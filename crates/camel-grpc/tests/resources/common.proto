@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package helloworld;
+
+enum Mood {
+  NEUTRAL = 0;
+  HAPPY = 1;
+  GRUMPY = 2;
+}

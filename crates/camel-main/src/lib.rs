@@ -416,6 +416,7 @@ pub fn new_main() -> Main {
     camel_sql::register(main.context());
     main.configure(camel_sql::configure_datasources_from_properties);
     camel_amqp::register(main.context());
+    camel_grpc::register(main.context()); // grpc component + protobuf data format
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {
