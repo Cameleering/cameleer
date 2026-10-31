@@ -4,8 +4,10 @@
 //! Supported options: `initialDelay`, `delay`, `useFixedDelay`, `repeatCount`, `greedy`,
 //! `sendEmptyMessageWhenIdle`, `backoffMultiplier`, `backoffIdleThreshold`,
 //! `backoffErrorThreshold`, `runLoggingLevel`, `startScheduler`, `timeUnit`,
-//! `scheduler` (`spring`/`quartz`/`none` are accepted and ignored),
-//! `scheduler.*` (a `scheduler.cron` is rejected: cron is not supported),
+//! `scheduler` (`spring`/`quartz`/`none`), `scheduler.cron` (a [cron expression](super::cron_expr),
+//! with `scheduler.timeZone` / `scheduler.trigger.timeZone`; when set, polls happen at the
+//! cron fire times and `initialDelay`/`delay`/backoff are ignored; other `scheduler.*` options
+//! are accepted and ignored),
 //! `pollStrategy`, `bridgeErrorHandler`, `exceptionHandler`, `exchangePattern` (accepted).
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,6 +38,8 @@ pub struct ScheduledPollConfig {
     pub run_logging_level: Level,
     /// If false the scheduler thread is not started; call [`ScheduledPollConsumer::poll_once`] manually.
     pub start_scheduler: bool,
+    /// Poll at the fire times of this cron expression (`scheduler.cron`) instead of using delays.
+    pub cron: Option<super::cron_expr::CronExpression>,
 }
 
 impl ScheduledPollConfig {
@@ -52,6 +56,7 @@ impl ScheduledPollConfig {
             backoff_error_threshold: 0,
             run_logging_level: Level::Trace,
             start_scheduler: true,
+            cron: None,
         }
     }
 
@@ -87,11 +92,9 @@ impl ScheduledPollConfig {
             }
         }
         let sched_opts = params.take_prefixed("scheduler.");
-        if sched_opts.contains_key("cron") {
-            return Err(CamelError::new(
-                crate::error::kinds::UNSUPPORTED_OPERATION,
-                "Cron scheduling (scheduler.cron) is not supported by rust-camel",
-            ));
+        if let Some(expr) = sched_opts.get("cron") {
+            let tz = sched_opts.get("timeZone").or_else(|| sched_opts.get("trigger.timeZone"));
+            c.cron = Some(super::cron_expr::CronExpression::parse_with_time_zone(expr, tz.map(|s| s.as_str()))?);
         }
         for k in ["pollStrategy", "bridgeErrorHandler", "exceptionHandler", "exchangePattern", "scheduledExecutorService", "poolSize"] {
             params.take(k);
@@ -130,8 +133,34 @@ impl PollInner {
         r
     }
 
+    fn run_cron_loop(&self, cron: &super::cron_expr::CronExpression, flag: &StopFlag) {
+        let c = &self.config;
+        let mut after = crate::util_time::now_millis() - 1;
+        let mut count = 0u64;
+        while c.repeat_count == 0 || count < c.repeat_count {
+            let Some(scheduled) = super::cron::sleep_until_next_fire(cron, after, flag) else { return };
+            after = scheduled;
+            count += 1;
+            loop {
+                match self.run_poll() {
+                    Ok(n) if n > 0 && c.greedy && !flag.is_stopped() => continue,
+                    Ok(_) => {}
+                    Err(e) => crate::camel_warn!(&self.name, "Consumer poll failed: {}", e),
+                }
+                break;
+            }
+            if flag.is_stopped() {
+                return;
+            }
+        }
+    }
+
     fn run_loop(&self, flag: &StopFlag) {
         let c = &self.config;
+        if let Some(cron) = &c.cron {
+            self.run_cron_loop(cron, flag);
+            return;
+        }
         if flag.sleep(c.initial_delay) {
             return;
         }
@@ -287,8 +316,14 @@ mod tests {
     }
 
     #[test]
-    fn cron_rejected_and_backoff_validated() {
-        let mut p = Parameters::new([("scheduler.cron".to_string(), "0 * * * *".to_string())].into_iter().collect());
+    fn cron_parsed_and_backoff_validated() {
+        let mut p = Parameters::new(
+            [("scheduler".to_string(), "quartz".to_string()), ("scheduler.cron".to_string(), "0 * * * *".to_string())].into_iter().collect(),
+        );
+        let c = ScheduledPollConfig::from_params(&mut p, Duration::ZERO, Duration::ZERO).unwrap();
+        assert_eq!(c.cron.unwrap().expression(), "0 * * * *");
+        assert!(p.is_empty());
+        let mut p = Parameters::new([("scheduler.cron".to_string(), "bad cron".to_string())].into_iter().collect());
         assert!(ScheduledPollConfig::from_params(&mut p, Duration::ZERO, Duration::ZERO).is_err());
         let mut p = Parameters::new([("backoffIdleThreshold".to_string(), "2".to_string())].into_iter().collect());
         assert!(ScheduledPollConfig::from_params(&mut p, Duration::ZERO, Duration::ZERO).is_err());

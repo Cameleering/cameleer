@@ -134,7 +134,10 @@ fn scheduler_greedy_and_backoff() {
 #[test]
 fn scheduler_cron_and_unknown_scheduler_rejected() {
     let ctx = CamelContext::new();
-    assert!(ctx.get_endpoint("scheduler:c?scheduler.cron=0+0+*+*+*").is_err());
+    // cron scheduling is supported (see component_cron.rs); invalid expressions are rejected
+    assert!(ctx.get_endpoint("scheduler:c?scheduler=quartz&scheduler.cron=0+0+*+*+*").is_ok());
+    assert!(ctx.get_endpoint("scheduler:c2?scheduler.cron=0+0+*+*").is_err());
+    assert!(ctx.get_endpoint("scheduler:c3?scheduler=bogus").is_err());
     assert!(ctx.get_endpoint("scheduler:c?scheduler=spring").is_ok());
     assert!(ctx.get_endpoint("scheduler:d?timeUnit=SECONDS&delay=1").is_ok());
 }

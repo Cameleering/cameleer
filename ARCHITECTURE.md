@@ -67,14 +67,14 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 | `processor/errors/` | error handlers (default, dead letter channel, none) with redelivery, onException, doTry, onCompletion, intercepts, throttle, delay, sample, idempotentConsumer, circuitBreaker, validate, rollback, threads, policies, route policies; installed by `ErrorsRouteHook` |
 | `processor/transform/`, `dataformat/` | marshal/unmarshal; json, csv, base64, string, hex, gzip/zip (own DEFLATE), jacksonXml, urlencoded |
 | `language/` | simple, constant, header, exchangeProperty, variable, jsonpath, xpath (+ small XML parser), tokenize, jq, ref, method/bean |
-| `component/` | direct, seda, vm, stub, mock, log, timer, scheduler, file, bean/class, ref, controlbus, browse, exec, stream, language, dataset, dataset-test, dataformat |
+| `component/` | direct, seda, vm, stub, mock, log, timer, scheduler, file, bean/class, ref, controlbus, browse, exec, stream, language, dataset, dataset-test, dataformat, cron/quartz (`cron_expr.rs` = cron parser), mustache, string-template/velocity/freemarker (`templating.rs`, shared `template_support.rs`), json-validator, validator (XML) |
 | `management.rs`, `health.rs`, `tracer.rs`, `history.rs` | statistics/operations/Prometheus, health checks, tracer + backlog, message history (one `ManagementState` per context, installed via a route hook) |
 | `template_routes.rs`, `supervising.rs` | route templates in the Rust DSL; supervising route controller |
 | `regex.rs` | backtracking regex engine with Java syntax |
 
 Other crates: `camel-http` (HTTP/1.1 server and client, platform-http/jetty/undertow/netty-http,
 http producer, REST DSL + OpenAPI, netty TCP/UDP), `camel-yaml` (YAML 1.2 parser/emitter, YAML
-DSL step registry in `src/dsl.rs`, `src/dsl/eips.rs`, `src/dsl/config.rs`, XML DSL), `camel-main`
+DSL step registry in `src/dsl.rs`, `src/dsl/eips.rs`, `src/dsl/config.rs`, XML DSL, Kamelets + `kamelet:` component in `src/kamelet.rs`), `camel-main`
 (`Main`, `application.properties`, dev console in `console.rs`, YAML REST glue in
 `yaml_rest.rs`, `camel` CLI). Feature coverage versus Apache Camel: `docs/FEATURES.md`.
 

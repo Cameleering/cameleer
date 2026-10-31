@@ -1372,6 +1372,14 @@ impl YamlLoader {
 
     fn load_document(&self, ctx: &CamelContext, source: &Source<'_>) -> Result<Vec<RouteDefinition>> {
         let doc = source.value;
+        // `kamelet:` endpoints may be used by any YAML route
+        crate::kamelet::register_kamelet_component(ctx);
+        // Kamelet / Pipe / KameletBinding resources
+        if let Some(routes) = crate::kamelet::load_resource_document(self, ctx, doc)
+            .map_err(|e| if e.kind == YAML_DSL_ERROR { dsl_error(format!("{} {}", e.message, source.location(&[]))) } else { e })?
+        {
+            return Ok(routes);
+        }
         let single;
         let items: &[Value] = match doc {
             Value::Null => return Ok(Vec::new()),

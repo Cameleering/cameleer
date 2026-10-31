@@ -57,8 +57,9 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | Route Policy | ✅ | |
 | Intercept, interceptFrom, interceptSendToEndpoint (skip, afterUri, onWhen) | ✅ | |
 | Process / bean / method | ✅ | Processors are closures or registry beans. There is no reflection-based bean binding. |
-| Saga, Kamelets, Script (groovy/js), Transformer/Validator (data types), Service Call | ❌ | |
-| Route templates | ✅ | Rust DSL (`add_route_template`, `TemplatedRouteBuilder`) and YAML/XML (`routeTemplate`, `templatedRoute`, `{{param:default}}`, `prefixId`, template beans via registered bean factories). No Kamelets. |
+| Kamelets, Pipes / KameletBindings | ⚠️ | `camel-yaml::kamelet`: YAML Kamelets (`spec.definition.properties`, `required`, defaults, `spec.template`/`spec.flow`), `kamelet:name?prop=x` as source (`from`) and sink/action (`to`), `{{prop}}`/`{{?prop}}` from uri parameters, `camel.kamelet.<name>[.<routeId>].<prop>` properties and defaults, `add_kamelet`, `load_kamelets_from_dir`, built-in `timer-source`, `log-sink`, `log-action`, `insert-header-action`, `set-body-action`. Pipes/KameletBindings with Kamelet refs or uris become routes. No Kamelet beans, data types or Pipe error handlers. |
+| Saga, Script (groovy/js), Transformer/Validator (data types), Service Call | ❌ | |
+| Route templates | ✅ | Rust DSL (`add_route_template`, `TemplatedRouteBuilder`) and YAML/XML (`routeTemplate`, `templatedRoute`, `{{param:default}}`, `prefixId`, template beans via registered bean factories). Kamelets: see above. |
 | Message history, tracer, route supervising | ✅ | `set_message_history` (also printed in the exhausted-failure log), `set_tracing` + backlog tracer, supervising route controller with back-off. |
 
 ## Error handling
@@ -107,7 +108,12 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | direct | ✅ | Synchronous. Fails with `DirectConsumerNotAvailableException` when no consumer is running. |
 | seda / vm / stub | ✅ | `size`, `concurrentConsumers`, `waitForTaskToComplete`, `timeout`, `multipleConsumers`, `blockWhenFull`, `discardWhenFull`, `offerTimeout`, `purgeWhenStopping`, `failIfNoConsumers`, `discardIfNoConsumers`. Supports polling consumers. |
 | timer | ✅ | `period`, `delay`, `repeatCount`, `fixedRate`, `includeMetadata`. Sets the `CamelTimerCounter` property. |
-| scheduler | ✅ | Scheduled poll consumer options, including cron. |
+| scheduler | ✅ | Scheduled poll consumer options, including `scheduler=quartz&scheduler.cron=...` (also for the file consumer). |
+| cron, quartz | ✅ | Built-in cron engine (`component/cron_expr.rs`): Quartz 6/7-field and Unix 5-field syntax, `L`, `W`, `#`, names, macros (`@daily`...), UTC or fixed offsets (`timeZone=GMT+02:00`). `quartz:` cron and simple triggers (`trigger.repeatInterval`/`repeatCount`, `fireNow`, `triggerStartDelay`). Quartz headers (`fireTime`, `scheduledFireTime`, ...) carry epoch millis. No job store, clustering, calendars or regional time zones; missed fires are skipped. |
+| mustache | ✅ | Variables, sections, inverted sections, comments, partials, set-delimiter, standalone lines; `allowTemplateFromHeader`, `contentCache`, `startDelimiter`/`endDelimiter`. No lambdas. |
+| string-template, velocity, freemarker | ⚠️ | Substitution only (`<name>`, `$name`/`${name}`, `${name!default}`); directives and template expressions fail with "not supported". |
+| json-validator | ✅ | Built-in JSON Schema validator (draft-04 to 07 subset incl. `$ref` to local definitions, combinators, formats); `JsonValidationException` lists all errors. No remote `$ref`. |
+| validator (XML) | ⚠️ | Well-formedness only, plus the root element must be a global element of the XSD. No XML Schema content validation. |
 | log | ✅ | `level`, `showAll`/`showXxx`, `multiline`, `maxChars`, `groupSize`/`groupInterval`, masking. Body type names are rust-camel value types. |
 | mock | ✅ | Expectations (count, minimum count, bodies in order or any order, headers, properties, no duplicates, custom), `assertPeriod`, `resultWaitTime`, `whenAnyExchangeReceived`, `returnReplyBody`, reset. |
 | file | ✅ | Consumer: `noop` (idempotent), `delete`, `move`/`moveFailed`/`preMove` with file-language expressions, include/exclude/ant filters, `recursive`, depth, sorting, read locks, idempotent repositories, done files. Producer: `fileName` expressions, `fileExist` (Override/Append/Fail/Ignore/Move/TryRename), temp files, done files, `CamelFileNameProduced`. |
@@ -118,14 +124,14 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | https / TLS | ❌ | Out of scope for a std-only build (no TLS stack). `https:` uris fail with a clear error. |
 | rest (REST DSL) | ✅ | Verbs, path/query parameters, `bindingMode` off/auto/json, CORS, OpenAPI 3 document. No XML binding, no `clientRequestValidation`. |
 | netty (tcp/udp) | ✅ | Text line and raw codecs, sync request/reply. |
-| Kafka, JMS/AMQP, SQL/JDBC, AWS/Azure/GCP, FTP/SFTP, Mail, MQTT, gRPC, WebSocket, Cron (Quartz)... | ❌ | They need external protocol stacks or drivers. |
+| Kafka, JMS/AMQP, SQL/JDBC, AWS/Azure/GCP, FTP/SFTP, Mail, MQTT, gRPC, WebSocket... | ❌ | They need external protocol stacks or drivers. |
 
 ## DSLs
 
 | DSL | Status | Notes |
 |---|---|---|
 | Rust fluent DSL (equivalent of the Java DSL) | ✅ | `end()` with no open block is tolerated, as in the Java DSL. |
-| YAML DSL | ✅ | All EIPs of the Rust DSL incl. marshal/unmarshal, `routeConfiguration` (onException, onCompletion, intercepts, errorHandler), top-level `errorHandler`, beans via registered factories, line/column error messages. Throttle needs a constant maximum; no Kamelets; options the core does not model (e.g. `executorService`) are ignored. |
+| YAML DSL | ✅ | All EIPs of the Rust DSL incl. marshal/unmarshal, `routeConfiguration` (onException, onCompletion, intercepts, errorHandler), top-level `errorHandler`, beans via registered factories, line/column error messages. Throttle needs a constant maximum; Kamelet, Pipe and KameletBinding resources (and `kamelet:` uris) are supported; options the core does not model (e.g. `executorService`) are ignored. |
 | XML DSL | ✅ | `camel-yaml/src/xml.rs` converts XML to the YAML model and reuses the YAML step handlers, so coverage follows the YAML DSL. |
 | REST DSL (Rust) | ✅ | See the rest component. |
 | REST DSL in YAML | ✅ | `rest`/`restConfiguration` in YAML and XML (registered by `camel-main`), OpenAPI document. A `restConfiguration` loaded in a later file than its `rest` is not applied. |
