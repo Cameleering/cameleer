@@ -32,6 +32,52 @@ fn producer_suite_over_postgres_with_scram() {
 }
 
 #[test]
+fn stored_procedure_suite_over_postgres() {
+    let s = server(PgAuth::ScramSha256);
+    let ds = datasource_from_url(&s.url("camel", "s3cret")).unwrap();
+    let ctx = context_with(ds.clone());
+    let dir = std::env::temp_dir().join(unique("pgstored"));
+    std::fs::create_dir_all(&dir).unwrap();
+    stored_suite(&ctx, &ds, &dir, true);
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(s.received_queries().iter().any(|q| q.starts_with("CALL ") && q.contains("$1")), "{:?}", s.received_queries());
+    assert!(s.received_queries().iter().any(|q| q.starts_with("SELECT * FROM subnumbers_function($1, $2)")));
+}
+
+#[test]
+fn procedures_and_functions_over_the_wire() {
+    let s = server(PgAuth::Md5);
+    let mut c = PgConnection::connect(&config(&s, "camel", "s3cret")).unwrap();
+    // simple query protocol: DDL with dollar quoting, CALL with OUT parameters as a row
+    c.execute("CREATE PROCEDURE split_name(IN full_name TEXT, OUT first_name TEXT, OUT last_name TEXT) LANGUAGE plpgsql AS $body$ BEGIN first_name := split_part(full_name, ' ', 1); last_name := split_part(full_name, ' ', 2); END $body$", &[])
+        .unwrap_or_else(|e| panic!("{}", e));
+    let r = c.execute("CALL split_name('Ada Lovelace', NULL, NULL)", &[]).unwrap();
+    assert!(r.is_query);
+    assert_eq!(r.columns, vec!["first_name", "last_name"]);
+    assert_eq!(r.rows, vec![vec![Value::from("Ada"), Value::from("Lovelace")]]);
+    // extended protocol with parameters
+    let r = c.execute("CALL split_name(?, NULL, NULL)", &[Value::from("Grace Hopper")]).unwrap();
+    assert_eq!(r.rows, vec![vec![Value::from("Grace"), Value::from("Hopper")]]);
+    c.execute("CREATE FUNCTION area(w DOUBLE PRECISION, h DOUBLE PRECISION, OUT square DOUBLE PRECISION, OUT perimeter DOUBLE PRECISION) AS $$ BEGIN square := w * h; perimeter := 2 * (w + h); END $$ LANGUAGE plpgsql", &[]).unwrap();
+    let r = c.execute("SELECT * FROM area(?, ?)", &[Value::Float(2.0), Value::Float(3.5)]).unwrap();
+    assert_eq!(r.columns, vec!["square", "perimeter"]);
+    assert_eq!(r.rows, vec![vec![Value::Float(7.0), Value::Float(11.0)]]);
+    c.execute("CREATE FUNCTION inc(i INTEGER) RETURNS INTEGER AS $$ SELECT i + 1 $$ LANGUAGE sql", &[]).unwrap();
+    let r = c.execute("SELECT inc(41)", &[]).unwrap();
+    assert_eq!(r.columns, vec!["inc"]);
+    assert_eq!(r.rows, vec![vec![Value::Int(42)]]);
+    // errors raised by procedures keep their SQLSTATE
+    c.execute("CREATE PROCEDURE fail(IN code TEXT) LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'failed: %', code USING ERRCODE = '22023'; END $$", &[]).unwrap();
+    let e = c.execute("CALL fail('x')", &[]).unwrap_err();
+    assert!(e.message.contains("failed: x") && e.message.contains("22023"), "{}", e.message);
+    // a procedure without OUT parameters completes with the CALL tag
+    c.execute("CREATE PROCEDURE noop() LANGUAGE plpgsql AS $$ BEGIN NULL; END $$", &[]).unwrap();
+    let r = c.execute("CALL noop()", &[]).unwrap();
+    assert!(!r.is_query);
+    assert_eq!(r.command, "CALL");
+}
+
+#[test]
 fn scram_md5_cleartext_and_trust_authentication() {
     for auth in [PgAuth::ScramSha256, PgAuth::Md5, PgAuth::Cleartext, PgAuth::Trust] {
         let s = server(auth);

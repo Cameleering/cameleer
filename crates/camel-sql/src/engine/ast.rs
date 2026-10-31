@@ -2,6 +2,8 @@
 
 use camel_core::value::Value;
 
+pub use super::plast::*;
+
 /// Column data types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
@@ -69,6 +71,14 @@ pub enum Statement {
     Select(Box<Select>),
     Update { table: String, alias: Option<String>, sets: Vec<(String, Expr)>, where_: Option<Expr>, returning: Option<Vec<SelectItem>> },
     Delete { table: String, alias: Option<String>, where_: Option<Expr>, returning: Option<Vec<SelectItem>> },
+    /// `CREATE [OR REPLACE] PROCEDURE | FUNCTION`.
+    CreateRoutine { routine: Box<Routine>, or_replace: bool },
+    /// `DROP PROCEDURE | FUNCTION [IF EXISTS] name`.
+    DropRoutine { name: String, function: bool, if_exists: bool },
+    /// `CALL name(args)`.
+    Call { name: String, args: Vec<Expr> },
+    /// `DO $$ block $$` (anonymous procedural block).
+    Do(Box<Block>),
     Begin,
     Commit,
     Rollback,
@@ -127,6 +137,10 @@ pub struct From {
 pub enum TableRef {
     Table { name: String, alias: Option<String> },
     Subquery { query: Box<Select>, alias: String },
+    /// A set-returning function call (`FROM fn(args) [alias]`).
+    Function { name: String, args: Vec<Expr>, alias: Option<String> },
+    /// A materialized relation (internal: the pre-evaluated result of a function call).
+    Values { name: String, columns: Vec<String>, rows: Vec<Vec<Value>>, alias: Option<String> },
 }
 
 /// Join kinds.

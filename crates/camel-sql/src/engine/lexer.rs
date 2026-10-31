@@ -51,7 +51,7 @@ impl Token {
     }
 }
 
-const OPS: &[&str] = &["<>", "!=", "<=", ">=", "||", "::", "=", "<", ">", "+", "-", "*", "/", "%", "(", ")", ",", ".", ";"];
+const OPS: &[&str] = &[":=", "..", "=>", "<>", "!=", "<=", ">=", "||", "::", "=", "<", ">", "+", "-", "*", "/", "%", "(", ")", ",", ".", ";"];
 
 /// Tokenize SQL text.
 pub fn tokenize(sql: &str) -> SqlResult<Vec<Token>> {
@@ -117,7 +117,7 @@ pub fn tokenize(sql: &str) -> SqlResult<Vec<Token>> {
                 s.push(chars[i]);
                 adv!();
             }
-            if i < chars.len() && chars[i] == '.' && chars.get(i + 1).is_none_or(|d| d.is_ascii_digit() || !d.is_alphabetic()) {
+            if i < chars.len() && chars[i] == '.' && chars.get(i + 1) != Some(&'.') && chars.get(i + 1).is_none_or(|d| d.is_ascii_digit() || !d.is_alphabetic()) {
                 is_float = true;
                 s.push('.');
                 adv!();
@@ -225,6 +225,36 @@ pub fn tokenize(sql: &str) -> SqlResult<Vec<Token>> {
             adv!();
             push(&mut out, Tok::Param);
             continue;
+        }
+        // dollar-quoted string: $$...$$ or $tag$...$tag$
+        if c == '$' && chars.get(i + 1).is_some_and(|d| *d == '$' || d.is_alphabetic() || *d == '_') {
+            let mut j = i + 1;
+            while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                j += 1;
+            }
+            if chars.get(j) == Some(&'$') {
+                let tag: String = chars[i..=j].iter().collect();
+                let tag_chars: Vec<char> = tag.chars().collect();
+                let body_start = j + 1;
+                let mut k = body_start;
+                let mut end = None;
+                while k + tag_chars.len() <= chars.len() {
+                    if chars[k..k + tag_chars.len()] == tag_chars[..] {
+                        end = Some(k);
+                        break;
+                    }
+                    k += 1;
+                }
+                let Some(end) = end else {
+                    return Err(SqlErr::syntax(format!("unterminated dollar-quoted string at line {}, column {}", tl, tc)));
+                };
+                let body: String = chars[body_start..end].iter().collect();
+                while i < end + tag_chars.len() {
+                    adv!();
+                }
+                push(&mut out, Tok::Str(body));
+                continue;
+            }
         }
         if c == '$' && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit()) {
             adv!();

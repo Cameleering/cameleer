@@ -491,24 +491,6 @@ impl Service for SqlConsumer {
     }
 }
 
-/// The `sql-stored` component: stored procedures are not supported by rust-camel.
-pub struct SqlStoredComponent;
-
-impl Component for SqlStoredComponent {
-    fn create_endpoint(&self, _ctx: &CamelContext, uri: &str, _remaining: &str, _params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
-        Err(CamelError::new(
-            camel_core::error::kinds::UNSUPPORTED_OPERATION,
-            format!("The sql-stored component is not supported by rust-camel (no stored procedures in the embedded engine or client): {}", uri),
-        ))
-    }
-    fn lenient_properties(&self) -> bool {
-        true
-    }
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
 /// Map `values` into a parameter map (helper for tests and processors).
 pub fn param_map<I: IntoIterator<Item = (&'static str, Value)>>(values: I) -> Value {
     Value::Object(values.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<ObjectMap>())

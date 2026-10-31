@@ -195,3 +195,85 @@ pub fn producer_suite(ctx: &CamelContext, ds: &Arc<dyn DataSource>) {
     assert_eq!(ex.body().as_array().unwrap()[0].get("name"), Some(&Value::from("apple")));
     ctx.stop().unwrap();
 }
+
+/// `sql-stored` behaviour shared by both back ends. `ctx` must have `ds` bound and not be started.
+pub fn stored_suite(ctx: &CamelContext, ds: &Arc<dyn DataSource>, dir: &std::path::Path, wire: bool) {
+    exec(ds, "CREATE TABLE orders (id INTEGER PRIMARY KEY, item TEXT, qty INTEGER)");
+    exec(ds, "CREATE PROCEDURE subnumbers(IN num1 INTEGER, IN num2 INTEGER, OUT resultofsub INTEGER) LANGUAGE plpgsql AS $$ BEGIN resultofsub := num1 - num2; END $$");
+    exec(
+        ds,
+        "CREATE PROCEDURE add_order(IN p_id INTEGER, IN p_item VARCHAR, INOUT p_qty INTEGER, OUT total INTEGER) LANGUAGE plpgsql AS $$
+         BEGIN
+           IF p_qty <= 0 THEN RAISE EXCEPTION 'invalid quantity % for %', p_qty, p_item; END IF;
+           INSERT INTO orders VALUES (p_id, p_item, p_qty);
+           p_qty := p_qty * 2;
+           SELECT sum(qty) INTO total FROM orders;
+         END $$",
+    );
+    exec(ds, "CREATE FUNCTION subnumbers_function(a INTEGER, b INTEGER) RETURNS INTEGER AS $$ SELECT a - b $$ LANGUAGE sql");
+    exec(ds, "CREATE FUNCTION orders_over(min_qty INTEGER) RETURNS TABLE (id INTEGER, item TEXT) LANGUAGE plpgsql AS $$ BEGIN RETURN QUERY SELECT o.id, o.item FROM orders o WHERE o.qty >= min_qty ORDER BY o.id; END $$");
+    exec(ds, "CREATE PROCEDURE log_item(IN p_id INTEGER, IN p_item TEXT) LANGUAGE sql AS $$ INSERT INTO orders VALUES (p_id, p_item, 1) $$");
+    let tpl = dir.join("add_order.sql");
+    std::fs::write(&tpl, "-- template\nadd_order(INTEGER :#id, VARCHAR :#item, INOUT INTEGER ${body[qty]} qty, OUT INTEGER total)").unwrap();
+    let tpl_uri = format!("sql-stored:file:{}?dataSource=#ds", tpl.display());
+    ctx.add_routes(move |b| {
+        b.from("direct:sub").to("sql-stored:SUBNUMBERS(INTEGER ${headers.num1},INTEGER ${headers.num2},OUT INTEGER resultofsub)?dataSource=#ds");
+        b.from("direct:sub-header").to("sql-stored:subnumbers(INTEGER :#num1, INTEGER :#num2, OUT INTEGER resultofsub)?dataSource=#ds&outputHeader=result");
+        b.from("direct:fn").to("sql-stored:subnumbers_function(OUT INTEGER resultofsub, INTEGER ${header.v1}, INTEGER ${header.v2})?dataSource=#ds&function=true");
+        b.from("direct:add").to(&tpl_uri);
+        b.from("direct:set").to("sql-stored:orders_over(INTEGER ${header.min})?dataSource=#ds&function=true&outputType=SelectList");
+        b.from("direct:set-one").to("sql-stored:orders_over(INTEGER ${header.min})?dataSource=#ds&function=true&outputType=SelectOne");
+        b.from("direct:batch").to("sql-stored:log_item(INTEGER :#id, VARCHAR :#item)?dataSource=#ds&batch=true");
+        b.from("direct:noop").to("sql-stored:subnumbers(INTEGER 10, INTEGER 4, OUT INTEGER r)?dataSource=#ds&noop=true");
+        b.from("direct:body-template").to("sql-stored:ignored?dataSource=#ds&useMessageBodyForTemplate=true");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    let r = t.request_body_and_headers("direct:sub", Value::Null, vec![("num1", Value::Int(1)), ("num2", Value::Int(2))]).unwrap();
+    assert_eq!(r, obj(&[("resultofsub", Value::Int(-1))]));
+    // string header values are converted to the template's SQL types
+    let ex = t
+        .request("direct:sub-header", |ex| {
+            ex.set_body("keep me");
+            ex.set_header("num1", "40");
+            ex.set_header("num2", "2");
+        })
+        .unwrap();
+    assert_eq!(ex.body(), &Value::from("keep me"));
+    assert_eq!(ex.header("result"), Some(&obj(&[("resultofsub", Value::Int(38))])));
+    let r = t.request_body_and_headers("direct:fn", Value::Null, vec![("v1", Value::Int(9)), ("v2", Value::Int(3))]).unwrap();
+    assert_eq!(r, obj(&[("resultofsub", Value::Int(6))]));
+    // file template, body map + Simple sources, INOUT and OUT values, update count
+    let ex = t.request("direct:add", |ex| ex.set_body(obj(&[("id", Value::Int(1)), ("item", Value::from("apple")), ("qty", Value::Int(3))]))).unwrap();
+    assert_eq!(ex.body(), &obj(&[("qty", Value::Int(6)), ("total", Value::Int(3))]));
+    assert_eq!(ex.header("CamelSqlStoredUpdateCount"), Some(&Value::Int(1)));
+    t.request_body("direct:add", obj(&[("id", Value::Int(2)), ("item", Value::from("pear")), ("qty", Value::Int(10))])).unwrap();
+    // RAISE EXCEPTION surfaces as an SQLException with the message
+    let e = t.request_body("direct:add", obj(&[("id", Value::Int(3)), ("item", Value::from("plum")), ("qty", Value::Int(0))])).unwrap_err();
+    assert!(format!("{:?}", e).contains("invalid quantity 0 for plum"), "{:?}", e);
+    assert_eq!(count(ds, "SELECT count(*) FROM orders"), 2);
+    // result sets per outputType
+    let r = t.request_body_and_header("direct:set", Value::Null, "min", 2).unwrap();
+    assert_eq!(r, Value::Array(vec![obj(&[("id", Value::Int(1)), ("item", Value::from("apple"))]), obj(&[("id", Value::Int(2)), ("item", Value::from("pear"))])]));
+    let r = t.request_body_and_header("direct:set-one", Value::Null, "min", 5).unwrap();
+    assert_eq!(r, obj(&[("id", Value::Int(2)), ("item", Value::from("pear"))]));
+    // batch: one call per body element, in one transaction
+    let ex = t.request("direct:batch", |ex| ex.set_body(Value::Array(vec![obj(&[("id", Value::Int(10)), ("item", Value::from("a"))]), obj(&[("id", Value::Int(11)), ("item", Value::from("b"))])]))).unwrap();
+    // over the wire the CALL command tag carries no row count
+    assert_eq!(ex.header("CamelSqlStoredUpdateCount"), Some(&Value::Int(if wire { 0 } else { 2 })));
+    assert_eq!(count(ds, "SELECT count(*) FROM orders"), 4);
+    let e = t.request_body("direct:batch", Value::Array(vec![obj(&[("id", Value::Int(12)), ("item", Value::from("c"))]), obj(&[("id", Value::Int(10)), ("item", Value::from("dup"))])])).unwrap_err();
+    assert!(format!("{:?}", e).contains("duplicate"), "{:?}", e);
+    assert_eq!(count(ds, "SELECT count(*) FROM orders"), 4, "the batch was rolled back");
+    // noop keeps the body; literal values in the template
+    assert_eq!(t.request_body("direct:noop", "body").unwrap(), Value::from("body"));
+    // template from the message body and from the CamelSqlStoredTemplate header
+    assert_eq!(t.request_body("direct:body-template", "subnumbers(INTEGER 7, INTEGER 7, OUT INTEGER zero)").unwrap(), obj(&[("zero", Value::Int(0))]));
+    let r = t.request_body_and_header("direct:sub", Value::Null, "CamelSqlStoredTemplate", "subnumbers(INTEGER 100, INTEGER 1, OUT INTEGER x)").unwrap();
+    assert_eq!(r, obj(&[("x", Value::Int(99))]));
+    // unknown procedure
+    let e = t.request_body_and_header("direct:sub", Value::Null, "CamelSqlStoredTemplate", "nope(INTEGER 1)").unwrap_err();
+    assert!(format!("{:?}", e).contains("does not exist"), "{:?}", e);
+    ctx.stop().unwrap();
+}
