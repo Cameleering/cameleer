@@ -12,6 +12,7 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 | `crates/camel-http` | HTTP/1.1 server + client (std::net), `http`, `platform-http`, `rest` DSL, `netty` (tcp/udp) |
 | `crates/camel-yaml` | YAML 1.2 parser + Camel YAML DSL loader |
 | `crates/camel-protocols` | ftp, mail (smtp/pop3/imap), websocket, mllp/hl7, syslog — plus embedded test servers in `testing` |
+| `crates/camel-datastores` | Redis (RESP2/3), MongoDB (BSON/OP_MSG), Elasticsearch/OpenSearch (REST), Cassandra (CQL v4), CouchDB connectors + embedded test servers |
 | `crates/camel-main` | `camel` CLI binary, application.properties, route loading, dev console |
 | `crates/camel-tls` | from-scratch TLS 1.3/1.2 client+server (`TlsStream<S: Read+Write>`, `split` into read/write halves), crypto primitives, X.509/PEM/PKCS#8/CRL, trust store, `keystore` (PKCS#12, JKS, JCEKS), mutual TLS (`ClientAuth`), session resumption (client `ClientSessionCache`, server tickets), certificate/CRL generator (`certgen`); `net::NetStream` (cloneable plain/TLS socket used by all network components), `SslContextParameters` + Camel glue in `camel_support` (`sslContextParameters=#bean`, `camel.ssl.*`, `camel.server.ssl.*`, `endpoint_tls`, error kinds), `sasl` (PLAIN, SCRAM-SHA-256/512), `testing` (test PKI); depends on camel-core only |
 | `crates/camel-grpc` | HPACK + HTTP/2 client/server (`h2`, public for reuse), `.proto` parser + dynamic protobuf codec (`proto`), gRPC framing/status/client/server (`grpc`), Camel `grpc` component and `protobuf` data format |
