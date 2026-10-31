@@ -77,6 +77,7 @@ dependencies = [
  "camel-http",
  "camel-kafka-mqtt",
  "camel-protocols",
+ "camel-script",
  "camel-sql",
  "camel-ssh",
  "camel-yaml",
@@ -88,6 +89,14 @@ version = "0.1.0"
 dependencies = [
  "camel-core",
  "camel-tls",
+]
+
+[[package]]
+name = "camel-script"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+ "camel-yaml",
 ]
 
 [[package]]
