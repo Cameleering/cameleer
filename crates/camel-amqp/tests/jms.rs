@@ -11,7 +11,7 @@ use camel_core::prelude::*;
 fn context(broker: &StompBroker) -> CamelContext {
     let ctx = CamelContext::new();
     camel_amqp::register(&ctx);
-    for scheme in ["jms", "activemq", "amqp", "stomp"] {
+    for scheme in ["jms", "activemq", "amqp-stomp", "stomp"] {
         ctx.properties().set(format!("camel.component.{}.brokerUrl", scheme), broker.url());
     }
     ctx
@@ -68,7 +68,7 @@ fn queue_competing_consumers() {
             })
             .to("mock:orders");
         b.from("activemq:queue:shared").to("mock:a");
-        b.from("amqp:queue:shared").to("mock:b");
+        b.from("amqp-stomp:queue:shared").to("mock:b");
     })
     .unwrap();
     ctx.start().unwrap();

@@ -1,4 +1,4 @@
-//! The `stomp` component and the JMS-style `jms` / `activemq` / `amqp` components, all
+//! The `stomp` component and the JMS-style `jms` / `activemq` / `amqp-stomp` components, all
 //! speaking STOMP 1.2 (ActiveMQ, Artemis and RabbitMQ accept STOMP).
 //!
 //! ```text
@@ -11,7 +11,7 @@
 //! ```
 //!
 //! The broker url comes from `brokerURL` (alias `brokerUrl`) or the context properties
-//! `camel.component.<scheme>.brokerUrl` / `brokerURL` (also `remoteURI` for `amqp`), the
+//! `camel.component.<scheme>.brokerUrl` / `brokerURL` (also `remoteURI` for `amqp-stomp`), the
 //! credentials from `username`/`password` (`login`/`passcode` for `stomp`) or
 //! `camel.component.<scheme>.username|password`. Urls such as `tcp://h:p`, `stomp://h:p`,
 //! `amqp://h:p` and `failover:(tcp://h:p,...)` are accepted (the first address is used).
@@ -23,7 +23,7 @@
 //! with `ack:auto` and map every STOMP header to a Camel header; producers `SEND` the body
 //! with every non-`Camel*` header.
 //!
-//! **jms / activemq / amqp**: queues are point-to-point (competing consumers, one STOMP
+//! **jms / activemq / amqp-stomp**: queues are point-to-point (competing consumers, one STOMP
 //! subscription per concurrent consumer with a prefetch window of `prefetchSize`), topics
 //! publish-subscribe. Consumers acknowledge after processing (`client-individual`):
 //! `AUTO_ACKNOWLEDGE`/`DUPS_OK_ACKNOWLEDGE` always ack, `CLIENT_ACKNOWLEDGE` nacks failed
@@ -90,7 +90,7 @@ pub mod headers {
 pub enum Flavor {
     /// `stomp`: raw STOMP headers, InOnly.
     Stomp,
-    /// `jms`, `activemq`, `amqp`: JMS semantics.
+    /// `jms`, `activemq`, `amqp-stomp`: JMS semantics.
     Jms,
 }
 
@@ -316,7 +316,7 @@ impl JmsConfig {
     }
 }
 
-/// The `stomp` / `jms` / `activemq` / `amqp` component.
+/// The `stomp` / `jms` / `activemq` / `amqp-stomp` component.
 pub struct JmsComponent {
     flavor: Flavor,
     scheme: &'static str,
@@ -327,7 +327,7 @@ impl JmsComponent {
     pub fn stomp() -> Self {
         JmsComponent { flavor: Flavor::Stomp, scheme: "stomp" }
     }
-    /// A JMS-style component (`jms`, `activemq`, `amqp`) over STOMP.
+    /// A JMS-style component (`jms`, `activemq`, `amqp-stomp`) over STOMP.
     pub fn jms(scheme: &'static str) -> Self {
         JmsComponent { flavor: Flavor::Jms, scheme }
     }
@@ -343,7 +343,7 @@ impl Component for JmsComponent {
     }
 }
 
-/// A `stomp` / `jms` / `activemq` / `amqp` endpoint.
+/// A `stomp` / `jms` / `activemq` / `amqp-stomp` endpoint.
 pub struct JmsEndpoint {
     uri: String,
     ctx: WeakContext,
