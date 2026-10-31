@@ -7,3 +7,4 @@ description = "rust-camel SQL support (std only): DataSource SPI, embedded rusts
 
 [dependencies]
 camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }

@@ -1,6 +1,14 @@
-//! `http` producer component (`https` is rejected: no TLS in a std-only build).
+//! `http` / `https` producer component.
 //!
 //! `http://host:port/path?httpMethod=POST&throwExceptionOnFailure=true&...`
+//! `https://host:8443/path?sslContextParameters=#ssl`
+//!
+//! HTTPS uses `camel-tls` with SNI and hostname verification. Trust/key material comes
+//! from `sslContextParameters=#bean` (or `camel.component.https.sslContextParameters`),
+//! `useGlobalSslContextParameters=true`, the global `camel.ssl.*` parameters when
+//! `camel.ssl.enabled=true`, else the system trust store. Proxies: `proxyHost`/`proxyPort`
+//! (+ `proxyAuthUsername`/`proxyAuthPassword`), or `useSystemProperties=true` to use
+//! `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`; `https` targets are reached through a `CONNECT` tunnel.
 //!
 //! Supported options: `httpMethod`, `bridgeEndpoint`, `throwExceptionOnFailure`,
 //! `okStatusCodeRange`, `connectTimeout`, `socketTimeout`/`soTimeout`/`responseTimeout`,
@@ -32,10 +40,11 @@ use camel_core::util::Parameters;
 use camel_core::value::Value;
 
 use crate::binding::{add_header_value, body_to_value, headers, value_to_body, write_message_headers};
-use crate::client::{https_not_supported, HttpClient, Url};
+use crate::client::{HttpClient, ProxyAddr, ProxyConfig, Url};
+use camel_tls::TlsClientConfig;
 use crate::http::{base64_encode, percent_encode, HttpHeaders};
 
-/// The `http` (and erroring `https`) component.
+/// The `http` / `https` component.
 pub struct HttpComponent {
     scheme: String,
 }
@@ -67,6 +76,11 @@ pub struct HttpProducerOptions {
     pub ignore_response_body: bool,
     pub custom_host_header: Option<String>,
     pub preserve_host_header: bool,
+    /// TLS configuration for `https` targets (None = system trust store).
+    pub tls: Option<Arc<TlsClientConfig>>,
+    /// TLS server name override (`SslContextParameters::server_name`).
+    pub tls_server_name: Option<String>,
+    pub proxy: Option<ProxyConfig>,
 }
 
 fn parse_ranges(s: &str) -> Result<Vec<(u16, u16)>> {
@@ -82,12 +96,32 @@ fn parse_ranges(s: &str) -> Result<Vec<(u16, u16)>> {
 }
 
 impl Component for HttpComponent {
-    fn create_endpoint(&self, _ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
-        if self.scheme.eq_ignore_ascii_case("https") || remaining.starts_with("https://") {
-            return Err(https_not_supported(uri));
+    fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
+        let https = self.scheme.eq_ignore_ascii_case("https") || remaining.starts_with("https://");
+        let remaining = remaining.strip_prefix("http://").or_else(|| remaining.strip_prefix("https://")).unwrap_or(remaining);
+        let mut base = Url::parse(&format!("{}://{}", if https { "https" } else { "http" }, remaining))?;
+        let ssl = camel_tls::camel_support::take_endpoint_ssl(ctx, params, &self.scheme)?;
+        let ssl = match ssl {
+            Some(p) => Some(p),
+            None => camel_tls::camel_support::global_ssl_context_parameters(ctx)?,
+        };
+        let tls = match &ssl {
+            Some(p) => Some(Arc::new(p.client_config().map_err(|e| camel_tls::camel_support::tls_error(&e, uri))?)),
+            None => None,
+        };
+        let tls_server_name = ssl.as_ref().and_then(|p| p.server_name.clone());
+        let mut proxy = None;
+        if let Some(h) = params.take("proxyHost").or_else(|| params.take("proxyAuthHost")) {
+            let port = params.take("proxyPort").or_else(|| params.take("proxyAuthPort")).unwrap_or_else(|| "80".into());
+            let port: u16 = port.trim().parse().map_err(|_| CamelError::illegal_argument(format!("Invalid proxyPort: {}", port)))?;
+            let credentials = params.take("proxyAuthUsername").map(|u| format!("{}:{}", u, params.take("proxyAuthPassword").unwrap_or_default()));
+            proxy = Some(ProxyConfig::new(ProxyAddr { host: h, port, credentials }));
         }
-        let remaining = remaining.strip_prefix("http://").unwrap_or(remaining);
-        let mut base = Url::parse(&format!("http://{}", remaining))?;
+        params.take("proxyAuthScheme");
+        params.take("proxyAuthMethod");
+        if params.take_bool("useSystemProperties", false)? && proxy.is_none() {
+            proxy = ProxyConfig::from_env();
+        }
         let socket_timeout = match params.take("socketTimeout").or_else(|| params.take("soTimeout")).or_else(|| params.take("responseTimeout")) {
             Some(v) => camel_core::util::parse_duration(&v)?,
             None => Duration::from_secs(60),
@@ -118,6 +152,9 @@ impl Component for HttpComponent {
             ignore_response_body: params.take_bool("ignoreResponseBody", false)?,
             custom_host_header: params.take("customHostHeader"),
             preserve_host_header: params.take_bool("preserveHostHeader", false)?,
+            tls,
+            tls_server_name,
+            proxy,
         };
         for ignored in [
             "connectionRequestTimeout",
@@ -132,8 +169,8 @@ impl Component for HttpComponent {
             "clearExpiredCookies",
             "transferException",
             "lazyStartProducer",
-            "useSystemProperties",
             "httpBinding",
+            "x509HostnameVerifier",
         ] {
             params.take(ignored);
         }
@@ -201,10 +238,7 @@ impl HttpProducer {
         if !self.opts.bridge_endpoint {
             if let Some(u) = ex.header(headers::HTTP_URI).map(|v| v.to_string()) {
                 let lower = u.to_ascii_lowercase();
-                if lower.starts_with("https://") {
-                    return Err(https_not_supported(&u));
-                }
-                if lower.starts_with("http://") {
+                if lower.starts_with("http://") || lower.starts_with("https://") {
                     url = Url::parse(&u)?;
                 }
             }
@@ -332,6 +366,9 @@ impl Processor for HttpProducer {
             read_timeout: self.opts.socket_timeout,
             follow_redirects: self.opts.follow_redirects,
             chunked_requests: self.opts.chunked,
+            tls: self.opts.tls.clone(),
+            tls_server_name: self.opts.tls_server_name.clone(),
+            proxy: self.opts.proxy.clone(),
             ..HttpClient::default()
         };
         let resp = client.execute(&method, &url, &req_headers, if send_body { Some(&body) } else { None }, None)?;

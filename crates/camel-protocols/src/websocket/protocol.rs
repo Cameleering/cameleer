@@ -13,7 +13,10 @@
 //! ```
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
+
+use camel_tls::camel_support::EndpointTls;
+use camel_tls::net::NetStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -22,7 +25,7 @@ use camel_core::dataformat::base64;
 use camel_core::error::{kinds, CamelError, Result};
 
 use super::sha1::sha1;
-use crate::common::{connect, io_error, random_bytes, read_line};
+use crate::common::{connect_stream, io_error, random_bytes, read_line};
 
 /// The GUID appended to the client key (RFC 6455 section 1.3).
 pub const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -219,8 +222,8 @@ static IDS: AtomicU64 = AtomicU64::new(1);
 /// should read with [`WsConnection::read_message`].
 pub struct WsConnection {
     id: String,
-    reader: Mutex<BufReader<TcpStream>>,
-    writer: Mutex<TcpStream>,
+    reader: Mutex<BufReader<NetStream>>,
+    writer: Mutex<NetStream>,
     client: bool,
     closed: AtomicBool,
     close_sent: AtomicBool,
@@ -232,7 +235,7 @@ pub struct WsConnection {
 
 impl WsConnection {
     /// Wrap an upgraded stream. `client` connections mask outgoing frames.
-    pub fn new(stream: TcpStream, reader: BufReader<TcpStream>, client: bool, path: &str) -> std::io::Result<WsConnection> {
+    pub fn new(stream: NetStream, reader: BufReader<NetStream>, client: bool, path: &str) -> std::io::Result<WsConnection> {
         let remote = stream.peer_addr().ok();
         let n = IDS.fetch_add(1, Ordering::Relaxed);
         let rnd: String = random_bytes(6).iter().map(|b| format!("{:02x}", b)).collect();
@@ -257,14 +260,20 @@ impl WsConnection {
 
     /// Open a client connection sending extra handshake headers.
     pub fn connect_with(host: &str, port: u16, path: &str, timeout: Duration, headers: &[(String, String)]) -> Result<WsConnection> {
-        let what = format!("ws://{}:{}{}", host, port, path);
-        let stream = connect(host, port, timeout)?;
+        Self::connect_secure(host, port, path, timeout, headers, None)
+    }
+
+    /// Open a client connection, over TLS (`wss://`) when `tls` is given.
+    pub fn connect_secure(host: &str, port: u16, path: &str, timeout: Duration, headers: &[(String, String)], tls: Option<&EndpointTls>) -> Result<WsConnection> {
+        let what = format!("{}://{}:{}{}", if tls.is_some() { "wss" } else { "ws" }, host, port, path);
+        let stream = connect_stream(host, port, timeout, tls)?;
         let _ = stream.set_nodelay(true);
         let t = if timeout.is_zero() { None } else { Some(timeout) };
         let _ = stream.set_read_timeout(t);
         let key = base64::encode(&random_bytes(16), false);
         let path = if path.is_empty() { "/" } else { path };
-        let host_header = if port == 80 { host.to_string() } else { format!("{}:{}", host, port) };
+        let default_port = if tls.is_some() { 443 } else { 80 };
+        let host_header = if port == default_port { host.to_string() } else { format!("{}:{}", host, port) };
         let mut req = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {}\r\nSec-WebSocket-Version: 13\r\n",
             path, host_header, key
@@ -312,6 +321,11 @@ impl WsConnection {
     /// Unique connection key.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Whether the connection uses TLS (`wss`).
+    pub fn is_secure(&self) -> bool {
+        self.writer.lock().map(|w| w.is_tls()).unwrap_or(false)
     }
 
     /// The request path of the connection.

@@ -20,6 +20,9 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
+
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -100,7 +103,7 @@ struct BChan {
 }
 
 struct Conn {
-    writer: Arc<Mutex<TcpStream>>,
+    writer: Arc<Mutex<NetStream>>,
     frame_max: u32,
 }
 
@@ -181,9 +184,15 @@ pub struct AmqpBrokerBuilder {
     frame_max: u32,
     host: String,
     port: u16,
+    tls: Option<Arc<TlsServerConfig>>,
 }
 
 impl AmqpBrokerBuilder {
+    /// Serve AMQP over TLS (`amqps`) with this configuration.
+    pub fn tls(mut self, cfg: TlsServerConfig) -> Self {
+        self.tls = Some(Arc::new(cfg));
+        self
+    }
     /// Add a user (the default user `guest`/`guest` is replaced by the first call).
     pub fn user(mut self, name: &str, password: &str) -> Self {
         if self.users.len() == 1 && self.users[0].0 == "guest" {
@@ -231,10 +240,13 @@ impl AmqpBrokerBuilder {
             }
         }
         let s2 = shared.clone();
+        let tls = self.tls.clone();
         let server = TcpServer::bind(&self.host, self.port, "amqp-broker", move |stream, id| {
-            serve(&s2, stream, id);
+            if let Some(s) = wrap(stream, tls.as_deref()) {
+                serve(&s2, s, id);
+            }
         })?;
-        Ok(AmqpBroker { server, shared })
+        Ok(AmqpBroker { server, shared, tls: self.tls.is_some() })
     }
 }
 
@@ -242,6 +254,20 @@ impl AmqpBrokerBuilder {
 pub struct AmqpBroker {
     server: TcpServer,
     shared: Arc<Shared>,
+    tls: bool,
+}
+
+/// Wraps an accepted connection (TLS handshake when configured).
+fn wrap(stream: TcpStream, tls: Option<&TlsServerConfig>) -> Option<NetStream> {
+    match tls {
+        Some(cfg) => {
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+            let s = NetStream::server(stream, cfg).ok()?;
+            let _ = s.set_read_timeout(None);
+            Some(s)
+        }
+        None => Some(NetStream::plain(stream)),
+    }
 }
 
 impl AmqpBroker {
@@ -250,14 +276,14 @@ impl AmqpBroker {
         Self::builder().start()
     }
     pub fn builder() -> AmqpBrokerBuilder {
-        AmqpBrokerBuilder { users: vec![("guest".into(), "guest".into())], vhosts: vec!["/".into()], heartbeat: 0, frame_max: 131_072, host: "127.0.0.1".into(), port: 0 }
+        AmqpBrokerBuilder { users: vec![("guest".into(), "guest".into())], vhosts: vec!["/".into()], heartbeat: 0, frame_max: 131_072, host: "127.0.0.1".into(), port: 0, tls: None }
     }
     pub fn port(&self) -> u16 {
         self.server.port()
     }
-    /// `amqp://127.0.0.1:<port>`.
+    /// `amqp://127.0.0.1:<port>` (`amqps://` with TLS).
     pub fn url(&self) -> String {
-        format!("amqp://127.0.0.1:{}", self.port())
+        format!("{}://127.0.0.1:{}", if self.tls { "amqps" } else { "amqp" }, self.port())
     }
     /// Stop the broker and close every connection.
     pub fn stop(&self) {
@@ -867,7 +893,7 @@ struct PendingPublish {
     header: bool,
 }
 
-fn serve(shared: &Arc<Shared>, stream: TcpStream, conn: u64) {
+fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let Ok(rs) = stream.try_clone() else { return };
     let mut reader = BufReader::new(rs);
@@ -898,7 +924,7 @@ fn serve(shared: &Arc<Shared>, stream: TcpStream, conn: u64) {
     if write(&Method::new(m::CONNECTION_START, vec![Arg::Octet(0), Arg::Octet(9), Arg::Table(sp), Arg::LongStr(b"PLAIN AMQPLAIN".to_vec()), Arg::LongStr(b"en_US".to_vec())])).is_err() {
         return;
     }
-    let next_method = |reader: &mut BufReader<TcpStream>| -> Option<Method> {
+    let next_method = |reader: &mut BufReader<NetStream>| -> Option<Method> {
         loop {
             let f = read_frame(reader, 0).ok()?;
             if f.kind == FRAME_HEARTBEAT {

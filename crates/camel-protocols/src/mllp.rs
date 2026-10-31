@@ -24,6 +24,10 @@
 //! (15s), `readTimeout` (5s, idle wait for the rest of a frame), `connectTimeout` (30s),
 //! `idleTimeout` (consumer: close idle connections, 0 = never), `keepAlive`,
 //! `tcpNoDelay` (true), plus accepted-and-ignored tuning options.
+//!
+//! TLS: `sslContextParameters=#bean` (or `useGlobalSslContextParameters=true`) makes the
+//! consumer accept TLS connections (the bean needs key material) and the producer connect
+//! with TLS (verifying the server certificate against the bean's trust store).
 
 use std::any::Any;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -37,8 +41,10 @@ use camel_core::message::{Exchange, ExchangePattern};
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
 use camel_core::value::Value;
+use camel_tls::camel_support::{endpoint_tls, EndpointTls};
+use camel_tls::net::NetStream;
 
-use crate::common::{connect, io_error, split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
+use crate::common::{connect_stream, io_error, split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
 use crate::hl7::Hl7Message;
 
 /// Start of block (VT).
@@ -156,6 +162,8 @@ pub struct MllpConfig {
     pub keep_alive: bool,
     pub tcp_no_delay: bool,
     pub max_frame_size: usize,
+    /// TLS settings (`sslContextParameters`).
+    pub tls: Option<EndpointTls>,
 }
 
 /// The `mllp` component.
@@ -171,7 +179,9 @@ impl Component for MllpComponent {
             Some(c) if c == "ISO-8859-1" || c == "LATIN1" || c == "US-ASCII" => Charset::Latin1,
             Some(c) => return Err(CamelError::illegal_argument(format!("Unsupported charsetName: {}", c))),
         };
+        let tls = endpoint_tls(ctx, params, "mllp", false, &[])?;
         let cfg = MllpConfig {
+            tls,
             host,
             port,
             auto_ack: params.take_bool("autoAck", true)?,
@@ -304,8 +314,18 @@ struct Handler {
 }
 
 impl Handler {
-    fn serve(&self, stream: TcpStream) {
-        let _ = stream.set_nodelay(self.cfg.tcp_no_delay);
+    fn serve(&self, tcp: TcpStream) {
+        let _ = tcp.set_nodelay(self.cfg.tcp_no_delay);
+        let stream = match &self.cfg.tls {
+            Some(t) => match t.accept(tcp, "mllp consumer") {
+                Ok(s) => s,
+                Err(e) => {
+                    camel_core::camel_debug!(&self.logger, "MLLP TLS handshake failed: {}", e);
+                    return;
+                }
+            },
+            None => NetStream::plain(tcp),
+        };
         if !self.cfg.idle_timeout.is_zero() {
             let _ = stream.set_read_timeout(Some(self.cfg.idle_timeout));
         }
@@ -411,8 +431,8 @@ impl Service for MllpConsumer {
 // ---------------------------------------------------------------------------
 
 struct Conn {
-    stream: TcpStream,
-    reader: BufReader<TcpStream>,
+    stream: NetStream,
+    reader: BufReader<NetStream>,
 }
 
 struct MllpProducer {
@@ -432,7 +452,7 @@ impl Service for MllpProducer {
 impl MllpProducer {
     fn open(&self) -> Result<Conn> {
         let host = if self.cfg.host == "0.0.0.0" { "127.0.0.1" } else { &self.cfg.host };
-        let stream = connect(host, self.cfg.port, self.cfg.connect_timeout)?;
+        let stream = connect_stream(host, self.cfg.port, self.cfg.connect_timeout, self.cfg.tls.as_ref())?;
         let _ = stream.set_nodelay(self.cfg.tcp_no_delay);
         let reader = BufReader::new(stream.try_clone().map_err(|e| io_error(e, host))?);
         Ok(Conn { stream, reader })

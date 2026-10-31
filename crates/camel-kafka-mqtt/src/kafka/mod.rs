@@ -27,8 +27,16 @@
 //! `heartbeatIntervalMs` (3000), `sessionTimeoutMs` (45000), `maxPollIntervalMs` (300000),
 //! `fetchMaxBytes`, `maxPartitionFetchBytes`, `requestTimeoutMs` (30000), `recordMetadata`
 //! (true), `keyDeserializer`/`valueDeserializer`, plus accepted-and-ignored tuning options.
-//! `securityProtocol` other than `PLAINTEXT`, `saslMechanism` and `saslJaasConfig` fail
-//! with `UnsupportedOperationException` (no TLS/SASL in a std-only build).
+//!
+//! **Security**: `securityProtocol` `PLAINTEXT` (default), `SSL`, `SASL_PLAINTEXT` or
+//! `SASL_SSL`. TLS trust comes from `sslContextParameters=#bean`,
+//! `useGlobalSslContextParameters=true`, `sslTruststoreLocation` (a PEM CA file - Java
+//! keystores are not supported), the global `camel.ssl.*` parameters, else the system
+//! trust store; `sslEndpointIdentificationAlgorithm=` (empty) disables host name
+//! verification, `sslProtocol` restricts the TLS version. SASL: `saslMechanism` `PLAIN`
+//! (default), `SCRAM-SHA-256` or `SCRAM-SHA-512` with credentials from `saslJaasConfig`
+//! (`... required username="u" password="p";`). GSSAPI/OAUTHBEARER and client
+//! certificates (`sslKeystoreLocation`) are not supported.
 
 pub mod client;
 mod consumer;
@@ -48,7 +56,8 @@ use camel_core::util::Parameters;
 use camel_core::value::Value;
 
 use crate::net::{now_millis, unique_id};
-use client::{ClientConfig, KafkaClient};
+use camel_tls::camel_support::{endpoint_tls, EndpointTls};
+use client::{ClientConfig, KafkaClient, SaslConfig};
 use protocol::{partition_for_key, Record};
 
 /// Kafka header names (Camel `KafkaConstants`).
@@ -122,14 +131,76 @@ pub struct KafkaConfig {
     pub record_metadata: bool,
     pub key_as_bytes: bool,
     pub value_as_bytes: bool,
+    /// TLS for `SSL` / `SASL_SSL`.
+    pub tls: Option<EndpointTls>,
+    /// SASL for `SASL_PLAINTEXT` / `SASL_SSL`.
+    pub sasl: Option<SaslConfig>,
 }
 
 impl KafkaConfig {
     fn client_config(&self, suffix: &str) -> Result<ClientConfig> {
         let mut c = ClientConfig::new(&self.brokers, &format!("{}{}", self.client_id, suffix))?;
         c.request_timeout = self.request_timeout;
+        c.tls = self.tls.clone();
+        c.sasl = self.sasl.clone();
         Ok(c)
     }
+}
+
+/// Parses the security options (`securityProtocol`, `ssl*`, `sasl*`).
+fn take_security(ctx: &CamelContext, params: &mut Parameters) -> Result<(Option<EndpointTls>, Option<SaslConfig>)> {
+    let proto = params.take_string("securityProtocol", "PLAINTEXT").to_ascii_uppercase();
+    let (use_tls, use_sasl) = match proto.as_str() {
+        "PLAINTEXT" => (false, false),
+        "SSL" => (true, false),
+        "SASL_PLAINTEXT" => (false, true),
+        "SASL_SSL" => (true, true),
+        other => return Err(CamelError::illegal_argument(format!("Invalid securityProtocol: {} (PLAINTEXT, SSL, SASL_PLAINTEXT or SASL_SSL)", other))),
+    };
+    let mechanism = params.take_string("saslMechanism", "PLAIN").to_ascii_uppercase();
+    let jaas = params.take("saslJaasConfig").filter(|s| !s.trim().is_empty());
+    params.take("saslKerberosServiceName");
+    let truststore = params.take("sslTruststoreLocation").filter(|s| !s.trim().is_empty());
+    let endpoint_alg = params.take("sslEndpointAlgorithm").or_else(|| params.take("sslEndpointIdentificationAlgorithm"));
+    let ssl_protocol = params.take("sslProtocol").or_else(|| params.take("sslEnabledProtocols"));
+    if params.take("sslKeystoreLocation").filter(|s| !s.trim().is_empty()).is_some() {
+        camel_core::camel_warn!("kafka", "sslKeystoreLocation (client certificates) is not supported by rust-camel kafka and is ignored");
+    }
+    // other ssl*/kerberos/sasl tuning options are accepted and ignored
+    let rest: Vec<String> = params.keys().filter(|k| k.starts_with("ssl") && *k != "sslContextParameters" || k.starts_with("kerberos") || k.starts_with("sasl")).cloned().collect();
+    for k in rest {
+        params.take(&k);
+    }
+    let tls = match endpoint_tls(ctx, params, "kafka", use_tls, &[])? {
+        Some(t) if use_tls => {
+            let mut p = (*t.params).clone();
+            if let Some(ts) = &truststore {
+                p.trust_store = vec![camel_tls::PemSource::parse(ts)];
+            }
+            if let Some(alg) = &endpoint_alg {
+                p.hostname_verification = Some(!alg.trim().is_empty());
+            }
+            if let Some(v) = ssl_protocol.as_deref().and_then(|s| s.split(',').filter_map(camel_tls::params::parse_tls_version).max()) {
+                p.min_version = Some(v);
+                p.max_version = Some(v);
+            }
+            Some(EndpointTls::new(Arc::new(p)))
+        }
+        _ => None,
+    };
+    let sasl = if use_sasl {
+        if mechanism == "GSSAPI" || mechanism == "OAUTHBEARER" {
+            return Err(CamelError::new(kinds::UNSUPPORTED_OPERATION, format!("Kafka saslMechanism {} is not supported by rust-camel (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)", mechanism)));
+        }
+        if mechanism != "PLAIN" && camel_tls::sasl::ScramMechanism::from_name(&mechanism).is_none() {
+            return Err(CamelError::illegal_argument(format!("Unsupported saslMechanism: {} (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)", mechanism)));
+        }
+        let jaas = jaas.ok_or_else(|| CamelError::illegal_argument(format!("securityProtocol={} requires saslJaasConfig with username and password", proto)))?;
+        Some(SaslConfig::from_jaas(&mechanism, &jaas)?)
+    } else {
+        None
+    };
+    Ok((tls, sasl))
 }
 
 /// The `kafka` component. Component-level `brokers` can be set with [`KafkaComponent::with_brokers`].
@@ -207,27 +278,10 @@ const IGNORED: &[&str] = &[
     "queueBufferingMaxMessages",
 ];
 
-const UNSUPPORTED_SECURITY: &str = "no TLS/SASL in a std-only build; use securityProtocol=PLAINTEXT";
-
 impl Component for KafkaComponent {
     fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
         let topic = crate::net::percent_decode(remaining.trim_matches('/'));
-        let proto = params.take_string("securityProtocol", "PLAINTEXT");
-        if !proto.eq_ignore_ascii_case("PLAINTEXT") {
-            return Err(CamelError::new(kinds::UNSUPPORTED_OPERATION, format!("Kafka securityProtocol {} is not supported by rust-camel ({}): {}", proto, UNSUPPORTED_SECURITY, uri)));
-        }
-        for k in ["saslMechanism", "saslJaasConfig", "saslKerberosServiceName"] {
-            if let Some(v) = params.take(k) {
-                if !v.is_empty() && !(k == "saslMechanism" && v.eq_ignore_ascii_case("GSSAPI")) {
-                    return Err(CamelError::new(kinds::UNSUPPORTED_OPERATION, format!("Kafka option {} is not supported by rust-camel ({})", k, UNSUPPORTED_SECURITY)));
-                }
-            }
-        }
-        // ssl*/kerberos options only apply to SSL/SASL protocols: accepted and ignored
-        let ssl: Vec<String> = params.keys().filter(|k| k.starts_with("ssl") || k.starts_with("kerberos") || k.starts_with("sasl")).cloned().collect();
-        for k in ssl {
-            params.take(&k);
-        }
+        let (tls, sasl) = take_security(ctx, params)?;
         let auto_offset_reset = match params.take_string("autoOffsetReset", "latest").to_ascii_lowercase().as_str() {
             "earliest" => OffsetReset::Earliest,
             "latest" => OffsetReset::Latest,
@@ -287,6 +341,8 @@ impl Component for KafkaComponent {
             record_metadata: params.take_bool("recordMetadata", true)?,
             key_as_bytes: bytes_deser(params.take("keyDeserializer")),
             value_as_bytes: bytes_deser(params.take("valueDeserializer")),
+            tls,
+            sasl,
             topic,
         };
         for k in IGNORED {

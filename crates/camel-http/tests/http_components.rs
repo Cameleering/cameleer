@@ -240,9 +240,9 @@ fn producer_headers_query_forwarding_and_https() {
     let r = t.request_body_and_header(&format!("http://127.0.0.1:{}/echo?bridgeEndpoint=true", p), Value::Null, "CamelHttpUri", other).unwrap();
     assert!(r.to_string().starts_with("GET /echo "), "{}", r);
 
-    // https is rejected
+    // https endpoints are accepted (TLS end-to-end tests live in tests/tls.rs)
     let err = t.request_body("https://127.0.0.1:1/x", "x").unwrap_err();
-    assert!(format!("{}", err).contains("HTTPS is not supported"), "{}", err);
+    assert_eq!(err.root_cause().kind, kinds::CONNECT, "{}", err);
     // connection refused
     let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     let err = t.request_body(&format!("http://127.0.0.1:{}/x", free), "x").unwrap_err();

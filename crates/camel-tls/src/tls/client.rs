@@ -230,7 +230,7 @@ impl<S: Read + Write> Conn<S> {
             return Err(TlsError::proto(alert::DECODE_ERROR, "server sent an empty certificate list"));
         }
         if cfg.verify {
-            let name = if host.is_empty() { None } else { Some(host) };
+            let name = if host.is_empty() || !cfg.verify_hostname { None } else { Some(host) };
             x509::verify_chain(&certs, name, &cfg.roots, x509::now_unix(), x509::OID_EKU_SERVER_AUTH)?;
         }
         let leaf = Certificate::from_der(&certs[0]).map_err(|e| TlsError::proto(alert::BAD_CERTIFICATE, e.to_string()))?;

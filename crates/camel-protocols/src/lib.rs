@@ -1,15 +1,15 @@
 //! # rust-camel protocols
 //!
-//! Network protocol components built on `std::net` only (no TLS, no SSH):
+//! Network protocol components built on `std::net`, with TLS from `camel-tls` (no SSH):
 //!
 //! | scheme | module | role |
 //! |---|---|---|
-//! | `ftp` | [`ftp`] | FTP consumer (polling) and producer; `ftps`/`sftp` fail with a clear error |
-//! | `smtp` | [`mail`] | send mail; `smtps` fails |
-//! | `pop3`, `imap` | [`mail`] | polling mail consumers; `pop3s`/`imaps` fail |
-//! | `websocket`, `vertx-websocket`, `ws` | [`websocket`] | RFC 6455 server and client; `wss` fails |
-//! | `mllp` | [`mllp`] | HL7 v2 over MLLP with auto acknowledgement |
-//! | `syslog` | [`syslog`] | syslog over UDP/TCP (RFC 5424 / 3164) |
+//! | `ftp`, `ftps` | [`ftp`] | FTP/FTPS consumer (polling) and producer; `sftp` fails with a clear error |
+//! | `smtp`, `smtps` | [`mail`] | send mail (STARTTLS / implicit TLS) |
+//! | `pop3`, `imap`, `pop3s`, `imaps` | [`mail`] | polling mail consumers (STARTTLS / implicit TLS) |
+//! | `websocket`, `vertx-websocket`, `ws`, `wss` | [`websocket`] | RFC 6455 server and client (optionally TLS) |
+//! | `mllp` | [`mllp`] | HL7 v2 over MLLP with auto acknowledgement (optionally TLS) |
+//! | `syslog` | [`syslog`] | syslog over UDP/TCP/TLS (RFC 5424 / 3164 / 5425) |
 //!
 //! Data formats bound in the registry by [`register`]: `hl7` ([`hl7::Hl7DataFormat`]) and
 //! `syslog` ([`syslog::SyslogDataFormat`]); language `hl7terser`.
@@ -81,26 +81,26 @@ fn add(ctx: &CamelContext, scheme: &'static str, f: impl Fn() -> Arc<dyn Compone
     }
 }
 
-/// Register all components of this crate on a context (lazily created): `ftp`, `ftps`
-/// and `sftp` (errors), `smtp`, `pop3`, `imap` (`smtps`, `pop3s`, `imaps` error),
-/// `websocket`, `vertx-websocket`, `ws` (`wss` errors), `mllp`, `syslog`; binds the
+/// Register all components of this crate on a context (lazily created): `ftp`, `ftps`,
+/// `sftp` (errors), `smtp`, `pop3`, `imap`, `smtps`, `pop3s`, `imaps`,
+/// `websocket`, `vertx-websocket`, `ws`, `wss`, `mllp`, `syslog`; binds the
 /// `hl7` and `syslog` data formats and adds the `hl7terser` language. Schemes that
 /// already have a component are left untouched.
 pub fn register(ctx: &CamelContext) {
     use websocket::{Flavor, WebSocketComponent};
     add(ctx, "ftp", || Arc::new(ftp::FtpComponent));
-    add(ctx, "ftps", || Arc::new(UnsupportedComponent::new("ftps", "no TLS in a std-only build; use plain ftp")));
+    add(ctx, "ftps", || Arc::new(ftp::FtpsComponent));
     add(ctx, "sftp", || Arc::new(UnsupportedComponent::new("sftp", "no SSH in a std-only build; use plain ftp")));
     add(ctx, "smtp", || Arc::new(mail::MailComponent::new(mail::MailProtocol::Smtp)));
     add(ctx, "pop3", || Arc::new(mail::MailComponent::new(mail::MailProtocol::Pop3)));
     add(ctx, "imap", || Arc::new(mail::MailComponent::new(mail::MailProtocol::Imap)));
-    for scheme in ["smtps", "pop3s", "imaps"] {
-        add(ctx, scheme, move || Arc::new(UnsupportedComponent::new(scheme, "no TLS in a std-only build; use smtp, pop3 or imap")));
-    }
+    add(ctx, "smtps", || Arc::new(mail::MailComponent::secure(mail::MailProtocol::Smtp)));
+    add(ctx, "pop3s", || Arc::new(mail::MailComponent::secure(mail::MailProtocol::Pop3)));
+    add(ctx, "imaps", || Arc::new(mail::MailComponent::secure(mail::MailProtocol::Imap)));
     add(ctx, "websocket", || Arc::new(WebSocketComponent::new(Flavor::Camel)));
     add(ctx, "vertx-websocket", || Arc::new(WebSocketComponent::new(Flavor::Vertx)));
     add(ctx, "ws", || Arc::new(WebSocketComponent::new(Flavor::Client)));
-    add(ctx, "wss", || Arc::new(UnsupportedComponent::new("wss", "no TLS in a std-only build; use ws")));
+    add(ctx, "wss", || Arc::new(WebSocketComponent::secure_client()));
     add(ctx, "mllp", || Arc::new(mllp::MllpComponent));
     add(ctx, "syslog", || Arc::new(syslog::SyslogComponent));
     if lookup_data_format(ctx.registry(), "hl7").is_none() {

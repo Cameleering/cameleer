@@ -18,7 +18,9 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufReader, Write};
-use std::net::TcpStream;
+
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -99,7 +101,7 @@ enum TxOp {
 }
 
 struct ConnSt {
-    writer: Arc<Mutex<TcpStream>>,
+    writer: Arc<Mutex<NetStream>>,
     txs: HashMap<String, Vec<TxOp>>,
     temps: Vec<String>,
 }
@@ -278,9 +280,15 @@ pub struct StompBrokerBuilder {
     max_redeliveries: u32,
     host: String,
     port: u16,
+    tls: Option<Arc<TlsServerConfig>>,
 }
 
 impl StompBrokerBuilder {
+    /// Serve STOMP over TLS (`ssl://` / `stomp+ssl://` broker urls) with this configuration.
+    pub fn tls(mut self, cfg: TlsServerConfig) -> Self {
+        self.tls = Some(Arc::new(cfg));
+        self
+    }
     /// Require a login (any number of users; none = anonymous access).
     pub fn user(mut self, login: &str, passcode: &str) -> Self {
         self.users.push((login.into(), passcode.into()));
@@ -312,7 +320,23 @@ impl StompBrokerBuilder {
             running,
         });
         let s2 = shared.clone();
-        let server = TcpServer::bind(&self.host, self.port, "stomp-broker", move |stream, id| serve(&s2, stream, id))?;
+        let tls = self.tls.clone();
+        let server = TcpServer::bind(&self.host, self.port, "stomp-broker", move |stream, id| {
+            let s = match &tls {
+                Some(cfg) => {
+                    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+                    match NetStream::server(stream, cfg) {
+                        Ok(s) => {
+                            let _ = s.set_read_timeout(None);
+                            s
+                        }
+                        Err(_) => return,
+                    }
+                }
+                None => NetStream::plain(stream),
+            };
+            serve(&s2, s, id)
+        })?;
         Ok(StompBroker { server, shared })
     }
 }
@@ -329,7 +353,7 @@ impl StompBroker {
         Self::builder().start()
     }
     pub fn builder() -> StompBrokerBuilder {
-        StompBrokerBuilder { users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0 }
+        StompBrokerBuilder { users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0, tls: None }
     }
     pub fn port(&self) -> u16 {
         self.server.port()
@@ -550,7 +574,7 @@ fn cleanup(st: &mut State, conn: u64, max: u32) {
     }
 }
 
-fn serve(shared: &Arc<Shared>, stream: TcpStream, conn: u64) {
+fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     let Ok(rs) = stream.try_clone() else { return };
     let mut reader = BufReader::new(rs);

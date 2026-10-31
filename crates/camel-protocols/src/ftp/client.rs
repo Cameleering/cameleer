@@ -12,10 +12,20 @@
 //! let data = c.retr("hello.txt").unwrap();
 //! c.quit();
 //! ```
+//!
+//! FTPS (RFC 4217): [`FtpClient::connect_secure`] with [`FtpSecurity`] for explicit
+//! (`AUTH TLS` on the control connection) or implicit (TLS from the first byte) mode;
+//! after login [`FtpClient::protect_data`] sends `PBSZ`/`PROT P` so data connections are
+//! TLS-protected too (TLS session resumption across channels is not implemented).
 
 use std::io::{BufReader, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use camel_tls::camel_support::io_to_camel;
+use camel_tls::net::NetStream;
+use camel_tls::TlsClientConfig;
 
 use camel_core::component::file::GENERIC_FILE_OPERATION_FAILED;
 use camel_core::error::{CamelError, Result};
@@ -46,10 +56,24 @@ enum DataChannel {
     Active(TcpListener),
 }
 
+/// FTPS mode of a connection.
+#[derive(Clone, Debug)]
+pub enum FtpSecurity {
+    /// Plain FTP.
+    None,
+    /// `AUTH TLS` after the greeting (RFC 4217), usually on port 21.
+    Explicit { tls: Arc<TlsClientConfig>, server_name: String },
+    /// TLS from the first byte, usually on port 990.
+    Implicit { tls: Arc<TlsClientConfig>, server_name: String },
+}
+
 /// A connected FTP control connection.
 pub struct FtpClient {
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
+    reader: BufReader<NetStream>,
+    writer: NetStream,
+    /// TLS settings for protected data connections (`PROT P`).
+    data_tls: Option<(Arc<TlsClientConfig>, String)>,
+    control_tls: Option<(Arc<TlsClientConfig>, String)>,
     host: String,
     passive: bool,
     binary: Option<bool>,
@@ -63,16 +87,34 @@ pub struct FtpClient {
 impl FtpClient {
     /// Connect and read the server greeting (`220`).
     pub fn connect(host: &str, port: u16, connect_timeout: Duration, so_timeout: Duration) -> Result<FtpClient> {
-        let stream = connect(host, port, connect_timeout).map_err(|e| ftp_error(format!("Cannot connect to ftp://{}:{}: {}", host, port, e.message)))?;
+        FtpClient::connect_secure(host, port, connect_timeout, so_timeout, &FtpSecurity::None)
+    }
+
+    /// Connect with the given FTPS mode and read the greeting; in explicit mode `AUTH TLS`
+    /// is negotiated before returning.
+    pub fn connect_secure(host: &str, port: u16, connect_timeout: Duration, so_timeout: Duration, security: &FtpSecurity) -> Result<FtpClient> {
+        let tcp = connect(host, port, connect_timeout).map_err(|e| ftp_error(format!("Cannot connect to ftp://{}:{}: {}", host, port, e.message)))?;
         let t = if so_timeout.is_zero() { None } else { Some(so_timeout) };
-        let _ = stream.set_read_timeout(t);
-        let _ = stream.set_write_timeout(t);
-        let _ = stream.set_nodelay(true);
+        let _ = tcp.set_read_timeout(t);
+        let _ = tcp.set_write_timeout(t);
+        let _ = tcp.set_nodelay(true);
+        let ipv6 = tcp.peer_addr().map(|a| a.is_ipv6()).unwrap_or(false);
+        let stream = match security {
+            FtpSecurity::Implicit { tls, server_name } => {
+                NetStream::client(tcp, server_name, tls).map_err(|e| io_to_camel(e, &format!("ftps://{}:{}", host, port)))?
+            }
+            _ => NetStream::plain(tcp),
+        };
         let writer = stream.try_clone().map_err(|e| io_error(e, host))?;
-        let ipv6 = stream.peer_addr().map(|a| a.is_ipv6()).unwrap_or(false);
+        let control_tls = match security {
+            FtpSecurity::Implicit { tls, server_name } => Some((tls.clone(), server_name.clone())),
+            _ => None,
+        };
         let mut c = FtpClient {
             reader: BufReader::new(stream),
             writer,
+            data_tls: None,
+            control_tls,
             host: host.to_string(),
             passive: true,
             binary: None,
@@ -89,7 +131,37 @@ impl FtpClient {
         if r.code != 220 {
             return Err(ftp_error(format!("Unexpected FTP greeting: {} {}", r.code, r.text)));
         }
+        if let FtpSecurity::Explicit { tls, server_name } = security {
+            let r = c.send_command("AUTH TLS")?;
+            if r.code != 234 {
+                return Err(ftp_error(format!("FTP server refused AUTH TLS: {} {}", r.code, r.text)));
+            }
+            if !c.reader.buffer().is_empty() {
+                return Err(ftp_error("Unexpected data after AUTH TLS reply"));
+            }
+            let plain = c.writer.try_clone().map_err(|e| io_error(e, host))?;
+            let secured = plain.start_tls_client(server_name, tls).map_err(|e| io_to_camel(e, &format!("ftp://{}:{} (AUTH TLS)", host, port)))?;
+            c.reader = BufReader::new(secured.try_clone().map_err(|e| io_error(e, host))?);
+            c.writer = secured;
+            c.control_tls = Some((tls.clone(), server_name.clone()));
+        }
         Ok(c)
+    }
+
+    /// Whether the control connection is TLS-protected.
+    pub fn is_secure(&self) -> bool {
+        self.writer.is_tls()
+    }
+
+    /// FTPS: `PBSZ <pbsz>` + `PROT <prot>` (`P` = private: data connections use TLS,
+    /// `C` = clear). Requires a TLS control connection.
+    pub fn protect_data(&mut self, pbsz: u64, prot: &str) -> Result<()> {
+        let tls = self.control_tls.clone().ok_or_else(|| ftp_error("PROT requires a TLS control connection"))?;
+        self.expect(&format!("PBSZ {}", pbsz), |c| c == 200)?;
+        let prot = prot.trim().to_ascii_uppercase();
+        self.expect(&format!("PROT {}", prot), |c| c == 200)?;
+        self.data_tls = if prot == "P" { Some(tls) } else { None };
+        Ok(())
     }
 
     /// Use passive (`PASV`/`EPSV`, the client connects) or active (`PORT`/`EPRT`) data connections.
@@ -340,7 +412,7 @@ impl FtpClient {
         }
     }
 
-    fn accept_data(&self, ch: DataChannel) -> Result<TcpStream> {
+    fn accept_data(&self, ch: DataChannel) -> Result<NetStream> {
         let s = match ch {
             DataChannel::Passive(s) => s,
             DataChannel::Active(l) => {
@@ -361,7 +433,10 @@ impl FtpClient {
         let t = if self.data_timeout.is_zero() { None } else { Some(self.data_timeout) };
         let _ = s.set_read_timeout(t);
         let _ = s.set_write_timeout(t);
-        Ok(s)
+        match &self.data_tls {
+            Some((cfg, name)) => NetStream::client(s, name, cfg).map_err(|e| io_to_camel(e, &format!("ftps data connection to {}", self.host))),
+            None => Ok(NetStream::plain(s)),
+        }
     }
 
     /// Run a data transfer command: upload `data` or download the result.

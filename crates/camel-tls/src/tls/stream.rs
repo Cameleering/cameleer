@@ -5,6 +5,7 @@ use super::conn::Conn;
 use super::{CipherSuite, NamedGroup, TlsError, TlsVersion};
 use std::fmt;
 use std::io::{self, Read, Write};
+use std::sync::{Arc, Mutex};
 
 /// A TLS connection over any blocking `Read + Write` transport (typically a
 /// `TcpStream`). The handshake is performed by [`TlsStream::connect`] /
@@ -100,6 +101,125 @@ impl<S: Read + Write> TlsStream<S> {
 
     pub fn into_inner(self) -> S {
         self.conn.io
+    }
+
+    /// Splits the connection into independently usable read and write halves so one
+    /// thread can block in `read` while others write (full duplex). `write_io` is a
+    /// second handle to the same transport (e.g. `TcpStream::try_clone`); the read
+    /// half keeps the original. TLS 1.3 KeyUpdate requests and alerts detected while
+    /// reading are sent through the write half.
+    pub fn split<W: Read + Write + Send + 'static>(self, write_io: W) -> Result<(TlsReadHalf<S>, TlsWriteHalf<W>), TlsError> {
+        let (r, w) = self.conn.split(write_io)?;
+        Ok((TlsReadHalf { conn: r }, TlsWriteHalf { conn: w }))
+    }
+}
+
+/// The read half of a split [`TlsStream`].
+pub struct TlsReadHalf<S: Read + Write> {
+    conn: Conn<S>,
+}
+
+impl<S: Read + Write> fmt::Debug for TlsReadHalf<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TlsReadHalf").field("version", &self.conn.version).finish()
+    }
+}
+
+impl<S: Read + Write> TlsReadHalf<S> {
+    /// Whether the peer has sent close_notify.
+    pub fn peer_closed(&self) -> bool {
+        self.conn.read_closed()
+    }
+
+    pub fn get_ref(&self) -> &S {
+        &self.conn.io
+    }
+
+    /// Peer certificate chain (DER, leaf first). Empty on the server side.
+    pub fn peer_certificates(&self) -> &[Vec<u8>] {
+        &self.conn.peer_certs
+    }
+}
+
+impl<S: Read + Write> Read for TlsReadHalf<S> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.conn.read_app(buf) {
+            Ok(n) => Ok(n),
+            Err(TlsError::Io(e)) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => {
+                Err(e)
+            }
+            Err(e) => Err(self.conn.fail(e).into()),
+        }
+    }
+}
+
+/// The write half of a split [`TlsStream`]; clones share the same connection state.
+pub struct TlsWriteHalf<W: Read + Write> {
+    conn: Arc<Mutex<Conn<W>>>,
+}
+
+impl<W: Read + Write> Clone for TlsWriteHalf<W> {
+    fn clone(&self) -> Self {
+        TlsWriteHalf { conn: self.conn.clone() }
+    }
+}
+
+impl<W: Read + Write> fmt::Debug for TlsWriteHalf<W> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TlsWriteHalf")
+    }
+}
+
+impl<W: Read + Write> TlsWriteHalf<W> {
+    fn lock(&self) -> io::Result<std::sync::MutexGuard<'_, Conn<W>>> {
+        self.conn.lock().map_err(|_| io::Error::other("TLS write half poisoned"))
+    }
+
+    /// Writes all of `buf` as application data (one lock for the whole buffer, so
+    /// concurrent writers never interleave inside one call).
+    pub fn write_all_data(&self, buf: &[u8]) -> io::Result<()> {
+        let mut c = self.lock()?;
+        match c.write_app(buf) {
+            Ok(_) => Ok(()),
+            Err(TlsError::Closed) => Err(TlsError::Closed.into()),
+            Err(e) => Err(c.fail(e).into()),
+        }
+    }
+
+    /// Sends close_notify (idempotent).
+    pub fn close(&self) -> io::Result<()> {
+        self.lock()?.close().map_err(io::Error::from)
+    }
+
+    /// The negotiated protocol version.
+    pub fn protocol_version(&self) -> Option<TlsVersion> {
+        self.conn.lock().ok().and_then(|c| c.version)
+    }
+
+    /// The negotiated cipher suite.
+    pub fn cipher_suite(&self) -> Option<CipherSuite> {
+        self.conn.lock().ok().and_then(|c| c.suite)
+    }
+
+    /// The negotiated ALPN protocol.
+    pub fn alpn_protocol(&self) -> Option<Vec<u8>> {
+        self.conn.lock().ok().and_then(|c| c.alpn.clone())
+    }
+
+    /// Server side: the SNI host name sent by the client.
+    pub fn sni_hostname(&self) -> Option<String> {
+        self.conn.lock().ok().and_then(|c| c.sni.clone())
+    }
+}
+
+impl<W: Read + Write> Write for TlsWriteHalf<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.write_all_data(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.lock()?.flush().map_err(io::Error::from)
     }
 }
 

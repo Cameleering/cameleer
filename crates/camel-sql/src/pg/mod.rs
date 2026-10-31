@@ -11,4 +11,4 @@ pub mod client;
 pub mod crypto;
 pub mod protocol;
 
-pub use client::{PgConfig, PgConnection, PgDataSource, PooledConnection};
+pub use client::{PgConfig, PgConnection, PgDataSource, PooledConnection, SslMode};

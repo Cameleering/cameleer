@@ -1,7 +1,8 @@
 //! Test helpers: an embedded PostgreSQL wire-protocol server backed by the rustsql engine.
 //!
 //! [`PgTestServer`] listens on an ephemeral port and speaks the subset of protocol v3 that
-//! the [`crate::pg`] client uses: startup (SSL requests are declined), authentication (trust,
+//! the [`crate::pg`] client uses: startup (SSL requests are declined, or accepted with
+//! [`PgTestServer::start_tls`]), authentication (trust,
 //! cleartext, MD5, SCRAM-SHA-256), simple query (multi-statement), extended query
 //! (Parse/Bind/Describe/Execute/Sync/Close/Flush) with text parameters, and transactions.
 //!
@@ -14,6 +15,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufReader};
 use std::net::{TcpListener, TcpStream};
+
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -42,6 +46,9 @@ struct UserEntry {
 }
 
 struct Shared {
+    tls: Option<Arc<TlsServerConfig>>,
+    /// Whether the TLS server refuses plain (non-SSL) sessions.
+    require_tls: bool,
     db: String,
     auth: PgAuth,
     iterations: u32,
@@ -67,6 +74,16 @@ impl PgTestServer {
 
     /// Like [`PgTestServer::start`] with a custom SCRAM iteration count.
     pub fn start_with_iterations(db: &str, auth: PgAuth, users: &[(&str, &str)], iterations: u32) -> io::Result<PgTestServer> {
+        Self::start_inner(db, auth, users, iterations, None)
+    }
+
+    /// Like [`PgTestServer::start`], accepting SSLRequest with the given TLS configuration
+    /// (and refusing sessions that did not negotiate TLS, like `hostssl` in pg_hba.conf).
+    pub fn start_tls(db: &str, auth: PgAuth, users: &[(&str, &str)], tls: TlsServerConfig) -> io::Result<PgTestServer> {
+        Self::start_inner(db, auth, users, 4096, Some(Arc::new(tls)))
+    }
+
+    fn start_inner(db: &str, auth: PgAuth, users: &[(&str, &str)], iterations: u32, tls: Option<Arc<TlsServerConfig>>) -> io::Result<PgTestServer> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
         let users = users
@@ -78,6 +95,8 @@ impl PgTestServer {
             })
             .collect();
         let shared = Arc::new(Shared {
+            require_tls: tls.is_some(),
+            tls,
             db: db.to_string(),
             auth,
             iterations,
@@ -159,8 +178,8 @@ struct Portal {
 
 struct Session {
     shared: Arc<Shared>,
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
+    reader: BufReader<NetStream>,
+    writer: NetStream,
     conn: EmbeddedConnection,
     statements: HashMap<String, (Option<Statement>, Vec<i32>)>,
     portals: HashMap<String, Portal>,
@@ -174,6 +193,7 @@ fn sql_state(e: &SqlErr) -> &'static str {
 impl Session {
     fn run(shared: Arc<Shared>, stream: TcpStream) -> io::Result<()> {
         let _ = stream.set_nodelay(true);
+        let stream = NetStream::plain(stream);
         let writer = stream.try_clone()?;
         let db = shared.db.clone();
         let mut s = Session {
@@ -230,10 +250,21 @@ impl Session {
             let body = read_untagged(&mut self.reader)?;
             let code = Buf::new(&body).i32()?;
             match code {
+                SSL_REQUEST if self.shared.tls.is_some() && !self.writer.is_tls() => {
+                    send(&mut self.writer, b"S")?;
+                    let cfg = self.shared.tls.clone().expect("tls");
+                    let plain = self.writer.try_clone()?;
+                    let secured = plain.start_tls_server(&cfg)?;
+                    self.reader = BufReader::new(secured.try_clone()?);
+                    self.writer = secured;
+                }
                 SSL_REQUEST | GSSENC_REQUEST => {
                     send(&mut self.writer, b"N")?;
                 }
                 CANCEL_REQUEST => return Ok(false),
+                PROTOCOL_V3 if self.shared.require_tls && !self.writer.is_tls() => {
+                    return self.fatal("28000", "no pg_hba.conf entry for host: SSL off");
+                }
                 PROTOCOL_V3 => break body,
                 other => return self.fatal("0A000", &format!("unsupported frontend protocol {}", other)),
             }

@@ -190,8 +190,9 @@ fn smtp_authentication_failure_and_unsupported_schemes() {
     let cause = err.cause.as_deref().unwrap_or(&err);
     assert_eq!(cause.kind, "AuthenticationFailedException");
     assert_eq!(mailbox.count("x@localhost"), 0);
-    for uri in ["smtps://host", "pop3s://host", "imaps://host"] {
-        assert!(ctx.get_endpoint(uri).err().unwrap().to_string().contains("not supported"));
+    // the TLS schemes resolve (end-to-end tests in tests/tls.rs)
+    for uri in ["smtps://host", "pop3s://host", "imaps://host", "smtp://host?mail.smtp.starttls.enable=true"] {
+        assert!(ctx.get_endpoint(uri).is_ok(), "{}", uri);
     }
     // pop3 cannot produce, smtp cannot consume
     assert!(ctx.get_endpoint("pop3://host").unwrap().create_producer().is_err());

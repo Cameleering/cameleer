@@ -125,10 +125,10 @@ fn producer_options_override_topic_partition_key_and_acks() {
     for p in 0..4 {
         assert_eq!(broker.records("spread", p).len(), 2);
     }
-    // TLS / SASL are rejected clearly
+    // SASL needs credentials; unsupported mechanisms are rejected clearly (TLS/SASL: tests/tls.rs)
     let err = ctx.get_endpoint(&format!("kafka:events?brokers={}&securityProtocol=SASL_SSL", b)).err().unwrap();
-    assert!(err.message.contains("not supported"), "{}", err.message);
-    let err = ctx.get_endpoint(&format!("kafka:events?brokers={}&saslMechanism=PLAIN", b)).err().unwrap();
+    assert!(err.message.contains("saslJaasConfig"), "{}", err.message);
+    let err = ctx.get_endpoint(&format!("kafka:events?brokers={}&securityProtocol=SASL_PLAINTEXT&saslMechanism=GSSAPI", b)).err().unwrap();
     assert!(err.message.contains("not supported"), "{}", err.message);
     assert!(ctx.get_endpoint("kafka:events?bogusOption=1").is_err());
     ctx.stop().unwrap();

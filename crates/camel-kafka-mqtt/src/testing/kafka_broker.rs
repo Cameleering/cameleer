@@ -7,6 +7,11 @@
 //! rebalancing, session timeouts and generations), OffsetCommit/OffsetFetch and
 //! CreateTopics. Data is kept in memory and lost on stop.
 //!
+//! Security (for tests of `securityProtocol`): [`KafkaBrokerConfig::tls`] serves TLS
+//! (`SSL` / `SASL_SSL`), [`KafkaBrokerConfig::sasl_users`] requires SASL authentication
+//! (SaslHandshake v1 + SaslAuthenticate v1 with PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512)
+//! before any request other than ApiVersions.
+//!
 //! ```no_run
 //! use camel_kafka_mqtt::testing::KafkaBroker;
 //! let broker = KafkaBroker::start().unwrap();
@@ -18,6 +23,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::TcpStream;
+
+use camel_tls::net::NetStream;
+use camel_tls::sasl::{parse_plain, ScramCredentials, ScramMechanism, ScramServer};
+use camel_tls::TlsServerConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -160,6 +169,10 @@ struct Data {
 }
 
 struct State {
+    tls: Option<Arc<TlsServerConfig>>,
+    sasl_users: Vec<(String, String)>,
+    /// Successful SASL logins `(mechanism, user)`.
+    sasl_logins: Mutex<Vec<(String, String)>>,
     port: Mutex<u16>,
     default_partitions: usize,
     auto_create: bool,
@@ -183,11 +196,15 @@ pub struct KafkaBrokerConfig {
     pub auto_create_topics: bool,
     /// Port to bind (default 0 = ephemeral).
     pub port: u16,
+    /// Serve TLS with this configuration (`securityProtocol=SSL` / `SASL_SSL`).
+    pub tls: Option<TlsServerConfig>,
+    /// When non-empty, clients must authenticate with SASL as one of these `(user, password)`.
+    pub sasl_users: Vec<(String, String)>,
 }
 
 impl Default for KafkaBrokerConfig {
     fn default() -> Self {
-        KafkaBrokerConfig { default_partitions: 1, auto_create_topics: true, port: 0 }
+        KafkaBrokerConfig { default_partitions: 1, auto_create_topics: true, port: 0, tls: None, sasl_users: Vec::new() }
     }
 }
 
@@ -205,6 +222,9 @@ impl KafkaBroker {
     /// Start a broker with explicit settings.
     pub fn start_with(cfg: KafkaBrokerConfig) -> Result<KafkaBroker> {
         let state = Arc::new(State {
+            tls: cfg.tls.map(Arc::new),
+            sasl_users: cfg.sasl_users,
+            sasl_logins: Mutex::new(Vec::new()),
             port: Mutex::new(0),
             default_partitions: cfg.default_partitions.max(1),
             auto_create: cfg.auto_create_topics,
@@ -314,6 +334,11 @@ impl KafkaBroker {
         f(self)
     }
 
+    /// Successful SASL logins as `(mechanism, user)`.
+    pub fn sasl_logins(&self) -> Vec<(String, String)> {
+        self.state.sasl_logins.lock().unwrap().clone()
+    }
+
     /// Number of open client connections.
     pub fn connection_count(&self) -> usize {
         self.server.connection_count()
@@ -336,7 +361,100 @@ impl Drop for KafkaBroker {
     }
 }
 
-fn serve(state: &Arc<State>, mut stream: TcpStream) {
+/// Per-connection SASL state.
+enum Auth {
+    /// No SASL configured, or authentication completed.
+    Done,
+    /// Waiting for SaslHandshake.
+    Handshake,
+    /// Waiting for SaslAuthenticate with the given mechanism.
+    Plain,
+    Scram(Box<ScramServer<Box<dyn Fn(&str) -> Option<ScramCredentials> + Send>>>, bool),
+}
+
+fn sasl_step(state: &State, auth: &mut Auth, key: i16, body: &[u8]) -> Option<Vec<u8>> {
+    let mut d = Decoder::new(body);
+    match key {
+        api::SASL_HANDSHAKE => {
+            let mech = d.string().ok()?.to_ascii_uppercase();
+            let supported = vec!["PLAIN".to_string(), "SCRAM-SHA-256".to_string(), "SCRAM-SHA-512".to_string()];
+            let next = match mech.as_str() {
+                "PLAIN" => Some(Auth::Plain),
+                m => ScramMechanism::from_name(m).map(|mech| {
+                    let users = state.sasl_users.clone();
+                    let lookup: Box<dyn Fn(&str) -> Option<ScramCredentials> + Send> = Box::new(move |u: &str| {
+                        users.iter().find(|(n, _)| n == u).map(|(_, p)| ScramCredentials::derive(mech, p, format!("salt-{u}").as_bytes(), 4096))
+                    });
+                    Auth::Scram(Box::new(ScramServer::new(mech, lookup)), false)
+                }),
+            };
+            let error_code = match (&auth, next) {
+                (Auth::Handshake, Some(n)) => {
+                    *auth = n;
+                    errors::NONE
+                }
+                (Auth::Handshake, None) => errors::UNSUPPORTED_SASL_MECHANISM,
+                _ => errors::ILLEGAL_SASL_STATE,
+            };
+            Some(SaslHandshakeResponse { error_code, mechanisms: supported }.encode())
+        }
+        api::SASL_AUTHENTICATE => {
+            let token = d.bytes().ok()?;
+            let fail = |m: &str| SaslAuthenticateResponse { error_code: errors::SASL_AUTHENTICATION_FAILED, error_message: Some(m.to_string()), auth_bytes: Vec::new(), session_lifetime_ms: 0 };
+            let ok = |b: Vec<u8>| SaslAuthenticateResponse { error_code: errors::NONE, error_message: None, auth_bytes: b, session_lifetime_ms: 0 };
+            let resp = match auth {
+                Auth::Plain => match parse_plain(&token) {
+                    Some((_, u, p)) if state.sasl_users.iter().any(|(n, pw)| *n == u && *pw == p) => {
+                        state.sasl_logins.lock().unwrap().push(("PLAIN".into(), u));
+                        *auth = Auth::Done;
+                        ok(Vec::new())
+                    }
+                    _ => fail("Authentication failed: Invalid username or password"),
+                },
+                Auth::Scram(server, first_done) => {
+                    let text = String::from_utf8_lossy(&token).into_owned();
+                    if !*first_done {
+                        match server.handle_client_first(&text) {
+                            Ok(sf) => {
+                                *first_done = true;
+                                ok(sf.into_bytes())
+                            }
+                            Err(e) => fail(&e.to_string()),
+                        }
+                    } else {
+                        match server.handle_client_final(&text) {
+                            Ok(fin) => {
+                                let user = server.user().unwrap_or("").to_string();
+                                state.sasl_logins.lock().unwrap().push(("SCRAM".into(), user));
+                                *auth = Auth::Done;
+                                ok(fin.into_bytes())
+                            }
+                            Err(_) => fail("Authentication failed during authentication due to invalid credentials with SASL mechanism SCRAM"),
+                        }
+                    }
+                }
+                _ => SaslAuthenticateResponse { error_code: errors::ILLEGAL_SASL_STATE, error_message: Some("SaslAuthenticate before SaslHandshake".into()), auth_bytes: Vec::new(), session_lifetime_ms: 0 },
+            };
+            let failed = resp.error_code != errors::NONE;
+            let out = resp.encode();
+            if failed {
+                *auth = Auth::Handshake;
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+fn serve(state: &Arc<State>, tcp: TcpStream) {
+    let mut stream = match &state.tls {
+        Some(cfg) => match NetStream::server(tcp, cfg) {
+            Ok(s) => s,
+            Err(_) => return,
+        },
+        None => NetStream::plain(tcp),
+    };
+    let mut auth = if state.sasl_users.is_empty() { Auth::Done } else { Auth::Handshake };
     loop {
         let frame = match read_frame(&mut stream, 64 * 1024 * 1024) {
             Ok(Some(f)) => f,
@@ -352,6 +470,13 @@ fn serve(state: &Arc<State>, mut stream: TcpStream) {
             Some(ApiVersionsResponse { error_code, apis: api::VERSIONS.iter().map(|(k, v)| (*k, *v, *v)).collect() }.encode())
         } else if expected != Some(header.api_version) {
             break; // unsupported API or version: Kafka closes the connection
+        } else if header.api_key == api::SASL_HANDSHAKE || header.api_key == api::SASL_AUTHENTICATE {
+            match sasl_step(state, &mut auth, header.api_key, body) {
+                Some(r) => Some(r),
+                None => break,
+            }
+        } else if !matches!(auth, Auth::Done) {
+            break; // unauthenticated request: Kafka closes the connection
         } else {
             match handle(state, header.api_key, body, header.client_id.as_deref().unwrap_or("")) {
                 Ok(r) => r,

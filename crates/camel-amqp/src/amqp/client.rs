@@ -15,7 +15,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::{BufReader, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::Shutdown;
+
+use camel_tls::camel_support::EndpointTls;
+use camel_tls::net::NetStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -53,6 +56,8 @@ pub struct AmqpConfig {
     pub rpc_timeout: Duration,
     /// Reported in the `connection_name` client property.
     pub connection_name: Option<String>,
+    /// TLS (`amqps`).
+    pub tls: Option<EndpointTls>,
 }
 
 impl Default for AmqpConfig {
@@ -69,6 +74,7 @@ impl Default for AmqpConfig {
             channel_max: 2047,
             rpc_timeout: Duration::from_secs(30),
             connection_name: None,
+            tls: None,
         }
     }
 }
@@ -179,7 +185,7 @@ impl ChanState {
 }
 
 struct Inner {
-    writer: Mutex<TcpStream>,
+    writer: Mutex<NetStream>,
     frame_max: u32,
     channel_max: u16,
     heartbeat: u16,
@@ -242,14 +248,21 @@ pub struct Connection {
 impl Connection {
     /// Connect, authenticate (PLAIN) and open the virtual host.
     pub fn open(cfg: &AmqpConfig) -> Result<Connection> {
-        let stream = connect(&cfg.host, cfg.port, cfg.connect_timeout)?;
-        let what = format!("amqp://{}:{}", cfg.host, cfg.port);
+        let tcp = connect(&cfg.host, cfg.port, cfg.connect_timeout)?;
+        let what = format!("{}://{}:{}", if cfg.tls.is_some() { "amqps" } else { "amqp" }, cfg.host, cfg.port);
+        let stream = match &cfg.tls {
+            Some(t) => {
+                let _ = tcp.set_read_timeout(Some(cfg.connect_timeout.max(Duration::from_millis(100))));
+                t.handshake_client(tcp, &cfg.host)?
+            }
+            None => NetStream::plain(tcp),
+        };
         let ioe = |e: std::io::Error| io_error(e, &what);
         stream.set_read_timeout(Some(cfg.connect_timeout.max(Duration::from_millis(100)))).map_err(ioe)?;
         let mut reader = BufReader::new(stream.try_clone().map_err(ioe)?);
         let mut w = stream.try_clone().map_err(ioe)?;
         w.write_all(PROTOCOL_HEADER).map_err(ioe)?;
-        let read_method = |reader: &mut BufReader<TcpStream>| -> Result<Method> {
+        let read_method = |reader: &mut BufReader<NetStream>| -> Result<Method> {
             loop {
                 let f = read_frame(reader, 0).map_err(|e| {
                     if e.kind() == std::io::ErrorKind::UnexpectedEof {
@@ -447,7 +460,7 @@ struct PendingContent {
     header_seen: bool,
 }
 
-fn reader_loop(inner: Arc<Inner>, mut reader: BufReader<TcpStream>) {
+fn reader_loop(inner: Arc<Inner>, mut reader: BufReader<NetStream>) {
     let mut pending: HashMap<u16, PendingContent> = HashMap::new();
     let reason = loop {
         let f = match read_frame(&mut reader, inner.frame_max) {

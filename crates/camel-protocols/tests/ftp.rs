@@ -212,10 +212,11 @@ fn producer_file_exist_strategies() {
 }
 
 #[test]
-fn ftps_and_sftp_are_not_supported() {
+fn sftp_is_not_supported_and_ftps_resolves() {
     let ctx = context();
-    for uri in ["sftp://host/dir?password=x", "ftps://host/dir"] {
-        let err = ctx.get_endpoint(uri).err().expect("must fail");
-        assert!(err.to_string().contains("not supported"), "{}", err);
-    }
+    let err = ctx.get_endpoint("sftp://host/dir?password=x").err().expect("must fail");
+    assert!(err.to_string().contains("not supported"), "{}", err);
+    // ftps is supported (end-to-end tests in tests/tls.rs); options are validated
+    assert!(ctx.get_endpoint("ftps://host/dir?isImplicit=true&execProt=P").is_ok());
+    assert!(ctx.get_endpoint("ftps://host/dir?execProt=X").is_err());
 }

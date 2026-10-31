@@ -17,6 +17,13 @@
 //! Headers set on consumed exchanges: `CamelNettyRemoteAddress`, `CamelNettyLocalAddress`.
 //! Setting header `CamelNettyCloseChannelWhenComplete=true` closes the connection after
 //! the reply. Port `0` picks a free port (see [`crate::local_port`]).
+//!
+//! TLS (TCP only): `ssl=true` with `sslContextParameters=#bean` (or
+//! `useGlobalSslContextParameters=true` / the global `camel.ssl.*` parameters), or the
+//! netty-style `keyStoreFile` (PEM with certificate chain and key) and `trustStoreFile`
+//! (CA PEM) options. `hostnameVerification` (default false, as in Camel netty) controls
+//! whether the producer checks the server certificate's host name; the chain is always
+//! verified against the trust store. Client certificates (`needClientAuth`) are not supported.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -34,6 +41,9 @@ use camel_core::message::{Exchange, ExchangePattern};
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
 use camel_core::value::Value;
+use camel_tls::camel_support::{endpoint_tls, EndpointTls};
+use camel_tls::net::NetStream;
+use camel_tls::SslContextParameters;
 
 use crate::client::{connect, map_io_error, parse_authority};
 
@@ -103,6 +113,8 @@ pub struct NettyConfig {
     pub request_timeout: Duration,
     pub connect_timeout: Duration,
     pub worker_count: usize,
+    /// TLS settings when `ssl=true`.
+    pub tls: Option<EndpointTls>,
 }
 
 /// The `netty` component.
@@ -130,6 +142,30 @@ impl Component for NettyComponent {
                 camel_core::camel_warn!("netty", "Option {} is not supported by rust-camel netty and is ignored", unsupported);
             }
         }
+        let key_store = params.take("keyStoreFile").or_else(|| params.take("keyStoreResource"));
+        let trust_store = params.take("trustStoreFile").or_else(|| params.take("trustStoreResource"));
+        let hostname_verification = params.take_bool("hostnameVerification", false)?;
+        if params.take_bool("needClientAuth", false)? {
+            return Err(CamelError::illegal_argument("needClientAuth=true is not supported (no client certificate authentication)"));
+        }
+        let mut tls = endpoint_tls(ctx, params, "netty", false, &["ssl"])?;
+        if let Some(t) = tls.as_mut() {
+            let mut p: SslContextParameters = (*t.params).clone();
+            if let Some(k) = &key_store {
+                p.cert_chain = Some(camel_tls::PemSource::parse(k));
+                p.private_key = None;
+            }
+            if let Some(ts) = &trust_store {
+                p.trust_store = vec![camel_tls::PemSource::parse(ts)];
+            }
+            if p.hostname_verification.is_none() {
+                p.hostname_verification = Some(hostname_verification);
+            }
+            *t = EndpointTls::new(Arc::new(p));
+        }
+        if tls.is_some() && protocol == Protocol::Udp {
+            return Err(CamelError::illegal_argument("ssl=true is only supported with netty:tcp (no DTLS)"));
+        }
         let cfg = NettyConfig {
             protocol,
             host,
@@ -148,6 +184,7 @@ impl Component for NettyComponent {
             request_timeout: params.take_duration("requestTimeout", Duration::ZERO)?,
             connect_timeout: params.take_duration("connectTimeout", Duration::from_secs(10))?,
             worker_count: params.take_usize("workerCount", 16)?,
+            tls,
         };
         params.take_bool("allowDefaultCodec", true)?;
         for ignored in [
@@ -173,6 +210,11 @@ impl Component for NettyComponent {
             "bridgeErrorHandler",
             "exchangePattern",
             "options",
+            "passphrase",
+            "keyStoreFormat",
+            "securityProvider",
+            "sslHandler",
+            "enabledProtocols",
         ] {
             params.take(ignored);
         }
@@ -345,10 +387,20 @@ fn route_message(ctx: &WeakContext, processor: &Arc<dyn Processor>, cfg: &NettyC
     (Some(encode_body(&reply, cfg)), close)
 }
 
-fn serve_tcp(stream: TcpStream, cfg: NettyConfig, ctx: WeakContext, processor: Arc<dyn Processor>, running: Arc<AtomicBool>) {
-    let _ = stream.set_nodelay(cfg.tcp_no_delay);
-    let remote = stream.peer_addr().ok();
-    let local = stream.local_addr().ok();
+fn serve_tcp(tcp: TcpStream, cfg: NettyConfig, ctx: WeakContext, processor: Arc<dyn Processor>, running: Arc<AtomicBool>) {
+    let _ = tcp.set_nodelay(cfg.tcp_no_delay);
+    let remote = tcp.peer_addr().ok();
+    let local = tcp.local_addr().ok();
+    let stream = match &cfg.tls {
+        Some(t) => match t.accept(tcp, "netty consumer") {
+            Ok(s) => s,
+            Err(e) => {
+                camel_core::camel_debug!("netty", "TLS handshake with {:?} failed: {}", remote, e);
+                return;
+            }
+        },
+        None => NetStream::plain(tcp),
+    };
     let mut reader = BufReader::new(&stream);
     let mut writer = &stream;
     while running.load(Ordering::SeqCst) {
@@ -501,7 +553,10 @@ impl NettyProducer {
 
     fn send_tcp(&self, ex: &mut Exchange) -> Result<()> {
         let what = format!("{}:{}", self.cfg.host, self.cfg.port);
-        let stream = connect(&self.cfg.host, self.cfg.port, self.cfg.connect_timeout)?;
+        let stream = match &self.cfg.tls {
+            Some(t) => t.connect(&self.cfg.host, self.cfg.port, self.cfg.connect_timeout)?,
+            None => NetStream::plain(connect(&self.cfg.host, self.cfg.port, self.cfg.connect_timeout)?),
+        };
         let _ = stream.set_nodelay(self.cfg.tcp_no_delay);
         let timeout = if self.cfg.request_timeout.is_zero() { None } else { Some(self.cfg.request_timeout) };
         let _ = stream.set_read_timeout(timeout);

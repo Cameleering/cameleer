@@ -274,6 +274,14 @@ impl ServerRegistry {
         let mut servers = self.servers.lock().unwrap();
         if port != 0 {
             if let Some(s) = servers.get(&port) {
+                if s.server.is_tls() != config.tls.is_some() {
+                    return Err(CamelError::illegal_argument(format!(
+                        "Port {} is already used by an {} server; cannot register an {} endpoint on it",
+                        port,
+                        if s.server.is_tls() { "https" } else { "http" },
+                        if config.tls.is_some() { "https" } else { "http" }
+                    )));
+                }
                 let route_id = s.router.add(spec, handler)?;
                 return Ok(Registration { port, route_id });
             }

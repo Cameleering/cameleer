@@ -4,6 +4,9 @@
 //! `MODE`, `STRU`, `PASV`, `EPSV`, `PORT`, `EPRT`, `LIST` (Unix format), `NLST`, `MLSD`,
 //! `RETR`, `STOR`, `APPE`, `DELE`, `MKD`, `RMD`, `RNFR`/`RNTO`, `SIZE`, `MDTM`, `SITE`,
 //! `NOOP` and `QUIT`. Paths cannot escape the served root directory.
+//!
+//! FTPS: [`FtpServer::start_tls`] serves explicit (`AUTH TLS`, `PBSZ`, `PROT`) or implicit
+//! TLS; with `PROT P` data connections are TLS-protected (handshake after the `150` reply).
 
 use std::collections::HashMap;
 use std::fs;
@@ -16,12 +19,25 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 use camel_core::error::Result;
 use camel_core::util_time::{civil_from_epoch, now_millis};
 
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
+
 use crate::common::{read_line, TcpServer};
 use crate::ftp::client::{from_net_ascii, to_net_ascii};
 use crate::ftp::join_path;
 use crate::ftp::listing::{format_mdtm, month_name};
 
+/// FTPS mode of the embedded server.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FtpsMode {
+    /// `AUTH TLS` upgrades the control connection; login requires TLS.
+    Explicit,
+    /// TLS from the first byte.
+    Implicit,
+}
+
 struct State {
+    tls: Option<(Arc<TlsServerConfig>, FtpsMode)>,
     root: PathBuf,
     users: HashMap<String, String>,
     commands: Mutex<Vec<String>>,
@@ -41,16 +57,27 @@ impl FtpServer {
 
     /// Serve `root`, accepting only the given `(user, password)` pairs (empty = any).
     pub fn start_with_users(root: impl Into<PathBuf>, users: &[(&str, &str)]) -> Result<FtpServer> {
-        let root = root.into();
+        Self::start_inner(root.into(), users, None)
+    }
+
+    /// Serve `root` over FTPS (explicit or implicit) with the given server certificate.
+    pub fn start_tls(root: impl Into<PathBuf>, users: &[(&str, &str)], tls: TlsServerConfig, mode: FtpsMode) -> Result<FtpServer> {
+        Self::start_inner(root.into(), users, Some((Arc::new(tls), mode)))
+    }
+
+    fn start_inner(root: PathBuf, users: &[(&str, &str)], tls: Option<(Arc<TlsServerConfig>, FtpsMode)>) -> Result<FtpServer> {
         fs::create_dir_all(&root).map_err(|e| camel_core::error::CamelError::io(e.to_string()))?;
         let state = Arc::new(State {
+            tls,
             root: fs::canonicalize(&root).unwrap_or(root),
             users: users.iter().map(|(u, p)| (u.to_string(), p.to_string())).collect(),
             commands: Mutex::new(Vec::new()),
         });
         let st = state.clone();
         let server = TcpServer::bind("127.0.0.1", 0, "ftp-server", move |s| {
-            let _ = Session::new(st.clone(), s).run();
+            if let Some(session) = Session::new(st.clone(), s) {
+                let _ = session.run();
+            }
         })?;
         Ok(FtpServer { server, state })
     }
@@ -78,8 +105,9 @@ impl FtpServer {
 
 struct Session {
     st: Arc<State>,
-    reader: BufReader<TcpStream>,
-    out: TcpStream,
+    reader: BufReader<NetStream>,
+    out: NetStream,
+    prot_private: bool,
     user: Option<String>,
     logged_in: bool,
     cwd: String,
@@ -90,10 +118,22 @@ struct Session {
 }
 
 impl Session {
-    fn new(st: Arc<State>, s: TcpStream) -> Session {
+    fn new(st: Arc<State>, s: TcpStream) -> Option<Session> {
         let _ = s.set_read_timeout(Some(Duration::from_secs(120)));
-        let out = s.try_clone().expect("clone stream");
-        Session { st, reader: BufReader::new(s), out, user: None, logged_in: false, cwd: "/".into(), binary: false, pasv: None, port: None, rnfr: None }
+        let s = match &st.tls {
+            Some((cfg, FtpsMode::Implicit)) => NetStream::server(s, cfg).ok()?,
+            _ => NetStream::plain(s),
+        };
+        let out = s.try_clone().ok()?;
+        Some(Session { st, reader: BufReader::new(s), out, prot_private: false, user: None, logged_in: false, cwd: "/".into(), binary: false, pasv: None, port: None, rnfr: None })
+    }
+
+    /// Wraps an accepted data connection in TLS after `PROT P` (call after the 150 reply).
+    fn secure_data(&self, s: TcpStream) -> std::io::Result<NetStream> {
+        match (&self.st.tls, self.prot_private) {
+            (Some((cfg, _)), true) => NetStream::server(s, cfg),
+            _ => Ok(NetStream::plain(s)),
+        }
     }
 
     fn reply(&mut self, text: &str) -> std::io::Result<()> {
@@ -134,11 +174,15 @@ impl Session {
     }
 
     fn send_data(&mut self, data: &[u8]) -> std::io::Result<()> {
-        let mut s = match self.open_data() {
+        let s = match self.open_data() {
             Ok(s) => s,
             Err(_) => return self.reply("425 Can't open data connection"),
         };
         self.reply("150 Opening data connection")?;
+        let mut s = match self.secure_data(s) {
+            Ok(s) => s,
+            Err(_) => return self.reply("425 TLS negotiation on the data connection failed"),
+        };
         let r = s.write_all(data).and_then(|_| s.flush());
         let _ = s.shutdown(std::net::Shutdown::Both);
         match r {
@@ -214,6 +258,42 @@ impl Session {
             };
             let logged = if cmd == "PASS" { "PASS ****".to_string() } else { line.clone() };
             self.st.commands.lock().unwrap().push(logged);
+            if cmd == "AUTH" {
+                match &self.st.tls {
+                    Some((cfg, FtpsMode::Explicit)) if !self.out.is_tls() && matches!(arg.trim().to_ascii_uppercase().as_str(), "TLS" | "SSL" | "TLS-C") => {
+                        let cfg = cfg.clone();
+                        self.reply("234 Proceed with negotiation")?;
+                        let plain = self.out.try_clone()?;
+                        let secured = plain.start_tls_server(&cfg)?;
+                        self.reader = BufReader::new(secured.try_clone()?);
+                        self.out = secured;
+                    }
+                    _ => self.reply("504 AUTH not supported")?,
+                }
+                continue;
+            }
+            if self.st.tls.is_some() && !self.out.is_tls() && !matches!(cmd.as_str(), "QUIT" | "FEAT" | "NOOP" | "SYST") {
+                self.reply("530 TLS required (use AUTH TLS)")?;
+                continue;
+            }
+            if cmd == "PBSZ" && self.out.is_tls() {
+                self.reply("200 PBSZ=0")?;
+                continue;
+            }
+            if cmd == "PROT" && self.out.is_tls() {
+                match arg.trim().to_ascii_uppercase().as_str() {
+                    "P" => {
+                        self.prot_private = true;
+                        self.reply("200 Protection level set to Private")?;
+                    }
+                    "C" => {
+                        self.prot_private = false;
+                        self.reply("200 Protection level set to Clear")?;
+                    }
+                    _ => self.reply("536 Protection level not supported")?,
+                }
+                continue;
+            }
             if !self.logged_in && !matches!(cmd.as_str(), "USER" | "PASS" | "QUIT" | "SYST" | "FEAT" | "NOOP" | "OPTS") {
                 self.reply("530 Please login with USER and PASS")?;
                 continue;
@@ -237,6 +317,9 @@ impl Session {
                     }
                 }
                 "SYST" => self.reply("215 UNIX Type: L8")?,
+                "FEAT" if self.st.tls.is_some() => {
+                    self.reply("211-Features:\r\n AUTH TLS\r\n PBSZ\r\n PROT\r\n MLSD\r\n SIZE\r\n MDTM\r\n EPSV\r\n UTF8\r\n211 End")?
+                }
                 "FEAT" => self.reply("211-Features:\r\n MLSD\r\n SIZE\r\n MDTM\r\n EPSV\r\n UTF8\r\n211 End")?,
                 "OPTS" | "MODE" | "STRU" | "SITE" | "ALLO" => self.reply("200 OK")?,
                 "NOOP" => self.reply("200 NOOP ok")?,
@@ -322,7 +405,7 @@ impl Session {
                         self.reply("553 Cannot create file")?;
                         continue;
                     }
-                    let mut s = match self.open_data() {
+                    let s = match self.open_data() {
                         Ok(s) => s,
                         Err(_) => {
                             self.reply("425 Can't open data connection")?;
@@ -330,6 +413,13 @@ impl Session {
                         }
                     };
                     self.reply("150 Ok to send data")?;
+                    let mut s = match self.secure_data(s) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            self.reply("425 TLS negotiation on the data connection failed")?;
+                            continue;
+                        }
+                    };
                     let mut data = Vec::new();
                     let r = s.read_to_end(&mut data);
                     drop(s);

@@ -25,6 +25,8 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use camel_core::executor::ThreadPool;
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
 
 use crate::http::{read_request, write_response, HttpRequest, HttpResponse, Limits};
 
@@ -59,6 +61,8 @@ pub struct ServerConfig {
     pub shutdown_timeout: Duration,
     /// Maximum requests served on one connection.
     pub max_keep_alive_requests: usize,
+    /// Serve HTTPS with this TLS configuration (None = plain HTTP).
+    pub tls: Option<Arc<TlsServerConfig>>,
 }
 
 impl Default for ServerConfig {
@@ -72,6 +76,7 @@ impl Default for ServerConfig {
             write_timeout: Duration::from_secs(30),
             shutdown_timeout: Duration::from_secs(10),
             max_keep_alive_requests: 1000,
+            tls: None,
         }
     }
 }
@@ -124,6 +129,11 @@ impl HttpServer {
     /// The bound address.
     pub fn local_addr(&self) -> SocketAddr {
         self.local_addr
+    }
+
+    /// Whether the server speaks HTTPS.
+    pub fn is_tls(&self) -> bool {
+        self.inner.config.tls.is_some()
     }
 
     /// The bound port.
@@ -222,11 +232,29 @@ impl Drop for BusyGuard<'_> {
     }
 }
 
-fn serve_connection(inner: &ServerInner, stream: &TcpStream) {
+fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
     let cfg = &inner.config;
-    let _ = stream.set_nodelay(true);
-    let _ = stream.set_write_timeout(Some(cfg.write_timeout));
-    let peer = stream.peer_addr().ok();
+    let _ = tcp.set_nodelay(true);
+    let _ = tcp.set_write_timeout(Some(cfg.write_timeout));
+    let peer = tcp.peer_addr().ok();
+    let stream = match tcp.try_clone() {
+        Ok(t) => match &cfg.tls {
+            Some(tls) => {
+                let _ = tcp.set_read_timeout(Some(cfg.read_timeout));
+                match NetStream::server(t, tls) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        camel_core::camel_debug!("camel-http", "TLS handshake with {:?} failed: {}", peer, e);
+                        let _ = tcp.shutdown(std::net::Shutdown::Both);
+                        return;
+                    }
+                }
+            }
+            None => NetStream::plain(t),
+        },
+        Err(_) => return,
+    };
+    let stream = &stream;
     let mut reader = BufReader::new(stream);
     let mut writer = stream;
     let mut served = 0usize;
@@ -278,6 +306,7 @@ fn serve_connection(inner: &ServerInner, stream: &TcpStream) {
         }
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
+    let _ = tcp.shutdown(std::net::Shutdown::Both);
 }
 
 #[cfg(test)]

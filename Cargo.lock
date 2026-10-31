@@ -7,6 +7,7 @@ name = "camel-amqp"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-tls",
 ]
 
 [[package]]
@@ -34,6 +35,7 @@ name = "camel-http"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-tls",
 ]
 
 [[package]]
@@ -41,6 +43,7 @@ name = "camel-kafka-mqtt"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-tls",
 ]
 
 [[package]]
@@ -64,6 +67,7 @@ name = "camel-protocols"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-tls",
 ]
 
 [[package]]
@@ -71,6 +75,7 @@ name = "camel-sql"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-tls",
 ]
 
 [[package]]
@@ -84,6 +89,9 @@ dependencies = [
 [[package]]
 name = "camel-tls"
 version = "0.1.0"
+dependencies = [
+ "camel-core",
+]
 
 [[package]]
 name = "camel-yaml"

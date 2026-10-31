@@ -1,8 +1,11 @@
 //! PostgreSQL wire protocol (v3) client implementing [`Connection`].
 
 use std::collections::BTreeMap;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+
+use camel_tls::net::NetStream;
+use camel_tls::SslContextParameters;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,9 +17,44 @@ use super::crypto::{b64, b64_decode, hmac_sha256, md5_password, nonce, xor32, Sc
 use super::protocol::*;
 use crate::datasource::{sql_error, Connection, DataSource, ExecuteOptions, QueryResult};
 
+/// `sslmode` (libpq semantics).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SslMode {
+    /// Plain connections only (`disable`, also `allow`).
+    Disable,
+    /// TLS if the server supports it, else plain; no certificate verification.
+    Prefer,
+    /// TLS required; the certificate is only verified when `sslrootcert` is set (then like verify-ca).
+    Require,
+    /// TLS required; the chain is verified, the host name is not.
+    VerifyCa,
+    /// TLS required; chain and host name are verified.
+    VerifyFull,
+}
+
+impl SslMode {
+    pub fn parse(s: &str) -> Option<SslMode> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "disable" | "allow" => Some(SslMode::Disable),
+            "prefer" => Some(SslMode::Prefer),
+            "require" => Some(SslMode::Require),
+            "verify-ca" => Some(SslMode::VerifyCa),
+            "verify-full" => Some(SslMode::VerifyFull),
+            _ => None,
+        }
+    }
+}
+
 /// Connection settings.
 #[derive(Clone, Debug)]
 pub struct PgConfig {
+    /// TLS negotiation (`sslmode`; `ssl=true` means verify-full as in pgjdbc).
+    pub ssl_mode: SslMode,
+    /// CA certificate(s) (PEM) used to verify the server (`sslrootcert`); when absent and
+    /// `ssl_params` is None, the system trust store is used.
+    pub ssl_root_cert: Option<String>,
+    /// Explicit trust parameters (take precedence over `sslrootcert`).
+    pub ssl_params: Option<SslContextParameters>,
     pub host: String,
     pub port: u16,
     pub database: String,
@@ -33,6 +71,9 @@ pub struct PgConfig {
 impl Default for PgConfig {
     fn default() -> Self {
         PgConfig {
+            ssl_mode: SslMode::Disable,
+            ssl_root_cert: None,
+            ssl_params: None,
             host: "localhost".into(),
             port: 5432,
             database: "postgres".into(),
@@ -47,7 +88,7 @@ impl Default for PgConfig {
 }
 
 impl PgConfig {
-    /// Parse `[jdbc:]postgresql://[user[:password]@]host[:port][/database][?user=&password=&connectTimeout=&socketTimeout=&ApplicationName=&poolSize=]`.
+    /// Parse `[jdbc:]postgresql://[user[:password]@]host[:port][/database][?user=&password=&connectTimeout=&socketTimeout=&ApplicationName=&poolSize=&sslmode=&ssl=&sslrootcert=]`.
     pub fn from_url(url: &str) -> Result<Self> {
         let u = url.trim();
         let u = u.strip_prefix("jdbc:").unwrap_or(u);
@@ -103,10 +144,21 @@ impl PgConfig {
                 }
                 "ApplicationName" | "applicationName" => cfg.application_name = v,
                 "poolSize" => cfg.pool_size = v.parse().unwrap_or(8),
-                "sslmode" | "ssl" if v != "disable" && v != "false" && v != "allow" && v != "prefer" => {
+                "sslmode" => {
+                    cfg.ssl_mode = SslMode::parse(&v).ok_or_else(|| {
+                        CamelError::illegal_argument(format!("Invalid sslmode '{}' (disable, allow, prefer, require, verify-ca, verify-full): {}", v, url))
+                    })?
+                }
+                "ssl" => {
+                    if v.eq_ignore_ascii_case("true") && cfg.ssl_mode == SslMode::Disable {
+                        cfg.ssl_mode = SslMode::VerifyFull;
+                    }
+                }
+                "sslrootcert" => cfg.ssl_root_cert = Some(v),
+                "sslfactory" | "sslcert" | "sslkey" | "sslpassword" => {
                     return Err(CamelError::new(
                         camel_core::error::kinds::UNSUPPORTED_OPERATION,
-                        format!("SSL connections are not supported by rust-camel (std only): {}", url),
+                        format!("PostgreSQL option {} is not supported by rust-camel (no client certificates / custom factories): {}", k, url),
                     ));
                 }
                 _ => {}
@@ -121,14 +173,52 @@ impl PgConfig {
     }
 }
 
+/// Sends an SSLRequest when `sslmode` asks for TLS and performs the handshake if the
+/// server answers `S`.
+fn negotiate_ssl(mut tcp: TcpStream, cfg: &PgConfig) -> Result<NetStream> {
+    if cfg.ssl_mode == SslMode::Disable {
+        return Ok(NetStream::plain(tcp));
+    }
+    let mut req = Vec::new();
+    put_i32(&mut req, 8);
+    put_i32(&mut req, SSL_REQUEST);
+    tcp.write_all(&req).map_err(io_err)?;
+    let mut answer = [0u8; 1];
+    tcp.read_exact(&mut answer).map_err(io_err)?;
+    match answer[0] {
+        b'S' => {}
+        b'N' if cfg.ssl_mode == SslMode::Prefer => return Ok(NetStream::plain(tcp)),
+        b'N' => return Err(sql_error("08004", format!("The server {}:{} does not support SSL (sslmode={:?})", cfg.host, cfg.port, cfg.ssl_mode))),
+        other => return Err(sql_error("08P01", format!("Unexpected answer to SSLRequest: {:?}", other as char))),
+    }
+    let mut params = match (&cfg.ssl_params, &cfg.ssl_root_cert) {
+        (Some(p), _) => p.clone(),
+        (None, Some(root)) => SslContextParameters::new().trust_file(root),
+        (None, None) => SslContextParameters::new(),
+    };
+    let has_roots = cfg.ssl_params.is_some() || cfg.ssl_root_cert.is_some();
+    match cfg.ssl_mode {
+        SslMode::Prefer => params.insecure_skip_verify = true,
+        SslMode::Require if !has_roots => params.insecure_skip_verify = true,
+        SslMode::Require | SslMode::VerifyCa => params.hostname_verification = Some(false),
+        _ => {}
+    }
+    let tls = params.client_config().map_err(|e| sql_error("08006", format!("SSL configuration error: {}", e)))?;
+    let name = params.server_name.clone().unwrap_or_else(|| cfg.host.clone());
+    NetStream::client(tcp, &name, &tls).map_err(|e| {
+        let ssl = camel_tls::camel_support::io_to_camel(e, &format!("{}:{}", cfg.host, cfg.port));
+        sql_error("08006", format!("SSL error connecting to PostgreSQL: {}", ssl.message)).with_cause(ssl)
+    })
+}
+
 fn io_err(e: std::io::Error) -> CamelError {
     sql_error("08006", format!("I/O error communicating with PostgreSQL server: {}", e))
 }
 
 /// A connection to a PostgreSQL server.
 pub struct PgConnection {
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
+    reader: BufReader<NetStream>,
+    writer: NetStream,
     status: u8,
     broken: bool,
     server_params: BTreeMap<String, String>,
@@ -164,6 +254,8 @@ impl PgConnection {
             )
         })?;
         let _ = stream.set_nodelay(true);
+        stream.set_read_timeout(cfg.read_timeout.or(Some(Duration::from_secs(30)))).map_err(io_err)?;
+        let stream = negotiate_ssl(stream, cfg)?;
         stream.set_read_timeout(cfg.read_timeout).map_err(io_err)?;
         let writer = stream.try_clone().map_err(io_err)?;
         let mut c = PgConnection { reader: BufReader::new(stream), writer, status: b'I', broken: false, server_params: BTreeMap::new() };
@@ -622,7 +714,10 @@ mod tests {
         assert_eq!(c.read_timeout, Some(Duration::from_secs(5)));
         let c = PgConfig::from_url("postgresql://bob:pw%40x@localhost/test").unwrap();
         assert_eq!((c.user.as_str(), c.password.as_deref(), c.port, c.database.as_str()), ("bob", Some("pw@x"), 5432, "test"));
-        assert!(PgConfig::from_url("jdbc:postgresql://h/db?sslmode=require").is_err());
+        assert_eq!(PgConfig::from_url("jdbc:postgresql://h/db?sslmode=require").unwrap().ssl_mode, SslMode::Require);
+        assert_eq!(PgConfig::from_url("jdbc:postgresql://h/db?ssl=true").unwrap().ssl_mode, SslMode::VerifyFull);
+        assert!(PgConfig::from_url("jdbc:postgresql://h/db?sslmode=nope").is_err());
+        assert!(PgConfig::from_url("jdbc:postgresql://h/db?sslcert=/x").is_err());
         assert!(PgConfig::from_url("mysql://h/db").is_err());
         assert!(wants_returning("insert into t values (1)"));
         assert!(!wants_returning("insert into t values (1) returning id"));

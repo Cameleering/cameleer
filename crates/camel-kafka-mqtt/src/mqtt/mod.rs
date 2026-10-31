@@ -19,8 +19,13 @@
 //! `connectionTimeout` (30 s), `automaticReconnect` (true), `maxReconnectDelay` (128000 ms),
 //! `willTopic`, `willPayload`, `willQos`, `willRetained`, `sessionExpiryInterval`
 //! (paho-mqtt5, -1 = not sent), plus accepted-and-ignored options (`persistence`,
-//! `filePersistenceDirectory`, `maxInflight`, `executorServiceTimeout`, ...). `ssl://`,
-//! `wss://` and `ws://` broker urls fail with `UnsupportedOperationException`.
+//! `filePersistenceDirectory`, `maxInflight`, `executorServiceTimeout`, ...).
+//!
+//! TLS: `ssl://host:port` (also `mqtts://`, `tls://`; default port 8883) broker urls
+//! connect with TLS; trust from `sslContextParameters=#bean`,
+//! `useGlobalSslContextParameters=true`, the global `camel.ssl.*` parameters, else the
+//! system trust store (`httpsHostnameVerificationEnabled=false` skips the host name
+//! check). `wss://` and `ws://` broker urls fail with `UnsupportedOperationException`.
 
 pub mod client;
 pub mod packet;
@@ -74,6 +79,8 @@ pub struct PahoConfig {
     pub max_reconnect_delay: Duration,
     pub will: Option<Will>,
     pub session_expiry_interval: Option<u32>,
+    /// TLS settings for `ssl://` broker urls.
+    pub tls: Option<camel_tls::camel_support::EndpointTls>,
 }
 
 impl PahoConfig {
@@ -91,6 +98,7 @@ impl PahoConfig {
         o.auto_reconnect = self.automatic_reconnect;
         o.max_reconnect_delay = self.max_reconnect_delay;
         o.session_expiry_interval = self.session_expiry_interval;
+        o.tls = self.tls.clone();
         o
     }
 }
@@ -122,7 +130,6 @@ const IGNORED: &[&str] = &[
     "maxInflight",
     "executorServiceTimeout",
     "mqttVersion",
-    "httpsHostnameVerificationEnabled",
     "client",
     "socketFactory",
     "sslClientProps",
@@ -140,23 +147,28 @@ const IGNORED: &[&str] = &[
     "manualAcksEnabled",
 ];
 
-/// Parse `tcp://host:port`; secure / websocket schemes are not supported.
-pub fn parse_broker_url(url: &str) -> Result<(String, u16)> {
+/// Parse `tcp://host:port` or `ssl://host:port`; websocket schemes are not supported.
+/// Returns `(host, port, tls)`.
+pub fn parse_broker_url(url: &str) -> Result<(String, u16, bool)> {
     let (scheme, rest) = match url.find("://") {
         Some(i) => (url[..i].to_ascii_lowercase(), &url[i + 3..]),
         None => ("tcp".to_string(), url),
     };
     match scheme.as_str() {
-        "tcp" | "mqtt" => {}
-        "ssl" | "mqtts" | "wss" | "ws" | "tls" => {
-            return Err(CamelError::new(
-                kinds::UNSUPPORTED_OPERATION,
-                format!("MQTT broker url scheme {}:// is not supported by rust-camel (no TLS/WebSocket transport in a std-only build; use tcp://): {}", scheme, url),
-            ))
+        "tcp" | "mqtt" => {
+            let (h, p) = split_host_port(rest.trim_end_matches('/'), 1883)?;
+            Ok((h, p, false))
         }
-        other => return Err(CamelError::illegal_argument(format!("Invalid MQTT broker url scheme {}: {}", other, url))),
+        "ssl" | "mqtts" | "tls" => {
+            let (h, p) = split_host_port(rest.trim_end_matches('/'), 8883)?;
+            Ok((h, p, true))
+        }
+        "wss" | "ws" => Err(CamelError::new(
+            kinds::UNSUPPORTED_OPERATION,
+            format!("MQTT broker url scheme {}:// is not supported by rust-camel (no WebSocket transport; use tcp:// or ssl://): {}", scheme, url),
+        )),
+        other => Err(CamelError::illegal_argument(format!("Invalid MQTT broker url scheme {}: {}", other, url))),
     }
-    split_host_port(rest.trim_end_matches('/'), 1883)
 }
 
 impl Component for PahoComponent {
@@ -169,7 +181,19 @@ impl Component for PahoComponent {
             }
             None => params.take("brokerUrl").or_else(|| self.broker_url.clone()).unwrap_or_else(|| "tcp://localhost:1883".to_string()),
         };
-        let (host, port) = parse_broker_url(&url)?;
+        let (host, port, secure) = parse_broker_url(&url)?;
+        let hostname_verification = params.take_bool("httpsHostnameVerificationEnabled", true)?;
+        let scheme = if self.version.is_v5() { "paho-mqtt5" } else { "paho" };
+        let tls = match camel_tls::camel_support::endpoint_tls(ctx, params, scheme, secure, &[])? {
+            Some(t) if secure => {
+                let mut p = (*t.params).clone();
+                if !hostname_verification {
+                    p.hostname_verification = Some(false);
+                }
+                Some(camel_tls::camel_support::EndpointTls::new(Arc::new(p)))
+            }
+            _ => None,
+        };
         let qos = params.take_u64("qos", 2)?;
         if qos > 2 {
             return Err(CamelError::illegal_argument(format!("Invalid qos: {} (0, 1 or 2)", qos)));
@@ -213,6 +237,7 @@ impl Component for PahoComponent {
             max_reconnect_delay: Duration::from_millis(params.take_u64("maxReconnectDelay", 128_000)?),
             will,
             session_expiry_interval: if expiry >= 0 { Some(expiry.min(u32::MAX as i64) as u32) } else { None },
+            tls,
         };
         for k in IGNORED {
             params.take(k);

@@ -19,6 +19,7 @@ fn default_groups() -> Vec<NamedGroup> {
 pub struct TlsClientConfig {
     pub(crate) roots: RootStore,
     pub(crate) verify: bool,
+    pub(crate) verify_hostname: bool,
     pub(crate) alpn: Vec<Vec<u8>>,
     pub(crate) min_version: TlsVersion,
     pub(crate) max_version: TlsVersion,
@@ -41,6 +42,7 @@ impl TlsClientConfig {
             cfg: TlsClientConfig {
                 roots: RootStore::empty(),
                 verify: true,
+                verify_hostname: true,
                 alpn: Vec::new(),
                 min_version: TlsVersion::Tls12,
                 max_version: TlsVersion::Tls13,
@@ -97,6 +99,13 @@ impl TlsClientConfigBuilder {
     /// handshake signature is still checked against the presented key). For tests only.
     pub fn insecure_skip_verify(mut self, skip: bool) -> Self {
         self.cfg.verify = !skip;
+        self
+    }
+
+    /// Whether the certificate must match the server name (default true). With
+    /// `false` the chain is still verified against the trust store.
+    pub fn verify_hostname(mut self, yes: bool) -> Self {
+        self.cfg.verify_hostname = yes;
         self
     }
 

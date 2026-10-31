@@ -3,13 +3,50 @@
 //! creation. A client is not thread safe by itself (wrap it in a `Mutex` to share it).
 
 use std::collections::HashMap;
-use std::net::TcpStream;
 use std::time::Duration;
+
+use camel_tls::camel_support::EndpointTls;
+use camel_tls::net::NetStream;
+use camel_tls::sasl::{plain_initial_response, ScramClient, ScramMechanism};
 
 use camel_core::error::{CamelError, Result};
 
 use super::protocol::*;
 use crate::net::{connect, io_error, split_host_port};
+
+/// SASL mechanism and credentials (`SASL_PLAINTEXT` / `SASL_SSL`).
+#[derive(Clone)]
+pub struct SaslConfig {
+    /// `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`.
+    pub mechanism: String,
+    pub username: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for SaslConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SaslConfig").field("mechanism", &self.mechanism).field("username", &self.username).field("password", &"****").finish()
+    }
+}
+
+impl SaslConfig {
+    /// Credentials from a JAAS line such as
+    /// `org.apache.kafka.common.security.plain.PlainLoginModule required username="u" password="p";`.
+    pub fn from_jaas(mechanism: &str, jaas: &str) -> Result<SaslConfig> {
+        let value = |key: &str| -> Option<String> {
+            let i = jaas.find(&format!("{}=", key))? + key.len() + 1;
+            let rest = &jaas[i..];
+            if let Some(r) = rest.strip_prefix('"') {
+                r.find('"').map(|e| r[..e].to_string())
+            } else {
+                Some(rest.split(|c: char| c.is_whitespace() || c == ';').next().unwrap_or("").to_string())
+            }
+        };
+        let username = value("username").ok_or_else(|| CamelError::illegal_argument("saslJaasConfig: missing username=\"...\""))?;
+        let password = value("password").ok_or_else(|| CamelError::illegal_argument("saslJaasConfig: missing password=\"...\""))?;
+        Ok(SaslConfig { mechanism: mechanism.to_ascii_uppercase(), username, password })
+    }
+}
 
 /// Client settings.
 #[derive(Clone, Debug)]
@@ -19,6 +56,10 @@ pub struct ClientConfig {
     pub client_id: String,
     pub connect_timeout: Duration,
     pub request_timeout: Duration,
+    /// TLS (`SSL` / `SASL_SSL`).
+    pub tls: Option<EndpointTls>,
+    /// SASL authentication (`SASL_PLAINTEXT` / `SASL_SSL`).
+    pub sasl: Option<SaslConfig>,
 }
 
 impl ClientConfig {
@@ -26,18 +67,25 @@ impl ClientConfig {
     pub fn new(brokers: &str, client_id: &str) -> Result<ClientConfig> {
         let mut bootstrap = Vec::new();
         for b in brokers.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-            let b = b.strip_prefix("PLAINTEXT://").unwrap_or(b);
+            let b = ["PLAINTEXT://", "SSL://", "SASL_SSL://", "SASL_PLAINTEXT://"].iter().find_map(|p| b.strip_prefix(p)).unwrap_or(b);
             bootstrap.push(split_host_port(b, 9092)?);
         }
         if bootstrap.is_empty() {
             return Err(CamelError::illegal_argument("No Kafka brokers configured (option brokers=host:port)"));
         }
-        Ok(ClientConfig { bootstrap, client_id: client_id.to_string(), connect_timeout: Duration::from_secs(10), request_timeout: Duration::from_secs(30) })
+        Ok(ClientConfig {
+            bootstrap,
+            client_id: client_id.to_string(),
+            connect_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(30),
+            tls: None,
+            sasl: None,
+        })
     }
 }
 
 struct Conn {
-    stream: TcpStream,
+    stream: NetStream,
     correlation: i32,
 }
 
@@ -82,8 +130,13 @@ impl KafkaClient {
     }
 
     fn open(&self, host: &str, port: u16) -> Result<Conn> {
-        let stream = connect(host, port, self.cfg.connect_timeout)?;
-        let _ = stream.set_write_timeout(Some(self.cfg.request_timeout));
+        let what = format!("{}:{}", host, port);
+        let tcp = connect(host, port, self.cfg.connect_timeout)?;
+        let _ = tcp.set_write_timeout(Some(self.cfg.request_timeout));
+        let stream = match &self.cfg.tls {
+            Some(t) => t.handshake_client(tcp, host).map_err(|e| e.with_cause(CamelError::io(format!("TLS connection to Kafka broker {} failed", what))))?,
+            None => NetStream::plain(tcp),
+        };
         let mut conn = Conn { stream, correlation: 0 };
         // check that the broker supports the versions used by this client
         let body = Self::roundtrip(&mut conn, &self.cfg, api::API_VERSIONS, &[], self.cfg.request_timeout, &format!("{}:{}", host, port))?;
@@ -93,14 +146,62 @@ impl KafkaClient {
         }
         for (key, version) in api::VERSIONS {
             let ok = resp.apis.iter().any(|(k, min, max)| k == key && min <= version && version <= max);
-            if !ok && *key != api::CREATE_TOPICS {
+            if !ok && !api::optional(*key) {
                 return Err(CamelError::new(
                     "UnsupportedVersionException",
                     format!("Broker {}:{} does not support {} v{}", host, port, api::name(*key), version),
                 ));
             }
         }
+        if let Some(sasl) = &self.cfg.sasl {
+            Self::authenticate(&mut conn, &self.cfg, sasl, &what)?;
+        }
         Ok(conn)
+    }
+
+    /// SaslHandshake v1 + SaslAuthenticate v1 (KIP-152) with PLAIN or SCRAM.
+    fn authenticate(conn: &mut Conn, cfg: &ClientConfig, sasl: &SaslConfig, what: &str) -> Result<()> {
+        let auth_fail = |msg: String| CamelError::new("SaslAuthenticationException", msg);
+        let mut e = Encoder::new();
+        e.string(&sasl.mechanism);
+        let resp = SaslHandshakeResponse::decode(&Self::roundtrip(conn, cfg, api::SASL_HANDSHAKE, &e.buf, cfg.request_timeout, what)?)?;
+        if resp.error_code != errors::NONE {
+            return Err(auth_fail(format!(
+                "Kafka broker {} does not support SASL mechanism {} (enabled: {})",
+                what,
+                sasl.mechanism,
+                resp.mechanisms.join(", ")
+            )));
+        }
+        let mut step = |token: &[u8]| -> Result<Vec<u8>> {
+            let mut e = Encoder::new();
+            e.bytes(token);
+            let r = SaslAuthenticateResponse::decode(&Self::roundtrip(conn, cfg, api::SASL_AUTHENTICATE, &e.buf, cfg.request_timeout, what)?)?;
+            if r.error_code != errors::NONE {
+                return Err(auth_fail(format!(
+                    "Authentication failed for user {} at Kafka broker {}: {}",
+                    sasl.username,
+                    what,
+                    r.error_message.unwrap_or_else(|| errors::name(r.error_code).to_string())
+                )));
+            }
+            Ok(r.auth_bytes)
+        };
+        match sasl.mechanism.as_str() {
+            "PLAIN" => {
+                step(&plain_initial_response("", &sasl.username, &sasl.password))?;
+            }
+            m => {
+                let mech = ScramMechanism::from_name(m)
+                    .ok_or_else(|| CamelError::illegal_argument(format!("Unsupported saslMechanism: {} (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)", m)))?;
+                let mut c = ScramClient::new(mech, &sasl.username, &sasl.password);
+                let server_first = step(c.client_first().as_bytes())?;
+                let client_final = c.handle_server_first(&String::from_utf8_lossy(&server_first)).map_err(|e| auth_fail(e.to_string()))?;
+                let server_final = step(client_final.as_bytes())?;
+                c.verify_server_final(&String::from_utf8_lossy(&server_final)).map_err(|e| auth_fail(e.to_string()))?;
+            }
+        }
+        Ok(())
     }
 
     fn roundtrip(conn: &mut Conn, cfg: &ClientConfig, key: i16, body: &[u8], timeout: Duration, what: &str) -> Result<Vec<u8>> {

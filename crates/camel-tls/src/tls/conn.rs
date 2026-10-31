@@ -5,6 +5,7 @@ use super::keyschedule::{cipher13, next_traffic_secret};
 use super::record::{RecordCipher, MAX_FRAGMENT};
 use super::{alert, codec, content, hs, CipherSuite, NamedGroup, TlsError, TlsResult, TlsVersion};
 use std::io::{self, Read, Write};
+use std::sync::{Arc, Mutex};
 
 const MAX_HANDSHAKE_MESSAGE: usize = 1 << 18;
 
@@ -35,6 +36,33 @@ pub(crate) struct Conn<S> {
     read_closed: bool,
     write_closed: bool,
     broken: Option<String>,
+    /// Set on the read half of a split connection: alerts and KeyUpdate replies go
+    /// through the (shared) write half.
+    peer_writer: Option<Arc<Mutex<dyn SharedWrite>>>,
+}
+
+/// Write-side operations the read half of a split connection needs.
+pub(crate) trait SharedWrite: Send {
+    fn shared_send_alert(&mut self, level: u8, desc: u8);
+    fn shared_key_update(&mut self) -> TlsResult<()>;
+    fn shared_mark_broken(&mut self, msg: &str);
+}
+
+impl<S: Read + Write + Send> SharedWrite for Conn<S> {
+    fn shared_send_alert(&mut self, level: u8, desc: u8) {
+        self.send_alert(level, desc);
+    }
+    fn shared_key_update(&mut self) -> TlsResult<()> {
+        if self.write_closed || self.broken.is_some() {
+            return Ok(());
+        }
+        self.send_key_update(false)
+    }
+    fn shared_mark_broken(&mut self, msg: &str) {
+        if self.broken.is_none() {
+            self.broken = Some(msg.to_string());
+        }
+    }
 }
 
 impl<S: Read + Write> Conn<S> {
@@ -64,7 +92,33 @@ impl<S: Read + Write> Conn<S> {
             read_closed: false,
             write_closed: false,
             broken: None,
+            peer_writer: None,
         }
+    }
+
+    /// Splits an established connection into a read half (keeping `self.io`) and a
+    /// write half using `write_io` (typically a clone of the same socket).
+    pub fn split<W: Read + Write + Send + 'static>(mut self, write_io: W) -> TlsResult<(Conn<S>, Arc<Mutex<Conn<W>>>)> {
+        if self.handshaking || self.version.is_none() {
+            return Err(TlsError::Config("cannot split a connection before the handshake completed".into()));
+        }
+        self.flush()?;
+        let mut w = Conn::new(write_io, self.is_client);
+        w.write_cipher = self.write_cipher.take();
+        w.write_secret = std::mem::take(&mut self.write_secret);
+        w.write_closed = self.write_closed;
+        w.version = self.version;
+        w.handshaking = false;
+        w.suite = self.suite;
+        w.group = self.group;
+        w.alpn = self.alpn.clone();
+        w.sni = self.sni.clone();
+        w.broken = self.broken.clone();
+        let w = Arc::new(Mutex::new(w));
+        let dynw: Arc<Mutex<dyn SharedWrite>> = w.clone();
+        self.peer_writer = Some(dynw);
+        self.write_closed = true;
+        Ok((self, w))
     }
 
     // ------------------------------------------------------------ reading
@@ -283,6 +337,12 @@ impl<S: Read + Write> Conn<S> {
 
     /// Best-effort alert transmission.
     pub fn send_alert(&mut self, level: u8, desc: u8) {
+        if let Some(w) = &self.peer_writer {
+            if let Ok(mut w) = w.lock() {
+                w.shared_send_alert(level, desc);
+            }
+            return;
+        }
         if self.queue_record(content::ALERT, &[level, desc]).is_ok() {
             let _ = self.flush();
         }
@@ -295,6 +355,11 @@ impl<S: Read + Write> Conn<S> {
                 self.send_alert(2, a);
             }
             self.broken = Some(e.to_string());
+            if let Some(w) = &self.peer_writer {
+                if let Ok(mut w) = w.lock() {
+                    w.shared_mark_broken(&e.to_string());
+                }
+            }
         }
         e
     }
@@ -364,8 +429,12 @@ impl<S: Read + Write> Conn<S> {
                     let suite = self.suite.expect("suite");
                     self.read_secret = next_traffic_secret(suite.hash(), &self.read_secret);
                     self.read_cipher = Some(cipher13(suite, &self.read_secret));
-                    if body[0] == 1 && !self.write_closed {
-                        self.send_key_update(false)?;
+                    if body[0] == 1 {
+                        if let Some(w) = &self.peer_writer {
+                            w.lock().map_err(|_| TlsError::Config("write half poisoned".into()))?.shared_key_update()?;
+                        } else if !self.write_closed {
+                            self.send_key_update(false)?;
+                        }
                     }
                     Ok(())
                 }

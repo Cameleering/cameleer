@@ -348,7 +348,7 @@ pub fn octet_string(bytes: &[u8]) -> Vec<u8> {
     tlv(TAG_OCTET_STRING, bytes)
 }
 
-/// Context-specific constructed tag [n].
+/// Context-specific constructed tag `[n]`.
 pub fn explicit(n: u8, content: &[u8]) -> Vec<u8> {
     tlv(0xa0 | n, content)
 }
