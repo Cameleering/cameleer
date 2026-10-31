@@ -129,7 +129,7 @@ pub fn parse_error_handler(camel: &CamelContext, v: &Value) -> Result<ErrorHandl
         "deadLetterChannel" => {
             let uri = cfg
                 .get("deadLetterUri")
-                .map(|u| endpoint_uri(u))
+                .map(endpoint_uri)
                 .transpose()?
                 .ok_or_else(|| dsl_error("deadLetterChannel requires 'deadLetterUri'"))?;
             dead_letter_channel(uri)

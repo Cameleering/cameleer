@@ -113,7 +113,7 @@ impl DataFormat for HexDataFormat {
     }
     fn unmarshal(&self, ex: &mut Exchange) -> Result<()> {
         let t: String = ex.message.body.to_string().chars().filter(|c| !c.is_whitespace()).collect();
-        if t.len() % 2 != 0 {
+        if !t.len().is_multiple_of(2) {
             return Err(CamelError::new("DataFormatException", "Hex string has odd length"));
         }
         let mut out = Vec::with_capacity(t.len() / 2);

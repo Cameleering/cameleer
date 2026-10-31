@@ -91,7 +91,7 @@ fn stop_eip_and_route_control() {
     assert!(t.send_body("direct:p", 3).is_err());
     ctx.start_route("r2").unwrap();
     t.send_body("direct:p", 4).unwrap();
-    assert!(ctx.remove_route("r2").unwrap() == false);
+    assert!(!ctx.remove_route("r2").unwrap());
     ctx.stop_route("r2").unwrap();
     assert!(ctx.remove_route("r2").unwrap());
 }

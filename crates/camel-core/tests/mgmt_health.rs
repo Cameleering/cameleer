@@ -81,7 +81,7 @@ fn custom_checks_and_registry() {
 
     // dynamic repository and UNKNOWN does not fail the aggregate
     reg.add_repository(Arc::new(|| {
-        vec![Arc::new(FnHealthCheck::new("dyn", || HealthCheckResult::unknown())) as Arc<dyn camel_core::health::HealthCheck>]
+        vec![Arc::new(FnHealthCheck::new("dyn", HealthCheckResult::unknown)) as Arc<dyn camel_core::health::HealthCheck>]
     }));
     let r = ctx.health();
     assert!(r.is_up());

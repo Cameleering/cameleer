@@ -162,7 +162,7 @@ impl Processor for LogProducer {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         let n = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
         if let Some(g) = self.group_size {
-            if g > 0 && n % g == 0 {
+            if g > 0 && n.is_multiple_of(g) {
                 crate::log::log(self.level, &self.logger, format!("Received: {} new messages, with total {} so far.", g, n));
             }
             return Ok(());
@@ -201,7 +201,7 @@ pub fn mask_secrets(s: &str) -> String {
             let bytes: Vec<char> = out[start..].chars().collect();
             if bytes.first() == Some(&'=') || bytes.first() == Some(&':') {
                 let vstart = start + 1;
-                let vend = out[vstart..].find(|c: char| c == ',' || c == '}' || c == '&' || c == ' ' || c == ']').map(|i| vstart + i).unwrap_or(out.len());
+                let vend = out[vstart..].find([',', '}', '&', ' ', ']']).map(|i| vstart + i).unwrap_or(out.len());
                 out.replace_range(vstart..vend, "xxxxxx");
                 search_from = vstart + 6;
             } else {

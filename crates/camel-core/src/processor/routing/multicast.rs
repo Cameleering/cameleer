@@ -51,7 +51,7 @@ impl MulticastEngine {
     pub fn create(rc: &RouteContext, s: &MulticastSettings, name: &str, default_latest: bool) -> Result<Self> {
         let strategy = match &s.strategy {
             Some(sd) => Some(sd.resolve(&rc.context)?),
-            None if default_latest => Some(Arc::new(UseLatestAggregationStrategy::default()) as Arc<dyn AggregationStrategy>),
+            None if default_latest => Some(Arc::new(UseLatestAggregationStrategy) as Arc<dyn AggregationStrategy>),
             None => None,
         };
         let pool = if s.parallel_processing {

@@ -404,6 +404,19 @@ pub fn ant_match(pattern: &str, path: &str) -> bool {
     rec(&p, &s)
 }
 
+/// Create a [`Main`] with all available components and route loaders registered.
+pub fn new_main() -> Main {
+    let mut main = Main::new();
+    camel_http::register(main.context());
+    // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
+    yaml_rest::register();
+    for ext in ["yaml", "yml"] {
+        main.add_route_loader(ext, |ctx, text, _path| camel_yaml::add_routes_from_yaml(ctx, text));
+    }
+    main.add_route_loader("xml", |ctx, text, _path| camel_yaml::add_routes_from_xml(ctx, text));
+    main
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,17 +452,4 @@ mod tests {
         assert_eq!(main.context().resolve_placeholders("{{greeting}}").unwrap(), "hi");
         assert_eq!(main.context().status(), ServiceStatus::Stopped);
     }
-}
-
-/// Create a [`Main`] with all available components and route loaders registered.
-pub fn new_main() -> Main {
-    let mut main = Main::new();
-    camel_http::register(main.context());
-    // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
-    yaml_rest::register();
-    for ext in ["yaml", "yml"] {
-        main.add_route_loader(ext, |ctx, text, _path| camel_yaml::add_routes_from_yaml(ctx, text));
-    }
-    main.add_route_loader("xml", |ctx, text, _path| camel_yaml::add_routes_from_xml(ctx, text));
-    main
 }

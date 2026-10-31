@@ -568,7 +568,7 @@ pub fn zlib_compress(data: &[u8], level: u32) -> Vec<u8> {
 
 /// Decompress zlib data (raw DEFLATE is accepted as a fallback).
 pub fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>> {
-    if data.len() >= 2 && data[0] & 0x0f == 8 && ((data[0] as u16) << 8 | data[1] as u16) % 31 == 0 {
+    if data.len() >= 2 && data[0] & 0x0f == 8 && ((data[0] as u16) << 8 | data[1] as u16).is_multiple_of(31) {
         if data[1] & 0x20 != 0 {
             return Err(data_err("zlib preset dictionaries are not supported"));
         }

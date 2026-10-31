@@ -214,10 +214,7 @@ impl<'a> Parser<'a> {
                     match self.parse_number() {
                         Some(n) => {
                             let max = if self.eat(',') {
-                                match self.parse_number() {
-                                    Some(m) => Some(m),
-                                    None => None,
-                                }
+                                self.parse_number().map(|m| m)
                             } else {
                                 Some(n)
                             };

@@ -319,7 +319,7 @@ impl ValueBuilder {
     }
 
     pub fn is_equal_to(&self, v: impl Into<Operand>) -> ValueBuilder {
-        self.compare(v, |a, b| values_equal(a, b))
+        self.compare(v, values_equal)
     }
     pub fn is_equal_to_ignore_case(&self, v: impl Into<Operand>) -> ValueBuilder {
         self.compare(v, |a, b| a.to_string().eq_ignore_ascii_case(&b.to_string()))

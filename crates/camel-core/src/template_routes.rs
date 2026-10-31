@@ -194,7 +194,7 @@ impl CamelContext {
             .ok_or_else(|| CamelError::illegal_argument(format!("Cannot find RouteTemplate with id {}", template_id)))?;
         let values = t.resolve_parameters(&params)?;
         let route_id = if route_id.is_empty() { self.generate_template_route_id() } else { route_id.to_string() };
-        if self.route_ids().iter().any(|r| *r == route_id) {
+        if self.route_ids().contains(&route_id) {
             return Err(CamelError::new(crate::error::kinds::FAILED_TO_CREATE_ROUTE, format!("Route with id {} already exists", route_id)));
         }
         let tp = TemplateParams { values, route_id: route_id.clone(), template_id: template_id.to_string() };

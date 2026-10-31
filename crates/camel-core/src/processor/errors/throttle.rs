@@ -176,7 +176,7 @@ impl ProcessorDefinition for SampleDefinition {
             return Ok(Arc::new(move |ex: &mut Exchange| {
                 let mut c = counter.lock().unwrap();
                 *c += 1;
-                if *c % n != 0 {
+                if !(*c).is_multiple_of(n) {
                     ex.set_route_stop(true);
                 }
                 Ok(())

@@ -1955,7 +1955,7 @@ fn call(name: &str, args: &[Expr], ex: &Exchange) -> Result<Value> {
         },
         "list" => Value::Array(args.iter().map(|a| a.eval(ex)).collect::<Result<Vec<_>>>()?),
         "map" => {
-            if args.len() % 2 != 0 {
+            if !args.len().is_multiple_of(2) {
                 return Err(CamelError::illegal_argument("Function map(k1,v1,k2,v2...) requires an even number of arguments"));
             }
             let mut m = BTreeMap::new();

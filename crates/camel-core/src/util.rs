@@ -18,11 +18,10 @@ pub fn matches_pattern(name: &str, pattern: &str) -> bool {
             return true;
         }
     }
-    if pattern.contains('*') {
-        if wildcard_match(&name.to_ascii_lowercase(), &pattern.to_ascii_lowercase()) {
+    if pattern.contains('*')
+        && wildcard_match(&name.to_ascii_lowercase(), &pattern.to_ascii_lowercase()) {
             return true;
         }
-    }
     match crate::regex::Regex::new(pattern) {
         Ok(re) => re.is_full_match(name),
         Err(_) => false,

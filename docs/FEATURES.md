@@ -4,8 +4,7 @@ This page compares rust-camel with [Apache Camel 4](https://camel.apache.org/). 
 by reading the code and the conformance test suite (`crates/camel-core/tests/conformance_*.rs`,
 `crates/camel-http/tests/conformance_http.rs`), not from the wishlist.
 
-Legend: ✅ implemented, ⚠️ partial (see notes), ❌ not implemented, 🚧 in progress (other work
-is under way; status not assessed here).
+Legend: ✅ implemented, ⚠️ partial (see notes), ❌ not implemented.
 
 rust-camel uses only the Rust standard library, so anything that needs TLS, a database driver,
 a broker client or a JVM library is out of scope unless it can be written from scratch.
@@ -59,8 +58,8 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | Intercept, interceptFrom, interceptSendToEndpoint (skip, afterUri, onWhen) | ✅ | |
 | Process / bean / method | ✅ | Processors are closures or registry beans. There is no reflection-based bean binding. |
 | Saga, Kamelets, Script (groovy/js), Transformer/Validator (data types), Service Call | ❌ | |
-| Route templates | 🚧 | Being built by others (`template_routes.rs`, YAML templates). |
-| Message history, tracer, route supervising | 🚧 | Being built by others (`history.rs`, `tracer.rs`, `supervising.rs`). |
+| Route templates | ✅ | Rust DSL (`add_route_template`, `TemplatedRouteBuilder`) and YAML/XML (`routeTemplate`, `templatedRoute`, `{{param:default}}`, `prefixId`, template beans via registered bean factories). No Kamelets. |
+| Message history, tracer, route supervising | ✅ | `set_message_history` (also printed in the exhausted-failure log), `set_tracing` + backlog tracer, supervising route controller with back-off. |
 
 ## Error handling
 
@@ -126,19 +125,19 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | DSL | Status | Notes |
 |---|---|---|
 | Rust fluent DSL (equivalent of the Java DSL) | ✅ | `end()` with no open block is tolerated, as in the Java DSL. |
-| YAML DSL | 🚧 | Implemented in `camel-yaml`. EIP coverage is being extended by others, so it is not assessed here. |
-| XML DSL | 🚧 | Minimal loader in `camel-yaml/src/xml.rs` that reuses the YAML step handlers. Coverage follows the YAML DSL. |
+| YAML DSL | ✅ | All EIPs of the Rust DSL incl. marshal/unmarshal, `routeConfiguration` (onException, onCompletion, intercepts, errorHandler), top-level `errorHandler`, beans via registered factories, line/column error messages. Throttle needs a constant maximum; no Kamelets; options the core does not model (e.g. `executorService`) are ignored. |
+| XML DSL | ✅ | `camel-yaml/src/xml.rs` converts XML to the YAML model and reuses the YAML step handlers, so coverage follows the YAML DSL. |
 | REST DSL (Rust) | ✅ | See the rest component. |
-| REST DSL in YAML | 🚧 | In progress (`camel-main/src/yaml_rest.rs`). |
+| REST DSL in YAML | ✅ | `rest`/`restConfiguration` in YAML and XML (registered by `camel-main`), OpenAPI document. A `restConfiguration` loaded in a later file than its `rest` is not applied. |
 
 ## Management and tooling
 
 | Feature | Status | Notes |
 |---|---|---|
 | Route statistics, in-flight repository | ✅ | `RouteStats`, `inflight_count`, controlbus `stats`. |
-| JMX-style management, health checks, dev console | 🚧 | In progress (`management.rs`, `health.rs`, `camel-main/src/console.rs`). |
+| JMX-style management, health checks, dev console | ✅ | `managed_context()` (route/processor statistics, operations, JSON + Prometheus export), health check registry (context/routes/consumers, readiness/liveness), dev console `/q/health`, `/q/metrics`, `/q/dev/*` with route start/stop/suspend/resume. No JMX (not applicable). |
 | `camel-main` runner (`application.properties`, route discovery, `duration-max-*`) | ✅ | |
-| CLI `camel run / catalog / version / help` | ⚠️ | A small subset of the Camel JBang CLI (no `init`, `export`, `get` or `trace`). |
+| CLI `camel run / get / catalog / version / help` | ⚠️ | Subset of Camel JBang: `run` (YAML/XML files, properties, `--console`, `--trace`, `--max-*`), `get routes/context/health`. No `init`, `export`, `bind`. |
 | Spring Boot / Quarkus integration, Camel K | ❌ | Not applicable to Rust. |
 
 ## Known deviations found by the conformance suite
