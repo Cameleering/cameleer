@@ -17,8 +17,8 @@ fn async_delay_releases_the_seda_consumer() {
     let ctx = CamelContext::new();
     ctx.add_routes(|b| {
         // delay is asyncDelayed by default, as in Camel
-        b.from("seda:async").to("mock:a-before").delay(constant(400)).to("mock:a-after");
-        b.from("seda:sync").to("mock:s-before").delay(constant(400)).sync_delayed().to("mock:s-after");
+        b.from("seda:async").to("mock:a-before").delay(constant(1000)).to("mock:a-after");
+        b.from("seda:sync").to("mock:s-before").delay(constant(1000)).sync_delayed().to("mock:s-after");
     })
     .unwrap();
     ctx.start().unwrap();
@@ -29,14 +29,14 @@ fn async_delay_releases_the_seda_consumer() {
         t.send_body("seda:sync", i).unwrap();
     }
     // the single seda consumer took all three exchanges without waiting for the delays
-    assert!(mock(&ctx, "mock:a-before").wait_for_messages(3, Duration::from_millis(300)), "{:?}", start.elapsed());
+    assert!(mock(&ctx, "mock:a-before").wait_for_messages(3, Duration::from_millis(900)), "{:?}", start.elapsed());
     // the synchronous delay blocks the consumer: only the first exchange got through
     assert_eq!(mock(&ctx, "mock:s-before").received_counter(), 1);
     assert!(mock(&ctx, "mock:a-after").wait_for_messages(3, Duration::from_secs(5)));
-    // all three delays overlapped (about 400ms, not 1200ms)
-    assert!(start.elapsed() < Duration::from_millis(1000), "{:?}", start.elapsed());
+    // all three delays overlapped (about 1s, not 3s)
+    assert!(start.elapsed() < Duration::from_millis(2500), "{:?}", start.elapsed());
     assert!(mock(&ctx, "mock:s-after").wait_for_messages(3, Duration::from_secs(5)));
-    assert!(start.elapsed() >= Duration::from_millis(1200), "{:?}", start.elapsed());
+    assert!(start.elapsed() >= Duration::from_millis(3000), "{:?}", start.elapsed());
     // graceful stop waits for released threads
     ctx.stop().unwrap();
 }
