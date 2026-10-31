@@ -419,6 +419,7 @@ pub fn new_main() -> Main {
     camel_amqp::register(main.context());
     camel_grpc::register(main.context()); // grpc component + protobuf data format
     camel_cloud::register(main.context()); // aws2-s3/sqs/sns/ddb/lambda, azure-storage-blob/queue, google-storage/pubsub
+    camel_datastores::register(main.context()); // spring-redis, mongodb, elasticsearch/opensearch, cql, couchdb
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {
