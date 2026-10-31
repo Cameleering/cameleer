@@ -290,16 +290,16 @@ fn s_client_vs_ours(server_cfg: TlsServerConfig, ca_pem: &str, name: &str, extra
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("spawn openssl s_client");
     watchdog(&child, 60);
-    {
-        let mut stdin = child.stdin.take().unwrap();
-        stdin.write_all(b"hello\n").unwrap();
-        // keep stdin open briefly so s_client sends the line after the handshake
-        thread::sleep(Duration::from_millis(300));
-    }
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(b"hello\n").unwrap();
+    // Keep stdin open until our server has read the line and answered: closing it
+    // early (e.g. after a fixed sleep) makes s_client quit before the handshake
+    // completes on a loaded machine. Our server sends close_notify, so s_client exits.
+    let srv = server.join().unwrap();
+    drop(stdin);
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    let srv = server.join().unwrap();
     assert!(srv.is_ok(), "server error: {:?}\ns_client stderr:\n{stderr}", srv);
     assert!(stdout.contains("WORLD:hello"), "s_client did not receive our reply.\nstdout:\n{stdout}\nstderr:\n{stderr}");
     assert!(stderr.contains("Verification: OK"), "s_client verification failed:\n{stderr}");

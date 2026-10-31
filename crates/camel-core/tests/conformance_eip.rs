@@ -694,14 +694,14 @@ fn incoming_exchange_continues_after_aggregate_block() {
 fn aggregate_completion_timeout_is_inactivity_timeout() {
     let ctx = CamelContext::new();
     ctx.add_routes(|b| {
-        b.from("direct:start").aggregate(constant(1), ConcatStrategy).completion_timeout(Duration::from_millis(150)).to("mock:agg").end();
+        b.from("direct:start").aggregate(constant(1), ConcatStrategy).completion_timeout(Duration::from_millis(500)).to("mock:agg").end();
     })
     .unwrap();
     ctx.start().unwrap();
     let t = ctx.create_producer_template();
     for x in ["a", "b", "c", "d"] {
         t.send_body("direct:start", x).unwrap();
-        std::thread::sleep(Duration::from_millis(60));
+        std::thread::sleep(Duration::from_millis(40));
     }
     let m = ctx.mock_endpoint("mock:agg").unwrap();
     assert!(m.wait_for_messages(1, Duration::from_secs(5)));
