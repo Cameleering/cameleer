@@ -1,0 +1,59 @@
+# REST API with JSON binding, a content-based router and error handling.
+# Run:  cargo run -p camel-main --bin camel -- run examples/rest-api.camel.yaml
+# Try:  curl localhost:8080/api/orders/42
+#       curl -XPOST -H 'Content-Type: application/json' -d '{"item":"camel","qty":3}' localhost:8080/api/orders
+- restConfiguration:
+    component: platform-http
+    port: 8080
+    contextPath: /api
+    bindingMode: json
+- rest:
+    path: /orders
+    get:
+      - path: /{id}
+        to: direct:getOrder
+    post:
+      - to: direct:createOrder
+- routeConfiguration:
+    onException:
+      - onException:
+          exception:
+            - IllegalArgumentException
+          handled:
+            constant: true
+          steps:
+            - setHeader:
+                name: CamelHttpResponseCode
+                constant: 400
+            - setBody:
+                simple: "${exception.message}"
+- route:
+    id: getOrder
+    from:
+      uri: direct:getOrder
+      steps:
+        - setBody:
+            simple: '{"id": "${header.id}", "status": "shipped"}'
+        - unmarshal:
+            json: {}
+- route:
+    id: createOrder
+    from:
+      uri: direct:createOrder
+      steps:
+        - choice:
+            when:
+              - simple: "${body[qty]} > 10"
+                steps:
+                  - throwException:
+                      exceptionType: java.lang.IllegalArgumentException
+                      message: "Too many items: ${body[qty]}"
+            otherwise:
+              steps:
+                - setHeader:
+                    name: CamelHttpResponseCode
+                    constant: 201
+                - setBody:
+                    simple: '{"created": true, "item": "${body[item]}"}'
+                - unmarshal:
+                    json: {}
