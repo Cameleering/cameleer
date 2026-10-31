@@ -14,6 +14,7 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 | `crates/camel-protocols` | ftp, mail (smtp/pop3/imap), websocket, mllp/hl7, syslog — plus embedded test servers in `testing` |
 | `crates/camel-main` | `camel` CLI binary, application.properties, route loading, dev console |
 | `crates/camel-tls` | from-scratch TLS 1.3/1.2 client+server (`TlsStream<S: Read+Write>`), crypto primitives, X.509/PEM/PKCS#8, trust store, self-signed cert generator; no deps |
+| `crates/camel-ssh` | from-scratch SSH-2 client + test server (curve25519/ECDH KEX, Ed25519/ECDSA/RSA keys, ChaCha20-Poly1305/AES-GCM/AES-CTR, strict KEX, rekeying, known_hosts), SFTP v3 client/server, `sftp` and `ssh` components; embedded server in `testing` |
 
 ## Key concepts (camel-core)
 
