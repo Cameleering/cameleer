@@ -488,7 +488,10 @@ impl ErrorHandlerRuntime {
                         (None, None) => "null".to_string(),
                     }
                 );
-                if stack {
+                if !crate::history::message_history(ex).is_empty() {
+                    m.push_str("\n\n");
+                    m.push_str(&crate::history::format_message_history(ex));
+                } else if stack {
                     m.push_str(&format!("\n\nStacktrace\n---------------------------------------------------------------------------------------------------------------------------------------\n{}", format_chain(&err)));
                 }
                 m

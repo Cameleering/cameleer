@@ -94,7 +94,7 @@ fn tcp_inonly_producer_and_request_timeout() {
     ctx.start().unwrap();
     let port = camel_http::local_port(&ctx, uri).unwrap();
     let mock = ctx.mock_endpoint("mock:received").unwrap();
-    mock.expected_bodies_received(vec!["one", "two"]);
+    mock.expected_bodies_received_in_any_order(vec!["one", "two"]); // separate connections: no ordering guarantee
     let t = ctx.create_producer_template();
     let target = format!("netty:tcp://127.0.0.1:{}?textline=true&sync=false", port);
     t.send_body(&target, "one").unwrap();

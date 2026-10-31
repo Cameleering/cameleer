@@ -170,3 +170,28 @@ fn message_history_formatter_on_failure() {
     assert!(format_message_history(&ex).starts_with("Message History (message history is disabled)"));
     ctx.stop().unwrap();
 }
+
+#[test]
+fn exhausted_failure_log_includes_message_history() {
+    use std::sync::{Arc, Mutex};
+    let captured: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let c = captured.clone();
+    camel_core::log::add_sink(move |r| {
+        if r.logger == "DefaultErrorHandler" {
+            c.lock().unwrap().push(r.message.clone());
+        }
+    });
+    let ctx = CamelContext::new();
+    ctx.set_message_history(true);
+    ctx.add_routes(|b| {
+        b.from("direct:mh-fail").route_id("mhFail").set_header("x", constant(1)).process(|_: &mut Exchange| Err(CamelError::illegal_argument("kaboom-mh")));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    assert!(ctx.create_producer_template().send_body("direct:mh-fail", "x").is_err());
+    let logs = captured.lock().unwrap().clone();
+    let msg = logs.iter().find(|m| m.contains("kaboom-mh")).expect("exhausted log");
+    assert!(msg.contains("Message History"), "{}", msg);
+    assert!(msg.contains("mhFail"), "{}", msg);
+    ctx.stop().unwrap();
+}
