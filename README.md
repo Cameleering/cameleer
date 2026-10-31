@@ -13,15 +13,15 @@ use camel_core::prelude::*;
 fn main() -> Result<()> {
     let ctx = CamelContext::new();
     ctx.add_routes(|b| {
-        b.from("timer:hello?period=1000")
+        b.from("timer:hello?period=200")
             .route_id("hello")
-            .set_body(simple("Hello from rust-camel at ${date:now:HH:mm:ss}"))
-            .filter(header("CamelTimerCounter").is_greater_than(2))
+            .set_body(simple("Hello from rust-camel #${exchangeProperty.CamelTimerCounter} at ${date:now:HH:mm:ss}"))
+            .filter(simple("${exchangeProperty.CamelTimerCounter} > 2"))
                 .to("log:greetings")
             .end();
     })?;
     ctx.start()?;
-    std::thread::sleep(std::time::Duration::from_secs(5));
+    std::thread::sleep(std::time::Duration::from_millis(2000));
     ctx.stop()
 }
 ```

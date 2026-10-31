@@ -27,6 +27,7 @@ use crate::context::CamelContext;
 pub mod bean;
 pub mod browse;
 pub mod controlbus;
+pub mod dataformat;
 pub mod dataset;
 pub mod direct;
 pub mod exec;
@@ -60,6 +61,7 @@ pub fn register_builtin_components(ctx: &CamelContext) {
     ctx.add_component_factory("browse", || Arc::new(browse::BrowseComponent::default()));
     ctx.add_component_factory("exec", || Arc::new(exec::ExecComponent));
     ctx.add_component_factory("stream", || Arc::new(stream::StreamComponent));
+    ctx.add_component_factory("dataformat", || Arc::new(dataformat::DataFormatComponent));
     ctx.add_component_factory("language", || Arc::new(language::LanguageComponent));
     ctx.add_component_factory("dataset", || Arc::new(dataset::DataSetComponent::default()));
     ctx.add_component_factory("dataset-test", || Arc::new(dataset::DataSetTestComponent::default()));
