@@ -5,6 +5,7 @@
 //! starts the context and keeps running until stopped (signal, max duration,
 //! max messages or idle timeout).
 
+pub mod console;
 pub mod properties;
 pub mod signal;
 
@@ -42,6 +43,7 @@ pub struct Main {
     loaders: BTreeMap<String, RouteLoader>,
     route_files: Vec<PathBuf>,
     configurers: Vec<Box<dyn FnOnce(&CamelContext) -> Result<()>>>,
+    console: Option<console::DevConsoleServer>,
 }
 
 struct CompletedCounter {
@@ -79,6 +81,7 @@ impl Main {
             loaders: BTreeMap::new(),
             route_files: Vec::new(),
             configurers: Vec::new(),
+            console: None,
         }
     }
 
@@ -205,6 +208,7 @@ impl Main {
         if let Some(t) = self.config.shutdown_timeout {
             self.ctx.set_shutdown_timeout(t);
         }
+        self.apply_management_properties()?;
         for c in std::mem::take(&mut self.configurers) {
             c(&self.ctx)?;
         }
@@ -212,7 +216,70 @@ impl Main {
             camel_core::camel_info!("Main", "Loading routes from: {}", f.display());
             self.load_route_file(&f)?;
         }
-        self.ctx.start()
+        self.ctx.start()?;
+        for line in console::startup_summary(&self.ctx) {
+            camel_core::camel_info!("Main", "{}", line);
+        }
+        let cfg = console::ConsoleConfig::from_properties(&self.properties)?;
+        if cfg.is_active() && self.console.is_none() {
+            match console::DevConsoleServer::start(&self.ctx, &cfg) {
+                Ok(c) => self.console = Some(c),
+                Err(e) => {
+                    let _ = self.ctx.stop();
+                    return Err(e);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Tracing, message history and route controller options
+    /// (`camel.main.tracing`, `camel.main.backlog-tracing`, `camel.main.message-history`,
+    /// `camel.main.route-controller-supervise-enabled` / `camel.routecontroller.enabled`,
+    /// `...-initial-delay`, `...-back-off-delay`, `...-back-off-max-attempts`).
+    fn apply_management_properties(&mut self) -> Result<()> {
+        let flag = |k: &str| console::prop(&self.properties, k).map(|v| v.trim().eq_ignore_ascii_case("true"));
+        if let Some(t) = flag("camel.main.tracing") {
+            self.ctx.set_tracing(t);
+        }
+        if let Some(t) = flag("camel.main.backlog-tracing") {
+            self.ctx.set_backlog_tracing(t);
+        }
+        if let Some(t) = flag("camel.main.message-history") {
+            self.ctx.set_message_history(t);
+        }
+        if flag("camel.main.route-controller-supervise-enabled").or_else(|| flag("camel.routecontroller.enabled")).unwrap_or(false) {
+            let dur = |k: &str| -> Result<Option<Duration>> {
+                let v = console::prop(&self.properties, &format!("camel.main.route-controller-{}", k))
+                    .or_else(|| console::prop(&self.properties, &format!("camel.routecontroller.{}", k)));
+                v.map(|v| camel_core::util::parse_duration(v.trim())).transpose()
+            };
+            let mut c = camel_core::supervising::SupervisingRouteControllerConfig::default();
+            if let Some(d) = dur("initial-delay")? {
+                c.initial_delay = d;
+            }
+            if let Some(d) = dur("back-off-delay")? {
+                c.back_off_delay = d;
+            }
+            let attempts = console::prop(&self.properties, "camel.main.route-controller-back-off-max-attempts")
+                .or_else(|| console::prop(&self.properties, "camel.routecontroller.back-off-max-attempts"));
+            if let Some(a) = attempts {
+                c.back_off_max_attempts = a.trim().parse().map_err(|_| CamelError::illegal_argument(format!("Invalid back-off-max-attempts: {}", a)))?;
+            }
+            self.ctx.enable_supervising_route_controller(c);
+        }
+        Ok(())
+    }
+
+    /// Port of the management server (`/q/health`, `/q/metrics`, `/q/dev`), if running.
+    pub fn console_port(&self) -> Option<u16> {
+        self.console.as_ref().map(|c| c.port())
+    }
+
+    fn stop_console(&self) {
+        if let Some(c) = &self.console {
+            c.stop();
+        }
     }
 
     /// Start and block until a stop condition happens, then stop the context.
@@ -250,10 +317,12 @@ impl Main {
             std::thread::sleep(Duration::from_millis(20));
         }
         camel_core::camel_info!("Main", "Stopping CamelContext: {}", reason);
+        self.stop_console();
         self.ctx.stop()
     }
 
     pub fn stop(&self) -> Result<()> {
+        self.stop_console();
         self.ctx.stop()
     }
 }
