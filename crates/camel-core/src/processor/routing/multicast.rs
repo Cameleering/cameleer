@@ -95,7 +95,14 @@ impl MulticastEngine {
     }
 
     /// Process the `(sub-exchange, processor)` pairs and merge the result into `original`.
-    pub fn execute(&self, original: &mut Exchange, pairs: Vec<(Exchange, Arc<dyn Processor>)>) -> Result<()> {
+    pub fn execute(&self, original: &mut Exchange, mut pairs: Vec<(Exchange, Arc<dyn Processor>)>) -> Result<()> {
+        if !self.share_unit_of_work {
+            // each sub-exchange is a new unit of work: its "original message" (useOriginalMessage)
+            // is the sub-exchange message itself (e.g. the split part)
+            for (sub, _) in pairs.iter_mut() {
+                crate::processor::errors::begin_child_unit_of_work(sub);
+            }
+        }
         let saved = SavedProperties::save(original, RESTORED_PROPS);
         let mut agg = Aggregation { strategy: self.strategy.clone(), result: None, first_error: None };
         let outcome = if self.parallel { self.run_parallel(original, pairs, &mut agg) } else { self.run_sequential(original, pairs, &mut agg) };

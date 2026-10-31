@@ -547,6 +547,11 @@ impl CamelContext {
         *self.inner.shutdown_timeout.write().unwrap() = d;
     }
 
+    /// Timeout for graceful shutdown of routes (default 45 seconds, as in Camel).
+    pub fn shutdown_timeout(&self) -> Duration {
+        *self.inner.shutdown_timeout.read().unwrap()
+    }
+
     // --- components / endpoints ---
 
     /// Register a component instance under a scheme.

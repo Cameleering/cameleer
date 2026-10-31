@@ -23,7 +23,7 @@ use super::intercept::{uri_matches, InterceptDefinition, InterceptKind, Intercep
 use super::on_completion::{OnCompletionDefinition, OnCompletionRuntime};
 use super::on_exception::OnExceptionDefinition;
 use super::route_policy::RoutePolicy;
-use super::{matches_opt, snapshot_message, ORIGINAL_MESSAGE, TRY_ROUTE_BLOCK};
+use super::{matches_opt, snapshot_message, ALLOW_USE_ORIGINAL_MESSAGE, ORIGINAL_MESSAGE, TRY_ROUTE_BLOCK};
 
 /// Route extension key: route-level [`ErrorHandlerBuilder`].
 pub const ROUTE_ERROR_HANDLER: &str = "camel.errors.errorHandler";
@@ -243,6 +243,9 @@ impl RouteFactoryHook for ErrorsRouteHook {
         drop(guard);
 
         let needs_original = eh.as_ref().map(|e| e.needs_original()).unwrap_or(false);
+        if needs_original {
+            rc.context.set_global_option(ALLOW_USE_ORIGINAL_MESSAGE, "true");
+        }
         let rt = RouteErrorsRuntime {
             eh,
             intercepts: Arc::new(intercepts),
@@ -319,14 +322,15 @@ impl Processor for RouteWrapper {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         // a called route has its own error handler scope (doTry of the caller does not apply)
         let saved_try = ex.remove_property(TRY_ROUTE_BLOCK);
-        let saved_orig = if self.rt.needs_original {
-            let prev = ex.remove_property(ORIGINAL_MESSAGE);
+        // The original message belongs to the unit of work, which spans routes connected
+        // with direct/seda: only the first route of the unit of work takes the snapshot.
+        let set_orig = !ex.properties.contains_key(ORIGINAL_MESSAGE)
+            && (self.rt.needs_original
+                || ex.context.as_ref().map(|c| c.global_option(ALLOW_USE_ORIGINAL_MESSAGE).is_some()).unwrap_or(false));
+        if set_orig {
             let snap = snapshot_message(ex);
             ex.set_property(ORIGINAL_MESSAGE, snap);
-            Some(prev)
-        } else {
-            None
-        };
+        }
         for p in &self.rt.route_policies {
             p.on_exchange_begin(&self.route_id, ex);
         }
@@ -368,11 +372,8 @@ impl Processor for RouteWrapper {
         for p in self.rt.route_policies.iter().rev() {
             p.on_exchange_done(&self.route_id, ex);
         }
-        if let Some(prev) = saved_orig {
+        if set_orig {
             ex.remove_property(ORIGINAL_MESSAGE);
-            if let Some(v) = prev {
-                ex.set_property(ORIGINAL_MESSAGE, v);
-            }
         }
         if let Some(v) = saved_try {
             ex.set_property(TRY_ROUTE_BLOCK, v);

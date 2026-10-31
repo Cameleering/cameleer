@@ -597,6 +597,18 @@ impl Service for SedaConsumer {
         if !*started {
             return Ok(());
         }
+        // Graceful shutdown (Camel's ShutdownAware seda consumer): pending exchanges in the
+        // queue are completed before the consumer stops, unless purgeWhenStopping=true.
+        if !self.config.purge_when_stopping && !self.threads.is_current_thread() {
+            let timeout = self.ctx.upgrade().map(|c| c.shutdown_timeout()).unwrap_or(Duration::from_secs(45));
+            let deadline = std::time::Instant::now() + timeout;
+            while self.queue.size() > 0 && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            if self.queue.size() > 0 {
+                crate::camel_warn!("seda", "Timeout waiting for {} pending exchanges on {} to complete", self.queue.size(), self.uri);
+            }
+        }
         self.threads.flag().stop();
         self.queue.wake_all();
         self.threads.stop();

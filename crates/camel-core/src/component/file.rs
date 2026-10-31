@@ -186,6 +186,25 @@ fn file_function(f: &str, info: &FileInfo) -> Option<String> {
     })
 }
 
+/// Whether `f` (the part after `file:`) is a known file language function.
+pub fn is_file_function(f: &str) -> bool {
+    let info = FileInfo::from_headers(&Exchange::default());
+    file_function(f, &info).is_some()
+}
+
+/// Evaluate a file language function (`name`, `name.noext`, `onlyname`, `ext`, `parent`,
+/// `length`, `modified`...) from the `CamelFile*` headers of the exchange, as the Simple
+/// language does for `${file:...}`. Size and modification time are returned as numbers.
+pub fn file_function_value(f: &str, ex: &Exchange) -> Option<Value> {
+    let info = FileInfo::from_headers(ex);
+    match f {
+        "length" | "size" => Some(Value::Int(info.length as i64)),
+        "modified" => Some(Value::Int(info.modified)),
+        "onlyname" if ex.header(headers::FILE_NAME_ONLY).is_some() => ex.header(headers::FILE_NAME_ONLY).map(|v| Value::String(v.to_string())),
+        _ => file_function(f, &info).map(Value::String),
+    }
+}
+
 /// Evaluate a file-language expression against an exchange (and optional file).
 pub fn evaluate_file_expression(text: &str, ex: &Exchange, info: Option<&FileInfo>) -> Result<String> {
     if !text.contains("${") && !text.contains("$simple{") {
