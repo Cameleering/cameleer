@@ -174,6 +174,9 @@ pub struct RouteDefinition {
     pub outputs: Vec<Box<dyn ProcessorDefinition>>,
     /// Open blocks while building with the fluent DSL.
     pub(crate) stack: Vec<Box<dyn ProcessorDefinition>>,
+    /// Most recently added child of the innermost open block, kept aside until the
+    /// next builder operation so that `.id()` can still reach it.
+    pub(crate) pending: Option<Box<dyn ProcessorDefinition>>,
     pub auto_startup: bool,
     pub startup_order: Option<i32>,
     /// Route-scoped extension data (error handler definitions, onException clauses,
@@ -200,6 +203,7 @@ impl RouteDefinition {
             input: input.into(),
             outputs: Vec::new(),
             stack: Vec::new(),
+            pending: None,
             auto_startup: true,
             startup_order: None,
             extensions: BTreeMap::new(),
@@ -213,26 +217,41 @@ impl RouteDefinition {
         format!("[{}]", parts.join(", "))
     }
 
+    /// Move the pending child (if any) into the innermost open block.
+    pub(crate) fn flush_pending(&mut self) {
+        if let Some(def) = self.pending.take() {
+            match self.stack.last_mut() {
+                Some(top) => {
+                    if let Err(e) = top.add_output(def) {
+                        self.build_errors.push(e);
+                    }
+                }
+                None => self.outputs.push(def),
+            }
+        }
+    }
+
     /// Add a processor definition at the current position (inside the innermost open block).
     pub fn add(&mut self, def: Box<dyn ProcessorDefinition>) -> &mut Self {
-        if let Some(top) = self.stack.last_mut() {
-            if let Err(e) = top.add_output(def) {
-                self.build_errors.push(e);
-            }
-        } else {
+        self.flush_pending();
+        if self.stack.is_empty() {
             self.outputs.push(def);
+        } else {
+            self.pending = Some(def);
         }
         self
     }
 
     /// Open a block: the definition becomes the target of subsequent `add` calls until `end()`.
     pub fn push_block(&mut self, def: Box<dyn ProcessorDefinition>) -> &mut Self {
+        self.flush_pending();
         self.stack.push(def);
         self
     }
 
     /// Close the innermost open block.
     pub fn end(&mut self) -> &mut Self {
+        self.flush_pending();
         match self.stack.pop() {
             Some(def) => {
                 self.add(def);
@@ -244,12 +263,14 @@ impl RouteDefinition {
 
     /// Mutable access to the innermost open block, downcast to `T`.
     pub fn current_block_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.flush_pending();
         self.stack.last_mut().and_then(|b| b.as_any_mut().downcast_mut::<T>())
     }
 
     /// Find the innermost open block of type `T`, closing blocks above it.
     /// Used e.g. by `when()` after nested blocks inside a previous `when`.
     pub fn unwind_to_block<T: 'static>(&mut self) -> Option<&mut T> {
+        self.flush_pending();
         let pos = self.stack.iter().rposition(|b| b.as_any().is::<T>())?;
         while self.stack.len() > pos + 1 {
             self.end();
@@ -257,10 +278,12 @@ impl RouteDefinition {
         self.current_block_mut::<T>()
     }
 
-    /// The last added definition at the current level (for `.id()`).
+    /// The most recently added definition (for `.id()`): the pending child of an open
+    /// block, else the open block itself, else the last top-level output.
     pub fn last_mut(&mut self) -> Option<&mut Box<dyn ProcessorDefinition>> {
-        // We cannot reach into a block's outputs generically for mutation, so ids are
-        // applied to the most recently added top-level item or the open block itself.
+        if self.pending.is_some() {
+            return self.pending.as_mut();
+        }
         if let Some(top) = self.stack.last_mut() {
             return Some(top);
         }
@@ -274,6 +297,7 @@ impl RouteDefinition {
 
     /// Finish building: close any open blocks and return accumulated errors.
     pub fn finish(&mut self) -> Result<()> {
+        self.flush_pending();
         while !self.stack.is_empty() {
             self.end();
         }

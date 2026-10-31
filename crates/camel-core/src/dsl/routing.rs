@@ -109,7 +109,7 @@ impl RouteDefinition {
 
     fn routing_container_count(&self) -> usize {
         match self.stack.last() {
-            Some(b) => deep_count(b.as_ref()),
+            Some(b) => deep_count(b.as_ref()) + self.pending.as_ref().map(|p| 1 + deep_count(p.as_ref())).unwrap_or(0),
             None => self.outputs.iter().map(|o| 1 + deep_count(o.as_ref())).sum(),
         }
     }
@@ -139,6 +139,7 @@ impl RouteDefinition {
                 return self;
             }
         }
+        self.flush_pending();
         if let Some(top) = self.stack.last_mut() {
             if let Some(o) = block_options(top.as_any_mut()) {
                 if o.apply_option(&option) {

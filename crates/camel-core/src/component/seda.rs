@@ -76,6 +76,8 @@ pub struct SedaQueue {
     not_empty: Condvar,
     not_full: Condvar,
     ids: AtomicU64,
+    /// Serializes publish-subscribe dispatch so all subscribers see messages in order.
+    pubsub: Mutex<()>,
 }
 
 impl SedaQueue {
@@ -86,6 +88,7 @@ impl SedaQueue {
             state: Mutex::new(QueueState::default()),
             not_empty: Condvar::new(),
             not_full: Condvar::new(),
+            pubsub: Mutex::new(()),
             ids: AtomicU64::new(0),
         })
     }
@@ -542,6 +545,33 @@ impl Service for SedaConsumer {
             let (multiple, poll_timeout) = (self.config.multiple_consumers, self.config.poll_timeout);
             let logger = self.uri.clone();
             self.threads.spawn(&format!("Camel {} #{}", self.uri, i + 1), move |flag| {
+                if multiple {
+                    // pub/sub: pop + fan-out under one lock to preserve ordering
+                    while !flag.is_stopped() {
+                        let _guard = match queue.pubsub.try_lock() {
+                            Ok(g) => g,
+                            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+                            Err(std::sync::TryLockError::WouldBlock) => {
+                                std::thread::sleep(Duration::from_millis(2));
+                                continue;
+                            }
+                        };
+                        let mut st = queue.state.lock().unwrap();
+                        let item = match st.items.pop_front() {
+                            Some(i) => Some(i),
+                            None => {
+                                st = queue.not_empty.wait_timeout(st, poll_timeout.min(Duration::from_millis(100))).unwrap().0;
+                                st.items.pop_front()
+                            }
+                        };
+                        drop(st);
+                        if let Some(item) = item {
+                            queue.not_full.notify_one();
+                            dispatch(item, &queue, multiple, &processor, &ctx, &logger);
+                        }
+                    }
+                    return;
+                }
                 let mut st = queue.state.lock().unwrap();
                 loop {
                     if flag.is_stopped() {

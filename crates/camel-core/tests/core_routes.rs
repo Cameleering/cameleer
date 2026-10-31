@@ -95,3 +95,17 @@ fn stop_eip_and_route_control() {
     ctx.stop_route("r2").unwrap();
     assert!(ctx.remove_route("r2").unwrap());
 }
+
+#[test]
+fn id_applies_to_last_child_inside_block() {
+    let ctx = CamelContext::new();
+    let mut b = RouteBuilder::new(ctx.clone());
+    b.from("direct:a").filter(constant(true)).id("f1").to("mock:x").id("to-x").to("mock:y").end().to("mock:z").id("to-z");
+    let defs = b.into_definitions().unwrap();
+    let filter = &defs[0].outputs[0];
+    assert_eq!(filter.id(), Some("f1"));
+    let kids = filter.outputs();
+    assert_eq!(kids[0].id(), Some("to-x"));
+    assert_eq!(kids[1].id(), None);
+    assert_eq!(defs[0].outputs[1].id(), Some("to-z"));
+}

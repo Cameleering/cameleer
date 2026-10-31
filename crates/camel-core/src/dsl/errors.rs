@@ -145,6 +145,7 @@ impl RouteDefinition {
     /// intercept block. (Camel's `when` on interceptors is spelled `on_when` here.)
     pub fn on_when(&mut self, p: impl IntoExpression) -> &mut Self {
         let p = p.into_expression();
+        self.flush_pending();
         let pos = self.stack.iter().rposition(|b| {
             let a = b.as_any();
             a.is::<OnExceptionDefinition>() || a.is::<DoTryDefinition>() || a.is::<OnCompletionDefinition>() || a.is::<InterceptDefinition>()
