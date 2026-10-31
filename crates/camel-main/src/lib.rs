@@ -407,6 +407,7 @@ pub fn ant_match(pattern: &str, path: &str) -> bool {
 /// Create a [`Main`] with all available components and route loaders registered.
 pub fn new_main() -> Main {
     let mut main = Main::new();
+    camel_xml::register(main.context()); // xpath 1.0, xslt, validator (XSD), xj (before others: overrides core's xpath/validator)
     camel_http::register(main.context());
     camel_yaml::register_kamelet_component(main.context());
     camel_ssh::register(main.context()); // sftp, ssh (before camel_protocols, whose sftp is a placeholder)
@@ -422,6 +423,7 @@ pub fn new_main() -> Main {
     camel_cloud::register(main.context()); // aws2-s3/sqs/sns/ddb/lambda, azure-storage-blob/queue, google-storage/pubsub
     camel_datastores::register(main.context()); // spring-redis, mongodb, elasticsearch/opensearch, cql, couchdb
     camel_script::register(main.context()); // js, groovy, python, ognl, mvel, spel, datasonnet, csimple, joor
+    camel_saas::register(main.context()); // slack, telegram, github, twilio, jira, openai, webhook, graphql, rss, atom
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {
@@ -457,6 +459,19 @@ mod tests {
         let v = main.context().create_producer_template().request_body("direct:q", 0).unwrap();
         assert_eq!(v, camel_core::value::Value::Int(42));
         main.stop().unwrap();
+    }
+
+    #[test]
+    fn new_main_registers_xml_and_saas() {
+        let main = new_main();
+        let ctx = main.context();
+        for scheme in ["xslt", "xslt-saxon", "validator", "xj", "slack", "telegram", "github", "twilio", "jira", "openai", "webhook", "graphql", "rss", "atom"] {
+            assert!(ctx.has_component(scheme), "{}", scheme);
+        }
+        // the full XPath 1.0 engine replaces core's subset (following axis)
+        let e = ctx.resolve_language("xpath").unwrap().create_expression("count(/a/b[1]/following::*)", &Default::default()).unwrap();
+        let ex = camel_core::message::Exchange::with_body(Some(ctx.clone()), "<a><b/><b/><c/></a>");
+        assert_eq!(e.evaluate(&ex).unwrap(), camel_core::value::Value::Float(2.0));
     }
 
     #[test]

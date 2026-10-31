@@ -48,11 +48,11 @@ pub use ast::Dialect;
 
 /// Registry name of the factory used by the YAML `script` step to run scripts as processors
 /// (so that their exchange changes are kept).
-pub const SCRIPT_PROCESSOR_FACTORY: &str = "camelScriptProcessorFactory";
+pub use camel_core::processor::script::SCRIPT_PROCESSOR_FACTORY;
 
 /// The factory type bound under [`SCRIPT_PROCESSOR_FACTORY`]: `(language, text, options)` ->
 /// a processor, or `None` when the language is not a script language of this crate.
-pub type ScriptProcessorFactory = Box<dyn Fn(&str, &str, &BTreeMap<String, String>) -> Option<Result<Arc<dyn Processor>>> + Send + Sync>;
+pub use camel_core::processor::script::ScriptProcessorFactory;
 
 /// The dialect for a language name (`groovy`, `js`, ...).
 pub fn dialect_for(name: &str) -> Option<Dialect> {
