@@ -1,0 +1,9 @@
+[package]
+name = "camel-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel HTTP/1.1 server and client, http/platform-http components, REST DSL and netty (tcp/udp)"
+
+[dependencies]
+camel-core = { path = "../camel-core" }

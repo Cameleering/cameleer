@@ -7,6 +7,13 @@ name = "camel-core"
 version = "0.1.0"
 
 [[package]]
+name = "camel-http"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+]
+
+[[package]]
 name = "camel-main"
 version = "0.1.0"
 dependencies = [
