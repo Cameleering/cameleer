@@ -38,7 +38,7 @@ Or with the YAML DSL and the CLI:
         period: 1000
       steps:
         - setBody:
-            simple: "Hello ${header.CamelTimerCounter}"
+            simple: "Hello ${exchangeProperty.CamelTimerCounter}"
         - log: "${body}"
 ```
 

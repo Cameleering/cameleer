@@ -1,0 +1,12 @@
+- route:
+    id: hello
+    from:
+      uri: timer:hello
+      parameters:
+        period: 200
+        repeatCount: 3
+      steps:
+        - setBody:
+            simple: "Hello ${exchangeProperty.CamelTimerCounter}"
+        - log: "${body}"
+        - to: mock:out

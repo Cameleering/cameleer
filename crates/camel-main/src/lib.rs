@@ -373,7 +373,11 @@ mod tests {
 
 /// Create a [`Main`] with all available components and route loaders registered.
 pub fn new_main() -> Main {
-    let main = Main::new();
+    let mut main = Main::new();
     camel_http::register(main.context());
+    for ext in ["yaml", "yml"] {
+        main.add_route_loader(ext, |ctx, text, _path| camel_yaml::add_routes_from_yaml(ctx, text));
+    }
+    main.add_route_loader("xml", |ctx, text, _path| camel_yaml::add_routes_from_xml(ctx, text));
     main
 }
