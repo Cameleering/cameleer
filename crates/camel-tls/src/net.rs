@@ -32,6 +32,9 @@ struct TlsShared {
     reader: Mutex<TlsReadHalf<TcpStream>>,
     writer: TlsWriteHalf<TcpStream>,
     peer_certificates: Vec<Vec<u8>>,
+    resumed: bool,
+    origin: Vec<u8>,
+    session_key: Option<String>,
     eof: AtomicBool,
 }
 
@@ -81,26 +84,49 @@ impl NetStream {
         NetStream { tcp, tls: None }
     }
 
-    fn from_tls(tls: TlsStream<TcpStream>) -> io::Result<NetStream> {
+    fn from_tls(tls: TlsStream<TcpStream>, session_key: Option<String>) -> io::Result<NetStream> {
         let tcp = tls.get_ref().try_clone()?;
         let wio = tls.get_ref().try_clone()?;
         let peer_certificates = tls.peer_certificates().to_vec();
+        let resumed = tls.session_resumed();
+        let origin = tls.session_origin_id().to_vec();
         let (r, w) = tls.split(wio).map_err(tls_io_error)?;
-        Ok(NetStream { tcp, tls: Some(Arc::new(TlsShared { reader: Mutex::new(r), writer: w, peer_certificates, eof: AtomicBool::new(false) })) })
+        Ok(NetStream {
+            tcp,
+            tls: Some(Arc::new(TlsShared {
+                reader: Mutex::new(r),
+                writer: w,
+                peer_certificates,
+                resumed,
+                origin,
+                session_key,
+                eof: AtomicBool::new(false),
+            })),
+        })
     }
 
     /// Performs a TLS client handshake over `tcp`. `server_name` drives SNI and
-    /// hostname verification. If `tcp` has no read timeout, `handshake_timeout`
-    /// is applied during the handshake only.
+    /// hostname verification. If `tcp` has no read timeout, a 30 s timeout is applied
+    /// during the handshake only. Sessions are resumed per `server_name:port`.
     pub fn client(tcp: TcpStream, server_name: &str, config: &TlsClientConfig) -> io::Result<NetStream> {
-        let tls = with_handshake_timeout(&tcp, |t| TlsStream::connect(t, server_name, config))?;
-        NetStream::from_tls(tls)
+        let key = match tcp.peer_addr() {
+            Ok(a) => format!("{}:{}", server_name, a.port()),
+            Err(_) => server_name.to_string(),
+        };
+        NetStream::client_with_session_key(tcp, server_name, config, &key)
+    }
+
+    /// Client handshake resuming / storing the TLS session under `session_key`
+    /// (e.g. the FTPS control connection's key for its data connections).
+    pub fn client_with_session_key(tcp: TcpStream, server_name: &str, config: &TlsClientConfig, session_key: &str) -> io::Result<NetStream> {
+        let tls = with_handshake_timeout(&tcp, |t| TlsStream::connect_with_session_key(t, server_name, config, Some(session_key)))?;
+        NetStream::from_tls(tls, Some(session_key.to_string()))
     }
 
     /// Performs a TLS server handshake over an accepted `tcp` connection.
     pub fn server(tcp: TcpStream, config: &TlsServerConfig) -> io::Result<NetStream> {
         let tls = with_handshake_timeout(&tcp, |t| TlsStream::accept(t, config))?;
-        NetStream::from_tls(tls)
+        NetStream::from_tls(tls, None)
     }
 
     /// Connects to `host:port` and, when `tls` is given, performs a client handshake.
@@ -159,9 +185,26 @@ impl NetStream {
         self.tls.as_ref().and_then(|t| t.writer.sni_hostname())
     }
 
-    /// Client side: the server certificate chain (DER, leaf first).
+    /// The peer certificate chain (DER, leaf first): the server's on the client side,
+    /// the verified client certificate chain (mutual TLS) on the server side.
     pub fn peer_certificates(&self) -> &[Vec<u8>] {
         self.tls.as_ref().map(|t| t.peer_certificates.as_slice()).unwrap_or(&[])
+    }
+
+    /// Whether the TLS session was resumed (abbreviated handshake).
+    pub fn session_resumed(&self) -> bool {
+        self.tls.as_ref().is_some_and(|t| t.resumed)
+    }
+
+    /// Server side: identifies the full handshake the session descends from (see
+    /// [`TlsStream::session_origin_id`]); empty for plain and client connections.
+    pub fn session_origin_id(&self) -> &[u8] {
+        self.tls.as_ref().map(|t| t.origin.as_slice()).unwrap_or(&[])
+    }
+
+    /// Client side: the key the TLS session is cached under (`host:port` by default).
+    pub fn session_key(&self) -> Option<&str> {
+        self.tls.as_ref().and_then(|t| t.session_key.as_deref())
     }
 
     /// Another handle to the same connection.

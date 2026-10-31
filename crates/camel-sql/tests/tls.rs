@@ -70,3 +70,40 @@ fn sslmode_failures() {
     PgConnection::connect(&PgConfig::from_url(&url(&plain, "127.0.0.1", "sslmode=prefer")).unwrap()).unwrap();
     assert!(PgConfig::from_url(&url(&plain, "127.0.0.1", "sslmode=bogus")).is_err());
 }
+
+/// Client certificates (`sslcert` + `sslkey`, encrypted keys with `sslpassword`, PKCS#12
+/// `sslkey`) against a server requiring client authentication.
+#[test]
+fn ssl_client_certificates() {
+    use camel_tls::keystore::KeyStore;
+    let pki = testing::mtls();
+    let s = tls_server(testing::mtls_server_params(camel_tls::ClientAuth::Need));
+    let dir = std::env::temp_dir().join(format!("camel-sql-mtls-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = |name: &str, data: &[u8]| {
+        let p = dir.join(name);
+        std::fs::write(&p, data).unwrap();
+        p.display().to_string()
+    };
+    let ca = file("ca.pem", pki.ca.cert_pem.as_bytes());
+    let cert = file("client.crt", pki.client.cert_pem.as_bytes());
+    let key = file("client.key", pki.client.key_pem.as_bytes());
+    let enc = camel_tls::pem::encode_pem("ENCRYPTED PRIVATE KEY", &camel_tls::pbe::encrypt_private_key_info(&pki.client.key.to_pkcs8(), "kpw"));
+    let enc_key = file("client-enc.key", enc.as_bytes());
+    let p12 = file("client.p12", &KeyStore::from_key_entry("client", pki.client.key.clone(), vec![pki.client.cert_der.clone()]).to_pkcs12("p12pw"));
+    let base = format!("sslmode=verify-full&sslrootcert={}", ca);
+    for extra in [
+        format!("{}&sslcert={}&sslkey={}", base, cert, key),
+        format!("{}&sslcert={}&sslkey={}&sslpassword=kpw", base, cert, enc_key),
+        format!("{}&sslkey={}&sslpassword=p12pw", base, p12),
+    ] {
+        let cfg = PgConfig::from_url(&url(&s, "localhost", &extra)).unwrap();
+        let mut c = PgConnection::connect(&cfg).unwrap_or_else(|e| panic!("{}: {}", extra, e));
+        assert_eq!(c.execute("SELECT 1 AS one", &[]).unwrap().scalar().and_then(|v| v.as_i64()), Some(1));
+    }
+    // without a client certificate (or with a wrong key password) the connection fails
+    assert!(PgConnection::connect(&PgConfig::from_url(&url(&s, "localhost", &base)).unwrap()).is_err());
+    let bad = format!("{}&sslcert={}&sslkey={}&sslpassword=nope", base, cert, enc_key);
+    assert!(PgConnection::connect(&PgConfig::from_url(&url(&s, "localhost", &bad)).unwrap()).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -86,3 +86,43 @@ fn stomp_and_jms_over_tls() {
     assert!(t.send_body(&format!("stomp:queue:x?brokerURL=tcp://localhost:{}", broker.port()), "x").is_err(), "plain STOMP to the TLS port");
     broker.stop();
 }
+
+/// Spring Boot `spring.rabbitmq.ssl.key-store` / `trust-store` properties with PKCS#12 stores
+/// against a broker requiring client certificates.
+#[test]
+fn amqps_client_certificates_from_spring_key_store_properties() {
+    use camel_tls::keystore::KeyStore;
+    let pki = testing::mtls();
+    let broker = AmqpBroker::builder().tls(testing::mtls_server_params(camel_tls::ClientAuth::Need).server_config().unwrap()).start().unwrap();
+    let dir = std::env::temp_dir().join(format!("camel-amqp-mtls-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ks = dir.join("client.p12");
+    std::fs::write(&ks, KeyStore::from_key_entry("client", pki.client.key.clone(), vec![pki.client.cert_der.clone()]).to_pkcs12("secret")).unwrap();
+    let ts = dir.join("trust.p12");
+    std::fs::write(&ts, KeyStore::new().add_cert("ca", pki.ca.cert_der.clone()).to_pkcs12("secret")).unwrap();
+    let ctx = context();
+    ctx.properties().set("spring.rabbitmq.addresses", format!("amqps://localhost:{}", broker.port()));
+    ctx.properties().set("spring.rabbitmq.ssl.enabled", "true");
+    ctx.properties().set("spring.rabbitmq.ssl.key-store", ks.display().to_string());
+    ctx.properties().set("spring.rabbitmq.ssl.key-store-password", "secret");
+    ctx.properties().set("spring.rabbitmq.ssl.key-store-type", "PKCS12");
+    ctx.properties().set("spring.rabbitmq.ssl.trust-store", ts.display().to_string());
+    ctx.properties().set("spring.rabbitmq.ssl.trust-store-password", "secret");
+    ctx.add_routes(|b| {
+        b.from("spring-rabbitmq:mtls?queues=mq&routingKey=k").to("mock:mtls");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:mtls").unwrap();
+    mock.expected_bodies_received(vec!["with client cert"]);
+    ctx.create_producer_template().send_body("spring-rabbitmq:mtls?routingKey=k", "with client cert").unwrap();
+    mock.assert_is_satisfied().unwrap();
+    ctx.stop().unwrap();
+    // without a client certificate the broker refuses the connection
+    let ctx = context();
+    testing::bind_mtls_beans(&ctx);
+    let anon = format!("rabbitmq:x?hostname=localhost&portNumber={}&sslProtocol=true&sslContextParameters=#sslMtlsAnonymous&connectionTimeout=3000", broker.port());
+    assert!(ctx.create_producer_template().send_body(&anon, "x").is_err());
+    broker.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

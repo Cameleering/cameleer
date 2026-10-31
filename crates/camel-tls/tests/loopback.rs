@@ -60,7 +60,7 @@ fn run_pair(server_cfg: TlsServerConfig, client_cfg: TlsClientConfig, name: &str
         assert_eq!(resp, b"HELLO TLS\n");
         assert!(tls.peer_closed());
         tls.close().map_err(TlsError::Io)?;
-        Ok((tls.protocol_version(), tls.cipher_suite(), tls.named_group(), tls.alpn_protocol().map(|a| a.to_vec())))
+        Ok((tls.protocol_version(), tls.cipher_suite(), tls.named_group().unwrap(), tls.alpn_protocol().map(|a| a.to_vec())))
     })();
     let server_result = server.join().unwrap();
     let (version, suite, group, alpn) = client_result?;

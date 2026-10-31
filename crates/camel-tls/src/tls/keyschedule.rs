@@ -35,7 +35,20 @@ impl KeySchedule13 {
         Self::with_psk(suite.hash(), &zeros, shared, hello_hash)
     }
 
-    fn with_psk(h: HashAlg, psk: &[u8], shared: &[u8], hello_hash: &[u8]) -> KeySchedule13 {
+    /// Key schedule with an optional resumption PSK.
+    pub fn new_psk(suite: CipherSuite, psk: Option<&[u8]>, shared: &[u8], hello_hash: &[u8]) -> KeySchedule13 {
+        match psk {
+            Some(p) => Self::with_psk(suite.hash(), p, shared, hello_hash),
+            None => Self::new(suite, shared, hello_hash),
+        }
+    }
+
+    /// resumption_master_secret from the transcript hash through client Finished.
+    pub fn resumption_master(&self, hash: &[u8]) -> Vec<u8> {
+        derive_secret(self.h, &self.master, "res master", hash)
+    }
+
+    pub(crate) fn with_psk(h: HashAlg, psk: &[u8], shared: &[u8], hello_hash: &[u8]) -> KeySchedule13 {
         let zeros = vec![0u8; h.output_len()];
         let early = h.hkdf_extract(&zeros, psk);
         let derived = derive_secret(h, &early, "derived", &h.hash(&[]));
@@ -56,6 +69,20 @@ impl KeySchedule13 {
         let fk = hkdf_expand_label(self.h, base_key, "finished", &[], self.h.output_len());
         self.h.hmac(&fk, hash)
     }
+}
+
+/// PSK binder (RFC 8446 section 4.2.11.2) over the hash of the truncated ClientHello transcript.
+pub(crate) fn psk_binder(h: HashAlg, psk: &[u8], transcript_hash: &[u8]) -> Vec<u8> {
+    let zeros = vec![0u8; h.output_len()];
+    let early = h.hkdf_extract(&zeros, psk);
+    let binder_key = derive_secret(h, &early, "res binder", &h.hash(&[]));
+    let fk = hkdf_expand_label(h, &binder_key, "finished", &[], h.output_len());
+    h.hmac(&fk, transcript_hash)
+}
+
+/// The PSK of a NewSessionTicket.
+pub(crate) fn ticket_psk(h: HashAlg, resumption_master: &[u8], nonce: &[u8]) -> Vec<u8> {
+    hkdf_expand_label(h, resumption_master, "resumption", nonce, h.output_len())
 }
 
 /// Record protection from a TLS 1.3 traffic secret.

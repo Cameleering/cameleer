@@ -283,11 +283,30 @@ impl RabbitConfig {
             }
         }
         drop(o);
+        // Spring Boot key / trust store properties (spring.rabbitmq.ssl.key-store...)
+        let stores = if spring {
+            let sp = |k: &str| props.get(&format!("spring.rabbitmq.ssl.{}", k));
+            camel_tls::camel_support::StoreOptions {
+                key_store: sp("key-store"),
+                private_key: None,
+                key_store_password: sp("key-store-password"),
+                key_password: None,
+                key_store_type: sp("key-store-type"),
+                trust_store: sp("trust-store"),
+                trust_store_password: sp("trust-store-password"),
+                trust_store_type: sp("trust-store-type"),
+            }
+        } else {
+            camel_tls::camel_support::StoreOptions::default()
+        };
         if let Some(mut t) = camel_tls::camel_support::endpoint_tls(ctx, params, scheme, tls_wanted, &[])? {
-            if let Some(v) = tls_version {
+            if tls_version.is_some() || !stores.is_empty() {
                 let mut p = (*t.params).clone();
-                p.min_version = Some(v);
-                p.max_version = Some(v);
+                if let Some(v) = tls_version {
+                    p.min_version = Some(v);
+                    p.max_version = Some(v);
+                }
+                stores.apply(&mut p);
                 t = camel_tls::camel_support::EndpointTls::new(std::sync::Arc::new(p));
             }
             conn.tls = Some(t);

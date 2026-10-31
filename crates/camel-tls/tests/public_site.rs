@@ -51,7 +51,7 @@ fn https_get_public_site() {
     assert!(!cfg.roots().is_empty(), "system trust store is empty");
     let sock = connect_via_proxy(&host, 443);
     let mut tls = TlsStream::connect(sock, &host, &cfg).unwrap_or_else(|e| panic!("TLS handshake with {host} failed: {e}"));
-    eprintln!("{host}: {:?} {} {}", tls.protocol_version(), tls.cipher_suite().name(), tls.named_group().name());
+    eprintln!("{host}: {:?} {} {}", tls.protocol_version(), tls.cipher_suite().name(), tls.named_group().unwrap().name());
     write!(tls, "GET / HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: camel-tls-test\r\n\r\n").unwrap();
     let mut resp = Vec::new();
     let mut buf = [0u8; 4096];

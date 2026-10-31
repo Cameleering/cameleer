@@ -348,6 +348,7 @@ impl SshPrivateKey {
         }
         match camel_tls::PrivateKey::from_pem(text.as_bytes()).map_err(key_err)? {
             camel_tls::PrivateKey::Ec { curve, d, public } => Ok(SshPrivateKey::Ecdsa { curve, d, point: public }),
+            camel_tls::PrivateKey::Ed25519 { seed, public } => Ok(SshPrivateKey::Ed25519 { seed, public }),
             camel_tls::PrivateKey::Rsa(_) => Err(key_err("unexpected RSA key")),
         }
     }

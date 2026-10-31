@@ -113,6 +113,8 @@ pub struct HttpRequest {
     pub body: Vec<u8>,
     /// Remote peer address (set by the server).
     pub remote_addr: Option<SocketAddr>,
+    /// HTTPS with client authentication: the verified client certificate chain (DER, leaf first).
+    pub peer_certificates: Vec<Vec<u8>>,
 }
 
 impl HttpRequest {

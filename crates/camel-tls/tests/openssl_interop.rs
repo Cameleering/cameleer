@@ -148,7 +148,7 @@ fn client_get(port: u16, name: &str, cfg: &TlsClientConfig, key_update: bool) ->
     }
     let text = String::from_utf8_lossy(&resp).into_owned();
     assert!(text.starts_with("HTTP/1.0 200 ok"), "unexpected s_server response: {text}");
-    (text, tls.protocol_version(), tls.cipher_suite(), tls.named_group())
+    (text, tls.protocol_version(), tls.cipher_suite(), tls.named_group().unwrap())
 }
 
 fn ec_client(builder: camel_tls::TlsClientConfigBuilder) -> TlsClientConfig {
@@ -259,7 +259,7 @@ fn s_client_vs_ours(server_cfg: TlsServerConfig, ca_pem: &str, name: &str, extra
         let (sock, _) = listener.accept().map_err(|e| e.to_string())?;
         sock.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
         let mut tls = TlsStream::accept(sock, &server_cfg).map_err(|e| format!("our server handshake failed: {e}"))?;
-        let info = format!("{:?} {:?} {:?}", tls.protocol_version(), tls.cipher_suite(), tls.named_group());
+        let info = format!("{:?} {:?} {:?}", tls.protocol_version(), tls.cipher_suite(), tls.named_group().unwrap());
         let mut line = String::new();
         {
             let mut r = BufReader::new(&mut tls);
