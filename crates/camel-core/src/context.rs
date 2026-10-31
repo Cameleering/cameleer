@@ -317,6 +317,17 @@ impl Route {
     pub fn uptime(&self) -> Option<Duration> {
         self.uptime_start.lock().unwrap().map(|s| s.elapsed())
     }
+    /// Whether the route currently has a running consumer.
+    pub fn has_consumer(&self) -> bool {
+        self.consumer.lock().unwrap().is_some()
+    }
+}
+
+/// Handles the failure of an auto-startup route to start (route controller SPI, see
+/// `supervising::SupervisingRouteController`). Returning `Ok` lets the context keep
+/// starting; returning `Err` fails the context startup (the default behaviour).
+pub trait RouteStartupFailureHandler: Send + Sync {
+    fn on_route_startup_failure(&self, ctx: &CamelContext, route_id: &str, error: &CamelError) -> Result<()>;
 }
 
 /// Wraps a route's processor: sets exchange metadata, tracks inflight/statistics,
@@ -417,6 +428,7 @@ pub(crate) struct ContextInner {
     started_at: Mutex<Option<Instant>>,
     services: RwLock<Vec<Arc<dyn Service>>>,
     global_options: RwLock<BTreeMap<String, String>>,
+    startup_failure_handler: RwLock<Option<Arc<dyn RouteStartupFailureHandler>>>,
 }
 
 /// The Camel context. Cheap to clone (shared handle).
@@ -479,6 +491,7 @@ impl CamelContext {
                 started_at: Mutex::new(None),
                 services: RwLock::new(Vec::new()),
                 global_options: RwLock::new(BTreeMap::new()),
+                startup_failure_handler: RwLock::new(None),
             }),
         };
         crate::component::register_builtin_components(&ctx);
@@ -726,6 +739,24 @@ impl CamelContext {
         self.inner.channel_wrappers.write().unwrap().push(w);
     }
 
+    /// Install the handler deciding what happens when an auto-startup route fails to start.
+    pub fn set_route_startup_failure_handler(&self, h: Option<Arc<dyn RouteStartupFailureHandler>>) {
+        *self.inner.startup_failure_handler.write().unwrap() = h;
+    }
+
+    fn start_auto_route(&self, route: &Arc<Route>) -> Result<()> {
+        match self.start_route_internal(route) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let h = self.inner.startup_failure_handler.read().unwrap().clone();
+                match h {
+                    Some(h) => h.on_route_startup_failure(self, &route.id, &e),
+                    None => Err(e),
+                }
+            }
+        }
+    }
+
     /// Register a service started/stopped with the context.
     pub fn add_service(&self, s: Arc<dyn Service>) -> Result<()> {
         if self.is_started() {
@@ -767,7 +798,7 @@ impl CamelContext {
             self.inner.routes.write().unwrap().push(route.clone());
             self.notify(&CamelEvent::RouteAdded(route.id.clone()));
             if route.auto_startup {
-                self.start_route_internal(&route)?;
+                self.start_auto_route(&route)?;
             }
         } else {
             self.inner.pending_routes.lock().unwrap().push(def);
@@ -930,7 +961,7 @@ impl CamelContext {
             all.sort_by_key(|r| r.startup_order);
             for r in all {
                 if r.auto_startup {
-                    self.start_route_internal(&r)?;
+                    self.start_auto_route(&r)?;
                 }
             }
             Ok(())
