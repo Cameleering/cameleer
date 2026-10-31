@@ -720,3 +720,74 @@ fn unknown_options_and_names() {
     assert!(camel_dataformats::create("pgp", &Default::default()).is_some());
     assert!(camel_dataformats::create("nope", &Default::default()).is_none());
 }
+
+// ----------------------------------------------------------------------------- Fory
+
+#[test]
+fn fory_routes_and_struct_types() {
+    let c = ctx();
+    c.add_routes(|b| {
+        b.from("direct:fory").unmarshal_json().marshal("fory").to("mock:fory").unmarshal("fory").marshal_json();
+        b.from("direct:foryStruct")
+            .to("dataformat:fory:marshal?structTypes=RAW(demo.Order=id,lines)&refTracking=true")
+            .to("dataformat:fory:unmarshal?structTypes=RAW(demo.Order=id,lines)");
+    })
+    .unwrap();
+    c.start().unwrap();
+    let t = c.create_producer_template();
+    let json = r#"{"name":"Ann","n":-5,"f":2.5,"ok":true,"none":null,"list":[1,2,3],"nested":{"k":"v€"}}"#;
+    assert_eq!(t.request_body("direct:fory", json).unwrap().to_string(), json);
+    let wire = c.mock_endpoint("mock:fory").unwrap().received_exchanges()[0].body().to_bytes();
+    // xlang header: little endian + xlang flags, language RUST, root not-null flag
+    assert_eq!(&wire[..3], &[0x06, 0x06, 0xff]);
+    let order = Value::object([("@type", Value::from("demo.Order")), ("id", Value::Int(7)), ("lines", Value::from(vec!["a", "b"]))]);
+    assert_eq!(t.request_body("direct:foryStruct", order.clone()).unwrap(), order);
+    assert!(DataFormatDefinition::new("fory").option("requireClassRegistration", "true").option("threadSafe", "false").option("allowAutoWiredFory", "false").resolve(&c).is_ok());
+    // YAML DSL
+    let y = ctx();
+    camel_yaml::add_routes_from_yaml(&y, "- from:\n    uri: direct:y\n    steps:\n      - marshal:\n          fory: {}\n      - unmarshal:\n          fory: {}\n").unwrap();
+    y.start().unwrap();
+    assert_eq!(y.create_producer_template().request_body("direct:y", "hello").unwrap(), Value::from("hello"));
+}
+
+// ----------------------------------------------------------------------------- Barcode
+
+#[test]
+fn barcode_routes_and_third_party_pngs() {
+    let c = ctx();
+    c.add_routes(|b| {
+        b.from("direct:qr").marshal("barcode").to("mock:png").unmarshal("barcode");
+        b.from("direct:ean")
+            .marshal(DataFormatDefinition::new("barcode").option("barcodeFormat", "EAN_13").option("width", 300).option("height", 120))
+            .unmarshal(DataFormatDefinition::new("barcode").option("barcodeFormat", "EAN_13"));
+        b.from("direct:dm").to("dataformat:barcode:marshal?barcodeFormat=DATA_MATRIX&width=200&height=200").to("dataformat:barcode:unmarshal");
+        b.from("direct:qrH").to("dataformat:barcode:marshal?errorCorrectionLevel=H").to("dataformat:barcode:unmarshal");
+    })
+    .unwrap();
+    c.start().unwrap();
+    let t = c.create_producer_template();
+    let ex = t.request("direct:qr", |e| e.set_body("Hello from rust-camel")).unwrap();
+    assert!(ex.exception.is_none(), "{:?}", ex.exception);
+    assert_eq!(ex.body().to_string(), "Hello from rust-camel");
+    assert_eq!(ex.header("BarcodeFormat").unwrap().to_string(), "QR_CODE");
+    let png = c.mock_endpoint("mock:png").unwrap().received_exchanges()[0].body().to_bytes();
+    assert_eq!(&png[1..4], b"PNG");
+    let ex = t.request("direct:ean", |e| e.set_body("590123412345")).unwrap();
+    assert_eq!((ex.body().to_string(), ex.header("BarcodeFormat").unwrap().to_string()), ("5901234123457".to_string(), "EAN_13".to_string()));
+    let ex = t.request("direct:dm", |e| e.set_body("ECC200 data")).unwrap();
+    assert_eq!((ex.body().to_string(), ex.header("BarcodeFormat").unwrap().to_string()), ("ECC200 data".to_string(), "DATA_MATRIX".to_string()));
+    let ex = t.request("direct:qrH", |e| e.set_body("level H")).unwrap();
+    assert_eq!(ex.header("ERROR_CORRECTION_LEVEL").unwrap().to_string(), "H");
+
+    // PNGs re-encoded by Pillow (RGB interlaced, palette, RGBA) from our output
+    let fx = |n: &str| std::fs::read(format!("{}/tests/fixtures/barcode/{}", env!("CARGO_MANIFEST_DIR"), n)).unwrap();
+    let df = DataFormatDefinition::new("barcode").resolve(&c).unwrap();
+    for (f, text) in [("qr_rgb_interlaced.png", "Hello 123"), ("qr_pal.png", "Hello 123"), ("dm_rgba.png", "Hello 123")] {
+        let mut ex = Exchange::new(None);
+        ex.message.body = Value::Bytes(fx(f));
+        df.unmarshal(&mut ex).unwrap();
+        assert_eq!(ex.body().to_string(), text, "{}", f);
+    }
+    assert!(DataFormatDefinition::new("barcode").option("imageType", "JPG").resolve(&c).is_err());
+    assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "PDF_417").resolve(&c).is_err());
+}

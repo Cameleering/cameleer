@@ -21,10 +21,25 @@
 //! `camel.vault.aws.accessKey`, `secretKey`, `region`, `defaultCredentialsProvider`,
 //! `profileCredentialsProvider`, `profileName`, and (as in recent Camel versions)
 //! `uriEndpointOverride` + `overrideEndpoint`.
+//!
+//! **Secret refresh** ([`SecretsRefreshTask`], Camel's `CloudTrailReloadTriggerTask`): with
+//! `camel.vault.aws.refreshEnabled=true` a context service polls CloudTrail `LookupEvents`
+//! (event source `secretsmanager.amazonaws.com`) every `camel.vault.aws.refreshPeriod` ms
+//! (default 30000) for `PutSecretValue` / `UpdateSecret` / `RotateSecret` /
+//! `UpdateSecretVersionStage` / `RestoreSecret` events on the secrets named by
+//! `camel.vault.aws.secrets` (comma separated names or patterns, `*` wildcards; when empty, the
+//! secrets resolved through `{{aws:...}}`). An update triggers a context reload: the registered
+//! reload listeners ([`SecretsRefreshTask::add_reload_listener`]) are called with the updated
+//! secret names and every started route is restarted (`RouteStopped` / `RouteStarted` events).
+//! The task is a context bean named [`REFRESH_TASK_BEAN`] ([`refresh_task`]).
 
-use std::sync::Arc;
+use std::collections::{BTreeSet, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
-use camel_core::context::{CamelContext, PropertiesFunction};
+use camel_core::context::{CamelContext, PropertiesFunction, WeakContext};
+use camel_core::spi::Service;
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::value::{ObjectMap, Value};
@@ -233,6 +248,20 @@ fn vault_config(ctx: &CamelContext) -> Result<AwsConfig> {
     Ok(cfg)
 }
 
+/// Registry bean holding the names of the secrets resolved through `{{aws:...}}`.
+const USED_SECRETS_BEAN: &str = "camel-cloud-aws-vault-used-secrets";
+/// Registry bean name of the [`SecretsRefreshTask`].
+pub const REFRESH_TASK_BEAN: &str = "camel-cloud-aws-secrets-refresh-task";
+
+fn used_secrets(ctx: &CamelContext) -> Arc<Mutex<BTreeSet<String>>> {
+    if let Some(s) = ctx.registry().lookup::<Mutex<BTreeSet<String>>>(USED_SECRETS_BEAN) {
+        return s;
+    }
+    let s = Arc::new(Mutex::new(BTreeSet::new()));
+    ctx.registry().bind_arc(USED_SECRETS_BEAN, s.clone());
+    s
+}
+
 /// The `aws:` properties function for a context.
 pub fn properties_function(ctx: &CamelContext) -> PropertiesFunction {
     let weak = ctx.downgrade();
@@ -241,11 +270,210 @@ pub fn properties_function(ctx: &CamelContext) -> PropertiesFunction {
         let (name, field, version) = parse_secret_ref(r);
         let svc = SecretsManagerService { aws: vault_config(&ctx)?, operation: None, binary_payload: false };
         match svc.get_secret_value(&name, version.as_deref()) {
-            Ok(v) => Ok(secret_field(&v.to_string(), field.as_deref())),
+            Ok(v) => {
+                used_secrets(&ctx).lock().unwrap().insert(name.clone());
+                Ok(secret_field(&v.to_string(), field.as_deref()))
+            }
             Err(e) if error_code(&e).as_deref() == Some("ResourceNotFoundException") => Ok(None),
             Err(e) => Err(e),
         }
     })
+}
+
+/// Called with the names of the updated secrets when a reload is triggered.
+pub type ReloadListener = Arc<dyn Fn(&[String]) + Send + Sync>;
+
+/// CloudTrail event names that change a secret value.
+pub const UPDATE_EVENTS: &[&str] = &["PutSecretValue", "UpdateSecret", "RotateSecret", "UpdateSecretVersionStage", "RestoreSecret"];
+
+/// Periodic secret refresh triggering a context reload (see the module docs).
+pub struct SecretsRefreshTask {
+    ctx: WeakContext,
+    running: Arc<(Mutex<bool>, Condvar)>,
+    thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    since: Mutex<Option<f64>>,
+    seen: Mutex<HashSet<String>>,
+    listeners: Mutex<Vec<ReloadListener>>,
+    reloads: AtomicUsize,
+    enabled: AtomicBool,
+}
+
+/// The refresh task of a context (registered by [`crate::register`]).
+pub fn refresh_task(ctx: &CamelContext) -> Option<Arc<SecretsRefreshTask>> {
+    ctx.registry().lookup::<SecretsRefreshTask>(REFRESH_TASK_BEAN)
+}
+
+/// Name of a secret from a secret id (name or ARN `...:secret:name-AbCdEf`).
+pub fn secret_name_of(id: &str) -> String {
+    match id.split(":secret:").nth(1) {
+        Some(rest) => match rest.rsplit_once('-') {
+            Some((n, suffix)) if suffix.len() == 6 => n.to_string(),
+            _ => rest.to_string(),
+        },
+        None => id.to_string(),
+    }
+}
+
+impl SecretsRefreshTask {
+    /// Create the task of a context and register it as bean and service.
+    pub fn install(ctx: &CamelContext) -> Arc<SecretsRefreshTask> {
+        if let Some(t) = refresh_task(ctx) {
+            return t;
+        }
+        let t = Arc::new(SecretsRefreshTask {
+            ctx: ctx.downgrade(),
+            running: Arc::new((Mutex::new(false), Condvar::new())),
+            thread: Mutex::new(None),
+            since: Mutex::new(None),
+            seen: Mutex::new(HashSet::new()),
+            listeners: Mutex::new(Vec::new()),
+            reloads: AtomicUsize::new(0),
+            enabled: AtomicBool::new(false),
+        });
+        ctx.registry().bind_arc(REFRESH_TASK_BEAN, t.clone());
+        let _ = ctx.add_service(Arc::new(RefreshService(t.clone())));
+        t
+    }
+
+    /// Register a listener called on every reload.
+    pub fn add_reload_listener(&self, l: impl Fn(&[String]) + Send + Sync + 'static) {
+        self.listeners.lock().unwrap().push(Arc::new(l));
+    }
+
+    /// Number of reloads triggered so far.
+    pub fn reload_count(&self) -> usize {
+        self.reloads.load(Ordering::SeqCst)
+    }
+
+    /// Whether the periodic refresh is running.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(Ordering::SeqCst)
+    }
+
+    fn prop(ctx: &CamelContext, k: &str) -> Option<String> {
+        ctx.properties().get(&format!("camel.vault.aws.{}", k)).filter(|v| !v.trim().is_empty())
+    }
+
+    fn matches(&self, ctx: &CamelContext, name: &str) -> bool {
+        match Self::prop(ctx, "secrets") {
+            Some(p) => p.split(',').map(str::trim).filter(|p| !p.is_empty()).any(|p| camel_core::util::matches_pattern(name, p)),
+            None => {
+                let used = used_secrets(ctx);
+                let used = used.lock().unwrap();
+                used.is_empty() || used.contains(name)
+            }
+        }
+    }
+
+    /// One refresh check: look for secret updates since the previous check and reload when
+    /// one of the watched secrets changed. Returns the updated secret names.
+    pub fn check_now(&self) -> Result<Vec<String>> {
+        let ctx = self.ctx.upgrade().ok_or_else(|| CamelError::illegal_state("CamelContext is gone"))?;
+        let aws = vault_config(&ctx)?;
+        let since = *self.since.lock().unwrap();
+        let mut req = ObjectMap::new();
+        req.insert("LookupAttributes".into(), Value::Array(vec![obj([("AttributeKey", Value::from("EventSource")), ("AttributeValue", Value::from("secretsmanager.amazonaws.com"))])]));
+        if let Some(t) = since {
+            req.insert("StartTime".into(), Value::Float(t));
+        }
+        let api = super::JsonApi { host: "cloudtrail", service: "cloudtrail", target: "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101", version: "1.1", kind: kinds::CLOUDTRAIL };
+        let events = aws.api_paged(&api, "LookupEvents", req, "Events", "NextToken")?;
+        let mut updated: Vec<String> = Vec::new();
+        let mut newest = since.unwrap_or(0.0);
+        for e in &events {
+            let id = e.get("EventId").map(|i| i.to_string()).unwrap_or_default();
+            if !self.seen.lock().unwrap().insert(id) {
+                continue;
+            }
+            let t = e.get("EventTime").and_then(|t| t.as_f64()).unwrap_or(0.0);
+            newest = newest.max(t);
+            let name = e.get("EventName").map(|n| n.to_string()).unwrap_or_default();
+            if !UPDATE_EVENTS.contains(&name.as_str()) {
+                continue;
+            }
+            let mut ids: Vec<String> = e.get("Resources").and_then(|r| r.as_array()).into_iter().flatten().filter_map(|r| r.get("ResourceName").map(|n| n.to_string())).collect();
+            if let Some(doc) = e.get("CloudTrailEvent").and_then(|d| parse_json(d.to_string().as_bytes()).ok()) {
+                if let Some(sid) = doc.get("requestParameters").and_then(|r| r.get("secretId")) {
+                    ids.push(sid.to_string());
+                }
+            }
+            for sid in ids {
+                let n = secret_name_of(&sid);
+                if self.matches(&ctx, &n) && !updated.contains(&n) {
+                    updated.push(n);
+                }
+            }
+        }
+        if newest > 0.0 {
+            *self.since.lock().unwrap() = Some(newest);
+        }
+        if !updated.is_empty() {
+            camel_core::camel_info!("aws-secrets-manager", "Secrets {:?} updated: reloading the CamelContext routes", updated);
+            self.reloads.fetch_add(1, Ordering::SeqCst);
+            let listeners = self.listeners.lock().unwrap().clone();
+            for l in listeners {
+                l(&updated);
+            }
+            for id in ctx.route_ids() {
+                if ctx.route_status(&id).is_some_and(|s| s == camel_core::context::ServiceStatus::Started) {
+                    ctx.stop_route(&id)?;
+                    ctx.start_route(&id)?;
+                }
+            }
+        }
+        Ok(updated)
+    }
+
+    fn start(self: &Arc<Self>) -> Result<()> {
+        let Some(ctx) = self.ctx.upgrade() else { return Ok(()) };
+        if !Self::prop(&ctx, "refreshEnabled").is_some_and(|v| v.eq_ignore_ascii_case("true")) {
+            return Ok(());
+        }
+        let period = Self::prop(&ctx, "refreshPeriod").map(|p| p.parse::<u64>().map_err(|_| CamelError::illegal_argument(format!("Invalid camel.vault.aws.refreshPeriod: {}", p)))).transpose()?.unwrap_or(30_000).max(10);
+        // only events after start count
+        *self.since.lock().unwrap() = Some(crate::util::now_millis() as f64 / 1000.0);
+        *self.running.0.lock().unwrap() = true;
+        self.enabled.store(true, Ordering::SeqCst);
+        let me = self.clone();
+        let h = std::thread::Builder::new().name("aws-secrets-refresh".into()).spawn(move || loop {
+            {
+                let (lock, cv) = &*me.running;
+                let guard = lock.lock().unwrap();
+                let (guard, _) = cv.wait_timeout_while(guard, Duration::from_millis(period), |r| *r).unwrap();
+                if !*guard {
+                    return;
+                }
+            }
+            if let Err(e) = me.check_now() {
+                camel_core::camel_warn!("aws-secrets-manager", "Secret refresh check failed: {}", e);
+            }
+        });
+        *self.thread.lock().unwrap() = h.ok();
+        Ok(())
+    }
+
+    fn stop(&self) {
+        *self.running.0.lock().unwrap() = false;
+        self.running.1.notify_all();
+        self.enabled.store(false, Ordering::SeqCst);
+        if let Some(h) = self.thread.lock().unwrap().take() {
+            if h.thread().id() != std::thread::current().id() {
+                let _ = h.join();
+            }
+        }
+    }
+}
+
+struct RefreshService(Arc<SecretsRefreshTask>);
+
+impl Service for RefreshService {
+    fn start(&self) -> Result<()> {
+        self.0.start()
+    }
+    fn stop(&self) -> Result<()> {
+        self.0.stop();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -259,5 +487,7 @@ mod tests {
         assert_eq!(secret_field(r#"{"user":"scott","port":5432}"#, Some("port")).as_deref(), Some("5432"));
         assert_eq!(secret_field("plain", None).as_deref(), Some("plain"));
         assert_eq!(secret_field(r#"{"user":"scott"}"#, Some("nope")), None);
+        assert_eq!(secret_name_of("arn:aws:secretsmanager:us-east-1:000:secret:db-pass-AbC123"), "db-pass");
+        assert_eq!(secret_name_of("plain"), "plain");
     }
 }

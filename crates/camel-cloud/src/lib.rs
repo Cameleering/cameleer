@@ -6,9 +6,10 @@
 //! | scheme | module | service / protocol | auth |
 //! |---|---|---|---|
 //! | `aws2-s3` | [`aws::s3`] | Amazon S3 REST (XML), multipart / streaming | SigV4 |
-//! | `aws2-sqs` | [`aws::sqs`] | Amazon SQS (AWS JSON 1.0) | SigV4 |
+//! | `aws2-sqs` | [`aws::sqs`] | Amazon SQS (AWS JSON 1.0, Query protocol fallback) | SigV4 |
 //! | `aws2-sns` | [`aws::sns`] | Amazon SNS (Query API) | SigV4 |
 //! | `aws2-ddb` | [`aws::ddb`] | Amazon DynamoDB (AWS JSON 1.0) | SigV4 |
+//! | `aws2-ddbstream` | [`aws::ddbstream`] | DynamoDB Streams consumer (AWS JSON 1.0) | SigV4 |
 //! | `aws2-lambda` | [`aws::lambda`] | AWS Lambda REST | SigV4 |
 //! | `aws2-kinesis` | [`aws::kinesis`] | Kinesis Data Streams (AWS JSON 1.1) | SigV4 |
 //! | `aws2-kinesis-firehose` | [`aws::firehose`] | Kinesis Data Firehose (AWS JSON 1.1) | SigV4 |
@@ -39,7 +40,7 @@
 //! | `azure-storage-blob` | [`azure::blob`] | Azure Blob Storage REST (block/append/page, leases) | Shared Key / SAS |
 //! | `azure-storage-queue` | [`azure::queue`] | Azure Queue Storage REST | Shared Key / SAS |
 //! | `azure-storage-datalake` | [`azure::datalake`] | ADLS Gen2 DFS REST | Shared Key / SAS |
-//! | `azure-key-vault` | [`azure::keyvault`] | Key Vault secrets REST, `{{azure:...}}` | Azure AD client credentials |
+//! | `azure-key-vault` | [`azure::keyvault`] | Key Vault secrets / keys / certificates REST, `{{azure:...}}` | Azure AD client credentials |
 //! | `azure-cosmosdb` | [`azure::cosmosdb`] | Cosmos DB SQL REST + change feed | master key HMAC |
 //! | `azure-storage-files` | [`azure::files`] | Azure Files REST | Shared Key / SAS |
 //! | `azure-functions` | [`azure::functions`] | HTTP-triggered Functions | function keys / Entra ID |
@@ -53,7 +54,8 @@
 //! | `google-functions` | [`gcp::functions`] | Cloud Functions v1 REST | service account JWT → OAuth2 |
 //! | `google-firestore` | [`gcp::firestore`] | Firestore REST | service account JWT → OAuth2 |
 //! | `google-sheets` | [`gcp::sheets`] | Sheets v4 REST | service account JWT → OAuth2 |
-//! | `google-mail`, `google-calendar`, `google-drive` | [`gcp::workspace`] | Gmail / Calendar / Drive REST | service account + domain-wide delegation |
+//! | `google-mail`, `google-calendar`, `google-drive` | [`gcp::workspace`] | Gmail / Calendar / Drive REST (Drive file-change consumer) | service account + domain-wide delegation, or OAuth refresh token |
+//! | `google-mail-stream`, `google-calendar-stream`, `google-sheets-stream` | [`gcp::streams`] | new mails / event changes / appended rows (polling consumers) | OAuth refresh token or service account + delegation |
 //! | `google-vertexai`, `google-speech-to-text`, `google-text-to-speech` | [`gcp::ai`] | Vertex AI Gemini, Speech v1, Text-to-Speech v1 REST | service account JWT → OAuth2 |
 //!
 //! `azure-servicebus` / `azure-eventhubs` (AMQP 1.0) live in `camel-amqp10`. [`register`] also
@@ -100,6 +102,7 @@ const COMPONENTS: &[(&str, ServiceFactory)] = &[
     ("aws2-sqs", aws::sqs::create),
     ("aws2-sns", aws::sns::create),
     ("aws2-ddb", aws::ddb::create),
+    ("aws2-ddbstream", aws::ddbstream::create),
     ("aws2-lambda", aws::lambda::create),
     ("aws2-kinesis", aws::kinesis::create),
     ("aws2-kinesis-firehose", aws::firehose::create),
@@ -152,6 +155,9 @@ const COMPONENTS: &[(&str, ServiceFactory)] = &[
     ("google-mail", gcp::workspace::create_mail),
     ("google-calendar", gcp::workspace::create_calendar),
     ("google-drive", gcp::workspace::create_drive),
+    ("google-mail-stream", gcp::streams::create_mail_stream),
+    ("google-calendar-stream", gcp::streams::create_calendar_stream),
+    ("google-sheets-stream", gcp::streams::create_sheets_stream),
     ("google-vertexai", gcp::ai::create_vertexai),
     ("google-speech-to-text", gcp::ai::create_speech_to_text),
     ("google-text-to-speech", gcp::ai::create_text_to_speech),
@@ -176,6 +182,8 @@ pub fn register(ctx: &CamelContext) {
     if !props.has_function("azure") {
         props.add_function("azure", azure::keyvault::properties_function(ctx));
     }
+    aws::secretsmanager::SecretsRefreshTask::install(ctx);
+    azure::blob_checkpoint::register_factory(ctx);
     if !props.has_function("gcp") {
         props.add_function("gcp", gcp::secretmanager::properties_function(ctx));
     }

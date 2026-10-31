@@ -16,6 +16,8 @@
 //! | `asn1` | | [`asn1`] |
 //! | `iCal` | `ical` | [`ical`] |
 //! | `mimeMultipart` | `mime-multipart` | [`mime`] |
+//! | `fory` | | [`fory`] |
+//! | `barcode` | | [`barcode`] |
 //! | `univocityCsv`, `univocityTsv`, `univocityFixed` | `univocity-csv`, ... | [`univocity`] |
 //!
 //! Call [`register`] on a context: every format is registered as a data format *factory*
@@ -32,9 +34,11 @@ use camel_core::{CamelContext, Value};
 
 pub mod asn1;
 pub mod avro;
+pub mod barcode;
 pub mod bindy;
 pub mod cbor;
 pub mod crypto;
+pub mod fory;
 pub mod ical;
 pub mod mime;
 pub mod pgp;
@@ -190,6 +194,8 @@ pub fn factories() -> Vec<(&'static str, Factory)> {
     v.push(("cbor", cbor::create));
     v.push(("thrift", thrift::create));
     v.push(("asn1", asn1::create));
+    v.push(("fory", fory::create));
+    v.push(("barcode", barcode::create));
     for n in ["iCal", "ical"] {
         v.push((n, ical::create));
     }

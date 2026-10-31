@@ -15,6 +15,8 @@
 
 pub mod aad;
 pub mod blob;
+pub mod blob_checkpoint;
+pub mod changefeed;
 pub mod cosmosdb;
 pub mod datalake;
 pub mod eventgrid;

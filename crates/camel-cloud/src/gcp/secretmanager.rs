@@ -133,7 +133,7 @@ pub fn properties_function(ctx: &CamelContext) -> PropertiesFunction {
         });
         let key = key_loc.map(|l| ServiceAccountKey::load(&l).map(Arc::new)).transpose()?;
         let project = get("projectId").or_else(|| key.as_ref().map(|k| k.project_id.clone()).filter(|p| !p.is_empty())).ok_or_else(|| CamelError::illegal_argument("camel.vault.gcp.projectId must be set to use {{gcp:...}} placeholders"))?;
-        let gcp = GcpConfig { authenticate: key.is_some(), key, endpoint: get("uriEndpointOverride"), proxy: Proxy::Environment, trust_all_certificates: false, subject: None };
+        let gcp = GcpConfig { authenticate: key.is_some(), key, endpoint: get("uriEndpointOverride"), proxy: Proxy::Environment, trust_all_certificates: false, subject: None, user: None, static_token: None };
         let svc = SecretManagerService { gcp, project, operation: None };
         let (name, field, version) = crate::aws::secretsmanager::parse_secret_ref(r);
         match svc.access(&name, version.as_deref().unwrap_or("latest")) {

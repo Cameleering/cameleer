@@ -46,6 +46,8 @@ pub(super) struct ExtState {
     docs: BTreeMap<String, (ObjectMap, i64, i64)>,
     sheets: BTreeMap<String, Spreadsheet>,
     pub(super) token_scopes: HashMap<String, String>,
+    /// BigQuery load / extract jobs: id -> (job resource, polls left before DONE)
+    bq_jobs: HashMap<String, (Value, usize)>,
 }
 
 impl GcpMock {
@@ -196,6 +198,22 @@ fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> R
             }
             Response::json(200, obj([("kind", Value::from("bigquery#tableDataInsertAllResponse")), ("insertErrors", Value::Array(errors))]).to_json())
         }
+        ("POST", ["jobs"]) => {
+            drop(guard);
+            bq_job(st, project, &body)
+        }
+        ("GET", ["jobs", id]) => match ext.bq_jobs.get_mut(*id) {
+            Some((job, polls)) => {
+                if *polls > 0 {
+                    *polls -= 1;
+                    let mut j = job.as_object().cloned().unwrap_or_default();
+                    j.insert("status".into(), obj([("state", Value::from("RUNNING"))]));
+                    return Response::json(200, Value::Object(j).to_json());
+                }
+                Response::json(200, job.to_json())
+            }
+            None => gerror(404, "notFound", &format!("Not found: Job {}:{}", project, id)),
+        },
         ("POST", ["queries"]) => {
             let text = body.get("query").map(|q| q.to_string()).unwrap_or_default();
             if body.get("useLegacySql").is_some_and(|l| l.is_truthy()) {
@@ -224,6 +242,153 @@ fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> R
         }
         _ => gerror(400, "invalid", "Unsupported BigQuery request"),
     }
+}
+
+fn csv_fields(line: &str, delim: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' if quoted && chars.peek() == Some(&'"') => {
+                cur.push('"');
+                chars.next();
+            }
+            '"' => quoted = !quoted,
+            c if c == delim && !quoted => out.push(std::mem::take(&mut cur)),
+            c => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
+}
+
+fn csv_escape(v: &Value) -> String {
+    let s = v.to_string();
+    if s.contains([',', '"', '\n']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
+    }
+}
+
+/// Split `gs://bucket/object`.
+fn gs(uri: &str) -> Option<(String, String)> {
+    let rest = uri.strip_prefix("gs://")?;
+    let (b, o) = rest.split_once('/')?;
+    Some((b.to_string(), o.to_string()))
+}
+
+/// Run a load / extract job against the emulated Cloud Storage and tables.
+fn bq_job(st: &Shared, project: &str, body: &Value) -> Response {
+    let mut guard = st.lock().unwrap();
+    let job_id = body.get("jobReference").and_then(|r| r.get("jobId")).map(|j| j.to_string()).unwrap_or_else(|| format!("job_{}", random_hex(8)));
+    let cfg = body.get("configuration").cloned().unwrap_or_default();
+    let table_key = |t: &Value| format!("{}.{}.{}", t.get("projectId").map(|p| p.to_string()).unwrap_or_else(|| project.to_string()), t.get("datasetId").map(|p| p.to_string()).unwrap_or_default(), t.get("tableId").map(|p| p.to_string()).unwrap_or_default());
+    let mut stats = ObjectMap::new();
+    let result: Result<(), (String, String)> = (|| {
+        if let Some(load) = cfg.get("load") {
+            let key = table_key(&load.get("destinationTable").cloned().unwrap_or_default());
+            let format = load.get("sourceFormat").map(|f| f.to_string()).unwrap_or_else(|| "CSV".into());
+            let skip = load.get("skipLeadingRows").and_then(|s| s.as_i64()).unwrap_or(0) as usize;
+            let delim = load.get("fieldDelimiter").map(|d| d.to_string()).and_then(|d| d.chars().next()).unwrap_or(',');
+            let schema = guard.ext.tables.get(&key).map(|t| t.schema.clone()).ok_or_else(|| ("notFound".to_string(), format!("Not found: Table {}", key)))?;
+            let mut rows: Vec<ObjectMap> = Vec::new();
+            for uri in load.get("sourceUris").and_then(|u| u.as_array()).cloned().unwrap_or_default() {
+                let uri = uri.to_string();
+                let (b, o) = gs(&uri).ok_or_else(|| ("invalid".to_string(), format!("Invalid source uri {}", uri)))?;
+                let data = guard.buckets.get(&b).and_then(|bk| bk.objects.get(&o)).map(|x| x.data.clone()).ok_or_else(|| ("notFound".to_string(), format!("Not found: URI {}", uri)))?;
+                let text = String::from_utf8_lossy(&data).into_owned();
+                for line in text.lines().skip(if format == "CSV" { skip } else { 0 }).filter(|l| !l.trim().is_empty()) {
+                    let mut row = ObjectMap::new();
+                    match format.as_str() {
+                        "CSV" => {
+                            let fields = csv_fields(line, delim);
+                            if fields.len() != schema.len() {
+                                return Err(("invalid".into(), format!("Error while reading data, error message: CSV table encountered too many errors; expected {} columns but got {}", schema.len(), fields.len())));
+                            }
+                            for ((name, ty), f) in schema.iter().zip(fields) {
+                                let v = if f.is_empty() { Value::Null } else { bq_coerce(&Value::from(f.clone()), ty).map_err(|e| ("invalid".to_string(), e))? };
+                                row.insert(name.clone(), v);
+                            }
+                        }
+                        "NEWLINE_DELIMITED_JSON" => {
+                            let v = parse_json(line.as_bytes()).map_err(|e| ("invalid".to_string(), e.to_string()))?;
+                            for (k, x) in v.as_object().cloned().unwrap_or_default() {
+                                let ty = schema.iter().find(|(n, _)| *n == k).map(|(_, t)| t.clone()).ok_or_else(|| ("invalid".to_string(), format!("no such field: {}.", k)))?;
+                                row.insert(k, bq_coerce(&x, &ty).map_err(|e| ("invalid".to_string(), e))?);
+                            }
+                        }
+                        other => return Err(("invalid".into(), format!("Source format {} is not supported by the emulator", other))),
+                    }
+                    rows.push(row);
+                }
+            }
+            let t = guard.ext.tables.get_mut(&key).expect("checked");
+            match load.get("writeDisposition").map(|w| w.to_string()).as_deref().unwrap_or("WRITE_APPEND") {
+                "WRITE_TRUNCATE" => t.rows.clear(),
+                "WRITE_EMPTY" if !t.rows.is_empty() => return Err(("duplicate".into(), format!("Already Exists: Table {}", key))),
+                _ => {}
+            }
+            stats.insert("load".into(), obj([("outputRows", Value::from(rows.len().to_string())), ("inputFiles", Value::from(load.get("sourceUris").and_then(|u| u.as_array()).map(|a| a.len()).unwrap_or(0).to_string()))]));
+            t.rows.extend(rows);
+            Ok(())
+        } else if let Some(extract) = cfg.get("extract") {
+            let key = table_key(&extract.get("sourceTable").cloned().unwrap_or_default());
+            let (schema, rows) = guard.ext.tables.get(&key).map(|t| (t.schema.clone(), t.rows.clone())).ok_or_else(|| ("notFound".to_string(), format!("Not found: Table {}", key)))?;
+            let format = extract.get("destinationFormat").map(|f| f.to_string()).unwrap_or_else(|| "NEWLINE_DELIMITED_JSON".into());
+            let mut out = String::new();
+            match format.as_str() {
+                "CSV" => {
+                    if extract.get("printHeader").and_then(|p| p.as_bool()).unwrap_or(true) {
+                        out.push_str(&schema.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>().join(","));
+                        out.push('\n');
+                    }
+                    for r in &rows {
+                        out.push_str(&schema.iter().map(|(n, _)| r.get(n).map(csv_escape).unwrap_or_default()).collect::<Vec<_>>().join(","));
+                        out.push('\n');
+                    }
+                }
+                "NEWLINE_DELIMITED_JSON" => {
+                    for r in &rows {
+                        out.push_str(&Value::Object(r.clone()).to_json());
+                        out.push('\n');
+                    }
+                }
+                other => return Err(("invalid".into(), format!("Destination format {} is not supported by the emulator", other))),
+            }
+            for uri in extract.get("destinationUris").and_then(|u| u.as_array()).cloned().unwrap_or_default() {
+                let uri = uri.to_string().replace('*', "000000000000");
+                let (b, o) = gs(&uri).ok_or_else(|| ("invalid".to_string(), format!("Invalid destination uri {}", uri)))?;
+                let gen = super::next(&mut guard);
+                let ct = if format == "CSV" { "text/csv" } else { "application/json" };
+                let bucket = guard.buckets.get_mut(&b).ok_or_else(|| ("notFound".to_string(), format!("Not found: Bucket {}", b)))?;
+                bucket.objects.insert(o, super::new_obj(out.clone().into_bytes(), ct.into(), gen));
+            }
+            stats.insert("extract".into(), obj([("destinationUriFileCounts", Value::Array(vec![Value::from("1")]))]));
+            Ok(())
+        } else {
+            Err(("invalid".into(), "Only load and extract jobs are supported by the emulator (use jobs.query)".into()))
+        }
+    })();
+    let mut status = ObjectMap::new();
+    status.insert("state".into(), Value::from("DONE"));
+    if let Err((reason, message)) = &result {
+        status.insert("errorResult".into(), obj([("reason", Value::from(reason.clone())), ("message", Value::from(message.clone()))]));
+    }
+    let job = obj([
+        ("kind", Value::from("bigquery#job")),
+        ("id", Value::from(format!("{}:{}", project, job_id))),
+        ("jobReference", obj([("projectId", Value::from(project)), ("jobId", Value::from(job_id.clone()))])),
+        ("configuration", cfg),
+        ("status", Value::Object(status)),
+        ("statistics", Value::Object(stats)),
+    ]);
+    guard.ext.bq_jobs.insert(job_id, (job.clone(), 1));
+    let mut first = job.as_object().cloned().unwrap_or_default();
+    first.insert("status".into(), obj([("state", Value::from("PENDING"))]));
+    Response::json(200, Value::Object(first).to_json())
 }
 
 fn query_response(ext: &ExtState, project: &str, job_id: &str, token: Option<String>) -> Response {

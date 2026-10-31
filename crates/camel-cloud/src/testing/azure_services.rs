@@ -13,6 +13,8 @@
 
 #[path = "azure_more.rs"]
 mod more;
+#[path = "azure_keys.rs"]
+mod keys;
 pub use more::{AzureFn, FUNCTIONS_MASTER_KEY, OPENAI_KEY};
 
 use std::collections::{BTreeMap, HashMap};
@@ -66,6 +68,7 @@ struct State {
     deleted: BTreeMap<String, Vec<KvVersion>>,
     dbs: BTreeMap<String, Db>,
     more: more::MoreState,
+    keys: keys::KeysState,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -152,6 +155,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
         return token(st, &segs[0], req);
     }
     if let Some(r) = more::handle(st, req, &segs) {
+        return r;
+    }
+    if let Some(r) = keys::handle(st, req, &segs) {
         return r;
     }
     match segs.first().map(|s| s.as_str()) {

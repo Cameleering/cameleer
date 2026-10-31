@@ -9,6 +9,20 @@
 //! (`table$20260101`), `CamelGoogleBigQueryInsertId` (or the `useAsInsertId` field) the insert
 //! id for de-duplication. Rejected rows raise `BigQueryException` listing the insert errors.
 //!
+//! Load and extract jobs (rust-camel `operation` option / `CamelGoogleBigQueryOperation` header;
+//! default `insert` = the streaming insert above), run with `jobs.insert` and polled
+//! (`jobs.get`, every `jobPollInterval` ms, default 200, until `jobTimeout` ms, default 60000):
+//! * `load`: loads Cloud Storage files into the table: `sourceUris` / `CamelGoogleBigQuerySourceUris`
+//!   (or a list / text body of `gs://` uris), `sourceFormat` (`CSV` default,
+//!   `NEWLINE_DELIMITED_JSON`, `AVRO`, `PARQUET`...), `skipLeadingRows`, `fieldDelimiter`,
+//!   `writeDisposition` (`WRITE_APPEND` default, `WRITE_TRUNCATE`, `WRITE_EMPTY`),
+//!   `createDisposition`, `autodetect`.
+//! * `extract`: exports the table to `destinationUris` / `CamelGoogleBigQueryDestinationUris`
+//!   (`destinationFormat` `NEWLINE_DELIMITED_JSON` default or `CSV`, `printHeader`, `compression`).
+//!
+//! Body = the finished job resource; `CamelGoogleBigQueryJobId` is set; a job finishing with an
+//! `errorResult` raises `BigQueryException`.
+//!
 //! `google-bigquery-sql://projectId:query?...` runs a standard SQL query with `jobs.query`
 //! (polling `getQueryResults` until complete, reading all pages). The query may be
 //! `classpath:`/`file:` resource. `@name` parameters are bound from the header `name`, else
@@ -34,6 +48,10 @@ pub mod headers {
     pub const PARTITION_DECORATOR: &str = "CamelGoogleBigQueryPartitionDecorator";
     pub const TRANSLATED_QUERY: &str = "CamelGoogleBigQueryTranslatedQuery";
     pub const JOB_ID: &str = "CamelGoogleBigQueryJobId";
+    /// rust-camel extensions.
+    pub const OPERATION: &str = "CamelGoogleBigQueryOperation";
+    pub const SOURCE_URIS: &str = "CamelGoogleBigQuerySourceUris";
+    pub const DESTINATION_URIS: &str = "CamelGoogleBigQueryDestinationUris";
 }
 
 fn base(gcp: &GcpConfig, project: &str) -> String {
@@ -47,7 +65,26 @@ pub struct BigQueryService {
     pub dataset: String,
     pub table: Option<String>,
     pub use_as_insert_id: Option<String>,
+    pub operation: Option<String>,
+    /// Job options (`sourceFormat`, `writeDisposition`, ...).
+    pub job_options: std::collections::BTreeMap<String, String>,
+    pub job_poll_interval: std::time::Duration,
+    pub job_timeout: std::time::Duration,
 }
+
+const JOB_OPTIONS: &[&str] = &[
+    "sourceUris",
+    "sourceFormat",
+    "skipLeadingRows",
+    "fieldDelimiter",
+    "writeDisposition",
+    "createDisposition",
+    "autodetect",
+    "destinationUris",
+    "destinationFormat",
+    "printHeader",
+    "compression",
+];
 
 /// Factory for `google-bigquery`.
 pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
@@ -57,17 +94,112 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
     }
     let gcp = GcpConfig::from_opts(o)?;
     o.ignore(&["connectionFactory"]);
+    let mut job_options = std::collections::BTreeMap::new();
+    for k in JOB_OPTIONS {
+        if let Some(v) = o.get(k) {
+            job_options.insert(k.to_string(), v);
+        }
+    }
     Ok(Arc::new(BigQueryService {
         project: parts[0].to_string(),
         dataset: parts[1].to_string(),
         table: parts.get(2).map(|t| t.to_string()).filter(|t| !t.is_empty()),
         use_as_insert_id: o.get("useAsInsertId"),
+        operation: o.get("operation"),
+        job_options,
+        job_poll_interval: std::time::Duration::from_millis(o.i64("jobPollInterval", 200)?.max(1) as u64),
+        job_timeout: std::time::Duration::from_millis(o.i64("jobTimeout", 60_000)?.max(1) as u64),
         gcp,
     }))
 }
 
+impl BigQueryService {
+    fn uris(&self, ex: &Exchange, header: &str, option: &str) -> Vec<String> {
+        let from_header = crate::util::header_list(ex, header);
+        if !from_header.is_empty() {
+            return from_header;
+        }
+        if let Some(o) = self.job_options.get(option) {
+            return crate::util::str_list(&Value::from(o.clone()));
+        }
+        match ex.body() {
+            Value::Array(_) | Value::String(_) => crate::util::str_list(ex.body()).into_iter().filter(|u| u.starts_with("gs://")).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn job(&self, ex: &mut Exchange, op: &str) -> Result<()> {
+        let table = header_str(ex, headers::TABLE_ID).or_else(|| self.table.clone()).ok_or_else(|| CamelError::illegal_argument("Table id must be specified (uri or CamelGoogleBigQueryTableId)"))?;
+        let table_ref = obj([("projectId", Value::from(self.project.clone())), ("datasetId", Value::from(self.dataset.clone())), ("tableId", Value::from(table))]);
+        let opt = |k: &str| self.job_options.get(k).cloned();
+        let mut cfg = ObjectMap::new();
+        if op == "load" {
+            let uris = self.uris(ex, headers::SOURCE_URIS, "sourceUris");
+            if uris.is_empty() {
+                return Err(CamelError::illegal_argument("load needs sourceUris (option, CamelGoogleBigQuerySourceUris header or a list body of gs:// uris)"));
+            }
+            cfg.insert("sourceUris".into(), Value::from(uris));
+            cfg.insert("destinationTable".into(), table_ref);
+            cfg.insert("sourceFormat".into(), Value::from(opt("sourceFormat").unwrap_or_else(|| "CSV".into())));
+            cfg.insert("writeDisposition".into(), Value::from(opt("writeDisposition").unwrap_or_else(|| "WRITE_APPEND".into())));
+            if let Some(n) = opt("skipLeadingRows") {
+                cfg.insert("skipLeadingRows".into(), Value::Int(n.parse().map_err(|_| CamelError::illegal_argument(format!("Invalid skipLeadingRows: {}", n)))?));
+            }
+            for k in ["fieldDelimiter", "createDisposition"] {
+                if let Some(v) = opt(k) {
+                    cfg.insert(k.into(), Value::from(v));
+                }
+            }
+            if let Some(a) = opt("autodetect") {
+                cfg.insert("autodetect".into(), Value::Bool(a.eq_ignore_ascii_case("true")));
+            }
+        } else {
+            let uris = self.uris(ex, headers::DESTINATION_URIS, "destinationUris");
+            if uris.is_empty() {
+                return Err(CamelError::illegal_argument("extract needs destinationUris (option, CamelGoogleBigQueryDestinationUris header or a list body of gs:// uris)"));
+            }
+            cfg.insert("sourceTable".into(), table_ref);
+            cfg.insert("destinationUris".into(), Value::from(uris));
+            cfg.insert("destinationFormat".into(), Value::from(opt("destinationFormat").unwrap_or_else(|| "NEWLINE_DELIMITED_JSON".into())));
+            if let Some(p) = opt("printHeader") {
+                cfg.insert("printHeader".into(), Value::Bool(p.eq_ignore_ascii_case("true")));
+            }
+            if let Some(c) = opt("compression") {
+                cfg.insert("compression".into(), Value::from(c));
+            }
+        }
+        let job_id = format!("camel_{}_{}", op, crate::util::random_hex(8));
+        let body = obj([
+            ("jobReference", obj([("projectId", Value::from(self.project.clone())), ("jobId", Value::from(job_id.clone()))])),
+            ("configuration", obj([(op, Value::Object(cfg))])),
+        ]);
+        let base = base(&self.gcp, &self.project);
+        let mut job = self.gcp.json("POST", &format!("{}/jobs", base), Some(&body), kinds::BIGQUERY)?;
+        let deadline = std::time::Instant::now() + self.job_timeout;
+        while job.get("status").and_then(|s| s.get("state")).map(|s| s.to_string()).as_deref() != Some("DONE") {
+            if std::time::Instant::now() >= deadline {
+                return Err(cloud_error(kinds::BIGQUERY, format!("BigQuery job {} did not finish within {:?} (code: 408, status: DEADLINE_EXCEEDED)", job_id, self.job_timeout)));
+            }
+            std::thread::sleep(self.job_poll_interval);
+            job = self.gcp.json("GET", &format!("{}/jobs/{}", base, uri_encode(&job_id, false)), None, kinds::BIGQUERY)?;
+        }
+        ex.set_header(headers::JOB_ID, job_id);
+        if let Some(err) = job.get("status").and_then(|s| s.get("errorResult")) {
+            return Err(cloud_error(kinds::BIGQUERY, format!("BigQuery {} job failed: {} (code: 400, status: {})", op, err.get("message").map(|m| m.to_string()).unwrap_or_default(), err.get("reason").map(|m| m.to_string()).unwrap_or_default())));
+        }
+        ex.set_body(job);
+        Ok(())
+    }
+}
+
 impl CloudService for BigQueryService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
+        let op = crate::endpoint::operation(ex, headers::OPERATION, &self.operation, "insert");
+        match op.as_str() {
+            "insert" => {}
+            "load" | "extract" => return self.job(ex, &op),
+            other => return Err(crate::endpoint::unsupported("google-bigquery", other)),
+        }
         let mut table = header_str(ex, headers::TABLE_ID).or_else(|| self.table.clone()).ok_or_else(|| CamelError::illegal_argument("Table id must be specified (uri or CamelGoogleBigQueryTableId)"))?;
         if let Some(p) = header_str(ex, headers::PARTITION_DECORATOR) {
             table = format!("{}${}", table, p);

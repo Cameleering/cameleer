@@ -27,6 +27,15 @@
 //! emits one exchange per blob (body = content) with the `CamelAzureStorageBlob*` headers. Blobs
 //! are deleted after successful processing when `deleteAfterRead=true` (rust-camel extension,
 //! default false like Camel, which re-reads the container on every poll).
+//!
+//! Change feed ([`super::changefeed`]): operation `getChangeFeed` (body = list of change events,
+//! `changeFeedStartTime` / `changeFeedEndTime` options or the `CamelAzureStorageBlobChangeFeedStartTime`
+//! / `...EndTime` headers, epoch millis or ISO-8601), and with `changeFeed=true` (rust-camel) a
+//! change feed consumer: every poll reads the events after the newest one already delivered
+//! (from `changeFeedStartTime`, default: the consumer start) and emits one exchange per event
+//! (body = the event map, headers `CamelAzureStorageBlobChangeFeedEventType`,
+//! `...ChangeFeedEventTime`, `...ChangeFeedEventId`, `CamelAzureStorageBlobContainerName`,
+//! `CamelAzureStorageBlobBlobName`); no container is needed in the uri.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -64,6 +73,11 @@ pub mod headers {
     /// rust-camel extensions.
     pub const LEASE_ID: &str = "CamelAzureStorageBlobLeaseId";
     pub const LEASE_DURATION: &str = "CamelAzureStorageBlobLeaseDuration";
+    pub const CHANGE_FEED_START_TIME: &str = "CamelAzureStorageBlobChangeFeedStartTime";
+    pub const CHANGE_FEED_END_TIME: &str = "CamelAzureStorageBlobChangeFeedEndTime";
+    pub const CHANGE_FEED_EVENT_TYPE: &str = "CamelAzureStorageBlobChangeFeedEventType";
+    pub const CHANGE_FEED_EVENT_TIME: &str = "CamelAzureStorageBlobChangeFeedEventTime";
+    pub const CHANGE_FEED_EVENT_ID: &str = "CamelAzureStorageBlobChangeFeedEventId";
 }
 
 /// A blob of a listing.
@@ -102,7 +116,12 @@ pub struct BlobService {
     pub page_blob_size: i64,
     pub lease_blob: bool,
     pub lease_duration: i64,
+    pub change_feed: bool,
+    pub change_feed_start: Option<i64>,
+    pub change_feed_end: Option<i64>,
     pub scheduler: ScheduledPollConfig,
+    /// Change feed consumer position: (newest event time delivered, ids delivered at that time).
+    feed_position: std::sync::Mutex<(Option<i64>, std::collections::HashSet<String>)>,
 }
 
 /// Factory for the component.
@@ -124,10 +143,14 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         page_blob_size: o.i64("pageBlobSize", 512)?,
         lease_blob: o.bool("leaseBlob", false)?,
         lease_duration: o.i64("leaseDurationInSeconds", 60)?,
+        change_feed: o.bool("changeFeed", false)?,
+        change_feed_start: o.get("changeFeedStartTime").map(|v| super::changefeed::time_value(&Value::from(v.clone())).ok_or_else(|| CamelError::illegal_argument(format!("Invalid changeFeedStartTime: {}", v)))).transpose()?,
+        change_feed_end: o.get("changeFeedEndTime").map(|v| super::changefeed::time_value(&Value::from(v.clone())).ok_or_else(|| CamelError::illegal_argument(format!("Invalid changeFeedEndTime: {}", v)))).transpose()?,
+        feed_position: std::sync::Mutex::new((None, std::collections::HashSet::new())),
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
         azure,
     };
-    o.ignore(&["blobType", "closeStreamAfterRead", "closeStreamAfterWrite", "dataCount", "fileDir", "blobOffset", "regex", "downloadLinkExpiration", "changeFeedStartTime", "changeFeedEndTime", "commitBlockListLater", "blockListType", "maxRetryRequests"]);
+    o.ignore(&["blobType", "closeStreamAfterRead", "closeStreamAfterWrite", "dataCount", "fileDir", "blobOffset", "regex", "downloadLinkExpiration", "commitBlockListLater", "blockListType", "maxRetryRequests"]);
     Ok(Arc::new(s))
 }
 
@@ -357,6 +380,35 @@ impl BlobService {
     }
 }
 
+impl BlobService {
+    fn poll_change_feed(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        let (since, seen) = self.feed_position.lock().unwrap().clone();
+        let events = super::changefeed::read(&self.azure, since, self.change_feed_end)?;
+        let fresh: Vec<Value> = events.into_iter().filter(|e| !seen.contains(&e.get("id").map(|i| i.to_string()).unwrap_or_default())).collect();
+        let total = fresh.len();
+        for (i, e) in fresh.into_iter().enumerate() {
+            let id = e.get("id").map(|i| i.to_string()).unwrap_or_default();
+            let t = e.get("eventTime").and_then(|t| super::changefeed::iso_millis(&t.to_string())).unwrap_or(0);
+            let (container, blob) = super::changefeed::subject_parts(&e.get("subject").map(|s| s.to_string()).unwrap_or_default());
+            let mut ex = Exchange::new(ctx.clone());
+            ex.set_header(headers::CHANGE_FEED_EVENT_TYPE, e.get("eventType").cloned().unwrap_or_default());
+            ex.set_header(headers::CHANGE_FEED_EVENT_TIME, e.get("eventTime").cloned().unwrap_or_default());
+            ex.set_header(headers::CHANGE_FEED_EVENT_ID, id.clone());
+            ex.set_header(headers::BLOB_CONTAINER_NAME, container);
+            ex.set_header(headers::BLOB_NAME, blob);
+            ex.set_body(e);
+            set_batch(&mut ex, i, total);
+            process(logger, processor, &mut ex);
+            let mut p = self.feed_position.lock().unwrap();
+            if p.0.is_none_or(|l| t > l) {
+                *p = (Some(t), std::collections::HashSet::new());
+            }
+            p.1.insert(id);
+        }
+        Ok(total)
+    }
+}
+
 impl CloudService for BlobService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = operation(ex, headers::OPERATION, &self.operation, "listBlobContainers");
@@ -486,6 +538,11 @@ impl CloudService for BlobService {
             "breakBlobLease" => {
                 self.lease(&self.container(ex)?, &self.blob(ex)?, "break", None, None)?;
             }
+            "getChangeFeed" => {
+                let start = ex.header(headers::CHANGE_FEED_START_TIME).and_then(super::changefeed::time_value).or(self.change_feed_start);
+                let end = ex.header(headers::CHANGE_FEED_END_TIME).and_then(super::changefeed::time_value).or(self.change_feed_end);
+                ex.set_body(Value::Array(super::changefeed::read(&self.azure, start, end)?));
+            }
             other => return Err(unsupported("azure-storage-blob", other)),
         }
         Ok(())
@@ -495,7 +552,20 @@ impl CloudService for BlobService {
         Some(&self.scheduler)
     }
 
+    fn on_start(&self) -> Result<()> {
+        if self.change_feed {
+            let mut p = self.feed_position.lock().unwrap();
+            if p.0.is_none() {
+                p.0 = Some(self.change_feed_start.unwrap_or_else(crate::util::now_millis));
+            }
+        }
+        Ok(())
+    }
+
     fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        if self.change_feed {
+            return self.poll_change_feed(ctx, processor, logger);
+        }
         let container = self.container.clone().ok_or_else(|| CamelError::illegal_argument("The blob consumer requires a container name in the uri"))?;
         let names: Vec<String> = match &self.blob_name {
             Some(b) => vec![b.clone()],

@@ -71,6 +71,8 @@ pub(super) struct MoreState {
     vertex_requests: Vec<Value>,
     stats: StreamingStats,
     next: u64,
+    /// (client id, refresh token) -> (client secret, user email, scopes)
+    users: BTreeMap<(String, String), (String, String, String)>,
 }
 
 impl GcpMock {
@@ -80,6 +82,11 @@ impl GcpMock {
         let id = next_id(&mut s.more, "m");
         s.more.mailboxes.entry(user.to_string()).or_default().push(GmailMsg { id: id.clone(), thread: format!("t{}", id), labels: vec!["INBOX".into(), "UNREAD".into()], raw: raw.as_bytes().to_vec() });
         id
+    }
+    /// Register OAuth2 user credentials: refresh-token grants for them issue tokens acting as
+    /// `email` with `scopes`.
+    pub fn add_user_credentials(&self, client_id: &str, client_secret: &str, refresh_token: &str, email: &str, scopes: &[&str]) {
+        self.state.lock().unwrap().more.users.insert((client_id.into(), refresh_token.into()), (client_secret.into(), email.into(), scopes.join(" ")));
     }
     /// Raw messages of a mailbox with their labels.
     pub fn gmail_messages(&self, user: &str) -> Vec<(String, Vec<String>)> {
@@ -121,6 +128,27 @@ fn next_id(m: &mut MoreState, prefix: &str) -> String {
 
 fn ok(v: Value) -> Response {
     Response::json(200, v.to_json())
+}
+
+/// The `refresh_token` grant of the token endpoint.
+pub(super) fn refresh_grant(st: &Shared, p: &[(String, String)]) -> Response {
+    let get = |k: &str| p.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let mut s = st.lock().unwrap();
+    let user = s.more.users.get(&(get("client_id"), get("refresh_token"))).cloned();
+    let Some((secret, email, scopes)) = user else {
+        s.auth_failures += 1;
+        return Response::json(400, obj([("error", Value::from("invalid_grant")), ("error_description", Value::from("Token has been expired or revoked."))]).to_json());
+    };
+    if !crate::util::ct_eq(secret.as_bytes(), get("client_secret").as_bytes()) {
+        s.auth_failures += 1;
+        return Response::json(401, obj([("error", Value::from("invalid_client")), ("error_description", Value::from("Unauthorized"))]).to_json());
+    }
+    let tok = format!("ya29.user-{}", random_hex(16));
+    s.tokens.insert(tok.clone(), now_secs() + 3600);
+    s.ext.token_scopes.insert(tok.clone(), scopes.clone());
+    s.more.token_subjects.insert(tok.clone(), email);
+    s.token_requests += 1;
+    Response::json(200, obj([("access_token", Value::from(tok)), ("expires_in", Value::Int(3599)), ("scope", Value::from(scopes)), ("token_type", Value::from("Bearer"))]).to_json())
 }
 
 /// Scope / subject checks of a bearer token.
@@ -324,6 +352,8 @@ fn gmail(st: &Shared, req: &ServerRequest, user: &str, rest: &[&str]) -> Respons
                             q.split_whitespace().all(|term| match term.split_once(':') {
                                 Some(("from", v)) => header_of(&raw, "from").contains(&v.to_ascii_lowercase()),
                                 Some(("subject", v)) => header_of(&raw, "subject").contains(&v.to_ascii_lowercase()),
+                                Some(("is", "unread")) => m.labels.iter().any(|l| l == "UNREAD"),
+                                Some(("is", "read")) => !m.labels.iter().any(|l| l == "UNREAD"),
                                 _ => raw.contains(&term.to_ascii_lowercase()),
                             })
                         })
@@ -423,7 +453,7 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
         ("POST", ["calendars", cal, "events", "quickAdd"]) => {
             let text = req.query_param("text").unwrap_or_default();
             let id = next_id(&mut s.more, "e");
-            let e = obj([("id", Value::from(id.clone())), ("summary", Value::from(text)), ("status", Value::from("confirmed")), ("start", obj([("dateTime", Value::from(iso8601_millis(now_millis())))])), ("end", obj([("dateTime", Value::from(iso8601_millis(now_millis() + 3_600_000)))]))]);
+            let e = obj([("id", Value::from(id.clone())), ("summary", Value::from(text)), ("status", Value::from("confirmed")), ("start", obj([("dateTime", Value::from(iso8601_millis(now_millis())))])), ("end", obj([("dateTime", Value::from(iso8601_millis(now_millis() + 3_600_000)))])), ("updated", Value::from(iso8601_millis(now_millis())))]);
             s.more.calendars.entry(cal.to_string()).or_default().insert(id, e.clone());
             ok(e)
         }
@@ -436,17 +466,20 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
             e.insert("id".into(), Value::from(id.clone()));
             e.insert("status".into(), Value::from("confirmed"));
             e.insert("htmlLink".into(), Value::from(format!("https://calendar.google.com/event?eid={}", id)));
+            e.insert("updated".into(), Value::from(iso8601_millis(now_millis())));
             s.more.calendars.entry(cal.to_string()).or_default().insert(id, Value::Object(e.clone()));
             ok(Value::Object(e))
         }
         ("GET", ["calendars", cal, "events"]) => {
             let q = req.query_param("q").unwrap_or_default().to_ascii_lowercase();
             let (tmin, tmax) = (req.query_param("timeMin"), req.query_param("timeMax"));
+            let updated_min = req.query_param("updatedMin");
             let mut items: Vec<Value> = s
                 .more
                 .calendars
                 .get(*cal)
-                .map(|c| c.values().filter(|e| e.to_json().to_ascii_lowercase().contains(&q)).filter(|e| tmin.as_ref().is_none_or(|t| event_start(e) >= *t) && tmax.as_ref().is_none_or(|t| event_start(e) < *t)).cloned().collect())
+                .map(|c| c.values().filter(|e| e.to_json().to_ascii_lowercase().contains(&q)).filter(|e| tmin.as_ref().is_none_or(|t| event_start(e) >= *t) && tmax.as_ref().is_none_or(|t| event_start(e) < *t))
+                        .filter(|e| updated_min.as_ref().is_none_or(|u| e.get("updated").map(|x| x.to_string()).unwrap_or_default() >= *u)).cloned().collect())
                 .unwrap_or_default();
             if req.query_param("orderBy").as_deref() == Some("startTime") {
                 items.sort_by_key(event_start);
@@ -478,6 +511,7 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
                     }
                     e.insert("id".into(), Value::from(id.to_string()));
                     e.insert("status".into(), Value::from("confirmed"));
+                    e.insert("updated".into(), Value::from(iso8601_millis(now_millis())));
                     *existing = Value::Object(e);
                     ok(existing.clone())
                 }

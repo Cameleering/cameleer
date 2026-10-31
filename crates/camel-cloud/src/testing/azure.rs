@@ -10,6 +10,8 @@
 mod blob_ext;
 #[path = "azure_files_ext.rs"]
 mod files_ext;
+#[path = "azure_changefeed.rs"]
+mod changefeed;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -63,6 +65,8 @@ struct State {
     shares: BTreeMap<String, files_ext::Share>,
     auth_failures: usize,
     sas_requests: usize,
+    change_feed: bool,
+    feed_events: Vec<(i64, camel_core::value::Value)>,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -386,7 +390,24 @@ fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Op
         };
     };
     let Some(c) = s.containers.get_mut(&container) else { return error(404, "ContainerNotFound", "The specified container does not exist.") };
-    blob_ext::blob_item_op(c, req, blob)
+    let before = c.blobs.get(&blob).map(|b| b.etag.clone());
+    let resp = blob_ext::blob_item_op(c, req, blob.clone());
+    let after = c.blobs.get(&blob).map(|b| (b.etag.clone(), b.content_type.clone(), b.data.len(), b.blob_type.clone()));
+    if before != after.as_ref().map(|a| a.0.clone()) {
+        let api = match (&after, req.query_param("comp").as_deref()) {
+            (None, _) => "DeleteBlob",
+            (Some(_), Some("appendblock")) => "AppendBlock",
+            (Some(_), Some("page")) => "PutPage",
+            (Some(_), Some("blocklist")) => "PutBlockList",
+            _ => "PutBlob",
+        };
+        let (etag, ct, len, bt) = match after {
+            Some((e, c, l, t)) => (Some(e), c, l, t),
+            None => (None, String::new(), 0, "BlockBlob".to_string()),
+        };
+        changefeed::record(&mut s, &container, &blob, api, etag, &ct, len, &bt);
+    }
+    resp
 }
 
 fn message_xml(m: &QMsg, with_text: bool) -> String {

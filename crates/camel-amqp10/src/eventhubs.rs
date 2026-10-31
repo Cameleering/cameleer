@@ -74,6 +74,23 @@ pub trait CheckpointStore: Send + Sync {
     fn update(&self, namespace: &str, hub: &str, consumer_group: &str, partition: &str, checkpoint: Checkpoint) -> Result<()>;
 }
 
+/// Options of an Azure Blob checkpoint store (`blobAccountName`, `blobContainerName`,
+/// `blobAccessKey`, and the rust-camel `blobEndpoint` override, e.g. an Azurite URL).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BlobCheckpointOptions {
+    pub account_name: String,
+    pub container_name: String,
+    pub access_key: Option<String>,
+    pub endpoint: Option<String>,
+}
+
+/// Creates a blob checkpoint store from the endpoint's `blob*` options. Another crate
+/// (camel-cloud) binds one in the registry under [`BLOB_CHECKPOINT_STORE_FACTORY`].
+pub type BlobCheckpointStoreFactory = Arc<dyn Fn(&CamelContext, &BlobCheckpointOptions) -> Result<Arc<dyn CheckpointStore>> + Send + Sync>;
+
+/// Registry name of the [`BlobCheckpointStoreFactory`].
+pub const BLOB_CHECKPOINT_STORE_FACTORY: &str = "camel-amqp10-blob-checkpoint-store-factory";
+
 /// An in-memory checkpoint store.
 #[derive(Default)]
 pub struct InMemoryCheckpointStore {
@@ -166,6 +183,13 @@ impl EventHubsConfig {
         let partition_id = o.string("partitionId");
         let partition_key = o.string("partitionKey");
         let prefetch = o.num("prefetchCount", 500u32)?.max(1);
+        let blob = BlobCheckpointOptions {
+            account_name: o.string("blobAccountName").unwrap_or_default(),
+            container_name: o.string("blobContainerName").unwrap_or_default(),
+            access_key: o.string("blobAccessKey"),
+            endpoint: o.string("blobEndpoint"),
+        };
+        o.ignore(&["blobStorageSharedKeyCredential"]);
         let store: Arc<dyn CheckpointStore> = match o.string("checkpointStore") {
             Some(r) => {
                 let name = r.trim_start_matches('#');
@@ -174,11 +198,20 @@ impl EventHubsConfig {
                     .map(|a| (*a).clone())
                     .ok_or_else(|| CamelError::new(camel_core::error::kinds::NO_SUCH_BEAN, format!("No CheckpointStore bean named {}", name)))?
             }
+            None if blob != BlobCheckpointOptions::default() => {
+                if blob.account_name.is_empty() || blob.container_name.is_empty() {
+                    return Err(CamelError::illegal_argument("The blob checkpoint store needs both blobAccountName and blobContainerName"));
+                }
+                let factory = ctx.registry().lookup::<BlobCheckpointStoreFactory>(BLOB_CHECKPOINT_STORE_FACTORY).ok_or_else(|| {
+                    CamelError::new(
+                        camel_core::error::kinds::UNSUPPORTED_OPERATION,
+                        "Blob checkpoint options need the Azure Blob checkpoint store of camel-cloud (camel_cloud::register), or bind a CheckpointStore and use checkpointStore=#bean",
+                    )
+                })?;
+                factory(ctx, &blob)?
+            }
             None => default_store(ctx),
         };
-        if o.string("blobContainerName").is_some() || o.string("blobAccountName").is_some() || o.string("blobAccessKey").is_some() {
-            return Err(CamelError::new(camel_core::error::kinds::UNSUPPORTED_OPERATION, "Blob checkpoint options are not supported: bind a CheckpointStore (e.g. FileCheckpointStore) and use checkpointStore=#bean"));
-        }
         let batch_size = o.num("checkpointBatchSize", 500u32)?.max(1);
         let batch_timeout = o.millis("checkpointBatchTimeout", Duration::from_millis(5000))?;
         let initial = match o.get("initialPosition").map(|s| s.trim().to_ascii_lowercase()).as_deref() {

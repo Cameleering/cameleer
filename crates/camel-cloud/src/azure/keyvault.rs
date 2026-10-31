@@ -11,6 +11,24 @@
 //! * `deleteSecret`: soft delete; body = the deleted secret's recovery id.
 //! * `purgeDeletedSecret`, `recoverDeletedSecret`, `listSecrets` (rust-camel; body = names).
 //!
+//! Keys and certificates (rust-camel operations; Camel's component only manages secrets), over
+//! the `/keys` and `/certificates` APIs:
+//! * `createKey` (`CamelAzureKeyVaultKeyName`, `CamelAzureKeyVaultKeyType` `EC` (default) /
+//!   `RSA` / `EC-HSM` / `RSA-HSM`, `CamelAzureKeyVaultKeyCurve` (`P-256` default for EC),
+//!   `CamelAzureKeyVaultKeySize`, `CamelAzureKeyVaultKeyOperations`), `getKey`
+//!   (`CamelAzureKeyVaultKeyVersion`), `listKeys` (names), `deleteKey` (recovery id): body = the
+//!   key bundle (`key` JWK with `kid`, `attributes`), header `CamelAzureKeyVaultKeyVersion`.
+//! * `signData` / `verifyData`: the body is hashed for `CamelAzureKeyVaultSignatureAlgorithm`
+//!   (`ES256` default, `ES384`, `ES512`, `RS256`, `RS384`, `RS512`, `PS256`...) and the digest is
+//!   signed by the vault (body = signature bytes) or verified against
+//!   `CamelAzureKeyVaultSignature` (bytes or base64; body = boolean).
+//! * `createCertificate` (`CamelAzureKeyVaultCertificateName`, `CamelAzureKeyVaultCertificateSubject`
+//!   default `CN=<name>`, `CamelAzureKeyVaultCertificateValidityMonths` default 12; self-issued,
+//!   the pending operation is polled until completed), `getCertificate`
+//!   (`CamelAzureKeyVaultCertificateVersion`), `importCertificate` (body = PEM or base64
+//!   PKCS#12, optional `CamelAzureKeyVaultCertificatePassword`), `listCertificates` (names),
+//!   `deleteCertificate`: body = the certificate bundle (`cer` = base64 DER, `x5t`, `policy`).
+//!
 //! Options: `credentialType` (`CLIENT_SECRET` default, or `AZURE_IDENTITY` = `AZURE_CLIENT_ID` /
 //! `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID`), `authorityHost` (Azure AD host), and the
 //! rust-camel extension `uriEndpointOverride` + `overrideEndpoint` for the vault URL.
@@ -43,6 +61,31 @@ pub mod headers {
     pub const SECRET_NAME: &str = "CamelAzureKeyVaultSecretName";
     /// rust-camel extension.
     pub const SECRET_VERSION: &str = "CamelAzureKeyVaultSecretVersion";
+    /// rust-camel extensions (keys and certificates).
+    pub const KEY_NAME: &str = "CamelAzureKeyVaultKeyName";
+    pub const KEY_VERSION: &str = "CamelAzureKeyVaultKeyVersion";
+    pub const KEY_TYPE: &str = "CamelAzureKeyVaultKeyType";
+    pub const KEY_CURVE: &str = "CamelAzureKeyVaultKeyCurve";
+    pub const KEY_SIZE: &str = "CamelAzureKeyVaultKeySize";
+    pub const KEY_OPERATIONS: &str = "CamelAzureKeyVaultKeyOperations";
+    pub const SIGNATURE_ALGORITHM: &str = "CamelAzureKeyVaultSignatureAlgorithm";
+    pub const SIGNATURE: &str = "CamelAzureKeyVaultSignature";
+    pub const CERTIFICATE_NAME: &str = "CamelAzureKeyVaultCertificateName";
+    pub const CERTIFICATE_VERSION: &str = "CamelAzureKeyVaultCertificateVersion";
+    pub const CERTIFICATE_SUBJECT: &str = "CamelAzureKeyVaultCertificateSubject";
+    pub const CERTIFICATE_VALIDITY_MONTHS: &str = "CamelAzureKeyVaultCertificateValidityMonths";
+    pub const CERTIFICATE_PASSWORD: &str = "CamelAzureKeyVaultCertificatePassword";
+}
+
+/// Digest of `data` for a Key Vault signature algorithm.
+pub fn signature_digest(alg: &str, data: &[u8]) -> Result<Vec<u8>> {
+    use camel_tls::crypto::hash::{Digest, Sha256, Sha384, Sha512};
+    Ok(match alg.get(2..).unwrap_or("") {
+        "256" | "256K" => Sha256::digest(data),
+        "384" => Sha384::digest(data),
+        "512" => Sha512::digest(data),
+        _ => return Err(CamelError::illegal_argument(format!("Unsupported signature algorithm: {}", alg))),
+    })
 }
 
 /// A Key Vault secrets client.
@@ -171,6 +214,8 @@ impl CloudService for KeyVaultService {
                 let resp = self.send(Request::new("POST", self.url(&format!("/deletedsecrets/{}/recover", uri_encode(&name()?, false)))?))?;
                 ex.set_body(parse_json(&resp.body)?.get("id").cloned().unwrap_or_default());
             }
+            "createKey" | "getKey" | "listKeys" | "deleteKey" | "signData" | "verifyData" => self.key_op(ex, &op)?,
+            "createCertificate" | "getCertificate" | "importCertificate" | "listCertificates" | "deleteCertificate" => self.certificate_op(ex, &op)?,
             "listSecrets" => {
                 let resp = self.send(Request::new("GET", self.url("/secrets")?))?;
                 let v = parse_json(&resp.body)?;
@@ -181,6 +226,173 @@ impl CloudService for KeyVaultService {
         }
         Ok(())
     }
+}
+
+impl KeyVaultService {
+    fn json(&self, method: &str, path: &str, body: Option<Value>) -> Result<Value> {
+        let mut req = Request::new(method, self.url(path)?);
+        if let Some(b) = body {
+            req = req.header("Content-Type", "application/json").body(b.to_json().into_bytes());
+        }
+        let resp = self.send(req)?;
+        if resp.body.is_empty() {
+            return Ok(Value::Null);
+        }
+        parse_json(&resp.body)
+    }
+
+    fn names(&self, path: &str) -> Result<Value> {
+        let mut out = Vec::new();
+        let mut next = Some(self.url(path)?.to_string());
+        while let Some(u) = next.take() {
+            let resp = self.send(Request::new("GET", Url::parse(&u)?))?;
+            let v = parse_json(&resp.body)?;
+            out.extend(v.get("value").and_then(|a| a.as_array()).cloned().unwrap_or_default().iter().map(|s| Value::from(version_of(&s.get("id").or_else(|| s.get("kid")).map(|i| i.to_string()).unwrap_or_default()))));
+            next = v.get("nextLink").map(|n| n.to_string()).filter(|n| !n.is_empty());
+        }
+        Ok(Value::Array(out))
+    }
+
+    fn key_op(&self, ex: &mut Exchange, op: &str) -> Result<()> {
+        if op == "listKeys" {
+            let names = self.names("/keys")?;
+            ex.set_body(names);
+            return Ok(());
+        }
+        let name = header_str(ex, headers::KEY_NAME).ok_or_else(|| CamelError::illegal_argument("Key name must be specified (CamelAzureKeyVaultKeyName)"))?;
+        let n = uri_encode(&name, false);
+        let version = header_str(ex, headers::KEY_VERSION);
+        let vpath = match &version {
+            Some(v) => format!("/keys/{}/{}", n, uri_encode(v, false)),
+            None => format!("/keys/{}", n),
+        };
+        match op {
+            "createKey" => {
+                let kty = header_str(ex, headers::KEY_TYPE).unwrap_or_else(|| "EC".into()).to_ascii_uppercase();
+                let mut m = camel_core::value::ObjectMap::new();
+                m.insert("kty".into(), Value::from(kty.clone()));
+                if kty.starts_with("EC") {
+                    m.insert("crv".into(), Value::from(header_str(ex, headers::KEY_CURVE).unwrap_or_else(|| "P-256".into())));
+                }
+                if let Some(sz) = crate::util::header_i64(ex, headers::KEY_SIZE) {
+                    m.insert("key_size".into(), Value::Int(sz));
+                }
+                let ops = crate::util::header_list(ex, headers::KEY_OPERATIONS);
+                if !ops.is_empty() {
+                    m.insert("key_ops".into(), Value::from(ops));
+                }
+                let v = self.json("POST", &format!("/keys/{}/create", n), Some(Value::Object(m)))?;
+                Self::key_headers(ex, &v);
+                ex.set_body(v);
+            }
+            "getKey" => {
+                let v = self.json("GET", &vpath, None)?;
+                Self::key_headers(ex, &v);
+                ex.set_body(v);
+            }
+            "deleteKey" => {
+                let v = self.json("DELETE", &format!("/keys/{}", n), None)?;
+                ex.set_body(v.get("recoveryId").cloned().unwrap_or_default());
+            }
+            _ => {
+                let alg = header_str(ex, headers::SIGNATURE_ALGORITHM).unwrap_or_else(|| "ES256".into()).to_ascii_uppercase();
+                let digest = signature_digest(&alg, &ex.body().to_bytes())?;
+                let vp = if version.is_some() { vpath.clone() } else { format!("{}/", vpath) };
+                if op == "signData" {
+                    let v = self.json("POST", &format!("{}/sign", vp.trim_end_matches('/')), Some(crate::util::obj([("alg", Value::from(alg)), ("value", Value::from(crate::util::base64url_encode(&digest)))])))?;
+                    let sig = v.get("value").map(|s| b64url_decode(&s.to_string())).transpose()?.unwrap_or_default();
+                    ex.set_body(Value::Bytes(sig));
+                } else {
+                    let sig = match ex.header(headers::SIGNATURE) {
+                        Some(Value::Bytes(b)) => b.clone(),
+                        Some(v) => b64url_decode(&v.to_string())?,
+                        None => return Err(CamelError::illegal_argument("verifyData requires the CamelAzureKeyVaultSignature header")),
+                    };
+                    let v = self.json(
+                        "POST",
+                        &format!("{}/verify", vp.trim_end_matches('/')),
+                        Some(crate::util::obj([("alg", Value::from(alg)), ("digest", Value::from(crate::util::base64url_encode(&digest))), ("value", Value::from(crate::util::base64url_encode(&sig)))])),
+                    )?;
+                    ex.set_body(Value::Bool(v.get("value").and_then(|b| b.as_bool()).unwrap_or(false)));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn key_headers(ex: &mut Exchange, v: &Value) {
+        if let Some(kid) = v.get("key").and_then(|k| k.get("kid")) {
+            ex.set_header(headers::KEY_VERSION, version_of(&kid.to_string()));
+        }
+    }
+
+    fn certificate_op(&self, ex: &mut Exchange, op: &str) -> Result<()> {
+        if op == "listCertificates" {
+            let names = self.names("/certificates")?;
+            ex.set_body(names);
+            return Ok(());
+        }
+        let name = header_str(ex, headers::CERTIFICATE_NAME).ok_or_else(|| CamelError::illegal_argument("Certificate name must be specified (CamelAzureKeyVaultCertificateName)"))?;
+        let n = uri_encode(&name, false);
+        let bundle = match op {
+            "createCertificate" => {
+                let subject = header_str(ex, headers::CERTIFICATE_SUBJECT).unwrap_or_else(|| format!("CN={}", name));
+                let months = crate::util::header_i64(ex, headers::CERTIFICATE_VALIDITY_MONTHS).unwrap_or(12);
+                let policy = crate::util::obj([
+                    ("key_props", crate::util::obj([("kty", Value::from("EC")), ("crv", Value::from("P-256")), ("exportable", Value::Bool(true)), ("reuse_key", Value::Bool(false))])),
+                    ("x509_props", crate::util::obj([("subject", Value::from(subject)), ("validity_months", Value::Int(months))])),
+                    ("issuer", crate::util::obj([("name", Value::from("Self"))])),
+                ]);
+                let mut op_state = self.json("POST", &format!("/certificates/{}/create", n), Some(crate::util::obj([("policy", policy)])))?;
+                for _ in 0..50 {
+                    match op_state.get("status").map(|s| s.to_string()).as_deref() {
+                        Some("completed") => break,
+                        Some("inProgress") | None => {
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                            op_state = self.json("GET", &format!("/certificates/{}/pending", n), None)?;
+                        }
+                        Some(other) => {
+                            return Err(cloud_error(kinds::KEY_VAULT, format!("Certificate creation {}: {}", other, op_state.get("status_details").map(|d| d.to_string()).unwrap_or_default())));
+                        }
+                    }
+                }
+                self.json("GET", &format!("/certificates/{}", n), None)?
+            }
+            "getCertificate" => {
+                let path = match header_str(ex, headers::CERTIFICATE_VERSION) {
+                    Some(v) => format!("/certificates/{}/{}", n, uri_encode(&v, false)),
+                    None => format!("/certificates/{}", n),
+                };
+                self.json("GET", &path, None)?
+            }
+            "importCertificate" => {
+                let body = ex.body().to_bytes();
+                let text = String::from_utf8_lossy(&body).to_string();
+                let (value, ct) = if text.contains("-----BEGIN") { (text, "application/x-pem-file") } else { (crate::util::base64_encode(&body), "application/x-pkcs12") };
+                let mut m = camel_core::value::ObjectMap::new();
+                m.insert("value".into(), Value::from(value));
+                m.insert("policy".into(), crate::util::obj([("secret_props", crate::util::obj([("contentType", Value::from(ct))]))]));
+                if let Some(p) = header_str(ex, headers::CERTIFICATE_PASSWORD) {
+                    m.insert("pwd".into(), Value::from(p));
+                }
+                self.json("POST", &format!("/certificates/{}/import", n), Some(Value::Object(m)))?
+            }
+            _ => self.json("DELETE", &format!("/certificates/{}", n), None)?,
+        };
+        if let Some(id) = bundle.get("id") {
+            ex.set_header(headers::CERTIFICATE_VERSION, version_of(&id.to_string()));
+        }
+        ex.set_body(bundle);
+        Ok(())
+    }
+}
+
+fn b64url_decode(s: &str) -> Result<Vec<u8>> {
+    let mut t: String = s.trim().replace('-', "+").replace('_', "/");
+    while t.len() % 4 != 0 {
+        t.push('=');
+    }
+    crate::util::base64_decode(&t).ok_or_else(|| CamelError::illegal_argument("Invalid base64url value"))
 }
 
 /// The `azure:` properties function for a context.
