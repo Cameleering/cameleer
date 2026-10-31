@@ -1,0 +1,9 @@
+[package]
+name = "camel-sql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel SQL support (std only): DataSource SPI, embedded rustsql engine, PostgreSQL wire client, sql/jdbc components, JDBC repositories"
+
+[dependencies]
+camel-core = { path = "../camel-core" }

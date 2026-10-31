@@ -9,6 +9,7 @@ description = "rust-camel main runner and `camel` CLI (like Camel Main / Camel J
 camel-core = { path = "../camel-core" }
 camel-http = { path = "../camel-http" }
 camel-protocols = { path = "../camel-protocols" }
+camel-sql = { path = "../camel-sql" }
 camel-yaml = { path = "../camel-yaml" }
 
 [[bin]]

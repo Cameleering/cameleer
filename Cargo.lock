@@ -20,11 +20,19 @@ dependencies = [
  "camel-core",
  "camel-http",
  "camel-protocols",
+ "camel-sql",
  "camel-yaml",
 ]
 
 [[package]]
 name = "camel-protocols"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+]
+
+[[package]]
+name = "camel-sql"
 version = "0.1.0"
 dependencies = [
  "camel-core",
