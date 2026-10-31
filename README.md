@@ -5,7 +5,7 @@ routes, endpoints and components, the Enterprise Integration Patterns, expressio
 (Simple, JSONPath, XPath, tokenize, jq...), data formats, a fluent Rust DSL, the YAML/XML DSLs,
 a REST DSL, and a `camel` command-line runner.
 
-It is written in **pure Rust using only the standard library** (no external crates).
+It is written in **pure Rust using only the standard library** (no external crates) — including its own TLS, SSH, HTTP/2 and protocol stacks.
 
 ```rust
 use camel_core::prelude::*;
@@ -54,6 +54,13 @@ $ cargo run -p camel-main --bin camel -- run hello.camel.yaml --max-seconds 5
 | `camel-http` | HTTP/1.1 server and client, `platform-http`, `http`, REST DSL with OpenAPI, `netty` TCP/UDP |
 | `camel-yaml` | YAML parser, Camel YAML DSL, XML DSL, route templates |
 | `camel-protocols` | ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog (with embedded test servers) |
+| `camel-tls` | from-scratch TLS 1.3/1.2, X.509, `SslContextParameters` (used by all network components) |
+| `camel-kafka-mqtt` | kafka, paho / paho-mqtt5 (with embedded test brokers) |
+| `camel-amqp` | spring-rabbitmq / rabbitmq (AMQP 0-9-1), stomp, jms / activemq (with embedded test brokers) |
+| `camel-sql` | embedded SQL engine, PostgreSQL client, sql / jdbc components, JDBC repositories |
+| `camel-cloud` | AWS S3/SQS/SNS/DynamoDB/Lambda, Azure Blob/Queue, Google Storage/Pub/Sub (with verifying emulators) |
+| `camel-ssh` | SSH-2 + SFTP: sftp and ssh components |
+| `camel-grpc` | HTTP/2 + HPACK, protobuf, grpc component and protobuf data format |
 | `camel-main` | `Main` runner (application.properties, route discovery) and the `camel` CLI |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the internals, and [docs/FEATURES.md](docs/FEATURES.md) for
