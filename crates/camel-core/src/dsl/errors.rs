@@ -104,7 +104,7 @@ impl RouteBuilder {
 // ---------------------------------------------------------------------------
 
 impl RouteDefinition {
-    fn with_block<T: 'static>(&mut self, what: &str, f: impl FnOnce(&mut T)) -> &mut Self {
+    fn with_error_block<T: 'static>(&mut self, what: &str, f: impl FnOnce(&mut T)) -> &mut Self {
         match self.unwind_to_block::<T>() {
             Some(b) => f(b),
             None => self.add_build_error(CamelError::illegal_state(format!("{} must be used inside its block", what))),
@@ -113,7 +113,7 @@ impl RouteDefinition {
     }
 
     fn with_on_exception(&mut self, what: &str, f: impl FnOnce(&mut OnExceptionDefinition)) -> &mut Self {
-        self.with_block::<OnExceptionDefinition>(&format!("{} (onException option)", what), f)
+        self.with_error_block::<OnExceptionDefinition>(&format!("{} (onException option)", what), f)
     }
 
     // --- error handler / onException ---
@@ -254,29 +254,29 @@ impl RouteDefinition {
 
     /// Only run the onCompletion when the exchange completed successfully.
     pub fn on_complete_only(&mut self) -> &mut Self {
-        self.with_block::<OnCompletionDefinition>("on_complete_only", |d| d.mode = OnCompletionMode::OnCompleteOnly)
+        self.with_error_block::<OnCompletionDefinition>("on_complete_only", |d| d.mode = OnCompletionMode::OnCompleteOnly)
     }
 
     /// Only run the onCompletion when the exchange failed.
     pub fn on_failure_only(&mut self) -> &mut Self {
-        self.with_block::<OnCompletionDefinition>("on_failure_only", |d| d.mode = OnCompletionMode::OnFailureOnly)
+        self.with_error_block::<OnCompletionDefinition>("on_failure_only", |d| d.mode = OnCompletionMode::OnFailureOnly)
     }
 
     /// Run the onCompletion before the consumer sends the response (can change it).
     pub fn mode_before_consumer(&mut self) -> &mut Self {
-        self.with_block::<OnCompletionDefinition>("mode_before_consumer", |d| d.before_consumer = true)
+        self.with_error_block::<OnCompletionDefinition>("mode_before_consumer", |d| d.before_consumer = true)
     }
 
     /// Run the onCompletion after the consumer is done (default).
     pub fn mode_after_consumer(&mut self) -> &mut Self {
-        self.with_block::<OnCompletionDefinition>("mode_after_consumer", |d| d.before_consumer = false)
+        self.with_error_block::<OnCompletionDefinition>("mode_after_consumer", |d| d.before_consumer = false)
     }
 
     // --- intercept ---
 
     /// Do not send to the intercepted endpoint (interceptSendToEndpoint option).
     pub fn skip_send_to_original_endpoint(&mut self) -> &mut Self {
-        self.with_block::<InterceptDefinition>("skip_send_to_original_endpoint", |d| {
+        self.with_error_block::<InterceptDefinition>("skip_send_to_original_endpoint", |d| {
             if let InterceptKind::SendToEndpoint { skip_send_to_original_endpoint, .. } = &mut d.kind {
                 *skip_send_to_original_endpoint = true;
             }
@@ -292,12 +292,12 @@ impl RouteDefinition {
 
     /// Start a `doCatch` clause for the given exception kinds (empty = everything).
     pub fn do_catch(&mut self, exceptions: &[&str]) -> &mut Self {
-        self.with_block::<DoTryDefinition>("do_catch", |d| d.add_catch(exceptions))
+        self.with_error_block::<DoTryDefinition>("do_catch", |d| d.add_catch(exceptions))
     }
 
     /// Start the `doFinally` section.
     pub fn do_finally(&mut self) -> &mut Self {
-        self.with_block::<DoTryDefinition>("do_finally", |d| d.start_finally())
+        self.with_error_block::<DoTryDefinition>("do_finally", |d| d.start_finally())
     }
 
     /// Close the `doTry` block (closing any nested blocks first).
@@ -372,22 +372,22 @@ impl RouteDefinition {
 
     /// Idempotent consumer option: add keys eagerly (default true).
     pub fn eager(&mut self, b: bool) -> &mut Self {
-        self.with_block::<IdempotentConsumerDefinition>("eager", |d| d.eager = b)
+        self.with_error_block::<IdempotentConsumerDefinition>("eager", |d| d.eager = b)
     }
 
     /// Idempotent consumer option: skip duplicates (default true).
     pub fn skip_duplicate(&mut self, b: bool) -> &mut Self {
-        self.with_block::<IdempotentConsumerDefinition>("skip_duplicate", |d| d.skip_duplicate = b)
+        self.with_error_block::<IdempotentConsumerDefinition>("skip_duplicate", |d| d.skip_duplicate = b)
     }
 
     /// Idempotent consumer option: remove keys of failed exchanges (default true).
     pub fn remove_on_failure(&mut self, b: bool) -> &mut Self {
-        self.with_block::<IdempotentConsumerDefinition>("remove_on_failure", |d| d.remove_on_failure = b)
+        self.with_error_block::<IdempotentConsumerDefinition>("remove_on_failure", |d| d.remove_on_failure = b)
     }
 
     /// Idempotent consumer option: complete right after the block (default false).
     pub fn completion_eager(&mut self, b: bool) -> &mut Self {
-        self.with_block::<IdempotentConsumerDefinition>("completion_eager", |d| d.completion_eager = b)
+        self.with_error_block::<IdempotentConsumerDefinition>("completion_eager", |d| d.completion_eager = b)
     }
 
     // --- circuit breaker ---
@@ -399,14 +399,14 @@ impl RouteDefinition {
 
     /// Start the fallback section of the circuit breaker.
     pub fn on_fallback(&mut self) -> &mut Self {
-        self.with_block::<CircuitBreakerDefinition>("on_fallback", |d| {
+        self.with_error_block::<CircuitBreakerDefinition>("on_fallback", |d| {
             d.in_fallback = true;
             d.fallback.get_or_insert_with(Default::default);
         })
     }
 
     fn with_cb(&mut self, what: &str, f: impl FnOnce(&mut CircuitBreakerConfig)) -> &mut Self {
-        self.with_block::<CircuitBreakerDefinition>(what, |d| f(&mut d.config))
+        self.with_error_block::<CircuitBreakerDefinition>(what, |d| f(&mut d.config))
     }
 
     /// Replace the whole circuit breaker configuration.
