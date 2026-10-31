@@ -18,6 +18,8 @@ use camel_core::value::{ObjectMap, Value};
 mod ext;
 #[path = "aws_more.rs"]
 mod more;
+#[path = "aws_tail.rs"]
+mod tail;
 pub use ext::{MetricDatum, SentEmail};
 
 use super::{Handler, MockServer};
@@ -102,6 +104,7 @@ struct State {
     min_part_size: usize,
     ext: ext::ExtState,
     more: more::MoreState,
+    tail: tail::TailState,
     buckets: BTreeMap<String, Bucket>,
     queues: BTreeMap<String, Queue>,
     topics: BTreeMap<String, Vec<PublishedMessage>>,
@@ -381,6 +384,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
             let f = AuthFailure { code: "InvalidClientTokenId", message: "The security token included in the request is invalid.".into(), service: Some(verified.service.clone()) };
             return auth_error(req, &f);
         }
+    }
+    if let Some(resp) = tail::handle(st, &verified.service, req) {
+        return resp;
     }
     if let Some(resp) = ext::handle(st, &verified.service, req) {
         return resp;

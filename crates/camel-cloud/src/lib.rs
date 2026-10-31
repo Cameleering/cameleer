@@ -9,6 +9,7 @@
 //! | `aws2-sqs` | [`aws::sqs`] | Amazon SQS (AWS JSON 1.0) | SigV4 |
 //! | `aws2-sns` | [`aws::sns`] | Amazon SNS (Query API) | SigV4 |
 //! | `aws2-ddb` | [`aws::ddb`] | Amazon DynamoDB (AWS JSON 1.0) | SigV4 |
+//! | `aws2-ddbstream` | [`aws::ddbstream`] | DynamoDB Streams consumer (AWS JSON 1.0) | SigV4 |
 //! | `aws2-lambda` | [`aws::lambda`] | AWS Lambda REST | SigV4 |
 //! | `aws2-kinesis` | [`aws::kinesis`] | Kinesis Data Streams (AWS JSON 1.1) | SigV4 |
 //! | `aws2-kinesis-firehose` | [`aws::firehose`] | Kinesis Data Firehose (AWS JSON 1.1) | SigV4 |
@@ -100,6 +101,7 @@ const COMPONENTS: &[(&str, ServiceFactory)] = &[
     ("aws2-sqs", aws::sqs::create),
     ("aws2-sns", aws::sns::create),
     ("aws2-ddb", aws::ddb::create),
+    ("aws2-ddbstream", aws::ddbstream::create),
     ("aws2-lambda", aws::lambda::create),
     ("aws2-kinesis", aws::kinesis::create),
     ("aws2-kinesis-firehose", aws::firehose::create),
@@ -176,6 +178,7 @@ pub fn register(ctx: &CamelContext) {
     if !props.has_function("azure") {
         props.add_function("azure", azure::keyvault::properties_function(ctx));
     }
+    aws::secretsmanager::SecretsRefreshTask::install(ctx);
     if !props.has_function("gcp") {
         props.add_function("gcp", gcp::secretmanager::properties_function(ctx));
     }

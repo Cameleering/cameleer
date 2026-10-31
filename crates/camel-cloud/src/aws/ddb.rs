@@ -1,6 +1,6 @@
 //! The `aws2-ddb` component (Camel `camel-aws2-ddb`, producer) over the DynamoDB JSON 1.0 API.
 //!
-//! `aws2-ddb://tableName?operation=PutItem|GetItem|UpdateItem|DeleteItem|Query|Scan|DescribeTable|DeleteTable`
+//! `aws2-ddb://tableName?operation=PutItem|GetItem|UpdateItem|DeleteItem|Query|Scan|BatchGetItems|DescribeTable|UpdateTable|DeleteTable`
 //!
 //! Items, keys and conditions are plain [`Value`] maps; they are marshalled to/from
 //! DynamoDB attribute values ([`to_attribute_value`]: strings `S`, numbers `N`, booleans
@@ -16,6 +16,22 @@
 //! `CamelAwsDdbTableName`; output `CamelAwsDdbAttributes`, `CamelAwsDdbItems`,
 //! `CamelAwsDdbCount`, `CamelAwsDdbScannedCount`, `CamelAwsDdbLastEvaluatedKey`,
 //! `CamelAwsDdbTableStatus`, `CamelAwsDdbItemCount`, `CamelAwsDdbKeySchema`.
+//!
+//! Expressions: `CamelAwsDdbUpdateExpression` (UpdateItem: `SET a = :v, n = n + :one REMOVE b ...`,
+//! instead of `CamelAwsDdbUpdateValues`), `CamelAwsDdbKeyConditionExpression` (Query, instead of
+//! `CamelAwsDdbKeyConditions`), `CamelAwsDdbFilterExpression` (Query / Scan),
+//! `CamelAwsDdbConditionExpression` (Put/Update/DeleteItem), `CamelAwsDdbProjectionExpression`,
+//! with `CamelAwsDdbExpressionAttributeNames` (`#n` → name) and
+//! `CamelAwsDdbExpressionAttributeValues` (`:v` → plain value, marshalled); Camel's
+//! `CamelAwsDdbFilterExpressionAttributeNames` / `...Values` are accepted too.
+//!
+//! `BatchGetItems`: `CamelAwsDdbBatchItems` = map of table name → `{"Keys": [key maps],
+//! "ConsistentRead": .., "ProjectionExpression": ..}`; output `CamelAwsDdbBatchResponse` (table →
+//! items) and `CamelAwsDdbUnprocessedKeys`. `UpdateTable`: `CamelAwsDdbReadCapacity` /
+//! `CamelAwsDdbWriteCapacity` (provisioned throughput) and the rust-camel
+//! `CamelAwsDdbStreamViewType` (`NEW_IMAGE`, `OLD_IMAGE`, `NEW_AND_OLD_IMAGES`, `KEYS_ONLY`;
+//! `DISABLED` turns the stream off); output `CamelAwsDdbTableStatus`,
+//! `CamelAwsDdbProvisionedThroughput`. DescribeTable also sets `CamelAwsDdbStreamArn` (rust-camel).
 //!
 //! On start the table is described and, when missing and `keyAttributeName` is set, created
 //! (`keyAttributeName`, `keyAttributeType` default `S`, `readCapacity`, `writeCapacity`).
@@ -54,6 +70,43 @@ pub mod headers {
     pub const TABLE_STATUS: &str = "CamelAwsDdbTableStatus";
     pub const ITEM_COUNT: &str = "CamelAwsDdbItemCount";
     pub const KEY_SCHEMA: &str = "CamelAwsDdbKeySchema";
+    pub const UPDATE_EXPRESSION: &str = "CamelAwsDdbUpdateExpression";
+    pub const KEY_CONDITION_EXPRESSION: &str = "CamelAwsDdbKeyConditionExpression";
+    pub const FILTER_EXPRESSION: &str = "CamelAwsDdbFilterExpression";
+    pub const CONDITION_EXPRESSION: &str = "CamelAwsDdbConditionExpression";
+    pub const PROJECTION_EXPRESSION: &str = "CamelAwsDdbProjectionExpression";
+    pub const EXPRESSION_ATTRIBUTE_NAMES: &str = "CamelAwsDdbExpressionAttributeNames";
+    pub const EXPRESSION_ATTRIBUTE_VALUES: &str = "CamelAwsDdbExpressionAttributeValues";
+    pub const FILTER_EXPRESSION_ATTRIBUTE_NAMES: &str = "CamelAwsDdbFilterExpressionAttributeNames";
+    pub const FILTER_EXPRESSION_ATTRIBUTE_VALUES: &str = "CamelAwsDdbFilterExpressionAttributeValues";
+    pub const BATCH_ITEMS: &str = "CamelAwsDdbBatchItems";
+    pub const BATCH_RESPONSE: &str = "CamelAwsDdbBatchResponse";
+    pub const UNPROCESSED_KEYS: &str = "CamelAwsDdbUnprocessedKeys";
+    pub const READ_CAPACITY: &str = "CamelAwsDdbReadCapacity";
+    pub const WRITE_CAPACITY: &str = "CamelAwsDdbWriteCapacity";
+    pub const PROVISIONED_THROUGHPUT: &str = "CamelAwsDdbProvisionedThroughput";
+    /// rust-camel extensions.
+    pub const STREAM_VIEW_TYPE: &str = "CamelAwsDdbStreamViewType";
+    pub const STREAM_ARN: &str = "CamelAwsDdbStreamArn";
+}
+
+/// Add the expression attribute names / values headers to a request.
+fn expression_fields(ex: &Exchange, req: &mut ObjectMap) -> Result<()> {
+    let names = super::header_json(ex, headers::EXPRESSION_ATTRIBUTE_NAMES).or_else(|| super::header_json(ex, headers::FILTER_EXPRESSION_ATTRIBUTE_NAMES));
+    if let Some(n) = names {
+        let m = n.as_object().ok_or_else(|| CamelError::illegal_argument("Expression attribute names must be a map"))?;
+        req.insert("ExpressionAttributeNames".into(), Value::Object(m.iter().map(|(k, v)| (k.clone(), Value::from(v.to_string()))).collect()));
+    }
+    let values = super::header_json(ex, headers::EXPRESSION_ATTRIBUTE_VALUES).or_else(|| super::header_json(ex, headers::FILTER_EXPRESSION_ATTRIBUTE_VALUES));
+    if let Some(v) = values {
+        req.insert("ExpressionAttributeValues".into(), marshal_item(&v)?);
+    }
+    for (h, field) in [(headers::CONDITION_EXPRESSION, "ConditionExpression"), (headers::PROJECTION_EXPRESSION, "ProjectionExpression")] {
+        if let Some(e) = header_str(ex, h) {
+            req.insert(field.into(), Value::from(e));
+        }
+    }
+    Ok(())
 }
 
 /// Marshal a value to a DynamoDB attribute value.
@@ -189,6 +242,7 @@ impl DdbService {
         match op {
             "PutItem" => {
                 req.insert("Item".into(), marshal_item(&need(headers::ITEM)?)?);
+                expression_fields(ex, &mut req)?;
                 let r = self.call("PutItem", Value::Object(req))?;
                 set_attrs(ex, &r, "Attributes");
             }
@@ -203,11 +257,20 @@ impl DdbService {
             }
             "DeleteItem" => {
                 req.insert("Key".into(), marshal_item(&need(headers::KEY)?)?);
+                expression_fields(ex, &mut req)?;
                 let r = self.call("DeleteItem", Value::Object(req))?;
+                set_attrs(ex, &r, "Attributes");
+            }
+            "UpdateItem" if header_str(ex, headers::UPDATE_EXPRESSION).is_some() => {
+                req.insert("Key".into(), marshal_item(&need(headers::KEY)?)?);
+                req.insert("UpdateExpression".into(), Value::from(header_str(ex, headers::UPDATE_EXPRESSION).unwrap_or_default()));
+                expression_fields(ex, &mut req)?;
+                let r = self.call("UpdateItem", Value::Object(req))?;
                 set_attrs(ex, &r, "Attributes");
             }
             "UpdateItem" => {
                 req.insert("Key".into(), marshal_item(&need(headers::KEY)?)?);
+                expression_fields(ex, &mut req)?;
                 let values = need(headers::UPDATE_VALUES)?;
                 let m = values.as_object().ok_or_else(|| CamelError::illegal_argument("CamelAwsDdbUpdateValues must be a map"))?;
                 let updates: ObjectMap = m
@@ -222,8 +285,19 @@ impl DdbService {
                 set_attrs(ex, &r, "Attributes");
             }
             "Query" | "Scan" => {
+                expression_fields(ex, &mut req)?;
+                if let Some(f) = header_str(ex, headers::FILTER_EXPRESSION) {
+                    req.insert("FilterExpression".into(), Value::from(f));
+                }
                 if op == "Query" {
-                    req.insert("KeyConditions".into(), marshal_conditions(&need(headers::KEY_CONDITIONS)?)?);
+                    match header_str(ex, headers::KEY_CONDITION_EXPRESSION) {
+                        Some(kce) => {
+                            req.insert("KeyConditionExpression".into(), Value::from(kce));
+                        }
+                        None => {
+                            req.insert("KeyConditions".into(), marshal_conditions(&need(headers::KEY_CONDITIONS)?)?);
+                        }
+                    }
                     req.insert("ConsistentRead".into(), Value::Bool(consistent));
                     if let Some(f) = ex.header(headers::SCAN_INDEX_FORWARD).and_then(|v| v.as_bool()) {
                         req.insert("ScanIndexForward".into(), Value::Bool(f));
@@ -259,6 +333,62 @@ impl DdbService {
                 ex.set_header(headers::TABLE_STATUS, t.get("TableStatus").cloned().unwrap_or_default());
                 ex.set_header(headers::ITEM_COUNT, t.get("ItemCount").cloned().unwrap_or(Value::Int(0)));
                 ex.set_header(headers::KEY_SCHEMA, t.get("KeySchema").cloned().unwrap_or_default());
+                if let Some(a) = t.get("LatestStreamArn") {
+                    ex.set_header(headers::STREAM_ARN, a.clone());
+                }
+            }
+            "BatchGetItems" => {
+                let items = super::header_json(ex, headers::BATCH_ITEMS).ok_or_else(|| CamelError::illegal_argument("BatchGetItems requires the CamelAwsDdbBatchItems header"))?;
+                let tables = items.as_object().ok_or_else(|| CamelError::illegal_argument("CamelAwsDdbBatchItems must be a map of table name to keys"))?;
+                let mut ri = ObjectMap::new();
+                for (t, spec) in tables {
+                    let mut kaa = ObjectMap::new();
+                    let keys = match spec {
+                        Value::Array(a) => a.clone(),
+                        _ => spec.get("Keys").and_then(|k| k.as_array()).cloned().unwrap_or_default(),
+                    };
+                    kaa.insert("Keys".into(), Value::Array(keys.iter().map(marshal_item).collect::<Result<Vec<_>>>()?));
+                    for f in ["ConsistentRead", "ProjectionExpression", "AttributesToGet", "ExpressionAttributeNames"] {
+                        if let Some(v) = spec.get(f) {
+                            kaa.insert(f.into(), v.clone());
+                        }
+                    }
+                    ri.insert(t.clone(), Value::Object(kaa));
+                }
+                let r = self.call("BatchGetItem", obj([("RequestItems", Value::Object(ri))]))?;
+                let resp: ObjectMap = r
+                    .get("Responses")
+                    .and_then(|x| x.as_object())
+                    .map(|m| m.iter().map(|(t, items)| (t.clone(), Value::Array(items.as_array().map(|a| a.iter().map(unmarshal_item).collect()).unwrap_or_default()))).collect())
+                    .unwrap_or_default();
+                let unprocessed: ObjectMap = r
+                    .get("UnprocessedKeys")
+                    .and_then(|x| x.as_object())
+                    .map(|m| m.iter().map(|(t, k)| (t.clone(), Value::Array(k.get("Keys").and_then(|a| a.as_array()).map(|a| a.iter().map(unmarshal_item).collect()).unwrap_or_default()))).collect())
+                    .unwrap_or_default();
+                ex.set_header(headers::BATCH_RESPONSE, Value::Object(resp));
+                ex.set_header(headers::UNPROCESSED_KEYS, Value::Object(unprocessed));
+            }
+            "UpdateTable" => {
+                let rc = ex.header(headers::READ_CAPACITY).and_then(|v| v.as_i64().or_else(|| v.to_string().parse().ok()));
+                let wc = ex.header(headers::WRITE_CAPACITY).and_then(|v| v.as_i64().or_else(|| v.to_string().parse().ok()));
+                if rc.is_some() || wc.is_some() {
+                    req.insert(
+                        "ProvisionedThroughput".into(),
+                        obj([("ReadCapacityUnits", Value::Int(rc.unwrap_or(self.read_capacity))), ("WriteCapacityUnits", Value::Int(wc.unwrap_or(self.write_capacity)))]),
+                    );
+                }
+                if let Some(view) = header_str(ex, headers::STREAM_VIEW_TYPE) {
+                    let spec = if view.eq_ignore_ascii_case("DISABLED") { obj([("StreamEnabled", Value::Bool(false))]) } else { obj([("StreamEnabled", Value::Bool(true)), ("StreamViewType", Value::from(view))]) };
+                    req.insert("StreamSpecification".into(), spec);
+                }
+                let r = self.call("UpdateTable", Value::Object(req))?;
+                let t = r.get("TableDescription").cloned().unwrap_or_default();
+                ex.set_header(headers::TABLE_STATUS, t.get("TableStatus").cloned().unwrap_or_default());
+                ex.set_header(headers::PROVISIONED_THROUGHPUT, t.get("ProvisionedThroughput").cloned().unwrap_or_default());
+                if let Some(a) = t.get("LatestStreamArn") {
+                    ex.set_header(headers::STREAM_ARN, a.clone());
+                }
             }
             "DeleteTable" => {
                 self.call("DeleteTable", Value::Object(req))?;

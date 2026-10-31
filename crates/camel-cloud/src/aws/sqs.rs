@@ -22,6 +22,13 @@
 //!
 //! Other options: `queueUrl`, `autoCreateQueue` (default false), `queueOwnerAWSAccountId`,
 //! `defaultVisibilityTimeout`, `messageRetentionPeriod`, plus the [common AWS options](super).
+//!
+//! Protocol (rust-camel option `protocol`): `json` (AWS JSON 1.0, current SDKs), `query` (the
+//! legacy Query protocol: form-encoded `Action=...&Version=2012-11-05` requests, XML responses,
+//! as spoken by older SQS-compatible servers) or `auto` (default): JSON first, switching this
+//! endpoint to Query when the server rejects the JSON protocol (`InvalidAction`,
+//! `UnknownOperationException`, `MissingAction`, `UnsupportedProtocol`, or an HTTP 404/405
+//! without an error code).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -72,7 +79,145 @@ pub struct SqsService {
     pub message_deduplication_id_strategy: String,
     pub extend_message_visibility: bool,
     pub scheduler: ScheduledPollConfig,
+    /// Wire protocol (shared with the visibility extender).
+    pub protocol: Arc<Mutex<SqsProtocol>>,
     resolved_url: Mutex<Option<String>>,
+}
+
+/// SQS wire protocol.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SqsProtocol {
+    /// JSON first, Query after a protocol rejection.
+    Auto,
+    Json,
+    Query,
+}
+
+/// API version of the Query protocol.
+pub const QUERY_VERSION: &str = "2012-11-05";
+
+fn is_protocol_rejection(e: &CamelError) -> bool {
+    let code = error_code(e).unwrap_or_default();
+    matches!(code.as_str(), "InvalidAction" | "UnknownOperationException" | "MissingAction" | "UnsupportedProtocol" | "UnknownOperation")
+        || ((e.message.contains("Status Code: 404") || e.message.contains("Status Code: 405")) && code.starts_with("Http"))
+}
+
+/// Flatten an SQS JSON request into Query protocol parameters.
+pub fn to_query_params(body: &Value) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Some(m) = body.as_object() else { return out };
+    for (k, v) in m {
+        match (k.as_str(), v) {
+            ("Attributes", Value::Object(a)) => {
+                for (i, (n, val)) in a.iter().enumerate() {
+                    out.push((format!("Attribute.{}.Name", i + 1), n.clone()));
+                    out.push((format!("Attribute.{}.Value", i + 1), val.to_string()));
+                }
+            }
+            ("MessageAttributes", Value::Object(a)) => message_attributes(&mut out, "MessageAttribute", a),
+            ("AttributeNames", Value::Array(a)) => out.extend(a.iter().enumerate().map(|(i, n)| (format!("AttributeName.{}", i + 1), n.to_string()))),
+            ("MessageAttributeNames", Value::Array(a)) => out.extend(a.iter().enumerate().map(|(i, n)| (format!("MessageAttributeName.{}", i + 1), n.to_string()))),
+            ("Entries", Value::Array(a)) => {
+                let prefix = if a.iter().any(|e| e.get("MessageBody").is_some()) { "SendMessageBatchRequestEntry" } else { "DeleteMessageBatchRequestEntry" };
+                for (i, e) in a.iter().enumerate() {
+                    for (ek, ev) in e.as_object().into_iter().flatten() {
+                        match ev {
+                            Value::Object(ma) if ek == "MessageAttributes" => message_attributes(&mut out, &format!("{}.{}.MessageAttribute", prefix, i + 1), ma),
+                            _ => out.push((format!("{}.{}.{}", prefix, i + 1, ek), ev.to_string())),
+                        }
+                    }
+                }
+            }
+            (_, v) => out.push((k.clone(), v.to_string())),
+        }
+    }
+    out
+}
+
+fn message_attributes(out: &mut Vec<(String, String)>, prefix: &str, a: &ObjectMap) {
+    for (i, (n, val)) in a.iter().enumerate() {
+        out.push((format!("{}.{}.Name", prefix, i + 1), n.clone()));
+        for f in ["DataType", "StringValue", "BinaryValue"] {
+            if let Some(x) = val.get(f) {
+                out.push((format!("{}.{}.Value.{}", prefix, i + 1, f), x.to_string()));
+            }
+        }
+    }
+}
+
+/// Convert a Query protocol XML response into the JSON response shape.
+pub fn from_query_xml(action: &str, x: &crate::util::Xml) -> Value {
+    let root = x.root();
+    let text = |i: usize, n: &str| x.child_text(i, n).map(Value::from);
+    let mut out = ObjectMap::new();
+    let Some(r) = x.child(root, &format!("{}Result", action)) else { return Value::Object(out) };
+    match action {
+        "CreateQueue" | "GetQueueUrl" => crate::aws::put(&mut out, "QueueUrl", text(r, "QueueUrl")),
+        "SendMessage" => {
+            for f in ["MessageId", "MD5OfMessageBody", "MD5OfMessageAttributes", "SequenceNumber"] {
+                crate::aws::put(&mut out, f, text(r, f));
+            }
+        }
+        "ListQueues" => {
+            out.insert("QueueUrls".into(), Value::Array(x.children(r, "QueueUrl").into_iter().map(|i| Value::from(x.text(i))).collect()));
+        }
+        "SendMessageBatch" | "DeleteMessageBatch" => {
+            let entry = if action == "SendMessageBatch" { "SendMessageBatchResultEntry" } else { "DeleteMessageBatchResultEntry" };
+            let conv = |i: usize| Value::Object(x.doc.element_children(i).into_iter().map(|c| (x.name(c).to_string(), Value::from(x.text(c)))).collect());
+            out.insert("Successful".into(), Value::Array(x.children(r, entry).into_iter().map(conv).collect()));
+            out.insert("Failed".into(), Value::Array(x.children(r, "BatchResultErrorEntry").into_iter().map(conv).collect()));
+        }
+        "ReceiveMessage" => {
+            let mut msgs = Vec::new();
+            for m in x.children(r, "Message") {
+                let mut mm = ObjectMap::new();
+                for f in ["MessageId", "ReceiptHandle", "MD5OfBody", "Body", "MD5OfMessageAttributes"] {
+                    crate::aws::put(&mut mm, f, text(m, f));
+                }
+                let attrs: ObjectMap = x.children(m, "Attribute").into_iter().map(|a| (x.child_text(a, "Name").unwrap_or_default(), Value::from(x.child_text(a, "Value").unwrap_or_default()))).collect();
+                mm.insert("Attributes".into(), Value::Object(attrs));
+                let mut mattrs = ObjectMap::new();
+                for a in x.children(m, "MessageAttribute") {
+                    let name = x.child_text(a, "Name").unwrap_or_default();
+                    let mut v = ObjectMap::new();
+                    if let Some(val) = x.child(a, "Value") {
+                        for f in ["DataType", "StringValue", "BinaryValue"] {
+                            crate::aws::put(&mut v, f, x.child_text(val, f));
+                        }
+                    }
+                    mattrs.insert(name, Value::Object(v));
+                }
+                if !mattrs.is_empty() {
+                    mm.insert("MessageAttributes".into(), Value::Object(mattrs));
+                }
+                msgs.push(Value::Object(mm));
+            }
+            out.insert("Messages".into(), Value::Array(msgs));
+        }
+        "GetQueueAttributes" => {
+            let attrs: ObjectMap = x.children(r, "Attribute").into_iter().map(|a| (x.child_text(a, "Name").unwrap_or_default(), Value::from(x.child_text(a, "Value").unwrap_or_default()))).collect();
+            out.insert("Attributes".into(), Value::Object(attrs));
+        }
+        _ => {}
+    }
+    Value::Object(out)
+}
+
+/// One SQS call over the configured protocol.
+pub fn sqs_call(aws: &AwsConfig, protocol: &Mutex<SqsProtocol>, action: &str, body: &Value) -> Result<Value> {
+    let p = *protocol.lock().unwrap();
+    if p != SqsProtocol::Query {
+        match aws.json_call("sqs", "sqs", "AmazonSQS", action, body, "1.0", kinds::SQS) {
+            Err(e) if p == SqsProtocol::Auto && is_protocol_rejection(&e) => {
+                camel_core::camel_info!("aws2-sqs", "SQS endpoint rejected the JSON protocol ({}), switching to the Query protocol", e.message);
+                *protocol.lock().unwrap() = SqsProtocol::Query;
+            }
+            r => return r,
+        }
+    }
+    let url = aws.endpoint("sqs")?;
+    let x = aws.query_call(url, "sqs", &aws.region.clone(), QUERY_VERSION, action, to_query_params(body), kinds::SQS)?;
+    Ok(from_query_xml(action, &x))
 }
 
 /// Factory for the component.
@@ -113,6 +258,12 @@ impl SqsService {
             message_deduplication_id_strategy: o.string("messageDeduplicationIdStrategy", "useExchangeId"),
             extend_message_visibility: o.bool("extendMessageVisibility", false)?,
             scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
+            protocol: Arc::new(Mutex::new(match o.string("protocol", "auto").to_ascii_lowercase().as_str() {
+                "json" => SqsProtocol::Json,
+                "query" => SqsProtocol::Query,
+                "auto" => SqsProtocol::Auto,
+                other => return Err(CamelError::illegal_argument(format!("Invalid SQS protocol: {} (json, query or auto)", other))),
+            })),
             resolved_url: Mutex::new(None),
             queue_name,
             aws,
@@ -124,9 +275,14 @@ impl SqsService {
         Ok(s)
     }
 
-    /// Invoke an SQS JSON API action.
+    /// Invoke an SQS API action (JSON request shape, over JSON or Query protocol).
     pub fn call(&self, action: &str, body: Value) -> Result<Value> {
-        self.aws.json_call("sqs", "sqs", "AmazonSQS", action, &body, "1.0", kinds::SQS)
+        sqs_call(&self.aws, &self.protocol, action, &body)
+    }
+
+    /// The protocol in use.
+    pub fn current_protocol(&self) -> SqsProtocol {
+        *self.protocol.lock().unwrap()
     }
 
     fn is_fifo(&self) -> bool {
@@ -276,11 +432,11 @@ impl SqsService {
         let period = Duration::from_millis((vis.max(1) as u64) * 500);
         let extend_to = (vis * 3 + 1) / 2;
         let (tx, rx) = std::sync::mpsc::channel::<()>();
-        let (aws, url, handle, logger) = (self.aws.clone(), url.to_string(), handle.to_string(), logger.to_string());
+        let (aws, url, handle, logger, protocol) = (self.aws.clone(), url.to_string(), handle.to_string(), logger.to_string(), self.protocol.clone());
         let join = std::thread::spawn(move || {
             while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(period) {
                 let req = obj([("QueueUrl", Value::from(url.clone())), ("ReceiptHandle", Value::from(handle.clone())), ("VisibilityTimeout", Value::Int(extend_to))]);
-                if let Err(e) = aws.json_call("sqs", "sqs", "AmazonSQS", "ChangeMessageVisibility", &req, "1.0", kinds::SQS) {
+                if let Err(e) = sqs_call(&aws, &protocol, "ChangeMessageVisibility", &req) {
                     camel_core::camel_warn!(logger.as_str(), "Error extending the visibility of SQS message: {}", e);
                 }
             }

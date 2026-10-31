@@ -28,6 +28,7 @@ pub mod config;
 pub mod credentials;
 pub mod cw;
 pub mod ddb;
+pub mod ddbstream;
 pub mod ec2;
 pub mod ecs;
 pub mod eventbridge;

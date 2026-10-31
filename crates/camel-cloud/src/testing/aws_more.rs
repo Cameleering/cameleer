@@ -77,7 +77,7 @@ pub(super) struct MoreState {
     ts_dbs: BTreeMap<String, i64>,
     ts_tables: BTreeMap<(String, String), Vec<Value>>,
     ts_page_size: usize,
-    trail: Vec<Value>,
+    pub(super) trail: Vec<Value>,
     config_rules: BTreeMap<String, Value>,
     compliance: BTreeMap<String, String>,
     packs: BTreeMap<String, String>,
