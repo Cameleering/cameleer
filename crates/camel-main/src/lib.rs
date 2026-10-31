@@ -417,6 +417,7 @@ pub fn new_main() -> Main {
     camel_sql::register(main.context());
     main.configure(camel_sql::configure_datasources_from_properties);
     camel_amqp::register(main.context());
+    camel_amqp10::register(main.context()); // amqp (AMQP 1.0, replaces camel-amqp's STOMP flavour, now `amqp-stomp`), azure-servicebus, azure-eventhubs
     camel_grpc::register(main.context()); // grpc component + protobuf data format
     camel_cloud::register(main.context()); // aws2-s3/sqs/sns/ddb/lambda, azure-storage-blob/queue, google-storage/pubsub
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files

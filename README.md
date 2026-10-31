@@ -56,7 +56,8 @@ $ cargo run -p camel-main --bin camel -- run hello.camel.yaml --max-seconds 5
 | `camel-protocols` | ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog (with embedded test servers) |
 | `camel-tls` | from-scratch TLS 1.3/1.2, X.509, `SslContextParameters` (used by all network components) |
 | `camel-kafka-mqtt` | kafka, paho / paho-mqtt5 (with embedded test brokers) |
-| `camel-amqp` | spring-rabbitmq / rabbitmq (AMQP 0-9-1), stomp, jms / activemq (with embedded test brokers) |
+| `camel-amqp` | spring-rabbitmq / rabbitmq (AMQP 0-9-1), stomp, jms / activemq / amqp-stomp (with embedded test brokers) |
+| `camel-amqp10` | AMQP 1.0 client (SASL, TLS, CBS), amqp (JMS over AMQP 1.0), azure-servicebus, azure-eventhubs (embedded AMQP 1.0 broker with Azure emulation) |
 | `camel-sql` | embedded SQL engine, PostgreSQL client, sql / jdbc components, JDBC repositories |
 | `camel-cloud` | AWS S3/SQS/SNS/DynamoDB/Lambda, Azure Blob/Queue, Google Storage/Pub/Sub (with verifying emulators) |
 | `camel-ssh` | SSH-2 + SFTP: sftp and ssh components |

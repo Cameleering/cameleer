@@ -11,6 +11,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "camel-amqp10"
+version = "0.1.0"
+dependencies = [
+ "camel-amqp",
+ "camel-core",
+ "camel-tls",
+]
+
+[[package]]
 name = "camel-cloud"
 version = "0.1.0"
 dependencies = [
@@ -51,6 +60,7 @@ name = "camel-main"
 version = "0.1.0"
 dependencies = [
  "camel-amqp",
+ "camel-amqp10",
  "camel-cloud",
  "camel-core",
  "camel-grpc",
