@@ -1,0 +1,68 @@
+# rust-camel architecture
+
+rust-camel is a Rust implementation of the [Apache Camel](https://camel.apache.org/) integration
+framework. It is written **without any external crates** (std only): the build environment has
+no access to crates.io. Never add dependencies to `Cargo.toml` other than workspace crates.
+
+## Workspace layout
+
+| crate | purpose |
+|---|---|
+| `crates/camel-core` | Exchange/Message/Value, CamelContext, routes, Rust DSL, EIPs, languages, data formats, core components |
+| `crates/camel-http` | HTTP/1.1 server + client (std::net), `http`, `platform-http`, `rest` DSL, `netty` (tcp/udp) |
+| `crates/camel-yaml` | YAML 1.2 parser + Camel YAML DSL loader |
+| `crates/camel-main` | `camel` CLI binary, application.properties, route loading, dev console |
+
+## Key concepts (camel-core)
+
+- `value::Value` — dynamic type for bodies, headers, properties (Null/Bool/Int/Float/String/Bytes/Array/Object).
+  `Display` renders strings raw and null as `""`; `to_json()` for JSON. `FromValue` = type converter
+  (`ex.body_as::<String>()`). `compare_values`/`values_equal` give Camel-like coercing comparisons.
+- `error::CamelError { kind, message, cause }` — `kind` is a Java-like exception class name
+  (`"IOException"`). `kind_is_a(kind, parent)` models the hierarchy (used by onException/doCatch).
+  Constants in `error::kinds`. `register_kind_parent` adds custom kinds.
+- `message::Exchange` — `message` (headers are case-insensitive `Headers`, `body: Value`),
+  `properties`, `exception`, `pattern` (InOnly/InOut), `context: Option<CamelContext>`,
+  `on_completions`. `Clone` copies everything except on-completion callbacks.
+  `correlated_copy()` gives a new id. Property names in `message::props`.
+- `spi` — traits: `Processor` (closures `Fn(&mut Exchange)->Result<()>` implement it),
+  `Expression`, `Predicate`, `Language`, `Endpoint`, `Producer` (= Processor + Service),
+  `Consumer` (= Service), `PollingConsumer`, `Component`, `AggregationStrategy`, `EventNotifier`, `Service`.
+- **Failure semantics**: a processor returning `Err(e)` marks the exchange failed. Composite
+  processors (pipeline etc.) store it with `exchange.set_exception(e)` and stop routing when
+  `!exchange.should_continue()` (failed, `stop()`ed, or rollback-only).
+- `context::CamelContext` — cheap-clone handle. Components (`add_component`, lazy
+  `add_component_factory`), endpoint cache (`get_endpoint(uri)` resolves `{{placeholders}}`,
+  parses `scheme:path?options`, fails on unknown options unless the component is lenient),
+  `get_producer(uri)` (cached+started), `registry()`, `properties()`, languages, event notifiers,
+  routes lifecycle (`start`, `stop`, `start_route`, `stop_route`, `remove_route`...),
+  `create_producer_template()`, `mock_endpoint(uri)`.
+  Extension points: `add_route_factory_hook(RouteFactoryHook)` and `add_channel_wrapper(ChannelWrapper)`.
+- `model` — `ProcessorDefinition` trait (one struct per EIP, `create_processor(&RouteContext)`).
+  Block EIPs implement `is_block`/`add_output`/`outputs`. `RouteDefinition` holds the outputs and a
+  stack of open blocks (`push_block`, `add`, `end`, `current_block_mut::<T>()`, `unwind_to_block::<T>()`).
+  `RouteContext::create_child_processor(&outputs)` builds a pipeline with each child wrapped by the
+  channel wrappers (error handler etc.). Register stateful processors/producers with
+  `rc.add_service(...)` so they start/stop with the route. `impl_definition_boilerplate!()` macro.
+  `RouteDefinition.extensions` and `RouteBuilder.extensions/customizers/generators` hold
+  extension-specific config without touching core structs.
+- `builder` — `ExpressionDefinition` (language text resolved at route creation, or ready-made
+  expression/predicate), DSL helpers `simple()`, `constant()`, `header()`, `body()`,
+  `exchange_property()`, `expr(closure)`, `pred(closure)`, `and/or/not`, `ValueBuilder` predicate
+  methods (`is_equal_to`, `is_greater_than`, `contains`, `regex`...). DSL methods take `impl IntoExpression`.
+- `dsl` — `RouteBuilder::from(uri) -> &mut RouteDefinition`; DSL methods are `impl RouteDefinition`
+  blocks split across `dsl/core.rs`, `dsl/routing.rs`, `dsl/errors.rs`, `dsl/transform.rs`.
+  Methods take `&mut self` and return `&mut Self`. Block EIPs are closed with `.end()`.
+- `executor::ThreadPool` / `Future` — shared thread pool for parallel processing.
+- `log` — std-only logging (`camel_info!`, `camel_debug!`...; `CAMEL_LOG_LEVEL`; `add_sink` for tests).
+- `json` — JSON parser; `regex` — regex engine; `util` — URI parsing, `Parameters` (`take_bool`,
+  `take_duration`...), `parse_duration`, `matches_pattern`; `util_time` — date formatting.
+
+## Conventions
+
+- Mirror Apache Camel names and semantics (EIP names, endpoint options, header/property names,
+  exception kinds, Simple language syntax). When in doubt, follow the Camel documentation.
+- Every feature needs tests (unit tests in-module and/or integration tests in `tests/`).
+  Tests must be deterministic and fast (avoid long sleeps; use mock `assert_is_satisfied`).
+- `cargo build` must produce no warnings; `cargo test` must pass for the whole workspace.
+- Keep public APIs documented with `///` doc comments.

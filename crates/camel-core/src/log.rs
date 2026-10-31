@@ -1,0 +1,131 @@
+//! Minimal logging facility (no external crates). Log records go to stderr by
+//! default; a custom sink can be installed (useful for tests and the CLI).
+//! The level threshold comes from `CAMEL_LOG_LEVEL` (TRACE, DEBUG, INFO, WARN, ERROR, OFF).
+
+use std::sync::{OnceLock, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    Trace = 0,
+    Debug = 1,
+    Info = 2,
+    Warn = 3,
+    Error = 4,
+    Off = 5,
+}
+
+impl Level {
+    pub fn parse(s: &str) -> Option<Level> {
+        Some(match s.trim().to_ascii_uppercase().as_str() {
+            "TRACE" => Level::Trace,
+            "DEBUG" => Level::Debug,
+            "INFO" => Level::Info,
+            "WARN" | "WARNING" => Level::Warn,
+            "ERROR" => Level::Error,
+            "OFF" => Level::Off,
+            _ => return None,
+        })
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Level::Trace => "TRACE",
+            Level::Debug => "DEBUG",
+            Level::Info => "INFO",
+            Level::Warn => "WARN",
+            Level::Error => "ERROR",
+            Level::Off => "OFF",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LogRecord {
+    pub level: Level,
+    pub logger: String,
+    pub message: String,
+    pub timestamp_millis: u128,
+}
+
+type Sink = Box<dyn Fn(&LogRecord) + Send + Sync>;
+
+static LEVEL: OnceLock<RwLock<Level>> = OnceLock::new();
+static SINKS: RwLock<Vec<Sink>> = RwLock::new(Vec::new());
+static STDERR_ENABLED: RwLock<bool> = RwLock::new(true);
+
+fn level_lock() -> &'static RwLock<Level> {
+    LEVEL.get_or_init(|| {
+        let lvl = std::env::var("CAMEL_LOG_LEVEL").ok().and_then(|s| Level::parse(&s)).unwrap_or(Level::Info);
+        RwLock::new(lvl)
+    })
+}
+
+/// Current global threshold.
+pub fn level() -> Level {
+    *level_lock().read().unwrap()
+}
+
+/// Set the global threshold.
+pub fn set_level(level: Level) {
+    *level_lock().write().unwrap() = level;
+}
+
+pub fn enabled(level: Level) -> bool {
+    level != Level::Off && level >= self::level()
+}
+
+/// Install an additional log sink receiving every record that passes the threshold.
+pub fn add_sink(f: impl Fn(&LogRecord) + Send + Sync + 'static) {
+    SINKS.write().unwrap().push(Box::new(f));
+}
+
+/// Enable/disable writing to stderr.
+pub fn set_stderr_enabled(enabled: bool) {
+    *STDERR_ENABLED.write().unwrap() = enabled;
+}
+
+/// Format epoch millis as `YYYY-MM-DD HH:MM:SS.mmm` (UTC).
+pub fn format_timestamp(millis: u128) -> String {
+    let secs = (millis / 1000) as i64;
+    let ms = (millis % 1000) as u32;
+    let (y, mo, d, h, mi, s) = crate::util_time::civil_from_epoch(secs);
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", y, mo, d, h, mi, s, ms)
+}
+
+/// Emit a log record.
+pub fn log(level: Level, logger: &str, message: impl AsRef<str>) {
+    if !enabled(level) {
+        return;
+    }
+    let rec = LogRecord {
+        level,
+        logger: logger.to_string(),
+        message: message.as_ref().to_string(),
+        timestamp_millis: SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0),
+    };
+    if *STDERR_ENABLED.read().unwrap() {
+        let thread = std::thread::current();
+        eprintln!(
+            "{} {:5} [{}] {} : {}",
+            format_timestamp(rec.timestamp_millis),
+            level.as_str(),
+            thread.name().unwrap_or("main"),
+            logger,
+            rec.message
+        );
+    }
+    for sink in SINKS.read().unwrap().iter() {
+        sink(&rec);
+    }
+}
+
+#[macro_export]
+macro_rules! camel_info { ($logger:expr, $($arg:tt)*) => { $crate::log::log($crate::log::Level::Info, $logger, format!($($arg)*)) }; }
+#[macro_export]
+macro_rules! camel_warn { ($logger:expr, $($arg:tt)*) => { $crate::log::log($crate::log::Level::Warn, $logger, format!($($arg)*)) }; }
+#[macro_export]
+macro_rules! camel_error { ($logger:expr, $($arg:tt)*) => { $crate::log::log($crate::log::Level::Error, $logger, format!($($arg)*)) }; }
+#[macro_export]
+macro_rules! camel_debug { ($logger:expr, $($arg:tt)*) => { if $crate::log::enabled($crate::log::Level::Debug) { $crate::log::log($crate::log::Level::Debug, $logger, format!($($arg)*)) } }; }
+#[macro_export]
+macro_rules! camel_trace { ($logger:expr, $($arg:tt)*) => { if $crate::log::enabled($crate::log::Level::Trace) { $crate::log::log($crate::log::Level::Trace, $logger, format!($($arg)*)) } }; }
