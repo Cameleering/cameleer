@@ -409,6 +409,8 @@ pub fn new_main() -> Main {
     let mut main = Main::new();
     camel_http::register(main.context());
     camel_yaml::register_kamelet_component(main.context());
+    // ftp, smtp/pop3/imap, websocket, mllp, syslog
+    camel_protocols::register(main.context());
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {

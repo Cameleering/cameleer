@@ -11,6 +11,7 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 | `crates/camel-core` | Exchange/Message/Value, CamelContext, routes, Rust DSL, EIPs, languages, data formats, core components |
 | `crates/camel-http` | HTTP/1.1 server + client (std::net), `http`, `platform-http`, `rest` DSL, `netty` (tcp/udp) |
 | `crates/camel-yaml` | YAML 1.2 parser + Camel YAML DSL loader |
+| `crates/camel-protocols` | ftp, mail (smtp/pop3/imap), websocket, mllp/hl7, syslog — plus embedded test servers in `testing` |
 | `crates/camel-main` | `camel` CLI binary, application.properties, route loading, dev console |
 
 ## Key concepts (camel-core)

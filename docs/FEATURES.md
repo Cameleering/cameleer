@@ -105,6 +105,11 @@ a broker client or a JVM library is out of scope unless it can be written from s
 
 | Component | Status | Key options / notes |
 |---|---|---|
+| ftp | ✅ | `camel-protocols`. Polling consumer (noop/delete/move/preMove/moveFailed, include/exclude/ant, recursive, sortBy, idempotent) and producer (fileExist strategies, tempFileName, doneFileName); passive/active mode, MLSD/LIST parsing. No `readLock`. `ftps`/`sftp` ❌ (no TLS/SSH). |
+| smtp / pop3 / imap (mail) | ✅ | `camel-protocols`. SMTP AUTH PLAIN/LOGIN, headers override options, attachments via `CamelAttachments`; POP3/IMAP polling with MIME decoding, delete/copyTo/moveTo. No TLS variants or STARTTLS. |
+| websocket / vertx-websocket / ws | ✅ | `camel-protocols`. RFC 6455 server and client, fragmentation, ping/pong, `sendToAll`, connection-key routing. No compression extensions; `wss` ❌. |
+| mllp + hl7 data format | ✅ | `camel-protocols`. MLLP framing, auto-ACK (AA/AE), producer ACK validation and exceptions, `CamelMllp*` headers; HL7 v2 parsing with terser paths (`hl7terser` language). No typed HAPI model. |
+| syslog | ✅ | `camel-protocols`. RFC 5424/3164 data format, UDP/TCP component. |
 | direct | ✅ | Synchronous. Fails with `DirectConsumerNotAvailableException` when no consumer is running. |
 | seda / vm / stub | ✅ | `size`, `concurrentConsumers`, `waitForTaskToComplete`, `timeout`, `multipleConsumers`, `blockWhenFull`, `discardWhenFull`, `offerTimeout`, `purgeWhenStopping`, `failIfNoConsumers`, `discardIfNoConsumers`. Supports polling consumers. |
 | timer | ✅ | `period`, `delay`, `repeatCount`, `fixedRate`, `includeMetadata`. Sets the `CamelTimerCounter` property. |

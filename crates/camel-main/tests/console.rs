@@ -46,8 +46,10 @@ fn management_endpoints_over_http() {
     {
         let l = lines.lock().unwrap();
         let i = l.iter().position(|m| m == "Routes startup (total:2 started:2)").expect("summary logged");
-        assert_eq!(l[i + 1], "    Started hello (direct:hello)");
-        assert_eq!(l[i + 2], "    Started other (direct:other)");
+        // other tests in this binary log concurrently through the global sink, so only
+        // require the lines to appear after the summary
+        assert!(l[i + 1..].iter().any(|m| m == "    Started hello (direct:hello)"), "{:?}", &l[i..]);
+        assert!(l[i + 1..].iter().any(|m| m == "    Started other (direct:other)"), "{:?}", &l[i..]);
     }
 
     let t = ctx.create_producer_template();

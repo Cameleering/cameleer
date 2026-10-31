@@ -19,7 +19,15 @@ version = "0.1.0"
 dependencies = [
  "camel-core",
  "camel-http",
+ "camel-protocols",
  "camel-yaml",
+]
+
+[[package]]
+name = "camel-protocols"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
 ]
 
 [[package]]

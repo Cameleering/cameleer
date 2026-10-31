@@ -53,6 +53,7 @@ $ cargo run -p camel-main --bin camel -- run hello.camel.yaml --max-seconds 5
 | `camel-core` | `CamelContext`, `Exchange`/`Message`/`Value`, routes and the Rust DSL, EIPs, error handling, languages, data formats, core components |
 | `camel-http` | HTTP/1.1 server and client, `platform-http`, `http`, REST DSL with OpenAPI, `netty` TCP/UDP |
 | `camel-yaml` | YAML parser, Camel YAML DSL, XML DSL, route templates |
+| `camel-protocols` | ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog (with embedded test servers) |
 | `camel-main` | `Main` runner (application.properties, route discovery) and the `camel` CLI |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the internals, and [docs/FEATURES.md](docs/FEATURES.md) for
