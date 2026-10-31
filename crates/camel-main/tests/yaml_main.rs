@@ -178,3 +178,42 @@ fn invalid_rest_reports_location() {
     assert!(e.message.contains("bad.camel.yaml"), "{}", e);
     let _ = std::fs::remove_dir_all(file.parent().unwrap());
 }
+
+#[test]
+fn rest_configuration_in_a_later_file_applies() {
+    let routes = temp_file(
+        "a-routes.camel.yaml",
+        r#"
+- rest:
+    path: /late
+    get:
+      - to: direct:late
+- route:
+    from:
+      uri: direct:late
+      steps:
+        - setBody:
+            constant: configured later
+"#,
+    );
+    let cfg = temp_file(
+        "b-config.camel.yaml",
+        r#"
+- restConfiguration:
+    host: 127.0.0.1
+    port: 0
+    contextPath: /ctx
+    apiDocs: false
+"#,
+    );
+    let mut main = camel_main::new_main();
+    main.add_route_file(&routes);
+    main.add_route_file(&cfg);
+    main.start().unwrap();
+    let port = camel_http::platform_http_port(main.context()).expect("port");
+    let r = client().get(&format!("http://127.0.0.1:{}/ctx/late", port)).unwrap();
+    assert_eq!((r.status, r.body_text().as_str()), (200, "configured later"));
+    main.stop().unwrap();
+    let _ = std::fs::remove_dir_all(routes.parent().unwrap());
+    let _ = std::fs::remove_dir_all(cfg.parent().unwrap());
+}

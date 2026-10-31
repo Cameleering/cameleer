@@ -178,7 +178,8 @@ enum Func {
     FromRouteId,
     CamelId,
     Exception(Vec<Nav>),
-    Date { source: DateSource, offset: i64, pattern: Option<String>, tz: i64 },
+    /// `tz` = `None` uses the default time zone ([`crate::tz::TimeZone::local`]).
+    Date { source: DateSource, offset: i64, pattern: Option<String>, tz: Option<Arc<crate::tz::TimeZone>> },
     Properties(String, Option<String>),
     PropertiesExist(String),
     /// File language function (`${file:name}`...), evaluated from the `CamelFile*` headers.
@@ -186,6 +187,8 @@ enum Func {
     Env(String),
     Sys(String),
     Null,
+    /// A constant (`${type:org.apache.camel.Exchange.FILE_NAME}`).
+    Constant(Value),
     Ref(String),
     Bean(String, Option<String>),
     Iif(Pred, Expr, Expr),
@@ -909,11 +912,16 @@ impl<'a> P<'a> {
             "null" => Some(Func::Null),
             "uuid" => Some(Func::Call("uuid".into(), vec![], vec![])),
             "prettyBody" => Some(Func::Call("pretty".into(), vec![], vec![])),
-            "messageHistory" => Some(Func::Null),
+            "messageHistory" => Some(Func::Call("messageHistory".into(), vec![], vec![])),
             _ => None,
         };
         if let Some(func) = simple {
             return Ok(func);
+        }
+        if let Some(name) = f.strip_prefix("type:") {
+            return support::type_constant(name.trim()).map(Func::Constant).ok_or_else(|| {
+                self.err(format!("Cannot find the static field {} (only org.apache.camel.Exchange constants and a few java.lang constants are known)", name.trim()), pos)
+            });
         }
         for prefix in ["body", "in.body", "message.body"] {
             if let Some(rest) = f.strip_prefix(prefix) {
@@ -971,14 +979,15 @@ impl<'a> P<'a> {
             if pattern.is_empty() {
                 return Err(self.err("Valid syntax: ${date-with-timezone:command:timezone:pattern}", pos));
             }
-            return self.date(cmd, Some(pattern.to_string()), support::parse_timezone(tz), pos);
+            // unknown ids fall back to UTC like Java's TimeZone.getTimeZone
+            return self.date(cmd, Some(pattern.to_string()), Some(crate::tz::TimeZone::parse_lenient(tz)), pos);
         }
         if let Some(rest) = f.strip_prefix("date:") {
             let (cmd, pattern) = match rest.split_once(':') {
                 Some((c, p)) => (c, Some(p.to_string())),
                 None => (rest, None),
             };
-            return self.date(cmd, pattern, 0, pos);
+            return self.date(cmd, pattern, None, pos);
         }
         if let Some(rest) = f.strip_prefix("file:") {
             let rest = rest.trim();
@@ -1032,7 +1041,7 @@ impl<'a> P<'a> {
         Err(self.err(format!("Unknown function: {}", f), pos))
     }
 
-    fn date(&self, cmd: &str, pattern: Option<String>, tz: i64, pos: usize) -> Result<Func> {
+    fn date(&self, cmd: &str, pattern: Option<String>, tz: Option<Arc<crate::tz::TimeZone>>, pos: usize) -> Result<Func> {
         // split off offsets: now-1h, header.x+2d
         let cmd = cmd.trim();
         let mut base = cmd;
@@ -1196,7 +1205,15 @@ impl Expr {
             }
             Expr::Elvis(a, b) => {
                 let v = a.eval(ex)?;
-                if value_predicate(&v) && !matches!(&v, Value::String(s) if s.is_empty()) {
+                // Camel's elvis: the left side unless it is null, an empty string/collection or false
+                let empty = match &v {
+                    Value::Null | Value::Bool(false) => true,
+                    Value::String(s) => s.is_empty(),
+                    Value::Array(a) => a.is_empty(),
+                    Value::Object(o) => o.is_empty(),
+                    _ => false,
+                };
+                if !empty {
                     Ok(v)
                 } else {
                     b.eval(ex)
@@ -1494,7 +1511,7 @@ fn call_method(v: &Value, m: &str, a: &[Value]) -> Result<Value> {
         "values" => Value::Array(v.as_object().map(|o| o.values().cloned().collect()).unwrap_or_default()),
         "intValue" | "longValue" => Value::Int(v.as_i64().unwrap_or(0)),
         "doubleValue" | "floatValue" => Value::Float(v.as_f64().unwrap_or(0.0)),
-        "getClass" => Value::String(v.type_name().to_string()),
+        "getClass" => Value::String(v.java_type_name().unwrap_or("null").to_string()),
         _ => {
             return Err(CamelError::new(
                 "MethodNotFoundException",
@@ -1540,7 +1557,9 @@ impl Func {
                 navigate(v, navs, ex)
             }
             Func::BodyOneLine => Ok(Value::String(body_one_line(&ex.message.body))),
-            Func::BodyType => Ok(Value::String(ex.message.body.type_name().to_string())),
+            Func::BodyType => Ok(ex.message.body.java_type_name().map(Value::from).unwrap_or(Value::Null)),
+            Func::Constant(v) => Ok(v.clone()),
+
             Func::Scoped(scope, name, alt) => {
                 if let Some(v) = scoped_get(ex, scope, name) {
                     return Ok(v);
@@ -1630,7 +1649,10 @@ impl Func {
                     Some(m) => m + offset,
                 };
                 Ok(match pattern {
-                    Some(p) => Value::String(support::format_date(millis, p, *tz)),
+                    Some(p) => Value::String(match tz {
+                        Some(z) => crate::util_time::format_in_zone(millis, p, z),
+                        None => crate::util_time::format_millis(millis, p),
+                    }),
                     None => Value::Int(millis),
                 })
             }
@@ -1976,7 +1998,12 @@ fn call(name: &str, args: &[Expr], ex: &Exchange) -> Result<Value> {
             let (input, q) = if args.len() == 2 { (ev(0)?, evs(1)?) } else { (body(), evs(0)?) };
             super::xpath::query(&input.to_string(), &q, None)?
         }
-        "messageHistory" => Value::Null,
+        "messageHistory" => {
+            // ${messageHistory} / ${messageHistory(false)}: without the exchange details
+            let details = if args.is_empty() { true } else { ev(0)?.is_predicate_true() };
+            let text = crate::history::format_message_history(ex);
+            Value::String(if details { text } else { text.split("\nExchange\n").next().unwrap_or("").to_string() })
+        }
         "increment" | "decrement" => {
             let v = exp_or_body(0)?;
             let d = if name == "increment" { 1 } else { -1 };

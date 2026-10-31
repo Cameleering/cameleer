@@ -104,7 +104,7 @@ fn dead_letter_channel_moves_failed_exchange() {
     assert_eq!(caught.get("message").unwrap().as_str(), Some("disk full"));
     assert_eq!(caught.get("kind").unwrap().as_str(), Some("IOException"));
     assert_eq!(caught_exception(&d).unwrap(), CamelError::io("disk full"));
-    assert_eq!(d.property(props::FAILURE_ENDPOINT).unwrap().as_str(), Some("mock:flaky"));
+    assert_eq!(d.property(props::FAILURE_ENDPOINT).unwrap().as_str(), Some("mock://flaky"));
     assert_eq!(d.property(props::FAILURE_ROUTE_ID).unwrap().as_str(), Some("main"));
     assert_eq!(ex.property(props::ERRORHANDLER_HANDLED), Some(&Value::Bool(true)));
     assert!(ex.property(props::EXCEPTION_CAUGHT).is_some());

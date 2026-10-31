@@ -1071,35 +1071,60 @@ impl ConsumerCore {
                 Ok(true)
             }
             ReadLock::Changed => {
-                let start = Instant::now();
-                let stat = || -> Option<(u64, i64)> {
-                    let m = fs::metadata(&info.absolute).ok()?;
-                    let modified = m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_millis() as i64;
-                    Some((m.len(), modified))
-                };
-                let mut last = stat();
-                loop {
-                    if self.stop.sleep(c.read_lock_check_interval) {
-                        return Ok(false);
-                    }
-                    let now = stat();
-                    let Some((len, modified)) = now else { return Ok(false) };
-                    let age = crate::util_time::now_millis() - modified;
-                    if now == last && len >= c.read_lock_min_length && age >= c.read_lock_min_age.as_millis() as i64 {
-                        return Ok(true);
-                    }
-                    last = now;
-                    if !c.read_lock_timeout.is_zero() && start.elapsed() >= c.read_lock_timeout {
-                        crate::camel_warn!(&self.logger, "Cannot acquire read lock within {} millis. Will skip the file: {}", c.read_lock_timeout.as_millis(), info.absolute.display());
-                        return Ok(false);
+                // Camel's FileChangedExclusiveReadLockStrategy extends the marker file strategy:
+                // the marker file is taken first (readLockMarkerFile=true by default).
+                if c.read_lock_marker_file {
+                    match fs::OpenOptions::new().write(true).create_new(true).open(lock_path(&info.absolute)) {
+                        Ok(_) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+                        Err(e) => return Err(io_error("Cannot create lock file for", &info.absolute, e)),
                     }
                 }
+                let acquired = self.wait_until_unchanged(info);
+                if !acquired && c.read_lock_marker_file {
+                    let _ = fs::remove_file(lock_path(&info.absolute));
+                }
+                Ok(acquired)
+            }
+        }
+    }
+
+    /// The `changed` read lock check, as in Camel: without `readLockMinAge` the file must keep
+    /// the same length and modification time between two checks `readLockCheckInterval` apart;
+    /// with `readLockMinAge` the file only has to be last modified at least that long ago (so an
+    /// old file is taken at once). In both cases its length must be at least `readLockMinLength`.
+    /// Gives up after `readLockTimeout` (0 = never).
+    fn wait_until_unchanged(&self, info: &FileInfo) -> bool {
+        let c = self.cfg();
+        let start = Instant::now();
+        let min_age = c.read_lock_min_age.as_millis() as i64;
+        let stat = || -> Option<(u64, i64)> {
+            let m = fs::metadata(&info.absolute).ok()?;
+            let modified = m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_millis() as i64;
+            Some((m.len(), modified))
+        };
+        let mut last: Option<(u64, i64)> = None;
+        loop {
+            if !c.read_lock_timeout.is_zero() && start.elapsed() > c.read_lock_timeout {
+                crate::camel_warn!(&self.logger, "Cannot acquire read lock within {} millis. Will skip the file: {}", c.read_lock_timeout.as_millis(), info.absolute.display());
+                return false;
+            }
+            let Some((len, modified)) = stat() else { return false };
+            let unchanged = last == Some((len, modified));
+            let old_enough = crate::util_time::now_millis() - modified >= min_age;
+            if len >= c.read_lock_min_length && ((min_age == 0 && unchanged) || (min_age > 0 && old_enough)) {
+                return true;
+            }
+            last = Some((len, modified));
+            if self.stop.sleep(c.read_lock_check_interval) {
+                return false;
             }
         }
     }
 
     fn release_read_lock(&self, info: &FileInfo) {
-        if matches!(self.cfg().read_lock, ReadLock::MarkerFile | ReadLock::FileLock) {
+        let c = self.cfg();
+        if matches!(c.read_lock, ReadLock::MarkerFile | ReadLock::FileLock) || (c.read_lock == ReadLock::Changed && c.read_lock_marker_file) {
             let _ = fs::remove_file(lock_path(&info.absolute));
         }
     }

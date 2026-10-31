@@ -21,14 +21,19 @@
 //! When both day-of-month and day-of-week are restricted (neither `*` nor `?`) a day
 //! matches when either matches (Unix semantics; Quartz rejects such expressions).
 //!
-//! Expressions are evaluated in UTC unless a fixed offset is given
-//! ([`CronExpression::with_offset_seconds`], [`parse_time_zone`]): `UTC`, `GMT`, `Z`,
-//! `GMT+02:00`, `UTC-5`, `+0530`. Named regional zones (`Europe/Paris`) are rejected as
-//! rust-camel has no time zone database.
+//! [`CronExpression::parse`] evaluates in UTC; [`CronExpression::parse_with_time_zone`] and
+//! [`CronExpression::with_time_zone`] take any [`TimeZone`]: fixed offsets (`UTC`, `GMT+02:00`,
+//! `UTC-5`, `+0530`) and region ids read from the zoneinfo database (`Europe/Paris`).
+//! Daylight saving transitions are handled like Quartz (`java.util.Calendar`): a fire time that
+//! falls in a spring-forward gap fires once, shifted forward by the gap length (02:30 becomes
+//! 03:30), and a fire time in a fall-back overlap fires once, at the later (standard time)
+//! occurrence.
 
 use std::fmt;
+use std::sync::Arc;
 
 use crate::error::{CamelError, Result};
+use crate::tz::TimeZone;
 use crate::util_time::{civil_from_epoch, epoch_from_civil};
 
 /// Highest year considered when searching for the next fire time (as in Quartz).
@@ -74,12 +79,12 @@ pub struct CronExpression {
     dow: DowSpec,
     /// None = every year.
     years: Option<Vec<i64>>,
-    offset_seconds: i32,
+    zone: Arc<TimeZone>,
 }
 
 impl fmt::Debug for CronExpression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "CronExpression({:?}, offset={}s)", self.text, self.offset_seconds)
+        write!(f, "CronExpression({:?}, zone={})", self.text, self.zone.id())
     }
 }
 
@@ -255,15 +260,24 @@ impl CronExpression {
         if rest[2] == "?" && rest[4] == "?" {
             return Err(err(text, "'?' can only be used in one of day-of-month and day-of-week"));
         }
-        Ok(CronExpression { text: text.to_string(), seconds, minutes, hours, dom, months, dow, years, offset_seconds: 0 })
+        Ok(CronExpression { text: text.to_string(), seconds, minutes, hours, dom, months, dow, years, zone: Arc::new(TimeZone::utc()) })
     }
 
     /// Parse an expression evaluated in the given time zone (see [`parse_time_zone`]).
     pub fn parse_with_time_zone(expression: &str, time_zone: Option<&str>) -> Result<CronExpression> {
         let c = CronExpression::parse(expression)?;
         match time_zone {
-            Some(tz) if !tz.trim().is_empty() => Ok(c.with_offset_seconds(parse_time_zone(tz)?)),
+            Some(tz) if !tz.trim().is_empty() => Ok(c.with_time_zone(parse_zone(tz)?)),
             _ => Ok(c),
+        }
+    }
+
+    /// Like [`CronExpression::parse_with_time_zone`] but without a time zone the expression is
+    /// evaluated in the default zone ([`TimeZone::local`]), like Quartz uses the JVM default.
+    pub fn parse_with_default_zone(expression: &str, time_zone: Option<&str>) -> Result<CronExpression> {
+        match time_zone {
+            Some(tz) if !tz.trim().is_empty() => Self::parse_with_time_zone(expression, Some(tz)),
+            _ => Ok(CronExpression::parse(expression)?.with_time_zone(TimeZone::local())),
         }
     }
 
@@ -337,13 +351,24 @@ impl CronExpression {
 
     /// Evaluate the expression at a fixed UTC offset (seconds east of UTC).
     pub fn with_offset_seconds(mut self, offset: i32) -> Self {
-        self.offset_seconds = offset;
+        self.zone = Arc::new(fixed_zone(offset));
         self
     }
 
-    /// The UTC offset (seconds) the expression is evaluated in.
+    /// Evaluate the expression in the given time zone.
+    pub fn with_time_zone(mut self, zone: Arc<TimeZone>) -> Self {
+        self.zone = zone;
+        self
+    }
+
+    /// The time zone the expression is evaluated in.
+    pub fn time_zone(&self) -> &Arc<TimeZone> {
+        &self.zone
+    }
+
+    /// The UTC offset (seconds) of the expression's time zone at the current instant.
     pub fn offset_seconds(&self) -> i32 {
-        self.offset_seconds
+        self.zone.offset_at(crate::util_time::now_millis().div_euclid(1000))
     }
 
     /// The expression text as given.
@@ -353,7 +378,7 @@ impl CronExpression {
 
     /// Whether the expression matches the given instant (epoch seconds).
     pub fn matches(&self, epoch_secs: i64) -> bool {
-        let local = epoch_secs + self.offset_seconds as i64;
+        let local = self.zone.to_local(epoch_secs);
         let (y, mo, d, h, mi, s) = civil_from_epoch(local);
         self.year_ok(y)
             && self.months & (1 << mo) != 0
@@ -365,8 +390,19 @@ impl CronExpression {
 
     /// The next fire time strictly after `epoch_secs`, or None if there is none (before year 2199).
     pub fn next_after(&self, epoch_secs: i64) -> Option<i64> {
-        let off = self.offset_seconds as i64;
-        let mut t = epoch_secs + 1 + off; // local time
+        let mut local = self.zone.to_local(epoch_secs) + 1;
+        loop {
+            let candidate = self.next_local_from(local)?;
+            let utc = self.zone.resolve_local(candidate);
+            if utc > epoch_secs {
+                return Some(utc);
+            }
+            local = candidate + 1;
+        }
+    }
+
+    /// The first matching local time (epoch seconds of the wall clock) at or after `t`.
+    fn next_local_from(&self, mut t: i64) -> Option<i64> {
         loop {
             let (y, mo, d, h, mi, s) = civil_from_epoch(t);
             if y > MAX_YEAR {
@@ -412,7 +448,7 @@ impl CronExpression {
                 };
                 continue;
             }
-            return Some(t - off);
+            return Some(t);
         }
     }
 
@@ -543,8 +579,27 @@ fn dow_matches(spec: &DowSpec, y: i64, m: u32, d: u32) -> bool {
     spec.nth.iter().any(|&(w, k)| w == wd && (d - 1) / 7 + 1 == k)
 }
 
-/// Parse a time zone into a fixed UTC offset in seconds: `UTC`, `GMT`, `Z`, `Etc/UTC`,
-/// `GMT+02:00`, `GMT-5`, `UTC+0530`, `+02:00`. Regional names are rejected.
+fn fixed_zone(offset: i32) -> TimeZone {
+    let a = offset.abs();
+    let id = if offset == 0 {
+        "UTC".to_string()
+    } else {
+        format!("GMT{}{:02}:{:02}", if offset < 0 { '-' } else { '+' }, a / 3600, (a % 3600) / 60)
+    };
+    TimeZone::fixed(&id, offset)
+}
+
+/// Parse a time zone option: fixed offsets and region ids (`Europe/Paris`) from the zoneinfo
+/// database. A `+` decoded as a space in an endpoint uri (`GMT 02:00`) is accepted.
+pub fn parse_zone(tz: &str) -> Result<Arc<TimeZone>> {
+    if let Ok(off) = parse_time_zone(tz) {
+        return Ok(Arc::new(fixed_zone(off)));
+    }
+    TimeZone::parse(&tz.trim().replace(' ', "+"))
+}
+
+/// Parse a fixed-offset time zone into a UTC offset in seconds: `UTC`, `GMT`, `Z`, `Etc/UTC`,
+/// `GMT+02:00`, `GMT-5`, `UTC+0530`, `+02:00`. Regional names are rejected (see [`parse_zone`]).
 pub fn parse_time_zone(tz: &str) -> Result<i32> {
     // a `+` in an endpoint uri is decoded as a space: `GMT+02:00` arrives as `GMT 02:00`
     let t = tz.trim().replace(' ', "+");
@@ -593,6 +648,10 @@ mod tests {
     fn fmt(t: i64) -> String {
         let (y, mo, d, h, mi, s) = civil_from_epoch(t);
         format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", y, mo, d, h, mi, s)
+    }
+
+    fn seq_c(c: &CronExpression, from: i64, n: usize) -> Vec<String> {
+        c.next_n(from, n).into_iter().map(fmt).collect()
     }
 
     fn seq(expr: &str, from: i64, n: usize) -> Vec<String> {
@@ -721,6 +780,47 @@ mod tests {
         assert_eq!(fmt(c.next_after(ts(2024, 1, 1, 5, 0, 0)).unwrap()), "2024-02-01 05:00:00");
         assert!(c.matches(ts(2024, 2, 1, 5, 0, 0)));
         assert!(!c.matches(ts(2024, 2, 1, 0, 0, 0)));
+    }
+
+    #[test]
+    fn region_time_zones_and_dst() {
+        if !crate::tz::zoneinfo_available() {
+            eprintln!("zoneinfo database not available: skipping");
+            return;
+        }
+        // daily 12:00 Paris: 11:00 UTC in winter, 10:00 UTC in summer
+        let c = CronExpression::parse_with_time_zone("0 0 12 * * ?", Some("Europe/Paris")).unwrap();
+        assert_eq!(c.time_zone().id(), "Europe/Paris");
+        assert_eq!(seq_c(&c, ts(2024, 3, 30, 0, 0, 0), 2), vec!["2024-03-30 11:00:00", "2024-03-31 10:00:00"]);
+        // 02:30 does not exist on 2024-03-31 in Paris: fires once at 03:30 CEST (01:30 UTC)
+        let c = CronExpression::parse_with_time_zone("0 30 2 * * ?", Some("Europe/Paris")).unwrap();
+        assert_eq!(
+            seq_c(&c, ts(2024, 3, 29, 12, 0, 0), 3),
+            vec!["2024-03-30 01:30:00", "2024-03-31 01:30:00", "2024-04-01 00:30:00"]
+        );
+        // every 30 minutes across the gap: 01:30 CET, then 03:00 CEST (02:00 and 02:30 are
+        // shifted to 03:00 and 03:30 and so coincide with real times)
+        let c = CronExpression::parse_with_time_zone("0 0/30 * * * ?", Some("Europe/Paris")).unwrap();
+        assert_eq!(
+            seq_c(&c, ts(2024, 3, 31, 0, 15, 0), 4),
+            vec!["2024-03-31 00:30:00", "2024-03-31 01:00:00", "2024-03-31 01:30:00", "2024-03-31 02:00:00"]
+        );
+        // 01:30 happens twice on 2024-11-03 in New York: fires once (EST, 06:30 UTC)
+        let c = CronExpression::parse_with_time_zone("0 30 1 * * ?", Some("America/New_York")).unwrap();
+        assert_eq!(
+            seq_c(&c, ts(2024, 11, 2, 12, 0, 0), 3),
+            vec!["2024-11-03 06:30:00", "2024-11-04 06:30:00", "2024-11-05 06:30:00"]
+        );
+        // hourly across the fall-back: 00:00 EDT, 01:00 EST, 02:00 EST (no duplicate)
+        let c = CronExpression::parse_with_time_zone("0 0 * * * ?", Some("America/New_York")).unwrap();
+        assert_eq!(
+            seq_c(&c, ts(2024, 11, 3, 3, 30, 0), 3),
+            vec!["2024-11-03 04:00:00", "2024-11-03 06:00:00", "2024-11-03 07:00:00"]
+        );
+        assert!(c.matches(ts(2024, 11, 3, 6, 0, 0)));
+        assert!(CronExpression::parse_with_time_zone("0 0 * * * ?", Some("Nowhere/City")).is_err());
+        // the `+` of an offset decoded as a space
+        assert_eq!(parse_zone("GMT 02:00").unwrap().offset_at(0), 7200);
     }
 
     #[test]

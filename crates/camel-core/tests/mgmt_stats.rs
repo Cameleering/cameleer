@@ -44,7 +44,7 @@ fn route_and_processor_statistics() {
     assert_eq!(mc.exchanges_inflight(), 0);
 
     let r = mc.route("main").unwrap();
-    assert_eq!(r.endpoint_uri, "direct:start");
+    assert_eq!(r.endpoint_uri, "direct://start");
     assert_eq!(r.status, ServiceStatus::Started);
     assert_eq!(r.description.as_deref(), Some("The main route"));
     assert_eq!(r.group.as_deref(), Some("g1"));
@@ -84,10 +84,10 @@ fn route_and_processor_statistics() {
     assert_eq!(cv.get("exchangesTotal").unwrap().as_i64(), Some(5));
     assert_eq!(cv.get("totalRoutes").unwrap().as_i64(), Some(2));
     let dump = mc.dump_value();
-    assert!(dump.get("endpoints").unwrap().as_array().unwrap().iter().any(|e| e.get("uri").unwrap().as_str() == Some("direct:start")));
+    assert!(dump.get("endpoints").unwrap().as_array().unwrap().iter().any(|e| e.get("uri").unwrap().as_str() == Some("direct://start")));
     assert!(mc.components().contains(&"direct".to_string()));
-    assert!(mc.endpoints().iter().any(|e| e.uri == "mock:out" && e.scheme == "mock"));
-    assert_eq!(mc.endpoints().iter().find(|e| e.uri == "direct:start").unwrap().consumers, vec!["main".to_string()]);
+    assert!(mc.endpoints().iter().any(|e| e.uri == "mock://out" && e.scheme == "mock"));
+    assert_eq!(mc.endpoints().iter().find(|e| e.uri == "direct://start").unwrap().consumers, vec!["main".to_string()]);
 
     // reset
     mc.reset_statistics();

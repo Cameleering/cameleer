@@ -107,7 +107,7 @@ impl Processor for ToDynamicProcessor {
         if let Some(p) = self.pattern {
             exchange.pattern = p;
         }
-        exchange.set_property(props::TO_ENDPOINT, uri);
+        exchange.set_property(props::TO_ENDPOINT, ctx.normalize_endpoint_uri(&uri));
         let r = producer.process(exchange);
         exchange.pattern = saved;
         r

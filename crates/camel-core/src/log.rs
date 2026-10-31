@@ -84,11 +84,13 @@ pub fn set_stderr_enabled(enabled: bool) {
     *STDERR_ENABLED.write().unwrap() = enabled;
 }
 
-/// Format epoch millis as `YYYY-MM-DD HH:MM:SS.mmm` (UTC).
+/// Format epoch millis as `YYYY-MM-DD HH:MM:SS.mmm` in the default time zone
+/// ([`crate::tz::TimeZone::local`]: the `TZ` environment variable, `/etc/localtime`, else UTC).
 pub fn format_timestamp(millis: u128) -> String {
     let secs = (millis / 1000) as i64;
     let ms = (millis % 1000) as u32;
-    let (y, mo, d, h, mi, s) = crate::util_time::civil_from_epoch(secs);
+    let local = crate::tz::TimeZone::local().to_local(secs);
+    let (y, mo, d, h, mi, s) = crate::util_time::civil_from_epoch(local);
     format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}", y, mo, d, h, mi, s, ms)
 }
 

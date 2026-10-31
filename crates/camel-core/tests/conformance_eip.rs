@@ -167,9 +167,56 @@ fn recipient_list_from_header_with_delimiter() {
     assert_eq!(bodies(&ctx, "mock:b"), vec!["x", "y"]);
     assert_eq!(bodies(&ctx, "mock:c"), vec!["y", "z"]);
     let a = ctx.mock_endpoint("mock:a").unwrap().exchange(0).unwrap();
-    // Camel normalizes the uri to "mock://a"; rust-camel keeps the uri as written
-    let uri = a.property(props::RECIPIENT_LIST_ENDPOINT).map(|v| v.to_string()).unwrap();
-    assert!(uri == "mock://a" || uri == "mock:a", "{}", uri);
+    // Camel normalizes the uri (URISupport.normalizeUri)
+    assert_eq!(a.property(props::RECIPIENT_LIST_ENDPOINT), Some(&Value::from("mock://a")));
+    assert_eq!(a.property(props::TO_ENDPOINT), Some(&Value::from("mock://a")));
+}
+
+#[test]
+fn endpoint_uris_are_normalized_like_camel() {
+    let ctx = CamelContext::new();
+    // the same endpoint whatever form is used to look it up
+    let a = ctx.get_endpoint("seda:foo?size=10&blockWhenFull=true").unwrap();
+    assert_eq!(a.uri(), "seda://foo?blockWhenFull=true&size=10");
+    let b = ctx.get_endpoint("seda://foo?blockWhenFull=true&size=10").unwrap();
+    assert!(std::sync::Arc::ptr_eq(&a, &b));
+    assert_eq!(ctx.get_endpoint("mock:result").unwrap().uri(), "mock://result");
+    assert_eq!(ctx.get_endpoint("direct://start").unwrap().uri(), "direct://start");
+    assert_eq!(ctx.normalize_endpoint_uri("log:foo?showAll=true&level=WARN"), "log://foo?level=WARN&showAll=true");
+    // values are encoded like java.net.URLEncoder
+    assert_eq!(ctx.normalize_endpoint_uri("log:a?marker=hello world"), "log://a?marker=hello+world");
+    // invalid parameters are reported with the normalized uri
+    let e = ctx.get_endpoint("seda:x?nope=1").err().unwrap();
+    assert!(e.message.contains("seda://x?nope=1"), "{}", e);
+
+    ctx.add_routes(|b| {
+        b.from("direct:start").route_id("main").to("mock:a?retainFirst=5").to_d("mock:${header.next}").to("mock:end");
+        b.from("direct:slip").routing_slip(header("slip")).end();
+        b.from("direct:fail")
+            .error_handler(dead_letter_channel("mock:dead"))
+            .to("log:before?showAll=true&level=DEBUG")
+            .throw_exception("IOException", "boom");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    t.send_body_and_header("direct:start", "x", "next", "b").unwrap();
+    let a = ctx.mock_endpoint("mock:a?retainFirst=5").unwrap();
+    assert_eq!(a.uri(), "mock://a?retainFirst=5");
+    assert_eq!(a.exchange(0).unwrap().property(props::TO_ENDPOINT), Some(&Value::from("mock://a?retainFirst=5")));
+    let b = ctx.mock_endpoint("mock:b").unwrap();
+    assert_eq!(b.exchange(0).unwrap().property(props::TO_ENDPOINT), Some(&Value::from("mock://b")));
+    let end = ctx.mock_endpoint("mock://end").unwrap();
+    assert_eq!(end.received_counter(), 1);
+    assert_eq!(ctx.route("main").unwrap().endpoint_uri, "direct://start");
+
+    t.send_body_and_header("direct:slip", "y", "slip", "mock:s1,mock://s2").unwrap();
+    let s2 = ctx.mock_endpoint("s2").unwrap().exchange(0).unwrap();
+    assert_eq!(s2.property(props::SLIP_ENDPOINT), Some(&Value::from("mock://s2")));
+
+    t.send_body("direct:fail", "z").unwrap();
+    let d = ctx.mock_endpoint("dead").unwrap().exchange(0).unwrap();
+    assert_eq!(d.property(props::FAILURE_ENDPOINT), Some(&Value::from("log://before?level=DEBUG&showAll=true")));
 }
 
 #[test]

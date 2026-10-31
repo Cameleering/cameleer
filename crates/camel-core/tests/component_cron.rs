@@ -52,6 +52,11 @@ fn cron_endpoint_validation() {
     assert!(ctx.get_endpoint("cron:x?schedule=bad").is_err());
     assert!(ctx.get_endpoint("cron:x?schedule=0+0+12+*+*+?&timeZone=Mars/Base").is_err());
     assert!(ctx.get_endpoint("cron:x?schedule=@daily").is_ok());
+    if camel_core::tz::zoneinfo_available() {
+        assert!(ctx.get_endpoint("cron:paris?schedule=0+0+12+*+*+?&timeZone=Europe/Paris").is_ok());
+        assert!(ctx.get_endpoint("quartz:g/paris?cron=0+0+12+*+*+?&trigger.timeZone=America/New_York").is_ok());
+        assert!(ctx.get_endpoint("scheduler:p?scheduler=quartz&scheduler.cron=0+0+12+*+*+?&scheduler.timeZone=Asia/Tokyo").is_ok());
+    }
     assert!(ctx.get_endpoint("quartz:g/n?cron=0+0+12+*+*+?&trigger.timeZone=UTC&deleteJob=false").is_ok());
 }
 

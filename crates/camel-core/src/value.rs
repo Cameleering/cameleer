@@ -57,6 +57,25 @@ impl Value {
         }
     }
 
+    /// The Java class name Apache Camel would report for this value (`${bodyType}`, the log
+    /// component's `BodyType:`): `java.lang.String`, `java.lang.Integer` (`java.lang.Long` beyond
+    /// the 32-bit range), `java.lang.Double`, `java.lang.Boolean`, `byte[]`,
+    /// `java.util.ArrayList` and `java.util.LinkedHashMap` (the classes Camel's JSON support
+    /// produces for lists and maps). `None` for null.
+    pub fn java_type_name(&self) -> Option<&'static str> {
+        Some(match self {
+            Value::Null => return None,
+            Value::Bool(_) => "java.lang.Boolean",
+            Value::Int(i) if i32::try_from(*i).is_ok() => "java.lang.Integer",
+            Value::Int(_) => "java.lang.Long",
+            Value::Float(_) => "java.lang.Double",
+            Value::String(_) => "java.lang.String",
+            Value::Bytes(_) => "byte[]",
+            Value::Array(_) => "java.util.ArrayList",
+            Value::Object(_) => "java.util.LinkedHashMap",
+        })
+    }
+
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }
@@ -107,8 +126,28 @@ impl Value {
         }
     }
 
-    /// Truthiness used when an expression is used as a predicate.
-    /// Null, false, empty string, "false", 0, empty array/object are false.
+    /// Camel's `ObjectHelper.evaluateValuePredicate`: the result of an expression used as a
+    /// predicate. Exactly as in Camel 4:
+    ///
+    /// - a boolean is its value,
+    /// - a string is `true`/`false` when it is (trimmed, case-insensitive) `"true"`/`"false"`,
+    ///   any other string (including `""`) is true because it is not null,
+    /// - a collection (array) is true when not empty,
+    /// - null is false and every other value (numbers including `0`, maps, byte arrays) is true.
+    pub fn is_predicate_true(&self) -> bool {
+        match self {
+            Value::Null => false,
+            Value::Bool(b) => *b,
+            Value::String(s) => !s.trim().eq_ignore_ascii_case("false"),
+            Value::Array(a) => !a.is_empty(),
+            _ => true,
+        }
+    }
+
+    /// Lenient boolean conversion used for flag headers/properties (such as
+    /// `CamelRouteStop` or `CamelHttpChunked`): null, false, empty string, `"false"`, `0`, empty
+    /// array/object are false. This is **not** Camel's predicate semantics; use
+    /// [`Value::is_predicate_true`] for the result of an expression used as a predicate.
     pub fn is_truthy(&self) -> bool {
         match self {
             Value::Null => false,

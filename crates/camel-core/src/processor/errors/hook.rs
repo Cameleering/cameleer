@@ -6,9 +6,13 @@
 //!   `onException`/`onCompletion` blocks in the route outputs;
 //! - builder scoped: definitions collected per [`RouteBuilder`] (applied to every route of
 //!   that builder only);
+//! - route configurations (Camel `routeConfiguration`):
+//!   [`CamelContextErrorExt::add_route_configuration`], selected by the route's
+//!   `routeConfigurationId` (see [`RouteDefinition::route_configuration_id`]); configurations
+//!   without id apply to every route that does not name one (context-wide `onException`...);
 //! - context scoped: [`CamelContextErrorExt::set_error_handler`].
 
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use crate::context::{CamelContext, RouteFactoryHook};
 use crate::dsl::RouteBuilder;
@@ -35,7 +39,43 @@ pub const ROUTE_POLICIES: &str = "camel.errors.routePolicies";
 pub const BUILDER_EXT: &str = "camel.errors.builder";
 /// Registry name of the context-scoped [`ContextErrorConfig`].
 pub const CONTEXT_CONFIG: &str = "camel.errors.contextConfig";
+/// Registry name of the context's [`RouteConfigurations`].
+pub const ROUTE_CONFIGURATIONS: &str = "camel.errors.routeConfigurations";
+/// Route property naming the route configurations of a route (comma separated, wildcards allowed).
+pub const ROUTE_CONFIGURATION_ID: &str = "routeConfigurationId";
 const RUNTIME_ATTR: &str = "camel.errors.runtime";
+
+/// Route configurations added with [`CamelContextErrorExt::add_route_configuration`].
+#[derive(Default)]
+pub struct RouteConfigurations(pub RwLock<Vec<(Option<String>, BuilderScopeHandle)>>);
+
+/// The route configurations of the context that apply to a route: the ones named by its
+/// `routeConfigurationId` (exact id or wildcard), else the ones without id.
+fn select_route_configurations(def: &RouteDefinition, ctx: &CamelContext) -> Vec<BuilderScopeHandle> {
+    let Some(all) = ctx.registry().lookup::<RouteConfigurations>(ROUTE_CONFIGURATIONS) else { return Vec::new() };
+    let all = all.0.read().unwrap();
+    let ids: Vec<&str> =
+        def.properties.get(ROUTE_CONFIGURATION_ID).map(|s| s.split(',').map(str::trim).filter(|p| !p.is_empty()).collect()).unwrap_or_default();
+    if ids.is_empty() {
+        return all.iter().filter(|(id, _)| id.is_none()).map(|(_, h)| h.clone()).collect();
+    }
+    let mut out: Vec<BuilderScopeHandle> = Vec::new();
+    for want in &ids {
+        let mut found = false;
+        for (id, h) in all.iter() {
+            if let Some(id) = id {
+                if (id == want || crate::util::matches_pattern(id, want)) && !out.iter().any(|o| Arc::ptr_eq(&o.0, &h.0)) {
+                    out.push(h.clone());
+                    found = true;
+                }
+            }
+        }
+        if !found && !def.extensions.contains_key(BUILDER_SCOPE) {
+            crate::camel_warn!("RouteConfiguration", "Cannot find routeConfiguration with id '{}' (referenced by route {})", want, def.input);
+        }
+    }
+    out
+}
 
 /// Builder-scoped configuration shared by all routes of one builder.
 #[derive(Default)]
@@ -113,6 +153,14 @@ pub trait CamelContextErrorExt {
     fn set_error_handler(&self, eh: ErrorHandlerBuilder);
     /// The context-level error handler, if configured.
     fn context_error_handler(&self) -> Option<ErrorHandlerBuilder>;
+    /// Add a Camel `routeConfiguration` for routes created afterwards (Rust DSL and YAML):
+    /// `configure` receives a scratch route on which `on_exception`, `on_completion`,
+    /// `intercept*` blocks and an `error_handler` may be declared. A configuration with an id
+    /// applies to routes naming it with [`RouteDefinition::route_configuration_id`]; one
+    /// without id applies to every route that names none (context-wide `onException`).
+    fn add_route_configuration(&self, id: Option<&str>, configure: impl FnOnce(&mut RouteDefinition)) -> Result<()>
+    where
+        Self: Sized;
 }
 
 impl CamelContextErrorExt for CamelContext {
@@ -128,6 +176,38 @@ impl CamelContextErrorExt for CamelContext {
     }
     fn context_error_handler(&self) -> Option<ErrorHandlerBuilder> {
         self.registry().lookup::<ContextErrorConfig>(CONTEXT_CONFIG).and_then(|c| c.error_handler.read().unwrap().clone())
+    }
+    fn add_route_configuration(&self, id: Option<&str>, configure: impl FnOnce(&mut RouteDefinition)) -> Result<()> {
+        let label = id.map(|i| format!("routeConfiguration[{}]", i)).unwrap_or_else(|| "routeConfiguration".to_string());
+        let mut scratch = RouteDefinition::new(&label);
+        configure(&mut scratch);
+        scratch.finish()?;
+        let mut scope = BuilderScope { error_handler: scratch.extension::<ErrorHandlerBuilder>(ROUTE_ERROR_HANDLER).cloned(), outputs: Vec::new() };
+        for d in scratch.outputs.drain(..) {
+            let a = d.as_any();
+            if !(a.is::<OnExceptionDefinition>() || a.is::<OnCompletionDefinition>() || a.is::<InterceptDefinition>()) {
+                return Err(crate::error::CamelError::illegal_argument(format!(
+                    "A routeConfiguration may only contain onException, onCompletion, intercept, interceptFrom and interceptSendToEndpoint but found '{}' in {}",
+                    d.name(),
+                    label
+                )));
+            }
+            scope.outputs.push(d);
+        }
+        let handle = BuilderScopeHandle(Arc::new(Mutex::new(scope)));
+        let configs = match self.registry().lookup::<RouteConfigurations>(ROUTE_CONFIGURATIONS) {
+            Some(c) => c,
+            None => {
+                self.registry().bind(ROUTE_CONFIGURATIONS, RouteConfigurations::default());
+                self.registry().lookup::<RouteConfigurations>(ROUTE_CONFIGURATIONS).unwrap()
+            }
+        };
+        let mut list = configs.0.write().unwrap();
+        if let Some(i) = id {
+            list.retain(|(existing, _)| existing.as_deref() != Some(i));
+        }
+        list.push((id.map(str::to_string), handle));
+        Ok(())
     }
 }
 
@@ -155,11 +235,16 @@ impl RouteFactoryHook for ErrorsRouteHook {
     fn before_create(&self, def: &RouteDefinition, rc: &mut RouteContext) -> Result<()> {
         let handle = def.extension::<BuilderScopeHandle>(BUILDER_SCOPE).cloned();
         let guard = handle.as_ref().map(|h| h.0.lock().unwrap());
-        let builder_outputs: &[Box<dyn ProcessorDefinition>] = guard.as_ref().map(|g| g.outputs.as_slice()).unwrap_or(&[]);
+        let config_handles = select_route_configurations(def, &rc.context);
+        let config_guards: Vec<MutexGuard<'_, BuilderScope>> =
+            config_handles.iter().filter(|c| handle.as_ref().map(|h| !Arc::ptr_eq(&h.0, &c.0)).unwrap_or(true)).map(|c| c.0.lock().unwrap()).collect();
+        let builder_outputs: Vec<&Box<dyn ProcessorDefinition>> =
+            guard.iter().flat_map(|g| g.outputs.iter()).chain(config_guards.iter().flat_map(|g| g.outputs.iter())).collect();
         let eh_builder = def
             .extension::<ErrorHandlerBuilder>(ROUTE_ERROR_HANDLER)
             .cloned()
             .or_else(|| guard.as_ref().and_then(|g| g.error_handler.clone()))
+            .or_else(|| config_guards.iter().rev().find_map(|g| g.error_handler.clone()))
             .or_else(|| rc.context.context_error_handler())
             .unwrap_or_else(default_error_handler);
 
@@ -174,7 +259,7 @@ impl RouteFactoryHook for ErrorsRouteHook {
                     rt.policies.push(p);
                 }
             }
-            for d in builder_outputs {
+            for d in &builder_outputs {
                 if let Some(oe) = d.as_any().downcast_ref::<OnExceptionDefinition>() {
                     let p = oe.create_policy(rc_ref, &rt.policy, false)?;
                     rt.policies.push(p);
@@ -193,7 +278,7 @@ impl RouteFactoryHook for ErrorsRouteHook {
             }
             v
         };
-        for d in builder_outputs.iter().chain(def.outputs.iter()) {
+        for d in builder_outputs.iter().copied().chain(def.outputs.iter()) {
             if let Some(i) = d.as_any().downcast_ref::<InterceptDefinition>() {
                 let r = i.create_runtime(rc_ref)?;
                 match &r.kind {
@@ -240,6 +325,7 @@ impl RouteFactoryHook for ErrorsRouteHook {
         for p in &route_policies {
             p.on_init(&rc_ref.route_id);
         }
+        drop(config_guards);
         drop(guard);
 
         let needs_original = eh.as_ref().map(|e| e.needs_original()).unwrap_or(false);

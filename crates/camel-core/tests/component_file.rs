@@ -490,3 +490,52 @@ fn file_to_file_route_and_polling_consumer() {
     assert!(ct.receive_no_wait(&format!("file:{}?noop=true", dir.uri("empty"))).unwrap().is_none());
     ctx.stop().unwrap();
 }
+
+#[test]
+fn changed_read_lock_min_age_marker_file_and_growing_files() {
+    let dir = TempDir::new("changed");
+    dir.write("in/old.txt", "old");
+    // another consumer holds the marker file of this one
+    dir.write("in/locked.txt", "locked");
+    dir.write("in/locked.txt.camelLock", "");
+    std::thread::sleep(Duration::from_millis(120));
+    let ctx = CamelContext::new();
+    // with readLockMinAge an old file is taken at once (no second check 2s later)
+    let uri = format!("file:{}?readLock=changed&readLockMinAge=100&readLockCheckInterval=2000&{}", dir.uri("in"), FAST);
+    ctx.add_routes(move |b| {
+        b.from(&uri).convert_body_to_string_for_test().to("mock:changed");
+    })
+    .unwrap();
+    let start = std::time::Instant::now();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:changed").unwrap();
+    assert!(mock.wait_for_messages(1, Duration::from_millis(1500)));
+    assert!(start.elapsed() < Duration::from_millis(1500), "{:?}", start.elapsed());
+    assert_eq!(mock.received_bodies(), vec![Value::from("old")]);
+    // the marker file of the consumed file is released
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(!dir.exists("in/old.txt.camelLock"));
+    assert!(dir.exists("in/locked.txt"), "a file locked by someone else is left alone");
+    ctx.stop().unwrap();
+
+    // without readLockMinAge a file still being written is only taken once it stopped changing
+    let dir = TempDir::new("growing");
+    dir.write("in/grow.txt", "a");
+    let ctx = CamelContext::new();
+    let uri = format!("file:{}?readLock=changed&readLockCheckInterval=150&{}", dir.uri("in"), FAST);
+    ctx.add_routes(move |b| {
+        b.from(&uri).convert_body_to_string_for_test().to("mock:grow");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    for chunk in ["b", "c"] {
+        std::thread::sleep(Duration::from_millis(60));
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(dir.path().join("in/grow.txt")).unwrap();
+        f.write_all(chunk.as_bytes()).unwrap();
+    }
+    let mock = ctx.mock_endpoint("mock:grow").unwrap();
+    assert!(mock.wait_for_messages(1, Duration::from_secs(5)));
+    assert_eq!(mock.received_bodies(), vec![Value::from("abc")]);
+    ctx.stop().unwrap();
+}

@@ -206,6 +206,11 @@ fn confirms_returns_competing_consumers_and_reply_queues() {
     let e = other.channel().unwrap().queue_declare(&info.name, &QueueOptions::default()).unwrap_err();
     assert!(e.message.contains("405"), "{}", e.message);
     conn.close();
+    // the broker notices the closed connection asynchronously
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while broker.has_queue(&info.name) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
     assert!(!broker.has_queue(&info.name), "exclusive queue deleted with its connection");
 }
 

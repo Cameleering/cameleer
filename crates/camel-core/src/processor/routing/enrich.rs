@@ -100,7 +100,7 @@ impl Processor for EnrichProcessor {
         };
         let mut resource = exchange.correlated_copy();
         resource.pattern = ExchangePattern::InOut;
-        resource.set_property(props::TO_ENDPOINT, uri.to_string());
+        resource.set_property(props::TO_ENDPOINT, exchange.context()?.normalize_endpoint_uri(uri));
         run_processor(&super::recipient_list::ProducerProcessor(producer), &mut resource);
         if self.share_unit_of_work {
             exchange.on_completions.extend(std::mem::take(&mut resource.on_completions));

@@ -105,8 +105,18 @@ impl InterceptRuntime {
 }
 
 /// True if `uri` matches an interceptor endpoint pattern.
+/// Like Camel's `EndpointHelper.matchEndpoint`: the uri matches the pattern (wildcard or regex)
+/// in its given, normalized (`mock://a`) or short (`mock:a`) form, or both normalize to the
+/// same uri (so `seda:a?size=1&x=2` matches `seda://a?x=2&size=1`).
 pub(crate) fn uri_matches(uris: &[String], pattern: &str) -> bool {
-    uris.iter().any(|u| crate::util::matches_pattern(u, pattern) || crate::util::matches_pattern(&u.replacen("://", ":", 1), pattern))
+    let normalized_pattern = crate::util::normalize_uri(pattern).ok();
+    uris.iter().any(|u| {
+        let n = crate::util::normalize_uri(u).unwrap_or_else(|_| u.clone());
+        crate::util::matches_pattern(u, pattern)
+            || crate::util::matches_pattern(&n, pattern)
+            || crate::util::matches_pattern(&n.replacen("://", ":", 1), pattern)
+            || normalized_pattern.as_deref() == Some(n.as_str())
+    })
 }
 
 /// Runs `intercept()` interceptors before each step.
@@ -141,7 +151,11 @@ impl Processor for SendInterceptProcessor {
         let (uris, header_uri) = match &self.dynamic_uri {
             Some(e) => {
                 let u = e.evaluate(ex)?.to_string().trim().to_string();
-                (vec![u.clone()], u)
+                let normalized = match ex.context() {
+                    Ok(c) => c.normalize_endpoint_uri(&u),
+                    Err(_) => u.clone(),
+                };
+                (vec![u], normalized)
             }
             None => (self.static_uris.clone(), self.static_uris.last().cloned().unwrap_or_default()),
         };

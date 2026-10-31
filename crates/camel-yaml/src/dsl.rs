@@ -1520,6 +1520,13 @@ impl YamlLoader {
         Ok(routes)
     }
 
+    /// Create the beans of a `beans` list (with the registered bean factories) and record them
+    /// in the YAML state. `label` names the list in error messages.
+    pub fn load_bean_list(&self, ctx: &CamelContext, beans: &Value, label: &str) -> Result<()> {
+        let state = yaml_state(ctx);
+        self.load_beans(ctx, &state, &Source::synthetic(beans), beans, &[PathSegment::Key(label.to_string())])
+    }
+
     fn load_beans(&self, ctx: &CamelContext, state: &YamlState, source: &Source<'_>, v: &Value, path: &[PathSegment]) -> Result<()> {
         let items = match v {
             Value::Array(a) => a,

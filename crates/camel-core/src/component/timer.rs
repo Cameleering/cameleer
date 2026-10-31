@@ -18,7 +18,7 @@ use crate::spi::{Component, Consumer, Endpoint, Processor, Service};
 use crate::util::Parameters;
 use crate::value::Value;
 
-use super::support::{new_exchange, parse_duration_with_unit, process_consumer_exchange, BackgroundThreads, StopFlag};
+use super::support::{new_exchange, parse_duration_with_unit, process_consumer_exchange, BackgroundThreads, StopFlag, ThreadSpawner};
 
 /// The timer component.
 #[derive(Default)]
@@ -74,9 +74,27 @@ impl Component for TimerComponent {
     }
 }
 
-/// Parse the `time` option (`yyyy-MM-dd HH:mm:ss` or `yyyy-MM-dd'T'HH:mm:ss`) as UTC epoch millis.
+/// Parse the `time` option (`yyyy-MM-dd HH:mm:ss` or `yyyy-MM-dd'T'HH:mm:ss`) as epoch millis.
+/// Like Camel (`SimpleDateFormat`), the time is a local time of the default time zone
+/// ([`crate::tz::TimeZone::local`], honouring `TZ`); a trailing `Z` or offset (`+02:00`) or a
+/// bracketed zone id (`[Europe/Paris]`) selects another zone.
 fn parse_time(t: &str, _pattern: Option<&str>) -> Result<i64> {
     let err = || CamelError::illegal_argument(format!("Cannot parse timer time: {}", t));
+    let mut t = t.trim().to_string();
+    let mut zone = crate::tz::TimeZone::local();
+    if let Some(open) = t.find('[') {
+        let id = t[open + 1..].trim_end_matches(']').to_string();
+        zone = crate::tz::TimeZone::parse(&id)?;
+        t.truncate(open);
+    } else if let Some(stripped) = t.strip_suffix('Z') {
+        zone = std::sync::Arc::new(crate::tz::TimeZone::utc());
+        t = stripped.to_string();
+    } else if t.len() > 19 && t.is_char_boundary(19) {
+        if let Some(off) = crate::tz::parse_fixed_offset(&t[19..]) {
+            zone = std::sync::Arc::new(crate::tz::TimeZone::fixed("offset", off));
+            t.truncate(19);
+        }
+    }
     let t = t.trim().replace('T', " ");
     let (date, time) = t.split_once(' ').unwrap_or((t.as_str(), "00:00:00"));
     let d: Vec<&str> = date.split('-').collect();
@@ -87,7 +105,8 @@ fn parse_time(t: &str, _pattern: Option<&str>) -> Result<i64> {
     let num = |s: &str| s.trim().parse::<u32>().map_err(|_| err());
     let year: i64 = d[0].trim().parse().map_err(|_| err())?;
     let (hh, mm, ss) = (num(h.first().unwrap_or(&"0"))?, num(h.get(1).unwrap_or(&"0"))?, num(h.get(2).unwrap_or(&"0"))?);
-    Ok(crate::util_time::epoch_from_civil(year, num(d[1])?, num(d[2])?, hh, mm, ss) * 1000)
+    let local = crate::util_time::epoch_from_civil(year, num(d[1])?, num(d[2])?, hh, mm, ss);
+    Ok(zone.resolve_local(local) * 1000)
 }
 
 /// A timer endpoint (consumer only).
@@ -122,8 +141,17 @@ struct TimerConsumer {
     threads: BackgroundThreads,
 }
 
-fn run_timer(config: &TimerConfig, ctx: &WeakContext, processor: &dyn Processor, flag: &StopFlag) {
-    let logger = format!("timer://{}", config.name);
+/// Shared state of the timer threads of one consumer.
+struct TimerRun {
+    config: TimerConfig,
+    ctx: WeakContext,
+    processor: Arc<dyn Processor>,
+    spawner: ThreadSpawner,
+    name: String,
+}
+
+fn run_timer(run: Arc<TimerRun>, flag: Arc<StopFlag>) {
+    let config = &run.config;
     let mut initial = config.delay;
     if let Some(t) = config.time {
         let now = crate::util_time::now_millis();
@@ -132,15 +160,43 @@ fn run_timer(config: &TimerConfig, ctx: &WeakContext, processor: &dyn Processor,
     if flag.sleep(initial) {
         return;
     }
-    let mut scheduled = Instant::now();
-    let mut counter: u64 = 0;
+    timer_loop(run.clone(), flag, 0, Instant::now(), None);
+}
+
+/// The timer loop from a given state. `last_fired` is set when resuming after a fire (on a
+/// replacement thread after an asynchronous delay released the previous one, see
+/// [`crate::async_delay`]), so the schedule continues without waiting for that exchange.
+fn timer_loop(run: Arc<TimerRun>, flag: Arc<StopFlag>, mut counter: u64, mut scheduled: Instant, mut last_fired: Option<Instant>) {
+    let config = &run.config;
+    let logger = format!("timer://{}", config.name);
     loop {
+        if let Some(fired) = last_fired {
+            if config.period.is_zero() && config.repeat_count == 0 {
+                // period=0: fire once (like a one-shot java.util.Timer task)
+                break;
+            }
+            if config.repeat_count > 0 && counter >= config.repeat_count {
+                break;
+            }
+            if flag.is_stopped() {
+                break;
+            }
+            let next = if config.fixed_rate {
+                scheduled += config.period;
+                scheduled
+            } else {
+                fired + config.period
+            };
+            if flag.sleep_until(next) {
+                break;
+            }
+        }
         if config.repeat_count > 0 && counter >= config.repeat_count {
             break;
         }
         counter += 1;
         let fired = Instant::now();
-        let mut ex = new_exchange(ctx);
+        let mut ex = new_exchange(&run.ctx);
         ex.pattern = config.pattern;
         ex.set_property(props::TIMER_COUNTER, Value::from(counter));
         if config.include_metadata {
@@ -152,34 +208,32 @@ fn run_timer(config: &TimerConfig, ctx: &WeakContext, processor: &dyn Processor,
             ex.set_header(props::TIMER_COUNTER, Value::from(counter));
             ex.set_header("CamelMessageTimestamp", Value::from(now));
         }
-        process_consumer_exchange(&logger, processor, &mut ex);
-        if config.period.is_zero() && config.repeat_count == 0 {
-            // period=0: fire once (like a one-shot java.util.Timer task)
-            break;
-        }
-        if config.repeat_count > 0 && counter >= config.repeat_count {
-            break;
-        }
-        if flag.is_stopped() {
-            break;
-        }
-        let next = if config.fixed_rate {
-            scheduled += config.period;
-            scheduled
-        } else {
-            fired + config.period
+        let (r2, f2) = (run.clone(), flag.clone());
+        let on_release = move || {
+            let r3 = r2.clone();
+            if let Err(e) = r2.spawner.spawn(&r2.name, f2, move |flag| timer_loop(r3, flag, counter, scheduled, Some(fired))) {
+                crate::camel_warn!("timer", "Cannot start a replacement timer thread for {}: {}", r2.name, e);
+            }
         };
-        if flag.sleep_until(next) {
-            break;
+        let (_, released) = crate::async_delay::run_detachable(on_release, || process_consumer_exchange(&logger, run.processor.as_ref(), &mut ex));
+        if released {
+            return;
         }
+        last_fired = Some(fired);
     }
 }
 
 impl Service for TimerConsumer {
     fn start(&self) -> Result<()> {
-        let (config, ctx, processor) = (self.config.clone(), self.ctx.clone(), self.processor.clone());
-        self.threads
-            .spawn(&format!("Camel timer://{}", self.config.name), move |flag| run_timer(&config, &ctx, processor.as_ref(), &flag))
+        let name = format!("Camel timer://{}", self.config.name);
+        let run = Arc::new(TimerRun {
+            config: self.config.clone(),
+            ctx: self.ctx.clone(),
+            processor: self.processor.clone(),
+            spawner: self.threads.spawner(),
+            name: name.clone(),
+        });
+        self.threads.spawn(&name, move |flag| run_timer(run, flag))
     }
     fn stop(&self) -> Result<()> {
         self.threads.stop();

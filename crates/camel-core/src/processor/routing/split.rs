@@ -11,7 +11,7 @@ use crate::spi::{Expression, Processor};
 
 use super::multicast::MulticastEngine;
 use super::options::{EipOption, EipOptions, MulticastSettings};
-use super::support::to_iterable;
+use super::support::{to_iterable, to_lazy_iter};
 
 /// Splitter: the expression result is split into parts (array elements; strings are
 /// split on `delimiter`, default `,`), each part is routed as a sub-exchange
@@ -20,6 +20,10 @@ use super::support::to_iterable;
 /// Without an aggregation strategy the original exchange continues unchanged
 /// (but a sub-exchange failure is propagated); with a strategy the aggregated
 /// result replaces the message.
+///
+/// With `streaming` (and no parallel processing) the parts are produced lazily: a string body
+/// is split one part at a time and each sub-exchange is created only when the previous one
+/// is done. As in Camel, `CamelSplitSize` is then only set on the last sub-exchange.
 pub struct SplitDefinition {
     pub id: Option<String>,
     pub expression: ExpressionDefinition,
@@ -61,6 +65,29 @@ struct SplitProcessor {
 impl Processor for SplitProcessor {
     fn process(&self, exchange: &mut Exchange) -> Result<()> {
         let value = self.expression.evaluate(exchange)?;
+        if self.engine.is_streaming() && !self.engine.is_parallel() {
+            let mut parts = to_lazy_iter(value, self.delimiter.as_deref()).peekable();
+            // a template without the (possibly large) body: parts become the bodies
+            let body = std::mem::replace(&mut exchange.message.body, crate::value::Value::Null);
+            let template = exchange.clone();
+            exchange.message.body = body;
+            let child = self.child.clone();
+            let mut index = 0usize;
+            let mut pairs = std::iter::from_fn(move || {
+                let part = parts.next()?;
+                let last = parts.peek().is_none();
+                let mut sub = template.correlated_copy();
+                sub.message.body = part;
+                sub.set_property(props::SPLIT_INDEX, index);
+                sub.set_property(props::SPLIT_COMPLETE, last);
+                if last {
+                    sub.set_property(props::SPLIT_SIZE, index + 1);
+                }
+                index += 1;
+                Some((sub, child.clone()))
+            });
+            return self.engine.execute_lazy(exchange, &mut pairs);
+        }
         let parts = to_iterable(value, self.delimiter.as_deref());
         let n = parts.len();
         let pairs = parts

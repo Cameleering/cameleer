@@ -29,7 +29,8 @@ use crate::message::Exchange;
 use crate::spi::{Component, Consumer, Endpoint, PollingConsumer, Processor, Producer, Service};
 use crate::util::Parameters;
 
-use super::support::{copy_results, deadline_after, process_consumer_exchange, BackgroundThreads};
+use super::support::{copy_results, deadline_after, process_consumer_exchange, BackgroundThreads, StopFlag, ThreadSpawner};
+use crate::async_delay;
 
 /// Default queue capacity.
 pub const DEFAULT_QUEUE_SIZE: usize = 1000;
@@ -527,6 +528,47 @@ fn dispatch(item: QueueItem, queue: &SedaQueue, multiple: bool, processor: &Arc<
     }
 }
 
+/// State of a (non pub/sub) seda consumer thread.
+struct SedaWorker {
+    queue: Arc<SedaQueue>,
+    processor: Arc<dyn Processor>,
+    ctx: WeakContext,
+    logger: String,
+    poll_timeout: Duration,
+    spawner: ThreadSpawner,
+    name: String,
+}
+
+/// The consumer loop. Each exchange runs inside [`async_delay::run_detachable`]: when an
+/// asynchronous delay (`asyncDelayed`, `asyncDelayedRedelivery`) releases this thread, a
+/// replacement consumer thread takes over the queue and this thread exits after the exchange.
+fn seda_worker(w: Arc<SedaWorker>, flag: Arc<StopFlag>) {
+    let mut st = w.queue.state.lock().unwrap();
+    loop {
+        if flag.is_stopped() {
+            break;
+        }
+        if let Some(item) = st.items.pop_front() {
+            w.queue.not_full.notify_one();
+            drop(st);
+            let (w2, f2) = (w.clone(), flag.clone());
+            let on_release = move || {
+                let w3 = w2.clone();
+                if let Err(e) = w2.spawner.spawn(&w2.name, f2, move |flag| seda_worker(w3, flag)) {
+                    crate::camel_warn!("seda", "Cannot start a replacement consumer thread for {}: {}", w2.logger, e);
+                }
+            };
+            let ((), released) = async_delay::run_detachable(on_release, || dispatch(item, &w.queue, false, &w.processor, &w.ctx, &w.logger));
+            if released {
+                return;
+            }
+            st = w.queue.state.lock().unwrap();
+            continue;
+        }
+        st = w.queue.not_empty.wait_timeout(st, w.poll_timeout).unwrap().0;
+    }
+}
+
 impl Service for SedaConsumer {
     fn start(&self) -> Result<()> {
         let mut started = self.started.lock().unwrap();
@@ -544,6 +586,7 @@ impl Service for SedaConsumer {
             let (queue, processor, ctx) = (self.queue.clone(), self.processor.clone(), self.ctx.clone());
             let (multiple, poll_timeout) = (self.config.multiple_consumers, self.config.poll_timeout);
             let logger = self.uri.clone();
+            let spawner = self.threads.spawner();
             self.threads.spawn(&format!("Camel {} #{}", self.uri, i + 1), move |flag| {
                 if multiple {
                     // pub/sub: pop + fan-out under one lock to preserve ordering
@@ -572,20 +615,8 @@ impl Service for SedaConsumer {
                     }
                     return;
                 }
-                let mut st = queue.state.lock().unwrap();
-                loop {
-                    if flag.is_stopped() {
-                        break;
-                    }
-                    if let Some(item) = st.items.pop_front() {
-                        queue.not_full.notify_one();
-                        drop(st);
-                        dispatch(item, &queue, multiple, &processor, &ctx, &logger);
-                        st = queue.state.lock().unwrap();
-                        continue;
-                    }
-                    st = queue.not_empty.wait_timeout(st, poll_timeout).unwrap().0;
-                }
+                let name = std::thread::current().name().unwrap_or("Camel seda").to_string();
+                seda_worker(Arc::new(SedaWorker { queue, processor, ctx, logger, poll_timeout, spawner, name }), flag);
             })?;
         }
         *started = true;

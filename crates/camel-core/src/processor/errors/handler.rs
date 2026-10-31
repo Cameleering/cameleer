@@ -43,6 +43,10 @@ pub struct RedeliveryPolicy {
     pub log_retry_attempted: bool,
     /// Delay pattern such as `5:1000;10:5000` (attempt >= N waits the given millis).
     pub delay_pattern: Option<String>,
+    /// Camel `asyncDelayedRedelivery`: when the exchange was picked up by an asynchronous
+    /// consumer (seda, timer), the consumer thread is released during the redelivery delay
+    /// (see [`crate::async_delay`]). Synchronous callers (direct, `ProducerTemplate`) still wait.
+    pub async_delayed_redelivery: bool,
 }
 
 impl Default for RedeliveryPolicy {
@@ -61,6 +65,7 @@ impl Default for RedeliveryPolicy {
             log_exhausted: true,
             log_retry_attempted: true,
             delay_pattern: None,
+            async_delayed_redelivery: false,
         }
     }
 }
@@ -114,6 +119,7 @@ pub struct RedeliveryOverrides {
     pub log_stack_trace: Option<bool>,
     pub log_exhausted: Option<bool>,
     pub delay_pattern: Option<String>,
+    pub async_delayed_redelivery: Option<bool>,
 }
 
 impl RedeliveryOverrides {
@@ -132,7 +138,8 @@ impl RedeliveryOverrides {
             retry_attempted_log_level,
             retries_exhausted_log_level,
             log_stack_trace,
-            log_exhausted
+            log_exhausted,
+            async_delayed_redelivery
         );
         if let Some(d) = &self.delay_pattern {
             p.delay_pattern = Some(d.clone());
@@ -264,6 +271,12 @@ impl ErrorHandlerBuilder {
     }
     pub fn delay_pattern(mut self, p: impl Into<String>) -> Self {
         self.policy.delay_pattern = Some(p.into());
+        self
+    }
+    /// Release the consumer thread of asynchronous consumers during redelivery delays
+    /// (Camel `asyncDelayedRedelivery`).
+    pub fn async_delayed_redelivery(mut self, b: bool) -> Self {
+        self.policy.async_delayed_redelivery = b;
         self
     }
     /// Replace the whole redelivery policy.
@@ -590,7 +603,9 @@ impl Processor for ErrorChannel {
                 ex.set_header(props::REDELIVERY_MAX_COUNTER, rp.maximum_redeliveries);
             }
             let delay = rp.calculate_delay(attempt);
-            if delay > 0 {
+            if rp.async_delayed_redelivery {
+                crate::async_delay::async_sleep(Duration::from_millis(delay));
+            } else if delay > 0 {
                 std::thread::sleep(Duration::from_millis(delay));
             }
             ex.exception = None;

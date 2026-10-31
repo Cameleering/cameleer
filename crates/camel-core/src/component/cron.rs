@@ -1,7 +1,8 @@
 //! `cron:` component (Camel `camel-cron`) and the trigger runner shared with the
 //! [`quartz`](super::quartz) component and the `scheduler=quartz` scheduled poll consumer.
 //!
-//! `cron:name?schedule=0/5+*+*+*+*+?&timeZone=GMT+02:00`
+//! `cron:name?schedule=0/5+*+*+*+*+?&timeZone=Europe/Paris` (fixed offsets such as `GMT+02:00` and
+//! zoneinfo region ids; without `timeZone` the default zone of the process is used)
 //!
 //! The `schedule` is a [cron expression](super::cron_expr) (`+` in the uri is decoded as a
 //! space). Each fire sends an exchange with a null body and the Quartz headers
@@ -23,7 +24,7 @@ use crate::util::Parameters;
 use crate::util_time::now_millis;
 use crate::value::Value;
 
-pub use super::cron_expr::{parse_time_zone, CronExpression};
+pub use super::cron_expr::{parse_time_zone, parse_zone, CronExpression};
 use super::support::{new_exchange, process_consumer_exchange, BackgroundThreads, StopFlag};
 
 /// Quartz header names set on fired exchanges.
@@ -213,7 +214,7 @@ impl Component for CronComponent {
         }
         let schedule = params.take("schedule").ok_or_else(|| CamelError::illegal_argument("The cron endpoint requires the 'schedule' option"))?;
         let tz = params.take("timeZone").or_else(|| params.take("trigger.timeZone"));
-        let cron = CronExpression::parse_with_time_zone(&schedule, tz.as_deref())?;
+        let cron = CronExpression::parse_with_default_zone(&schedule, tz.as_deref())?;
         let pattern = take_pattern(params)?;
         for k in ["bridgeErrorHandler", "exceptionHandler"] {
             params.take(k);

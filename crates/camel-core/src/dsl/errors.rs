@@ -118,6 +118,14 @@ impl RouteDefinition {
 
     // --- error handler / onException ---
 
+    /// Camel `routeConfigurationId`: the route configurations (added with
+    /// [`CamelContextErrorExt::add_route_configuration`](crate::processor::errors::CamelContextErrorExt::add_route_configuration))
+    /// that apply to this route; comma separated ids, wildcards allowed.
+    pub fn route_configuration_id(&mut self, ids: &str) -> &mut Self {
+        self.properties.insert(crate::processor::errors::hook::ROUTE_CONFIGURATION_ID.to_string(), ids.to_string());
+        self
+    }
+
     /// Route-level error handler (overrides builder and context level).
     pub fn error_handler(&mut self, eh: ErrorHandlerBuilder) -> &mut Self {
         self.extensions.insert(ROUTE_ERROR_HANDLER.to_string(), Box::new(eh));
@@ -127,6 +135,24 @@ impl RouteDefinition {
     /// Route-scoped `onException` clause block (close with `end()`).
     pub fn on_exception(&mut self, exceptions: &[&str]) -> &mut Self {
         self.push_block(Box::new(OnExceptionDefinition::new(exceptions)))
+    }
+
+    /// Route-scoped `intercept` block (also used inside route configurations).
+    pub fn intercept(&mut self) -> &mut Self {
+        self.push_block(Box::new(InterceptDefinition::new(InterceptKind::All)))
+    }
+
+    /// Route-scoped `interceptFrom` block for inputs matching `pattern`.
+    pub fn intercept_from(&mut self, pattern: impl Into<String>) -> &mut Self {
+        self.push_block(Box::new(InterceptDefinition::new(InterceptKind::From(pattern.into()))))
+    }
+
+    /// Route-scoped `interceptSendToEndpoint` block for endpoints matching `pattern`.
+    pub fn intercept_send_to_endpoint(&mut self, pattern: impl Into<String>) -> &mut Self {
+        self.push_block(Box::new(InterceptDefinition::new(InterceptKind::SendToEndpoint {
+            pattern: pattern.into(),
+            skip_send_to_original_endpoint: false,
+        })))
     }
 
     /// Mark the exception as handled (`true`/`false` or a predicate).
@@ -222,6 +248,12 @@ impl RouteDefinition {
 
     pub fn log_exhausted(&mut self, b: bool) -> &mut Self {
         self.with_on_exception("log_exhausted", |d| d.policy.log_exhausted = Some(b))
+    }
+
+    /// `onException` option: release the consumer thread during redelivery delays
+    /// (Camel `asyncDelayedRedelivery`, see [`crate::async_delay`]).
+    pub fn async_delayed_redelivery(&mut self, b: bool) -> &mut Self {
+        self.with_on_exception("async_delayed_redelivery", |d| d.policy.async_delayed_redelivery = Some(b))
     }
 
     /// Use the original input message in the onException outputs.
@@ -337,7 +369,9 @@ impl RouteDefinition {
         self
     }
 
-    /// Async delayed flag for throttle/delay (accepted; delays run on the calling thread).
+    /// Camel `asyncDelayed` for throttle (default false) and delay (default true): when the
+    /// exchange was picked up by an asynchronous consumer (seda, timer), the consumer thread is
+    /// released while the exchange waits (see [`crate::async_delay`]); synchronous callers wait.
     pub fn async_delayed(&mut self, b: bool) -> &mut Self {
         match self.extensions.get(LAST_FLOW).and_then(|b| b.downcast_ref::<LastFlow>()) {
             Some(LastFlow::Throttle(c)) => c.lock().unwrap().async_delayed = b,
@@ -347,9 +381,16 @@ impl RouteDefinition {
         self
     }
 
-    /// Delay the exchange by the expression's value in millis.
+    /// Camel `syncDelayed()`: the delay or throttle blocks the consumer thread
+    /// (`async_delayed(false)`).
+    pub fn sync_delayed(&mut self) -> &mut Self {
+        self.async_delayed(false)
+    }
+
+    /// Delay the exchange by the expression's value in millis. Like Camel, the delay is
+    /// asynchronous by default (`asyncDelayed=true`, see [`RouteDefinition::async_delayed`]).
     pub fn delay(&mut self, millis: impl IntoExpression) -> &mut Self {
-        let flag = Arc::new(Mutex::new(false));
+        let flag = Arc::new(Mutex::new(true));
         self.extensions.insert(LAST_FLOW.to_string(), Box::new(LastFlow::Delay(flag.clone())));
         self.add(Box::new(DelayDefinition { id: None, expression: millis.into_expression(), async_delayed: flag }))
     }
