@@ -109,13 +109,20 @@ impl Registry {
 // Properties (placeholders)
 // ---------------------------------------------------------------------------
 
+/// A properties function (Camel `PropertiesFunction`): resolves the remainder of a
+/// `{{prefix:remainder}}` placeholder. `Ok(None)` means "not found" (the placeholder default,
+/// if any, is then used); errors abort the resolution.
+pub type PropertiesFunction = Arc<dyn Fn(&str) -> Result<Option<String>> + Send + Sync>;
+
 /// Property placeholder support: `{{key}}`, `{{key:default}}`, `{{env:NAME}}`,
-/// `{{sys:name}}` (environment), with nested resolution.
+/// `{{sys:name}}` (environment), custom functions (`{{prefix:remainder[:default]}}`, see
+/// [`PropertiesComponent::add_function`]), with nested resolution.
 #[derive(Default)]
 pub struct PropertiesComponent {
     props: RwLock<BTreeMap<String, String>>,
     /// Higher-priority override properties.
     overrides: RwLock<BTreeMap<String, String>>,
+    functions: RwLock<BTreeMap<String, PropertiesFunction>>,
 }
 
 impl PropertiesComponent {
@@ -143,6 +150,25 @@ impl PropertiesComponent {
         }
         // Camel also resolves OS env variables using the uppercase/underscore convention
         std::env::var(format!("CAMEL_PROPERTY_{}", key.to_ascii_uppercase().replace(['.', '-'], "_"))).ok()
+    }
+    /// Register a properties function for `{{prefix:...}}` placeholders (replaces an existing one).
+    pub fn add_function(&self, prefix: impl Into<String>, f: PropertiesFunction) {
+        self.functions.write().unwrap().insert(prefix.into(), f);
+    }
+    /// Whether a function is registered for `prefix`.
+    pub fn has_function(&self, prefix: &str) -> bool {
+        self.functions.read().unwrap().contains_key(prefix)
+    }
+    fn function_for(&self, key: &str) -> Option<(PropertiesFunction, usize)> {
+        let (prefix, _) = key.split_once(':')?;
+        self.functions.read().unwrap().get(prefix).map(|f| (f.clone(), prefix.len() + 1))
+    }
+    /// Look a key up, calling a registered function for `prefix:` keys.
+    pub fn lookup(&self, key: &str) -> Result<Option<String>> {
+        if let Some((f, n)) = self.function_for(key) {
+            return f(&key[n..]);
+        }
+        Ok(self.get(key))
     }
     pub fn all(&self) -> BTreeMap<String, String> {
         let mut m = self.props.read().unwrap().clone();
@@ -191,8 +217,11 @@ impl PropertiesComponent {
             }
             let end = end.ok_or_else(|| CamelError::illegal_argument(format!("Unclosed property placeholder in: {}", text)))?;
             let inner = self.resolve_depth(&after[..end], depth + 1)?;
-            let (key, default) = split_key_default(&inner);
-            let v = match self.get(key) {
+            let (key, default) = match self.function_for(&inner) {
+                Some((_, n)) => split_function_key_default(&inner, n),
+                None => split_key_default(&inner),
+            };
+            let v = match self.lookup(key)? {
                 Some(v) => v,
                 None => match default {
                     Some(d) => d.to_string(),
@@ -209,6 +238,14 @@ impl PropertiesComponent {
         }
         out.push_str(rest);
         Ok(out)
+    }
+}
+
+/// `prefix:name[:default]` where the function prefix is `prefix_len` bytes (with the colon).
+fn split_function_key_default(s: &str, prefix_len: usize) -> (&str, Option<&str>) {
+    match s[prefix_len..].find(':') {
+        Some(i) => (&s[..prefix_len + i], Some(&s[prefix_len + i + 1..])),
+        None => (s, None),
     }
 }
 
@@ -1156,5 +1193,25 @@ mod tests {
         std::env::set_var("RC_TEST_ENV", "e");
         assert_eq!(p.resolve("{{env:RC_TEST_ENV}}").unwrap(), "e");
         assert_eq!(p.resolve("{{env:RC_NOPE:dflt}}").unwrap(), "dflt");
+    }
+
+    #[test]
+    fn properties_functions() {
+        let p = PropertiesComponent::default();
+        p.add_function(
+            "vault",
+            Arc::new(|k: &str| match k {
+                "db/user" => Ok(Some("scott".to_string())),
+                "boom" => Err(CamelError::illegal_state("vault down")),
+                _ => Ok(None),
+            }),
+        );
+        assert!(p.has_function("vault"));
+        assert_eq!(p.resolve("u={{vault:db/user}}").unwrap(), "u=scott");
+        assert_eq!(p.resolve("{{vault:db/user:x}}").unwrap(), "scott");
+        assert_eq!(p.resolve("{{vault:missing:fallback}}").unwrap(), "fallback");
+        assert!(p.resolve("{{vault:missing}}").is_err());
+        assert_eq!(p.resolve("{{vault:boom}}").unwrap_err().message, "vault down");
+        assert_eq!(p.lookup("vault:db/user").unwrap().as_deref(), Some("scott"));
     }
 }

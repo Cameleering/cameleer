@@ -17,6 +17,20 @@
 //! Other options: `keyName`, `prefix`, `delimiter`, `autoCreateBucket` (default false),
 //! `forcePathStyle` (virtual-host style is used otherwise, except for overridden endpoints),
 //! `includeFolders` (default true), `storageClass`, plus the [common AWS options](super).
+//!
+//! Large objects: `multiPartUpload=true` uploads bodies larger than `partSize` (default 25 MiB)
+//! with a multipart upload (aborted on failure). rust-camel streaming extensions: the
+//! `CamelAwsS3SourceFile` header (a local path) uploads that file without loading it in
+//! memory (a streamed `UNSIGNED-PAYLOAD` PUT, or a multipart upload reading one part at a time),
+//! and `getObject` with the `CamelAwsS3DownloadFile` header streams the object into that file
+//! (body = the path).
+//!
+//! `streamingUploadMode=true` aggregates the bodies of many exchanges into multipart objects
+//! named after `keyName` (`namingStrategy` `progressive` (default: `key`, `key-1`, ...) or
+//! `random`): a part is uploaded every `partSize` bytes and the object is completed after
+//! `batchMessageNumber` (default 10) messages, `batchSize` (default 1 000 000) bytes,
+//! `streamingUploadTimeout` (ms) or when the producer stops. `restartingPolicy=lastPart`
+//! continues after the highest existing progressive index (default `override`).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,10 +42,12 @@ use camel_core::message::Exchange;
 use camel_core::spi::Processor;
 use camel_core::value::Value;
 
+use super::s3_multipart::{S3Client, StreamingConfig, StreamingUploader, DEFAULT_PART_SIZE};
 use super::{error_code, AwsConfig};
 use crate::endpoint::{operation, process, set_batch, unsupported, CloudService};
 use crate::http::{Request, Response, Url};
 use crate::util::{header_str, kinds, now_secs, uri_encode, xml_escape, Opts, Xml};
+
 
 /// Header names (Camel `AWS2S3Constants`).
 pub mod headers {
@@ -53,6 +69,10 @@ pub mod headers {
     pub const DOWNLOAD_LINK_EXPIRATION_TIME: &str = "CamelAwsS3DownloadLinkExpirationTime";
     /// User metadata (`x-amz-meta-*`) as a map.
     pub const METADATA: &str = "CamelAwsS3Metadata";
+    /// rust-camel extension: upload this local file (streamed).
+    pub const SOURCE_FILE: &str = "CamelAwsS3SourceFile";
+    /// rust-camel extension: `getObject` streams the object into this local file.
+    pub const DOWNLOAD_FILE: &str = "CamelAwsS3DownloadFile";
 }
 
 /// An object entry of a listing.
@@ -130,8 +150,11 @@ pub struct S3Service {
     pub max_messages_per_poll: i64,
     pub file_name: Option<String>,
     pub storage_class: Option<String>,
+    pub multi_part_upload: bool,
+    pub part_size: i64,
     pub scheduler: ScheduledPollConfig,
     marker: Mutex<Option<String>>,
+    streaming: Option<Arc<StreamingUploader>>,
 }
 
 /// Factory for the component.
@@ -164,36 +187,49 @@ impl S3Service {
             max_messages_per_poll: o.i64("maxMessagesPerPoll", 10)?,
             file_name: o.get("fileName"),
             storage_class: o.get("storageClass"),
+            multi_part_upload: o.bool("multiPartUpload", false)?,
+            part_size: o.i64("partSize", DEFAULT_PART_SIZE)?,
             scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
             marker: Mutex::new(None),
+            streaming: None,
             aws,
         };
-        o.ignore(&["pojoRequest", "multiPartUpload", "partSize", "autocloseBody", "useAwsKMS", "awsKMSKeyId", "batchMessageNumber", "batchSize"]);
+        let mut s = s;
+        if s.part_size <= 0 {
+            return Err(CamelError::illegal_argument("partSize must be positive"));
+        }
+        if o.bool("streamingUploadMode", false)? {
+            let key_name = s.key_name.clone().ok_or_else(|| CamelError::illegal_argument("streamingUploadMode requires the keyName option"))?;
+            let timeout = o.get("streamingUploadTimeout").map(|t| t.parse::<u64>().map(Duration::from_millis).map_err(|_| CamelError::illegal_argument(format!("Invalid streamingUploadTimeout: {}", t)))).transpose()?;
+            let cfg = StreamingConfig {
+                bucket: s.bucket.clone(),
+                key_name,
+                part_size: s.part_size as usize,
+                batch_message_number: o.i64("batchMessageNumber", 10)?,
+                batch_size: o.i64("batchSize", 1_000_000)?,
+                timeout,
+                naming_strategy: o.string("namingStrategy", "progressive"),
+                restarting_policy: o.string("restartingPolicy", "override"),
+            };
+            s.streaming = Some(StreamingUploader::new(s.client(), cfg));
+        } else {
+            o.ignore(&["batchMessageNumber", "batchSize", "streamingUploadTimeout", "namingStrategy", "restartingPolicy"]);
+        }
+        o.ignore(&["pojoRequest", "autocloseBody", "useAwsKMS", "awsKMSKeyId"]);
         if s.move_after_read && s.destination_bucket.is_none() {
             return Err(CamelError::illegal_argument("moveAfterRead requires the destinationBucket option"));
         }
         Ok(s)
     }
 
-    fn path_style(&self, bucket: &str) -> bool {
-        self.force_path_style || self.aws.is_overridden() || bucket.contains('.')
+    /// The addressing / transport part of this endpoint.
+    pub fn client(&self) -> S3Client {
+        S3Client { aws: self.aws.clone(), force_path_style: self.force_path_style }
     }
 
     /// URL of a bucket or object; `query` is an already encoded query string.
     pub fn url(&self, bucket: &str, key: Option<&str>, query: Option<String>) -> Result<Url> {
-        let mut u = self.aws.endpoint("s3")?;
-        let key_path = key.map(|k| format!("/{}", uri_encode(k, true))).unwrap_or_default();
-        let base = u.path.trim_end_matches('/').to_string();
-        if bucket.is_empty() {
-            u.path = if base.is_empty() { "/".into() } else { base };
-        } else if self.path_style(bucket) {
-            u.path = format!("{}/{}{}", base, uri_encode(bucket, false), key_path);
-        } else {
-            u.host = format!("{}.{}", bucket, u.host);
-            u.path = if key_path.is_empty() { "/".into() } else { key_path };
-        }
-        u.query = query.filter(|q| !q.is_empty());
-        Ok(u)
+        self.client().url(bucket, key, query)
     }
 
     fn send(&self, req: Request) -> Result<Response> {
@@ -341,7 +377,25 @@ impl S3Service {
                         extra.push((format!("x-amz-meta-{}", k.to_ascii_lowercase()), v.to_string()));
                     }
                 }
+                let part_size = self.part_size as usize;
+                if let Some(path) = header_str(ex, headers::SOURCE_FILE) {
+                    let (etag, len) = self.client().upload_file(&bucket, &key, &path, ct.as_deref(), &extra, self.multi_part_upload, part_size)?;
+                    ex.set_header(headers::E_TAG, etag);
+                    ex.set_header(headers::CONTENT_LENGTH, len as i64);
+                    return Ok(());
+                }
                 let body = ex.body().to_bytes();
+                if self.multi_part_upload && body.len() > part_size {
+                    let mut offset = 0;
+                    let etag = self.client().multipart_upload(&bucket, &key, ct.as_deref(), &extra, part_size, &mut |max| {
+                        let end = (offset + max).min(body.len());
+                        let chunk = body[offset..end].to_vec();
+                        offset = end;
+                        Ok(if chunk.is_empty() { None } else { Some(chunk) })
+                    })?;
+                    ex.set_header(headers::E_TAG, etag);
+                    return Ok(());
+                }
                 let resp = self.put_object(&bucket, &key, body, ct.as_deref(), &extra)?;
                 if let Some(e) = resp.header("ETag") {
                     ex.set_header(headers::E_TAG, e.to_string());
@@ -352,6 +406,15 @@ impl S3Service {
             }
             "getObject" | "getObjectRange" | "headObject" => {
                 let key = self.key(ex)?;
+                if op == "getObject" {
+                    if let Some(path) = header_str(ex, headers::DOWNLOAD_FILE) {
+                        let (resp, n) = self.client().download_file(&bucket, &key, &path)?;
+                        Self::set_object_headers(ex, &resp);
+                        ex.set_header(headers::CONTENT_LENGTH, n as i64);
+                        ex.set_body(path);
+                        return Ok(());
+                    }
+                }
                 let resp = match op {
                     "headObject" => self.head_object(&bucket, &key)?,
                     "getObjectRange" => {
@@ -433,8 +496,22 @@ impl S3Service {
 
 impl CloudService for S3Service {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
+        if let Some(up) = &self.streaming {
+            if let Some((key, etag)) = up.write(&ex.body().to_bytes())? {
+                ex.set_header(headers::KEY, key);
+                ex.set_header(headers::E_TAG, etag);
+            }
+            return Ok(());
+        }
         let op = operation(ex, headers::OPERATION, &self.operation, "putObject");
         self.produce_op(ex, &op)
+    }
+
+    fn on_stop(&self) -> Result<()> {
+        match &self.streaming {
+            Some(up) => up.stop(),
+            None => Ok(()),
+        }
     }
 
     fn scheduler(&self) -> Option<&ScheduledPollConfig> {
@@ -444,6 +521,9 @@ impl CloudService for S3Service {
     fn on_start(&self) -> Result<()> {
         if self.auto_create_bucket && !self.head_bucket(&self.bucket)? {
             self.create_bucket(&self.bucket)?;
+        }
+        if let Some(up) = &self.streaming {
+            up.start();
         }
         Ok(())
     }

@@ -1,11 +1,16 @@
 //! In-memory Google Cloud emulator: an OAuth2 token endpoint (`POST /token`, JWT bearer
-//! grant), Cloud Storage JSON API (`/storage/v1`, `/upload/storage/v1`) and Pub/Sub REST
-//! (`/v1/projects/...`) on one port.
+//! grant), Cloud Storage JSON API (`/storage/v1`, `/upload/storage/v1`), Pub/Sub REST
+//! (`/v1/projects/...`), and BigQuery, Secret Manager, Cloud Functions, Firestore and Sheets
+//! (see the `gcp_ext` part: [`CloudFn`]) on one port.
 //!
 //! The token endpoint verifies the RS256 signature of the JWT assertion with the registered
 //! service account public key and checks `iss`, `aud` (= the token URL), `iat`/`exp` and
 //! `scope`. Storage and Pub/Sub calls require a bearer token issued by it (unexpired), unless
 //! authentication is disabled with [`GcpMock::set_require_auth`].
+
+#[path = "gcp_ext.rs"]
+mod ext;
+pub use ext::CloudFn;
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -68,6 +73,7 @@ struct State {
     topics: BTreeMap<String, Vec<String>>,
     subscriptions: BTreeMap<String, Subscription>,
     next_id: i64,
+    ext: ext::ExtState,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -91,6 +97,7 @@ impl GcpMock {
             topics: BTreeMap::new(),
             subscriptions: BTreeMap::new(),
             next_id: 1,
+            ext: Default::default(),
         }));
         let st = state.clone();
         let handler: Handler = Arc::new(move |r| handle(&st, r));
@@ -267,6 +274,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     }
     let segs = req.segments();
     let s: Vec<&str> = segs.iter().map(|x| x.as_str()).collect();
+    if let Some(r) = ext::handle(st, req, &s) {
+        return r;
+    }
     match s.as_slice() {
         ["storage", "v1", ..] | ["upload", "storage", "v1", ..] => storage(st, req, &s),
         ["v1", "projects", ..] => pubsub(st, req, &s),
@@ -309,12 +319,14 @@ fn token(st: &Shared, req: &ServerRequest) -> Response {
     if num("exp") <= now || num("iat") > now + 300 || num("exp") - num("iat") > 3600 {
         return fail(st, "Invalid JWT: Token must be a short-lived token (60 minutes) and in a reasonable timeframe");
     }
-    if claims.get("scope").map(|s| s.to_string()).unwrap_or_default().is_empty() {
+    let scope = claims.get("scope").map(|s| s.to_string()).unwrap_or_default();
+    if scope.is_empty() {
         return fail(st, "Invalid JWT: missing scope");
     }
     let tok = format!("ya29.mock-{}", random_hex(16));
     let mut s = st.lock().unwrap();
     s.tokens.insert(tok.clone(), now + 3600);
+    s.ext.token_scopes.insert(tok.clone(), scope);
     s.token_requests += 1;
     Response::json(200, obj([("access_token", Value::from(tok)), ("expires_in", Value::Int(3599)), ("token_type", Value::from("Bearer"))]).to_json())
 }

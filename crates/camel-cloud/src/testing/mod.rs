@@ -14,11 +14,15 @@
 
 pub mod aws;
 pub mod azure;
+pub mod azure_services;
 pub mod gcp;
+pub mod imds;
 
 pub use aws::AwsMock;
 pub use azure::AzuriteMock;
+pub use azure_services::AzureMock;
 pub use gcp::GcpMock;
+pub use imds::ImdsMock;
 
 use std::io::{self, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};

@@ -1,5 +1,6 @@
-//! Google Cloud components (`google-storage`, `google-pubsub`) and the shared OAuth2
-//! service-account authentication.
+//! Google Cloud components (`google-storage`, `google-pubsub`, `google-bigquery`,
+//! `google-bigquery-sql`, `google-secret-manager`, `google-functions`, `google-firestore`,
+//! `google-sheets`) and the shared OAuth2 service-account authentication.
 //!
 //! Authentication: a service account JSON key (`serviceAccountKey` option: `file:path`,
 //! `classpath:path` (resolved as a file path), a plain path or the inline JSON; otherwise the
@@ -12,7 +13,12 @@
 //! Endpoint override: `uriEndpointOverride` + `overrideEndpoint=true`, or `endpoint`
 //! (`host:port` of an emulator, or a URL).
 
+pub mod bigquery;
+pub mod firestore;
+pub mod functions;
 pub mod pubsub;
+pub mod secretmanager;
+pub mod sheets;
 pub mod storage;
 
 use std::collections::HashMap;
@@ -204,6 +210,16 @@ impl GcpConfig {
         HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates)
     }
 
+    /// POST/GET/... a JSON request and parse the JSON response.
+    pub fn json(&self, method: &str, url: &str, body: Option<&Value>, kind: &str) -> Result<Value> {
+        let mut req = Request::new(method, Url::parse(url)?);
+        if let Some(b) = body {
+            req = req.header("Content-Type", "application/json").body(b.to_json().into_bytes());
+        }
+        let resp = self.send(req, kind)?;
+        parse_json(&resp.body)
+    }
+
     /// Base URL (`default` unless overridden), without trailing slash.
     pub fn base(&self, default: &str) -> String {
         self.endpoint.clone().unwrap_or_else(|| default.to_string()).trim_end_matches('/').to_string()
@@ -216,6 +232,11 @@ impl GcpConfig {
 
     /// Send with a bearer token (retrying once after a 401); non-2xx responses become errors of `kind`.
     pub fn send(&self, req: Request, kind: &str) -> Result<Response> {
+        self.send_scoped(req, kind, CLOUD_PLATFORM_SCOPE)
+    }
+
+    /// [`GcpConfig::send`] with a token for another OAuth scope (e.g. Sheets).
+    pub fn send_scoped(&self, req: Request, kind: &str, scope: &str) -> Result<Response> {
         let http = self.http();
         for attempt in 0..2 {
             let mut r = req.clone();
@@ -223,12 +244,12 @@ impl GcpConfig {
                 let key = self.key.as_ref().ok_or_else(|| {
                     cloud_error(kinds::GOOGLE_AUTH, "No Google credentials: set serviceAccountKey or GOOGLE_APPLICATION_CREDENTIALS (or authenticate=false for emulators)")
                 })?;
-                r.set_header("Authorization", format!("Bearer {}", access_token(key, CLOUD_PLATFORM_SCOPE, &http)?));
+                r.set_header("Authorization", format!("Bearer {}", access_token(key, scope, &http)?));
             }
             let resp = http.send(&r)?;
             if resp.status == 401 && attempt == 0 && self.authenticate {
                 if let Some(k) = &self.key {
-                    invalidate_token(k, CLOUD_PLATFORM_SCOPE);
+                    invalidate_token(k, scope);
                 }
                 continue;
             }

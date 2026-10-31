@@ -282,6 +282,35 @@ impl HttpClient {
 
     /// Send a request and read the full response.
     pub fn send(&self, req: &Request) -> Result<Response> {
+        let mut reader = self.write_request(req, None)?;
+        read_response(&mut reader, &req.method).map_err(|e| self.io_err(req, e))
+    }
+
+    /// Send a request whose body is streamed from `body` (`len` bytes; `req.body` is ignored).
+    pub fn send_streaming(&self, req: &Request, body: &mut dyn Read, len: u64) -> Result<Response> {
+        let mut reader = self.write_request(req, Some((body, len)))?;
+        read_response(&mut reader, &req.method).map_err(|e| self.io_err(req, e))
+    }
+
+    /// Send a request and stream a successful (2xx) response body into `sink` instead of
+    /// buffering it; the returned response then has an empty body. Error responses are buffered.
+    /// Returns the response and the number of bytes written to `sink`.
+    pub fn send_to(&self, req: &Request, sink: &mut dyn Write) -> Result<(Response, u64)> {
+        let mut reader = self.write_request(req, None)?;
+        let (status, headers) = read_response_head(&mut reader).map_err(|e| self.io_err(req, e))?;
+        if !(200..300).contains(&status) || req.method == "HEAD" || status == 204 {
+            let body = if req.method == "HEAD" || status == 204 { Vec::new() } else { read_body(&mut reader, &headers, true).map_err(|e| self.io_err(req, e))? };
+            return Ok((Response { status, headers, body }, 0));
+        }
+        let n = copy_body(&mut reader, &headers, sink).map_err(|e| self.io_err(req, e))?;
+        Ok((Response { status, headers, body: Vec::new() }, n))
+    }
+
+    fn io_err(&self, req: &Request, e: io::Error) -> CamelError {
+        CamelError::new(core_kinds::IO, format!("I/O error talking to {}: {}", req.url.origin(), e))
+    }
+
+    fn write_request(&self, req: &Request, streamed: Option<(&mut dyn Read, u64)>) -> Result<BufReader<Box<dyn Stream>>> {
         let url = &req.url;
         let proxy = self.proxy_for(url).map(|p| Url::parse(&p).map(|u| (u, proxy_auth(&p)))).transpose()?;
         let mut absolute_target = false;
@@ -315,17 +344,24 @@ impl HttpClient {
         if req.get_header("User-Agent").is_none() {
             head.push_str("User-Agent: rust-camel-cloud/0.1\r\n");
         }
-        if !req.body.is_empty() || matches!(req.method.as_str(), "POST" | "PUT" | "PATCH") {
-            head.push_str(&format!("Content-Length: {}\r\n", req.body.len()));
+        let body_len = streamed.as_ref().map(|(_, l)| *l).unwrap_or(req.body.len() as u64);
+        if body_len > 0 || matches!(req.method.as_str(), "POST" | "PUT" | "PATCH") {
+            head.push_str(&format!("Content-Length: {}\r\n", body_len));
         }
         head.push_str("Connection: close\r\n\r\n");
-        let io_err = |e: io::Error| CamelError::new(core_kinds::IO, format!("I/O error talking to {}: {}", url.origin(), e));
+        let io_err = |e: io::Error| self.io_err(req, e);
         stream.write_all(head.as_bytes()).map_err(io_err)?;
-        stream.write_all(&req.body).map_err(io_err)?;
+        match streamed {
+            Some((body, len)) => {
+                let n = io::copy(&mut body.take(len), &mut stream).map_err(io_err)?;
+                if n != len {
+                    return Err(io_err(io::Error::new(io::ErrorKind::UnexpectedEof, format!("request body ended after {} of {} bytes", n, len))));
+                }
+            }
+            None => stream.write_all(&req.body).map_err(io_err)?,
+        }
         stream.flush().map_err(io_err)?;
-        let mut reader = BufReader::new(stream);
-        let resp = read_response(&mut reader, &req.method).map_err(io_err)?;
-        Ok(resp)
+        Ok(BufReader::new(stream))
     }
 
     fn tls_wrap(&self, tcp: TcpStream, url: &Url) -> Result<TlsStream<TcpStream>> {
@@ -503,8 +539,8 @@ fn read_body<R: BufRead>(r: &mut R, headers: &[(String, String)], to_eof: bool) 
     Ok(out)
 }
 
-/// Read a response (`method` decides whether a body follows).
-pub fn read_response<R: BufRead>(r: &mut R, method: &str) -> io::Result<Response> {
+/// Read a response status line and headers (skipping `1xx` responses).
+pub fn read_response_head<R: BufRead>(r: &mut R) -> io::Result<(u16, Vec<(String, String)>)> {
     loop {
         let line = read_line(r)?.ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed before response"))?;
         let status: u16 = line
@@ -516,9 +552,49 @@ pub fn read_response<R: BufRead>(r: &mut R, method: &str) -> io::Result<Response
         if (100..200).contains(&status) {
             continue;
         }
-        let body = if method == "HEAD" || status == 204 || status == 304 { Vec::new() } else { read_body(r, &headers, true)? };
-        return Ok(Response { status, headers, body });
+        return Ok((status, headers));
     }
+}
+
+/// Copy a message body (chunked, Content-Length or until EOF) into `sink` without buffering it.
+pub fn copy_body<R: BufRead>(r: &mut R, headers: &[(String, String)], sink: &mut dyn Write) -> io::Result<u64> {
+    if find(headers, "Transfer-Encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked")) {
+        let mut total = 0u64;
+        loop {
+            let line = read_line(r)?.ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end of chunked body"))?;
+            let size = u64::from_str_radix(line.split(';').next().unwrap_or("").trim(), 16).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad chunk size"))?;
+            if size == 0 {
+                while read_line(r)?.is_some_and(|l| !l.is_empty()) {}
+                return Ok(total);
+            }
+            let n = io::copy(&mut r.take(size), sink)?;
+            if n != size {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "unexpected end of chunk"));
+            }
+            total += n;
+            read_line(r)?;
+        }
+    }
+    if let Some(len) = find(headers, "Content-Length") {
+        let len: u64 = len.trim().parse().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "bad Content-Length"))?;
+        let n = io::copy(&mut r.take(len), sink)?;
+        if n != len {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, format!("body ended after {} of {} bytes", n, len)));
+        }
+        return Ok(n);
+    }
+    match io::copy(r, sink) {
+        Ok(n) => Ok(n),
+        Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(0),
+        Err(e) => Err(e),
+    }
+}
+
+/// Read a response (`method` decides whether a body follows).
+pub fn read_response<R: BufRead>(r: &mut R, method: &str) -> io::Result<Response> {
+    let (status, headers) = read_response_head(r)?;
+    let body = if method == "HEAD" || status == 204 || status == 304 { Vec::new() } else { read_body(r, &headers, true)? };
+    Ok(Response { status, headers, body })
 }
 
 /// A request as received by a server.
@@ -670,6 +746,16 @@ mod tests {
         let raw = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n";
         let r = read_response(&mut &raw[..], "GET").unwrap();
         assert_eq!(r.text(), "hello world");
+        // streamed copy of the same body
+        let mut reader = &raw[..];
+        let (status, headers) = read_response_head(&mut reader).unwrap();
+        let mut sink = Vec::new();
+        assert_eq!((status, copy_body(&mut reader, &headers, &mut sink).unwrap()), (200, 11));
+        assert_eq!(sink, b"hello world");
+        let short = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc";
+        let mut reader = &short[..];
+        let (_, headers) = read_response_head(&mut reader).unwrap();
+        assert!(copy_body(&mut reader, &headers, &mut Vec::new()).is_err(), "truncated bodies are errors");
         assert_eq!(proxy_auth("http://u:p%40ss@h:1"), Some(format!("Basic {}", base64_encode(b"u:p@ss"))));
     }
 }
