@@ -1,0 +1,10 @@
+[package]
+name = "camel-ssh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel std-only SSH-2 client/server, SFTP v3 and the sftp / ssh components"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }

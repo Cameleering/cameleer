@@ -16,6 +16,7 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 | `crates/camel-tls` | from-scratch TLS 1.3/1.2 client+server (`TlsStream<S: Read+Write>`), crypto primitives, X.509/PEM/PKCS#8, trust store, self-signed cert generator; no deps |
 | `crates/camel-grpc` | HPACK + HTTP/2 client/server (`h2`, public for reuse), `.proto` parser + dynamic protobuf codec (`proto`), gRPC framing/status/client/server (`grpc`), Camel `grpc` component and `protobuf` data format |
 | `crates/camel-cloud` | AWS (aws2-s3/sqs/sns/ddb/lambda, SigV4), Azure Storage (blob/queue, Shared Key/SAS), Google (storage/pubsub, JWT→OAuth2) over REST with a small HTTPS client (`http.rs`, camel-tls) + in-memory emulators in `testing` that verify signatures/tokens |
+| `crates/camel-ssh` | from-scratch SSH-2 client + test server (curve25519/ECDH KEX, Ed25519/ECDSA/RSA keys, ChaCha20-Poly1305/AES-GCM/AES-CTR, strict KEX, rekeying, known_hosts), SFTP v3 client/server, `sftp` and `ssh` components; embedded server in `testing` |
 
 ## Key concepts (camel-core)
 

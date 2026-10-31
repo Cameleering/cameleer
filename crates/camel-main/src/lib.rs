@@ -409,6 +409,7 @@ pub fn new_main() -> Main {
     let mut main = Main::new();
     camel_http::register(main.context());
     camel_yaml::register_kamelet_component(main.context());
+    camel_ssh::register(main.context()); // sftp, ssh (before camel_protocols, whose sftp is a placeholder)
     // ftp, smtp/pop3/imap, websocket, mllp, syslog
     camel_protocols::register(main.context());
     camel_kafka_mqtt::register(main.context()); // kafka, paho, paho-mqtt5
