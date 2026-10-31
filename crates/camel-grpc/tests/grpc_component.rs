@@ -181,7 +181,7 @@ fn error_status_mapping() {
     let e = client.unary("/other.Service/SayHello", b"", &vec![], None).unwrap_err();
     assert_eq!(e.code, Code::Unimplemented);
     let e = client.unary("/helloworld.Greeter/SayHello", &[0x0a, 0x05, b'x'], &vec![], None).unwrap_err();
-    assert_eq!(e.code, Code::Internal);
+    assert_eq!(e.code, Code::Internal, "malformed request: got {:?}: {}", e.code, e.message);
     // a valid raw call
     let pool = DescriptorPool::from_file(PROTO).unwrap();
     let req = pool.encode("helloworld.HelloRequest", &Value::object([("name", "raw")])).unwrap();
