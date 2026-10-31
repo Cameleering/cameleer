@@ -250,13 +250,13 @@ impl RouteDefinition {
     }
 
     /// Close the innermost open block.
+    ///
+    /// As in the Camel Java DSL, `end()` without an open block is tolerated and does nothing
+    /// (e.g. `recipientList(...).end()` or a trailing `.end()` at the end of a route).
     pub fn end(&mut self) -> &mut Self {
         self.flush_pending();
-        match self.stack.pop() {
-            Some(def) => {
-                self.add(def);
-            }
-            None => self.build_errors.push(CamelError::illegal_state("end() called without an open block")),
+        if let Some(def) = self.stack.pop() {
+            self.add(def);
         }
         self
     }

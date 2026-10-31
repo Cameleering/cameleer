@@ -118,6 +118,19 @@ pub(crate) fn snapshot_message(ex: &Exchange) -> Value {
     Value::object([("body", ex.message.body.clone()), ("headers", ex.message.headers.to_value())])
 }
 
+/// Context global option enabling original-message tracking (Camel `allowUseOriginalMessage`),
+/// switched on automatically when a route uses `useOriginalMessage`/`useOriginalBody`.
+pub(crate) const ALLOW_USE_ORIGINAL_MESSAGE: &str = "CamelAllowUseOriginalMessage";
+
+/// Mark a sub-exchange (split/multicast/recipientList copy) as starting a new unit of work:
+/// if original-message tracking is active, the sub-exchange message becomes its original message.
+pub(crate) fn begin_child_unit_of_work(ex: &mut Exchange) {
+    if ex.properties.contains_key(ORIGINAL_MESSAGE) {
+        let snap = snapshot_message(ex);
+        ex.set_property(ORIGINAL_MESSAGE, snap);
+    }
+}
+
 /// Restore body (and optionally headers) from a snapshot produced by [`snapshot_message`].
 pub(crate) fn restore_message(ex: &mut Exchange, snap: &Value, headers_too: bool) {
     if let Some(b) = snap.get("body") {

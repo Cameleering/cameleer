@@ -181,6 +181,8 @@ enum Func {
     Date { source: DateSource, offset: i64, pattern: Option<String>, tz: i64 },
     Properties(String, Option<String>),
     PropertiesExist(String),
+    /// File language function (`${file:name}`...), evaluated from the `CamelFile*` headers.
+    File(String),
     Env(String),
     Sys(String),
     Null,
@@ -978,6 +980,13 @@ impl<'a> P<'a> {
             };
             return self.date(cmd, pattern, 0, pos);
         }
+        if let Some(rest) = f.strip_prefix("file:") {
+            let rest = rest.trim();
+            if !crate::component::file::is_file_function(rest) {
+                return Err(self.err(format!("Unknown file language syntax: {}", rest), pos));
+            }
+            return Ok(Func::File(rest.to_string()));
+        }
         if let Some(rest) = f.strip_prefix("properties-exist:") {
             return Ok(Func::PropertiesExist(rest.trim().to_string()));
         }
@@ -1635,6 +1644,7 @@ impl Func {
                     },
                 }
             }
+            Func::File(f) => Ok(crate::component::file::file_function_value(f, ex).unwrap_or(Value::Null)),
             Func::PropertiesExist(key) => {
                 let (neg, k) = match key.strip_prefix('!') {
                     Some(k) => (true, k),

@@ -96,6 +96,12 @@ impl BackgroundThreads {
         Ok(())
     }
 
+    /// Whether the calling thread is one of these background threads.
+    pub fn is_current_thread(&self) -> bool {
+        let me = std::thread::current().id();
+        self.handles.lock().unwrap().iter().any(|h| h.thread().id() == me)
+    }
+
     pub fn is_running(&self) -> bool {
         self.handles.lock().unwrap().iter().any(|h| !h.is_finished())
     }
