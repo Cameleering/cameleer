@@ -118,7 +118,7 @@ fn imap_consumer_with_attachments_and_move() {
     let ex = t
         .request(&smtp_uri, |ex| {
             ex.set_body("See attached");
-            let mut att = std::collections::BTreeMap::new();
+            let mut att = camel_core::value::ObjectMap::new();
             att.insert("data.bin".to_string(), Value::Bytes(vec![0, 1, 2, 3, 255]));
             att.insert("notes.txt".to_string(), Value::from("some notes"));
             ex.set_property("CamelAttachments", Value::Object(att));

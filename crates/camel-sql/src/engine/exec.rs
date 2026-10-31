@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::ast::*;
 use super::eval::{coerce, compare, eval, group_key, int_of, truth, Env, Params, Scope, ScopeCol};
@@ -390,7 +390,7 @@ fn exec_insert(
             values.push(v);
         }
         if !auto_cols.is_empty() {
-            generated.push(auto_cols.iter().map(|i| (t.columns[*i].name.clone(), values[*i].clone())).collect::<BTreeMap<_, _>>());
+            generated.push(auto_cols.iter().map(|i| (t.columns[*i].name.clone(), values[*i].clone())).collect::<ObjectMap>());
         }
         let id = t.next_rowid;
         t.next_rowid += 1;

@@ -21,7 +21,6 @@
 //! octet-counted framing.
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,7 +36,7 @@ use camel_core::message::Exchange;
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
 use camel_core::util_time::{civil_from_epoch, epoch_from_civil, now_millis};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 use camel_tls::camel_support::{endpoint_tls, EndpointTls};
 use camel_tls::net::NetStream;
 
@@ -114,7 +113,7 @@ fn parse_structured_data(s: &str) -> Result<(Value, &str)> {
     if let Some(rest) = s.strip_prefix('-') {
         return Ok((Value::Null, rest));
     }
-    let mut map = BTreeMap::new();
+    let mut map = ObjectMap::new();
     let b = s.as_bytes();
     let mut i = 0;
     while i < b.len() && b[i] == b'[' {
@@ -124,7 +123,7 @@ fn parse_structured_data(s: &str) -> Result<(Value, &str)> {
             i += 1;
         }
         let id = s[start..i].to_string();
-        let mut params = BTreeMap::new();
+        let mut params = ObjectMap::new();
         loop {
             while i < b.len() && b[i] == b' ' {
                 i += 1;
@@ -183,7 +182,7 @@ pub fn parse(text: &str) -> Result<Value> {
         return Err(parse_err(format!("Invalid PRI: {}", pri)));
     }
     let rest = &rest[end + 1..];
-    let mut m = BTreeMap::new();
+    let mut m = ObjectMap::new();
     let (fac, sev) = ((pri / 8) as usize, (pri % 8) as usize);
     m.insert("priority".to_string(), Value::Int(pri as i64));
     m.insert("facility".to_string(), Value::String(FACILITIES[fac].to_string()));

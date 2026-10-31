@@ -32,7 +32,7 @@ use camel_core::message::Exchange;
 use camel_core::model::RouteDefinition;
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer};
 use camel_core::util::Parameters;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::binding::headers;
 use crate::http::percent_encode;
@@ -661,12 +661,12 @@ pub fn openapi_document(dsl: &RestDsl) -> Value {
     if let Some(d) = cfg.api_properties.get("api.description") {
         info.push(("description", Value::from(d.clone())));
     }
-    let mut paths: BTreeMap<String, Value> = BTreeMap::new();
+    let mut paths: ObjectMap = ObjectMap::new();
     let mut tags: Vec<String> = Vec::new();
     for rest in &dsl.rests {
         for verb in rest.verbs.iter().filter(|v| v.api_docs) {
             let path = join_paths(&[&rest.path, &verb.path]);
-            let mut op: BTreeMap<String, Value> = BTreeMap::new();
+            let mut op: ObjectMap = ObjectMap::new();
             if let Some(id) = &verb.route_id {
                 op.insert("operationId".into(), Value::from(id.clone()));
             }
@@ -732,7 +732,7 @@ pub fn openapi_document(dsl: &RestDsl) -> Value {
             let consumes = verb.consumes.clone().or_else(|| rest.consumes.clone());
             if consumes.is_some() || body_param.is_some() || verb.type_name.is_some() {
                 let ct = consumes.unwrap_or_else(|| "application/json".into());
-                let mut content = BTreeMap::new();
+                let mut content = ObjectMap::new();
                 for c in ct.split(',') {
                     content.insert(c.trim().to_string(), obj(vec![("schema", obj(vec![("type", Value::from("object"))]))]));
                 }
@@ -746,12 +746,12 @@ pub fn openapi_document(dsl: &RestDsl) -> Value {
                 op.insert("requestBody".into(), obj(rb));
             }
             let produces = verb.produces.clone().or_else(|| rest.produces.clone());
-            let mut responses: BTreeMap<String, Value> = BTreeMap::new();
+            let mut responses: ObjectMap = ObjectMap::new();
             let resp_list = if verb.responses.is_empty() { vec![(200u16, "Success".to_string())] } else { verb.responses.clone() };
             for (code, msg) in resp_list {
                 let mut r = vec![("description", Value::from(msg))];
                 if let (Some(p), true) = (&produces, (200..300).contains(&code)) {
-                    let mut content = BTreeMap::new();
+                    let mut content = ObjectMap::new();
                     for c in p.split(',') {
                         content.insert(c.trim().to_string(), obj(vec![("schema", obj(vec![("type", Value::from("object"))]))]));
                     }
@@ -760,7 +760,7 @@ pub fn openapi_document(dsl: &RestDsl) -> Value {
                 responses.insert(code.to_string(), obj(r));
             }
             op.insert("responses".into(), Value::Object(responses));
-            let entry = paths.entry(path).or_insert_with(|| Value::Object(BTreeMap::new()));
+            let entry = paths.entry(path).or_insert_with(|| Value::Object(ObjectMap::new()));
             if let Some(o) = entry.as_object_mut() {
                 o.insert(verb.method.to_ascii_lowercase(), Value::Object(op));
             }

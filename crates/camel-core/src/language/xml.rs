@@ -5,10 +5,9 @@
 //! declaration, DOCTYPE (skipped), predefined and numeric character entities.
 //! Namespaces are kept as part of the qualified names (`ns:tag`).
 
-use std::collections::BTreeMap;
 
 use crate::error::{kinds, CamelError, Result};
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 /// Kind of a DOM node.
 #[derive(Clone, Debug, PartialEq)]
@@ -456,7 +455,7 @@ pub fn element_to_value(doc: &Document, i: usize) -> Value {
     if attrs.is_empty() && elems.is_empty() {
         return Value::String(text);
     }
-    let mut m: BTreeMap<String, Value> = BTreeMap::new();
+    let mut m = ObjectMap::new();
     for (k, v) in attrs {
         if k == "xmlns" || k.starts_with("xmlns:") {
             continue;

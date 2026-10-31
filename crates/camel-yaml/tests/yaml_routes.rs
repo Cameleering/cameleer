@@ -276,7 +276,7 @@ fn uri_parameters_are_merged() {
     let r = &routes[0];
     assert_eq!(r.input, "direct:params?timeout=1000");
     let uri = |i: usize| r.outputs[i].as_any().downcast_ref::<ToDefinition>().unwrap().uri.clone();
-    assert_eq!(uri(0), "log:params?level=DEBUG&showHeaders=true");
+    assert_eq!(uri(0), "log:params?showHeaders=true&level=DEBUG");
     assert_eq!(uri(1), "log:other?showBody=false&marker=a%20b");
 
     // the merged uris are valid endpoint uris

@@ -17,7 +17,7 @@
 use std::sync::{Arc, RwLock};
 
 use crate::context::{CamelContext, ServiceStatus, WeakContext};
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 /// Health state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,7 +82,7 @@ impl HealthCheckResult {
     }
     /// MicroProfile-health style JSON (`{"name", "status", "message", "data"}`).
     pub fn to_value(&self) -> Value {
-        let mut m = std::collections::BTreeMap::new();
+        let mut m = ObjectMap::new();
         m.insert("name".to_string(), Value::from(self.id.as_str()));
         m.insert("status".to_string(), Value::from(self.state.as_str()));
         if let Some(msg) = &self.message {
@@ -340,7 +340,7 @@ impl HealthCheck for RoutesHealthCheck {
         let Some(ctx) = self.0.upgrade() else { return HealthCheckResult::down("CamelContext is gone") };
         let failing = crate::supervising::failing_routes(&ctx);
         let mut down = Vec::new();
-        let mut details = std::collections::BTreeMap::new();
+        let mut details = ObjectMap::new();
         for r in ctx.routes() {
             let st = r.status();
             details.insert(format!("route.{}", r.id), Value::from(st.to_string()));
@@ -376,7 +376,7 @@ impl HealthCheck for ConsumersHealthCheck {
     fn call(&self) -> HealthCheckResult {
         let Some(ctx) = self.0.upgrade() else { return HealthCheckResult::down("CamelContext is gone") };
         let mut down = Vec::new();
-        let mut details = std::collections::BTreeMap::new();
+        let mut details = ObjectMap::new();
         for r in ctx.routes() {
             let running = r.has_consumer();
             details.insert(format!("consumer.{}", r.id), Value::from(if running { "UP" } else { "DOWN" }));

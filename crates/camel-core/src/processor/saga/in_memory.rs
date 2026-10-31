@@ -2,14 +2,14 @@
 //! here, the process. Not durable; compensation/completion calls are retried
 //! `max_retry_attempts` times with `retry_delay` between attempts.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use crate::context::{CamelContext, WeakContext};
 use crate::error::{CamelError, Result};
 use crate::message::{generate_id, Exchange};
-use crate::value::Value;
+use crate::value::ObjectMap;
 
 use super::{send_finalization, CamelSagaCoordinator, CamelSagaService, CamelSagaStep};
 
@@ -94,7 +94,7 @@ impl CamelSagaService for InMemorySagaService {
 struct State {
     status: SagaStatus,
     /// Registered steps with their option values (evaluated at begin).
-    steps: Vec<(CamelSagaStep, BTreeMap<String, Value>)>,
+    steps: Vec<(CamelSagaStep, ObjectMap)>,
 }
 
 /// Coordinator of one in-memory saga.

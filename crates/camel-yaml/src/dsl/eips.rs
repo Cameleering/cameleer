@@ -939,7 +939,7 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
                 },
             },
         };
-        let mut params = std::collections::BTreeMap::new();
+        let mut params = camel_core::value::ObjectMap::new();
         if let Some(m) = ctx.opt_str(cfg, "method") {
             params.insert("method".to_string(), Value::String(m));
         }

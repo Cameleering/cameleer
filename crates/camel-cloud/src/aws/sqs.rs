@@ -23,7 +23,6 @@
 //! Other options: `queueUrl`, `autoCreateQueue` (default false), `queueOwnerAWSAccountId`,
 //! `defaultVisibilityTimeout`, `messageRetentionPeriod`, plus the [common AWS options](super).
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,7 +31,7 @@ use camel_core::context::CamelContext;
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::Processor;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::{error_code, AwsConfig};
 use crate::endpoint::{operation, process, set_batch, unsupported, CloudService};
@@ -136,7 +135,7 @@ impl SqsService {
 
     /// Create the queue (idempotent) and return its URL.
     pub fn create_queue(&self) -> Result<String> {
-        let mut attrs = BTreeMap::new();
+        let mut attrs = ObjectMap::new();
         if let Some(v) = self.default_visibility_timeout {
             attrs.insert("VisibilityTimeout".to_string(), Value::from(v.to_string()));
         }
@@ -175,7 +174,7 @@ impl SqsService {
     }
 
     fn attributes_of(ex: &Exchange) -> Value {
-        let mut m = BTreeMap::new();
+        let mut m = ObjectMap::new();
         for (k, v) in user_headers(ex) {
             let (dt, sv) = match &v {
                 Value::Int(_) | Value::Float(_) => ("Number", v.to_string()),
@@ -187,7 +186,7 @@ impl SqsService {
         Value::Object(m)
     }
 
-    fn fifo_fields(&self, ex: &Exchange, entry: &mut BTreeMap<String, Value>, body: &str) {
+    fn fifo_fields(&self, ex: &Exchange, entry: &mut ObjectMap, body: &str) {
         if !self.is_fifo() {
             return;
         }
@@ -206,7 +205,7 @@ impl SqsService {
         match op {
             "sendMessage" => {
                 let body = ex.body_as::<String>()?;
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("QueueUrl".to_string(), Value::from(self.queue_url()?));
                 m.insert("MessageBody".to_string(), Value::from(body.clone()));
                 let delay = ex.header(headers::DELAY_HEADER).and_then(|v| v.as_i64().or_else(|| v.to_string().parse().ok())).or(self.delay_seconds);
@@ -229,7 +228,7 @@ impl SqsService {
                 };
                 let mut entries = Vec::new();
                 for (i, body) in items.iter().enumerate() {
-                    let mut e = BTreeMap::new();
+                    let mut e = ObjectMap::new();
                     e.insert("Id".to_string(), Value::from(i.to_string()));
                     e.insert("MessageBody".to_string(), Value::from(body.clone()));
                     if let Some(d) = self.delay_seconds {
@@ -248,7 +247,7 @@ impl SqsService {
                 self.call("DeleteMessage", obj([("QueueUrl", Value::from(self.queue_url()?)), ("ReceiptHandle", Value::from(handle))]))?;
             }
             "listQueues" => {
-                let mut req = BTreeMap::new();
+                let mut req = ObjectMap::new();
                 if let Some(p) = header_str(ex, headers::SQS_QUEUE_PREFIX) {
                     req.insert("QueueNamePrefix".to_string(), Value::from(p));
                 }
@@ -310,7 +309,7 @@ impl CloudService for SqsService {
 
     fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
         let url = self.queue_url()?;
-        let mut req = BTreeMap::new();
+        let mut req = ObjectMap::new();
         req.insert("QueueUrl".to_string(), Value::from(url.clone()));
         req.insert("MaxNumberOfMessages".to_string(), Value::Int(self.max_messages_per_poll.clamp(1, 10)));
         if let Some(w) = self.wait_time_seconds {
@@ -331,8 +330,8 @@ impl CloudService for SqsService {
             ex.set_header(headers::MESSAGE_ID, m.get("MessageId").cloned().unwrap_or_default());
             ex.set_header(headers::RECEIPT_HANDLE, handle.clone());
             ex.set_header(headers::MD5_OF_BODY, m.get("MD5OfBody").cloned().unwrap_or_default());
-            ex.set_header(headers::ATTRIBUTES, m.get("Attributes").cloned().unwrap_or(Value::Object(BTreeMap::new())));
-            let mut attrs = BTreeMap::new();
+            ex.set_header(headers::ATTRIBUTES, m.get("Attributes").cloned().unwrap_or(Value::Object(ObjectMap::new())));
+            let mut attrs = ObjectMap::new();
             if let Some(Value::Object(ma)) = m.get("MessageAttributes") {
                 for (k, v) in ma {
                     let val = match (v.get("DataType").map(|d| d.to_string()), v.get("StringValue")) {

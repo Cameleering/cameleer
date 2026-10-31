@@ -37,7 +37,7 @@ use crate::message::Exchange;
 use crate::model::{ChannelWrapper, ProcessorDefinition, RouteContext, RouteDefinition};
 use crate::spi::{EventNotifier, Processor};
 use crate::tracer::Tracer;
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 /// Registry name of the per-context [`ManagementState`].
 pub const MANAGEMENT_STATE: &str = "camel.management.state";
@@ -503,7 +503,7 @@ impl ManagedRoute {
 
     pub fn to_value(&self) -> Value {
         let opt = |s: &Option<String>| s.as_deref().map(Value::from).unwrap_or(Value::Null);
-        let mut m = BTreeMap::new();
+        let mut m = ObjectMap::new();
         m.insert("routeId".into(), Value::from(self.route_id.as_str()));
         m.insert("from".into(), Value::from(self.endpoint_uri.as_str()));
         m.insert("state".into(), Value::from(self.status.to_string()));

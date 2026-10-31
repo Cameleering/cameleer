@@ -9,7 +9,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use camel_core::value::{compare_values, Value};
+use camel_core::value::{compare_values, ObjectMap, Value};
 
 use super::frame::{error_code, format_uuid, parse_uuid, random_uuid, time_uuid, timestamp_millis, ColumnSpec, CqlType};
 use crate::mongodb::bson::format_iso_date;
@@ -754,7 +754,7 @@ pub fn parse(q: &str) -> R<(Stmt, usize)> {
 // storage
 // ---------------------------------------------------------------------------
 
-type Row = BTreeMap<String, Value>;
+type Row = ObjectMap;
 
 /// A table.
 #[derive(Clone, Debug)]

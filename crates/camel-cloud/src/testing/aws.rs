@@ -12,7 +12,7 @@ use std::io;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 #[path = "aws_ext.rs"]
 mod ext;
@@ -79,7 +79,7 @@ struct Table {
     range: Option<String>,
     key_schema: Value,
     attribute_definitions: Value,
-    items: Vec<BTreeMap<String, Value>>,
+    items: Vec<ObjectMap>,
 }
 
 struct Upload {
@@ -264,7 +264,7 @@ impl AwsMock {
     pub fn send_sqs(&self, name: &str, body: &str) {
         let (lock, cv) = &*self.state;
         let mut st = lock.lock().unwrap();
-        st.queues.entry(name.into()).or_default().messages.push(new_msg(body.into(), Value::Object(BTreeMap::new()), 0));
+        st.queues.entry(name.into()).or_default().messages.push(new_msg(body.into(), Value::Object(ObjectMap::new()), 0));
         cv.notify_all();
     }
 
@@ -708,7 +708,7 @@ fn sqs(st: &Shared, req: &ServerRequest) -> Response {
                 "SendMessage" => {
                     let text = s_("MessageBody");
                     let delay = body.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0);
-                    let m = new_msg(text.clone(), body.get("MessageAttributes").cloned().unwrap_or(Value::Object(BTreeMap::new())), delay);
+                    let m = new_msg(text.clone(), body.get("MessageAttributes").cloned().unwrap_or(Value::Object(ObjectMap::new())), delay);
                     let id = m.id.clone();
                     q.messages.push(m);
                     cv.notify_all();
@@ -718,7 +718,7 @@ fn sqs(st: &Shared, req: &ServerRequest) -> Response {
                     let mut out = Vec::new();
                     for e in body.get("Entries").and_then(|e| e.as_array()).cloned().unwrap_or_default() {
                         let text = e.get("MessageBody").map(|b| b.to_string()).unwrap_or_default();
-                        let m = new_msg(text.clone(), Value::Object(BTreeMap::new()), e.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0));
+                        let m = new_msg(text.clone(), Value::Object(ObjectMap::new()), e.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0));
                         out.push(obj([
                             ("Id", e.get("Id").cloned().unwrap_or_default()),
                             ("MessageId", Value::from(m.id.clone())),
@@ -746,7 +746,7 @@ fn sqs(st: &Shared, req: &ServerRequest) -> Response {
                             m.receive_count += 1;
                             let handle = format!("{}#{}", m.id, uuid());
                             m.receipt = Some(handle.clone());
-                            let attrs: BTreeMap<String, Value> = m
+                            let attrs: ObjectMap = m
                                 .attributes
                                 .as_object()
                                 .map(|a| a.iter().filter(|(k, _)| names.iter().any(|n| n == "All" || n == ".*" || n == *k)).map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -887,7 +887,7 @@ fn cmp_av(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
     }
 }
 
-fn condition_matches(item: &BTreeMap<String, Value>, attr: &str, cond: &Value) -> bool {
+fn condition_matches(item: &ObjectMap, attr: &str, cond: &Value) -> bool {
     let op = cond.get("ComparisonOperator").map(|o| o.to_string()).unwrap_or_else(|| "EQ".into());
     let list = cond.get("AttributeValueList").and_then(|l| l.as_array()).cloned().unwrap_or_default();
     let v = item.get(attr);
@@ -917,7 +917,7 @@ fn condition_matches(item: &BTreeMap<String, Value>, attr: &str, cond: &Value) -
     }
 }
 
-fn item_matches_key(t: &Table, item: &BTreeMap<String, Value>, key: &BTreeMap<String, Value>) -> bool {
+fn item_matches_key(t: &Table, item: &ObjectMap, key: &ObjectMap) -> bool {
     let eq = |a: &str| match (item.get(a), key.get(a)) {
         (Some(x), Some(y)) => cmp_av(x, y) == Some(std::cmp::Ordering::Equal),
         _ => false,
@@ -1009,7 +1009,7 @@ fn ddb(st: &Shared, req: &ServerRequest) -> Response {
                 }
             };
             let old = t.items[pos].clone();
-            let mut updated = BTreeMap::new();
+            let mut updated = ObjectMap::new();
             for (attr, u) in map_of("AttributeUpdates") {
                 match u.get("Action").map(|a| a.to_string()).as_deref().unwrap_or("PUT") {
                     "DELETE" => {
@@ -1044,7 +1044,7 @@ fn ddb(st: &Shared, req: &ServerRequest) -> Response {
             if action == "Query" && !conds.contains_key(&t.hash) {
                 return ddb_err("ValidationException", "Query condition missed key schema element");
             }
-            let mut items: Vec<BTreeMap<String, Value>> = t.items.iter().filter(|i| conds.iter().all(|(a, c)| condition_matches(i, a, c))).cloned().collect();
+            let mut items: Vec<ObjectMap> = t.items.iter().filter(|i| conds.iter().all(|(a, c)| condition_matches(i, a, c))).cloned().collect();
             if let Some(r) = &t.range {
                 items.sort_by(|a, b| match (a.get(r), b.get(r)) {
                     (Some(x), Some(y)) => cmp_av(x, y).unwrap_or(std::cmp::Ordering::Equal),
@@ -1059,12 +1059,12 @@ fn ddb(st: &Shared, req: &ServerRequest) -> Response {
             if let Some(l) = body.get("Limit").and_then(|l| l.as_i64()) {
                 if items.len() > l as usize {
                     items.truncate(l as usize);
-                    let key: BTreeMap<String, Value> =
+                    let key: ObjectMap =
                         items.last().unwrap().iter().filter(|(k, _)| **k == t.hash || Some(*k) == t.range.as_ref()).map(|(k, v)| (k.clone(), v.clone())).collect();
                     last = Some(Value::Object(key));
                 }
             }
-            let mut out = BTreeMap::new();
+            let mut out = ObjectMap::new();
             out.insert("Count".to_string(), Value::Int(items.len() as i64));
             out.insert("ScannedCount".to_string(), Value::Int(scanned as i64));
             out.insert("Items".to_string(), Value::Array(items.into_iter().map(Value::Object).collect()));

@@ -28,7 +28,7 @@ use camel_core::context::{CamelContext, WeakContext};
 use camel_core::error::{CamelError, Result};
 use camel_core::spi::{Component, Consumer, Endpoint, Processor};
 use camel_core::util::{url_encode, Parameters};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 use camel_xml::dom::{Document, NodeId};
 
 use crate::rest::{emit, poll_config, poll_consumer, Req, Rest};
@@ -225,7 +225,7 @@ fn opt(v: Option<String>) -> Value {
 pub fn parse_feed(doc: &Document) -> Result<Value> {
     let root = doc.document_element().ok_or_else(|| CamelError::new("FeedException", "Empty feed document"))?;
     let rl = doc.local_name(root);
-    let mut feed = std::collections::BTreeMap::new();
+    let mut feed = ObjectMap::new();
     let mut entries = Vec::new();
     if rl == "feed" && doc.namespace_uri(root) == ATOM_NS || rl == "feed" {
         feed.insert("type".to_string(), Value::from("atom_1.0"));
@@ -235,7 +235,7 @@ pub fn parse_feed(doc: &Document) -> Result<Value> {
         feed.insert("author".into(), opt(child(doc, root, "author").and_then(|a| child_text(doc, a, "name"))));
         feed.insert("publishedDate".into(), opt(child_text(doc, root, "updated")));
         for e in doc.element_children(root).into_iter().filter(|&c| doc.local_name(c) == "entry") {
-            let mut m = std::collections::BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("title".to_string(), opt(child_text(doc, e, "title")));
             m.insert("link".into(), opt(atom_link(doc, e)));
             m.insert("uri".into(), opt(child_text(doc, e, "id")));
@@ -259,7 +259,7 @@ pub fn parse_feed(doc: &Document) -> Result<Value> {
         feed.insert("publishedDate".into(), opt(child_text(doc, channel, "pubDate").or_else(|| child_text(doc, channel, "date"))));
         let items: Vec<NodeId> = if rss1 { doc.element_children(root) } else { doc.element_children(channel) };
         for it in items.into_iter().filter(|&c| doc.local_name(c) == "item") {
-            let mut m = std::collections::BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("title".to_string(), opt(child_text(doc, it, "title")));
             m.insert("link".into(), opt(child_text(doc, it, "link")));
             m.insert("uri".into(), opt(child_text(doc, it, "guid").or_else(|| doc.attribute_ns(it, "http://www.w3.org/1999/02/22-rdf-syntax-ns#", "about").map(String::from))));

@@ -16,7 +16,6 @@
 //! `sql:classpath:sql/select.sql`.
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,7 +26,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::{props, Exchange};
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::datasource::{kinds, lookup_datasource, sql_error, DataSource, ExecuteOptions, QueryResult};
 use crate::params::{bind, parse_sql, positional_values, ParsedSql};
@@ -512,5 +511,5 @@ impl Component for SqlStoredComponent {
 
 /// Map `values` into a parameter map (helper for tests and processors).
 pub fn param_map<I: IntoIterator<Item = (&'static str, Value)>>(values: I) -> Value {
-    Value::Object(values.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<BTreeMap<_, _>>())
+    Value::Object(values.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<ObjectMap>())
 }

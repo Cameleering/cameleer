@@ -11,12 +11,11 @@
 //! * `jdbc:postgresql://host:port/db?user=..&password=..` — the PostgreSQL wire protocol
 //!   client ([`crate::pg`]).
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, Once};
 
 use camel_core::context::CamelContext;
 use camel_core::error::{register_kind_parent, CamelError, Result};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 /// Exception kinds used by this crate (Java `java.sql` class names).
 pub mod kinds {
@@ -118,7 +117,7 @@ pub struct QueryResult {
     /// Rows affected by INSERT/UPDATE/DELETE (or returned by SELECT).
     pub update_count: i64,
     /// Generated keys (auto increment / serial columns) of inserted rows.
-    pub generated_keys: Vec<BTreeMap<String, Value>>,
+    pub generated_keys: Vec<ObjectMap>,
     /// True if the statement produces a result set (SELECT, `... RETURNING`).
     pub is_query: bool,
     /// The command tag (`SELECT`, `INSERT`, `CREATE TABLE`...).
@@ -132,7 +131,7 @@ impl QueryResult {
     }
 
     /// The rows as column name → value maps.
-    pub fn rows_as_maps(&self) -> Vec<BTreeMap<String, Value>> {
+    pub fn rows_as_maps(&self) -> Vec<ObjectMap> {
         self.rows.iter().map(|r| self.columns.iter().cloned().zip(r.iter().cloned()).collect()).collect()
     }
 

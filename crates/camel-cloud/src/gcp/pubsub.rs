@@ -17,7 +17,6 @@
 //! Other options: `authenticate` (default true), `endpoint` (emulator `host:port`),
 //! `messageOrderingEnabled`, `concurrentConsumers`/`synchronousPull`/`maxAckExtensionPeriod` (accepted).
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,7 +25,7 @@ use camel_core::context::CamelContext;
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::Processor;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::GcpConfig;
 use crate::endpoint::{process, set_batch, CloudService};
@@ -89,11 +88,11 @@ impl PubsubService {
     }
 
     /// Publish messages `(data, attributes, ordering key)`; returns the message ids.
-    pub fn publish(&self, messages: &[(Vec<u8>, BTreeMap<String, Value>, Option<String>)]) -> Result<Vec<String>> {
+    pub fn publish(&self, messages: &[(Vec<u8>, ObjectMap, Option<String>)]) -> Result<Vec<String>> {
         let msgs: Vec<Value> = messages
             .iter()
             .map(|(d, a, k)| {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("data".to_string(), Value::from(base64_encode(d)));
                 if !a.is_empty() {
                     m.insert("attributes".into(), Value::Object(a.iter().map(|(k, v)| (k.clone(), Value::from(v.to_string()))).collect()));
@@ -128,9 +127,9 @@ impl PubsubService {
 
 impl CloudService for PubsubService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
-        let attrs: BTreeMap<String, Value> = match ex.header(headers::ATTRIBUTES) {
+        let attrs: ObjectMap = match ex.header(headers::ATTRIBUTES) {
             Some(Value::Object(m)) => m.clone(),
-            _ => BTreeMap::new(),
+            _ => ObjectMap::new(),
         };
         let key = header_str(ex, headers::ORDERING_KEY);
         let bodies: Vec<Vec<u8>> = match ex.body() {
@@ -163,7 +162,7 @@ impl CloudService for PubsubService {
             ex.set_header(headers::MESSAGE_ID, m.get("messageId").cloned().unwrap_or_default());
             ex.set_header(headers::ACK_ID, ack_id.clone());
             ex.set_header(headers::PUBLISH_TIME, m.get("publishTime").cloned().unwrap_or_default());
-            ex.set_header(headers::ATTRIBUTES, m.get("attributes").cloned().unwrap_or(Value::Object(BTreeMap::new())));
+            ex.set_header(headers::ATTRIBUTES, m.get("attributes").cloned().unwrap_or(Value::Object(ObjectMap::new())));
             if let Some(k) = m.get("orderingKey").filter(|k| !k.to_string().is_empty()) {
                 ex.set_header(headers::ORDERING_KEY, k.clone());
             }

@@ -24,7 +24,6 @@ pub mod in_memory;
 pub mod lra;
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -36,7 +35,7 @@ use crate::message::Exchange;
 use crate::model::{OutputList, ProcessorDefinition, RouteContext};
 use crate::spi::{Component, Endpoint, Expression, Processor, Producer, Service};
 use crate::util::Parameters;
-use crate::value::Value;
+use crate::value::ObjectMap;
 
 pub use in_memory::InMemorySagaService;
 pub use lra::LraSagaService;
@@ -127,8 +126,8 @@ impl std::fmt::Debug for CamelSagaStep {
 
 impl CamelSagaStep {
     /// Evaluate the step options against an exchange (null values are skipped).
-    pub fn evaluate_options(&self, exchange: &Exchange) -> Result<BTreeMap<String, Value>> {
-        let mut m = BTreeMap::new();
+    pub fn evaluate_options(&self, exchange: &Exchange) -> Result<ObjectMap> {
+        let mut m = ObjectMap::new();
         for (k, e) in &self.options {
             let v = e.evaluate(exchange)?;
             if !v.is_null() {
@@ -492,7 +491,7 @@ pub fn register(ctx: &CamelContext) {
 /// Send a finalization (compensation/completion) message to `uri`: an empty body with
 /// the `Long-Running-Action` header and the step options as headers. Returns an error
 /// if sending fails or the exchange fails.
-pub fn send_finalization(ctx: &CamelContext, uri: &str, saga_id: &str, values: &BTreeMap<String, Value>) -> Result<()> {
+pub fn send_finalization(ctx: &CamelContext, uri: &str, saga_id: &str, values: &ObjectMap) -> Result<()> {
     let producer = ctx.get_producer(uri)?;
     let mut ex = Exchange::new(Some(ctx.clone()));
     ex.set_header(SAGA_LONG_RUNNING_ACTION, saga_id.to_string());

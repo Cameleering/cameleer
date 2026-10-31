@@ -17,7 +17,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 use camel_tls::PublicKey;
 
 use super::{Handler, MockServer, TEST_RSA_KEY_PEM};
@@ -415,7 +415,7 @@ fn storage(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
                 }
                 items.push(object_resource(bucket, n, o));
             }
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("kind".to_string(), Value::from("storage#objects"));
             m.insert("items".to_string(), Value::Array(items));
             if let Some(t) = next_token {
@@ -472,7 +472,7 @@ fn pubsub(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
                         if base64_decode(&data).is_none() {
                             return gerror(400, "INVALID_ARGUMENT", "Invalid data in message: must be base64");
                         }
-                        let attrs = m.get("attributes").cloned().unwrap_or(Value::Object(BTreeMap::new()));
+                        let attrs = m.get("attributes").cloned().unwrap_or(Value::Object(ObjectMap::new()));
                         let key = m.get("orderingKey").map(|k| k.to_string()).unwrap_or_default();
                         ids.push(Value::from(publish_one(&mut state, &name, data, attrs, key).unwrap_or_default()));
                     }
@@ -511,7 +511,7 @@ fn pubsub(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
                         m.ack_id = Some(ack.clone());
                         m.visible_at = now + deadline * 1000;
                         m.attempts += 1;
-                        let mut msg = BTreeMap::new();
+                        let mut msg = ObjectMap::new();
                         msg.insert("data".to_string(), Value::from(m.data.clone()));
                         msg.insert("attributes".to_string(), m.attributes.clone());
                         msg.insert("messageId".to_string(), Value::from(m.id.clone()));

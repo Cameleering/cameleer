@@ -3,13 +3,13 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 use camel_http::HttpResponse;
 
 use super::{basic, bearer, json, MockServer, Recorded};
 
 fn obj(items: Vec<(&str, Value)>) -> Value {
-    Value::Object(items.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<BTreeMap<_, _>>())
+    Value::Object(items.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<ObjectMap>())
 }
 
 fn is_json(r: &Recorded) -> bool {
@@ -184,7 +184,7 @@ impl TelegramMock {
             };
             let mut s = st.lock().unwrap();
             // parameters from JSON, form or query
-            let mut params: BTreeMap<String, Value> = BTreeMap::new();
+            let mut params: ObjectMap = ObjectMap::new();
             for (k, v) in &r.query {
                 params.insert(k.clone(), Value::String(v.clone()));
             }
@@ -820,7 +820,7 @@ impl GraphqlMock {
             let vars = b.get("variables").cloned().unwrap_or(Value::Null);
             let mut books = books.lock().unwrap();
             let book = |b: &(String, String, String)| obj(vec![("id", b.0.clone().into()), ("name", b.1.clone().into()), ("author", b.2.clone().into())]);
-            let mut data: BTreeMap<String, Value> = BTreeMap::new();
+            let mut data: ObjectMap = ObjectMap::new();
             if q.contains("addBook") {
                 let name = vars.get("name").map(|v| v.to_string()).unwrap_or_default();
                 let author = vars.get("author").map(|v| v.to_string()).unwrap_or_default();

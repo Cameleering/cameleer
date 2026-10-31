@@ -49,7 +49,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::azure::AzureNamespace;
 use crate::cbs::RequestResponse;
@@ -412,7 +412,7 @@ pub fn message_to_exchange(m: &Message, binary: bool, lock_token: Option<String>
     if let Some(t) = token {
         ex.set_header(LOCK_TOKEN, t);
     }
-    let mut props = std::collections::BTreeMap::new();
+    let mut props = ObjectMap::new();
     for (k, v) in &m.application_properties {
         match k.as_str() {
             "DeadLetterReason" => ex.set_header(DEAD_LETTER_REASON, to_camel(v)),

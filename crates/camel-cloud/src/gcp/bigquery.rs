@@ -16,12 +16,11 @@
 //! (`CamelGoogleBigQueryTranslatedQuery`). Body = number of affected rows for DML, otherwise
 //! the list of rows (maps typed after the result schema). `CamelGoogleBigQueryJobId` is set.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::GcpConfig;
 use crate::endpoint::CloudService;
@@ -84,7 +83,7 @@ impl CloudService for BigQueryService {
             if r.as_object().is_none() {
                 return Err(CamelError::illegal_argument("BigQuery rows must be maps"));
             }
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("json".to_string(), r.clone());
             let id = match (&self.use_as_insert_id, &header_insert_id) {
                 (Some(f), _) => r.get(f).map(|v| v.to_string()),
@@ -97,7 +96,7 @@ impl CloudService for BigQueryService {
             }
             rows.push(Value::Object(m));
         }
-        let mut req = BTreeMap::new();
+        let mut req = ObjectMap::new();
         req.insert("rows".to_string(), Value::Array(rows));
         if let Some(sfx) = header_str(ex, headers::TABLE_SUFFIX) {
             req.insert("templateSuffix".into(), Value::from(sfx));
@@ -208,7 +207,7 @@ pub fn rows_to_maps(schema: &Value, rows: &[Value]) -> Vec<Value> {
     rows.iter()
         .map(|r| {
             let cells = r.get("f").and_then(|f| f.as_array()).cloned().unwrap_or_default();
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             for (i, (name, ty)) in fields.iter().enumerate() {
                 let v = cells.get(i).and_then(|c| c.get("v")).cloned().unwrap_or_default();
                 let typed = match (&v, ty.as_str()) {

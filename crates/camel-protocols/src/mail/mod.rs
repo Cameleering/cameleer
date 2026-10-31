@@ -34,7 +34,7 @@ pub mod pop3;
 pub mod smtp;
 
 use std::any::Any;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -45,7 +45,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::common::{take_ignored, Authority, COMMON_IGNORED};
 use camel_tls::camel_support::{endpoint_tls, EndpointTls};
@@ -444,7 +444,7 @@ pub fn mail_to_exchange(ex: &mut Exchange, raw: &[u8], map_mail_message: bool) {
         ex.set_body(String::from_utf8_lossy(raw).into_owned());
     }
     if !msg.attachments.is_empty() {
-        let m: BTreeMap<String, Value> = msg.attachments.into_iter().map(|a| (a.name, Value::Bytes(a.data))).collect();
+        let m: ObjectMap = msg.attachments.into_iter().map(|a| (a.name, Value::Bytes(a.data))).collect();
         ex.set_property(ATTACHMENTS, Value::Object(m));
     }
 }

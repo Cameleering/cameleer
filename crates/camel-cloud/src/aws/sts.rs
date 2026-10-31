@@ -13,12 +13,11 @@
 //! expiration}` (plus `assumedRoleArn` / `federatedUserArn`; the identity for
 //! `getCallerIdentity`), ready to be used as `accessKey`/`secretKey`/`sessionToken` options.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::AwsConfig;
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -49,7 +48,7 @@ pub fn create(_remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
 }
 
 fn credentials_value(x: &Xml) -> Value {
-    let mut m = BTreeMap::new();
+    let mut m = ObjectMap::new();
     if let Some(c) = x.descendants("Credentials").first().copied() {
         let t = |n: &str| Value::from(x.child_text(c, n).unwrap_or_default());
         m.insert("accessKeyId".to_string(), t("AccessKeyId"));

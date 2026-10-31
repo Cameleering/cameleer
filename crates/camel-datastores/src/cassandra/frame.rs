@@ -2,11 +2,10 @@
 //! `[string map]`, `[option]`...), column types and value codecs, consistency levels and
 //! query parameters.
 
-use std::collections::BTreeMap;
 use std::io::{self, Read};
 
 use camel_core::error::{CamelError, Result};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::mongodb::bson::{format_iso_date, parse_iso_date};
 use crate::util::{hex, unhex};
@@ -823,7 +822,7 @@ pub fn decode_value(t: &CqlType, b: Option<&[u8]>) -> Result<Value> {
         CqlType::Map(kt, vt) => {
             let mut r = Reader::new(b);
             let n = r.int()?;
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             for _ in 0..n.max(0) {
                 let k = decode_value(kt, r.bytes()?.as_deref())?;
                 let v = decode_value(vt, r.bytes()?.as_deref())?;
@@ -841,7 +840,7 @@ pub fn decode_value(t: &CqlType, b: Option<&[u8]>) -> Result<Value> {
         }
         CqlType::Udt { fields, .. } => {
             let mut r = Reader::new(b);
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             for (n, t2) in fields {
                 let v = if r.remaining() > 0 { decode_value(t2, r.bytes()?.as_deref())? } else { Value::Null };
                 m.insert(n.clone(), v);

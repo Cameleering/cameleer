@@ -26,7 +26,6 @@ pub mod resp;
 pub mod server;
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,7 +35,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 pub use client::{PubSubMessage, RedisClient, RedisConfig, RedisConnection, Subscription};
 pub use repository::{RedisAggregationRepository, RedisIdempotentRepository};
@@ -217,7 +216,7 @@ fn to_object(r: &Resp) -> Value {
         Resp::Map(_) => r.to_value(),
         _ => {
             let items = r.items().unwrap_or_default();
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             for p in items.chunks(2) {
                 if p.len() == 2 {
                     m.insert(p[0].to_value().to_string(), p[1].to_value());

@@ -26,6 +26,10 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 ## Key concepts (camel-core)
 
 - `value::Value` — dynamic type for bodies, headers, properties (Null/Bool/Int/Float/String/Bytes/Array/Object).
+  `Object` holds a `value::ObjectMap` (alias `value::Map`): an insertion-ordered map like Camel's
+  `LinkedHashMap` (JSON/YAML parsers, CSV maps, SQL rows, XML→JSON, jq... keep source order; `insert`
+  on an existing key keeps its position, `remove` shifts). Its API mirrors `BTreeMap<String, Value>`;
+  `==` is order-insensitive like `Map.equals` (`eq_ordered` compares order too).
   `Display` renders strings raw and null as `""`; `to_json()` for JSON. `FromValue` = type converter
   (`ex.body_as::<String>()`). `compare_values`/`values_equal` give Camel-like coercing comparisons.
 - `error::CamelError { kind, message, cause }` — `kind` is a Java-like exception class name

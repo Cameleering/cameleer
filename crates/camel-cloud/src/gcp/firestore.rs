@@ -20,12 +20,11 @@
 //!   Body = list of maps with `_id`.
 //! Response header `CamelGoogleFirestoreUpdateTime`.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::GcpConfig;
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -57,7 +56,7 @@ pub fn to_firestore(v: &Value) -> Value {
 }
 
 /// A map as Firestore `fields`.
-pub fn fields_of(m: &BTreeMap<String, Value>) -> Value {
+pub fn fields_of(m: &ObjectMap) -> Value {
     Value::Object(m.iter().map(|(k, v)| (k.clone(), to_firestore(v))).collect())
 }
 
@@ -138,7 +137,7 @@ impl FirestoreService {
         header_str(ex, headers::DOCUMENT_ID).ok_or_else(|| CamelError::illegal_argument("Document id must be specified (CamelGoogleFirestoreDocumentId)"))
     }
 
-    fn body_map(ex: &Exchange) -> Result<BTreeMap<String, Value>> {
+    fn body_map(ex: &Exchange) -> Result<ObjectMap> {
         match ex.body() {
             Value::Object(m) => Ok(m.clone()),
             other => crate::util::parse_json(&other.to_bytes())?.as_object().cloned().ok_or_else(|| CamelError::illegal_argument("The document must be a map / JSON object")),
@@ -162,7 +161,7 @@ impl FirestoreService {
             return Ok(q);
         }
         let coll_id = collection.rsplit('/').next().unwrap_or(collection).to_string();
-        let mut sq = BTreeMap::new();
+        let mut sq = ObjectMap::new();
         sq.insert("from".to_string(), Value::Array(vec![obj([("collectionId", Value::from(coll_id))])]));
         let filters: Vec<Value> = q
             .as_object()

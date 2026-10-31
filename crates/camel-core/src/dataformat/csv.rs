@@ -11,11 +11,10 @@
 //! `ignoreSurroundingSpaces`/`trim`, `quoteMode` (`MINIMAL`, `ALL`, `NON_NUMERIC`, `NONE`),
 //! `nullString`, `commentMarker`, `escape`.
 
-use std::collections::BTreeMap;
 
 use crate::error::{CamelError, Result};
 use crate::message::Exchange;
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 use super::DataFormat;
 
@@ -321,7 +320,7 @@ impl CsvDataFormat {
             let rows = records
                 .into_iter()
                 .map(|r| {
-                    let mut m = BTreeMap::new();
+                    let mut m = ObjectMap::new();
                     for (i, f) in r.into_iter().enumerate() {
                         let key = header.get(i).cloned().unwrap_or_else(|| format!("{}", i));
                         m.insert(key, to_v(f));
@@ -379,5 +378,15 @@ mod tests {
         let f = CsvDataFormat::default();
         let v = Value::from(vec![Value::from(vec!["a", "b,c", "d\"e"]), Value::from(vec![Value::Int(1), Value::Null, Value::from("x")])]);
         assert_eq!(f.to_csv(&v).unwrap(), "a,\"b,c\",\"d\"\"e\"\r\n1,,x\r\n");
+    }
+
+    #[test]
+    fn maps_keep_header_order() {
+        // useOrderedMaps: each row is a LinkedHashMap in header order, and marshalling the maps
+        // back writes the columns in that same order.
+        let f = CsvDataFormat { use_maps: true, record_separator: "\n".into(), ..Default::default() };
+        let v = f.from_csv("zeta,alpha,mid\n1,2,3\n").unwrap();
+        assert_eq!(v.to_json(), r#"[{"zeta":"1","alpha":"2","mid":"3"}]"#);
+        assert_eq!(f.to_csv(&v).unwrap(), "zeta,alpha,mid\n1,2,3\n");
     }
 }

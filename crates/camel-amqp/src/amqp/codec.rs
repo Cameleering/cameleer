@@ -5,10 +5,9 @@
 //! types of every method used by the client and the embedded broker are listed in
 //! [`schema`] so that incoming frames can be decoded.
 
-use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 /// The protocol header sent by a client when it connects.
 pub const PROTOCOL_HEADER: &[u8; 8] = b"AMQP\x00\x00\x09\x01";
@@ -23,7 +22,7 @@ pub const FRAME_END: u8 = 0xCE;
 pub const FRAME_MIN_SIZE: u32 = 4096;
 
 /// A field table (`headers`, `arguments`, server/client properties).
-pub type Table = BTreeMap<String, Value>;
+pub type Table = ObjectMap;
 
 /// Class/method ids of the methods used by rust-camel.
 pub mod m {

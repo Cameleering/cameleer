@@ -16,12 +16,11 @@
 //!   `CamelAwsEventbridgeEventDetailType`, `CamelAwsEventbridgeEventResources` (list or comma
 //!   separated); body = list of entry ids, `CamelAwsEventbridgeFailedEntryCount`.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::AwsConfig;
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -71,7 +70,7 @@ impl EventbridgeService {
         header_str(ex, headers::RULE_NAME).ok_or_else(|| CamelError::illegal_argument("Rule name must be specified (CamelAwsEventbridgeRuleName)"))
     }
 
-    fn with_bus(&self, mut m: BTreeMap<String, Value>) -> Value {
+    fn with_bus(&self, mut m: ObjectMap) -> Value {
         m.insert("EventBusName".into(), Value::from(self.event_bus.clone()));
         Value::Object(m)
     }
@@ -92,7 +91,7 @@ impl EventbridgeService {
 
 fn target(v: &Value) -> Value {
     let g = |a: &str, b: &str| v.get(a).or_else(|| v.get(b)).cloned();
-    let mut m = BTreeMap::new();
+    let mut m = ObjectMap::new();
     m.insert("Id".to_string(), g("id", "Id").unwrap_or_default());
     m.insert("Arn".to_string(), g("arn", "Arn").unwrap_or_default());
     if let Some(i) = g("input", "Input") {
@@ -108,7 +107,7 @@ impl CloudService for EventbridgeService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = operation(ex, headers::OPERATION, &self.operation, "putRule");
         let one = |k: &str, v: Value| {
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert(k.to_string(), v);
             m
         };
@@ -152,7 +151,7 @@ impl CloudService for EventbridgeService {
                 }
             }
             "listRules" => {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 if let Some(p) = header_str(ex, headers::RULE_NAME_PREFIX) {
                     m.insert("NamePrefix".to_string(), Value::from(p));
                 }
@@ -175,7 +174,7 @@ impl CloudService for EventbridgeService {
                     v @ (Value::Object(_) | Value::Array(_)) => v.to_json(),
                     v => v.to_string(),
                 };
-                let mut entry = BTreeMap::new();
+                let mut entry = ObjectMap::new();
                 entry.insert("Source".to_string(), Value::from(source));
                 entry.insert("DetailType".to_string(), Value::from(detail_type));
                 entry.insert("Detail".to_string(), Value::from(detail));

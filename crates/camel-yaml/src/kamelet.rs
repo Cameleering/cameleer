@@ -528,7 +528,7 @@ pub fn pipe_to_route(doc: &Value) -> Result<Value> {
     if spec.get("errorHandler").is_some() {
         camel_warn!("camel-yaml", "Pipe {:?}: 'errorHandler' is not supported and is ignored", name);
     }
-    let mut route = BTreeMap::new();
+    let mut route = camel_core::value::ObjectMap::new();
     if let Some(n) = name {
         route.insert("id".to_string(), Value::String(n));
     }

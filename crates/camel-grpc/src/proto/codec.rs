@@ -26,10 +26,10 @@
 //! implicit-presence scalars, repeated and map fields are filled with their defaults.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use camel_core::error::{CamelError, Result};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::wkt::is_wrapper;
 use super::{DescriptorPool, FieldDescriptor, FieldType, MessageDescriptor};
@@ -257,7 +257,7 @@ fn wkt_in<'a>(md: &MessageDescriptor, v: &'a Value) -> Result<Cow<'a, Value>> {
     Ok(match name {
         "google.protobuf.Struct" => match v {
             Value::Object(_) => Cow::Owned(Value::object([("fields", v.clone())])),
-            Value::Null => Cow::Owned(Value::Object(BTreeMap::new())),
+            Value::Null => Cow::Owned(Value::Object(ObjectMap::new())),
             other => return Err(arg_err(format!("google.protobuf.Struct expects an object but got {}", other.type_name()))),
         },
         "google.protobuf.ListValue" => match v {
@@ -276,7 +276,7 @@ fn wkt_in<'a>(md: &MessageDescriptor, v: &'a Value) -> Result<Cow<'a, Value>> {
         }),
         n if is_wrapper(n) => match v {
             Value::Object(m) if m.len() == 1 && m.contains_key("value") => Cow::Borrowed(v),
-            Value::Null => Cow::Owned(Value::Object(BTreeMap::new())),
+            Value::Null => Cow::Owned(Value::Object(ObjectMap::new())),
             other => Cow::Owned(Value::object([("value", other.clone())])),
         },
         "google.protobuf.Timestamp" => match v {
@@ -305,7 +305,7 @@ fn wkt_out(md: &MessageDescriptor, v: Value) -> Value {
         other => return other,
     };
     match name {
-        "google.protobuf.Struct" => obj.remove("fields").unwrap_or(Value::Object(BTreeMap::new())),
+        "google.protobuf.Struct" => obj.remove("fields").unwrap_or(Value::Object(ObjectMap::new())),
         "google.protobuf.ListValue" => obj.remove("values").unwrap_or(Value::Array(Vec::new())),
         "google.protobuf.Value" => {
             if let Some(x) = obj.remove("number_value") {
@@ -342,7 +342,7 @@ fn encode_into(pool: &DescriptorPool, md: &MessageDescriptor, value: &Value, out
         return Err(arg_err("message nested too deeply"));
     }
     let value = wkt_in(md, value)?;
-    let empty = BTreeMap::new();
+    let empty = ObjectMap::new();
     let obj = match value.as_ref() {
         Value::Object(m) => m,
         Value::Null => &empty,
@@ -468,7 +468,7 @@ fn decode_depth(pool: &DescriptorPool, md: &MessageDescriptor, bytes: &[u8], opt
     if depth > MAX_DEPTH {
         return Err(err("message nested too deeply"));
     }
-    let mut map: BTreeMap<String, Value> = BTreeMap::new();
+    let mut map = ObjectMap::new();
     // singular message fields: concatenated encodings (merge semantics)
     let mut pending: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut pos = 0;
@@ -506,7 +506,7 @@ fn decode_depth(pool: &DescriptorPool, md: &MessageDescriptor, bytes: &[u8], opt
             } else {
                 v
             };
-            let slot = map.entry(fd.name.clone()).or_insert_with(|| Value::Object(BTreeMap::new()));
+            let slot = map.entry(fd.name.clone()).or_insert_with(|| Value::Object(ObjectMap::new()));
             if let Value::Object(m) = slot {
                 m.insert(k.to_string(), v);
             }
@@ -552,7 +552,7 @@ fn decode_depth(pool: &DescriptorPool, md: &MessageDescriptor, bytes: &[u8], opt
                 continue;
             }
             if fd.is_map {
-                map.insert(fd.name.clone(), Value::Object(BTreeMap::new()));
+                map.insert(fd.name.clone(), Value::Object(ObjectMap::new()));
             } else if fd.is_repeated() {
                 map.insert(fd.name.clone(), Value::Array(Vec::new()));
             } else if !fd.has_presence() {
@@ -560,7 +560,15 @@ fn decode_depth(pool: &DescriptorPool, md: &MessageDescriptor, bytes: &[u8], opt
             }
         }
     }
-    Ok(wkt_out(md, Value::Object(map)))
+    // Fields come out in declaration order (like protobuf-java's `getAllFields` / `JsonFormat`),
+    // whatever their order on the wire.
+    let mut ordered = ObjectMap::with_capacity(map.len());
+    for fd in &md.fields {
+        if let Some(v) = map.remove(&fd.name) {
+            ordered.insert(fd.name.clone(), v);
+        }
+    }
+    Ok(wkt_out(md, Value::Object(ordered)))
 }
 
 /// The default value of an implicit-presence scalar field.

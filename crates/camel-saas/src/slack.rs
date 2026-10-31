@@ -28,7 +28,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::rest::{api_error, body_text, emit, join_url, poll_config, poll_consumer, query, Req, Rest};
 
@@ -177,7 +177,7 @@ impl SlackProducer {
         let mut m = match &ex.message.body {
             Value::Object(o) => o.clone(),
             _ => {
-                let mut o = std::collections::BTreeMap::new();
+                let mut o = ObjectMap::new();
                 o.insert("text".to_string(), Value::String(body_text(ex).unwrap_or_default()));
                 o
             }

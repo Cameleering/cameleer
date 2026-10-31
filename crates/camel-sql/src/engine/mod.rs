@@ -37,7 +37,7 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use camel_core::error::{CamelError, Result};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::datasource::{sql_error, Connection, DataSource, ExecuteOptions, QueryResult};
 use ast::Statement;
@@ -150,7 +150,7 @@ impl EmbeddedConnection {
     }
 
     /// Execute one parsed statement.
-    pub fn execute_parsed(&mut self, stmt: &Statement, positional: &[Value], named: Option<&BTreeMap<String, Value>>, opts: &ExecuteOptions) -> SqlResult<QueryResult> {
+    pub fn execute_parsed(&mut self, stmt: &Statement, positional: &[Value], named: Option<&ObjectMap>, opts: &ExecuteOptions) -> SqlResult<QueryResult> {
         match stmt {
             Statement::Begin => {
                 if self.tx.is_none() {
@@ -198,7 +198,7 @@ impl EmbeddedConnection {
     }
 
     /// Execute a script; returns the result of every statement.
-    pub fn execute_script(&mut self, sql: &str, positional: &[Value], named: Option<&BTreeMap<String, Value>>, opts: &ExecuteOptions) -> SqlResult<Vec<QueryResult>> {
+    pub fn execute_script(&mut self, sql: &str, positional: &[Value], named: Option<&ObjectMap>, opts: &ExecuteOptions) -> SqlResult<Vec<QueryResult>> {
         let stmts = match parser::parse_statements(sql) {
             Ok(s) => s,
             Err(e) => {
@@ -216,7 +216,7 @@ impl EmbeddedConnection {
     }
 
     /// Execute SQL with named parameters (`:name` / `:#name`).
-    pub fn execute_named(&mut self, sql: &str, named: &BTreeMap<String, Value>) -> Result<QueryResult> {
+    pub fn execute_named(&mut self, sql: &str, named: &ObjectMap) -> Result<QueryResult> {
         let mut v = self.execute_script(sql, &[], Some(named), &ExecuteOptions::default())?;
         Ok(v.pop().unwrap_or_default())
     }

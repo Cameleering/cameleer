@@ -1,9 +1,8 @@
 //! JSON parsing (serialization lives on [`Value::to_json`]).
 
-use std::collections::BTreeMap;
 
 use crate::error::{CamelError, Result};
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 /// Parse a JSON document into a [`Value`].
 pub fn parse(text: &str) -> Result<Value> {
@@ -75,7 +74,7 @@ impl<'a> Parser<'a> {
             None => Err(self.err("Unexpected end of input")),
             Some(b'{') => {
                 self.i += 1;
-                let mut map = BTreeMap::new();
+                let mut map = ObjectMap::new();
                 self.ws();
                 if self.peek() == Some(b'}') {
                     self.i += 1;

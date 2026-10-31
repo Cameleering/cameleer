@@ -13,7 +13,7 @@ use crate::context::CamelContext;
 use crate::error::Result;
 use crate::message::Exchange;
 use crate::spi::{AggregationStrategy, Expression, Predicate};
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 use super::support::{LazyExpr, LazyPred};
 
@@ -108,7 +108,7 @@ impl AggregationStrategy for GroupedBodyAggregationStrategy {
 
 /// Snapshot of an exchange as a value: `{exchangeId, body, headers, properties}`.
 pub fn exchange_to_value(ex: &Exchange) -> Value {
-    let props: std::collections::BTreeMap<String, Value> =
+    let props: ObjectMap =
         ex.properties.iter().filter(|(k, _)| k.as_str() != GROUPED_EXCHANGE).map(|(k, v)| (k.clone(), v.clone())).collect();
     Value::object([
         ("exchangeId", Value::String(ex.exchange_id.clone())),

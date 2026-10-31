@@ -1,9 +1,8 @@
 //! Expression evaluation, value coercion and comparison.
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::ast::{is_aggregate, BinOp, DataType, Expr};
 use super::exec::{run_select, Database};
@@ -53,7 +52,7 @@ impl Scope {
 /// Statement parameters.
 pub struct Params<'a> {
     pub positional: &'a [Value],
-    pub named: Option<&'a BTreeMap<String, Value>>,
+    pub named: Option<&'a ObjectMap>,
 }
 
 /// Evaluation environment.

@@ -660,7 +660,7 @@ mod tests {
         let s = r##"{"definitions":{"pos":{"type":"integer","minimum":1}},"$defs":{"name":{"type":"string"}},
             "properties":{"n":{"$ref":"#/definitions/pos"},"s":{"$ref":"#/$defs/name"},"child":{"$ref":"#"}}}"##;
         assert!(errs(s, r#"{"n":1,"s":"x","child":{"n":2}}"#).is_empty());
-        assert_eq!(errs(s, r#"{"n":0,"child":{"s":1}}"#), ["$.child.s: integer found, string expected", "$.n: must have a minimum value of 1"]);
+        assert_eq!(errs(s, r#"{"n":0,"child":{"s":1}}"#), ["$.n: must have a minimum value of 1", "$.child.s: integer found, string expected"]);
         assert_eq!(errs(r##"{"$ref":"#/nope"}"##, "1").len(), 1);
         assert!(errs("true", "1").is_empty());
         assert_eq!(errs("false", "1").len(), 1);

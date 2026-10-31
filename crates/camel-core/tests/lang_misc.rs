@@ -91,6 +91,9 @@ fn jq_table() {
         (".items | map(select(.tags | length > 0)) | length", Value::Int(2)),
         (".items[0] | has(\"price\")", Value::Bool(true)),
         (".items[0] | to_entries | .[0].key", Value::from("id")),
+        ("keys", Value::from(vec!["items", "meta", "name"])),
+        ("keys_unsorted", Value::from(vec!["name", "items", "meta"])),
+        ("{z: 1, a: 2} | tojson", Value::from(r#"{"z":1,"a":2}"#)),
         (".items[0] | with_entries(select(.key == \"id\"))", Value::object([("id", 1)])),
         (".items | sort_by(-.price) | .[0].id", Value::Int(3)),
         (".items | group_by(.tags | length) | length", Value::Int(3)),
@@ -119,7 +122,7 @@ fn jq_table() {
         (".name | not", Value::Bool(false)),
         ("empty", Value::Null),
         // objects iterate in key order (items, meta, name)
-        ("[.[]?]", Value::Array(vec![doc.get("items").unwrap().clone(), doc.get("meta").unwrap().clone(), Value::from("shop")])),
+        ("[.[]?]", Value::Array(vec![Value::from("shop"), doc.get("items").unwrap().clone(), doc.get("meta").unwrap().clone()])),
         (".name? // \"x\"", Value::from("shop")),
         ("[.. | numbers] | length", Value::Int(6)),
         (".items[0] | tojson", Value::from(r#"{"id":1,"price":5,"tags":["a"]}"#)),

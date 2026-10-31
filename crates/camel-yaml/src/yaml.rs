@@ -19,11 +19,11 @@
 //!
 //! [`to_yaml`] emits a [`Value`] as block-style YAML.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use camel_core::error::kinds;
-use camel_core::{CamelError, Value};
+use camel_core::{CamelError, Value, value::ObjectMap};
 
 /// Maximum number of nodes that alias expansion may create (protection against
 /// "billion laughs" documents).
@@ -223,8 +223,11 @@ impl Node {
                         return Err(self.err(format!("tag {} cannot be applied to a mapping", t)));
                     }
                 }
-                let mut explicit: BTreeMap<String, Value> = BTreeMap::new();
-                let mut merged: BTreeMap<String, Value> = BTreeMap::new();
+                // Like SnakeYAML's `mergeNode`: keys keep source order, merged keys are spliced in
+                // where `<<` appears (without overriding earlier keys), and an explicit key
+                // overrides a merged one in place.
+                let mut out = ObjectMap::new();
+                let mut explicit: HashSet<String> = HashSet::new();
                 for (k, v) in pairs {
                     let is_merge = matches!(&k.kind, NodeKind::Scalar(t, ScalarStyle::Plain) if t == "<<") && k.tag.is_none();
                     if is_merge {
@@ -237,7 +240,7 @@ impl Node {
                             match src.to_value()? {
                                 Value::Object(m) => {
                                     for (mk, mv) in m {
-                                        merged.entry(mk).or_insert(mv);
+                                        out.entry(mk).or_insert(mv);
                                     }
                                 }
                                 _ => return Err(src.err("merge key '<<' requires a mapping or a sequence of mappings")),
@@ -245,16 +248,13 @@ impl Node {
                         }
                     } else {
                         let key = k.key_string()?;
-                        if explicit.contains_key(&key) {
+                        if !explicit.insert(key.clone()) {
                             return Err(k.err(format!("duplicate mapping key '{}'", key)));
                         }
-                        explicit.insert(key, v.to_value()?);
+                        out.insert(key, v.to_value()?);
                     }
                 }
-                for (k, v) in merged {
-                    explicit.entry(k).or_insert(v);
-                }
-                Ok(Value::Object(explicit))
+                Ok(Value::Object(out))
             }
         }
     }
@@ -332,7 +332,7 @@ fn resolve_scalar(text: &str, style: ScalarStyle, tag: Option<&str>) -> std::res
     }
     if is_tag(tag, "map") || is_tag(tag, "seq") {
         if style == ScalarStyle::Plain && text.is_empty() {
-            return Ok(if is_tag(tag, "map") { Value::Object(BTreeMap::new()) } else { Value::Array(Vec::new()) });
+            return Ok(if is_tag(tag, "map") { Value::Object(ObjectMap::new()) } else { Value::Array(Vec::new()) });
         }
         return Err(format!("tag {} cannot be applied to a scalar", tag));
     }
@@ -1642,7 +1642,7 @@ fn emit_value_after_indicator(v: &Value, indent: usize, out: &mut String) {
     }
 }
 
-fn emit_map(m: &BTreeMap<String, Value>, indent: usize, first_inline: bool, out: &mut String) {
+fn emit_map(m: &ObjectMap, indent: usize, first_inline: bool, out: &mut String) {
     for (i, (k, v)) in m.iter().enumerate() {
         if !(first_inline && i == 0) {
             pad(out, indent);
@@ -2224,6 +2224,18 @@ mod tests {
         let v = p(src);
         assert_eq!(v.get("m").unwrap(), &obj(vec![("a", Value::Int(1)), ("b", Value::Int(20))]));
         assert_eq!(v.get("multi").unwrap(), &obj(vec![("a", Value::Int(1)), ("b", Value::Int(2)), ("c", Value::Int(3))]));
+        // SnakeYAML order: merged keys spliced in at the `<<`, explicit keys override in place
+        let v = p("d: &d\n  y: 1\n  x: 2\nm:\n  z: 0\n  <<: *d\n  x: 20\n  w: 3\n");
+        assert_eq!(v.get("m").unwrap().to_json(), r#"{"z":0,"y":1,"x":20,"w":3}"#);
+    }
+
+    #[test]
+    fn mappings_keep_source_order() {
+        let src = "zebra: 1\napple:\n  second: b\n  first: a\nmango: [3, 2]\n";
+        let v = p(src);
+        assert_eq!(v.to_json(), r#"{"zebra":1,"apple":{"second":"b","first":"a"},"mango":[3,2]}"#);
+        assert_eq!(to_yaml(&v), "zebra: 1\napple:\n  second: b\n  first: a\nmango:\n  - 3\n  - 2\n");
+        assert_eq!(p(&to_yaml(&v)).to_json(), v.to_json());
     }
 
     #[test]
@@ -2544,7 +2556,7 @@ root:
     #[test]
     fn emit_seq_of_maps() {
         let v = arr(vec![obj(vec![("route", obj(vec![("id", s("r1")), ("from", obj(vec![("uri", s("direct:a"))]))]))])]);
-        assert_eq!(to_yaml(&v), "- route:\n    from:\n      uri: direct:a\n    id: r1\n");
+        assert_eq!(to_yaml(&v), "- route:\n    id: r1\n    from:\n      uri: direct:a\n");
         roundtrip(&v);
     }
 

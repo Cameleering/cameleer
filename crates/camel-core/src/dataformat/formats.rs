@@ -1,10 +1,9 @@
 //! Simple data formats: `json`, `string`, `hex`, `jacksonXml` and `urlencoded`.
 
-use std::collections::BTreeMap;
 
 use crate::error::{CamelError, Result};
 use crate::message::Exchange;
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 use super::DataFormat;
 
@@ -171,7 +170,7 @@ impl DataFormat for UrlEncodedDataFormat {
     fn marshal(&self, ex: &mut Exchange) -> Result<()> {
         let o = match &ex.message.body {
             Value::Object(o) => o.clone(),
-            Value::Null => BTreeMap::new(),
+            Value::Null => ObjectMap::new(),
             other => return Err(CamelError::new("DataFormatException", format!("urlencoded marshal requires an object body, got {}", other.type_name()))),
         };
         let mut parts = Vec::new();
@@ -190,7 +189,7 @@ impl DataFormat for UrlEncodedDataFormat {
     }
     fn unmarshal(&self, ex: &mut Exchange) -> Result<()> {
         let t = body_text(&ex.message.body)?;
-        let mut m: BTreeMap<String, Value> = BTreeMap::new();
+        let mut m = ObjectMap::new();
         for pair in t.split('&').filter(|p| !p.is_empty()) {
             let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
             let k = crate::util::url_decode(&k.replace('+', " "));

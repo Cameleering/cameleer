@@ -46,7 +46,7 @@ fn servicebus_send_receive_peek_lock_complete() {
     mock.expected_bodies_received(vec!["order-1", "order-2"]);
     mock.expected_header_received("CamelAzureServiceBusDeliveryCount", 0);
     let t = ctx.create_producer_template();
-    let mut props = std::collections::BTreeMap::new();
+    let mut props = camel_core::value::ObjectMap::new();
     props.insert("region".to_string(), Value::from("EU"));
     t.send_body_and_headers(
         &sb(&b, "orders", ""),

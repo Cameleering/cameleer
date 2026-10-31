@@ -19,7 +19,7 @@ use crate::impl_definition_boilerplate;
 use crate::message::Exchange;
 use crate::model::{ProcessorDefinition, RouteContext};
 use crate::spi::Processor;
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 /// Exchange property holding the claim check repository.
 pub const CLAIM_CHECK_REPOSITORY: &str = "CamelClaimCheckRepository";
@@ -142,7 +142,7 @@ fn snapshot(ex: &Exchange) -> Value {
     Value::object([("body", ex.message.body.clone()), ("headers", ex.message.headers.to_value())])
 }
 
-fn repo(ex: &mut Exchange) -> &mut std::collections::BTreeMap<String, Value> {
+fn repo(ex: &mut Exchange) -> &mut ObjectMap {
     let entry = ex
         .properties
         .entry(CLAIM_CHECK_REPOSITORY.to_string())
@@ -153,7 +153,7 @@ fn repo(ex: &mut Exchange) -> &mut std::collections::BTreeMap<String, Value> {
     entry.as_object_mut().unwrap()
 }
 
-fn keys_of(ex: &mut Exchange) -> &mut std::collections::BTreeMap<String, Value> {
+fn keys_of(ex: &mut Exchange) -> &mut ObjectMap {
     let r = repo(ex);
     if !matches!(r.get("keys"), Some(Value::Object(_))) {
         r.insert("keys".into(), Value::Object(Default::default()));

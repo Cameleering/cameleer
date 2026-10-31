@@ -289,6 +289,11 @@ impl Script {
             _ => v,
         };
         let mut out = value::to_value(&v);
+        if self.dialect == Dialect::Jsonnet {
+            // Jsonnet objects have no field order: materialized output is sorted by key
+            // (sjsonnet's default, as used by Camel DataSonnet), for JSON text and Java objects alike.
+            sort_keys_deep(&mut out);
+        }
         if self.dialect == Dialect::Jsonnet && self.result_type.is_none() {
             let m = self.output_media_type.to_ascii_lowercase();
             if m.contains("json") {
@@ -321,6 +326,18 @@ impl Script {
             }
         }
         CamelError::new(kinds::EXPRESSION_EVALUATION, format!("{} error: uncaught exception: {}", lang, it.display(e)))
+    }
+}
+
+/// Sort the keys of every object inside `v` (recursively).
+fn sort_keys_deep(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            o.sort_keys();
+            o.values_mut().for_each(sort_keys_deep);
+        }
+        Value::Array(a) => a.iter_mut().for_each(sort_keys_deep),
+        _ => {}
     }
 }
 

@@ -19,7 +19,7 @@ use std::sync::Arc;
 use crate::error::{CamelError, Result};
 use crate::message::Exchange;
 use crate::spi::{Expression, Language, Predicate};
-use crate::value::{compare_values, Value};
+use crate::value::{compare_values, ObjectMap, Value};
 
 #[derive(Debug, Clone, PartialEq)]
 enum T {
@@ -567,12 +567,15 @@ fn jq_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
             x.len().cmp(&y.len())
         }
         (Value::Object(x), Value::Object(y)) => {
-            let kx: Vec<&String> = x.keys().collect();
-            let ky: Vec<&String> = y.keys().collect();
+            // jq compares objects by their sorted key sets first, then value by value in key order.
+            let mut kx: Vec<&String> = x.keys().collect();
+            let mut ky: Vec<&String> = y.keys().collect();
+            kx.sort();
+            ky.sort();
             match kx.cmp(&ky) {
                 Ordering::Equal => {
-                    for (k, v) in x {
-                        let c = jq_cmp(v, &y[k]);
+                    for k in kx {
+                        let c = jq_cmp(&x[k], &y[k]);
                         if c != Ordering::Equal {
                             return c;
                         }
@@ -844,7 +847,7 @@ fn eval(e: &E, input: &Value) -> Result<Vec<Value>> {
             None => vec![],
         })],
         E::Object(entries) => {
-            let mut results: Vec<BTreeMap<String, Value>> = vec![BTreeMap::new()];
+            let mut results: Vec<ObjectMap> = vec![ObjectMap::new()];
             for (k, v) in entries {
                 let keys = eval(k, input)?;
                 let vals = match v {
@@ -931,7 +934,14 @@ fn call(name: &str, args: &[E], input: &Value) -> Result<Vec<Value>> {
         }],
         ("utf8bytelength", 0) => vec![Value::Int(s()?.len() as i64)],
         ("keys", 0) | ("keys_unsorted", 0) => vec![match input {
-            Value::Object(o) => Value::Array(o.keys().map(|k| Value::String(k.clone())).collect()),
+            Value::Object(o) => {
+                // `keys` is sorted by codepoint; `keys_unsorted` keeps the object's insertion order.
+                let mut ks: Vec<&String> = o.keys().collect();
+                if name == "keys" {
+                    ks.sort();
+                }
+                Value::Array(ks.into_iter().map(|k| Value::String(k.clone())).collect())
+            }
             Value::Array(a) => Value::Array((0..a.len()).map(|i| Value::Int(i as i64)).collect()),
             other => return Err(type_err(format!("{} has no keys", other.type_name()))),
         }],
@@ -963,7 +973,7 @@ fn call(name: &str, args: &[E], input: &Value) -> Result<Vec<Value>> {
         }
         ("map_values", 1) => vec![match input {
             Value::Object(o) => {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 for (k, v) in o {
                     if let Some(x) = eval(&args[0], v)?.into_iter().next() {
                         m.insert(k.clone(), x);
@@ -1161,7 +1171,7 @@ fn call(name: &str, args: &[E], input: &Value) -> Result<Vec<Value>> {
             other => return Err(type_err(format!("{} has no keys", other.type_name()))),
         })],
         ("from_entries", 0) => {
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             for e in arr(input, "from_entries")? {
                 let k = e.get("key").or_else(|| e.get("k")).or_else(|| e.get("name")).cloned().unwrap_or(Value::Null);
                 let v = e.get("value").or_else(|| e.get("v")).cloned().unwrap_or(Value::Null);

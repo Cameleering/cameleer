@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use camel_core::value::{compare_values, values_equal, Value};
+use camel_core::value::{compare_values, ObjectMap, Value, values_equal};
 
 use super::{gerror, GcpMock, Shared};
 use crate::gcp::firestore::{document_fields, fields_of, from_firestore};
@@ -18,7 +18,7 @@ pub type CloudFn = std::sync::Arc<dyn Fn(&str) -> Result<String, String> + Send 
 
 struct BqTable {
     schema: Vec<(String, String)>,
-    rows: Vec<BTreeMap<String, Value>>,
+    rows: Vec<ObjectMap>,
     insert_ids: Vec<String>,
 }
 
@@ -43,7 +43,7 @@ pub(super) struct ExtState {
     bq_page_size: usize,
     secrets: BTreeMap<String, Vec<Vec<u8>>>,
     functions: BTreeMap<String, CloudFn>,
-    docs: BTreeMap<String, (BTreeMap<String, Value>, i64, i64)>,
+    docs: BTreeMap<String, (ObjectMap, i64, i64)>,
     sheets: BTreeMap<String, Spreadsheet>,
     pub(super) token_scopes: HashMap<String, String>,
 }
@@ -163,7 +163,7 @@ fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> R
             let mut accepted = Vec::new();
             for (i, r) in rows.iter().enumerate() {
                 let json = r.get("json").and_then(|j| j.as_object()).cloned().unwrap_or_default();
-                let mut row = BTreeMap::new();
+                let mut row = ObjectMap::new();
                 let mut err: Option<String> = None;
                 for (k, v) in &json {
                     match t.schema.iter().find(|(n, _)| n == k) {
@@ -228,7 +228,7 @@ fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> R
 
 fn query_response(ext: &ExtState, project: &str, job_id: &str, token: Option<String>) -> Response {
     let j = &ext.jobs[job_id];
-    let mut m = BTreeMap::new();
+    let mut m = ObjectMap::new();
     m.insert("kind".to_string(), Value::from("bigquery#queryResponse"));
     m.insert("jobReference".to_string(), obj([("projectId", Value::from(project)), ("jobId", Value::from(job_id))]));
     if j.pending_polls > 0 && token.is_none() {
@@ -392,7 +392,7 @@ impl Parser<'_> {
     }
 }
 
-fn matches_row(row: &BTreeMap<String, Value>, conds: &[(String, String, Value)]) -> bool {
+fn matches_row(row: &ObjectMap, conds: &[(String, String, Value)]) -> bool {
     use std::cmp::Ordering::*;
     conds.iter().all(|(col, op, v)| {
         let x = row.get(col.rsplit('.').next().unwrap_or(col)).cloned().unwrap_or_default();
@@ -465,7 +465,7 @@ fn run_sql(ext: &mut ExtState, project: &str, q: &str, params: &HashMap<String, 
             return Err(format!("Syntax error: Unexpected {:?}", p.t[p.i]));
         }
         let t = ext.tables.get(&key).ok_or_else(|| not_found(&key))?;
-        let mut rows: Vec<&BTreeMap<String, Value>> = t.rows.iter().filter(|r| matches_row(r, &conds)).collect();
+        let mut rows: Vec<&ObjectMap> = t.rows.iter().filter(|r| matches_row(r, &conds)).collect();
         if let Some((col, desc)) = &order {
             rows.sort_by(|a, b| {
                 let o = compare_values(a.get(col).unwrap_or(&Value::Null), b.get(col).unwrap_or(&Value::Null)).unwrap_or(std::cmp::Ordering::Equal);
@@ -550,7 +550,7 @@ fn run_sql(ext: &mut ExtState, project: &str, q: &str, params: &HashMap<String, 
         let t = ext.tables.get_mut(&key).ok_or_else(|| not_found(&key))?;
         let mut n = 0;
         while p.op("(") {
-            let mut row = BTreeMap::new();
+            let mut row = ObjectMap::new();
             for c in &cols {
                 let v = p.value()?;
                 let ty = t.schema.iter().find(|(name, _)| name == c).map(|(_, ty)| ty.clone()).ok_or_else(|| format!("Column {} is not present in table {}", c, key))?;
@@ -672,11 +672,11 @@ fn functions(st: &Shared, req: &ServerRequest, project: &str, location: &str, re
 // Firestore
 // ---------------------------------------------------------------------------
 
-fn doc_resource(name: &str, d: &(BTreeMap<String, Value>, i64, i64)) -> Value {
+fn doc_resource(name: &str, d: &(ObjectMap, i64, i64)) -> Value {
     obj([("name", Value::from(name)), ("fields", fields_of(&d.0)), ("createTime", Value::from(iso8601_millis(d.1))), ("updateTime", Value::from(iso8601_millis(d.2)))])
 }
 
-fn ffilter(doc: &BTreeMap<String, Value>, f: &Value) -> bool {
+fn ffilter(doc: &ObjectMap, f: &Value) -> bool {
     use std::cmp::Ordering::*;
     if let Some(c) = f.get("compositeFilter") {
         let subs = c.get("filters").and_then(|a| a.as_array()).cloned().unwrap_or_default();
@@ -731,7 +731,7 @@ fn firestore(st: &Shared, req: &ServerRequest, project: &str, db: &str, rest: &[
         let Some(sq) = body.get("structuredQuery") else { return gerror(400, "INVALID_ARGUMENT", "structuredQuery is required") };
         let coll = sq.get("from").and_then(|f| f.as_array()).and_then(|a| a.first()).and_then(|f| f.get("collectionId")).map(|c| c.to_string()).unwrap_or_default();
         let parent = format!("{}/{}/", full, coll);
-        let mut docs: Vec<(&String, &(BTreeMap<String, Value>, i64, i64))> =
+        let mut docs: Vec<(&String, &(ObjectMap, i64, i64))> =
             ext.docs.iter().filter(|(n, d)| n.starts_with(&parent) && !n[parent.len()..].contains('/') && sq.get("where").is_none_or(|w| ffilter(&d.0, w))).collect();
         if let Some(o) = sq.get("orderBy").and_then(|o| o.as_array()).and_then(|a| a.first()) {
             let field = o.get("field").and_then(|f| f.get("fieldPath")).map(|p| p.to_string()).unwrap_or_default();
@@ -783,7 +783,7 @@ fn firestore(st: &Shared, req: &ServerRequest, project: &str, db: &str, rest: &[
             }
             let fields = document_fields(&body).as_object().cloned().unwrap_or_default();
             let mask: Vec<String> = req.query_params().into_iter().filter(|(k, _)| k == "updateMask.fieldPaths").map(|(_, v)| v).collect();
-            let entry = ext.docs.entry(full.clone()).or_insert_with(|| (BTreeMap::new(), now, now));
+            let entry = ext.docs.entry(full.clone()).or_insert_with(|| (ObjectMap::new(), now, now));
             if mask.is_empty() {
                 entry.0 = fields;
             } else {

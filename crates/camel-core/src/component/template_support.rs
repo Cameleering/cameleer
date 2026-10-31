@@ -18,7 +18,6 @@
 //! (`body`, `headers`, `messageId`) and, with `allowContextMapAll`, `camelContext` (`name`).
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -27,7 +26,7 @@ use crate::error::{CamelError, Result};
 use crate::message::Exchange;
 use crate::spi::{Endpoint, Processor, Producer, Service};
 use crate::util::Parameters;
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 /// Loads partial templates by name (returns None when not found).
 pub type PartialLoader<'a> = &'a dyn Fn(&str) -> Option<String>;
@@ -104,7 +103,7 @@ pub fn lookup_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
 /// Build the template data model for an exchange.
 pub fn template_context(ex: &Exchange, allow_context_map_all: bool) -> Value {
     let headers = ex.message.headers.to_value();
-    let variables: BTreeMap<String, Value> =
+    let variables: ObjectMap =
         ex.properties.iter().filter_map(|(k, v)| k.strip_prefix("CamelVariable.").map(|n| (n.to_string(), v.clone()))).collect();
     let message = Value::object([
         ("body", ex.message.body.clone()),
@@ -112,14 +111,14 @@ pub fn template_context(ex: &Exchange, allow_context_map_all: bool) -> Value {
         ("messageId", Value::String(ex.message.message_id.clone())),
     ]);
     let exchange = Value::object([
-        ("properties", Value::Object(ex.properties.clone())),
+        ("properties", Value::from(ex.properties.clone())),
         ("exchangeId", Value::String(ex.exchange_id.clone())),
         ("pattern", Value::String(format!("{:?}", ex.pattern))),
         ("message", message.clone()),
         ("in", message.clone()),
         ("variables", Value::Object(variables.clone())),
     ]);
-    let mut m: BTreeMap<String, Value> = BTreeMap::new();
+    let mut m = ObjectMap::new();
     m.insert("body".into(), ex.message.body.clone());
     m.insert("headers".into(), headers);
     m.insert("variables".into(), Value::Object(variables));

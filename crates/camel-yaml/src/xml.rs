@@ -19,11 +19,11 @@
 //! (`when` / `doCatch` / `exception` are always lists, repeated elements become lists);
 //! an element with only text becomes a string.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use camel_core::error::kinds;
 use camel_core::model::RouteDefinition;
-use camel_core::{CamelContext, CamelError, Result, Value};
+use camel_core::{CamelContext, CamelError, Result, Value, value::ObjectMap};
 
 use crate::dsl::{StepRegistry, YamlLoader, LANGUAGES};
 
@@ -302,11 +302,11 @@ fn decode_entities(s: &str) -> std::result::Result<String, String> {
 // Conversion to the YAML DSL shape
 // ---------------------------------------------------------------------------
 
-fn attrs_map(el: &Element) -> BTreeMap<String, Value> {
+fn attrs_map(el: &Element) -> ObjectMap {
     el.attributes.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()
 }
 
-fn insert_child(map: &mut BTreeMap<String, Value>, repeated: &mut BTreeSet<String>, key: &str, v: Value) {
+fn insert_child(map: &mut ObjectMap, repeated: &mut BTreeSet<String>, key: &str, v: Value) {
     if ARRAY_KEYS.contains(&key) || repeated.contains(key) {
         match map.get_mut(key) {
             Some(Value::Array(a)) => a.push(v),
@@ -334,7 +334,7 @@ fn convert_body(el: &Element, steps: &StepRegistry) -> Value {
     let text = el.text();
     if el.attributes.is_empty() && elements.is_empty() {
         let t = text.trim();
-        return if t.is_empty() { Value::Object(BTreeMap::new()) } else { Value::String(t.to_string()) };
+        return if t.is_empty() { Value::Object(ObjectMap::new()) } else { Value::String(t.to_string()) };
     }
     let mut map = attrs_map(el);
     let mut step_list: Vec<Value> = Vec::new();
@@ -380,7 +380,7 @@ fn convert_step(el: &Element, steps: &StepRegistry) -> Value {
 
 fn convert_route(el: &Element, steps: &StepRegistry) -> Result<Value> {
     let mut route = attrs_map(el);
-    let mut from: Option<BTreeMap<String, Value>> = None;
+    let mut from: Option<ObjectMap> = None;
     let mut step_list = Vec::new();
     for child in el.elements() {
         match child.name.as_str() {
@@ -438,7 +438,7 @@ fn convert_top(el: &Element, steps: &StepRegistry, out: &mut Vec<Value>) -> Resu
             let mut b = attrs_map(el);
             for c in el.elements() {
                 if c.name == "properties" {
-                    let props: BTreeMap<String, Value> = c
+                    let props: ObjectMap = c
                         .elements()
                         .filter_map(|p| Some((p.attr("key")?.to_string(), Value::String(p.attr("value").unwrap_or("").to_string()))))
                         .collect();

@@ -153,7 +153,7 @@ pub fn parse_error_handler(camel: &CamelContext, v: &Value) -> Result<ErrorHandl
     };
     let map = match cfg {
         Value::Object(m) => m.clone(),
-        _ => BTreeMap::new(),
+        _ => camel_core::value::ObjectMap::new(),
     };
     for (k, val) in &map {
         let wrap = |e: CamelError| dsl_error(format!("{} option '{}': {}", kind, k, e.message));
@@ -206,7 +206,7 @@ impl YamlLoader {
     pub(super) fn build_route_configuration(&self, camel: &CamelContext, source: &Source<'_>, cfg: &Value, path: Vec<PathSegment>) -> Result<BuilderScope> {
         let map = match cfg {
             Value::Object(m) => m.clone(),
-            Value::Null => BTreeMap::new(),
+            Value::Null => camel_core::value::ObjectMap::new(),
             other => {
                 return Err(dsl_error(format!("A routeConfiguration must be a mapping but found {} {}", other.type_name(), source.location(&path))))
             }

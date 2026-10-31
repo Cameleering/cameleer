@@ -9,6 +9,12 @@ use std::fmt;
 
 use crate::error::{CamelError, Result};
 
+mod map;
+pub use map::{Entry, IntoIter, Iter, IterMut, Keys, ObjectMap, OccupiedEntry, VacantEntry, Values, ValuesMut};
+
+/// Short alias for [`ObjectMap`], the insertion-ordered map behind [`Value::Object`].
+pub type Map = ObjectMap;
+
 /// A dynamically typed value.
 #[derive(Clone, Debug, Default)]
 pub enum Value {
@@ -20,7 +26,8 @@ pub enum Value {
     String(String),
     Bytes(Vec<u8>),
     Array(Vec<Value>),
-    Object(BTreeMap<String, Value>),
+    /// A map with insertion-ordered keys (Camel's `LinkedHashMap`); see [`ObjectMap`].
+    Object(ObjectMap),
 }
 
 impl PartialEq for Value {
@@ -177,14 +184,14 @@ impl Value {
         }
     }
 
-    pub fn as_object(&self) -> Option<&BTreeMap<String, Value>> {
+    pub fn as_object(&self) -> Option<&ObjectMap> {
         match self {
             Value::Object(o) => Some(o),
             _ => None,
         }
     }
 
-    pub fn as_object_mut(&mut self) -> Option<&mut BTreeMap<String, Value>> {
+    pub fn as_object_mut(&mut self) -> Option<&mut ObjectMap> {
         match self {
             Value::Object(o) => Some(o),
             _ => None,
@@ -452,9 +459,15 @@ impl From<Vec<&str>> for Value {
         Value::Array(v.into_iter().map(Value::from).collect())
     }
 }
-impl From<BTreeMap<String, Value>> for Value {
-    fn from(v: BTreeMap<String, Value>) -> Self {
+impl From<ObjectMap> for Value {
+    fn from(v: ObjectMap) -> Self {
         Value::Object(v)
+    }
+}
+impl From<BTreeMap<String, Value>> for Value {
+    /// The entries keep the map's (sorted) iteration order.
+    fn from(v: BTreeMap<String, Value>) -> Self {
+        Value::Object(v.into())
     }
 }
 impl<T: Into<Value>> From<Option<T>> for Value {
@@ -549,10 +562,19 @@ macro_rules! from_value_vec {
 }
 from_value_vec!(Value, String, i64, i32, f64, bool);
 
-impl FromValue for BTreeMap<String, Value> {
+impl FromValue for ObjectMap {
     fn from_value(v: &Value) -> Result<Self> {
         match v {
             Value::Object(o) => Ok(o.clone()),
+            Value::Null => Ok(ObjectMap::new()),
+            other => Err(conv_err(other, "map")),
+        }
+    }
+}
+impl FromValue for BTreeMap<String, Value> {
+    fn from_value(v: &Value) -> Result<Self> {
+        match v {
+            Value::Object(o) => Ok(o.clone().into()),
             Value::Null => Ok(BTreeMap::new()),
             other => Err(conv_err(other, "map")),
         }
@@ -570,6 +592,15 @@ mod tests {
         let o = Value::object([("a", Value::from(1)), ("b", Value::from(vec!["x", "y"]))]);
         assert_eq!(o.to_json(), r#"{"a":1,"b":["x","y"]}"#);
         assert_eq!(Value::from("a\"b\n").to_json(), r#""a\"b\n""#);
+    }
+
+    #[test]
+    fn objects_keep_insertion_order() {
+        let o = Value::object([("b", 1), ("a", 2), ("c", 3)]);
+        assert_eq!(o.to_json(), r#"{"b":1,"a":2,"c":3}"#);
+        assert_eq!(o, Value::object([("a", 2), ("c", 3), ("b", 1)]), "Map.equals ignores order");
+        let parsed = crate::json::parse(r#"{"b":1,"a":{"z":true,"y":null}}"#).unwrap();
+        assert_eq!(parsed.to_json(), r#"{"b":1,"a":{"z":true,"y":null}}"#);
     }
 
     #[test]

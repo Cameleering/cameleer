@@ -2,7 +2,7 @@
 //! snapshots for repositories and a small threaded TCP server for the embedded test
 //! servers.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::io;
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -12,7 +12,7 @@ use std::thread::JoinHandle;
 use camel_core::context::CamelContext;
 use camel_core::error::{CamelError, Result};
 use camel_core::message::{Exchange, ExchangePattern};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 use camel_tls::net::NetStream;
 use camel_tls::pem::{base64_decode, base64_encode};
 use camel_tls::TlsServerConfig;
@@ -126,9 +126,9 @@ fn dec(v: Value) -> Value {
 /// Serializes an exchange snapshot (id, pattern, body, headers, properties) as JSON
 /// (same layout as the JDBC aggregation repository of `camel-sql`).
 pub fn exchange_to_json(ex: &Exchange) -> String {
-    let headers: BTreeMap<String, Value> = ex.message.headers.iter().map(|(k, v)| (k.to_string(), enc(v))).collect();
-    let props: BTreeMap<String, Value> = ex.properties.iter().map(|(k, v)| (k.clone(), enc(v))).collect();
-    let mut m = BTreeMap::new();
+    let headers: ObjectMap = ex.message.headers.iter().map(|(k, v)| (k.to_string(), enc(v))).collect();
+    let props: ObjectMap = ex.properties.iter().map(|(k, v)| (k.clone(), enc(v))).collect();
+    let mut m = ObjectMap::new();
     m.insert("exchangeId".to_string(), Value::String(ex.exchange_id.clone()));
     m.insert("pattern".to_string(), Value::String(format!("{:?}", ex.pattern)));
     m.insert("body".to_string(), enc(&ex.message.body));

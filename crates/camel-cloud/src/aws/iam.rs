@@ -10,12 +10,11 @@
 //! `listAccessKeys`, `deleteAccessKey` (`CamelAwsIAMAccessKeyID`). Users and groups are maps
 //! `{userName, userId, arn, path, createDate}` / `{groupName, groupId, arn, path, createDate}`.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::AwsConfig;
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -44,7 +43,7 @@ pub fn create(_remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
 }
 
 fn entity(x: &Xml, node: usize, fields: &[(&str, &str)]) -> Value {
-    let mut m = BTreeMap::new();
+    let mut m = ObjectMap::new();
     for (xml_name, key) in fields {
         m.insert(key.to_string(), Value::from(x.child_text(node, xml_name).unwrap_or_default()));
     }

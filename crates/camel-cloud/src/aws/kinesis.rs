@@ -23,7 +23,7 @@
 //! `CamelAwsKinesisShardId`, `CamelMessageTimestamp`. A closed shard (no next iterator) is
 //! handled per `shardClosed`: `ignore` (default, logged), `silent` or `fail`.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,7 +32,7 @@ use camel_core::context::CamelContext;
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::Processor;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::AwsConfig;
 use crate::endpoint::{operation, process, set_batch, unsupported, CloudService};
@@ -172,7 +172,7 @@ impl KinesisService {
     }
 
     fn iterator_for(&self, shard: &str) -> Result<String> {
-        let mut req = BTreeMap::new();
+        let mut req = ObjectMap::new();
         req.insert("StreamName".to_string(), self.stream_name());
         req.insert("ShardId".to_string(), Value::from(shard));
         req.insert("ShardIteratorType".to_string(), Value::from(self.iterator_type.clone()));
@@ -197,7 +197,7 @@ impl CloudService for KinesisService {
             "putRecord" => {
                 let pk = header_str(ex, headers::PARTITION_KEY)
                     .ok_or_else(|| CamelError::illegal_argument("putRecord requires the CamelAwsKinesisPartitionKey header"))?;
-                let mut req = BTreeMap::new();
+                let mut req = ObjectMap::new();
                 req.insert("StreamName".to_string(), self.stream_name());
                 req.insert("Data".to_string(), Value::from(base64_encode(&ex.body().to_bytes())));
                 req.insert("PartitionKey".to_string(), Value::from(pk));

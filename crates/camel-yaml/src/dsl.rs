@@ -67,7 +67,7 @@ use camel_core::model::{ProcessorDefinition, RouteDefinition};
 use camel_core::processor::errors::CamelContextErrorExt;
 use camel_core::processor::basic::*;
 use camel_core::util::url_encode;
-use camel_core::{camel_warn, CamelContext, CamelError, Result, Value};
+use camel_core::{camel_warn, CamelContext, CamelError, Result, Value, value::ObjectMap};
 
 use crate::yaml::{self, Node, PathSegment};
 
@@ -923,7 +923,7 @@ pub struct BeanDefinition {
     /// The bean `type` (a Java class name in Camel).
     pub type_name: Option<String>,
     /// The `properties` mapping.
-    pub properties: BTreeMap<String, Value>,
+    pub properties: ObjectMap,
     /// The full raw definition.
     pub raw: Value,
     /// Whether a bean factory created the bean.
@@ -1752,7 +1752,7 @@ fn expression_to_value(e: &ExpressionDefinition) -> Value {
             if options.is_empty() {
                 Value::object([(language.clone(), Value::String(expression.clone()))])
             } else {
-                let mut m: BTreeMap<String, Value> = options.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
+                let mut m: ObjectMap = options.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect();
                 if !expression.is_empty() {
                     m.insert("expression".into(), Value::String(expression.clone()));
                 }
@@ -1763,7 +1763,7 @@ fn expression_to_value(e: &ExpressionDefinition) -> Value {
     }
 }
 
-fn merge(mut a: BTreeMap<String, Value>, b: Value) -> BTreeMap<String, Value> {
+fn merge(mut a: ObjectMap, b: Value) -> ObjectMap {
     if let Value::Object(m) = b {
         a.extend(m);
     }
@@ -1774,7 +1774,7 @@ fn merge(mut a: BTreeMap<String, Value>, b: Value) -> BTreeMap<String, Value> {
 /// EIPs are rendered by name with their label and children).
 pub fn step_to_value(d: &dyn ProcessorDefinition) -> Value {
     let any = d.as_any();
-    let mut cfg: BTreeMap<String, Value> = BTreeMap::new();
+    let mut cfg: ObjectMap = ObjectMap::new();
     if let Some(id) = d.id() {
         cfg.insert("id".into(), Value::String(id.to_string()));
     }
@@ -1851,7 +1851,7 @@ pub fn step_to_value(d: &dyn ProcessorDefinition) -> Value {
 
 /// Convert a route definition to the YAML DSL shape (`{route: {...}}`).
 pub fn route_definition_to_value(def: &RouteDefinition) -> Value {
-    let mut route: BTreeMap<String, Value> = BTreeMap::new();
+    let mut route: ObjectMap = ObjectMap::new();
     if let Some(id) = &def.id {
         route.insert("id".into(), Value::String(id.clone()));
     }
@@ -1867,7 +1867,7 @@ pub fn route_definition_to_value(def: &RouteDefinition) -> Value {
     if let Some(o) = def.startup_order {
         route.insert("startupOrder".into(), Value::Int(o as i64));
     }
-    let mut from: BTreeMap<String, Value> = BTreeMap::new();
+    let mut from: ObjectMap = ObjectMap::new();
     from.insert("uri".into(), Value::String(def.input.clone()));
     from.insert("steps".into(), Value::Array(def.outputs.iter().map(|o| step_to_value(o.as_ref())).collect()));
     route.insert("from".into(), Value::Object(from));
@@ -1896,7 +1896,7 @@ pub fn dump_routes_as_yaml(ctx: &CamelContext) -> String {
                 items.push(v);
             }
             None => {
-                let mut route = BTreeMap::new();
+                let mut route = ObjectMap::new();
                 route.insert("id".to_string(), Value::String(r.id.clone()));
                 if let Some(d) = &r.description {
                     route.insert("description".to_string(), Value::String(d.clone()));
@@ -1946,7 +1946,7 @@ mod tests {
         assert_eq!(endpoint_uri(&y("uri: log:a?level=INFO\nparameters:\n  showAll: true")).unwrap(), "log:a?level=INFO&showAll=true");
         assert_eq!(
             endpoint_uri(&y("uri: x:y\nparameters:\n  q: a b&c\n  p: '{{prop}}'\n  r: RAW(a+b)\n  s: '#bean'")).unwrap(),
-            "x:y?p={{prop}}&q=a%20b%26c&r=RAW(a+b)&s=%23bean"
+            "x:y?q=a%20b%26c&p={{prop}}&r=RAW(a+b)&s=%23bean"
         );
         assert!(endpoint_uri(&y("parameters: {a: 1}")).unwrap_err().message.contains("uri"));
     }

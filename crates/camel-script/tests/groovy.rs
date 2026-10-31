@@ -74,7 +74,7 @@ fn groovy_closures_and_collections() {
             ("[3, 1, 2].max() + [3, 1, 2].min()", "4"),
             ("[1, 2, 3].any { it > 2 } && [1, 2, 3].every { it > 0 }", "true"),
             ("[1, 1, 2].unique()", "[1,2]"),
-            ("[1, 2, 3, 4].groupBy { it % 2 == 0 ? 'even' : 'odd' }", "{\"even\":[2,4],\"odd\":[1,3]}"),
+            ("[1, 2, 3, 4].groupBy { it % 2 == 0 ? 'even' : 'odd' }", "{\"odd\":[1,3],\"even\":[2,4]}"),
             ("[1, 2, 3].collectEntries { [(it.toString()): it * it] }", "{\"1\":1,\"2\":4,\"3\":9}"),
             ("[[1, 2], [3]].flatten()", "[1,2,3]"),
             ("[1, 2, 3].reverse()", "[3,2,1]"),

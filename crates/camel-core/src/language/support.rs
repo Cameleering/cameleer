@@ -3,14 +3,13 @@
 //! hashing (SHA-256/SHA-1/MD5), date formatting/parsing with time zones and
 //! registry beans ([`BeanMethod`]).
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::context::{CamelContext, Registry};
 use crate::error::{kinds, CamelError, Result};
 use crate::message::Exchange;
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 // ---------------------------------------------------------------------------
 // Bean methods
@@ -639,7 +638,7 @@ pub fn parse_offset(s: &str) -> Option<i64> {
 
 /// Object map from pairs (helper).
 pub fn obj(pairs: Vec<(&str, Value)>) -> Value {
-    Value::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<BTreeMap<_, _>>())
+    Value::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect::<ObjectMap>())
 }
 
 #[cfg(test)]

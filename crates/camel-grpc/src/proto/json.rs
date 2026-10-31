@@ -4,12 +4,11 @@
 //! scalars, `Struct`/`Value`/`ListValue` as plain JSON, NaN/Infinity as strings.
 //! On input both the original field names and the JSON names are accepted.
 
-use std::collections::BTreeMap;
 
 use camel_core::dataformat::base64;
 use camel_core::error::{CamelError, Result};
 use camel_core::util_time::{civil_from_epoch, epoch_from_civil};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::wkt::is_wrapper;
 use super::{DescriptorPool, FieldDescriptor, FieldType, MessageDescriptor};
@@ -163,7 +162,7 @@ pub fn to_json(pool: &DescriptorPool, md: &MessageDescriptor, v: &Value) -> Resu
         Value::Null => return Ok(Value::Null),
         other => return Err(arg_err(format!("Message {} expects an object but got {}", md.full_name, other.type_name()))),
     };
-    let mut out = BTreeMap::new();
+    let mut out = ObjectMap::new();
     for (k, val) in obj {
         let fd = md.field(k).ok_or_else(|| arg_err(format!("Message {} has no field named \"{}\"", md.full_name, k)))?;
         if val.is_null() {
@@ -178,7 +177,7 @@ fn field_to_json(pool: &DescriptorPool, fd: &FieldDescriptor, v: &Value) -> Resu
     if fd.is_map {
         let entry = pool.message(&fd.type_name).ok_or_else(|| arg_err("unknown map entry"))?;
         let m = v.as_object().ok_or_else(|| arg_err(format!("Field {}: map expects an object", fd.name)))?;
-        let mut out = BTreeMap::new();
+        let mut out = ObjectMap::new();
         for (k, x) in m {
             out.insert(k.clone(), scalar_to_json(pool, &entry.fields[1], x)?);
         }
@@ -251,7 +250,7 @@ pub fn from_json(pool: &DescriptorPool, md: &MessageDescriptor, v: &Value) -> Re
         Value::Null => return Ok(Value::Null),
         other => return Err(arg_err(format!("Message {} expects a JSON object but got {}", md.full_name, other.type_name()))),
     };
-    let mut out = BTreeMap::new();
+    let mut out = ObjectMap::new();
     for (k, val) in obj {
         let fd = md.field(k).ok_or_else(|| arg_err(format!("Message {} has no field named \"{}\"", md.full_name, k)))?;
         if val.is_null() {
@@ -260,7 +259,7 @@ pub fn from_json(pool: &DescriptorPool, md: &MessageDescriptor, v: &Value) -> Re
         let nv = if fd.is_map {
             let entry = pool.message(&fd.type_name).ok_or_else(|| arg_err("unknown map entry"))?;
             let m = val.as_object().ok_or_else(|| arg_err(format!("Field {}: map expects an object", fd.name)))?;
-            let mut o = BTreeMap::new();
+            let mut o = ObjectMap::new();
             for (mk, x) in m {
                 o.insert(mk.clone(), scalar_from_json(pool, &entry.fields[1], x)?);
             }

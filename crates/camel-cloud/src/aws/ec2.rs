@@ -12,12 +12,11 @@
 //! instanceType, state, stateCode, launchTime, privateIpAddress, keyName}` or of state
 //! changes `{instanceId, previousState, currentState}`.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::AwsConfig;
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -58,7 +57,7 @@ pub fn parse_instances(x: &Xml) -> Vec<Value> {
             let t = |n: &str| Value::from(x.child_text(item, n).unwrap_or_default());
             let state = x.child(item, "instanceState");
             let st = |n: &str| state.and_then(|s| x.child_text(s, n)).unwrap_or_default();
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("instanceId".to_string(), t("instanceId"));
             m.insert("imageId".to_string(), t("imageId"));
             m.insert("instanceType".to_string(), t("instanceType"));

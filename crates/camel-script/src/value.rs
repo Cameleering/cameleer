@@ -1,11 +1,11 @@
 //! Runtime values of the script interpreter (a dynamic object model over `camel_core::Value`).
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::ast::FuncDef;
 use crate::interp::Env;
@@ -273,7 +273,7 @@ fn to_value_depth(v: &V, depth: usize) -> Value {
                 ObjKind::Date(ms) => Value::String(crate::builtins::iso_date(*ms)),
                 ObjKind::Set => Value::Array(o.props.values().map(|x| to_value_depth(x, depth + 1)).collect()),
                 _ => {
-                    let mut m = BTreeMap::new();
+                    let mut m = ObjectMap::new();
                     for (k, x) in o.props.iter() {
                         if matches!(x, V::Func(_)) {
                             continue;

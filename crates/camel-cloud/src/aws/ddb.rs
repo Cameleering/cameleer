@@ -20,12 +20,11 @@
 //! On start the table is described and, when missing and `keyAttributeName` is set, created
 //! (`keyAttributeName`, `keyAttributeType` default `S`, `readCapacity`, `writeCapacity`).
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::{error_code, AwsConfig};
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -70,7 +69,7 @@ pub fn to_attribute_value(v: &Value) -> Value {
     }
 }
 
-fn marshal_map(m: &BTreeMap<String, Value>) -> Value {
+fn marshal_map(m: &ObjectMap) -> Value {
     Value::Object(m.iter().map(|(k, v)| (k.clone(), to_attribute_value(v))).collect())
 }
 
@@ -116,7 +115,7 @@ pub fn unmarshal_item(v: &Value) -> Value {
 /// Marshal a conditions map (Query `KeyConditions`, Scan `ScanFilter`).
 pub fn marshal_conditions(v: &Value) -> Result<Value> {
     let m = v.as_object().ok_or_else(|| CamelError::illegal_argument("Conditions must be a map"))?;
-    let mut out = BTreeMap::new();
+    let mut out = ObjectMap::new();
     for (attr, cond) in m {
         let c = match cond.as_object().filter(|c| c.contains_key("ComparisonOperator")) {
             Some(c) => {
@@ -174,7 +173,7 @@ impl DdbService {
 
     fn produce_op(&self, ex: &mut Exchange, op: &str) -> Result<()> {
         let table = self.table(ex);
-        let mut req = BTreeMap::new();
+        let mut req = ObjectMap::new();
         req.insert("TableName".to_string(), Value::from(table.clone()));
         let need = |name: &str| ex.header(name).filter(|v| !v.is_null()).cloned().ok_or_else(|| CamelError::illegal_argument(format!("{} requires the {} header", op, name)));
         if let Some(rv) = header_str(ex, headers::RETURN_VALUES) {
@@ -211,7 +210,7 @@ impl DdbService {
                 req.insert("Key".into(), marshal_item(&need(headers::KEY)?)?);
                 let values = need(headers::UPDATE_VALUES)?;
                 let m = values.as_object().ok_or_else(|| CamelError::illegal_argument("CamelAwsDdbUpdateValues must be a map"))?;
-                let updates: BTreeMap<String, Value> = m
+                let updates: ObjectMap = m
                     .iter()
                     .map(|(k, v)| {
                         let u = if v.is_null() { obj([("Action", Value::from("DELETE"))]) } else { obj([("Action", Value::from("PUT")), ("Value", to_attribute_value(v))]) };
@@ -336,7 +335,7 @@ mod tests {
             ("ts", Value::object([("ComparisonOperator", Value::from("GT")), ("AttributeValueList", Value::Array(vec![Value::Int(5)]))])),
         ]))
         .unwrap();
-        assert_eq!(c.get("id").unwrap().to_json(), r#"{"AttributeValueList":[{"S":"a"}],"ComparisonOperator":"EQ"}"#);
+        assert_eq!(c.get("id").unwrap().to_json(), r#"{"ComparisonOperator":"EQ","AttributeValueList":[{"S":"a"}]}"#);
         assert_eq!(c.get("ts").unwrap().get("ComparisonOperator").unwrap(), &Value::from("GT"));
     }
 }

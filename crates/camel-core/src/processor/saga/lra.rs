@@ -29,7 +29,7 @@ use crate::error::{kinds, CamelError, Result};
 use crate::message::Exchange;
 use crate::spi::Service;
 use crate::util::{parse_query, url_encode};
-use crate::value::Value;
+use crate::value::{ObjectMap, Value};
 
 use super::{send_finalization, CamelSagaCoordinator, CamelSagaService, CamelSagaStep, SAGA_LONG_RUNNING_ACTION};
 
@@ -337,7 +337,7 @@ fn handle_participant_call(inner: &LraInner, req: &HttpMessage) -> (u16, Vec<(&'
         "complete" => URL_COMPLETION_KEY,
         _ => return (404, vec![], format!("unknown participant action {}", req.path)),
     };
-    let mut values: BTreeMap<String, Value> = BTreeMap::new();
+    let mut values: ObjectMap = ObjectMap::new();
     let mut target = None;
     for (k, v) in &req.query {
         if k == key {
@@ -400,7 +400,7 @@ pub struct LraSagaCoordinator {
 }
 
 impl LraSagaCoordinator {
-    fn participant_link(&self, action: &str, key: &str, uri: &str, values: &BTreeMap<String, Value>) -> String {
+    fn participant_link(&self, action: &str, key: &str, uri: &str, values: &ObjectMap) -> String {
         let mut link = format!("{}/{}?{}={}", self.service.participant_url(), action, key, url_encode(uri));
         for (k, v) in values {
             link.push_str(&format!("&{}={}", url_encode(k), url_encode(&v.to_string())));

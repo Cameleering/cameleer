@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::{json_error, request_id, AwsMock, Shared, ACCOUNT};
 use crate::http::{Response, ServerRequest};
@@ -429,7 +429,7 @@ fn kinesis(st: &Shared, req: &ServerRequest) -> Response {
                     ])
                 })
                 .collect();
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("Records".to_string(), Value::Array(out));
             m.insert("MillisBehindLatest".to_string(), Value::Int(0));
             if !(k.closed[idx] && end >= recs.len()) {
@@ -529,7 +529,7 @@ fn events(st: &Shared, req: &ServerRequest) -> Response {
     let key = (bus.clone(), rule_name.clone());
     let not_found = || err("ResourceNotFoundException", &format!("Rule {} does not exist on EventBus {}.", rule_name, bus));
     let rule_doc = |name: &str, r: &Rule| {
-        let mut m = BTreeMap::new();
+        let mut m = ObjectMap::new();
         m.insert("Name".to_string(), Value::from(name));
         m.insert("Arn".to_string(), Value::from(r.arn.clone()));
         m.insert("State".to_string(), Value::from(r.state.clone()));
@@ -639,7 +639,7 @@ fn events(st: &Shared, req: &ServerRequest) -> Response {
                 out.push(obj([("EventId", Value::from(id))]));
             }
             for (q, payload) in deliveries {
-                s.queues.entry(q).or_default().messages.push(super::new_msg(payload, Value::Object(BTreeMap::new()), 0));
+                s.queues.entry(q).or_default().messages.push(super::new_msg(payload, Value::Object(ObjectMap::new()), 0));
             }
             st.1.notify_all();
             json_ok(obj([("FailedEntryCount", Value::Int(0)), ("Entries", Value::Array(out))]))
@@ -689,7 +689,7 @@ fn secrets(st: &Shared, req: &ServerRequest) -> Response {
             let wanted = s_(&body, "VersionId");
             let v = if wanted.is_empty() { sec.versions.last() } else { sec.versions.iter().find(|v| v.id == wanted) };
             let Some(v) = v else { return err("ResourceNotFoundException", "Secrets Manager can't find the specified secret value for VersionId") };
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("ARN".to_string(), Value::from(sec.arn.clone()));
             m.insert("Name".to_string(), Value::from(name.clone()));
             m.insert("VersionId".to_string(), Value::from(v.id.clone()));
@@ -712,7 +712,7 @@ fn secrets(st: &Shared, req: &ServerRequest) -> Response {
         }
         "DescribeSecret" => {
             let Some(sec) = ext.secrets.get(&name) else { return not_found() };
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             m.insert("ARN".to_string(), Value::from(sec.arn.clone()));
             m.insert("Name".to_string(), Value::from(name.clone()));
             m.insert("Description".to_string(), Value::from(sec.description.clone()));
@@ -821,7 +821,7 @@ fn states(st: &Shared, req: &ServerRequest) -> Response {
     let err = |code: &str, msg: &str| json_error(400, "com.amazonaws.swf.service.model", code, msg).with_header("Content-Type", "application/x-amz-json-1.0");
     let ok = |v: Value| Response::json(200, v.to_json()).with_header("Content-Type", "application/x-amz-json-1.0");
     let exec_doc = |arn: &str, e: &Execution| {
-        let mut m = BTreeMap::new();
+        let mut m = ObjectMap::new();
         m.insert("executionArn".to_string(), Value::from(arn));
         m.insert("stateMachineArn".to_string(), Value::from(e.machine.clone()));
         m.insert("name".to_string(), Value::from(e.name.clone()));

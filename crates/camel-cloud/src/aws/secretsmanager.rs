@@ -22,13 +22,12 @@
 //! `profileCredentialsProvider`, `profileName`, and (as in recent Camel versions)
 //! `uriEndpointOverride` + `overrideEndpoint`.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::context::{CamelContext, PropertiesFunction};
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::{error_code, AwsConfig};
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -70,7 +69,7 @@ impl SecretsManagerService {
 
     /// `GetSecretValue`: the secret string, or the decoded binary.
     pub fn get_secret_value(&self, id: &str, version: Option<&str>) -> Result<Value> {
-        let mut m = BTreeMap::new();
+        let mut m = ObjectMap::new();
         m.insert("SecretId".to_string(), Value::from(id));
         if let Some(v) = version {
             m.insert("VersionId".to_string(), Value::from(v));
@@ -88,7 +87,7 @@ impl SecretsManagerService {
             .ok_or_else(|| CamelError::illegal_argument("Secret id must be specified (CamelAwsSecretsManagerSecretId)"))
     }
 
-    fn payload(&self, ex: &Exchange, m: &mut BTreeMap<String, Value>) {
+    fn payload(&self, ex: &Exchange, m: &mut ObjectMap) {
         if self.binary_payload {
             m.insert("SecretBinary".into(), Value::from(base64_encode(&ex.body().to_bytes())));
         } else {
@@ -103,7 +102,7 @@ impl CloudService for SecretsManagerService {
         match op.as_str() {
             "createSecret" => {
                 let name = header_str(ex, headers::SECRET_NAME).ok_or_else(|| CamelError::illegal_argument("createSecret requires the CamelAwsSecretsManagerSecretName header"))?;
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("Name".to_string(), Value::from(name));
                 m.insert("ClientRequestToken".to_string(), Value::from(crate::util::uuid()));
                 if let Some(d) = header_str(ex, headers::SECRET_DESCRIPTION) {
@@ -142,7 +141,7 @@ impl CloudService for SecretsManagerService {
                 ex.set_body(Value::Array(all));
             }
             "deleteSecret" => {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("SecretId".to_string(), Value::from(Self::secret_id(ex)?));
                 if ex.header(headers::FORCE_DELETION).is_some_and(|v| v.is_truthy()) {
                     m.insert("ForceDeleteWithoutRecovery".into(), Value::Bool(true));
@@ -155,7 +154,7 @@ impl CloudService for SecretsManagerService {
                 ex.set_body(r.get("ARN").cloned().unwrap_or_default());
             }
             "updateSecret" => {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("SecretId".to_string(), Value::from(Self::secret_id(ex)?));
                 m.insert("ClientRequestToken".to_string(), Value::from(crate::util::uuid()));
                 self.payload(ex, &mut m);
@@ -164,7 +163,7 @@ impl CloudService for SecretsManagerService {
                 ex.set_body(r.get("ARN").cloned().unwrap_or_default());
             }
             "rotateSecret" => {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("SecretId".to_string(), Value::from(Self::secret_id(ex)?));
                 m.insert("ClientRequestToken".to_string(), Value::from(crate::util::uuid()));
                 if let Some(arn) = header_str(ex, headers::LAMBDA_ROTATION_FUNCTION_ARN) {

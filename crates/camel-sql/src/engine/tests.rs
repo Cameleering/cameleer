@@ -1,6 +1,7 @@
 //! Engine unit tests.
 
 use super::*;
+use camel_core::value::ObjectMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static N: AtomicUsize = AtomicUsize::new(0);
@@ -49,6 +50,15 @@ fn setup() -> EmbeddedConnection {
          INSERT INTO orders (customer_id, item, amount, qty) VALUES (1, 'apple', 1.5, 10), (1, 'pear', 2.25, 4), (2, 'apple', 1.5, 1), (3, 'kiwi', 0.5, 20), (NULL, 'melon', 3.0, 2);",
     );
     c
+}
+
+#[test]
+fn row_maps_keep_column_order() {
+    let mut c = setup();
+    let r = run(&mut c, "SELECT name, id, city AS b, vip AS a FROM customers WHERE id = 1");
+    assert_eq!(r.rows_as_values()[0].to_json(), r#"{"name":"Alice","id":1,"b":"Paris","a":true}"#);
+    let maps = r.rows_as_maps();
+    assert_eq!(maps[0].keys().map(String::as_str).collect::<Vec<_>>(), ["name", "id", "b", "a"]);
 }
 
 #[test]
@@ -320,7 +330,7 @@ fn parameters() {
     // text parameters are coerced
     let r = runp(&mut c, "SELECT name FROM customers WHERE id = $1 AND vip = $2", &[s("4"), s("t")]);
     assert_eq!(r.rows, vec![vec![s("Dave")]]);
-    let named: BTreeMap<String, Value> = [("city".to_string(), s("London")), ("id".to_string(), i(2))].into_iter().collect();
+    let named: ObjectMap = [("city".to_string(), s("London")), ("id".to_string(), i(2))].into_iter().collect();
     let r = c.execute_named("SELECT name FROM customers WHERE city = :#city AND id = :id", &named).unwrap();
     assert_eq!(r.rows, vec![vec![s("Bob")]]);
     let e = c.execute("SELECT * FROM customers WHERE id = ? AND name = ?", &[i(1)]).unwrap_err();

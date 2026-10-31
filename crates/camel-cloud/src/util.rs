@@ -1,7 +1,6 @@
 //! Shared helpers: hashing (SHA-256, HMAC, MD5), encodings (hex, base64, percent),
 //! timestamps, small XML/JSON helpers, endpoint option lookup and exception kinds.
 
-use std::collections::BTreeMap;
 use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,7 +10,7 @@ use camel_core::language::xml::{local_name, Document, NodeKind};
 use camel_core::message::Exchange;
 use camel_core::util::Parameters;
 use camel_core::util_time::{civil_from_epoch, epoch_from_civil};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 use camel_tls::crypto::hash::{hmac, Digest, Sha256};
 
 // ---------------------------------------------------------------------------
@@ -512,7 +511,7 @@ pub fn header_i64(ex: &Exchange, name: &str) -> Option<i64> {
 
 /// Build an object value from string pairs.
 pub fn string_map(pairs: impl IntoIterator<Item = (String, String)>) -> Value {
-    Value::Object(pairs.into_iter().map(|(k, v)| (k, Value::String(v))).collect::<BTreeMap<_, _>>())
+    Value::Object(pairs.into_iter().map(|(k, v)| (k, Value::String(v))).collect::<ObjectMap>())
 }
 
 /// JSON object from pairs.
@@ -524,7 +523,7 @@ pub fn obj<const N: usize>(pairs: [(&str, Value); N]) -> Value {
 pub fn parse_json(body: &[u8]) -> Result<Value> {
     let text = String::from_utf8_lossy(body);
     if text.trim().is_empty() {
-        return Ok(Value::Object(BTreeMap::new()));
+        return Ok(Value::Object(ObjectMap::new()));
     }
     camel_core::json::parse(&text)
 }

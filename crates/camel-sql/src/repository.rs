@@ -1,6 +1,5 @@
 //! JDBC-backed repositories for the idempotent consumer and the aggregator.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::context::{CamelContext, WeakContext};
@@ -8,7 +7,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::{Exchange, ExchangePattern};
 use camel_core::processor::errors::IdempotentRepository;
 use camel_core::processor::routing::AggregationRepository;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::datasource::DataSource;
 use crate::pg::crypto::{b64, b64_decode};
@@ -147,9 +146,9 @@ fn dec(v: Value) -> Value {
 
 /// Serialize an exchange snapshot (id, pattern, body, headers, properties) as JSON.
 pub fn exchange_to_json(ex: &Exchange) -> String {
-    let headers: BTreeMap<String, Value> = ex.message.headers.iter().map(|(k, v)| (k.to_string(), enc(v))).collect();
-    let props: BTreeMap<String, Value> = ex.properties.iter().map(|(k, v)| (k.clone(), enc(v))).collect();
-    let mut m = BTreeMap::new();
+    let headers: ObjectMap = ex.message.headers.iter().map(|(k, v)| (k.to_string(), enc(v))).collect();
+    let props: ObjectMap = ex.properties.iter().map(|(k, v)| (k.clone(), enc(v))).collect();
+    let mut m = ObjectMap::new();
     m.insert("exchangeId".to_string(), Value::String(ex.exchange_id.clone()));
     m.insert("pattern".to_string(), Value::String(format!("{:?}", ex.pattern)));
     m.insert("body".to_string(), enc(&ex.message.body));

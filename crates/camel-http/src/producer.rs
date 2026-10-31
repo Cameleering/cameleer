@@ -37,7 +37,7 @@ use camel_core::error::{kinds, CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::spi::{Component, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::binding::{add_header_value, body_to_value, headers, value_to_body, write_message_headers};
 use crate::client::{HttpClient, ProxyAddr, ProxyConfig, Url};
@@ -306,7 +306,7 @@ impl HttpOperationFailed {
     }
 
     fn to_value(&self) -> Value {
-        let mut m = BTreeMap::new();
+        let mut m = ObjectMap::new();
         m.insert("uri".to_string(), Value::from(self.uri.clone()));
         m.insert("statusCode".to_string(), Value::Int(self.status_code as i64));
         m.insert("statusText".to_string(), Value::from(self.status_text.clone()));

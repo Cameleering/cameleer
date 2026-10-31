@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 /// One placeholder.
 #[derive(Clone, Debug, PartialEq)]
@@ -140,7 +140,7 @@ pub fn parse_sql(sql: &str, placeholder: &str, named_prefix: &str, allow_named: 
 }
 
 /// Look up a named parameter: body map, headers, exchange properties, variables.
-pub fn lookup_named(ex: &Exchange, name: &str, body_map: Option<&BTreeMap<String, Value>>) -> Option<Value> {
+pub fn lookup_named(ex: &Exchange, name: &str, body_map: Option<&ObjectMap>) -> Option<Value> {
     if let Some(m) = body_map {
         if let Some(v) = m.get(name).or_else(|| m.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v)) {
             return Some(v.clone());
@@ -185,7 +185,7 @@ fn eval_expression(ex: &Exchange, text: &str) -> Result<Value> {
 ///
 /// `body_map` is used for named lookups; `positional` supplies positional values;
 /// `expected` (if > 0) overrides the number of positional values required.
-pub fn bind(parsed: &ParsedSql, ex: &Exchange, body_map: Option<&BTreeMap<String, Value>>, positional: Vec<Value>, expected: usize) -> Result<(String, Vec<Value>)> {
+pub fn bind(parsed: &ParsedSql, ex: &Exchange, body_map: Option<&ObjectMap>, positional: Vec<Value>, expected: usize) -> Result<(String, Vec<Value>)> {
     let needed = if expected > 0 { expected } else { parsed.positional_count() };
     if parsed.positional_count() > 0 && positional.len() != needed && !(positional.len() > needed && parsed.has_named()) {
         return Err(CamelError::new(

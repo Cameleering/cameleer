@@ -16,12 +16,11 @@
 //!   `listExecutions` (`CamelAwsStepFunctionsStateMachineArn`, optional
 //!   `CamelAwsStepFunctionsExecutionStatusFilter`).
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use super::AwsConfig;
 use crate::endpoint::{operation, unsupported, CloudService};
@@ -71,7 +70,7 @@ impl StepFunctionsService {
         self.aws.json_call("states", "states", "AWSStepFunctions", action, &body, "1.0", kinds::SFN)
     }
 
-    fn paged(&self, action: &str, req: BTreeMap<String, Value>, field: &str) -> Result<Value> {
+    fn paged(&self, action: &str, req: ObjectMap, field: &str) -> Result<Value> {
         let mut all = Vec::new();
         let mut token: Option<String> = None;
         loop {
@@ -115,12 +114,12 @@ impl CloudService for StepFunctionsService {
                 ex.set_body(r);
             }
             "listStateMachines" => {
-                let v = self.paged("ListStateMachines", BTreeMap::new(), "stateMachines")?;
+                let v = self.paged("ListStateMachines", ObjectMap::new(), "stateMachines")?;
                 ex.set_body(v);
             }
             "startExecution" | "startSyncExecution" => {
                 let input = header_str(ex, headers::EXECUTION_INPUT).unwrap_or_else(|| json_text(ex.body()));
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("stateMachineArn".to_string(), Value::from(need(ex, headers::STATE_MACHINE_ARN)?));
                 m.insert("input".to_string(), Value::from(input));
                 if let Some(n) = header_str(ex, headers::EXECUTION_NAME) {
@@ -141,13 +140,13 @@ impl CloudService for StepFunctionsService {
                 ex.set_body(r);
             }
             "getExecutionHistory" => {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("executionArn".to_string(), Value::from(need(ex, headers::EXECUTION_ARN)?));
                 let v = self.paged("GetExecutionHistory", m, "events")?;
                 ex.set_body(v);
             }
             "listExecutions" => {
-                let mut m = BTreeMap::new();
+                let mut m = ObjectMap::new();
                 m.insert("stateMachineArn".to_string(), Value::from(need(ex, headers::STATE_MACHINE_ARN)?));
                 if let Some(f) = header_str(ex, headers::EXECUTION_STATUS_FILTER) {
                     m.insert("statusFilter".into(), Value::from(f));

@@ -36,7 +36,7 @@ use crate::error::{kinds, CamelError, Result};
 use crate::message::Exchange;
 use crate::regex::Regex;
 use crate::spi::{Expression, Language, Predicate};
-use crate::value::{compare_values, values_equal, Value};
+use crate::value::{compare_values, ObjectMap, Value, values_equal};
 
 use super::support::{self, value_predicate};
 
@@ -1359,7 +1359,7 @@ fn exception_of(ex: &Exchange) -> Option<CamelError> {
 }
 
 fn error_value(e: &CamelError) -> Value {
-    let mut m = BTreeMap::new();
+    let mut m = ObjectMap::new();
     m.insert("kind".to_string(), Value::String(e.kind.clone()));
     m.insert("class".to_string(), Value::String(e.kind.clone()));
     m.insert("message".to_string(), Value::String(e.message.clone()));
@@ -1972,7 +1972,7 @@ fn call(name: &str, args: &[Expr], ex: &Exchange) -> Result<Value> {
         "empty" => match evs(0)?.to_ascii_lowercase().as_str() {
             "string" => Value::String(String::new()),
             "list" | "set" | "array" => Value::Array(vec![]),
-            "map" | "object" => Value::Object(BTreeMap::new()),
+            "map" | "object" => Value::Object(Default::default()),
             other => return Err(CamelError::illegal_argument(format!("Function empty(type) supports string, list, map but got: {}", other))),
         },
         "list" => Value::Array(args.iter().map(|a| a.eval(ex)).collect::<Result<Vec<_>>>()?),
@@ -1980,7 +1980,7 @@ fn call(name: &str, args: &[Expr], ex: &Exchange) -> Result<Value> {
             if !args.len().is_multiple_of(2) {
                 return Err(CamelError::illegal_argument("Function map(k1,v1,k2,v2...) requires an even number of arguments"));
             }
-            let mut m = BTreeMap::new();
+            let mut m = ObjectMap::new();
             for k in (0..args.len()).step_by(2) {
                 m.insert(evs(k)?, ev(k + 1)?);
             }

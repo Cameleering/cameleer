@@ -228,7 +228,7 @@ fn base64_string_hex_xml_urlencoded() {
     assert!(run(DataFormatDefinition::xml(), false, "<a>").is_err());
 
     let ex = run(DataFormatDefinition::urlencoded(), true, Value::object([("q", "a b&c"), ("n", "1")])).unwrap();
-    assert_eq!(ex.body(), &Value::from("n=1&q=a%20b%26c"));
+    assert_eq!(ex.body(), &Value::from("q=a%20b%26c&n=1"));
     let ex = run(DataFormatDefinition::urlencoded(), false, "q=a+b%26c&n=1&n=2").unwrap();
     assert_eq!(ex.body().get("q"), Some(&Value::from("a b&c")));
     assert_eq!(ex.body().get("n"), Some(&Value::from(vec!["1", "2"])));
@@ -274,7 +274,7 @@ fn marshal_unmarshal_in_routes() {
     let t = ctx.create_producer_template();
 
     let m = ctx.mock_endpoint("mock:json").unwrap();
-    m.expected_bodies_received(vec![r#"{"age":3,"name":"Ann"}"#]);
+    m.expected_bodies_received(vec![r#"{"name":"Ann","age":3}"#]);
     m.expected_header_received("name", "Ann");
     t.send_body("direct:json", r#"{"name": "Ann", "age": 3}"#).unwrap();
     m.assert_is_satisfied().unwrap();
