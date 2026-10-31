@@ -1532,3 +1532,43 @@ fn xml_dsl_split_choice_do_try_and_route_configuration() {
     send(&ctx, "direct:xmlLb", "x");
     mock(&ctx, "mock:xmlLb").assert_is_satisfied().unwrap();
 }
+
+#[test]
+fn marshal_unmarshal_steps() {
+    let ctx = camel_core::CamelContext::new();
+    camel_yaml::add_routes_from_yaml(&ctx, r#"
+- from:
+    uri: direct:mu
+    steps:
+      - unmarshal:
+          json: {}
+      - setBody:
+          simple: "${body[name]}"
+      - to: mock:name
+- from:
+    uri: direct:csv
+    steps:
+      - unmarshal:
+          csv:
+            delimiter: ";"
+      - marshal:
+          json: {}
+      - to: mock:csv
+- from:
+    uri: direct:b64
+    steps:
+      - marshal: base64
+      - unmarshal:
+          base64: {}
+      - to: mock:b64
+"#).unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    t.send_body("direct:mu", r#"{"name":"Camel"}"#).unwrap();
+    t.send_body("direct:csv", "a;b\nc;d").unwrap();
+    t.send_body("direct:b64", "hello").unwrap();
+    assert_eq!(ctx.mock_endpoint("mock:name").unwrap().received_bodies(), vec![camel_core::Value::from("Camel")]);
+    assert_eq!(ctx.mock_endpoint("mock:csv").unwrap().received_bodies()[0].to_string(), r#"[["a","b"],["c","d"]]"#);
+    assert_eq!(ctx.mock_endpoint("mock:b64").unwrap().received_bodies()[0].to_string(), "hello");
+    ctx.stop().unwrap();
+}

@@ -33,6 +33,8 @@ use camel_core::processor::routing::{
     SplitDefinition, StrategyDefinition, WireTapDefinition,
 };
 use camel_core::spi::Processor;
+use camel_core::dataformat::DataFormatDefinition;
+use camel_core::processor::transform::MarshalDefinition;
 use camel_core::util::parse_duration;
 
 use super::*;
@@ -949,6 +951,13 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
         ctx.add(Box::new(ToDefinition::new(uri)));
         Ok(())
     });
+    for (step, marshal) in [("marshal", true), ("unmarshal", false)] {
+        r.register(step, move |ctx, cfg| {
+            let df = data_format_definition(ctx, cfg)?;
+            ctx.add(Box::new(if marshal { MarshalDefinition::marshal(df) } else { MarshalDefinition::unmarshal(df) }));
+            Ok(())
+        });
+    }
     r.register("script", |ctx, cfg| {
         let expression = ctx.expression(cfg)?;
         ctx.add(Box::new(CustomDefinition {
@@ -1035,4 +1044,33 @@ fn load_do_try(ctx: &mut StepContext<'_>, cfg: &Value) -> Result<()> {
         ctx.load_section(f)?;
     }
     Ok(())
+}
+
+/// Parse a YAML data format reference: `{json: {prettyPrint: true}}`, `{csv: {delimiter: ";"}}`,
+/// `{custom: {ref: myFormat}}`, or a plain string name (`json`).
+fn data_format_definition(ctx: &StepContext<'_>, cfg: &Value) -> Result<DataFormatDefinition> {
+    if let Some(name) = cfg.as_str() {
+        return Ok(DataFormatDefinition::new(name));
+    }
+    let obj = cfg.as_object().ok_or_else(|| ctx.error("marshal/unmarshal expects a data format"))?;
+    let mut formats = obj.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "description" | "disabled" | "variableSend" | "variableReceive" | "allowNullBody"));
+    let (name, opts) = formats.next().ok_or_else(|| ctx.error("marshal/unmarshal requires a data format, e.g. json: {}"))?;
+    if formats.next().is_some() {
+        return Err(ctx.error("marshal/unmarshal must specify exactly one data format"));
+    }
+    if name == "custom" {
+        let r = opts.as_str().map(String::from).or_else(|| opts.get("ref").map(|v| v.to_string()));
+        let r = r.ok_or_else(|| ctx.error("custom data format requires a ref"))?;
+        return Ok(DataFormatDefinition::named(r.trim_start_matches('#').trim_start_matches("bean:")));
+    }
+    let mut df = DataFormatDefinition::new(name.clone());
+    if let Some(o) = opts.as_object() {
+        for (k, v) in o {
+            if k == "id" {
+                continue;
+            }
+            df.options.insert(k.clone(), v.to_string());
+        }
+    }
+    Ok(df)
 }
