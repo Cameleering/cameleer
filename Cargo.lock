@@ -32,6 +32,15 @@ name = "camel-core"
 version = "0.1.0"
 
 [[package]]
+name = "camel-datastores"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+ "camel-http",
+ "camel-tls",
+]
+
+[[package]]
 name = "camel-grpc"
 version = "0.1.0"
 dependencies = [
@@ -63,6 +72,7 @@ dependencies = [
  "camel-amqp10",
  "camel-cloud",
  "camel-core",
+ "camel-datastores",
  "camel-grpc",
  "camel-http",
  "camel-kafka-mqtt",

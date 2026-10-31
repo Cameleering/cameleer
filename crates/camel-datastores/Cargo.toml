@@ -1,0 +1,11 @@
+[package]
+name = "camel-datastores"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel datastore connectors (std only): Redis (spring-redis), MongoDB, Elasticsearch/OpenSearch, Cassandra (cql), CouchDB, with wire protocols and embedded test servers"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+camel-http = { path = "../camel-http" }
+camel-tls = { path = "../camel-tls" }

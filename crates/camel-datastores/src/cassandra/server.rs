@@ -1,0 +1,329 @@
+//! Embedded Cassandra server for tests: CQL native protocol v4 (`OPTIONS`, `STARTUP`,
+//! PasswordAuthenticator via `AUTH_RESPONSE`, `QUERY`, `PREPARE`, `EXECUTE`, `BATCH`,
+//! `REGISTER`), result paging and TLS, backed by the in-memory [`engine`](super::engine).
+
+use std::collections::{BTreeMap, HashMap};
+use std::io::{self, BufReader, Write};
+use std::sync::{Arc, Mutex};
+
+use camel_core::value::Value;
+use camel_tls::crypto::hash::HashAlg;
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
+
+use super::engine::{self, CqlError, Outcome, Schema};
+use super::frame::{decode_value, encode_value, error_code, opcode, read_frame, result_kind, write_rows_metadata, ColumnSpec, Consistency, Frame, QueryParams, Reader, Writer, VERSION};
+use crate::util::TcpServer;
+
+/// Server settings.
+#[derive(Clone, Default)]
+pub struct CassandraServerConfig {
+    /// Users (name → password); when not empty the PasswordAuthenticator is required.
+    pub users: BTreeMap<String, String>,
+    pub tls: Option<Arc<TlsServerConfig>>,
+}
+
+struct Shared {
+    cfg: CassandraServerConfig,
+    schema: Mutex<Schema>,
+    prepared: Mutex<HashMap<Vec<u8>, (String, Option<String>)>>,
+    consistencies: Mutex<Vec<Consistency>>,
+    queries: Mutex<Vec<String>>,
+}
+
+/// A running embedded Cassandra server (stopped on drop).
+pub struct CassandraServer {
+    shared: Arc<Shared>,
+    tcp: TcpServer,
+}
+
+impl CassandraServer {
+    pub fn start() -> io::Result<CassandraServer> {
+        Self::start_with(CassandraServerConfig::default())
+    }
+
+    pub fn start_with(cfg: CassandraServerConfig) -> io::Result<CassandraServer> {
+        let tls = cfg.tls.clone();
+        let mut schema = Schema::default();
+        for q in [
+            "CREATE KEYSPACE system WITH replication = {'class': 'LocalStrategy'}",
+            "CREATE TABLE system.local (key text PRIMARY KEY, release_version text, cluster_name text, cql_version text, data_center text, rack text, partitioner text)",
+            "INSERT INTO system.local (key, release_version, cluster_name, cql_version, data_center, rack, partitioner) VALUES ('local', '4.1.0', 'Embedded Cluster', '3.4.6', 'datacenter1', 'rack1', 'org.apache.cassandra.dht.Murmur3Partitioner')",
+        ] {
+            let (st, _) = engine::parse(q).expect("bootstrap statement");
+            schema.execute(&st, &[], None).expect("bootstrap");
+        }
+        let shared = Arc::new(Shared { cfg, schema: Mutex::new(schema), prepared: Mutex::new(HashMap::new()), consistencies: Mutex::new(Vec::new()), queries: Mutex::new(Vec::new()) });
+        let sh = shared.clone();
+        let tcp = TcpServer::start("cql-server", tls, move |s| {
+            let _ = serve(&sh, s);
+        })?;
+        Ok(CassandraServer { shared, tcp })
+    }
+
+    pub fn port(&self) -> u16 {
+        self.tcp.port()
+    }
+
+    /// Runs a CQL statement directly (no keyspace selected).
+    pub fn execute(&self, cql: &str) -> Result<Outcome, CqlError> {
+        let (st, _) = engine::parse(cql)?;
+        self.shared.schema.lock().unwrap().execute(&st, &[], None)
+    }
+
+    /// Consistency levels of the QUERY/EXECUTE requests received so far.
+    pub fn consistencies(&self) -> Vec<Consistency> {
+        self.shared.consistencies.lock().unwrap().clone()
+    }
+
+    /// Statements received (QUERY and PREPARE).
+    pub fn queries(&self) -> Vec<String> {
+        self.shared.queries.lock().unwrap().clone()
+    }
+
+    pub fn connection_count(&self) -> usize {
+        self.tcp.connection_count()
+    }
+
+    pub fn stop(&self) {
+        self.tcp.stop();
+    }
+}
+
+struct Conn {
+    started: bool,
+    authed: bool,
+    keyspace: Option<String>,
+}
+
+fn error_frame(stream: i16, e: &CqlError, extra: Option<&[u8]>) -> Frame {
+    let mut w = Writer::new();
+    w.int(e.0);
+    w.string(&e.1);
+    match e.0 {
+        error_code::ALREADY_EXISTS => {
+            w.string("");
+            w.string("");
+        }
+        error_code::UNPREPARED => {
+            w.short_bytes(extra.unwrap_or_default());
+        }
+        _ => {}
+    }
+    Frame::response(stream, opcode::ERROR, w.0)
+}
+
+fn serve(sh: &Shared, stream: NetStream) -> io::Result<()> {
+    let mut writer = stream.try_clone()?;
+    let mut reader = BufReader::new(stream);
+    let mut conn = Conn { started: false, authed: sh.cfg.users.is_empty(), keyspace: None };
+    loop {
+        let f = read_frame(&mut reader)?;
+        let resp = if f.version & 0x7f != VERSION {
+            let e = CqlError(error_code::PROTOCOL_ERROR, format!("Invalid or unsupported protocol version ({}); supported versions are (4/v4)", f.version & 0x7f));
+            let mut fr = error_frame(f.stream, &e, None);
+            fr.version = (f.version & 0x7f) | 0x80;
+            fr
+        } else {
+            match handle(sh, &mut conn, &f) {
+                Ok(fr) => fr,
+                Err((e, extra)) => error_frame(f.stream, &e, extra.as_deref()),
+            }
+        };
+        writer.write_all(&resp.encode())?;
+        writer.flush()?;
+    }
+}
+
+type HResult = Result<Frame, (CqlError, Option<Vec<u8>>)>;
+
+fn perr(m: &str) -> (CqlError, Option<Vec<u8>>) {
+    (CqlError(error_code::PROTOCOL_ERROR, m.to_string()), None)
+}
+
+fn handle(sh: &Shared, conn: &mut Conn, f: &Frame) -> HResult {
+    let mut r = Reader::new(&f.body);
+    let pe = |e: camel_core::error::CamelError| perr(&e.message);
+    match f.opcode {
+        opcode::OPTIONS => {
+            let mut w = Writer::new();
+            w.short(3);
+            w.string("CQL_VERSION");
+            w.string_list(&["3.4.6"]);
+            w.string("COMPRESSION");
+            w.string_list(&[]);
+            w.string("PROTOCOL_VERSIONS");
+            w.string_list(&["4/v4"]);
+            Ok(Frame::response(f.stream, opcode::SUPPORTED, w.0))
+        }
+        opcode::STARTUP => {
+            r.string_map().map_err(pe)?;
+            conn.started = true;
+            if sh.cfg.users.is_empty() {
+                Ok(Frame::response(f.stream, opcode::READY, Vec::new()))
+            } else {
+                let mut w = Writer::new();
+                w.string("org.apache.cassandra.auth.PasswordAuthenticator");
+                Ok(Frame::response(f.stream, opcode::AUTHENTICATE, w.0))
+            }
+        }
+        opcode::AUTH_RESPONSE => {
+            let token = r.bytes().map_err(pe)?.unwrap_or_default();
+            let ok = camel_tls::sasl::parse_plain(&token).is_some_and(|(_, u, p)| sh.cfg.users.get(&u) == Some(&p));
+            if !ok {
+                let user = camel_tls::sasl::parse_plain(&token).map(|(_, u, _)| u).unwrap_or_default();
+                return Err((CqlError(error_code::BAD_CREDENTIALS, format!("Provided username {} and/or password are incorrect", user)), None));
+            }
+            conn.authed = true;
+            let mut w = Writer::new();
+            w.bytes(None);
+            Ok(Frame::response(f.stream, opcode::AUTH_SUCCESS, w.0))
+        }
+        _ if !conn.started => Err(perr("Unexpected message, expecting STARTUP or OPTIONS")),
+        _ if !conn.authed => Err((CqlError(error_code::UNAUTHORIZED, "You have not logged in".into()), None)),
+        opcode::REGISTER => Ok(Frame::response(f.stream, opcode::READY, Vec::new())),
+        opcode::QUERY => {
+            let q = r.long_string().map_err(pe)?;
+            let params = QueryParams::read(&mut r).map_err(pe)?;
+            sh.queries.lock().unwrap().push(q.clone());
+            run(sh, conn, f.stream, &q, &params)
+        }
+        opcode::PREPARE => {
+            let q = r.long_string().map_err(pe)?;
+            sh.queries.lock().unwrap().push(q.clone());
+            let (st, n) = engine::parse(&q).map_err(|e| (e, None))?;
+            let (binds, result) = sh.schema.lock().unwrap().prepare(&st, n, conn.keyspace.as_deref()).map_err(|e| (e, None))?;
+            let id = HashAlg::Sha256.hash(format!("{}\0{}", conn.keyspace.as_deref().unwrap_or(""), q).as_bytes())[..16].to_vec();
+            sh.prepared.lock().unwrap().insert(id.clone(), (q, conn.keyspace.clone()));
+            let mut w = Writer::new();
+            w.int(result_kind::PREPARED);
+            w.short_bytes(&id);
+            w.int(0); // flags: no global table spec
+            w.int(binds.len() as i32);
+            w.int(0); // pk count
+            for b in &binds {
+                w.string(&b.keyspace);
+                w.string(&b.table);
+                w.string(&b.name);
+                w.cql_type(&b.cql_type);
+            }
+            write_rows_metadata(&mut w, &result, None, result.is_empty());
+            Ok(Frame::response(f.stream, opcode::RESULT, w.0))
+        }
+        opcode::EXECUTE => {
+            let id = r.short_bytes().map_err(pe)?;
+            let params = QueryParams::read(&mut r).map_err(pe)?;
+            let found = sh.prepared.lock().unwrap().get(&id).cloned();
+            let Some((q, ks)) = found else {
+                return Err((CqlError(error_code::UNPREPARED, format!("Prepared query with ID {} not found (either the query was not prepared on this host (maybe the host has been restarted?) or you have prepared too many queries and it has been evicted from the internal cache)", crate::util::hex(&id))), Some(id)));
+            };
+            // run in the keyspace the statement was prepared in
+            let original = conn.keyspace.clone();
+            if ks.is_some() {
+                conn.keyspace = ks;
+            }
+            let r = run(sh, conn, f.stream, &q, &params);
+            if !matches!(&r, Ok(fr) if is_set_keyspace(fr)) {
+                conn.keyspace = original;
+            }
+            r
+        }
+        opcode::BATCH => {
+            let _kind = r.byte().map_err(pe)?;
+            let n = r.short().map_err(pe)?;
+            let mut stmts = Vec::new();
+            for _ in 0..n {
+                let k = r.byte().map_err(pe)?;
+                let q = if k == 0 {
+                    r.long_string().map_err(pe)?
+                } else {
+                    let id = r.short_bytes().map_err(pe)?;
+                    match sh.prepared.lock().unwrap().get(&id) {
+                        Some((q, _)) => q.clone(),
+                        None => return Err((CqlError(error_code::UNPREPARED, "Prepared query not found".into()), Some(id))),
+                    }
+                };
+                let nv = r.short().map_err(pe)?;
+                let vals = (0..nv).map(|_| r.bytes()).collect::<camel_core::error::Result<Vec<_>>>().map_err(pe)?;
+                stmts.push((q, vals));
+            }
+            let c = r.short().map_err(pe)?;
+            if let Some(c) = Consistency::from_code(c) {
+                sh.consistencies.lock().unwrap().push(c);
+            }
+            for (q, vals) in stmts {
+                let mut p = QueryParams::new(Consistency::One);
+                p.values = vals;
+                run(sh, conn, f.stream, &q, &p)?;
+            }
+            let mut w = Writer::new();
+            w.int(result_kind::VOID);
+            Ok(Frame::response(f.stream, opcode::RESULT, w.0))
+        }
+        other => Err(perr(&format!("Unknown opcode {}", other))),
+    }
+}
+
+fn is_set_keyspace(f: &Frame) -> bool {
+    f.body.len() >= 4 && i32::from_be_bytes(f.body[..4].try_into().unwrap()) == result_kind::SET_KEYSPACE
+}
+
+fn run(sh: &Shared, conn: &mut Conn, stream: i16, q: &str, params: &QueryParams) -> HResult {
+    sh.consistencies.lock().unwrap().push(params.consistency);
+    let (st, n) = engine::parse(q).map_err(|e| (e, None))?;
+    let mut schema = sh.schema.lock().unwrap();
+    let ks = conn.keyspace.clone();
+    let mut binds = Vec::new();
+    if n > 0 || !params.values.is_empty() {
+        if params.values.len() != n {
+            return Err((CqlError(error_code::INVALID, format!("There were {} markers(?) in CQL but {} bound variables", n, params.values.len())), None));
+        }
+        let (specs, _) = schema.prepare(&st, n, ks.as_deref()).map_err(|e| (e, None))?;
+        for (spec, v) in specs.iter().zip(&params.values) {
+            binds.push(decode_value(&spec.cql_type, v.as_deref()).map_err(|e| (CqlError(error_code::INVALID, e.message), None))?);
+        }
+    }
+    let outcome = schema.execute(&st, &binds, ks.as_deref()).map_err(|e| (e, None))?;
+    drop(schema);
+    let mut w = Writer::new();
+    match outcome {
+        Outcome::Void => {
+            w.int(result_kind::VOID);
+        }
+        Outcome::SetKeyspace(k) => {
+            w.int(result_kind::SET_KEYSPACE);
+            w.string(&k);
+            conn.keyspace = Some(k);
+        }
+        Outcome::SchemaChange { change, target, keyspace, name } => {
+            w.int(result_kind::SCHEMA_CHANGE);
+            w.string(change);
+            w.string(target);
+            w.string(&keyspace);
+            if target != "KEYSPACE" {
+                w.string(&name);
+            }
+        }
+        Outcome::Rows { cols, rows } => encode_rows(&mut w, &cols, rows, params).map_err(|e| (e, None))?,
+    }
+    Ok(Frame::response(stream, opcode::RESULT, w.0))
+}
+
+fn encode_rows(w: &mut Writer, cols: &[ColumnSpec], rows: Vec<Vec<Value>>, params: &QueryParams) -> Result<(), CqlError> {
+    let offset = params.paging_state.as_ref().filter(|p| p.len() == 4).map(|p| u32::from_be_bytes(p[..4].try_into().unwrap()) as usize).unwrap_or(0);
+    let page = params.page_size.filter(|p| *p > 0).map(|p| p as usize).unwrap_or(usize::MAX);
+    let end = offset.saturating_add(page).min(rows.len());
+    let more = end < rows.len();
+    let paging = if more { Some((end as u32).to_be_bytes().to_vec()) } else { None };
+    w.int(result_kind::ROWS);
+    write_rows_metadata(w, cols, paging.as_deref(), params.skip_metadata);
+    let slice = if offset < rows.len() { &rows[offset..end] } else { &[] };
+    w.int(slice.len() as i32);
+    for row in slice {
+        for (c, v) in cols.iter().zip(row) {
+            let b = encode_value(&c.cql_type, v).map_err(|e| CqlError(error_code::SERVER_ERROR, e.message))?;
+            w.bytes(b.as_deref());
+        }
+    }
+    Ok(())
+}
