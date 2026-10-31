@@ -30,6 +30,10 @@ pub trait CloudService: Send + Sync + 'static {
     fn on_start(&self) -> Result<()> {
         Ok(())
     }
+    /// Called when a producer or consumer stops (flush pending work...).
+    fn on_stop(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Factory creating a service from the endpoint `remaining` path and options.
@@ -104,6 +108,9 @@ impl Service for CloudProducer {
     fn start(&self) -> Result<()> {
         self.svc.on_start()
     }
+    fn stop(&self) -> Result<()> {
+        self.svc.on_stop()
+    }
 }
 
 impl Processor for CloudProducer {
@@ -131,7 +138,8 @@ impl Service for CloudConsumer {
         self.poll.start()
     }
     fn stop(&self) -> Result<()> {
-        self.poll.stop()
+        self.poll.stop()?;
+        self.svc.on_stop()
     }
 }
 

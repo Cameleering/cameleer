@@ -1,5 +1,7 @@
-//! Azure Storage components (`azure-storage-blob`, `azure-storage-queue`) and the shared
-//! client: Shared Key request signing and SAS tokens.
+//! Azure components: Storage (`azure-storage-blob`, `azure-storage-queue`,
+//! `azure-storage-datalake`) with the shared client (Shared Key request signing and SAS
+//! tokens), `azure-key-vault` (Azure AD client credentials, [`aad`]) and `azure-cosmosdb`
+//! (master-key signing).
 //!
 //! Common options: `accessKey` (base64 account key), `credentialType`
 //! (`SHARED_ACCOUNT_KEY` - default when `accessKey` is set, `AZURE_SAS` - with `sasToken`;
@@ -7,9 +9,13 @@
 //! `uriEndpointOverride` + `overrideEndpoint=true` (Azurite-style path addressing
 //! `http://host:port/{account}/...`), `proxyHost`/`proxyPort`, `trustAllCertificates`.
 //!
-//! `azure-servicebus` is out of scope: Service Bus speaks AMQP 1.0, which rust-camel does not implement.
+//! `azure-servicebus` / `azure-eventhubs` speak AMQP 1.0 and are not part of this crate.
 
+pub mod aad;
 pub mod blob;
+pub mod cosmosdb;
+pub mod datalake;
+pub mod keyvault;
 pub mod queue;
 
 use camel_core::error::{CamelError, Result};
@@ -47,18 +53,18 @@ impl AzureConfig {
             return Err(CamelError::illegal_argument("Azure storage account name must be specified"));
         }
         let ct = o.get("credentialType").map(|c| c.to_ascii_uppercase());
-        let key = o.get("accessKey");
+        let key = o.get("accessKey").or_else(|| o.get("accountKey"));
         let sas = o.get("sasToken");
         let credential = match (ct.as_deref(), key, sas) {
             (Some("AZURE_SAS"), _, Some(s)) | (None, None, Some(s)) => Credential::Sas(s.trim_start_matches('?').to_string()),
             (Some("AZURE_SAS"), _, None) => return Err(CamelError::illegal_argument("credentialType=AZURE_SAS requires the sasToken option")),
-            (Some("SHARED_ACCOUNT_KEY") | None, Some(k), _) => {
+            (Some("SHARED_ACCOUNT_KEY") | Some("SHARED_KEY_CREDENTIAL") | None, Some(k), _) => {
                 if base64_decode(&k).is_none() {
                     return Err(CamelError::illegal_argument("accessKey must be the base64 encoded storage account key"));
                 }
                 Credential::SharedKey(k)
             }
-            (Some("SHARED_ACCOUNT_KEY"), None, _) | (None, None, None) => {
+            (Some("SHARED_ACCOUNT_KEY") | Some("SHARED_KEY_CREDENTIAL"), None, _) | (None, None, None) => {
                 return Err(CamelError::illegal_argument("An accessKey (credentialType=SHARED_ACCOUNT_KEY) or a sasToken (credentialType=AZURE_SAS) is required"))
             }
             (Some(other), _, _) => {

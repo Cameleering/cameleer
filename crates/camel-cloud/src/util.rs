@@ -29,16 +29,36 @@ pub mod kinds {
     pub const SNS: &str = "SnsException";
     pub const DYNAMODB: &str = "DynamoDbException";
     pub const LAMBDA: &str = "LambdaException";
+    pub const KINESIS: &str = "KinesisException";
+    pub const FIREHOSE: &str = "FirehoseException";
+    pub const EVENTBRIDGE: &str = "EventBridgeException";
+    pub const SECRETS_MANAGER: &str = "SecretsManagerException";
+    pub const SES: &str = "SesException";
+    pub const CLOUDWATCH: &str = "CloudWatchException";
+    pub const STS: &str = "StsException";
+    pub const SFN: &str = "SfnException";
+    pub const IAM: &str = "IamException";
+    pub const EC2: &str = "Ec2Exception";
     /// Client-side configuration / credential problems (`SdkClientException`).
     pub const SDK_CLIENT: &str = "SdkClientException";
     /// Azure `com.azure.core.exception.HttpResponseException` family.
     pub const AZURE_HTTP: &str = "HttpResponseException";
     pub const BLOB_STORAGE: &str = "BlobStorageException";
     pub const QUEUE_STORAGE: &str = "QueueStorageException";
+    pub const DATALAKE_STORAGE: &str = "DataLakeStorageException";
+    /// Key Vault errors (`com.azure.core.exception.ResourceNotFoundException` etc. map here).
+    pub const KEY_VAULT: &str = "KeyVaultErrorException";
+    pub const COSMOS: &str = "CosmosException";
+    /// Azure AD token acquisition failure (`com.azure.core.exception.ClientAuthenticationException`).
+    pub const AZURE_AUTH: &str = "ClientAuthenticationException";
     /// Google `com.google.cloud.BaseServiceException` family.
     pub const GOOGLE_SERVICE: &str = "BaseServiceException";
     pub const GOOGLE_STORAGE: &str = "StorageException";
     pub const GOOGLE_API: &str = "ApiException";
+    pub const BIGQUERY: &str = "BigQueryException";
+    pub const FIRESTORE: &str = "FirestoreException";
+    /// Google API client errors (`com.google.api.client.googleapis.json.GoogleJsonResponseException`).
+    pub const GOOGLE_JSON: &str = "GoogleJsonResponseException";
     /// OAuth2 token exchange failure.
     pub const GOOGLE_AUTH: &str = "GoogleAuthException";
 }
@@ -51,15 +71,38 @@ pub fn ensure_kinds() {
         p(kinds::SDK, camel_core::error::kinds::RUNTIME);
         p(kinds::SDK_CLIENT, kinds::SDK);
         p(kinds::AWS_SERVICE, kinds::SDK);
-        for k in [kinds::S3, kinds::SQS, kinds::SNS, kinds::DYNAMODB, kinds::LAMBDA] {
+        for k in [
+            kinds::S3,
+            kinds::SQS,
+            kinds::SNS,
+            kinds::DYNAMODB,
+            kinds::LAMBDA,
+            kinds::KINESIS,
+            kinds::FIREHOSE,
+            kinds::EVENTBRIDGE,
+            kinds::SECRETS_MANAGER,
+            kinds::SES,
+            kinds::CLOUDWATCH,
+            kinds::STS,
+            kinds::SFN,
+            kinds::IAM,
+            kinds::EC2,
+        ] {
             p(k, kinds::AWS_SERVICE);
         }
         p(kinds::AZURE_HTTP, camel_core::error::kinds::RUNTIME);
         p(kinds::BLOB_STORAGE, kinds::AZURE_HTTP);
         p(kinds::QUEUE_STORAGE, kinds::AZURE_HTTP);
+        p(kinds::DATALAKE_STORAGE, kinds::AZURE_HTTP);
+        p(kinds::KEY_VAULT, kinds::AZURE_HTTP);
+        p(kinds::COSMOS, kinds::AZURE_HTTP);
+        p(kinds::AZURE_AUTH, kinds::AZURE_HTTP);
         p(kinds::GOOGLE_SERVICE, camel_core::error::kinds::RUNTIME);
         p(kinds::GOOGLE_STORAGE, kinds::GOOGLE_SERVICE);
         p(kinds::GOOGLE_API, kinds::GOOGLE_SERVICE);
+        p(kinds::BIGQUERY, kinds::GOOGLE_SERVICE);
+        p(kinds::FIRESTORE, kinds::GOOGLE_SERVICE);
+        p(kinds::GOOGLE_JSON, kinds::GOOGLE_SERVICE);
         p(kinds::GOOGLE_AUTH, camel_core::error::kinds::IO);
     });
 }
@@ -441,6 +484,30 @@ pub fn user_headers(ex: &Exchange) -> Vec<(String, Value)> {
         .filter(|(k, v)| !k.to_ascii_lowercase().starts_with("camel") && matches!(v, Value::String(_) | Value::Int(_) | Value::Float(_) | Value::Bool(_)))
         .map(|(k, v)| (k.to_string(), v.clone()))
         .collect()
+}
+
+/// A list from a value: an array's elements, or a comma separated string.
+pub fn str_list(v: &Value) -> Vec<String> {
+    match v {
+        Value::Array(a) => a.iter().map(|x| x.to_string()).filter(|x| !x.is_empty()).collect(),
+        Value::Null => Vec::new(),
+        other => other.to_string().split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect(),
+    }
+}
+
+/// A header as a list (array or comma separated string); empty when absent.
+pub fn header_list(ex: &Exchange, name: &str) -> Vec<String> {
+    ex.header(name).map(str_list).unwrap_or_default()
+}
+
+/// An optional numeric endpoint option.
+pub fn opt_i64(o: &mut Opts, key: &str) -> Result<Option<i64>> {
+    o.get(key).map(|v| v.trim().parse::<i64>().map_err(|_| CamelError::illegal_argument(format!("Invalid number for option {}: {}", key, v)))).transpose()
+}
+
+/// Header as i64 (number or numeric string).
+pub fn header_i64(ex: &Exchange, name: &str) -> Option<i64> {
+    ex.header(name).and_then(|v| v.as_i64().or_else(|| v.to_string().trim().parse().ok()))
 }
 
 /// Build an object value from string pairs.

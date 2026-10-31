@@ -16,6 +16,9 @@
 //! `CamelAwsSqsMD5OfBody`, `CamelAwsSqsAttributes`, `CamelAwsSqsMessageAttributes` and one
 //! header per message attribute. Successfully processed messages are deleted
 //! (`deleteAfterRead`, default true); failed ones become visible again after the visibility timeout.
+//! With `extendMessageVisibility=true` (requires `visibilityTimeout`) the visibility of a message
+//! being processed is extended to 1.5 x `visibilityTimeout` every `visibilityTimeout / 2`
+//! (`ChangeMessageVisibility`), as Camel's timeout extender does.
 //!
 //! Other options: `queueUrl`, `autoCreateQueue` (default false), `queueOwnerAWSAccountId`,
 //! `defaultVisibilityTimeout`, `messageRetentionPeriod`, plus the [common AWS options](super).
@@ -68,6 +71,7 @@ pub struct SqsService {
     pub message_retention_period: Option<i64>,
     pub message_group_id_strategy: Option<String>,
     pub message_deduplication_id_strategy: String,
+    pub extend_message_visibility: bool,
     pub scheduler: ScheduledPollConfig,
     resolved_url: Mutex<Option<String>>,
 }
@@ -108,12 +112,16 @@ impl SqsService {
             message_retention_period: opt_i(o, "messageRetentionPeriod")?,
             message_group_id_strategy: o.get("messageGroupIdStrategy"),
             message_deduplication_id_strategy: o.string("messageDeduplicationIdStrategy", "useExchangeId"),
+            extend_message_visibility: o.bool("extendMessageVisibility", false)?,
             scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
             resolved_url: Mutex::new(None),
             queue_name,
             aws,
         };
-        o.ignore(&["concurrentConsumers", "deleteIfFiltered", "extendMessageVisibility", "delayQueue", "serverSideEncryptionEnabled", "kmsMasterKeyId", "kmsDataKeyReusePeriodSeconds", "batchSeparator", "sortAttributeName"]);
+        if s.extend_message_visibility && s.visibility_timeout.is_none_or(|v| v <= 0) {
+            return Err(CamelError::illegal_argument("extendMessageVisibility=true requires a positive visibilityTimeout"));
+        }
+        o.ignore(&["concurrentConsumers", "deleteIfFiltered", "delayQueue", "serverSideEncryptionEnabled", "kmsMasterKeyId", "kmsDataKeyReusePeriodSeconds", "batchSeparator", "sortAttributeName"]);
         Ok(s)
     }
 
@@ -260,6 +268,28 @@ impl SqsService {
     }
 }
 
+type Extender = (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>);
+
+impl SqsService {
+    /// Start the visibility extender of an in-flight message (when enabled).
+    fn start_extender(&self, url: &str, handle: &str, logger: &str) -> Option<Extender> {
+        let vis = self.visibility_timeout.filter(|_| self.extend_message_visibility)?;
+        let period = Duration::from_millis((vis.max(1) as u64) * 500);
+        let extend_to = (vis * 3 + 1) / 2;
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let (aws, url, handle, logger) = (self.aws.clone(), url.to_string(), handle.to_string(), logger.to_string());
+        let join = std::thread::spawn(move || {
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(period) {
+                let req = obj([("QueueUrl", Value::from(url.clone())), ("ReceiptHandle", Value::from(handle.clone())), ("VisibilityTimeout", Value::Int(extend_to))]);
+                if let Err(e) = aws.json_call("sqs", "sqs", "AmazonSQS", "ChangeMessageVisibility", &req, "1.0", kinds::SQS) {
+                    camel_core::camel_warn!(logger.as_str(), "Error extending the visibility of SQS message: {}", e);
+                }
+            }
+        });
+        Some((tx, join))
+    }
+}
+
 impl CloudService for SqsService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = operation(ex, headers::OPERATION, &self.operation, "sendMessage");
@@ -319,7 +349,13 @@ impl CloudService for SqsService {
             }
             ex.set_header(headers::MESSAGE_ATTRIBUTES, Value::Object(attrs));
             set_batch(&mut ex, i, total);
-            if process(logger, processor, &mut ex) && self.delete_after_read {
+            let extender = self.start_extender(&url, &handle, logger);
+            let ok = process(logger, processor, &mut ex);
+            if let Some((stop, join)) = extender {
+                let _ = stop.send(());
+                let _ = join.join();
+            }
+            if ok && self.delete_after_read {
                 if let Err(e) = self.call("DeleteMessage", obj([("QueueUrl", Value::from(url.clone())), ("ReceiptHandle", Value::from(handle))])) {
                     camel_core::camel_warn!(logger, "Error deleting SQS message: {}", e);
                 }

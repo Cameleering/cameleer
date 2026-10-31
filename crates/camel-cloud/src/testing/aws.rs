@@ -1,6 +1,10 @@
-//! In-memory AWS emulator: S3 (REST/XML), SQS (JSON 1.0), SNS (Query), DynamoDB (JSON 1.0
-//! subset) and Lambda (invoke registered closures), on one port. Every request must carry a
-//! valid SigV4 signature (header or presigned query) for a registered access key; the
+//! In-memory AWS emulator: S3 (REST/XML, including multipart uploads), SQS (JSON 1.0), SNS
+//! (Query), DynamoDB (JSON 1.0 subset), Lambda (invoke registered closures), Kinesis, Firehose,
+//! EventBridge (rules with simple pattern matching delivering to emulated SQS queues), Secrets
+//! Manager, Step Functions (Pass/Succeed/Fail state machines), SES, CloudWatch, STS (issues
+//! temporary credentials that the emulator then accepts), IAM and EC2, on one port. Every
+//! request must carry a valid SigV4 signature (header or presigned query) for a registered
+//! access key, plus the matching `X-Amz-Security-Token` for temporary credentials; the
 //! service is taken from the credential scope. Bad signatures get `403 SignatureDoesNotMatch`.
 
 use std::collections::{BTreeMap, HashMap};
@@ -10,11 +14,15 @@ use std::time::{Duration, Instant};
 
 use camel_core::value::Value;
 
+#[path = "aws_ext.rs"]
+mod ext;
+pub use ext::{MetricDatum, SentEmail};
+
 use super::{Handler, MockServer};
 use crate::aws::ddb::{from_attribute_value, marshal_item, unmarshal_item};
 use crate::aws::sigv4::{verify_request, AuthFailure};
 use crate::http::{Response, ServerRequest};
-use crate::util::{http_date, iso8601_millis, md5_hex, now_millis, now_secs, obj, parse_form, parse_json, percent_decode, uuid, xml_escape};
+use crate::util::{http_date, iso8601_millis, md5_hex, now_millis, now_secs, obj, parse_form, parse_json, percent_decode, random_hex, uuid, xml_escape};
 
 /// Account id used in queue URLs and ARNs.
 pub const ACCOUNT: &str = "000000000000";
@@ -74,9 +82,23 @@ struct Table {
     items: Vec<BTreeMap<String, Value>>,
 }
 
+struct Upload {
+    bucket: String,
+    key: String,
+    content_type: String,
+    metadata: Vec<(String, String)>,
+    parts: BTreeMap<i32, Vec<u8>>,
+}
+
 #[derive(Default)]
 struct State {
     credentials: HashMap<String, String>,
+    session_tokens: HashMap<String, String>,
+    visibility_changes: usize,
+    uploads: HashMap<String, Upload>,
+    completed_uploads: usize,
+    min_part_size: usize,
+    ext: ext::ExtState,
     buckets: BTreeMap<String, Bucket>,
     queues: BTreeMap<String, Queue>,
     topics: BTreeMap<String, Vec<PublishedMessage>>,
@@ -117,7 +139,7 @@ impl AwsMock {
     }
 
     fn start_inner(access_key: &str, secret_key: &str, tls: bool) -> io::Result<AwsMock> {
-        let state: Shared = Arc::new((Mutex::new(State { region: "us-east-1".into(), ..Default::default() }), Condvar::new()));
+        let state: Shared = Arc::new((Mutex::new(State { region: "us-east-1".into(), min_part_size: 5 * 1024 * 1024, ..Default::default() }), Condvar::new()));
         state.0.lock().unwrap().credentials.insert(access_key.to_string(), secret_key.to_string());
         let st = state.clone();
         let handler: Handler = Arc::new(move |req| handle(&st, req));
@@ -152,6 +174,29 @@ impl AwsMock {
     /// Accept another access key.
     pub fn add_credentials(&self, access_key: &str, secret_key: &str) {
         self.lock().credentials.insert(access_key.into(), secret_key.into());
+    }
+
+    /// Accept temporary credentials (requests must also carry `X-Amz-Security-Token: token`).
+    pub fn add_session_credentials(&self, access_key: &str, secret_key: &str, token: &str) {
+        let mut s = self.lock();
+        s.credentials.insert(access_key.into(), secret_key.into());
+        s.session_tokens.insert(access_key.into(), token.into());
+    }
+
+    /// Number of `ChangeMessageVisibility` calls served.
+    pub fn visibility_changes(&self) -> usize {
+        self.lock().visibility_changes
+    }
+
+    /// Minimum size of non-final multipart parts (5 MiB like S3 by default).
+    pub fn set_min_part_size(&self, bytes: usize) {
+        self.lock().min_part_size = bytes;
+    }
+
+    /// (uploads in progress, completed multipart uploads).
+    pub fn multipart_stats(&self) -> (usize, usize) {
+        let s = self.lock();
+        (s.uploads.len(), s.completed_uploads)
     }
 
     /// Number of requests rejected by authentication.
@@ -311,7 +356,7 @@ fn auth_error(req: &ServerRequest, f: &AuthFailure) -> Response {
     });
     match service.as_str() {
         "s3" => s3_error(403, f.code, &f.message),
-        "sns" => query_error(403, f.code, &f.message),
+        "sns" | "ses" | "monitoring" | "sts" | "iam" | "ec2" => query_error(403, f.code, &f.message),
         "lambda" => Response::json(403, obj([("message", Value::from(f.message.clone()))]).to_json()).with_header("x-amzn-ErrorType", format!("{}:", f.code)),
         _ => json_error(403, "com.amazon.coral.service", f.code, &f.message),
     }
@@ -326,6 +371,17 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
             return auth_error(req, &f);
         }
     };
+    let expected_token = st.0.lock().unwrap().session_tokens.get(&verified.access_key).cloned();
+    if let Some(tok) = expected_token {
+        if req.header("X-Amz-Security-Token") != Some(tok.as_str()) {
+            st.0.lock().unwrap().auth_failures += 1;
+            let f = AuthFailure { code: "InvalidClientTokenId", message: "The security token included in the request is invalid.".into(), service: Some(verified.service.clone()) };
+            return auth_error(req, &f);
+        }
+    }
+    if let Some(resp) = ext::handle(st, &verified.service, req) {
+        return resp;
+    }
     match verified.service.as_str() {
         "s3" => s3(st, req),
         "sqs" => sqs(st, req),
@@ -390,6 +446,10 @@ fn s3(st: &Shared, req: &ServerRequest) -> Response {
             _ => s3_error(405, "MethodNotAllowed", "Method not allowed"),
         };
     };
+    let has_q = |name: &str| req.query.split('&').any(|p| p == name || p.starts_with(&format!("{}=", name)));
+    if has_q("uploads") || has_q("uploadId") {
+        return s3_multipart(&mut s, req, &bucket, &key);
+    }
     match req.method.as_str() {
         "PUT" => {
             if let Some(src) = req.header("x-amz-copy-source") {
@@ -453,6 +513,86 @@ fn s3(st: &Shared, req: &ServerRequest) -> Response {
                 s3_error(404, "NoSuchBucket", "The specified bucket does not exist")
             }
         }
+        _ => s3_error(405, "MethodNotAllowed", "Method not allowed"),
+    }
+}
+
+fn s3_multipart(s: &mut State, req: &ServerRequest, bucket: &str, key: &str) -> Response {
+    if !s.buckets.contains_key(bucket) {
+        return s3_error(404, "NoSuchBucket", "The specified bucket does not exist");
+    }
+    let upload_id = req.query_param("uploadId").unwrap_or_default();
+    let no_upload = || s3_error(404, "NoSuchUpload", "The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed.");
+    match req.method.as_str() {
+        "POST" if upload_id.is_empty() => {
+            let id = format!("{}{}", random_hex(16), random_hex(16));
+            let metadata = req.headers.iter().filter_map(|(k, v)| k.to_ascii_lowercase().strip_prefix("x-amz-meta-").map(|m| (m.to_string(), v.clone()))).collect();
+            s.uploads.insert(
+                id.clone(),
+                Upload { bucket: bucket.into(), key: key.into(), content_type: req.header("Content-Type").unwrap_or("binary/octet-stream").into(), metadata, parts: BTreeMap::new() },
+            );
+            Response::xml(
+                200,
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><InitiateMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{}</Bucket><Key>{}</Key><UploadId>{}</UploadId></InitiateMultipartUploadResult>",
+                    xml_escape(bucket),
+                    xml_escape(key),
+                    id
+                ),
+            )
+        }
+        "PUT" => {
+            let Some(u) = s.uploads.get_mut(&upload_id).filter(|u| u.bucket == bucket && u.key == key) else { return no_upload() };
+            let Some(n) = req.query_param("partNumber").and_then(|n| n.parse::<i32>().ok()).filter(|n| (1..=10000).contains(n)) else {
+                return s3_error(400, "InvalidArgument", "Part number must be an integer between 1 and 10000, inclusive");
+            };
+            let etag = format!("\"{}\"", md5_hex(&req.body));
+            u.parts.insert(n, req.body.clone());
+            Response::new(200).with_header("ETag", etag)
+        }
+        "POST" => {
+            let Some(u) = s.uploads.get(&upload_id).filter(|u| u.bucket == bucket && u.key == key) else { return no_upload() };
+            let Ok(x) = crate::util::Xml::parse(&req.text()) else { return s3_error(400, "MalformedXML", "The XML you provided was not well-formed") };
+            let listed: Vec<(i32, String)> = x.descendants("Part").into_iter().map(|p| (x.child_text(p, "PartNumber").and_then(|n| n.trim().parse().ok()).unwrap_or(0), x.child_text(p, "ETag").unwrap_or_default())).collect();
+            if listed.is_empty() {
+                return s3_error(400, "MalformedXML", "The XML you provided was not well-formed or did not validate against our published schema");
+            }
+            let mut data = Vec::new();
+            let mut md5s = Vec::new();
+            for (i, (n, etag)) in listed.iter().enumerate() {
+                if i > 0 && *n <= listed[i - 1].0 {
+                    return s3_error(400, "InvalidPartOrder", "The list of parts was not in ascending order. Parts must be ordered by part number.");
+                }
+                let Some(part) = u.parts.get(n) else { return s3_error(400, "InvalidPart", "One or more of the specified parts could not be found.") };
+                if etag.trim_matches('"') != md5_hex(part) {
+                    return s3_error(400, "InvalidPart", "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.");
+                }
+                if i + 1 < listed.len() && part.len() < s.min_part_size {
+                    return s3_error(400, "EntityTooSmall", "Your proposed upload is smaller than the minimum allowed object size.");
+                }
+                data.extend_from_slice(part);
+                md5s.extend_from_slice(&crate::util::md5(part));
+            }
+            let u = s.uploads.remove(&upload_id).expect("checked");
+            let etag = format!("\"{}-{}\"", md5_hex(&md5s), listed.len());
+            let mut o = new_obj(data, u.content_type, u.metadata, "STANDARD".into());
+            o.etag = etag.clone();
+            s.buckets.get_mut(bucket).expect("checked").objects.insert(key.to_string(), o);
+            s.completed_uploads += 1;
+            Response::xml(
+                200,
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Location>/{0}/{1}</Location><Bucket>{0}</Bucket><Key>{1}</Key><ETag>{2}</ETag></CompleteMultipartUploadResult>",
+                    xml_escape(bucket),
+                    xml_escape(key),
+                    xml_escape(&etag)
+                ),
+            )
+        }
+        "DELETE" => match s.uploads.remove(&upload_id) {
+            Some(_) => Response::new(204),
+            None => no_upload(),
+        },
         _ => s3_error(405, "MethodNotAllowed", "Method not allowed"),
     }
 }
@@ -644,6 +784,8 @@ fn sqs(st: &Shared, req: &ServerRequest) -> Response {
                 }
                 "ChangeMessageVisibility" => {
                     let handle = s_("ReceiptHandle");
+                    s.visibility_changes += 1;
+                    let Some(q) = s.queues.get_mut(&name) else { return sqs_err("QueueDoesNotExist", "The specified queue does not exist.") };
                     let secs = body.get("VisibilityTimeout").and_then(|v| v.as_i64()).unwrap_or(0);
                     match q.messages.iter_mut().find(|m| m.receipt.as_deref() == Some(handle.as_str())) {
                         Some(m) => {

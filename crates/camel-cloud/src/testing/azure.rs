@@ -1,17 +1,21 @@
 //! In-memory Azure Storage emulator (Azurite-style path addressing
-//! `http://127.0.0.1:port/{account}/...`): Blob service and Queue service on two ports.
+//! `http://127.0.0.1:port/{account}/...`): Blob service (block, append and page blobs, leases),
+//! Queue service and the ADLS Gen2 DFS endpoint (sharing the blob containers) on three ports.
 //! Requests must be authorized with a valid Shared Key signature (recomputed with the account
 //! key) or a valid, unexpired account SAS token granting the needed service, resource type and
 //! permission; otherwise `403 AuthenticationFailed` / `AuthorizationPermissionMismatch`.
 
-use std::collections::BTreeMap;
+#[path = "azure_blob_ext.rs"]
+mod blob_ext;
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::sync::{Arc, Mutex};
 
 use super::{Handler, MockServer};
 use crate::azure::{shared_key_signature, shared_key_string_to_sign, AccountSas};
 use crate::http::{Response, ServerRequest};
-use crate::util::{base64_encode, ct_eq, http_date, md5, now_millis, now_secs, parse_http_date, parse_iso8601, percent_decode, random_hex, uuid, xml_escape, Xml};
+use crate::util::{ct_eq, http_date, now_millis, now_secs, parse_http_date, parse_iso8601, percent_decode, random_hex, uuid, xml_escape, Xml};
 
 /// Azurite's well-known development account.
 pub const ACCOUNT: &str = "devstoreaccount1";
@@ -25,6 +29,10 @@ struct Blob {
     etag: String,
     last_modified: i64,
     metadata: Vec<(String, String)>,
+    blob_type: String,
+    lease: Option<blob_ext::Lease>,
+    pages: BTreeSet<usize>,
+    committed_blocks: i64,
 }
 
 #[derive(Default)]
@@ -47,6 +55,7 @@ struct QMsg {
 #[derive(Default)]
 struct State {
     containers: BTreeMap<String, Container>,
+    dfs_pending: HashMap<(String, String), Vec<u8>>,
     queues: BTreeMap<String, Vec<QMsg>>,
     auth_failures: usize,
     sas_requests: usize,
@@ -58,6 +67,7 @@ type Shared = Arc<Mutex<State>>;
 pub struct AzuriteMock {
     blob: MockServer,
     queue: MockServer,
+    dfs: MockServer,
     state: Shared,
 }
 
@@ -65,10 +75,11 @@ impl AzuriteMock {
     /// Start both services for the development account.
     pub fn start() -> io::Result<AzuriteMock> {
         let state: Shared = Arc::new(Mutex::new(State::default()));
-        let (s1, s2) = (state.clone(), state.clone());
+        let (s1, s2, s3) = (state.clone(), state.clone(), state.clone());
         let bh: Handler = Arc::new(move |r| handle(&s1, r, 'b'));
         let qh: Handler = Arc::new(move |r| handle(&s2, r, 'q'));
-        Ok(AzuriteMock { blob: MockServer::start(bh)?, queue: MockServer::start(qh)?, state })
+        let dh: Handler = Arc::new(move |r| handle(&s3, r, 'd'));
+        Ok(AzuriteMock { blob: MockServer::start(bh)?, queue: MockServer::start(qh)?, dfs: MockServer::start(dh)?, state })
     }
 
     pub fn blob_url(&self) -> String {
@@ -76,6 +87,18 @@ impl AzuriteMock {
     }
     pub fn queue_url(&self) -> String {
         self.queue.url()
+    }
+    /// The ADLS Gen2 (dfs) endpoint.
+    pub fn dfs_url(&self) -> String {
+        self.dfs.url()
+    }
+    /// Options for `azure-storage-datalake://devstoreaccount1/...` (Shared Key).
+    pub fn datalake_options(&self) -> String {
+        format!("accountKey=RAW({})&uriEndpointOverride={}&overrideEndpoint=true", ACCOUNT_KEY, self.dfs_url())
+    }
+    /// (blob type, lease state) of a blob.
+    pub fn blob_state(&self, container: &str, name: &str) -> Option<(String, bool)> {
+        self.state.lock().unwrap().containers.get(container).and_then(|c| c.blobs.get(name)).map(|b| (b.blob_type.clone(), b.lease.as_ref().is_some_and(|l| l.expires.is_none_or(|e| e > now_secs()))))
     }
 
     /// Options for `azure-storage-blob://devstoreaccount1/...` (Shared Key).
@@ -136,7 +159,17 @@ impl AzuriteMock {
 }
 
 fn new_blob(data: Vec<u8>, content_type: String, metadata: Vec<(String, String)>) -> Blob {
-    Blob { data, content_type, etag: format!("\"0x{}\"", random_hex(8).to_uppercase()), last_modified: now_secs(), metadata }
+    Blob {
+        data,
+        content_type,
+        etag: format!("\"0x{}\"", random_hex(8).to_uppercase()),
+        last_modified: now_secs(),
+        metadata,
+        blob_type: "BlockBlob".into(),
+        lease: None,
+        pages: BTreeSet::new(),
+        committed_blocks: 0,
+    }
 }
 
 fn new_msg(text: String, visibility: i64, ttl: i64) -> QMsg {
@@ -230,9 +263,13 @@ fn handle(st: &Shared, req: &ServerRequest, service: char) -> Response {
         return error(400, "InvalidUri", "Unknown account in path (expected http://host:port/devstoreaccount1/...)");
     }
     let segs: Vec<String> = rest.split('/').filter(|s| !s.is_empty()).map(|s| percent_decode(s, false)).collect();
-    if let Err(resp) = authorize(st, req, service, &segs) {
+    if let Err(resp) = authorize(st, req, if service == 'd' { 'b' } else { service }, &segs) {
         st.lock().unwrap().auth_failures += 1;
         return resp;
+    }
+    if service == 'd' {
+        let path = rest.split_once('/').map(|(_, b)| percent_decode(b, false)).filter(|b| !b.is_empty());
+        return blob_ext::dfs_op(st, req, segs.first().cloned(), path);
     }
     if service == 'b' {
         // the blob name may contain '/': take the raw remainder after the container
@@ -300,42 +337,7 @@ fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Op
         };
     };
     let Some(c) = s.containers.get_mut(&container) else { return error(404, "ContainerNotFound", "The specified container does not exist.") };
-    match req.method.as_str() {
-        "PUT" => {
-            if req.header("x-ms-blob-type") != Some("BlockBlob") {
-                return error(400, "MissingRequiredHeader", "An HTTP header that's mandatory for this request is not specified (x-ms-blob-type: BlockBlob).");
-            }
-            let meta = req.headers.iter().filter_map(|(k, v)| k.to_ascii_lowercase().strip_prefix("x-ms-meta-").map(|m| (m.to_string(), v.clone()))).collect();
-            let b = new_blob(req.body.clone(), req.header("Content-Type").unwrap_or("application/octet-stream").to_string(), meta);
-            let r = Response::new(201)
-                .with_header("ETag", b.etag.clone())
-                .with_header("Last-Modified", http_date(b.last_modified))
-                .with_header("Content-MD5", base64_encode(&md5(&b.data)));
-            c.blobs.insert(blob, b);
-            r
-        }
-        "GET" | "HEAD" => match c.blobs.get(&blob) {
-            None => error(404, "BlobNotFound", "The specified blob does not exist."),
-            Some(b) => {
-                let mut r = Response::new(200)
-                    .with_header("Content-Type", b.content_type.clone())
-                    .with_header("ETag", b.etag.clone())
-                    .with_header("Last-Modified", http_date(b.last_modified))
-                    .with_header("Content-MD5", base64_encode(&md5(&b.data)))
-                    .with_header("x-ms-blob-type", "BlockBlob")
-                    .with_header("Content-Length", b.data.len().to_string());
-                for (k, v) in &b.metadata {
-                    r = r.with_header(&format!("x-ms-meta-{}", k), v.clone());
-                }
-                r.with_body(b.data.clone())
-            }
-        },
-        "DELETE" => match c.blobs.remove(&blob) {
-            Some(_) => Response::new(202),
-            None => error(404, "BlobNotFound", "The specified blob does not exist."),
-        },
-        _ => error(405, "UnsupportedHttpVerb", "The resource doesn't support the specified HTTP verb."),
-    }
+    blob_ext::blob_item_op(c, req, blob)
 }
 
 fn message_xml(m: &QMsg, with_text: bool) -> String {

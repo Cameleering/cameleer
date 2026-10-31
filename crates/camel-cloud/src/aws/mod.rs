@@ -1,4 +1,6 @@
-//! AWS components (`aws2-s3`, `aws2-sqs`, `aws2-sns`, `aws2-ddb`, `aws2-lambda`) and the
+//! AWS components (`aws2-s3`, `aws2-sqs`, `aws2-sns`, `aws2-ddb`, `aws2-lambda`,
+//! `aws2-kinesis`, `aws2-kinesis-firehose`, `aws2-eventbridge`, `aws-secrets-manager`,
+//! `aws2-ses`, `aws2-cw`, `aws2-sts`, `aws2-step-functions`, `aws2-iam`, `aws2-ec2`) and the
 //! shared client configuration.
 //!
 //! Common endpoint options (also settable as `camel.component.<scheme>.<option>`):
@@ -11,15 +13,27 @@
 //! Credentials: explicit `accessKey`/`secretKey` when given, otherwise the default chain:
 //! `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`, then the shared
 //! credentials file (`AWS_SHARED_CREDENTIALS_FILE` or `~/.aws/credentials`, profile
-//! `profileCredentialsName` / `AWS_PROFILE` / `default`). Container and EC2 instance metadata
-//! credentials are not supported.
+//! `profileCredentialsName` / `AWS_PROFILE` / `default`), then the container credentials
+//! endpoint and the EC2 instance metadata service ([`credentials`]).
 
+pub mod credentials;
+pub mod cw;
 pub mod ddb;
+pub mod ec2;
+pub mod eventbridge;
+pub mod firehose;
+pub mod iam;
+pub mod kinesis;
 pub mod lambda;
 pub mod s3;
+pub mod s3_multipart;
+pub mod secretsmanager;
+pub mod ses;
 pub mod sigv4;
 pub mod sns;
 pub mod sqs;
+pub mod stepfunctions;
+pub mod sts;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::value::Value;
@@ -111,16 +125,67 @@ impl AwsConfig {
         }
     }
 
+    /// Endpoint of a global service (`https://{host}` unless overridden, e.g. `iam.amazonaws.com`).
+    pub fn global_endpoint(&self, host: &str) -> Result<Url> {
+        match (&self.uri_endpoint_override, self.override_endpoint) {
+            (Some(u), true) => Url::parse(u),
+            _ => Url::parse(&format!("https://{}", host)),
+        }
+    }
+
     /// Sign (SigV4 for `service`) and send a request; non-2xx responses become errors of `kind`.
-    pub fn send(&self, mut req: Request, service: &str, kind: &str) -> Result<Response> {
+    pub fn send(&self, req: Request, service: &str, kind: &str) -> Result<Response> {
+        self.send_in_region(req, service, &self.region.clone(), kind)
+    }
+
+    /// [`AwsConfig::send`] signing for an explicit region (global services sign for `us-east-1`).
+    pub fn send_in_region(&self, mut req: Request, service: &str, region: &str, kind: &str) -> Result<Response> {
         let creds = self.credentials()?;
-        sigv4::sign_request(&mut req, &creds, &self.region, service, now_secs());
+        sigv4::sign_request(&mut req, &creds, region, service, now_secs());
         let resp = self.http().send(&req)?;
         if resp.is_success() {
             Ok(resp)
         } else {
             Err(service_error(kind, service, &resp))
         }
+    }
+
+    /// Send a request whose body is streamed from `body` (`len` bytes), signed with
+    /// `UNSIGNED-PAYLOAD`.
+    pub fn send_streaming(&self, mut req: Request, service: &str, kind: &str, body: &mut dyn std::io::Read, len: u64) -> Result<Response> {
+        let creds = self.credentials()?;
+        req.set_header("x-amz-content-sha256", sigv4::UNSIGNED_PAYLOAD);
+        sigv4::sign_request(&mut req, &creds, &self.region, service, now_secs());
+        let resp = self.http().send_streaming(&req, body, len)?;
+        if resp.is_success() {
+            Ok(resp)
+        } else {
+            Err(service_error(kind, service, &resp))
+        }
+    }
+
+    /// Send a request and stream a successful response body into `sink`; returns the
+    /// response (with an empty body) and the number of bytes written.
+    pub fn send_to(&self, mut req: Request, service: &str, kind: &str, sink: &mut dyn std::io::Write) -> Result<(Response, u64)> {
+        let creds = self.credentials()?;
+        sigv4::sign_request(&mut req, &creds, &self.region, service, now_secs());
+        let (resp, n) = self.http().send_to(&req, sink)?;
+        if resp.is_success() {
+            Ok((resp, n))
+        } else {
+            Err(service_error(kind, service, &resp))
+        }
+    }
+
+    /// AWS Query protocol call (`Action`/`Version` form POST); returns the XML response.
+    pub fn query_call(&self, url: Url, service: &str, region: &str, version: &str, action: &str, params: Vec<(String, String)>, kind: &str) -> Result<Xml> {
+        let mut all = vec![("Action".to_string(), action.to_string()), ("Version".to_string(), version.to_string())];
+        all.extend(params);
+        let req = Request::new("POST", url)
+            .header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+            .body(crate::util::encode_form(&all).into_bytes());
+        let resp = self.send_in_region(req, service, region, kind)?;
+        Xml::parse(&resp.text())
     }
 
     /// AWS JSON 1.0/1.1 protocol call (`X-Amz-Target: {target_prefix}.{operation}`).
@@ -154,9 +219,14 @@ pub fn resolve_credentials(cfg: &AwsConfig, env: &dyn Fn(&str) -> Option<String>
             return Ok(c);
         }
     }
+    if !cfg.use_profile_credentials_provider {
+        if let Some(c) = credentials::container_credentials(&envv).or_else(|| credentials::imds_credentials(&envv)) {
+            return Ok(c);
+        }
+    }
     Err(cloud_error(
         kinds::SDK_CLIENT,
-        "Unable to load AWS credentials: set accessKey/secretKey, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or a shared credentials profile",
+        "Unable to load AWS credentials: set accessKey/secretKey, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, a shared credentials profile, or run with container / instance profile credentials",
     ))
 }
 
@@ -244,7 +314,7 @@ mod tests {
         cfg.use_default_credentials_provider = true;
         let c = resolve_credentials(&cfg, &env).unwrap();
         assert_eq!((c.access_key.as_str(), c.session_token.as_deref()), ("ENVA", Some("TOK")));
-        let none = |_: &str| None;
+        let none = |k: &str| (k == "AWS_EC2_METADATA_DISABLED").then(|| "true".to_string());
         assert!(resolve_credentials(&cfg, &none).unwrap_err().is_a(kinds::SDK));
     }
 

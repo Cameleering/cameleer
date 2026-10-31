@@ -10,6 +10,19 @@
 //! The blob name comes from `CamelAzureStorageBlobBlobName` or `blobName`, the container from
 //! `CamelAzureStorageBlobContainerName` or the path.
 //!
+//! Append blobs: `createAppendBlob`, `commitAppendBlob` (appends the body as a block; creates
+//! the blob first when missing unless `createAppendBlob=false` / `CamelAzureStorageBlobCreateAppendBlob`).
+//! Page blobs: `createPageBlob` (`pageBlobSize` / `CamelAzureStorageBlobPageBlobSize`, default
+//! 512), `uploadPageBlob` (body written at `CamelAzureStorageBlobPageBlobRange` = `"start-end"`
+//! or `{start, end}`, 512-byte aligned; default from offset 0; creates the blob first unless
+//! `createPageBlob=false`), `resizePageBlob`, `clearPageBlob`, `getPageBlobRanges` (body = list
+//! of `{start, end}`).
+//! Leases (rust-camel operations, as Camel only exposes `leaseBlob`): `acquireBlobLease`
+//! (`leaseDurationInSeconds` / `CamelAzureStorageBlobLeaseDuration`, -1 = infinite; sets
+//! `CamelAzureStorageBlobLeaseId`), `renewBlobLease`, `releaseBlobLease`, `breakBlobLease`.
+//! Write and delete operations send `CamelAzureStorageBlobLeaseId` as `x-ms-lease-id`; with
+//! `leaseBlob=true` they acquire a lease for the duration of the operation.
+//!
 //! Consumer: with `blobName`, polls that blob; otherwise lists the container (`prefix`) and
 //! emits one exchange per blob (body = content) with the `CamelAzureStorageBlob*` headers. Blobs
 //! are deleted after successful processing when `deleteAfterRead=true` (rust-camel extension,
@@ -43,6 +56,14 @@ pub mod headers {
     pub const BLOB_TYPE: &str = "CamelAzureStorageBlobBlobType";
     pub const METADATA: &str = "CamelAzureStorageBlobMetadata";
     pub const PREFIX: &str = "CamelAzureStorageBlobPrefix";
+    pub const PAGE_BLOB_RANGE: &str = "CamelAzureStorageBlobPageBlobRange";
+    pub const PAGE_BLOB_SIZE: &str = "CamelAzureStorageBlobPageBlobSize";
+    pub const CREATE_APPEND_BLOB: &str = "CamelAzureStorageBlobCreateAppendBlob";
+    pub const CREATE_PAGE_BLOB: &str = "CamelAzureStorageBlobCreatePageBlob";
+    pub const COMMITTED_BLOCK_COUNT: &str = "CamelAzureStorageBlobCommittedBlockCount";
+    /// rust-camel extensions.
+    pub const LEASE_ID: &str = "CamelAzureStorageBlobLeaseId";
+    pub const LEASE_DURATION: &str = "CamelAzureStorageBlobLeaseDuration";
 }
 
 /// A blob of a listing.
@@ -76,6 +97,11 @@ pub struct BlobService {
     pub prefix: Option<String>,
     pub max_results_per_page: Option<i64>,
     pub delete_after_read: bool,
+    pub create_append_blob: bool,
+    pub create_page_blob: bool,
+    pub page_blob_size: i64,
+    pub lease_blob: bool,
+    pub lease_duration: i64,
     pub scheduler: ScheduledPollConfig,
 }
 
@@ -93,10 +119,15 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         prefix: o.get("prefix"),
         max_results_per_page: o.get("maxResultsPerPage").and_then(|v| v.parse().ok()),
         delete_after_read: o.bool("deleteAfterRead", false)?,
+        create_append_blob: o.bool("createAppendBlob", true)?,
+        create_page_blob: o.bool("createPageBlob", true)?,
+        page_blob_size: o.i64("pageBlobSize", 512)?,
+        lease_blob: o.bool("leaseBlob", false)?,
+        lease_duration: o.i64("leaseDurationInSeconds", 60)?,
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
         azure,
     };
-    o.ignore(&["blobType", "closeStreamAfterRead", "closeStreamAfterWrite", "dataCount", "fileDir", "blobOffset", "regex", "downloadLinkExpiration", "changeFeedStartTime", "changeFeedEndTime", "leaseBlob", "leaseDurationInSeconds", "commitBlockListLater", "createAppendBlob", "createPageBlob", "blockListType", "pageBlobSize", "maxRetryRequests"]);
+    o.ignore(&["blobType", "closeStreamAfterRead", "closeStreamAfterWrite", "dataCount", "fileDir", "blobOffset", "regex", "downloadLinkExpiration", "changeFeedStartTime", "changeFeedEndTime", "commitBlockListLater", "blockListType", "maxRetryRequests"]);
     Ok(Arc::new(s))
 }
 
@@ -118,6 +149,111 @@ impl BlobService {
             req.set_header(&format!("x-ms-meta-{}", k), v.clone());
         }
         self.send(req)
+    }
+
+    fn blob_url(&self, container: &str, blob: &str, query: &str) -> Result<crate::http::Url> {
+        self.azure.url("blob", &Self::blob_path(container, blob), query)
+    }
+
+    fn with_lease(mut req: Request, lease: Option<&str>) -> Request {
+        if let Some(l) = lease {
+            req.set_header("x-ms-lease-id", l);
+        }
+        req
+    }
+
+    /// Create an empty append blob.
+    pub fn create_append_blob(&self, container: &str, blob: &str, lease: Option<&str>) -> Result<Response> {
+        self.send(Self::with_lease(Request::new("PUT", self.blob_url(container, blob, "")?).header("x-ms-blob-type", "AppendBlob"), lease))
+    }
+
+    /// Append a block to an append blob.
+    pub fn append_block(&self, container: &str, blob: &str, data: Vec<u8>, lease: Option<&str>) -> Result<Response> {
+        self.send(Self::with_lease(Request::new("PUT", self.blob_url(container, blob, "comp=appendblock")?).body(data), lease))
+    }
+
+    /// Create a page blob of `size` bytes (a multiple of 512).
+    pub fn create_page_blob(&self, container: &str, blob: &str, size: i64, lease: Option<&str>) -> Result<Response> {
+        self.send(Self::with_lease(Request::new("PUT", self.blob_url(container, blob, "")?).header("x-ms-blob-type", "PageBlob").header("x-ms-blob-content-length", size.to_string()), lease))
+    }
+
+    /// Write (`data` = Some) or clear pages `start..=end`.
+    pub fn put_pages(&self, container: &str, blob: &str, start: i64, end: i64, data: Option<Vec<u8>>, lease: Option<&str>) -> Result<Response> {
+        let mut req = Request::new("PUT", self.blob_url(container, blob, "comp=page")?).header("x-ms-range", format!("bytes={}-{}", start, end));
+        req = match data {
+            Some(d) => req.header("x-ms-page-write", "update").body(d),
+            None => req.header("x-ms-page-write", "clear"),
+        };
+        self.send(Self::with_lease(req, lease))
+    }
+
+    /// Resize a page blob.
+    pub fn resize_page_blob(&self, container: &str, blob: &str, size: i64, lease: Option<&str>) -> Result<Response> {
+        self.send(Self::with_lease(Request::new("PUT", self.blob_url(container, blob, "comp=properties")?).header("x-ms-blob-content-length", size.to_string()), lease))
+    }
+
+    /// Valid page ranges of a page blob.
+    pub fn page_ranges(&self, container: &str, blob: &str) -> Result<Vec<(i64, i64)>> {
+        let resp = self.send(Request::new("GET", self.blob_url(container, blob, "comp=pagelist")?))?;
+        let x = Xml::parse(&resp.text())?;
+        Ok(x.descendants("PageRange")
+            .into_iter()
+            .map(|r| (x.child_text(r, "Start").and_then(|v| v.trim().parse().ok()).unwrap_or(0), x.child_text(r, "End").and_then(|v| v.trim().parse().ok()).unwrap_or(0)))
+            .collect())
+    }
+
+    /// Lease actions (`acquire`, `renew`, `release`, `break`); returns the response.
+    pub fn lease(&self, container: &str, blob: &str, action: &str, lease_id: Option<&str>, duration: Option<i64>) -> Result<Response> {
+        let mut req = Request::new("PUT", self.blob_url(container, blob, "comp=lease")?).header("x-ms-lease-action", action);
+        if let Some(id) = lease_id {
+            req.set_header("x-ms-lease-id", id);
+        }
+        if let Some(d) = duration {
+            req.set_header("x-ms-lease-duration", d.to_string());
+        }
+        if action == "break" {
+            req.set_header("x-ms-lease-break-period", "0");
+        }
+        self.send(req)
+    }
+
+    /// Run a write operation with the exchange's lease id, or (leaseBlob=true) under a lease
+    /// acquired for its duration.
+    fn leased<T>(&self, ex: &Exchange, container: &str, blob: &str, may_not_exist: bool, f: impl FnOnce(Option<&str>) -> Result<T>) -> Result<T> {
+        if let Some(id) = header_str(ex, headers::LEASE_ID) {
+            return f(Some(&id));
+        }
+        if !self.lease_blob {
+            return f(None);
+        }
+        let acquired = match self.lease(container, blob, "acquire", None, Some(self.lease_duration)) {
+            Ok(r) => r.header("x-ms-lease-id").map(|s| s.to_string()),
+            Err(e) if may_not_exist && error_code(&e).is_some_and(|c| c == "BlobNotFound") => None,
+            Err(e) => return Err(e),
+        };
+        let res = f(acquired.as_deref());
+        if let Some(id) = acquired {
+            let _ = self.lease(container, blob, "release", Some(&id), None);
+        }
+        res
+    }
+
+    fn page_range(ex: &Exchange, len: usize) -> Result<(i64, i64)> {
+        match ex.header(headers::PAGE_BLOB_RANGE) {
+            Some(Value::Object(m)) => {
+                let g = |k: &str| m.get(k).and_then(|v| v.as_i64());
+                let start = g("start").unwrap_or(0);
+                Ok((start, g("end").unwrap_or(start + len as i64 - 1)))
+            }
+            Some(v) if !v.is_null() => {
+                let t = v.to_string();
+                let t = t.trim().trim_start_matches("bytes=");
+                let (a, b) = t.split_once('-').ok_or_else(|| CamelError::illegal_argument(format!("Invalid page range: {}", t)))?;
+                let p = |x: &str| x.trim().parse::<i64>().map_err(|_| CamelError::illegal_argument(format!("Invalid page range: {}", t)));
+                Ok((p(a)?, p(b)?))
+            }
+            _ => Ok((0, len as i64 - 1)),
+        }
     }
 
     pub fn get_blob(&self, container: &str, blob: &str) -> Result<Response> {
@@ -247,7 +383,17 @@ impl CloudService for BlobService {
                     Some(Value::Object(m)) => m.iter().map(|(k, v)| (k.clone(), v.to_string())).collect(),
                     _ => Vec::new(),
                 };
-                let resp = self.upload_block_blob(&container, &blob, ex.body().to_bytes(), ct.as_deref(), &meta)?;
+                let data = ex.body().to_bytes();
+                let resp = self.leased(ex, &container, &blob, true, |lease| {
+                    let mut req = Request::new("PUT", self.blob_url(&container, &blob, "")?)
+                        .header("x-ms-blob-type", "BlockBlob")
+                        .header("Content-Type", ct.as_deref().unwrap_or("application/octet-stream"))
+                        .body(data);
+                    for (k, v) in &meta {
+                        req.set_header(&format!("x-ms-meta-{}", k), v.clone());
+                    }
+                    self.send(Self::with_lease(req, lease))
+                })?;
                 if let Some(e) = resp.header("ETag") {
                     ex.set_header(headers::E_TAG, e.to_string());
                 }
@@ -261,7 +407,84 @@ impl CloudService for BlobService {
                 ex.set_body(Value::Bytes(resp.body));
             }
             "deleteBlob" => {
-                self.delete_blob(&self.container(ex)?, &self.blob(ex)?)?;
+                let (container, blob) = (self.container(ex)?, self.blob(ex)?);
+                self.leased(ex, &container, &blob, false, |lease| self.send(Self::with_lease(Request::new("DELETE", self.blob_url(&container, &blob, "")?), lease)))?;
+            }
+            "createAppendBlob" => {
+                let (container, blob) = (self.container(ex)?, self.blob(ex)?);
+                let r = self.leased(ex, &container, &blob, true, |lease| self.create_append_blob(&container, &blob, lease))?;
+                Self::set_blob_headers(ex, &r);
+            }
+            "commitAppendBlob" => {
+                let (container, blob) = (self.container(ex)?, self.blob(ex)?);
+                let create = ex.header(headers::CREATE_APPEND_BLOB).map(|v| v.is_truthy()).unwrap_or(self.create_append_blob);
+                if create && self.send(Request::new("HEAD", self.blob_url(&container, &blob, "")?)).is_err() {
+                    self.create_append_blob(&container, &blob, None)?;
+                }
+                let data = ex.body().to_bytes();
+                let r = self.leased(ex, &container, &blob, false, |lease| self.append_block(&container, &blob, data, lease))?;
+                if let Some(e) = r.header("ETag") {
+                    ex.set_header(headers::E_TAG, e.to_string());
+                }
+                if let Some(c) = r.header("x-ms-blob-committed-block-count").and_then(|c| c.parse::<i64>().ok()) {
+                    ex.set_header(headers::COMMITTED_BLOCK_COUNT, c);
+                }
+            }
+            "createPageBlob" | "resizePageBlob" => {
+                let (container, blob) = (self.container(ex)?, self.blob(ex)?);
+                let size = ex.header(headers::PAGE_BLOB_SIZE).and_then(|v| v.as_i64()).unwrap_or(self.page_blob_size);
+                if size % 512 != 0 {
+                    return Err(CamelError::illegal_argument(format!("Page blob size must be a multiple of 512 bytes: {}", size)));
+                }
+                let r = if op == "createPageBlob" {
+                    self.leased(ex, &container, &blob, true, |lease| self.create_page_blob(&container, &blob, size, lease))?
+                } else {
+                    self.leased(ex, &container, &blob, false, |lease| self.resize_page_blob(&container, &blob, size, lease))?
+                };
+                if let Some(e) = r.header("ETag") {
+                    ex.set_header(headers::E_TAG, e.to_string());
+                }
+            }
+            "uploadPageBlob" | "clearPageBlob" => {
+                let (container, blob) = (self.container(ex)?, self.blob(ex)?);
+                let data = ex.body().to_bytes();
+                let (start, end) = Self::page_range(ex, if op == "uploadPageBlob" { data.len() } else { 512 })?;
+                if start % 512 != 0 || (end + 1) % 512 != 0 || end < start {
+                    return Err(CamelError::illegal_argument(format!("Page range {}-{} must be aligned to 512-byte pages", start, end)));
+                }
+                if op == "uploadPageBlob" {
+                    if data.len() as i64 != end - start + 1 {
+                        return Err(CamelError::illegal_argument(format!("The body ({} bytes) does not match the page range {}-{}", data.len(), start, end)));
+                    }
+                    let create = ex.header(headers::CREATE_PAGE_BLOB).map(|v| v.is_truthy()).unwrap_or(self.create_page_blob);
+                    if create && self.send(Request::new("HEAD", self.blob_url(&container, &blob, "")?)).is_err() {
+                        let size = ex.header(headers::PAGE_BLOB_SIZE).and_then(|v| v.as_i64()).unwrap_or(self.page_blob_size).max(end + 1);
+                        self.create_page_blob(&container, &blob, (size + 511) / 512 * 512, None)?;
+                    }
+                }
+                let payload = if op == "uploadPageBlob" { Some(data) } else { None };
+                let r = self.leased(ex, &container, &blob, false, |lease| self.put_pages(&container, &blob, start, end, payload, lease))?;
+                if let Some(e) = r.header("ETag") {
+                    ex.set_header(headers::E_TAG, e.to_string());
+                }
+            }
+            "getPageBlobRanges" => {
+                let ranges = self.page_ranges(&self.container(ex)?, &self.blob(ex)?)?;
+                ex.set_body(Value::Array(ranges.into_iter().map(|(a, b)| obj([("start", Value::Int(a)), ("end", Value::Int(b))])).collect()));
+            }
+            "acquireBlobLease" => {
+                let (container, blob) = (self.container(ex)?, self.blob(ex)?);
+                let d = ex.header(headers::LEASE_DURATION).and_then(|v| v.as_i64()).unwrap_or(self.lease_duration);
+                let r = self.lease(&container, &blob, "acquire", None, Some(d))?;
+                ex.set_header(headers::LEASE_ID, r.header("x-ms-lease-id").unwrap_or("").to_string());
+            }
+            "renewBlobLease" | "releaseBlobLease" => {
+                let (container, blob) = (self.container(ex)?, self.blob(ex)?);
+                let id = header_str(ex, headers::LEASE_ID).ok_or_else(|| CamelError::illegal_argument(format!("{} requires the CamelAzureStorageBlobLeaseId header", op)))?;
+                self.lease(&container, &blob, if op == "renewBlobLease" { "renew" } else { "release" }, Some(&id), None)?;
+            }
+            "breakBlobLease" => {
+                self.lease(&self.container(ex)?, &self.blob(ex)?, "break", None, None)?;
             }
             other => return Err(unsupported("azure-storage-blob", other)),
         }
