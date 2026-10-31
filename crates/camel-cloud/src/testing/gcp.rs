@@ -67,6 +67,9 @@ struct Subscription {
     topic: String,
     ack_deadline: i64,
     messages: Vec<PsMsg>,
+    /// (dead-letter topic, max delivery attempts)
+    dead_letter: Option<(String, i64)>,
+    exactly_once: bool,
 }
 
 struct State {
@@ -196,7 +199,7 @@ impl GcpMock {
         let t = format!("projects/{}/topics/{}", project, topic);
         let name = format!("projects/{}/subscriptions/{}", project, subscription);
         s.topics.entry(t.clone()).or_default().push(name.clone());
-        s.subscriptions.insert(name, Subscription { topic: t, ack_deadline: 10, messages: vec![] });
+        s.subscriptions.insert(name, Subscription { topic: t, ack_deadline: 10, messages: vec![], dead_letter: None, exactly_once: false });
     }
     /// Publish directly; returns the message id.
     pub fn publish(&self, project: &str, topic: &str, data: &[u8], attributes: &[(&str, &str)]) -> String {
@@ -307,6 +310,9 @@ fn token(st: &Shared, req: &ServerRequest) -> Response {
         st.lock().unwrap().auth_failures += 1;
         Response::json(400, obj([("error", Value::from("invalid_grant")), ("error_description", Value::from(desc))]).to_json())
     };
+    if get("grant_type") == "refresh_token" {
+        return more::refresh_grant(st, &p);
+    }
     if get("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" {
         return fail(st, "Invalid grant_type");
     }
@@ -464,6 +470,42 @@ fn storage(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
     }
 }
 
+fn sub_resource(name: &str, s: &Subscription) -> Value {
+    let mut m = ObjectMap::new();
+    m.insert("name".into(), Value::from(name));
+    m.insert("topic".into(), Value::from(s.topic.clone()));
+    m.insert("ackDeadlineSeconds".into(), Value::Int(s.ack_deadline));
+    if s.exactly_once {
+        m.insert("enableExactlyOnceDelivery".into(), Value::Bool(true));
+    }
+    if let Some((t, max)) = &s.dead_letter {
+        m.insert("deadLetterPolicy".into(), obj([("deadLetterTopic", Value::from(t.clone())), ("maxDeliveryAttempts", Value::Int(*max))]));
+    }
+    Value::Object(m)
+}
+
+/// Move messages delivered `maxDeliveryAttempts` times (and due again) to the dead-letter topic.
+fn forward_dead_letters(state: &mut State, sub: &str) {
+    let now = now_millis();
+    let Some(s) = state.subscriptions.get_mut(sub) else { return };
+    let Some((dlt, max)) = s.dead_letter.clone() else { return };
+    let mut moved = Vec::new();
+    s.messages.retain(|m| {
+        if m.attempts >= max && m.visible_at <= now {
+            moved.push(m.clone());
+            false
+        } else {
+            true
+        }
+    });
+    for m in moved {
+        let mut attrs = m.attributes.as_object().cloned().unwrap_or_default();
+        attrs.insert("CloudPubSubDeadLetterSourceSubscription".into(), Value::from(sub));
+        attrs.insert("CloudPubSubDeadLetterSourceDeliveryCount".into(), Value::from(m.attempts.to_string()));
+        publish_one(state, &dlt, m.data, Value::Object(attrs), m.ordering_key);
+    }
+}
+
 fn pubsub(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
     let mut state = st.lock().unwrap();
     let body = parse_json(&req.body).unwrap_or_default();
@@ -481,6 +523,10 @@ fn pubsub(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
                     ok(obj([("name", Value::from(name))]))
                 }
                 ("GET", "") if state.topics.contains_key(&name) => ok(obj([("name", Value::from(name))])),
+                ("DELETE", "") => match state.topics.remove(&name) {
+                    Some(_) => ok(obj([])),
+                    None => gerror(404, "NOT_FOUND", "Resource not found (resource=topic)."),
+                },
                 ("POST", "publish") => {
                     if !state.topics.contains_key(&name) {
                         return gerror(404, "NOT_FOUND", "Resource not found (resource=topic).");
@@ -511,15 +557,40 @@ fn pubsub(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
                 if state.subscriptions.contains_key(&name) {
                     return gerror(409, "ALREADY_EXISTS", "Subscription already exists");
                 }
+                let dead_letter = match body.get("deadLetterPolicy") {
+                    Some(p) => {
+                        let t = p.get("deadLetterTopic").map(|t| t.to_string()).unwrap_or_default();
+                        let max = p.get("maxDeliveryAttempts").and_then(|m| m.as_i64()).unwrap_or(5);
+                        if !state.topics.contains_key(&t) {
+                            return gerror(404, "NOT_FOUND", "Resource not found (resource=dead letter topic).");
+                        }
+                        if !(5..=100).contains(&max) {
+                            return gerror(400, "INVALID_ARGUMENT", "Invalid max_delivery_attempts: must be between 5 and 100.");
+                        }
+                        Some((t, max))
+                    }
+                    None => None,
+                };
+                let exactly_once = body.get("enableExactlyOnceDelivery").and_then(|e| e.as_bool()) == Some(true);
                 state.topics.get_mut(&topic).unwrap().push(name.clone());
                 let deadline = body.get("ackDeadlineSeconds").and_then(|d| d.as_i64()).unwrap_or(10);
-                state.subscriptions.insert(name.clone(), Subscription { topic: topic.clone(), ack_deadline: deadline, messages: vec![] });
-                return ok(obj([("name", Value::from(name)), ("topic", Value::from(topic)), ("ackDeadlineSeconds", Value::Int(deadline))]));
+                state.subscriptions.insert(name.clone(), Subscription { topic: topic.clone(), ack_deadline: deadline, messages: vec![], dead_letter: dead_letter.clone(), exactly_once });
+                return ok(sub_resource(&name, &state.subscriptions[&name]));
+            }
+            if req.method == "DELETE" && verb.is_empty() {
+                let Some(sub) = state.subscriptions.remove(&name) else { return gerror(404, "NOT_FOUND", "Resource not found (resource=subscription).") };
+                if let Some(subs) = state.topics.get_mut(&sub.topic) {
+                    subs.retain(|s| *s != name);
+                }
+                return ok(obj([]));
+            }
+            if req.method == "POST" && verb == "pull" {
+                forward_dead_letters(&mut state, &name);
             }
             let Some(subscription) = state.subscriptions.get_mut(&name) else { return gerror(404, "NOT_FOUND", "Resource not found (resource=subscription).") };
             let ack_ids: Vec<String> = body.get("ackIds").and_then(|a| a.as_array()).map(|a| a.iter().map(|v| v.to_string()).collect()).unwrap_or_default();
             match (req.method.as_str(), verb) {
-                ("GET", "") => ok(obj([("name", Value::from(name)), ("topic", Value::from(subscription.topic.clone()))])),
+                ("GET", "") => ok(sub_resource(&name, subscription)),
                 ("POST", "pull") => {
                     let max = body.get("maxMessages").and_then(|m| m.as_i64()).unwrap_or(1).max(1) as usize;
                     let now = now_millis();
@@ -543,6 +614,29 @@ fn pubsub(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
                     ok(if out.is_empty() { obj([]) } else { obj([("receivedMessages", Value::Array(out))]) })
                 }
                 ("POST", "acknowledge") => {
+                    if subscription.exactly_once {
+                        // every ack id must belong to a message whose lease is still valid
+                        let now = now_millis();
+                        let invalid: Vec<&String> = ack_ids.iter().filter(|a| !subscription.messages.iter().any(|m| m.ack_id.as_ref() == Some(*a) && m.visible_at > now)).collect();
+                        if !invalid.is_empty() {
+                            let meta: ObjectMap = invalid.iter().map(|a| (a.to_string(), Value::from("PERMANENT_FAILURE_INVALID_ACK_ID"))).collect();
+                            let valid: Vec<String> = ack_ids.iter().filter(|a| !invalid.contains(a)).cloned().collect();
+                            subscription.messages.retain(|m| m.ack_id.as_ref().is_none_or(|a| !valid.contains(a)));
+                            return Response::json(
+                                400,
+                                obj([(
+                                    "error",
+                                    obj([
+                                        ("code", Value::Int(400)),
+                                        ("message", Value::from("Some acknowledgement ids in the request were invalid. This could be because the acknowledgement ids have expired or the acknowledgement ids were malformed.")),
+                                        ("status", Value::from("INVALID_ARGUMENT")),
+                                        ("details", Value::Array(vec![obj([("@type", Value::from("type.googleapis.com/google.rpc.ErrorInfo")), ("reason", Value::from("EXACTLY_ONCE_ACKID_FAILURE")), ("domain", Value::from("pubsub.googleapis.com")), ("metadata", Value::Object(meta))])])),
+                                    ]),
+                                )])
+                                .to_json(),
+                            );
+                        }
+                    }
                     subscription.messages.retain(|m| m.ack_id.as_ref().is_none_or(|a| !ack_ids.contains(a)));
                     ok(obj([]))
                 }

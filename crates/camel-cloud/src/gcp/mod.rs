@@ -13,6 +13,15 @@
 //! process-wide until shortly before it expires. `authenticate=false` sends no credentials
 //! (emulators).
 //!
+//! User credentials (OAuth refresh token, as Camel's Google API components take them):
+//! `clientId` + `clientSecret` + `refreshToken` are exchanged at the token endpoint
+//! (`grant_type=refresh_token`; `https://oauth2.googleapis.com/token`, or the rust-camel
+//! `tokenServerUrl`) for access tokens, cached until shortly before they expire and refreshed
+//! after a 401; an `authorized_user` credentials file (`serviceAccountKey` /
+//! `GOOGLE_APPLICATION_CREDENTIALS`, as written by `gcloud auth application-default login`) works
+//! the same way, and `accessToken` uses a fixed token. User credentials take precedence over a
+//! service account key.
+//!
 //! Endpoint override: `uriEndpointOverride` + `overrideEndpoint=true`, or `endpoint`
 //! (`host:port` of an emulator, or a URL).
 
@@ -25,6 +34,8 @@ pub mod pubsub_stream;
 pub mod secretmanager;
 pub mod sheets;
 pub mod storage;
+pub mod streams;
+
 pub mod workspace;
 
 use std::collections::HashMap;
@@ -198,6 +209,82 @@ pub fn invalidate_token_as(key: &ServiceAccountKey, scope: &str, subject: Option
     token_cache().lock().unwrap().remove(&cache_key(key, scope, subject));
 }
 
+/// OAuth2 user credentials (refresh token flow).
+#[derive(Clone)]
+pub struct UserCredentials {
+    pub client_id: String,
+    client_secret: String,
+    refresh_token: String,
+    pub token_uri: String,
+}
+
+impl std::fmt::Debug for UserCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UserCredentials").field("client_id", &self.client_id).field("token_uri", &self.token_uri).finish()
+    }
+}
+
+/// Default Google OAuth2 token endpoint.
+pub const TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
+
+impl UserCredentials {
+    pub fn new(client_id: &str, client_secret: &str, refresh_token: &str, token_uri: Option<&str>) -> UserCredentials {
+        UserCredentials {
+            client_id: client_id.to_string(),
+            client_secret: client_secret.to_string(),
+            refresh_token: refresh_token.to_string(),
+            token_uri: token_uri.filter(|t| !t.is_empty()).unwrap_or(TOKEN_URI).to_string(),
+        }
+    }
+
+    /// Parse an `authorized_user` credentials JSON.
+    pub fn parse(json: &str) -> Result<UserCredentials> {
+        let v = camel_core::json::parse(json)?;
+        let s = |k: &str| v.get(k).map(|x| x.to_string()).unwrap_or_default();
+        if s("client_id").is_empty() || s("refresh_token").is_empty() {
+            return Err(CamelError::illegal_argument("authorized_user credentials need client_id, client_secret and refresh_token"));
+        }
+        Ok(UserCredentials::new(&s("client_id"), &s("client_secret"), &s("refresh_token"), Some(&s("token_uri"))))
+    }
+
+    fn cache_key(&self) -> TokenKey {
+        (format!("user:{}", self.client_id), self.token_uri.clone(), crate::util::hex(&sha256(format!("{}\n{}", self.client_secret, self.refresh_token).as_bytes())), String::new())
+    }
+
+    /// An access token (cached until 60 s before expiry).
+    pub fn access_token(&self, http: &HttpClient) -> Result<String> {
+        let ck = self.cache_key();
+        let now = now_secs();
+        if let Some((tok, exp)) = token_cache().lock().unwrap().get(&ck) {
+            if *exp > now + 60 {
+                return Ok(tok.clone());
+            }
+        }
+        let body = encode_form(&[
+            ("grant_type".into(), "refresh_token".into()),
+            ("client_id".into(), self.client_id.clone()),
+            ("client_secret".into(), self.client_secret.clone()),
+            ("refresh_token".into(), self.refresh_token.clone()),
+        ]);
+        let req = Request::new("POST", Url::parse(&self.token_uri)?).header("Content-Type", "application/x-www-form-urlencoded").body(body.into_bytes());
+        let resp = http.send(&req)?;
+        let v = parse_json(&resp.body).unwrap_or_default();
+        if !resp.is_success() {
+            let msg = v.get("error_description").or_else(|| v.get("error")).map(|e| e.to_string()).unwrap_or_else(|| resp.text());
+            return Err(cloud_error(kinds::GOOGLE_AUTH, format!("Error refreshing the access token of client {}: {} (status {})", self.client_id, msg, resp.status)));
+        }
+        let tok = v.get("access_token").map(|t| t.to_string()).filter(|t| !t.is_empty()).ok_or_else(|| cloud_error(kinds::GOOGLE_AUTH, "Token response without access_token"))?;
+        let exp = now + v.get("expires_in").and_then(|e| e.as_i64().or_else(|| e.to_string().parse().ok())).unwrap_or(3600);
+        token_cache().lock().unwrap().insert(ck, (tok.clone(), exp));
+        Ok(tok)
+    }
+
+    /// Forget the cached token.
+    pub fn invalidate(&self) {
+        token_cache().lock().unwrap().remove(&self.cache_key());
+    }
+}
+
 /// Client configuration shared by the Google endpoints.
 #[derive(Clone, Debug)]
 pub struct GcpConfig {
@@ -208,14 +295,46 @@ pub struct GcpConfig {
     pub trust_all_certificates: bool,
     /// User impersonated with domain-wide delegation (`delegate` / `subject` options).
     pub subject: Option<String>,
+    /// OAuth2 user credentials (`clientId` / `clientSecret` / `refreshToken`).
+    pub user: Option<Arc<UserCredentials>>,
+    /// A fixed access token (`accessToken`).
+    pub static_token: Option<String>,
 }
 
 impl GcpConfig {
     /// Read the common options.
     pub fn from_opts(o: &mut Opts) -> Result<GcpConfig> {
         let authenticate = o.bool("authenticate", true)?;
-        let key = match o.get("serviceAccountKey").or_else(|| std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok().filter(|s| !s.is_empty())) {
-            Some(loc) if authenticate => Some(Arc::new(ServiceAccountKey::load(&loc)?)),
+        let token_server = o.get("tokenServerUrl");
+        let mut user = match (o.get("clientId"), o.get("clientSecret"), o.get("refreshToken")) {
+            (Some(id), Some(secret), Some(rt)) => Some(Arc::new(UserCredentials::new(&id, &secret, &rt, token_server.as_deref()))),
+            (_, _, Some(_)) => return Err(CamelError::illegal_argument("refreshToken requires clientId and clientSecret")),
+            _ => None,
+        };
+        let static_token = o.get("accessToken").filter(|t| !t.is_empty());
+        let explicit_key = o.get("serviceAccountKey");
+        let key = match explicit_key.clone().or_else(|| if user.is_some() { None } else { std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok().filter(|s| !s.is_empty()) }) {
+            Some(loc) if authenticate => {
+                let text = if loc.trim().starts_with('{') {
+                    loc.clone()
+                } else {
+                    let path = loc.trim().strip_prefix("file:").or_else(|| loc.trim().strip_prefix("classpath:")).unwrap_or(loc.trim()).to_string();
+                    std::fs::read_to_string(&path).map_err(|e| CamelError::io(format!("Cannot read Google credentials {}: {}", path, e)))?
+                };
+                let ty = camel_core::json::parse(&text).ok().and_then(|v| v.get("type").map(|t| t.to_string())).unwrap_or_default();
+                if ty == "authorized_user" {
+                    if user.is_none() {
+                        let mut u = UserCredentials::parse(&text)?;
+                        if let Some(t) = &token_server {
+                            u.token_uri = t.clone();
+                        }
+                        user = Some(Arc::new(u));
+                    }
+                    None
+                } else {
+                    Some(Arc::new(ServiceAccountKey::parse(&text)?))
+                }
+            }
             _ => None,
         };
         let over = o.get("uriEndpointOverride");
@@ -234,7 +353,8 @@ impl GcpConfig {
         };
         o.ignore(&["storageClient", "pubsubEndpoint", "serializer", "loggerId"]);
         let subject = o.get("delegate").or_else(|| o.get("subject"));
-        Ok(GcpConfig { key, authenticate, endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)?, subject })
+        o.ignore(&["applicationName"]);
+        Ok(GcpConfig { key, authenticate, endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)?, subject, user, static_token })
     }
 
     pub fn http(&self) -> HttpClient {
@@ -261,18 +381,33 @@ impl GcpConfig {
         self.key.as_ref().map(|k| k.project_id.clone()).filter(|p| !p.is_empty())
     }
 
-    /// A bearer token for `scope` (None when authentication is disabled).
+    /// A bearer token for `scope` (None when authentication is disabled): the fixed
+    /// `accessToken`, the user credentials' token, or the service account's.
     pub fn bearer(&self, scope: &str) -> Result<Option<String>> {
+        self.token_with(scope, &self.http())
+    }
+
+    fn token_with(&self, scope: &str, http: &HttpClient) -> Result<Option<String>> {
         if !self.authenticate {
             return Ok(None);
         }
-        let key = self.key.as_ref().ok_or_else(|| cloud_error(kinds::GOOGLE_AUTH, "No Google credentials: set serviceAccountKey or GOOGLE_APPLICATION_CREDENTIALS (or authenticate=false for emulators)"))?;
-        access_token_as(key, scope, self.subject.as_deref(), &self.http()).map(Some)
+        if let Some(t) = &self.static_token {
+            return Ok(Some(t.clone()));
+        }
+        if let Some(u) = &self.user {
+            return u.access_token(http).map(Some);
+        }
+        let key = self.key.as_ref().ok_or_else(|| {
+            cloud_error(kinds::GOOGLE_AUTH, "No Google credentials: set serviceAccountKey or GOOGLE_APPLICATION_CREDENTIALS, clientId/clientSecret/refreshToken (or authenticate=false for emulators)")
+        })?;
+        access_token_as(key, scope, self.subject.as_deref(), http).map(Some)
     }
 
     /// Forget the cached token for `scope` (after an authentication failure).
     pub fn invalidate(&self, scope: &str) {
-        if let Some(k) = &self.key {
+        if let Some(u) = &self.user {
+            u.invalidate();
+        } else if let Some(k) = &self.key {
             invalidate_token_as(k, scope, self.subject.as_deref());
         }
     }
@@ -284,28 +419,33 @@ impl GcpConfig {
 
     /// [`GcpConfig::send`] with a token for another OAuth scope (e.g. Sheets).
     pub fn send_scoped(&self, req: Request, kind: &str, scope: &str) -> Result<Response> {
+        let resp = self.send_raw(req, scope)?;
+        if resp.is_success() {
+            Ok(resp)
+        } else {
+            Err(google_error(kind, &resp))
+        }
+    }
+
+    /// Send with a bearer token for `scope` (retrying once after a 401) and return the
+    /// response whatever its status.
+    pub fn send_raw(&self, req: Request, scope: &str) -> Result<Response> {
         let http = self.http();
+        let mut last = None;
         for attempt in 0..2 {
             let mut r = req.clone();
-            if self.authenticate {
-                let key = self.key.as_ref().ok_or_else(|| {
-                    cloud_error(kinds::GOOGLE_AUTH, "No Google credentials: set serviceAccountKey or GOOGLE_APPLICATION_CREDENTIALS (or authenticate=false for emulators)")
-                })?;
-                r.set_header("Authorization", format!("Bearer {}", access_token_as(key, scope, self.subject.as_deref(), &http)?));
+            if let Some(tok) = self.token_with(scope, &http)? {
+                r.set_header("Authorization", format!("Bearer {}", tok));
             }
             let resp = http.send(&r)?;
-            if resp.status == 401 && attempt == 0 && self.authenticate {
-                if let Some(k) = &self.key {
-                    invalidate_token_as(k, scope, self.subject.as_deref());
-                }
+            if resp.status == 401 && attempt == 0 && self.authenticate && self.static_token.is_none() {
+                self.invalidate(scope);
+                last = Some(resp);
                 continue;
             }
-            if resp.is_success() {
-                return Ok(resp);
-            }
-            return Err(google_error(kind, &resp));
+            return Ok(resp);
         }
-        unreachable!("loop returns")
+        Ok(last.expect("one attempt was made"))
     }
 }
 

@@ -1,4 +1,4 @@
-//! AWS components (`aws2-s3`, `aws2-sqs`, `aws2-sns`, `aws2-ddb`, `aws2-lambda`,
+//! AWS components (`aws2-s3`, `aws2-sqs`, `aws2-sns`, `aws2-ddb`, `aws2-ddbstream`, `aws2-lambda`,
 //! `aws2-kinesis`, `aws2-kinesis-firehose`, `aws2-eventbridge`, `aws-secrets-manager`,
 //! `aws2-ses`, `aws2-cw`, `aws2-sts`, `aws2-step-functions`, `aws2-iam`, `aws2-ec2`,
 //! `aws2-msk`, `aws2-athena`, `aws2-textract`, `aws2-translate`, `aws2-comprehend`,

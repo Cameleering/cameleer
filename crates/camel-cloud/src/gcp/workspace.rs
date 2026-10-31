@@ -32,9 +32,26 @@
 //! the body with `name` (alias `title`), `mimeType`, `parents`; body = created file),
 //! `drive-files/update` (`fileId`; new content), `drive-files/copy` (`fileId`, `name`),
 //! `drive-files/delete` (`fileId`).
+//!
+//! Consumer: `from("google-drive://drive-files/list?q=...&delay=...")` polls the file list
+//! (Camel's API consumer) and emits the file changes since the previous poll: one exchange per
+//! new (`created`), modified (`modifiedTime` changed, `modified`) or vanished (`removed`) file,
+//! body = the file resource (`{id}` for removals), headers `CamelGoogleDrive.changeType` and
+//! `CamelGoogleDrive.fileId`; the first poll emits every listed file as `created` (set
+//! `consumeExisting=false`, rust-camel, to only report later changes).
+//!
+//! Authentication: service account (+ `delegate`), or Camel's `clientId` / `clientSecret` /
+//! `refreshToken` user credentials, or `accessToken` (see [`super`]). The streaming consumers
+//! `google-mail-stream`, `google-calendar-stream` and `google-sheets-stream` are in
+//! [`super::streams`].
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use camel_core::component::scheduled::ScheduledPollConfig;
+use camel_core::context::CamelContext;
+use camel_core::spi::Processor;
 
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
@@ -71,6 +88,10 @@ pub struct WorkspaceService {
     pub method: String,
     pub scope: String,
     options: BTreeMap<String, String>,
+    scheduler: ScheduledPollConfig,
+    consume_existing: bool,
+    /// Drive consumer snapshot: file id -> modifiedTime (None before the first poll).
+    drive_seen: Mutex<Option<BTreeMap<String, String>>>,
 }
 
 fn create_for(api: Api, remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
@@ -107,8 +128,20 @@ fn create_for(api: Api, remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudSe
             options.insert(n.to_string(), v);
         }
     }
-    o.ignore(&["clientId", "clientSecret", "accessToken", "refreshToken", "applicationName", "inBody", "content", "splitResult"]);
-    Ok(Arc::new(WorkspaceService { gcp, api, api_name: api_name.to_string(), method: method.to_string(), scope, options }))
+    o.ignore(&["inBody", "content", "splitResult"]);
+    let consume_existing = o.bool("consumeExisting", true)?;
+    let scheduler = ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?;
+    Ok(Arc::new(WorkspaceService {
+        gcp,
+        api,
+        api_name: api_name.to_string(),
+        method: method.to_string(),
+        scope,
+        options,
+        scheduler,
+        consume_existing,
+        drive_seen: Mutex::new(None),
+    }))
 }
 
 /// Factory for `google-mail`.
@@ -431,6 +464,45 @@ impl CloudService for WorkspaceService {
             Api::Calendar => self.calendar(ex),
             Api::Drive => self.drive(ex),
         }
+    }
+
+    fn scheduler(&self) -> Option<&ScheduledPollConfig> {
+        (self.api == Api::Drive && self.method == "list").then_some(&self.scheduler)
+    }
+
+    fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        let mut probe = Exchange::new(ctx.clone());
+        self.drive(&mut probe)?;
+        let files = probe.body().as_array().cloned().unwrap_or_default();
+        let previous = self.drive_seen.lock().unwrap().clone();
+        let mut current = BTreeMap::new();
+        let mut changes: Vec<(&str, String, Value)> = Vec::new();
+        for f in files {
+            let id = f.get("id").map(|i| i.to_string()).unwrap_or_default();
+            let modified = f.get("modifiedTime").map(|m| m.to_string()).unwrap_or_default();
+            current.insert(id.clone(), modified.clone());
+            match previous.as_ref().map(|p| p.get(&id)) {
+                None if self.consume_existing => changes.push(("created", id, f)),
+                None => {}
+                Some(None) => changes.push(("created", id, f)),
+                Some(Some(m)) if *m != modified => changes.push(("modified", id, f)),
+                Some(Some(_)) => {}
+            }
+        }
+        for id in previous.iter().flat_map(|p| p.keys()).filter(|id| !current.contains_key(*id)) {
+            changes.push(("removed", id.clone(), obj([("id", Value::from(id.clone()))])));
+        }
+        *self.drive_seen.lock().unwrap() = Some(current);
+        let total = changes.len();
+        for (i, (kind, id, f)) in changes.into_iter().enumerate() {
+            let mut ex = Exchange::new(ctx.clone());
+            ex.set_header("CamelGoogleDrive.changeType", kind);
+            ex.set_header("CamelGoogleDrive.fileId", id);
+            ex.set_body(f);
+            crate::endpoint::set_batch(&mut ex, i, total);
+            crate::endpoint::process(logger, processor, &mut ex);
+        }
+        Ok(total)
     }
 }
 
