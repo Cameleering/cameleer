@@ -7,7 +7,8 @@
 //! | DataSource / Connection SPI, registry binding, url factory | [`datasource`] |
 //! | embedded in-memory SQL engine `rustsql` (`jdbc:rustsql:mem:<name>`) | [`engine`] |
 //! | PostgreSQL wire protocol v3 client (`jdbc:postgresql://...`) | [`pg`] |
-//! | `sql` component (producer + polling consumer), `sql-stored` (unsupported) | [`sql`] |
+//! | `sql` component (producer + polling consumer) | [`sql`] |
+//! | `sql-stored` component (stored procedures and functions) | [`sql_stored`] |
 //! | `jdbc` component | [`jdbc`] |
 //! | thread-bound transactions and the transaction policy | [`transaction`] |
 //! | `JdbcIdempotentRepository`, `JdbcAggregationRepository` | [`repository`] |
@@ -35,6 +36,7 @@ pub mod params;
 pub mod pg;
 pub mod repository;
 pub mod sql;
+pub mod sql_stored;
 pub mod testing;
 pub mod transaction;
 
@@ -65,7 +67,7 @@ pub fn register(ctx: &CamelContext) {
     datasource::register_sql_kinds();
     add(ctx, "sql", || Arc::new(sql::SqlComponent::new()));
     add(ctx, "jdbc", || Arc::new(jdbc::JdbcComponent::new()));
-    add(ctx, "sql-stored", || Arc::new(sql::SqlStoredComponent));
+    add(ctx, "sql-stored", || Arc::new(sql_stored::SqlStoredComponent::new()));
 }
 
 /// Create and bind data sources from properties:

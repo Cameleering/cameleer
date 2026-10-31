@@ -635,6 +635,13 @@ pub fn eval(expr: &Expr, env: &Env) -> SqlResult<Value> {
             for a in args {
                 vals.push(eval(a, env)?);
             }
+            if let Some(r) = env.db.routines.get(&name.to_ascii_lowercase()) {
+                if !r.function {
+                    return Err(SqlErr::new("42809", format!("{}() is a procedure (use CALL)", r.name)));
+                }
+                let out = super::plsql::call_routine(&mut super::plsql::DbCtx::Ref(env.db), r, vals, false, env.now)?;
+                return Ok(out.scalar);
+            }
             call_function(name, vals, env)
         }
     }
@@ -884,6 +891,20 @@ fn call_function(name: &str, vals: Vec<Value>, env: &Env) -> SqlResult<Value> {
                 return Ok(Value::Null);
             }
             Ok(Value::String(s0().replace(&text_of(&vals[1]), &text_of(&vals[2]))))
+        }
+        "SPLIT_PART" => {
+            arity(name, &vals, 3, 3)?;
+            if null_in {
+                return Ok(Value::Null);
+            }
+            let n = int_of(&vals[2], "field position")?;
+            if n == 0 {
+                return Err(SqlErr::new("22023", "field position must not be zero"));
+            }
+            let s = s0();
+            let parts: Vec<&str> = s.split(text_of(&vals[1]).as_str()).collect();
+            let idx = if n > 0 { n - 1 } else { parts.len() as i64 + n };
+            Ok(Value::String(if idx >= 0 { parts.get(idx as usize).map(|p| p.to_string()).unwrap_or_default() } else { String::new() }))
         }
         "POSITION" | "STRPOS" | "INSTR" => {
             arity(name, &vals, 2, 2)?;

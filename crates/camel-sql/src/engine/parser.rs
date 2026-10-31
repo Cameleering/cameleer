@@ -56,47 +56,47 @@ pub fn count_parameters(sql: &str) -> SqlResult<usize> {
     Ok(q.max(n))
 }
 
-struct Parser {
-    toks: Vec<Token>,
-    pos: usize,
-    next_param: usize,
+pub(crate) struct Parser {
+    pub(crate) toks: Vec<Token>,
+    pub(crate) pos: usize,
+    pub(crate) next_param: usize,
 }
 
 impl Parser {
-    fn new(sql: &str) -> SqlResult<Self> {
+    pub(crate) fn new(sql: &str) -> SqlResult<Self> {
         Ok(Parser { toks: tokenize(sql)?, pos: 0, next_param: 0 })
     }
 
-    fn peek(&self) -> &Token {
+    pub(crate) fn peek(&self) -> &Token {
         &self.toks[self.pos]
     }
-    fn peek_at(&self, n: usize) -> &Tok {
+    pub(crate) fn peek_at(&self, n: usize) -> &Tok {
         &self.toks[(self.pos + n).min(self.toks.len() - 1)].tok
     }
-    fn advance(&mut self) -> Token {
+    pub(crate) fn advance(&mut self) -> Token {
         let t = self.toks[self.pos].clone();
         if self.pos < self.toks.len() - 1 {
             self.pos += 1;
         }
         t
     }
-    fn at_eof(&self) -> bool {
+    pub(crate) fn at_eof(&self) -> bool {
         matches!(self.peek().tok, Tok::Eof)
     }
 
-    fn unexpected(&self, expected: &str) -> SqlErr {
+    pub(crate) fn unexpected(&self, expected: &str) -> SqlErr {
         let t = self.peek();
         let near = if matches!(t.tok, Tok::Eof) { "syntax error at end of input".to_string() } else { format!("syntax error at or near \"{}\"", t.describe()) };
         SqlErr::syntax(format!("{} (line {}, column {}): expected {}", near, t.line, t.col, expected))
     }
 
-    fn is_kw(&self, kw: &str) -> bool {
+    pub(crate) fn is_kw(&self, kw: &str) -> bool {
         matches!(&self.peek().tok, Tok::Ident(s) if s.eq_ignore_ascii_case(kw))
     }
-    fn is_kw_at(&self, n: usize, kw: &str) -> bool {
+    pub(crate) fn is_kw_at(&self, n: usize, kw: &str) -> bool {
         matches!(self.peek_at(n), Tok::Ident(s) if s.eq_ignore_ascii_case(kw))
     }
-    fn eat_kw(&mut self, kw: &str) -> bool {
+    pub(crate) fn eat_kw(&mut self, kw: &str) -> bool {
         if self.is_kw(kw) {
             self.advance();
             true
@@ -104,17 +104,17 @@ impl Parser {
             false
         }
     }
-    fn expect_kw(&mut self, kw: &str) -> SqlResult<()> {
+    pub(crate) fn expect_kw(&mut self, kw: &str) -> SqlResult<()> {
         if self.eat_kw(kw) {
             Ok(())
         } else {
             Err(self.unexpected(kw))
         }
     }
-    fn is_op(&self, op: &str) -> bool {
+    pub(crate) fn is_op(&self, op: &str) -> bool {
         matches!(&self.peek().tok, Tok::Op(o) if *o == op)
     }
-    fn eat_op(&mut self, op: &str) -> bool {
+    pub(crate) fn eat_op(&mut self, op: &str) -> bool {
         if self.is_op(op) {
             self.advance();
             true
@@ -122,7 +122,7 @@ impl Parser {
             false
         }
     }
-    fn expect_op(&mut self, op: &str) -> SqlResult<()> {
+    pub(crate) fn expect_op(&mut self, op: &str) -> SqlResult<()> {
         if self.eat_op(op) {
             Ok(())
         } else {
@@ -131,7 +131,7 @@ impl Parser {
     }
 
     /// An identifier (quoted or not, keywords not reserved allowed).
-    fn ident(&mut self, what: &str) -> SqlResult<String> {
+    pub(crate) fn ident(&mut self, what: &str) -> SqlResult<String> {
         match &self.peek().tok {
             Tok::Ident(s) if !RESERVED.iter().any(|r| r.eq_ignore_ascii_case(s)) => {
                 let s = s.clone();
@@ -148,7 +148,7 @@ impl Parser {
     }
 
     /// A possibly schema-qualified table name (`public.orders` → `orders`).
-    fn table_name(&mut self) -> SqlResult<String> {
+    pub(crate) fn table_name(&mut self) -> SqlResult<String> {
         let mut name = self.ident("table name")?;
         while self.is_op(".") {
             self.advance();
@@ -157,7 +157,7 @@ impl Parser {
         Ok(name)
     }
 
-    fn statement(&mut self) -> SqlResult<Statement> {
+    pub(crate) fn statement(&mut self) -> SqlResult<Statement> {
         let t = self.peek().clone();
         let word = match &t.tok {
             Tok::Ident(s) => s.to_ascii_uppercase(),
@@ -171,6 +171,8 @@ impl Parser {
             "DELETE" => self.delete(),
             "CREATE" => self.create(),
             "DROP" => self.drop(),
+            "CALL" | "EXEC" | "EXECUTE" => self.call_stmt(),
+            "DO" => self.do_stmt(),
             "TRUNCATE" => {
                 self.advance();
                 self.eat_kw("TABLE");
@@ -217,7 +219,7 @@ impl Parser {
         }
     }
 
-    fn skip_transaction_modes(&mut self) {
+    pub(crate) fn skip_transaction_modes(&mut self) {
         // ISOLATION LEVEL ..., READ WRITE, READ ONLY
         while !self.at_eof() && !self.is_op(";") {
             self.advance();
@@ -226,10 +228,13 @@ impl Parser {
 
     // ------------------------------------------------------------------ DDL
 
-    fn create(&mut self) -> SqlResult<Statement> {
+    pub(crate) fn create(&mut self) -> SqlResult<Statement> {
         self.expect_kw("CREATE")?;
-        self.eat_kw("OR");
+        let or_replace = self.eat_kw("OR");
         self.eat_kw("REPLACE");
+        if self.is_kw("PROCEDURE") || self.is_kw("FUNCTION") {
+            return self.create_routine(or_replace);
+        }
         let unique = self.eat_kw("UNIQUE");
         if self.is_kw("INDEX") || unique || self.is_kw("SEQUENCE") || self.is_kw("VIEW") {
             let what = self.advance().describe().to_ascii_uppercase();
@@ -286,7 +291,7 @@ impl Parser {
         Ok(Statement::CreateTable { name, if_not_exists, columns, constraints })
     }
 
-    fn skip_constraint(&mut self) -> SqlResult<()> {
+    pub(crate) fn skip_constraint(&mut self) -> SqlResult<()> {
         let mut depth = 0;
         loop {
             if self.at_eof() {
@@ -304,7 +309,7 @@ impl Parser {
         }
     }
 
-    fn ident_list(&mut self) -> SqlResult<Vec<String>> {
+    pub(crate) fn ident_list(&mut self) -> SqlResult<Vec<String>> {
         self.expect_op("(")?;
         let mut v = vec![self.ident("column name")?];
         while self.eat_op(",") {
@@ -314,7 +319,7 @@ impl Parser {
         Ok(v)
     }
 
-    fn data_type(&mut self) -> SqlResult<(DataType, bool)> {
+    pub(crate) fn data_type(&mut self) -> SqlResult<(DataType, bool)> {
         let t = self.peek().clone();
         let word = match &t.tok {
             Tok::Ident(s) => s.to_ascii_uppercase(),
@@ -374,7 +379,7 @@ impl Parser {
         Ok((ty, serial))
     }
 
-    fn type_len(&mut self) -> SqlResult<(Option<u32>, Option<u32>)> {
+    pub(crate) fn type_len(&mut self) -> SqlResult<(Option<u32>, Option<u32>)> {
         if !self.eat_op("(") {
             return Ok((None, None));
         }
@@ -394,7 +399,7 @@ impl Parser {
         Ok((nums.first().copied().filter(|n| *n != u32::MAX), nums.get(1).copied()))
     }
 
-    fn column_def(&mut self) -> SqlResult<ColumnDef> {
+    pub(crate) fn column_def(&mut self) -> SqlResult<ColumnDef> {
         let name = self.ident("column name")?;
         let (ty, serial) = self.data_type()?;
         let mut c = ColumnDef { name, ty, not_null: false, primary_key: false, unique: false, default: None, auto_increment: serial };
@@ -452,7 +457,7 @@ impl Parser {
         Ok(c)
     }
 
-    fn skip_parens(&mut self) -> SqlResult<()> {
+    pub(crate) fn skip_parens(&mut self) -> SqlResult<()> {
         self.expect_op("(")?;
         let mut depth = 1;
         while depth > 0 {
@@ -469,8 +474,24 @@ impl Parser {
         Ok(())
     }
 
-    fn drop(&mut self) -> SqlResult<Statement> {
+    pub(crate) fn drop(&mut self) -> SqlResult<Statement> {
         self.expect_kw("DROP")?;
+        if self.is_kw("PROCEDURE") || self.is_kw("FUNCTION") {
+            let function = self.advance().describe().eq_ignore_ascii_case("FUNCTION");
+            let mut if_exists = false;
+            if self.eat_kw("IF") {
+                self.expect_kw("EXISTS")?;
+                if_exists = true;
+            }
+            let name = self.table_name()?.to_ascii_lowercase();
+            if self.is_op("(") {
+                self.skip_parens()?;
+            }
+            if !self.eat_kw("CASCADE") {
+                self.eat_kw("RESTRICT");
+            }
+            return Ok(Statement::DropRoutine { name, function, if_exists });
+        }
         if !self.is_kw("TABLE") {
             let what = self.advance().describe().to_ascii_uppercase();
             while !self.at_eof() && !self.is_op(";") {
@@ -496,7 +517,7 @@ impl Parser {
 
     // ------------------------------------------------------------------ DML
 
-    fn insert(&mut self) -> SqlResult<Statement> {
+    pub(crate) fn insert(&mut self) -> SqlResult<Statement> {
         self.expect_kw("INSERT")?;
         self.expect_kw("INTO")?;
         let table = self.table_name()?;
@@ -531,7 +552,7 @@ impl Parser {
         Ok(Statement::Insert { table, columns, source, returning })
     }
 
-    fn insert_value(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn insert_value(&mut self) -> SqlResult<Expr> {
         if self.is_kw("DEFAULT") {
             self.advance();
             return Ok(Expr::Function { name: "DEFAULT".into(), args: vec![], distinct: false, star: false });
@@ -539,7 +560,7 @@ impl Parser {
         self.expr()
     }
 
-    fn returning(&mut self) -> SqlResult<Option<Vec<SelectItem>>> {
+    pub(crate) fn returning(&mut self) -> SqlResult<Option<Vec<SelectItem>>> {
         if self.eat_kw("RETURNING") {
             Ok(Some(self.select_items()?))
         } else {
@@ -547,7 +568,7 @@ impl Parser {
         }
     }
 
-    fn opt_alias(&mut self) -> SqlResult<Option<String>> {
+    pub(crate) fn opt_alias(&mut self) -> SqlResult<Option<String>> {
         if self.eat_kw("AS") {
             return Ok(Some(self.ident("alias")?));
         }
@@ -558,7 +579,7 @@ impl Parser {
         }
     }
 
-    fn update(&mut self) -> SqlResult<Statement> {
+    pub(crate) fn update(&mut self) -> SqlResult<Statement> {
         self.expect_kw("UPDATE")?;
         let table = self.table_name()?;
         let alias = if self.is_kw("SET") { None } else { self.opt_alias()? };
@@ -586,7 +607,7 @@ impl Parser {
         Ok(Statement::Update { table, alias, sets, where_, returning })
     }
 
-    fn delete(&mut self) -> SqlResult<Statement> {
+    pub(crate) fn delete(&mut self) -> SqlResult<Statement> {
         self.expect_kw("DELETE")?;
         self.expect_kw("FROM")?;
         let table = self.table_name()?;
@@ -598,7 +619,7 @@ impl Parser {
 
     // ------------------------------------------------------------------ SELECT
 
-    fn select(&mut self) -> SqlResult<Select> {
+    pub(crate) fn select(&mut self) -> SqlResult<Select> {
         let mut s = self.select_core()?;
         loop {
             if self.eat_kw("UNION") {
@@ -679,7 +700,7 @@ impl Parser {
         Ok(s)
     }
 
-    fn select_core(&mut self) -> SqlResult<Select> {
+    pub(crate) fn select_core(&mut self) -> SqlResult<Select> {
         if self.eat_op("(") {
             let s = self.select()?;
             self.expect_op(")")?;
@@ -766,6 +787,7 @@ impl Parser {
                     let rname = match &table {
                         TableRef::Table { name, alias } => alias.clone().unwrap_or(name.clone()),
                         TableRef::Subquery { alias, .. } => alias.clone(),
+                        TableRef::Function { name, alias, .. } | TableRef::Values { name, alias, .. } => alias.clone().unwrap_or(name.to_ascii_lowercase()),
                     };
                     let mut cond: Option<Expr> = None;
                     for c in cols {
@@ -803,7 +825,7 @@ impl Parser {
         Ok(s)
     }
 
-    fn table_ref(&mut self) -> SqlResult<TableRef> {
+    pub(crate) fn table_ref(&mut self) -> SqlResult<TableRef> {
         if self.eat_op("(") {
             let q = self.select()?;
             self.expect_op(")")?;
@@ -811,11 +833,26 @@ impl Parser {
             return Ok(TableRef::Subquery { query: Box::new(q), alias });
         }
         let name = self.table_name()?;
+        if self.eat_op("(") {
+            // set-returning function
+            let mut args = Vec::new();
+            if !self.eat_op(")") {
+                loop {
+                    args.push(self.expr()?);
+                    if self.eat_op(")") {
+                        break;
+                    }
+                    self.expect_op(",")?;
+                }
+            }
+            let alias = self.opt_alias()?;
+            return Ok(TableRef::Function { name: name.to_ascii_lowercase(), args, alias });
+        }
         let alias = self.opt_alias()?;
         Ok(TableRef::Table { name, alias })
     }
 
-    fn select_items(&mut self) -> SqlResult<Vec<SelectItem>> {
+    pub(crate) fn select_items(&mut self) -> SqlResult<Vec<SelectItem>> {
         let mut items = Vec::new();
         loop {
             if self.eat_op("*") {
@@ -839,11 +876,11 @@ impl Parser {
 
     // ------------------------------------------------------------------ expressions
 
-    fn expr(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn expr(&mut self) -> SqlResult<Expr> {
         self.or_expr()
     }
 
-    fn or_expr(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn or_expr(&mut self) -> SqlResult<Expr> {
         let mut l = self.and_expr()?;
         while self.eat_kw("OR") {
             let r = self.and_expr()?;
@@ -852,7 +889,7 @@ impl Parser {
         Ok(l)
     }
 
-    fn and_expr(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn and_expr(&mut self) -> SqlResult<Expr> {
         let mut l = self.not_expr()?;
         while self.eat_kw("AND") {
             let r = self.not_expr()?;
@@ -861,14 +898,14 @@ impl Parser {
         Ok(l)
     }
 
-    fn not_expr(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn not_expr(&mut self) -> SqlResult<Expr> {
         if self.eat_kw("NOT") {
             return Ok(Expr::Not(Box::new(self.not_expr()?)));
         }
         self.predicate()
     }
 
-    fn predicate(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn predicate(&mut self) -> SqlResult<Expr> {
         let left = self.concat_expr()?;
         let op = match &self.peek().tok {
             Tok::Op("=") => Some(BinOp::Eq),
@@ -954,7 +991,7 @@ impl Parser {
         Ok(left)
     }
 
-    fn concat_expr(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn concat_expr(&mut self) -> SqlResult<Expr> {
         let mut l = self.additive()?;
         while self.eat_op("||") {
             let r = self.additive()?;
@@ -963,7 +1000,7 @@ impl Parser {
         Ok(l)
     }
 
-    fn additive(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn additive(&mut self) -> SqlResult<Expr> {
         let mut l = self.multiplicative()?;
         loop {
             let op = if self.is_op("+") {
@@ -980,7 +1017,7 @@ impl Parser {
         Ok(l)
     }
 
-    fn multiplicative(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn multiplicative(&mut self) -> SqlResult<Expr> {
         let mut l = self.unary()?;
         loop {
             let op = if self.is_op("*") {
@@ -999,7 +1036,7 @@ impl Parser {
         Ok(l)
     }
 
-    fn unary(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn unary(&mut self) -> SqlResult<Expr> {
         if self.eat_op("-") {
             let e = self.unary()?;
             return Ok(match e {
@@ -1019,7 +1056,7 @@ impl Parser {
         Ok(e)
     }
 
-    fn primary(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn primary(&mut self) -> SqlResult<Expr> {
         let t = self.peek().clone();
         match t.tok {
             Tok::Int(i) => {
@@ -1119,7 +1156,7 @@ impl Parser {
         }
     }
 
-    fn column_ref(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn column_ref(&mut self) -> SqlResult<Expr> {
         let first = self.ident("column name")?;
         if self.is_op(".") && !matches!(self.peek_at(1), Tok::Op("*")) {
             self.advance();
@@ -1135,7 +1172,7 @@ impl Parser {
         Ok(Expr::Column { table: None, name: first })
     }
 
-    fn function_call(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn function_call(&mut self) -> SqlResult<Expr> {
         let name = self.ident("function name")?.to_ascii_uppercase();
         self.expect_op("(")?;
         let mut args = Vec::new();
@@ -1172,7 +1209,7 @@ impl Parser {
         Ok(Expr::Function { name, args, distinct, star })
     }
 
-    fn case_expr(&mut self) -> SqlResult<Expr> {
+    pub(crate) fn case_expr(&mut self) -> SqlResult<Expr> {
         self.expect_kw("CASE")?;
         let operand = if self.is_kw("WHEN") { None } else { Some(Box::new(self.expr()?)) };
         let mut whens = Vec::new();
@@ -1196,6 +1233,7 @@ fn table_ref_name(base: &TableRef, joins: &[Join]) -> String {
     match r {
         TableRef::Table { name, alias } => alias.clone().unwrap_or(name.clone()),
         TableRef::Subquery { alias, .. } => alias.clone(),
+        TableRef::Function { name, alias, .. } | TableRef::Values { name, alias, .. } => alias.clone().unwrap_or(name.to_ascii_lowercase()),
     }
 }
 
@@ -1204,7 +1242,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_statements() {
+    pub(crate) fn parses_statements() {
         let v = parse_statements("create table t (id serial primary key, name varchar(20) not null default 'x'); insert into t(name) values ('a'),('b') returning id; select * from t").unwrap();
         assert_eq!(v.len(), 3);
         assert!(matches!(&v[0], Statement::CreateTable { columns, .. } if columns.len() == 2 && columns[0].auto_increment));
@@ -1212,7 +1250,7 @@ mod tests {
     }
 
     #[test]
-    fn error_messages() {
+    pub(crate) fn error_messages() {
         let e = parse_statement("select * form t").unwrap_err();
         assert!(e.message.contains("syntax error at or near \"form\""), "{}", e.message);
         let e = parse_statement("select * from").unwrap_err();
@@ -1225,7 +1263,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_params() {
+    pub(crate) fn counts_params() {
         assert_eq!(count_parameters("select ? , ? from t where a = ?").unwrap(), 3);
         assert_eq!(count_parameters("select $1, $2, $1").unwrap(), 2);
     }

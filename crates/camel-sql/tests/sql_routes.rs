@@ -21,6 +21,34 @@ fn producer_suite_embedded() {
 }
 
 #[test]
+fn stored_procedure_suite_embedded() {
+    let ds = embedded();
+    let ctx = context_with(ds.clone());
+    let dir = std::env::temp_dir().join(unique("stored"));
+    std::fs::create_dir_all(&dir).unwrap();
+    stored_suite(&ctx, &ds, &dir, false);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn stored_procedure_in_a_transacted_route() {
+    let ds = embedded();
+    let ctx = context_with(ds.clone());
+    exec(&ds, "CREATE TABLE log (msg TEXT)");
+    exec(&ds, "CREATE PROCEDURE write_log(IN m TEXT) LANGUAGE plpgsql AS $$ BEGIN INSERT INTO log VALUES (m); END $$");
+    camel_sql::bind_transaction_policy(&ctx, "tx", ds.clone());
+    ctx.add_routes(|b| {
+        b.from("direct:tx").policy_ref("tx").to("sql-stored:write_log(VARCHAR ${body})?dataSource=#ds").throw_exception("IllegalStateException", "boom");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    assert!(t.request_body("direct:tx", "hello").is_err());
+    assert_eq!(count(&ds, "SELECT count(*) FROM log"), 0, "the procedure's insert was rolled back with the route transaction");
+    ctx.stop().unwrap();
+}
+
+#[test]
 fn timer_to_sql_insert() {
     let ds = embedded();
     exec(&ds, "CREATE TABLE ticks (id SERIAL PRIMARY KEY, counter INT, note TEXT)");
@@ -329,8 +357,10 @@ fn aggregation_with_jdbc_repository() {
 fn endpoint_configuration_errors() {
     let ds = embedded();
     let ctx = context_with(ds.clone());
-    let e = ctx.get_endpoint("sql-stored:SUB_NUMBERS(INTEGER ${headers.num1})").err().unwrap();
-    assert!(format!("{:?}", e).contains("not supported"), "{:?}", e);
+    assert!(ctx.get_endpoint("sql-stored:SUB_NUMBERS(INTEGER ${headers.num1})").is_ok());
+    let e = ctx.get_endpoint("sql-stored:SUB_NUMBERS(OUT INTEGER)").err().unwrap();
+    assert!(format!("{:?}", e).contains("Missing name"), "{:?}", e);
+    assert!(ctx.get_endpoint("sql-stored:P()?bogus=1").is_err());
     assert!(ctx.get_endpoint("sql:select 1?dataSource=#missing").is_err());
     assert!(ctx.get_endpoint("sql:select 1?dataSource=#ds&bogus=1").is_err());
     assert!(ctx.get_endpoint("sql:select 1?dataSource=#ds&outputType=Nope").is_err());

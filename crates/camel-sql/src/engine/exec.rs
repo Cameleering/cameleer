@@ -83,6 +83,8 @@ impl Table {
 #[derive(Clone, Debug, Default)]
 pub struct Database {
     pub tables: BTreeMap<String, Table>,
+    /// Stored procedures and functions by lower-case name.
+    pub routines: BTreeMap<String, Routine>,
 }
 
 impl Database {
@@ -107,6 +109,7 @@ pub enum Undo {
     CreateTable { table: String },
     DropTable { table: Table },
     Truncate { table: String, rows: Vec<Row> },
+    Routine { name: String, old: Option<Routine> },
 }
 
 /// Apply undo records (newest first).
@@ -144,6 +147,14 @@ pub fn apply_undo(db: &mut Database, undo: Vec<Undo>) {
                     t.rows = rows;
                 }
             }
+            Undo::Routine { name, old } => match old {
+                Some(r) => {
+                    db.routines.insert(name, r);
+                }
+                None => {
+                    db.routines.remove(&name);
+                }
+            },
         }
     }
 }
@@ -155,7 +166,7 @@ pub struct Relation {
     pub rows: Vec<Vec<Value>>,
 }
 
-fn column_type(ty: &DataType) -> ColumnType {
+pub(crate) fn column_type(ty: &DataType) -> ColumnType {
     match ty {
         DataType::Integer => ColumnType::Integer,
         DataType::BigInt => ColumnType::BigInt,
@@ -170,7 +181,52 @@ fn column_type(ty: &DataType) -> ColumnType {
 
 /// Execute a non-transaction-control statement.
 pub fn execute_statement(db: &mut Database, stmt: &Statement, params: &Params, undo: &mut Vec<Undo>, opts: &ExecuteOptions, now: &str) -> SqlResult<QueryResult> {
+    let prepared;
+    let stmt = if !db.routines.is_empty() && matches!(stmt, Statement::Select(_) | Statement::Insert { .. } | Statement::Update { .. } | Statement::Delete { .. } | Statement::Call { .. }) {
+        let mut s = stmt.clone();
+        prepare_routine_calls(db, undo, &mut s, params, now)?;
+        prepared = s;
+        &prepared
+    } else {
+        stmt
+    };
     match stmt {
+        Statement::CreateRoutine { routine, or_replace } => {
+            let old = db.routines.get(&routine.name).cloned();
+            if old.is_some() && !*or_replace {
+                return Err(SqlErr::new("42723", format!("{} \"{}\" already exists", if routine.function { "function" } else { "procedure" }, routine.name)));
+            }
+            db.routines.insert(routine.name.clone(), (**routine).clone());
+            undo.push(Undo::Routine { name: routine.name.clone(), old });
+            Ok(QueryResult::update(if routine.function { "CREATE FUNCTION" } else { "CREATE PROCEDURE" }, 0))
+        }
+        Statement::DropRoutine { name, function, if_exists } => {
+            let kind = if *function { "function" } else { "procedure" };
+            match db.routines.get(name) {
+                Some(r) if r.function != *function => Err(SqlErr::new("42809", format!("\"{}\" is not a {}", name, kind))),
+                Some(_) => {
+                    let old = db.routines.remove(name);
+                    undo.push(Undo::Routine { name: name.clone(), old });
+                    Ok(QueryResult::update(if *function { "DROP FUNCTION" } else { "DROP PROCEDURE" }, 0))
+                }
+                None if *if_exists => Ok(QueryResult::update(if *function { "DROP FUNCTION" } else { "DROP PROCEDURE" }, 0)),
+                None => Err(SqlErr::new("42883", format!("{} {} does not exist", kind, name))),
+            }
+        }
+        Statement::Call { name, args } => {
+            let r = db.routines.get(name).cloned().ok_or_else(|| SqlErr::new("42883", format!("procedure {}() does not exist", name)))?;
+            if r.function {
+                return Err(SqlErr::new("42809", format!("{}() is not a procedure (to call a function, use SELECT)", name)));
+            }
+            let vals = {
+                let scope = Scope::default();
+                let env = empty_env(&scope, params, db, now);
+                args.iter().map(|a| eval(a, &env)).collect::<SqlResult<Vec<_>>>()?
+            };
+            let out = super::plsql::call_routine(&mut super::plsql::DbCtx::Mut(db, undo), &r, vals, true, now)?;
+            Ok(out.into_call_result())
+        }
+        Statement::Do(block) => super::plsql::run_do(&mut super::plsql::DbCtx::Mut(db, undo), block, now),
         Statement::Select(sel) => {
             let mut rel = run_select(db, sel, params, None, now)?;
             if opts.max_rows > 0 {
@@ -539,6 +595,22 @@ fn table_source(db: &Database, tref: &TableRef, params: &Params, outer: Option<&
             let cols = rel.columns.iter().map(|c| ScopeCol { table: Some(alias.clone()), name: c.clone(), ty: None }).collect();
             Ok((cols, rel.rows))
         }
+        TableRef::Values { name, columns, rows, alias } => {
+            let t = alias.clone().unwrap_or_else(|| name.clone());
+            Ok((columns.iter().map(|c| ScopeCol { table: Some(t.clone()), name: c.clone(), ty: None }).collect(), rows.clone()))
+        }
+        TableRef::Function { name, args, alias } => {
+            let scope = Scope::default();
+            let base = empty_env(&scope, params, db, now);
+            let env = match outer {
+                Some(o) => Env { outer: Some(o), ..base },
+                None => base,
+            };
+            let vals = args.iter().map(|a| eval(a, &env)).collect::<SqlResult<Vec<_>>>()?;
+            let (columns, rows) = table_function(db, name, vals, now)?;
+            let t = alias.clone().unwrap_or_else(|| name.clone());
+            Ok((columns.iter().map(|c| ScopeCol { table: Some(t.clone()), name: c.clone(), ty: None }).collect(), rows))
+        }
     }
 }
 
@@ -884,4 +956,113 @@ pub fn run_select(db: &Database, sel: &Select, params: &Params, outer: Option<&E
     let rows: Vec<Vec<Value>> = core.rows.into_iter().map(|(o, _)| o).skip(offset).take(limit.unwrap_or(usize::MAX)).collect();
     let types = finish_types(core.types, &rows);
     Ok(Relation { columns: core.names, types, rows })
+}
+
+// ---------------------------------------------------------------------------
+// routines in queries
+// ---------------------------------------------------------------------------
+
+/// A set-returning function in FROM evaluated read-only: a user routine or the built-in
+/// `generate_series(start, stop [, step])`.
+fn table_function(db: &Database, name: &str, args: Vec<Value>, now: &str) -> SqlResult<(Vec<String>, Vec<Vec<Value>>)> {
+    if let Some(r) = db.routines.get(name) {
+        if !r.function {
+            return Err(SqlErr::new("42809", format!("{}() is a procedure (use CALL)", name)));
+        }
+        let out = super::plsql::call_routine(&mut super::plsql::DbCtx::Ref(db), r, args, false, now)?;
+        return Ok((out.columns, out.rows));
+    }
+    if name == "generate_series" {
+        if !(2..=3).contains(&args.len()) {
+            return Err(SqlErr::new("42883", "function generate_series requires 2 or 3 arguments"));
+        }
+        if args.iter().any(|a| a.is_null()) {
+            return Ok((vec![name.into()], Vec::new()));
+        }
+        let a = int_of(&args[0], "generate_series start")?;
+        let b = int_of(&args[1], "generate_series stop")?;
+        let step = if args.len() == 3 { int_of(&args[2], "generate_series step")? } else { 1 };
+        if step == 0 {
+            return Err(SqlErr::new("22023", "step size cannot equal zero"));
+        }
+        let mut rows = Vec::new();
+        let mut i = a;
+        while (step > 0 && i <= b) || (step < 0 && i >= b) {
+            rows.push(vec![Value::Int(i)]);
+            if rows.len() > 10_000_000 {
+                return Err(SqlErr::new("54000", "generate_series: too many rows"));
+            }
+            i += step;
+        }
+        return Ok((vec![name.into()], rows));
+    }
+    Err(SqlErr::new("42883", format!("function {}() does not exist", name)))
+}
+
+/// Pre-evaluate calls of user routines whose arguments are constant (literals and
+/// parameters) with write access, replacing them by their results, so that functions
+/// called as `SELECT fn(...)` / `SELECT * FROM fn(...)` may modify data. Calls with
+/// column arguments are evaluated per row (read-only) during the query.
+pub fn prepare_routine_calls(db: &mut Database, undo: &mut Vec<Undo>, stmt: &mut Statement, params: &Params, now: &str) -> SqlResult<()> {
+    if db.routines.is_empty() {
+        return Ok(());
+    }
+    // keep the output column name of `SELECT fn(...)`
+    if let Statement::Select(s) = stmt {
+        for it in &mut s.items {
+            if let SelectItem::Expr { expr: Expr::Function { name, .. }, alias: alias @ None } = it {
+                if db.routines.contains_key(&name.to_ascii_lowercase()) {
+                    *alias = Some(name.to_ascii_lowercase());
+                }
+            }
+        }
+    }
+    let mut err: Option<SqlErr> = None;
+    stmt.walk_mut(&mut |e| {
+        if err.is_some() {
+            return;
+        }
+        let Expr::Function { name, args, .. } = e else { return };
+        let key = name.to_ascii_lowercase();
+        let Some(r) = db.routines.get(&key).filter(|r| r.function).cloned() else { return };
+        if !args.iter().all(|a| a.is_constant()) {
+            return;
+        }
+        let vals = {
+            let scope = Scope::default();
+            let env = empty_env(&scope, params, db, now);
+            args.iter().map(|a| eval(a, &env)).collect::<SqlResult<Vec<_>>>()
+        };
+        let r = vals.and_then(|vals| super::plsql::call_routine(&mut super::plsql::DbCtx::Mut(db, undo), &r, vals, false, now));
+        match r {
+            Ok(out) => *e = Expr::Literal(out.scalar),
+            Err(x) => err = Some(x),
+        }
+    });
+    if let Some(e) = err {
+        return Err(e);
+    }
+    stmt.walk_tables_mut(&mut |t| {
+        if err.is_some() {
+            return;
+        }
+        let TableRef::Function { name, args, alias } = t else { return };
+        let Some(r) = db.routines.get(name.as_str()).filter(|r| r.function).cloned() else { return };
+        if !args.iter().all(|a| a.is_constant()) {
+            return;
+        }
+        let vals = {
+            let scope = Scope::default();
+            let env = empty_env(&scope, params, db, now);
+            args.iter().map(|a| eval(a, &env)).collect::<SqlResult<Vec<_>>>()
+        };
+        match vals.and_then(|vals| super::plsql::call_routine(&mut super::plsql::DbCtx::Mut(db, undo), &r, vals, false, now)) {
+            Ok(out) => *t = TableRef::Values { name: name.clone(), columns: out.columns, rows: out.rows, alias: alias.clone() },
+            Err(x) => err = Some(x),
+        }
+    });
+    match err {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }

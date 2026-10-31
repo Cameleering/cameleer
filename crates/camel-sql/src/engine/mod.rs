@@ -24,6 +24,27 @@
 //! * `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK` (undo-log rollback; isolation is
 //!   "read uncommitted": statements are serialized but transactions interleave).
 //! * Parameters: `?` (positional), `$n` (numbered) and `:name` / `:#name` (named).
+//! * Stored routines ([`plsql`], [`plparse`]): `CREATE [OR REPLACE] PROCEDURE name([IN|OUT|INOUT]
+//!   [name] type [DEFAULT expr], ...) [LANGUAGE sql|plpgsql] AS $$ body $$`, `CREATE FUNCTION
+//!   ... RETURNS type | SETOF type | SETOF table | TABLE (col type, ...) | void | record`
+//!   (`STRICT`, volatility and other attributes accepted), `DROP PROCEDURE|FUNCTION [IF
+//!   EXISTS]`, `CALL name(args)` (OUT/INOUT values returned as one row; OUT positions may be
+//!   passed as NULL or omitted), `SELECT fn(args)`, `SELECT * FROM fn(args) [alias]`,
+//!   `DO $$ block $$`, built-in `generate_series`. Bodies are plain SQL (the last statement
+//!   gives the result) or a PL/pgSQL subset: `DECLARE` (types, `RECORD`, `%TYPE`,
+//!   `CONSTANT`, `NOT NULL`, defaults), `:=` / `=` assignment (also `rec.field`),
+//!   `IF/ELSIF/ELSE`, `WHILE`, `LOOP`, `FOR i IN [REVERSE] a..b [BY n]`, `FOR rec IN
+//!   query`, labels with `EXIT`/`CONTINUE [label] [WHEN]`, `RETURN`, `RETURN NEXT`,
+//!   `RETURN QUERY`, `RAISE NOTICE|EXCEPTION 'fmt %', args [USING ERRCODE = ..]`, SQL
+//!   statements with variables, `SELECT ... INTO [STRICT]`, `... RETURNING ... INTO`,
+//!   `PERFORM`, `FOUND`, `GET DIAGNOSTICS ... = ROW_COUNT`, nested blocks with `EXCEPTION
+//!   WHEN cond THEN` handlers (block changes rolled back; `SQLSTATE`/`SQLERRM`). A plain
+//!   `SELECT` in a procedure without OUT parameters becomes the result set of `CALL`.
+//!   Functions called per row with column arguments run read-only; data-modifying
+//!   functions are called with constant arguments (`SELECT fn(1)`, `FROM fn(?)`) or via
+//!   procedures. Routine calls nest up to [`plsql::MAX_DEPTH`] levels. Not supported:
+//!   overloading, VARIADIC, cursors, `FOREACH`, transaction control inside procedures,
+//!   triggers.
 //!
 //! Errors are `SQLException` kinds with PostgreSQL SQLStates (see [`crate::datasource::sql_error`]).
 
@@ -32,6 +53,9 @@ pub mod eval;
 pub mod exec;
 pub mod lexer;
 pub mod parser;
+pub mod plast;
+pub mod plparse;
+pub mod plsql;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -288,3 +312,6 @@ impl DataSource for EmbeddedDataSource {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod routine_tests;
