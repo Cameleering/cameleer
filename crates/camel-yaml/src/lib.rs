@@ -29,7 +29,8 @@ pub mod yaml;
 
 pub use dsl::{
     add_route_from_template, add_routes_from_file, add_routes_from_yaml, build_uri, dump_route_definitions_as_yaml, dump_routes_as_yaml,
-    endpoint_uri, find_expression, load_routes, load_routes_from_file, parse_expression, register_bean_factory, register_step,
+    endpoint_uri, exception_kind, find_expression, load_routes, load_routes_from_file, parse_error_handler, parse_expression, ref_name,
+    register_bean_factory, register_step, resolve_aggregation_strategy,
     register_top_level_handler, route_definition_to_value, step_to_value, yaml_state, BeanDefinition, BeanFactory, RouteTemplateDefinition,
     StepContext, StepHandler, StepRegistry, TemplateParameter, TopLevelContext, TopLevelHandler, YamlLoader, YamlState, YAML_DSL_ERROR,
 };

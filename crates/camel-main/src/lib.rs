@@ -8,6 +8,7 @@
 pub mod console;
 pub mod properties;
 pub mod signal;
+pub mod yaml_rest;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -444,6 +445,8 @@ mod tests {
 pub fn new_main() -> Main {
     let mut main = Main::new();
     camel_http::register(main.context());
+    // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
+    yaml_rest::register();
     for ext in ["yaml", "yml"] {
         main.add_route_loader(ext, |ctx, text, _path| camel_yaml::add_routes_from_yaml(ctx, text));
     }

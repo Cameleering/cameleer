@@ -13,11 +13,34 @@
 //!         - to: mock:result
 //! ```
 //!
-//! Supported top-level elements: `route`, `from` (short form), `beans`, `routeTemplate`,
-//! `templatedRoute`, and – stored raw and exposed through [`YamlState`] and the
-//! top-level extension hooks ([`register_top_level_handler`]) – `routeConfiguration`,
-//! `restConfiguration`, `rest`, `errorHandler`, `onException`, `onCompletion`,
-//! `intercept`, `interceptFrom`, `interceptSendToEndpoint`, `dataFormats`.
+//! Supported top-level elements: `route`, `from` (short form), `beans`, `routeTemplate`
+//! (with `parameters` and local `beans`), `templatedRoute` (`routeId`, `prefixId`,
+//! `parameters`, `{{param:default}}`), `routeConfiguration` (`onException`,
+//! `onCompletion`, `intercept`, `interceptFrom`, `interceptSendToEndpoint`,
+//! `errorHandler`; applied to the routes referencing its `id` with
+//! `routeConfigurationId`, or to all routes without `routeConfigurationId` when it has
+//! no `id`), `errorHandler` (context wide: `deadLetterChannel`, `defaultErrorHandler`,
+//! `noErrorHandler`, `refErrorHandler`), and top-level `onException` / `onCompletion` /
+//! `intercept*` (anonymous route configurations). All of these, plus
+//! `restConfiguration`, `rest` and `dataFormats`, are also stored raw in the
+//! [`YamlState`] and passed to the top-level extension hooks
+//! ([`register_top_level_handler`]; camel-main registers the REST DSL this way).
+//!
+//! Routes accept `id`, `description`, `group`, `autoStartup`, `startupOrder`,
+//! `routeConfigurationId`, `errorHandler`, `errorHandlerRef` and `routePolicy`.
+//!
+//! ## EIPs
+//!
+//! Built-in steps cover the EIPs of the Rust DSL with the Camel 4 YAML property names:
+//! `to`, `toD`, `setBody`, `setHeader(s)`, `filter`, `choice` (`when` / `otherwise`),
+//! `split`, `aggregate`, `multicast`, `recipientList`, `routingSlip`, `dynamicRouter`,
+//! `wireTap`, `enrich`, `pollEnrich`, `loop`, `loadBalance`, `resequence`, `sort`,
+//! `pipeline`, `claimCheck`, `doTry` (`doCatch` / `doFinally`), `onException`,
+//! `onCompletion`, `intercept*`, `throttle`, `delay`, `sample`, `idempotentConsumer`,
+//! `circuitBreaker` (`onFallback`), `validate`, `rollback`, `throwException`, `threads`,
+//! `transacted`, `policy`, `bean`, `script`, ... (see [`StepRegistry::names`]).
+//! Bean references (`aggregationStrategy`, `idempotentRepository`, `ref`, ...) are
+//! looked up in the context registry (a leading `#` / `#bean:` is ignored).
 //!
 //! ## Step registry
 //!
@@ -41,11 +64,18 @@ use camel_core::error::{kinds, register_kind_parent};
 use camel_core::log::Level;
 use camel_core::message::ExchangePattern;
 use camel_core::model::{ProcessorDefinition, RouteDefinition};
+use camel_core::processor::errors::CamelContextErrorExt;
 use camel_core::processor::basic::*;
 use camel_core::util::url_encode;
 use camel_core::{camel_warn, CamelContext, CamelError, Result, Value};
 
 use crate::yaml::{self, Node, PathSegment};
+
+mod config;
+mod eips;
+
+pub use config::{apply_redelivery_policy, parse_error_handler, parse_redelivery_overrides, RedeliveryExtras, ROUTE_CONFIGURATION_ITEMS};
+pub use eips::{exception_kind, ref_name, resolve_aggregation_strategy};
 
 /// Exception kind used for YAML DSL errors (a child of `IllegalArgumentException`).
 pub const YAML_DSL_ERROR: &str = "YamlDeserializationException";
@@ -339,6 +369,8 @@ pub struct StepContext<'a> {
     path: Vec<PathSegment>,
     step_name: String,
     pending_id: Option<String>,
+    /// Blocks opened with [`StepContext::push_open_block`] in the current step list.
+    dangling: usize,
 }
 
 impl<'a> StepContext<'a> {
@@ -407,6 +439,13 @@ impl<'a> StepContext<'a> {
         self.route.end();
     }
 
+    /// Open a block that extends to the end of the enclosing step list (like `threads`
+    /// in Camel, where the remaining steps run inside it). It is closed automatically.
+    pub fn push_open_block(&mut self, def: Box<dyn ProcessorDefinition>) {
+        self.push_block(def);
+        self.dangling += 1;
+    }
+
     /// Open `def` as a block, load `steps` into it and close it.
     pub fn add_block(&mut self, def: Box<dyn ProcessorDefinition>, steps: Option<&Value>) -> Result<()> {
         self.push_block(def);
@@ -430,12 +469,21 @@ impl<'a> StepContext<'a> {
         match steps {
             Value::Null => Ok(()),
             Value::Array(items) => {
+                let saved = std::mem::replace(&mut self.dangling, 0);
+                let mut r = Ok(());
                 for (i, item) in items.iter().enumerate() {
                     let mut p = base.clone();
                     p.push(PathSegment::Index(i));
-                    self.load_step_at(item, p)?;
+                    r = self.load_step_at(item, p);
+                    if r.is_err() {
+                        break;
+                    }
                 }
-                Ok(())
+                for _ in 0..self.dangling {
+                    self.route.end();
+                }
+                self.dangling = saved;
+                r
             }
             other => Err(dsl_error(format!(
                 "Expected a list of steps but found {} {}",
@@ -641,6 +689,8 @@ fn language_expression(lang: &str, v: &Value) -> Result<ExpressionDefinition> {
         }
         Value::Null => Ok(ExpressionDefinition::language(lang, "")),
         Value::Array(_) => Err(dsl_error(format!("invalid '{}' expression: expected a string or a mapping", lang))),
+        // `tokenize: ","` is a shorthand for `tokenize: {token: ","}`
+        other if lang == "tokenize" => Ok(ExpressionDefinition::language(lang, "").option("token", other.to_string())),
         other => Ok(ExpressionDefinition::language(lang, other.to_string())),
     }
 }
@@ -744,6 +794,7 @@ fn excludes_of(ctx: &StepContext<'_>, cfg: &Value) -> Vec<String> {
 }
 
 fn register_core_steps(r: &mut StepRegistry) {
+    eips::register_eip_steps(r);
     r.register("to", to_handler(None));
     r.register("inOnly", to_handler(Some(ExchangePattern::InOnly)));
     r.register("inOut", to_handler(Some(ExchangePattern::InOut)));
@@ -894,6 +945,9 @@ pub struct RouteTemplateDefinition {
     pub parameters: Vec<TemplateParameter>,
     /// The route-shaped template body (`{from: {...}, ...}`).
     pub route: Value,
+    /// Template local `beans` (created with the bean factories when the template is
+    /// instantiated, after parameter substitution).
+    pub beans: Vec<Value>,
 }
 
 impl RouteTemplateDefinition {
@@ -926,11 +980,17 @@ impl RouteTemplateDefinition {
         } else {
             return Err(dsl_error(format!("routeTemplate '{}' requires a 'route' or 'from'", id)));
         };
-        Ok(RouteTemplateDefinition { id, description: v.get("description").and_then(scalar_string), parameters, route })
+        let beans = match v.get("beans") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(a)) => a.clone(),
+            Some(_) => return Err(dsl_error(format!("routeTemplate '{}': 'beans' must be a list", id))),
+        };
+        Ok(RouteTemplateDefinition { id, description: v.get("description").and_then(scalar_string), parameters, route, beans })
     }
 
-    /// Substitute `{{param}}` placeholders and return the route-shaped value.
-    pub fn instantiate(&self, params: &BTreeMap<String, String>) -> Result<Value> {
+    /// Parameter values for an instantiation: declared defaults overridden by `params`.
+    /// Fails if a required parameter has no value.
+    pub fn resolve_parameters(&self, params: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>> {
         let missing: Vec<&str> = self
             .parameters
             .iter()
@@ -949,23 +1009,73 @@ impl RouteTemplateDefinition {
         for (k, v) in params {
             values.insert(k.clone(), v.clone());
         }
-        Ok(substitute(&self.route, &values))
+        Ok(values)
+    }
+
+    /// Substitute `{{param}}` placeholders and return the route-shaped value.
+    /// `{{param:default}}` uses the inline default when the parameter has no value.
+    pub fn instantiate(&self, params: &BTreeMap<String, String>) -> Result<Value> {
+        let values = self.resolve_parameters(params)?;
+        let declared: Vec<&str> = self.parameters.iter().map(|p| p.name.as_str()).collect();
+        Ok(substitute_declared(&self.route, &values, &declared))
     }
 }
 
-/// Replace `{{name}}` placeholders in all string scalars.
+/// Replace `{{name}}` (and `{{name:default}}`) placeholders whose name is in `params`
+/// in all string scalars. Other placeholders are left for the properties component.
 pub fn substitute(v: &Value, params: &BTreeMap<String, String>) -> Value {
+    substitute_declared(v, params, &[])
+}
+
+/// Like [`substitute`]; additionally `{{name:default}}` of a `declared` parameter
+/// without value is replaced by its inline default.
+fn substitute_declared(v: &Value, params: &BTreeMap<String, String>, declared: &[&str]) -> Value {
     match v {
-        Value::String(s) if s.contains("{{") => {
-            let mut out = s.clone();
-            for (k, val) in params {
-                out = out.replace(&format!("{{{{{}}}}}", k), val);
-            }
-            Value::String(out)
-        }
-        Value::Array(a) => Value::Array(a.iter().map(|x| substitute(x, params)).collect()),
-        Value::Object(m) => Value::Object(m.iter().map(|(k, x)| (k.clone(), substitute(x, params))).collect()),
+        Value::String(s) if s.contains("{{") => Value::String(substitute_text(s, params, declared)),
+        Value::Array(a) => Value::Array(a.iter().map(|x| substitute_declared(x, params, declared)).collect()),
+        Value::Object(m) => Value::Object(m.iter().map(|(k, x)| (k.clone(), substitute_declared(x, params, declared))).collect()),
         other => other.clone(),
+    }
+}
+
+fn substitute_text(s: &str, params: &BTreeMap<String, String>, declared: &[&str]) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(start) = rest.find("{{") {
+        let Some(len) = rest[start + 2..].find("}}") else { break };
+        let inner = &rest[start + 2..start + 2 + len];
+        let (name, default) = match inner.split_once(':') {
+            Some((n, d)) => (n.trim(), Some(d)),
+            None => (inner.trim(), None),
+        };
+        out.push_str(&rest[..start]);
+        match (params.get(name), default) {
+            (Some(v), _) => out.push_str(v),
+            (None, Some(d)) if declared.contains(&name) => out.push_str(d),
+            _ => out.push_str(&rest[start..start + 4 + len]),
+        }
+        rest = &rest[start + 4 + len..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Prefix the `id` of every step below `v` (templatedRoute `prefixId`).
+fn prefix_step_ids(v: &mut Value, prefix: &str) {
+    match v {
+        Value::Object(m) => {
+            for (k, x) in m.iter_mut() {
+                if k == "id" {
+                    if let Value::String(s) = x {
+                        *s = format!("{}{}", prefix, s);
+                    }
+                } else {
+                    prefix_step_ids(x, prefix);
+                }
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(|x| prefix_step_ids(x, prefix)),
+        _ => {}
     }
 }
 
@@ -1087,6 +1197,24 @@ impl<'a> TopLevelContext<'a> {
     pub fn error(&self, message: impl std::fmt::Display) -> CamelError {
         dsl_error(format!("Error in '{}' {}: {}", self.kind, self.location(), message))
     }
+    /// All top-level elements of the given kind in the document being loaded (in
+    /// document order), e.g. every `restConfiguration` of the file, including ones
+    /// that come after the element being handled.
+    pub fn document_elements(&self, kind: &str) -> Vec<&'a Value> {
+        let doc: &'a Value = self.source.value;
+        match doc {
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|it| match it {
+                    Value::Object(m) if m.len() == 1 => m.get(kind),
+                    _ => None,
+                })
+                .collect(),
+            Value::Object(m) if m.len() == 1 => m.get(kind).into_iter().collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Add a generated route.
     pub fn add_route(&mut self, route: RouteDefinition) {
         self.routes.push(route);
@@ -1191,12 +1319,21 @@ impl YamlLoader {
             let source = Source { name, doc_index: if multi { Some(i) } else { None }, value: &value, node: Some(node) };
             routes.extend(self.load_document(ctx, &source)?);
         }
+        self.apply_route_configurations(ctx, &mut routes)?;
         Ok(routes)
     }
 
     /// Load routes from an already parsed value (a list of top-level elements).
     pub fn load_routes_from_value(&self, ctx: &CamelContext, value: &Value) -> Result<Vec<RouteDefinition>> {
-        self.load_document(ctx, &Source::synthetic(value))
+        let mut routes = self.load_document(ctx, &Source::synthetic(value))?;
+        self.apply_route_configurations(ctx, &mut routes)?;
+        Ok(routes)
+    }
+
+    /// Link route definitions built outside of [`YamlLoader::load_routes`] (e.g. with
+    /// [`YamlLoader::build_route`]) to the `routeConfiguration`s loaded into `ctx`.
+    pub fn apply_route_configurations_to(&self, ctx: &CamelContext, routes: &mut [RouteDefinition]) -> Result<()> {
+        self.apply_route_configurations(ctx, routes)
     }
 
     /// Load routes from a file (`.xml` files are loaded with the XML DSL).
@@ -1229,7 +1366,7 @@ impl YamlLoader {
     }
 
     fn load_steps_at(&self, camel: &CamelContext, source: &Source<'_>, route: &mut RouteDefinition, steps: &Value, path: Vec<PathSegment>) -> Result<()> {
-        let mut sc = StepContext { route, camel, loader: self, source, path, step_name: "from".into(), pending_id: None };
+        let mut sc = StepContext { route, camel, loader: self, source, path, step_name: "from".into(), pending_id: None, dangling: 0 };
         sc.load_steps(steps)
     }
 
@@ -1342,6 +1479,23 @@ impl YamlLoader {
                         )));
                     }
                     state.add_configuration(other, (*v).clone());
+                    match other {
+                        "routeConfiguration" => {
+                            // validate eagerly (errors get precise locations); applied to the
+                            // routes when the whole input has been loaded
+                            self.build_route_configuration(ctx, source, v, path.clone())?;
+                        }
+                        "errorHandler" => {
+                            let eh = parse_error_handler(ctx, v)
+                                .map_err(|e| dsl_error(format!("Invalid errorHandler {}: {}", source.location(&path), e.message)))?;
+                            ctx.set_error_handler(eh);
+                        }
+                        item if ROUTE_CONFIGURATION_ITEMS.contains(&item) => {
+                            let wrapped = Value::object([(item, (*v).clone())]);
+                            self.build_route_configuration(ctx, source, &wrapped, path_of(*i))?;
+                        }
+                        _ => {}
+                    }
                     if let Some(h) = handler {
                         let mut tl = TopLevelContext { camel: ctx, loader: self, source, path: path.clone(), kind: other.to_string(), routes: &mut routes };
                         h(&mut tl, v).map_err(|e| {
@@ -1413,7 +1567,11 @@ impl YamlLoader {
         }
         let route_id = v.get("routeId").and_then(scalar_string);
         let template = state.route_template(&template_id).ok_or_else(|| dsl_error(format!("Cannot find route template with id '{}'", template_id)))?;
-        self.instantiate_template(ctx, &template, route_id.as_deref(), &params)
+        if let Some(beans) = v.get("beans") {
+            self.load_beans(ctx, state, &Source::synthetic(beans), beans, &[PathSegment::Key("beans".into())])?;
+        }
+        let prefix = v.get("prefixId").and_then(scalar_string);
+        self.instantiate_template_with_prefix(ctx, &template, route_id.as_deref(), prefix.as_deref(), &params)
     }
 
     /// Create a route from a template.
@@ -1424,7 +1582,35 @@ impl YamlLoader {
         route_id: Option<&str>,
         params: &BTreeMap<String, String>,
     ) -> Result<RouteDefinition> {
-        let value = template.instantiate(params)?;
+        self.instantiate_template_with_prefix(ctx, template, route_id, None, params)
+    }
+
+    /// Create a route from a template; `prefix_id` is prepended to the id of every step.
+    pub fn instantiate_template_with_prefix(
+        &self,
+        ctx: &CamelContext,
+        template: &RouteTemplateDefinition,
+        route_id: Option<&str>,
+        prefix_id: Option<&str>,
+        params: &BTreeMap<String, String>,
+    ) -> Result<RouteDefinition> {
+        let mut value = template.instantiate(params)?;
+        if !template.beans.is_empty() {
+            let values = template.resolve_parameters(params)?;
+            let declared: Vec<&str> = template.parameters.iter().map(|p| p.name.as_str()).collect();
+            let beans = substitute_declared(&Value::Array(template.beans.clone()), &values, &declared);
+            let state = yaml_state(ctx);
+            self.load_beans(ctx, &state, &Source::synthetic(&beans), &beans, &[PathSegment::Key(format!("routeTemplate[{}].beans", template.id))])?;
+        }
+        if let Some(prefix) = prefix_id {
+            if let Value::Object(m) = &mut value {
+                for (k, x) in m.iter_mut() {
+                    if k == "from" || k == "steps" {
+                        prefix_step_ids(x, prefix);
+                    }
+                }
+            }
+        }
         let source = Source::synthetic(&value);
         let mut def = self
             .build_route_at(ctx, &source, &value, vec![PathSegment::Key(format!("routeTemplate[{}]", template.id))])?;
@@ -1432,6 +1618,9 @@ impl YamlLoader {
             def.id = Some(id.to_string());
         }
         def.properties.insert("routeTemplateId".into(), template.id.clone());
+        if let Some(p) = prefix_id {
+            def.properties.insert("prefixId".into(), p.to_string());
+        }
         Ok(def)
     }
 
@@ -1454,6 +1643,26 @@ impl YamlLoader {
                 "autoStartup" => def.auto_startup = resolve_bool(ctx, val).map_err(|e| bad(e.message))?,
                 "startupOrder" => {
                     def.startup_order = Some(val.as_i64().ok_or_else(|| bad(format!("expected an integer but found {}", val)))? as i32)
+                }
+                "errorHandler" => {
+                    let eh = parse_error_handler(ctx, val).map_err(|e| bad(e.message))?;
+                    def.error_handler(eh);
+                }
+                "errorHandlerRef" => {
+                    let eh = parse_error_handler(ctx, &Value::object([("refErrorHandler", val.clone())])).map_err(|e| bad(e.message))?;
+                    def.error_handler(eh);
+                }
+                "routePolicy" | "routePolicyRef" => {
+                    let names: Vec<String> = match val {
+                        Value::Array(a) => a.iter().filter_map(scalar_string).collect(),
+                        other => scalar_string(other).map(|s| s.split(',').map(|p| p.trim().to_string()).collect()).unwrap_or_default(),
+                    };
+                    for n in names.iter().map(|n| ref_name(n)).filter(|n| !n.is_empty()) {
+                        if ctx.registry().lookup::<Arc<dyn camel_core::processor::errors::RoutePolicy>>(&n).is_none() {
+                            return Err(bad(format!("No RoutePolicy named '{}' found in the registry", n)));
+                        }
+                        def.route_policy_ref(n);
+                    }
                 }
                 _ => {
                     let s = match val {
@@ -1508,7 +1717,11 @@ pub fn add_route_from_template(ctx: &CamelContext, template_id: &str, route_id: 
     let template = yaml_state(ctx)
         .route_template(template_id)
         .ok_or_else(|| dsl_error(format!("Cannot find route template with id '{}'", template_id)))?;
-    let def = YamlLoader::new().instantiate_template(ctx, &template, route_id, params)?;
+    let loader = YamlLoader::new();
+    let def = loader.instantiate_template(ctx, &template, route_id, params)?;
+    let mut defs = [def];
+    loader.apply_route_configurations(ctx, &mut defs)?;
+    let [def] = defs;
     ctx.add_route_definition(def)
 }
 
