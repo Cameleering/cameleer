@@ -48,8 +48,8 @@ fn management_endpoints_over_http() {
         let i = l.iter().position(|m| m == "Routes startup (total:2 started:2)").expect("summary logged");
         // other tests in this binary log concurrently through the global sink, so only
         // require the lines to appear after the summary
-        assert!(l[i + 1..].iter().any(|m| m == "    Started hello (direct:hello)"), "{:?}", &l[i..]);
-        assert!(l[i + 1..].iter().any(|m| m == "    Started other (direct:other)"), "{:?}", &l[i..]);
+        assert!(l[i + 1..].iter().any(|m| m == "    Started hello (direct://hello)"), "{:?}", &l[i..]);
+        assert!(l[i + 1..].iter().any(|m| m == "    Started other (direct://other)"), "{:?}", &l[i..]);
     }
 
     let t = ctx.create_producer_template();
@@ -83,11 +83,11 @@ fn management_endpoints_over_http() {
     assert_eq!(routes.len(), 2);
     assert_eq!(routes[0].get("statistics").unwrap().get("exchangesTotal").unwrap().as_i64(), Some(2));
     let v = json::parse(&c.get(&format!("{}/q/dev/route/hello", base)).unwrap().body_text()).unwrap();
-    assert_eq!(v.get("from").unwrap().as_str(), Some("direct:hello"));
+    assert_eq!(v.get("from").unwrap().as_str(), Some("direct://hello"));
     assert_eq!(v.get("processors").unwrap().as_array().unwrap().len(), 2);
     assert_eq!(c.get(&format!("{}/q/dev/route/nope", base)).unwrap().status, 404);
     let v = json::parse(&c.get(&format!("{}/q/dev/endpoints", base)).unwrap().body_text()).unwrap();
-    assert!(v.get("endpoints").unwrap().as_array().unwrap().iter().any(|e| e.get("uri").unwrap().as_str() == Some("mock:out")));
+    assert!(v.get("endpoints").unwrap().as_array().unwrap().iter().any(|e| e.get("uri").unwrap().as_str() == Some("mock://out")));
     let v = json::parse(&c.get(&format!("{}/q/dev/health", base)).unwrap().body_text()).unwrap();
     assert_eq!(v.get("status").unwrap().as_str(), Some("UP"));
     let v = json::parse(&c.get(&format!("{}/q/dev/trace", base)).unwrap().body_text()).unwrap();
@@ -119,9 +119,9 @@ fn management_endpoints_over_http() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert!(lines[0].starts_with("ID     FROM          STATUS"), "{}", stdout);
-    assert!(lines[1].starts_with("hello  direct:hello  Started"), "{}", stdout);
-    assert!(lines[2].starts_with("other  direct:other  Started"), "{}", stdout);
+    assert!(lines[0].starts_with("ID     FROM            STATUS"), "{}", stdout);
+    assert!(lines[1].starts_with("hello  direct://hello  Started"), "{}", stdout);
+    assert!(lines[2].starts_with("other  direct://other  Started"), "{}", stdout);
 
     main.stop().unwrap();
     assert!(c.get(&format!("{}/q/health", base)).is_err(), "server stopped");

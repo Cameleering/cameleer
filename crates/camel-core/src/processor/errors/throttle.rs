@@ -23,7 +23,8 @@ pub struct ThrottleConfig {
     pub time_period: Duration,
     /// Fail with `ThrottlerRejectedExecutionException` instead of waiting.
     pub reject_execution: bool,
-    /// Accepted for compatibility; delays are always applied on the calling thread.
+    /// Release the consumer thread of asynchronous consumers while waiting
+    /// (see [`crate::async_delay`]). Default false, as in Camel.
     pub async_delayed: bool,
     /// Throttle per correlation key.
     pub correlation: Option<ExpressionDefinition>,
@@ -62,6 +63,7 @@ impl ProcessorDefinition for ThrottleDefinition {
             max: c.maximum_requests,
             period: c.time_period,
             reject: c.reject_execution,
+            async_delayed: c.async_delayed,
             correlation: c.correlation.as_ref().map(|e| e.resolve_expression(&rc.context)).transpose()?,
             windows: Mutex::new(HashMap::new()),
         }))
@@ -73,6 +75,7 @@ struct Throttler {
     max: usize,
     period: Duration,
     reject: bool,
+    async_delayed: bool,
     correlation: Option<Arc<dyn Expression>>,
     windows: Mutex<HashMap<String, VecDeque<Instant>>>,
 }
@@ -107,7 +110,12 @@ impl Processor for Throttler {
                 }
                 (*q.front().unwrap() + self.period).saturating_duration_since(now)
             };
-            std::thread::sleep(wait.max(Duration::from_millis(1)));
+            let wait = wait.max(Duration::from_millis(1));
+            if self.async_delayed {
+                crate::async_delay::async_sleep(wait);
+            } else {
+                std::thread::sleep(wait);
+            }
         }
     }
 }
@@ -121,7 +129,8 @@ impl Processor for Throttler {
 pub struct DelayDefinition {
     pub id: Option<String>,
     pub expression: ExpressionDefinition,
-    /// Accepted for compatibility; the delay is always applied on the calling thread.
+    /// Release the consumer thread of asynchronous consumers while waiting
+    /// (see [`crate::async_delay`]). Default true, as in Camel.
     pub async_delayed: Arc<Mutex<bool>>,
 }
 
@@ -134,6 +143,7 @@ impl ProcessorDefinition for DelayDefinition {
     }
     fn create_processor(&self, rc: &RouteContext) -> Result<Arc<dyn Processor>> {
         let e = self.expression.resolve_expression(&rc.context)?;
+        let async_delayed = *self.async_delayed.lock().unwrap();
         Ok(Arc::new(move |ex: &mut Exchange| {
             let v = e.evaluate(ex)?;
             let d = match &v {
@@ -143,7 +153,11 @@ impl ProcessorDefinition for DelayDefinition {
                 other => crate::util::parse_duration(&other.to_string())?,
             };
             if d > Duration::ZERO {
-                std::thread::sleep(d);
+                if async_delayed {
+                    crate::async_delay::async_sleep(d);
+                } else {
+                    std::thread::sleep(d);
+                }
             }
             Ok(())
         }))

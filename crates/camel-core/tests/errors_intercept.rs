@@ -63,7 +63,7 @@ fn intercept_from_pattern() {
     t.send_body("direct:in2", 3).unwrap();
     let i = ctx.mock_endpoint("mock:intercepted").unwrap();
     assert_eq!(i.received_bodies(), vec![Value::from(1), Value::from(3)]);
-    assert_eq!(i.exchange(0).unwrap().header(props::INTERCEPTED_ENDPOINT), Some(&Value::from("direct:input1")));
+    assert_eq!(i.exchange(0).unwrap().header(props::INTERCEPTED_ENDPOINT), Some(&Value::from("direct://input1")));
     assert_eq!(ctx.mock_endpoint("mock:result").unwrap().received_counter(), 3);
 }
 
@@ -102,8 +102,8 @@ fn intercept_send_to_endpoint() {
     // to("mock:foo") and toD("mock:four") are intercepted
     assert_eq!(count("mock:detour"), 2);
     let d = ctx.mock_endpoint("mock:detour").unwrap();
-    assert_eq!(d.exchange(0).unwrap().header(props::INTERCEPTED_ENDPOINT), Some(&Value::from("mock:foo")));
-    assert_eq!(d.exchange(1).unwrap().header(props::INTERCEPTED_ENDPOINT), Some(&Value::from("mock:four")));
+    assert_eq!(d.exchange(0).unwrap().header(props::INTERCEPTED_ENDPOINT), Some(&Value::from("mock://foo")));
+    assert_eq!(d.exchange(1).unwrap().header(props::INTERCEPTED_ENDPOINT), Some(&Value::from("mock://four")));
     assert_eq!(ctx.mock_endpoint("mock:end").unwrap().received_bodies(), vec![Value::from("skipped")]);
 }
 

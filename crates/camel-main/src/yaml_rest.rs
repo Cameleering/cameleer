@@ -22,12 +22,16 @@
 //!       - to: direct:createUser
 //! ```
 //!
-//! `restConfiguration` may come before or after the `rest` elements of a file; all the
-//! `rest` elements of a file are turned into routes together (one OpenAPI document).
-//! Configurations loaded from earlier files of the same context apply as well.
+//! `restConfiguration` may come before or after the `rest` elements, in the same file or in
+//! any other file loaded before the context starts: like in Camel, the REST configuration is
+//! global. `rest` elements loaded before the context starts are validated at load time and
+//! turned into routes when the context starts, all together (one OpenAPI document), with
+//! every `restConfiguration` loaded by then. `rest` elements loaded into a running context
+//! are turned into routes at once with the configurations loaded so far.
 
-use std::sync::{Arc, Once};
+use std::sync::{Arc, Mutex, Once};
 
+use camel_core::context::WeakContext;
 use camel_core::dsl::RouteBuilder;
 use camel_core::prelude::*;
 use camel_http::rest::{RestBindingMode, RestConfiguration, RestDefinition, RestDslExt, RestParam, RestParamType, VerbDefinition};
@@ -40,6 +44,70 @@ const VERBS: &[&str] = &["get", "post", "put", "delete", "patch", "head", "optio
 const API_DOC_FLAG: &str = "camel-main.yaml-rest.apiDoc";
 
 struct ApiDocGenerated;
+
+/// Registry name of the [`PendingRests`] service of a context.
+const PENDING_FLAG: &str = "camel-main.yaml-rest.pending";
+
+/// `rest` elements loaded before the context started; turned into routes when the context
+/// starts (services start before the pending routes are created).
+struct PendingRests {
+    ctx: WeakContext,
+    rests: Mutex<Vec<Value>>,
+}
+
+impl Service for PendingRests {
+    fn start(&self) -> Result<()> {
+        let rests: Vec<Value> = std::mem::take(&mut *self.rests.lock().unwrap());
+        if rests.is_empty() {
+            return Ok(());
+        }
+        let Some(ctx) = self.ctx.upgrade() else { return Ok(()) };
+        let refs: Vec<&Value> = rests.iter().collect();
+        let mut routes = build_rest_routes(&ctx, &refs, &[])?;
+        camel_yaml::YamlLoader::new().apply_route_configurations_to(&ctx, &mut routes)?;
+        for r in routes {
+            ctx.add_route_definition(r)?;
+        }
+        Ok(())
+    }
+}
+
+fn pending_rests(ctx: &CamelContext) -> Arc<PendingRests> {
+    static CREATE: Mutex<()> = Mutex::new(());
+    let _g = CREATE.lock().unwrap();
+    if let Some(p) = ctx.registry().lookup::<PendingRests>(PENDING_FLAG) {
+        return p;
+    }
+    let p = Arc::new(PendingRests { ctx: ctx.downgrade(), rests: Mutex::new(Vec::new()) });
+    ctx.registry().bind_arc(PENDING_FLAG, p.clone() as Arc<dyn std::any::Any + Send + Sync>);
+    let _ = ctx.add_service(p.clone());
+    p
+}
+
+/// Build the routes of `rests` with every `restConfiguration` loaded into the context, plus
+/// `extra_configs` (the ones of the document being loaded).
+fn build_rest_routes(ctx: &CamelContext, rests: &[&Value], extra_configs: &[Value]) -> Result<Vec<camel_core::model::RouteDefinition>> {
+    let mut b = RouteBuilder::new(ctx.clone());
+    let shared = b.rest_dsl();
+    {
+        let mut dsl = shared.lock().unwrap();
+        let mut configs: Vec<Value> = yaml_state(ctx).rest_configurations();
+        configs.extend(extra_configs.iter().cloned());
+        for c in &configs {
+            apply_rest_configuration(ctx, &mut dsl.configuration, c)?;
+        }
+        if ctx.registry().contains(API_DOC_FLAG) {
+            dsl.configuration.api_docs = false;
+        }
+        for r in rests {
+            dsl.rests.push(parse_rest(ctx, r)?);
+        }
+        if dsl.configuration.api_docs {
+            ctx.registry().bind_arc(API_DOC_FLAG, Arc::new(ApiDocGenerated));
+        }
+    }
+    b.into_definitions()
+}
 
 /// Register the `rest` top-level handler with the YAML DSL (idempotent).
 pub fn register() {
@@ -268,27 +336,22 @@ fn rest_handler(tl: &mut TopLevelContext<'_>, v: &Value) -> Result<()> {
         vec![v]
     };
     let ctx = tl.camel().clone();
-    let mut b = RouteBuilder::new(ctx.clone());
-    let shared = b.rest_dsl();
-    {
-        let mut dsl = shared.lock().unwrap();
-        // configurations of earlier files and of this document (also after the rest elements)
-        let mut configs: Vec<Value> = yaml_state(&ctx).rest_configurations();
-        configs.extend(tl.document_elements("restConfiguration").into_iter().cloned());
-        for c in &configs {
-            apply_rest_configuration(&ctx, &mut dsl.configuration, c).map_err(|e| tl.error(e.message))?;
+    // configurations of earlier files and of this document (also after the rest elements)
+    let doc_configs: Vec<Value> = tl.document_elements("restConfiguration").into_iter().cloned().collect();
+    if !ctx.is_started() {
+        // validate now (errors report the file location), build the routes at startup so that
+        // restConfiguration elements of files loaded later apply too
+        let mut probe = RestConfiguration::default();
+        for c in yaml_state(&ctx).rest_configurations().iter().chain(doc_configs.iter()) {
+            apply_rest_configuration(&ctx, &mut probe, c).map_err(|e| tl.error(e.message))?;
         }
-        if ctx.registry().contains(API_DOC_FLAG) {
-            dsl.configuration.api_docs = false;
+        for r in &rests {
+            parse_rest(&ctx, r).map_err(|e| tl.error(e.message))?;
         }
-        for r in rests {
-            dsl.rests.push(parse_rest(&ctx, r).map_err(|e| tl.error(e.message))?);
-        }
-        if dsl.configuration.api_docs {
-            ctx.registry().bind_arc(API_DOC_FLAG, Arc::new(ApiDocGenerated));
-        }
+        pending_rests(&ctx).rests.lock().unwrap().extend(rests.into_iter().cloned());
+        return Ok(());
     }
-    for route in b.into_definitions().map_err(|e| tl.error(e.message))? {
+    for route in build_rest_routes(&ctx, &rests, &doc_configs).map_err(|e| tl.error(e.message))? {
         tl.add_route(route);
     }
     Ok(())

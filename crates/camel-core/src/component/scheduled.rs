@@ -94,7 +94,7 @@ impl ScheduledPollConfig {
         let sched_opts = params.take_prefixed("scheduler.");
         if let Some(expr) = sched_opts.get("cron") {
             let tz = sched_opts.get("timeZone").or_else(|| sched_opts.get("trigger.timeZone"));
-            c.cron = Some(super::cron_expr::CronExpression::parse_with_time_zone(expr, tz.map(|s| s.as_str()))?);
+            c.cron = Some(super::cron_expr::CronExpression::parse_with_default_zone(expr, tz.map(|s| s.as_str()))?);
         }
         for k in ["pollStrategy", "bridgeErrorHandler", "exceptionHandler", "exchangePattern", "scheduledExecutorService", "poolSize"] {
             params.take(k);

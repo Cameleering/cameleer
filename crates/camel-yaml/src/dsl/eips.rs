@@ -366,6 +366,7 @@ pub(super) fn on_exception_definition(ctx: &StepContext<'_>, cfg: &Value) -> Res
             log_stack_trace: Some(p.log_stack_trace),
             log_exhausted: Some(p.log_exhausted),
             delay_pattern: p.delay_pattern.clone(),
+            async_delayed_redelivery: Some(p.async_delayed_redelivery),
         };
     }
     d.use_original_message = ctx.flag(cfg, "useOriginalMessage", false)?;
@@ -842,7 +843,7 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
     });
     r.register("delay", |ctx, cfg| {
         let expression = ctx.expression(cfg)?;
-        let async_delayed = Arc::new(Mutex::new(ctx.flag(cfg, "asyncDelayed", false)?));
+        let async_delayed = Arc::new(Mutex::new(ctx.flag(cfg, "asyncDelayed", true)?));
         ctx.add(Box::new(DelayDefinition { id: None, expression, async_delayed }));
         Ok(())
     });

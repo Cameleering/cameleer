@@ -339,8 +339,8 @@ fn log_component_options_format() {
     t.send_body_and_header("direct:nobody", "Secret", "a", 1).unwrap();
     let recs = records.lock().unwrap().clone();
     assert_eq!(recs.len(), 3, "{:?}", recs);
-    assert!(recs[0].starts_with("Exchange[ExchangePattern: InOnly, BodyType: "), "{}", recs[0]);
-    assert!(recs[0].ends_with("Body: Hello]"), "{}", recs[0]);
+    // same text as Camel's DefaultExchangeFormatter, with the Java class name of the body
+    assert_eq!(recs[0], "Exchange[ExchangePattern: InOnly, BodyType: java.lang.String, Body: Hello]");
     assert_eq!(recs[1], "Exchange[Headers: {foo=bar}, Body: Hi]");
     assert_eq!(recs[2], "Exchange[Headers: {a=1}]");
 }

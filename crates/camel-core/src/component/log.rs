@@ -73,7 +73,7 @@ impl ExchangeFormatter {
             parts.push(format!("Headers: {{{}}}", h.join(", ")));
         }
         if all || self.show_body_type {
-            parts.push(format!("BodyType: {}", ex.message.body.type_name()));
+            parts.push(format!("BodyType: {}", ex.message.body.java_type_name().unwrap_or("null")));
         }
         if all || self.show_body {
             let mut b = if ex.message.body.is_null() { "[Body is null]".to_string() } else { ex.message.body.to_string() };

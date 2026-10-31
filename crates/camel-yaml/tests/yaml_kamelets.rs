@@ -22,7 +22,7 @@ fn builtin_timer_source_from_rust_dsl() {
     let kamelet_routes: Vec<String> = ctx.route_ids().into_iter().filter(|r| r.starts_with("timer-source-")).collect();
     assert_eq!(kamelet_routes.len(), 1, "{:?}", ctx.route_ids());
     let route = ctx.route(&kamelet_routes[0]).unwrap();
-    assert!(route.endpoint_uri.starts_with("timer:tick"), "{}", route.endpoint_uri);
+    assert!(route.endpoint_uri.starts_with("timer://tick"), "{}", route.endpoint_uri);
     ctx.stop().unwrap();
 }
 
@@ -273,4 +273,58 @@ fn load_kamelets_from_directory() {
     std::fs::write(dir.join("broken.kamelet.yaml"), "kind: Kamelet\nmetadata: {}\n").unwrap();
     assert!(load_kamelets_from_dir(&ctx, &dir).is_err());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+const PREFIXER: &str = r#"
+apiVersion: camel.apache.org/v1
+kind: Kamelet
+metadata:
+  name: prefix-action
+spec:
+  definition:
+    properties:
+      prefix:
+        type: string
+        default: "> "
+  template:
+    beans:
+      - name: prefixer
+        type: com.example.KameletPrefixer
+        properties:
+          prefix: "{{prefix}}"
+    from:
+      uri: kamelet:source
+      steps:
+        - process:
+            ref: "{{prefixer}}"
+"#;
+
+#[test]
+fn kamelet_template_local_beans() {
+    camel_yaml::register_bean_factory("com.example.KameletPrefixer", |ctx: &CamelContext, def: &camel_yaml::BeanDefinition| {
+        let prefix = def.properties.get("prefix").map(|v| v.to_string()).unwrap_or_default();
+        ctx.registry().bind_processor(def.name.clone(), move |ex: &mut Exchange| {
+            let b: String = ex.body_as()?;
+            ex.set_body(format!("{}{}", prefix, b));
+            Ok(())
+        });
+        Ok(())
+    });
+    let ctx = CamelContext::new();
+    add_kamelet(&ctx, PREFIXER).unwrap();
+    ctx.add_routes(|b| {
+        b.from("direct:a").to("kamelet:prefix-action?prefix=A:").to("mock:a");
+        b.from("direct:b").to("kamelet:prefix-action").to("mock:b");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    t.send_body("direct:a", "x").unwrap();
+    t.send_body("direct:b", "y").unwrap();
+    // each Kamelet route gets its own bean, configured with its own properties
+    assert_eq!(ctx.mock_endpoint("mock:a").unwrap().received_bodies(), vec![Value::from("A:x")]);
+    assert_eq!(ctx.mock_endpoint("mock:b").unwrap().received_bodies(), vec![Value::from("> y")]);
+    let local: Vec<String> = camel_yaml::yaml_state(&ctx).beans().into_iter().map(|b| b.name).filter(|n| n.starts_with("prefixer-")).collect();
+    assert_eq!(local.len(), 2, "{:?}", local);
+    ctx.stop().unwrap();
 }

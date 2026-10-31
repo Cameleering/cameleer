@@ -146,6 +146,20 @@ pub fn url_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Encode like `java.net.URLEncoder` (UTF-8): alphanumerics and `.-*_` are kept, a space
+/// becomes `+`, everything else is percent-encoded.
+pub fn form_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'*' => out.push(b as char),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
 /// Percent-encode a URI component.
 pub fn url_encode(s: &str) -> String {
     let mut out = String::new();
@@ -237,12 +251,16 @@ impl EndpointUri {
         Ok(EndpointUri { scheme, path: path.to_string(), params: parse_query(query) })
     }
 
-    /// Canonical string form: `scheme://path?sorted-params`.
+    /// Canonical string form, like Camel's `URISupport.normalizeUri`:
+    /// `scheme://path?sorted-params`, with keys and values encoded like `java.net.URLEncoder`
+    /// (`mock:result` -> `mock://result`, `seda:foo?size=10&blockWhenFull=true` ->
+    /// `seda://foo?blockWhenFull=true&size=10`). Endpoint uris (`Endpoint::uri`) and the
+    /// endpoint properties (`CamelToEndpoint`...) use this form.
     pub fn normalized(&self) -> String {
         let mut s = format!("{}://{}", self.scheme, self.path);
         if !self.params.is_empty() {
             s.push('?');
-            let q: Vec<String> = self.params.iter().map(|(k, v)| format!("{}={}", k, url_encode(v))).collect();
+            let q: Vec<String> = self.params.iter().map(|(k, v)| format!("{}={}", form_encode(k), form_encode(v))).collect();
             s.push_str(&q.join("&"));
         }
         s
@@ -254,7 +272,8 @@ fn find_query_start(s: &str) -> Option<usize> {
     s.find('?')
 }
 
-/// Normalize an endpoint uri so that equivalent uris map to the same endpoint.
+/// Normalize an endpoint uri like Camel's `URISupport.normalizeUri` (see
+/// [`EndpointUri::normalized`]) so that equivalent uris map to the same endpoint.
 pub fn normalize_uri(uri: &str) -> Result<String> {
     Ok(EndpointUri::parse(uri)?.normalized())
 }

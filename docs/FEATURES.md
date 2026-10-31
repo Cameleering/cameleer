@@ -28,8 +28,8 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | Property placeholders `{{key}}`, `{{key:default}}`, `{{env:X}}` | ✅ | Resolved in uris, endpoint options and Simple expressions when the route is created. |
 | Registry / beans | ✅ | A typed registry (`bind`, `lookup`, processors, aggregation strategies, bean methods). |
 | Event notifiers | ✅ | Context, route and exchange events. |
-| Endpoint uri normalization | ⚠️ | Uris keep the form they were written in (`mock:a`). Camel normalizes to `mock://a`, which shows in `CamelToEndpoint` and `CamelRecipientListEndpoint`. |
-| Value predicate truthiness | ⚠️ | A bare value used as a predicate is false for null, `false`, `"false"`, `0`, `""` and empty collections. Camel treats any non-null value other than `false`/`"false"` as true (so `0` and `""` are true in Camel). |
+| Endpoint uri normalization | ✅ | Like Camel's `URISupport.normalizeUri`: `Endpoint::uri()`, route endpoints, `CamelToEndpoint`, `CamelRecipientListEndpoint`, `CamelSlipEndpoint`, `CamelFailureEndpoint`, `CamelInterceptedEndpoint` and endpoint errors use `scheme://path?sorted-params` (`mock://result`, `seda://foo?blockWhenFull=true&size=10`, values encoded like `URLEncoder`). Lookups and `interceptSendToEndpoint` patterns work with either form. `RAW(...)` values are shown encoded rather than as `RAW(...)`. |
+| Value predicate truthiness | ✅ | `ObjectHelper.evaluateValuePredicate` (`Value::is_predicate_true`): a boolean is its value, a string is false only for `"false"` (trimmed, any case), an array is true when not empty, null is false and anything else (`0`, `""`, maps, bytes) is true. Used by Simple, `header`/`constant`/... languages used as predicates and JSONPath. |
 
 ## Enterprise Integration Patterns
 
@@ -38,7 +38,7 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | Pipeline, `to`, `toD` (Simple uri), `step` | ✅ | |
 | Message Filter (+ `CamelFilterMatched`) | ✅ | |
 | Content-Based Router (`choice/when/otherwise`, `endChoice`, nested) | ✅ | A choice with no `otherwise` continues after the choice. |
-| Splitter (tokenize, arrays, delimiter, streaming, parallel, timeout, stopOnException, shareUnitOfWork, aggregation strategy) | ✅ | Without a strategy the original message continues. `stop()` in a split part stops only that part. |
+| Splitter (tokenize, arrays, delimiter, streaming, parallel, timeout, stopOnException, shareUnitOfWork, aggregation strategy) | ✅ | Without a strategy the original message continues. `stop()` in a split part stops only that part. Sequential `streaming` is lazy: a string body is split one part at a time and sub-exchanges are created on demand; `CamelSplitSize` is set on the last part only, as in Camel. The tokenize language itself still returns all tokens at once. |
 | Aggregator (completionSize/Timeout/Interval/Predicate/FromBatchConsumer/OnNewCorrelationGroup, eager check, forceCompletionOnStop, discardOnCompletionTimeout, closeCorrelationKeyOnCompletion, custom repository) | ✅ | `completionTimeout` is an inactivity timeout. `CamelAggregatedCompletedBy` takes the values `size`, `timeout`, `predicate`, `interval`, `force`... Repositories are in memory only (no JDBC/LevelDB). |
 | Multicast (parallel, strategy, stopOnException, timeout) | ✅ | Without a strategy the last reply wins, as in Camel. |
 | Recipient List (delimiter, ignoreInvalidEndpoints, parallel, strategy) | ✅ | |
@@ -49,7 +49,7 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | Idempotent Consumer (eager, skipDuplicate, removeOnFailure, completionEager) | ✅ | Memory LRU repository only. Duplicates skip only the idempotent block, as in Camel. |
 | Load Balancer (round robin, random, sticky, weighted, topic, failover, custom) | ✅ | |
 | Resequencer (batch, stream) | ✅ | |
-| Sort, Claim Check, Sampling, Delay, Throttle (incl. correlated) | ✅ | |
+| Sort, Claim Check, Sampling, Delay, Throttle (incl. correlated) | ✅ | `asyncDelayed` (default true for delay, false for throttle, as in Camel; `sync_delayed()`) releases the consumer thread of asynchronous consumers (seda, timer) while the exchange waits, see `camel_core::async_delay`. Synchronous callers (direct, `ProducerTemplate`) still wait. |
 | Validate | ✅ | Throws `PredicateValidationException`. |
 | Circuit Breaker (`onFallback`) | ✅ | A resilience4j-style state machine built in. No Resilience4j/MicroProfile integrations. |
 | Stop, Rollback, markRollbackOnly(Last), throwException | ✅ | `throwException` messages are Simple expressions. |
@@ -57,7 +57,7 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | Route Policy | ✅ | |
 | Intercept, interceptFrom, interceptSendToEndpoint (skip, afterUri, onWhen) | ✅ | |
 | Process / bean / method | ✅ | Processors are closures or registry beans. There is no reflection-based bean binding. |
-| Kamelets, Pipes / KameletBindings | ⚠️ | `camel-yaml::kamelet`: YAML Kamelets (`spec.definition.properties`, `required`, defaults, `spec.template`/`spec.flow`), `kamelet:name?prop=x` as source (`from`) and sink/action (`to`), `{{prop}}`/`{{?prop}}` from uri parameters, `camel.kamelet.<name>[.<routeId>].<prop>` properties and defaults, `add_kamelet`, `load_kamelets_from_dir`, built-in `timer-source`, `log-sink`, `log-action`, `insert-header-action`, `set-body-action`. Pipes/KameletBindings with Kamelet refs or uris become routes. No Kamelet beans, data types or Pipe error handlers. |
+| Kamelets, Pipes / KameletBindings | ⚠️ | `camel-yaml::kamelet`: YAML Kamelets (`spec.definition.properties`, `required`, defaults, `spec.template`/`spec.flow`), `kamelet:name?prop=x` as source (`from`) and sink/action (`to`), `{{prop}}`/`{{?prop}}` from uri parameters, `camel.kamelet.<name>[.<routeId>].<prop>` properties and defaults, `add_kamelet`, `load_kamelets_from_dir`, built-in `timer-source`, `log-sink`, `log-action`, `insert-header-action`, `set-body-action`. Pipes/KameletBindings with Kamelet refs or uris become routes. Template local beans (`spec.template.beans`, created per Kamelet route with the registered bean factories, `{{beanName}}` resolves to the route's bean). No data types or Pipe error handlers. |
 | Saga, Script (groovy/js), Transformer/Validator (data types), Service Call | ❌ | |
 | Route templates | ✅ | Rust DSL (`add_route_template`, `TemplatedRouteBuilder`) and YAML/XML (`routeTemplate`, `templatedRoute`, `{{param:default}}`, `prefixId`, template beans via registered bean factories). Kamelets: see above. |
 | Message history, tracer, route supervising | ✅ | `set_message_history` (also printed in the exhausted-failure log), `set_tracing` + backlog tracer, supervising route controller with back-off. |
@@ -67,8 +67,8 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | Feature | Status | Notes |
 |---|---|---|
 | DefaultErrorHandler, DeadLetterChannel, NoErrorHandler | ✅ | Redelivery headers `CamelRedelivered`, `CamelRedeliveryCounter` and `CamelRedeliveryMaxCounter`. Redelivery happens at the point of failure. |
-| Redelivery policy (delay, back-off, collision avoidance, delayPattern, max delay, retryWhile, onRedelivery, onExceptionOccurred, onPrepareFailure, log levels) | ✅ | Delays block the calling thread (no asynchronous redelivery scheduler). |
-| `onException` (hierarchy matching, cause chain, onWhen, handled, continued, useOriginalMessage/Body, route vs builder scope) | ✅ | Exception "classes" are string kinds with a registered parent hierarchy (`register_kind_parent`). |
+| Redelivery policy (delay, back-off, collision avoidance, delayPattern, max delay, retryWhile, onRedelivery, onExceptionOccurred, onPrepareFailure, log levels, asyncDelayedRedelivery) | ✅ | With `asyncDelayedRedelivery` (Rust DSL and YAML `redeliveryPolicy`) the consumer thread of asynchronous consumers (seda, timer) is released during the delay: a replacement consumer thread takes over and the waiting exchange finishes on the released thread (rust-camel processors are synchronous, so this is a thread hand-off rather than a scheduler continuation). Otherwise, and for synchronous callers, the delay blocks the calling thread. |
+| `onException` (hierarchy matching, cause chain, onWhen, handled, continued, useOriginalMessage/Body, route, builder and route configuration scope) | ✅ | Exception "classes" are string kinds with a registered parent hierarchy (`register_kind_parent`). Route configurations for Rust DSL routes: `ctx.add_route_configuration(Some("id") / None, \|c\| ...)` with `on_exception`, `on_completion`, `intercept*` and `error_handler`, selected with `route_configuration_id("a,b*")`; a configuration without id applies to every route that names none (context-wide `onException`). |
 | Error handler scope across direct sub-routes | ✅ | The failing route's error handler applies. A handled exchange stops the caller too (`CamelErrorHandlerHandled`). An exhausted exchange is not redelivered again by the caller. |
 | deadLetterHandleNewException | ✅ | |
 | doTry / doCatch (onWhen) / doFinally | ✅ | No error-handler redelivery inside doTry. |
@@ -79,7 +79,7 @@ a broker client or a JVM library is out of scope unless it can be written from s
 
 | Language | Status | Notes |
 |---|---|---|
-| Simple | ✅ | Operators (`==`, `=~`, `!=`, `>`..., `contains`, `~~`, `regex`, `in`, `range`, `is`, `startsWith`, `endsWith`, `&&`, `||`), ternary, elvis, OGNL navigation and method calls, `bodyAs`/`headerAs`, `date`/`date-with-timezone`, `properties`, `env`/`sys`, `file:*` functions, string/math/collection functions, `jsonpath`/`jq`/`xpath` inline, `bean`, `ref`. `${bodyType}` returns the dynamic value type (`string`) rather than a Java class name. `${type:...}` is not supported. |
+| Simple | ✅ | Operators (`==`, `=~`, `!=`, `>`..., `contains`, `~~`, `regex`, `in`, `range`, `is`, `startsWith`, `endsWith`, `&&`, `||`), ternary, elvis, OGNL navigation and method calls, `bodyAs`/`headerAs`, `date`/`date-with-timezone`, `properties`, `env`/`sys`, `file:*` functions, string/math/collection functions, `jsonpath`/`jq`/`xpath` inline, `bean`, `ref`. `${bodyType}` returns the Java class name Camel would report (`java.lang.String`, `java.lang.Integer`/`Long`, `java.lang.Double`, `java.lang.Boolean`, `byte[]`, `java.util.ArrayList`, `java.util.LinkedHashMap`). `${type:org.apache.camel.Exchange.FILE_NAME}` gives the `Exchange` constants (and `java.lang.Integer/Long.MIN_VALUE/MAX_VALUE`, `Boolean.TRUE/FALSE`). `${messageHistory}` / `${messageHistory(false)}`. `date-with-timezone` accepts region ids (`Europe/Paris`); `${date:...}` uses the default time zone (`TZ`). |
 | Constant, Header, ExchangeProperty, Variable, Ref, Bean/Method | ✅ | |
 | Tokenize (token, regex, pair, xml) | ✅ | |
 | JSONPath | ✅ | A built-in implementation (Jayway-style syntax). |
@@ -112,16 +112,16 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | syslog | ✅ | `camel-protocols`. RFC 5424/3164 data format, UDP/TCP component. |
 | direct | ✅ | Synchronous. Fails with `DirectConsumerNotAvailableException` when no consumer is running. |
 | seda / vm / stub | ✅ | `size`, `concurrentConsumers`, `waitForTaskToComplete`, `timeout`, `multipleConsumers`, `blockWhenFull`, `discardWhenFull`, `offerTimeout`, `purgeWhenStopping`, `failIfNoConsumers`, `discardIfNoConsumers`. Supports polling consumers. |
-| timer | ✅ | `period`, `delay`, `repeatCount`, `fixedRate`, `includeMetadata`. Sets the `CamelTimerCounter` property. |
+| timer | ✅ | `period`, `delay`, `repeatCount`, `fixedRate`, `includeMetadata`, `time` (local time of the default time zone; a trailing `Z`, offset or `[Europe/Paris]` selects another zone). Sets the `CamelTimerCounter` property. |
 | scheduler | ✅ | Scheduled poll consumer options, including `scheduler=quartz&scheduler.cron=...` (also for the file consumer). |
-| cron, quartz | ✅ | Built-in cron engine (`component/cron_expr.rs`): Quartz 6/7-field and Unix 5-field syntax, `L`, `W`, `#`, names, macros (`@daily`...), UTC or fixed offsets (`timeZone=GMT+02:00`). `quartz:` cron and simple triggers (`trigger.repeatInterval`/`repeatCount`, `fireNow`, `triggerStartDelay`). Quartz headers (`fireTime`, `scheduledFireTime`, ...) carry epoch millis. No job store, clustering, calendars or regional time zones; missed fires are skipped. |
+| cron, quartz | ✅ | Built-in cron engine (`component/cron_expr.rs`): Quartz 6/7-field and Unix 5-field syntax, `L`, `W`, `#`, names, macros (`@daily`...), time zones (`timeZone=GMT+02:00` or region ids such as `Europe/Paris` read from the system zoneinfo database, TZif v1-v3 with POSIX footer rules; default: the process time zone). DST gaps and overlaps behave like Quartz: a fire time in a spring-forward gap fires once, shifted forward; one in a fall-back overlap fires once (standard time). `quartz:` cron and simple triggers (`trigger.repeatInterval`/`repeatCount`, `fireNow`, `triggerStartDelay`). Quartz headers (`fireTime`, `scheduledFireTime`, ...) carry epoch millis. No job store, clustering or calendars; missed fires are skipped. |
 | mustache | ✅ | Variables, sections, inverted sections, comments, partials, set-delimiter, standalone lines; `allowTemplateFromHeader`, `contentCache`, `startDelimiter`/`endDelimiter`. No lambdas. |
 | string-template, velocity, freemarker | ⚠️ | Substitution only (`<name>`, `$name`/`${name}`, `${name!default}`); directives and template expressions fail with "not supported". |
 | json-validator | ✅ | Built-in JSON Schema validator (draft-04 to 07 subset incl. `$ref` to local definitions, combinators, formats); `JsonValidationException` lists all errors. No remote `$ref`. |
 | validator (XML) | ⚠️ | Well-formedness only, plus the root element must be a global element of the XSD. No XML Schema content validation. |
-| log | ✅ | `level`, `showAll`/`showXxx`, `multiline`, `maxChars`, `groupSize`/`groupInterval`, masking. Body type names are rust-camel value types. |
+| log | ✅ | `level`, `showAll`/`showXxx`, `multiline`, `maxChars`, `groupSize`/`groupInterval`, masking. `BodyType:` shows the Java class name Camel would show (`java.lang.String`...). Log timestamps use the default time zone (`TZ`). |
 | mock | ✅ | Expectations (count, minimum count, bodies in order or any order, headers, properties, no duplicates, custom), `assertPeriod`, `resultWaitTime`, `whenAnyExchangeReceived`, `returnReplyBody`, reset. |
-| file | ✅ | Consumer: `noop` (idempotent), `delete`, `move`/`moveFailed`/`preMove` with file-language expressions, include/exclude/ant filters, `recursive`, depth, sorting, read locks, idempotent repositories, done files. Producer: `fileName` expressions, `fileExist` (Override/Append/Fail/Ignore/Move/TryRename), temp files, done files, `CamelFileNameProduced`. |
+| file | ✅ | Consumer: `noop` (idempotent), `delete`, `move`/`moveFailed`/`preMove` with file-language expressions, include/exclude/ant filters, `recursive`, depth, sorting, read locks (`changed` follows Camel: marker file, two equal checks or `readLockMinAge`, `readLockMinLength`, `readLockTimeout`), idempotent repositories, done files. Producer: `fileName` expressions, `fileExist` (Override/Append/Fail/Ignore/Move/TryRename), temp files, done files, `CamelFileNameProduced`. |
 | controlbus | ✅ | Route actions (start/stop/suspend/resume/restart/status/stats/fail) and `language:` scripts. |
 | bean / class, ref, language, browse, exec, stream, dataset/dataset-test/test, dataformat | ✅ | `exec` runs local processes. `stream` handles stdin/stdout/stderr/files. |
 | platform-http (aliases jetty, undertow, netty-http) | ✅ | HTTP/1.1 server: path parameters, `matchOnUriPrefix`, `httpMethodRestrict` (405), chunked encoding, keep-alive, `muteException`. `CamelHttpResponseCode` sets the status. A failure is a 500 carrying the exception text. A handled exception is a 200 with the handled body. |
@@ -135,11 +135,11 @@ a broker client or a JVM library is out of scope unless it can be written from s
 
 | DSL | Status | Notes |
 |---|---|---|
-| Rust fluent DSL (equivalent of the Java DSL) | ✅ | `end()` with no open block is tolerated, as in the Java DSL. |
+| Rust fluent DSL (equivalent of the Java DSL) | ✅ | `end()` with no open block is tolerated, as in the Java DSL. Route configurations: `ctx.add_route_configuration(...)` + `route_configuration_id(...)`. |
 | YAML DSL | ✅ | All EIPs of the Rust DSL incl. marshal/unmarshal, `routeConfiguration` (onException, onCompletion, intercepts, errorHandler), top-level `errorHandler`, beans via registered factories, line/column error messages. Throttle needs a constant maximum; Kamelet, Pipe and KameletBinding resources (and `kamelet:` uris) are supported; options the core does not model (e.g. `executorService`) are ignored. |
 | XML DSL | ✅ | `camel-yaml/src/xml.rs` converts XML to the YAML model and reuses the YAML step handlers, so coverage follows the YAML DSL. |
 | REST DSL (Rust) | ✅ | See the rest component. |
-| REST DSL in YAML | ✅ | `rest`/`restConfiguration` in YAML and XML (registered by `camel-main`), OpenAPI document. A `restConfiguration` loaded in a later file than its `rest` is not applied. |
+| REST DSL in YAML | ✅ | `rest`/`restConfiguration` in YAML and XML (registered by `camel-main`), OpenAPI document. `rest` elements loaded before the context starts become routes at startup, so a `restConfiguration` from any file (earlier or later) applies. |
 
 ## Management and tooling
 
@@ -155,9 +155,7 @@ a broker client or a JVM library is out of scope unless it can be written from s
 
 These differences are kept on purpose (documented, not fixed):
 
-1. Endpoint uris are not normalized (`mock:a`, not `mock://a`).
-2. Value truthiness: `0` and `""` are false as predicates (Camel treats them as true).
-3. `${bodyType}` and the log component's `BodyType:` show rust-camel value type names.
-4. In Simple text, `$${` is an escape that produces a literal `${`.
-5. Redelivery delays block the processing thread (Camel can schedule redelivery asynchronously).
-6. No TLS: `https` and secure netty are not available.
+1. In Simple text, `$${` is an escape that produces a literal `${`.
+2. No TLS: `https` and secure netty are not available.
+3. Maps (`Value::Object`) are sorted by key: JSON objects do not keep the insertion order of their keys.
+4. Asynchronous delays (`asyncDelayed`, `asyncDelayedRedelivery`) hand the waiting exchange to its (released) thread and start a replacement consumer thread, instead of scheduling a continuation on a scheduler pool.

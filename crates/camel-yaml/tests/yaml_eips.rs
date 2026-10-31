@@ -1572,3 +1572,51 @@ fn marshal_unmarshal_steps() {
     assert_eq!(ctx.mock_endpoint("mock:b64").unwrap().received_bodies()[0].to_string(), "hello");
     ctx.stop().unwrap();
 }
+
+#[test]
+fn async_delayed_redelivery_and_delay_options() {
+    let ctx = CamelContext::new();
+    ctx.registry().bind_processor("failFirst", |ex: &mut Exchange| {
+        if ex.header("CamelRedelivered").is_none() {
+            return Err(CamelError::io("io"));
+        }
+        Ok(())
+    });
+    start_with(
+        &ctx,
+        r##"
+- errorHandler:
+    defaultErrorHandler:
+      redeliveryPolicy:
+        maximumRedeliveries: 1
+        redeliveryDelay: 300
+        asyncDelayedRedelivery: true
+- from:
+    uri: seda:redeliver
+    steps:
+      - to: mock:attempt
+      - process: {ref: failFirst}
+      - to: mock:ok
+- from:
+    uri: seda:delay
+    steps:
+      - to: mock:before
+      - delay:
+          constant: 300
+          asyncDelayed: false
+      - to: mock:after
+"##,
+    );
+    let t = ctx.create_producer_template();
+    for i in 0..3 {
+        t.send_body("seda:redeliver", i).unwrap();
+        t.send_body("seda:delay", i).unwrap();
+    }
+    // asynchronous redelivery: the three first attempts are not held back by the delays
+    assert!(mock(&ctx, "mock:attempt").wait_for_messages(3, Duration::from_millis(250)));
+    // synchronous delay: the consumer is blocked
+    assert_eq!(mock(&ctx, "mock:before").received_counter(), 1);
+    assert!(mock(&ctx, "mock:ok").wait_for_messages(3, Duration::from_secs(5)));
+    assert!(mock(&ctx, "mock:after").wait_for_messages(3, Duration::from_secs(5)));
+    ctx.stop().unwrap();
+}

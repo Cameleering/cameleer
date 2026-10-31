@@ -71,8 +71,51 @@ pub fn deadline_after(d: Duration) -> Option<Instant> {
 /// (unless called from one of the threads itself, which would deadlock).
 #[derive(Default)]
 pub struct BackgroundThreads {
+    inner: Arc<ThreadsInner>,
+}
+
+#[derive(Default)]
+struct ThreadsInner {
     flag: Mutex<Option<Arc<StopFlag>>>,
     handles: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl ThreadsInner {
+    fn flag(&self) -> Arc<StopFlag> {
+        self.flag.lock().unwrap().get_or_insert_with(StopFlag::new).clone()
+    }
+    fn spawn(&self, name: &str, f: impl FnOnce(Arc<StopFlag>) + Send + 'static) -> Result<()> {
+        self.spawn_with(name, self.flag(), f)
+    }
+    fn spawn_with(&self, name: &str, flag: Arc<StopFlag>, f: impl FnOnce(Arc<StopFlag>) + Send + 'static) -> Result<()> {
+        let h = std::thread::Builder::new()
+            .name(name.to_string())
+            .spawn(move || f(flag))
+            .map_err(|e| CamelError::illegal_state(format!("Cannot spawn thread {}: {}", name, e)))?;
+        let mut handles = self.handles.lock().unwrap();
+        handles.retain(|h| !h.is_finished());
+        handles.push(h);
+        Ok(())
+    }
+}
+
+/// A cloneable handle that spawns more threads into a [`BackgroundThreads`] set (used to start
+/// a replacement consumer thread when an asynchronous delay releases the current one, see
+/// [`crate::async_delay`]). Dropping it does not stop the threads.
+#[derive(Clone)]
+pub struct ThreadSpawner {
+    inner: Arc<ThreadsInner>,
+}
+
+impl ThreadSpawner {
+    /// Spawn a named thread running `f(flag)` in the set, sharing the stop flag of the thread
+    /// it replaces. Nothing is spawned when that flag is already stopped.
+    pub fn spawn(&self, name: &str, flag: Arc<StopFlag>, f: impl FnOnce(Arc<StopFlag>) + Send + 'static) -> Result<()> {
+        if flag.is_stopped() {
+            return Ok(());
+        }
+        self.inner.spawn_with(name, flag, f)
+    }
 }
 
 impl BackgroundThreads {
@@ -82,50 +125,54 @@ impl BackgroundThreads {
 
     /// The current stop flag (a fresh one is created on first use / after stop).
     pub fn flag(&self) -> Arc<StopFlag> {
-        self.flag.lock().unwrap().get_or_insert_with(StopFlag::new).clone()
+        self.inner.flag()
     }
 
     /// Spawn a named thread running `f(stop_flag)`.
     pub fn spawn(&self, name: &str, f: impl FnOnce(Arc<StopFlag>) + Send + 'static) -> Result<()> {
-        let flag = self.flag();
-        let h = std::thread::Builder::new()
-            .name(name.to_string())
-            .spawn(move || f(flag))
-            .map_err(|e| CamelError::illegal_state(format!("Cannot spawn thread {}: {}", name, e)))?;
-        self.handles.lock().unwrap().push(h);
-        Ok(())
+        self.inner.spawn(name, f)
+    }
+
+    /// A handle that can spawn threads into this set from other threads.
+    pub fn spawner(&self) -> ThreadSpawner {
+        ThreadSpawner { inner: self.inner.clone() }
     }
 
     /// Whether the calling thread is one of these background threads.
     pub fn is_current_thread(&self) -> bool {
         let me = std::thread::current().id();
-        self.handles.lock().unwrap().iter().any(|h| h.thread().id() == me)
+        self.inner.handles.lock().unwrap().iter().any(|h| h.thread().id() == me)
     }
 
     pub fn is_running(&self) -> bool {
-        self.handles.lock().unwrap().iter().any(|h| !h.is_finished())
+        self.inner.handles.lock().unwrap().iter().any(|h| !h.is_finished())
     }
 
-    /// Signal stop and join all threads.
+    /// Signal stop and join all threads (including threads started while stopping).
     pub fn stop(&self) {
-        let flag = self.flag.lock().unwrap().take();
+        let flag = self.inner.flag.lock().unwrap().take();
         if let Some(f) = &flag {
             f.stop();
         }
-        let handles: Vec<JoinHandle<()>> = std::mem::take(&mut *self.handles.lock().unwrap());
         let me = std::thread::current().id();
-        for h in handles {
-            if h.thread().id() == me {
-                continue; // stopping from inside the consumer thread: let it finish on its own
+        loop {
+            let handles: Vec<JoinHandle<()>> = std::mem::take(&mut *self.inner.handles.lock().unwrap());
+            if handles.is_empty() {
+                break;
             }
-            let _ = h.join();
+            for h in handles {
+                if h.thread().id() == me {
+                    continue; // stopping from inside the consumer thread: let it finish on its own
+                }
+                let _ = h.join();
+            }
         }
     }
 }
 
 impl Drop for BackgroundThreads {
     fn drop(&mut self) {
-        if let Ok(f) = self.flag.lock() {
+        if let Ok(f) = self.inner.flag.lock() {
             if let Some(f) = f.as_ref() {
                 f.stop();
             }

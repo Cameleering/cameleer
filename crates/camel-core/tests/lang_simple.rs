@@ -83,7 +83,7 @@ fn templating_table() {
         ("${null}", Value::Null),
         ("x${null}y", Value::from("xy")),
         ("${bodyOneLine}", Value::from("Hello World")),
-        ("${bodyType}", Value::from("string")),
+        ("${bodyType}", Value::from("java.lang.String")),
         ("${body.length()}", Value::Int(11)),
         ("${body.toUpperCase()}", Value::from("HELLO WORLD")),
         ("${body.substring(6)}", Value::from("World")),
@@ -347,7 +347,8 @@ fn predicates_table() {
         ("${header.flag} == true", true),
         ("${header.flag}", true),
         ("${header.missing}", false),
-        ("${header.empty}", false),
+        // Camel's ObjectHelper.evaluateValuePredicate: a non-null string other than "false" is true
+        ("${header.empty}", true),
         ("true", true),
         ("false", false),
         ("${header.num} > 5 && ${header.foo} == 'abc'", true),
@@ -388,7 +389,6 @@ fn syntax_errors_table() {
         "${date:sometime:yyyy}",
         "${header.x > 5 ? 'a'}",
         "${iif(a,b)}",
-        "${type:java.lang.Integer.MAX_VALUE}",
         "${trim(${body}}",
     ];
     for text in bad_exprs {

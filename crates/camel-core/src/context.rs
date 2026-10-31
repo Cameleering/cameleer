@@ -622,23 +622,25 @@ impl CamelContext {
         if let Some(e) = self.inner.endpoints.read().unwrap().get(&key) {
             return Ok(e.clone());
         }
+        // Like Camel, endpoints are created with (and report) the normalized uri:
+        // `mock:result` -> `mock://result`, parameters sorted.
         let component = self.get_component(&parsed.scheme).ok_or_else(|| {
-            CamelError::resolve_endpoint_failed(&resolved, format!("No component found with scheme: {}", parsed.scheme))
+            CamelError::resolve_endpoint_failed(&key, format!("No component found with scheme: {}", parsed.scheme))
         })?;
         let mut params = Parameters::new(parsed.params.clone());
         let endpoint = component
-            .create_endpoint(self, &resolved, &parsed.path, &mut params)
+            .create_endpoint(self, &key, &parsed.path, &mut params)
             .map_err(|e| {
                 if e.kind == kinds::RESOLVE_ENDPOINT_FAILED {
                     e
                 } else {
-                    CamelError::resolve_endpoint_failed(&resolved, &e.message).with_cause(e)
+                    CamelError::resolve_endpoint_failed(&key, &e.message).with_cause(e)
                 }
             })?;
         if !params.is_empty() && !component.lenient_properties() {
             let unknown: Vec<String> = params.keys().cloned().collect();
             return Err(CamelError::resolve_endpoint_failed(
-                &resolved,
+                &key,
                 format!(
                     "There are {} parameters that couldn't be set on the endpoint. Check the uri if the parameters are spelt correctly and that they are properties of the endpoint. Unknown parameters=[{}]",
                     unknown.len(),
@@ -657,6 +659,14 @@ impl CamelContext {
             endpoint.start()?;
         }
         Ok(endpoint)
+    }
+
+    /// The normalized form of an endpoint uri (placeholders resolved), as reported by
+    /// `Endpoint::uri` and the `CamelToEndpoint` property: `mock:a` -> `mock://a`.
+    /// Returns the uri unchanged when it cannot be parsed.
+    pub fn normalize_endpoint_uri(&self, uri: &str) -> String {
+        let resolved = self.resolve_placeholders(uri.trim()).unwrap_or_else(|_| uri.trim().to_string());
+        crate::util::normalize_uri(&resolved).unwrap_or(resolved)
     }
 
     /// Typed endpoint lookup, e.g. `ctx.endpoint::<MockEndpoint>("mock:out")`.

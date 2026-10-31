@@ -95,7 +95,7 @@ fn recipient_list_from_header() {
     assert_eq!(ctx.mock_endpoint("a").unwrap().received_bodies(), vec![Value::from("x")]);
     let b = ctx.mock_endpoint("b").unwrap();
     assert_eq!(b.received_bodies(), vec![Value::from("x"), Value::from("y")]);
-    assert_eq!(b.received_exchanges()[0].property(props::RECIPIENT_LIST_ENDPOINT), Some(&Value::from("mock:b")));
+    assert_eq!(b.received_exchanges()[0].property(props::RECIPIENT_LIST_ENDPOINT), Some(&Value::from("mock://b")));
     assert_eq!(ctx.mock_endpoint("after").unwrap().received_counter(), 2);
 }
 
@@ -177,7 +177,7 @@ fn routing_slip_sequential() {
     assert_eq!(r, Value::from("xAB"));
     let s = ctx.mock_endpoint("slip").unwrap().received_exchanges();
     assert_eq!(s[0].body(), &Value::from("xAB"));
-    assert_eq!(s[0].property(props::SLIP_ENDPOINT), Some(&Value::from("mock:slip")));
+    assert_eq!(s[0].property(props::SLIP_ENDPOINT), Some(&Value::from("mock://slip")));
 }
 
 #[test]
@@ -206,8 +206,9 @@ fn dynamic_router_until_null() {
                 let last = ex.property(props::SLIP_ENDPOINT).map(|v| v.to_string());
                 Ok(match last.as_deref() {
                     None => Value::from("direct:a"),
-                    Some("direct:a") => Value::from("mock:b,direct:c"),
-                    Some("direct:c") => Value::from("mock:d"),
+                    // CamelSlipEndpoint holds the normalized uri, as in Camel
+                    Some("direct://a") => Value::from("mock:b,direct:c"),
+                    Some("direct://c") => Value::from("mock:d"),
                     _ => Value::Null,
                 })
             }))

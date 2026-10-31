@@ -57,7 +57,9 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 - `executor::ThreadPool` / `Future` — shared thread pool for parallel processing.
 - `log` — std-only logging (`camel_info!`, `camel_debug!`...; `CAMEL_LOG_LEVEL`; `add_sink` for tests).
 - `json` — JSON parser; `regex` — regex engine; `util` — URI parsing, `Parameters` (`take_bool`,
-  `take_duration`...), `parse_duration`, `matches_pattern`; `util_time` — date formatting.
+  `take_duration`...), `parse_duration`, `matches_pattern`; `util_time` — date formatting (`format_in_zone`);
+  `tz` — time zones (TZif reader for `/usr/share/zoneinfo`, POSIX TZ rules, `TimeZone::local()` from `TZ`);
+  `async_delay` — releasing seda/timer consumer threads during `asyncDelayed` waits.
 
 ## Module map (camel-core)
 

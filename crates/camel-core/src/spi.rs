@@ -72,11 +72,12 @@ where
     }
 }
 
-/// Adapts an expression to a predicate using value truthiness.
+/// Adapts an expression to a predicate using Camel's `ObjectHelper.evaluateValuePredicate`
+/// ([`Value::is_predicate_true`](crate::value::Value::is_predicate_true)).
 pub struct ExpressionPredicate(pub Arc<dyn Expression>);
 impl Predicate for ExpressionPredicate {
     fn matches(&self, exchange: &Exchange) -> Result<bool> {
-        Ok(self.0.evaluate(exchange)?.is_truthy())
+        Ok(self.0.evaluate(exchange)?.is_predicate_true())
     }
 }
 
@@ -94,7 +95,7 @@ pub trait Language: Send + Sync {
     /// Create an expression. `options` are language specific settings
     /// (e.g. `token` for tokenize, `resultType` for jsonpath).
     fn create_expression(&self, text: &str, options: &BTreeMap<String, String>) -> Result<Arc<dyn Expression>>;
-    /// Create a predicate. Defaults to the expression's truthiness.
+    /// Create a predicate. Defaults to `ObjectHelper.evaluateValuePredicate` of the expression.
     fn create_predicate(&self, text: &str, options: &BTreeMap<String, String>) -> Result<Arc<dyn Predicate>> {
         Ok(Arc::new(ExpressionPredicate(self.create_expression(text, options)?)))
     }

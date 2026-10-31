@@ -105,6 +105,8 @@ pub struct KameletDefinition {
     pub properties: Vec<KameletProperty>,
     /// The route-shaped template (`{from: {uri, parameters, steps}}`).
     pub template: Value,
+    /// Template local beans (`spec.template.beans`), created for each Kamelet route.
+    pub beans: Vec<Value>,
     /// The whole resource.
     pub raw: Value,
 }
@@ -162,6 +164,16 @@ impl KameletDefinition {
         if template.get("from").and_then(|f| crate::dsl::endpoint_uri(f).ok()).is_none() {
             return Err(kamelet_error(format!("Kamelet '{}': the template 'from' requires a 'uri'", name)));
         }
+        let beans = match tpl.get("beans") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Array(a)) => a.clone(),
+            Some(_) => return Err(kamelet_error(format!("Kamelet '{}': 'spec.template.beans' must be a list", name))),
+        };
+        for b in &beans {
+            if b.get("name").and_then(scalar_string).is_none() {
+                return Err(kamelet_error(format!("Kamelet '{}': every template bean requires a 'name'", name)));
+            }
+        }
         Ok(KameletDefinition {
             name,
             kamelet_type,
@@ -169,6 +181,7 @@ impl KameletDefinition {
             description: definition.and_then(|d| d.get("description")).and_then(scalar_string),
             properties,
             template,
+            beans,
             raw: v.clone(),
         })
     }
@@ -210,10 +223,50 @@ impl KameletDefinition {
         Ok(values)
     }
 
+    /// The registry name of the template local bean `name` for the Kamelet route `route_id`.
+    pub fn local_bean_name(name: &str, route_id: &str) -> String {
+        format!("{}-{}", name, route_id)
+    }
+
+    /// Create the template local beans (`spec.template.beans`) of the Kamelet route
+    /// `route_id`, as Camel does for route template local beans: each bean is created with
+    /// the registered bean factories (Kamelet property placeholders in its definition are
+    /// resolved) and bound under a name unique to the route; `{{beanName}}` in the template
+    /// resolves to that name (`#bean:{{beanName}}`). The names are added to `values`.
+    pub fn create_local_beans(&self, ctx: &CamelContext, route_id: &str, values: &mut BTreeMap<String, String>) -> Result<()> {
+        if self.beans.is_empty() {
+            return Ok(());
+        }
+        let mut declared: Vec<&str> = self.properties.iter().map(|p| p.name.as_str()).collect();
+        for b in &self.beans {
+            let name = b.get("name").and_then(scalar_string).unwrap_or_default();
+            values.insert(name.clone(), Self::local_bean_name(&name, route_id));
+        }
+        let names: Vec<String> = self.beans.iter().filter_map(|b| b.get("name").and_then(scalar_string)).collect();
+        declared.extend(names.iter().map(|s| s.as_str()));
+        let beans: Vec<Value> = self
+            .beans
+            .iter()
+            .map(|b| {
+                let mut b = substitute(b, values, &declared);
+                if let Value::Object(m) = &mut b {
+                    let name = m.get("name").and_then(scalar_string).unwrap_or_default();
+                    m.insert("name".into(), Value::String(Self::local_bean_name(&name, route_id)));
+                }
+                b
+            })
+            .collect();
+        YamlLoader::new()
+            .load_bean_list(ctx, &Value::Array(beans), &format!("kamelet[{}].beans", self.name))
+            .map_err(|e| kamelet_error(format!("Kamelet {}: {}", self.name, e.message)))
+    }
+
     /// Build the route-shaped value of a Kamelet route: placeholders substituted,
     /// `kamelet:source`/`kamelet:sink` bound to `route_id`.
     pub fn instantiate(&self, route_id: &str, values: &BTreeMap<String, String>) -> Value {
-        let declared: Vec<&str> = self.properties.iter().map(|p| p.name.as_str()).collect();
+        let mut declared: Vec<&str> = self.properties.iter().map(|p| p.name.as_str()).collect();
+        let bean_names: Vec<String> = self.beans.iter().filter_map(|b| b.get("name").and_then(scalar_string)).collect();
+        declared.extend(bean_names.iter().map(|s| s.as_str()));
         let mut v = substitute(&self.template, values, &declared);
         bind_internal_endpoints(&mut v, route_id);
         if let Value::Object(m) = &mut v {
@@ -586,7 +639,8 @@ impl KameletRoute {
         }
         let ctx = self.ctx.upgrade().ok_or_else(|| CamelError::illegal_state("CamelContext is gone"))?;
         let id = self.next_id(&ctx);
-        let values = self.kamelet.resolve_properties(&ctx, Some(&id), &self.params)?;
+        let mut values = self.kamelet.resolve_properties(&ctx, Some(&id), &self.params)?;
+        self.kamelet.create_local_beans(&ctx, &id, &mut values)?;
         let value = self.kamelet.instantiate(&id, &values);
         let mut def = YamlLoader::new().build_route(&ctx, &value).map_err(|e| {
             CamelError::new(e.kind.clone(), format!("Failed to create route from Kamelet {}: {}", self.kamelet.name, e.message)).with_cause(e)

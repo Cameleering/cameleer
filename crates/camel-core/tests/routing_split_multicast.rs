@@ -428,3 +428,59 @@ fn option_in_wrong_place_is_build_error() {
 fn ints(v: &[i64]) -> Value {
     Value::Array(v.iter().map(|i| Value::from(*i)).collect())
 }
+
+#[test]
+fn split_streaming_is_lazy_and_sets_size_on_last() {
+    let ctx = CamelContext::new();
+    ctx.add_routes(move |b| {
+        b.from("direct:stream").split(body()).delimiter("\n").streaming().to("mock:part").end().to("mock:after");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let body: String = (0..1000).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+    ctx.create_producer_template().send_body("direct:stream", body.as_str()).unwrap();
+    let parts = ctx.mock_endpoint("mock:part").unwrap();
+    assert_eq!(parts.received_counter(), 1000);
+    let exs = parts.received_exchanges();
+    assert_eq!(exs[0].body(), &Value::from("line0"));
+    assert_eq!(exs[999].body(), &Value::from("line999"));
+    assert_eq!(exs[0].property(props::SPLIT_INDEX), Some(&Value::Int(0)));
+    assert_eq!(exs[0].property(props::SPLIT_COMPLETE), Some(&Value::Bool(false)));
+    // like Camel, the size is only known (and set) on the last part when streaming
+    assert!(exs[0].property(props::SPLIT_SIZE).is_none());
+    assert_eq!(exs[999].property(props::SPLIT_SIZE), Some(&Value::Int(1000)));
+    assert_eq!(exs[999].property(props::SPLIT_COMPLETE), Some(&Value::Bool(true)));
+    // the original message continues
+    assert_eq!(ctx.mock_endpoint("mock:after").unwrap().exchange(0).unwrap().body(), &Value::from(body.as_str()));
+}
+
+#[test]
+fn split_streaming_creates_parts_on_demand() {
+    use camel_core::processor::routing::support::to_lazy_iter;
+    // the lazy iterator yields parts one at a time and can be abandoned early
+    let mut it = to_lazy_iter(Value::from("a,b,,c"), Some(","));
+    assert_eq!(it.next(), Some(Value::from("a")));
+    assert_eq!(it.next(), Some(Value::from("b")));
+    assert_eq!(it.next(), Some(Value::from("")));
+    assert_eq!(it.next(), Some(Value::from("c")));
+    assert_eq!(it.next(), None);
+    assert_eq!(to_lazy_iter(Value::from(""), Some(",")).count(), 0);
+    assert_eq!(to_lazy_iter(Value::from("x"), None).collect::<Vec<_>>(), vec![Value::from("x")]);
+    // stopOnException stops pulling parts
+    let ctx = CamelContext::new();
+    ctx.add_routes(move |b| {
+        b.from("direct:stop")
+            .split(body())
+            .streaming()
+            .stop_on_exception()
+            .to("mock:seen")
+            .filter(simple("${body} == 'b'"))
+            .throw_exception("IllegalArgumentException", "bad part")
+            .end()
+            .end();
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    assert!(ctx.create_producer_template().send_body("direct:stop", "a,b,c,d").is_err());
+    assert_eq!(ctx.mock_endpoint("mock:seen").unwrap().received_counter(), 2);
+}

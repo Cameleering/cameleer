@@ -43,7 +43,7 @@ fn level(camel: &CamelContext, v: &Value) -> Result<Level> {
 /// `backOffMultiplier`, `useExponentialBackOff`, `maximumRedeliveryDelay`,
 /// `useCollisionAvoidance`, `collisionAvoidanceFactor`, `retryAttemptedLogLevel`,
 /// `retriesExhaustedLogLevel`, `logStackTrace`, `logExhausted`, `logRetryAttempted`,
-/// `delayPattern`). Other Camel logging options are accepted and ignored.
+/// `delayPattern`, `asyncDelayedRedelivery`). Other Camel logging options are accepted and ignored.
 pub fn parse_redelivery_overrides(camel: &CamelContext, v: &Value) -> Result<(RedeliveryOverrides, RedeliveryExtras)> {
     let mut o = RedeliveryOverrides::default();
     let mut x = RedeliveryExtras::default();
@@ -68,6 +68,7 @@ pub fn parse_redelivery_overrides(camel: &CamelContext, v: &Value) -> Result<(Re
             "logExhausted" => o.log_exhausted = Some(val_bool(camel, val).map_err(wrap)?),
             "logRetryAttempted" => x.log_retry_attempted = Some(val_bool(camel, val).map_err(wrap)?),
             "delayPattern" => o.delay_pattern = Some(val_str(camel, val).map_err(wrap)?),
+            "asyncDelayedRedelivery" => o.async_delayed_redelivery = Some(val_bool(camel, val).map_err(wrap)?),
             "id" => {}
             other => camel_core::camel_debug!("camel-yaml", "redeliveryPolicy option '{}' is not supported and is ignored", other),
         }

@@ -206,7 +206,7 @@ impl Tracer {
             exchange_id: ex.exchange_id.clone(),
             headers: ex.message.headers.to_value(),
             body,
-            body_type: ex.body().type_name().to_string(),
+            body_type: ex.body().java_type_name().unwrap_or("null").to_string(),
             message,
         };
         if self.is_enabled() {

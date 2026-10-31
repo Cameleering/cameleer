@@ -246,6 +246,46 @@ pub fn to_iterable(v: Value, delimiter: Option<&str>) -> Vec<Value> {
     }
 }
 
+/// Lazy version of [`to_iterable`] (used by streaming split): a string is split on the
+/// delimiter one part at a time, without building all parts up front.
+pub fn to_lazy_iter(v: Value, delimiter: Option<&str>) -> Box<dyn Iterator<Item = Value> + Send> {
+    match (v, delimiter) {
+        (Value::String(s), Some(d)) if !d.is_empty() => {
+            if s.is_empty() {
+                return Box::new(std::iter::empty());
+            }
+            Box::new(StringSplitIter { text: s, delimiter: d.to_string(), pos: Some(0) })
+        }
+        (Value::Array(a), _) => Box::new(a.into_iter()),
+        (other, d) => Box::new(to_iterable(other, d).into_iter()),
+    }
+}
+
+/// Splits an owned string on a delimiter lazily.
+struct StringSplitIter {
+    text: String,
+    delimiter: String,
+    pos: Option<usize>,
+}
+
+impl Iterator for StringSplitIter {
+    type Item = Value;
+    fn next(&mut self) -> Option<Value> {
+        let start = self.pos?;
+        let rest = &self.text[start..];
+        match rest.find(&self.delimiter) {
+            Some(i) => {
+                self.pos = Some(start + i + self.delimiter.len());
+                Some(Value::String(rest[..i].to_string()))
+            }
+            None => {
+                self.pos = None;
+                Some(Value::String(rest.to_string()))
+            }
+        }
+    }
+}
+
 /// Convert an `i64` milliseconds setting to a duration (negative = None).
 pub fn millis(ms: i64) -> Option<Duration> {
     if ms < 0 {

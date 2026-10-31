@@ -235,8 +235,62 @@ fn doc_headers_size_and_body_type() {
     ex.set_header("a", 1);
     ex.set_header("b", 2);
     assert_eq!(eval(&ex, "${headers}").len(), Some(2));
-    // rust-camel reports the dynamic Value type name (Camel reports a Java class name)
-    assert_eq!(eval(&ex, "${bodyType}"), Value::from("string"));
+    // the Java class name Camel reports
+    assert_eq!(eval(&ex, "${bodyType}"), Value::from("java.lang.String"));
+    assert!(matches(&ex, "${bodyType} == 'java.lang.String'"));
+    let types = [
+        (Value::from(1), "java.lang.Integer"),
+        (Value::from(1i64 << 40), "java.lang.Long"),
+        (Value::from(1.5), "java.lang.Double"),
+        (Value::from(true), "java.lang.Boolean"),
+        (Value::Bytes(vec![1]), "byte[]"),
+        (Value::Array(vec![Value::Int(1)]), "java.util.ArrayList"),
+        (Value::Object(Default::default()), "java.util.LinkedHashMap"),
+    ];
+    for (body, name) in types {
+        ex.set_body(body);
+        assert_eq!(eval(&ex, "${bodyType}"), Value::from(name));
+    }
+    ex.set_body(Value::Null);
+    assert_eq!(eval(&ex, "${bodyType}"), Value::Null);
+}
+
+#[test]
+fn doc_type_function_for_exchange_constants() {
+    let mut ex = exchange();
+    ex.set_header("CamelFileName", "a.txt");
+    assert_eq!(eval(&ex, "${type:org.apache.camel.Exchange.FILE_NAME}"), Value::from("CamelFileName"));
+    assert_eq!(eval(&ex, "${type:org.apache.camel.Exchange.REDELIVERY_COUNTER}"), Value::from("CamelRedeliveryCounter"));
+    assert_eq!(eval(&ex, "${type:org.apache.camel.Exchange.HTTP_RESPONSE_CODE}"), Value::from("CamelHttpResponseCode"));
+    assert_eq!(eval(&ex, "${type:org.apache.camel.Exchange.CONTENT_TYPE}"), Value::from("Content-Type"));
+    assert_eq!(eval(&ex, "${type:org.apache.camel.Exchange.ERRORHANDLER_HANDLED}"), Value::from("CamelErrorHandlerHandled"));
+    assert_eq!(eval(&ex, "${type:java.lang.Integer.MAX_VALUE}"), Value::Int(i32::MAX as i64));
+    assert!(matches(&ex, "${header.CamelFileName} == 'a.txt' && ${type:org.apache.camel.Exchange.FILE_NAME} == 'CamelFileName'"));
+    assert!(SimpleExpression::parse("${type:org.apache.camel.Nope.X}").is_err());
+}
+
+#[test]
+fn doc_message_history_function() {
+    let ctx = CamelContext::new();
+    ctx.set_message_history(true);
+    ctx.add_routes(|b| {
+        b.from("direct:start").route_id("hist").to("mock:x").set_body(simple("${messageHistory}")).to("mock:full");
+        b.from("direct:short").route_id("short").set_body(simple("${messageHistory(false)}")).to("mock:short");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    t.send_body("direct:start", "payload").unwrap();
+    t.send_body("direct:short", "payload").unwrap();
+    let full = ctx.mock_endpoint("mock:full").unwrap().exchange(0).unwrap().body().to_string();
+    assert!(full.starts_with("Message History\n"), "{}", full);
+    assert!(full.contains("[hist              ] [hist              ] [from[direct://start]"), "{}", full);
+    assert!(full.contains("to[mock:x]"), "{}", full);
+    assert!(full.contains("\nExchange\n"), "{}", full);
+    assert!(full.contains("Body: payload"), "{}", full);
+    let short = ctx.mock_endpoint("mock:short").unwrap().exchange(0).unwrap().body().to_string();
+    assert!(short.contains("from[direct://short]"), "{}", short);
+    assert!(!short.contains("Exchange"), "{}", short);
 }
 
 #[test]
@@ -309,6 +363,36 @@ fn doc_empty_and_boolean_literals() {
     assert!(!matches(&ex, "${header.missing}"));
 }
 
+/// Camel `ObjectHelper.evaluateValuePredicate`: a bare value used as a predicate is true unless
+/// it is null, `false`, the string "false" (trimmed, any case) or an empty collection.
+#[test]
+fn doc_value_predicate_truthiness_matches_camel() {
+    let mut ex = exchange();
+    ex.set_header("e", "");
+    ex.set_header("zero", 0);
+    ex.set_header("f", " FALSE ");
+    ex.set_header("t", "True");
+    ex.set_header("word", "no");
+    ex.set_header("list", Value::Array(vec![]));
+    ex.set_header("map", Value::Object(Default::default()));
+    assert!(matches(&ex, "${header.e}"));
+    assert!(matches(&ex, "${header.zero}"));
+    assert!(!matches(&ex, "${header.f}"));
+    assert!(matches(&ex, "${header.t}"));
+    assert!(matches(&ex, "${header.word}"));
+    assert!(!matches(&ex, "${header.list}"));
+    assert!(matches(&ex, "${header.map}"));
+    // the same rules apply to other languages used as predicates (header, constant)
+    let ctx = CamelContext::new();
+    let p = |lang: &str, text: &str| ctx.resolve_language(lang).unwrap().create_predicate(text, &Default::default()).unwrap().matches(&ex).unwrap();
+    assert!(p("header", "zero"));
+    assert!(p("header", "e"));
+    assert!(!p("header", "f"));
+    assert!(!p("header", "missing"));
+    assert!(p("constant", "0"));
+    assert!(!p("constant", "false"));
+}
+
 #[test]
 fn doc_equals_ignore_case_and_not_equals_ignore_case() {
     let mut ex = exchange();
@@ -378,6 +462,28 @@ fn doc_date_from_header_with_offset() {
     assert_eq!(eval(&ex, "${date:header.d:yyyy-MM-dd}"), Value::from("2024-01-15"));
     assert_eq!(eval(&ex, "${date:header.d+1d:yyyy-MM-dd}"), Value::from("2024-01-16"));
     assert_eq!(eval(&ex, "${date-with-timezone:header.d:GMT+02:00:HH:mm}"), Value::from("12:00"));
+}
+
+#[test]
+fn doc_date_with_named_timezone() {
+    if !camel_core::tz::zoneinfo_available() {
+        eprintln!("zoneinfo database not available: skipping");
+        return;
+    }
+    let mut ex = exchange();
+    // just before / after the Europe/Paris spring-forward transition (2024-03-31 01:00 UTC)
+    ex.set_header("a", camel_core::language::support::parse_date("2024-03-31T00:59:00Z").unwrap());
+    ex.set_header("b", camel_core::language::support::parse_date("2024-03-31T01:00:00Z").unwrap());
+    assert_eq!(eval(&ex, "${date-with-timezone:header.a:Europe/Paris:yyyy-MM-dd HH:mm}"), Value::from("2024-03-31 01:59"));
+    assert_eq!(eval(&ex, "${date-with-timezone:header.b:Europe/Paris:yyyy-MM-dd HH:mm z}"), Value::from("2024-03-31 03:00 CEST"));
+    // America/New_York fall back (2024-11-03 06:00 UTC)
+    ex.set_header("c", camel_core::language::support::parse_date("2024-11-03T05:30:00Z").unwrap());
+    ex.set_header("d", camel_core::language::support::parse_date("2024-11-03T06:30:00Z").unwrap());
+    assert_eq!(eval(&ex, "${date-with-timezone:header.c:America/New_York:HH:mm z}"), Value::from("01:30 EDT"));
+    assert_eq!(eval(&ex, "${date-with-timezone:header.d:America/New_York:HH:mm z}"), Value::from("01:30 EST"));
+    // now is accepted too
+    let v = eval(&ex, "${date-with-timezone:now:Europe/Paris:yyyy-MM-dd HH:mm}").to_string();
+    assert_eq!(v.len(), 16, "{}", v);
 }
 
 #[test]

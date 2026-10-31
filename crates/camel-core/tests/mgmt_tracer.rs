@@ -37,14 +37,14 @@ fn tracer_logs_each_step() {
     let ev = events.lock().unwrap().clone();
     let lines: Vec<&str> = ev.iter().map(|e| e.message.as_str()).collect();
     assert_eq!(ev.len(), 6, "{:#?}", lines);
-    assert!(lines[0].starts_with(">>> (tr) from[direct:start] <<< Exchange["), "{}", lines[0]);
+    assert!(lines[0].starts_with(">>> (tr) from[direct://start] <<< Exchange["), "{}", lines[0]);
     assert!(lines[0].contains("Body: hello"), "{}", lines[0]);
     assert!(ev[0].first);
     assert!(lines[1].starts_with(">>> (tr) setHeader[h"), "{}", lines[1]);
     assert!(lines[2].starts_with(">>> (tr) to[direct:sub]"), "{}", lines[2]);
     assert!(lines[2].contains("h=v"), "headers are shown: {}", lines[2]);
     assert_eq!(ev[2].node_id, "callSub");
-    assert!(lines[3].starts_with(">>> (sub) from[direct:sub]"), "{}", lines[3]);
+    assert!(lines[3].starts_with(">>> (sub) from[direct://sub]"), "{}", lines[3]);
     assert!(lines[4].starts_with(">>> (sub) transform["), "{}", lines[4]);
     assert!(lines[5].starts_with(">>> (tr) to[mock:out] <<< "), "{}", lines[5]);
     assert!(lines[5].contains("Body: hello!"), "{}", lines[5]);
@@ -83,7 +83,7 @@ fn tracer_writes_to_log() {
     ctx.create_producer_template().send_body("direct:sub", marker.as_str()).unwrap();
     let logged = logged.lock().unwrap();
     assert_eq!(logged.len(), 2, "{:?}", logged);
-    assert!(logged[0].starts_with(">>> (sub) from[direct:sub] <<< Exchange[Id: "), "{}", logged[0]);
+    assert!(logged[0].starts_with(">>> (sub) from[direct://sub] <<< Exchange[Id: "), "{}", logged[0]);
     ctx.stop().unwrap();
 }
 
@@ -133,9 +133,9 @@ fn message_history_property() {
         .iter()
         .map(|v| (v.get("routeId").unwrap().to_string(), v.get("label").unwrap().to_string()))
         .collect();
-    assert_eq!(steps[0], ("hist".to_string(), "from[direct:hist]".to_string()));
+    assert_eq!(steps[0], ("hist".to_string(), "from[direct://hist]".to_string()));
     assert_eq!(steps[1], ("hist".to_string(), "to[direct:sub]".to_string()));
-    assert_eq!(steps[2], ("sub".to_string(), "from[direct:sub]".to_string()));
+    assert_eq!(steps[2], ("sub".to_string(), "from[direct://sub]".to_string()));
     assert_eq!(steps[3].0, "sub");
     assert!(steps[3].1.starts_with("transform"));
     assert_eq!(steps[4], ("hist".to_string(), "to[mock:hist]".to_string()));
@@ -159,7 +159,7 @@ fn message_history_formatter_on_failure() {
     let text = format_message_history(&ex);
     assert!(text.starts_with("Message History\n---"), "{}", text);
     assert!(text.contains("RouteId              ProcessorId          Processor"), "{}", text);
-    assert!(text.contains("[failing           ] [failing           ] [from[direct:fail]"), "{}", text);
+    assert!(text.contains("[failing           ] [failing           ] [from[direct://fail]"), "{}", text);
     assert!(text.contains("[failing           ] [boom              ] [process[Processor]"), "{}", text);
     assert!(text.contains("Body: payload"), "{}", text);
     assert!(text.contains("Stacktrace"), "{}", text);

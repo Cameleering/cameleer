@@ -195,21 +195,84 @@ pub fn is_instance_of(v: &Value, type_name: &str) -> bool {
     }
 }
 
-/// Camel's `ObjectHelper.evaluateValuePredicate`: null/false/"false"/"" -> false,
-/// empty collections -> false, any other value -> true.
-pub fn value_predicate(v: &Value) -> bool {
-    match v {
-        Value::Null => false,
-        Value::Bool(b) => *b,
-        Value::String(s) => {
-            let t = s.trim();
-            !(t.is_empty() || t.eq_ignore_ascii_case("false"))
-        }
-        Value::Bytes(b) => !b.is_empty(),
-        Value::Array(a) => !a.is_empty(),
-        Value::Object(o) => !o.is_empty(),
-        _ => true,
+/// The value of a static field for the Simple `${type:...}` function. Supports the constants
+/// of `org.apache.camel.Exchange` (e.g. `org.apache.camel.Exchange.FILE_NAME` ->
+/// `CamelFileName`; `Exchange.FILE_NAME` is accepted too) and the `MIN_VALUE`/`MAX_VALUE` of
+/// `java.lang.Integer`/`Long`, `java.lang.Boolean.TRUE`/`FALSE`.
+pub fn type_constant(name: &str) -> Option<Value> {
+    let (class, field) = name.rsplit_once('.')?;
+    match class {
+        "org.apache.camel.Exchange" | "Exchange" => exchange_constant(field).map(Value::from),
+        "java.lang.Integer" | "Integer" => match field {
+            "MAX_VALUE" => Some(Value::Int(i32::MAX as i64)),
+            "MIN_VALUE" => Some(Value::Int(i32::MIN as i64)),
+            _ => None,
+        },
+        "java.lang.Long" | "Long" => match field {
+            "MAX_VALUE" => Some(Value::Int(i64::MAX)),
+            "MIN_VALUE" => Some(Value::Int(i64::MIN)),
+            _ => None,
+        },
+        "java.lang.Boolean" | "Boolean" => match field {
+            "TRUE" => Some(Value::Bool(true)),
+            "FALSE" => Some(Value::Bool(false)),
+            _ => None,
+        },
+        _ => None,
     }
+}
+
+/// The string value of an `org.apache.camel.Exchange` constant: `FILE_NAME` -> `CamelFileName`.
+/// Most constants follow that naming rule; the exceptions are listed explicitly.
+pub fn exchange_constant(field: &str) -> Option<String> {
+    if field.is_empty() || !field.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+        return None;
+    }
+    let special = match field {
+        "CONTENT_TYPE" => Some("Content-Type"),
+        "CONTENT_ENCODING" => Some("Content-Encoding"),
+        "CONTENT_LENGTH" => Some("Content-Length"),
+        "TRANSFER_ENCODING" => Some("Transfer-Encoding"),
+        "BREADCRUMB_ID" => Some("breadcrumbId"),
+        "DEFAULT_CHARSET_PROPERTY" => Some("org.apache.camel.default.charset"),
+        "ERRORHANDLER_HANDLED" => Some("CamelErrorHandlerHandled"),
+        "ERRORHANDLER_BRIDGE" => Some("CamelErrorHandlerBridge"),
+        "ERRORHANDLER_CIRCUIT_DETECTED" => Some("CamelFErrorHandlerCircuitDetected"),
+        "EXCEPTION_HANDLED" => Some("CamelExceptionHandled"),
+        "HTTP_SERVLET_REQUEST" => Some("CamelHttpServletRequest"),
+        "HTTP_SERVLET_RESPONSE" => Some("CamelHttpServletResponse"),
+        "OVERRULE_FILE_NAME" => Some("CamelOverruleFileName"),
+        "SAXPARSER_FACTORY" => Some("CamelSAXParserFactory"),
+        "XSLT_FILE_NAME" => Some("CamelXsltFileName"),
+        "XSLT_ERROR" => Some("CamelXsltError"),
+        "XSLT_FATAL_ERROR" => Some("CamelXsltFatalError"),
+        "XSLT_WARNING" => Some("CamelXsltWarning"),
+        "SOAP_ACTION" => Some("CamelSoapAction"),
+        "AUTHENTICATION" => Some("CamelAuthentication"),
+        "DUPLICATE_MESSAGE" => Some("CamelDuplicateMessage"),
+        "OFFSET" => Some("CamelOffset"),
+        "FILTER_NON_XML_CHARS" => Some("CamelFilterNonXmlChars"),
+        _ => None,
+    };
+    if let Some(s) = special {
+        return Some(s.to_string());
+    }
+    let mut out = String::from("Camel");
+    for part in field.split('_').filter(|p| !p.is_empty()) {
+        let mut cs = part.chars();
+        if let Some(first) = cs.next() {
+            out.push(first);
+            out.push_str(&cs.as_str().to_ascii_lowercase());
+        }
+    }
+    Some(out)
+}
+
+/// Camel's `ObjectHelper.evaluateValuePredicate` (see [`Value::is_predicate_true`]): null,
+/// `false`, `"false"` and empty collections are false; any other value (including `0` and
+/// `""`) is true.
+pub fn value_predicate(v: &Value) -> bool {
+    v.is_predicate_true()
 }
 
 /// Iterate a value like Camel's `ObjectHelper.createIterator`: arrays item by item,
@@ -476,127 +539,16 @@ pub fn parse_timezone(tz: &str) -> i64 {
     sign * (h * 60 + m)
 }
 
-const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const DAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-
 /// Format epoch millis using a Java `SimpleDateFormat` pattern in the time zone given as
-/// an offset in minutes. Supports `G y Y M L d D E u a H k K h m s S z Z X` and quoted text.
+/// an offset in minutes (see [`crate::util_time::format_in_zone`] for named zones).
 pub fn format_date(millis: i64, pattern: &str, offset_min: i64) -> String {
-    let local = millis + offset_min * 60_000;
-    let secs = local.div_euclid(1000);
-    let ms = local.rem_euclid(1000);
-    let (y, mo, d, h, mi, s) = crate::util_time::civil_from_epoch(secs);
-    let days = secs.div_euclid(86_400);
-    let dow = ((days + 3).rem_euclid(7)) as usize; // 0 = Monday (1970-01-01 was a Thursday)
-    let doy = days - crate::util_time::epoch_from_civil(y, 1, 1, 0, 0, 0).div_euclid(86_400) + 1;
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut out = String::new();
-    let mut i = 0;
-    let pad = |v: i64, n: usize| format!("{:0width$}", v, width = n);
-    while i < chars.len() {
-        let c = chars[i];
-        if c == '\'' {
-            if i + 1 < chars.len() && chars[i + 1] == '\'' {
-                out.push('\'');
-                i += 2;
-                continue;
-            }
-            i += 1;
-            while i < chars.len() {
-                if chars[i] == '\'' {
-                    if i + 1 < chars.len() && chars[i + 1] == '\'' {
-                        out.push('\'');
-                        i += 2;
-                        continue;
-                    }
-                    break;
-                }
-                out.push(chars[i]);
-                i += 1;
-            }
-            i += 1;
-            continue;
-        }
-        if !c.is_ascii_alphabetic() {
-            out.push(c);
-            i += 1;
-            continue;
-        }
-        let mut n = 1;
-        while i + n < chars.len() && chars[i + n] == c {
-            n += 1;
-        }
-        let tz = |colon: bool, z_for_zero: bool| -> String {
-            if offset_min == 0 && z_for_zero {
-                return "Z".to_string();
-            }
-            let sign = if offset_min < 0 { '-' } else { '+' };
-            let a = offset_min.abs();
-            if colon {
-                format!("{}{:02}:{:02}", sign, a / 60, a % 60)
-            } else {
-                format!("{}{:02}{:02}", sign, a / 60, a % 60)
-            }
-        };
-        match c {
-            'G' => out.push_str("AD"),
-            'u' => out.push_str(&(dow as i64 + 1).to_string()),
-            'y' | 'Y' => {
-                if n == 2 {
-                    out.push_str(&pad(y.rem_euclid(100), 2));
-                } else {
-                    out.push_str(&pad(y, n));
-                }
-            }
-            'M' | 'L' => match n {
-                1 => out.push_str(&mo.to_string()),
-                2 => out.push_str(&pad(mo as i64, 2)),
-                3 => out.push_str(&MONTHS[(mo - 1) as usize][..3]),
-                _ => out.push_str(MONTHS[(mo - 1) as usize]),
-            },
-            'd' => out.push_str(&pad(d as i64, n)),
-            'D' => out.push_str(&pad(doy, n)),
-            'E' => {
-                if n >= 4 {
-                    out.push_str(DAYS[dow])
-                } else {
-                    out.push_str(&DAYS[dow][..3])
-                }
-            }
-            'a' => out.push_str(if h < 12 { "AM" } else { "PM" }),
-            'H' => out.push_str(&pad(h as i64, n)),
-            'k' => out.push_str(&pad(if h == 0 { 24 } else { h as i64 }, n)),
-            'K' => out.push_str(&pad((h % 12) as i64, n)),
-            'h' => out.push_str(&pad(if h % 12 == 0 { 12 } else { (h % 12) as i64 }, n)),
-            'm' => out.push_str(&pad(mi as i64, n)),
-            's' => out.push_str(&pad(s as i64, n)),
-            'S' => {
-                let v = format!("{:03}", ms);
-                if n <= 3 {
-                    out.push_str(&v[..n]);
-                } else {
-                    out.push_str(&v);
-                    out.push_str(&"0".repeat(n - 3));
-                }
-            }
-            'z' => {
-                if offset_min == 0 {
-                    out.push_str("UTC")
-                } else {
-                    out.push_str(&format!("GMT{}", tz(true, false)))
-                }
-            }
-            'Z' => out.push_str(&tz(false, false)),
-            'X' => out.push_str(&if n >= 3 { tz(true, true) } else { tz(false, true) }),
-            other => {
-                for _ in 0..n {
-                    out.push(other)
-                }
-            }
-        }
-        i += n;
-    }
-    out
+    let tz = if offset_min == 0 {
+        crate::tz::TimeZone::utc()
+    } else {
+        let a = offset_min.abs();
+        crate::tz::TimeZone::fixed(&format!("GMT{}{:02}:{:02}", if offset_min < 0 { '-' } else { '+' }, a / 60, a % 60), (offset_min * 60) as i32)
+    };
+    crate::util_time::format_in_zone(millis, pattern, &tz)
 }
 
 /// Parse a date/time string into epoch millis. Accepts ISO-8601 forms
@@ -727,6 +679,17 @@ mod tests {
         assert!(is_instance_of(&Value::from("x"), "String"));
         assert!(is_instance_of(&Value::from(1), "Number"));
         assert!(!value_predicate(&Value::from("false")));
+        assert!(!value_predicate(&Value::from(" FALSE ")));
+        assert!(!value_predicate(&Value::Null));
+        assert!(!value_predicate(&Value::Bool(false)));
+        assert!(!value_predicate(&Value::Array(vec![])));
+        assert!(value_predicate(&Value::from(" True")));
         assert!(value_predicate(&Value::from(0)));
+        assert!(value_predicate(&Value::from(0.0)));
+        assert!(value_predicate(&Value::from("")));
+        assert!(value_predicate(&Value::from("no")));
+        assert!(value_predicate(&Value::Bytes(vec![])));
+        assert!(value_predicate(&Value::Object(Default::default())));
+        assert!(value_predicate(&Value::from(vec![0])));
     }
 }

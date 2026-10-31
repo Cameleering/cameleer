@@ -44,7 +44,7 @@ impl Component for QuartzComponent {
         let fire_now = params.take_bool("fireNow", false)?;
         let delayed_secs = params.take_i64("startDelayedSeconds", 0)?.max(0) as u64;
         let trigger = match params.take("cron") {
-            Some(c) => Trigger::Cron(CronExpression::parse_with_time_zone(&c, tz.as_deref())?),
+            Some(c) => Trigger::Cron(CronExpression::parse_with_default_zone(&c, tz.as_deref())?),
             None => {
                 let num = |k: &str, d: i64| -> Result<i64> {
                     match trigger_opts.get(k) {

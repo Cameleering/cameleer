@@ -94,18 +94,43 @@ impl MulticastEngine {
         copy_results(original, sub);
     }
 
+    /// Whether sub-exchanges are processed in parallel.
+    pub fn is_parallel(&self) -> bool {
+        self.parallel
+    }
+
+    /// Whether streaming is enabled.
+    pub fn is_streaming(&self) -> bool {
+        self.streaming
+    }
+
     /// Process the `(sub-exchange, processor)` pairs and merge the result into `original`.
-    pub fn execute(&self, original: &mut Exchange, mut pairs: Vec<(Exchange, Arc<dyn Processor>)>) -> Result<()> {
-        if !self.share_unit_of_work {
-            // each sub-exchange is a new unit of work: its "original message" (useOriginalMessage)
-            // is the sub-exchange message itself (e.g. the split part)
-            for (sub, _) in pairs.iter_mut() {
-                crate::processor::errors::begin_child_unit_of_work(sub);
-            }
+    pub fn execute(&self, original: &mut Exchange, pairs: Vec<(Exchange, Arc<dyn Processor>)>) -> Result<()> {
+        if self.parallel {
+            self.execute_with(original, |engine, original, agg| {
+                let mut pairs = pairs;
+                if !engine.share_unit_of_work {
+                    for (sub, _) in pairs.iter_mut() {
+                        crate::processor::errors::begin_child_unit_of_work(sub);
+                    }
+                }
+                engine.run_parallel(original, pairs, agg)
+            })
+        } else {
+            self.execute_lazy(original, &mut pairs.into_iter())
         }
+    }
+
+    /// Sequential processing of lazily created `(sub-exchange, processor)` pairs: each
+    /// sub-exchange is created only when the previous one is done (streaming split).
+    pub fn execute_lazy(&self, original: &mut Exchange, pairs: &mut dyn Iterator<Item = (Exchange, Arc<dyn Processor>)>) -> Result<()> {
+        self.execute_with(original, |engine, original, agg| engine.run_sequential(original, pairs, agg))
+    }
+
+    fn execute_with(&self, original: &mut Exchange, run: impl FnOnce(&Self, &mut Exchange, &mut Aggregation) -> Result<bool>) -> Result<()> {
         let saved = SavedProperties::save(original, RESTORED_PROPS);
         let mut agg = Aggregation { strategy: self.strategy.clone(), result: None, first_error: None };
-        let outcome = if self.parallel { self.run_parallel(original, pairs, &mut agg) } else { self.run_sequential(original, pairs, &mut agg) };
+        let outcome = run(self, original, &mut agg);
         match outcome {
             Err(e) => original.set_exception(e),
             Ok(true) => {} // stopped on exception: result already copied
@@ -128,8 +153,13 @@ impl MulticastEngine {
     }
 
     /// Returns Ok(true) if processing stopped because of stopOnException.
-    fn run_sequential(&self, original: &mut Exchange, pairs: Vec<(Exchange, Arc<dyn Processor>)>, agg: &mut Aggregation) -> Result<bool> {
-        for (i, (mut sub, p)) in pairs.into_iter().enumerate() {
+    fn run_sequential(&self, original: &mut Exchange, pairs: &mut dyn Iterator<Item = (Exchange, Arc<dyn Processor>)>, agg: &mut Aggregation) -> Result<bool> {
+        for (i, (mut sub, p)) in pairs.enumerate() {
+            if !self.share_unit_of_work {
+                // each sub-exchange is a new unit of work: its "original message" (useOriginalMessage)
+                // is the sub-exchange message itself (e.g. the split part)
+                crate::processor::errors::begin_child_unit_of_work(&mut sub);
+            }
             run_processor(p.as_ref(), &mut sub);
             let sub = self.finish_sub(original, sub);
             if self.stop_on_exception && (sub.is_failed() || sub.rollback_only) {
