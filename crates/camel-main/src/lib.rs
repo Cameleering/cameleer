@@ -424,6 +424,7 @@ pub fn new_main() -> Main {
     camel_datastores::register(main.context()); // spring-redis, mongodb, elasticsearch/opensearch, cql, couchdb
     camel_script::register(main.context()); // js, groovy, python, ognl, mvel, spel, datasonnet, csimple, joor
     camel_saas::register(main.context()); // slack, telegram, github, twilio, jira, openai, webhook, graphql, rss, atom
+    camel_dataformats::register(main.context()); // avro, bindy, yaml, tarFile, zipFile, crypto, pgp, cbor, thrift, asn1, iCal, mimeMultipart, univocity
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {
@@ -472,6 +473,18 @@ mod tests {
         let e = ctx.resolve_language("xpath").unwrap().create_expression("count(/a/b[1]/following::*)", &Default::default()).unwrap();
         let ex = camel_core::message::Exchange::with_body(Some(ctx.clone()), "<a><b/><b/><c/></a>");
         assert_eq!(e.evaluate(&ex).unwrap(), camel_core::value::Value::Float(2.0));
+    }
+
+    #[test]
+    fn new_main_registers_dataformats() {
+        let main = new_main();
+        for name in ["avro", "bindyCsv", "yaml", "tarFile", "pgp", "crypto", "cbor", "iCal", "mimeMultipart"] {
+            assert!(camel_core::dataformat::lookup_data_format_factory(main.context().registry(), name).is_some(), "{}", name);
+        }
+        let df = camel_core::dataformat::DataFormatDefinition::new("cbor").resolve(main.context()).unwrap();
+        let mut ex = camel_core::message::Exchange::with_body(Some(main.context().clone()), camel_core::value::Value::Int(500));
+        df.marshal(&mut ex).unwrap();
+        assert_eq!(ex.message.body, camel_core::value::Value::Bytes(vec![0x19, 0x01, 0xf4]));
     }
 
     #[test]

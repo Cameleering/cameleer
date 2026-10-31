@@ -1,0 +1,11 @@
+[package]
+name = "camel-dataformats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel data formats: Avro, Bindy, YAML, Tar, Zip, Crypto, PGP, CBOR, Thrift, ASN.1, iCal, MIME multipart"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }
+camel-yaml = { path = "../camel-yaml" }

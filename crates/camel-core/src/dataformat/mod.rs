@@ -53,6 +53,38 @@ pub fn lookup_data_format(registry: &Registry, name: &str) -> Option<Arc<dyn Dat
     registry.lookup::<Arc<dyn DataFormat>>(name).map(|a| (*a).clone())
 }
 
+/// A factory creating a data format from its options (used for formats contributed by other
+/// crates, so that name references with options - `marshal: {avro: {schema: ...}}`,
+/// `DataFormatDefinition::new("avro").option(..)`, `dataformat:avro:marshal?...` - work).
+pub type DataFormatFactory = dyn Fn(&BTreeMap<String, String>) -> Result<Arc<dyn DataFormat>> + Send + Sync;
+
+struct FactoryHolder(Arc<DataFormatFactory>);
+
+const FACTORY_PREFIX: &str = "camel.dataformat.factory.";
+
+/// Register a data format factory under `name`. Factories take precedence over built-in
+/// formats of the same name (but not over data format instances bound with [`bind_data_format`]).
+pub fn register_data_format_factory(
+    registry: &Registry,
+    name: &str,
+    factory: impl Fn(&BTreeMap<String, String>) -> Result<Arc<dyn DataFormat>> + Send + Sync + 'static,
+) {
+    registry.bind(format!("{}{}", FACTORY_PREFIX, name), FactoryHolder(Arc::new(factory)));
+}
+
+/// Look up a data format factory registered with [`register_data_format_factory`].
+pub fn lookup_data_format_factory(registry: &Registry, name: &str) -> Option<Arc<DataFormatFactory>> {
+    registry.lookup::<FactoryHolder>(&format!("{}{}", FACTORY_PREFIX, name)).map(|h| h.0.clone())
+}
+
+/// Create a data format by name: a registered factory, else a built-in format.
+pub fn create_data_format_with(registry: &Registry, name: &str, o: &BTreeMap<String, String>) -> Result<Arc<dyn DataFormat>> {
+    match lookup_data_format_factory(registry, name) {
+        Some(f) => f(o),
+        None => create_data_format(name, o),
+    }
+}
+
 fn opt<'a>(o: &'a BTreeMap<String, String>, keys: &[&str]) -> Option<&'a str> {
     keys.iter().find_map(|k| o.get(*k).map(|s| s.as_str()))
 }
@@ -260,7 +292,7 @@ impl DataFormatDefinition {
         for (k, v) in &self.options {
             opts.insert(k.clone(), ctx.resolve_placeholders(v)?);
         }
-        create_data_format(&self.name, &opts)
+        create_data_format_with(ctx.registry(), &self.name, &opts)
     }
 }
 

@@ -10,6 +10,7 @@ camel-amqp = { path = "../camel-amqp" }
 camel-amqp10 = { path = "../camel-amqp10" }
 camel-cloud = { path = "../camel-cloud" }
 camel-core = { path = "../camel-core" }
+camel-dataformats = { path = "../camel-dataformats" }
 camel-datastores = { path = "../camel-datastores" }
 camel-grpc = { path = "../camel-grpc" }
 camel-http = { path = "../camel-http" }

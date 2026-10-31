@@ -7,7 +7,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use crate::context::CamelContext;
-use crate::dataformat::{create_data_format, lookup_data_format, DataFormat};
+use crate::dataformat::{create_data_format_with, lookup_data_format, DataFormat};
 use crate::error::{CamelError, Result};
 use crate::message::Exchange;
 use crate::spi::{Component, Endpoint, Processor, Producer, Service};
@@ -37,7 +37,7 @@ impl Component for DataFormatComponent {
                 params.take_all();
                 f
             }
-            None => create_data_format(name, &params.take_all())?,
+            None => create_data_format_with(ctx.registry(), name, &params.take_all())?,
         };
         Ok(Arc::new(DataFormatEndpoint { uri: uri.to_string(), format, marshal }))
     }
