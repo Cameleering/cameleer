@@ -373,5 +373,7 @@ mod tests {
 
 /// Create a [`Main`] with all available components and route loaders registered.
 pub fn new_main() -> Main {
-    Main::new()
+    let main = Main::new();
+    camel_http::register(main.context());
+    main
 }

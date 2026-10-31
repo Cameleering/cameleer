@@ -18,4 +18,5 @@ name = "camel-main"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-http",
 ]
