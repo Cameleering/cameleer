@@ -1,0 +1,10 @@
+[package]
+name = "camel-xml"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel XML stack (std only): XML 1.0 parser + DOM, XPath 1.0, XSLT 1.0 (xslt/xslt-saxon components), XML Schema validation (validator component), xj, xmlsecurity"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }
