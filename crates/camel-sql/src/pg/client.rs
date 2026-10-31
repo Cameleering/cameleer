@@ -55,6 +55,13 @@ pub struct PgConfig {
     pub ssl_root_cert: Option<String>,
     /// Explicit trust parameters (take precedence over `sslrootcert`).
     pub ssl_params: Option<SslContextParameters>,
+    /// Client certificate (`sslcert`: PEM or DER) for mutual TLS.
+    pub ssl_cert: Option<String>,
+    /// Client private key (`sslkey`: PEM, DER PKCS#8 (optionally encrypted), or a PKCS#12
+    /// `.p12`/`.pfx` file holding certificate and key).
+    pub ssl_key: Option<String>,
+    /// Password of an encrypted `sslkey` / PKCS#12 file (`sslpassword`).
+    pub ssl_password: Option<String>,
     pub host: String,
     pub port: u16,
     pub database: String,
@@ -74,6 +81,9 @@ impl Default for PgConfig {
             ssl_mode: SslMode::Disable,
             ssl_root_cert: None,
             ssl_params: None,
+            ssl_cert: None,
+            ssl_key: None,
+            ssl_password: None,
             host: "localhost".into(),
             port: 5432,
             database: "postgres".into(),
@@ -155,10 +165,13 @@ impl PgConfig {
                     }
                 }
                 "sslrootcert" => cfg.ssl_root_cert = Some(v),
-                "sslfactory" | "sslcert" | "sslkey" | "sslpassword" => {
+                "sslcert" => cfg.ssl_cert = Some(v),
+                "sslkey" => cfg.ssl_key = Some(v),
+                "sslpassword" => cfg.ssl_password = Some(v),
+                "sslfactory" => {
                     return Err(CamelError::new(
                         camel_core::error::kinds::UNSUPPORTED_OPERATION,
-                        format!("PostgreSQL option {} is not supported by rust-camel (no client certificates / custom factories): {}", k, url),
+                        format!("PostgreSQL option {} is not supported by rust-camel (no custom SSL factories): {}", k, url),
                     ));
                 }
                 _ => {}
@@ -196,6 +209,25 @@ fn negotiate_ssl(mut tcp: TcpStream, cfg: &PgConfig) -> Result<NetStream> {
         (None, Some(root)) => SslContextParameters::new().trust_file(root),
         (None, None) => SslContextParameters::new(),
     };
+    // client certificate: sslcert + sslkey, or a PKCS#12 sslkey (pgjdbc)
+    if let Some(key) = cfg.ssl_key.as_deref().filter(|k| !k.trim().is_empty()) {
+        let lower = key.to_ascii_lowercase();
+        let stores = if lower.ends_with(".p12") || lower.ends_with(".pfx") {
+            camel_tls::camel_support::StoreOptions { key_store: Some(key.to_string()), key_store_password: cfg.ssl_password.clone(), ..Default::default() }
+        } else {
+            let cert = cfg.ssl_cert.clone().ok_or_else(|| sql_error("08006", "sslkey requires sslcert (the client certificate)"))?;
+            camel_tls::camel_support::StoreOptions {
+                key_store: Some(cert),
+                private_key: Some(key.to_string()),
+                key_password: cfg.ssl_password.clone(),
+                ..Default::default()
+            }
+        };
+        stores.apply(&mut params);
+    } else if let Some(cert) = cfg.ssl_cert.as_deref().filter(|c| !c.trim().is_empty()) {
+        // a combined PEM (certificate chain + key) in sslcert
+        camel_tls::camel_support::StoreOptions { key_store: Some(cert.to_string()), key_password: cfg.ssl_password.clone(), ..Default::default() }.apply(&mut params);
+    }
     let has_roots = cfg.ssl_params.is_some() || cfg.ssl_root_cert.is_some();
     match cfg.ssl_mode {
         SslMode::Prefer => params.insecure_skip_verify = true,
@@ -717,7 +749,8 @@ mod tests {
         assert_eq!(PgConfig::from_url("jdbc:postgresql://h/db?sslmode=require").unwrap().ssl_mode, SslMode::Require);
         assert_eq!(PgConfig::from_url("jdbc:postgresql://h/db?ssl=true").unwrap().ssl_mode, SslMode::VerifyFull);
         assert!(PgConfig::from_url("jdbc:postgresql://h/db?sslmode=nope").is_err());
-        assert!(PgConfig::from_url("jdbc:postgresql://h/db?sslcert=/x").is_err());
+        assert_eq!(PgConfig::from_url("jdbc:postgresql://h/db?sslcert=/x&sslkey=/k&sslpassword=p").unwrap().ssl_key.as_deref(), Some("/k"));
+        assert!(PgConfig::from_url("jdbc:postgresql://h/db?sslfactory=x").is_err());
         assert!(PgConfig::from_url("mysql://h/db").is_err());
         assert!(wants_returning("insert into t values (1)"));
         assert!(!wants_returning("insert into t values (1) returning id"));

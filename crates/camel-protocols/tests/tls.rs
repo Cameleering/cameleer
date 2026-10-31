@@ -77,6 +77,72 @@ fn ftps_client_explicit_and_implicit_with_protected_data() {
     let _ = fs::remove_dir_all(&root);
 }
 
+/// vsftpd `require_ssl_reuse=YES` style server: data connections must resume the
+/// control connection's TLS session (TLS 1.3 tickets and TLS 1.2 tickets / session IDs).
+#[test]
+fn ftps_data_connections_reuse_the_control_session() {
+    let root = temp_dir("ftps-reuse");
+    for v in [camel_tls::TlsVersion::Tls13, camel_tls::TlsVersion::Tls12] {
+        for tickets in [true, false] {
+            let mut p = testing::server_params();
+            p.min_version = Some(v);
+            p.max_version = Some(v);
+            let cfg = camel_tls::TlsServerConfig::builder()
+                .certified_key(p.key_material().unwrap().unwrap())
+                .versions(v, v)
+                .session_tickets(tickets)
+                .build()
+                .unwrap();
+            for mode in [FtpsMode::Explicit, FtpsMode::Implicit] {
+                let server = FtpServer::start_tls(&root, &[("admin", "secret")], cfg.clone(), mode).unwrap();
+                server.set_require_ssl_reuse(true);
+                let label = format!("{v:?} tickets={tickets} {mode:?}");
+                for (resumption, ok) in [(true, true), (false, false)] {
+                    let mut cp = testing::client_params();
+                    cp.session_resumption = Some(resumption);
+                    let tls = Arc::new(cp.client_config().unwrap());
+                    let sec = match mode {
+                        FtpsMode::Explicit => FtpSecurity::Explicit { tls, server_name: "localhost".into() },
+                        FtpsMode::Implicit => FtpSecurity::Implicit { tls, server_name: "localhost".into() },
+                    };
+                    let mut c = FtpClient::connect_secure("127.0.0.1", server.port(), Duration::from_secs(5), Duration::from_secs(10), &sec).unwrap();
+                    c.login("admin", "secret").unwrap();
+                    c.protect_data(0, "P").unwrap();
+                    c.set_binary(true).unwrap();
+                    let r = c.stor("reuse.bin", b"reused", false);
+                    if !ok {
+                        let e = r.expect_err(&format!("{label}: transfer without session reuse must fail"));
+                        assert!(e.to_string().contains("522") || e.to_string().contains("reuse"), "{label}: {e}");
+                        c.quit();
+                        continue;
+                    }
+                    r.unwrap_or_else(|e| panic!("{label}: {e}"));
+                    // several data connections in a row, uploads and downloads
+                    for _ in 0..2 {
+                        assert_eq!(c.retr("reuse.bin").unwrap_or_else(|e| panic!("{label}: {e}")), b"reused");
+                        assert!(c.list("").unwrap().iter().any(|f| f.name == "reuse.bin"), "{label}");
+                        c.stor("reuse.bin", b"reused", false).unwrap();
+                    }
+                    c.dele("reuse.bin").unwrap();
+                    c.quit();
+                }
+                server.stop();
+            }
+        }
+    }
+    // the ftps component (cached endpoint TLS configuration) against a reuse-enforcing server
+    let server = FtpServer::start_tls(&root, &[("admin", "secret")], server_cfg(), FtpsMode::Explicit).unwrap();
+    server.set_require_ssl_reuse(true);
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let uri = format!("ftps://admin@localhost:{}/reuse?password=secret&passiveMode=true&sslContextParameters=#ssl", server.port());
+    t.send_body_and_header(&uri, "one", "CamelFileName", "1.txt").unwrap();
+    t.send_body_and_header(&uri, "two", "CamelFileName", "2.txt").unwrap();
+    assert_eq!(fs::read_to_string(root.join("reuse/2.txt")).unwrap(), "two");
+    server.stop();
+    let _ = fs::remove_dir_all(&root);
+}
+
 #[test]
 fn ftps_routes_explicit_and_implicit() {
     let root = temp_dir("ftps-routes");

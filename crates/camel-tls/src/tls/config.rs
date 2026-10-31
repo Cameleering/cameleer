@@ -1,10 +1,68 @@
 //! Client and server configuration builders.
 
+use super::session::{ClientSessionCache, ServerSessions};
 use super::{CipherSuite, NamedGroup, TlsError, TlsResult, TlsVersion};
-use crate::keys::{PrivateKey, PublicKey};
+use crate::keys::PrivateKey;
 use crate::pem;
-use crate::x509::{Certificate, RootStore};
+use crate::x509::{Certificate, Crl, RootStore};
 use std::path::Path;
+use std::sync::Arc;
+
+/// Whether a server requests / requires client certificates (Camel
+/// `clientAuthentication=NONE|WANT|REQUIRE`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClientAuth {
+    #[default]
+    None,
+    /// Request a certificate; connections without one are accepted.
+    Want,
+    /// Require a certificate (handshake fails without a valid one).
+    Need,
+}
+
+impl ClientAuth {
+    /// Parses `NONE` / `WANT` / `REQUIRE` (also `NEED`, `true`/`false`, `optional`).
+    pub fn parse(s: &str) -> Option<ClientAuth> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "NONE" | "FALSE" | "NO" | "OFF" | "" => Some(ClientAuth::None),
+            "WANT" | "OPTIONAL" | "REQUEST" | "REQUESTED" => Some(ClientAuth::Want),
+            "REQUIRE" | "REQUIRED" | "NEED" | "TRUE" | "YES" | "ON" => Some(ClientAuth::Need),
+            _ => None,
+        }
+    }
+}
+
+/// A certificate chain (DER, leaf first) with its private key.
+#[derive(Clone, Debug)]
+pub struct CertifiedKey {
+    pub chain: Vec<Vec<u8>>,
+    pub key: PrivateKey,
+}
+
+impl CertifiedKey {
+    /// Checks that the key matches the leaf certificate.
+    pub fn new(chain: Vec<Vec<u8>>, key: PrivateKey) -> TlsResult<CertifiedKey> {
+        if chain.is_empty() {
+            return Err(TlsError::Config("no certificate chain configured".into()));
+        }
+        let leaf = Certificate::from_der(&chain[0]).map_err(|e| TlsError::Config(format!("leaf certificate: {e}")))?;
+        if !leaf.public_key.as_ref().is_some_and(|p| p.same_as(&key.public_key())) {
+            return Err(TlsError::Config("private key does not match the leaf certificate".into()));
+        }
+        Ok(CertifiedKey { chain, key })
+    }
+
+    /// From PEM certificate chain and PEM private key (optionally encrypted).
+    pub fn from_pem(chain_pem: &[u8], key_pem: &[u8], key_password: Option<&str>) -> TlsResult<CertifiedKey> {
+        let chain: Vec<Vec<u8>> =
+            pem::parse_pem(chain_pem).map_err(TlsError::Config)?.into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.der).collect();
+        let key = PrivateKey::from_pem_with_password(key_pem, key_password).map_err(TlsError::Config)?;
+        CertifiedKey::new(chain, key)
+    }
+}
+
+/// Default session lifetime (seconds), like Java's `SSLSessionContext` default.
+pub const DEFAULT_SESSION_LIFETIME: u32 = 86_400;
 
 fn default_suites() -> Vec<CipherSuite> {
     CipherSuite::ALL.to_vec()
@@ -27,6 +85,11 @@ pub struct TlsClientConfig {
     /// Preference order; a key share is sent for the first one (HelloRetryRequest
     /// handles servers that want another).
     pub(crate) groups: Vec<NamedGroup>,
+    /// Client certificate for mutual TLS.
+    pub(crate) client_cert: Option<Arc<CertifiedKey>>,
+    pub(crate) crls: Arc<Vec<Crl>>,
+    /// Session cache for resumption (None disables resumption).
+    pub(crate) session_cache: Option<Arc<ClientSessionCache>>,
 }
 
 impl Default for TlsClientConfig {
@@ -48,6 +111,9 @@ impl TlsClientConfig {
                 max_version: TlsVersion::Tls13,
                 suites: default_suites(),
                 groups: default_groups(),
+                client_cert: None,
+                crls: Arc::new(Vec::new()),
+                session_cache: Some(Arc::new(ClientSessionCache::default())),
             },
             system_roots: true,
         }
@@ -55,6 +121,16 @@ impl TlsClientConfig {
 
     pub fn roots(&self) -> &RootStore {
         &self.roots
+    }
+
+    /// The session cache (None when resumption is disabled).
+    pub fn session_cache(&self) -> Option<&Arc<ClientSessionCache>> {
+        self.session_cache.as_ref()
+    }
+
+    /// Whether a client certificate is configured.
+    pub fn has_client_certificate(&self) -> bool {
+        self.client_cert.is_some()
     }
 }
 
@@ -133,6 +209,36 @@ impl TlsClientConfigBuilder {
         self
     }
 
+    /// Client certificate (mutual TLS): sent when the server requests one.
+    pub fn client_certificate(mut self, ck: CertifiedKey) -> Self {
+        self.cfg.client_cert = Some(Arc::new(ck));
+        self
+    }
+
+    /// Client certificate from PEM chain + PEM key.
+    pub fn client_cert_pem(self, chain_pem: &[u8], key_pem: &[u8]) -> TlsResult<Self> {
+        Ok(self.client_certificate(CertifiedKey::from_pem(chain_pem, key_pem, None)?))
+    }
+
+    /// Certificate revocation lists checked during chain validation.
+    pub fn crls(mut self, crls: Vec<Crl>) -> Self {
+        self.cfg.crls = Arc::new(crls);
+        self
+    }
+
+    /// Enables (default) or disables TLS session resumption (TLS 1.3 PSK tickets,
+    /// TLS 1.2 session tickets and IDs) with a fresh cache.
+    pub fn session_resumption(mut self, yes: bool) -> Self {
+        self.cfg.session_cache = if yes { Some(Arc::new(ClientSessionCache::default())) } else { None };
+        self
+    }
+
+    /// Uses `cache` (e.g. shared between configurations) for resumption.
+    pub fn session_cache(mut self, cache: Arc<ClientSessionCache>) -> Self {
+        self.cfg.session_cache = Some(cache);
+        self
+    }
+
     pub fn build(mut self) -> TlsClientConfig {
         if self.system_roots {
             let mut store = RootStore::system();
@@ -153,6 +259,11 @@ pub struct TlsServerConfig {
     pub(crate) max_version: TlsVersion,
     pub(crate) suites: Vec<CipherSuite>,
     pub(crate) groups: Vec<NamedGroup>,
+    pub(crate) client_auth: ClientAuth,
+    pub(crate) client_roots: RootStore,
+    pub(crate) crls: Arc<Vec<Crl>>,
+    /// Resumption state (None disables resumption).
+    pub(crate) sessions: Option<Arc<ServerSessions>>,
 }
 
 impl TlsServerConfig {
@@ -165,8 +276,18 @@ impl TlsServerConfig {
             max_version: TlsVersion::Tls13,
             suites: default_suites(),
             groups: default_groups(),
+            client_auth: ClientAuth::None,
+            client_roots: RootStore::empty(),
+            crls: Vec::new(),
+            resumption: true,
+            tickets: true,
+            lifetime: DEFAULT_SESSION_LIFETIME,
             error: None,
         }
+    }
+
+    pub fn client_auth(&self) -> ClientAuth {
+        self.client_auth
     }
 
     /// Shortcut: certificate chain PEM + private key PEM.
@@ -193,6 +314,12 @@ pub struct TlsServerConfigBuilder {
     max_version: TlsVersion,
     suites: Vec<CipherSuite>,
     groups: Vec<NamedGroup>,
+    client_auth: ClientAuth,
+    client_roots: RootStore,
+    crls: Vec<Crl>,
+    resumption: bool,
+    tickets: bool,
+    lifetime: u32,
     error: Option<String>,
 }
 
@@ -290,47 +417,83 @@ impl TlsServerConfigBuilder {
         self
     }
 
+    /// Certificate chain and key in one.
+    pub fn certified_key(mut self, ck: CertifiedKey) -> Self {
+        self.chain = ck.chain;
+        self.key = Some(ck.key);
+        self
+    }
+
+    /// Client certificate authentication mode (default [`ClientAuth::None`]).
+    pub fn client_auth(mut self, mode: ClientAuth) -> Self {
+        self.client_auth = mode;
+        self
+    }
+
+    /// Trust anchors for client certificates (also advertised as certificate_authorities).
+    pub fn client_roots(mut self, roots: RootStore) -> Self {
+        self.client_roots = roots;
+        self
+    }
+
+    /// Adds client-certificate trust anchors from PEM text.
+    pub fn add_client_root_pem(mut self, pem: &[u8]) -> Self {
+        if let Err(e) = self.client_roots.add_pem(pem) {
+            return self.fail(format!("client trust store: {e}"));
+        }
+        self
+    }
+
+    /// Certificate revocation lists checked when validating client certificates.
+    pub fn crls(mut self, crls: Vec<Crl>) -> Self {
+        self.crls = crls;
+        self
+    }
+
+    /// Enables (default) or disables session resumption.
+    pub fn session_resumption(mut self, yes: bool) -> Self {
+        self.resumption = yes;
+        self
+    }
+
+    /// Whether to issue stateless (encrypted) session tickets (default true); with
+    /// `false` sessions are kept in a server-side cache: TLS 1.2 uses session IDs and
+    /// TLS 1.3 tickets carry only a random cache identity.
+    pub fn session_tickets(mut self, yes: bool) -> Self {
+        self.tickets = yes;
+        self
+    }
+
+    /// Session / ticket lifetime in seconds (default 86400, at most 7 days).
+    pub fn session_lifetime_secs(mut self, secs: u32) -> Self {
+        self.lifetime = secs;
+        self
+    }
+
     pub fn build(self) -> TlsResult<TlsServerConfig> {
         if let Some(e) = self.error {
             return Err(TlsError::Config(e));
         }
-        if self.chain.is_empty() {
-            return Err(TlsError::Config("no certificate chain configured".into()));
-        }
         let key = self.key.ok_or_else(|| TlsError::Config("no private key configured".into()))?;
-        let leaf = Certificate::from_der(&self.chain[0]).map_err(|e| TlsError::Config(format!("leaf certificate: {e}")))?;
-        let matches = match (&leaf.public_key, key.public_key()) {
-            (Some(PublicKey::Ec { point: a, .. }), PublicKey::Ec { point: b, .. }) => *a == b,
-            (Some(PublicKey::Rsa(_)), PublicKey::Rsa(_)) => PublicKey::from_spki(&leaf.spki).is_ok() && rsa_matches(&leaf, &key),
-            _ => false,
-        };
-        if !matches {
-            return Err(TlsError::Config("private key does not match the leaf certificate".into()));
-        }
+        let ck = CertifiedKey::new(self.chain, key)?;
         if self.suites.is_empty() || self.groups.is_empty() {
             return Err(TlsError::Config("empty cipher suite or group list".into()));
         }
+        if self.client_auth != ClientAuth::None && self.client_roots.is_empty() {
+            return Err(TlsError::Config("client authentication requires a trust store for client certificates".into()));
+        }
         Ok(TlsServerConfig {
-            cert_chain: self.chain,
-            key,
+            cert_chain: ck.chain,
+            key: ck.key,
             alpn: self.alpn,
             min_version: self.min_version,
             max_version: self.max_version,
             suites: self.suites,
             groups: self.groups,
+            client_auth: self.client_auth,
+            client_roots: self.client_roots,
+            crls: Arc::new(self.crls),
+            sessions: if self.resumption { Some(Arc::new(ServerSessions::new(self.lifetime, self.tickets))) } else { None },
         })
-    }
-}
-
-fn rsa_matches(leaf: &Certificate, key: &PrivateKey) -> bool {
-    // sign a probe and verify with the certificate key
-    let h = crate::crypto::hash::HashAlg::Sha256;
-    let digest = h.hash(b"camel-tls key check");
-    match (key, &leaf.public_key) {
-        (PrivateKey::Rsa(k), Some(PublicKey::Rsa(p))) => match k.sign_pkcs1(h, &digest) {
-            Some(sig) => p.verify_pkcs1(h, &digest, &sig),
-            None => false,
-        },
-        _ => false,
     }
 }

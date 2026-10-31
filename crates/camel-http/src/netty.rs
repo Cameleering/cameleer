@@ -145,9 +145,10 @@ impl Component for NettyComponent {
         let key_store = params.take("keyStoreFile").or_else(|| params.take("keyStoreResource"));
         let trust_store = params.take("trustStoreFile").or_else(|| params.take("trustStoreResource"));
         let hostname_verification = params.take_bool("hostnameVerification", false)?;
-        if params.take_bool("needClientAuth", false)? {
-            return Err(CamelError::illegal_argument("needClientAuth=true is not supported (no client certificate authentication)"));
-        }
+        // Camel netty: keyStoreFormat (JKS, PKCS12 or PEM; detected when absent) and passphrase
+        let key_store_format = params.take("keyStoreFormat");
+        let passphrase = params.take("passphrase");
+        let client_auth = camel_tls::camel_support::take_client_auth(params)?;
         let mut tls = endpoint_tls(ctx, params, "netty", false, &["ssl"])?;
         if let Some(t) = tls.as_mut() {
             let mut p: SslContextParameters = (*t.params).clone();
@@ -157,6 +158,17 @@ impl Component for NettyComponent {
             }
             if let Some(ts) = &trust_store {
                 p.trust_store = vec![camel_tls::PemSource::parse(ts)];
+            }
+            if let Some(f) = &key_store_format {
+                p.key_store_type = Some(f.clone());
+                p.trust_store_type = Some(f.clone());
+            }
+            if let Some(pw) = &passphrase {
+                p.key_store_password = Some(pw.clone());
+                p.trust_store_password = Some(pw.clone());
+            }
+            if client_auth.is_some() {
+                p.client_authentication = client_auth;
             }
             if p.hostname_verification.is_none() {
                 p.hostname_verification = Some(hostname_verification);
@@ -356,7 +368,15 @@ struct NettyConsumer {
 }
 
 /// Route one received message; returns the reply bytes (None = no reply).
-fn route_message(ctx: &WeakContext, processor: &Arc<dyn Processor>, cfg: &NettyConfig, data: &[u8], remote: Option<SocketAddr>, local: Option<SocketAddr>) -> (Option<Vec<u8>>, bool) {
+fn route_message(
+    ctx: &WeakContext,
+    processor: &Arc<dyn Processor>,
+    cfg: &NettyConfig,
+    data: &[u8],
+    remote: Option<SocketAddr>,
+    local: Option<SocketAddr>,
+    client_certs: &[Vec<u8>],
+) -> (Option<Vec<u8>>, bool) {
     let ctx = match ctx.upgrade() {
         Some(c) => c,
         None => return (None, true),
@@ -369,6 +389,10 @@ fn route_message(ctx: &WeakContext, processor: &Arc<dyn Processor>, cfg: &NettyC
     }
     if let Some(l) = local {
         ex.set_header(NETTY_LOCAL_ADDRESS, l.to_string());
+    }
+    // mutual TLS (needClientAuth): Camel's CamelNettySSLClientCert* headers
+    for (k, v) in camel_tls::camel_support::client_cert_headers("CamelNettySSLClientCert", client_certs) {
+        ex.set_header(&k, v);
     }
     if let Err(e) = processor.process(&mut ex) {
         ex.set_exception(e);
@@ -408,7 +432,7 @@ fn serve_tcp(tcp: TcpStream, cfg: NettyConfig, ctx: WeakContext, processor: Arc<
             Ok(Some(d)) => d,
             _ => break,
         };
-        let (reply, close) = route_message(&ctx, &processor, &cfg, &data, remote, local);
+        let (reply, close) = route_message(&ctx, &processor, &cfg, &data, remote, local, stream.peer_certificates());
         if let Some(r) = reply {
             if writer.write_all(&r).and_then(|_| writer.flush()).is_err() {
                 break;
@@ -486,7 +510,7 @@ impl Service for NettyConsumer {
                                     data = &data[..data.len() - 1];
                                 }
                             }
-                            let (reply, _) = route_message(&ctx, &processor, &cfg, data, Some(from), Some(local));
+                            let (reply, _) = route_message(&ctx, &processor, &cfg, data, Some(from), Some(local), &[]);
                             if let Some(r) = reply {
                                 let _ = socket.send_to(&r, from);
                             }

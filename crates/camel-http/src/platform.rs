@@ -128,13 +128,15 @@ impl Component for HttpConsumerComponent {
         // or the embedded server properties (`camel.server.ssl.*`, `camel.server.sslEnabled`)
         let ssl = camel_tls::camel_support::take_endpoint_ssl(ctx, params, &self.scheme)?;
         let ssl_flag = params.take_bool("ssl", false)?;
+        // mutual TLS: needClientAuth=true / clientAuth=NONE|WANT|REQUIRE
+        let client_auth = camel_tls::camel_support::take_client_auth(params)?;
         let use_tls = match uri_scheme {
             Some(https) => https,
             None => ssl_flag || ssl.is_some() || camel_tls::camel_support::server_ssl_enabled(ctx),
         };
         let mut server_config = self.server_config.lock().unwrap().clone();
         if use_tls {
-            let tls = camel_tls::camel_support::server_config(ctx, ssl.as_ref(), uri)?;
+            let tls = camel_tls::camel_support::server_config_with_client_auth(ctx, ssl.as_ref(), uri, client_auth)?;
             server_config.tls = Some(Arc::new(tls));
         }
         let host = params.take("host").unwrap_or(host);

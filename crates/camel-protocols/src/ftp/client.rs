@@ -73,6 +73,9 @@ pub struct FtpClient {
     writer: NetStream,
     /// TLS settings for protected data connections (`PROT P`).
     data_tls: Option<(Arc<TlsClientConfig>, String)>,
+    /// Session cache key of the TLS control connection: data connections resume its
+    /// session (servers such as vsftpd with `require_ssl_reuse` insist on it).
+    control_session_key: Option<String>,
     control_tls: Option<(Arc<TlsClientConfig>, String)>,
     host: String,
     passive: bool,
@@ -110,10 +113,12 @@ impl FtpClient {
             FtpSecurity::Implicit { tls, server_name } => Some((tls.clone(), server_name.clone())),
             _ => None,
         };
+        let control_session_key = stream.session_key().map(str::to_string);
         let mut c = FtpClient {
             reader: BufReader::new(stream),
             writer,
             data_tls: None,
+            control_session_key,
             control_tls,
             host: host.to_string(),
             passive: true,
@@ -142,6 +147,7 @@ impl FtpClient {
             let plain = c.writer.try_clone().map_err(|e| io_error(e, host))?;
             let secured = plain.start_tls_client(server_name, tls).map_err(|e| io_to_camel(e, &format!("ftp://{}:{} (AUTH TLS)", host, port)))?;
             c.reader = BufReader::new(secured.try_clone().map_err(|e| io_error(e, host))?);
+            c.control_session_key = secured.session_key().map(str::to_string);
             c.writer = secured;
             c.control_tls = Some((tls.clone(), server_name.clone()));
         }
@@ -434,7 +440,13 @@ impl FtpClient {
         let _ = s.set_read_timeout(t);
         let _ = s.set_write_timeout(t);
         match &self.data_tls {
-            Some((cfg, name)) => NetStream::client(s, name, cfg).map_err(|e| io_to_camel(e, &format!("ftps data connection to {}", self.host))),
+            Some((cfg, name)) => {
+                let r = match &self.control_session_key {
+                    Some(key) => NetStream::client_with_session_key(s, name, cfg, key),
+                    None => NetStream::client(s, name, cfg),
+                };
+                r.map_err(|e| io_to_camel(e, &format!("ftps data connection to {}", self.host)))
+            }
             None => Ok(NetStream::plain(s)),
         }
     }

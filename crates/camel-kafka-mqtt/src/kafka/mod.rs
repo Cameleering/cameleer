@@ -160,12 +160,19 @@ fn take_security(ctx: &CamelContext, params: &mut Parameters) -> Result<(Option<
     let mechanism = params.take_string("saslMechanism", "PLAIN").to_ascii_uppercase();
     let jaas = params.take("saslJaasConfig").filter(|s| !s.trim().is_empty());
     params.take("saslKerberosServiceName");
-    let truststore = params.take("sslTruststoreLocation").filter(|s| !s.trim().is_empty());
+    // key / trust stores: PKCS12, JKS or PEM (sslKeystoreType / sslTruststoreType; detected when absent)
+    let stores = camel_tls::camel_support::StoreOptions {
+        key_store: params.take("sslKeystoreLocation").filter(|s| !s.trim().is_empty()),
+        private_key: None,
+        key_store_password: params.take("sslKeystorePassword"),
+        key_password: params.take("sslKeyPassword"),
+        key_store_type: params.take("sslKeystoreType"),
+        trust_store: params.take("sslTruststoreLocation").filter(|s| !s.trim().is_empty()),
+        trust_store_password: params.take("sslTruststorePassword"),
+        trust_store_type: params.take("sslTruststoreType"),
+    };
     let endpoint_alg = params.take("sslEndpointAlgorithm").or_else(|| params.take("sslEndpointIdentificationAlgorithm"));
     let ssl_protocol = params.take("sslProtocol").or_else(|| params.take("sslEnabledProtocols"));
-    if params.take("sslKeystoreLocation").filter(|s| !s.trim().is_empty()).is_some() {
-        camel_core::camel_warn!("kafka", "sslKeystoreLocation (client certificates) is not supported by rust-camel kafka and is ignored");
-    }
     // other ssl*/kerberos/sasl tuning options are accepted and ignored
     let rest: Vec<String> = params.keys().filter(|k| k.starts_with("ssl") && *k != "sslContextParameters" || k.starts_with("kerberos") || k.starts_with("sasl")).cloned().collect();
     for k in rest {
@@ -174,9 +181,7 @@ fn take_security(ctx: &CamelContext, params: &mut Parameters) -> Result<(Option<
     let tls = match endpoint_tls(ctx, params, "kafka", use_tls, &[])? {
         Some(t) if use_tls => {
             let mut p = (*t.params).clone();
-            if let Some(ts) = &truststore {
-                p.trust_store = vec![camel_tls::PemSource::parse(ts)];
-            }
+            stores.apply(&mut p);
             if let Some(alg) = &endpoint_alg {
                 p.hostname_verification = Some(!alg.trim().is_empty());
             }

@@ -7,6 +7,7 @@ mod conn;
 mod keyschedule;
 mod record;
 mod server;
+pub mod session;
 pub mod stream;
 
 use crate::crypto::ec::EcCurve;
@@ -52,8 +53,12 @@ pub(crate) mod ext {
     pub const SIGNATURE_ALGORITHMS: u16 = 13;
     pub const ALPN: u16 = 16;
     pub const EXTENDED_MASTER_SECRET: u16 = 23;
+    pub const SESSION_TICKET: u16 = 35;
+    pub const PRE_SHARED_KEY: u16 = 41;
     pub const SUPPORTED_VERSIONS: u16 = 43;
     pub const COOKIE: u16 = 44;
+    pub const PSK_KEY_EXCHANGE_MODES: u16 = 45;
+    pub const CERTIFICATE_AUTHORITIES: u16 = 47;
     pub const KEY_SHARE: u16 = 51;
     pub const RENEGOTIATION_INFO: u16 = 0xff01;
 }
@@ -67,6 +72,7 @@ pub mod alert {
     pub const HANDSHAKE_FAILURE: u8 = 40;
     pub const BAD_CERTIFICATE: u8 = 42;
     pub const UNSUPPORTED_CERTIFICATE: u8 = 43;
+    pub const CERTIFICATE_REVOKED: u8 = 44;
     pub const CERTIFICATE_EXPIRED: u8 = 45;
     pub const CERTIFICATE_UNKNOWN: u8 = 46;
     pub const ILLEGAL_PARAMETER: u8 = 47;
@@ -79,6 +85,8 @@ pub mod alert {
     pub const USER_CANCELED: u8 = 90;
     pub const NO_RENEGOTIATION: u8 = 100;
     pub const MISSING_EXTENSION: u8 = 109;
+    pub const UNSUPPORTED_EXTENSION: u8 = 110;
+    pub const CERTIFICATE_REQUIRED: u8 = 116;
     pub const UNRECOGNIZED_NAME: u8 = 112;
     pub const NO_APPLICATION_PROTOCOL: u8 = 120;
 
@@ -149,6 +157,7 @@ impl TlsError {
                 CertError::UnknownIssuer { .. } => alert::UNKNOWN_CA,
                 CertError::Parse(_) => alert::BAD_CERTIFICATE,
                 CertError::BadSignature { .. } => alert::BAD_CERTIFICATE,
+                CertError::Revoked { .. } => alert::CERTIFICATE_REVOKED,
                 _ => alert::CERTIFICATE_UNKNOWN,
             }),
             _ => None,
@@ -425,9 +434,11 @@ pub mod sigscheme {
     pub const RSA_PSS_RSAE_SHA256: u16 = 0x0804;
     pub const RSA_PSS_RSAE_SHA384: u16 = 0x0805;
     pub const RSA_PSS_RSAE_SHA512: u16 = 0x0806;
+    pub const ED25519: u16 = 0x0807;
 
     /// What we offer / accept, in preference order.
-    pub const SUPPORTED: [u16; 8] = [
+    pub const SUPPORTED: [u16; 9] = [
+        ED25519,
         ECDSA_SECP256R1_SHA256,
         ECDSA_SECP384R1_SHA384,
         RSA_PSS_RSAE_SHA256,
@@ -455,6 +466,7 @@ pub(crate) fn choose_scheme(key: &PrivateKey, offered: &[u16], tls13: bool) -> O
     let candidates: Vec<u16> = match key {
         PrivateKey::Ec { curve: EcCurve::P256, .. } => vec![ECDSA_SECP256R1_SHA256],
         PrivateKey::Ec { curve: EcCurve::P384, .. } => vec![ECDSA_SECP384R1_SHA384],
+        PrivateKey::Ed25519 { .. } => vec![ED25519],
         PrivateKey::Rsa(_) if tls13 => vec![RSA_PSS_RSAE_SHA256, RSA_PSS_RSAE_SHA384, RSA_PSS_RSAE_SHA512],
         PrivateKey::Rsa(_) => vec![
             RSA_PSS_RSAE_SHA256,
@@ -470,6 +482,12 @@ pub(crate) fn choose_scheme(key: &PrivateKey, offered: &[u16], tls13: bool) -> O
 
 /// Signs `message` (hashing it with the scheme's hash).
 pub(crate) fn sign_message(key: &PrivateKey, scheme: u16, message: &[u8]) -> TlsResult<Vec<u8>> {
+    if let PrivateKey::Ed25519 { seed, .. } = key {
+        if scheme != sigscheme::ED25519 {
+            return Err(TlsError::proto(alert::INTERNAL_ERROR, "unsupported signature scheme"));
+        }
+        return Ok(crate::crypto::ed25519::sign(seed, message).to_vec());
+    }
     let h = scheme_hash(scheme).ok_or_else(|| TlsError::proto(alert::INTERNAL_ERROR, "unsupported signature scheme"))?;
     let digest = h.hash(message);
     let sig = match key {
@@ -478,6 +496,7 @@ pub(crate) fn sign_message(key: &PrivateKey, scheme: u16, message: &[u8]) -> Tls
             sigscheme::RSA_PSS_RSAE_SHA256 | sigscheme::RSA_PSS_RSAE_SHA384 | sigscheme::RSA_PSS_RSAE_SHA512 => k.sign_pss(h, &digest),
             _ => k.sign_pkcs1(h, &digest),
         },
+        PrivateKey::Ed25519 { .. } => None,
     };
     sig.ok_or_else(|| TlsError::proto(alert::INTERNAL_ERROR, "signing failed"))
 }
@@ -489,6 +508,13 @@ pub(crate) fn verify_message(key: &PublicKey, scheme: u16, message: &[u8], sig: 
     let fail = || TlsError::proto(alert::DECRYPT_ERROR, "handshake signature verification failed");
     if !SUPPORTED.contains(&scheme) {
         return Err(TlsError::proto(alert::ILLEGAL_PARAMETER, format!("unsupported signature scheme {scheme:#06x}")));
+    }
+    if scheme == ED25519 {
+        return match key {
+            PublicKey::Ed25519(k) if crate::crypto::ed25519::verify(k, message, sig) => Ok(()),
+            PublicKey::Ed25519(_) => Err(fail()),
+            _ => Err(TlsError::proto(alert::ILLEGAL_PARAMETER, "signature scheme does not match key type")),
+        };
     }
     let h = scheme_hash(scheme).unwrap();
     let digest = h.hash(message);

@@ -52,6 +52,23 @@ const fn make_sbox() -> [u8; 256] {
 
 static SBOX: [u8; 256] = make_sbox();
 
+const fn make_inv_sbox() -> [u8; 256] {
+    let s = make_sbox();
+    let mut inv = [0u8; 256];
+    let mut i = 0usize;
+    while i < 256 {
+        inv[s[i] as usize] = i as u8;
+        i += 1;
+    }
+    inv
+}
+
+static INV_SBOX: [u8; 256] = make_inv_sbox();
+
+fn gmul(a: u8, b: u8) -> u8 {
+    gf_mul(a, b)
+}
+
 #[inline]
 fn xtime(b: u8) -> u8 {
     (b << 1) ^ (((b >> 7) & 1) * 0x1b)
@@ -135,6 +152,100 @@ impl Aes {
             }
         }
     }
+}
+
+impl Aes {
+    /// Inverse cipher (used for CBC decryption of key stores).
+    pub fn decrypt_block(&self, block: &mut [u8; 16]) {
+        let nr = self.round_keys.len() - 1;
+        let s = block;
+        for (b, k) in s.iter_mut().zip(&self.round_keys[nr]) {
+            *b ^= k;
+        }
+        for round in (0..nr).rev() {
+            // InvShiftRows
+            let t = *s;
+            for c in 0..4 {
+                for r in 0..4 {
+                    s[4 * ((c + r) % 4) + r] = t[4 * c + r];
+                }
+            }
+            for b in s.iter_mut() {
+                *b = INV_SBOX[*b as usize];
+            }
+            for (b, k) in s.iter_mut().zip(&self.round_keys[round]) {
+                *b ^= k;
+            }
+            if round != 0 {
+                for c in 0..4 {
+                    let a = [s[4 * c], s[4 * c + 1], s[4 * c + 2], s[4 * c + 3]];
+                    for r in 0..4 {
+                        s[4 * c + r] = gmul(a[r], 14) ^ gmul(a[(r + 1) % 4], 11) ^ gmul(a[(r + 2) % 4], 13) ^ gmul(a[(r + 3) % 4], 9);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A 64- or 128-bit block cipher usable in CBC mode.
+pub trait BlockCipher {
+    const BLOCK: usize;
+    fn encrypt(&self, block: &mut [u8]);
+    fn decrypt(&self, block: &mut [u8]);
+}
+
+impl BlockCipher for Aes {
+    const BLOCK: usize = 16;
+    fn encrypt(&self, block: &mut [u8]) {
+        let b: &mut [u8; 16] = block.try_into().expect("16-byte block");
+        self.encrypt_block(b);
+    }
+    fn decrypt(&self, block: &mut [u8]) {
+        let b: &mut [u8; 16] = block.try_into().expect("16-byte block");
+        self.decrypt_block(b);
+    }
+}
+
+/// CBC encryption with PKCS#7 padding.
+pub fn cbc_encrypt<C: BlockCipher>(c: &C, iv: &[u8], data: &[u8]) -> Vec<u8> {
+    let bs = C::BLOCK;
+    let pad = bs - data.len() % bs;
+    let mut buf = data.to_vec();
+    buf.extend(std::iter::repeat_n(pad as u8, pad));
+    let mut prev = iv.to_vec();
+    for chunk in buf.chunks_mut(bs) {
+        for (b, p) in chunk.iter_mut().zip(&prev) {
+            *b ^= p;
+        }
+        c.encrypt(chunk);
+        prev.copy_from_slice(chunk);
+    }
+    buf
+}
+
+/// CBC decryption removing PKCS#7 padding (None on a length or padding error).
+pub fn cbc_decrypt<C: BlockCipher>(c: &C, iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
+    let bs = C::BLOCK;
+    if data.is_empty() || !data.len().is_multiple_of(bs) || iv.len() != bs {
+        return None;
+    }
+    let mut out = data.to_vec();
+    let mut prev = iv.to_vec();
+    for chunk in out.chunks_mut(bs) {
+        let saved = chunk.to_vec();
+        c.decrypt(chunk);
+        for (b, p) in chunk.iter_mut().zip(&prev) {
+            *b ^= p;
+        }
+        prev = saved;
+    }
+    let pad = *out.last()? as usize;
+    if pad == 0 || pad > bs || out[out.len() - pad..].iter().any(|b| *b as usize != pad) {
+        return None;
+    }
+    out.truncate(out.len() - pad);
+    Some(out)
 }
 
 /// Branch-free GF(2^128) multiplication in the GCM bit order.
@@ -236,6 +347,26 @@ impl AesGcm {
 mod tests {
     use super::*;
     use crate::util::{hex, unhex};
+
+    #[test]
+    fn decrypt_inverts_and_cbc_roundtrip() {
+        for key in [unhex("000102030405060708090a0b0c0d0e0f"), unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")] {
+            let a = Aes::new(&key);
+            let mut b = [0u8; 16];
+            b.copy_from_slice(&unhex("00112233445566778899aabbccddeeff"));
+            a.encrypt_block(&mut b);
+            a.decrypt_block(&mut b);
+            assert_eq!(hex(&b), "00112233445566778899aabbccddeeff");
+        }
+        // NIST SP 800-38A F.2.1 CBC-AES128 (first block; our padding adds a block)
+        let a = Aes::new(&unhex("2b7e151628aed2a6abf7158809cf4f3c"));
+        let ct = cbc_encrypt(&a, &unhex("000102030405060708090a0b0c0d0e0f"), &unhex("6bc1bee22e409f96e93d7e117393172a"));
+        assert_eq!(hex(&ct[..16]), "7649abac8119b246cee98e9b12e9197d");
+        assert_eq!(cbc_decrypt(&a, &unhex("000102030405060708090a0b0c0d0e0f"), &ct).unwrap(), unhex("6bc1bee22e409f96e93d7e117393172a"));
+        let mut bad = ct.clone();
+        bad[4] ^= 1;
+        assert!(cbc_decrypt(&a, &unhex("000102030405060708090a0b0c0d0e0f"), &bad).is_none());
+    }
 
     #[test]
     fn sbox_spot_checks() {

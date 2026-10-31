@@ -31,6 +31,13 @@ impl Name {
     pub fn common_name(&self) -> Option<&str> {
         self.attributes.iter().find(|(o, _)| o == OID_CN).map(|(_, v)| v.as_str())
     }
+
+    /// The name with the most specific attribute first (`CN=x, O=y, C=z`), as Java's
+    /// `X500Principal.toString()` renders it.
+    pub fn to_dn_string(&self) -> String {
+        let reversed = Name { attributes: self.attributes.iter().rev().cloned().collect() };
+        reversed.to_string()
+    }
 }
 
 impl fmt::Display for Name {
@@ -307,6 +314,7 @@ pub enum CertError {
     UsageNotAllowed { subject: String },
     PathTooLong,
     UnsupportedCriticalExtension { subject: String, oid: String },
+    Revoked { subject: String },
 }
 
 impl fmt::Display for CertError {
@@ -329,6 +337,7 @@ impl fmt::Display for CertError {
             CertError::UnsupportedCriticalExtension { subject, oid } => {
                 write!(f, "unsupported critical extension {oid} in '{subject}'")
             }
+            CertError::Revoked { subject } => write!(f, "certificate has been revoked: {subject}"),
         }
     }
 }
@@ -432,6 +441,104 @@ impl RootStore {
     pub fn extend(&mut self, other: &RootStore) {
         self.roots.extend(other.roots.iter().cloned());
     }
+
+    /// The trust anchors.
+    pub fn certificates(&self) -> impl Iterator<Item = &Certificate> {
+        self.roots.iter().map(|c| c.as_ref())
+    }
+}
+
+/// A parsed certificate revocation list (RFC 5280 section 5).
+#[derive(Clone, Debug)]
+pub struct Crl {
+    pub der: Vec<u8>,
+    pub tbs: Vec<u8>,
+    pub issuer: Name,
+    pub issuer_raw: Vec<u8>,
+    pub this_update: i64,
+    pub next_update: Option<i64>,
+    /// Serial numbers (INTEGER contents, as in [`Certificate::serial`]) of revoked certificates.
+    pub revoked: Vec<Vec<u8>>,
+    pub signature_algorithm: SignatureAlgorithm,
+    pub signature: Vec<u8>,
+}
+
+impl Crl {
+    pub fn from_der(der: &[u8]) -> DerResult<Crl> {
+        let mut outer = Der::new(der);
+        let mut c = outer.sequence()?;
+        let tbs_tlv = c.expect(TAG_SEQUENCE)?;
+        let mut sig_alg_r = c.sequence()?;
+        let signature_algorithm = SignatureAlgorithm::parse(&mut sig_alg_r)?;
+        let signature = c.bit_string()?.to_vec();
+        let mut t = tbs_tlv.reader();
+        if t.peek_tag() == Some(TAG_INTEGER) {
+            t.small_uint()?;
+        }
+        let _alg = t.sequence()?;
+        let issuer_tlv = t.expect(TAG_SEQUENCE)?;
+        let this_update = asn1::parse_time(&t.read()?)?;
+        let mut next_update = None;
+        if matches!(t.peek_tag(), Some(asn1::TAG_UTC_TIME) | Some(asn1::TAG_GENERALIZED_TIME)) {
+            next_update = Some(asn1::parse_time(&t.read()?)?);
+        }
+        let mut revoked = Vec::new();
+        if t.peek_tag() == Some(TAG_SEQUENCE) {
+            let mut list = t.sequence()?;
+            while !list.is_empty() {
+                let mut entry = list.sequence()?;
+                revoked.push(entry.expect(TAG_INTEGER)?.value.to_vec());
+            }
+        }
+        Ok(Crl {
+            der: der.to_vec(),
+            tbs: tbs_tlv.raw.to_vec(),
+            issuer: parse_name(&issuer_tlv)?,
+            issuer_raw: issuer_tlv.raw.to_vec(),
+            this_update,
+            next_update,
+            revoked,
+            signature_algorithm,
+            signature,
+        })
+    }
+
+    /// Parses every `X509 CRL` block of PEM text, or a single DER CRL.
+    pub fn parse_all(data: &[u8]) -> Result<Vec<Crl>, String> {
+        if data.windows(10).any(|w| w == b"-----BEGIN") {
+            let mut out = Vec::new();
+            for b in pem::parse_pem(data)? {
+                if b.label == "X509 CRL" {
+                    out.push(Crl::from_der(&b.der).map_err(|e| e.to_string())?);
+                }
+            }
+            if out.is_empty() {
+                return Err("no X509 CRL blocks found".into());
+            }
+            Ok(out)
+        } else {
+            Ok(vec![Crl::from_der(data).map_err(|e| e.to_string())?])
+        }
+    }
+
+    pub fn verify_signed_by(&self, issuer_key: &PublicKey) -> bool {
+        self.signature_algorithm.verify(issuer_key, &self.tbs, &self.signature)
+    }
+
+    pub fn is_revoked(&self, serial: &[u8]) -> bool {
+        self.revoked.iter().any(|s| s == serial)
+    }
+}
+
+/// Fails with [`CertError::Revoked`] when a CRL issued (and signed) by `issuer_key`
+/// lists `cert`.
+fn check_revocation(cert: &Certificate, issuer_key: &PublicKey, crls: &[Crl]) -> Result<(), CertError> {
+    for crl in crls.iter().filter(|c| c.issuer_raw == cert.issuer_raw) {
+        if crl.is_revoked(&cert.serial) && crl.verify_signed_by(issuer_key) {
+            return Err(CertError::Revoked { subject: cert.subject.to_string() });
+        }
+    }
+    Ok(())
 }
 
 pub fn now_unix() -> i64 {
@@ -475,6 +582,20 @@ pub fn verify_chain(
     now: i64,
     required_eku: &str,
 ) -> Result<Certificate, CertError> {
+    verify_chain_with_crls(chain, hostname, roots, now, required_eku, &[])
+}
+
+/// [`verify_chain`] plus revocation checking: every certificate on the path that is
+/// listed in a matching CRL (same issuer, valid signature) is rejected. Certificates
+/// without a matching CRL are accepted (no "unknown status" failures).
+pub fn verify_chain_with_crls(
+    chain: &[Vec<u8>],
+    hostname: Option<&str>,
+    roots: &RootStore,
+    now: i64,
+    required_eku: &str,
+    crls: &[Crl],
+) -> Result<Certificate, CertError> {
     if chain.is_empty() {
         return Err(CertError::NoCertificates);
     }
@@ -511,7 +632,7 @@ pub fn verify_chain(
     }
     let mut used = vec![false; certs.len()];
     used[0] = true;
-    build_path(&certs, 0, roots, now, &mut used, 0)?;
+    build_path(&certs, 0, roots, now, &mut used, 0, crls)?;
     Ok(leaf.clone())
 }
 
@@ -522,6 +643,7 @@ fn build_path(
     now: i64,
     used: &mut Vec<bool>,
     depth: usize,
+    crls: &[Crl],
 ) -> Result<(), CertError> {
     if depth > MAX_PATH_DEPTH {
         return Err(CertError::PathTooLong);
@@ -532,7 +654,7 @@ fn build_path(
     for root in roots.roots.iter().filter(|r| r.subject_raw == cert.issuer_raw) {
         if let Some(pk) = &root.public_key {
             if cert.verify_signed_by(pk) {
-                return Ok(());
+                return check_revocation(cert, pk, crls);
             }
             last_err = CertError::BadSignature { subject: cert.subject.to_string() };
         }
@@ -572,8 +694,12 @@ fn build_path(
             last_err = CertError::BadSignature { subject: cert.subject.to_string() };
             continue;
         }
+        if let Err(e) = check_revocation(cert, pk, crls) {
+            last_err = e;
+            continue;
+        }
         used[j] = true;
-        match build_path(certs, j, roots, now, used, depth + 1) {
+        match build_path(certs, j, roots, now, used, depth + 1, crls) {
             Ok(()) => return Ok(()),
             Err(e) => last_err = e,
         }

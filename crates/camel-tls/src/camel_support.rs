@@ -12,7 +12,7 @@
 //!    parameters if `camel.ssl.enabled=true`, else the system trust store.
 
 use crate::params::SslContextParameters;
-use crate::tls::config::{TlsClientConfig, TlsServerConfig};
+use crate::tls::config::{ClientAuth, TlsClientConfig, TlsServerConfig};
 use crate::tls::TlsError;
 use camel_core::error::{CamelError, Result};
 use camel_core::util::Parameters;
@@ -154,6 +154,17 @@ pub fn client_config(ctx: &CamelContext, explicit: Option<&Arc<SslContextParamet
 /// Builds a server config from the explicit parameters, else the embedded-server
 /// parameters ([`server_ssl_context_parameters`]), else the global ones.
 pub fn server_config(ctx: &CamelContext, explicit: Option<&Arc<SslContextParameters>>, what: &str) -> Result<TlsServerConfig> {
+    server_config_with_client_auth(ctx, explicit, what, None)
+}
+
+/// Like [`server_config`], overriding the client authentication mode (endpoint options
+/// such as `needClientAuth=true` / `clientAuth=REQUIRE`).
+pub fn server_config_with_client_auth(
+    ctx: &CamelContext,
+    explicit: Option<&Arc<SslContextParameters>>,
+    what: &str,
+    client_auth: Option<ClientAuth>,
+) -> Result<TlsServerConfig> {
     let p = match explicit {
         Some(p) => p.clone(),
         None => match server_ssl_context_parameters(ctx)?.or(global_ssl_context_parameters(ctx)?) {
@@ -166,7 +177,120 @@ pub fn server_config(ctx: &CamelContext, explicit: Option<&Arc<SslContextParamet
             }
         },
     };
+    let p = match client_auth {
+        Some(mode) => Arc::new(SslContextParameters { client_authentication: Some(mode), ..(*p).clone() }),
+        None => p,
+    };
     p.server_config().map_err(|e| tls_error(&e, what))
+}
+
+/// Consumes the endpoint options selecting client certificate authentication:
+/// `clientAuth` / `clientAuthentication` (`NONE`, `WANT`, `REQUIRE`), `needClientAuth=true`
+/// (REQUIRE) and `wantClientAuth=true` (WANT).
+pub fn take_client_auth(params: &mut Parameters) -> Result<Option<ClientAuth>> {
+    let mut mode = None;
+    for key in ["clientAuth", "clientAuthentication"] {
+        if let Some(v) = params.take(key) {
+            mode = Some(ClientAuth::parse(&v).ok_or_else(|| CamelError::illegal_argument(format!("Invalid {}: {} (NONE, WANT or REQUIRE)", key, v)))?);
+        }
+    }
+    for (key, value) in [("needClientAuth", ClientAuth::Need), ("wantClientAuth", ClientAuth::Want)] {
+        if let Some(v) = params.take(key) {
+            match v.trim().to_ascii_lowercase().as_str() {
+                "true" => {
+                    if mode != Some(ClientAuth::Need) {
+                        mode = Some(value);
+                    }
+                }
+                "false" => {
+                    if mode.is_none() {
+                        mode = Some(ClientAuth::None);
+                    }
+                }
+                other => return Err(CamelError::illegal_argument(format!("Invalid boolean value for {}: {}", key, other))),
+            }
+        }
+    }
+    Ok(mode)
+}
+
+/// Key / trust store options of a component (Kafka `sslKeystoreLocation`, Spring
+/// `spring.rabbitmq.ssl.key-store`, PostgreSQL `sslcert`...), applied on top of the
+/// endpoint's [`SslContextParameters`] by [`StoreOptions::apply`].
+#[derive(Clone, Debug, Default)]
+pub struct StoreOptions {
+    /// Key store (PKCS#12, JKS, JCEKS or PEM with certificate chain + key).
+    pub key_store: Option<String>,
+    /// Separate PEM private key file (with `key_store` holding the certificate chain).
+    pub private_key: Option<String>,
+    pub key_store_password: Option<String>,
+    pub key_password: Option<String>,
+    pub key_store_type: Option<String>,
+    pub trust_store: Option<String>,
+    pub trust_store_password: Option<String>,
+    pub trust_store_type: Option<String>,
+}
+
+impl StoreOptions {
+    pub fn is_empty(&self) -> bool {
+        self.key_store.is_none() && self.trust_store.is_none() && self.private_key.is_none()
+    }
+
+    /// Applies the options to `p` (a key store replaces the configured key material,
+    /// a trust store the configured trust store).
+    pub fn apply(&self, p: &mut SslContextParameters) {
+        let blank = |o: &Option<String>| o.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        if let Some(k) = blank(&self.key_store) {
+            p.cert_chain = Some(crate::params::PemSource::parse(&k));
+            p.private_key = blank(&self.private_key).map(|k| crate::params::PemSource::parse(&k));
+        }
+        if let Some(v) = &self.key_store_password {
+            p.key_store_password = Some(v.clone());
+        }
+        if let Some(v) = &self.key_password {
+            p.key_password = Some(v.clone());
+        }
+        if let Some(v) = blank(&self.key_store_type) {
+            p.key_store_type = Some(v);
+        }
+        if let Some(t) = blank(&self.trust_store) {
+            p.trust_store = vec![crate::params::PemSource::parse(&t)];
+        }
+        if let Some(v) = &self.trust_store_password {
+            p.trust_store_password = Some(v.clone());
+        }
+        if let Some(v) = blank(&self.trust_store_type) {
+            p.trust_store_type = Some(v);
+        }
+    }
+}
+
+/// Exchange headers describing a verified client certificate chain (leaf first), named
+/// like Camel Netty's `CamelNettySSLClientCert*` headers: `{prefix}SubjectName`,
+/// `{prefix}IssuerName`, `{prefix}SerialNo`, `{prefix}NotBefore`, `{prefix}NotAfter`
+/// (distinguished names most-specific attribute first, times as RFC 3339 UTC).
+pub fn client_cert_headers(prefix: &str, chain: &[Vec<u8>]) -> Vec<(String, String)> {
+    let Some(leaf) = chain.first().and_then(|d| crate::x509::Certificate::from_der(d).ok()) else { return Vec::new() };
+    let serial: String = {
+        let mut s = leaf.serial.as_slice();
+        while s.len() > 1 && s[0] == 0 {
+            s = &s[1..];
+        }
+        crate::util::hex(s)
+    };
+    vec![
+        (format!("{}SubjectName", prefix), leaf.subject.to_dn_string()),
+        (format!("{}IssuerName", prefix), leaf.issuer.to_dn_string()),
+        (format!("{}SerialNo", prefix), serial),
+        (format!("{}NotBefore", prefix), rfc3339(leaf.not_before)),
+        (format!("{}NotAfter", prefix), rfc3339(leaf.not_after)),
+    ]
+}
+
+fn rfc3339(unix: i64) -> String {
+    let (y, m, d) = crate::asn1::civil_from_days(unix.div_euclid(86400));
+    let s = unix.rem_euclid(86400);
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, s / 3600, s / 60 % 60, s % 60)
 }
 
 /// The embedded HTTP server parameters: `camel.server.ssl.*` properties

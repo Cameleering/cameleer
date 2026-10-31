@@ -7,12 +7,16 @@
 //!
 //! FTPS: [`FtpServer::start_tls`] serves explicit (`AUTH TLS`, `PBSZ`, `PROT`) or implicit
 //! TLS; with `PROT P` data connections are TLS-protected (handshake after the `150` reply).
+//! [`FtpServer::set_require_ssl_reuse`] mimics vsftpd's `require_ssl_reuse=YES`: a data
+//! connection must resume the TLS session of its control connection, otherwise the
+//! transfer fails with `522 SSL connection failed; session reuse required`.
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufReader, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -41,6 +45,7 @@ struct State {
     root: PathBuf,
     users: HashMap<String, String>,
     commands: Mutex<Vec<String>>,
+    require_ssl_reuse: AtomicBool,
 }
 
 /// An embedded FTP server bound to `127.0.0.1` on an ephemeral port.
@@ -72,6 +77,7 @@ impl FtpServer {
             root: fs::canonicalize(&root).unwrap_or(root),
             users: users.iter().map(|(u, p)| (u.to_string(), p.to_string())).collect(),
             commands: Mutex::new(Vec::new()),
+            require_ssl_reuse: AtomicBool::new(false),
         });
         let st = state.clone();
         let server = TcpServer::bind("127.0.0.1", 0, "ftp-server", move |s| {
@@ -95,6 +101,12 @@ impl FtpServer {
     /// All commands received so far (passwords masked).
     pub fn commands(&self) -> Vec<String> {
         self.state.commands.lock().unwrap().clone()
+    }
+
+    /// Require protected data connections to resume the control connection's TLS
+    /// session (vsftpd `require_ssl_reuse`).
+    pub fn set_require_ssl_reuse(&self, yes: bool) {
+        self.state.require_ssl_reuse.store(yes, Ordering::SeqCst);
     }
 
     /// Stop the server and close all connections.
@@ -131,8 +143,25 @@ impl Session {
     /// Wraps an accepted data connection in TLS after `PROT P` (call after the 150 reply).
     fn secure_data(&self, s: TcpStream) -> std::io::Result<NetStream> {
         match (&self.st.tls, self.prot_private) {
-            (Some((cfg, _)), true) => NetStream::server(s, cfg),
+            (Some((cfg, _)), true) => {
+                let d = NetStream::server(s, cfg)?;
+                if self.st.require_ssl_reuse.load(Ordering::SeqCst)
+                    && !(d.session_resumed() && !d.session_origin_id().is_empty() && d.session_origin_id() == self.out.session_origin_id())
+                {
+                    let _ = d.shutdown(std::net::Shutdown::Both);
+                    return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "session reuse required"));
+                }
+                Ok(d)
+            }
             _ => Ok(NetStream::plain(s)),
+        }
+    }
+
+    fn data_tls_failed(&mut self, e: &std::io::Error) -> std::io::Result<()> {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            self.reply("522 SSL connection failed; session reuse required")
+        } else {
+            self.reply("425 TLS negotiation on the data connection failed")
         }
     }
 
@@ -181,7 +210,7 @@ impl Session {
         self.reply("150 Opening data connection")?;
         let mut s = match self.secure_data(s) {
             Ok(s) => s,
-            Err(_) => return self.reply("425 TLS negotiation on the data connection failed"),
+            Err(e) => return self.data_tls_failed(&e),
         };
         let r = s.write_all(data).and_then(|_| s.flush());
         let _ = s.shutdown(std::net::Shutdown::Both);
@@ -415,8 +444,8 @@ impl Session {
                     self.reply("150 Ok to send data")?;
                     let mut s = match self.secure_data(s) {
                         Ok(s) => s,
-                        Err(_) => {
-                            self.reply("425 TLS negotiation on the data connection failed")?;
+                        Err(e) => {
+                            self.data_tls_failed(&e)?;
                             continue;
                         }
                     };

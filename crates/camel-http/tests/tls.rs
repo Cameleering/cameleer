@@ -188,6 +188,85 @@ fn netty_tcp_ssl_round_trip_and_rejections() {
     ctx.stop().unwrap();
 }
 
+/// Mutual TLS on platform-http / jetty https consumers (`needClientAuth=true`, `clientAuth=WANT`)
+/// with the verified client certificate exposed as `CamelHttpSslClientCert*` headers.
+#[test]
+fn platform_http_mutual_tls_and_client_cert_headers() {
+    let ctx = context();
+    testing::bind_mtls_beans(&ctx);
+    ctx.registry().bind("mtlsServerNoAuth", testing::mtls_server_params(camel_tls::ClientAuth::None));
+    let need = "jetty:https://127.0.0.1:0/mtls?sslContextParameters=#mtlsServerNoAuth&needClientAuth=true";
+    let want = "platform-http:/want?ssl=true&port=0&sslContextParameters=#mtlsServerNoAuth&clientAuth=WANT";
+    for from in [need, want] {
+        ctx.add_routes(move |b| {
+            b.from(from).process(|ex: &mut Exchange| {
+                let subject = ex.header("CamelHttpSslClientCertSubjectName").map(|v| v.to_string()).unwrap_or_else(|| "anonymous".into());
+                let pem = ex.header("CamelHttpSslClientCert").map(|v| v.to_string()).unwrap_or_default();
+                let issuer = ex.header("CamelHttpSslClientCertIssuerName").map(|v| v.to_string()).unwrap_or_default();
+                ex.set_body(format!("{}|{}|{}", subject, issuer, pem.contains("BEGIN CERTIFICATE")));
+                Ok(())
+            });
+        })
+        .unwrap();
+    }
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    let port = camel_http::local_port(&ctx, need).unwrap();
+    let out = t.request_body(&format!("https://localhost:{}/mtls?sslContextParameters=#sslMtlsClient", port), "x").unwrap();
+    assert_eq!(out.to_string(), "CN=camel-client|CN=Camel mTLS Test CA|true");
+    for bad in ["sslMtlsAnonymous", "sslMtlsUntrusted"] {
+        let err = t.request_body(&format!("https://localhost:{}/mtls?sslContextParameters=#{}", port, bad), "x").unwrap_err();
+        assert!(err.root_cause().is_a("IOException"), "{bad}: {:?}", err);
+    }
+    let port = camel_http::local_port(&ctx, want).unwrap();
+    let out = t.request_body(&format!("https://localhost:{}/want?sslContextParameters=#sslMtlsAnonymous", port), "x").unwrap();
+    assert!(out.to_string().starts_with("anonymous|"), "{}", out);
+    let out = t.request_body(&format!("https://localhost:{}/want?sslContextParameters=#sslMtlsClient", port), "x").unwrap();
+    assert!(out.to_string().starts_with("CN=camel-client|"), "{}", out);
+    ctx.stop().unwrap();
+}
+
+/// netty `needClientAuth=true` with PKCS#12 key/trust stores (`keyStoreFile`, `trustStoreFile`,
+/// `passphrase`, `keyStoreFormat`) and the `CamelNettySSLClientCert*` headers.
+#[test]
+fn netty_need_client_auth_with_pkcs12_stores() {
+    use camel_tls::keystore::KeyStore;
+    let pki = testing::mtls();
+    let dir = std::env::temp_dir().join(format!("camel-http-netty-mtls-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, ks: KeyStore| {
+        let p = dir.join(name);
+        std::fs::write(&p, ks.to_pkcs12("changeit")).unwrap();
+        p.display().to_string()
+    };
+    let server_ks = write("server.p12", KeyStore::from_key_entry("server", pki.server.key.clone(), vec![pki.server.cert_der.clone()]));
+    let client_ks = write("client.p12", KeyStore::from_key_entry("client", pki.client.key.clone(), vec![pki.client.cert_der.clone()]));
+    let other_ks = write("other.p12", KeyStore::from_key_entry("other", pki.untrusted_client.key.clone(), vec![pki.untrusted_client.cert_der.clone()]));
+    let trust = write("trust.p12", KeyStore::new().add_cert("ca", pki.ca.cert_der.clone()));
+    let ctx = context();
+    let uri = format!(
+        "netty:tcp://127.0.0.1:0?textline=true&sync=true&ssl=true&needClientAuth=true&keyStoreFile={}&trustStoreFile={}&passphrase=changeit&keyStoreFormat=PKCS12",
+        server_ks, trust
+    );
+    let from = uri.clone();
+    ctx.add_routes(move |b| {
+        b.from(&from).transform(simple("${header.CamelNettySSLClientCertSubjectName}"));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let port = camel_http::local_port(&ctx, &uri).unwrap();
+    let t = ctx.create_producer_template();
+    let client = |ks: &str| {
+        format!("netty:tcp://localhost:{}?textline=true&sync=true&ssl=true&keyStoreFile={}&trustStoreFile={}&passphrase=changeit&requestTimeout=10s", port, ks, trust)
+    };
+    assert_eq!(t.request_body(&client(&client_ks), "hi").unwrap().to_string(), "CN=camel-client");
+    assert!(t.request_body(&client(&other_ks), "hi").is_err(), "untrusted client certificate must be rejected");
+    let anonymous = format!("netty:tcp://localhost:{}?textline=true&sync=true&ssl=true&trustStoreFile={}&passphrase=changeit&requestTimeout=10s", port, trust);
+    assert!(t.request_body(&anonymous, "hi").is_err(), "a client without certificate must be rejected");
+    ctx.stop().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A minimal HTTP CONNECT proxy: one tunnel per connection, counting tunnels.
 fn start_connect_proxy() -> (u16, Arc<AtomicUsize>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -23,6 +23,8 @@ pub struct RsaPublicKey {
 pub struct RsaPrivateKey {
     pub public: RsaPublicKey,
     d: Vec<u64>,
+    /// The original PKCS#1 encoding (with CRT parameters), when parsed from one.
+    pub(crate) pkcs1: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for RsaPublicKey {
@@ -90,6 +92,16 @@ impl RsaPublicKey {
 
     pub fn modulus_bits(&self) -> usize {
         self.mod_bits
+    }
+
+    /// Big-endian (modulus, public exponent).
+    pub fn components(&self) -> (Vec<u8>, Vec<u8>) {
+        let n = to_be_bytes(&self.ctx.m, self.k);
+        let mut e = to_be_bytes(&self.e, self.k);
+        while e.len() > 1 && e[0] == 0 {
+            e.remove(0);
+        }
+        (n, e)
     }
 
     pub fn size(&self) -> usize {
@@ -193,7 +205,13 @@ impl RsaPrivateKey {
         if !lt(&d, &public.ctx.m) {
             return None;
         }
-        Some(RsaPrivateKey { public, d })
+        Some(RsaPrivateKey { public, d, pkcs1: None })
+    }
+
+    /// The PKCS#1 `RSAPrivateKey` encoding this key was parsed from (keys built with
+    /// [`RsaPrivateKey::new`] lack the CRT parameters and have none).
+    pub fn pkcs1_der(&self) -> Option<&[u8]> {
+        self.pkcs1.as_deref()
     }
 
     fn decrypt_raw(&self, em: &[u8]) -> Option<Vec<u8>> {

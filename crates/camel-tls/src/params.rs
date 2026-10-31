@@ -2,10 +2,16 @@
 //! `SSLContextParameters` - one description of trust material, key material and
 //! protocol options from which client and server TLS configurations are built.
 //!
-//! Key and trust stores are PEM files (Java keystores are not supported): a
-//! "key store" is a PEM file holding the certificate chain (leaf first) and the
-//! private key, or two separate files; a "trust store" is one or more PEM files with
-//! CA certificates.
+//! Key and trust stores may be PEM files, PKCS#12 (`.p12`/`.pfx`), Java JKS or JCEKS
+//! (format detected from the content or set with `keyStoreType`/`trustStoreType`):
+//! a "key store" holds the certificate chain (leaf first) and the private key (or a
+//! PEM certificate chain plus a separate PEM key file, optionally an `ENCRYPTED PRIVATE
+//! KEY`); a "trust store" holds CA certificates (all certificates of a PEM file, the
+//! trusted-certificate entries of a PKCS#12/JKS store).
+//!
+//! Mutual TLS: a client with key material presents it when the server asks;
+//! a server requests client certificates with `client_authentication`
+//! (`NONE`/`WANT`/`REQUIRE`) and validates them against its trust store (and CRLs).
 //!
 //! ```
 //! use camel_tls::SslContextParameters;
@@ -16,12 +22,14 @@
 //! let _ccfg = client.client_config().unwrap();
 //! ```
 
+use crate::keystore::{KeyStore, KeyStoreFormat};
 use crate::pem;
-use crate::tls::config::{TlsClientConfig, TlsServerConfig};
+use crate::tls::config::{CertifiedKey, ClientAuth, TlsClientConfig, TlsServerConfig};
 use crate::tls::{TlsError, TlsVersion};
+use crate::x509::{Crl, RootStore};
 use std::path::PathBuf;
 
-/// Source of PEM material: a file path or inline PEM text.
+/// Source of key/trust material: a file path (any supported format) or inline PEM text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PemSource {
     File(PathBuf),
@@ -29,7 +37,7 @@ pub enum PemSource {
 }
 
 impl PemSource {
-    fn load(&self) -> Result<Vec<u8>, TlsError> {
+    pub fn load(&self) -> Result<Vec<u8>, TlsError> {
         match self {
             PemSource::File(p) => std::fs::read(p).map_err(|e| TlsError::Config(format!("{}: {e}", p.display()))),
             PemSource::Inline(s) => Ok(s.as_bytes().to_vec()),
@@ -70,6 +78,24 @@ pub struct SslContextParameters {
     pub max_version: Option<TlsVersion>,
     /// Overrides the SNI / hostname used for verification on client connections.
     pub server_name: Option<String>,
+    /// Key store password (`keystorePassword`): store integrity / PKCS#12 encryption.
+    pub key_store_password: Option<String>,
+    /// Private key password (`keyPassword`, default: the key store password).
+    pub key_password: Option<String>,
+    /// `PKCS12`, `JKS`, `JCEKS` or `PEM` (default: detected).
+    pub key_store_type: Option<String>,
+    /// Alias of the key entry to use (`certAlias`, default: the first key entry).
+    pub cert_alias: Option<String>,
+    pub trust_store_password: Option<String>,
+    pub trust_store_type: Option<String>,
+    /// Server side: client certificate authentication (`clientAuthentication`).
+    pub client_authentication: Option<ClientAuth>,
+    /// CRL files (PEM `X509 CRL` or DER) checked during chain validation.
+    pub crl_files: Vec<PemSource>,
+    /// Session resumption (default true).
+    pub session_resumption: Option<bool>,
+    /// Session lifetime in seconds (`sessionTimeout`, default 86400).
+    pub session_timeout: Option<u32>,
 }
 
 /// Parses `TLSv1.2` / `TLSv1.3` / `1.2` / `TLS` (any) style protocol names.
@@ -131,6 +157,49 @@ impl SslContextParameters {
         self
     }
 
+    /// A key store file (PKCS#12, JKS, JCEKS or PEM) with its password.
+    pub fn key_store(mut self, path: impl Into<PathBuf>, password: &str) -> Self {
+        self.cert_chain = Some(PemSource::File(path.into()));
+        self.private_key = None;
+        self.key_store_password = Some(password.to_string());
+        self
+    }
+
+    /// A trust store file (PKCS#12, JKS, JCEKS, PEM or DER) with its password.
+    pub fn trust_store(mut self, path: impl Into<PathBuf>, password: Option<&str>) -> Self {
+        self.trust_store.push(PemSource::File(path.into()));
+        self.trust_store_password = password.map(str::to_string);
+        self
+    }
+
+    pub fn key_password(mut self, password: &str) -> Self {
+        self.key_password = Some(password.to_string());
+        self
+    }
+
+    pub fn cert_alias(mut self, alias: &str) -> Self {
+        self.cert_alias = Some(alias.to_string());
+        self
+    }
+
+    /// Server side: client certificate authentication mode.
+    pub fn client_authentication(mut self, mode: ClientAuth) -> Self {
+        self.client_authentication = Some(mode);
+        self
+    }
+
+    /// Adds a CRL file.
+    pub fn crl_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.crl_files.push(PemSource::File(path.into()));
+        self
+    }
+
+    /// Enables (default) or disables session resumption.
+    pub fn session_resumption(mut self, yes: bool) -> Self {
+        self.session_resumption = Some(yes);
+        self
+    }
+
     /// DANGEROUS: disables server certificate verification (tests only).
     pub fn insecure(mut self, yes: bool) -> Self {
         self.insecure_skip_verify = yes;
@@ -170,42 +239,124 @@ impl SslContextParameters {
         (min, max)
     }
 
-    /// Builds a client configuration.
+    fn store_format(name: &Option<String>, data: &[u8]) -> Result<KeyStoreFormat, TlsError> {
+        match name.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            Some(n) => KeyStoreFormat::from_name(n).ok_or_else(|| TlsError::Config(format!("unsupported key store type {n}"))),
+            None => Ok(KeyStoreFormat::detect(data)),
+        }
+    }
+
+    /// The configured certificate chain and private key (None without key material).
+    pub fn key_material(&self) -> Result<Option<CertifiedKey>, TlsError> {
+        let Some(src) = &self.cert_chain else { return Ok(None) };
+        let data = src.load()?;
+        let what = |e: String| TlsError::Config(format!("key store: {e}"));
+        let key_pw = self.key_password.as_deref().or(self.key_store_password.as_deref());
+        if let Some(k) = &self.private_key {
+            // certificate chain + separate key file
+            let chain: Vec<Vec<u8>> = match Self::store_format(&self.key_store_type, &data)? {
+                KeyStoreFormat::Pem => pem::parse_pem(&data).map_err(what)?.into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.der).collect(),
+                KeyStoreFormat::Der => vec![data.clone()],
+                _ => return Err(TlsError::Config("a separate private key needs a PEM or DER certificate chain".into())),
+            };
+            let kdata = k.load()?;
+            let key = crate::keys::PrivateKey::from_pem_with_password(&kdata, key_pw)
+                .or_else(|e| crate::keys::PrivateKey::from_der(&kdata).map_err(|_| e))
+                .or_else(|e| match key_pw {
+                    // DER EncryptedPrivateKeyInfo (e.g. pgjdbc's .pk8 key files)
+                    Some(pw) => crate::pbe::decrypt_encrypted_private_key_info(&kdata, pw)
+                        .and_then(|der| crate::keys::PrivateKey::from_pkcs8(&der).map_err(|x| x.to_string()))
+                        .map_err(|_| e),
+                    None => Err(e),
+                })
+                .map_err(|e| TlsError::Config(format!("private key: {e}")))?;
+            return CertifiedKey::new(chain, key).map(Some);
+        }
+        let fmt = Self::store_format(&self.key_store_type, &data)?;
+        let ks = KeyStore::load_as(&data, fmt, self.key_store_password.as_deref(), key_pw).map_err(what)?;
+        let (key, chain) = ks.key_entry(self.cert_alias.as_deref()).ok_or_else(|| {
+            TlsError::Config(match &self.cert_alias {
+                Some(a) => format!("key store has no private key entry '{a}' (aliases: {})", ks.aliases().join(", ")),
+                None => "key store contains no private key".into(),
+            })
+        })?;
+        CertifiedKey::new(chain.to_vec(), key.clone()).map(Some)
+    }
+
+    /// The configured trust anchors (empty when no trust store is set).
+    pub fn trust_roots(&self) -> Result<RootStore, TlsError> {
+        let mut roots = RootStore::empty();
+        for t in &self.trust_store {
+            let data = t.load()?;
+            match Self::store_format(&self.trust_store_type, &data)? {
+                KeyStoreFormat::Pem => {
+                    roots.add_pem(&data).map_err(|e| TlsError::Config(format!("trust store: {e}")))?;
+                }
+                fmt => {
+                    let ks = KeyStore::load_as(&data, fmt, self.trust_store_password.as_deref(), None)
+                        .map_err(|e| TlsError::Config(format!("trust store: {e}")))?;
+                    let certs = ks.trusted_certs();
+                    if certs.is_empty() {
+                        return Err(TlsError::Config("trust store contains no trusted certificate entries".into()));
+                    }
+                    for c in certs {
+                        roots.add_der(&c).map_err(|e| TlsError::Config(format!("trust store: {e}")))?;
+                    }
+                }
+            }
+        }
+        Ok(roots)
+    }
+
+    /// The configured CRLs.
+    pub fn crls(&self) -> Result<Vec<Crl>, TlsError> {
+        let mut out = Vec::new();
+        for c in &self.crl_files {
+            out.extend(Crl::parse_all(&c.load()?).map_err(|e| TlsError::Config(format!("CRL: {e}")))?);
+        }
+        Ok(out)
+    }
+
+    /// Builds a client configuration (presenting the key material, if any, as client
+    /// certificate when the server requests one).
     pub fn client_config(&self) -> Result<TlsClientConfig, TlsError> {
         let system = self.use_system_trust_store.unwrap_or(self.trust_store.is_empty());
-        let mut b = TlsClientConfig::builder().system_roots(system);
-        for t in &self.trust_store {
-            b = b.add_root_pem(&t.load()?)?;
+        let mut b = TlsClientConfig::builder().system_roots(system).root_store(self.trust_roots()?);
+        if let Some(ck) = self.key_material()? {
+            b = b.client_certificate(ck);
         }
         let protos: Vec<&str> = self.alpn.iter().map(|s| s.as_str()).collect();
         let (min, max) = self.version_range();
         Ok(b.insecure_skip_verify(self.insecure_skip_verify)
             .verify_hostname(self.hostname_verification.unwrap_or(true))
-            .alpn_protocols(&protos).versions(min, max).build())
+            .crls(self.crls()?)
+            .session_resumption(self.session_resumption.unwrap_or(true))
+            .alpn_protocols(&protos)
+            .versions(min, max)
+            .build())
     }
 
-    /// Builds a server configuration (requires `cert_chain`).
+    /// Builds a server configuration (requires key material). With client
+    /// authentication the trust store validates client certificates.
     pub fn server_config(&self) -> Result<TlsServerConfig, TlsError> {
-        let chain = self
-            .cert_chain
-            .as_ref()
-            .ok_or_else(|| TlsError::Config("no server certificate configured (keyStore / certificate chain)".into()))?
-            .load()?;
-        let key = match &self.private_key {
-            Some(k) => k.load()?,
-            None => {
-                // combined key store: pick the private key block out of the chain file
-                let blocks = pem::parse_pem(&chain).map_err(TlsError::Config)?;
-                let kb = blocks
-                    .iter()
-                    .find(|b| b.label.ends_with("PRIVATE KEY"))
-                    .ok_or_else(|| TlsError::Config("key store PEM contains no private key".into()))?;
-                pem::encode_pem(&kb.label, &kb.der).into_bytes()
-            }
-        };
+        let ck = self.key_material()?.ok_or_else(|| TlsError::Config("no server certificate configured (keyStore / certificate chain)".into()))?;
         let protos: Vec<&str> = self.alpn.iter().map(|s| s.as_str()).collect();
         let (min, max) = self.version_range();
-        TlsServerConfig::builder().cert_chain_pem(&chain).private_key_pem(&key).alpn_protocols(&protos).versions(min, max).build()
+        let mut b = TlsServerConfig::builder()
+            .certified_key(ck)
+            .alpn_protocols(&protos)
+            .versions(min, max)
+            .session_resumption(self.session_resumption.unwrap_or(true))
+            .session_lifetime_secs(self.session_timeout.unwrap_or(crate::tls::config::DEFAULT_SESSION_LIFETIME));
+        let mode = self.client_authentication.unwrap_or_default();
+        if mode != ClientAuth::None {
+            let roots = self.trust_roots()?;
+            if roots.is_empty() {
+                return Err(TlsError::Config(format!("clientAuthentication={mode:?} requires a trust store for client certificates")));
+            }
+            b = b.client_auth(mode).client_roots(roots).crls(self.crls()?);
+        }
+        b.build()
     }
 
     /// Reads parameters from properties below `prefix` (e.g. `camel.ssl.`), using
@@ -214,7 +365,11 @@ impl SslContextParameters {
     /// `trustStore` (comma-separated CA PEM files or inline PEM), `useSystemTrustStore`,
     /// `trustAllCertificates`/`insecureSkipVerify`, `hostnameVerification`, `secureSocketProtocol` (one version),
     /// `secureSocketProtocols` (list: min..max), `minVersion`, `maxVersion`,
-    /// `alpn`/`applicationProtocols`, `serverName`. Returns `None` when none is set.
+    /// `alpn`/`applicationProtocols`, `serverName`, `keystorePassword`, `keyPassword`,
+    /// `keyStoreType`, `certAlias`, `trustStorePassword`, `trustStoreType`,
+    /// `clientAuthentication` (`NONE`/`WANT`/`REQUIRE`, also `serverParameters.clientAuthentication`,
+    /// `clientAuth`, `needClientAuth=true`, `wantClientAuth=true`), `crlFile`,
+    /// `sessionTimeout`, `sessionResumption`. Returns `None` when none is set.
     pub fn from_properties(prefix: &str, get: &dyn Fn(&str) -> Option<String>, keys: &[String]) -> Result<Option<Self>, TlsError> {
         let norm = |k: &str| k.to_ascii_lowercase().replace(['-', '_'], "");
         let lookup = |names: &[&str]| -> Option<String> {
@@ -297,6 +452,59 @@ impl SslContextParameters {
             p.server_name = Some(v.trim().to_string());
             any = true;
         }
+        if let Some(v) = lookup(&["keystorePassword", "keyStore.password", "keyStorePass"]) {
+            p.key_store_password = Some(v);
+            any = true;
+        }
+        if let Some(v) = lookup(&["keyPassword", "keyManagers.keyPassword", "privateKeyPassword"]) {
+            p.key_password = Some(v);
+            any = true;
+        }
+        if let Some(v) = lookup(&["keyStoreType", "keyStore.type"]) {
+            p.key_store_type = Some(v.trim().to_string());
+            any = true;
+        }
+        if let Some(v) = lookup(&["certAlias", "keyAlias", "alias"]) {
+            p.cert_alias = Some(v.trim().to_string());
+            any = true;
+        }
+        if let Some(v) = lookup(&["trustStorePassword", "trustStore.password"]) {
+            p.trust_store_password = Some(v);
+            any = true;
+        }
+        if let Some(v) = lookup(&["trustStoreType", "trustStore.type"]) {
+            p.trust_store_type = Some(v.trim().to_string());
+            any = true;
+        }
+        if let Some(v) = lookup(&["clientAuthentication", "serverParameters.clientAuthentication", "clientAuth"]) {
+            p.client_authentication =
+                Some(ClientAuth::parse(&v).ok_or_else(|| TlsError::Config(format!("invalid clientAuthentication '{v}' (NONE, WANT or REQUIRE)")))?);
+            any = true;
+        }
+        if let Some(v) = lookup(&["needClientAuth"]) {
+            if truthy(&v) {
+                p.client_authentication = Some(ClientAuth::Need);
+            }
+            any = true;
+        }
+        if let Some(v) = lookup(&["wantClientAuth"]) {
+            if truthy(&v) && p.client_authentication != Some(ClientAuth::Need) {
+                p.client_authentication = Some(ClientAuth::Want);
+            }
+            any = true;
+        }
+        if let Some(v) = lookup(&["crlFile", "crlFiles", "crl"]) {
+            p.crl_files.extend(v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(PemSource::parse));
+            any = true;
+        }
+        if let Some(v) = lookup(&["sessionTimeout"]) {
+            p.session_timeout = Some(v.trim().parse().map_err(|_| TlsError::Config(format!("invalid sessionTimeout '{v}'")))?);
+            any = true;
+        }
+        if let Some(v) = lookup(&["sessionResumption", "sessionCaching", "sessionCacheEnabled"]) {
+            p.session_resumption = Some(truthy(&v));
+            any = true;
+        }
         Ok(if any { Some(p) } else { None })
     }
 }
@@ -337,6 +545,47 @@ mod tests {
         assert_eq!(c.roots().len(), 1, "system roots are not added when a trust store is set");
         let none = SslContextParameters::from_properties("camel.nossl.", &|k| m.get(k).cloned(), &keys).unwrap();
         assert!(none.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keystore_and_client_auth_properties() {
+        let dir = std::env::temp_dir().join(format!("camel-tls-params-ks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pki = crate::testing::mtls();
+        let ks = dir.join("server.jks");
+        let store = KeyStore::from_key_entry("srv", pki.server.key.clone(), vec![pki.server.cert_der.clone()]);
+        std::fs::write(&ks, store.to_jks("storepw", "keypw")).unwrap();
+        let ts = dir.join("trust.p12");
+        std::fs::write(&ts, KeyStore::new().add_cert("ca", pki.ca.cert_der.clone()).to_pkcs12("trustpw")).unwrap();
+        let crl = dir.join("ca.crl");
+        std::fs::write(&crl, pem::encode_pem("X509 CRL", &crate::certgen::issue_crl(&pki.ca, &[], 1))).unwrap();
+        let mut m = BTreeMap::new();
+        m.insert("camel.ssl.keyStore".to_string(), ks.display().to_string());
+        m.insert("camel.ssl.keystorePassword".to_string(), "storepw".to_string());
+        m.insert("camel.ssl.keyPassword".to_string(), "keypw".to_string());
+        m.insert("camel.ssl.keyStoreType".to_string(), "JKS".to_string());
+        m.insert("camel.ssl.certAlias".to_string(), "srv".to_string());
+        m.insert("camel.ssl.trustStore".to_string(), ts.display().to_string());
+        m.insert("camel.ssl.trustStorePassword".to_string(), "trustpw".to_string());
+        m.insert("camel.ssl.serverParameters.clientAuthentication".to_string(), "REQUIRE".to_string());
+        m.insert("camel.ssl.crlFile".to_string(), crl.display().to_string());
+        m.insert("camel.ssl.sessionTimeout".to_string(), "600".to_string());
+        let keys: Vec<String> = m.keys().cloned().collect();
+        let p = SslContextParameters::from_properties("camel.ssl.", &|k| m.get(k).cloned(), &keys).unwrap().unwrap();
+        assert_eq!(p.client_authentication, Some(ClientAuth::Need));
+        assert_eq!(p.session_timeout, Some(600));
+        let scfg = p.server_config().unwrap();
+        assert_eq!(scfg.client_auth(), ClientAuth::Need);
+        assert_eq!(p.crls().unwrap().len(), 1);
+        assert!(p.client_config().unwrap().has_client_certificate());
+        let mut bad = m.clone();
+        bad.insert("camel.ssl.clientAuthentication".to_string(), "SOMETIMES".to_string());
+        let bad_keys: Vec<String> = bad.keys().cloned().collect();
+        assert!(SslContextParameters::from_properties("camel.ssl.", &|k| bad.get(k).cloned(), &bad_keys).is_err());
+        // client authentication without a trust store is a configuration error
+        let no_trust = SslContextParameters { trust_store: Vec::new(), ..p };
+        assert!(no_trust.server_config().is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

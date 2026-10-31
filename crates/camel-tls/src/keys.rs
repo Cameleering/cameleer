@@ -38,6 +38,7 @@ pub fn curve_oid(c: EcCurve) -> &'static str {
 pub enum PublicKey {
     Ec { curve: EcCurve, point: Vec<u8> },
     Rsa(RsaPublicKey),
+    Ed25519([u8; 32]),
 }
 
 impl PublicKey {
@@ -66,6 +67,10 @@ impl PublicKey {
                 }
                 Ok(PublicKey::Ec { curve, point: key.to_vec() })
             }
+            OID_ED25519 => {
+                let k: [u8; 32] = key.try_into().map_err(|_| DerError("bad Ed25519 public key length".into()))?;
+                Ok(PublicKey::Ed25519(k))
+            }
             other => Err(DerError(format!("unsupported public key algorithm {other}"))),
         }
     }
@@ -74,7 +79,28 @@ impl PublicKey {
         match self {
             PublicKey::Ec { curve, .. } => format!("ECDSA {:?}", curve),
             PublicKey::Rsa(r) => format!("RSA {}", r.modulus_bits()),
+            PublicKey::Ed25519(_) => "Ed25519".to_string(),
         }
+    }
+
+    /// Encodes the key as a DER SubjectPublicKeyInfo.
+    pub fn to_spki(&self) -> Vec<u8> {
+        match self {
+            PublicKey::Ec { curve, point } => {
+                asn1::seq(&[asn1::seq(&[asn1::oid(OID_EC_PUBLIC_KEY), asn1::oid(curve_oid(*curve))]), asn1::bit_string(point)])
+            }
+            PublicKey::Rsa(r) => {
+                let (n, e) = r.components();
+                let key = asn1::seq(&[asn1::uint(&n), asn1::uint(&e)]);
+                asn1::seq(&[asn1::seq(&[asn1::oid(OID_RSA_ENCRYPTION), asn1::tlv(asn1::TAG_NULL, &[])]), asn1::bit_string(&key)])
+            }
+            PublicKey::Ed25519(k) => asn1::seq(&[asn1::seq(&[asn1::oid(OID_ED25519)]), asn1::bit_string(k)]),
+        }
+    }
+
+    /// Whether two keys are the same.
+    pub fn same_as(&self, other: &PublicKey) -> bool {
+        self.to_spki() == other.to_spki()
     }
 }
 
@@ -83,18 +109,29 @@ impl PublicKey {
 pub enum PrivateKey {
     Ec { curve: EcCurve, d: Vec<u8>, public: Vec<u8> },
     Rsa(RsaPrivateKey),
+    Ed25519 { seed: [u8; 32], public: [u8; 32] },
 }
 
 impl PrivateKey {
     /// Parses the first private key found in PEM text (PKCS#8, SEC1 or PKCS#1).
     pub fn from_pem(data: &[u8]) -> Result<PrivateKey, String> {
+        PrivateKey::from_pem_with_password(data, None)
+    }
+
+    /// Like [`PrivateKey::from_pem`], also accepting an `ENCRYPTED PRIVATE KEY`
+    /// (PKCS#8 EncryptedPrivateKeyInfo: PBES2 or PKCS#12 PBE) with `password`.
+    pub fn from_pem_with_password(data: &[u8], password: Option<&str>) -> Result<PrivateKey, String> {
         let blocks = pem::parse_pem(data)?;
         for b in blocks {
             let r = match b.label.as_str() {
                 "PRIVATE KEY" => PrivateKey::from_pkcs8(&b.der),
                 "EC PRIVATE KEY" => PrivateKey::from_sec1(&b.der, None),
                 "RSA PRIVATE KEY" => PrivateKey::from_pkcs1(&b.der),
-                "ENCRYPTED PRIVATE KEY" => return Err("encrypted private keys are not supported".into()),
+                "ENCRYPTED PRIVATE KEY" => {
+                    let pw = password.ok_or("the private key is encrypted: a key password is required (keyPassword)")?;
+                    let der = crate::pbe::decrypt_encrypted_private_key_info(&b.der, pw)?;
+                    PrivateKey::from_pkcs8(&der)
+                }
                 _ => continue,
             };
             return r.map_err(|e| e.to_string());
@@ -126,8 +163,30 @@ impl PrivateKey {
                 let curve = curve_from_oid(&asn1::decode_oid(p.value)?).ok_or(DerError("unsupported curve".into()))?;
                 PrivateKey::from_sec1(key, Some(curve))
             }
+            OID_ED25519 => {
+                let seed = Der::new(key).octet_string()?;
+                let seed: [u8; 32] = seed.try_into().map_err(|_| DerError("bad Ed25519 private key length".into()))?;
+                Ok(PrivateKey::ed25519_from_seed(seed))
+            }
             other => Err(DerError(format!("unsupported private key algorithm {other}"))),
         }
+    }
+
+    /// An Ed25519 key from its 32-byte seed.
+    pub fn ed25519_from_seed(seed: [u8; 32]) -> PrivateKey {
+        PrivateKey::Ed25519 { seed, public: crate::crypto::ed25519::public_key(&seed) }
+    }
+
+    /// A fresh random Ed25519 key.
+    pub fn generate_ed25519() -> PrivateKey {
+        PrivateKey::ed25519_from_seed(crate::crypto::ed25519::generate_seed())
+    }
+
+    /// A fresh random ECDSA key.
+    pub fn generate_ec(curve: EcCurve) -> PrivateKey {
+        let d = curve.generate_private();
+        let public = curve.public_key(&d).expect("valid scalar");
+        PrivateKey::Ec { curve, d, public }
     }
 
     pub fn from_sec1(der: &[u8], curve: Option<EcCurve>) -> DerResult<PrivateKey> {
@@ -164,17 +223,35 @@ impl PrivateKey {
         let n = s.uint()?;
         let e = s.uint()?;
         let d = s.uint()?;
-        RsaPrivateKey::new(n, e, d).map(PrivateKey::Rsa).ok_or(DerError("invalid RSA private key".into()))
+        let mut k = RsaPrivateKey::new(n, e, d).ok_or(DerError("invalid RSA private key".into()))?;
+        k.pkcs1 = Some(der.to_vec());
+        Ok(PrivateKey::Rsa(k))
     }
 
     pub fn public_key(&self) -> PublicKey {
         match self {
             PrivateKey::Ec { curve, public, .. } => PublicKey::Ec { curve: *curve, point: public.clone() },
             PrivateKey::Rsa(r) => PublicKey::Rsa(r.public.clone()),
+            PrivateKey::Ed25519 { public, .. } => PublicKey::Ed25519(*public),
         }
     }
 
-    /// Encodes an EC key as PKCS#8 DER (used by the self-signed generator).
+    /// Encodes the key as PKCS#8 DER (RSA keys need their original PKCS#1 encoding).
+    pub fn to_pkcs8(&self) -> Vec<u8> {
+        match self {
+            PrivateKey::Rsa(r) => {
+                let pkcs1 = r.pkcs1_der().unwrap_or_default();
+                asn1::seq(&[
+                    asn1::uint(&[0]),
+                    asn1::seq(&[asn1::oid(OID_RSA_ENCRYPTION), asn1::tlv(asn1::TAG_NULL, &[])]),
+                    asn1::octet_string(pkcs1),
+                ])
+            }
+            _ => self.to_pkcs8_der().expect("EC / Ed25519 key"),
+        }
+    }
+
+    /// Encodes an EC or Ed25519 key as PKCS#8 DER (used by the self-signed generator).
     pub fn to_pkcs8_der(&self) -> Option<Vec<u8>> {
         match self {
             PrivateKey::Ec { curve, d, public } => {
@@ -185,6 +262,11 @@ impl PrivateKey {
                     asn1::octet_string(&sec1),
                 ]))
             }
+            PrivateKey::Ed25519 { seed, .. } => Some(asn1::seq(&[
+                asn1::uint(&[0]),
+                asn1::seq(&[asn1::oid(OID_ED25519)]),
+                asn1::octet_string(&asn1::octet_string(seed)),
+            ])),
             PrivateKey::Rsa(_) => None,
         }
     }
@@ -296,6 +378,7 @@ impl SignatureAlgorithm {
                 Some((r, s)) => curve.verify(point, &h.hash(message), &r, &s),
                 None => false,
             },
+            (SignatureAlgorithm::Ed25519, PublicKey::Ed25519(k)) => crate::crypto::ed25519::verify(k, message, sig),
             _ => false,
         }
     }

@@ -285,6 +285,9 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
             }
         };
         req.remote_addr = peer;
+        if !stream.peer_certificates().is_empty() {
+            req.peer_certificates = stream.peer_certificates().to_vec();
+        }
         served += 1;
         let mut keep_alive = req.wants_keep_alive()
             && inner.running.load(Ordering::SeqCst)

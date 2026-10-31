@@ -167,3 +167,61 @@ fn mqtt_over_ssl() {
         broker.stop();
     }
 }
+
+fn mtls_files(tag: &str) -> (std::path::PathBuf, String, String, String) {
+    use camel_tls::keystore::KeyStore;
+    let pki = testing::mtls();
+    let dir = std::env::temp_dir().join(format!("camel-kafka-mtls-{}-{}", tag, std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p12 = dir.join("client.p12");
+    std::fs::write(&p12, KeyStore::from_key_entry("client", pki.client.key.clone(), vec![pki.client.cert_der.clone()]).to_pkcs12("changeit")).unwrap();
+    let pem = dir.join("client.pem");
+    std::fs::write(&pem, format!("{}{}", pki.client.cert_pem, pki.client.key_pem)).unwrap();
+    let ca = dir.join("ca.pem");
+    std::fs::write(&ca, &pki.ca.cert_pem).unwrap();
+    let s = |p: std::path::PathBuf| p.display().to_string();
+    (dir.clone(), s(p12), s(pem), s(ca))
+}
+
+/// Kafka client certificates: `sslKeystoreLocation` (PKCS12 / PEM) + `sslKeystorePassword`,
+/// against a broker requiring client authentication.
+#[test]
+fn kafka_mutual_tls_with_keystores() {
+    let broker = KafkaBroker::start_with(KafkaBrokerConfig {
+        tls: Some(testing::mtls_server_params(camel_tls::ClientAuth::Need).server_config().unwrap()),
+        ..Default::default()
+    })
+    .unwrap();
+    broker.create_topic("mtls", 1);
+    let (dir, p12, pem, ca) = mtls_files("kafka");
+    let b = format!("localhost:{}", broker.port());
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let base = format!("kafka:mtls?brokers={}&securityProtocol=SSL&sslTruststoreLocation={}&sslTruststoreType=PEM", b, ca);
+    t.send_body(&format!("{}&sslKeystoreLocation={}&sslKeystorePassword=changeit&sslKeystoreType=PKCS12", base, p12), "p12").unwrap();
+    t.send_body(&format!("{}&sslKeystoreLocation={}&sslKeystoreType=PEM", base, pem), "pem").unwrap();
+    assert!(t.send_body(&format!("{}&requestTimeoutMs=3000", base), "anonymous").is_err(), "no client certificate");
+    assert!(t.send_body(&format!("{}&sslKeystoreLocation={}&sslKeystorePassword=wrong", base, p12), "x").is_err(), "wrong key store password");
+    assert_eq!(broker.records("mtls", 0).len(), 2);
+    broker.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MQTT client certificates through `sslContextParameters` key material.
+#[test]
+fn mqtt_mutual_tls() {
+    let broker = MqttBroker::start_with(MqttBrokerConfig {
+        tls: Some(testing::mtls_server_params(camel_tls::ClientAuth::Need).server_config().unwrap()),
+        ..Default::default()
+    })
+    .unwrap();
+    let ctx = context();
+    testing::bind_mtls_beans(&ctx);
+    let t = ctx.create_producer_template();
+    let url = format!("ssl://localhost:{}", broker.port());
+    t.send_body(&format!("paho:m/t?brokerUrl={}&qos=1&sslContextParameters=#sslMtlsClient", url), "hi").unwrap();
+    assert!(t
+        .send_body(&format!("paho:m/t?brokerUrl={}&qos=1&sslContextParameters=#sslMtlsAnonymous&automaticReconnect=false&connectionTimeout=5", url), "x")
+        .is_err());
+    broker.stop();
+}

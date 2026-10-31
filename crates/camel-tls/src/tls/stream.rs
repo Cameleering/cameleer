@@ -31,9 +31,19 @@ impl<S: Read + Write> fmt::Debug for TlsStream<S> {
 impl<S: Read + Write> TlsStream<S> {
     /// Performs a client handshake. `server_name` is used for SNI (unless it is an IP
     /// address) and for certificate hostname verification.
+    /// Sessions are cached (when the configuration has a session cache) under
+    /// `server_name`; see [`TlsStream::connect_with_session_key`].
     pub fn connect(stream: S, server_name: &str, config: &TlsClientConfig) -> Result<TlsStream<S>, TlsError> {
+        TlsStream::connect_with_session_key(stream, server_name, config, None)
+    }
+
+    /// Client handshake that resumes / stores the session under `session_key`
+    /// (e.g. `host:port`; default `server_name`). Connections sharing a key (and a
+    /// configuration) resume each other's sessions, e.g. FTPS data connections use
+    /// the control connection's key.
+    pub fn connect_with_session_key(stream: S, server_name: &str, config: &TlsClientConfig, session_key: Option<&str>) -> Result<TlsStream<S>, TlsError> {
         let mut conn = Conn::new(stream, true);
-        if let Err(e) = conn.client_handshake(config, server_name) {
+        if let Err(e) = conn.client_handshake(config, server_name, session_key) {
             return Err(conn.fail(e));
         }
         Ok(TlsStream { conn })
@@ -56,8 +66,21 @@ impl<S: Read + Write> TlsStream<S> {
         self.conn.suite.expect("handshake complete")
     }
 
-    pub fn named_group(&self) -> NamedGroup {
-        self.conn.group.expect("handshake complete")
+    /// The key exchange group (None for a resumed TLS 1.2 session, which has no key exchange).
+    pub fn named_group(&self) -> Option<NamedGroup> {
+        self.conn.group
+    }
+
+    /// Whether the session was resumed (TLS 1.3 PSK or TLS 1.2 abbreviated handshake).
+    pub fn session_resumed(&self) -> bool {
+        self.conn.resumed
+    }
+
+    /// Server side: an opaque identifier of the full handshake this session descends
+    /// from - equal for a connection and every connection resuming its session (used
+    /// e.g. to enforce FTPS data-channel session reuse). Empty on the client side.
+    pub fn session_origin_id(&self) -> &[u8] {
+        &self.conn.session_origin
     }
 
     /// The negotiated ALPN protocol, if any.
@@ -65,7 +88,8 @@ impl<S: Read + Write> TlsStream<S> {
         self.conn.alpn.as_deref()
     }
 
-    /// Peer certificate chain as sent (DER, leaf first). Empty on the server side.
+    /// Peer certificate chain (DER, leaf first): the server chain on the client side,
+    /// the verified client certificate chain (if any) on the server side.
     pub fn peer_certificates(&self) -> &[Vec<u8>] {
         &self.conn.peer_certs
     }
@@ -209,6 +233,16 @@ impl<W: Read + Write> TlsWriteHalf<W> {
     /// Server side: the SNI host name sent by the client.
     pub fn sni_hostname(&self) -> Option<String> {
         self.conn.lock().ok().and_then(|c| c.sni.clone())
+    }
+
+    /// Whether the session was resumed.
+    pub fn session_resumed(&self) -> bool {
+        self.conn.lock().map(|c| c.resumed).unwrap_or(false)
+    }
+
+    /// See [`TlsStream::session_origin_id`].
+    pub fn session_origin_id(&self) -> Vec<u8> {
+        self.conn.lock().map(|c| c.session_origin.clone()).unwrap_or_default()
     }
 }
 

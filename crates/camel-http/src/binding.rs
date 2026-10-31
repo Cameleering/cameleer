@@ -18,6 +18,11 @@ pub mod headers {
     pub const HTTP_RESPONSE_TEXT: &str = "CamelHttpResponseText";
     pub const HTTP_CHUNKED: &str = "CamelHttpChunked";
     pub const HTTP_REMOTE_ADDRESS: &str = "CamelHttpRemoteAddress";
+    /// Verified TLS client certificate (mutual TLS) of the request: the leaf in PEM.
+    pub const HTTP_SSL_CLIENT_CERT: &str = "CamelHttpSslClientCert";
+    /// Prefix of `CamelHttpSslClientCertSubjectName`, `...IssuerName`, `...SerialNo`,
+    /// `...NotBefore` and `...NotAfter`.
+    pub const HTTP_SSL_CLIENT_CERT_PREFIX: &str = "CamelHttpSslClientCert";
     pub const CONTENT_TYPE: &str = "Content-Type";
     /// Exchange property holding details of an `HttpOperationFailedException`.
     pub const HTTP_OPERATION_FAILED: &str = "CamelHttpOperationFailed";
@@ -183,6 +188,12 @@ impl ConsumerBinding {
         }
         if let Some(a) = req.remote_addr {
             msg.headers.set(headers::HTTP_REMOTE_ADDRESS, a.to_string());
+        }
+        if let Some(leaf) = req.peer_certificates.first() {
+            msg.headers.set(headers::HTTP_SSL_CLIENT_CERT, camel_tls::pem::encode_pem("CERTIFICATE", leaf));
+            for (k, v) in camel_tls::camel_support::client_cert_headers(headers::HTTP_SSL_CLIENT_CERT_PREFIX, &req.peer_certificates) {
+                msg.headers.set(k, v);
+            }
         }
         if let Some(ct) = req.content_type() {
             msg.headers.set(headers::CONTENT_TYPE, ct.to_string());

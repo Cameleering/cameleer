@@ -32,21 +32,40 @@
 //!   beans (`sslContextParameters=#ssl`), global parameters (`camel.ssl.*`,
 //!   `useGlobalSslContextParameters=true`), embedded server parameters (`camel.server.ssl.*`),
 //!   [`camel_support::endpoint_tls`] and exception mapping (`SSLHandshakeException`...).
+//! * [`keystore`]: PEM, PKCS#12, JKS and JCEKS key/trust stores (read and write).
 //! * [`sasl`]: PLAIN and SCRAM-SHA-256/512 client and server.
-//! * [`testing`]: a cached test PKI for end-to-end component tests.
+//! * [`testing`]: a cached test PKI for end-to-end component tests (incl. a CA-based
+//!   mutual-TLS PKI), [`certgen`] issues certificates and CRLs.
 //!
 //! # Supported parameters
 //!
 //! * TLS 1.3: `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384`,
 //!   `TLS_CHACHA20_POLY1305_SHA256`; HelloRetryRequest, KeyUpdate, middlebox
-//!   compatibility mode; NewSessionTicket is accepted and ignored (no resumption, no 0-RTT, no PSK).
+//!   compatibility mode; PSK resumption (`psk_dhe_ke` with binders, also after HRR) from
+//!   NewSessionTickets. No 0-RTT early data.
 //! * TLS 1.2: `ECDHE_{ECDSA,RSA}_WITH_{AES_128_GCM_SHA256,AES_256_GCM_SHA384,CHACHA20_POLY1305_SHA256}`
 //!   with extended master secret (RFC 7627) and secure-renegotiation signalling (renegotiation itself is refused).
 //! * Groups: x25519, secp256r1, secp384r1.
-//! * Signatures: ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384, rsa_pss_rsae_sha{256,384,512},
+//! * TLS 1.2 session resumption: RFC 5077 session tickets and session IDs (abbreviated
+//!   handshake, extended master secret preserved).
+//! * Signatures: ed25519, ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384, rsa_pss_rsae_sha{256,384,512},
 //!   rsa_pkcs1_sha{256,384,512} (TLS 1.2 handshakes and certificates only). Certificates may also
-//!   use RSASSA-PSS, sha1WithRSA and ECDSA-SHA1/512 signatures.
-//! * Client certificates are not supported (a CertificateRequest is answered with an empty chain).
+//!   use Ed25519, RSASSA-PSS, sha1WithRSA and ECDSA-SHA1/512 signatures; Ed25519 keys work for
+//!   servers and clients in TLS 1.3 and TLS 1.2 (RFC 8422).
+//! * Mutual TLS: servers request client certificates ([`ClientAuth`] `Want`/`Need`, CertificateRequest
+//!   with signature_algorithms and certificate_authorities) and validate them (clientAuth EKU,
+//!   CRLs); clients answer with Certificate + CertificateVerify when configured
+//!   ([`TlsClientConfigBuilder::client_certificate`]).
+//!
+//! # Session resumption
+//!
+//! [`TlsClientConfig`] keeps a session cache (on by default) keyed by `host:port` for
+//! [`NetStream`] connections (or an explicit key: FTPS data connections use the control
+//! connection's). [`TlsServerConfig`] issues AES-256-GCM encrypted tickets (TLS 1.3 PSK
+//! tickets are sent with the first application data so clients that never read do not
+//! reset the connection) or, with `session_tickets(false)`, keeps a server-side cache.
+//! Resumed sessions restore the peer certificates; [`TlsStream::session_resumed`] and
+//! [`TlsStream::session_origin_id`] expose the outcome.
 //!
 //! # Security notes and limitations
 //!
@@ -65,9 +84,12 @@
 //!   modular helpers allocate, which is not a timing leak but costs performance.
 //! * Certificate validation covers signatures, validity periods, basicConstraints/CA,
 //!   keyUsage, extendedKeyUsage (serverAuth), pathLenConstraint and hostnames
-//!   (SAN DNS/IP, single left-most wildcard label; CN only when no SAN extension).
-//!   Not implemented: revocation (CRL/OCSP), name constraints, certificate policies
-//!   (these critical extensions are tolerated, not enforced), and Ed25519/RSA-PSS-only keys.
+//!   (SAN DNS/IP, single left-most wildcard label; CN only when no SAN extension), and
+//!   revocation against configured CRLs (a certificate without a matching CRL is accepted).
+//!   Not implemented: OCSP (incl. stapling), name constraints, certificate policies
+//!   (these critical extensions are tolerated, not enforced), and RSA-PSS-only (id-RSASSA-PSS) keys.
+//! * Key stores: legacy 3DES / RC2 / MD5 / SHA-1 are implemented only to read old PKCS#12 and
+//!   JCEKS files; RC2/DES use table lookups and are not constant time.
 //! * Secrets are not zeroised on drop.
 //! * The randomness source is `/dev/urandom` feeding a ChaCha20 fast-key-erasure DRBG.
 
@@ -76,8 +98,10 @@ pub mod camel_support;
 pub mod certgen;
 pub mod crypto;
 pub mod keys;
+pub mod keystore;
 pub mod net;
 pub mod params;
+pub mod pbe;
 pub mod pem;
 pub mod sasl;
 pub mod testing;
@@ -87,9 +111,11 @@ pub mod x509;
 
 pub use certgen::{self_signed, self_signed_with_sans, SelfSigned};
 pub use keys::{PrivateKey, PublicKey};
-pub use tls::config::{TlsClientConfig, TlsClientConfigBuilder, TlsServerConfig, TlsServerConfigBuilder};
+pub use tls::config::{CertifiedKey, ClientAuth, TlsClientConfig, TlsClientConfigBuilder, TlsServerConfig, TlsServerConfigBuilder};
+pub use tls::session::ClientSessionCache;
 pub use net::NetStream;
 pub use params::{PemSource, SslContextParameters};
 pub use tls::stream::{TlsReadHalf, TlsStream, TlsWriteHalf};
 pub use tls::{CipherSuite, NamedGroup, TlsError, TlsVersion};
-pub use x509::{CertError, Certificate, RootStore};
+pub use keystore::KeyStore;
+pub use x509::{CertError, Certificate, Crl, RootStore};

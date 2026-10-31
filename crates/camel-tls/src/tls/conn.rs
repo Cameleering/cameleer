@@ -1,11 +1,22 @@
 //! Connection core shared by client and server: record I/O, handshake message
 //! framing, alerts and post-handshake messages.
 
-use super::keyschedule::{cipher13, next_traffic_secret};
+use super::keyschedule::{cipher13, next_traffic_secret, ticket_psk};
 use super::record::{RecordCipher, MAX_FRAGMENT};
+use super::session::{now_ms, ClientSession, ClientSessionCache};
 use super::{alert, codec, content, hs, CipherSuite, NamedGroup, TlsError, TlsResult, TlsVersion};
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
+
+/// Client side: where TLS 1.3 NewSessionTickets received after the handshake go.
+pub(crate) struct TicketSink {
+    pub cache: Arc<ClientSessionCache>,
+    pub key: String,
+    pub resumption_master: Vec<u8>,
+    pub suite: CipherSuite,
+    pub server_name: String,
+    pub peer_certs: Vec<Vec<u8>>,
+}
 
 const MAX_HANDSHAKE_MESSAGE: usize = 1 << 18;
 
@@ -30,6 +41,14 @@ pub(crate) struct Conn<S> {
     pub alpn: Option<Vec<u8>>,
     pub peer_certs: Vec<Vec<u8>>,
     pub sni: Option<String>,
+    /// Whether the session was resumed (abbreviated handshake / PSK).
+    pub resumed: bool,
+    /// Server side: identifies the full handshake this session descends from.
+    pub session_origin: Vec<u8>,
+    pub(crate) ticket_sink: Option<TicketSink>,
+    /// Server side: a TLS 1.3 NewSessionTicket sent before the first application data
+    /// (deferred so that clients which never read do not reset the connection).
+    pub(crate) pending_ticket: Option<Vec<u8>>,
     /// TLS 1.3 application traffic secrets (for KeyUpdate).
     pub read_secret: Vec<u8>,
     pub write_secret: Vec<u8>,
@@ -87,6 +106,10 @@ impl<S: Read + Write> Conn<S> {
             alpn: None,
             peer_certs: Vec::new(),
             sni: None,
+            resumed: false,
+            session_origin: Vec::new(),
+            ticket_sink: None,
+            pending_ticket: None,
             read_secret: Vec::new(),
             write_secret: Vec::new(),
             read_closed: false,
@@ -114,6 +137,10 @@ impl<S: Read + Write> Conn<S> {
         w.alpn = self.alpn.clone();
         w.sni = self.sni.clone();
         w.broken = self.broken.clone();
+        w.resumed = self.resumed;
+        w.session_origin = self.session_origin.clone();
+        w.peer_certs = self.peer_certs.clone();
+        w.pending_ticket = self.pending_ticket.take();
         let w = Arc::new(Mutex::new(w));
         let dynw: Arc<Mutex<dyn SharedWrite>> = w.clone();
         self.peer_writer = Some(dynw);
@@ -418,7 +445,7 @@ impl<S: Read + Write> Conn<S> {
         let body = &m[4..];
         if self.is_tls13() {
             match m[0] {
-                hs::NEW_SESSION_TICKET if self.is_client => Ok(()), // resumption not supported: ignore
+                hs::NEW_SESSION_TICKET if self.is_client => self.on_new_session_ticket(body),
                 hs::KEY_UPDATE => {
                     if body.len() != 1 || body[0] > 1 {
                         return Err(TlsError::proto(alert::DECODE_ERROR, "malformed KeyUpdate"));
@@ -455,6 +482,45 @@ impl<S: Read + Write> Conn<S> {
         }
     }
 
+    fn on_new_session_ticket(&mut self, body: &[u8]) -> TlsResult<()> {
+        let mut r = codec::Reader::new(body, "NewSessionTicket");
+        let lifetime = u32::from_be_bytes(r.take(4)?.try_into().unwrap());
+        let age_add = u32::from_be_bytes(r.take(4)?.try_into().unwrap());
+        let nonce = r.vec8()?.to_vec();
+        let ticket = r.vec16()?.to_vec();
+        let _exts = r.vec16()?;
+        r.finish()?;
+        if ticket.is_empty() {
+            return Err(TlsError::decode("NewSessionTicket"));
+        }
+        if lifetime > 604_800 {
+            return Err(TlsError::proto(alert::ILLEGAL_PARAMETER, "ticket lifetime too long"));
+        }
+        if let Some(sink) = &self.ticket_sink {
+            if lifetime == 0 {
+                return Ok(());
+            }
+            let psk = ticket_psk(sink.suite.hash(), &sink.resumption_master, &nonce);
+            sink.cache.put(
+                &sink.key,
+                ClientSession {
+                    version: TlsVersion::Tls13,
+                    suite: sink.suite,
+                    secret: psk,
+                    ticket,
+                    session_id: Vec::new(),
+                    ems: false,
+                    age_add,
+                    received_ms: now_ms(),
+                    lifetime_secs: lifetime,
+                    server_name: sink.server_name.clone(),
+                    peer_certs: sink.peer_certs.clone(),
+                },
+            );
+        }
+        Ok(())
+    }
+
     /// TLS 1.3 KeyUpdate: sends the message under the current key, then rotates the write key.
     pub fn send_key_update(&mut self, request_peer: bool) -> TlsResult<()> {
         if !self.is_tls13() || self.handshaking {
@@ -472,6 +538,9 @@ impl<S: Read + Write> Conn<S> {
         self.check_usable()?;
         if self.write_closed {
             return Err(TlsError::Closed);
+        }
+        if let Some(t) = self.pending_ticket.take() {
+            self.queue_record(content::HANDSHAKE, &t)?;
         }
         // rotate keys well before AEAD usage limits (RFC 8446 section 5.5)
         if self.is_tls13() && self.write_cipher.as_ref().map(|c| c.seq).unwrap_or(0) > (1 << 24) {
