@@ -45,7 +45,7 @@ pub mod proto;
 use std::sync::Arc;
 
 use camel_core::context::CamelContext;
-use camel_core::dataformat::{bind_data_format, lookup_data_format};
+use camel_core::dataformat::lookup_data_format;
 
 pub use component::{GrpcComponent, GrpcEndpoint, GRPC_EVENT_TYPE, GRPC_METHOD_NAME, GRPC_USER_AGENT};
 pub use dataformat::{protobuf, protobuf_json, ContentTypeFormat, ProtobufDataFormat};
@@ -61,8 +61,13 @@ pub fn register(ctx: &CamelContext) {
     if !ctx.has_component("grpc") {
         ctx.add_component_factory("grpc", || Arc::new(GrpcComponent));
     }
+    // A factory (not a bound instance) so that named references with options, e.g. YAML
+    // `marshal: {protobuf: {instanceClass, protoFile}}`, get a configured data format.
+    // Without options it falls back to the dynamic one (CamelProtobuf* headers / properties).
     if lookup_data_format(ctx.registry(), "protobuf").is_none() {
-        bind_data_format(ctx.registry(), "protobuf", ProtobufDataFormat::dynamic());
+        camel_core::dataformat::register_data_format_factory(ctx.registry(), "protobuf", |o| {
+            Ok(Arc::new(ProtobufDataFormat::from_options(o)?) as Arc<dyn camel_core::dataformat::DataFormat>)
+        });
     }
 }
 
