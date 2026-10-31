@@ -73,6 +73,7 @@ use crate::yaml::{self, Node, PathSegment};
 
 mod config;
 mod eips;
+mod eips_extra;
 
 pub use config::{apply_redelivery_policy, parse_error_handler, parse_redelivery_overrides, RedeliveryExtras, ROUTE_CONFIGURATION_ITEMS};
 pub use eips::{exception_kind, ref_name, resolve_aggregation_strategy};
@@ -795,6 +796,7 @@ fn excludes_of(ctx: &StepContext<'_>, cfg: &Value) -> Vec<String> {
 
 fn register_core_steps(r: &mut StepRegistry) {
     eips::register_eip_steps(r);
+    eips_extra::register_extra_steps(r);
     r.register("to", to_handler(None));
     r.register("inOnly", to_handler(Some(ExchangePattern::InOnly)));
     r.register("inOut", to_handler(Some(ExchangePattern::InOut)));

@@ -16,8 +16,10 @@
 //! - `transform`: marshal/unmarshal and data formats, ...
 
 pub mod core;
+pub mod eips_extra;
 pub mod errors;
 pub mod routing;
+pub mod saga;
 pub mod transform;
 
 use std::any::Any;
