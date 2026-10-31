@@ -67,7 +67,7 @@ impl ClientSecretCredential {
 
     /// An access token for `scope` (e.g. `https://vault.azure.net/.default`), cached.
     pub fn token(&self, scope: &str, http: &HttpClient) -> Result<String> {
-        let key = (self.authority_host.clone(), self.tenant_id.clone(), self.client_id.clone(), scope.to_string());
+        let key = (self.authority_host.clone(), self.tenant_id.clone(), format!("{}#{}", self.client_id, &crate::util::sha256_hex(self.client_secret.as_bytes())[..16]), scope.to_string());
         let now = now_secs();
         if let Some((t, exp)) = token_cache().lock().unwrap().get(&key) {
             if *exp > now + 60 {
@@ -95,6 +95,6 @@ impl ClientSecretCredential {
 
     /// Forget the cached token for `scope` (after a 401).
     pub fn invalidate(&self, scope: &str) {
-        token_cache().lock().unwrap().remove(&(self.authority_host.clone(), self.tenant_id.clone(), self.client_id.clone(), scope.to_string()));
+        token_cache().lock().unwrap().remove(&(self.authority_host.clone(), self.tenant_id.clone(), format!("{}#{}", self.client_id, &crate::util::sha256_hex(self.client_secret.as_bytes())[..16]), scope.to_string()));
     }
 }

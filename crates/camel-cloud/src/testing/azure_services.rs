@@ -11,6 +11,10 @@
 //!   with partition keys, a SQL subset (`SELECT * FROM c WHERE c.a = @p AND c.b > 3 ORDER BY
 //!   c.x DESC`) and the change feed (`A-IM: Incremental feed`).
 
+#[path = "azure_more.rs"]
+mod more;
+pub use more::{AzureFn, FUNCTIONS_MASTER_KEY, OPENAI_KEY};
+
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::sync::{Arc, Mutex};
@@ -61,6 +65,7 @@ struct State {
     secrets: BTreeMap<String, Vec<KvVersion>>,
     deleted: BTreeMap<String, Vec<KvVersion>>,
     dbs: BTreeMap<String, Db>,
+    more: more::MoreState,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -145,6 +150,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     let segs = req.segments();
     if segs.len() == 4 && segs[1] == "oauth2" && segs[3] == "token" && req.method == "POST" {
         return token(st, &segs[0], req);
+    }
+    if let Some(r) = more::handle(st, req, &segs) {
+        return r;
     }
     match segs.first().map(|s| s.as_str()) {
         Some("secrets") | Some("deletedsecrets") => key_vault(st, req, &segs),

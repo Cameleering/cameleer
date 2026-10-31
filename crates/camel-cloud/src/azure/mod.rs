@@ -1,7 +1,9 @@
 //! Azure components: Storage (`azure-storage-blob`, `azure-storage-queue`,
 //! `azure-storage-datalake`) with the shared client (Shared Key request signing and SAS
 //! tokens), `azure-key-vault` (Azure AD client credentials, [`aad`]) and `azure-cosmosdb`
-//! (master-key signing).
+//! (master-key signing), Azure Files (`azure-storage-files`, Shared Key / SAS) and the JSON
+//! REST components over [`rest`]: `azure-functions` (function keys), `azure-eventgrid` (access
+//! key, SAS or Entra ID), `azure-schema-registry` and `azure-openai` (API key or Entra ID).
 //!
 //! Common options: `accessKey` (base64 account key), `credentialType`
 //! (`SHARED_ACCOUNT_KEY` - default when `accessKey` is set, `AZURE_SAS` - with `sasToken`;
@@ -15,8 +17,14 @@ pub mod aad;
 pub mod blob;
 pub mod cosmosdb;
 pub mod datalake;
+pub mod eventgrid;
+pub mod files;
+pub mod functions;
 pub mod keyvault;
+pub mod openai;
 pub mod queue;
+pub mod rest;
+pub mod schemaregistry;
 
 use camel_core::error::{CamelError, Result};
 

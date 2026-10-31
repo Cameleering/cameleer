@@ -1,6 +1,9 @@
 //! Google Cloud components (`google-storage`, `google-pubsub`, `google-bigquery`,
 //! `google-bigquery-sql`, `google-secret-manager`, `google-functions`, `google-firestore`,
-//! `google-sheets`) and the shared OAuth2 service-account authentication.
+//! `google-sheets`, `google-mail`, `google-calendar`, `google-drive`, `google-vertexai`,
+//! `google-speech-to-text`, `google-text-to-speech`) and the shared OAuth2 service-account
+//! authentication (with domain-wide delegation: `delegate` / `subject` = the impersonated user,
+//! sent as the JWT `sub` claim).
 //!
 //! Authentication: a service account JSON key (`serviceAccountKey` option: `file:path`,
 //! `classpath:path` (resolved as a file path), a plain path or the inline JSON; otherwise the
@@ -13,13 +16,16 @@
 //! Endpoint override: `uriEndpointOverride` + `overrideEndpoint=true`, or `endpoint`
 //! (`host:port` of an emulator, or a URL).
 
+pub mod ai;
 pub mod bigquery;
 pub mod firestore;
 pub mod functions;
 pub mod pubsub;
+pub mod pubsub_stream;
 pub mod secretmanager;
 pub mod sheets;
 pub mod storage;
+pub mod workspace;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -100,14 +106,22 @@ impl ServiceAccountKey {
 
     /// A signed JWT assertion for the token endpoint.
     pub fn jwt(&self, scope: &str, now: i64) -> Result<String> {
+        self.jwt_for(scope, None, now)
+    }
+
+    /// A signed JWT assertion impersonating `subject` (domain-wide delegation, `sub` claim).
+    pub fn jwt_for(&self, scope: &str, subject: Option<&str>, now: i64) -> Result<String> {
         let header = crate::util::obj([("alg", Value::from("RS256")), ("typ", Value::from("JWT")), ("kid", Value::from(self.private_key_id.clone()))]);
-        let claims = crate::util::obj([
+        let mut claims = crate::util::obj([
             ("iss", Value::from(self.client_email.clone())),
             ("scope", Value::from(scope)),
             ("aud", Value::from(self.token_uri.clone())),
             ("iat", Value::Int(now)),
             ("exp", Value::Int(now + 3600)),
         ]);
+        if let (Some(s), Value::Object(m)) = (subject, &mut claims) {
+            m.insert("sub".into(), Value::from(s));
+        }
         let input = format!("{}.{}", base64url_encode(header.to_json().as_bytes()), base64url_encode(claims.to_json().as_bytes()));
         let sig = self.sign(input.as_bytes())?;
         Ok(format!("{}.{}", input, base64url_encode(&sig)))
@@ -134,23 +148,32 @@ pub fn verify_jwt(jwt: &str, key: &camel_tls::PublicKey) -> std::result::Result<
     parse_json(&dec(parts[1])?).map_err(|e| e.to_string())
 }
 
-type TokenKey = (String, String, String);
+type TokenKey = (String, String, String, String);
 
 fn token_cache() -> &'static Mutex<HashMap<TokenKey, (String, i64)>> {
     static CACHE: OnceLock<Mutex<HashMap<TokenKey, (String, i64)>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn cache_key(key: &ServiceAccountKey, scope: &str, subject: Option<&str>) -> TokenKey {
+    (key.client_email.clone(), key.token_uri.clone(), scope.to_string(), subject.unwrap_or("").to_string())
+}
+
 /// Get an access token for `scope` (cached until 60 s before expiry).
 pub fn access_token(key: &ServiceAccountKey, scope: &str, http: &HttpClient) -> Result<String> {
-    let ck = (key.client_email.clone(), key.token_uri.clone(), scope.to_string());
+    access_token_as(key, scope, None, http)
+}
+
+/// Get an access token for `scope` impersonating `subject` (domain-wide delegation) when given.
+pub fn access_token_as(key: &ServiceAccountKey, scope: &str, subject: Option<&str>, http: &HttpClient) -> Result<String> {
+    let ck = cache_key(key, scope, subject);
     let now = now_secs();
     if let Some((tok, exp)) = token_cache().lock().unwrap().get(&ck) {
         if *exp > now + 60 {
             return Ok(tok.clone());
         }
     }
-    let assertion = key.jwt(scope, now)?;
+    let assertion = key.jwt_for(scope, subject, now)?;
     let body = encode_form(&[("grant_type".into(), "urn:ietf:params:oauth:grant-type:jwt-bearer".into()), ("assertion".into(), assertion)]);
     let req = Request::new("POST", Url::parse(&key.token_uri)?).header("Content-Type", "application/x-www-form-urlencoded").body(body.into_bytes());
     let resp = http.send(&req)?;
@@ -167,7 +190,12 @@ pub fn access_token(key: &ServiceAccountKey, scope: &str, http: &HttpClient) -> 
 
 /// Forget a cached token (after a 401).
 pub fn invalidate_token(key: &ServiceAccountKey, scope: &str) {
-    token_cache().lock().unwrap().remove(&(key.client_email.clone(), key.token_uri.clone(), scope.to_string()));
+    invalidate_token_as(key, scope, None);
+}
+
+/// Forget a cached delegated token.
+pub fn invalidate_token_as(key: &ServiceAccountKey, scope: &str, subject: Option<&str>) {
+    token_cache().lock().unwrap().remove(&cache_key(key, scope, subject));
 }
 
 /// Client configuration shared by the Google endpoints.
@@ -178,6 +206,8 @@ pub struct GcpConfig {
     pub endpoint: Option<String>,
     pub proxy: Proxy,
     pub trust_all_certificates: bool,
+    /// User impersonated with domain-wide delegation (`delegate` / `subject` options).
+    pub subject: Option<String>,
 }
 
 impl GcpConfig {
@@ -203,7 +233,8 @@ impl GcpConfig {
             }
         };
         o.ignore(&["storageClient", "pubsubEndpoint", "serializer", "loggerId"]);
-        Ok(GcpConfig { key, authenticate, endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)? })
+        let subject = o.get("delegate").or_else(|| o.get("subject"));
+        Ok(GcpConfig { key, authenticate, endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)?, subject })
     }
 
     pub fn http(&self) -> HttpClient {
@@ -230,6 +261,22 @@ impl GcpConfig {
         self.key.as_ref().map(|k| k.project_id.clone()).filter(|p| !p.is_empty())
     }
 
+    /// A bearer token for `scope` (None when authentication is disabled).
+    pub fn bearer(&self, scope: &str) -> Result<Option<String>> {
+        if !self.authenticate {
+            return Ok(None);
+        }
+        let key = self.key.as_ref().ok_or_else(|| cloud_error(kinds::GOOGLE_AUTH, "No Google credentials: set serviceAccountKey or GOOGLE_APPLICATION_CREDENTIALS (or authenticate=false for emulators)"))?;
+        access_token_as(key, scope, self.subject.as_deref(), &self.http()).map(Some)
+    }
+
+    /// Forget the cached token for `scope` (after an authentication failure).
+    pub fn invalidate(&self, scope: &str) {
+        if let Some(k) = &self.key {
+            invalidate_token_as(k, scope, self.subject.as_deref());
+        }
+    }
+
     /// Send with a bearer token (retrying once after a 401); non-2xx responses become errors of `kind`.
     pub fn send(&self, req: Request, kind: &str) -> Result<Response> {
         self.send_scoped(req, kind, CLOUD_PLATFORM_SCOPE)
@@ -244,12 +291,12 @@ impl GcpConfig {
                 let key = self.key.as_ref().ok_or_else(|| {
                     cloud_error(kinds::GOOGLE_AUTH, "No Google credentials: set serviceAccountKey or GOOGLE_APPLICATION_CREDENTIALS (or authenticate=false for emulators)")
                 })?;
-                r.set_header("Authorization", format!("Bearer {}", access_token(key, scope, &http)?));
+                r.set_header("Authorization", format!("Bearer {}", access_token_as(key, scope, self.subject.as_deref(), &http)?));
             }
             let resp = http.send(&r)?;
             if resp.status == 401 && attempt == 0 && self.authenticate {
                 if let Some(k) = &self.key {
-                    invalidate_token(k, scope);
+                    invalidate_token_as(k, scope, self.subject.as_deref());
                 }
                 continue;
             }

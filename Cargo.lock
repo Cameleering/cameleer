@@ -24,6 +24,8 @@ name = "camel-cloud"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-grpc",
+ "camel-kafka-mqtt",
  "camel-tls",
 ]
 

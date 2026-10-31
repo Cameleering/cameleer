@@ -29,7 +29,8 @@
 //! (true), `keyDeserializer`/`valueDeserializer`, plus accepted-and-ignored tuning options.
 //!
 //! **Security**: `securityProtocol` `PLAINTEXT` (default), `SSL`, `SASL_PLAINTEXT` or
-//! `SASL_SSL`. TLS trust comes from `sslContextParameters=#bean`,
+//! `SASL_SSL` (custom one-step SASL mechanisms such as `AWS_MSK_IAM`, registered by
+//! `camel-cloud`, plug in through [`client::register_sasl_mechanism`]). TLS trust comes from `sslContextParameters=#bean`,
 //! `useGlobalSslContextParameters=true`, `sslTruststoreLocation` (a PEM CA file - Java
 //! keystores are not supported), the global `camel.ssl.*` parameters, else the system
 //! trust store; `sslEndpointIdentificationAlgorithm=` (empty) disables host name
@@ -194,6 +195,9 @@ fn take_security(ctx: &CamelContext, params: &mut Parameters) -> Result<(Option<
         _ => None,
     };
     let sasl = if use_sasl {
+        if let Some(factory) = client::sasl_mechanism(&mechanism) {
+            return Ok((tls, Some(SaslConfig::custom(&mechanism, factory(jaas.as_deref().unwrap_or(""))?))));
+        }
         if mechanism == "GSSAPI" || mechanism == "OAUTHBEARER" {
             return Err(CamelError::new(kinds::UNSUPPORTED_OPERATION, format!("Kafka saslMechanism {} is not supported by rust-camel (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)", mechanism)));
         }

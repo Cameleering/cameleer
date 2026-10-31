@@ -26,6 +26,11 @@ pub trait CloudService: Send + Sync + 'static {
     fn scheduler(&self) -> Option<&ScheduledPollConfig> {
         None
     }
+    /// A consumer that is not a scheduled poller (e.g. a streaming consumer); `None` (default)
+    /// uses [`CloudService::scheduler`] + [`CloudService::poll`].
+    fn custom_consumer(&self, _ctx: &WeakContext, _uri: &str, _processor: &Arc<dyn Processor>) -> Option<Result<Arc<dyn Consumer>>> {
+        None
+    }
     /// Called when a producer or consumer starts (auto-create resources...).
     fn on_start(&self) -> Result<()> {
         Ok(())
@@ -84,6 +89,9 @@ impl Endpoint for CloudEndpoint {
         Ok(Arc::new(CloudProducer { svc: self.svc.clone() }))
     }
     fn create_consumer(&self, processor: Arc<dyn Processor>) -> Result<Arc<dyn Consumer>> {
+        if let Some(c) = self.svc.custom_consumer(&self.ctx, &self.uri, &processor) {
+            return c;
+        }
         let cfg = self
             .svc
             .scheduler()

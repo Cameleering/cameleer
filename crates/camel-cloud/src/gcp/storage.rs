@@ -8,7 +8,10 @@
 //! `CamelGoogleCloudStorageOperation`): `putObject` (upload), `getObject` (body = bytes),
 //! `listObjects` (`prefix`), `deleteObject`, `copyObject`
 //! (`CamelGoogleCloudStorageDestinationBucketName`, `CamelGoogleCloudStorageDestinationObjectName`),
-//! `listBuckets`, `deleteBucket`, `createBucket`.
+//! `listBuckets`, `deleteBucket`, `createBucket`, `createDownloadLink` (V4 signed URL
+//! `GOOG4-RSA-SHA256` with the service account key, valid for
+//! `CamelGoogleCloudStorageDownloadLinkExpirationTime` milliseconds (default 5 minutes, at most
+//! 7 days); body = the URL, also in `CamelGoogleCloudStorageDownloadLink`).
 //!
 //! Consumer: lists the bucket (`prefix`, `maxMessagesPerPoll` default 10, or the single
 //! `objectName`), one exchange per object (body = content when `includeBody`, default true) with
@@ -47,6 +50,36 @@ pub mod headers {
     pub const UPDATE_TIME: &str = "CamelGoogleCloudStorageUpdateTime";
     pub const GENERATION: &str = "CamelGoogleCloudStorageGeneration";
     pub const PREFIX: &str = "CamelGoogleCloudStoragePrefix";
+    pub const DOWNLOAD_LINK_EXPIRATION_TIME: &str = "CamelGoogleCloudStorageDownloadLinkExpirationTime";
+    pub const DOWNLOAD_LINK: &str = "CamelGoogleCloudStorageDownloadLink";
+}
+
+/// The V4 signing algorithm of Cloud Storage signed URLs.
+pub const V4_ALGORITHM: &str = "GOOG4-RSA-SHA256";
+
+/// (canonical query without signature, string to sign) of a V4 signed URL.
+pub fn v4_string_to_sign(method: &str, host: &str, path: &str, client_email: &str, secs: i64, expires: i64) -> (String, String) {
+    let dt = crate::util::amz_date(secs);
+    let scope = format!("{}/auto/storage/goog4_request", &dt[..8]);
+    let query = format!(
+        "X-Goog-Algorithm={}&X-Goog-Credential={}&X-Goog-Date={}&X-Goog-Expires={}&X-Goog-SignedHeaders=host",
+        V4_ALGORITHM,
+        uri_encode(&format!("{}/{}", client_email, scope), false),
+        dt,
+        expires
+    );
+    let cr = crate::aws::sigv4::canonical_request(method, path, &query, &[("host".to_string(), host.to_string())], &["host".to_string()], "UNSIGNED-PAYLOAD", "s3");
+    let sts = format!("{}\n{}\n{}\n{}", V4_ALGORITHM, dt, scope, crate::util::sha256_hex(cr.as_bytes()));
+    (query, sts)
+}
+
+/// A V4 signed URL for `GET {base}/{bucket}/{object}` valid for `expires` seconds.
+pub fn v4_signed_url(key: &super::ServiceAccountKey, base: &str, bucket: &str, object: &str, secs: i64, expires: i64) -> Result<String> {
+    let url = Url::parse(base)?;
+    let path = format!("{}/{}/{}", url.path.trim_end_matches('/'), uri_encode(bucket, false), uri_encode(object, true));
+    let (query, sts) = v4_string_to_sign("GET", &url.host_header(), &path, &key.client_email, secs, expires);
+    let sig = crate::util::hex(&key.sign(sts.as_bytes())?);
+    Ok(format!("{}://{}{}?{}&X-Goog-Signature={}", url.scheme, url.host_header(), path, query, sig))
 }
 
 /// The storage endpoint configuration and client.
@@ -267,6 +300,15 @@ impl CloudService for StorageService {
             "deleteBucket" => {
                 self.send(Request::new("DELETE", self.url(&format!("/storage/v1/b/{}", uri_encode(&bucket, false)), "")?))?;
                 ex.set_body(true);
+            }
+            "createDownloadLink" => {
+                let name = self.object(ex)?;
+                let key = self.gcp.key.as_ref().ok_or_else(|| CamelError::illegal_argument("createDownloadLink requires a service account key (serviceAccountKey)"))?;
+                let millis = crate::util::header_i64(ex, headers::DOWNLOAD_LINK_EXPIRATION_TIME).unwrap_or(300_000);
+                let secs = (millis / 1000).clamp(1, 7 * 86400);
+                let link = v4_signed_url(key, &self.gcp.base("https://storage.googleapis.com"), &bucket, &name, crate::util::now_secs(), secs)?;
+                ex.set_header(headers::DOWNLOAD_LINK, link.clone());
+                ex.set_body(link);
             }
             other => return Err(unsupported("google-storage", other)),
         }

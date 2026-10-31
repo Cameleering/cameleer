@@ -1,7 +1,11 @@
 //! AWS components (`aws2-s3`, `aws2-sqs`, `aws2-sns`, `aws2-ddb`, `aws2-lambda`,
 //! `aws2-kinesis`, `aws2-kinesis-firehose`, `aws2-eventbridge`, `aws-secrets-manager`,
-//! `aws2-ses`, `aws2-cw`, `aws2-sts`, `aws2-step-functions`, `aws2-iam`, `aws2-ec2`) and the
-//! shared client configuration.
+//! `aws2-ses`, `aws2-cw`, `aws2-sts`, `aws2-step-functions`, `aws2-iam`, `aws2-ec2`,
+//! `aws2-msk`, `aws2-athena`, `aws2-textract`, `aws2-translate`, `aws2-comprehend`,
+//! `aws2-polly`, `aws2-rekognition`, `aws2-transcribe`, `aws-bedrock`,
+//! `aws-bedrock-agent-runtime`, `aws2-mq`, `aws2-ecs`, `aws2-eks`, `aws2-kms`,
+//! `aws2-timestream`, `aws-cloudtrail`, `aws-config`, `aws2-redshift-data`), the `AWS_MSK_IAM`
+//! Kafka SASL mechanism ([`msk`]) and the shared client configuration.
 //!
 //! Common endpoint options (also settable as `camel.component.<scheme>.<option>`):
 //! `accessKey`, `secretKey`, `sessionToken`, `region` (default `AWS_REGION` /
@@ -16,15 +20,27 @@
 //! `profileCredentialsName` / `AWS_PROFILE` / `default`), then the container credentials
 //! endpoint and the EC2 instance metadata service ([`credentials`]).
 
+pub mod athena;
+pub mod bedrock;
+pub mod cloudtrail;
+pub mod comprehend;
+pub mod config;
 pub mod credentials;
 pub mod cw;
 pub mod ddb;
 pub mod ec2;
+pub mod ecs;
 pub mod eventbridge;
 pub mod firehose;
 pub mod iam;
 pub mod kinesis;
+pub mod kms;
 pub mod lambda;
+pub mod mq;
+pub mod msk;
+pub mod polly;
+pub mod redshiftdata;
+pub mod rekognition;
 pub mod s3;
 pub mod s3_multipart;
 pub mod secretsmanager;
@@ -34,9 +50,13 @@ pub mod sns;
 pub mod sqs;
 pub mod stepfunctions;
 pub mod sts;
+pub mod textract;
+pub mod timestream;
+pub mod transcribe;
+pub mod translate;
 
 use camel_core::error::{CamelError, Result};
-use camel_core::value::Value;
+use camel_core::value::{ObjectMap, Value};
 
 use crate::http::{HttpClient, Proxy, Request, Response, Url};
 use crate::util::{cloud_error, kinds, now_secs, Opts, Xml};
@@ -196,6 +216,117 @@ impl AwsConfig {
             .body(body.to_json().into_bytes());
         let resp = self.send(req, service, kind)?;
         crate::util::parse_json(&resp.body)
+    }
+
+    /// Call an AWS JSON protocol API described by `api`.
+    pub fn api(&self, api: &JsonApi, operation: &str, body: &Value) -> Result<Value> {
+        self.json_call(api.host, api.service, api.target, operation, body, api.version, api.kind)
+    }
+
+    /// Call a paginated AWS JSON API: follows `token_field` (`NextToken` / `nextToken`) and
+    /// concatenates the `list_field` arrays.
+    pub fn api_paged(&self, api: &JsonApi, operation: &str, req: ObjectMap, list_field: &str, token_field: &str) -> Result<Vec<Value>> {
+        let mut all = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            let mut r = req.clone();
+            if let Some(t) = &token {
+                r.insert(token_field.to_string(), Value::from(t.clone()));
+            }
+            let v = self.api(api, operation, &Value::Object(r))?;
+            all.extend(v.get(list_field).and_then(|a| a.as_array()).cloned().unwrap_or_default());
+            token = v.get(token_field).map(|t| t.to_string()).filter(|t| !t.is_empty());
+            if token.is_none() {
+                return Ok(all);
+            }
+        }
+    }
+
+    /// AWS REST-JSON call: `method` on `{endpoint(service_host)}{path}?{query}`, JSON body,
+    /// JSON response.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rest_json(&self, method: &str, service_host: &str, path: &str, query: &[(String, String)], body: Option<&Value>, service: &str, kind: &str) -> Result<Value> {
+        let resp = self.rest_call(method, service_host, path, query, body.map(|b| ("application/json", b.to_json().into_bytes())), &[], service, kind)?;
+        crate::util::parse_json(&resp.body)
+    }
+
+    /// AWS REST call with a raw body `(content type, bytes)` and extra headers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rest_call(
+        &self,
+        method: &str,
+        service_host: &str,
+        path: &str,
+        query: &[(String, String)],
+        body: Option<(&str, Vec<u8>)>,
+        headers: &[(&str, String)],
+        service: &str,
+        kind: &str,
+    ) -> Result<Response> {
+        let mut url = self.endpoint(service_host)?;
+        url.path = format!("{}{}", url.path.trim_end_matches('/'), path);
+        url.query = if query.is_empty() { None } else { Some(crate::util::encode_form(query)) };
+        let mut req = Request::new(method, url);
+        for (k, v) in headers {
+            req.set_header(k, v.clone());
+        }
+        if let Some((ct, b)) = body {
+            req = req.header("Content-Type", ct).body(b);
+        }
+        self.send(req, service, kind)
+    }
+}
+
+/// Description of an AWS JSON 1.0/1.1 API: endpoint host prefix, signing name,
+/// `X-Amz-Target` prefix, JSON version and exception kind.
+#[derive(Clone, Copy, Debug)]
+pub struct JsonApi {
+    pub host: &'static str,
+    pub service: &'static str,
+    pub target: &'static str,
+    pub version: &'static str,
+    pub kind: &'static str,
+}
+
+/// A required header.
+pub fn need(ex: &camel_core::message::Exchange, h: &str) -> Result<String> {
+    crate::util::header_str(ex, h).ok_or_else(|| CamelError::illegal_argument(format!("The {} header is required", h)))
+}
+
+/// A header, falling back to an endpoint option.
+pub fn hdr(ex: &camel_core::message::Exchange, h: &str, option: &Option<String>) -> Option<String> {
+    crate::util::header_str(ex, h).or_else(|| option.clone())
+}
+
+/// A required header or endpoint option.
+pub fn need_or(ex: &camel_core::message::Exchange, h: &str, option: &Option<String>, option_name: &str) -> Result<String> {
+    hdr(ex, h, option).ok_or_else(|| CamelError::illegal_argument(format!("The {} header (or the {} option) is required", h, option_name)))
+}
+
+/// Insert `key` into `m` when `v` is present.
+pub fn put(m: &mut ObjectMap, key: &str, v: Option<impl Into<Value>>) {
+    if let Some(v) = v {
+        m.insert(key.to_string(), v.into());
+    }
+}
+
+/// A header as a JSON value: objects/arrays as is, JSON text parsed, other scalars as is.
+pub fn header_json(ex: &camel_core::message::Exchange, h: &str) -> Option<Value> {
+    match ex.header(h)? {
+        Value::Null => None,
+        Value::String(s) if s.trim_start().starts_with(['{', '[']) => camel_core::json::parse(s).ok(),
+        v => Some(v.clone()),
+    }
+}
+
+/// The body as a JSON value (maps/lists as is, JSON text parsed); None otherwise.
+pub fn body_json(ex: &camel_core::message::Exchange) -> Option<Value> {
+    match ex.body() {
+        Value::Null => None,
+        Value::Object(_) | Value::Array(_) => Some(ex.body().clone()),
+        Value::Bytes(b) => camel_core::json::parse(&String::from_utf8_lossy(b)).ok().filter(|v| matches!(v, Value::Object(_) | Value::Array(_))),
+        Value::String(s) => camel_core::json::parse(s).ok().filter(|v| matches!(v, Value::Object(_) | Value::Array(_))),
+        _ => None,
     }
 }
 

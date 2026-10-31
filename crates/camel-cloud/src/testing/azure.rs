@@ -1,12 +1,15 @@
 //! In-memory Azure Storage emulator (Azurite-style path addressing
 //! `http://127.0.0.1:port/{account}/...`): Blob service (block, append and page blobs, leases),
-//! Queue service and the ADLS Gen2 DFS endpoint (sharing the blob containers) on three ports.
+//! Queue service, the ADLS Gen2 DFS endpoint (sharing the blob containers) and Azure Files on
+//! four ports.
 //! Requests must be authorized with a valid Shared Key signature (recomputed with the account
 //! key) or a valid, unexpired account SAS token granting the needed service, resource type and
 //! permission; otherwise `403 AuthenticationFailed` / `AuthorizationPermissionMismatch`.
 
 #[path = "azure_blob_ext.rs"]
 mod blob_ext;
+#[path = "azure_files_ext.rs"]
+mod files_ext;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -57,6 +60,7 @@ struct State {
     containers: BTreeMap<String, Container>,
     dfs_pending: HashMap<(String, String), Vec<u8>>,
     queues: BTreeMap<String, Vec<QMsg>>,
+    shares: BTreeMap<String, files_ext::Share>,
     auth_failures: usize,
     sas_requests: usize,
 }
@@ -68,6 +72,7 @@ pub struct AzuriteMock {
     blob: MockServer,
     queue: MockServer,
     dfs: MockServer,
+    file: MockServer,
     state: Shared,
 }
 
@@ -75,11 +80,49 @@ impl AzuriteMock {
     /// Start both services for the development account.
     pub fn start() -> io::Result<AzuriteMock> {
         let state: Shared = Arc::new(Mutex::new(State::default()));
-        let (s1, s2, s3) = (state.clone(), state.clone(), state.clone());
+        let (s1, s2, s3, s4) = (state.clone(), state.clone(), state.clone(), state.clone());
         let bh: Handler = Arc::new(move |r| handle(&s1, r, 'b'));
         let qh: Handler = Arc::new(move |r| handle(&s2, r, 'q'));
         let dh: Handler = Arc::new(move |r| handle(&s3, r, 'd'));
-        Ok(AzuriteMock { blob: MockServer::start(bh)?, queue: MockServer::start(qh)?, dfs: MockServer::start(dh)?, state })
+        let fh: Handler = Arc::new(move |r| handle(&s4, r, 'f'));
+        Ok(AzuriteMock { blob: MockServer::start(bh)?, queue: MockServer::start(qh)?, dfs: MockServer::start(dh)?, file: MockServer::start(fh)?, state })
+    }
+
+    /// The Azure Files endpoint.
+    pub fn file_url(&self) -> String {
+        self.file.url()
+    }
+    /// Options for `azure-storage-files://devstoreaccount1/share?...` (Shared Key).
+    pub fn files_options(&self) -> String {
+        format!("accessKey=RAW({})&uriEndpointOverride={}&overrideEndpoint=true", ACCOUNT_KEY, self.file_url())
+    }
+    /// Create a file share.
+    pub fn create_share(&self, name: &str) {
+        self.state.lock().unwrap().shares.entry(name.into()).or_insert_with(|| files_ext::Share { created: now_secs(), ..Default::default() });
+    }
+    /// Put a file (parent directories are created).
+    pub fn put_share_file(&self, share: &str, path: &str, data: &[u8]) {
+        self.create_share(share);
+        let mut s = self.state.lock().unwrap();
+        let sh = s.shares.get_mut(share).unwrap();
+        let mut acc = String::new();
+        for part in path.split('/').collect::<Vec<_>>().split_last().map(|(_, dirs)| dirs.to_vec()).unwrap_or_default() {
+            acc = if acc.is_empty() { part.to_string() } else { format!("{}/{}", acc, part) };
+            sh.dirs.insert(acc.clone());
+        }
+        sh.files.insert(path.into(), files_ext::AzFile { data: data.to_vec(), content_type: "application/octet-stream".into(), etag: format!("\"0x{}\"", random_hex(8)), last_modified: now_secs() });
+    }
+    /// Content of a file of a share.
+    pub fn share_file(&self, share: &str, path: &str) -> Option<Vec<u8>> {
+        self.state.lock().unwrap().shares.get(share).and_then(|s| s.files.get(path)).map(|f| f.data.clone())
+    }
+    /// Paths of the files of a share.
+    pub fn share_files(&self, share: &str) -> Vec<String> {
+        self.state.lock().unwrap().shares.get(share).map(|s| s.files.keys().cloned().collect()).unwrap_or_default()
+    }
+    /// Directories of a share.
+    pub fn share_dirs(&self, share: &str) -> Vec<String> {
+        self.state.lock().unwrap().shares.get(share).map(|s| s.dirs.iter().cloned().collect()).unwrap_or_default()
     }
 
     pub fn blob_url(&self) -> String {
@@ -186,6 +229,9 @@ fn error(status: u16, code: &str, message: &str) -> Response {
 /// (permission letters accepted, resource type) needed by a request on the given service.
 fn sas_requirement(service: char, method: &str, segs: &[String], req: &ServerRequest) -> (&'static str, char) {
     let comp_list = req.query_param("comp").as_deref() == Some("list");
+    if service == 'f' {
+        return files_ext::sas_requirement(method, segs, req);
+    }
     if service == 'b' {
         match (segs.len(), method) {
             (0, _) => ("l", 's'),
@@ -266,6 +312,9 @@ fn handle(st: &Shared, req: &ServerRequest, service: char) -> Response {
     if let Err(resp) = authorize(st, req, if service == 'd' { 'b' } else { service }, &segs) {
         st.lock().unwrap().auth_failures += 1;
         return resp;
+    }
+    if service == 'f' {
+        return files_ext::file_op(st, req, rest);
     }
     if service == 'd' {
         let path = rest.split_once('/').map(|(_, b)| percent_decode(b, false)).filter(|b| !b.is_empty());

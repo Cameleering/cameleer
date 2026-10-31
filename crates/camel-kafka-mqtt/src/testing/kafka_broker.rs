@@ -168,9 +168,13 @@ struct Data {
     client_fetches: HashMap<String, usize>,
 }
 
+/// Verifies the single message of a custom SASL mechanism; returns the principal or an error.
+pub type SaslVerifier = Arc<dyn Fn(&[u8]) -> std::result::Result<String, String> + Send + Sync>;
+
 struct State {
     tls: Option<Arc<TlsServerConfig>>,
     sasl_users: Vec<(String, String)>,
+    sasl_custom: Vec<(String, SaslVerifier)>,
     /// Successful SASL logins `(mechanism, user)`.
     sasl_logins: Mutex<Vec<(String, String)>>,
     port: Mutex<u16>,
@@ -188,7 +192,7 @@ pub struct KafkaBroker {
 }
 
 /// Broker settings.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KafkaBrokerConfig {
     /// Partitions of auto-created topics (default 1).
     pub default_partitions: usize,
@@ -200,11 +204,27 @@ pub struct KafkaBrokerConfig {
     pub tls: Option<TlsServerConfig>,
     /// When non-empty, clients must authenticate with SASL as one of these `(user, password)`.
     pub sasl_users: Vec<(String, String)>,
+    /// Custom one-step SASL mechanisms `(name, verifier)` (e.g. `AWS_MSK_IAM`); when non-empty
+    /// SASL authentication is required too.
+    pub sasl_custom: Vec<(String, SaslVerifier)>,
+}
+
+impl std::fmt::Debug for KafkaBrokerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KafkaBrokerConfig")
+            .field("default_partitions", &self.default_partitions)
+            .field("auto_create_topics", &self.auto_create_topics)
+            .field("port", &self.port)
+            .field("tls", &self.tls.is_some())
+            .field("sasl_users", &self.sasl_users.len())
+            .field("sasl_custom", &self.sasl_custom.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl Default for KafkaBrokerConfig {
     fn default() -> Self {
-        KafkaBrokerConfig { default_partitions: 1, auto_create_topics: true, port: 0, tls: None, sasl_users: Vec::new() }
+        KafkaBrokerConfig { default_partitions: 1, auto_create_topics: true, port: 0, tls: None, sasl_users: Vec::new(), sasl_custom: Vec::new() }
     }
 }
 
@@ -224,6 +244,7 @@ impl KafkaBroker {
         let state = Arc::new(State {
             tls: cfg.tls.map(Arc::new),
             sasl_users: cfg.sasl_users,
+            sasl_custom: cfg.sasl_custom,
             sasl_logins: Mutex::new(Vec::new()),
             port: Mutex::new(0),
             default_partitions: cfg.default_partitions.max(1),
@@ -369,6 +390,7 @@ enum Auth {
     Handshake,
     /// Waiting for SaslAuthenticate with the given mechanism.
     Plain,
+    Custom(String, SaslVerifier),
     Scram(Box<ScramServer<Box<dyn Fn(&str) -> Option<ScramCredentials> + Send>>>, bool),
 }
 
@@ -377,8 +399,11 @@ fn sasl_step(state: &State, auth: &mut Auth, key: i16, body: &[u8]) -> Option<Ve
     match key {
         api::SASL_HANDSHAKE => {
             let mech = d.string().ok()?.to_ascii_uppercase();
-            let supported = vec!["PLAIN".to_string(), "SCRAM-SHA-256".to_string(), "SCRAM-SHA-512".to_string()];
+            let mut supported = vec!["PLAIN".to_string(), "SCRAM-SHA-256".to_string(), "SCRAM-SHA-512".to_string()];
+            supported.extend(state.sasl_custom.iter().map(|(n, _)| n.clone()));
+            let custom = state.sasl_custom.iter().find(|(n, _)| n.eq_ignore_ascii_case(&mech)).cloned();
             let next = match mech.as_str() {
+                _ if custom.is_some() => custom.map(|(n, v)| Auth::Custom(n, v)),
                 "PLAIN" => Some(Auth::Plain),
                 m => ScramMechanism::from_name(m).map(|mech| {
                     let users = state.sasl_users.clone();
@@ -410,6 +435,14 @@ fn sasl_step(state: &State, auth: &mut Auth, key: i16, body: &[u8]) -> Option<Ve
                         ok(Vec::new())
                     }
                     _ => fail("Authentication failed: Invalid username or password"),
+                },
+                Auth::Custom(name, verify) => match verify(&token) {
+                    Ok(principal) => {
+                        state.sasl_logins.lock().unwrap().push((name.clone(), principal));
+                        *auth = Auth::Done;
+                        ok(format!("{{\"version\":\"2020_10_22\",\"request-id\":\"{}\"}}", state.sasl_logins.lock().unwrap().len()).into_bytes())
+                    }
+                    Err(e) => fail(&format!("Authentication failed with SASL mechanism {}: {}", name, e)),
                 },
                 Auth::Scram(server, first_done) => {
                     let text = String::from_utf8_lossy(&token).into_owned();
@@ -454,7 +487,7 @@ fn serve(state: &Arc<State>, tcp: TcpStream) {
         },
         None => NetStream::plain(tcp),
     };
-    let mut auth = if state.sasl_users.is_empty() { Auth::Done } else { Auth::Handshake };
+    let mut auth = if state.sasl_users.is_empty() && state.sasl_custom.is_empty() { Auth::Done } else { Auth::Handshake };
     loop {
         let frame = match read_frame(&mut stream, 64 * 1024 * 1024) {
             Ok(Some(f)) => f,

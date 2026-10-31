@@ -1,7 +1,10 @@
 //! In-memory Google Cloud emulator: an OAuth2 token endpoint (`POST /token`, JWT bearer
 //! grant), Cloud Storage JSON API (`/storage/v1`, `/upload/storage/v1`), Pub/Sub REST
 //! (`/v1/projects/...`), and BigQuery, Secret Manager, Cloud Functions, Firestore and Sheets
-//! (see the `gcp_ext` part: [`CloudFn`]) on one port.
+//! (see the `gcp_ext` part: [`CloudFn`]), Gmail, Calendar, Drive, Vertex AI, Speech-to-Text,
+//! Text-to-Speech and Storage V4 signed URLs (the `gcp_more` part) on one port, plus the
+//! Pub/Sub StreamingPull gRPC service on a second port ([`GcpMock::pubsub_grpc_address`],
+//! included in [`GcpMock::endpoint_options`] as `pubsubEndpoint`).
 //!
 //! The token endpoint verifies the RS256 signature of the JWT assertion with the registered
 //! service account public key and checks `iss`, `aud` (= the token URL), `iat`/`exp` and
@@ -11,6 +14,9 @@
 #[path = "gcp_ext.rs"]
 mod ext;
 pub use ext::CloudFn;
+#[path = "gcp_more.rs"]
+mod more;
+pub use more::StreamingStats;
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -74,6 +80,7 @@ struct State {
     subscriptions: BTreeMap<String, Subscription>,
     next_id: i64,
     ext: ext::ExtState,
+    more: more::MoreState,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -82,6 +89,7 @@ type Shared = Arc<Mutex<State>>;
 pub struct GcpMock {
     server: MockServer,
     state: Shared,
+    grpc: camel_grpc::grpc::server::GrpcServer,
 }
 
 impl GcpMock {
@@ -98,10 +106,12 @@ impl GcpMock {
             subscriptions: BTreeMap::new(),
             next_id: 1,
             ext: Default::default(),
+            more: Default::default(),
         }));
         let st = state.clone();
         let handler: Handler = Arc::new(move |r| handle(&st, r));
-        let mock = GcpMock { server: MockServer::start(handler)?, state };
+        let grpc = more::start_grpc(state.clone())?;
+        let mock = GcpMock { server: MockServer::start(handler)?, state, grpc };
         let key = ServiceAccountKey::parse(&mock.service_account_json()).map_err(|e| io::Error::other(e.to_string()))?;
         mock.trust_key(CLIENT_EMAIL, key.public_key());
         Ok(mock)
@@ -128,9 +138,9 @@ impl GcpMock {
         Ok(p)
     }
 
-    /// Endpoint options: `serviceAccountKey=file:...&uriEndpointOverride=...&overrideEndpoint=true`.
+    /// Endpoint options: `serviceAccountKey=file:...&uriEndpointOverride=...&overrideEndpoint=true&pubsubEndpoint=...`.
     pub fn endpoint_options(&self, key_file: &std::path::Path) -> String {
-        format!("serviceAccountKey=file:{}&uriEndpointOverride={}&overrideEndpoint=true", key_file.display(), self.url())
+        format!("serviceAccountKey=file:{}&uriEndpointOverride={}&overrideEndpoint=true&pubsubEndpoint={}", key_file.display(), self.url(), self.pubsub_grpc_address())
     }
 
     /// Trust another service account's public key.
@@ -261,6 +271,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     if req.path == "/token" && req.method == "POST" {
         return token(st, req);
     }
+    if let Some(r) = more::signed_url(st, req) {
+        return r;
+    }
     {
         let mut s = st.lock().unwrap();
         if s.require_auth {
@@ -275,6 +288,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     let segs = req.segments();
     let s: Vec<&str> = segs.iter().map(|x| x.as_str()).collect();
     if let Some(r) = ext::handle(st, req, &s) {
+        return r;
+    }
+    if let Some(r) = more::handle(st, req, &s) {
         return r;
     }
     match s.as_slice() {
@@ -327,6 +343,9 @@ fn token(st: &Shared, req: &ServerRequest) -> Response {
     let mut s = st.lock().unwrap();
     s.tokens.insert(tok.clone(), now + 3600);
     s.ext.token_scopes.insert(tok.clone(), scope);
+    if let Some(sub) = claims.get("sub").map(|x| x.to_string()).filter(|x| !x.is_empty()) {
+        s.more.token_subjects.insert(tok.clone(), sub);
+    }
     s.token_requests += 1;
     Response::json(200, obj([("access_token", Value::from(tok)), ("expires_in", Value::Int(3599)), ("token_type", Value::from("Bearer"))]).to_json())
 }
