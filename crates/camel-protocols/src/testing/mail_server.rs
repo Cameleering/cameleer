@@ -2,6 +2,10 @@
 //! Camel's mock mailbox): mail sent with SMTP to `bob@localhost` can be read with POP3 or
 //! IMAP by logging in as `bob@localhost` (or just `bob`).
 //!
+//! TLS: `start_tls(&mailbox, tls_config, implicit)` on each server serves implicit TLS
+//! (`smtps`/`pop3s`/`imaps`) or plain connections that offer `STARTTLS` / `STLS` and
+//! refuse authentication until TLS is negotiated.
+//!
 //! ```no_run
 //! use camel_protocols::testing::{Mailbox, SmtpServer, Pop3Server};
 //! let mailbox = Mailbox::new();
@@ -15,6 +19,9 @@ use std::collections::HashMap;
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
+
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
 use std::time::Duration;
 
 use camel_core::dataformat::base64;
@@ -121,16 +128,60 @@ impl Mailbox {
     }
 }
 
-fn reply(out: &mut TcpStream, line: &str) -> std::io::Result<()> {
+fn reply(out: &mut NetStream, line: &str) -> std::io::Result<()> {
     out.write_all(line.as_bytes())?;
     out.write_all(b"\r\n")?;
     out.flush()
 }
 
-fn session_streams(s: TcpStream) -> std::io::Result<(BufReader<TcpStream>, TcpStream)> {
+fn session_streams(s: NetStream) -> std::io::Result<(BufReader<NetStream>, NetStream)> {
     s.set_read_timeout(Some(Duration::from_secs(60)))?;
     let out = s.try_clone()?;
     Ok((BufReader::new(s), out))
+}
+
+/// TLS mode of an embedded mail server.
+#[derive(Clone)]
+enum ServerTls {
+    Plain,
+    Implicit(Arc<TlsServerConfig>),
+    StartTls(Arc<TlsServerConfig>),
+}
+
+impl ServerTls {
+    fn new(cfg: Option<TlsServerConfig>, implicit: bool) -> ServerTls {
+        match cfg {
+            None => ServerTls::Plain,
+            Some(c) if implicit => ServerTls::Implicit(Arc::new(c)),
+            Some(c) => ServerTls::StartTls(Arc::new(c)),
+        }
+    }
+
+    /// Wraps an accepted connection (handshake for implicit TLS).
+    fn wrap(&self, s: TcpStream) -> std::io::Result<NetStream> {
+        let _ = s.set_read_timeout(Some(Duration::from_secs(30)));
+        match self {
+            ServerTls::Implicit(c) => NetStream::server(s, c),
+            _ => Ok(NetStream::plain(s)),
+        }
+    }
+
+    /// STARTTLS configuration (None when not offered).
+    fn starttls(&self) -> Option<Arc<TlsServerConfig>> {
+        match self {
+            ServerTls::StartTls(c) => Some(c.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Upgrades a session in place after a positive STARTTLS reply.
+fn upgrade(r: &mut BufReader<NetStream>, out: &mut NetStream, cfg: &TlsServerConfig) -> std::io::Result<()> {
+    let plain = out.try_clone()?;
+    let secured = plain.start_tls_server(cfg)?;
+    *r = BufReader::new(secured.try_clone()?);
+    *out = secured;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -145,9 +196,20 @@ pub struct SmtpServer {
 
 impl SmtpServer {
     pub fn start(mailbox: &Mailbox) -> Result<SmtpServer> {
+        Self::start_inner(mailbox, ServerTls::Plain)
+    }
+
+    /// TLS server: implicit TLS when `implicit`, else plain with STARTTLS (required before login).
+    pub fn start_tls(mailbox: &Mailbox, tls: TlsServerConfig, implicit: bool) -> Result<SmtpServer> {
+        Self::start_inner(mailbox, ServerTls::new(Some(tls), implicit))
+    }
+
+    fn start_inner(mailbox: &Mailbox, tls: ServerTls) -> Result<SmtpServer> {
         let mb = mailbox.clone();
         let server = TcpServer::bind("127.0.0.1", 0, "smtp-server", move |s| {
-            let _ = smtp_session(&mb, s);
+            if let Ok(s) = tls.wrap(s) {
+                let _ = smtp_session(&mb, s, tls.starttls());
+            }
         })?;
         Ok(SmtpServer { server })
     }
@@ -159,7 +221,7 @@ impl SmtpServer {
     }
 }
 
-fn smtp_session(mb: &Mailbox, s: TcpStream) -> std::io::Result<()> {
+fn smtp_session(mb: &Mailbox, s: NetStream, starttls: Option<Arc<TlsServerConfig>>) -> std::io::Result<()> {
     let (mut r, mut out) = session_streams(s)?;
     reply(&mut out, "220 localhost rust-camel ESMTP test server")?;
     let mut from: Option<String> = None;
@@ -169,7 +231,18 @@ fn smtp_session(mb: &Mailbox, s: TcpStream) -> std::io::Result<()> {
         let upper = line.to_ascii_uppercase();
         let verb = upper.split_whitespace().next().unwrap_or("").to_string();
         match verb.as_str() {
+            "EHLO" if starttls.is_some() && !out.is_tls() => reply(&mut out, "250-localhost\r\n250-STARTTLS\r\n250-8BITMIME\r\n250 SIZE 52428800")?,
             "EHLO" => reply(&mut out, "250-localhost\r\n250-AUTH PLAIN LOGIN\r\n250-8BITMIME\r\n250 SIZE 52428800")?,
+            "STARTTLS" => match &starttls {
+                Some(cfg) if !out.is_tls() => {
+                    reply(&mut out, "220 Ready to start TLS")?;
+                    upgrade(&mut r, &mut out, cfg)?;
+                    from = None;
+                    rcpts.clear();
+                }
+                _ => reply(&mut out, "502 STARTTLS not available")?,
+            },
+            "AUTH" | "MAIL" if starttls.is_some() && !out.is_tls() => reply(&mut out, "530 Must issue a STARTTLS command first")?,
             "HELO" => reply(&mut out, "250 localhost")?,
             "AUTH" => {
                 let parts: Vec<&str> = line.split_whitespace().collect();
@@ -265,9 +338,20 @@ pub struct Pop3Server {
 
 impl Pop3Server {
     pub fn start(mailbox: &Mailbox) -> Result<Pop3Server> {
+        Self::start_inner(mailbox, ServerTls::Plain)
+    }
+
+    /// TLS server: implicit TLS when `implicit`, else plain with STARTTLS (required before login).
+    pub fn start_tls(mailbox: &Mailbox, tls: TlsServerConfig, implicit: bool) -> Result<Pop3Server> {
+        Self::start_inner(mailbox, ServerTls::new(Some(tls), implicit))
+    }
+
+    fn start_inner(mailbox: &Mailbox, tls: ServerTls) -> Result<Pop3Server> {
         let mb = mailbox.clone();
         let server = TcpServer::bind("127.0.0.1", 0, "pop3-server", move |s| {
-            let _ = pop3_session(&mb, s);
+            if let Ok(s) = tls.wrap(s) {
+                let _ = pop3_session(&mb, s, tls.starttls());
+            }
         })?;
         Ok(Pop3Server { server })
     }
@@ -279,7 +363,7 @@ impl Pop3Server {
     }
 }
 
-fn pop3_session(mb: &Mailbox, s: TcpStream) -> std::io::Result<()> {
+fn pop3_session(mb: &Mailbox, s: NetStream, starttls: Option<Arc<TlsServerConfig>>) -> std::io::Result<()> {
     let (mut r, mut out) = session_streams(s)?;
     reply(&mut out, "+OK rust-camel POP3 test server ready")?;
     let mut user: Option<String> = None;
@@ -292,6 +376,20 @@ fn pop3_session(mb: &Mailbox, s: TcpStream) -> std::io::Result<()> {
         let mut parts = line.splitn(2, ' ');
         let verb = parts.next().unwrap_or("").to_ascii_uppercase();
         let arg = parts.next().unwrap_or("").trim().to_string();
+        if verb == "STLS" {
+            match &starttls {
+                Some(cfg) if !out.is_tls() => {
+                    reply(&mut out, "+OK Begin TLS negotiation")?;
+                    upgrade(&mut r, &mut out, cfg)?;
+                }
+                _ => reply(&mut out, "-ERR STLS not available")?,
+            }
+            continue;
+        }
+        if starttls.is_some() && !out.is_tls() && matches!(verb.as_str(), "USER" | "PASS") {
+            reply(&mut out, "-ERR TLS required (use STLS)")?;
+            continue;
+        }
         if key.is_none() && !matches!(verb.as_str(), "USER" | "PASS" | "QUIT" | "CAPA") {
             reply(&mut out, "-ERR not authenticated")?;
             continue;
@@ -301,6 +399,7 @@ fn pop3_session(mb: &Mailbox, s: TcpStream) -> std::io::Result<()> {
             (i < deleted.len() && !deleted[i]).then_some(i)
         };
         match verb.as_str() {
+            "CAPA" if starttls.is_some() && !out.is_tls() => reply(&mut out, "+OK\r\nSTLS\r\nUIDL\r\nTOP\r\n.")?,
             "CAPA" => reply(&mut out, "+OK\r\nUSER\r\nUIDL\r\nTOP\r\n.")?,
             "USER" => {
                 user = Some(arg);
@@ -394,9 +493,20 @@ pub struct ImapServer {
 
 impl ImapServer {
     pub fn start(mailbox: &Mailbox) -> Result<ImapServer> {
+        Self::start_inner(mailbox, ServerTls::Plain)
+    }
+
+    /// TLS server: implicit TLS when `implicit`, else plain with STARTTLS (required before login).
+    pub fn start_tls(mailbox: &Mailbox, tls: TlsServerConfig, implicit: bool) -> Result<ImapServer> {
+        Self::start_inner(mailbox, ServerTls::new(Some(tls), implicit))
+    }
+
+    fn start_inner(mailbox: &Mailbox, tls: ServerTls) -> Result<ImapServer> {
         let mb = mailbox.clone();
         let server = TcpServer::bind("127.0.0.1", 0, "imap-server", move |s| {
-            let _ = imap_session(&mb, s);
+            if let Ok(s) = tls.wrap(s) {
+                let _ = imap_session(&mb, s, tls.starttls());
+            }
         })?;
         Ok(ImapServer { server })
     }
@@ -437,7 +547,7 @@ fn imap_args(s: &str) -> Vec<String> {
     out
 }
 
-fn imap_session(mb: &Mailbox, s: TcpStream) -> std::io::Result<()> {
+fn imap_session(mb: &Mailbox, s: NetStream, starttls: Option<Arc<TlsServerConfig>>) -> std::io::Result<()> {
     let (mut r, mut out) = session_streams(s)?;
     reply(&mut out, "* OK [CAPABILITY IMAP4rev1] rust-camel IMAP test server ready")?;
     let mut key: Option<String> = None;
@@ -455,12 +565,29 @@ fn imap_session(mb: &Mailbox, s: TcpStream) -> std::io::Result<()> {
         if cmd == "UID" && !rest.is_empty() {
             cmd = rest.remove(0).to_ascii_uppercase();
         }
+        if cmd == "STARTTLS" {
+            match &starttls {
+                Some(cfg) if !out.is_tls() => {
+                    reply(&mut out, &format!("{} OK Begin TLS negotiation now", tag))?;
+                    upgrade(&mut r, &mut out, cfg)?;
+                }
+                _ => reply(&mut out, &format!("{} BAD STARTTLS not available", tag))?,
+            }
+            continue;
+        }
+        if starttls.is_some() && !out.is_tls() && cmd == "LOGIN" {
+            reply(&mut out, &format!("{} NO [PRIVACYREQUIRED] use STARTTLS first", tag))?;
+            continue;
+        }
         if key.is_none() && !matches!(cmd.as_str(), "LOGIN" | "CAPABILITY" | "LOGOUT" | "NOOP") {
             reply(&mut out, &format!("{} NO not authenticated", tag))?;
             continue;
         }
         let box_key = |k: &str, f: &str| if f.eq_ignore_ascii_case("INBOX") { k.to_string() } else { format!("{}/{}", k, f) };
         match cmd.as_str() {
+            "CAPABILITY" if starttls.is_some() && !out.is_tls() => {
+                reply(&mut out, &format!("* CAPABILITY IMAP4rev1 STARTTLS LOGINDISABLED\r\n{} OK CAPABILITY completed", tag))?
+            }
             "CAPABILITY" => reply(&mut out, &format!("* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n{} OK CAPABILITY completed", tag))?,
             "NOOP" => reply(&mut out, &format!("{} OK NOOP completed", tag))?,
             "LOGIN" => match (rest.first(), rest.get(1)) {

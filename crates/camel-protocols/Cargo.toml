@@ -7,3 +7,4 @@ description = "rust-camel network protocol components (std only): ftp, smtp/pop3
 
 [dependencies]
 camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }

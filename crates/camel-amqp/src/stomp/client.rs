@@ -9,7 +9,10 @@
 
 use std::collections::HashMap;
 use std::io::{BufReader, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::Shutdown;
+
+use camel_tls::camel_support::EndpointTls;
+use camel_tls::net::NetStream;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -47,6 +50,8 @@ pub struct StompConfig {
     pub receipt_timeout: Duration,
     /// Optional `client-id` header (ActiveMQ).
     pub client_id: Option<String>,
+    /// TLS (`ssl://`, `stomp+ssl://` broker urls).
+    pub tls: Option<EndpointTls>,
 }
 
 impl Default for StompConfig {
@@ -62,6 +67,7 @@ impl Default for StompConfig {
             connect_timeout: Duration::from_secs(30),
             receipt_timeout: Duration::from_secs(10),
             client_id: None,
+            tls: None,
         }
     }
 }
@@ -93,7 +99,7 @@ impl AckMode {
 }
 
 struct Inner {
-    writer: Mutex<TcpStream>,
+    writer: Mutex<NetStream>,
     subs: Mutex<HashMap<String, Sender<Frame>>>,
     receipts: Mutex<HashMap<String, Sender<Frame>>>,
     closed: Mutex<Option<CamelError>>,
@@ -155,8 +161,15 @@ pub struct StompConnection {
 impl StompConnection {
     /// Connect (`CONNECT` / `CONNECTED`).
     pub fn open(cfg: &StompConfig) -> Result<StompConnection> {
-        let stream = connect(&cfg.host, cfg.port, cfg.connect_timeout)?;
-        let what = format!("stomp://{}:{}", cfg.host, cfg.port);
+        let tcp = connect(&cfg.host, cfg.port, cfg.connect_timeout)?;
+        let what = format!("{}://{}:{}", if cfg.tls.is_some() { "stomp+ssl" } else { "stomp" }, cfg.host, cfg.port);
+        let stream = match &cfg.tls {
+            Some(t) => {
+                let _ = tcp.set_read_timeout(Some(cfg.connect_timeout.max(Duration::from_millis(100))));
+                t.handshake_client(tcp, &cfg.host)?
+            }
+            None => NetStream::plain(tcp),
+        };
         let ioe = |e: std::io::Error| io_error(e, &what);
         stream.set_read_timeout(Some(cfg.connect_timeout.max(Duration::from_millis(100)))).map_err(ioe)?;
         let mut reader = BufReader::new(stream.try_clone().map_err(ioe)?);

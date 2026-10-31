@@ -208,10 +208,10 @@ fn rest_dsl_json_binding_round_trip_and_error_500() {
 }
 
 #[test]
-fn https_is_out_of_scope_and_fails_clearly() {
+fn https_endpoint_connection_failure_is_a_connect_exception() {
+    // https is supported (see tests/tls.rs); an unreachable target fails like plain http
     let ctx = context();
     ctx.start().unwrap();
     let e = ctx.create_producer_template().request_body("https://127.0.0.1:1/x", Value::Null).unwrap_err();
-    let text = format!("{} {:?}", e, e.cause);
-    assert!(text.to_lowercase().contains("https") || text.to_lowercase().contains("tls"), "{}", text);
+    assert!(e.chain().any(|c| c.is_a("ConnectException")), "{:?}", e);
 }

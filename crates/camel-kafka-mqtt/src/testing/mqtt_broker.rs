@@ -17,6 +17,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufReader, Write};
 use std::net::TcpStream;
+
+use camel_tls::net::NetStream;
+use camel_tls::TlsServerConfig;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -33,11 +36,13 @@ pub struct MqttBrokerConfig {
     pub port: u16,
     /// Accepted `(username, password)` pairs; empty = anonymous access allowed.
     pub users: Vec<(String, String)>,
+    /// Serve MQTT over TLS (`ssl://` broker urls) with this configuration.
+    pub tls: Option<TlsServerConfig>,
 }
 
 struct BConn {
     id: u64,
-    writer: Mutex<TcpStream>,
+    writer: Mutex<NetStream>,
     v5: bool,
 }
 
@@ -79,6 +84,7 @@ struct Inner {
 }
 
 struct State {
+    tls: Option<Arc<TlsServerConfig>>,
     users: Vec<(String, String)>,
     inner: Mutex<Inner>,
     running: AtomicBool,
@@ -101,6 +107,7 @@ impl MqttBroker {
     /// Start with settings.
     pub fn start_with(cfg: MqttBrokerConfig) -> Result<MqttBroker> {
         let state = Arc::new(State {
+            tls: cfg.tls.map(Arc::new),
             users: cfg.users,
             inner: Mutex::new(Inner::default()),
             running: AtomicBool::new(true),
@@ -116,9 +123,9 @@ impl MqttBroker {
         self.server.port()
     }
 
-    /// `tcp://127.0.0.1:<port>`, for the `brokerUrl` option.
+    /// `tcp://127.0.0.1:<port>` (`ssl://` with TLS), for the `brokerUrl` option.
     pub fn url(&self) -> String {
-        format!("tcp://127.0.0.1:{}", self.port())
+        format!("{}://127.0.0.1:{}", if self.state.tls.is_some() { "ssl" } else { "tcp" }, self.port())
     }
 
     /// The retained payload of a topic.
@@ -239,8 +246,15 @@ fn valid_credentials(state: &State, c: &Connect) -> bool {
     state.users.iter().any(|(uu, pp)| uu == u && pp.as_bytes() == p.as_slice())
 }
 
-fn serve(state: &Arc<State>, stream: TcpStream) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+fn serve(state: &Arc<State>, tcp: TcpStream) {
+    let _ = tcp.set_read_timeout(Some(Duration::from_secs(10)));
+    let stream = match &state.tls {
+        Some(cfg) => match NetStream::server(tcp, cfg) {
+            Ok(s) => s,
+            Err(_) => return,
+        },
+        None => NetStream::plain(tcp),
+    };
     let Ok(rs) = stream.try_clone() else { return };
     let mut reader = BufReader::new(rs);
     let connect = match read_packet(&mut reader, false, 1 << 20) {

@@ -1,4 +1,4 @@
-//! WebSocket components (RFC 6455, plain `ws` only):
+//! WebSocket components (RFC 6455, `ws` and `wss`):
 //!
 //! | scheme | role |
 //! |---|---|
@@ -26,6 +26,11 @@
 //! `allowedOrigins` (comma separated, `*` = any), `subProtocol`/`subProtocols`,
 //! `fireWebSocketConnectionEvents` (vertx), `consumeAsClient` (vertx), `connectTimeout`
 //! (10s), `reconnectInterval` (client consumers, 0 = no reconnect).
+//!
+//! **TLS**: `wss://host:port/path` client endpoints (default port 443) verify the server
+//! certificate; `websocket`/`vertx-websocket` servers serve `wss` when
+//! `sslContextParameters=#bean` (with key material) or `useGlobalSslContextParameters=true`
+//! is set (the first endpoint binding a host/port decides).
 
 pub mod protocol;
 pub mod sha1;
@@ -34,6 +39,9 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::io::BufReader;
 use std::net::TcpStream;
+
+use camel_tls::camel_support::{endpoint_tls, EndpointTls};
+use camel_tls::net::NetStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
@@ -115,6 +123,8 @@ pub struct WsOptions {
     pub consume_as_client: bool,
     pub connect_timeout: Duration,
     pub reconnect_interval: Duration,
+    /// TLS (wss) settings.
+    pub tls: Option<EndpointTls>,
 }
 
 impl WsOptions {
@@ -136,10 +146,8 @@ impl WsOptions {
             consume_as_client: params.take_bool("consumeAsClient", false)?,
             connect_timeout: params.take_duration("connectTimeout", Duration::from_secs(10))?,
             reconnect_interval: params.take_duration("reconnectInterval", Duration::ZERO)?,
+            tls: None,
         };
-        if params.take("sslContextParameters").is_some() {
-            return Err(CamelError::new(camel_core::error::kinds::UNSUPPORTED_OPERATION, "TLS (wss) is not supported by rust-camel"));
-        }
         take_ignored(params, COMMON_IGNORED);
         take_ignored(
             params,
@@ -158,7 +166,6 @@ impl WsOptions {
                 "clientOptions",
                 "reconnectInitialDelay",
                 "reconnectMaxAttempts",
-                "useGlobalSslContextParameters",
                 "handshakeHeaders",
             ],
         );
@@ -222,6 +229,7 @@ pub struct WsServer {
     host: String,
     port: u16,
     tcp: Mutex<Option<TcpServer>>,
+    tls: Mutex<Option<EndpointTls>>,
     paths: Mutex<HashMap<String, PathEntry>>,
     conns: Mutex<HashMap<String, Arc<WsConnection>>>,
 }
@@ -252,6 +260,10 @@ impl WsServer {
         }
         let mut tcp = self.tcp.lock().unwrap();
         if tcp.is_none() {
+            if let Some(t) = &options.tls {
+                t.server_config("websocket server")?;
+            }
+            *self.tls.lock().unwrap() = options.tls.clone();
             let weak: Weak<WsServer> = Arc::downgrade(self);
             let t = TcpServer::bind(&self.host, self.port, "websocket", move |s| {
                 if let Some(srv) = weak.upgrade() {
@@ -295,8 +307,19 @@ impl WsServer {
         empty
     }
 
-    fn handle(self: Arc<Self>, stream: TcpStream) {
-        let _ = stream.set_nodelay(true);
+    fn handle(self: Arc<Self>, tcp: TcpStream) {
+        let _ = tcp.set_nodelay(true);
+        let tls = self.tls.lock().unwrap().clone();
+        let stream = match tls {
+            Some(t) => match t.accept(tcp, "websocket server") {
+                Ok(s) => s,
+                Err(e) => {
+                    camel_core::camel_debug!("websocket", "TLS handshake failed: {}", e);
+                    return;
+                }
+            },
+            None => NetStream::plain(tcp),
+        };
         let Ok(rs) = stream.try_clone() else { return };
         let mut reader = BufReader::new(rs);
         let mut w = &stream;
@@ -364,7 +387,7 @@ fn get_or_create_server(reg: &Registry, host: &str, port: u16) -> Arc<WsServer> 
             return s.clone();
         }
     }
-    let s = Arc::new(WsServer { host: host.to_string(), port, tcp: Mutex::new(None), paths: Mutex::new(HashMap::new()), conns: Mutex::new(HashMap::new()) });
+    let s = Arc::new(WsServer { host: host.to_string(), port, tcp: Mutex::new(None), tls: Mutex::new(None), paths: Mutex::new(HashMap::new()), conns: Mutex::new(HashMap::new()) });
     r.insert((host.to_string(), port), s.clone());
     s
 }
@@ -409,7 +432,7 @@ impl WsClient {
         if let Some(c) = guard.as_ref().filter(|c| c.is_open()) {
             return Ok(c.clone());
         }
-        let mut c = WsConnection::connect(&self.host, self.port, &self.path, self.options.connect_timeout)?;
+        let mut c = WsConnection::connect_secure(&self.host, self.port, &self.path, self.options.connect_timeout, &[], self.options.tls.as_ref())?;
         c.set_max_message_size(self.options.max_message_size);
         c.set_max_frame_size(self.options.max_frame_size);
         let c = Arc::new(c);
@@ -474,12 +497,18 @@ impl WsClient {
 /// The `websocket`, `vertx-websocket` and `ws` components.
 pub struct WebSocketComponent {
     flavor: Flavor,
+    secure: bool,
     servers: Registry,
 }
 
 impl WebSocketComponent {
     pub fn new(flavor: Flavor) -> Self {
-        WebSocketComponent { flavor, servers: Arc::new(Mutex::new(HashMap::new())) }
+        WebSocketComponent { flavor, secure: false, servers: Arc::new(Mutex::new(HashMap::new())) }
+    }
+
+    /// The `wss` client component (TLS, default port 443).
+    pub fn secure_client() -> Self {
+        WebSocketComponent { flavor: Flavor::Client, secure: true, servers: Arc::new(Mutex::new(HashMap::new())) }
     }
 }
 
@@ -488,6 +517,7 @@ impl Component for WebSocketComponent {
         let default_port = match self.flavor {
             Flavor::Camel => 9292,
             Flavor::Vertx => 0,
+            Flavor::Client if self.secure => 443,
             Flavor::Client => 80,
         };
         let (authority, path) = match remaining.find('/') {
@@ -496,7 +526,15 @@ impl Component for WebSocketComponent {
             None => ("", remaining),
         };
         let (host, port) = split_host_port(authority, default_port)?;
-        let options = WsOptions::parse(params)?;
+        let scheme = match (self.flavor, self.secure) {
+            (Flavor::Client, true) => "wss",
+            (Flavor::Client, false) => "ws",
+            (Flavor::Vertx, _) => "vertx-websocket",
+            (Flavor::Camel, _) => "websocket",
+        };
+        let tls = endpoint_tls(ctx, params, scheme, self.secure, &[])?;
+        let mut options = WsOptions::parse(params)?;
+        options.tls = tls;
         let path = normalize_path(path);
         let client = if self.flavor == Flavor::Client || (self.flavor == Flavor::Vertx) {
             let h = if host == "0.0.0.0" { "127.0.0.1".to_string() } else { host.clone() };

@@ -15,6 +15,9 @@
 //! credentials from `username`/`password` (`login`/`passcode` for `stomp`) or
 //! `camel.component.<scheme>.username|password`. Urls such as `tcp://h:p`, `stomp://h:p`,
 //! `amqp://h:p` and `failover:(tcp://h:p,...)` are accepted (the first address is used).
+//! TLS: `ssl://h:p`, `stomp+ssl://h:p`, `stomps://h:p` (or `sslContextParameters=#bean` /
+//! `useGlobalSslContextParameters=true` with any url) connect over TLS; trust comes from
+//! the parameters, the global `camel.ssl.*` ones, else the system trust store.
 //!
 //! **stomp**: `stomp:queue:a` is the STOMP destination `/queue/a`. Consumers subscribe
 //! with `ack:auto` and map every STOMP header to a Camel header; producers `SEND` the body
@@ -61,7 +64,7 @@ use camel_core::value::Value;
 use super::client::{AckMode, StompConfig, StompConnection, Subscription};
 use super::frame::Frame;
 use super::{jms_destination_name, normalize_destination};
-use crate::common::{now_millis, parse_broker_url, take_ignored, unique_id, COMMON_IGNORED};
+use crate::common::{broker_url_is_tls, now_millis, parse_broker_url, take_ignored, unique_id, COMMON_IGNORED};
 use crate::selector::Selector;
 
 /// JMS header names (Camel `JmsConstants`).
@@ -178,12 +181,13 @@ impl JmsConfig {
             .or_else(|| comp("connectionFactory.brokerURL"))
             .unwrap_or_else(|| "tcp://localhost:61613".to_string());
         let (host, port) = parse_broker_url(&url, 61613)?;
+        let tls = camel_tls::camel_support::endpoint_tls(ctx, params, scheme, broker_url_is_tls(&url), &[])?;
         let (login_key, pass_key) = if flavor == Flavor::Stomp { ("login", "passcode") } else { ("username", "password") };
         let login = params.take(login_key).or_else(|| comp(login_key)).or_else(|| params.take("login")).or_else(|| comp("login"));
         let passcode = params.take(pass_key).or_else(|| comp(pass_key)).or_else(|| params.take("passcode")).or_else(|| comp("passcode"));
         let virtual_host = params.take("host").or_else(|| comp("host"));
         let client_id = params.take("clientId").or_else(|| comp("clientId"));
-        let conn = StompConfig { host, port, login, passcode, virtual_host, client_id, ..Default::default() };
+        let conn = StompConfig { host, port, login, passcode, virtual_host, client_id, tls, ..Default::default() };
         let destination = match flavor {
             Flavor::Stomp => {
                 if remaining.starts_with('/') {

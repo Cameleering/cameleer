@@ -40,6 +40,22 @@ pub fn split_host_port(s: &str, default_port: u16) -> Result<(String, u16)> {
     }
 }
 
+/// Whether a broker url selects TLS: `ssl://`, `amqps://`, `stomp+ssl://`, `stomp+tls://`,
+/// `stomps://`, `tls://`, `nio+ssl://` (also as the first address of a `failover:(...)` list).
+pub fn broker_url_is_tls(url: &str) -> bool {
+    let mut u = url.trim();
+    if let Some(rest) = u.strip_prefix("failover:").or_else(|| u.strip_prefix("discovery:")) {
+        u = rest.trim_start_matches('(');
+    }
+    match u.find("://") {
+        Some(i) => {
+            let scheme = u[..i].to_ascii_lowercase();
+            matches!(scheme.as_str(), "ssl" | "tls" | "amqps" | "stomps" | "stomp+ssl" | "stomp+tls" | "ssl+stomp" | "nio+ssl" | "mqtt+ssl")
+        }
+        None => false,
+    }
+}
+
 /// Parse a broker url such as `tcp://host:61613`, `stomp://host:port`, `nio://...`,
 /// `amqp://host:port`, `failover:(tcp://a:1,tcp://b:2)?opts` (the first address is used)
 /// or a bare `host:port`. Returns `(host, port)`.

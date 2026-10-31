@@ -1,13 +1,12 @@
 //! # rust-camel HTTP
 //!
-//! HTTP/1.1 server and client built on `std::net` (plain `http` only: there is no TLS
-//! in a std-only build, `https` endpoints fail with a clear error), plus the Camel
-//! components built on top of them:
+//! HTTP/1.1 server and client built on `std::net`, with HTTPS (client and server) via
+//! `camel-tls` and `SslContextParameters`, plus the Camel components built on top of them:
 //!
 //! | scheme | role |
 //! |---|---|
 //! | `platform-http`, `jetty`, `undertow`, `netty-http` | HTTP consumers ([`platform`]) |
-//! | `http` (`https` errors) | HTTP producer ([`producer`]) |
+//! | `http`, `https` | HTTP producer ([`producer`]) |
 //! | `rest` | rest endpoints ([`rest::RestComponent`]) |
 //! | `netty` | TCP/UDP sockets ([`netty`]) |
 //!
@@ -45,14 +44,14 @@ use std::sync::Arc;
 use camel_core::context::CamelContext;
 
 pub use binding::headers;
-pub use client::{HttpClient, HttpConnection, Url};
+pub use client::{HttpClient, HttpConnection, ProxyAddr, ProxyConfig, Url};
 pub use http::{HttpHeaders, HttpRequest, HttpResponse};
 pub use producer::HttpOperationFailed;
 pub use rest::{RestBindingMode, RestDslExt, RestParam};
 pub use server::{HttpServer, ServerConfig};
 
 /// Register all components of this crate on a context (lazily created):
-/// `platform-http`, `jetty`, `undertow`, `netty-http`, `http`, `https` (always errors),
+/// `platform-http`, `jetty`, `undertow`, `netty-http`, `http`, `https`,
 /// `netty` and `rest`. Schemes that already have a component (or factory) registered
 /// are left untouched, so applications can pre-register customized components.
 pub fn register(ctx: &CamelContext) {

@@ -7,3 +7,4 @@ description = "rust-camel messaging components (std only): kafka (wire protocol 
 
 [dependencies]
 camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }

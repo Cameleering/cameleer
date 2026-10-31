@@ -2,26 +2,40 @@
 //! `DELE`, `RSET`, `NOOP`, `QUIT`.
 
 use std::io::{BufReader, Write};
-use std::net::TcpStream;
 use std::time::Duration;
+
+use camel_tls::net::NetStream;
 
 use camel_core::error::Result;
 
 use super::mime::read_dot_terminated;
 use super::{auth_error, messaging_error};
-use crate::common::{connect, io_error, read_line};
+use super::{MailTls, StartTls};
+use crate::common::{connect_stream, io_error, read_line, upgrade_stream};
 
 /// A connected POP3 session.
 pub struct Pop3Client {
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
+    reader: BufReader<NetStream>,
+    writer: NetStream,
     host: String,
 }
 
 impl Pop3Client {
     /// Connect and read the `+OK` greeting.
     pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<Pop3Client> {
-        let s = connect(host, port, timeout).map_err(|e| messaging_error(format!("Couldn't connect to host, port: {}, {}; {}", host, port, e.message)))?;
+        Pop3Client::connect_with(host, port, timeout, None)
+    }
+
+    /// Connect with implicit TLS (`pop3s`) or STARTTLS (`STLS`, RFC 2595).
+    pub fn connect_with(host: &str, port: u16, timeout: Duration, tls: Option<&MailTls>) -> Result<Pop3Client> {
+        let implicit = tls.filter(|t| t.implicit).map(|t| &t.tls);
+        let s = connect_stream(host, port, timeout, implicit).map_err(|e| {
+            if e.is_a("SSLException") {
+                e
+            } else {
+                messaging_error(format!("Couldn't connect to host, port: {}, {}; {}", host, port, e.message))
+            }
+        })?;
         let t = if timeout.is_zero() { None } else { Some(timeout) };
         let _ = s.set_read_timeout(t);
         let _ = s.set_write_timeout(t);
@@ -30,6 +44,15 @@ impl Pop3Client {
         let (ok, text) = c.read_status()?;
         if !ok {
             return Err(messaging_error(format!("POP3 server refused connection: {}", text)));
+        }
+        if let Some(t) = tls.filter(|t| !t.implicit && t.starttls != StartTls::Off) {
+            match c.command("STLS")? {
+                Ok(_) => upgrade_stream(&mut c.reader, &mut c.writer, &t.tls, host)?,
+                Err(e) if t.starttls == StartTls::Required => {
+                    return Err(messaging_error(format!("STARTTLS is required but POP3 server {} refused STLS: {}", host, e)))
+                }
+                Err(_) => {}
+            }
         }
         Ok(c)
     }

@@ -14,6 +14,11 @@
 //! Component options: `unmarshal` (true: body is the parsed object, false: the raw text),
 //! `charset` accepted. TCP accepts octet-counted (RFC 6587) and LF terminated frames;
 //! the producer sends one datagram (UDP) or an LF terminated line (TCP).
+//!
+//! TLS (RFC 5425): `syslog:tls://host:port` (default port 6514), or `syslog:tcp://...` with
+//! `ssl=true` / `sslContextParameters=#bean`. The consumer needs key material in the
+//! parameters (or the global `camel.ssl.*` ones); over TLS the producer uses
+//! octet-counted framing.
 
 use std::any::Any;
 use std::collections::BTreeMap;
@@ -33,8 +38,10 @@ use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Servic
 use camel_core::util::Parameters;
 use camel_core::util_time::{civil_from_epoch, epoch_from_civil, now_millis};
 use camel_core::value::Value;
+use camel_tls::camel_support::{endpoint_tls, EndpointTls};
+use camel_tls::net::NetStream;
 
-use crate::common::{connect, host_port, io_error, split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
+use crate::common::{connect_stream, host_port, io_error, split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
 use crate::ftp::listing::{month_name, month_number};
 
 /// Header names (Camel `SyslogConstants`).
@@ -363,6 +370,7 @@ struct SyslogConfig {
     host: String,
     port: u16,
     unmarshal: bool,
+    tls: Option<EndpointTls>,
 }
 
 /// The `syslog` component.
@@ -375,11 +383,18 @@ impl Component for SyslogComponent {
             (Transport::Udp, r)
         } else if let Some(r) = remaining.strip_prefix("tcp://").or_else(|| remaining.strip_prefix("tcp:")) {
             (Transport::Tcp, r)
+        } else if let Some(r) = remaining.strip_prefix("tls://").or_else(|| remaining.strip_prefix("tls:")) {
+            (Transport::Tcp, r)
         } else {
             (Transport::Udp, remaining)
         };
-        let (host, port) = split_host_port(rest.trim_end_matches('/'), 514)?;
-        let cfg = SyslogConfig { transport, host, port, unmarshal: params.take_bool("unmarshal", true)? };
+        let tls_scheme = remaining.starts_with("tls:");
+        let (host, port) = split_host_port(rest.trim_end_matches('/'), if tls_scheme { 6514 } else { 514 })?;
+        let tls = endpoint_tls(ctx, params, "syslog", tls_scheme, &["ssl"])?;
+        if tls.is_some() && transport == Transport::Udp {
+            return Err(CamelError::illegal_argument("syslog over TLS requires the tcp or tls transport"));
+        }
+        let cfg = SyslogConfig { transport, host, port, unmarshal: params.take_bool("unmarshal", true)?, tls };
         take_ignored(params, COMMON_IGNORED);
         take_ignored(params, &["charset", "sync", "textline", "delimiter", "receiveBufferSize", "sendBufferSize"]);
         Ok(Arc::new(SyslogEndpoint { uri: uri.to_string(), ctx: ctx.downgrade(), cfg, port: Arc::new(Mutex::new(None)) }))
@@ -467,9 +482,19 @@ impl Router {
     }
 
     /// Serve a TCP connection: octet-counted (`LEN SP MSG`) or LF terminated frames.
-    fn serve_tcp(&self, stream: TcpStream) {
-        let remote = stream.peer_addr().ok();
-        let local = stream.local_addr().ok();
+    fn serve_tcp(&self, tcp: TcpStream) {
+        let remote = tcp.peer_addr().ok();
+        let local = tcp.local_addr().ok();
+        let stream = match &self.cfg.tls {
+            Some(t) => match t.accept(tcp, "syslog consumer") {
+                Ok(s) => s,
+                Err(e) => {
+                    camel_core::camel_debug!(&self.logger, "syslog TLS handshake failed: {}", e);
+                    return;
+                }
+            },
+            None => NetStream::plain(tcp),
+        };
         let mut r = BufReader::new(&stream);
         loop {
             let first = match r.fill_buf() {
@@ -589,8 +614,9 @@ impl Processor for SyslogProducer {
                 socket.send_to(text.as_bytes(), target).map_err(|e| io_error(e, &what))?;
             }
             Transport::Tcp => {
-                let mut s = connect(host, self.cfg.port, Duration::from_secs(10))?;
-                s.write_all(format!("{}\n", text).as_bytes()).map_err(|e| io_error(e, &what))?;
+                let mut s = connect_stream(host, self.cfg.port, Duration::from_secs(10), self.cfg.tls.as_ref())?;
+                let frame = if s.is_tls() { format!("{} {}", text.len(), text) } else { format!("{}\n", text) };
+                s.write_all(frame.as_bytes()).map_err(|e| io_error(e, &what))?;
                 let _ = s.shutdown(std::net::Shutdown::Both);
             }
         }

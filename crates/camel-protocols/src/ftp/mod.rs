@@ -1,4 +1,13 @@
-//! `ftp:` component (Camel `camel-ftp`, plain FTP only).
+//! `ftp:` and `ftps:` components (Camel `camel-ftp`).
+//!
+//! **FTPS** (`ftps://host[:port]/dir`): explicit mode (`AUTH TLS`, default port 21) or
+//! implicit mode with `isImplicit=true` (default port 990). After login `PBSZ <execPbsz>`
+//! (default 0) and `PROT <execProt>` (default `P`: TLS-protected data connections) are sent
+//! unless `disableSecureDataChannelDefaults=true` (then only when set explicitly).
+//! Trust material: `sslContextParameters=#bean`, `useGlobalSslContextParameters=true`, the
+//! global `camel.ssl.*` parameters, else the system trust store; `securityProtocol`
+//! (`TLSv1.2`/`TLSv1.3`/`TLS`) restricts the protocol version. TLS session resumption on
+//! data connections (vsftpd `require_ssl_reuse`) is not implemented.
 //!
 //! `ftp://[username@]host[:port]/directoryname[?options]` — the directory is relative to
 //! the login directory (use `//abs/dir` for an absolute directory).
@@ -57,7 +66,8 @@ use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Servic
 use camel_core::util::Parameters;
 use camel_core::value::Value;
 
-pub use client::{ftp_error, FtpClient, FtpReply};
+pub use client::{ftp_error, FtpClient, FtpReply, FtpSecurity};
+use camel_tls::camel_support::{endpoint_tls, EndpointTls};
 pub use listing::RemoteFile;
 
 use crate::common::{take_ignored, Authority, COMMON_IGNORED};
@@ -76,9 +86,22 @@ struct SortKey {
     key: String,
 }
 
+/// FTPS settings of an endpoint.
+#[derive(Clone, Debug)]
+pub struct FtpsConfig {
+    pub tls: EndpointTls,
+    pub implicit: bool,
+    /// `PBSZ` value (None = not sent).
+    pub exec_pbsz: Option<u64>,
+    /// `PROT` value (None = not sent).
+    pub exec_prot: Option<String>,
+}
+
 /// Configuration of an `ftp` endpoint.
 #[derive(Clone)]
 pub struct FtpConfig {
+    /// FTPS settings (`ftps:` endpoints).
+    pub ftps: Option<FtpsConfig>,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -145,7 +168,13 @@ fn take_list(p: &mut Parameters, k: &str) -> Vec<String> {
 impl FtpConfig {
     /// Parse `remaining` (`[user[:password]@]host[:port]/dir`) and the endpoint options.
     pub fn parse(remaining: &str, params: &mut Parameters) -> Result<FtpConfig> {
-        let a = Authority::parse(remaining, 21)?;
+        FtpConfig::parse_with(remaining, params, None)
+    }
+
+    /// Like [`FtpConfig::parse`] with FTPS settings (the default port is 990 in implicit mode).
+    pub fn parse_with(remaining: &str, params: &mut Parameters, ftps: Option<FtpsConfig>) -> Result<FtpConfig> {
+        let default_port = if ftps.as_ref().map(|f| f.implicit).unwrap_or(false) { 990 } else { 21 };
+        let a = Authority::parse(remaining, default_port)?;
         if a.host.is_empty() {
             return Err(CamelError::illegal_argument(format!("Hostname must be configured: ftp://{}", remaining)));
         }
@@ -195,6 +224,7 @@ impl FtpConfig {
         let exclude = take_nonempty(params, "exclude").map(|p| NamePattern::new(&p)).transpose()?;
         let scheduler = ScheduledPollConfig::from_params(params, Duration::from_millis(1000), Duration::from_millis(500))?;
         let cfg = FtpConfig {
+            ftps,
             host: a.host,
             port: a.port,
             username,
@@ -402,10 +432,29 @@ impl Connection {
         let mut attempt = 0;
         loop {
             let r = (|| -> Result<Session> {
-                let mut client = FtpClient::connect(&c.host, c.port, c.connect_timeout, c.so_timeout)?;
+                let security = match &c.ftps {
+                    None => FtpSecurity::None,
+                    Some(f) => {
+                        let tls = f.tls.client_config()?;
+                        let server_name = f.tls.server_name(&c.host).to_string();
+                        if f.implicit {
+                            FtpSecurity::Implicit { tls, server_name }
+                        } else {
+                            FtpSecurity::Explicit { tls, server_name }
+                        }
+                    }
+                };
+                let mut client = FtpClient::connect_secure(&c.host, c.port, c.connect_timeout, c.so_timeout, &security)?;
                 client.set_passive(c.passive_mode);
                 client.set_data_timeout(c.data_timeout);
                 client.login(&c.username, &c.password)?;
+                if let Some(f) = &c.ftps {
+                    if let Some(prot) = &f.exec_prot {
+                        client.protect_data(f.exec_pbsz.unwrap_or(0), prot)?;
+                    } else if let Some(pbsz) = f.exec_pbsz {
+                        client.send_command(&format!("PBSZ {}", pbsz))?;
+                    }
+                }
                 client.set_binary(c.binary)?;
                 for s in &c.site_commands {
                     client.send_command(&format!("SITE {}", s))?;
@@ -481,6 +530,56 @@ impl Component for FtpComponent {
             None => Arc::new(MemoryIdempotentRepository::default()),
         };
         let cfg = Arc::new(FtpConfig::parse(remaining, params)?);
+        Ok(Arc::new(FtpEndpoint { uri: uri.to_string(), ctx: ctx.downgrade(), cfg, repo, in_progress: Arc::new(Mutex::new(HashSet::new())) }))
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// The `ftps` component (FTP over TLS, explicit or implicit).
+#[derive(Default)]
+pub struct FtpsComponent;
+
+impl Component for FtpsComponent {
+    fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
+        let implicit = params.take_bool("isImplicit", false)?;
+        let disable_defaults = params.take_bool("disableSecureDataChannelDefaults", false)?;
+        let exec_pbsz = match params.take("execPbsz") {
+            Some(v) => Some(v.trim().parse::<u64>().map_err(|_| CamelError::illegal_argument(format!("Invalid execPbsz: {}", v)))?),
+            None if disable_defaults => None,
+            None => Some(0),
+        };
+        let exec_prot = match params.take("execProt") {
+            Some(v) => {
+                let v = v.trim().to_ascii_uppercase();
+                if !matches!(v.as_str(), "C" | "S" | "E" | "P") {
+                    return Err(CamelError::illegal_argument(format!("Invalid execProt: {} (C, S, E or P)", v)));
+                }
+                Some(v)
+            }
+            None if disable_defaults => None,
+            None => Some("P".to_string()),
+        };
+        let security_protocol = params.take("securityProtocol");
+        let mut tls = endpoint_tls(ctx, params, "ftps", true, &[])?.expect("ftps always uses TLS");
+        if let Some(v) = security_protocol.as_deref().and_then(camel_tls::params::parse_tls_version) {
+            let mut p = (*tls.params).clone();
+            p.min_version = Some(v);
+            p.max_version = Some(v);
+            tls = EndpointTls::new(Arc::new(p));
+        }
+        take_ignored(params, &["ftpClient.trustStore.file", "ftpClient.trustStore.password", "ftpClient.keyStore.file", "ftpClient.keyStore.password", "ftpClientKeyStoreParameters", "ftpClientTrustStoreParameters"]);
+        let ftps = FtpsConfig { tls, implicit, exec_pbsz, exec_prot };
+        let repo: Arc<dyn IdempotentRepository> = match params.take("idempotentRepository") {
+            Some(r) => {
+                let name = r.trim_start_matches('#').trim_start_matches("bean:");
+                let repo = ctx.registry().lookup::<Arc<dyn IdempotentRepository>>(name).ok_or_else(|| CamelError::no_such_bean(name))?;
+                (*repo).clone()
+            }
+            None => Arc::new(MemoryIdempotentRepository::default()),
+        };
+        let cfg = Arc::new(FtpConfig::parse_with(remaining, params, Some(ftps))?);
         Ok(Arc::new(FtpEndpoint { uri: uri.to_string(), ctx: ctx.downgrade(), cfg, repo, in_progress: Arc::new(Mutex::new(HashSet::new())) }))
     }
     fn as_any(&self) -> &dyn Any {

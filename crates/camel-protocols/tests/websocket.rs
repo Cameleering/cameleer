@@ -215,5 +215,7 @@ fn vertx_websocket_events_and_consume_as_client() {
     c.close(1000, "");
     ctx.stop().unwrap();
     echo_ctx.stop().unwrap();
-    assert!(ctx.get_endpoint("wss://host/x").is_err());
+    // wss endpoints resolve (TLS end-to-end tests in tests/tls.rs); bad options still fail
+    assert!(ctx.get_endpoint("wss://host/x").is_ok());
+    assert!(ctx.get_endpoint("wss://host/x?sslContextParameters=#missing").is_err());
 }

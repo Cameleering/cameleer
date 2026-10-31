@@ -8,13 +8,22 @@
 //! - `jetty:http://0.0.0.0:8081/path` (also `undertow:`, `netty-http:`) take host and port
 //!   from the uri.
 //!
+//! HTTPS: `jetty:https://0.0.0.0:8443/path` (also `undertow:`/`netty-http:`) and
+//! `platform-http` endpoints with `ssl=true` or `sslContextParameters=#bean` serve TLS. The
+//! server certificate comes from `sslContextParameters` (endpoint option or
+//! `camel.component.<scheme>.sslContextParameters`), else the embedded server properties
+//! `camel.server.ssl.keyStore` / `certFile` + `keyFile` (or the global `camel.ssl.*`
+//! parameters with `camel.server.useGlobalSslContextParameters=true`). Setting
+//! `camel.server.sslEnabled=true` makes every `platform-http` endpoint use TLS.
+//!
 //! Port `0` picks a free port; use [`crate::local_port`] to discover it. For
 //! `platform-http`, all endpoints of a component with port 0 share the same ephemeral
 //! port (like a single platform server).
 //!
 //! Endpoint options: `httpMethodRestrict`, `matchOnUriPrefix`, `consumes`, `produces`,
 //! `muteException`, `chunked`, `mapHttpMessageBody`, `mapHttpMessageHeaders`,
-//! `mapHttpMessageFormUrlEncodedBody`, `port`, `host` (plus a few accepted and ignored
+//! `mapHttpMessageFormUrlEncodedBody`, `port`, `host`, `ssl`, `sslContextParameters`,
+//! `useGlobalSslContextParameters` (plus a few accepted and ignored
 //! Camel options such as `disableStreamCache`, `transferException`, `useStreaming`).
 
 use std::any::Any;
@@ -27,7 +36,7 @@ use camel_core::spi::{Component, Consumer, Endpoint, Processor, Service};
 use camel_core::util::Parameters;
 
 use crate::binding::ConsumerBinding;
-use crate::client::{https_not_supported, parse_authority};
+use crate::client::parse_authority;
 use crate::http::{HttpRequest, HttpResponse};
 use crate::registry::{registry, HttpRouteSpec, Registration, RouteHandler};
 use crate::server::ServerConfig;
@@ -103,15 +112,31 @@ impl HttpConsumerComponent {
 
 impl Component for HttpConsumerComponent {
     fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
-        let (host, port, path, from_uri) = if let Some(rest) = remaining.strip_prefix("http://") {
+        let (uri_scheme, rest) = match (remaining.strip_prefix("http://"), remaining.strip_prefix("https://")) {
+            (Some(r), _) => (Some(false), r),
+            (_, Some(r)) => (Some(true), r),
+            _ => (None, remaining),
+        };
+        let (host, port, path, from_uri) = if let Some(https) = uri_scheme {
             let split = rest.find('/').unwrap_or(rest.len());
-            let (h, p) = parse_authority(&rest[..split], 80).map_err(CamelError::illegal_argument)?;
+            let (h, p) = parse_authority(&rest[..split], if https { 443 } else { 80 }).map_err(CamelError::illegal_argument)?;
             (h, p, rest[split..].to_string(), true)
-        } else if remaining.starts_with("https://") {
-            return Err(https_not_supported(uri));
         } else {
             (self.default_host(ctx), self.default_port(ctx)?, remaining.to_string(), false)
         };
+        // TLS: `jetty:https://...`, or for platform-http `ssl=true`, `sslContextParameters=#bean`
+        // or the embedded server properties (`camel.server.ssl.*`, `camel.server.sslEnabled`)
+        let ssl = camel_tls::camel_support::take_endpoint_ssl(ctx, params, &self.scheme)?;
+        let ssl_flag = params.take_bool("ssl", false)?;
+        let use_tls = match uri_scheme {
+            Some(https) => https,
+            None => ssl_flag || ssl.is_some() || camel_tls::camel_support::server_ssl_enabled(ctx),
+        };
+        let mut server_config = self.server_config.lock().unwrap().clone();
+        if use_tls {
+            let tls = camel_tls::camel_support::server_config(ctx, ssl.as_ref(), uri)?;
+            server_config.tls = Some(Arc::new(tls));
+        }
         let host = params.take("host").unwrap_or(host);
         let explicit_port = params.take("port");
         let (port, share) = match explicit_port {
@@ -161,7 +186,7 @@ impl Component for HttpConsumerComponent {
             spec,
             binding,
             ctx: ctx.downgrade(),
-            server_config: self.server_config.lock().unwrap().clone(),
+            server_config,
             shared_port,
             bound_port: Arc::new(Mutex::new(None)),
         }))
@@ -197,6 +222,10 @@ impl HttpConsumerEndpoint {
     /// The configured port (0 = ephemeral).
     pub fn configured_port(&self) -> u16 {
         self.port
+    }
+    /// Whether the endpoint serves HTTPS.
+    pub fn is_tls(&self) -> bool {
+        self.server_config.tls.is_some()
     }
 }
 

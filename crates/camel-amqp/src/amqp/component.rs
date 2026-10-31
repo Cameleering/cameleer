@@ -24,6 +24,11 @@
 //! (also as `camel.component.rabbitmq.<option>`). The exchange name `default` (spring) or
 //! an empty name means the AMQP default exchange.
 //!
+//! **TLS** (`amqps`): enabled by an `amqps://` address, `sslProtocol=true|TLS|TLSv1.2|TLSv1.3`
+//! (rabbitmq), `spring.rabbitmq.ssl.enabled=true`, or `sslContextParameters=#bean` /
+//! `useGlobalSslContextParameters=true`. Trust comes from the parameters, the global
+//! `camel.ssl.*` ones, else the system trust store. Client certificates are not supported.
+//!
 //! **Consumers** declare (when `autoDeclare` / `declare`) the exchange, the queue(s) and the
 //! binding (plus the dead letter exchange/queue), set `basic.qos` and consume with
 //! `concurrentConsumers` channels. Messages become exchanges with the AMQP headers as
@@ -66,7 +71,7 @@ use camel_core::value::Value;
 
 use super::client::{AmqpConfig, Channel, Connection, Delivery, ExchangeOptions, QueueOptions};
 use super::codec::{BasicProperties, Table};
-use crate::common::{parse_broker_url, split_host_port, take_ignored, unique_id, COMMON_IGNORED};
+use crate::common::{broker_url_is_tls, parse_broker_url, split_host_port, take_ignored, unique_id, COMMON_IGNORED};
 
 /// Header names (Camel `RabbitMQConstants` / `SpringRabbitMQConstants`).
 pub mod headers {
@@ -218,14 +223,28 @@ impl RabbitConfig {
             }
         }
         let props = ctx.properties();
+        let mut tls_wanted = false;
+        let mut tls_version = None;
         let mut o = |k: &str| opt(params, ctx, scheme, k);
+        if let Some(v) = o("sslProtocol") {
+            let v = v.trim();
+            if !v.eq_ignore_ascii_case("false") && !v.is_empty() {
+                tls_wanted = true;
+                tls_version = camel_tls::params::parse_tls_version(v);
+            }
+        }
+        if spring && props.get("spring.rabbitmq.ssl.enabled").map(|v| v.trim().eq_ignore_ascii_case("true")).unwrap_or(false) {
+            tls_wanted = true;
+        }
+        let _ = o("trustManager");
         if spring {
             let host = o("host").or_else(|| props.get("spring.rabbitmq.host"));
             let port = o("port").or_else(|| props.get("spring.rabbitmq.port"));
             let addresses = o("addresses").or_else(|| props.get("spring.rabbitmq.addresses"));
             if let Some(a) = addresses {
                 let first = a.split(',').next().unwrap_or("").trim().to_string();
-                let (h, p) = parse_broker_url(&first, 5672)?;
+                tls_wanted |= broker_url_is_tls(&first);
+                let (h, p) = parse_broker_url(&first, if broker_url_is_tls(&first) { 5671 } else { 5672 })?;
                 conn.host = h;
                 conn.port = p;
             }
@@ -263,6 +282,17 @@ impl RabbitConfig {
                 conn.vhost = v;
             }
         }
+        drop(o);
+        if let Some(mut t) = camel_tls::camel_support::endpoint_tls(ctx, params, scheme, tls_wanted, &[])? {
+            if let Some(v) = tls_version {
+                let mut p = (*t.params).clone();
+                p.min_version = Some(v);
+                p.max_version = Some(v);
+                t = camel_tls::camel_support::EndpointTls::new(std::sync::Arc::new(p));
+            }
+            conn.tls = Some(t);
+        }
+        let mut o = |k: &str| opt(params, ctx, scheme, k);
         conn.heartbeat = parse_num("requestedHeartbeat", o("requestedHeartbeat"), 60u16)?;
         conn.frame_max = parse_num("requestedFrameMax", o("requestedFrameMax"), conn.frame_max)?;
         conn.channel_max = parse_num("requestedChannelMax", o("requestedChannelMax"), conn.channel_max)?;

@@ -40,8 +40,10 @@ pub mod api {
     pub const HEARTBEAT: i16 = 12;
     pub const LEAVE_GROUP: i16 = 13;
     pub const SYNC_GROUP: i16 = 14;
+    pub const SASL_HANDSHAKE: i16 = 17;
     pub const API_VERSIONS: i16 = 18;
     pub const CREATE_TOPICS: i16 = 19;
+    pub const SASL_AUTHENTICATE: i16 = 36;
 
     /// `(api key, version)` used by this client for every API.
     pub const VERSIONS: &[(i16, i16)] = &[
@@ -58,7 +60,14 @@ pub mod api {
         (SYNC_GROUP, 1),
         (API_VERSIONS, 0),
         (CREATE_TOPICS, 2),
+        (SASL_HANDSHAKE, 1),
+        (SASL_AUTHENTICATE, 1),
     ];
+
+    /// APIs that a broker may lack (only needed for some features).
+    pub fn optional(key: i16) -> bool {
+        matches!(key, CREATE_TOPICS | SASL_HANDSHAKE | SASL_AUTHENTICATE)
+    }
 
     /// The version used for an API key.
     pub fn version(key: i16) -> i16 {
@@ -81,6 +90,8 @@ pub mod api {
             SYNC_GROUP => "SyncGroup",
             API_VERSIONS => "ApiVersions",
             CREATE_TOPICS => "CreateTopics",
+            SASL_HANDSHAKE => "SaslHandshake",
+            SASL_AUTHENTICATE => "SaslAuthenticate",
             _ => "Unknown",
         }
     }
@@ -104,7 +115,10 @@ pub mod errors {
     pub const UNKNOWN_MEMBER_ID: i16 = 25;
     pub const INVALID_SESSION_TIMEOUT: i16 = 26;
     pub const REBALANCE_IN_PROGRESS: i16 = 27;
+    pub const UNSUPPORTED_SASL_MECHANISM: i16 = 33;
+    pub const ILLEGAL_SASL_STATE: i16 = 34;
     pub const UNSUPPORTED_VERSION: i16 = 35;
+    pub const SASL_AUTHENTICATION_FAILED: i16 = 58;
     pub const TOPIC_ALREADY_EXISTS: i16 = 36;
     pub const INVALID_PARTITIONS: i16 = 37;
     pub const INVALID_REQUEST: i16 = 42;
@@ -130,6 +144,9 @@ pub mod errors {
             INVALID_SESSION_TIMEOUT => "INVALID_SESSION_TIMEOUT",
             REBALANCE_IN_PROGRESS => "REBALANCE_IN_PROGRESS",
             UNSUPPORTED_VERSION => "UNSUPPORTED_VERSION",
+            UNSUPPORTED_SASL_MECHANISM => "UNSUPPORTED_SASL_MECHANISM",
+            ILLEGAL_SASL_STATE => "ILLEGAL_SASL_STATE",
+            SASL_AUTHENTICATION_FAILED => "SASL_AUTHENTICATION_FAILED",
             TOPIC_ALREADY_EXISTS => "TOPIC_ALREADY_EXISTS",
             INVALID_PARTITIONS => "INVALID_PARTITIONS",
             INVALID_REQUEST => "INVALID_REQUEST",
@@ -648,6 +665,55 @@ pub fn decode_record_batches(data: &[u8]) -> Result<Vec<Record>> {
 // ---------------------------------------------------------------------------
 // API bodies
 // ---------------------------------------------------------------------------
+
+/// SaslHandshake v1 response.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct SaslHandshakeResponse {
+    pub error_code: i16,
+    pub mechanisms: Vec<String>,
+}
+
+impl SaslHandshakeResponse {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut e = Encoder::new();
+        e.i16(self.error_code).len(self.mechanisms.len());
+        for m in &self.mechanisms {
+            e.string(m);
+        }
+        e.buf
+    }
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        let mut d = Decoder::new(data);
+        let error_code = d.i16()?;
+        let n = d.len()?;
+        let mut mechanisms = Vec::with_capacity(n);
+        for _ in 0..n {
+            mechanisms.push(d.string()?);
+        }
+        Ok(SaslHandshakeResponse { error_code, mechanisms })
+    }
+}
+
+/// SaslAuthenticate v1 response.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct SaslAuthenticateResponse {
+    pub error_code: i16,
+    pub error_message: Option<String>,
+    pub auth_bytes: Vec<u8>,
+    pub session_lifetime_ms: i64,
+}
+
+impl SaslAuthenticateResponse {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut e = Encoder::new();
+        e.i16(self.error_code).nullable_string(self.error_message.as_deref()).bytes(&self.auth_bytes).i64(self.session_lifetime_ms);
+        e.buf
+    }
+    pub fn decode(data: &[u8]) -> Result<Self> {
+        let mut d = Decoder::new(data);
+        Ok(SaslAuthenticateResponse { error_code: d.i16()?, error_message: d.nullable_string()?, auth_bytes: d.bytes()?, session_lifetime_ms: d.i64()? })
+    }
+}
 
 /// ApiVersions v0 response.
 #[derive(Clone, Debug, PartialEq, Default)]

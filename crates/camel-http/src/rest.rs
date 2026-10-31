@@ -65,6 +65,8 @@ impl RestBindingMode {
 #[derive(Clone, Debug)]
 pub struct RestConfiguration {
     pub component: String,
+    /// `http` (default) or `https` (the consumer then serves TLS; see `platform-http`).
+    pub scheme: String,
     pub host: Option<String>,
     pub port: Option<u16>,
     pub context_path: String,
@@ -82,6 +84,7 @@ impl Default for RestConfiguration {
     fn default() -> Self {
         RestConfiguration {
             component: "platform-http".into(),
+            scheme: "http".into(),
             host: None,
             port: None,
             context_path: String::new(),
@@ -265,6 +268,13 @@ impl RestConfigurationBuilder {
     pub fn component(&mut self, c: &str) -> &mut Self {
         let c = c.to_string();
         self.with(|cfg| cfg.component = c)
+    }
+    /// `http` (default) or `https`: with `https` the consumers serve TLS using the
+    /// embedded server certificate (`camel.server.ssl.*`, the global `camel.ssl.*`
+    /// parameters, or an `sslContextParameters` endpoint property).
+    pub fn scheme(&mut self, scheme: &str) -> &mut Self {
+        let sc = scheme.to_ascii_lowercase();
+        self.with(|cfg| cfg.scheme = sc)
     }
     pub fn host(&mut self, h: &str) -> &mut Self {
         let h = h.to_string();
@@ -463,9 +473,13 @@ fn consumer_uri(cfg: &RestConfiguration, path: &str, method: Option<&str>, consu
         if let Some(h) = &cfg.host {
             q.push(("host".into(), h.clone()));
         }
+        if cfg.scheme == "https" && !cfg.endpoint_properties.contains_key("ssl") {
+            q.push(("ssl".into(), "true".into()));
+        }
         format!("platform-http:{}", path)
     } else if matches!(cfg.component.as_str(), "jetty" | "undertow" | "netty-http") {
-        format!("{}:http://{}:{}{}", cfg.component, cfg.host.as_deref().unwrap_or("0.0.0.0"), cfg.port.unwrap_or(crate::platform::DEFAULT_PORT), path)
+        let scheme = if cfg.scheme == "https" { "https" } else { "http" };
+        format!("{}:{}://{}:{}{}", cfg.component, scheme, cfg.host.as_deref().unwrap_or("0.0.0.0"), cfg.port.unwrap_or(crate::platform::DEFAULT_PORT), path)
     } else {
         format!("{}:{}", cfg.component, path)
     };
@@ -865,8 +879,13 @@ impl Processor for RestProducer {
             let v = ex.header(&name).map(|v| v.to_string()).unwrap_or_default();
             path = path.replace(&format!("{{{}}}", name), &percent_encode(&v));
         }
-        let host = self.host.trim_start_matches("http://").trim_end_matches('/');
-        let uri = format!("{}://{}{}?httpMethod={}", self.component, host, path, self.method);
+        let (component, host) = match self.host.strip_prefix("https://") {
+            Some(h) if self.component == "http" => ("https", h),
+            Some(h) => (self.component.as_str(), h),
+            None => (self.component.as_str(), self.host.trim_start_matches("http://")),
+        };
+        let host = host.trim_end_matches('/');
+        let uri = format!("{}://{}{}?httpMethod={}", component, host, path, self.method);
         let producer = ctx.get_producer(&uri)?;
         ex.message.headers.remove(headers::HTTP_METHOD);
         ex.message.headers.remove(headers::HTTP_PATH);

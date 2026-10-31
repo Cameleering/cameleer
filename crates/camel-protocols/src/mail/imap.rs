@@ -2,13 +2,15 @@
 //! `FETCH n BODY.PEEK[]`, `STORE`, `COPY`, `EXPUNGE`, `NOOP`, `LOGOUT`.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
 use std::time::Duration;
+
+use camel_tls::net::NetStream;
 
 use camel_core::error::Result;
 
 use super::{auth_error, messaging_error};
-use crate::common::{connect, io_error};
+use super::{MailTls, StartTls};
+use crate::common::{connect_stream, io_error, upgrade_stream};
 
 /// An untagged response (`* ...`) with the literals it carried.
 #[derive(Clone, Debug, Default)]
@@ -33,8 +35,8 @@ pub fn quote(s: &str) -> String {
 
 /// A connected IMAP session.
 pub struct ImapClient {
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
+    reader: BufReader<NetStream>,
+    writer: NetStream,
     host: String,
     tag: u32,
 }
@@ -42,7 +44,19 @@ pub struct ImapClient {
 impl ImapClient {
     /// Connect and read the `* OK` greeting.
     pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<ImapClient> {
-        let s = connect(host, port, timeout).map_err(|e| messaging_error(format!("Couldn't connect to host, port: {}, {}; {}", host, port, e.message)))?;
+        ImapClient::connect_with(host, port, timeout, None)
+    }
+
+    /// Connect with implicit TLS (`imaps`) or `STARTTLS` (RFC 3501 section 6.2.1).
+    pub fn connect_with(host: &str, port: u16, timeout: Duration, tls: Option<&MailTls>) -> Result<ImapClient> {
+        let implicit = tls.filter(|t| t.implicit).map(|t| &t.tls);
+        let s = connect_stream(host, port, timeout, implicit).map_err(|e| {
+            if e.is_a("SSLException") {
+                e
+            } else {
+                messaging_error(format!("Couldn't connect to host, port: {}, {}; {}", host, port, e.message))
+            }
+        })?;
         let t = if timeout.is_zero() { None } else { Some(timeout) };
         let _ = s.set_read_timeout(t);
         let _ = s.set_write_timeout(t);
@@ -51,6 +65,14 @@ impl ImapClient {
         let (line, _) = c.read_response_line()?;
         if !line.starts_with("* OK") && !line.starts_with("* PREAUTH") {
             return Err(messaging_error(format!("IMAP server refused connection: {}", line)));
+        }
+        if let Some(t) = tls.filter(|t| !t.implicit && t.starttls != StartTls::Off) {
+            let r = c.command("STARTTLS")?;
+            if r.status == "OK" {
+                upgrade_stream(&mut c.reader, &mut c.writer, &t.tls, host)?;
+            } else if t.starttls == StartTls::Required {
+                return Err(messaging_error(format!("STARTTLS is required but IMAP server {} refused it: {} {}", host, r.status, r.text)));
+            }
         }
         Ok(c)
     }

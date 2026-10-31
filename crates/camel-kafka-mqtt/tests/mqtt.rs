@@ -245,7 +245,7 @@ fn client_will_persistent_session_and_unsubscribe() {
 #[test]
 fn unsupported_transports_fail_clearly() {
     let ctx = context();
-    for uri in ["paho:t?brokerUrl=ssl://localhost:8883", "paho-mqtt5:t?brokerUrl=wss://localhost:443"] {
+    for uri in ["paho:t?brokerUrl=ws://localhost:8883", "paho-mqtt5:t?brokerUrl=wss://localhost:443"] {
         let err = ctx.get_endpoint(uri).err().expect("must fail");
         assert!(err.message.contains("not supported"), "{}", err.message);
     }

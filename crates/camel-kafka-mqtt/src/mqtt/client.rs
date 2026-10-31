@@ -8,7 +8,8 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::net::TcpStream;
+use camel_tls::camel_support::EndpointTls;
+use camel_tls::net::NetStream;
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -59,6 +60,8 @@ pub struct MqttOptions {
     pub max_reconnect_delay: Duration,
     /// MQTT 5 session expiry interval in seconds (None = not sent).
     pub session_expiry_interval: Option<u32>,
+    /// TLS (`ssl://` broker urls).
+    pub tls: Option<EndpointTls>,
 }
 
 impl MqttOptions {
@@ -79,6 +82,7 @@ impl MqttOptions {
             auto_reconnect: true,
             max_reconnect_delay: Duration::from_secs(128),
             session_expiry_interval: None,
+            tls: None,
         }
     }
 }
@@ -99,7 +103,7 @@ pub struct MqttMessage {
 pub type MessageHandler = Arc<dyn Fn(MqttMessage) + Send + Sync>;
 
 struct Connection {
-    writer: Mutex<TcpStream>,
+    writer: Mutex<NetStream>,
     generation: u64,
     last_send: Mutex<Instant>,
 }
@@ -194,10 +198,14 @@ fn connack_error(code: u8, v5: bool) -> CamelError {
     CamelError::new(kind, format!("MQTT connection refused: {} (reason code {})", reason, code))
 }
 
-fn establish(opts: &MqttOptions) -> Result<(TcpStream, BufReader<TcpStream>, bool)> {
-    let what = format!("tcp://{}:{}", opts.host, opts.port);
-    let stream = connect(&opts.host, opts.port, opts.connect_timeout)?;
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(10)));
+fn establish(opts: &MqttOptions) -> Result<(NetStream, BufReader<NetStream>, bool)> {
+    let what = format!("{}://{}:{}", if opts.tls.is_some() { "ssl" } else { "tcp" }, opts.host, opts.port);
+    let tcp = connect(&opts.host, opts.port, opts.connect_timeout)?;
+    let _ = tcp.set_write_timeout(Some(Duration::from_secs(10)));
+    let stream = match &opts.tls {
+        Some(t) => t.handshake_client(tcp, &opts.host)?,
+        None => NetStream::plain(tcp),
+    };
     let v5 = opts.version.is_v5();
     let mut props = Properties::new();
     if v5 {
@@ -417,7 +425,7 @@ fn dispatch_loop(inner: Arc<Inner>, rx: Receiver<Dispatch>, handler: Option<Mess
     }
 }
 
-fn io_loop(inner: Arc<Inner>, mut stream: TcpStream, mut reader: BufReader<TcpStream>, mut conn: Arc<Connection>, tx: Sender<Dispatch>) {
+fn io_loop(inner: Arc<Inner>, mut stream: NetStream, mut reader: BufReader<NetStream>, mut conn: Arc<Connection>, tx: Sender<Dispatch>) {
     let v5 = inner.v5();
     let keep_alive = inner.opts.keep_alive;
     let poll = Duration::from_millis(100);

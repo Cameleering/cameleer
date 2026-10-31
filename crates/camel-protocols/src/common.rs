@@ -4,7 +4,7 @@
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
-use std::io::{BufRead, ErrorKind};
+use std::io::{BufRead, BufReader, ErrorKind};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use camel_core::error::{kinds, CamelError, Result};
 use camel_core::util::{url_decode, Parameters};
+use camel_tls::camel_support::{io_to_camel, EndpointTls};
+use camel_tls::net::NetStream;
 
 /// `[user[:password]@]host[:port][/path]` split into its parts.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -109,6 +111,35 @@ pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
         Some(e) => io_error(e, &what),
         None => CamelError::new(kinds::CONNECT, format!("Unknown host: {}", host)),
     })
+}
+
+/// Connect to `host:port`; with `tls` the TLS handshake is performed right away
+/// (implicit TLS). TLS failures map to `SSLHandshakeException`/`SSLPeerUnverifiedException`.
+pub fn connect_stream(host: &str, port: u16, timeout: Duration, tls: Option<&EndpointTls>) -> Result<NetStream> {
+    let tcp = connect(host, port, timeout)?;
+    match tls {
+        Some(t) => {
+            let cfg = t.client_config()?;
+            if !timeout.is_zero() {
+                let _ = tcp.set_read_timeout(Some(timeout));
+            }
+            NetStream::client(tcp, t.server_name(host), &cfg).map_err(|e| io_to_camel(e, &host_port(host, port)))
+        }
+        None => Ok(NetStream::plain(tcp)),
+    }
+}
+
+/// Upgrades a line-protocol session to TLS in place (STARTTLS / STLS / `AUTH TLS`).
+/// Fails if the server already sent data past the positive reply.
+pub fn upgrade_stream(reader: &mut BufReader<NetStream>, writer: &mut NetStream, tls: &EndpointTls, host: &str) -> Result<()> {
+    if !reader.buffer().is_empty() {
+        return Err(CamelError::io(format!("Unexpected data from {} before the TLS handshake", host)));
+    }
+    let plain = writer.try_clone().map_err(|e| io_error(e, host))?;
+    let secured = tls.start_tls(plain, host)?;
+    *reader = BufReader::new(secured.try_clone().map_err(|e| io_error(e, host))?);
+    *writer = secured;
+    Ok(())
 }
 
 /// Read one line terminated by `\n` (an optional `\r` is removed). `Ok(None)` on EOF.

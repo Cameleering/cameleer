@@ -115,6 +115,7 @@ pub fn apply_rest_configuration(ctx: &CamelContext, cfg: &mut RestConfiguration,
         match k.as_str() {
             "component" => cfg.component = s(ctx, x).map_err(wrap)?,
             "host" => cfg.host = Some(s(ctx, x).map_err(wrap)?),
+            "scheme" => cfg.scheme = s(ctx, x).map_err(wrap)?.to_ascii_lowercase(),
             "port" => {
                 let p = s(ctx, x).map_err(wrap)?;
                 cfg.port = Some(p.trim().parse::<u16>().map_err(|_| wrap(CamelError::illegal_argument(format!("invalid port '{}'", p))))?);

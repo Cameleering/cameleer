@@ -1,6 +1,13 @@
-//! Mail components (Camel `camel-mail`, plain protocols only): `smtp` producer,
-//! `pop3` and `imap` polling consumers. `smtps`, `pop3s` and `imaps` fail with a clear
-//! error (no TLS in a std-only build).
+//! Mail components (Camel `camel-mail`): `smtp`/`smtps` producer, `pop3`/`pop3s` and
+//! `imap`/`imaps` polling consumers.
+//!
+//! **TLS**: `smtps` (port 465), `pop3s` (995) and `imaps` (993) use implicit TLS.
+//! STARTTLS on the plain schemes is enabled with the JavaMail-style options
+//! `mail.smtp.starttls.enable=true` / `mail.pop3.starttls.enable=true` /
+//! `mail.imap.starttls.enable=true` (upgrade when offered) and
+//! `mail.<protocol>.starttls.required=true` (fail when not offered). Trust material:
+//! `sslContextParameters=#bean`, `useGlobalSslContextParameters=true`, the global
+//! `camel.ssl.*` parameters, else the system trust store.
 //!
 //! **SMTP producer** `smtp://[username@]host[:port][?options]` (port 25): options
 //! `username`, `password` (authenticates with `AUTH PLAIN` or `AUTH LOGIN`), `from`
@@ -41,6 +48,26 @@ use camel_core::util::Parameters;
 use camel_core::value::Value;
 
 use crate::common::{take_ignored, Authority, COMMON_IGNORED};
+use camel_tls::camel_support::{endpoint_tls, EndpointTls};
+
+/// STARTTLS policy of a plain mail endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartTls {
+    Off,
+    /// Upgrade when the server offers it.
+    Enable,
+    /// Fail when the server does not offer it.
+    Required,
+}
+
+/// TLS settings of a mail endpoint.
+#[derive(Clone, Debug)]
+pub struct MailTls {
+    pub tls: EndpointTls,
+    /// Implicit TLS (`smtps`, `pop3s`, `imaps`).
+    pub implicit: bool,
+    pub starttls: StartTls,
+}
 use mime::{build_message, parse_address_list, parse_message, Attachment};
 
 /// Exception kind for mail failures (JavaMail `MessagingException`).
@@ -82,12 +109,29 @@ impl MailProtocol {
             MailProtocol::Imap => 143,
         }
     }
+    /// Default port with implicit TLS (`smtps` 465, `pop3s` 995, `imaps` 993).
+    pub fn default_secure_port(&self) -> u16 {
+        match self {
+            MailProtocol::Smtp => 465,
+            MailProtocol::Pop3 => 995,
+            MailProtocol::Imap => 993,
+        }
+    }
+    fn name(&self) -> &'static str {
+        match self {
+            MailProtocol::Smtp => "smtp",
+            MailProtocol::Pop3 => "pop3",
+            MailProtocol::Imap => "imap",
+        }
+    }
 }
 
 /// Configuration of a mail endpoint.
 #[derive(Clone, Debug)]
 pub struct MailConfig {
     pub protocol: MailProtocol,
+    /// TLS settings (implicit TLS or STARTTLS), None for plain connections.
+    pub tls: Option<MailTls>,
     pub host: String,
     pub port: u16,
     pub username: Option<String>,
@@ -112,13 +156,46 @@ pub struct MailConfig {
 
 impl MailConfig {
     pub fn parse(protocol: MailProtocol, remaining: &str, params: &mut Parameters) -> Result<MailConfig> {
-        let a = Authority::parse(remaining, protocol.default_port())?;
+        MailConfig::parse_with(protocol, remaining, params, None)
+    }
+
+    /// Parse with TLS settings resolved by the component (`ctx` + secure flag).
+    pub fn parse_with(protocol: MailProtocol, remaining: &str, params: &mut Parameters, tls: Option<(&CamelContext, &str, bool)>) -> Result<MailConfig> {
+        let mut mail_tls = None;
+        if let Some((ctx, scheme, secure)) = tls {
+            let prefix = format!("mail.{}.", protocol.name());
+            let flag = |params: &mut Parameters, key: &str| -> Result<bool> {
+                Ok(match params.take(&format!("{}{}", prefix, key)).or_else(|| params.take(&format!("mail.{}s.{}", protocol.name(), key))) {
+                    Some(v) => v.trim().eq_ignore_ascii_case("true"),
+                    None => false,
+                })
+            };
+            let required = flag(params, "starttls.required")?;
+            let enable = flag(params, "starttls.enable")? || required;
+            let ssl_enable = flag(params, "ssl.enable")?;
+            let implicit = secure || ssl_enable;
+            let starttls = if implicit {
+                StartTls::Off
+            } else if required {
+                StartTls::Required
+            } else if enable {
+                StartTls::Enable
+            } else {
+                StartTls::Off
+            };
+            if let Some(t) = endpoint_tls(ctx, params, scheme, implicit || starttls != StartTls::Off, &[])? {
+                mail_tls = Some(MailTls { tls: t, implicit, starttls: if implicit || starttls != StartTls::Off { starttls } else { StartTls::Enable } });
+            }
+        }
+        let default_port = if mail_tls.as_ref().map(|t| t.implicit).unwrap_or(false) { protocol.default_secure_port() } else { protocol.default_port() };
+        let a = Authority::parse(remaining, default_port)?;
         let fetch_size = params.take_i64("fetchSize", -1)?;
         let max = params.take_i64("maxMessagesPerPoll", 0)?;
         let max = if max > 0 { max as usize } else if fetch_size > 0 { fetch_size as usize } else { 0 };
         let scheduler = ScheduledPollConfig::from_params(params, Duration::from_millis(1000), Duration::from_millis(60_000))?;
         let cfg = MailConfig {
             protocol,
+            tls: mail_tls,
             host: if a.host == "0.0.0.0" { "localhost".to_string() } else { a.host },
             port: a.port,
             username: params.take("username").or(a.user),
@@ -167,8 +244,6 @@ impl MailConfig {
                 "javaMailSender",
                 "javaMailProperties",
                 "session",
-                "sslContextParameters",
-                "useGlobalSslContextParameters",
                 "attachmentsContentTransferEncodingResolver",
                 "authenticator",
                 "binding",
@@ -187,17 +262,23 @@ impl MailConfig {
 /// The mail component for `smtp`, `pop3` and `imap`.
 pub struct MailComponent {
     protocol: MailProtocol,
+    secure: bool,
 }
 
 impl MailComponent {
     pub fn new(protocol: MailProtocol) -> Self {
-        MailComponent { protocol }
+        MailComponent { protocol, secure: false }
+    }
+    /// The implicit-TLS variant (`smtps`, `pop3s`, `imaps`).
+    pub fn secure(protocol: MailProtocol) -> Self {
+        MailComponent { protocol, secure: true }
     }
 }
 
 impl Component for MailComponent {
     fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
-        let cfg = MailConfig::parse(self.protocol, remaining, params)?;
+        let scheme = format!("{}{}", self.protocol.name(), if self.secure { "s" } else { "" });
+        let cfg = MailConfig::parse_with(self.protocol, remaining, params, Some((ctx, &scheme, self.secure)))?;
         Ok(Arc::new(MailEndpoint { uri: uri.to_string(), ctx: ctx.downgrade(), cfg, seen: Arc::new(Mutex::new(HashSet::new())) }))
     }
     fn as_any(&self) -> &dyn Any {
@@ -335,7 +416,7 @@ impl Processor for SmtpProducer {
             (Some(u), Some(p)) => Some((u.as_str(), p.as_str())),
             _ => None,
         };
-        smtp::send(&c.host, c.port, c.connection_timeout, auth, &envelope_from, &recipients, &message)
+        smtp::send_with(&c.host, c.port, c.connection_timeout, c.tls.as_ref(), auth, &envelope_from, &recipients, &message)
     }
 }
 
@@ -396,7 +477,7 @@ impl MailConsumerCore {
 
     fn poll_pop3(&self, processor: &dyn Processor) -> Result<usize> {
         let c = &self.cfg;
-        let mut client = pop3::Pop3Client::connect(&c.host, c.port, c.connection_timeout)?;
+        let mut client = pop3::Pop3Client::connect_with(&c.host, c.port, c.connection_timeout, c.tls.as_ref())?;
         let (u, p) = self.credentials();
         client.login(&u, &p)?;
         let ids: Vec<(usize, Option<String>)> = match client.uidl()? {
@@ -434,7 +515,7 @@ impl MailConsumerCore {
 
     fn poll_imap(&self, processor: &dyn Processor) -> Result<usize> {
         let c = &self.cfg;
-        let mut client = imap::ImapClient::connect(&c.host, c.port, c.connection_timeout)?;
+        let mut client = imap::ImapClient::connect_with(&c.host, c.port, c.connection_timeout, c.tls.as_ref())?;
         let (u, p) = self.credentials();
         client.login(&u, &p)?;
         client.select(&c.folder_name)?;

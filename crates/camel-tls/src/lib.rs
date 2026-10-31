@@ -24,6 +24,17 @@
 //! conn.close().unwrap();
 //! ```
 //!
+//! # Camel integration
+//!
+//! * [`net::NetStream`]: a cloneable plain-or-TLS TCP stream (full duplex: clones share one
+//!   session whose read and write halves are locked independently) used by the components.
+//! * [`SslContextParameters`] (Camel `SSLContextParameters`) and [`camel_support`]: registry
+//!   beans (`sslContextParameters=#ssl`), global parameters (`camel.ssl.*`,
+//!   `useGlobalSslContextParameters=true`), embedded server parameters (`camel.server.ssl.*`),
+//!   [`camel_support::endpoint_tls`] and exception mapping (`SSLHandshakeException`...).
+//! * [`sasl`]: PLAIN and SCRAM-SHA-256/512 client and server.
+//! * [`testing`]: a cached test PKI for end-to-end component tests.
+//!
 //! # Supported parameters
 //!
 //! * TLS 1.3: `TLS_AES_128_GCM_SHA256`, `TLS_AES_256_GCM_SHA384`,
@@ -61,10 +72,15 @@
 //! * The randomness source is `/dev/urandom` feeding a ChaCha20 fast-key-erasure DRBG.
 
 pub mod asn1;
+pub mod camel_support;
 pub mod certgen;
 pub mod crypto;
 pub mod keys;
+pub mod net;
+pub mod params;
 pub mod pem;
+pub mod sasl;
+pub mod testing;
 pub mod tls;
 pub mod util;
 pub mod x509;
@@ -72,6 +88,8 @@ pub mod x509;
 pub use certgen::{self_signed, self_signed_with_sans, SelfSigned};
 pub use keys::{PrivateKey, PublicKey};
 pub use tls::config::{TlsClientConfig, TlsClientConfigBuilder, TlsServerConfig, TlsServerConfigBuilder};
-pub use tls::stream::TlsStream;
+pub use net::NetStream;
+pub use params::{PemSource, SslContextParameters};
+pub use tls::stream::{TlsReadHalf, TlsStream, TlsWriteHalf};
 pub use tls::{CipherSuite, NamedGroup, TlsError, TlsVersion};
 pub use x509::{CertError, Certificate, RootStore};

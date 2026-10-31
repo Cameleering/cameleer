@@ -2,20 +2,23 @@
 //! `MAIL FROM`, `RCPT TO`, `DATA` with dot-stuffing, `RSET`, `NOOP`, `QUIT`.
 
 use std::io::{BufReader, Write};
-use std::net::TcpStream;
 use std::time::Duration;
+
+use camel_tls::camel_support::EndpointTls;
+use camel_tls::net::NetStream;
 
 use camel_core::dataformat::base64;
 use camel_core::error::Result;
 
 use super::mime::dot_stuff;
 use super::{auth_error, messaging_error};
-use crate::common::{connect, io_error, read_line};
+use super::{MailTls, StartTls};
+use crate::common::{connect_stream, io_error, read_line, upgrade_stream};
 
 /// A connected SMTP session.
 pub struct SmtpClient {
-    reader: BufReader<TcpStream>,
-    writer: TcpStream,
+    reader: BufReader<NetStream>,
+    writer: NetStream,
     host: String,
     extensions: Vec<String>,
 }
@@ -23,7 +26,18 @@ pub struct SmtpClient {
 impl SmtpClient {
     /// Connect and read the `220` greeting.
     pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<SmtpClient> {
-        let s = connect(host, port, timeout).map_err(|e| messaging_error(format!("Couldn't connect to host, port: {}, {}; {}", host, port, e.message)))?;
+        SmtpClient::connect_with(host, port, timeout, None)
+    }
+
+    /// Connect with implicit TLS (`smtps`) when `implicit_tls` is given.
+    pub fn connect_with(host: &str, port: u16, timeout: Duration, implicit_tls: Option<&EndpointTls>) -> Result<SmtpClient> {
+        let s = connect_stream(host, port, timeout, implicit_tls).map_err(|e| {
+            if e.is_a("SSLException") {
+                e
+            } else {
+                messaging_error(format!("Couldn't connect to host, port: {}, {}; {}", host, port, e.message))
+            }
+        })?;
         let t = if timeout.is_zero() { None } else { Some(timeout) };
         let _ = s.set_read_timeout(t);
         let _ = s.set_write_timeout(t);
@@ -79,6 +93,25 @@ impl SmtpClient {
             return Ok(());
         }
         self.expect(&format!("HELO {}", domain), &[250]).map(|_| ())
+    }
+
+    /// Whether the connection is TLS-protected.
+    pub fn is_secure(&self) -> bool {
+        self.writer.is_tls()
+    }
+
+    /// `STARTTLS` (RFC 3207): upgrades the connection and repeats `EHLO`. Returns
+    /// false (and stays plain) if the server does not advertise STARTTLS.
+    pub fn starttls(&mut self, tls: &EndpointTls, domain: &str) -> Result<bool> {
+        if !self.extensions.iter().any(|e| e.eq_ignore_ascii_case("STARTTLS")) {
+            return Ok(false);
+        }
+        self.expect("STARTTLS", &[220])?;
+        let host = self.host.clone();
+        upgrade_stream(&mut self.reader, &mut self.writer, tls, &host)?;
+        self.extensions.clear();
+        self.hello(domain)?;
+        Ok(true)
     }
 
     /// Extensions advertised in the `EHLO` reply (e.g. `AUTH PLAIN LOGIN`, `8BITMIME`).
@@ -153,8 +186,20 @@ impl SmtpClient {
 
 /// Convenience: deliver one message (connect, hello, optional auth, send, quit).
 pub fn send(host: &str, port: u16, timeout: Duration, auth: Option<(&str, &str)>, from: &str, recipients: &[String], message: &str) -> Result<()> {
-    let mut c = SmtpClient::connect(host, port, timeout)?;
+    send_with(host, port, timeout, None, auth, from, recipients, message)
+}
+
+/// Like [`send`] with TLS: implicit (`smtps`) or STARTTLS.
+#[allow(clippy::too_many_arguments)]
+pub fn send_with(host: &str, port: u16, timeout: Duration, tls: Option<&MailTls>, auth: Option<(&str, &str)>, from: &str, recipients: &[String], message: &str) -> Result<()> {
+    let implicit = tls.filter(|t| t.implicit).map(|t| &t.tls);
+    let mut c = SmtpClient::connect_with(host, port, timeout, implicit)?;
     c.hello("localhost")?;
+    if let Some(t) = tls.filter(|t| !t.implicit && t.starttls != StartTls::Off) {
+        if !c.starttls(&t.tls, "localhost")? && t.starttls == StartTls::Required {
+            return Err(messaging_error(format!("STARTTLS is required but host {} does not support STARTTLS", host)));
+        }
+    }
     if let Some((u, p)) = auth {
         c.authenticate(u, p)?;
     }
