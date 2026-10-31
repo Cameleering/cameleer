@@ -3,6 +3,7 @@
 //! creation. A client is not thread safe by itself (wrap it in a `Mutex` to share it).
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use camel_tls::camel_support::EndpointTls;
@@ -14,18 +15,43 @@ use camel_core::error::{CamelError, Result};
 use super::protocol::*;
 use crate::net::{connect, io_error, split_host_port};
 
+/// Produces the single client message of a custom one-step SASL mechanism for a broker host
+/// (e.g. `AWS_MSK_IAM`, registered by `camel-cloud`).
+pub type SaslTokenProvider = Arc<dyn Fn(&str) -> Result<Vec<u8>> + Send + Sync>;
+
+/// Builds a [`SaslTokenProvider`] from the endpoint's `saslJaasConfig`.
+pub type SaslMechanismFactory = Arc<dyn Fn(&str) -> Result<SaslTokenProvider> + Send + Sync>;
+
+fn sasl_registry() -> &'static Mutex<HashMap<String, SaslMechanismFactory>> {
+    static R: OnceLock<Mutex<HashMap<String, SaslMechanismFactory>>> = OnceLock::new();
+    R.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Register a custom one-step SASL mechanism (`saslMechanism=<name>`): the factory receives
+/// the `saslJaasConfig` text and returns the token provider. Re-registering replaces it.
+pub fn register_sasl_mechanism(name: &str, factory: SaslMechanismFactory) {
+    sasl_registry().lock().unwrap().insert(name.to_ascii_uppercase(), factory);
+}
+
+/// The factory of a registered custom SASL mechanism.
+pub fn sasl_mechanism(name: &str) -> Option<SaslMechanismFactory> {
+    sasl_registry().lock().unwrap().get(&name.to_ascii_uppercase()).cloned()
+}
+
 /// SASL mechanism and credentials (`SASL_PLAINTEXT` / `SASL_SSL`).
 #[derive(Clone)]
 pub struct SaslConfig {
-    /// `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`.
+    /// `PLAIN`, `SCRAM-SHA-256`, `SCRAM-SHA-512` or a registered custom mechanism.
     pub mechanism: String,
     pub username: String,
     pub password: String,
+    /// Token provider of a custom one-step mechanism (see [`register_sasl_mechanism`]).
+    pub token_provider: Option<SaslTokenProvider>,
 }
 
 impl std::fmt::Debug for SaslConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SaslConfig").field("mechanism", &self.mechanism).field("username", &self.username).field("password", &"****").finish()
+        f.debug_struct("SaslConfig").field("mechanism", &self.mechanism).field("username", &self.username).field("password", &"****").field("custom", &self.token_provider.is_some()).finish()
     }
 }
 
@@ -44,7 +70,12 @@ impl SaslConfig {
         };
         let username = value("username").ok_or_else(|| CamelError::illegal_argument("saslJaasConfig: missing username=\"...\""))?;
         let password = value("password").ok_or_else(|| CamelError::illegal_argument("saslJaasConfig: missing password=\"...\""))?;
-        Ok(SaslConfig { mechanism: mechanism.to_ascii_uppercase(), username, password })
+        Ok(SaslConfig { mechanism: mechanism.to_ascii_uppercase(), username, password, token_provider: None })
+    }
+
+    /// A custom one-step mechanism.
+    pub fn custom(mechanism: &str, provider: SaslTokenProvider) -> SaslConfig {
+        SaslConfig { mechanism: mechanism.to_ascii_uppercase(), username: String::new(), password: String::new(), token_provider: Some(provider) }
     }
 }
 
@@ -154,13 +185,13 @@ impl KafkaClient {
             }
         }
         if let Some(sasl) = &self.cfg.sasl {
-            Self::authenticate(&mut conn, &self.cfg, sasl, &what)?;
+            Self::authenticate(&mut conn, &self.cfg, sasl, host, &what)?;
         }
         Ok(conn)
     }
 
     /// SaslHandshake v1 + SaslAuthenticate v1 (KIP-152) with PLAIN or SCRAM.
-    fn authenticate(conn: &mut Conn, cfg: &ClientConfig, sasl: &SaslConfig, what: &str) -> Result<()> {
+    fn authenticate(conn: &mut Conn, cfg: &ClientConfig, sasl: &SaslConfig, host: &str, what: &str) -> Result<()> {
         let auth_fail = |msg: String| CamelError::new("SaslAuthenticationException", msg);
         let mut e = Encoder::new();
         e.string(&sasl.mechanism);
@@ -179,14 +210,18 @@ impl KafkaClient {
             let r = SaslAuthenticateResponse::decode(&Self::roundtrip(conn, cfg, api::SASL_AUTHENTICATE, &e.buf, cfg.request_timeout, what)?)?;
             if r.error_code != errors::NONE {
                 return Err(auth_fail(format!(
-                    "Authentication failed for user {} at Kafka broker {}: {}",
-                    sasl.username,
+                    "Authentication failed for {} at Kafka broker {}: {}",
+                    if sasl.username.is_empty() { format!("mechanism {}", sasl.mechanism) } else { format!("user {}", sasl.username) },
                     what,
                     r.error_message.unwrap_or_else(|| errors::name(r.error_code).to_string())
                 )));
             }
             Ok(r.auth_bytes)
         };
+        if let Some(p) = &sasl.token_provider {
+            step(&p(host)?)?;
+            return Ok(());
+        }
         match sasl.mechanism.as_str() {
             "PLAIN" => {
                 step(&plain_initial_response("", &sasl.username, &sasl.password))?;

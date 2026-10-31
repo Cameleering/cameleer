@@ -1,5 +1,5 @@
 //! Google Cloud components end-to-end against the embedded emulator (JWT-verifying OAuth
-//! token endpoint, Cloud Storage JSON API, Pub/Sub REST).
+//! token endpoint, Cloud Storage JSON API, Pub/Sub REST + streaming pull).
 
 use std::time::{Duration, Instant};
 
@@ -185,7 +185,7 @@ fn pubsub_failed_exchange_is_nacked_and_redelivered() {
     let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let a2 = attempts.clone();
     ctx.add_routes(move |b| {
-        b.from(&format!("google-pubsub://{}:s?delay=10&initialDelay=0&{}", PROJECT, opts))
+        b.from(&format!("google-pubsub://{}:s?synchronousPull=true&delay=10&initialDelay=0&{}", PROJECT, opts))
             .process(move |_ex: &mut Exchange| {
                 if a2.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                     return Err(CamelError::runtime("first attempt fails"));

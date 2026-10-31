@@ -14,17 +14,24 @@
 //! (default) successful exchanges are acknowledged and failed ones nacked
 //! (`modifyAckDeadline` 0); `ackMode=NONE` leaves acknowledgement to the subscription deadline.
 //!
+//! The consumer above is the **synchronous pull** one (`synchronousPull=true`, scheduled
+//! polls). By default (`synchronousPull=false`, as in Camel) the consumer uses gRPC
+//! **streaming pull** ([`super::pubsub_stream`]): `concurrentConsumers` streams (default 1),
+//! `ackDeadlineSeconds` (stream ack deadline, default 10), `maxOutstandingMessages` (default
+//! 1000) / `maxOutstandingBytes` (default 100 MiB) flow control, `maxAckExtensionPeriod`
+//! (seconds, default 3600) deadline extension while processing, target `pubsubEndpoint`.
+//!
 //! Other options: `authenticate` (default true), `endpoint` (emulator `host:port`),
-//! `messageOrderingEnabled`, `concurrentConsumers`/`synchronousPull`/`maxAckExtensionPeriod` (accepted).
+//! `messageOrderingEnabled`, `maxDeliveryAttempts` (accepted).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use camel_core::component::scheduled::ScheduledPollConfig;
-use camel_core::context::CamelContext;
+use camel_core::context::{CamelContext, WeakContext};
 use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
-use camel_core::spi::Processor;
+use camel_core::spi::{Consumer, Processor};
 use camel_core::value::{ObjectMap, Value};
 
 use super::GcpConfig;
@@ -51,6 +58,8 @@ pub struct PubsubService {
     pub ack_auto: bool,
     pub message_ordering_enabled: bool,
     pub scheduler: ScheduledPollConfig,
+    /// Streaming pull settings (`None` = synchronous pull).
+    pub streaming: Option<super::pubsub_stream::StreamSettings>,
 }
 
 /// Factory for the component.
@@ -59,11 +68,30 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         .split_once(':')
         .filter(|(p, d)| !p.is_empty() && !d.is_empty())
         .ok_or_else(|| CamelError::illegal_argument("Expected google-pubsub://projectId:destinationName"))?;
+    let pubsub_endpoint = o.get("pubsubEndpoint");
     let gcp = GcpConfig::from_opts(o)?;
     let ack = o.string("ackMode", "AUTO").to_ascii_uppercase();
     if ack != "AUTO" && ack != "NONE" {
         return Err(CamelError::illegal_argument(format!("Invalid ackMode: {} (AUTO or NONE)", ack)));
     }
+    let streaming = if o.bool("synchronousPull", false)? {
+        o.ignore(&["concurrentConsumers", "maxAckExtensionPeriod", "ackDeadlineSeconds", "maxOutstandingMessages", "maxOutstandingBytes"]);
+        None
+    } else {
+        let (target, tls) = super::pubsub_stream::StreamSettings::resolve_target(pubsub_endpoint.as_deref(), &gcp)?;
+        Some(super::pubsub_stream::StreamSettings {
+            gcp: gcp.clone(),
+            target,
+            tls,
+            subscription: format!("projects/{}/subscriptions/{}", project, destination),
+            ack_deadline_seconds: o.i64("ackDeadlineSeconds", 10)?.clamp(1, 600),
+            max_outstanding_messages: o.i64("maxOutstandingMessages", 1000)?,
+            max_outstanding_bytes: o.i64("maxOutstandingBytes", 100 * 1024 * 1024)?,
+            max_ack_extension: Duration::from_secs(o.i64("maxAckExtensionPeriod", 3600)?.max(0) as u64),
+            ack_auto: ack == "AUTO",
+            concurrent_consumers: o.i64("concurrentConsumers", 1)?.max(1) as usize,
+        })
+    };
     let s = PubsubService {
         project: project.to_string(),
         destination: destination.to_string(),
@@ -72,8 +100,9 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         message_ordering_enabled: o.bool("messageOrderingEnabled", false)?,
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
         gcp,
+        streaming,
     };
-    o.ignore(&["concurrentConsumers", "synchronousPull", "maxAckExtensionPeriod", "maxDeliveryAttempts"]);
+    o.ignore(&["maxDeliveryAttempts"]);
     Ok(Arc::new(s))
 }
 
@@ -149,6 +178,11 @@ impl CloudService for PubsubService {
 
     fn scheduler(&self) -> Option<&ScheduledPollConfig> {
         Some(&self.scheduler)
+    }
+
+    fn custom_consumer(&self, ctx: &WeakContext, uri: &str, processor: &Arc<dyn Processor>) -> Option<Result<Arc<dyn Consumer>>> {
+        let s = self.streaming.clone()?;
+        Some(Ok(Arc::new(super::pubsub_stream::StreamingPullConsumer::new(s, ctx.clone(), uri, processor.clone()))))
     }
 
     fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {

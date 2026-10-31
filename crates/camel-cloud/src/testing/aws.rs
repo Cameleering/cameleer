@@ -16,6 +16,8 @@ use camel_core::value::{ObjectMap, Value};
 
 #[path = "aws_ext.rs"]
 mod ext;
+#[path = "aws_more.rs"]
+mod more;
 pub use ext::{MetricDatum, SentEmail};
 
 use super::{Handler, MockServer};
@@ -99,6 +101,7 @@ struct State {
     completed_uploads: usize,
     min_part_size: usize,
     ext: ext::ExtState,
+    more: more::MoreState,
     buckets: BTreeMap<String, Bucket>,
     queues: BTreeMap<String, Queue>,
     topics: BTreeMap<String, Vec<PublishedMessage>>,
@@ -357,7 +360,7 @@ fn auth_error(req: &ServerRequest, f: &AuthFailure) -> Response {
     match service.as_str() {
         "s3" => s3_error(403, f.code, &f.message),
         "sns" | "ses" | "monitoring" | "sts" | "iam" | "ec2" => query_error(403, f.code, &f.message),
-        "lambda" => Response::json(403, obj([("message", Value::from(f.message.clone()))]).to_json()).with_header("x-amzn-ErrorType", format!("{}:", f.code)),
+        "lambda" | "polly" | "mq" | "eks" | "kafka" | "bedrock" => Response::json(403, obj([("message", Value::from(f.message.clone()))]).to_json()).with_header("x-amzn-ErrorType", format!("{}:", f.code)),
         _ => json_error(403, "com.amazon.coral.service", f.code, &f.message),
     }
 }
@@ -380,6 +383,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
         }
     }
     if let Some(resp) = ext::handle(st, &verified.service, req) {
+        return resp;
+    }
+    if let Some(resp) = more::handle(st, &verified.service, req) {
         return resp;
     }
     match verified.service.as_str() {

@@ -38,6 +38,27 @@ pub mod kinds {
     pub const SFN: &str = "SfnException";
     pub const IAM: &str = "IamException";
     pub const EC2: &str = "Ec2Exception";
+    pub const ATHENA: &str = "AthenaException";
+    pub const TEXTRACT: &str = "TextractException";
+    pub const TRANSLATE: &str = "TranslateException";
+    pub const COMPREHEND: &str = "ComprehendException";
+    pub const POLLY: &str = "PollyException";
+    pub const REKOGNITION: &str = "RekognitionException";
+    pub const TRANSCRIBE: &str = "TranscribeException";
+    pub const BEDROCK: &str = "BedrockRuntimeException";
+    pub const BEDROCK_AGENT: &str = "BedrockAgentRuntimeException";
+    pub const MQ: &str = "MqException";
+    pub const ECS: &str = "EcsException";
+    pub const EKS: &str = "EksException";
+    pub const KMS: &str = "KmsException";
+    pub const TIMESTREAM_WRITE: &str = "TimestreamWriteException";
+    pub const TIMESTREAM_QUERY: &str = "TimestreamQueryException";
+    pub const CLOUDTRAIL: &str = "CloudTrailException";
+    pub const CONFIG: &str = "ConfigException";
+    pub const REDSHIFT_DATA: &str = "RedshiftDataException";
+    /// Amazon MSK API errors (`software.amazon.awssdk.services.kafka.model.KafkaException`;
+    /// renamed to avoid clashing with the kafka component's `KafkaException`).
+    pub const MSK: &str = "MskException";
     /// Client-side configuration / credential problems (`SdkClientException`).
     pub const SDK_CLIENT: &str = "SdkClientException";
     /// Azure `com.azure.core.exception.HttpResponseException` family.
@@ -48,6 +69,8 @@ pub mod kinds {
     /// Key Vault errors (`com.azure.core.exception.ResourceNotFoundException` etc. map here).
     pub const KEY_VAULT: &str = "KeyVaultErrorException";
     pub const COSMOS: &str = "CosmosException";
+    /// Azure Files errors (`com.azure.storage.file.share.models.ShareStorageException`).
+    pub const SHARE_STORAGE: &str = "ShareStorageException";
     /// Azure AD token acquisition failure (`com.azure.core.exception.ClientAuthenticationException`).
     pub const AZURE_AUTH: &str = "ClientAuthenticationException";
     /// Google `com.google.cloud.BaseServiceException` family.
@@ -86,6 +109,25 @@ pub fn ensure_kinds() {
             kinds::SFN,
             kinds::IAM,
             kinds::EC2,
+            kinds::ATHENA,
+            kinds::TEXTRACT,
+            kinds::TRANSLATE,
+            kinds::COMPREHEND,
+            kinds::POLLY,
+            kinds::REKOGNITION,
+            kinds::TRANSCRIBE,
+            kinds::BEDROCK,
+            kinds::BEDROCK_AGENT,
+            kinds::MQ,
+            kinds::ECS,
+            kinds::EKS,
+            kinds::KMS,
+            kinds::TIMESTREAM_WRITE,
+            kinds::TIMESTREAM_QUERY,
+            kinds::CLOUDTRAIL,
+            kinds::CONFIG,
+            kinds::REDSHIFT_DATA,
+            kinds::MSK,
         ] {
             p(k, kinds::AWS_SERVICE);
         }
@@ -95,6 +137,7 @@ pub fn ensure_kinds() {
         p(kinds::DATALAKE_STORAGE, kinds::AZURE_HTTP);
         p(kinds::KEY_VAULT, kinds::AZURE_HTTP);
         p(kinds::COSMOS, kinds::AZURE_HTTP);
+        p(kinds::SHARE_STORAGE, kinds::AZURE_HTTP);
         p(kinds::AZURE_AUTH, kinds::AZURE_HTTP);
         p(kinds::GOOGLE_SERVICE, camel_core::error::kinds::RUNTIME);
         p(kinds::GOOGLE_STORAGE, kinds::GOOGLE_SERVICE);
