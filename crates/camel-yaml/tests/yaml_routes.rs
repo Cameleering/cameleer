@@ -551,6 +551,10 @@ fn auto_startup_and_route_options() {
     add_routes_from_yaml(
         &ctx,
         r#"
+- routeConfiguration:
+    id: myConfig
+- routeConfiguration:
+    id: cfg
 - route:
     id: lazy
     autoStartup: "{{start.it}}"
@@ -570,6 +574,8 @@ fn auto_startup_and_route_options() {
     let routes = load_routes(&ctx, "- route:\n    routeConfigurationId: cfg\n    from: {uri: direct:x}\n").unwrap();
     assert_eq!(routes[0].properties.get("routeConfigurationId").map(|s| s.as_str()), Some("cfg"));
     assert!(routes[0].extension::<Value>("yaml").is_some());
+    let e = load_routes(&ctx, "- route:\n    routeConfigurationId: nope\n    from: {uri: direct:y}\n").unwrap_err();
+    assert!(e.message.contains("Cannot find routeConfiguration with id 'nope'"), "{}", e);
 }
 
 #[test]
