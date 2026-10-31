@@ -14,11 +14,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "camel-kafka-mqtt"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+]
+
+[[package]]
 name = "camel-main"
 version = "0.1.0"
 dependencies = [
  "camel-core",
  "camel-http",
+ "camel-kafka-mqtt",
  "camel-protocols",
  "camel-yaml",
 ]
