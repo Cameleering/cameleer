@@ -16,6 +16,7 @@ camel-grpc = { path = "../camel-grpc" }
 camel-http = { path = "../camel-http" }
 camel-protocols = { path = "../camel-protocols" }
 camel-script = { path = "../camel-script" }
+camel-soap = { path = "../camel-soap" }
 camel-saas = { path = "../camel-saas" }
 camel-kafka-mqtt = { path = "../camel-kafka-mqtt" }
 camel-sql = { path = "../camel-sql" }

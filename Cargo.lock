@@ -91,6 +91,7 @@ dependencies = [
  "camel-protocols",
  "camel-saas",
  "camel-script",
+ "camel-soap",
  "camel-sql",
  "camel-ssh",
  "camel-xml",
@@ -120,6 +121,16 @@ version = "0.1.0"
 dependencies = [
  "camel-core",
  "camel-yaml",
+]
+
+[[package]]
+name = "camel-soap"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+ "camel-http",
+ "camel-tls",
+ "camel-xml",
 ]
 
 [[package]]

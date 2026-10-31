@@ -424,6 +424,7 @@ pub fn new_main() -> Main {
     camel_datastores::register(main.context()); // spring-redis, mongodb, elasticsearch/opensearch, cql, couchdb
     camel_script::register(main.context()); // js, groovy, python, ognl, mvel, spel, datasonnet, csimple, joor
     camel_saas::register(main.context()); // slack, telegram, github, twilio, jira, openai, webhook, graphql, rss, atom
+    camel_soap::register(main.context()); // cxf, cxfrs, spring-ws, fhir + jaxb, fhirJson, fhirXml data formats
     camel_dataformats::register(main.context()); // avro, bindy, yaml, tarFile, zipFile, crypto, pgp, cbor, thrift, asn1, iCal, mimeMultipart, univocity
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
