@@ -31,6 +31,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "camel-tls"
+version = "0.1.0"
+
+[[package]]
 name = "camel-yaml"
 version = "0.1.0"
 dependencies = [

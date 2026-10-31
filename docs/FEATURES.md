@@ -126,7 +126,7 @@ a broker client or a JVM library is out of scope unless it can be written from s
 | bean / class, ref, language, browse, exec, stream, dataset/dataset-test/test, dataformat | ✅ | `exec` runs local processes. `stream` handles stdin/stdout/stderr/files. |
 | platform-http (aliases jetty, undertow, netty-http) | ✅ | HTTP/1.1 server: path parameters, `matchOnUriPrefix`, `httpMethodRestrict` (405), chunked encoding, keep-alive, `muteException`. `CamelHttpResponseCode` sets the status. A failure is a 500 carrying the exception text. A handled exception is a 200 with the handled body. |
 | http | ✅ | HTTP/1.1 client: `httpMethod`, `throwExceptionOnFailure`, `okStatusCodeRange`, timeouts, redirects, Basic auth, `bridgeEndpoint`, `CamelHttpMethod/Path/Query/Uri` headers, `HttpOperationFailedException` with status code and response body. |
-| https / TLS | ❌ | Out of scope for a std-only build (no TLS stack). `https:` uris fail with a clear error. |
+| https / TLS | ⚠️ | `camel-tls` provides a std-only TLS 1.3/1.2 stack (`TlsStream` client/server, system trust store, interop-tested against OpenSSL). Not yet wired into the `https:`/ftps/mail/wss components, which still fail with a clear error. |
 | rest (REST DSL) | ✅ | Verbs, path/query parameters, `bindingMode` off/auto/json, CORS, OpenAPI 3 document. No XML binding, no `clientRequestValidation`. |
 | netty (tcp/udp) | ✅ | Text line and raw codecs, sync request/reply. |
 | Kafka, JMS/AMQP, SQL/JDBC, AWS/Azure/GCP, FTP/SFTP, Mail, MQTT, gRPC, WebSocket... | ❌ | They need external protocol stacks or drivers. |
@@ -160,4 +160,4 @@ These differences are kept on purpose (documented, not fixed):
 3. `${bodyType}` and the log component's `BodyType:` show rust-camel value type names.
 4. In Simple text, `$${` is an escape that produces a literal `${`.
 5. Redelivery delays block the processing thread (Camel can schedule redelivery asynchronously).
-6. No TLS: `https` and secure netty are not available.
+6. No TLS in the components yet: `https` and secure netty are not available (the `camel-tls` crate provides the TLS stack; integration is pending).
