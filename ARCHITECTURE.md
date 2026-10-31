@@ -13,6 +13,7 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 | `crates/camel-yaml` | YAML 1.2 parser + Camel YAML DSL loader |
 | `crates/camel-protocols` | ftp, mail (smtp/pop3/imap), websocket, mllp/hl7, syslog — plus embedded test servers in `testing` |
 | `crates/camel-main` | `camel` CLI binary, application.properties, route loading, dev console |
+| `crates/camel-tls` | from-scratch TLS 1.3/1.2 client+server (`TlsStream<S: Read+Write>`), crypto primitives, X.509/PEM/PKCS#8, trust store, self-signed cert generator; no deps |
 
 ## Key concepts (camel-core)
 
