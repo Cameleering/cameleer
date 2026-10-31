@@ -1589,7 +1589,7 @@ fn async_delayed_redelivery_and_delay_options() {
     defaultErrorHandler:
       redeliveryPolicy:
         maximumRedeliveries: 1
-        redeliveryDelay: 300
+        redeliveryDelay: 1000
         asyncDelayedRedelivery: true
 - from:
     uri: seda:redeliver
@@ -1602,7 +1602,7 @@ fn async_delayed_redelivery_and_delay_options() {
     steps:
       - to: mock:before
       - delay:
-          constant: 300
+          constant: 1000
           asyncDelayed: false
       - to: mock:after
 "##,
@@ -1613,10 +1613,10 @@ fn async_delayed_redelivery_and_delay_options() {
         t.send_body("seda:delay", i).unwrap();
     }
     // asynchronous redelivery: the three first attempts are not held back by the delays
-    assert!(mock(&ctx, "mock:attempt").wait_for_messages(3, Duration::from_millis(250)));
+    assert!(mock(&ctx, "mock:attempt").wait_for_messages(3, Duration::from_millis(800)));
     // synchronous delay: the consumer is blocked
     assert_eq!(mock(&ctx, "mock:before").received_counter(), 1);
-    assert!(mock(&ctx, "mock:ok").wait_for_messages(3, Duration::from_secs(5)));
-    assert!(mock(&ctx, "mock:after").wait_for_messages(3, Duration::from_secs(5)));
+    assert!(mock(&ctx, "mock:ok").wait_for_messages(3, Duration::from_secs(10)));
+    assert!(mock(&ctx, "mock:after").wait_for_messages(3, Duration::from_secs(10)));
     ctx.stop().unwrap();
 }
