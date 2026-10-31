@@ -1,0 +1,11 @@
+[package]
+name = "camel-saas"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel SaaS / API connectors over REST (std only): slack, telegram, github, twilio, jira, openai, webhook, graphql, rss/atom, with embedded mock servers"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+camel-http = { path = "../camel-http" }
+camel-xml = { path = "../camel-xml" }
