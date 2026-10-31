@@ -1,5 +1,4 @@
 use camel_core::prelude::*;
-use camel_core::processor::errors::*;
 
 #[test]
 fn route_scoped_on_completion_modes() {

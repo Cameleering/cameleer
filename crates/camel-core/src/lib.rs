@@ -42,6 +42,18 @@ pub mod prelude {
     pub use crate::template::{ConsumerTemplate, ProducerTemplate};
     pub use crate::util::Parameters;
     pub use crate::value::{FromValue, Value};
+
+    pub use crate::dataformat::DataFormatDefinition;
+    pub use crate::language::{
+        bean_method, jq, jsonpath, jsonpath_as, method, ref_expression, tokenize, tokenize_pair, tokenize_regex, tokenize_xml, xpath,
+        xpath_as, LanguageOptions,
+    };
+    pub use crate::processor::errors::{
+        caught_exception, dead_letter_channel, default_error_handler, memory_idempotent_repository, no_error_handler, CamelContextErrorExt,
+        RedeliveryPolicy,
+    };
+    pub use crate::processor::routing::strategies;
+    pub use crate::processor::routing::ClaimCheckOperation;
 }
 
 pub use prelude::*;

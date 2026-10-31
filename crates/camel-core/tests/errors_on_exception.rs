@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use camel_core::builder::exception_message;
 use camel_core::prelude::*;
-use camel_core::processor::errors::*;
 
 #[test]
 fn handled_stops_routing_and_clears_exception() {

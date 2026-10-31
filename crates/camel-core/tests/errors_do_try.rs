@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use camel_core::prelude::*;
-use camel_core::processor::errors::*;
 
 fn fail_on(body: &'static str, kind: &'static str) -> impl Fn(&mut Exchange) -> Result<()> + Send + Sync {
     move |ex: &mut Exchange| {

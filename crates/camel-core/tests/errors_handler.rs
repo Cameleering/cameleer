@@ -3,7 +3,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use camel_core::prelude::*;
-use camel_core::processor::errors::*;
 
 /// A processor failing the first `fail_times` invocations with the given error.
 fn flaky(counter: Arc<AtomicUsize>, fail_times: usize, kind: &'static str) -> impl Fn(&mut Exchange) -> Result<()> + Send + Sync {
