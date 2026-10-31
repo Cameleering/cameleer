@@ -1,0 +1,12 @@
+[package]
+name = "camel-script"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel scripting languages: JavaScript, Groovy, Python, OGNL, MVEL, SpEL, DataSonnet (tree-walking interpreters)"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+
+[dev-dependencies]
+camel-yaml = { path = "../camel-yaml" }

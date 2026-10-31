@@ -965,6 +965,15 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
             id: None,
             name: "script".into(),
             factory: Box::new(move |rc| {
+                // script languages (camel-script) run as processors so their exchange changes are kept
+                if let ExpressionDefinition::Language { language, expression: text, options } = &expression {
+                    type ScriptFactory = Box<dyn Fn(&str, &str, &std::collections::BTreeMap<String, String>) -> Option<Result<Arc<dyn Processor>>> + Send + Sync>;
+                    if let Some(f) = rc.context.registry().lookup::<ScriptFactory>("camelScriptProcessorFactory") {
+                        if let Some(p) = f(language, &rc.context.resolve_placeholders(text)?, options) {
+                            return p;
+                        }
+                    }
+                }
                 let e = expression.resolve_expression(&rc.context)?;
                 Ok(Arc::new(move |ex: &mut Exchange| {
                     e.evaluate(ex)?;
