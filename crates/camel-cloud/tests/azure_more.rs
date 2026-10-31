@@ -217,17 +217,29 @@ fn cosmosdb_change_feed_consumer() {
     changes.message(0, |ex| ex.body().as_array().is_some_and(|a| a.len() == 2));
     ctx.start().unwrap();
     changes.assert_is_satisfied().unwrap();
-    // updates and new items arrive as a new batch, unchanged items are not re-sent
+    // updates and new items arrive (in one or more batches, depending on poll timing);
+    // unchanged items are not re-sent
     changes.reset();
-    changes.expected_message_count(1);
-    changes.message(0, |ex| {
-        let ids: Vec<String> = ex.body().as_array().map(|a| a.iter().map(|d| d.get("id").unwrap().to_string()).collect()).unwrap_or_default();
-        ids == vec!["o3".to_string(), "o1".to_string()] && ex.header("CamelAzureCosmosDbContainerName").is_some_and(|c| c.to_string() == "orders")
-    });
     t.request_body(&format!("{}&operation=createItem", base), Value::object([("id", "o3"), ("customer", "acme")])).unwrap();
     t.request_body(&format!("{}&operation=upsertItem", base), Value::object([("id", "o1"), ("customer", "acme"), ("status", "shipped")])).unwrap();
-    changes.set_assert_period(Duration::from_millis(100));
-    changes.assert_is_satisfied().unwrap();
+    let ids = || -> Vec<String> {
+        changes
+            .received_exchanges()
+            .iter()
+            .flat_map(|ex| ex.body().as_array().cloned().unwrap_or_default())
+            .map(|d| d.get("id").unwrap().to_string())
+            .collect()
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while ids().len() < 2 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::thread::sleep(Duration::from_millis(150)); // nothing else (e.g. o2) may follow
+    assert_eq!(ids(), vec!["o3".to_string(), "o1".to_string()]);
+    assert!(changes
+        .received_exchanges()
+        .iter()
+        .all(|ex| ex.header("CamelAzureCosmosDbContainerName").is_some_and(|c| c.to_string() == "orders")));
     ctx.stop().unwrap();
 }
 
