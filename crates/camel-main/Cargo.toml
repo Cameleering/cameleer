@@ -1,0 +1,13 @@
+[package]
+name = "camel-main"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel main runner and `camel` CLI (like Camel Main / Camel JBang)"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+
+[[bin]]
+name = "camel"
+path = "src/bin/camel.rs"
