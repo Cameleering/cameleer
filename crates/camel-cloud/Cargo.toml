@@ -1,0 +1,10 @@
+[package]
+name = "camel-cloud"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "rust-camel cloud components (std only): AWS (S3, SQS, SNS, DynamoDB, Lambda), Azure Storage (Blob, Queue) and Google Cloud (Storage, Pub/Sub) over their REST APIs, with embedded mock servers"
+
+[dependencies]
+camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }

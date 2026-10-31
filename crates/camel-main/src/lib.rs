@@ -416,6 +416,7 @@ pub fn new_main() -> Main {
     camel_sql::register(main.context());
     main.configure(camel_sql::configure_datasources_from_properties);
     camel_amqp::register(main.context());
+    camel_cloud::register(main.context()); // aws2-s3/sqs/sns/ddb/lambda, azure-storage-blob/queue, google-storage/pubsub
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {

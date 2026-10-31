@@ -1,0 +1,998 @@
+//! In-memory AWS emulator: S3 (REST/XML), SQS (JSON 1.0), SNS (Query), DynamoDB (JSON 1.0
+//! subset) and Lambda (invoke registered closures), on one port. Every request must carry a
+//! valid SigV4 signature (header or presigned query) for a registered access key; the
+//! service is taken from the credential scope. Bad signatures get `403 SignatureDoesNotMatch`.
+
+use std::collections::{BTreeMap, HashMap};
+use std::io;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+use camel_core::value::Value;
+
+use super::{Handler, MockServer};
+use crate::aws::ddb::{from_attribute_value, marshal_item, unmarshal_item};
+use crate::aws::sigv4::{verify_request, AuthFailure};
+use crate::http::{Response, ServerRequest};
+use crate::util::{http_date, iso8601_millis, md5_hex, now_millis, now_secs, obj, parse_form, parse_json, percent_decode, uuid, xml_escape};
+
+/// Account id used in queue URLs and ARNs.
+pub const ACCOUNT: &str = "000000000000";
+
+/// A registered Lambda function: payload in, payload out (`Err` = function error).
+pub type LambdaFn = Arc<dyn Fn(&[u8]) -> Result<Vec<u8>, String> + Send + Sync>;
+
+#[derive(Clone, Debug)]
+struct S3Obj {
+    data: Vec<u8>,
+    content_type: String,
+    etag: String,
+    last_modified: i64,
+    metadata: Vec<(String, String)>,
+    storage_class: String,
+}
+
+#[derive(Default)]
+struct Bucket {
+    created: i64,
+    objects: BTreeMap<String, S3Obj>,
+}
+
+#[derive(Clone, Debug)]
+struct SqsMsg {
+    id: String,
+    body: String,
+    attributes: Value,
+    sent: i64,
+    visible_at: i64,
+    receipt: Option<String>,
+    receive_count: i64,
+}
+
+#[derive(Default)]
+struct Queue {
+    attributes: BTreeMap<String, String>,
+    messages: Vec<SqsMsg>,
+}
+
+/// A message published to an emulated SNS topic.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublishedMessage {
+    pub message_id: String,
+    pub message: String,
+    pub subject: Option<String>,
+    pub message_structure: Option<String>,
+    pub attributes: BTreeMap<String, String>,
+    pub group_id: Option<String>,
+}
+
+struct Table {
+    hash: String,
+    range: Option<String>,
+    key_schema: Value,
+    attribute_definitions: Value,
+    items: Vec<BTreeMap<String, Value>>,
+}
+
+#[derive(Default)]
+struct State {
+    credentials: HashMap<String, String>,
+    buckets: BTreeMap<String, Bucket>,
+    queues: BTreeMap<String, Queue>,
+    topics: BTreeMap<String, Vec<PublishedMessage>>,
+    tables: BTreeMap<String, Table>,
+    functions: BTreeMap<String, LambdaFn>,
+    auth_failures: usize,
+    region: String,
+}
+
+type Shared = Arc<(Mutex<State>, Condvar)>;
+
+/// The AWS emulator.
+pub struct AwsMock {
+    server: MockServer,
+    state: Shared,
+    access_key: String,
+    secret_key: String,
+}
+
+impl AwsMock {
+    /// Default test credentials.
+    pub const ACCESS_KEY: &'static str = "AKIAMOCKACCESSKEY";
+    pub const SECRET_KEY: &'static str = "mock/secret+key/1234567890";
+
+    /// Start with the default credentials and region `us-east-1`.
+    pub fn start() -> io::Result<AwsMock> {
+        Self::start_with(Self::ACCESS_KEY, Self::SECRET_KEY)
+    }
+
+    /// Start accepting one access key / secret pair.
+    pub fn start_with(access_key: &str, secret_key: &str) -> io::Result<AwsMock> {
+        Self::start_inner(access_key, secret_key, false)
+    }
+
+    /// Start over HTTPS (self-signed certificate for `localhost`, see [`AwsMock::cert_pem`]).
+    pub fn start_tls() -> io::Result<AwsMock> {
+        Self::start_inner(Self::ACCESS_KEY, Self::SECRET_KEY, true)
+    }
+
+    fn start_inner(access_key: &str, secret_key: &str, tls: bool) -> io::Result<AwsMock> {
+        let state: Shared = Arc::new((Mutex::new(State { region: "us-east-1".into(), ..Default::default() }), Condvar::new()));
+        state.0.lock().unwrap().credentials.insert(access_key.to_string(), secret_key.to_string());
+        let st = state.clone();
+        let handler: Handler = Arc::new(move |req| handle(&st, req));
+        let server = if tls { MockServer::start_tls(handler)? } else { MockServer::start(handler)? };
+        Ok(AwsMock { server, state, access_key: access_key.into(), secret_key: secret_key.into() })
+    }
+
+    /// The server certificate (PEM) when started with [`AwsMock::start_tls`].
+    pub fn cert_pem(&self) -> Option<&str> {
+        self.server.cert_pem.as_deref()
+    }
+
+    pub fn url(&self) -> String {
+        self.server.url()
+    }
+
+    pub fn port(&self) -> u16 {
+        self.server.port()
+    }
+
+    /// Endpoint options for component uris:
+    /// `accessKey=..&secretKey=..&region=us-east-1&uriEndpointOverride=..&overrideEndpoint=true`.
+    pub fn endpoint_options(&self) -> String {
+        format!(
+            "accessKey=RAW({})&secretKey=RAW({})&region=us-east-1&uriEndpointOverride={}&overrideEndpoint=true",
+            self.access_key,
+            self.secret_key,
+            self.url()
+        )
+    }
+
+    /// Accept another access key.
+    pub fn add_credentials(&self, access_key: &str, secret_key: &str) {
+        self.lock().credentials.insert(access_key.into(), secret_key.into());
+    }
+
+    /// Number of requests rejected by authentication.
+    pub fn auth_failures(&self) -> usize {
+        self.lock().auth_failures
+    }
+
+    pub fn request_count(&self) -> usize {
+        self.server.request_count()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.0.lock().unwrap()
+    }
+
+    // ---- S3 helpers
+    pub fn create_bucket(&self, name: &str) {
+        self.lock().buckets.entry(name.into()).or_insert_with(|| Bucket { created: now_secs(), objects: BTreeMap::new() });
+    }
+    pub fn bucket_exists(&self, name: &str) -> bool {
+        self.lock().buckets.contains_key(name)
+    }
+    pub fn put_object(&self, bucket: &str, key: &str, data: &[u8]) {
+        self.create_bucket(bucket);
+        self.lock().buckets.get_mut(bucket).unwrap().objects.insert(key.into(), new_obj(data.to_vec(), "application/octet-stream".into(), vec![], "STANDARD".into()));
+    }
+    pub fn object(&self, bucket: &str, key: &str) -> Option<Vec<u8>> {
+        self.lock().buckets.get(bucket).and_then(|b| b.objects.get(key)).map(|o| o.data.clone())
+    }
+    /// Content type and user metadata of an object.
+    pub fn object_info(&self, bucket: &str, key: &str) -> Option<(String, Vec<(String, String)>)> {
+        self.lock().buckets.get(bucket).and_then(|b| b.objects.get(key)).map(|o| (o.content_type.clone(), o.metadata.clone()))
+    }
+    pub fn object_keys(&self, bucket: &str) -> Vec<String> {
+        self.lock().buckets.get(bucket).map(|b| b.objects.keys().cloned().collect()).unwrap_or_default()
+    }
+
+    // ---- SQS helpers
+    /// Create a queue; returns its URL.
+    pub fn create_queue(&self, name: &str) -> String {
+        self.lock().queues.entry(name.into()).or_default();
+        format!("{}/{}/{}", self.url(), ACCOUNT, name)
+    }
+    pub fn queue_exists(&self, name: &str) -> bool {
+        self.lock().queues.contains_key(name)
+    }
+    /// Bodies of all messages (visible or in flight) of a queue.
+    pub fn queue_messages(&self, name: &str) -> Vec<String> {
+        self.lock().queues.get(name).map(|q| q.messages.iter().map(|m| m.body.clone()).collect()).unwrap_or_default()
+    }
+    /// Message attributes (name → string value) of all messages of a queue.
+    pub fn queue_message_attributes(&self, name: &str) -> Vec<BTreeMap<String, String>> {
+        self.lock()
+            .queues
+            .get(name)
+            .map(|q| {
+                q.messages
+                    .iter()
+                    .map(|m| m.attributes.as_object().map(|a| a.iter().map(|(k, v)| (k.clone(), v.get("StringValue").map(|s| s.to_string()).unwrap_or_default())).collect()).unwrap_or_default())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+    /// Enqueue a message directly.
+    pub fn send_sqs(&self, name: &str, body: &str) {
+        let (lock, cv) = &*self.state;
+        let mut st = lock.lock().unwrap();
+        st.queues.entry(name.into()).or_default().messages.push(new_msg(body.into(), Value::Object(BTreeMap::new()), 0));
+        cv.notify_all();
+    }
+
+    // ---- SNS helpers
+    /// Create a topic; returns its ARN.
+    pub fn create_topic(&self, name: &str) -> String {
+        let mut st = self.lock();
+        let arn = format!("arn:aws:sns:{}:{}:{}", st.region, ACCOUNT, name);
+        st.topics.entry(arn.clone()).or_default();
+        arn
+    }
+    /// Messages published to a topic (by name).
+    pub fn published(&self, topic: &str) -> Vec<PublishedMessage> {
+        self.lock().topics.iter().find(|(arn, _)| arn.rsplit(':').next() == Some(topic)).map(|(_, m)| m.clone()).unwrap_or_default()
+    }
+
+    // ---- DynamoDB helpers
+    /// Create a table with a hash key and optional range key (string attributes).
+    pub fn create_table(&self, name: &str, hash: &str, range: Option<&str>) {
+        let mut ks = vec![obj([("AttributeName", Value::from(hash)), ("KeyType", Value::from("HASH"))])];
+        if let Some(r) = range {
+            ks.push(obj([("AttributeName", Value::from(r)), ("KeyType", Value::from("RANGE"))]));
+        }
+        self.lock().tables.insert(
+            name.into(),
+            Table { hash: hash.into(), range: range.map(|r| r.to_string()), key_schema: Value::Array(ks), attribute_definitions: Value::Array(vec![]), items: vec![] },
+        );
+    }
+    pub fn table_exists(&self, name: &str) -> bool {
+        self.lock().tables.contains_key(name)
+    }
+    /// Items of a table (unmarshalled).
+    pub fn table_items(&self, name: &str) -> Vec<Value> {
+        self.lock().tables.get(name).map(|t| t.items.iter().map(|i| unmarshal_item(&Value::Object(i.clone()))).collect()).unwrap_or_default()
+    }
+
+    // ---- Lambda helpers
+    /// Register a function implementation.
+    pub fn register_function(&self, name: &str, f: impl Fn(&[u8]) -> Result<Vec<u8>, String> + Send + Sync + 'static) {
+        self.lock().functions.insert(name.into(), Arc::new(f));
+    }
+}
+
+fn new_obj(data: Vec<u8>, content_type: String, metadata: Vec<(String, String)>, storage_class: String) -> S3Obj {
+    S3Obj { etag: format!("\"{}\"", md5_hex(&data)), data, content_type, last_modified: now_secs(), metadata, storage_class }
+}
+
+fn new_msg(body: String, attributes: Value, delay: i64) -> SqsMsg {
+    let now = now_millis();
+    SqsMsg { id: uuid(), body, attributes, sent: now, visible_at: now + delay * 1000, receipt: None, receive_count: 0 }
+}
+
+fn request_id() -> String {
+    uuid()
+}
+
+fn s3_error(status: u16, code: &str, message: &str) -> Response {
+    Response::xml(status, format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>{}</Code><Message>{}</Message><RequestId>{}</RequestId></Error>", code, xml_escape(message), request_id()))
+        .with_header("x-amz-request-id", request_id())
+}
+
+fn json_error(status: u16, prefix: &str, code: &str, message: &str) -> Response {
+    Response::json(status, obj([("__type", Value::from(format!("{}#{}", prefix, code))), ("message", Value::from(message))]).to_json())
+        .with_header("Content-Type", "application/x-amz-json-1.0")
+        .with_header("x-amzn-RequestId", request_id())
+}
+
+fn query_error(status: u16, code: &str, message: &str) -> Response {
+    Response::xml(
+        status,
+        format!(
+            "<ErrorResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><Error><Type>Sender</Type><Code>{}</Code><Message>{}</Message></Error><RequestId>{}</RequestId></ErrorResponse>",
+            code,
+            xml_escape(message),
+            request_id()
+        ),
+    )
+}
+
+fn auth_error(req: &ServerRequest, f: &AuthFailure) -> Response {
+    let service = f.service.clone().unwrap_or_else(|| {
+        if req.header("X-Amz-Target").is_some() {
+            "sqs".into()
+        } else if req.text().contains("Action=") {
+            "sns".into()
+        } else {
+            "s3".into()
+        }
+    });
+    match service.as_str() {
+        "s3" => s3_error(403, f.code, &f.message),
+        "sns" => query_error(403, f.code, &f.message),
+        "lambda" => Response::json(403, obj([("message", Value::from(f.message.clone()))]).to_json()).with_header("x-amzn-ErrorType", format!("{}:", f.code)),
+        _ => json_error(403, "com.amazon.coral.service", f.code, &f.message),
+    }
+}
+
+fn handle(st: &Shared, req: &ServerRequest) -> Response {
+    let creds = st.0.lock().unwrap().credentials.clone();
+    let verified = match verify_request(req, &|k| creds.get(k).cloned(), now_secs()) {
+        Ok(v) => v,
+        Err(f) => {
+            st.0.lock().unwrap().auth_failures += 1;
+            return auth_error(req, &f);
+        }
+    };
+    match verified.service.as_str() {
+        "s3" => s3(st, req),
+        "sqs" => sqs(st, req),
+        "sns" => sns(st, req),
+        "dynamodb" => ddb(st, req),
+        "lambda" => lambda(st, req),
+        other => s3_error(400, "InvalidRequest", &format!("Service {} is not emulated", other)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S3
+// ---------------------------------------------------------------------------
+
+fn s3_target(req: &ServerRequest) -> (String, Option<String>) {
+    let host = req.header("Host").unwrap_or("").split(':').next().unwrap_or("").to_string();
+    let raw = req.path.trim_start_matches('/');
+    if let Some(bucket) = host.strip_suffix(".localhost").filter(|b| !b.is_empty()) {
+        let key = if raw.is_empty() { None } else { Some(percent_decode(raw, false)) };
+        return (bucket.to_string(), key);
+    }
+    match raw.split_once('/') {
+        Some((b, k)) if !k.is_empty() => (percent_decode(b, false), Some(percent_decode(k, false))),
+        Some((b, _)) => (percent_decode(b, false), None),
+        None => (percent_decode(raw, false), None),
+    }
+}
+
+fn s3(st: &Shared, req: &ServerRequest) -> Response {
+    let (bucket, key) = s3_target(req);
+    let mut s = st.0.lock().unwrap();
+    if bucket.is_empty() {
+        if req.method != "GET" {
+            return s3_error(405, "MethodNotAllowed", "Method not allowed");
+        }
+        let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>mock</ID></Owner><Buckets>");
+        for (name, b) in &s.buckets {
+            xml.push_str(&format!("<Bucket><Name>{}</Name><CreationDate>{}</CreationDate></Bucket>", xml_escape(name), iso8601_millis(b.created * 1000)));
+        }
+        xml.push_str("</Buckets></ListAllMyBucketsResult>");
+        return Response::xml(200, xml);
+    }
+    let Some(key) = key else {
+        return match req.method.as_str() {
+            "PUT" => {
+                s.buckets.entry(bucket).or_insert_with(|| Bucket { created: now_secs(), objects: BTreeMap::new() });
+                Response::new(200)
+            }
+            "HEAD" => Response::new(if s.buckets.contains_key(&bucket) { 200 } else { 404 }),
+            "DELETE" => match s.buckets.get(&bucket) {
+                None => s3_error(404, "NoSuchBucket", "The specified bucket does not exist"),
+                Some(b) if !b.objects.is_empty() => s3_error(409, "BucketNotEmpty", "The bucket you tried to delete is not empty"),
+                Some(_) => {
+                    s.buckets.remove(&bucket);
+                    Response::new(204)
+                }
+            },
+            "GET" => {
+                let Some(b) = s.buckets.get(&bucket) else { return s3_error(404, "NoSuchBucket", "The specified bucket does not exist") };
+                s3_list(&bucket, b, req)
+            }
+            _ => s3_error(405, "MethodNotAllowed", "Method not allowed"),
+        };
+    };
+    match req.method.as_str() {
+        "PUT" => {
+            if let Some(src) = req.header("x-amz-copy-source") {
+                let src = percent_decode(src.trim_start_matches('/'), false);
+                let (sb, sk) = src.split_once('/').unwrap_or((&src, ""));
+                let Some(o) = s.buckets.get(sb).and_then(|b| b.objects.get(sk)).cloned() else {
+                    return s3_error(404, "NoSuchKey", "The specified key does not exist.");
+                };
+                let Some(dst) = s.buckets.get_mut(&bucket) else { return s3_error(404, "NoSuchBucket", "The specified bucket does not exist") };
+                let copy = S3Obj { last_modified: now_secs(), ..o };
+                let etag = copy.etag.clone();
+                dst.objects.insert(key, copy);
+                return Response::xml(
+                    200,
+                    format!("<CopyObjectResult><LastModified>{}</LastModified><ETag>{}</ETag></CopyObjectResult>", iso8601_millis(now_millis()), xml_escape(&etag)),
+                );
+            }
+            let Some(b) = s.buckets.get_mut(&bucket) else { return s3_error(404, "NoSuchBucket", "The specified bucket does not exist") };
+            let meta: Vec<(String, String)> =
+                req.headers.iter().filter_map(|(k, v)| k.to_ascii_lowercase().strip_prefix("x-amz-meta-").map(|m| (m.to_string(), v.clone()))).collect();
+            let o = new_obj(
+                req.body.clone(),
+                req.header("Content-Type").unwrap_or("binary/octet-stream").to_string(),
+                meta,
+                req.header("x-amz-storage-class").unwrap_or("STANDARD").to_string(),
+            );
+            let etag = o.etag.clone();
+            b.objects.insert(key, o);
+            Response::new(200).with_header("ETag", etag)
+        }
+        "GET" | "HEAD" => {
+            let Some(b) = s.buckets.get(&bucket) else { return s3_error(404, "NoSuchBucket", "The specified bucket does not exist") };
+            let Some(o) = b.objects.get(&key) else {
+                return if req.method == "HEAD" { Response::new(404) } else { s3_error(404, "NoSuchKey", "The specified key does not exist.") };
+            };
+            let mut status = 200;
+            let mut data = o.data.clone();
+            if let Some(range) = req.header("Range").and_then(|r| r.strip_prefix("bytes=")) {
+                let (a, z) = range.split_once('-').unwrap_or((range, ""));
+                let a: usize = a.parse().unwrap_or(0);
+                let z: usize = z.parse().unwrap_or(data.len().saturating_sub(1)).min(data.len().saturating_sub(1));
+                data = if a <= z && a < data.len() { data[a..=z].to_vec() } else { Vec::new() };
+                status = 206;
+            }
+            let mut r = Response::new(status)
+                .with_header("Content-Type", o.content_type.clone())
+                .with_header("ETag", o.etag.clone())
+                .with_header("Last-Modified", http_date(o.last_modified))
+                .with_header("x-amz-storage-class", o.storage_class.clone())
+                .with_header("Content-Length", data.len().to_string());
+            for (k, v) in &o.metadata {
+                r = r.with_header(&format!("x-amz-meta-{}", k), v.clone());
+            }
+            r.with_body(data)
+        }
+        "DELETE" => {
+            if let Some(b) = s.buckets.get_mut(&bucket) {
+                b.objects.remove(&key);
+                Response::new(204)
+            } else {
+                s3_error(404, "NoSuchBucket", "The specified bucket does not exist")
+            }
+        }
+        _ => s3_error(405, "MethodNotAllowed", "Method not allowed"),
+    }
+}
+
+fn s3_list(bucket: &str, b: &Bucket, req: &ServerRequest) -> Response {
+    let q = req.query_params();
+    let get = |k: &str| q.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    let prefix = get("prefix").unwrap_or_default();
+    let delimiter = get("delimiter").filter(|d| !d.is_empty());
+    let max: usize = get("max-keys").and_then(|m| m.parse().ok()).unwrap_or(1000);
+    let after = get("continuation-token").or_else(|| get("start-after")).or_else(|| get("marker")).unwrap_or_default();
+    let mut contents = Vec::new();
+    let mut prefixes: Vec<String> = Vec::new();
+    let mut truncated = false;
+    for (k, o) in b.objects.range(after.clone()..).filter(|(k, _)| **k != after && k.starts_with(&prefix)) {
+        if let Some(d) = &delimiter {
+            if let Some(i) = k[prefix.len()..].find(d.as_str()) {
+                let p = k[..prefix.len() + i + d.len()].to_string();
+                if !prefixes.contains(&p) {
+                    prefixes.push(p);
+                }
+                continue;
+            }
+        }
+        if contents.len() >= max {
+            truncated = true;
+            break;
+        }
+        contents.push((k.clone(), o));
+    }
+    let mut xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>{}</Name><Prefix>{}</Prefix><KeyCount>{}</KeyCount><MaxKeys>{}</MaxKeys><IsTruncated>{}</IsTruncated>",
+        xml_escape(bucket),
+        xml_escape(&prefix),
+        contents.len(),
+        max,
+        truncated
+    );
+    if truncated {
+        if let Some((k, _)) = contents.last() {
+            xml.push_str(&format!("<NextContinuationToken>{}</NextContinuationToken>", xml_escape(k)));
+        }
+    }
+    for (k, o) in &contents {
+        xml.push_str(&format!(
+            "<Contents><Key>{}</Key><LastModified>{}</LastModified><ETag>{}</ETag><Size>{}</Size><StorageClass>{}</StorageClass></Contents>",
+            xml_escape(k),
+            iso8601_millis(o.last_modified * 1000),
+            xml_escape(&o.etag),
+            o.data.len(),
+            o.storage_class
+        ));
+    }
+    for p in prefixes {
+        xml.push_str(&format!("<CommonPrefixes><Prefix>{}</Prefix></CommonPrefixes>", xml_escape(&p)));
+    }
+    xml.push_str("</ListBucketResult>");
+    Response::xml(200, xml)
+}
+
+// ---------------------------------------------------------------------------
+// SQS (JSON protocol)
+// ---------------------------------------------------------------------------
+
+fn sqs_err(code: &str, msg: &str) -> Response {
+    json_error(400, "com.amazonaws.sqs", code, msg).with_header("x-amzn-query-error", format!("AWS.SimpleQueueService.{};Sender", code))
+}
+
+fn queue_name_of(url: &str) -> String {
+    url.trim_end_matches('/').rsplit('/').next().unwrap_or("").to_string()
+}
+
+fn sqs(st: &Shared, req: &ServerRequest) -> Response {
+    let action = req.header("X-Amz-Target").and_then(|t| t.strip_prefix("AmazonSQS.")).unwrap_or("").to_string();
+    let body = match parse_json(&req.body) {
+        Ok(b) => b,
+        Err(e) => return sqs_err("InvalidParameterValue", &e.to_string()),
+    };
+    let s_ = |k: &str| body.get(k).map(|v| v.to_string()).unwrap_or_default();
+    let host = req.header("Host").unwrap_or("localhost");
+    let url_of = |name: &str| format!("http://{}/{}/{}", host, ACCOUNT, name);
+    let (lock, cv) = &**st;
+    let mut s = lock.lock().unwrap();
+    let ok = |v: Value| Response::json(200, v.to_json()).with_header("Content-Type", "application/x-amz-json-1.0");
+    match action.as_str() {
+        "CreateQueue" => {
+            let name = s_("QueueName");
+            let q = s.queues.entry(name.clone()).or_default();
+            if let Some(Value::Object(a)) = body.get("Attributes") {
+                for (k, v) in a {
+                    q.attributes.insert(k.clone(), v.to_string());
+                }
+            }
+            ok(obj([("QueueUrl", Value::from(url_of(&name)))]))
+        }
+        "GetQueueUrl" => {
+            let name = s_("QueueName");
+            if s.queues.contains_key(&name) {
+                ok(obj([("QueueUrl", Value::from(url_of(&name)))]))
+            } else {
+                sqs_err("QueueDoesNotExist", "The specified queue does not exist.")
+            }
+        }
+        "ListQueues" => {
+            let prefix = s_("QueueNamePrefix");
+            let urls: Vec<Value> = s.queues.keys().filter(|n| n.starts_with(&prefix)).map(|n| Value::from(url_of(n))).collect();
+            ok(obj([("QueueUrls", Value::Array(urls))]))
+        }
+        _ => {
+            let name = queue_name_of(&s_("QueueUrl"));
+            let Some(q) = s.queues.get_mut(&name) else { return sqs_err("QueueDoesNotExist", "The specified queue does not exist.") };
+            match action.as_str() {
+                "SendMessage" => {
+                    let text = s_("MessageBody");
+                    let delay = body.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0);
+                    let m = new_msg(text.clone(), body.get("MessageAttributes").cloned().unwrap_or(Value::Object(BTreeMap::new())), delay);
+                    let id = m.id.clone();
+                    q.messages.push(m);
+                    cv.notify_all();
+                    ok(obj([("MessageId", Value::from(id)), ("MD5OfMessageBody", Value::from(md5_hex(text.as_bytes())))]))
+                }
+                "SendMessageBatch" => {
+                    let mut out = Vec::new();
+                    for e in body.get("Entries").and_then(|e| e.as_array()).cloned().unwrap_or_default() {
+                        let text = e.get("MessageBody").map(|b| b.to_string()).unwrap_or_default();
+                        let m = new_msg(text.clone(), Value::Object(BTreeMap::new()), e.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0));
+                        out.push(obj([
+                            ("Id", e.get("Id").cloned().unwrap_or_default()),
+                            ("MessageId", Value::from(m.id.clone())),
+                            ("MD5OfMessageBody", Value::from(md5_hex(text.as_bytes()))),
+                        ]));
+                        q.messages.push(m);
+                    }
+                    cv.notify_all();
+                    ok(obj([("Successful", Value::Array(out)), ("Failed", Value::Array(vec![]))]))
+                }
+                "ReceiveMessage" => {
+                    let max = body.get("MaxNumberOfMessages").and_then(|m| m.as_i64()).unwrap_or(1).clamp(1, 10) as usize;
+                    let wait = body.get("WaitTimeSeconds").and_then(|m| m.as_i64()).unwrap_or(0).clamp(0, 20);
+                    let deadline = Instant::now() + Duration::from_secs(wait as u64);
+                    let names: Vec<String> = body.get("MessageAttributeNames").and_then(|a| a.as_array()).map(|a| a.iter().map(|v| v.to_string()).collect()).unwrap_or_default();
+                    drop(s);
+                    let mut s = lock.lock().unwrap();
+                    loop {
+                        let now = now_millis();
+                        let Some(q) = s.queues.get_mut(&name) else { return sqs_err("QueueDoesNotExist", "The specified queue does not exist.") };
+                        let vis = body.get("VisibilityTimeout").and_then(|v| v.as_i64()).or_else(|| q.attributes.get("VisibilityTimeout").and_then(|v| v.parse().ok())).unwrap_or(30);
+                        let mut out = Vec::new();
+                        for m in q.messages.iter_mut().filter(|m| m.visible_at <= now).take(max) {
+                            m.visible_at = now + vis * 1000;
+                            m.receive_count += 1;
+                            let handle = format!("{}#{}", m.id, uuid());
+                            m.receipt = Some(handle.clone());
+                            let attrs: BTreeMap<String, Value> = m
+                                .attributes
+                                .as_object()
+                                .map(|a| a.iter().filter(|(k, _)| names.iter().any(|n| n == "All" || n == ".*" || n == *k)).map(|(k, v)| (k.clone(), v.clone())).collect())
+                                .unwrap_or_default();
+                            out.push(obj([
+                                ("MessageId", Value::from(m.id.clone())),
+                                ("ReceiptHandle", Value::from(handle)),
+                                ("MD5OfBody", Value::from(md5_hex(m.body.as_bytes()))),
+                                ("Body", Value::from(m.body.clone())),
+                                (
+                                    "Attributes",
+                                    obj([
+                                        ("SentTimestamp", Value::from(m.sent.to_string())),
+                                        ("ApproximateReceiveCount", Value::from(m.receive_count.to_string())),
+                                    ]),
+                                ),
+                                ("MessageAttributes", Value::Object(attrs)),
+                            ]));
+                        }
+                        if !out.is_empty() || Instant::now() >= deadline {
+                            return ok(if out.is_empty() { obj([]) } else { obj([("Messages", Value::Array(out))]) });
+                        }
+                        let left = deadline.saturating_duration_since(Instant::now()).min(Duration::from_millis(50));
+                        s = cv.wait_timeout(s, left).unwrap().0;
+                    }
+                }
+                "DeleteMessage" => {
+                    let handle = s_("ReceiptHandle");
+                    let before = q.messages.len();
+                    q.messages.retain(|m| m.receipt.as_deref() != Some(handle.as_str()));
+                    if q.messages.len() == before {
+                        return sqs_err("ReceiptHandleIsInvalid", "The input receipt handle is invalid.");
+                    }
+                    ok(obj([]))
+                }
+                "ChangeMessageVisibility" => {
+                    let handle = s_("ReceiptHandle");
+                    let secs = body.get("VisibilityTimeout").and_then(|v| v.as_i64()).unwrap_or(0);
+                    match q.messages.iter_mut().find(|m| m.receipt.as_deref() == Some(handle.as_str())) {
+                        Some(m) => {
+                            m.visible_at = now_millis() + secs * 1000;
+                            cv.notify_all();
+                            ok(obj([]))
+                        }
+                        None => sqs_err("ReceiptHandleIsInvalid", "The input receipt handle is invalid."),
+                    }
+                }
+                "PurgeQueue" => {
+                    q.messages.clear();
+                    ok(obj([]))
+                }
+                "DeleteQueue" => {
+                    s.queues.remove(&name);
+                    ok(obj([]))
+                }
+                other => sqs_err("InvalidAction", &format!("Unsupported action {}", other)),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SNS (Query protocol)
+// ---------------------------------------------------------------------------
+
+fn sns(st: &Shared, req: &ServerRequest) -> Response {
+    let p = parse_form(&req.text());
+    let get = |k: &str| p.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    let action = get("Action").unwrap_or_default();
+    let mut s = st.0.lock().unwrap();
+    let wrap = |name: &str, inner: String| {
+        Response::xml(
+            200,
+            format!(
+                "<{0}Response xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><{0}Result>{1}</{0}Result><ResponseMetadata><RequestId>{2}</RequestId></ResponseMetadata></{0}Response>",
+                name,
+                inner,
+                request_id()
+            ),
+        )
+    };
+    match action.as_str() {
+        "CreateTopic" => {
+            let name = get("Name").unwrap_or_default();
+            let arn = format!("arn:aws:sns:{}:{}:{}", s.region, ACCOUNT, name);
+            s.topics.entry(arn.clone()).or_default();
+            wrap("CreateTopic", format!("<TopicArn>{}</TopicArn>", xml_escape(&arn)))
+        }
+        "ListTopics" => {
+            let members: String = s.topics.keys().map(|a| format!("<member><TopicArn>{}</TopicArn></member>", xml_escape(a))).collect();
+            wrap("ListTopics", format!("<Topics>{}</Topics>", members))
+        }
+        "DeleteTopic" => {
+            s.topics.remove(&get("TopicArn").unwrap_or_default());
+            wrap("DeleteTopic", String::new())
+        }
+        "Publish" => {
+            let arn = get("TopicArn").unwrap_or_default();
+            let Some(topic) = s.topics.get_mut(&arn) else { return query_error(404, "NotFound", "Topic does not exist") };
+            let mut attributes = BTreeMap::new();
+            let mut n = 1;
+            while let Some(name) = get(&format!("MessageAttributes.entry.{}.Name", n)) {
+                attributes.insert(name, get(&format!("MessageAttributes.entry.{}.Value.StringValue", n)).unwrap_or_default());
+                n += 1;
+            }
+            let structure = get("MessageStructure");
+            let message = get("Message").unwrap_or_default();
+            if structure.as_deref() == Some("json") && parse_json(message.as_bytes()).ok().and_then(|v| v.get("default").cloned()).is_none() {
+                return query_error(400, "InvalidParameter", "Invalid parameter: Message Structure - No default entry in JSON message body");
+            }
+            let id = uuid();
+            topic.push(PublishedMessage { message_id: id.clone(), message, subject: get("Subject"), message_structure: structure, attributes, group_id: get("MessageGroupId") });
+            wrap("Publish", format!("<MessageId>{}</MessageId>", id))
+        }
+        other => query_error(400, "InvalidAction", &format!("Unsupported action {}", other)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DynamoDB
+// ---------------------------------------------------------------------------
+
+fn ddb_err(code: &str, msg: &str) -> Response {
+    json_error(400, "com.amazonaws.dynamodb.v20120810", code, msg)
+}
+
+fn cmp_av(a: &Value, b: &Value) -> Option<std::cmp::Ordering> {
+    let (ta, va) = a.as_object()?.iter().next()?;
+    let (tb, vb) = b.as_object()?.iter().next()?;
+    if ta != tb {
+        return None;
+    }
+    match ta.as_str() {
+        "N" => va.to_string().parse::<f64>().ok()?.partial_cmp(&vb.to_string().parse::<f64>().ok()?),
+        _ => Some(va.to_string().cmp(&vb.to_string())),
+    }
+}
+
+fn condition_matches(item: &BTreeMap<String, Value>, attr: &str, cond: &Value) -> bool {
+    let op = cond.get("ComparisonOperator").map(|o| o.to_string()).unwrap_or_else(|| "EQ".into());
+    let list = cond.get("AttributeValueList").and_then(|l| l.as_array()).cloned().unwrap_or_default();
+    let v = item.get(attr);
+    use std::cmp::Ordering::*;
+    let c = |i: usize| v.and_then(|v| list.get(i).and_then(|x| cmp_av(v, x)));
+    match op.as_str() {
+        "EQ" => c(0) == Some(Equal),
+        "NE" => c(0) != Some(Equal),
+        "LT" => c(0) == Some(Less),
+        "LE" => matches!(c(0), Some(Less | Equal)),
+        "GT" => c(0) == Some(Greater),
+        "GE" => matches!(c(0), Some(Greater | Equal)),
+        "BETWEEN" => matches!(c(0), Some(Greater | Equal)) && matches!(c(1), Some(Less | Equal)),
+        "BEGINS_WITH" => match (v.map(from_attribute_value), list.first().map(from_attribute_value)) {
+            (Some(Value::String(a)), Some(Value::String(b))) => a.starts_with(&b),
+            _ => false,
+        },
+        "CONTAINS" => match (v.map(from_attribute_value), list.first().map(from_attribute_value)) {
+            (Some(Value::String(a)), Some(Value::String(b))) => a.contains(&b),
+            (Some(Value::Array(a)), Some(b)) => a.contains(&b),
+            _ => false,
+        },
+        "NOT_NULL" => v.is_some(),
+        "NULL" => v.is_none(),
+        "IN" => (0..list.len()).any(|i| c(i) == Some(Equal)),
+        _ => false,
+    }
+}
+
+fn item_matches_key(t: &Table, item: &BTreeMap<String, Value>, key: &BTreeMap<String, Value>) -> bool {
+    let eq = |a: &str| match (item.get(a), key.get(a)) {
+        (Some(x), Some(y)) => cmp_av(x, y) == Some(std::cmp::Ordering::Equal),
+        _ => false,
+    };
+    eq(&t.hash) && t.range.as_ref().is_none_or(|r| eq(r))
+}
+
+fn ddb(st: &Shared, req: &ServerRequest) -> Response {
+    let action = req.header("X-Amz-Target").and_then(|t| t.strip_prefix("DynamoDB_20120810.")).unwrap_or("").to_string();
+    let body = match parse_json(&req.body) {
+        Ok(b) => b,
+        Err(e) => return ddb_err("SerializationException", &e.to_string()),
+    };
+    let ok = |v: Value| Response::json(200, v.to_json()).with_header("Content-Type", "application/x-amz-json-1.0");
+    let table_name = body.get("TableName").map(|t| t.to_string()).unwrap_or_default();
+    let mut s = st.0.lock().unwrap();
+    let describe = |t: &Table, name: &str| {
+        obj([
+            ("TableName", Value::from(name)),
+            ("TableStatus", Value::from("ACTIVE")),
+            ("KeySchema", t.key_schema.clone()),
+            ("AttributeDefinitions", t.attribute_definitions.clone()),
+            ("ItemCount", Value::Int(t.items.len() as i64)),
+        ])
+    };
+    if action == "CreateTable" {
+        if s.tables.contains_key(&table_name) {
+            return ddb_err("ResourceInUseException", "Table already exists");
+        }
+        let ks = body.get("KeySchema").cloned().unwrap_or(Value::Array(vec![]));
+        let find = |kt: &str| ks.as_array().and_then(|a| a.iter().find(|k| k.get("KeyType").map(|t| t.to_string()).as_deref() == Some(kt))).and_then(|k| k.get("AttributeName")).map(|n| n.to_string());
+        let Some(hash) = find("HASH") else { return ddb_err("ValidationException", "No HASH key") };
+        let t = Table { hash, range: find("RANGE"), key_schema: ks.clone(), attribute_definitions: body.get("AttributeDefinitions").cloned().unwrap_or_default(), items: vec![] };
+        let d = describe(&t, &table_name);
+        s.tables.insert(table_name, t);
+        return ok(obj([("TableDescription", d)]));
+    }
+    let Some(t) = s.tables.get_mut(&table_name) else { return ddb_err("ResourceNotFoundException", "Requested resource not found") };
+    let map_of = |k: &str| body.get(k).and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let return_values = body.get("ReturnValues").map(|r| r.to_string()).unwrap_or_else(|| "NONE".into());
+    match action.as_str() {
+        "DescribeTable" => ok(obj([("Table", describe(t, &table_name))])),
+        "DeleteTable" => {
+            let d = describe(t, &table_name);
+            s.tables.remove(&table_name);
+            ok(obj([("TableDescription", d)]))
+        }
+        "PutItem" => {
+            let item = map_of("Item");
+            if !item.contains_key(&t.hash) {
+                return ddb_err("ValidationException", "One of the required keys was not given a value");
+            }
+            let pos = t.items.iter().position(|i| item_matches_key(t, i, &item));
+            let old = pos.map(|p| t.items.remove(p));
+            t.items.push(item);
+            match (return_values.as_str(), old) {
+                ("ALL_OLD", Some(o)) => ok(obj([("Attributes", Value::Object(o))])),
+                _ => ok(obj([])),
+            }
+        }
+        "GetItem" => {
+            let key = map_of("Key");
+            match t.items.iter().find(|i| item_matches_key(t, i, &key)) {
+                Some(i) => {
+                    let item = match body.get("AttributesToGet").and_then(|a| a.as_array()) {
+                        Some(names) => i.iter().filter(|(k, _)| names.iter().any(|n| n.to_string() == **k)).map(|(k, v)| (k.clone(), v.clone())).collect(),
+                        None => i.clone(),
+                    };
+                    ok(obj([("Item", Value::Object(item))]))
+                }
+                None => ok(obj([])),
+            }
+        }
+        "DeleteItem" => {
+            let key = map_of("Key");
+            let old = t.items.iter().position(|i| item_matches_key(t, i, &key)).map(|p| t.items.remove(p));
+            match (return_values.as_str(), old) {
+                ("ALL_OLD", Some(o)) => ok(obj([("Attributes", Value::Object(o))])),
+                _ => ok(obj([])),
+            }
+        }
+        "UpdateItem" => {
+            let key = map_of("Key");
+            let pos = match t.items.iter().position(|i| item_matches_key(t, i, &key)) {
+                Some(p) => p,
+                None => {
+                    t.items.push(key.clone());
+                    t.items.len() - 1
+                }
+            };
+            let old = t.items[pos].clone();
+            let mut updated = BTreeMap::new();
+            for (attr, u) in map_of("AttributeUpdates") {
+                match u.get("Action").map(|a| a.to_string()).as_deref().unwrap_or("PUT") {
+                    "DELETE" => {
+                        t.items[pos].remove(&attr);
+                    }
+                    "ADD" => {
+                        let add = u.get("Value").cloned().unwrap_or_default();
+                        let cur = t.items[pos].get(&attr).map(from_attribute_value).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let inc = from_attribute_value(&add).as_f64().unwrap_or(0.0);
+                        let n = cur + inc;
+                        let v = if n.fract() == 0.0 { Value::Int(n as i64) } else { Value::Float(n) };
+                        let av = crate::aws::ddb::to_attribute_value(&v);
+                        t.items[pos].insert(attr.clone(), av.clone());
+                        updated.insert(attr, av);
+                    }
+                    _ => {
+                        let v = u.get("Value").cloned().unwrap_or_default();
+                        t.items[pos].insert(attr.clone(), v.clone());
+                        updated.insert(attr, v);
+                    }
+                }
+            }
+            match return_values.as_str() {
+                "ALL_NEW" => ok(obj([("Attributes", Value::Object(t.items[pos].clone()))])),
+                "ALL_OLD" => ok(obj([("Attributes", Value::Object(old))])),
+                "UPDATED_NEW" => ok(obj([("Attributes", Value::Object(updated))])),
+                _ => ok(obj([])),
+            }
+        }
+        "Query" | "Scan" => {
+            let conds = if action == "Query" { map_of("KeyConditions") } else { map_of("ScanFilter") };
+            if action == "Query" && !conds.contains_key(&t.hash) {
+                return ddb_err("ValidationException", "Query condition missed key schema element");
+            }
+            let mut items: Vec<BTreeMap<String, Value>> = t.items.iter().filter(|i| conds.iter().all(|(a, c)| condition_matches(i, a, c))).cloned().collect();
+            if let Some(r) = &t.range {
+                items.sort_by(|a, b| match (a.get(r), b.get(r)) {
+                    (Some(x), Some(y)) => cmp_av(x, y).unwrap_or(std::cmp::Ordering::Equal),
+                    _ => std::cmp::Ordering::Equal,
+                });
+            }
+            if body.get("ScanIndexForward").and_then(|f| f.as_bool()) == Some(false) {
+                items.reverse();
+            }
+            let scanned = if action == "Scan" { t.items.len() } else { items.len() };
+            let mut last = None;
+            if let Some(l) = body.get("Limit").and_then(|l| l.as_i64()) {
+                if items.len() > l as usize {
+                    items.truncate(l as usize);
+                    let key: BTreeMap<String, Value> =
+                        items.last().unwrap().iter().filter(|(k, _)| **k == t.hash || Some(*k) == t.range.as_ref()).map(|(k, v)| (k.clone(), v.clone())).collect();
+                    last = Some(Value::Object(key));
+                }
+            }
+            let mut out = BTreeMap::new();
+            out.insert("Count".to_string(), Value::Int(items.len() as i64));
+            out.insert("ScannedCount".to_string(), Value::Int(scanned as i64));
+            out.insert("Items".to_string(), Value::Array(items.into_iter().map(Value::Object).collect()));
+            if let Some(l) = last {
+                out.insert("LastEvaluatedKey".to_string(), l);
+            }
+            ok(Value::Object(out))
+        }
+        other => ddb_err("UnknownOperationException", &format!("Unsupported operation {}", other)),
+    }
+}
+
+/// Marshal helper for tests seeding DynamoDB data through the API shape.
+pub fn marshal(v: &Value) -> Value {
+    marshal_item(v).unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Lambda
+// ---------------------------------------------------------------------------
+
+fn lambda_err(status: u16, code: &str, msg: &str) -> Response {
+    Response::json(status, obj([("Type", Value::from("User")), ("message", Value::from(msg))]).to_json()).with_header("x-amzn-ErrorType", format!("{}:", code))
+}
+
+fn lambda(st: &Shared, req: &ServerRequest) -> Response {
+    let segs = req.segments();
+    if segs.len() < 2 || segs[0] != "2015-03-31" || segs[1] != "functions" {
+        return lambda_err(404, "ResourceNotFoundException", "Unknown resource");
+    }
+    let s = st.0.lock().unwrap();
+    let region = s.region.clone();
+    let config = |name: &str| {
+        obj([
+            ("FunctionName", Value::from(name)),
+            ("FunctionArn", Value::from(format!("arn:aws:lambda:{}:{}:function:{}", region, ACCOUNT, name))),
+            ("Runtime", Value::from("provided.al2")),
+            ("Handler", Value::from("mock")),
+        ])
+    };
+    if segs.len() == 2 {
+        let fs: Vec<Value> = s.functions.keys().map(|n| config(n)).collect();
+        return Response::json(200, obj([("Functions", Value::Array(fs))]).to_json());
+    }
+    let name = segs[2].rsplit(':').next().unwrap_or(&segs[2]).to_string();
+    let name = if segs[2].contains(":function:") { segs[2].split(":function:").nth(1).unwrap_or(&name).split(':').next().unwrap_or("").to_string() } else { name };
+    let Some(f) = s.functions.get(&name).cloned() else {
+        return lambda_err(404, "ResourceNotFoundException", &format!("Function not found: arn:aws:lambda:{}:{}:function:{}", region, ACCOUNT, name));
+    };
+    drop(s);
+    match (req.method.as_str(), segs.get(3).map(|s| s.as_str())) {
+        ("POST", Some("invocations")) => {
+            let it = req.header("X-Amz-Invocation-Type").unwrap_or("RequestResponse");
+            if it == "DryRun" {
+                return Response::new(204);
+            }
+            let result = f(&req.body);
+            if it == "Event" {
+                return Response::new(202);
+            }
+            match result {
+                Ok(out) => Response::new(200).with_header("X-Amz-Executed-Version", "$LATEST").with_header("Content-Type", "application/json").with_body(out),
+                Err(msg) => Response::json(200, obj([("errorMessage", Value::from(msg)), ("errorType", Value::from("Error"))]).to_json()).with_header("X-Amz-Function-Error", "Unhandled"),
+            }
+        }
+        ("GET", None) => Response::json(200, obj([("Configuration", config(&name))]).to_json()),
+        ("DELETE", None) => {
+            st.0.lock().unwrap().functions.remove(&name);
+            Response::new(204)
+        }
+        _ => lambda_err(400, "InvalidRequestContentException", "Unsupported request"),
+    }
+}
