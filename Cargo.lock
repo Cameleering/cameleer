@@ -23,7 +23,9 @@ dependencies = [
 name = "camel-cloud"
 version = "0.1.0"
 dependencies = [
+ "camel-amqp10",
  "camel-core",
+ "camel-dataformats",
  "camel-grpc",
  "camel-kafka-mqtt",
  "camel-tls",

@@ -10,3 +10,5 @@ camel-core = { path = "../camel-core" }
 camel-tls = { path = "../camel-tls" }
 camel-grpc = { path = "../camel-grpc" }
 camel-kafka-mqtt = { path = "../camel-kafka-mqtt" }
+camel-dataformats = { path = "../camel-dataformats" }
+camel-amqp10 = { path = "../camel-amqp10" }
