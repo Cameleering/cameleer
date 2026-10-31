@@ -80,8 +80,6 @@ fn parse_sub(p: &str, df: &DecimalFormat) -> Result<SubPattern, String> {
 
 /// Round half-even to `digits` fraction digits and return the decimal digits.
 fn round_digits(x: f64, digits: usize) -> String {
-    let s = format!("{:.*}", digits + 3, x);
-    // use exact decimal representation for half-even decisions
     let factor = 10f64.powi(digits as i32);
     let scaled = x * factor;
     let fl = scaled.floor();
@@ -95,7 +93,6 @@ fn round_digits(x: f64, digits: usize) -> String {
     } else {
         scaled.round()
     };
-    let _ = s;
     let v = r / factor;
     format!("{:.*}", digits, v)
 }
@@ -110,7 +107,7 @@ pub fn format_number(x: f64, pattern: &str, df: &DecimalFormat) -> Result<String
         None => (pattern, None),
     };
     let pos = parse_sub(pos_p, df)?;
-    let negative = x < 0.0 || (x == 0.0 && x.is_sign_negative() && false);
+    let negative = x < 0.0;
     let (prefix, suffix) = if negative {
         match neg_p {
             Some(n) => {

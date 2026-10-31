@@ -57,8 +57,10 @@ dependencies = [
  "camel-http",
  "camel-kafka-mqtt",
  "camel-protocols",
+ "camel-saas",
  "camel-sql",
  "camel-ssh",
+ "camel-xml",
  "camel-yaml",
 ]
 
@@ -68,6 +70,15 @@ version = "0.1.0"
 dependencies = [
  "camel-core",
  "camel-tls",
+]
+
+[[package]]
+name = "camel-saas"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+ "camel-http",
+ "camel-xml",
 ]
 
 [[package]]
@@ -91,6 +102,14 @@ name = "camel-tls"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+]
+
+[[package]]
+name = "camel-xml"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+ "camel-tls",
 ]
 
 [[package]]

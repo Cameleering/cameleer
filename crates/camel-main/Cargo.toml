@@ -12,9 +12,11 @@ camel-core = { path = "../camel-core" }
 camel-grpc = { path = "../camel-grpc" }
 camel-http = { path = "../camel-http" }
 camel-protocols = { path = "../camel-protocols" }
+camel-saas = { path = "../camel-saas" }
 camel-kafka-mqtt = { path = "../camel-kafka-mqtt" }
 camel-sql = { path = "../camel-sql" }
 camel-ssh = { path = "../camel-ssh" }
+camel-xml = { path = "../camel-xml" }
 camel-yaml = { path = "../camel-yaml" }
 
 [[bin]]

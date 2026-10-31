@@ -60,16 +60,6 @@ pub(crate) enum AvtPart {
 #[derive(Clone, Debug)]
 pub(crate) struct Avt(pub Vec<AvtPart>);
 
-impl Avt {
-    fn constant(&self) -> Option<String> {
-        match self.0.as_slice() {
-            [] => Some(String::new()),
-            [AvtPart::Lit(s)] => Some(s.clone()),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) enum VarValue {
     Select(XPath),
@@ -518,7 +508,7 @@ impl Compiler {
             "for-each" => {
                 let select = self.xpath(doc, el, Self::required(doc, el, "select")?)?;
                 let sorts = self.sorts(doc, el)?;
-                let body = self.body_skipping(doc, el, &["sort"])?;
+                let body = self.body(doc, el)?;
                 Instr::ForEach { select, sorts, body }
             }
             "if" => Instr::If { test: self.xpath(doc, el, Self::required(doc, el, "test")?)?, body: self.body(doc, el)? },
@@ -614,11 +604,6 @@ impl Compiler {
                 }
             }
         }))
-    }
-
-    fn body_skipping(&mut self, doc: &Document, el: NodeId, _skip: &[&str]) -> Result<Vec<Instr>, CamelError> {
-        // sort / with-param compile to nothing in `instruction`
-        self.body(doc, el)
     }
 
     fn template_params(&mut self, doc: &Document, el: NodeId) -> Result<Vec<Param>, CamelError> {
@@ -1058,10 +1043,4 @@ impl Stylesheet {
 /// Convenience: compile a stylesheet and transform XML text.
 pub fn transform(xsl: &str, xml: &str) -> Result<String, CamelError> {
     Stylesheet::compile(xsl, None)?.transform_to_string(xml, &[])
-}
-
-// make Avt::constant used
-#[allow(dead_code)]
-fn _avt_constant(a: &Avt) -> Option<String> {
-    a.constant()
 }

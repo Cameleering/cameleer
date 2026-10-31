@@ -22,12 +22,14 @@
 //!
 //! XQuery is not implemented.
 
+pub mod c14n;
 pub mod dom;
 pub mod language;
 pub mod parser;
 pub mod serialize;
 pub mod validator;
 pub mod xj;
+pub mod xmlsecurity;
 pub mod xpath;
 pub mod xsd;
 pub mod xslt;
@@ -62,6 +64,7 @@ pub(crate) fn register_kinds() {
         register_kind_parent(TRANSFORMER_EXCEPTION, kinds::EXCEPTION);
         register_kind_parent(TRANSFORMER_CONFIGURATION_EXCEPTION, TRANSFORMER_EXCEPTION);
         validator::register_validation_kinds();
+        xmlsecurity::register_kinds();
     });
 }
 
@@ -75,4 +78,6 @@ pub fn register(ctx: &CamelContext) {
     ctx.add_component_factory("xslt-saxon", || Arc::new(xslt_component::XsltComponent::new(true)));
     ctx.add_component_factory("validator", || Arc::new(validator::ValidatorComponent));
     ctx.add_component_factory("xj", || Arc::new(xj::XjComponent));
+    ctx.add_component_factory("xmlsecurity-sign", || Arc::new(xmlsecurity::XmlSecurityComponent::sign()));
+    ctx.add_component_factory("xmlsecurity-verify", || Arc::new(xmlsecurity::XmlSecurityComponent::verify()));
 }

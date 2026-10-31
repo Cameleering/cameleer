@@ -61,6 +61,8 @@ $ cargo run -p camel-main --bin camel -- run hello.camel.yaml --max-seconds 5
 | `camel-cloud` | AWS S3/SQS/SNS/DynamoDB/Lambda, Azure Blob/Queue, Google Storage/Pub/Sub (with verifying emulators) |
 | `camel-ssh` | SSH-2 + SFTP: sftp and ssh components |
 | `camel-grpc` | HTTP/2 + HPACK, protobuf, grpc component and protobuf data format |
+| `camel-xml` | XML 1.0 parser + DOM, XPath 1.0 (`xpath` language), XSLT 1.0 (`xslt`, `xslt-saxon`), XML Schema (`validator`), `xj`, `xmlsecurity-sign`/`-verify` |
+| `camel-saas` | slack, telegram, github, twilio, jira, openai, webhook, graphql, rss/atom (with embedded mock servers) |
 | `camel-main` | `Main` runner (application.properties, route discovery) and the `camel` CLI |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the internals, and [docs/FEATURES.md](docs/FEATURES.md) for
