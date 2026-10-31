@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "camel-amqp"
+version = "0.1.0"
+dependencies = [
+ "camel-core",
+]
+
+[[package]]
 name = "camel-core"
 version = "0.1.0"
 
@@ -17,6 +24,7 @@ dependencies = [
 name = "camel-main"
 version = "0.1.0"
 dependencies = [
+ "camel-amqp",
  "camel-core",
  "camel-http",
  "camel-protocols",
