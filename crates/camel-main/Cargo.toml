@@ -10,6 +10,7 @@ camel-core = { path = "../camel-core" }
 camel-http = { path = "../camel-http" }
 camel-protocols = { path = "../camel-protocols" }
 camel-kafka-mqtt = { path = "../camel-kafka-mqtt" }
+camel-sql = { path = "../camel-sql" }
 camel-yaml = { path = "../camel-yaml" }
 
 [[bin]]

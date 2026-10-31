@@ -412,6 +412,9 @@ pub fn new_main() -> Main {
     // ftp, smtp/pop3/imap, websocket, mllp, syslog
     camel_protocols::register(main.context());
     camel_kafka_mqtt::register(main.context()); // kafka, paho, paho-mqtt5
+    // sql, jdbc, sql-stored + `camel.datasource[.<name>].url` data sources
+    camel_sql::register(main.context());
+    main.configure(camel_sql::configure_datasources_from_properties);
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {
@@ -432,6 +435,21 @@ mod tests {
         assert!(ant_match("**/*.yaml", "x/y/a.yaml"));
         assert!(ant_match("**/*.yaml", "a.yaml"));
         assert_eq!(dashed_to_camel("camel.main.duration-max-seconds"), "camel.main.durationMaxSeconds");
+    }
+
+    #[test]
+    fn new_main_binds_datasources_from_properties() {
+        let mut main = new_main();
+        main.set_property("camel.datasource.url", "jdbc:rustsql:mem:camelMainDsTest");
+        main.configure(|ctx| {
+            ctx.add_routes(|b| {
+                b.from("direct:q").to("sql:select 6 * 7 as answer?dataSource=#dataSource&outputType=SelectOne");
+            })
+        });
+        main.start().unwrap();
+        let v = main.context().create_producer_template().request_body("direct:q", 0).unwrap();
+        assert_eq!(v, camel_core::value::Value::Int(42));
+        main.stop().unwrap();
     }
 
     #[test]
