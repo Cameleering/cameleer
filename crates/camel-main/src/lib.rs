@@ -415,6 +415,7 @@ pub fn new_main() -> Main {
     // sql, jdbc, sql-stored + `camel.datasource[.<name>].url` data sources
     camel_sql::register(main.context());
     main.configure(camel_sql::configure_datasources_from_properties);
+    camel_amqp::register(main.context());
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {

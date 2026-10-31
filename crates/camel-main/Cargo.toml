@@ -6,6 +6,7 @@ license.workspace = true
 description = "rust-camel main runner and `camel` CLI (like Camel Main / Camel JBang)"
 
 [dependencies]
+camel-amqp = { path = "../camel-amqp" }
 camel-core = { path = "../camel-core" }
 camel-http = { path = "../camel-http" }
 camel-protocols = { path = "../camel-protocols" }
