@@ -435,6 +435,8 @@ impl P {
                         arrow: false,
                         implicit_it: false,
                         implicit_return: false,
+                        generator: false,
+                        is_async: false,
                     }))]);
                 }
                 "try" => return Ok(vec![self.try_stmt()?]),
@@ -775,7 +777,7 @@ impl P {
             self.next();
             let (params, rest) = self.params(":")?;
             let body = self.test()?;
-            return Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body: FuncBody::Expr(Box::new(body)), arrow: true, implicit_it: false, implicit_return: false })));
+            return Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body: FuncBody::Expr(Box::new(body)), arrow: true, implicit_it: false, implicit_return: false, generator: false, is_async: false })));
         }
         let c = self.or_test()?;
         if self.is_kw("if") {

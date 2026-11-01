@@ -12,7 +12,7 @@ type R<T> = Result<T, SyntaxError>;
 /// Parse a whole program.
 pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
     let toks = tokenize(src, 0, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false };
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: d == Dialect::Js };
     let body = match d {
         Dialect::Ognl | Dialect::Spel => {
             let e = p.parse_sequence()?;
@@ -30,13 +30,22 @@ pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
             body
         }
     };
+    // JavaScript top-level await: run the script body as an async function
+    if d == Dialect::Js && crate::gen::stmts_have_yield(&body) {
+        let mut f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
+        f.arrow = true;
+        f.is_async = true;
+        f.implicit_return = true;
+        let call = Expr::Call { callee: Box::new(Expr::Func(Arc::new(f))), args: vec![], optional: false, pos: 0 };
+        return Ok(Program { dialect: d, body: vec![Stmt::Expr(call)] });
+    }
     Ok(Program { dialect: d, body })
 }
 
 /// Parse an embedded expression (template interpolation) at absolute offset `base`.
 pub fn parse_embedded(src: &str, base: usize, d: Dialect) -> R<Expr> {
     let toks = tokenize(src, base, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false };
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: false };
     if p.at_eof() {
         return Err(SyntaxError { pos: base, msg: "empty expression".into() });
     }
@@ -50,6 +59,10 @@ struct Parser {
     i: usize,
     d: Dialect,
     no_in: bool,
+    /// Inside a generator function (`yield` is an operator).
+    in_gen: bool,
+    /// Inside an async function or at the JavaScript top level (`await` is an operator).
+    in_async: bool,
 }
 
 const JS_KEYWORDS: &[&str] = &[
@@ -158,6 +171,10 @@ impl Parser {
     }
     /// Property name after `.`: any identifier or keyword (or a string in Groovy).
     fn prop_name(&mut self) -> R<String> {
+        if self.d == Dialect::Js && self.is_p("#") {
+            self.next();
+            return Ok(format!("#{}", self.ident()?));
+        }
         match self.peek().clone() {
             T::Ident(s) => {
                 self.next();
@@ -246,9 +263,15 @@ impl Parser {
                     self.consume_semi()?;
                     return Ok(s);
                 }
-                "function" if d == Dialect::Js && matches!(self.peek_at(1), T::Ident(_)) => {
+                "function" if d == Dialect::Js && (matches!(self.peek_at(1), T::Ident(_)) || self.is_p_at(1, "*")) => {
                     self.next();
-                    let f = self.parse_function_rest(false)?;
+                    let f = self.parse_function_rest(false, false)?;
+                    return Ok(Stmt::Func(Arc::new(f)));
+                }
+                "async" if d == Dialect::Js && self.is_kw_at(1, "function") && !self.tok_at(1).nl => {
+                    self.next();
+                    self.next();
+                    let f = self.parse_function_rest(false, true)?;
                     return Ok(Stmt::Func(Arc::new(f)));
                 }
                 "class" if d == Dialect::Js => {
@@ -508,7 +531,7 @@ impl Parser {
             }
         }
         let body = self.parse_block_body()?;
-        Ok(Stmt::Func(Arc::new(FuncDef { name: Some(name), params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: true })))
+        Ok(Stmt::Func(Arc::new(FuncDef { name: Some(name), params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: true, generator: false, is_async: false })))
     }
 
     fn parse_var_decl(&mut self) -> R<Stmt> {
@@ -752,26 +775,112 @@ impl Parser {
         };
         let extends = if self.eat_kw("extends") { Some(self.parse_postfix()?) } else { None };
         self.expect_p("{")?;
-        let mut ctor = None;
+        let mut ctors = Vec::new();
         let mut methods = Vec::new();
+        let mut fields = Vec::new();
         while !self.eat_p("}") {
             if self.eat_p(";") {
                 continue;
             }
-            let is_static = self.is_kw("static") && !self.is_p_at(1, "(");
+            let is_static = self.is_kw("static") && !self.is_p_at(1, "(") && !self.is_p_at(1, "=");
             if is_static {
                 self.next();
+                if self.is_p("{") {
+                    // static initialization block
+                    let body = self.parse_block_body()?;
+                    let f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
+                    let call = Expr::Call { callee: Box::new(Expr::Member { obj: Box::new(Expr::Func(Arc::new(f))), name: "call".into(), optional: false, pos: 0 }), args: vec![Elem::Item(Expr::This)], optional: false, pos: 0 };
+                    fields.push(ClassField { name: format!("%static{}", fields.len()), init: Some(call), is_static: true });
+                    continue;
+                }
             }
-            let mname = self.prop_name()?;
-            let mut f = self.parse_function_params_body()?;
+            let (m, key) = self.parse_method_head()?;
+            if m.accessor.is_none() && !m.generator && !m.is_async && (self.is_p("=") || self.is_p(";") || self.is_p("}") || self.nl()) && !self.is_p("(") {
+                // class field
+                let init = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
+                self.consume_semi()?;
+                let PropKey::Name(n) = key else { return self.err("computed class field names are not supported") };
+                fields.push(ClassField { name: n, init, is_static });
+                continue;
+            }
+            let mut f = self.parse_method_body(m.generator, m.is_async)?;
+            let (mname, mkey) = match key {
+                PropKey::Name(n) => (n, None),
+                PropKey::Computed(e) => (String::new(), Some(e)),
+            };
             f.name = Some(mname.clone());
-            if mname == "constructor" && !is_static {
-                ctor = Some(Arc::new(f));
+            if mname == "constructor" && !is_static && m.accessor.is_none() {
+                ctors.push(Arc::new(f));
             } else {
-                methods.push((mname, Arc::new(f), is_static));
+                let kind = match m.accessor {
+                    Some(true) => MemberKind::Getter,
+                    Some(false) => MemberKind::Setter,
+                    None => MemberKind::Method,
+                };
+                methods.push(ClassMember { name: mname, key: mkey, func: Arc::new(f), kind, is_static });
             }
         }
-        Ok(ClassDef { name, extends, ctor, methods })
+        Ok(ClassDef { name, extends, ctors, methods, fields, mixins: vec![], style: ClassStyle::Js, annotations: vec![] })
+    }
+
+    /// Method head in classes / object literals: modifiers (`get`, `set`, `async`, `*`) and the
+    /// member name.
+    fn parse_method_head(&mut self) -> R<(MethodHead, PropKey)> {
+        let mut h = MethodHead { accessor: None, generator: false, is_async: false };
+        let is_name_next = |p: &Parser, n: usize| matches!(p.peek_at(n), T::Ident(_) | T::Str(_) | T::Int(_) | T::Num(_) | T::P("[") | T::P("#") | T::P("*"));
+        if (self.is_kw("get") || self.is_kw("set")) && is_name_next(self, 1) && !self.is_p_at(1, "*") {
+            h.accessor = Some(self.is_kw("get"));
+            self.next();
+        } else if self.is_kw("async") && is_name_next(self, 1) && !self.tok_at(1).nl {
+            h.is_async = true;
+            self.next();
+        }
+        if self.eat_p("*") {
+            h.generator = true;
+        }
+        let key = match self.peek().clone() {
+            T::Ident(s) => {
+                self.next();
+                PropKey::Name(s)
+            }
+            T::Str(s) => {
+                self.next();
+                PropKey::Name(s)
+            }
+            T::Int(i) => {
+                self.next();
+                PropKey::Name(i.to_string())
+            }
+            T::Num(f) => {
+                self.next();
+                PropKey::Name(crate::interp::js_num_str(f))
+            }
+            T::P("#") => {
+                self.next();
+                PropKey::Name(format!("#{}", self.ident()?))
+            }
+            T::P("[") => {
+                self.next();
+                let k = self.parse_assign()?;
+                self.expect_p("]")?;
+                PropKey::Computed(k)
+            }
+            _ => return self.err(format!("unexpected {} in class body", describe(self.peek()))),
+        };
+        Ok((h, key))
+    }
+
+    fn parse_method_body(&mut self, generator: bool, is_async: bool) -> R<FuncDef> {
+        let (sg, sa) = (self.in_gen, self.in_async);
+        self.in_gen = generator;
+        self.in_async = is_async;
+        let r = self.parse_function_params_body();
+        self.in_gen = sg;
+        self.in_async = sa;
+        let mut f = r?;
+        f.generator = generator;
+        f.is_async = is_async;
+        Ok(f)
     }
 
     // ------------------------------------------------------------------ functions
@@ -798,11 +907,12 @@ impl Parser {
     fn parse_function_params_body(&mut self) -> R<FuncDef> {
         let (params, rest) = self.parse_params()?;
         let body = self.parse_block_body()?;
-        Ok(FuncDef { name: None, params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: false })
+        Ok(FuncDef { name: None, params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: false, generator: false, is_async: false })
     }
 
-    /// After `function`: optional name, params, body.
-    fn parse_function_rest(&mut self, expr: bool) -> R<FuncDef> {
+    /// After `function`: optional `*`, optional name, params, body.
+    fn parse_function_rest(&mut self, expr: bool, is_async: bool) -> R<FuncDef> {
+        let generator = self.eat_p("*");
         let name = match self.peek().clone() {
             T::Ident(n) => {
                 self.next();
@@ -811,22 +921,32 @@ impl Parser {
             _ if expr => None,
             _ => return self.err("expected function name"),
         };
-        let mut f = self.parse_function_params_body()?;
+        let mut f = self.parse_method_body(generator, is_async)?;
         f.name = name;
         Ok(f)
     }
 
     fn parse_arrow_body(&mut self, params: Vec<Param>, rest: Option<Pat>) -> R<Expr> {
+        self.parse_arrow_body_async(params, rest, false)
+    }
+
+    fn parse_arrow_body_async(&mut self, params: Vec<Param>, rest: Option<Pat>, is_async: bool) -> R<Expr> {
+        let (sg, sa) = (self.in_gen, self.in_async);
+        self.in_gen = false;
+        self.in_async = is_async;
         let body = if self.is_p("{") {
-            FuncBody::Block(self.parse_block_body()?)
+            self.parse_block_body().map(FuncBody::Block)
         } else {
             let save = self.no_in;
             self.no_in = false;
-            let e = self.parse_assign()?;
+            let e = self.parse_assign();
             self.no_in = save;
-            FuncBody::Expr(Box::new(e))
+            e.map(|e| FuncBody::Expr(Box::new(e)))
         };
-        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body, arrow: true, implicit_it: false, implicit_return: false })))
+        self.in_gen = sg;
+        self.in_async = sa;
+        let body = body?;
+        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body, arrow: true, implicit_it: false, implicit_return: false, generator: false, is_async })))
     }
 
     /// Groovy closure `{ a, b -> ... }` (current token is `{`).
@@ -872,7 +992,7 @@ impl Parser {
             body.push(self.parse_statement()?);
         }
         self.next();
-        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body: FuncBody::Block(body), arrow: false, implicit_it, implicit_return: true })))
+        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body: FuncBody::Block(body), arrow: false, implicit_it, implicit_return: true, generator: false, is_async: false })))
     }
 
     // ------------------------------------------------------------------ expressions
@@ -921,6 +1041,33 @@ impl Parser {
     }
 
     fn parse_assign(&mut self) -> R<Expr> {
+        if self.d == Dialect::Js && self.in_gen && self.is_kw("yield") {
+            let pos = self.pos();
+            self.next();
+            let delegate = !self.nl() && self.eat_p("*");
+            let ends = self.nl() && !delegate || matches!(self.peek(), T::P(")") | T::P("]") | T::P("}") | T::P(",") | T::P(";") | T::P(":") | T::Eof);
+            let arg = if ends { None } else { Some(Box::new(self.parse_assign()?)) };
+            return Ok(Expr::Yield { arg, delegate, pos });
+        }
+        if self.d == Dialect::Js && self.is_kw("async") && !self.tok_at(1).nl {
+            // async arrow functions
+            if matches!(self.peek_at(1), T::Ident(w) if !JS_KEYWORDS.contains(&w.as_str())) && self.is_p_at(2, "=>") {
+                self.next();
+                let name = self.ident()?;
+                self.next();
+                return self.parse_arrow_body_async(vec![Param { pat: Pat::Id(name), default: None }], None, true);
+            }
+            if self.is_p_at(1, "(") {
+                let save = self.i;
+                self.next();
+                if self.is_arrow_ahead() {
+                    let (params, rest) = self.parse_params()?;
+                    self.expect_p("=>")?;
+                    return self.parse_arrow_body_async(params, rest, true);
+                }
+                self.i = save;
+            }
+        }
         if self.d == Dialect::Js {
             if matches!(self.peek(), T::Ident(w) if !JS_KEYWORDS.contains(&w.as_str())) && self.is_p_at(1, "=>") {
                 let name = self.ident()?;
@@ -988,6 +1135,7 @@ impl Parser {
                         Prop::Spread(e) => rest = Some(Box::new(self.to_pat(e)?)),
                         Prop::KV(k, Expr::Assign { op: None, target, value, .. }) => v.push((k, *target, Some(*value))),
                         Prop::KV(k, e) => v.push((k, self.to_pat(e)?, None)),
+                        Prop::Get(..) | Prop::Set(..) => return self.err("invalid destructuring target"),
                     }
                 }
                 Pat::Obj(v, rest)
@@ -1198,6 +1346,11 @@ impl Parser {
             T::Ident(w) if w == "void" && self.d == Dialect::Js => Some(UnOp::Void),
             T::Ident(w) if w == "delete" && self.d == Dialect::Js => Some(UnOp::Delete),
             T::Ident(w) if w == "not" && matches!(self.d, Dialect::Ognl | Dialect::Spel) => Some(UnOp::Not),
+            T::Ident(w) if w == "await" && self.d == Dialect::Js && self.in_async && !matches!(self.peek_at(1), T::P(")") | T::P(";") | T::P(",") | T::P("=") | T::Eof) => {
+                self.next();
+                let e = self.parse_unary()?;
+                return Ok(Expr::Await(Box::new(e), pos));
+            }
             _ => None,
         };
         if let Some(op) = op {
@@ -1325,6 +1478,8 @@ impl Parser {
                             arrow: false,
                             implicit_it: true,
                             implicit_return: true,
+                            generator: false,
+                            is_async: false,
                         }));
                         e = Expr::Call { callee: Box::new(Expr::Member { obj: Box::new(e), name: "collect".into(), optional: true, pos }), args: vec![Elem::Item(f)], optional: false, pos };
                     } else {
@@ -1521,7 +1676,12 @@ impl Parser {
                     "this" => return Ok(Expr::This),
                     "super" => return Ok(Expr::Super(pos)),
                     "function" if d == Dialect::Js => {
-                        let f = self.parse_function_rest(true)?;
+                        let f = self.parse_function_rest(true, false)?;
+                        return Ok(Expr::Func(Arc::new(f)));
+                    }
+                    "async" if d == Dialect::Js && self.is_kw("function") && !self.nl() => {
+                        self.next();
+                        let f = self.parse_function_rest(true, true)?;
                         return Ok(Expr::Func(Arc::new(f)));
                     }
                     "class" if d == Dialect::Js => {
@@ -1694,8 +1854,21 @@ impl Parser {
         self.no_in = false;
         let mut props = Vec::new();
         while !self.is_p("}") {
+            let accessor_or_method = (self.is_kw("get") || self.is_kw("set") || self.is_kw("async")) && matches!(self.peek_at(1), T::Ident(_) | T::Str(_) | T::Int(_) | T::P("[") | T::P("*"));
             if self.eat_p("...") {
                 props.push(Prop::Spread(self.parse_assign()?));
+            } else if accessor_or_method || self.is_p("*") {
+                let (m, key) = self.parse_method_head()?;
+                let mut f = self.parse_method_body(m.generator, m.is_async)?;
+                if let PropKey::Name(n) = &key {
+                    f.name = Some(n.clone());
+                }
+                let f = Arc::new(f);
+                props.push(match m.accessor {
+                    Some(true) => Prop::Get(key, f),
+                    Some(false) => Prop::Set(key, f),
+                    None => Prop::KV(key, Expr::Func(f)),
+                });
             } else {
                 let key = match self.peek().clone() {
                     T::Ident(s) => {
@@ -1759,6 +1932,13 @@ fn spel_key(e: Expr) -> PropKey {
         Expr::Int(i) => PropKey::Name(i.to_string()),
         other => PropKey::Computed(other),
     }
+}
+
+struct MethodHead {
+    /// Some(true) getter, Some(false) setter.
+    accessor: Option<bool>,
+    generator: bool,
+    is_async: bool,
 }
 
 #[derive(Clone, Copy)]

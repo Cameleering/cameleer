@@ -31,17 +31,26 @@ use camel_core::message::{Exchange, Headers};
 use camel_core::spi::{Expression, Language, Predicate, Processor};
 use camel_core::value::Value;
 
+mod arena;
 pub mod ast;
 mod builtins;
+mod classes;
+mod collections;
 pub mod error;
 mod format;
+mod gen;
 mod host;
 mod interp;
+mod java;
+mod jobj;
 mod json;
 mod jsonnet;
 mod lexer;
+mod media;
 mod parser;
+mod promise;
 mod python;
+mod stack;
 mod value;
 
 pub use ast::Dialect;
@@ -73,26 +82,15 @@ pub struct Script {
     dialect: Dialect,
     src: Arc<str>,
     prog: ast::Program,
-    /// Run on a dedicated thread with a large stack (user-defined functions may recurse).
-    deep: bool,
     result_type: Option<String>,
     output_media_type: String,
     body_media_type: String,
+    options: BTreeMap<String, String>,
 }
 
 impl std::fmt::Debug for Script {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Script[{}: {}]", self.dialect.display_name(), self.src)
-    }
-}
-
-fn has_functions(d: Dialect, src: &str) -> bool {
-    match d {
-        Dialect::Js => src.contains("function") || src.contains("=>") || src.contains("class"),
-        Dialect::Groovy | Dialect::Mvel => src.contains("->") || src.contains("def ") || src.contains(") {") || src.contains("){"),
-        Dialect::Python => src.contains("def ") || src.contains("lambda"),
-        Dialect::Jsonnet => src.contains("function") || src.contains("local") && src.contains('('),
-        Dialect::Ognl | Dialect::Spel => false,
     }
 }
 
@@ -161,10 +159,10 @@ impl Script {
             dialect,
             src: Arc::from(text),
             prog,
-            deep: has_functions(dialect, text),
             result_type: opt("resultType"),
             output_media_type: opt("outputMediaType").unwrap_or_else(|| "application/json".into()),
             body_media_type: opt("bodyMediaType").unwrap_or_else(|| "application/json".into()),
+            options: options.clone(),
         })
     }
 
@@ -226,35 +224,36 @@ impl Script {
         }
     }
 
+    /// Evaluate on the caller's thread (see [`stack`] for deep recursion).
     fn run(&self, parts: Parts) -> Outcome {
-        if !self.deep {
-            return self.run_inner(parts, 40);
-        }
-        std::thread::scope(|s| {
-            let h = std::thread::Builder::new()
-                .name("camel-script".into())
-                .stack_size(256 << 20)
-                .spawn_scoped(s, move || self.run_inner(parts, interp::MAX_DEPTH))
-                .map_err(|e| CamelError::new(kinds::EXPRESSION_EVALUATION, format!("cannot start script thread: {}", e)))?;
-            h.join().unwrap_or_else(|_| Err(CamelError::new(kinds::EXPRESSION_EVALUATION, format!("{} script panicked", self.dialect.display_name()))))
-        })
+        let prev = arena::enter();
+        let r = self.run_inner(parts);
+        arena::exit(prev);
+        r
     }
 
-    fn run_inner(&self, parts: Parts, max_depth: usize) -> Outcome {
+    fn run_inner(&self, parts: Parts) -> Outcome {
         let state = host::HostState::new(parts.exchange_id, parts.pattern, parts.message_id, parts.context, parts.headers, parts.body, parts.properties, parts.exception, parts.route_id);
         let host = Rc::new(state);
         let mut it = interp::Interp::new(self.dialect, self.src.clone(), host.clone());
-        it.max_depth = max_depth;
         if self.dialect == Dialect::Jsonnet {
-            let payload = self.payload(&host);
+            let payload = match self.payload(&host) {
+                Ok(p) => p,
+                Err(e) => {
+                    it.teardown();
+                    return Err(e);
+                }
+            };
             it.globals.define("payload", payload);
         }
         let r = it.run_program(&self.prog);
         let result = match r {
-            Ok(v) | Err(interp::Ctrl::Return(v)) => self.finish(&mut it, v),
+            Ok(v) | Err(interp::Ctrl::Return(v)) | Err(interp::Ctrl::Value(v)) => self.finish(&mut it, v),
             Err(interp::Ctrl::Throw(e)) => Err(self.to_error(&it, &e)),
             Err(_) => Ok(Value::Null),
         };
+        // the body is converted before the object graph is torn down
+        host.freeze_body();
         it.teardown();
         drop(it);
         let result = result?;
@@ -263,23 +262,18 @@ impl Script {
         Ok((result, headers, body, props))
     }
 
-    fn payload(&self, host: &host::HostState) -> value::V {
+    fn payload(&self, host: &host::HostState) -> Result<value::V> {
         let body = host.body_value();
-        let json = self.body_media_type.contains("json");
-        match &body {
-            Value::String(_) | Value::Bytes(_) if json => {
-                let s = body.as_str().unwrap_or("").to_string();
-                if s.trim().is_empty() {
-                    return value::V::Null;
-                }
-                json::parse(&s).unwrap_or_else(|_| value::V::string(s))
-            }
-            other => value::from_value(other),
-        }
+        media::read_payload(&body, &self.body_media_type, &self.options)
     }
 
     fn finish(&self, it: &mut interp::Interp, v: value::V) -> Result<Value> {
         use value::{Host, V};
+        let v = match it.materialize(&v) {
+            Ok(v) => v,
+            Err(interp::Ctrl::Throw(e)) => return Err(self.to_error(it, &e)),
+            Err(_) => v,
+        };
         let v = match &v {
             V::Host(h) => match &**h {
                 Host::Headers | Host::Properties | Host::Variables => host::snapshot(it, h).unwrap_or(V::Null),
@@ -295,12 +289,7 @@ impl Script {
             sort_keys_deep(&mut out);
         }
         if self.dialect == Dialect::Jsonnet && self.result_type.is_none() {
-            let m = self.output_media_type.to_ascii_lowercase();
-            if m.contains("json") {
-                out = Value::String(json::stringify(&v, &json::JsonOpts { indent: None, item_sep: "", key_sep: "", sort_keys: true, js: false, newline: "\n" }).unwrap_or_else(|| "null".into()));
-            } else if m.starts_with("text/") {
-                out = Value::String(it.display(&v));
-            }
+            out = media::write_output(it, &v, out, &self.output_media_type, &self.options)?;
         }
         if let Some(t) = &self.result_type {
             out = camel_core::language::support::convert_to_type(&out, t)?;

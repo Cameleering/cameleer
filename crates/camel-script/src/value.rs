@@ -9,6 +9,7 @@ use camel_core::value::{ObjectMap, Value};
 
 use crate::ast::FuncDef;
 use crate::interp::Env;
+pub use crate::arena::{new_arr_ref, new_closure, new_obj_ref};
 
 /// A shared, mutable array.
 pub type ArrRef = Rc<RefCell<Vec<V>>>;
@@ -42,6 +43,33 @@ pub struct RegexVal {
     pub re: camel_core::regex::Regex,
 }
 
+/// Shared interior state of a special object (compared by identity).
+pub struct Internal<T>(pub Rc<RefCell<T>>);
+
+impl<T> Internal<T> {
+    pub fn new(v: T) -> Internal<T> {
+        Internal(Rc::new(RefCell::new(v)))
+    }
+}
+
+impl<T> Clone for Internal<T> {
+    fn clone(&self) -> Self {
+        Internal(self.0.clone())
+    }
+}
+
+impl<T> PartialEq for Internal<T> {
+    fn eq(&self, o: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &o.0)
+    }
+}
+
+impl<T> std::fmt::Debug for Internal<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<internal>")
+    }
+}
+
 /// Kind of an object.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ObjKind {
@@ -52,6 +80,20 @@ pub enum ObjKind {
     Set,
     /// Python keyword arguments passed as the last call argument.
     Kwargs,
+    /// An accessor property (`get` / `set` functions in the props), stored as a property value.
+    Accessor,
+    /// A JavaScript symbol (id, description).
+    Symbol(u64, Rc<str>),
+    /// JavaScript `Map` / `Set` / `WeakMap` / `WeakSet`.
+    Coll(Internal<crate::collections::Coll>),
+    /// A promise.
+    Promise(Internal<crate::promise::PromiseState>),
+    /// A generator object (JavaScript `function*`, Python generator functions, async functions).
+    Generator(Internal<crate::gen::GenState>),
+    /// `java.util.Optional` (`value` prop, absent when empty).
+    Optional,
+    /// A DataSonnet object with late-bound `self` / `super` and hidden fields.
+    Jsonnet(Internal<crate::jobj::JMeta>),
 }
 
 /// An object / map with insertion-ordered keys and an optional prototype.
@@ -88,21 +130,43 @@ impl Default for Obj {
     }
 }
 
-/// Insertion ordered property map.
+/// Prefix of property keys that are symbols (kept apart from the string keys).
+pub const SYM_PREFIX: &str = "@@sym:";
+
+fn is_sym(k: &str) -> bool {
+    k.starts_with(SYM_PREFIX)
+}
+
+/// Insertion ordered property map. Symbol keys are stored apart and are not enumerated.
 #[derive(Clone, Default)]
 pub struct PropMap {
     keys: Vec<Rc<str>>,
     map: HashMap<Rc<str>, V>,
+    syms: Option<Box<HashMap<Rc<str>, V>>>,
 }
 
 impl PropMap {
     pub fn get(&self, k: &str) -> Option<&V> {
+        if is_sym(k) {
+            return self.syms.as_ref().and_then(|m| m.get(k));
+        }
         self.map.get(k)
     }
     pub fn contains(&self, k: &str) -> bool {
+        if is_sym(k) {
+            return self.syms.as_ref().is_some_and(|m| m.contains_key(k));
+        }
         self.map.contains_key(k)
     }
+    /// Symbol keyed properties.
+    pub fn symbols(&self) -> Vec<(Rc<str>, V)> {
+        self.syms.as_ref().map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default()
+    }
     pub fn set(&mut self, k: &str, v: V) {
+        if is_sym(k) {
+            self.syms.get_or_insert_with(Default::default).insert(Rc::from(k), v);
+            return;
+        }
         if let Some(slot) = self.map.get_mut(k) {
             *slot = v;
         } else {
@@ -112,6 +176,9 @@ impl PropMap {
         }
     }
     pub fn remove(&mut self, k: &str) -> Option<V> {
+        if is_sym(k) {
+            return self.syms.as_mut().and_then(|m| m.remove(k));
+        }
         let v = self.map.remove(k)?;
         self.keys.retain(|x| &**x != k);
         Some(v)
@@ -125,6 +192,7 @@ impl PropMap {
     pub fn clear(&mut self) {
         self.keys.clear();
         self.map.clear();
+        self.syms = None;
     }
     pub fn keys(&self) -> impl Iterator<Item = &Rc<str>> {
         self.keys.iter()
@@ -141,6 +209,20 @@ impl PropMap {
     }
 }
 
+/// How a closure is invoked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flavor {
+    Plain,
+    /// A class constructor (calling it constructs an instance).
+    Class,
+    /// Python instance method (`self` is passed as the first argument when bound).
+    PyMethod,
+    /// Python `@staticmethod`.
+    PyStatic,
+    /// Python `@classmethod` (the class is passed as the first argument).
+    PyClassMethod,
+}
+
 /// A user defined function / closure.
 pub struct Closure {
     pub def: Arc<FuncDef>,
@@ -150,6 +232,7 @@ pub struct Closure {
     pub parent: Option<V>,
     /// Class constructors: the home object for `super.method()`.
     pub home: RefCell<Option<ObjRef>>,
+    pub flavor: Flavor,
 }
 
 /// Built-in host objects.
@@ -170,6 +253,10 @@ pub enum Host {
     NsFn(&'static str, String),
     /// A (Java) class name without built-in support (exception types, ...).
     Type(String),
+    /// A registry bean (SpEL `@name`).
+    Bean(String),
+    /// Groovy `Type.metaClass` (assigning closures adds methods to the type).
+    Meta(String),
 }
 
 impl V {
@@ -180,10 +267,13 @@ impl V {
         V::Str(Rc::from(s))
     }
     pub fn arr(v: Vec<V>) -> V {
-        V::Arr(Rc::new(RefCell::new(v)))
+        V::Arr(new_arr_ref(v))
     }
     pub fn obj(p: PropMap) -> V {
-        V::Obj(Rc::new(RefCell::new(Obj { props: p, proto: None, kind: ObjKind::Plain })))
+        V::Obj(new_obj_ref(Obj { props: p, proto: None, kind: ObjKind::Plain }))
+    }
+    pub fn obj_kind(p: PropMap, kind: ObjKind) -> V {
+        V::Obj(new_obj_ref(Obj { props: p, proto: None, kind }))
     }
     pub fn new_obj() -> V {
         V::obj(PropMap::default())
@@ -272,6 +362,16 @@ fn to_value_depth(v: &V, depth: usize) -> Value {
             match &o.kind {
                 ObjKind::Date(ms) => Value::String(crate::builtins::iso_date(*ms)),
                 ObjKind::Set => Value::Array(o.props.values().map(|x| to_value_depth(x, depth + 1)).collect()),
+                ObjKind::Coll(c) => crate::collections::coll_to_value(&c.0.borrow(), &|x| to_value_depth(x, depth + 1), &|k| match k {
+                    V::Str(s) => s.to_string(),
+                    V::Int(i) => i.to_string(),
+                    other => match to_value_depth(other, depth + 1) {
+                        Value::String(s) => s,
+                        v => v.to_string(),
+                    },
+                }),
+                ObjKind::Symbol(..) | ObjKind::Accessor | ObjKind::Promise(_) | ObjKind::Generator(_) => Value::Null,
+                ObjKind::Optional => o.props.get("value").map(|x| to_value_depth(x, depth + 1)).unwrap_or(Value::Null),
                 _ => {
                     let mut m = ObjectMap::new();
                     for (k, x) in o.props.iter() {

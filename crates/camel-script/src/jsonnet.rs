@@ -289,7 +289,7 @@ impl P {
     }
 
     fn func(params: Vec<Param>, body: Expr) -> Expr {
-        Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body: FuncBody::Expr(Box::new(body)), arrow: true, implicit_it: false, implicit_return: false }))
+        Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body: FuncBody::Expr(Box::new(body)), arrow: true, implicit_it: false, implicit_return: false, generator: false, is_async: false }))
     }
 
     fn bind(&mut self) -> PR<(String, Expr)> {
