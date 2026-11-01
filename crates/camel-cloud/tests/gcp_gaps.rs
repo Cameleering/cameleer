@@ -249,3 +249,65 @@ fn cloud_functions_management() {
     assert!(req(&t, &f("hello", "listFunctions"), "", &[]).body().as_array().unwrap().iter().any(|n| s(n).ends_with("/hello")));
     req(&t, &f("hello", "deleteFunction"), "", &[]);
 }
+
+#[test]
+fn firestore_batched_writes_transactions_and_listener() {
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let fs = |op: &str| format!("google-firestore://{}:accounts?operation={}&{}", PROJECT, op, env.opts());
+    let w = |op: &str, id: &str, data: Value| Value::object([("op", Value::from(op)), ("id", Value::from(id)), ("data", data)]);
+    // atomic commit
+    let r = req(&t, &fs("commit"), Value::Array(vec![w("create", "alice", Value::object([("balance", 100)])), w("create", "bob", Value::object([("balance", 50)]))]), &[]);
+    assert_eq!(r.body().as_array().unwrap().len(), 2);
+    assert!(r.header("CamelGoogleFirestoreCommitTime").is_some());
+    // a failing precondition aborts the whole commit
+    let e = call(&t, &fs("commit"), Value::Array(vec![w("update", "alice", Value::object([("balance", 0)])), w("create", "bob", Value::object([("balance", 1)]))]), &[]).unwrap_err();
+    assert!(e.message.contains("already exists"), "{}", e);
+    assert_eq!(env.mock.firestore_doc(PROJECT, "accounts/alice").unwrap().get("balance").and_then(|b| b.as_i64()), Some(100));
+    // batchWrite: independent writes with per-write status
+    let st = req(&t, &fs("batchWrite"), Value::Array(vec![w("update", "nobody", Value::object([("x", 1)])), w("set", "carol", Value::object([("balance", 7)])), w("delete", "bob", Value::Null)]), &[]).body().clone();
+    let codes: Vec<i64> = st.as_array().unwrap().iter().map(|x| x.get("code").and_then(|c| c.as_i64()).unwrap()).collect();
+    assert_eq!(codes, vec![5, 0, 0]);
+    assert!(env.mock.firestore_doc(PROJECT, "accounts/bob").is_none());
+    // transaction: read, then commit a transfer
+    let tx = s(req(&t, &fs("beginTransaction"), "", &[]).body());
+    let alice = req(&t, &fs("getDocument"), "", &[("CamelGoogleFirestoreDocumentId", Value::from("alice")), ("CamelGoogleFirestoreTransaction", Value::from(tx.as_str()))]).body().clone();
+    let bal = alice.get("balance").and_then(|b| b.as_i64()).unwrap();
+    req(&t, &fs("commit"), Value::Array(vec![w("update", "alice", Value::object([("balance", bal - 30)])), w("update", "carol", Value::object([("balance", 37)]))]), &[("CamelGoogleFirestoreTransaction", Value::from(tx.as_str()))]);
+    assert_eq!(env.mock.firestore_doc(PROJECT, "accounts/alice").unwrap().get("balance").and_then(|b| b.as_i64()), Some(70));
+    // a concurrent change of a document read in the transaction aborts it
+    let tx = s(req(&t, &fs("beginTransaction"), "", &[]).body());
+    req(&t, &fs("getDocument"), "", &[("CamelGoogleFirestoreDocumentId", Value::from("alice")), ("CamelGoogleFirestoreTransaction", Value::from(tx.as_str()))]);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    req(&t, &fs("setDocument"), Value::object([("balance", 1)]), &[("CamelGoogleFirestoreDocumentId", Value::from("alice"))]);
+    let e = call(&t, &fs("commit"), Value::Array(vec![w("update", "alice", Value::object([("balance", 999)]))]), &[("CamelGoogleFirestoreTransaction", Value::from(tx.as_str()))]).unwrap_err();
+    assert!(e.message.contains("ABORTED"), "{}", e);
+    assert_eq!(env.mock.firestore_aborted_transactions(), 1);
+    // read-only transaction + rollback
+    let tx = s(req(&t, &fs("beginTransaction"), "", &[("CamelGoogleFirestoreReadOnly", Value::Bool(true))]).body());
+    assert!(call(&t, &fs("commit"), Value::Array(vec![w("set", "x", Value::object([("a", 1)]))]), &[("CamelGoogleFirestoreTransaction", Value::from(tx.as_str()))]).is_err());
+    let tx = s(req(&t, &fs("beginTransaction"), "", &[]).body());
+    req(&t, &fs("rollback"), "", &[("CamelGoogleFirestoreTransaction", Value::from(tx.as_str()))]);
+    // snapshot listener
+    let from = format!("google-firestore://{}:accounts?delay=30&initialDelay=0&{}", PROJECT, env.opts());
+    let c2 = context();
+    c2.add_routes(move |r| {
+        r.from(&from).to("mock:changes");
+    })
+    .unwrap();
+    let m = c2.mock_endpoint("mock:changes").unwrap();
+    c2.start().unwrap();
+    assert!(wait(&|| m.received_exchanges().len() == 2), "initial snapshot: alice + carol");
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    req(&t, &fs("setDocument"), Value::object([("balance", 5)]), &[("CamelGoogleFirestoreDocumentId", Value::from("dave"))]);
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    req(&t, &fs("updateDocument"), Value::object([("balance", 6)]), &[("CamelGoogleFirestoreDocumentId", Value::from("carol"))]);
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    req(&t, &fs("deleteDocument"), "", &[("CamelGoogleFirestoreDocumentId", Value::from("alice"))]);
+    assert!(wait(&|| m.received_exchanges().len() == 5), "{}", m.received_exchanges().len());
+    let kinds: Vec<(String, String)> = m.received_exchanges().iter().map(|e| (s(e.header("CamelGoogleFirestoreChangeType").unwrap()), s(e.header("CamelGoogleFirestoreDocumentId").unwrap()))).collect();
+    assert_eq!(&kinds[2..], &[("ADDED".to_string(), "dave".to_string()), ("MODIFIED".to_string(), "carol".to_string()), ("REMOVED".to_string(), "alice".to_string())]);
+    assert_eq!(m.received_exchanges()[3].body().get("balance").and_then(|b| b.as_i64()), Some(6));
+    c2.stop().unwrap();
+}

@@ -19,7 +19,23 @@
 //!   `descending`, `limit` (headers `CamelGoogleFirestoreOrderBy`, `CamelGoogleFirestoreLimit`).
 //!   Body = list of maps with `_id`.
 //! Response header `CamelGoogleFirestoreUpdateTime`.
-
+//!
+//! Batched writes and transactions: `commit` (atomic: all writes or none) and `batchWrite`
+//! (independent writes; body = per-write `{code, message}` statuses) take a list body of write
+//! maps `{op: set | update | create | delete, collection (default: the endpoint's), id, data}`
+//! (`update` merges the data's fields and requires the document, `create` requires it to be
+//! missing); `beginTransaction` (`CamelGoogleFirestoreReadOnly`; sets
+//! `CamelGoogleFirestoreTransaction`), `getDocument` reads within the transaction of that
+//! header, `commit` with the header commits it (an `ABORTED` error when a document read in it was
+//! changed meanwhile: retry the transaction), `rollback`. `commit` sets
+//! `CamelGoogleFirestoreCommitTime`.
+//!
+//! Consumer (snapshot listener): every poll lists the collection and emits one exchange per
+//! change since the previous snapshot (body = the document map with `_id`,
+//! `CamelGoogleFirestoreChangeType` = `ADDED` / `MODIFIED` / `REMOVED`,
+//! `CamelGoogleFirestoreDocumentId`, `CamelGoogleFirestoreUpdateTime`); the first poll reports
+//! the existing documents as `ADDED` unless `skipInitialSnapshot=true` (rust-camel). This is a
+//! polled listener: the gRPC `Listen` stream is not used.
 use std::sync::Arc;
 
 use camel_core::error::{CamelError, Result};
@@ -39,6 +55,10 @@ pub mod headers {
     pub const ORDER_BY: &str = "CamelGoogleFirestoreOrderBy";
     pub const LIMIT: &str = "CamelGoogleFirestoreLimit";
     pub const UPDATE_TIME: &str = "CamelGoogleFirestoreUpdateTime";
+    pub const TRANSACTION: &str = "CamelGoogleFirestoreTransaction";
+    pub const READ_ONLY: &str = "CamelGoogleFirestoreReadOnly";
+    pub const COMMIT_TIME: &str = "CamelGoogleFirestoreCommitTime";
+    pub const CHANGE_TYPE: &str = "CamelGoogleFirestoreChangeType";
 }
 
 /// Convert a value to a Firestore typed value.
@@ -90,6 +110,9 @@ pub struct FirestoreService {
     pub order_by: Option<String>,
     pub descending: bool,
     pub limit: Option<i64>,
+    pub skip_initial_snapshot: bool,
+    pub scheduler: camel_core::component::scheduled::ScheduledPollConfig,
+    snapshot: std::sync::Mutex<Option<std::collections::BTreeMap<String, String>>>,
 }
 
 /// Factory for the component.
@@ -108,6 +131,9 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         order_by: o.get("orderBy"),
         descending: o.bool("descending", false)?,
         limit: crate::util::opt_i64(o, "limit")?,
+        skip_initial_snapshot: o.bool("skipInitialSnapshot", false)?,
+        scheduler: camel_core::component::scheduled::ScheduledPollConfig::from_params(o.params, std::time::Duration::from_millis(1000), std::time::Duration::from_millis(500))?,
+        snapshot: std::sync::Mutex::new(None),
         gcp,
     }))
 }
@@ -191,7 +217,10 @@ impl CloudService for FirestoreService {
         let op = operation(ex, headers::OPERATION, &self.operation, "getDocument");
         match op.as_str() {
             "getDocument" => {
-                let url = format!("{}/{}/{}", self.root(), encode_path(&self.collection(ex)?), uri_encode(&Self::doc_id(ex)?, false));
+                let mut url = format!("{}/{}/{}", self.root(), encode_path(&self.collection(ex)?), uri_encode(&Self::doc_id(ex)?, false));
+                if let Some(tx) = header_str(ex, headers::TRANSACTION) {
+                    url = format!("{}?transaction={}", url, uri_encode(&tx, false));
+                }
                 let d = self.call("GET", &url, None)?;
                 ex.set_header(headers::UPDATE_TIME, d.get("updateTime").cloned().unwrap_or_default());
                 ex.set_body(document_fields(&d));
@@ -248,9 +277,136 @@ impl CloudService for FirestoreService {
                 let docs: Vec<Value> = r.as_array().cloned().unwrap_or_default().iter().filter_map(|e| e.get("document").map(with_id)).collect();
                 ex.set_body(Value::Array(docs));
             }
+            "beginTransaction" => {
+                let ro = ex.header(headers::READ_ONLY).is_some_and(|v| v.is_truthy());
+                let opts = if ro { obj([("readOnly", obj([]))]) } else { obj([("readWrite", obj([]))]) };
+                let r = self.call("POST", &format!("{}:beginTransaction", self.root()), Some(&obj([("options", opts)])))?;
+                let tx = r.get("transaction").cloned().unwrap_or_default();
+                ex.set_header(headers::TRANSACTION, tx.clone());
+                ex.set_body(tx);
+            }
+            "rollback" => {
+                let tx = header_str(ex, headers::TRANSACTION).ok_or_else(|| CamelError::illegal_argument("rollback requires the CamelGoogleFirestoreTransaction header"))?;
+                self.call("POST", &format!("{}:rollback", self.root()), Some(&obj([("transaction", Value::from(tx))])))?;
+                ex.message.remove_header(headers::TRANSACTION);
+            }
+            "commit" | "batchWrite" => {
+                let writes = self.writes(ex)?;
+                let mut req = ObjectMap::new();
+                req.insert("writes".into(), Value::Array(writes));
+                if op == "commit" {
+                    if let Some(tx) = header_str(ex, headers::TRANSACTION) {
+                        req.insert("transaction".into(), Value::from(tx));
+                    }
+                }
+                let r = self.call("POST", &format!("{}:{}", self.root(), op), Some(&Value::Object(req)))?;
+                if op == "commit" {
+                    ex.message.remove_header(headers::TRANSACTION);
+                    ex.set_header(headers::COMMIT_TIME, r.get("commitTime").cloned().unwrap_or_default());
+                    ex.set_body(r.get("writeResults").cloned().unwrap_or(Value::Array(vec![])));
+                } else {
+                    ex.set_body(r.get("status").cloned().unwrap_or(Value::Array(vec![])));
+                }
+            }
             other => return Err(unsupported("google-firestore", other)),
         }
         Ok(())
+    }
+
+    fn scheduler(&self) -> Option<&camel_core::component::scheduled::ScheduledPollConfig> {
+        Some(&self.scheduler)
+    }
+
+    fn poll(&self, ctx: Option<camel_core::context::CamelContext>, processor: &dyn camel_core::spi::Processor, logger: &str) -> Result<usize> {
+        let coll = self.collection.clone().ok_or_else(|| CamelError::illegal_argument("The Firestore listener requires a collection in the uri"))?;
+        let mut docs: Vec<Value> = Vec::new();
+        let mut token: Option<String> = None;
+        loop {
+            let url = match &token {
+                Some(t) => format!("{}/{}?pageToken={}", self.root(), encode_path(&coll), uri_encode(t, false)),
+                None => format!("{}/{}", self.root(), encode_path(&coll)),
+            };
+            let r = self.call("GET", &url, None)?;
+            docs.extend(r.get("documents").and_then(|d| d.as_array()).cloned().unwrap_or_default());
+            token = r.get("nextPageToken").map(|t| t.to_string()).filter(|t| !t.is_empty());
+            if token.is_none() {
+                break;
+            }
+        }
+        let current: std::collections::BTreeMap<String, String> = docs.iter().map(|d| (d.get("name").map(|n| n.to_string()).unwrap_or_default(), d.get("updateTime").map(|t| t.to_string()).unwrap_or_default())).collect();
+        let mut guard = self.snapshot.lock().unwrap();
+        let first = guard.is_none();
+        let previous = guard.clone().unwrap_or_default();
+        let mut changes: Vec<(&str, Value, String)> = Vec::new();
+        if !(first && self.skip_initial_snapshot) {
+            for d in &docs {
+                let name = d.get("name").map(|n| n.to_string()).unwrap_or_default();
+                match previous.get(&name) {
+                    None => changes.push(("ADDED", with_id(d), name)),
+                    Some(t) if Some(t) != current.get(&name) => changes.push(("MODIFIED", with_id(d), name)),
+                    _ => {}
+                }
+            }
+            for name in previous.keys().filter(|n| !current.contains_key(*n)) {
+                changes.push(("REMOVED", obj([("_id", Value::from(name.rsplit('/').next().unwrap_or("")))]), name.clone()));
+            }
+        }
+        *guard = Some(current.clone());
+        drop(guard);
+        let total = changes.len();
+        for (i, (kind, body, name)) in changes.into_iter().enumerate() {
+            let mut ex = Exchange::new(ctx.clone());
+            ex.set_header(headers::CHANGE_TYPE, kind);
+            ex.set_header(headers::DOCUMENT_ID, name.rsplit('/').next().unwrap_or("").to_string());
+            ex.set_header(headers::COLLECTION, coll.clone());
+            if let Some(t) = current.get(&name) {
+                ex.set_header(headers::UPDATE_TIME, t.clone());
+            }
+            ex.set_body(body);
+            crate::endpoint::set_batch(&mut ex, i, total);
+            crate::endpoint::process(logger, processor, &mut ex);
+        }
+        Ok(total)
+    }
+}
+
+impl FirestoreService {
+    fn writes(&self, ex: &Exchange) -> Result<Vec<Value>> {
+        let list = match ex.body() {
+            Value::Array(a) => a.clone(),
+            other => match crate::util::parse_json(&other.to_bytes())? {
+                Value::Array(a) => a,
+                _ => return Err(CamelError::illegal_argument("The writes must be a list of {op, collection, id, data} maps")),
+            },
+        };
+        let base = format!("projects/{}/databases/{}/documents", self.project, self.database);
+        let mut out = Vec::new();
+        for w in list {
+            let op = w.get("op").map(|o| o.to_string()).unwrap_or_else(|| "set".into());
+            let coll = w.get("collection").map(|c| c.to_string()).or_else(|| header_str(ex, headers::COLLECTION)).or_else(|| self.collection.clone()).ok_or_else(|| CamelError::illegal_argument("A write needs a collection"))?;
+            let id = w.get("id").map(|i| i.to_string()).filter(|i| !i.is_empty()).ok_or_else(|| CamelError::illegal_argument("A write needs a document id"))?;
+            let name = format!("{}/{}/{}", base, coll, id);
+            let data = w.get("data").and_then(|d| d.as_object().cloned()).unwrap_or_default();
+            let mut m = ObjectMap::new();
+            match op.as_str() {
+                "delete" => {
+                    m.insert("delete".into(), Value::from(name));
+                }
+                "set" | "update" | "create" => {
+                    m.insert("update".into(), obj([("name", Value::from(name)), ("fields", fields_of(&data))]));
+                    if op == "update" {
+                        m.insert("updateMask".into(), obj([("fieldPaths", Value::from(data.keys().cloned().collect::<Vec<_>>()))]));
+                        m.insert("currentDocument".into(), obj([("exists", Value::Bool(true))]));
+                    }
+                    if op == "create" {
+                        m.insert("currentDocument".into(), obj([("exists", Value::Bool(false))]));
+                    }
+                }
+                other => return Err(CamelError::illegal_argument(format!("Unknown write op {} (set, update, create, delete)", other))),
+            }
+            out.push(Value::Object(m));
+        }
+        Ok(out)
     }
 }
 

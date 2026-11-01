@@ -58,6 +58,9 @@ pub(super) struct ExtState {
     fn_uploads: BTreeMap<String, Vec<u8>>,
     /// long-running operations (name -> (resource, polls before done))
     fn_ops: BTreeMap<String, (Value, usize)>,
+    /// Firestore transactions: id -> (read only, documents read with their update time)
+    fs_tx: HashMap<String, (bool, BTreeMap<String, i64>)>,
+    fs_aborted: usize,
 }
 
 impl GcpMock {
@@ -105,6 +108,10 @@ impl GcpMock {
     /// Fields of a document (`collection/id` path under the default database of `project`).
     pub fn firestore_doc(&self, project: &str, path: &str) -> Option<Value> {
         self.state.lock().unwrap().ext.docs.get(&format!("projects/{}/databases/(default)/documents/{}", project, path)).map(|(f, _, _)| Value::Object(f.clone()))
+    }
+    /// Firestore transactions aborted by a conflicting write.
+    pub fn firestore_aborted_transactions(&self) -> usize {
+        self.state.lock().unwrap().ext.fs_aborted
     }
     /// Store a document directly.
     pub fn put_firestore_doc(&self, project: &str, path: &str, fields: Value) {
@@ -1061,6 +1068,123 @@ fn functions(st: &Shared, req: &ServerRequest, project: &str, location: &str, re
 // Firestore
 // ---------------------------------------------------------------------------
 
+/// One Firestore write: (document name, Some(fields, mask) for an update / None for a delete,
+/// `currentDocument.exists` precondition).
+type FsWrite = (String, Option<(ObjectMap, Option<Vec<String>>)>, Option<bool>);
+
+fn parse_write(w: &Value) -> Result<FsWrite, String> {
+    let exists = w.get("currentDocument").and_then(|c| c.get("exists")).and_then(|e| e.as_bool());
+    if let Some(d) = w.get("delete") {
+        return Ok((d.to_string(), None, exists));
+    }
+    let u = w.get("update").ok_or("A write needs update or delete")?;
+    let name = u.get("name").map(|n| n.to_string()).ok_or("A write needs a document name")?;
+    let fields = document_fields(u).as_object().cloned().unwrap_or_default();
+    let mask = w.get("updateMask").and_then(|m| m.get("fieldPaths")).and_then(|f| f.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect());
+    Ok((name, Some((fields, mask)), exists))
+}
+
+fn check_write(docs: &BTreeMap<String, (ObjectMap, i64, i64)>, w: &FsWrite) -> Result<(), (u16, &'static str, String)> {
+    match (w.2, docs.contains_key(&w.0)) {
+        (Some(true), false) => Err((404, "NOT_FOUND", format!("No document to update: {}", w.0))),
+        (Some(false), true) => Err((409, "ALREADY_EXISTS", format!("Document already exists: {}", w.0))),
+        _ => Ok(()),
+    }
+}
+
+fn apply_write(docs: &mut BTreeMap<String, (ObjectMap, i64, i64)>, w: FsWrite, now: i64) {
+    match w.1 {
+        None => {
+            docs.remove(&w.0);
+        }
+        Some((fields, mask)) => {
+            let e = docs.entry(w.0).or_insert_with(|| (ObjectMap::new(), now, now));
+            match mask {
+                None => e.0 = fields,
+                Some(m) => {
+                    for k in m {
+                        match fields.get(&k) {
+                            Some(v) => {
+                                e.0.insert(k, v.clone());
+                            }
+                            None => {
+                                e.0.remove(&k);
+                            }
+                        }
+                    }
+                }
+            }
+            e.2 = now;
+        }
+    }
+}
+
+/// beginTransaction / commit (atomic, transactional reads checked) / batchWrite (independent
+/// writes, per-write status) / rollback.
+fn firestore_writes(ext: &mut ExtState, verb: &str, body: &Value, now: i64) -> Response {
+    let ts = Value::from(iso8601_millis(now));
+    match verb {
+        "beginTransaction" => {
+            let read_only = body.get("options").and_then(|o| o.get("readOnly")).is_some();
+            let id = crate::util::base64_encode(random_hex(12).as_bytes());
+            ext.fs_tx.insert(id.clone(), (read_only, BTreeMap::new()));
+            Response::json(200, obj([("transaction", Value::from(id))]).to_json())
+        }
+        "rollback" => {
+            let tx = body.get("transaction").map(|t| t.to_string()).unwrap_or_default();
+            match ext.fs_tx.remove(&tx) {
+                Some(_) => Response::json(200, "{}"),
+                None => gerror(400, "INVALID_ARGUMENT", "Invalid transaction."),
+            }
+        }
+        "commit" => {
+            let writes: Vec<FsWrite> = match body.get("writes").and_then(|w| w.as_array()).cloned().unwrap_or_default().iter().map(parse_write).collect::<Result<_, _>>() {
+                Ok(w) => w,
+                Err(e) => return gerror(400, "INVALID_ARGUMENT", &e),
+            };
+            if let Some(tx) = body.get("transaction").map(|t| t.to_string()) {
+                let Some((read_only, reads)) = ext.fs_tx.remove(&tx) else { return gerror(400, "INVALID_ARGUMENT", "Invalid transaction.") };
+                if read_only && !writes.is_empty() {
+                    return gerror(400, "INVALID_ARGUMENT", "Cannot modify entities in a read-only transaction.");
+                }
+                // optimistic concurrency: documents read in the transaction must be unchanged
+                if reads.iter().any(|(n, t)| ext.docs.get(n).map(|d| d.2).unwrap_or(0) != *t) {
+                    ext.fs_aborted += 1;
+                    return gerror(409, "ABORTED", "Transaction aborted: a document read in the transaction was modified concurrently (too much contention).");
+                }
+            }
+            for w in &writes {
+                if let Err((code, status, msg)) = check_write(&ext.docs, w) {
+                    return gerror(code, status, &msg);
+                }
+            }
+            let n = writes.len();
+            for w in writes {
+                apply_write(&mut ext.docs, w, now);
+            }
+            Response::json(200, obj([("writeResults", Value::Array(vec![obj([("updateTime", ts.clone())]); n])), ("commitTime", ts)]).to_json())
+        }
+        _ => {
+            let mut results = Vec::new();
+            let mut status = Vec::new();
+            for w in body.get("writes").and_then(|w| w.as_array()).cloned().unwrap_or_default() {
+                match parse_write(&w).map_err(|e| (400u16, "INVALID_ARGUMENT", e)).and_then(|w| check_write(&ext.docs, &w).map(|_| w)) {
+                    Ok(w) => {
+                        apply_write(&mut ext.docs, w, now);
+                        results.push(obj([("updateTime", ts.clone())]));
+                        status.push(obj([("code", Value::Int(0))]));
+                    }
+                    Err((_, st, msg)) => {
+                        results.push(obj([]));
+                        status.push(obj([("code", Value::Int(if st == "NOT_FOUND" { 5 } else if st == "ALREADY_EXISTS" { 6 } else { 3 })), ("message", Value::from(msg))]));
+                    }
+                }
+            }
+            Response::json(200, obj([("writeResults", Value::Array(results)), ("status", Value::Array(status))]).to_json())
+        }
+    }
+}
+
 fn doc_resource(name: &str, d: &(ObjectMap, i64, i64)) -> Value {
     obj([("name", Value::from(name)), ("fields", fields_of(&d.0)), ("createTime", Value::from(iso8601_millis(d.1))), ("updateTime", Value::from(iso8601_millis(d.2)))])
 }
@@ -1116,6 +1240,14 @@ fn firestore(st: &Shared, req: &ServerRequest, project: &str, db: &str, rest: &[
     let path = segs[1..].join("/");
     let full = if path.is_empty() { root.clone() } else { format!("{}/{}", root, path) };
     let now = now_millis();
+    if path.is_empty() && matches!(verb.as_str(), "beginTransaction" | "commit" | "batchWrite" | "rollback") {
+        return firestore_writes(ext, &verb, &body, now);
+    }
+    if let (Some(tx), "GET") = (req.query_param("transaction"), req.method.as_str()) {
+        let Some((_, reads)) = ext.fs_tx.get_mut(&tx) else { return gerror(400, "INVALID_ARGUMENT", "Invalid transaction.") };
+        let t = ext.docs.get(&full).map(|d| d.2).unwrap_or(0);
+        reads.insert(full.clone(), t);
+    }
     if verb == "runQuery" {
         let Some(sq) = body.get("structuredQuery") else { return gerror(400, "INVALID_ARGUMENT", "structuredQuery is required") };
         let coll = sq.get("from").and_then(|f| f.as_array()).and_then(|a| a.first()).and_then(|f| f.get("collectionId")).map(|c| c.to_string()).unwrap_or_default();
