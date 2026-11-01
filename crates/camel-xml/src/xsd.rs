@@ -18,8 +18,14 @@
 //! `duration`, `gYear`, `gYearMonth`, `gMonth`, `gDay`, `gMonthDay`, `base64Binary`,
 //! `hexBinary`, `anyType`, `anySimpleType`.
 //!
-//! Not supported: identity constraints (`unique`/`key`/`keyref`), substitution groups,
-//! `xsi:type`, `redefine`, block/final checks, ID/IDREF uniqueness.
+//! Also: identity constraints (`unique` / `key` / `keyref` with the restricted XPath of
+//! selectors and fields: `.//`, `child::`, `attribute::` / `@`, `*`, `p:*`, `.`, `|`),
+//! substitution groups (transitive, `abstract` heads, members without a type take the head's
+//! type), `xsi:type` (resolved against the instance's namespace context, must be derived from
+//! the declared type, abstract complex types need it), and `redefine` (components of the
+//! redefined schema replaced, self references resolving to the original definition).
+//!
+//! Not supported: block/final checks, ID/IDREF uniqueness.
 //!
 //! Errors use Xerces message codes (`cvc-complex-type.2.4.a: Invalid content was found
 //! starting with element 'x'. One of '{a, b}' is expected.`) with line and column numbers.
@@ -95,6 +101,8 @@ enum TypeRef {
     InlineSimple(Box<SimpleType>),
     InlineComplex(Box<ComplexType>),
     AnyType,
+    /// A substitution group member without a type: the head element's type.
+    HeadOf(Key),
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +111,34 @@ struct ElementDecl {
     ty: TypeRef,
     nillable: bool,
     fixed: Option<String>,
+    abstract_: bool,
+    identity: Vec<Identity>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum IdKind {
+    Unique,
+    Key,
+    KeyRef,
+}
+
+/// A step of the restricted identity-constraint XPath.
+#[derive(Clone, Debug)]
+enum IdStep {
+    SelfNode,
+    /// child element (namespace, local; `*` wildcards); `descendant` = preceded by `.//`
+    Child { ns: Option<String>, local: String, descendant: bool },
+    Attr { ns: Option<String>, local: String, descendant: bool },
+}
+
+/// An identity constraint (`unique`, `key`, `keyref`).
+#[derive(Clone, Debug)]
+struct Identity {
+    kind: IdKind,
+    name: Key,
+    refer: Option<Key>,
+    selector: Vec<Vec<IdStep>>,
+    fields: Vec<Vec<Vec<IdStep>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -154,6 +190,7 @@ enum Derivation {
 
 #[derive(Clone, Debug)]
 struct ComplexType {
+    abstract_: bool,
     mixed: bool,
     content: Content,
     attrs: Vec<AttrItem>,
@@ -175,6 +212,8 @@ pub struct Schema {
     groups: HashMap<Key, Particle>,
     attribute_groups: HashMap<Key, (Vec<AttrItem>, bool)>,
     attributes: HashMap<Key, AttrDecl>,
+    /// Substitution group head → direct members.
+    substitutions: HashMap<Key, Vec<Key>>,
     loaded: Vec<PathBuf>,
 }
 
@@ -188,6 +227,9 @@ struct Ctx<'a> {
     elem_qualified: bool,
     attr_qualified: bool,
     base: Option<PathBuf>,
+    /// While parsing a `redefine` child: references to the redefined component resolve to
+    /// the original (renamed) one.
+    rename: Option<(Key, Key)>,
 }
 
 fn is_xsd(doc: &Document, n: NodeId, local: &str) -> bool {
@@ -236,6 +278,7 @@ impl Schema {
             elem_qualified: doc.attribute(root, "elementFormDefault") == Some("qualified"),
             attr_qualified: doc.attribute(root, "attributeFormDefault") == Some("qualified"),
             base: base.map(|b| b.to_path_buf()),
+            rename: None,
         };
         for c in xsd_children(doc, root) {
             let local = doc.local_name(c).to_string();
@@ -246,9 +289,21 @@ impl Schema {
                         let p = if p.is_absolute() { p } else { ctx.base.as_ref().map(|b| b.join(&p)).unwrap_or(p) };
                         self.load_file(&p)?;
                     }
+                    if local == "redefine" {
+                        self.redefine(&ctx, c)?;
+                    }
                 }
                 "element" => {
                     let d = self.element_decl(&ctx, c, true)?;
+                    if let Some(heads) = doc.attribute(c, "substitutionGroup") {
+                        for h in heads.split_whitespace() {
+                            let hk = Self::qname(&ctx, c, h)?;
+                            let members = self.substitutions.entry(hk).or_default();
+                            if !members.contains(&d.name) {
+                                members.push(d.name.clone());
+                            }
+                        }
+                    }
                     self.elements.insert(d.name.clone(), d);
                 }
                 "complexType" => {
@@ -283,15 +338,140 @@ impl Schema {
         Ok(())
     }
 
+    /// Apply the components of an `xs:redefine` (after loading the redefined schema).
+    fn redefine(&mut self, ctx: &Ctx, el: NodeId) -> Result<(), String> {
+        let doc = ctx.doc;
+        for c in xsd_children(doc, el) {
+            let Some(name) = doc.attribute(c, "name") else { continue };
+            let key = (ctx.tns.clone(), name.to_string());
+            let orig = (ctx.tns.clone(), format!("{}\u{0}redefined", name));
+            let rctx = Ctx { doc, tns: ctx.tns.clone(), elem_qualified: ctx.elem_qualified, attr_qualified: ctx.attr_qualified, base: ctx.base.clone(), rename: Some((key.clone(), orig.clone())) };
+            match doc.local_name(c) {
+                "complexType" | "simpleType" => {
+                    if let Some(t) = self.types.remove(&key) {
+                        self.types.insert(orig, t);
+                    }
+                    let def = if doc.local_name(c) == "complexType" { TypeDef::Complex(self.complex_type(&rctx, c)?) } else { TypeDef::Simple(self.simple_type(&rctx, c)?) };
+                    self.types.insert(key, def);
+                }
+                "group" => {
+                    if let Some(g) = self.groups.remove(&key) {
+                        self.groups.insert(orig, g);
+                    }
+                    let inner = xsd_children(doc, c).into_iter().next().ok_or("Empty group")?;
+                    let p = self.particle(&rctx, inner)?;
+                    self.groups.insert(key, p);
+                }
+                "attributeGroup" => {
+                    if let Some(g) = self.attribute_groups.remove(&key) {
+                        self.attribute_groups.insert(orig, g);
+                    }
+                    let (items, any) = self.attr_items(&rctx, c)?;
+                    self.attribute_groups.insert(key, (items, any));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn qname(ctx: &Ctx, el: NodeId, q: &str) -> Result<Key, String> {
         let q = q.trim();
-        match q.split_once(':') {
+        let k = match q.split_once(':') {
             Some((p, l)) => match ctx.doc.lookup_namespace(el, p) {
-                Some(u) => Ok((u, l.to_string())),
-                None => Err(format!("Undeclared prefix '{}' in schema QName '{}'", p, q)),
+                Some(u) => (u, l.to_string()),
+                None => return Err(format!("Undeclared prefix '{}' in schema QName '{}'", p, q)),
             },
-            None => Ok((ctx.doc.lookup_namespace(el, "").unwrap_or_default(), q.to_string())),
+            None => (ctx.doc.lookup_namespace(el, "").unwrap_or_default(), q.to_string()),
+        };
+        Ok(match &ctx.rename {
+            Some((from, to)) if *from == k => to.clone(),
+            _ => k,
+        })
+    }
+
+    /// All (transitive) members of a substitution group.
+    fn substitution_members(&self, head: &Key) -> Vec<Key> {
+        let mut out: Vec<Key> = Vec::new();
+        let mut todo = vec![head.clone()];
+        while let Some(h) = todo.pop() {
+            for m in self.substitutions.get(&h).into_iter().flatten() {
+                if !out.contains(m) && m != head {
+                    out.push(m.clone());
+                    todo.push(m.clone());
+                }
+            }
         }
+        out
+    }
+
+    fn id_path(ctx: &Ctx, el: NodeId, path: &str, field: bool) -> Result<Vec<Vec<IdStep>>, String> {
+        let mut alts = Vec::new();
+        for alt in path.split('|').map(str::trim) {
+            let (descendant, rest) = match alt.strip_prefix(".//") {
+                Some(r) => (true, r),
+                None => (false, alt),
+            };
+            let mut steps = Vec::new();
+            let mut first = true;
+            for s in rest.split('/').map(str::trim) {
+                let d = descendant && first;
+                first = false;
+                let s = s.strip_prefix("child::").unwrap_or(s);
+                let (attr, s) = match s.strip_prefix('@').or_else(|| s.strip_prefix("attribute::")) {
+                    Some(r) => (true, r),
+                    None => (false, s),
+                };
+                if s == "." && !attr {
+                    steps.push(IdStep::SelfNode);
+                    continue;
+                }
+                if s.is_empty() {
+                    return Err(format!("Invalid identity constraint XPath '{}'", path));
+                }
+                let (ns, local) = match s.split_once(':') {
+                    Some((p, l)) => (Some(ctx.doc.lookup_namespace(el, p).ok_or_else(|| format!("Undeclared prefix '{}' in XPath '{}'", p, path))?), l.to_string()),
+                    None if s == "*" => (None, "*".to_string()),
+                    None => (Some(String::new()), s.to_string()),
+                };
+                if attr && !field {
+                    return Err(format!("c-selector-xpath: The selector value '{}' is not valid; selector xpaths cannot contain attributes.", path));
+                }
+                steps.push(if attr { IdStep::Attr { ns, local, descendant: d } } else { IdStep::Child { ns, local, descendant: d } });
+            }
+            alts.push(steps);
+        }
+        Ok(alts)
+    }
+
+    fn identity(ctx: &Ctx, el: NodeId) -> Result<Option<Identity>, String> {
+        let doc = ctx.doc;
+        let kind = match doc.local_name(el) {
+            "unique" => IdKind::Unique,
+            "key" => IdKind::Key,
+            "keyref" => IdKind::KeyRef,
+            _ => return Ok(None),
+        };
+        let name = (ctx.tns.clone(), doc.attribute(el, "name").ok_or("An identity constraint requires a name")?.to_string());
+        let refer = match doc.attribute(el, "refer") {
+            Some(r) => Some(Self::qname(ctx, el, r)?),
+            None if kind == IdKind::KeyRef => return Err("keyref requires refer".into()),
+            None => None,
+        };
+        let mut selector = Vec::new();
+        let mut fields = Vec::new();
+        for c in xsd_children(doc, el) {
+            let xp = doc.attribute(c, "xpath").unwrap_or("");
+            match doc.local_name(c) {
+                "selector" => selector = Self::id_path(ctx, c, xp, false)?,
+                "field" => fields.push(Self::id_path(ctx, c, xp, true)?),
+                _ => {}
+            }
+        }
+        if selector.is_empty() || fields.is_empty() {
+            return Err(format!("Identity constraint '{}' requires a selector and at least one field", name.1));
+        }
+        Ok(Some(Identity { kind, name, refer, selector, fields }))
     }
 
     fn simple_ref(ctx: &Ctx, el: NodeId, q: &str) -> Result<SimpleRef, String> {
@@ -329,7 +509,10 @@ impl Schema {
                 TypeRef::Named(k)
             }
         } else {
-            let mut t = TypeRef::AnyType;
+            let mut t = match doc.attribute(el, "substitutionGroup").and_then(|h| h.split_whitespace().next()) {
+                Some(h) if global => TypeRef::HeadOf(Self::qname(ctx, el, h)?),
+                _ => TypeRef::AnyType,
+            };
             for c in xsd_children(doc, el) {
                 if is_xsd(doc, c, "complexType") {
                     t = TypeRef::InlineComplex(Box::new(self.complex_type(ctx, c)?));
@@ -339,7 +522,20 @@ impl Schema {
             }
             t
         };
-        Ok(ElementDecl { name: (ns, name.to_string()), ty, nillable: doc.attribute(el, "nillable") == Some("true"), fixed: doc.attribute(el, "fixed").map(String::from) })
+        let mut identity = Vec::new();
+        for c in xsd_children(doc, el) {
+            if let Some(i) = Self::identity(ctx, c)? {
+                identity.push(i);
+            }
+        }
+        Ok(ElementDecl {
+            name: (ns, name.to_string()),
+            ty,
+            nillable: doc.attribute(el, "nillable") == Some("true"),
+            fixed: doc.attribute(el, "fixed").map(String::from),
+            abstract_: doc.attribute(el, "abstract") == Some("true"),
+            identity,
+        })
     }
 
     fn particle(&mut self, ctx: &Ctx, el: NodeId) -> Result<Particle, String> {
@@ -479,7 +675,7 @@ impl Schema {
                 _ => {}
             }
         }
-        Ok(ComplexType { mixed, content, attrs, any_attribute, base })
+        Ok(ComplexType { abstract_: doc.attribute(el, "abstract") == Some("true"), mixed, content, attrs, any_attribute, base })
     }
 
     fn facets(&mut self, ctx: &Ctx, el: NodeId) -> Result<Facets, String> {
@@ -557,17 +753,19 @@ impl Schema {
 
     /// Validate a document; returns all errors found (empty when valid).
     pub fn validate(&self, doc: &Document) -> Vec<ValidationError> {
-        let mut v = Validator { s: self, doc, errors: Vec::new() };
+        let mut v = Validator { s: self, doc, errors: Vec::new(), scopes: Vec::new() };
         match doc.document_element() {
             None => v.err(0, "Premature end of file.".into()),
             Some(root) => {
                 let key = (doc.namespace_uri(root).to_string(), doc.local_name(root).to_string());
                 match self.elements.get(&key) {
+                    Some(d) if d.abstract_ => v.err(root, format!("cvc-elt.2: The value of {{abstract}} in the element declaration for '{}' must be false.", doc.qualified_name(root))),
                     Some(d) => v.element(root, d),
                     None => v.err(root, format!("cvc-elt.1.a: Cannot find the declaration of element '{}'.", doc.qualified_name(root))),
                 }
             }
         }
+        v.check_keyrefs();
         v.errors
     }
 
@@ -824,6 +1022,37 @@ struct Validator<'a> {
     s: &'a Schema,
     doc: &'a Document,
     errors: Vec<ValidationError>,
+    /// Elements carrying identity constraints, in document order.
+    scopes: Vec<(NodeId, Vec<Identity>)>,
+}
+
+const KNOWN_BUILTINS: &[&str] = &[
+    "string", "normalizedString", "token", "language", "Name", "NCName", "ID", "IDREF", "IDREFS", "ENTITY", "ENTITIES", "NMTOKEN", "NMTOKENS", "QName", "NOTATION", "anyURI", "boolean",
+    "decimal", "float", "double", "integer", "long", "int", "short", "byte", "nonNegativeInteger", "positiveInteger", "nonPositiveInteger", "negativeInteger", "unsignedLong", "unsignedInt",
+    "unsignedShort", "unsignedByte", "date", "dateTime", "time", "duration", "gYear", "gYearMonth", "gMonth", "gDay", "gMonthDay", "base64Binary", "hexBinary", "anySimpleType",
+];
+
+fn builtin_parent(b: &str) -> Option<&'static str> {
+    Some(match b {
+        "integer" => "decimal",
+        "nonPositiveInteger" | "long" | "nonNegativeInteger" => "integer",
+        "negativeInteger" => "nonPositiveInteger",
+        "int" => "long",
+        "short" => "int",
+        "byte" => "short",
+        "unsignedLong" | "positiveInteger" => "nonNegativeInteger",
+        "unsignedInt" => "unsignedLong",
+        "unsignedShort" => "unsignedInt",
+        "unsignedByte" => "unsignedShort",
+        "normalizedString" => "string",
+        "token" => "normalizedString",
+        "language" | "Name" | "NMTOKEN" => "token",
+        "NCName" => "Name",
+        "ID" | "IDREF" | "ENTITY" => "NCName",
+        "anyType" => return None,
+        "anySimpleType" => "anyType",
+        _ => "anySimpleType",
+    })
 }
 
 const MAX_ERRORS: usize = 100;
@@ -1021,6 +1250,17 @@ impl<'a> Validator<'a> {
     fn resolve_type(&self, t: &'a TypeRef) -> Option<ResolvedType<'a>> {
         match t {
             TypeRef::AnyType => Some(ResolvedType::Any),
+            TypeRef::HeadOf(h) => {
+                let mut cur = h;
+                for _ in 0..30 {
+                    match self.s.elements.get(cur).map(|d| &d.ty) {
+                        Some(TypeRef::HeadOf(next)) => cur = next,
+                        Some(other) => return self.resolve_type(other),
+                        None => return Some(ResolvedType::Any),
+                    }
+                }
+                Some(ResolvedType::Any)
+            }
             TypeRef::InlineSimple(st) => Some(ResolvedType::Simple(SimpleRef::Inline(st.clone()))),
             TypeRef::InlineComplex(ct) => Some(ResolvedType::Complex(ct)),
             TypeRef::Named(k) => match self.s.types.get(k) {
@@ -1107,6 +1347,82 @@ impl<'a> Validator<'a> {
         }
     }
 
+    /// The key of the declared type (for `xsi:type` derivation checks); `None` = anyType.
+    fn declared_type_key(&self, t: &TypeRef) -> Option<Key> {
+        match t {
+            TypeRef::Named(k) => Some(k.clone()),
+            TypeRef::InlineSimple(st) if !st.name.is_empty() => match &st.variety {
+                Variety::Atomic(SimpleRef::Builtin(b)) if *b == st.name => Some((XSD_NS.to_string(), b.clone())),
+                _ => Some((String::new(), "\u{0}anonymous".into())),
+            },
+            TypeRef::InlineSimple(_) | TypeRef::InlineComplex(_) => Some((String::new(), "\u{0}anonymous".into())),
+            TypeRef::AnyType => None,
+            TypeRef::HeadOf(h) => self.s.elements.get(h).and_then(|d| self.declared_type_key(&d.ty)),
+        }
+    }
+
+    /// Whether type `k` is `base` or derived from it.
+    fn derives_from(&self, k: &Key, base: &Key, depth: usize) -> bool {
+        if k == base || (base.0 == XSD_NS && base.1 == "anyType") {
+            return true;
+        }
+        if depth > 40 {
+            return false;
+        }
+        if k.0 == XSD_NS {
+            return match builtin_parent(&k.1) {
+                Some(p) => self.derives_from(&(XSD_NS.to_string(), p.to_string()), base, depth + 1),
+                None => false,
+            };
+        }
+        match self.s.types.get(k) {
+            Some(TypeDef::Complex(ct)) => match (&ct.base, &ct.content) {
+                (Some((b, _)), _) => self.derives_from(b, base, depth + 1),
+                (None, Content::Simple(SimpleRef::Builtin(b))) => self.derives_from(&(XSD_NS.to_string(), b.clone()), base, depth + 1),
+                _ => false,
+            },
+            Some(TypeDef::Simple(st)) => match &st.variety {
+                Variety::Atomic(SimpleRef::Named(b)) => self.derives_from(b, base, depth + 1),
+                Variety::Atomic(SimpleRef::Builtin(b)) => self.derives_from(&(XSD_NS.to_string(), b.clone()), base, depth + 1),
+                _ => false,
+            },
+            None => false,
+        }
+    }
+
+    /// Resolve an `xsi:type` attribute.
+    fn xsi_type(&self, el: NodeId, raw: &str, decl: &ElementDecl, qn: &str) -> Result<(ResolvedType<'a>, bool), String> {
+        let t = raw.trim();
+        let k = match t.split_once(':') {
+            Some((p, l)) => match self.doc.lookup_namespace(el, p) {
+                Some(u) => (u, l.to_string()),
+                None => return Err(format!("cvc-elt.4.1: The value '{}' of attribute 'http://www.w3.org/2001/XMLSchema-instance,type' of element '{}' is not a valid QName.", t, qn)),
+            },
+            None => (self.doc.lookup_namespace(el, "").unwrap_or_default(), t.to_string()),
+        };
+        let (resolved, abstract_) = if k.0 == XSD_NS {
+            if k.1 == "anyType" {
+                (ResolvedType::Any, false)
+            } else if KNOWN_BUILTINS.contains(&k.1.as_str()) {
+                (ResolvedType::Simple(SimpleRef::Builtin(k.1.clone())), false)
+            } else {
+                return Err(format!("cvc-elt.4.2: Cannot resolve '{}' to a type definition for element '{}'.", t, qn));
+            }
+        } else {
+            match self.s.types.get(&k) {
+                Some(TypeDef::Simple(_)) => (ResolvedType::Simple(SimpleRef::Named(k.clone())), false),
+                Some(TypeDef::Complex(ct)) => (ResolvedType::Complex(ct), ct.abstract_),
+                None => return Err(format!("cvc-elt.4.2: Cannot resolve '{}' to a type definition for element '{}'.", t, qn)),
+            }
+        };
+        if let Some(dk) = self.declared_type_key(&decl.ty) {
+            if !self.derives_from(&k, &dk, 0) {
+                return Err(format!("cvc-elt.4.3: Type '{}' is not validly derived from the type definition, '{}', of element '{}'.", t, if dk.1.starts_with('\u{0}') { "#AnonType" } else { dk.1.as_str() }, qn));
+            }
+        }
+        Ok((resolved, abstract_))
+    }
+
     fn element(&mut self, el: NodeId, decl: &ElementDecl) {
         let doc = self.doc;
         let qn = doc.qualified_name(el);
@@ -1119,12 +1435,40 @@ impl<'a> Validator<'a> {
             }
             return;
         }
-        let Some(ty) = self.resolve_type(&decl.ty) else {
-            if let TypeRef::Named(k) = &decl.ty {
-                self.err(el, format!("src-resolve: Cannot resolve the name '{}' to a(n) 'type definition' component.", k.1));
+        let ty = match doc.attribute_ns(el, XSI_NS, "type") {
+            Some(t) => match self.xsi_type(el, t, decl, &qn) {
+                Ok((rt, abstract_)) => {
+                    if abstract_ {
+                        self.err(el, format!("cvc-type.2: The type definition cannot be abstract for element {}.", qn));
+                        return;
+                    }
+                    rt
+                }
+                Err(m) => {
+                    self.err(el, m);
+                    return;
+                }
+            },
+            None => {
+                let Some(ty) = self.resolve_type(&decl.ty) else {
+                    if let TypeRef::Named(k) = &decl.ty {
+                        self.err(el, format!("src-resolve: Cannot resolve the name '{}' to a(n) 'type definition' component.", k.1));
+                    }
+                    return;
+                };
+                if let ResolvedType::Complex(ct) = &ty {
+                    if ct.abstract_ {
+                        self.err(el, format!("cvc-type.2: The type definition cannot be abstract for element {}.", qn));
+                        return;
+                    }
+                }
+                ty
             }
-            return;
         };
+        if !decl.identity.is_empty() {
+            self.check_identity(el, &decl.identity, &qn);
+            self.scopes.push((el, decl.identity.clone()));
+        }
         let text_children = |doc: &Document| -> String { doc.children(el).iter().filter(|&&c| doc.node_type(c) == NodeType::Text).map(|&c| doc.value(c)).collect() };
         match ty {
             ResolvedType::Any => {}
@@ -1250,10 +1594,24 @@ impl<'a> Validator<'a> {
         let mut decls: Vec<(Key, Option<ElementDecl>, bool)> = Vec::new();
         self.collect_decls(p, &mut decls, 0);
         for (i, &k) in kids.iter().enumerate() {
-            if !complete && i >= reach {
-                // still validate children that have a declaration
+            // substitution group members stand for referenced heads
+            let member = if decls.iter().any(|(n, _, _)| *n == names[i]) {
+                None
+            } else {
+                decls.iter().find(|(n, _, w)| !*w && self.s.substitution_members(n).contains(&names[i])).and_then(|_| self.s.elements.get(&names[i]).cloned())
+            };
+            if let Some(d) = member {
+                if d.abstract_ {
+                    self.err(k, format!("cvc-elt.2: The value of {{abstract}} in the element declaration for '{}' must be false.", doc.qualified_name(k)));
+                } else {
+                    self.element(k, &d);
+                }
+                continue;
             }
             match decls.iter().find(|(n, _, _)| *n == names[i]) {
+                Some((_, Some(d), _)) if d.abstract_ => {
+                    self.err(k, format!("cvc-elt.2: The value of {{abstract}} in the element declaration for '{}' must be false.", doc.qualified_name(k)));
+                }
                 Some((_, Some(d), _)) => {
                     let d = d.clone();
                     self.element(k, &d);
@@ -1272,6 +1630,173 @@ impl<'a> Validator<'a> {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------ identity constraints
+
+    fn id_select(&self, ctx: NodeId, path: &[IdStep]) -> Vec<NodeId> {
+        let doc = self.doc;
+        let mut cur = vec![ctx];
+        for step in path {
+            let mut next = Vec::new();
+            let matches_name = |n: NodeId, ns: &Option<String>, local: &str| -> bool {
+                (local == "*" || doc.local_name(n) == local) && ns.as_ref().map(|u| doc.namespace_uri(n) == u).unwrap_or(true)
+            };
+            for &c in &cur {
+                match step {
+                    IdStep::SelfNode => next.push(c),
+                    IdStep::Child { ns, local, descendant } => {
+                        let bases = if *descendant { self.descendants_or_self(c) } else { vec![c] };
+                        for b in bases {
+                            for ch in doc.element_children(b) {
+                                if matches_name(ch, ns, local) && !next.contains(&ch) {
+                                    next.push(ch);
+                                }
+                            }
+                        }
+                    }
+                    IdStep::Attr { ns, local, descendant } => {
+                        let bases = if *descendant { self.descendants_or_self(c) } else { vec![c] };
+                        for b in bases {
+                            for &a in doc.attributes(b) {
+                                if (local == "*" || doc.local_name(a) == local) && ns.as_ref().map(|u| doc.namespace_uri(a) == u).unwrap_or(true) && doc.namespace_uri(a) != crate::dom::XMLNS_NS {
+                                    next.push(a);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cur = next;
+        }
+        cur
+    }
+
+    fn descendants_or_self(&self, n: NodeId) -> Vec<NodeId> {
+        let mut out = vec![n];
+        let mut i = 0;
+        while i < out.len() {
+            let kids = self.doc.element_children(out[i]);
+            out.extend(kids);
+            i += 1;
+        }
+        out
+    }
+
+    /// The key tuples of a constraint in a scope: (node, Some(values)) or (node, None) when a
+    /// field is missing. Errors for fields selecting several nodes are reported.
+    fn id_tuples(&mut self, scope: NodeId, c: &Identity, qn: &str) -> Vec<(NodeId, Option<Vec<String>>)> {
+        let mut targets: Vec<NodeId> = Vec::new();
+        for alt in &c.selector {
+            for n in self.id_select(scope, alt) {
+                if !targets.contains(&n) {
+                    targets.push(n);
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for t in targets {
+            let mut values = Vec::new();
+            let mut complete = true;
+            for f in &c.fields {
+                let mut hits: Vec<NodeId> = Vec::new();
+                for alt in f {
+                    hits.extend(self.id_select(t, alt));
+                }
+                match hits.len() {
+                    0 => complete = false,
+                    1 => values.push(collapse(&self.doc.string_value(hits[0]))),
+                    _ => {
+                        self.err(t, format!("cvc-identity-constraint.3: Field \"{}\" of identity constraint \"{}\" matches more than one value within the scope of its selector; fields must match unique values.", self.doc.qualified_name(hits[1]), c.name.1));
+                        complete = false;
+                    }
+                }
+            }
+            let _ = qn;
+            out.push((t, if complete { Some(values) } else { None }));
+        }
+        out
+    }
+
+    fn check_identity(&mut self, el: NodeId, ids: &[Identity], qn: &str) {
+        for c in ids {
+            if c.kind == IdKind::KeyRef {
+                continue;
+            }
+            let tuples = self.id_tuples(el, c, qn);
+            let mut seen: Vec<Vec<String>> = Vec::new();
+            for (n, vals) in tuples {
+                match vals {
+                    None if c.kind == IdKind::Key => self.err(n, format!("cvc-identity-constraint.4.2.1.a: Element \"{}\" has no value for the key \"{}\".", qn, c.name.1)),
+                    None => {}
+                    Some(v) => {
+                        if seen.contains(&v) {
+                            let shown = v.join(",");
+                            let msg = if c.kind == IdKind::Key {
+                                format!("cvc-identity-constraint.4.2.2: Duplicate key value [{}] declared for identity constraint \"{}\" of element \"{}\".", shown, c.name.1, qn)
+                            } else {
+                                format!("cvc-identity-constraint.4.1: Duplicate unique value [{}] declared for identity constraint \"{}\" of element \"{}\".", shown, c.name.1, qn)
+                            };
+                            self.err(n, msg);
+                        } else {
+                            seen.push(v);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_keyrefs(&mut self) {
+        let scopes = std::mem::take(&mut self.scopes);
+        for (el, ids) in &scopes {
+            for c in ids.iter().filter(|c| c.kind == IdKind::KeyRef) {
+                let refer = c.refer.clone().unwrap_or_default();
+                // the referenced key: on an ancestor-or-self scope, else on descendant scopes
+                let mut key_scopes: Vec<(NodeId, Identity)> = Vec::new();
+                let mut anc = Some(*el);
+                while let Some(a) = anc {
+                    if let Some((_, kids)) = scopes.iter().find(|(n, _)| *n == a) {
+                        if let Some(k) = kids.iter().find(|k| k.name == refer && k.kind != IdKind::KeyRef) {
+                            key_scopes.push((a, k.clone()));
+                            break;
+                        }
+                    }
+                    anc = self.doc.parent(a);
+                }
+                if key_scopes.is_empty() {
+                    let desc = self.descendants_or_self(*el);
+                    for (n, kids) in &scopes {
+                        if desc.contains(n) {
+                            if let Some(k) = kids.iter().find(|k| k.name == refer && k.kind != IdKind::KeyRef) {
+                                key_scopes.push((*n, k.clone()));
+                            }
+                        }
+                    }
+                }
+                let qn = self.doc.qualified_name(*el);
+                if key_scopes.is_empty() {
+                    self.err(*el, format!("cvc-identity-constraint.4.3: Key '{}' with value '' not found for identity constraint of element '{}'.", c.name.1, qn));
+                    continue;
+                }
+                let mut keys: Vec<Vec<String>> = Vec::new();
+                for (s, k) in &key_scopes {
+                    for (_, v) in self.id_tuples(*s, k, &qn) {
+                        if let Some(v) = v {
+                            keys.push(v);
+                        }
+                    }
+                }
+                for (n, v) in self.id_tuples(*el, c, &qn) {
+                    if let Some(v) = v {
+                        if !keys.contains(&v) {
+                            self.err(n, format!("cvc-identity-constraint.4.3: Key '{}' with value '{}' not found for identity constraint of element '{}'.", c.name.1, v.join(","), qn));
+                        }
+                    }
+                }
+            }
+        }
+        self.scopes = scopes;
     }
 
     fn collect_decls(&self, p: &Particle, out: &mut Vec<(Key, Option<ElementDecl>, bool)>, depth: usize) {
@@ -1375,7 +1900,15 @@ impl Matcher<'_, '_> {
     fn term(&mut self, t: &Term, start: usize, depth: usize) -> Vec<usize> {
         match t {
             Term::Element(d) => self.element_at(&d.name, start),
-            Term::ElementRef(k) => self.element_at(k, start),
+            Term::ElementRef(k) => {
+                let r = self.element_at(k, start);
+                if r.is_empty() && start < self.names.len() && self.v.s.substitution_members(k).contains(&self.names[start]) {
+                    self.reach = self.reach.max(start + 1);
+                    return vec![start + 1];
+                }
+                r
+            }
+
             Term::Any { namespaces, not, .. } => {
                 self.note(start, "WC[##any]".into());
                 if start < self.names.len() {
