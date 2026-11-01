@@ -1634,7 +1634,9 @@ fn async_delayed_redelivery_and_delay_options() {
     }
     // asynchronous redelivery: the three first attempts are not held back by the delays
     assert!(mock(&ctx, "mock:attempt").wait_for_messages(3, Duration::from_millis(800)));
-    // synchronous delay: the consumer is blocked
+    // synchronous delay: the consumer is blocked (wait for the first exchange to arrive
+    // first: on a loaded machine the seda consumer may not have picked it up yet)
+    assert!(mock(&ctx, "mock:before").wait_for_messages(1, Duration::from_millis(900)));
     assert_eq!(mock(&ctx, "mock:before").received_counter(), 1);
     assert!(mock(&ctx, "mock:ok").wait_for_messages(3, Duration::from_secs(10)));
     assert!(mock(&ctx, "mock:after").wait_for_messages(3, Duration::from_secs(10)));
