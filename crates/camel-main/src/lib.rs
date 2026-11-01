@@ -1,11 +1,20 @@
 //! # camel-main
 //!
 //! Standalone runner for rust-camel applications (Camel Main equivalent):
-//! loads `application.properties`, configures the context, discovers route files,
-//! starts the context and keeps running until stopped (signal, max duration,
-//! max messages or idle timeout).
+//! loads `application.properties`/`application.yaml` (with profiles, relaxed binding,
+//! environment variables, `camel.springboot.*` aliases, `camel.component.*` options and
+//! `camel.beans.*` beans, see [`config`]), configures the context, discovers route files
+//! (YAML/XML DSL, Kamelets, Pipes and Camel K `Integration` resources, see
+//! [`integration`]), starts the context and keeps running until stopped (signal, stop file,
+//! max duration, max messages or idle timeout). With `--dev` (`camel.main.dev-reload`) route
+//! files are reloaded when they change; [`local`] publishes the status files used by the
+//! `camel ps/get/cmd/log/trace/stop` commands.
 
+pub mod cli;
+pub mod config;
 pub mod console;
+pub mod integration;
+pub mod local;
 pub mod properties;
 pub mod signal;
 pub mod yaml_rest;
@@ -34,6 +43,8 @@ pub struct MainConfig {
     pub duration_max_idle_seconds: Option<u64>,
     pub shutdown_timeout: Option<Duration>,
     pub log_level: Option<String>,
+    /// Reload route files when they change (`camel run --dev`).
+    pub dev_reload: bool,
 }
 
 /// The main runner.
@@ -45,6 +56,22 @@ pub struct Main {
     route_files: Vec<PathBuf>,
     configurers: Vec<Box<dyn FnOnce(&CamelContext) -> Result<()>>>,
     console: Option<console::DevConsoleServer>,
+    /// Properties set in code / on the command line (highest precedence).
+    explicit: BTreeMap<String, String>,
+    /// Per-profile YAML documents of the loaded configuration files.
+    profile_docs: Vec<(String, BTreeMap<String, String>)>,
+    /// Directories of the loaded configuration files (for `application-<profile>.*`).
+    config_dirs: Vec<PathBuf>,
+    profile: Option<String>,
+    env: Option<BTreeMap<String, String>>,
+    /// Route files loaded at startup with their modification time (dev reload).
+    loaded_files: Vec<(PathBuf, Option<std::time::SystemTime>)>,
+    local: Option<local::LocalStatus>,
+    local_dir: Option<PathBuf>,
+    /// In-memory route sources: (file name, content).
+    route_sources: Vec<(String, String)>,
+    /// Ids of the routes created from route files (replaced on reload).
+    file_route_ids: Vec<String>,
 }
 
 struct CompletedCounter {
@@ -83,7 +110,58 @@ impl Main {
             route_files: Vec::new(),
             configurers: Vec::new(),
             console: None,
+            explicit: BTreeMap::new(),
+            profile_docs: Vec::new(),
+            config_dirs: Vec::new(),
+            profile: None,
+            env: None,
+            loaded_files: Vec::new(),
+            local: None,
+            local_dir: None,
+            route_sources: Vec::new(),
+            file_route_ids: Vec::new(),
         }
+    }
+
+    /// Publish status files in `dir` and accept commands from the `camel` CLI (see
+    /// [`local`]).
+    pub fn enable_local_status(&mut self, dir: impl Into<PathBuf>) {
+        self.local_dir = Some(dir.into());
+    }
+
+    /// The local status publisher, when running with [`Self::enable_local_status`].
+    pub fn local_status(&self) -> Option<&local::LocalStatus> {
+        self.local.as_ref()
+    }
+
+    /// Replace the routes loaded from route files by reloading the files (dev mode).
+    /// Errors are logged; the previous routes are removed either way.
+    pub fn reload_route_files(&mut self) -> Result<()> {
+        for id in std::mem::take(&mut self.file_route_ids) {
+            let _ = self.ctx.stop_route(&id);
+            let _ = self.ctx.remove_route(&id);
+        }
+        let before: Vec<String> = self.ctx.route_ids();
+        let files: Vec<PathBuf> = self.loaded_files.iter().map(|(f, _)| f.clone()).collect();
+        let mut result = Ok(());
+        self.loaded_files.clear();
+        for f in files {
+            let mtime = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
+            if let Err(e) = self.load_route_file(&f) {
+                camel_core::camel_error!("Main", "Failed to reload {}: {}", f.display(), e);
+                result = Err(e);
+            } else {
+                camel_core::camel_info!("Main", "Reloaded routes from: {}", f.display());
+            }
+            self.loaded_files.push((f, mtime));
+        }
+        self.file_route_ids = self.ctx.route_ids().into_iter().filter(|id| !before.contains(id)).collect();
+        result
+    }
+
+    /// Whether a loaded route file changed since it was (re)loaded.
+    fn route_files_changed(&self) -> bool {
+        self.loaded_files.iter().any(|(f, t)| std::fs::metadata(f).and_then(|m| m.modified()).ok() != *t)
     }
 
     /// Use an existing context.
@@ -113,31 +191,120 @@ impl Main {
         self.route_files.push(path.into());
     }
 
+    /// Add an in-memory route source (e.g. embedded with `include_str!` by `camel export`);
+    /// the loader is chosen by the extension of `name`.
+    pub fn add_route_source(&mut self, name: impl Into<String>, content: impl Into<String>) {
+        self.route_sources.push((name.into(), content.into()));
+    }
+
+    /// Load configuration text (`yaml = true` for application.yaml content).
+    pub fn load_properties_text(&mut self, text: &str, yaml: bool) -> Result<()> {
+        if yaml {
+            let (base, docs) = config::parse_yaml_config(text)?;
+            self.properties.extend(base);
+            self.profile_docs.extend(docs);
+        } else {
+            self.properties.extend(properties::parse_properties(text));
+        }
+        Ok(())
+    }
+
     /// Add routes with the Rust DSL.
     pub fn configure(&mut self, f: impl FnOnce(&CamelContext) -> Result<()> + 'static) {
         self.configurers.push(Box::new(f));
     }
 
-    /// Set a property (same as in application.properties).
+    /// Set a property (overrides configuration files and environment variables, like a
+    /// command line argument in Spring Boot).
     pub fn set_property(&mut self, key: impl Into<String>, value: impl Into<String>) {
-        self.properties.insert(key.into(), value.into());
+        self.explicit.insert(key.into(), value.into());
     }
 
-    /// Load an application.properties file.
+    /// The effective properties (after `start`: files, profile, environment and explicit
+    /// properties merged).
+    pub fn properties(&self) -> &BTreeMap<String, String> {
+        &self.properties
+    }
+
+    /// Activate a profile (`application-<profile>.*`, `%<profile>.` keys).
+    pub fn set_profile(&mut self, profile: impl Into<String>) {
+        self.profile = Some(profile.into());
+    }
+
+    /// Use these environment variables instead of the process environment.
+    pub fn set_environment(&mut self, env: BTreeMap<String, String>) {
+        self.env = Some(env);
+    }
+
+    /// Load a configuration file: `.properties`, or `.yaml`/`.yml` (flattened; documents
+    /// for other profiles are kept for [`Self::set_profile`]).
     pub fn load_properties_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
-        let text = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| CamelError::io(format!("Cannot read properties file {}: {}", path.as_ref().display(), e)))?;
-        self.properties.extend(properties::parse_properties(&text));
+        let path = path.as_ref();
+        let (base, docs) = config::load_file(path)?;
+        self.properties.extend(base);
+        self.profile_docs.extend(docs);
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        if !self.config_dirs.contains(&dir) {
+            self.config_dirs.push(dir);
+        }
+        Ok(())
+    }
+
+    /// Load `application.properties`, `application.yaml` and `application.yml` from `dir`
+    /// (those that exist). Returns how many files were loaded.
+    pub fn load_application_config(&mut self, dir: impl AsRef<Path>) -> Result<usize> {
+        let files = config::application_files(dir.as_ref());
+        for f in &files {
+            self.load_properties_file(f)?;
+        }
+        if !self.config_dirs.contains(&dir.as_ref().to_path_buf()) {
+            self.config_dirs.push(dir.as_ref().to_path_buf());
+        }
+        Ok(files.len())
+    }
+
+    /// Merge files, profile, environment variables, aliases and explicit properties.
+    fn merge_configuration(&mut self) -> Result<()> {
+        let env: BTreeMap<String, String> = self.env.clone().unwrap_or_else(|| std::env::vars().collect());
+        let mut props = self.properties.clone();
+        let mut probe = props.clone();
+        probe.extend(self.explicit.clone());
+        let profile = self.profile.clone().or_else(|| config::active_profile(&probe, &env));
+        if let Some(p) = &profile {
+            for name in p.split(',').map(str::trim) {
+                for dir in self.config_dirs.clone() {
+                    for ext in ["properties", "yaml", "yml"] {
+                        let f = dir.join(format!("application-{}.{}", name, ext));
+                        if f.is_file() {
+                            let (base, docs) = config::load_file(&f)?;
+                            props.extend(base);
+                            self.profile_docs.extend(docs);
+                        }
+                    }
+                }
+            }
+            camel_core::camel_info!("Main", "The following profiles are active: {}", p);
+        }
+        config::apply_profile(&mut props, &self.profile_docs, profile.as_deref());
+        let schemes = self.ctx.component_names();
+        for (k, v) in &env {
+            if let Some(key) = config::env_to_property(k, &schemes) {
+                props.insert(key, v.clone());
+            }
+        }
+        props.extend(self.explicit.clone());
+        config::apply_aliases(&mut props);
+        if let Some(p) = profile {
+            props.entry("camel.main.profile".into()).or_insert(p);
+        }
+        self.properties = props;
         Ok(())
     }
 
     /// Apply `camel.main.*` and other well-known properties to the configuration.
     fn apply_properties(&mut self) -> Result<()> {
-        let get = |k: &str| -> Option<String> {
-            let dashed = k.to_string();
-            let camel = dashed_to_camel(k);
-            self.properties.get(&dashed).or_else(|| self.properties.get(&camel)).cloned()
-        };
+        self.merge_configuration()?;
+        let get = |k: &str| -> Option<String> { config::relaxed_get(&self.properties, k).cloned() };
         if let Some(v) = get("camel.main.name") {
             self.config.name = Some(v);
         }
@@ -166,8 +333,57 @@ impl Main {
         if let Some(v) = get("camel.main.log-level").or_else(|| get("logging.level.root")) {
             self.config.log_level = Some(v);
         }
+        if let Some(v) = get("camel.main.dev-reload") {
+            self.config.dev_reload = v.trim().eq_ignore_ascii_case("true");
+        }
         // all properties become placeholders
         self.ctx.properties().set_all(self.properties.clone());
+        config::create_beans(&self.ctx, &self.properties)?;
+        Ok(())
+    }
+
+    /// Load the Kamelets of `camel.main.kamelet-locations` (alias
+    /// `camel.component.kamelet.location`; comma separated directories, `file:` and
+    /// `classpath:` prefixes accepted — the latter relative to the working directory; default
+    /// `classpath:kamelets`). Remote (`github:`) locations are skipped with a warning.
+    fn load_kamelet_locations(&self) -> Result<()> {
+        let explicit = config::relaxed_get(&self.properties, "camel.main.kamelet-locations")
+            .or_else(|| config::relaxed_get(&self.properties, "camel.component.kamelet.location"))
+            .cloned();
+        let locations = explicit.clone().unwrap_or_else(|| "classpath:kamelets".into());
+        for loc in locations.split(',').map(str::trim).filter(|l| !l.is_empty()) {
+            if loc.starts_with("github:") || loc.starts_with("http:") || loc.starts_with("https:") {
+                camel_core::camel_warn!("Main", "Remote Kamelet location {} is not supported (no network access); skipped", loc);
+                continue;
+            }
+            let dir = loc.strip_prefix("file:").or_else(|| loc.strip_prefix("classpath:")).unwrap_or(loc);
+            let dir = Path::new(dir);
+            if dir.is_dir() {
+                let names = camel_yaml::load_kamelets_from_dir(&self.ctx, dir)?;
+                camel_core::camel_info!("Main", "Loaded {} Kamelets from {}: {}", names.len(), dir.display(), names.join(", "));
+            } else if explicit.is_some() {
+                camel_core::camel_warn!("Main", "Kamelet location {} does not exist", dir.display());
+            }
+        }
+        Ok(())
+    }
+
+    /// Camel K Integration files among the explicit route files contribute properties
+    /// before the configuration is applied.
+    fn prescan_integrations(&mut self) -> Result<()> {
+        for f in self.route_files.clone() {
+            let is_yaml = matches!(f.extension().and_then(|e| e.to_str()), Some("yaml" | "yml"));
+            if !is_yaml {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(&f) {
+                if let Some(it) = integration::parse_integration(&text)? {
+                    for (k, v) in it.properties {
+                        self.properties.entry(k).or_insert(v);
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -200,6 +416,7 @@ impl Main {
 
     /// Initialize and start the context (does not block).
     pub fn start(&mut self) -> Result<()> {
+        self.prescan_integrations()?;
         self.apply_properties()?;
         if let Some(l) = &self.config.log_level {
             if let Some(level) = camel_core::log::Level::parse(l) {
@@ -213,11 +430,27 @@ impl Main {
         for c in std::mem::take(&mut self.configurers) {
             c(&self.ctx)?;
         }
+        self.load_kamelet_locations()?;
+        self.loaded_files.clear();
+        let before: Vec<String> = self.ctx.assign_pending_route_ids();
         for f in self.discover_route_files()? {
             camel_core::camel_info!("Main", "Loading routes from: {}", f.display());
             self.load_route_file(&f)?;
+            let mtime = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
+            self.loaded_files.push((f, mtime));
+        }
+        self.file_route_ids = self.ctx.assign_pending_route_ids().into_iter().filter(|id| !before.contains(id)).collect();
+        for (name, content) in self.route_sources.clone() {
+            let ext = Path::new(&name).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let loader = self.loaders.get(&ext).cloned().ok_or_else(|| CamelError::illegal_argument(format!("No route loader for {}", name)))?;
+            camel_core::camel_info!("Main", "Loading routes from: {} (embedded)", name);
+            loader(&self.ctx, &content, Path::new(&name))?;
         }
         self.ctx.start()?;
+        if let Some(dir) = &self.local_dir {
+            let name = self.config.name.clone().unwrap_or_else(|| self.ctx.name().to_string());
+            self.local = Some(local::LocalStatus::start(&self.ctx, &name, dir)?);
+        }
         for line in console::startup_summary(&self.ctx) {
             camel_core::camel_info!("Main", "{}", line);
         }
@@ -292,10 +525,22 @@ impl Main {
         self.start()?;
         let started = Instant::now();
         let reason;
+        let mut last_check = Instant::now();
         loop {
             if signal::received() {
                 reason = "signal received".to_string();
                 break;
+            }
+            if self.local.as_ref().map(|l| l.stop_requested()).unwrap_or(false) {
+                reason = "stop requested".to_string();
+                break;
+            }
+            let reload_requested = self.local.as_ref().map(|l| l.take_reload_request()).unwrap_or(false);
+            if reload_requested || (self.config.dev_reload && last_check.elapsed() >= Duration::from_millis(300)) {
+                last_check = Instant::now();
+                if reload_requested || self.route_files_changed() {
+                    let _ = self.reload_route_files();
+                }
             }
             if let Some(s) = self.config.duration_max_seconds {
                 if started.elapsed() >= Duration::from_secs(s) {
@@ -319,30 +564,19 @@ impl Main {
         }
         camel_core::camel_info!("Main", "Stopping CamelContext: {}", reason);
         self.stop_console();
+        if let Some(l) = self.local.take() {
+            l.stop();
+        }
         self.ctx.stop()
     }
 
     pub fn stop(&self) -> Result<()> {
         self.stop_console();
+        if let Some(l) = &self.local {
+            l.stop();
+        }
         self.ctx.stop()
     }
-}
-
-/// `routes-include-pattern` → `routesIncludePattern` style alias.
-fn dashed_to_camel(k: &str) -> String {
-    let mut out = String::new();
-    let mut upper = false;
-    for c in k.chars() {
-        if c == '-' {
-            upper = true;
-        } else if upper {
-            out.extend(c.to_uppercase());
-            upper = false;
-        } else {
-            out.push(c);
-        }
-    }
-    out
 }
 
 /// Expand a simple glob (`dir/*.yaml`, `dir/**/*.yaml`, or a plain path) into files.
@@ -429,7 +663,19 @@ pub fn new_main() -> Main {
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {
-        main.add_route_loader(ext, |ctx, text, _path| camel_yaml::add_routes_from_yaml(ctx, text));
+        main.add_route_loader(ext, |ctx, text, _path| match integration::parse_integration(text)? {
+            // Camel K Integration resource: its properties become placeholders (camel.main.*
+            // options of explicit route files were applied before startup)
+            Some(it) => {
+                for (k, v) in &it.properties {
+                    if ctx.properties().get(k).is_none() {
+                        ctx.properties().set(k.clone(), v.clone());
+                    }
+                }
+                integration::load_integration(ctx, &it)
+            }
+            None => camel_yaml::add_routes_from_yaml(ctx, text),
+        });
     }
     main.add_route_loader("xml", |ctx, text, _path| camel_yaml::add_routes_from_xml(ctx, text));
     main
@@ -445,7 +691,6 @@ mod tests {
         assert!(!ant_match("*.yaml", "x/a.yaml"));
         assert!(ant_match("**/*.yaml", "x/y/a.yaml"));
         assert!(ant_match("**/*.yaml", "a.yaml"));
-        assert_eq!(dashed_to_camel("camel.main.duration-max-seconds"), "camel.main.durationMaxSeconds");
     }
 
     #[test]

@@ -162,6 +162,8 @@ pub struct OperationInfo {
     pub faults: Vec<(String, Option<Key>)>,
     /// Address of the selected port.
     pub address: Option<String>,
+    /// SOAP encoding (`use="encoded"`, rpc/encoded): `xsi:type` on accessors, multi-refs.
+    pub encoded: bool,
 }
 
 impl OperationInfo {
@@ -468,7 +470,7 @@ impl Wsdl {
             .iter()
             .map(|(n, m)| (n.clone(), self.messages.get(m).and_then(|m| m.parts.first()).and_then(|p| p.element.clone())))
             .collect();
-        Ok(OperationInfo { name: name.to_string(), namespace, soap_action: bo.soap_action.clone(), style: bo.style, version: b.version, input, output, faults, address })
+        Ok(OperationInfo { name: name.to_string(), namespace, soap_action: bo.soap_action.clone(), style: bo.style, version: b.version, input, output, faults, address, encoded: !bo.input.literal })
     }
 
     /// The shape of a part's element.

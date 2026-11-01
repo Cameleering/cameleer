@@ -1550,7 +1550,7 @@ impl Func {
         match self {
             Func::Body(navs) => navigate(ex.message.body.clone(), navs, ex),
             Func::BodyAs(t, mandatory, navs) => {
-                let v = support::convert_to_type(&ex.message.body, t)?;
+                let v = support::convert_to_type_ex(Some(ex), &ex.message.body, t)?;
                 if *mandatory && v.is_null() {
                     return Err(CamelError::new("InvalidPayloadException", format!("No body available of type: {} on: Message", t)));
                 }
@@ -1573,7 +1573,7 @@ impl Func {
             }
             Func::ScopedAs(scope, name, t) => {
                 let n = name.eval_string(ex)?;
-                support::convert_to_type(&scoped_get(ex, scope, &n).unwrap_or(Value::Null), t)
+                support::convert_to_type_ex(Some(ex), &scoped_get(ex, scope, &n).unwrap_or(Value::Null), t)
             }
             Func::Headers => Ok(ex.message.headers.to_value()),
             Func::Variables => Ok(Value::Object(

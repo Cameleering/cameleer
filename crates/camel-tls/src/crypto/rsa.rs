@@ -425,6 +425,63 @@ impl RsaPrivateKey {
     }
 }
 
+// ---------------------------------------------------------------- RSAES-OAEP (RFC 8017 7.1)
+
+impl RsaPublicKey {
+    /// RSAES-OAEP encryption with `hash` for both the label hash and MGF1 (XML Encryption
+    /// `rsa-oaep-mgf1p` uses SHA-1). `None` when the message is too long.
+    pub fn encrypt_oaep(&self, hash: HashAlg, label: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
+        let k = self.k;
+        let hlen = hash.output_len();
+        if msg.len() + 2 * hlen + 2 > k {
+            return None;
+        }
+        let mut db = hash.hash(label);
+        db.resize(k - msg.len() - hlen - 2, 0);
+        db.push(1);
+        db.extend_from_slice(msg);
+        let seed = rng::random_bytes(hlen);
+        let db_mask = mgf1(hash, &seed, k - hlen - 1);
+        let masked_db: Vec<u8> = db.iter().zip(&db_mask).map(|(a, b)| a ^ b).collect();
+        let seed_mask = mgf1(hash, &masked_db, hlen);
+        let masked_seed: Vec<u8> = seed.iter().zip(&seed_mask).map(|(a, b)| a ^ b).collect();
+        let mut em = vec![0u8];
+        em.extend(masked_seed);
+        em.extend(masked_db);
+        let m = from_be_bytes(&em, self.ctx.n())?;
+        let c = self.ctx.pow(&m, &self.e, false);
+        Some(to_be_bytes(&c, k))
+    }
+}
+
+impl RsaPrivateKey {
+    /// RSAES-OAEP decryption (see [`RsaPublicKey::encrypt_oaep`]).
+    pub fn decrypt_oaep(&self, hash: HashAlg, label: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
+        let k = self.public.k;
+        let hlen = hash.output_len();
+        if ciphertext.len() != k || k < 2 * hlen + 2 {
+            return None;
+        }
+        let em = self.decrypt_raw(ciphertext)?;
+        let (y, rest) = em.split_first()?;
+        let (masked_seed, masked_db) = rest.split_at(hlen);
+        let seed_mask = mgf1(hash, masked_db, hlen);
+        let seed: Vec<u8> = masked_seed.iter().zip(&seed_mask).map(|(a, b)| a ^ b).collect();
+        let db_mask = mgf1(hash, &seed, k - hlen - 1);
+        let db: Vec<u8> = masked_db.iter().zip(&db_mask).map(|(a, b)| a ^ b).collect();
+        let lhash = hash.hash(label);
+        if *y != 0 || !ct_eq(&db[..hlen], &lhash) {
+            return None;
+        }
+        let rest = &db[hlen..];
+        let one = rest.iter().position(|&b| b != 0)?;
+        if rest[one] != 1 {
+            return None;
+        }
+        Some(rest[one + 1..].to_vec())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -316,23 +316,22 @@ fn include_import_and_document() {
 }
 
 #[test]
-fn xslt2_features_are_rejected_clearly() {
+fn xslt3_features_are_rejected_clearly() {
     let e = Stylesheet::compile(
-        r#"<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/"><xsl:for-each-group select="//order" group-by="@customer"><x/></xsl:for-each-group></xsl:template></xsl:stylesheet>"#,
+        r#"<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/"><xsl:iterate select="//order"><x/></xsl:iterate></xsl:template></xsl:stylesheet>"#,
         None,
     )
     .unwrap_err();
     assert_eq!(e.kind, "TransformerConfigurationException");
+    assert!(e.message.contains("xsl:iterate is not supported"), "{}", e.message);
+    // XSLT 2.0 instructions are rejected in 1.0 stylesheets
+    let e = Stylesheet::compile(&xsl(r#"<xsl:template match="/"><xsl:for-each-group select="x" group-by="y"/></xsl:template>"#), None).unwrap_err();
     assert!(e.message.contains("xsl:for-each-group is not supported"), "{}", e.message);
-    let e = Stylesheet::compile(
-        r#"<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/"><xsl:value-of select="for $i in 1 to 3 return $i"/></xsl:template></xsl:stylesheet>"#,
-        None,
-    )
-    .unwrap_err();
-    assert!(e.message.contains("XPath 2.0"), "{}", e.message);
+    // and XPath 2.0 syntax too
+    assert!(Stylesheet::compile(&xsl(r#"<xsl:template match="/"><xsl:value-of select="for $i in 1 to 3 return $i"/></xsl:template>"#), None).is_err());
     // xsl:fallback is honoured
     let out = transform(
-        r#"<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:output omit-xml-declaration="yes"/><xsl:template match="/"><xsl:for-each-group select="x" group-by="y"><xsl:fallback>fb</xsl:fallback></xsl:for-each-group></xsl:template></xsl:stylesheet>"#,
+        r#"<xsl:stylesheet version="3.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:output omit-xml-declaration="yes"/><xsl:template match="/"><xsl:iterate select="x"><xsl:fallback>fb</xsl:fallback></xsl:iterate></xsl:template></xsl:stylesheet>"#,
         "<a/>",
     )
     .unwrap();

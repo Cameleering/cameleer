@@ -62,7 +62,7 @@ fn xslt_component_with_header_parameters_and_outputs() {
 fn xslt_saxon_rejects_xslt2_and_template_from_header() {
     let d = dir("saxon");
     let xsl2 = d.join("v2.xsl");
-    std::fs::write(&xsl2, r#"<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:function name="f"/></xsl:stylesheet>"#).unwrap();
+    std::fs::write(&xsl2, r#"<xsl:stylesheet version="2.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform"><xsl:template match="/"><xsl:iterate select="*"/></xsl:template></xsl:stylesheet>"#).unwrap();
     let ctx = ctx();
     let u = format!("xslt-saxon:file:{}?saxonExtensionFunctions=#x", xsl2.display());
     ctx.add_routes(move |b| {
@@ -74,7 +74,7 @@ fn xslt_saxon_rejects_xslt2_and_template_from_header() {
     let t = ctx.create_producer_template();
     let e = t.request_body("direct:v2", "<a/>").unwrap_err();
     let msg = format!("{:?}", e);
-    assert!(msg.contains("xsl:function is not supported"), "{}", msg);
+    assert!(msg.contains("xsl:iterate is not supported"), "{}", msg);
     let r = t
         .request_body_and_header(
             "direct:hdr",

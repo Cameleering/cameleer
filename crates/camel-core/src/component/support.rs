@@ -62,6 +62,52 @@ impl StopFlag {
     }
 }
 
+/// Suspension state shared by a consumer and its threads (implements
+/// [`SuspendableService`](crate::spi::SuspendableService)).
+#[derive(Default)]
+pub struct SuspendState {
+    suspended: Mutex<bool>,
+    cond: Condvar,
+}
+
+impl SuspendState {
+    pub fn new() -> Arc<SuspendState> {
+        Arc::new(SuspendState::default())
+    }
+    pub fn set(&self, suspended: bool) {
+        *self.suspended.lock().unwrap() = suspended;
+        self.cond.notify_all();
+    }
+    pub fn get(&self) -> bool {
+        *self.suspended.lock().unwrap()
+    }
+    /// Block while suspended. Returns true when `flag` was stopped meanwhile.
+    pub fn wait_while_suspended(&self, flag: &StopFlag) -> bool {
+        let mut s = self.suspended.lock().unwrap();
+        while *s {
+            if flag.is_stopped() {
+                return true;
+            }
+            s = self.cond.wait_timeout(s, Duration::from_millis(20)).unwrap().0;
+        }
+        flag.is_stopped()
+    }
+}
+
+impl crate::spi::SuspendableService for SuspendState {
+    fn suspend(&self) -> Result<()> {
+        self.set(true);
+        Ok(())
+    }
+    fn resume(&self) -> Result<()> {
+        self.set(false);
+        Ok(())
+    }
+    fn is_suspended(&self) -> bool {
+        self.get()
+    }
+}
+
 /// `Instant::now() + d`, or None when that would overflow (i.e. "forever").
 pub fn deadline_after(d: Duration) -> Option<Instant> {
     Instant::now().checked_add(d)

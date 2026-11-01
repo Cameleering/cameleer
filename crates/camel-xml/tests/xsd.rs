@@ -194,3 +194,101 @@ fn schema_load_errors() {
     assert!(Schema::parse("<notaschema/>", None).is_err());
     assert!(Schema::parse("<xs:schema xmlns:xs='http://www.w3.org/2001/XMLSchema'><xs:simpleType name='p'><xs:restriction base='xs:string'><xs:pattern value='('/></xs:restriction></xs:simpleType></xs:schema>", None).is_err());
 }
+
+fn errs(xsd: &Schema, xml: &str) -> Vec<String> {
+    xsd.validate(&Document::parse(xml).unwrap()).into_iter().map(|e| e.message).collect()
+}
+
+const LIB_XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:l="urn:lib" targetNamespace="urn:lib" elementFormDefault="qualified">
+  <xs:element name="library">
+    <xs:complexType><xs:sequence>
+      <xs:element name="book" maxOccurs="unbounded"><xs:complexType><xs:sequence><xs:element name="title" type="xs:string"/></xs:sequence>
+        <xs:attribute name="isbn" type="xs:string"/><xs:attribute name="code" type="xs:string"/></xs:complexType></xs:element>
+      <xs:element name="loan" minOccurs="0" maxOccurs="unbounded"><xs:complexType><xs:attribute name="book" type="xs:string"/></xs:complexType></xs:element>
+    </xs:sequence></xs:complexType>
+    <xs:key name="bookKey"><xs:selector xpath="l:book"/><xs:field xpath="@isbn"/></xs:key>
+    <xs:unique name="codeUnique"><xs:selector xpath=".//l:book"/><xs:field xpath="@code"/></xs:unique>
+    <xs:keyref name="loanRef" refer="l:bookKey"><xs:selector xpath="l:loan"/><xs:field xpath="@book"/></xs:keyref>
+  </xs:element>
+</xs:schema>"#;
+
+#[test]
+fn identity_constraints() {
+    let s = Schema::parse(LIB_XSD, None).unwrap();
+    let ok = r#"<library xmlns="urn:lib"><book isbn="1" code="a"><title>A</title></book><book isbn="2"><title>B</title></book><loan book="2"/></library>"#;
+    assert_eq!(errs(&s, ok), Vec::<String>::new());
+    let bad = r#"<library xmlns="urn:lib"><book isbn="1" code="a"><title>A</title></book><book isbn="1" code="a"><title>B</title></book><book code="c"><title>C</title></book><loan book="9"/></library>"#;
+    let e = errs(&s, bad);
+    assert!(e.iter().any(|m| m == "cvc-identity-constraint.4.2.2: Duplicate key value [1] declared for identity constraint \"bookKey\" of element \"library\"."), "{:?}", e);
+    assert!(e.iter().any(|m| m == "cvc-identity-constraint.4.1: Duplicate unique value [a] declared for identity constraint \"codeUnique\" of element \"library\"."), "{:?}", e);
+    assert!(e.iter().any(|m| m == "cvc-identity-constraint.4.2.1.a: Element \"library\" has no value for the key \"bookKey\"."), "{:?}", e);
+    assert!(e.iter().any(|m| m == "cvc-identity-constraint.4.3: Key 'loanRef' with value '9' not found for identity constraint of element 'library'."), "{:?}", e);
+}
+
+const POLY_XSD: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:z="urn:z" targetNamespace="urn:z" elementFormDefault="qualified">
+  <xs:element name="zoo"><xs:complexType><xs:sequence>
+    <xs:element name="animal" type="z:Animal" maxOccurs="unbounded"/>
+    <xs:element ref="z:shape" minOccurs="0" maxOccurs="unbounded"/>
+  </xs:sequence></xs:complexType></xs:element>
+  <xs:complexType name="Animal" abstract="true"><xs:sequence><xs:element name="name" type="xs:string"/></xs:sequence></xs:complexType>
+  <xs:complexType name="Dog"><xs:complexContent><xs:extension base="z:Animal"><xs:sequence><xs:element name="barks" type="xs:int"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType>
+  <xs:complexType name="Rock"><xs:sequence><xs:element name="name" type="xs:string"/></xs:sequence></xs:complexType>
+  <xs:element name="shape" type="z:Shape" abstract="true"/>
+  <xs:complexType name="Shape"><xs:sequence><xs:element name="color" type="xs:string"/></xs:sequence></xs:complexType>
+  <xs:element name="circle" substitutionGroup="z:shape"><xs:complexType><xs:complexContent><xs:extension base="z:Shape"><xs:sequence><xs:element name="radius" type="xs:double"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType></xs:element>
+  <xs:element name="square" substitutionGroup="z:shape"/>
+  <xs:element name="bigSquare" substitutionGroup="z:square"/>
+</xs:schema>"#;
+
+#[test]
+fn xsi_type_and_substitution_groups() {
+    let s = Schema::parse(POLY_XSD, None).unwrap();
+    let ok = r#"<zoo xmlns="urn:z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:q="urn:z"><animal xsi:type="q:Dog"><name>Rex</name><barks>3</barks></animal><circle><color>red</color><radius>2</radius></circle><square><color>b</color></square><bigSquare><color>c</color></bigSquare></zoo>"#;
+    assert_eq!(errs(&s, ok), Vec::<String>::new());
+    let e = errs(&s, r#"<zoo xmlns="urn:z"><animal><name>x</name></animal></zoo>"#);
+    assert_eq!(e, vec!["cvc-type.2: The type definition cannot be abstract for element animal.".to_string()]);
+    let e = errs(&s, r#"<zoo xmlns="urn:z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><animal xsi:type="Rock"><name>x</name></animal></zoo>"#);
+    assert_eq!(e, vec!["cvc-elt.4.3: Type 'Rock' is not validly derived from the type definition, 'Animal', of element 'animal'.".to_string()]);
+    let e = errs(&s, r#"<zoo xmlns="urn:z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><animal xsi:type="Cat"><name>x</name></animal></zoo>"#);
+    assert_eq!(e, vec!["cvc-elt.4.2: Cannot resolve 'Cat' to a type definition for element 'animal'.".to_string()]);
+    let e = errs(&s, r#"<zoo xmlns="urn:z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><animal xsi:type="Dog"><name>x</name><barks>many</barks></animal><shape><color>x</color></shape></zoo>"#);
+    assert!(e.iter().any(|m| m.contains("'many' is not a valid value for 'int'")), "{:?}", e);
+    assert!(e.iter().any(|m| m == "cvc-elt.2: The value of {abstract} in the element declaration for 'shape' must be false."), "{:?}", e);
+    let e = errs(&s, r#"<zoo xmlns="urn:z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><animal xsi:type="Dog"><name>x</name><barks>1</barks></animal><circle><color>x</color></circle></zoo>"#);
+    assert!(e.iter().any(|m| m.starts_with("cvc-complex-type.2.4.b")), "{:?}", e);
+    // xsi:type with a built-in on an anyType element
+    let any = Schema::parse(r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:element name="v"/></xs:schema>"#, None).unwrap();
+    assert!(errs(&any, r#"<v xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:int">12</v>"#).is_empty());
+    assert_eq!(errs(&any, r#"<v xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xs="http://www.w3.org/2001/XMLSchema" xsi:type="xs:int">x</v>"#).len(), 2);
+}
+
+#[test]
+fn redefine_extends_and_restricts() {
+    let dir = std::env::temp_dir().join(format!("camel-xsd-redefine-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("base.xsd"),
+        r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:element name="person" type="Person"/>
+  <xs:complexType name="Person"><xs:sequence><xs:element name="name" type="xs:string"/></xs:sequence></xs:complexType>
+  <xs:simpleType name="Code"><xs:restriction base="xs:string"><xs:maxLength value="5"/></xs:restriction></xs:simpleType>
+  <xs:group name="extra"><xs:sequence><xs:element name="code" type="Code" minOccurs="0"/></xs:sequence></xs:group>
+</xs:schema>"#,
+    )
+    .unwrap();
+    let main = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <xs:redefine schemaLocation="base.xsd">
+    <xs:complexType name="Person"><xs:complexContent><xs:extension base="Person"><xs:sequence><xs:element name="age" type="xs:int"/><xs:group ref="extra"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType>
+    <xs:simpleType name="Code"><xs:restriction base="Code"><xs:pattern value="[A-Z]+"/></xs:restriction></xs:simpleType>
+  </xs:redefine>
+</xs:schema>"#;
+    let s = Schema::parse(main, Some(&dir)).unwrap();
+    assert!(errs(&s, "<person><name>Ann</name><age>3</age><code>AB</code></person>").is_empty());
+    let e = errs(&s, "<person><name>Ann</name></person>");
+    assert!(e[0].starts_with("cvc-complex-type.2.4.b"), "{:?}", e);
+    let e = errs(&s, "<person><name>Ann</name><age>3</age><code>ab</code></person>");
+    assert!(e[0].starts_with("cvc-pattern-valid"), "{:?}", e);
+    let e = errs(&s, "<person><name>Ann</name><age>3</age><code>ABCDEFG</code></person>");
+    assert!(e[0].starts_with("cvc-maxLength-valid"), "{:?}", e);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -862,7 +862,7 @@ impl JsonPathExpression {
             }
         }
         if let Some(t) = self.options.get("resultType").filter(|t| !t.is_empty()) {
-            v = super::support::convert_to_type(&v, t)?;
+            v = super::support::convert_to_type_ex(Some(ex), &v, t)?;
         }
         Ok(v)
     }

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use camel_core::context::CamelContext;
-use camel_core::message::Headers;
+use camel_core::message::{Exchange, Headers};
 use camel_core::value::Value;
 
 use crate::ast::Dialect;
@@ -77,6 +77,14 @@ impl HostState {
         match self.body.borrow().as_ref() {
             Some(v) => to_value(v),
             None => self.body_value.borrow().clone(),
+        }
+    }
+
+    /// Convert the body to a Camel value now (before the object graph is torn down).
+    pub fn freeze_body(&self) {
+        let v = self.body.borrow_mut().take();
+        if let Some(v) = v {
+            *self.body_value.borrow_mut() = to_value(&v);
         }
     }
 
@@ -245,6 +253,11 @@ fn put_key(it: &Interp, h: &Host, k: &str, v: &V) -> bool {
     true
 }
 
+/// Lower-case the first letter (bean property names).
+pub fn lc_first_pub(s: &str) -> String {
+    lc_first(s)
+}
+
 fn lc_first(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -308,6 +321,16 @@ pub fn get_member(it: &mut Interp, h: &Rc<Host>, recv: &V, name: &str, pos: u32)
             None => method(),
         },
         Host::Ns(n) => return crate::builtins::ns_member(it, n, name, pos),
+        Host::Bean(b) => {
+            let bean = bean_value(it, b, pos)?;
+            if let V::Host(bh) = &bean {
+                if matches!(&**bh, Host::Bean(_)) {
+                    return Ok(method());
+                }
+            }
+            return it.get_member(&bean, name, pos);
+        }
+        Host::Meta(_) => method(),
         Host::NsFn(..) | Host::Type(_) => {
             if name == "name" || name == "simpleName" {
                 return Ok(V::string(match &**h {
@@ -372,6 +395,8 @@ fn slf4j(it: &Interp, args: &[V]) -> String {
 /// Method call on a host object.
 pub fn call_method(it: &mut Interp, h: &Rc<Host>, recv: &V, name: &str, args: Vec<V>, pos: u32) -> R<V> {
     match &**h {
+        Host::Bean(b) => return call_bean(it, b, name, args, pos),
+        Host::Meta(_) => return it.type_error(format!("metaClass.{}() is not supported", name), Some(pos)),
         Host::Exchange => match name {
             "getIn" | "getMessage" | "getOut" | "getRequest" => return Ok(V::host(Host::Message)),
             "getProperty" | "getExchangeProperty" => {
@@ -573,4 +598,122 @@ fn default_or_convert(it: &mut Interp, v: V, second: Option<&V>, pos: u32) -> R<
         Some(t @ V::Host(_)) => convert_arg(it, v, Some(t), pos),
         Some(d) => Ok(if v.is_nullish() { d.clone() } else { v }),
     }
+}
+
+// ====================================================================== registry beans (SpEL `@name`)
+
+fn registry_value(any: &std::sync::Arc<dyn std::any::Any + Send + Sync>) -> Option<Value> {
+    if let Some(v) = any.downcast_ref::<Value>() {
+        return Some(v.clone());
+    }
+    if let Some(v) = any.downcast_ref::<String>() {
+        return Some(Value::String(v.clone()));
+    }
+    if let Some(v) = any.downcast_ref::<&'static str>() {
+        return Some(Value::String(v.to_string()));
+    }
+    if let Some(v) = any.downcast_ref::<i64>() {
+        return Some(Value::Int(*v));
+    }
+    if let Some(v) = any.downcast_ref::<i32>() {
+        return Some(Value::Int(*v as i64));
+    }
+    if let Some(v) = any.downcast_ref::<f64>() {
+        return Some(Value::Float(*v));
+    }
+    if let Some(v) = any.downcast_ref::<bool>() {
+        return Some(Value::Bool(*v));
+    }
+    if let Some(v) = any.downcast_ref::<Vec<Value>>() {
+        return Some(Value::Array(v.clone()));
+    }
+    if let Some(v) = any.downcast_ref::<BTreeMap<String, Value>>() {
+        let mut m = camel_core::value::ObjectMap::new();
+        for (k, x) in v {
+            m.insert(k.clone(), x.clone());
+        }
+        return Some(Value::Object(m));
+    }
+    None
+}
+
+/// `@name`: a registry bean. Plain values (`Value`, strings, numbers, booleans, lists, maps) are
+/// returned as values; invokable beans (bean methods, `Bean` objects, processors) as a bean
+/// reference whose methods are invoked through the registry.
+pub fn bean_ref(it: &mut Interp, name: &str, pos: u32) -> R<V> {
+    if let Some(v) = it.beans.get(name) {
+        return Ok(v.clone());
+    }
+    let Some(ctx) = it.host.context.clone() else {
+        return it.throw("SpelEvaluationException", format!("EL1057E: No bean resolver registered in the context to resolve access to bean '{}'", name), Some(pos));
+    };
+    let reg = ctx.registry();
+    let v = match reg.lookup_any(name) {
+        Some(any) => match registry_value(&any) {
+            Some(v) => from_value(&v),
+            None => V::host(Host::Bean(name.to_string())),
+        },
+        None => {
+            // bean methods bound as `name.method`
+            let prefix = format!("{}.", name);
+            if reg.names().iter().any(|n| n.starts_with(&prefix)) {
+                V::host(Host::Bean(name.to_string()))
+            } else {
+                return it.throw("SpelEvaluationException", format!("EL1058E: A problem occurred when trying to resolve bean '{}': no bean named '{}' in the registry", name, name), Some(pos));
+            }
+        }
+    };
+    it.beans.insert(name.to_string(), v.clone());
+    Ok(v)
+}
+
+fn bean_value(it: &mut Interp, name: &str, pos: u32) -> R<V> {
+    bean_ref(it, name, pos)
+}
+
+/// An exchange built from the script's view (for invoking registry beans).
+fn exchange_copy(it: &Interp, body: Value) -> Exchange {
+    let mut ex = Exchange::with_body(it.host.context.clone(), body);
+    ex.exchange_id = it.host.exchange_id.clone();
+    ex.message.headers = it.host.headers.borrow().clone();
+    ex.properties = it.host.properties.borrow().clone();
+    ex
+}
+
+/// Invoke method `method` of registry bean `name` with `args` (the single argument, or the
+/// argument list, becomes the message body; no argument keeps the current body).
+fn call_bean(it: &mut Interp, name: &str, method: &str, args: Vec<V>, pos: u32) -> R<V> {
+    let Some(ctx) = it.host.context.clone() else {
+        return it.throw("SpelEvaluationException", format!("EL1057E: No bean resolver registered in the context to resolve access to bean '{}'", name), Some(pos));
+    };
+    let body = match args.len() {
+        0 => it.host.body_value(),
+        1 => to_value(&args[0]),
+        _ => Value::Array(args.iter().map(to_value).collect()),
+    };
+    let reg = ctx.registry();
+    for cand in [format!("{}.{}", name, method), format!("{}::{}", name, method)] {
+        if let Some(b) = reg.lookup::<camel_core::language::support::BeanMethod>(&cand) {
+            let ex = exchange_copy(it, body);
+            return match b.invoke(&ex) {
+                Ok(v) => Ok(from_value(&v)),
+                Err(e) => it.throw(&e.kind, e.message, Some(pos)),
+            };
+        }
+    }
+    if let Some(bean) = camel_core::component::bean::lookup_bean(reg, name) {
+        let mut ex = exchange_copy(it, body);
+        return match bean.invoke(Some(method), &mut ex) {
+            Ok(()) => Ok(from_value(&ex.message.body)),
+            Err(e) => it.throw(&e.kind, e.message, Some(pos)),
+        };
+    }
+    if let Some(b) = reg.lookup::<camel_core::language::support::BeanMethod>(name) {
+        let ex = exchange_copy(it, body);
+        return match b.invoke(&ex) {
+            Ok(v) => Ok(from_value(&v)),
+            Err(e) => it.throw(&e.kind, e.message, Some(pos)),
+        };
+    }
+    it.throw("SpelEvaluationException", format!("EL1004E: Method call: Method {}() cannot be found on bean '{}'", method, name), Some(pos))
 }

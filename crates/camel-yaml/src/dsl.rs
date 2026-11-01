@@ -189,6 +189,19 @@ where
     global_bean_factories().lock().unwrap().insert(type_name.into(), Arc::new(factory));
 }
 
+/// Create a bean with the globally registered factory for its `type` (used by
+/// camel-main's `camel.beans.*` properties). Returns false when no factory is registered.
+pub fn create_bean(ctx: &CamelContext, def: &BeanDefinition) -> Result<bool> {
+    let factory = def.type_name.as_ref().and_then(|t| global_bean_factories().lock().unwrap().get(t).cloned());
+    match factory {
+        Some(f) => {
+            f(ctx, def)?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Step registry
 // ---------------------------------------------------------------------------

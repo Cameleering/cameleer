@@ -285,7 +285,7 @@ fn tokenize(src: &str, base: usize) -> R<Vec<Tok>> {
 /// Parse a Python program.
 pub fn parse_program(src: &str) -> R<Program> {
     let toks = tokenize(src, 0)?;
-    let mut p = P { toks, i: 0 };
+    let mut p = P { toks, i: 0, saw_yield: false };
     let mut body = Vec::new();
     while !p.is(&PT::Eof) {
         if p.eat(&PT::Newline) {
@@ -298,7 +298,7 @@ pub fn parse_program(src: &str) -> R<Program> {
 
 fn parse_embedded(code: &str, base: usize) -> R<Expr> {
     let toks = tokenize(code.trim_end(), base)?;
-    let mut p = P { toks, i: 0 };
+    let mut p = P { toks, i: 0, saw_yield: false };
     let e = p.testlist()?;
     p.eat(&PT::Newline);
     if !p.is(&PT::Eof) {
@@ -310,6 +310,8 @@ fn parse_embedded(code: &str, base: usize) -> R<Expr> {
 struct P {
     toks: Vec<Tok>,
     i: usize,
+    /// A `yield` was parsed in the current function body.
+    saw_yield: bool,
 }
 
 fn describe(t: &PT) -> String {
@@ -398,6 +400,9 @@ impl P {
 
     // ------------------------------------------------------------------ statements
     fn statement(&mut self) -> R<Vec<Stmt>> {
+        if self.is_op("@") {
+            return self.decorated();
+        }
         if let PT::Name(k) = self.peek().clone() {
             match k.as_str() {
                 "if" => return Ok(vec![self.if_stmt()?]),
@@ -419,27 +424,10 @@ impl P {
                     let els = if self.eat_kw("else") { Some(Box::new(Stmt::Block(self.block()?))) } else { None };
                     return Ok(vec![Stmt::ForIn { decl: None, pat: target, obj, body: Box::new(Stmt::Block(body)), values: true, else_body: els }]);
                 }
-                "def" => {
-                    self.next();
-                    let name = self.name()?;
-                    let (params, rest) = self.params(")")?;
-                    if self.eat_op("->") {
-                        self.test()?;
-                    }
-                    let body = self.block()?;
-                    return Ok(vec![Stmt::Func(Arc::new(FuncDef {
-                        name: Some(name),
-                        params,
-                        rest,
-                        body: FuncBody::Block(body),
-                        arrow: false,
-                        implicit_it: false,
-                        implicit_return: false,
-                    }))]);
-                }
+                "def" => return Ok(vec![Stmt::Func(Arc::new(self.def_stmt()?))]),
                 "try" => return Ok(vec![self.try_stmt()?]),
-                "class" => return self.err("class definitions are not supported"),
-                "with" => return self.err("'with' statements are not supported"),
+                "class" => return Ok(vec![Stmt::Class(Arc::new(self.class_stmt(vec![])?))]),
+                "with" => return Ok(vec![self.with_stmt()?]),
                 _ => {}
             }
         }
@@ -454,6 +442,242 @@ impl P {
             return self.err(format!("invalid syntax: unexpected {}", describe(self.peek())));
         }
         Ok(out)
+    }
+
+    /// `def name(params) [-> type]: body` (a generator when the body yields).
+    fn def_stmt(&mut self) -> R<FuncDef> {
+        self.next();
+        let name = self.name()?;
+        let (params, rest) = self.params(")")?;
+        if self.eat_op("->") {
+            self.test()?;
+        }
+        let saved = std::mem::replace(&mut self.saw_yield, false);
+        let body = self.block();
+        let generator = std::mem::replace(&mut self.saw_yield, saved);
+        Ok(FuncDef { name: Some(name), params, rest, body: FuncBody::Block(body?), arrow: false, implicit_it: false, implicit_return: false, generator, is_async: false })
+    }
+
+    /// `@decorator` lines followed by a `def` or `class`.
+    fn decorated(&mut self) -> R<Vec<Stmt>> {
+        let mut decs = Vec::new();
+        while self.eat_op("@") {
+            decs.push(self.test()?);
+            if !self.eat(&PT::Newline) {
+                return self.err(format!("invalid syntax: unexpected {}", describe(self.peek())));
+            }
+            while self.eat(&PT::Newline) {}
+        }
+        if self.is_kw("class") {
+            return Ok(vec![Stmt::Class(Arc::new(self.class_stmt(decs)?))]);
+        }
+        if !self.is_kw("def") {
+            return self.err(format!("invalid syntax: expected 'def' or 'class' after decorator but found {}", describe(self.peek())));
+        }
+        let pos = self.pos();
+        let f = self.def_stmt()?;
+        let name = f.name.clone().unwrap_or_default();
+        let mut value = Expr::Ident(name.clone(), pos);
+        for d in decs.into_iter().rev() {
+            value = Expr::Call { callee: Box::new(d), args: vec![Elem::Item(value)], optional: false, pos };
+        }
+        Ok(vec![Stmt::Func(Arc::new(f)), Stmt::Expr(Expr::Assign { op: None, target: Box::new(Pat::Id(name)), value: Box::new(value), pos })])
+    }
+
+    /// `class Name(Base, ...): body` with methods, class attributes, `@staticmethod`,
+    /// `@classmethod`, `@property` / `@x.setter` and `@dataclass`.
+    fn class_stmt(&mut self, decorators: Vec<Expr>) -> R<ClassDef> {
+        self.next();
+        let name = self.name()?;
+        let mut bases = Vec::new();
+        if self.eat_op("(") {
+            while !self.is_op(")") {
+                if matches!(self.peek(), PT::Name(_)) && matches!(self.toks.get(self.i + 1).map(|t| &t.t), Some(PT::Op("="))) {
+                    // metaclass=... keyword
+                    self.next();
+                    self.next();
+                    self.test()?;
+                } else {
+                    let b = self.test()?;
+                    if !matches!(&b, Expr::Ident(n, _) if n == "object") {
+                        bases.push(b);
+                    }
+                }
+                if !self.eat_op(",") {
+                    break;
+                }
+            }
+            self.expect_op(")")?;
+        }
+        let saved = std::mem::replace(&mut self.saw_yield, false);
+        let body = self.block();
+        self.saw_yield = saved;
+        let body = body?;
+        let mut methods: Vec<ClassMember> = Vec::new();
+        let mut fields: Vec<ClassField> = Vec::new();
+        let mut data_fields: Vec<(String, Option<Expr>)> = Vec::new();
+        let mut i = 0;
+        while i < body.len() {
+            match &body[i] {
+                Stmt::Func(f) => {
+                    let fname = f.name.clone().unwrap_or_default();
+                    // decorator applications emitted by `decorated`
+                    let mut kind = MemberKind::Method;
+                    let mut is_static = false;
+                    let mut mname = fname.clone();
+                    while let Some(Stmt::Expr(Expr::Assign { op: None, target, value, .. })) = body.get(i + 1) {
+                        if !matches!(&**target, Pat::Id(n) if *n == fname) {
+                            break;
+                        }
+                        let mut v: &Expr = value;
+                        let mut decs = Vec::new();
+                        while let Expr::Call { callee, args, .. } = v {
+                            decs.push((**callee).clone());
+                            match args.first() {
+                                Some(Elem::Item(a)) => v = a,
+                                _ => break,
+                            }
+                        }
+                        for d in decs {
+                            match &d {
+                                Expr::Ident(n, _) if n == "staticmethod" => is_static = true,
+                                Expr::Ident(n, _) if n == "classmethod" => kind = MemberKind::ClassMethod,
+                                Expr::Ident(n, _) if n == "property" || n.ends_with("cached_property") => kind = MemberKind::Getter,
+                                Expr::Member { obj, name: m, .. } if m == "setter" || m == "getter" => {
+                                    if let Expr::Ident(p, _) = &**obj {
+                                        mname = p.clone();
+                                    }
+                                    kind = if m == "setter" { MemberKind::Setter } else { MemberKind::Getter };
+                                }
+                                Expr::Member { name: m, .. } if m == "cached_property" => kind = MemberKind::Getter,
+                                _ => {}
+                            }
+                        }
+                        i += 1;
+                    }
+                    methods.push(ClassMember { name: mname, key: None, func: f.clone(), kind, is_static });
+                }
+                Stmt::Expr(Expr::Assign { op: None, target, value, .. }) => match &**target {
+                    Pat::Id(n) => fields.push(ClassField { name: n.clone(), init: Some((**value).clone()), is_static: true }),
+                    _ => return self.err("unsupported class attribute assignment"),
+                },
+                Stmt::Labeled(l, inner) if l.starts_with("%annot:") => {
+                    let n = l["%annot:".len()..].to_string();
+                    let init = match &**inner {
+                        Stmt::Expr(Expr::Assign { value, .. }) => Some((**value).clone()),
+                        _ => None,
+                    };
+                    if let Some(e) = &init {
+                        fields.push(ClassField { name: n.clone(), init: Some(e.clone()), is_static: true });
+                    }
+                    data_fields.push((n, init));
+                }
+                Stmt::Class(c) => fields.push(ClassField { name: c.name.clone().unwrap_or_default(), init: Some(Expr::Class(c.clone())), is_static: true }),
+                Stmt::Empty | Stmt::Expr(Expr::Str(_)) | Stmt::Expr(Expr::Template(_)) => {}
+                _ => return self.err("unsupported statement in class body"),
+            }
+            i += 1;
+        }
+        let dataclass = decorators.iter().any(|d| match d {
+            Expr::Ident(n, _) => n == "dataclass",
+            Expr::Member { name, .. } => name == "dataclass",
+            Expr::Call { callee, .. } => matches!(&**callee, Expr::Ident(n, _) if n == "dataclass") || matches!(&**callee, Expr::Member { name, .. } if name == "dataclass"),
+            _ => false,
+        });
+        if dataclass {
+            self.add_dataclass_methods(&name, &data_fields, &mut methods)?;
+        }
+        let mut bases = bases.into_iter();
+        let extends = bases.next();
+        Ok(ClassDef { name: Some(name), extends, ctors: vec![], methods, fields, mixins: bases.collect(), style: ClassStyle::Python, annotations: vec![] })
+    }
+
+    /// `@dataclass`: `__init__`, `__repr__` and `__eq__` from the annotated fields.
+    fn add_dataclass_methods(&mut self, name: &str, data: &[(String, Option<Expr>)], methods: &mut Vec<ClassMember>) -> R<()> {
+        let params: Vec<String> = data.iter().map(|(n, d)| if d.is_some() { format!("{}=None", n) } else { n.clone() }).collect();
+        let assigns: String = data.iter().map(|(n, _)| format!("        self.{0} = {0}\n", n)).collect();
+        let repr = data.iter().map(|(n, _)| format!("'{0}=' + repr(self.{0})", n)).collect::<Vec<_>>().join(" + ', ' + ");
+        let mine = data.iter().map(|(n, _)| format!("self.{}", n)).collect::<Vec<_>>().join(", ");
+        let theirs = data.iter().map(|(n, _)| format!("other.{}", n)).collect::<Vec<_>>().join(", ");
+        let src = format!(
+            "class {n}:\n    def __init__(self{c}{p}):\n{a}        pass\n    def __repr__(self):\n        return '{n}(' + {r} + ')'\n    def __eq__(self, other):\n        return isinstance(other, {n}) and [{m}] == [{t}]\n",
+            n = name,
+            c = if params.is_empty() { "" } else { ", " },
+            p = params.join(", "),
+            a = assigns,
+            r = if repr.is_empty() { "''".to_string() } else { repr },
+            m = mine,
+            t = theirs
+        );
+        let prog = parse_program(&src)?;
+        if let Some(Stmt::Class(c)) = prog.body.into_iter().next() {
+            for m in &c.methods {
+                if methods.iter().any(|x| x.name == m.name) {
+                    continue;
+                }
+                let mut m = m.clone();
+                if m.name == "__init__" {
+                    // real default expressions
+                    let mut f = (*m.func).clone();
+                    for (p, (_, d)) in f.params.iter_mut().skip(1).zip(data.iter()) {
+                        if let Some(d) = d {
+                            p.default = Some(d.clone());
+                        }
+                    }
+                    m.func = Arc::new(f);
+                }
+                methods.push(m);
+            }
+        }
+        Ok(())
+    }
+
+    /// `with a as x, b as y: body`: `__enter__` / `__exit__` around the body.
+    fn with_stmt(&mut self) -> R<Stmt> {
+        let pos = self.pos();
+        self.next();
+        let mut items = Vec::new();
+        loop {
+            let e = self.test()?;
+            let target = if self.eat_kw("as") {
+                let t = self.or_expr()?;
+                Some(self.to_pat(t)?)
+            } else {
+                None
+            };
+            items.push((e, target));
+            if !self.eat_op(",") {
+                break;
+            }
+        }
+        let mut body = self.block()?;
+        for (k, (e, target)) in items.into_iter().enumerate().rev() {
+            let m = format!("%with{}", k);
+            let ok = format!("%withok{}", k);
+            let ex = format!("%withexc{}", k);
+            let id = |n: &str| Expr::Ident(n.to_string(), pos);
+            let call = |obj: Expr, name: &str, args: Vec<Expr>| Expr::Call { callee: Box::new(Expr::Member { obj: Box::new(obj), name: name.into(), optional: false, pos }), args: args.into_iter().map(Elem::Item).collect(), optional: false, pos };
+            let assign = |t: Pat, v: Expr| Stmt::Expr(Expr::Assign { op: None, target: Box::new(t), value: Box::new(v), pos });
+            let mut stmts = vec![assign(Pat::Id(m.clone()), e)];
+            let entered = call(id(&m), "__enter__", vec![]);
+            match target {
+                Some(t) => stmts.push(assign(t, entered)),
+                None => stmts.push(Stmt::Expr(entered)),
+            }
+            stmts.push(assign(Pat::Id(ok.clone()), Expr::Bool(true)));
+            let type_of = Expr::Call { callee: Box::new(id("type")), args: vec![Elem::Item(id(&ex))], optional: false, pos };
+            let handler = vec![
+                assign(Pat::Id(ok.clone()), Expr::Bool(false)),
+                Stmt::If(Expr::Unary(UnOp::Not, Box::new(call(id(&m), "__exit__", vec![type_of, id(&ex), Expr::Null])), pos), Box::new(Stmt::Throw(id(&ex), pos)), None),
+            ];
+            stmts.push(Stmt::Try {
+                block: body,
+                catches: vec![Catch { types: vec![], param: Some(Pat::Id(ex.clone())), body: handler }],
+                finally: Some(vec![Stmt::If(id(&ok), Box::new(Stmt::Expr(call(id(&m), "__exit__", vec![Expr::Null, Expr::Null, Expr::Null]))), None)]),
+            });
+            body = stmts;
+        }
+        Ok(Stmt::Block(body))
     }
 
     fn block(&mut self) -> R<Vec<Stmt>> {
@@ -607,11 +831,15 @@ impl P {
         if self.is_op(":") {
             self.next();
             self.test()?;
+            let label = match &first {
+                Expr::Ident(n, _) => format!("%annot:{}", n),
+                _ => "%annot".to_string(),
+            };
             if !self.eat_op("=") {
-                return Ok(Stmt::Empty);
+                return Ok(Stmt::Labeled(label, Box::new(Stmt::Empty)));
             }
-            let v = self.testlist()?;
-            return Ok(Stmt::Expr(Expr::Assign { op: None, target: Box::new(self.to_pat(first)?), value: Box::new(v), pos }));
+            let v = self.yield_or_testlist()?;
+            return Ok(Stmt::Labeled(label, Box::new(Stmt::Expr(Expr::Assign { op: None, target: Box::new(self.to_pat(first)?), value: Box::new(v), pos }))));
         }
         let aug = match self.peek() {
             PT::Op("+=") => Some(BinOp::Add),
@@ -630,7 +858,7 @@ impl P {
         };
         if let Some(op) = aug {
             self.next();
-            let v = self.testlist()?;
+            let v = self.yield_or_testlist()?;
             return Ok(Stmt::Expr(Expr::Assign { op: Some(AssignOp::Bin(op)), target: Box::new(self.to_pat(first)?), value: Box::new(v), pos }));
         }
         if self.is_op("=") {
@@ -638,7 +866,7 @@ impl P {
             let mut value;
             loop {
                 self.next();
-                value = self.testlist_star()?;
+                value = if self.is_kw("yield") { self.yield_expr()? } else { self.testlist_star()? };
                 if self.is_op("=") {
                     targets.push(value);
                     continue;
@@ -770,12 +998,38 @@ impl P {
         Ok(Elem::Item(self.test()?))
     }
 
+    fn yield_or_testlist(&mut self) -> R<Expr> {
+        if self.is_kw("yield") {
+            return self.yield_expr();
+        }
+        self.testlist()
+    }
+
+    /// `yield`, `yield value`, `yield a, b`, `yield from iterable`.
+    fn yield_expr(&mut self) -> R<Expr> {
+        let pos = self.pos();
+        self.next();
+        self.saw_yield = true;
+        if self.eat_kw("from") {
+            let e = self.test()?;
+            return Ok(Expr::Yield { arg: Some(Box::new(e)), delegate: true, pos });
+        }
+        if matches!(self.peek(), PT::Newline | PT::Eof | PT::Dedent | PT::Op(")") | PT::Op(";") | PT::Op("]") | PT::Op("}")) {
+            return Ok(Expr::Yield { arg: None, delegate: false, pos });
+        }
+        let e = self.testlist()?;
+        Ok(Expr::Yield { arg: Some(Box::new(e)), delegate: false, pos })
+    }
+
     fn test(&mut self) -> R<Expr> {
+        if self.is_kw("yield") {
+            return self.yield_expr();
+        }
         if self.is_kw("lambda") {
             self.next();
             let (params, rest) = self.params(":")?;
             let body = self.test()?;
-            return Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body: FuncBody::Expr(Box::new(body)), arrow: true, implicit_it: false, implicit_return: false })));
+            return Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body: FuncBody::Expr(Box::new(body)), arrow: true, implicit_it: false, implicit_return: false, generator: false, is_async: false })));
         }
         let c = self.or_test()?;
         if self.is_kw("if") {
@@ -1180,6 +1434,11 @@ impl P {
                     "None" => Expr::Null,
                     "True" => Expr::Bool(true),
                     "False" => Expr::Bool(false),
+                    "super" if self.is_op("(") && matches!(self.toks.get(self.i + 1).map(|t| &t.t), Some(PT::Op(")"))) => {
+                        self.next();
+                        self.next();
+                        Expr::Super(pos)
+                    }
                     "and" | "or" | "not" | "in" | "is" | "if" | "else" | "elif" | "for" | "while" | "def" | "return" | "lambda" | "pass" | "break" | "continue" => {
                         self.i -= 1;
                         return self.err(format!("invalid syntax: unexpected keyword '{}'", n));

@@ -41,7 +41,7 @@ pub use handler::{dead_letter_channel, default_error_handler, no_error_handler, 
 pub use hook::{CamelContextErrorExt, ErrorsRouteHook};
 pub use idempotent::{memory_idempotent_repository, IdempotentConsumerDefinition, IdempotentRepository, MemoryIdempotentRepository};
 pub use intercept::{InterceptDefinition, InterceptKind};
-pub use misc::Policy;
+pub use misc::{Policy, ThreadsOptions};
 pub use on_completion::{OnCompletionDefinition, OnCompletionMode};
 pub use on_exception::OnExceptionDefinition;
 pub use route_policy::{RoutePolicy, ThrottlingInflightRoutePolicy, ThrottlingScope};

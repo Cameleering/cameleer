@@ -128,6 +128,21 @@ pub enum Expr {
     Func { uri: String, local: String, prefix: Option<String>, args: Vec<Expr> },
     Filter(Box<Expr>, Vec<Expr>),
     Path(PathExpr),
+    // ---- XPath 2.0 (compiled with `XPath::compile_v2`) ----
+    /// `if (c) then a else b`
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
+    /// `for $v in E, $w in F return R` (bindings `(uri, local, expr)`)
+    For(Vec<(String, String, Expr)>, Box<Expr>),
+    /// `some` (false) / `every` (true) `$v in E satisfies T`
+    Quantified(bool, Vec<(String, String, Expr)>, Box<Expr>),
+    /// `(a, b, ...)`, `()`
+    Sequence(Vec<Expr>),
+    /// `a to b`
+    Range(Box<Expr>, Box<Expr>),
+    /// `a intersect b`
+    Intersect(Box<Expr>, Box<Expr>),
+    /// `a except b`
+    Except(Box<Expr>, Box<Expr>),
 }
 
 impl Expr {
@@ -152,11 +167,15 @@ impl Expr {
     fn uses_position(&self) -> bool {
         match self {
             Expr::Func { uri, local, args, .. } => (uri.is_empty() && (local == "position" || local == "last")) || args.iter().any(|a| a.uses_position()),
-            Expr::Or(a, b) | Expr::And(a, b) | Expr::Cmp(_, a, b) | Expr::Arith(_, a, b) | Expr::Union(a, b) => a.uses_position() || b.uses_position(),
+            Expr::Or(a, b) | Expr::And(a, b) | Expr::Cmp(_, a, b) | Expr::Arith(_, a, b) | Expr::Union(a, b) | Expr::Range(a, b) | Expr::Intersect(a, b) | Expr::Except(a, b) => a.uses_position() || b.uses_position(),
             Expr::Neg(a) => a.uses_position(),
             Expr::Filter(p, _) => p.uses_position(),
             Expr::Path(p) => matches!(&p.start, PathStart::Expr(e) if e.uses_position()),
             Expr::Literal(_) | Expr::Number(_) | Expr::Var(..) => false,
+            Expr::If(c, a, b) => c.uses_position() || a.uses_position() || b.uses_position(),
+            Expr::For(bs, r) | Expr::Quantified(_, bs, r) => bs.iter().any(|(_, _, e)| e.uses_position()) || r.uses_position(),
+            Expr::Sequence(es) => es.iter().any(|e| e.uses_position()),
+
         }
     }
 }

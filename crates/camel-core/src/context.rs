@@ -44,6 +44,10 @@ pub enum CamelEvent {
     RouteStarted(String),
     RouteStopped(String),
     RouteRemoved(String),
+    RouteSuspended(String),
+    RouteResumed(String),
+    ContextSuspended,
+    ContextResumed,
     ExchangeCreated { exchange_id: String, route_id: Option<String> },
     ExchangeCompleted { exchange_id: String, route_id: Option<String>, elapsed_ms: u64 },
     ExchangeFailed { exchange_id: String, route_id: Option<String>, error: CamelError },
@@ -78,6 +82,13 @@ impl Registry {
     }
     pub fn contains(&self, name: &str) -> bool {
         self.beans.read().unwrap().contains_key(name)
+    }
+    /// All beans of type `T` (Camel `findByTypeWithName`), sorted by name.
+    pub fn find_by_type<T: Any + Send + Sync>(&self) -> Vec<(String, Arc<T>)> {
+        let mut v: Vec<(String, Arc<T>)> =
+            self.beans.read().unwrap().iter().filter_map(|(k, b)| b.clone().downcast::<T>().ok().map(|t| (k.clone(), t))).collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
     }
     pub fn unbind(&self, name: &str) -> bool {
         self.beans.write().unwrap().remove(name).is_some()
@@ -466,6 +477,7 @@ pub(crate) struct ContextInner {
     services: RwLock<Vec<Arc<dyn Service>>>,
     global_options: RwLock<BTreeMap<String, String>>,
     startup_failure_handler: RwLock<Option<Arc<dyn RouteStartupFailureHandler>>>,
+    type_converter: Arc<crate::typeconverter::TypeConverterRegistry>,
 }
 
 /// The Camel context. Cheap to clone (shared handle).
@@ -494,6 +506,23 @@ impl Default for CamelContext {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// `queue-size` -> `queueSize`.
+pub fn dashed_to_camel_case(s: &str) -> String {
+    let mut out = String::new();
+    let mut up = false;
+    for c in s.chars() {
+        if c == '-' {
+            up = true;
+        } else if up {
+            out.extend(c.to_uppercase());
+            up = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 static CONTEXT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -529,6 +558,7 @@ impl CamelContext {
                 services: RwLock::new(Vec::new()),
                 global_options: RwLock::new(BTreeMap::new()),
                 startup_failure_handler: RwLock::new(None),
+                type_converter: Arc::new(crate::typeconverter::TypeConverterRegistry::new()),
             }),
         };
         crate::component::register_builtin_components(&ctx);
@@ -547,6 +577,11 @@ impl CamelContext {
 
     pub fn status(&self) -> ServiceStatus {
         *self.inner.status.read().unwrap()
+    }
+
+    /// The type converter registry (Camel `getTypeConverterRegistry()`).
+    pub fn type_converter(&self) -> Arc<crate::typeconverter::TypeConverterRegistry> {
+        self.inner.type_converter.clone()
     }
 
     pub fn is_started(&self) -> bool {
@@ -645,6 +680,34 @@ impl CamelContext {
         Some(c)
     }
 
+    /// Set a component-level option (Camel `camel.component.<scheme>.<option>`): used as the
+    /// default of the endpoint option with the same name for endpoints created afterwards.
+    pub fn set_component_option(&self, scheme: &str, option: &str, value: impl Into<String>) {
+        self.set_global_option(format!("camel.component.{}.{}", scheme, option), value);
+    }
+
+    /// The component-level options of a scheme: `set_component_option` values and
+    /// `camel.component.<scheme>.<option>` properties (dashed names are accepted:
+    /// `queue-size` = `queueSize`).
+    pub fn component_options(&self, scheme: &str) -> BTreeMap<String, String> {
+        let prefix = format!("camel.component.{}.", scheme);
+        let mut out = BTreeMap::new();
+        let mut add = |k: &str, v: &str| {
+            if let Some(opt) = k.strip_prefix(&prefix) {
+                if !opt.is_empty() && !opt.contains('.') {
+                    out.insert(dashed_to_camel_case(opt), self.resolve_placeholders(v).unwrap_or_else(|_| v.to_string()));
+                }
+            }
+        };
+        for (k, v) in self.inner.properties.all() {
+            add(&k, &v);
+        }
+        for (k, v) in self.inner.global_options.read().unwrap().iter() {
+            add(k, v);
+        }
+        out
+    }
+
     /// Typed access to a component.
     pub fn component<T: 'static>(&self, scheme: &str) -> Option<Arc<dyn Component>> {
         self.get_component(scheme).filter(|c| c.as_any().is::<T>())
@@ -665,6 +728,18 @@ impl CamelContext {
             CamelError::resolve_endpoint_failed(&key, format!("No component found with scheme: {}", parsed.scheme))
         })?;
         let mut params = Parameters::new(parsed.params.clone());
+        // component-level options (`camel.component.<scheme>.<option>` properties or
+        // `set_component_option`) are defaults for endpoint options not given in the uri;
+        // ones the endpoint does not know are ignored
+        let mut injected = Vec::new();
+        if !component.lenient_properties() {
+            for (k, v) in self.component_options(&parsed.scheme) {
+                if params.get(&k).is_none() {
+                    params.insert(k.clone(), v);
+                    injected.push(k);
+                }
+            }
+        }
         let endpoint = component
             .create_endpoint(self, &key, &parsed.path, &mut params)
             .map_err(|e| {
@@ -674,6 +749,9 @@ impl CamelContext {
                     CamelError::resolve_endpoint_failed(&key, &e.message).with_cause(e)
                 }
             })?;
+        for k in injected {
+            params.take(&k);
+        }
         if !params.is_empty() && !component.lenient_properties() {
             let unknown: Vec<String> = params.keys().cloned().collect();
             return Err(CamelError::resolve_endpoint_failed(
@@ -858,6 +936,23 @@ impl CamelContext {
         Ok(())
     }
 
+    /// Give the pending (not yet created) routes without an id their generated id now
+    /// (`route1`, ... in the order they would get it at startup) and return the ids of all
+    /// pending routes.
+    pub fn assign_pending_route_ids(&self) -> Vec<String> {
+        let n = self.inner.pending_routes.lock().unwrap().len();
+        for i in 0..n {
+            let missing = self.inner.pending_routes.lock().unwrap().get(i).map(|d| d.id.is_none()).unwrap_or(false);
+            if missing {
+                let id = self.next_route_id();
+                if let Some(d) = self.inner.pending_routes.lock().unwrap().get_mut(i) {
+                    d.id = Some(id);
+                }
+            }
+        }
+        self.inner.pending_routes.lock().unwrap().iter().filter_map(|d| d.id.clone()).collect()
+    }
+
     fn next_route_id(&self) -> String {
         loop {
             let n = self.inner.route_counter.fetch_add(1, Ordering::Relaxed) + 1;
@@ -989,6 +1084,9 @@ impl CamelContext {
         if self.is_started() {
             return Ok(());
         }
+        if self.status() == ServiceStatus::Suspended {
+            return self.resume();
+        }
         *self.inner.status.write().unwrap() = ServiceStatus::Starting;
         self.notify(&CamelEvent::ContextStarting);
         let result = (|| -> Result<()> {
@@ -1101,6 +1199,9 @@ impl CamelContext {
 
     pub fn start_route(&self, id: &str) -> Result<()> {
         let r = self.route(id).ok_or_else(|| CamelError::illegal_argument(format!("No route with id {}", id)))?;
+        if r.status() == ServiceStatus::Suspended {
+            return self.resume_route(id);
+        }
         self.start_route_internal(&r)
     }
 
@@ -1110,22 +1211,101 @@ impl CamelContext {
         self.stop_route_internal(&r, timeout)
     }
 
-    /// Suspend = stop the consumer while keeping the route (rust-camel treats it as stop).
+    /// Suspend a route (Camel `suspendRoute`). When the route's consumer is a
+    /// [`SuspendableService`](crate::spi::SuspendableService) it is suspended in place (its
+    /// threads/sockets/queues stay, no new exchanges are created) and in-flight exchanges are
+    /// allowed to complete; otherwise the route is stopped, as Camel does for consumers that
+    /// do not support suspension. The route status becomes `Suspended` either way.
     pub fn suspend_route(&self, id: &str) -> Result<()> {
-        self.stop_route(id)?;
-        if let Some(r) = self.route(id) {
-            *r.status.write().unwrap() = ServiceStatus::Suspended;
+        let r = self.route(id).ok_or_else(|| CamelError::illegal_argument(format!("No route with id {}", id)))?;
+        match r.status() {
+            ServiceStatus::Suspended => return Ok(()),
+            ServiceStatus::Started => {}
+            _ => return Ok(()),
         }
+        let consumer = r.consumer.lock().unwrap().clone();
+        let in_place = match consumer.as_ref().and_then(|c| c.as_suspendable()) {
+            Some(s) => {
+                s.suspend()?;
+                true
+            }
+            None => false,
+        };
+        if in_place {
+            let timeout = *self.inner.shutdown_timeout.read().unwrap();
+            let deadline = Instant::now() + timeout;
+            while self.inner.inflight.route_size(id) > 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        } else {
+            self.stop_route(id)?;
+        }
+        *r.status.write().unwrap() = ServiceStatus::Suspended;
+        crate::camel_info!("CamelContext", "Route: {} is suspended", id);
+        self.notify(&CamelEvent::RouteSuspended(id.to_string()));
         Ok(())
     }
 
+    /// Resume a suspended route (Camel `resumeRoute`): a suspended-in-place consumer is
+    /// resumed, a stopped one is started again. A route that is not suspended is started.
     pub fn resume_route(&self, id: &str) -> Result<()> {
-        if let Some(r) = self.route(id) {
-            if r.status() == ServiceStatus::Suspended {
+        let r = self.route(id).ok_or_else(|| CamelError::illegal_argument(format!("No route with id {}", id)))?;
+        if r.status() != ServiceStatus::Suspended {
+            return self.start_route(id);
+        }
+        let consumer = r.consumer.lock().unwrap().clone();
+        match consumer.as_ref().and_then(|c| c.as_suspendable()) {
+            Some(s) if s.is_suspended() => {
+                s.resume()?;
+                *r.status.write().unwrap() = ServiceStatus::Started;
+            }
+            _ => {
                 *r.status.write().unwrap() = ServiceStatus::Stopped;
+                self.start_route(id)?;
             }
         }
-        self.start_route(id)
+        crate::camel_info!("CamelContext", "Route: {} resumed", id);
+        self.notify(&CamelEvent::RouteResumed(id.to_string()));
+        Ok(())
+    }
+
+    /// Whether the route's consumer is currently suspended in place (rather than stopped).
+    pub fn is_route_suspended_in_place(&self, id: &str) -> bool {
+        self.route(id)
+            .and_then(|r| r.consumer.lock().unwrap().clone())
+            .and_then(|c| c.as_suspendable().map(|s| s.is_suspended()))
+            .unwrap_or(false)
+    }
+
+    /// Suspend the context (Camel `CamelContext.suspend()`): all started routes are
+    /// suspended (in reverse startup order) and the context status becomes `Suspended`.
+    pub fn suspend(&self) -> Result<()> {
+        if self.status() != ServiceStatus::Started {
+            return Ok(());
+        }
+        let mut routes = self.routes();
+        routes.sort_by_key(|r| std::cmp::Reverse(r.startup_order));
+        for r in routes.iter().filter(|r| r.status() == ServiceStatus::Started) {
+            self.suspend_route(&r.id)?;
+        }
+        *self.inner.status.write().unwrap() = ServiceStatus::Suspended;
+        self.notify(&CamelEvent::ContextSuspended);
+        Ok(())
+    }
+
+    /// Resume a suspended context: the suspended routes are resumed in startup order.
+    pub fn resume(&self) -> Result<()> {
+        if self.status() != ServiceStatus::Suspended {
+            return Ok(());
+        }
+        *self.inner.status.write().unwrap() = ServiceStatus::Started;
+        let mut routes = self.routes();
+        routes.sort_by_key(|r| r.startup_order);
+        for r in routes.iter().filter(|r| r.status() == ServiceStatus::Suspended) {
+            self.resume_route(&r.id)?;
+        }
+        self.notify(&CamelEvent::ContextResumed);
+        Ok(())
     }
 
     /// Remove a stopped route. Returns false if the route is not stopped.
@@ -1136,6 +1316,9 @@ impl CamelContext {
         };
         if !matches!(r.status(), ServiceStatus::Stopped | ServiceStatus::Initialized | ServiceStatus::Suspended) {
             return Ok(false);
+        }
+        if r.status() == ServiceStatus::Suspended && r.consumer.lock().unwrap().is_some() {
+            self.stop_route(id)?;
         }
         self.inner.routes.write().unwrap().retain(|x| x.id != id);
         self.notify(&CamelEvent::RouteRemoved(id.to_string()));

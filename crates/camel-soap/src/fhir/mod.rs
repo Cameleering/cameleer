@@ -16,6 +16,7 @@ pub mod dataformat;
 pub mod json;
 pub mod model;
 pub mod testing;
+pub mod validation;
 
 use camel_core::error::{kinds, register_kind_parent};
 

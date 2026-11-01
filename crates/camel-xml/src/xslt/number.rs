@@ -196,12 +196,144 @@ fn roman(mut n: u64, upper: bool) -> String {
     }
 }
 
-fn format_one(n: u64, token: &str, grouping: Option<(char, usize)>) -> String {
+const GREEK: &str = "αβγδεζηθικλμνξοπρστυφχψω";
+const CYRILLIC: &str = "абвгдежзиклмнопрстуфхцчшщэюя";
+const HEBREW: &str = "אבגדהוזחטיכלמנסעפצקרשת";
+
+/// Alphabetic numbering over an arbitrary alphabet, starting at `start` (index into it).
+fn alpha_in(n: u64, alphabet: &[char], start: usize) -> String {
+    let base = alphabet.len() as u64;
+    let mut n = n + start as u64;
+    let mut s = Vec::new();
+    while n > 0 {
+        n -= 1;
+        s.push(alphabet[(n % base) as usize]);
+        n /= base;
+    }
+    s.reverse();
+    s.into_iter().collect()
+}
+
+/// Greek alphabetic numerals with a keraia (`letter-value="traditional"`, `lang="el"`).
+fn greek_traditional(n: u64) -> String {
+    if n == 0 || n >= 1_000_000 {
+        return n.to_string();
+    }
+    let units = ["", "α", "β", "γ", "δ", "ε", "ϛ", "ζ", "η", "θ"];
+    let tens = ["", "ι", "κ", "λ", "μ", "ν", "ξ", "ο", "π", "ϟ"];
+    let hundreds = ["", "ρ", "σ", "τ", "υ", "φ", "χ", "ψ", "ω", "ϡ"];
+    let mut s = String::new();
+    let thousands = n / 1000;
+    if thousands > 0 {
+        s.push('͵');
+        s.push_str(&greek_traditional(thousands).trim_end_matches('ʹ').to_string());
+    }
+    let r = n % 1000;
+    s.push_str(hundreds[(r / 100) as usize]);
+    s.push_str(tens[((r / 10) % 10) as usize]);
+    s.push_str(units[(r % 10) as usize]);
+    s.push('ʹ');
+    s
+}
+
+/// Hebrew numerals (`letter-value="traditional"`, `lang="he"`), 15 / 16 written טו / טז.
+fn hebrew_traditional(n: u64) -> String {
+    if n == 0 || n >= 10_000 {
+        return n.to_string();
+    }
+    let units = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];
+    let tens = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
+    let mut s = String::new();
+    if n >= 1000 {
+        s.push_str(units[(n / 1000) as usize]);
+        s.push('\'');
+    }
+    let mut h = n % 1000 / 100;
+    while h >= 4 {
+        s.push('ת');
+        h -= 4;
+    }
+    s.push_str(["", "ק", "ר", "ש"][h as usize]);
+    let r = n % 100;
+    match r {
+        15 => s.push_str("טו"),
+        16 => s.push_str("טז"),
+        _ => {
+            s.push_str(tens[(r / 10) as usize]);
+            s.push_str(units[(r % 10) as usize]);
+        }
+    }
+    s
+}
+
+/// `letter-value` / `lang` options of `xsl:number`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NumberLang<'a> {
+    /// `alphabetic`, `traditional` or empty.
+    pub letter_value: &'a str,
+    /// `lang` (e.g. `el`, `ru`, `he`) or empty.
+    pub lang: &'a str,
+}
+
+fn alphabetic_token(n: u64, token: &str, opts: NumberLang) -> Option<String> {
+    let mut cs = token.chars();
+    let c = cs.next()?;
+    if cs.next().is_some() {
+        return None;
+    }
+    let lang = opts.lang.split(['-', '_']).next().unwrap_or("").to_ascii_lowercase();
+    let traditional = opts.letter_value == "traditional";
+    let alphabetic = opts.letter_value == "alphabetic";
+    let find = |alpha: &str, ch: char| -> Option<(Vec<char>, usize)> {
+        let v: Vec<char> = alpha.chars().collect();
+        let i = v.iter().position(|&x| x == ch)?;
+        Some((v, i))
+    };
+    let lower = c.to_lowercase().next().unwrap_or(c);
+    let upper = c.is_uppercase();
+    let case = |s: String| if upper { s.to_uppercase() } else { s };
+    // Greek / Cyrillic / Hebrew format tokens, or `a` / `A` with a matching `lang`
+    let (alpha, start) = if let Some((v, i)) = find(GREEK, lower) {
+        if traditional {
+            return Some(greek_traditional(n));
+        }
+        (v, i)
+    } else if let Some(r) = find(CYRILLIC, lower) {
+        r
+    } else if let Some(r) = find(HEBREW, c) {
+        if !alphabetic {
+            return Some(hebrew_traditional(n));
+        }
+        r
+    } else if lower == 'a' && lang == "el" {
+        if traditional {
+            return Some(greek_traditional(n));
+        }
+        (GREEK.chars().collect(), 0)
+    } else if lower == 'a' && matches!(lang.as_str(), "ru" | "uk" | "bg" | "sr" | "be" | "mk") {
+        (CYRILLIC.chars().collect(), 0)
+    } else if lower == 'a' && lang == "he" {
+        return Some(if alphabetic { alpha_in(n, &HEBREW.chars().collect::<Vec<_>>(), 0) } else { hebrew_traditional(n) });
+    } else if (lower == 'i') && !alphabetic {
+        return Some(roman(n, upper));
+    } else if lower.is_ascii_lowercase() && (lower == 'a' || alphabetic) {
+        (('a'..='z').collect(), (lower as u8 - b'a') as usize)
+    } else {
+        return None;
+    };
+    if n == 0 {
+        return Some("0".into());
+    }
+    Some(case(alpha_in(n, &alpha, start)))
+}
+
+fn format_one_lang(n: u64, token: &str, grouping: Option<(char, usize)>, opts: NumberLang) -> String {
     let s = match token {
-        "a" => alpha(n, false),
-        "A" => alpha(n, true),
-        "i" => roman(n, false),
-        "I" => roman(n, true),
+        "a" if opts.lang.is_empty() => alpha(n, false),
+        "A" if opts.lang.is_empty() => alpha(n, true),
+        "i" if opts.letter_value != "alphabetic" => roman(n, false),
+        "I" if opts.letter_value != "alphabetic" => roman(n, true),
+        t if t.chars().count() == 1 && !t.chars().all(|c| c.is_ascii_digit()) && alphabetic_token(n, t, opts).is_some() => alphabetic_token(n, t, opts).unwrap(),
         t if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) => {
             let mut s = n.to_string();
             while s.len() < t.len() {
@@ -229,6 +361,11 @@ fn format_one(n: u64, token: &str, grouping: Option<(char, usize)>) -> String {
 
 /// Format a list of numbers with an `xsl:number` format string.
 pub fn format_number_list(nums: &[u64], format: &str, grouping: Option<(char, usize)>) -> String {
+    format_number_list_lang(nums, format, grouping, NumberLang::default())
+}
+
+/// [`format_number_list`] with `letter-value` / `lang`.
+pub fn format_number_list_lang(nums: &[u64], format: &str, grouping: Option<(char, usize)>, opts: NumberLang) -> String {
     // split into alternating separator / alphanumeric tokens
     let mut parts: Vec<(bool, String)> = Vec::new();
     for c in format.chars() {
@@ -255,7 +392,7 @@ pub fn format_number_list(nums: &[u64], format: &str, grouping: Option<(char, us
             out.push_str(seps.get(i - 1).or(seps.last()).map(|s| s.as_str()).unwrap_or("."));
         }
         let tok = tokens.get(i).or(tokens.last()).unwrap();
-        out.push_str(&format_one(*n, tok, grouping));
+        out.push_str(&format_one_lang(*n, tok, grouping, opts));
     }
     out.push_str(&suffix);
     out

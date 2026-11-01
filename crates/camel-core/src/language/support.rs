@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::context::{CamelContext, Registry};
-use crate::error::{kinds, CamelError, Result};
+use crate::error::{CamelError, Result};
 use crate::message::Exchange;
 use crate::value::{ObjectMap, Value};
 
@@ -117,63 +117,16 @@ fn short_type(t: &str) -> String {
     t.to_string()
 }
 
-/// Convert a value to a (Java-like) type name: `String`, `Integer`/`Long`/`int`,
-/// `Double`/`Float`/`BigDecimal`, `Boolean`, `byte[]`, `Map`, `List`, `Object`, ...
-/// Unknown types return the value unchanged.
+/// Convert a value to a (Java-like) type name with the built-in converters (see
+/// [`crate::typeconverter`]). Types without a converter return the value unchanged.
 pub fn convert_to_type(v: &Value, type_name: &str) -> Result<Value> {
-    let t = short_type(type_name);
-    let conv_err = |target: &str| {
-        CamelError::new(
-            kinds::NO_TYPE_CONVERSION_AVAILABLE,
-            format!("No type converter available to convert from type: {} to the required type: {} with value {}", v.type_name(), target, v),
-        )
-    };
-    if v.is_null() {
-        return Ok(Value::Null);
-    }
-    Ok(match t.as_str() {
-        "String" | "string" | "CharSequence" | "StringBuilder" => Value::String(v.to_string()),
-        "Integer" | "int" | "Long" | "long" | "Short" | "short" | "Byte" | "byte" | "BigInteger" | "integer" => match v {
-            Value::Int(_) => v.clone(),
-            Value::Float(f) => Value::Int(*f as i64),
-            Value::Bool(b) => Value::Int(*b as i64),
-            _ => Value::Int(v.as_i64().ok_or_else(|| conv_err(&t))?),
-        },
-        "Double" | "double" | "Float" | "float" | "BigDecimal" | "Number" | "number" => match v {
-            Value::Int(i) if t != "Number" && t != "number" => Value::Float(*i as f64),
-            Value::Int(_) | Value::Float(_) => v.clone(),
-            _ => Value::Float(v.as_f64().ok_or_else(|| conv_err(&t))?),
-        },
-        "Boolean" | "boolean" => match v {
-            Value::Bool(_) => v.clone(),
-            Value::Int(i) => Value::Bool(*i != 0),
-            _ => Value::Bool(v.as_bool().ok_or_else(|| conv_err(&t))?),
-        },
-        "byte[]" | "bytes" | "InputStream" | "ByteBuffer" => Value::Bytes(v.to_bytes()),
-        "Map" | "HashMap" | "LinkedHashMap" | "TreeMap" | "JsonObject" | "ObjectNode" | "object" => match v {
-            Value::Object(_) => v.clone(),
-            Value::String(_) | Value::Bytes(_) => match crate::json::parse(v.as_str().unwrap_or("")) {
-                Ok(o @ Value::Object(_)) => o,
-                _ => return Err(conv_err(&t)),
-            },
-            _ => return Err(conv_err(&t)),
-        },
-        "List" | "ArrayList" | "Collection" | "Iterable" | "Iterator" | "Set" | "Object[]" | "String[]" | "JsonArray" | "ArrayNode"
-        | "array" => match v {
-            Value::Array(_) => v.clone(),
-            Value::String(_) | Value::Bytes(_) => match crate::json::parse(v.as_str().unwrap_or("")) {
-                Ok(a @ Value::Array(_)) => a,
-                _ => Value::Array(iterate(v)),
-            },
-            Value::Object(o) => Value::Array(o.values().cloned().collect()),
-            other => Value::Array(vec![other.clone()]),
-        },
-        "JsonNode" => match v {
-            Value::String(_) | Value::Bytes(_) => crate::json::parse(v.as_str().unwrap_or(""))?,
-            other => other.clone(),
-        },
-        _ => v.clone(),
-    })
+    convert_to_type_ex(None, v, type_name)
+}
+
+/// Convert with the type converter registry of the exchange's context (custom converters
+/// included). Types without a converter return the value unchanged.
+pub fn convert_to_type_ex(ex: Option<&Exchange>, v: &Value, type_name: &str) -> Result<Value> {
+    crate::typeconverter::registry_for(ex).convert_lenient(type_name, v, ex)
 }
 
 /// Whether `v` is an instance of the (Java-like) type name (used by the `is` operator).

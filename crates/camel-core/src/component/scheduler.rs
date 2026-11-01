@@ -71,6 +71,9 @@ impl Service for SchedulerConsumer {
     fn stop(&self) -> Result<()> {
         self.poll.stop()
     }
+    fn as_suspendable(&self) -> Option<&dyn crate::spi::SuspendableService> {
+        self.poll.as_suspendable()
+    }
 }
 
 impl Endpoint for SchedulerEndpoint {

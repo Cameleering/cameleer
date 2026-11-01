@@ -19,13 +19,13 @@ use std::time::{Duration, Instant};
 use crate::context::{CamelContext, WeakContext};
 use crate::error::{CamelError, Result};
 use crate::message::{props, ExchangePattern};
-use crate::spi::{Component, Consumer, Endpoint, Processor, Service};
+use crate::spi::{Component, Consumer, Endpoint, Processor, Service, SuspendableService};
 use crate::util::Parameters;
 use crate::util_time::now_millis;
 use crate::value::Value;
 
 pub use super::cron_expr::{parse_time_zone, parse_zone, CronExpression};
-use super::support::{new_exchange, process_consumer_exchange, BackgroundThreads, StopFlag};
+use super::support::{new_exchange, process_consumer_exchange, BackgroundThreads, StopFlag, SuspendState};
 
 /// Quartz header names set on fired exchanges.
 pub mod headers {
@@ -84,11 +84,14 @@ pub fn sleep_until_millis(epoch_ms: i64, flag: &StopFlag) -> bool {
 }
 
 /// Run a trigger loop on the current thread until stopped or the trigger is exhausted.
-pub fn run_trigger(config: &TriggerConfig, ctx: &WeakContext, processor: &dyn Processor, flag: &StopFlag) {
+pub fn run_trigger(config: &TriggerConfig, ctx: &WeakContext, processor: &dyn Processor, flag: &StopFlag, suspend: &SuspendState) {
     let start = now_millis() + config.start_delay.as_millis() as i64;
     let mut counter: u64 = 0;
     let mut previous: Option<i64> = None;
     let fire = |scheduled: i64, next: Option<i64>, previous: Option<i64>, counter: u64| {
+        if suspend.get() {
+            return; // suspended: skip this fire
+        }
         let fired = now_millis();
         let mut ex = new_exchange(ctx);
         ex.pattern = config.pattern;
@@ -170,7 +173,7 @@ impl Endpoint for TriggerEndpoint {
         &self.uri
     }
     fn create_consumer(&self, processor: Arc<dyn Processor>) -> Result<Arc<dyn Consumer>> {
-        Ok(Arc::new(TriggerConsumer { config: self.config.clone(), ctx: self.ctx.clone(), processor, threads: BackgroundThreads::new() }))
+        Ok(Arc::new(TriggerConsumer { config: self.config.clone(), ctx: self.ctx.clone(), processor, threads: BackgroundThreads::new(), suspend: SuspendState::new() }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -182,16 +185,21 @@ struct TriggerConsumer {
     ctx: WeakContext,
     processor: Arc<dyn Processor>,
     threads: BackgroundThreads,
+    suspend: Arc<SuspendState>,
 }
 
 impl Service for TriggerConsumer {
     fn start(&self) -> Result<()> {
-        let (config, ctx, processor) = (self.config.clone(), self.ctx.clone(), self.processor.clone());
-        self.threads.spawn(&format!("Camel {}", self.config.logger), move |flag| run_trigger(&config, &ctx, processor.as_ref(), &flag))
+        let (config, ctx, processor, suspend) = (self.config.clone(), self.ctx.clone(), self.processor.clone(), self.suspend.clone());
+        self.threads.spawn(&format!("Camel {}", self.config.logger), move |flag| run_trigger(&config, &ctx, processor.as_ref(), &flag, &suspend))
     }
     fn stop(&self) -> Result<()> {
         self.threads.stop();
+        self.suspend.set(false);
         Ok(())
+    }
+    fn as_suspendable(&self) -> Option<&dyn SuspendableService> {
+        Some(&*self.suspend)
     }
 }
 
