@@ -147,6 +147,7 @@ const COMPONENTS: &[(&str, ServiceFactory)] = &[
     ("azure-openai", azure::openai::create),
     ("google-storage", gcp::storage::create),
     ("google-pubsub", gcp::pubsub::create),
+    ("google-pubsub-lite", gcp::pubsub_lite::create),
     ("google-bigquery", gcp::bigquery::create),
     ("google-bigquery-sql", gcp::bigquery::create_sql),
     ("google-secret-manager", gcp::secretmanager::create),

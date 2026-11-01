@@ -16,6 +16,8 @@ mod ext;
 pub use ext::CloudFn;
 #[path = "gcp_more.rs"]
 mod more;
+#[path = "gcp_lite.rs"]
+mod lite;
 pub use more::StreamingStats;
 
 use std::collections::{BTreeMap, HashMap};
@@ -94,6 +96,7 @@ struct State {
     metadata_requests: usize,
     ext: ext::ExtState,
     more: more::MoreState,
+    lite: lite::LiteState,
 }
 
 type Shared = Arc<Mutex<State>>;
@@ -127,6 +130,7 @@ impl GcpMock {
             metadata_requests: 0,
             ext: Default::default(),
             more: Default::default(),
+            lite: Default::default(),
         }));
         let st = state.clone();
         let handler: Handler = Arc::new(move |r| handle(&st, r));

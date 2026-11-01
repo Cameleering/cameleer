@@ -398,3 +398,75 @@ fn vertexai_streaming_embeddings_images_and_partner_models() {
     let raw = Value::object([("anthropic_version", Value::from("bad")), ("max_tokens", Value::Int(5)), ("messages", Value::Array(vec![]))]);
     assert!(call(&t, &claude("rawPredict"), raw, &[]).unwrap_err().message.contains("anthropic_version"));
 }
+
+#[test]
+fn pubsub_lite_publish_subscribe_and_cursors() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let lite = |dest: &str, extra: &str| format!("google-pubsub-lite:{}:us-central1-a:{}?{}{}", PROJECT, dest, env.opts(), extra);
+    req(&t, &lite("orders", "&operation=createTopic&partitionCount=3"), "", &[]);
+    assert!(call(&t, &lite("orders", "&operation=createTopic"), "", &[]).unwrap_err().message.contains("already exists"));
+    assert_eq!(req(&t, &lite("orders", "&operation=getTopicPartitions"), "", &[]).body().as_i64(), Some(3));
+    req(&t, &lite("orders-sub", "&operation=createSubscription&topic=orders"), "", &[]);
+    // ordering keys pin partitions, others go round robin
+    let a = req(&t, &lite("orders", ""), "a1", &[("CamelGooglePubsubLiteOrderingKey", Value::from("customer-1")), ("CamelGooglePubsubLiteAttributes", Value::object([("kind", "new")]))]);
+    let b = req(&t, &lite("orders", ""), "a2", &[("CamelGooglePubsubLiteOrderingKey", Value::from("customer-1"))]);
+    assert_eq!(a.header("CamelGooglePubsubLitePartition"), b.header("CamelGooglePubsubLitePartition"));
+    let p = a.header("CamelGooglePubsubLitePartition").and_then(|v| v.as_i64()).unwrap();
+    assert_eq!(s(a.header("CamelGooglePubsubLiteMessageId").unwrap()), format!("{}:0", p));
+    assert_eq!(s(b.header("CamelGooglePubsubLiteMessageId").unwrap()), format!("{}:1", p));
+    let ids = req(&t, &lite("orders", ""), Value::Array(vec!["x".into(), "y".into(), "z".into()]), &[]).header("CamelGooglePubsubLiteMessageId").unwrap().clone();
+    assert_eq!(ids.as_array().unwrap().len(), 3);
+    let topic_path = format!("projects/{}/locations/us-central1-a/topics/orders", PROJECT);
+    assert_eq!(env.mock.lite_messages(&topic_path, p as usize)[..2], [b"a1".to_vec(), b"a2".to_vec()]);
+    // consumer: every message once, the first failure redelivered after a later poll
+    let failed_once = std::sync::Arc::new(AtomicUsize::new(0));
+    let f2 = failed_once.clone();
+    let from = lite("orders-sub", "&delay=30&initialDelay=0&streamIdleTimeout=100");
+    ctx.add_routes(move |r| {
+        r.from(&from)
+            .process(move |ex: &mut Exchange| -> Result<()> {
+                if s(ex.body()) == "y" && f2.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return Err(CamelError::illegal_state("transient"));
+                }
+                Ok(())
+            })
+            .to("mock:lite");
+    })
+    .unwrap();
+    let m = ctx.mock_endpoint("mock:lite").unwrap();
+    ctx.start().unwrap();
+    assert!(wait(&|| m.received_exchanges().len() >= 5), "{}", m.received_exchanges().len());
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let mut bodies: Vec<String> = m.received_exchanges().iter().map(|e| s(e.body())).collect();
+    bodies.sort();
+    assert_eq!(bodies, vec!["a1", "a2", "x", "y", "z"]);
+    let first = m.received_exchanges().iter().find(|e| s(e.body()) == "a1").unwrap().clone();
+    assert_eq!(s(first.header("CamelGooglePubsubLiteAttributes").unwrap().get("kind").unwrap()), "new");
+    assert_eq!(s(first.header("CamelGooglePubsubLiteOrderingKey").unwrap()), "customer-1");
+    assert!(first.header("CamelGooglePubsubLitePublishTime").is_some());
+    ctx.stop().unwrap();
+    let sub_path = format!("projects/{}/locations/us-central1-a/subscriptions/orders-sub", PROJECT);
+    let committed: i64 = env.mock.lite_committed(&sub_path).iter().sum();
+    assert_eq!(committed, 5, "cursors committed past every message");
+    // a new consumer starts from the committed cursors: nothing is redelivered
+    let c2 = context();
+    let from = lite("orders-sub", "&delay=30&initialDelay=0&streamIdleTimeout=100");
+    c2.add_routes(move |r| {
+        r.from(&from).to("mock:again");
+    })
+    .unwrap();
+    let m2 = c2.mock_endpoint("mock:again").unwrap();
+    c2.start().unwrap();
+    t.send_body(&lite("orders", ""), "late").unwrap();
+    assert!(wait(&|| m2.received_exchanges().len() == 1));
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(m2.received_exchanges().len(), 1);
+    assert_eq!(s(m2.received_exchanges()[0].body()), "late");
+    c2.stop().unwrap();
+    req(&t, &lite("orders-sub", "&operation=deleteSubscription"), "", &[]);
+    req(&t, &lite("orders", "&operation=deleteTopic"), "", &[]);
+    assert!(call(&t, &lite("orders", "&operation=getTopicPartitions"), "", &[]).is_err());
+}

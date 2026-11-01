@@ -43,6 +43,7 @@ pub mod bigquery;
 pub mod firestore;
 pub mod functions;
 pub mod pubsub;
+pub mod pubsub_lite;
 pub mod pubsub_stream;
 pub mod secretmanager;
 pub mod sheets;

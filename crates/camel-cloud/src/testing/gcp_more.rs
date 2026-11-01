@@ -881,6 +881,19 @@ fn voices(req: &ServerRequest) -> Response {
 /// Start the gRPC server of the emulator.
 pub(super) fn start_grpc(st: Shared) -> std::io::Result<GrpcServer> {
     let service = move |call: &ServerCall| -> Status {
+        if call.service().starts_with("google.cloud.pubsublite.v1.") {
+            {
+                let mut s = st.lock().unwrap();
+                if s.require_auth {
+                    let tok = call.metadata().iter().find(|(k, _)| k == "authorization").and_then(|(_, v)| v.strip_prefix("Bearer ")).unwrap_or("").to_string();
+                    if !s.tokens.get(&tok).is_some_and(|exp| *exp > now_secs()) {
+                        s.auth_failures += 1;
+                        return Status::new(Code::Unauthenticated, "Request had invalid authentication credentials. Expected OAuth 2 access token.");
+                    }
+                }
+            }
+            return super::lite::handle(&st, call).unwrap_or_else(|| Status::new(Code::Unimplemented, "unknown service"));
+        }
         if call.service() != "google.pubsub.v1.Subscriber" || call.method() != "StreamingPull" {
             return Status::new(Code::Unimplemented, format!("Method not found: {}/{}", call.service(), call.method()));
         }
