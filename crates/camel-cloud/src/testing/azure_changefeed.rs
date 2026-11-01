@@ -70,7 +70,7 @@ pub(super) fn record(s: &mut State, container: &str, blob: &str, api: &str, etag
 
 fn rebuild(s: &mut State) {
     let schema = AvroSchema::parse(SCHEMA).expect("change feed schema");
-    let mut c = Container { created: now_secs(), blobs: BTreeMap::new() };
+    let mut c = Container { created: now_secs(), ..Default::default() };
     let mut hours: BTreeMap<i64, Vec<Value>> = BTreeMap::new();
     for (t, e) in &s.feed_events {
         hours.entry(t.div_euclid(3_600_000)).or_default().push(e.clone());

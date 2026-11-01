@@ -90,3 +90,57 @@ fn storage_and_key_vault_with_managed_and_workload_identity() {
     assert!(az.identity_requests().iter().any(|r| r.1 == "https://vault.azure.net"));
     let _ = std::fs::remove_file(file);
 }
+
+fn http_get(url: &str) -> (u16, Vec<u8>) {
+    let r = camel_cloud::http::HttpClient::new().send(&camel_cloud::http::Request::new("GET", camel_cloud::http::Url::parse(url).unwrap())).unwrap();
+    (r.status, r.body)
+}
+
+#[test]
+fn blob_block_lists_download_links_files_and_copies() {
+    let az = AzuriteMock::start().unwrap();
+    az.create_container("docs");
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let uri = |op: &str, extra: &str| format!("azure-storage-blob://{}/docs?operation={}&blobName=big.txt{}&{}", ACCOUNT, op, extra, az.blob_options());
+    // stage two blocks (not visible yet), list them, commit
+    let ids = req(&t, &uri("stageBlockBlobList", ""), Value::Array(vec![Value::from("hello "), Value::from("world")]), &[]).body().clone();
+    let ids: Vec<String> = ids.as_array().unwrap().iter().map(s).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(az.blob("docs", "big.txt").is_none(), "staged blocks are uncommitted");
+    let un = req(&t, &uri("getBlobBlockList", "&blockListType=UNCOMMITTED"), "", &[]).body().clone();
+    assert_eq!(un.as_array().unwrap().len(), 2);
+    assert_eq!(un.as_array().unwrap()[1].get("size").and_then(|v| v.as_i64()), Some(5));
+    req(&t, &uri("commitBlobBlockList", ""), Value::from(ids.clone()), &[("CamelAzureStorageBlobContentType", Value::from("text/plain"))]);
+    assert_eq!(az.blob("docs", "big.txt").unwrap(), b"hello world");
+    let committed = req(&t, &uri("getBlobBlockList", ""), "", &[]).body().clone();
+    assert_eq!(committed.as_array().unwrap().iter().map(|b| s(b.get("name").unwrap())).collect::<Vec<_>>(), ids);
+    // re-commit the first committed block plus a newly staged one
+    let new_ids = req(&t, &uri("stageBlockBlobList", ""), "!", &[]).body().clone();
+    req(&t, &uri("commitBlobBlockList", ""), Value::from(vec![ids[0].clone(), s(&new_ids.as_array().unwrap()[0])]), &[]);
+    assert_eq!(az.blob("docs", "big.txt").unwrap(), b"hello !");
+    // staging with commitBlockListLater=false commits at once
+    req(&t, &format!("azure-storage-blob://{}/docs?operation=stageBlockBlobList&blobName=now.txt&commitBlockListLater=false&{}", ACCOUNT, az.blob_options()), Value::Array(vec![Value::from("a"), Value::from("b")]), &[]);
+    assert_eq!(az.blob("docs", "now.txt").unwrap(), b"ab");
+    let e = call(&t, &uri("commitBlobBlockList", ""), Value::from(vec!["bm9wZQ=="]), &[]).unwrap_err();
+    assert!(e.message.contains("InvalidBlockList"), "{}", e);
+    // download link: a read-only service SAS
+    let link = s(req(&t, &uri("downloadLink", "&downloadLinkExpiration=60000"), "", &[]).body());
+    assert!(link.contains("sr=b") && link.contains("sp=r"), "{}", link);
+    assert_eq!(http_get(&link), (200, b"hello !".to_vec()));
+    let tampered = link.replace("sp=r", "sp=rw");
+    assert_eq!(http_get(&tampered).0, 403);
+    let put = camel_cloud::http::HttpClient::new().send(&camel_cloud::http::Request::new("PUT", camel_cloud::http::Url::parse(&link).unwrap()).header("x-ms-blob-type", "BlockBlob").body(b"x".to_vec())).unwrap();
+    assert_eq!(put.status, 403, "read-only link");
+    // download to a file
+    let dir = std::env::temp_dir().join(format!("camel-blob-{}", camel_cloud::util::random_hex(6)));
+    let path = s(req(&t, &uri("downloadBlobToFile", &format!("&fileDir={}", dir.display())), "", &[]).body());
+    assert_eq!(std::fs::read(&path).unwrap(), b"hello !");
+    let _ = std::fs::remove_dir_all(&dir);
+    // server-side copy (same account), and from a SAS-authorized source
+    az.create_container("backup");
+    let ex = req(&t, &format!("azure-storage-blob://{}/backup?operation=copyBlob&blobName=copy.txt&{}", ACCOUNT, az.blob_options()), "", &[("CamelAzureStorageBlobSourceBlobContainerName", Value::from("docs")), ("CamelAzureStorageBlobSourceBlobName", Value::from("big.txt"))]);
+    assert_eq!(s(ex.header("CamelAzureStorageBlobCopyStatus").unwrap()), "success");
+    assert!(!s(ex.body()).is_empty());
+    assert_eq!(az.blob("backup", "copy.txt").unwrap(), b"hello !");
+}

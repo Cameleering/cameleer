@@ -18,6 +18,7 @@
 
 pub mod aad;
 pub mod blob;
+pub mod blob_ops;
 pub mod blob_checkpoint;
 pub mod changefeed;
 pub mod cosmosdb;
@@ -339,6 +340,17 @@ impl AccountSas {
             get("sig")?,
         ))
     }
+}
+
+/// A service SAS for one blob (`sr=b`, version 2020-12-06+ string-to-sign layout:
+/// `sp, st, se, /blob/{account}/{container}/{blob}, si, sip, spr, sv, sr, snapshot time, ses,
+/// rscc, rscd, rsce, rscl, rsct`).
+pub fn blob_service_sas(account: &str, account_key_b64: &str, container: &str, blob: &str, permissions: &str, expiry: &str) -> Result<String> {
+    let resource = format!("/blob/{}/{}/{}", account, container, blob);
+    let sts = [permissions, "", expiry, &resource, "", "", "https,http", API_VERSION, "b", "", "", "", "", "", "", ""].join("\n");
+    let sig = shared_key_signature(account_key_b64, &sts)?;
+    let enc = |s: &str| crate::util::uri_encode(s, false);
+    Ok(format!("sv={}&spr=https,http&se={}&sr=b&sp={}&sig={}", enc(API_VERSION), enc(expiry), permissions, enc(&sig)))
 }
 
 /// Parse `PT30S`-style ISO durations, plain seconds or Camel durations into seconds.

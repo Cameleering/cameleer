@@ -38,12 +38,16 @@ struct Blob {
     lease: Option<blob_ext::Lease>,
     pages: BTreeSet<usize>,
     committed_blocks: i64,
+    /// committed block list (id, size) of block blobs built with Put Block List
+    block_list: Vec<(String, usize)>,
 }
 
 #[derive(Default)]
 struct Container {
     created: i64,
     blobs: BTreeMap<String, Blob>,
+    /// blob -> staged (uncommitted) blocks (id, data)
+    staged: BTreeMap<String, Vec<(String, Vec<u8>)>>,
 }
 
 #[derive(Clone)]
@@ -177,7 +181,7 @@ impl AzuriteMock {
     }
 
     pub fn create_container(&self, name: &str) {
-        self.state.lock().unwrap().containers.entry(name.into()).or_insert_with(|| Container { created: now_secs(), blobs: BTreeMap::new() });
+        self.state.lock().unwrap().containers.entry(name.into()).or_insert_with(|| Container { created: now_secs(), ..Default::default() });
     }
     pub fn container_exists(&self, name: &str) -> bool {
         self.state.lock().unwrap().containers.contains_key(name)
@@ -222,6 +226,7 @@ fn new_blob(data: Vec<u8>, content_type: String, metadata: Vec<(String, String)>
         lease: None,
         pages: BTreeSet::new(),
         committed_blocks: 0,
+        block_list: Vec::new(),
     }
 }
 
@@ -269,8 +274,38 @@ fn sas_requirement(service: char, method: &str, segs: &[String], req: &ServerReq
     }
 }
 
+/// Verify a blob service SAS (`sr=b`) for `/blob/{account}/{container}/{blob}`.
+fn verify_blob_service_sas(params: &[(String, String)], container: &str, blob: &str, perms_needed: &str) -> Result<(), Response> {
+    let get = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    if get("sr") != "b" {
+        return Err(error(403, "AuthenticationFailed", "Only blob service SAS (sr=b) is supported"));
+    }
+    let resource = format!("/blob/{}/{}/{}", ACCOUNT, container, blob);
+    let sts = [get("sp"), get("st"), get("se"), resource, get("si"), get("sip"), get("spr"), get("sv"), get("sr"), String::new(), get("ses"), get("rscc"), get("rscd"), get("rsce"), get("rscl"), get("rsct")].join("\n");
+    let expected = shared_key_signature(ACCOUNT_KEY, &sts).unwrap_or_default();
+    if !ct_eq(expected.as_bytes(), get("sig").as_bytes()) {
+        return Err(error(403, "AuthenticationFailed", "Signature did not match"));
+    }
+    if parse_iso8601(&get("se")).is_none_or(|e| e < now_secs()) {
+        return Err(error(403, "AuthenticationFailed", "Signed expiry time has passed"));
+    }
+    if !perms_needed.chars().any(|p| get("sp").contains(p)) {
+        return Err(error(403, "AuthorizationPermissionMismatch", "This request is not authorized to perform this operation using this permission."));
+    }
+    Ok(())
+}
+
 fn authorize(st: &Shared, req: &ServerRequest, service: char, segs: &[String]) -> Result<(), Response> {
     let params = req.query_params();
+    if params.iter().any(|(k, _)| k == "sig") && params.iter().any(|(k, _)| k == "sr") && !params.iter().any(|(k, _)| k == "ss") {
+        // service SAS of one blob
+        let (perms, _) = sas_requirement(service, &req.method, segs, req);
+        let container = segs.first().cloned().unwrap_or_default();
+        let blob = segs.get(1..).map(|b| b.join("/")).unwrap_or_default();
+        verify_blob_service_sas(&params, &container, &blob, perms)?;
+        st.lock().unwrap().sas_requests += 1;
+        return Ok(());
+    }
     if params.iter().any(|(k, _)| k == "sig") {
         let Some((sas, sig)) = AccountSas::parse(&params) else { return Err(error(403, "AuthenticationFailed", "Malformed SAS token")) };
         let expected = shared_key_signature(ACCOUNT_KEY, &sas.string_to_sign(ACCOUNT)).unwrap_or_default();
@@ -372,7 +407,7 @@ fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Op
                 if s.containers.contains_key(&container) {
                     return error(409, "ContainerAlreadyExists", "The specified container already exists.");
                 }
-                s.containers.insert(container, Container { created: now_secs(), blobs: BTreeMap::new() });
+                s.containers.insert(container, Container { created: now_secs(), ..Default::default() });
                 Response::new(201).with_header("ETag", "\"0x1\"")
             }
             "DELETE" if restype.as_deref() == Some("container") => match s.containers.remove(&container) {
@@ -414,7 +449,15 @@ fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Op
             _ => error(400, "InvalidQueryParameterValue", "Unsupported container operation"),
         };
     };
+    if req.method == "PUT" && req.query_param("comp").is_none() {
+        if let Some(src) = req.header("x-ms-copy-source") {
+            return copy_blob(&mut s, &container, &blob, src).unwrap_or_else(|r| r);
+        }
+    }
     let Some(c) = s.containers.get_mut(&container) else { return error(404, "ContainerNotFound", "The specified container does not exist.") };
+    if let Some(resp) = blob_ext::block_list_op(c, req, &blob) {
+        return resp;
+    }
     let before = c.blobs.get(&blob).map(|b| b.etag.clone());
     let resp = blob_ext::blob_item_op(c, req, blob.clone());
     let after = c.blobs.get(&blob).map(|b| (b.etag.clone(), b.content_type.clone(), b.data.len(), b.blob_type.clone()));
@@ -433,6 +476,30 @@ fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Op
         changefeed::record(&mut s, &container, &blob, api, etag, &ct, len, &bt);
     }
     resp
+}
+
+/// Copy Blob (synchronous here): the source is a blob of this account (path-style URL),
+/// authorized by a service / account SAS in its query or by the request itself.
+fn copy_blob(s: &mut State, container: &str, blob: &str, src: &str) -> Result<Response, Response> {
+    let bad = || error(400, "InvalidHeaderValue", "The value for the x-ms-copy-source header is invalid.");
+    let url = crate::http::Url::parse(src).map_err(|_| bad())?;
+    let path = url.path.trim_start_matches('/');
+    let (account, rest) = path.split_once('/').ok_or_else(bad)?;
+    if account != ACCOUNT {
+        return Err(error(403, "CannotVerifyCopySource", "The source account is unknown to this emulator."));
+    }
+    let (src_container, src_blob) = rest.split_once('/').map(|(c, b)| (percent_decode(c, false), percent_decode(b, false))).ok_or_else(bad)?;
+    let query = url.query.clone().unwrap_or_default();
+    let params: Vec<(String, String)> = query.split('&').filter(|p| !p.is_empty()).map(|p| p.split_once('=').map(|(k, v)| (percent_decode(k, true), percent_decode(v, true))).unwrap_or((p.to_string(), String::new()))).collect();
+    if params.iter().any(|(k, _)| k == "sr") {
+        verify_blob_service_sas(&params, &src_container, &src_blob, "r").map_err(|_| error(403, "CannotVerifyCopySource", "Server failed to authenticate the copy source."))?;
+    }
+    let Some(source) = s.containers.get(&src_container).and_then(|c| c.blobs.get(&src_blob)).cloned() else { return Err(error(404, "CannotVerifyCopySource", "The specified blob does not exist.")) };
+    let Some(c) = s.containers.get_mut(container) else { return Err(error(404, "ContainerNotFound", "The specified container does not exist.")) };
+    let mut b = new_blob(source.data.clone(), source.content_type.clone(), source.metadata.clone());
+    b.blob_type = source.blob_type.clone();
+    c.blobs.insert(blob.to_string(), b);
+    Ok(Response::new(202).with_header("x-ms-copy-id", uuid()).with_header("x-ms-copy-status", "success").with_header("ETag", c.blobs[blob].etag.clone()).with_header("Last-Modified", http_date(now_secs())))
 }
 
 fn message_xml(m: &QMsg, with_text: bool) -> String {

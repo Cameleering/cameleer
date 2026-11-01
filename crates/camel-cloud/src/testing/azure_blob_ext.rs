@@ -1,8 +1,6 @@
 //! Blob-level operations of the Azurite emulator (block, append and page blobs, leases) and
 //! the ADLS Gen2 DFS endpoint sharing the blob containers (file systems).
 
-use std::collections::BTreeMap;
-
 use super::{error, new_blob, Blob, Container, Shared};
 use crate::http::{Response, ServerRequest};
 use crate::util::{base64_encode, http_date, md5, now_secs, random_hex, uuid};
@@ -42,6 +40,102 @@ fn parse_range(v: Option<&str>) -> Option<(usize, usize)> {
     let r = v?.trim().strip_prefix("bytes=")?;
     let (a, b) = r.split_once('-')?;
     Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+}
+
+/// Put Block / Put Block List / Get Block List; None for other requests.
+pub(super) fn block_list_op(c: &mut Container, req: &ServerRequest, blob: &str) -> Option<Response> {
+    let comp = req.query_param("comp").unwrap_or_default();
+    match (req.method.as_str(), comp.as_str()) {
+        ("PUT", "block") => {
+            let id = req.query_param("blockid").unwrap_or_default();
+            if id.is_empty() || crate::util::base64_decode(&id).is_none() {
+                return Some(error(400, "InvalidQueryParameterValue", "Value for one of the query parameters specified in the request URI is invalid (blockid)."));
+            }
+            if let Some(b) = c.blobs.get(blob) {
+                if let Err(r) = check_lease(b, req) {
+                    return Some(r);
+                }
+            }
+            let staged = c.staged.entry(blob.to_string()).or_default();
+            staged.retain(|(i, _)| *i != id);
+            staged.push((id, req.body.clone()));
+            Some(Response::new(201).with_header("Content-MD5", base64_encode(&md5(&req.body))))
+        }
+        ("PUT", "blocklist") => {
+            let text = req.text();
+            let Ok(x) = crate::util::Xml::parse(&text) else { return Some(error(400, "InvalidXmlDocument", "XML specified is not syntactically valid.")) };
+            if let Some(b) = c.blobs.get(blob) {
+                if let Err(r) = check_lease(b, req) {
+                    return Some(r);
+                }
+            }
+            let committed: Vec<(String, usize)> = c.blobs.get(blob).map(|b| b.block_list.clone()).unwrap_or_default();
+            let staged = c.staged.get(blob).cloned().unwrap_or_default();
+            let mut data = Vec::new();
+            let mut list = Vec::new();
+            let old_data = c.blobs.get(blob).map(|b| b.data.clone()).unwrap_or_default();
+            for i in x.doc.element_children(x.root()) {
+                let kind = x.name(i).to_string();
+                let id = x.text(i);
+                let from_staged = staged.iter().find(|(s, _)| *s == id).map(|(_, d)| d.clone());
+                let from_committed = || {
+                    let mut off = 0;
+                    for (cid, size) in &committed {
+                        if *cid == id {
+                            return old_data.get(off..off + size).map(|d| d.to_vec());
+                        }
+                        off += size;
+                    }
+                    None
+                };
+                let block = match kind.as_str() {
+                    "Uncommitted" => from_staged,
+                    "Committed" => from_committed(),
+                    _ => from_staged.or_else(from_committed),
+                };
+                let Some(block) = block else { return Some(error(400, "InvalidBlockList", "The specified block list is invalid.")) };
+                list.push((id, block.len()));
+                data.extend_from_slice(&block);
+            }
+            let ct = req.header("x-ms-blob-content-type").unwrap_or("application/octet-stream").to_string();
+            let meta = req.headers.iter().filter_map(|(k, v)| k.to_ascii_lowercase().strip_prefix("x-ms-meta-").map(|m| (m.to_string(), v.clone()))).collect();
+            let lease = c.blobs.get(blob).and_then(|b| b.lease.clone());
+            let mut b = new_blob(data, ct, meta);
+            b.block_list = list;
+            b.lease = lease;
+            let r = blob_headers(Response::new(201), &b);
+            c.blobs.insert(blob.to_string(), b);
+            c.staged.remove(blob);
+            Some(r)
+        }
+        ("GET", "blocklist") => {
+            let kind = req.query_param("blocklisttype").unwrap_or_else(|| "committed".into()).to_ascii_lowercase();
+            let committed = c.blobs.get(blob).map(|b| b.block_list.clone());
+            let staged = c.staged.get(blob).cloned();
+            if committed.is_none() && staged.is_none() {
+                return Some(error(404, "BlobNotFound", "The specified blob does not exist."));
+            }
+            let block = |id: &str, size: usize| format!("<Block><Name>{}</Name><Size>{}</Size></Block>", id, size);
+            let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?><BlockList>");
+            if kind != "uncommitted" {
+                xml.push_str("<CommittedBlocks>");
+                for (id, size) in committed.unwrap_or_default() {
+                    xml.push_str(&block(&id, size));
+                }
+                xml.push_str("</CommittedBlocks>");
+            }
+            if kind != "committed" {
+                xml.push_str("<UncommittedBlocks>");
+                for (id, d) in staged.unwrap_or_default() {
+                    xml.push_str(&block(&id, d.len()));
+                }
+                xml.push_str("</UncommittedBlocks>");
+            }
+            xml.push_str("</BlockList>");
+            Some(Response::xml(200, xml))
+        }
+        _ => None,
+    }
 }
 
 /// Operations on one blob of an existing container.
@@ -299,7 +393,7 @@ pub(super) fn dfs_op(st: &Shared, req: &ServerRequest, fs: Option<String>, path:
                 if s.containers.contains_key(&fs) {
                     return dfs_error(409, "FilesystemAlreadyExists", "The specified filesystem already exists.");
                 }
-                s.containers.insert(fs, Container { created: now_secs(), blobs: BTreeMap::new() });
+                s.containers.insert(fs, Container { created: now_secs(), ..Default::default() });
                 Response::new(201).with_header("ETag", "\"0x1\"")
             }
             ("DELETE", "filesystem") => match s.containers.remove(&fs) {

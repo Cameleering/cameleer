@@ -120,6 +120,16 @@ pub struct BlobService {
     pub change_feed_start: Option<i64>,
     pub change_feed_end: Option<i64>,
     pub scheduler: ScheduledPollConfig,
+    /// `fileDir` of downloadBlobToFile.
+    pub file_dir: Option<String>,
+    /// `downloadLinkExpiration` (millis) of downloadLink.
+    pub download_link_expiration: Option<i64>,
+    /// `commitBlockListLater` of stageBlockBlobList (default true).
+    pub commit_block_list_later: bool,
+    /// `blockListType` of getBlobBlockList (COMMITTED default, UNCOMMITTED, ALL).
+    pub block_list_type: String,
+    /// `sourceBlobAccessKey` of copyBlob (the source account's key).
+    pub source_blob_access_key: Option<String>,
     /// Change feed consumer position: (newest event time delivered, ids delivered at that time).
     feed_position: std::sync::Mutex<(Option<i64>, std::collections::HashSet<String>)>,
 }
@@ -147,15 +157,20 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         change_feed_start: o.get("changeFeedStartTime").map(|v| super::changefeed::time_value(&Value::from(v.clone())).ok_or_else(|| CamelError::illegal_argument(format!("Invalid changeFeedStartTime: {}", v)))).transpose()?,
         change_feed_end: o.get("changeFeedEndTime").map(|v| super::changefeed::time_value(&Value::from(v.clone())).ok_or_else(|| CamelError::illegal_argument(format!("Invalid changeFeedEndTime: {}", v)))).transpose()?,
         feed_position: std::sync::Mutex::new((None, std::collections::HashSet::new())),
+        file_dir: o.get("fileDir"),
+        download_link_expiration: o.get("downloadLinkExpiration").map(|v| v.parse::<i64>().map_err(|_| CamelError::illegal_argument(format!("Invalid downloadLinkExpiration: {}", v)))).transpose()?,
+        commit_block_list_later: o.bool("commitBlockListLater", true)?,
+        block_list_type: o.string("blockListType", "COMMITTED").to_ascii_uppercase(),
+        source_blob_access_key: o.get("sourceBlobAccessKey"),
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
         azure,
     };
-    o.ignore(&["blobType", "closeStreamAfterRead", "closeStreamAfterWrite", "dataCount", "fileDir", "blobOffset", "regex", "downloadLinkExpiration", "commitBlockListLater", "blockListType", "maxRetryRequests"]);
+    o.ignore(&["blobType", "closeStreamAfterRead", "closeStreamAfterWrite", "dataCount", "blobOffset", "regex", "maxRetryRequests"]);
     Ok(Arc::new(s))
 }
 
 impl BlobService {
-    fn send(&self, req: Request) -> Result<Response> {
+    pub(crate) fn send(&self, req: Request) -> Result<Response> {
         self.azure.send(req, kinds::BLOB_STORAGE)
     }
 
@@ -174,7 +189,7 @@ impl BlobService {
         self.send(req)
     }
 
-    fn blob_url(&self, container: &str, blob: &str, query: &str) -> Result<crate::http::Url> {
+    pub(crate) fn blob_url(&self, container: &str, blob: &str, query: &str) -> Result<crate::http::Url> {
         self.azure.url("blob", &Self::blob_path(container, blob), query)
     }
 
@@ -341,19 +356,19 @@ impl BlobService {
             .collect())
     }
 
-    fn container(&self, ex: &Exchange) -> Result<String> {
+    pub(crate) fn container(&self, ex: &Exchange) -> Result<String> {
         header_str(ex, headers::BLOB_CONTAINER_NAME)
             .or_else(|| self.container.clone())
             .ok_or_else(|| CamelError::illegal_argument("No container name: set it in the uri (azure-storage-blob://account/container) or the CamelAzureStorageBlobContainerName header"))
     }
 
-    fn blob(&self, ex: &Exchange) -> Result<String> {
+    pub(crate) fn blob(&self, ex: &Exchange) -> Result<String> {
         header_str(ex, headers::BLOB_NAME)
             .or_else(|| self.blob_name.clone())
             .ok_or_else(|| CamelError::illegal_argument("No blob name: set the blobName option or the CamelAzureStorageBlobBlobName header"))
     }
 
-    fn set_blob_headers(ex: &mut Exchange, resp: &Response) {
+    pub(crate) fn set_blob_headers(ex: &mut Exchange, resp: &Response) {
         if let Some(v) = resp.header("ETag") {
             ex.set_header(headers::E_TAG, v.to_string());
         }
@@ -543,7 +558,11 @@ impl CloudService for BlobService {
                 let end = ex.header(headers::CHANGE_FEED_END_TIME).and_then(super::changefeed::time_value).or(self.change_feed_end);
                 ex.set_body(Value::Array(super::changefeed::read(&self.azure, start, end)?));
             }
-            other => return Err(unsupported("azure-storage-blob", other)),
+            other => {
+                if !self.more_ops(ex, other)? {
+                    return Err(unsupported("azure-storage-blob", other));
+                }
+            }
         }
         Ok(())
     }
