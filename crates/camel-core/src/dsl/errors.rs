@@ -30,7 +30,7 @@ use crate::processor::errors::hook::{builder_ext, RoutePolicies, RoutePolicyRef,
 use crate::processor::errors::idempotent::{IdempotentConsumerDefinition, IdempotentRepository};
 use crate::processor::errors::intercept::{InterceptDefinition, InterceptKind};
 use crate::processor::errors::misc::{
-    Policy, PolicyDefinition, RollbackDefinition, RollbackMode, ThreadsDefinition, ThrowExceptionDefinition, TransactedDefinition,
+    Policy, PolicyDefinition, RollbackDefinition, RollbackMode, ThreadsDefinition, ThreadsOptions, ThrowExceptionDefinition, TransactedDefinition,
     ValidateDefinition,
 };
 use crate::processor::errors::on_completion::{OnCompletionDefinition, OnCompletionMode};
@@ -511,19 +511,36 @@ impl RouteDefinition {
         self.add(Box::new(ThrowExceptionDefinition { id: None, kind: kind.into(), message: message.into() }))
     }
 
-    /// Continue routing on a thread pool of `pool_size` threads (block; `end()` optional).
+    /// Continue routing on a thread pool of `pool_size` core threads (block; `end()`
+    /// optional). Other options come from the default profile; see [`Self::threads_with`].
     pub fn threads(&mut self, pool_size: usize) -> &mut Self {
-        self.push_block(Box::new(ThreadsDefinition { id: None, pool_size, thread_name: "Threads".to_string(), outputs: Default::default() }))
+        self.threads_with(ThreadsOptions::new().pool_size(pool_size))
     }
 
-    /// Mark the route as transacted (no-op marker).
+    /// Continue routing on a thread pool configured by `options` (poolSize, maxPoolSize,
+    /// keepAliveTime, maxQueueSize, allowCoreThreadTimeOut, rejectedPolicy,
+    /// callerRunsWhenRejected, threadName, executorService).
+    pub fn threads_with(&mut self, options: ThreadsOptions) -> &mut Self {
+        self.push_block(Box::new(ThreadsDefinition::new(options)))
+    }
+
+    /// Run the rest of the route in a transaction (`PROPAGATION_REQUIRED` policy, see
+    /// [`crate::transaction`]). Block; `end()` optional.
     pub fn transacted(&mut self) -> &mut Self {
-        self.add(Box::new(TransactedDefinition { id: None, reference: None }))
+        self.push_block(Box::new(TransactedDefinition::new(None)))
     }
 
-    /// Mark the route as transacted with a named policy (no-op marker).
+    /// Run the rest of the route in a transaction of the named policy (a
+    /// `TransactionPolicy` bean or a `PROPAGATION_*` name).
     pub fn transacted_ref(&mut self, policy: impl Into<String>) -> &mut Self {
-        self.add(Box::new(TransactedDefinition { id: None, reference: Some(policy.into()) }))
+        self.push_block(Box::new(TransactedDefinition::new(Some(policy.into()))))
+    }
+
+    /// Run the rest of the route in a transaction of `policy`.
+    pub fn transacted_policy(&mut self, policy: crate::transaction::TransactionPolicy) -> &mut Self {
+        let mut d = TransactedDefinition::new(None);
+        d.policy = Some(Arc::new(policy));
+        self.push_block(Box::new(d))
     }
 
     /// Open a policy block whose processors are wrapped by `policy`.

@@ -16,11 +16,12 @@ use camel_core::processor::errors::handler::RedeliveryOverrides;
 use camel_core::processor::errors::idempotent::{memory_idempotent_repository, IdempotentConsumerDefinition, IdempotentRepository, MemoryIdempotentRepository};
 use camel_core::processor::errors::intercept::{InterceptDefinition, InterceptKind};
 use camel_core::processor::errors::misc::{
-    PolicyDefinition, RollbackDefinition, RollbackMode, ThreadsDefinition, ThrowExceptionDefinition, TransactedDefinition, ValidateDefinition,
+    PolicyDefinition, RollbackDefinition, RollbackMode, ThreadsDefinition, ThreadsOptions, ThrowExceptionDefinition, TransactedDefinition, ValidateDefinition,
 };
 use camel_core::processor::errors::on_completion::{OnCompletionDefinition, OnCompletionMode};
 use camel_core::processor::errors::on_exception::OnExceptionDefinition;
 use camel_core::processor::errors::throttle::{DelayDefinition, SampleDefinition, ThrottleDefinition};
+use camel_core::executor::RejectedPolicy;
 use camel_core::processor::errors::BoolOrPredicate;
 use camel_core::processor::routing::sort::Comparator;
 use camel_core::processor::routing::strategies;
@@ -892,9 +893,34 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
         Ok(())
     });
     r.register("threads", |ctx, cfg| {
-        let pool_size = ctx.opt_usize(cfg, "poolSize")?.or(ctx.opt_usize(cfg, "maxPoolSize")?).unwrap_or(10).max(1);
-        let thread_name = ctx.opt_str(cfg, "threadName").unwrap_or_else(|| "Threads".into());
-        let def = Box::new(ThreadsDefinition { id: None, pool_size, thread_name, outputs: Default::default() });
+        // keepAliveTime is in seconds (Camel's default timeUnit)
+        let unit_ms = match ctx.opt_str(cfg, "timeUnit").map(|u| u.to_ascii_uppercase()) {
+            None => 1000,
+            Some(u) => match u.as_str() {
+                "NANOSECONDS" | "MICROSECONDS" | "MILLISECONDS" => 1,
+                "SECONDS" => 1000,
+                "MINUTES" => 60_000,
+                "HOURS" => 3_600_000,
+                "DAYS" => 86_400_000,
+                other => return Err(ctx.error(format!("unknown timeUnit {}", other))),
+            },
+        };
+        let rejected_policy = match ctx.opt_str(cfg, "rejectedPolicy") {
+            Some(p) => Some(RejectedPolicy::parse(&p).map_err(|e| ctx.error(e.message))?),
+            None => None,
+        };
+        let options = ThreadsOptions {
+            pool_size: ctx.opt_usize(cfg, "poolSize")?,
+            max_pool_size: ctx.opt_usize(cfg, "maxPoolSize")?,
+            keep_alive_time: ctx.opt_duration_unit(cfg, "keepAliveTime", unit_ms)?,
+            max_queue_size: ctx.opt_i64(cfg, "maxQueueSize")?,
+            allow_core_thread_timeout: ctx.opt_bool(cfg, "allowCoreThreadTimeOut")?,
+            rejected_policy,
+            caller_runs_when_rejected: ctx.opt_bool(cfg, "callerRunsWhenRejected")?,
+            thread_name: ctx.opt_str(cfg, "threadName"),
+            executor_service: ctx.opt_str(cfg, "executorService").or_else(|| ctx.opt_str(cfg, "executorServiceRef")).map(|r| ref_name(&r)),
+        };
+        let def = Box::new(ThreadsDefinition::new(options));
         match cfg.get("steps") {
             Some(s) => ctx.add_block(def, Some(s)),
             None => {
@@ -909,8 +935,15 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
             Value::String(s) => Some(ref_name(s)),
             _ => ctx.opt_str(cfg, "ref").map(|r| ref_name(&r)),
         };
-        ctx.add(Box::new(TransactedDefinition { id: None, reference }));
-        Ok(())
+        let def = Box::new(TransactedDefinition::new(reference));
+        match cfg.get("steps") {
+            Some(s) => ctx.add_block(def, Some(s)),
+            None => {
+                // like Camel: the remaining steps of the route run in the transaction
+                ctx.push_open_block(def);
+                Ok(())
+            }
+        }
     });
     r.register("policy", |ctx, cfg| {
         let reference = match cfg {

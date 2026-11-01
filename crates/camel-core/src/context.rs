@@ -83,6 +83,13 @@ impl Registry {
     pub fn contains(&self, name: &str) -> bool {
         self.beans.read().unwrap().contains_key(name)
     }
+    /// All beans of type `T` (Camel `findByTypeWithName`), sorted by name.
+    pub fn find_by_type<T: Any + Send + Sync>(&self) -> Vec<(String, Arc<T>)> {
+        let mut v: Vec<(String, Arc<T>)> =
+            self.beans.read().unwrap().iter().filter_map(|(k, b)| b.clone().downcast::<T>().ok().map(|t| (k.clone(), t))).collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    }
     pub fn unbind(&self, name: &str) -> bool {
         self.beans.write().unwrap().remove(name).is_some()
     }

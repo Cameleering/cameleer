@@ -380,8 +380,21 @@ fn threads_eip() {
 }
 
 #[test]
-fn transacted_is_a_noop_marker() {
+fn transacted_with_a_transaction_manager() {
     let ctx = CamelContext::new();
+    let commits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let c2 = commits.clone();
+    ctx.registry().bind_transaction_manager(
+        "tm",
+        camel_core::transaction::FnTransactionManager::new(
+            |_| Ok(Box::new(())),
+            move |_| {
+                c2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            },
+            |_| Ok(()),
+        ),
+    );
     ctx.add_routes(|b| {
         b.from("direct:start").transacted().to("mock:result");
         b.from("direct:ref").transacted_ref("PROPAGATION_REQUIRES_NEW").to("mock:result");
@@ -391,6 +404,7 @@ fn transacted_is_a_noop_marker() {
     ctx.create_producer_template().send_body("direct:start", 1).unwrap();
     ctx.create_producer_template().send_body("direct:ref", 2).unwrap();
     assert_eq!(ctx.mock_endpoint("mock:result").unwrap().received_counter(), 2);
+    assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
 struct HeaderPolicy(&'static str);
