@@ -1,4 +1,5 @@
-//! Locating symbols in (clean, synthetic) images: binarisation, QR finder pattern detection
+//! The fast path for clean, generated images (camera images: see `vision`, `qr_detect`,
+//! `dm_detect`, `aztec_detect`): global binarisation, QR finder pattern detection
 //! (1:1:3:1:1 runs confirmed horizontally and vertically, clustering, right-isosceles triple
 //! selection, orientation) with affine module sampling, Data Matrix location by its L finder
 //! and timing pattern, and scan rows for linear symbologies.

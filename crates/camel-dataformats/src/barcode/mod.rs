@@ -5,10 +5,10 @@
 //!
 //! | format | encode | decode |
 //! |---|---|---|
-//! | `QR_CODE` | versions 1-40, ECC L/M/Q/H (`errorCorrectionLevel`, default L like ZXing), numeric / alphanumeric / Kanji (JIS X 0208 text) / byte (UTF-8 with ECI 26 for non-ASCII), RS, mask by penalty rules | finder patterns, sampling, format/version info, unmasking, RS correction, Kanji to Unicode |
-//! | `DATA_MATRIX` | ECC 200 square 10x10 .. 144x144 and rectangular 8x18 .. 16x48 (`dataMatrixShape` NONE (ZXing order) / SQUARE / RECTANGLE), ASCII encodation | upright symbols; ASCII, C40, Text, X12, EDIFACT, Base 256 |
-//! | `PDF_417` | text / byte / numeric compaction (`pdf417Compaction`, AUTO like ZXing), UTF-8 via ECI 26, error correction level 0-8 (`errorCorrectionLevel`, default 2), ZXing dimensions and rendering | row scanning in all four 90° orientations, per-row voting, RS correction with erasures, Macro PDF417 blocks skipped |
-//! | `AZTEC` | compact 1-4 and full-range 4-32 layers, ZXing's 33% error correction, Upper/Lower/Digit/Punct/Mixed + Binary Shift, ECI 26 for non-Latin-1 | upright symbols via the bullseye; every mode, FLG(n) ECIs, RS correction |
+//! | `QR_CODE` | versions 1-40, ECC L/M/Q/H (`errorCorrectionLevel`, default L like ZXing), numeric / alphanumeric / Kanji (JIS X 0208 text) / byte (UTF-8 with ECI 26 for non-ASCII), RS, mask by penalty rules | ZXing-style finder/alignment pattern detection with perspective sampling, format/version info, unmasking, RS correction, Kanji, Shift_JIS guessing |
+//! | `DATA_MATRIX` | ECC 200 square 10x10 .. 144x144 and rectangular 8x18 .. 16x48 (`dataMatrixShape` NONE (ZXing order) / SQUARE / RECTANGLE), ASCII encodation | white-rectangle + edge-fitted L finder, perspective sampling, any orientation; ASCII, C40, Text, X12, EDIFACT, Base 256 |
+//! | `PDF_417` | text / byte / numeric compaction (`pdf417Compaction`, AUTO like ZXing), UTF-8 via ECI 26, error correction level 0-8 (`errorCorrectionLevel`, default 2), ZXing dimensions and rendering | deskewed row scanning in all four orientations (rows tracked per codeword cluster), per-row voting, RS correction with erasures, Macro PDF417 blocks skipped |
+//! | `AZTEC` | compact 1-4 and full-range 4-32 layers, ZXing's 33% error correction, Upper/Lower/Digit/Punct/Mixed + Binary Shift, ECI 26 for non-Latin-1 | bull's-eye detection with a least-squares perspective fit (rings, outer edges, reference grid), any orientation; every mode, FLG(n) ECIs, RS correction |
 //! | `CODE_128` | code sets A/B/C, automatic switching | yes |
 //! | `CODE_39` | yes | yes |
 //! | `EAN_13`, `UPC_A` | 12/13 (11/12) digits, check digit computed or verified | yes (an EAN-13 starting with 0 is reported as `UPC_A` unless `barcodeFormat=EAN_13`) |
@@ -23,9 +23,10 @@
 //! baseline JPEG (detected by signature), finds the
 //! symbol (when `barcodeFormat` is the default QR_CODE every supported format is tried) and sets
 //! the body to the text and the `BarcodeFormat` header (plus `ERROR_CORRECTION_LEVEL` for QR).
-//! Detection targets clean, axis-aligned images such as generated ones (QR also in 90° steps
-//! and mirrored); it is not a camera-image reader (no perspective correction, local
-//! thresholding or damaged finder recovery).
+//! Clean generated images take a fast path; photographs go through the camera path (see
+//! [`decode`]): noise-adaptive smoothing, ZXing's `HybridBinarizer`, rotation / scale /
+//! perspective tolerant detectors and a copy deskewed by the dominant edge orientation for
+//! linear and stacked symbols (scan lines band-averaged and locally thresholded, columns too).
 
 pub mod aztec;
 pub mod aztec_detect;

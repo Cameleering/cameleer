@@ -369,36 +369,3 @@ pub fn detect_and_decode(b: &Bin) -> Option<String> {
     }
     None
 }
-
-#[cfg(test)]
-pub fn debug(b: &Bin) {
-    let cs = centres(b);
-    eprintln!("centres {:?}", cs);
-    for (cx, cy, module) in cs {
-        for compact in [true, false] {
-            let rings = if compact { 4 } else { 6 };
-            let h = fit(b, (cx, cy), module, rings).map(|f| f.0);
-            eprintln!("compact {} fit {:?}", compact, h.map(|h| (h.map(0.0, 0.0), h.map(1.0, 0.0), h.map(0.0, 1.0))));
-            if let Some(h) = h {
-                for o in 0..8 {
-                    let core = sample(b, &h, o, if compact { 15 } else { 19 });
-                    if o == 0 {
-                        for y in 0..core.height {
-                            eprintln!("{}", (0..core.width).map(|x| if core.get(x, y) { '#' } else { '.' }).collect::<String>());
-                        }
-                    }
-                    let md = aztec::read_mode(&core, compact);
-                    eprintln!("o {} mode {:?}", o, md);
-                    if let Some((layers, _)) = md {
-                        let n = aztec::matrix_size(layers, compact);
-                        let m = sample(b, &h, o, n);
-                        for y in 0..n {
-                            eprintln!("{}", (0..n).map(|x| if m.get(x, y) { '#' } else { '.' }).collect::<String>());
-                        }
-                        eprintln!("{:?}", aztec::decode_matrix(&m));
-                    }
-                }
-            }
-        }
-    }
-}

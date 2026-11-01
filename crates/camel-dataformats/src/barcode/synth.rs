@@ -269,6 +269,21 @@ mod tests {
         assert!(f.is_empty(), "{:#?}", f);
     }
 
+    /// Every 2D symbology through a sweep of arbitrary rotation angles with mild keystone.
+    #[test]
+    fn rotation_sweep() {
+        for (text, f) in [("rotation sweep QR", Format::QrCode), ("rotation sweep DM", Format::DataMatrix), ("rotation sweep Aztec", Format::Aztec)] {
+            let src = printed(text, f);
+            for k in 0..14 {
+                let angle = k as f64 * 13.0 + 2.0;
+                let cam = Camera { rotate: angle, keystone: 0.08, blur: 0.6, noise: 3.0, ..Camera::default() };
+                let img = photograph(&src, &cam, k);
+                let d = decode_camera_path(&img, None).unwrap_or_else(|e| panic!("{:?} at {}: {}", f, angle, e));
+                assert_eq!((d.format, d.text.as_str()), (f, text), "{}", angle);
+            }
+        }
+    }
+
     #[test]
     fn camera_data_matrix() {
         let f = failures("Camel Data Matrix 2026", Format::DataMatrix, None);
@@ -297,59 +312,5 @@ mod tests {
     fn camera_ean13() {
         let f = failures("5901234123457", Format::Ean13, None);
         assert!(f.is_empty(), "{:#?}", f);
-    }
-}
-
-#[cfg(test)]
-mod debug {
-    use super::*;
-    use crate::barcode::{aztec_detect, vision};
-
-    #[test]
-    #[ignore]
-    fn debug_dir() {
-        let dir = std::env::var("BARCODE_DIR").unwrap();
-        let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
-        names.sort();
-        for p in names {
-            let b = std::fs::read(&p).unwrap();
-            let t = std::time::Instant::now();
-            let r = crate::barcode::read_image(&b).and_then(|g| decode(&g, None));
-            eprintln!("{:?} {:?} {:?}", p.file_name().unwrap(), t.elapsed(), r.map(|d| (d.format, d.text)));
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn debug_aztec_file() {
-        let b = std::fs::read(std::env::var("BARCODE_FILE").unwrap()).unwrap();
-        let g = crate::barcode::read_image(&b).unwrap();
-        eprintln!("sigma {}", vision::noise_sigma(&g));
-        let bin = vision::hybrid(&g).unwrap();
-        aztec_detect::debug(&bin);
-    }
-
-    #[test]
-    #[ignore]
-    fn debug_dump() {
-        let out = std::env::var("BARCODE_OUT").unwrap();
-        let text = std::env::var("BARCODE_TEXT").unwrap();
-        let f = Format::parse(&std::env::var("BARCODE_FORMAT").unwrap()).unwrap();
-        let src = printed(&text, f);
-        for (i, (name, cam)) in distortions().into_iter().enumerate() {
-            let img = photograph(&src, &cam, 1000 + i as u64);
-            std::fs::write(format!("{}/{:02}-{}.png", out, i, name.replace(' ', "_")), crate::barcode::png::encode(&img)).unwrap();
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn debug_aztec() {
-        let src = printed("Aztec camera test 0123456789", Format::Aztec);
-        for rot in [0.0, 17.0] {
-            let img = photograph(&src, &Camera { rotate: rot, ..Camera::default() }, 1);
-            let bin = vision::hybrid(&img).unwrap();
-            aztec_detect::debug(&bin);
-        }
     }
 }
