@@ -1,16 +1,17 @@
-//! XSLT 1.0 execution.
+//! XSLT execution (1.0, plus the XSLT 2.0 core).
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use camel_core::error::CamelError;
 use camel_core::value::Value;
 
-use super::number::{format_number, format_number_list, DecimalFormat};
+use super::number::{format_number, format_number_list_lang, DecimalFormat, NumberLang};
 use super::pattern::Pattern;
-use super::{resolve_href, Avt, AvtPart, Instr, Key, NumberSpec, SortSpec, Stylesheet, VarValue, WithParam};
+use super::{resolve_href, Avt, AvtPart, Function, GroupKind, Instr, Key, NumberSpec, SortSpec, Stylesheet, VarValue, WithParam};
 use crate::dom::{Document, NodeId, NodeType, QName};
 use crate::serialize::{Method, RAW_TEXT_TARGET};
 use crate::xpath::{axis_nodes, Ctx, Docs, Env, XNode, XPath, XPathError, XValue};
@@ -28,6 +29,8 @@ pub struct TransformResult {
     pub method: Method,
     /// `xsl:output media-type`, or the default for the method.
     pub media_type: String,
+    /// Secondary results written with `xsl:result-document` (`href`, serialized content).
+    pub secondary: Vec<(String, String)>,
 }
 
 type XR<T> = Result<T, String>;
@@ -49,6 +52,38 @@ enum GState {
 struct Out {
     doc: Document,
     stack: Vec<NodeId>,
+    /// Sequence capture (bodies of `xsl:function` and of variables with `as`).
+    items: Option<Vec<Item>>,
+    /// Root children of `doc` already recorded in `items`.
+    flushed: usize,
+}
+
+impl Out {
+    fn new() -> Out {
+        Out { doc: Document::new(), stack: vec![0], items: None, flushed: 0 }
+    }
+
+    /// Record root children constructed since the last flush as items.
+    fn flush(&mut self) {
+        let kids = self.doc.children(0).to_vec();
+        if let Some(items) = &mut self.items {
+            for &k in &kids[self.flushed..] {
+                items.push(Item::Node(k));
+            }
+        }
+        self.flushed = kids.len();
+    }
+}
+
+enum Item {
+    Val(XValue),
+    Node(NodeId),
+}
+
+/// The current group of `xsl:for-each-group`.
+struct Group {
+    items: Vec<XNode>,
+    key: XValue,
 }
 
 struct Exec<'s> {
@@ -63,6 +98,10 @@ struct Exec<'s> {
     messages: RefCell<Vec<String>>,
     depth: Cell<usize>,
     rules: RefCell<Vec<(usize, Option<Key>)>>,
+    groups: RefCell<Vec<Rc<Group>>>,
+    regex_groups: RefCell<Vec<Rc<Vec<String>>>>,
+    tunnel: RefCell<Vec<Rc<Vec<(Key, XValue)>>>>,
+    secondary: RefCell<Vec<(String, String)>>,
 }
 
 struct EvalEnv<'a, 's> {
@@ -95,6 +134,30 @@ impl Env for EvalEnv<'_, '_> {
         let s = |i: usize| args.get(i).map(|a| a.to_string_value(docs)).unwrap_or_default();
         let r: Result<XValue, String> = match (uri, local) {
             ("", "current") => Ok(XValue::Nodes(vec![self.current])),
+            ("", "current-group") if args.is_empty() => Ok(match self.ex.groups.borrow().last() {
+                Some(g) => XValue::Nodes(g.items.clone()),
+                None => XValue::Nodes(Vec::new()),
+            }),
+            ("", "current-grouping-key") if args.is_empty() => Ok(match self.ex.groups.borrow().last() {
+                Some(g) => g.key.clone(),
+                None => XValue::Nodes(Vec::new()),
+            }),
+            ("", "regex-group") if args.len() == 1 => {
+                let i = args[0].to_number(docs);
+                Ok(XValue::Str(match self.ex.regex_groups.borrow().last() {
+                    Some(g) if i >= 0.0 => g.get(i as usize).cloned().unwrap_or_default(),
+                    _ => String::new(),
+                }))
+            }
+            ("", "unparsed-text") if !args.is_empty() => {
+                let p = resolve_href(&s(0), self.ex.ss.base_dir.as_deref());
+                std::fs::read_to_string(&p).map(XValue::Str).map_err(|e| format!("Cannot read {}: {}", p.display(), e))
+            }
+            ("", "unparsed-text-available") if !args.is_empty() => Ok(XValue::Bool(resolve_href(&s(0), self.ex.ss.base_dir.as_deref()).is_file())),
+            (u, l) if !u.is_empty() && self.ex.ss.functions.contains_key(&((u.to_string(), l.to_string()), args.len())) => {
+                let f = self.ex.ss.functions[&((u.to_string(), l.to_string()), args.len())].clone();
+                self.ex.call_function(&f, l, args, ctx.node)
+            }
             ("", "key") => self.ex.key_fn(&s(0), args.get(1).cloned().unwrap_or(XValue::Str(String::new())), ctx.node.doc),
             ("", "document") => self.ex.document_fn(args),
             ("", "generate-id") => {
@@ -112,7 +175,9 @@ impl Env for EvalEnv<'_, '_> {
                 format_number(x, &s(1), &df).map(XValue::Str)
             }
             ("", "system-property") => Ok(match local_part(&s(0)) {
-                "version" => XValue::Num(1.0),
+                "version" => XValue::Num(if self.ex.ss.version >= 2.0 { 2.0 } else { 1.0 }),
+                "product-name" => XValue::Str("rust-camel".into()),
+                "supports-backwards-compatibility" => XValue::Str("yes".into()),
                 "vendor" => XValue::Str("rust-camel".into()),
                 "vendor-url" => XValue::Str("https://camel.apache.org".into()),
                 _ => XValue::Str(String::new()),
@@ -120,9 +185,17 @@ impl Env for EvalEnv<'_, '_> {
             ("", "element-available") => {
                 let n = s(0);
                 let l = local_part(&n);
-                Ok(XValue::Bool(n.contains(':') && SUPPORTED_INSTRUCTIONS.contains(&l)))
+                Ok(XValue::Bool(n.contains(':') && (SUPPORTED_INSTRUCTIONS.contains(&l) || (self.ex.ss.version >= 2.0 && super::XSLT2_IMPLEMENTED.contains(&l)))))
             }
-            ("", "function-available") => Ok(XValue::Bool(FUNCTIONS.contains(&local_part(&s(0))))),
+            ("", "function-available") => {
+                let name = s(0);
+                let l = local_part(&name);
+                let user = match name.split_once(':') {
+                    Some((p, _)) => self.ex.ss.functions.keys().any(|((u, fl), _)| fl == l && !u.is_empty() && !p.is_empty()),
+                    None => false,
+                };
+                Ok(XValue::Bool(user || FUNCTIONS.contains(&l) || (self.ex.ss.version >= 2.0 && crate::xpath::f2::FUNCTION_NAMES.contains(&l))))
+            }
             ("", "unparsed-entity-uri") => {
                 let d = docs.get(ctx.node.doc);
                 Ok(XValue::Str(d.unparsed_entities.get(&s(0)).cloned().unwrap_or_default()))
@@ -264,7 +337,7 @@ fn run_inner(ss: &Stylesheet, mut source: Document, params: &[(String, Value)]) 
     let ex = Exec {
         ss,
         docs: Docs::new(source),
-        outs: RefCell::new(vec![Out { doc: Document::new(), stack: vec![0] }]),
+        outs: RefCell::new(vec![Out::new()]),
         globals: RefCell::new(HashMap::new()),
         ext_params: ext,
         key_index: RefCell::new(HashMap::new()),
@@ -273,6 +346,10 @@ fn run_inner(ss: &Stylesheet, mut source: Document, params: &[(String, Value)]) 
         messages: RefCell::new(Vec::new()),
         depth: Cell::new(0),
         rules: RefCell::new(Vec::new()),
+        groups: RefCell::new(Vec::new()),
+        regex_groups: RefCell::new(Vec::new()),
+        tunnel: RefCell::new(vec![Rc::new(Vec::new())]),
+        secondary: RefCell::new(Vec::new()),
     };
     let root = Frame { node: XNode::new(0, 0), pos: 1, size: 1 };
     ex.process_node(root, &None, &[])?;
@@ -287,7 +364,7 @@ fn run_inner(ss: &Stylesheet, mut source: Document, params: &[(String, Value)]) 
         }
         .to_string()
     });
-    Ok(TransformResult { output, tree: out.doc, messages: ex.messages.into_inner(), method, media_type })
+    Ok(TransformResult { output, tree: out.doc, messages: ex.messages.into_inner(), method, media_type, secondary: ex.secondary.into_inner() })
 }
 
 impl<'s> Exec<'s> {
@@ -304,6 +381,10 @@ impl<'s> Exec<'s> {
     fn eval_nodes(&self, xp: &XPath, f: &Frame, locals: &[(Key, XValue)]) -> XR<Vec<XNode>> {
         match self.eval(xp, f, locals)? {
             XValue::Nodes(n) => Ok(n),
+            other if self.ss.version >= 2.0 => match self.docs.atomic_sequence(&[other.to_string_value(&self.docs)]) {
+                XValue::Nodes(n) => Ok(n),
+                _ => Ok(Vec::new()),
+            },
             other => Err(format!("Expression '{}' must evaluate to a node-set but returned a {}", xp.as_str(), other.type_name())),
         }
     }
@@ -359,11 +440,50 @@ impl<'s> Exec<'s> {
                 let doc = self.build_tree(b, f, &mut l)?;
                 Ok(XValue::Nodes(vec![XNode::new(self.docs.add(doc), 0)]))
             }
+            VarValue::Seq(b) => {
+                let mut l = locals.to_vec();
+                self.capture(b, f, &mut l)
+            }
         }
     }
 
+    /// Evaluate a body as a sequence (`xsl:sequence` items and constructed nodes, in order).
+    fn capture(&self, body: &[Instr], f: &Frame, locals: &mut Vec<(Key, XValue)>) -> XR<XValue> {
+        let mut o = Out::new();
+        o.items = Some(Vec::new());
+        self.outs.borrow_mut().push(o);
+        let r = self.exec_body(body, f, locals);
+        let mut out = self.outs.borrow_mut().pop().unwrap();
+        r?;
+        out.flush();
+        let items = out.items.take().unwrap_or_default();
+        let d = self.docs.add(out.doc);
+        let vals: Vec<XValue> = items
+            .into_iter()
+            .map(|i| match i {
+                Item::Val(v) => v,
+                Item::Node(id) => XValue::Nodes(vec![XNode::new(d, id)]),
+            })
+            .collect();
+        Ok(crate::xpath::sequence(vals, &self.docs))
+    }
+
+    /// Call a stylesheet function (`xsl:function`).
+    fn call_function(&self, func: &Function, name: &str, args: &[XValue], node: XNode) -> XR<XValue> {
+        let d = self.depth.get() + 1;
+        if d > MAX_DEPTH {
+            return Err(format!("Function recursion is too deep in {}() (more than {} nested calls)", name, MAX_DEPTH));
+        }
+        self.depth.set(d);
+        let mut locals: Vec<(Key, XValue)> = func.params.iter().cloned().zip(args.iter().cloned()).collect();
+        let f = Frame { node, pos: 1, size: 1 };
+        let r = self.capture(&func.body, &f, &mut locals);
+        self.depth.set(d - 1);
+        r
+    }
+
     fn build_tree(&self, body: &[Instr], f: &Frame, locals: &mut Vec<(Key, XValue)>) -> XR<Document> {
-        self.outs.borrow_mut().push(Out { doc: Document::new(), stack: vec![0] });
+        self.outs.borrow_mut().push(Out::new());
         let r = self.exec_body(body, f, locals);
         let out = self.outs.borrow_mut().pop().unwrap();
         r?;
@@ -637,8 +757,10 @@ impl<'s> Exec<'s> {
         let rule = &self.ss.templates[t];
         let mut locals: Vec<(Key, XValue)> = Vec::new();
         let r = (|| -> XR<()> {
+            let tunnel = self.tunnel.borrow().last().cloned().unwrap_or_default();
             for p in rule.params.iter() {
-                let v = match params.iter().find(|(k, _)| *k == p.name) {
+                let given = if p.tunnel { tunnel.iter().find(|(k, _)| *k == p.name) } else { params.iter().find(|(k, _)| *k == p.name) };
+                let v = match given {
                     Some((_, v)) => v.clone(),
                     None => self.var_value(&p.value, &f, &locals)?,
                 };
@@ -655,40 +777,86 @@ impl<'s> Exec<'s> {
 
     fn eval_params(&self, params: &[WithParam], f: &Frame, locals: &[(Key, XValue)]) -> XR<Vec<(Key, XValue)>> {
         let mut out = Vec::new();
-        for p in params {
+        for p in params.iter().filter(|p| !p.tunnel) {
             out.push((p.name.clone(), self.var_value(&p.value, f, locals)?));
         }
         Ok(out)
+    }
+
+    /// Evaluate tunnel parameters; returns true when a new tunnel set was pushed.
+    fn push_tunnel(&self, params: &[WithParam], f: &Frame, locals: &[(Key, XValue)]) -> XR<bool> {
+        if !params.iter().any(|p| p.tunnel) {
+            return Ok(false);
+        }
+        let mut set: Vec<(Key, XValue)> = self.tunnel.borrow().last().map(|t| t.as_ref().clone()).unwrap_or_default();
+        for p in params.iter().filter(|p| p.tunnel) {
+            let v = self.var_value(&p.value, f, locals)?;
+            set.retain(|(k, _)| *k != p.name);
+            set.push((p.name.clone(), v));
+        }
+        self.tunnel.borrow_mut().push(Rc::new(set));
+        Ok(true)
+    }
+
+    fn with_tunnel<T>(&self, params: &[WithParam], f: &Frame, locals: &[(Key, XValue)], run: impl FnOnce() -> XR<T>) -> XR<T> {
+        let pushed = self.push_tunnel(params, f, locals)?;
+        let r = run();
+        if pushed {
+            self.tunnel.borrow_mut().pop();
+        }
+        r
     }
 
     fn sort(&self, nodes: Vec<XNode>, sorts: &[SortSpec], f: &Frame, locals: &[(Key, XValue)]) -> XR<Vec<XNode>> {
         if sorts.is_empty() || nodes.len() < 2 {
             return Ok(nodes);
         }
+        let size = nodes.len();
+        let order = self.sort_indices(size, sorts, f, locals, &mut |i, s| {
+            let nf = Frame { node: nodes[i], pos: i + 1, size };
+            self.eval_string(&s.select, &nf, locals)
+        })?;
+        Ok(order.into_iter().map(|i| nodes[i]).collect())
+    }
+
+    /// Sort `n` items by `xsl:sort` keys; `key(i, spec)` gives item `i`'s key string.
+    fn sort_indices(&self, n: usize, sorts: &[SortSpec], f: &Frame, locals: &[(Key, XValue)], key: &mut dyn FnMut(usize, &SortSpec) -> XR<String>) -> XR<Vec<usize>> {
         enum K {
             Num(f64),
-            Text(String),
+            Text(Vec<u32>, String, String),
         }
-        let size = nodes.len();
         let mut specs = Vec::new();
         for s in sorts {
             let dt = self.avt(&s.data_type, f, locals)?;
             let desc = self.avt(&s.order, f, locals)? == "descending";
             let lower_first = self.avt(&s.case_order, f, locals)? == "lower-first";
-            specs.push((dt == "number", desc, lower_first));
+            let lang = match &s.lang {
+                Some(a) => self.avt(a, f, locals)?,
+                None => String::new(),
+            };
+            let collation = match &s.collation {
+                Some(a) => Some(self.avt(a, f, locals)?),
+                None => None,
+            };
+            let coll = Collation::new(collation.as_deref(), &lang)?;
+            specs.push((dt == "number", desc, lower_first, coll));
         }
-        let mut keys: Vec<(usize, Vec<K>)> = Vec::with_capacity(size);
-        for (i, &n) in nodes.iter().enumerate() {
-            let nf = Frame { node: n, pos: i + 1, size };
+        let mut keys: Vec<(usize, Vec<K>)> = Vec::with_capacity(n);
+        for i in 0..n {
             let mut ks = Vec::new();
-            for (s, (num, _, _)) in sorts.iter().zip(&specs) {
-                let v = self.eval_string(&s.select, &nf, locals)?;
-                ks.push(if *num { K::Num(crate::xpath::string_to_number(&v)) } else { K::Text(v) });
+            for (s, (num, _, _, coll)) in sorts.iter().zip(&specs) {
+                let v = key(i, s)?;
+                ks.push(if *num {
+                    K::Num(crate::xpath::string_to_number(&v))
+                } else {
+                    let (p, sec) = coll.keys(&v);
+                    K::Text(p, sec, v)
+                });
             }
             keys.push((i, ks));
         }
         keys.sort_by(|a, b| {
-            for (j, (_, desc, lower_first)) in specs.iter().enumerate() {
+            for (j, (_, desc, lower_first, coll)) in specs.iter().enumerate() {
                 let o = match (&a.1[j], &b.1[j]) {
                     (K::Num(x), K::Num(y)) => match (x.is_nan(), y.is_nan()) {
                         (true, true) => Ordering::Equal,
@@ -696,14 +864,26 @@ impl<'s> Exec<'s> {
                         (false, true) => Ordering::Greater,
                         _ => x.partial_cmp(y).unwrap_or(Ordering::Equal),
                     },
-                    (K::Text(x), K::Text(y)) => x.to_lowercase().cmp(&y.to_lowercase()).then_with(|| {
-                        let c = x.cmp(y); // uppercase sorts before lowercase in code point order
-                        if *lower_first {
-                            c.reverse()
+                    (K::Text(pa, sa, x), K::Text(pb, sb, y)) => {
+                        if coll.codepoint {
+                            x.cmp(y)
                         } else {
-                            c
+                            let o = pa.cmp(pb);
+                            let o = if coll.strength >= 2 { o.then_with(|| sa.cmp(sb)) } else { o };
+                            if coll.strength >= 3 {
+                                o.then_with(|| {
+                                    let c = x.cmp(y); // uppercase sorts before lowercase in code point order
+                                    if *lower_first {
+                                        c.reverse()
+                                    } else {
+                                        c
+                                    }
+                                })
+                            } else {
+                                o
+                            }
                         }
-                    }),
+                    }
                     _ => Ordering::Equal,
                 };
                 let o = if *desc { o.reverse() } else { o };
@@ -713,7 +893,7 @@ impl<'s> Exec<'s> {
             }
             Ordering::Equal
         });
-        Ok(keys.into_iter().map(|(i, _)| nodes[i]).collect())
+        Ok(keys.into_iter().map(|(i, _)| i).collect())
     }
 
     fn number(&self, spec: &NumberSpec, f: &Frame, locals: &[(Key, XValue)]) -> XR<String> {
@@ -815,7 +995,15 @@ impl<'s> Exec<'s> {
             }
             _ => None,
         };
-        Ok(format_number_list(&nums, &format, grouping))
+        let letter_value = match &spec.letter_value {
+            Some(a) => self.avt(a, f, locals)?,
+            None => String::new(),
+        };
+        let lang = match &spec.lang {
+            Some(a) => self.avt(a, f, locals)?,
+            None => String::new(),
+        };
+        Ok(format_number_list_lang(&nums, &format, grouping, NumberLang { letter_value: &letter_value, lang: &lang }))
     }
 
     fn resolve_name(&self, name: &str, ns: Option<String>, ns_ctx: &[(String, String)], element: bool) -> XR<QName> {
@@ -850,6 +1038,200 @@ impl<'s> Exec<'s> {
         Ok(QName::ns(prefix, local, uri))
     }
 
+    /// Find the next template rule below `(precedence, priority, order)` (`xsl:next-match`).
+    fn find_template_below(&self, n: XNode, mode: &Option<Key>, below: (usize, f64, usize)) -> XR<Option<usize>> {
+        let mut best: Option<usize> = None;
+        for (i, t) in self.ss.templates.iter().enumerate() {
+            let Some(p) = &t.pattern else { continue };
+            if t.mode != *mode {
+                continue;
+            }
+            let k = (t.precedence, t.priority, t.order);
+            if k.partial_cmp(&below) != Some(Ordering::Less) {
+                continue;
+            }
+            if let Some(bi) = best {
+                let b = &self.ss.templates[bi];
+                if k.partial_cmp(&(b.precedence, b.priority, b.order)) != Some(Ordering::Greater) {
+                    continue;
+                }
+            }
+            let env = EvalEnv { ex: self, locals: &[], current: n };
+            if p.matches(&self.docs, n, &env).map_err(xerr)? {
+                best = Some(i);
+            }
+        }
+        Ok(best)
+    }
+
+    /// Whether a node is an item of an atomic sequence (a text node directly under a
+    /// document node).
+    fn is_atomic_item(&self, n: XNode) -> bool {
+        if n.ns != 0 {
+            return false;
+        }
+        let d = self.docs.get(n.doc);
+        let id = n.node_id();
+        d.node_type(id) == NodeType::Text && d.parent(id) == Some(0)
+    }
+
+    /// `xsl:sequence`: add items to a captured sequence, or write them to the result tree.
+    fn emit_sequence(&self, v: XValue) {
+        let captured = self.with_out(|o| {
+            if o.items.is_some() && o.stack.len() == 1 {
+                o.flush();
+                o.items.as_mut().unwrap().push(Item::Val(v.clone()));
+                true
+            } else {
+                false
+            }
+        });
+        if captured {
+            return;
+        }
+        let mut prev_atomic = false;
+        for item in crate::xpath::items(v) {
+            match item {
+                XValue::Nodes(ns) => {
+                    for n in ns {
+                        let atomic = self.is_atomic_item(n);
+                        if atomic && prev_atomic {
+                            self.out_text(" ");
+                        }
+                        self.copy_node(n);
+                        prev_atomic = atomic;
+                    }
+                }
+                other => {
+                    if prev_atomic {
+                        self.out_text(" ");
+                    }
+                    self.out_text(&other.to_string_value(&self.docs));
+                    prev_atomic = true;
+                }
+            }
+        }
+    }
+
+    /// Emit nodes in the given order (not document order) as a sequence.
+    fn emit_ordered(&self, nodes: Vec<XNode>) {
+        let captured = self.with_out(|o| o.items.is_some() && o.stack.len() == 1);
+        if captured {
+            // copy into the capture document so the order is preserved
+            let strings: Vec<String> = nodes.iter().map(|n| self.docs.string_value(*n)).collect();
+            if nodes.iter().all(|n| self.is_atomic_item(*n)) {
+                self.emit_sequence(self.docs.atomic_sequence(&strings));
+            } else {
+                self.with_out(|o| o.flush());
+                for n in nodes {
+                    self.copy_node(n);
+                }
+            }
+            return;
+        }
+        for n in nodes {
+            self.emit_sequence(XValue::Nodes(vec![n]));
+        }
+    }
+
+    fn for_each_group(&self, select: &XPath, kind: &GroupKind, sorts: &[SortSpec], body: &[Instr], f: &Frame, locals: &mut Vec<(Key, XValue)>) -> XR<()> {
+        let population = self.eval_nodes(select, f, locals)?;
+        let size = population.len();
+        let mut groups: Vec<Group> = Vec::new();
+        match kind {
+            GroupKind::By(key) => {
+                let mut index: HashMap<String, usize> = HashMap::new();
+                for (i, &n) in population.iter().enumerate() {
+                    let nf = Frame { node: n, pos: i + 1, size };
+                    let v = self.eval(key, &nf, locals)?;
+                    let mut seen_here: Vec<usize> = Vec::new();
+                    for k in crate::xpath::items(v) {
+                        let ks = k.to_string_value(&self.docs);
+                        let gi = match index.get(&ks) {
+                            Some(&gi) => gi,
+                            None => {
+                                let key = match &k {
+                                    XValue::Nodes(_) => XValue::Str(ks.clone()),
+                                    other => other.clone(),
+                                };
+                                groups.push(Group { items: Vec::new(), key });
+                                index.insert(ks, groups.len() - 1);
+                                groups.len() - 1
+                            }
+                        };
+                        if !seen_here.contains(&gi) {
+                            groups[gi].items.push(n);
+                            seen_here.push(gi);
+                        }
+                    }
+                }
+            }
+            GroupKind::Adjacent(key) => {
+                let mut last: Option<String> = None;
+                for (i, &n) in population.iter().enumerate() {
+                    let nf = Frame { node: n, pos: i + 1, size };
+                    let v = self.eval(key, &nf, locals)?;
+                    let ks = v.to_string_value(&self.docs);
+                    if last.as_deref() == Some(ks.as_str()) {
+                        groups.last_mut().unwrap().items.push(n);
+                    } else {
+                        let key = match &v {
+                            XValue::Nodes(_) => XValue::Str(ks.clone()),
+                            other => other.clone(),
+                        };
+                        groups.push(Group { items: vec![n], key });
+                        last = Some(ks);
+                    }
+                }
+            }
+            GroupKind::StartingWith(p) => {
+                for &n in &population {
+                    if groups.is_empty() || self.pattern_matches(p, n)? {
+                        groups.push(Group { items: vec![n], key: XValue::Nodes(Vec::new()) });
+                    } else {
+                        groups.last_mut().unwrap().items.push(n);
+                    }
+                }
+            }
+            GroupKind::EndingWith(p) => {
+                let mut open = false;
+                for &n in &population {
+                    if !open {
+                        groups.push(Group { items: Vec::new(), key: XValue::Nodes(Vec::new()) });
+                        open = true;
+                    }
+                    groups.last_mut().unwrap().items.push(n);
+                    if self.pattern_matches(p, n)? {
+                        open = false;
+                    }
+                }
+            }
+        }
+        let groups: Vec<Rc<Group>> = groups.into_iter().map(Rc::new).collect();
+        let order: Vec<usize> = if sorts.is_empty() {
+            (0..groups.len()).collect()
+        } else {
+            let gsize = groups.len();
+            self.sort_indices(gsize, sorts, f, locals, &mut |i, s| {
+                self.groups.borrow_mut().push(groups[i].clone());
+                let nf = Frame { node: groups[i].items[0], pos: i + 1, size: gsize };
+                let r = self.eval_string(&s.select, &nf, locals);
+                self.groups.borrow_mut().pop();
+                r
+            })?
+        };
+        let gsize = order.len();
+        for (pos, gi) in order.into_iter().enumerate() {
+            let g = groups[gi].clone();
+            let nf = Frame { node: g.items[0], pos: pos + 1, size: gsize };
+            self.groups.borrow_mut().push(g);
+            let r = self.exec_body(body, &nf, locals);
+            self.groups.borrow_mut().pop();
+            r?;
+        }
+        Ok(())
+    }
+
     fn exec_body(&self, body: &[Instr], f: &Frame, locals: &mut Vec<(Key, XValue)>) -> XR<()> {
         let mark = locals.len();
         let r = self.exec_instrs(body, f, locals);
@@ -862,8 +1244,17 @@ impl<'s> Exec<'s> {
             match ins {
                 Instr::Text(s) => self.out_text(s),
                 Instr::RawText(s) => self.out_raw(s),
-                Instr::ValueOf { select, raw } => {
-                    let s = self.eval_string(select, f, locals)?;
+                Instr::ValueOf { select, raw, separator, v2 } => {
+                    let s = if *v2 {
+                        let sep = match separator {
+                            Some(a) => self.avt(a, f, locals)?,
+                            None => " ".to_string(),
+                        };
+                        let v = self.eval(select, f, locals)?;
+                        crate::xpath::items(v).iter().map(|i| i.to_string_value(&self.docs)).collect::<Vec<_>>().join(&sep)
+                    } else {
+                        self.eval_string(select, f, locals)?
+                    };
                     if *raw {
                         self.out_raw(&s);
                     } else {
@@ -940,15 +1331,142 @@ impl<'s> Exec<'s> {
                     let nodes = self.sort(nodes, sorts, f, locals)?;
                     let pv = self.eval_params(params, f, locals)?;
                     let size = nodes.len();
-                    for (i, n) in nodes.into_iter().enumerate() {
-                        self.process_node(Frame { node: n, pos: i + 1, size }, mode, &pv)?;
-                    }
+                    self.with_tunnel(params, f, locals, || {
+                        for (i, n) in nodes.into_iter().enumerate() {
+                            self.process_node(Frame { node: n, pos: i + 1, size }, mode, &pv)?;
+                        }
+                        Ok(())
+                    })?;
                 }
                 Instr::CallTemplate { name, params } => {
                     let t = *self.ss.named.get(name).ok_or_else(|| format!("Could not find template named: {}", name.1))?;
                     let pv = self.eval_params(params, f, locals)?;
                     let mode = self.rules.borrow().last().and_then(|(_, m)| m.clone());
-                    self.invoke(t, *f, &pv, &mode)?;
+                    self.with_tunnel(params, f, locals, || self.invoke(t, *f, &pv, &mode))?;
+                }
+                Instr::NextMatch { params } => {
+                    let cur = self.rules.borrow().last().cloned();
+                    let Some((t, mode)) = cur else { return Err("xsl:next-match used outside of a template rule".into()) };
+                    let pv = self.eval_params(params, f, locals)?;
+                    let below = { let r = &self.ss.templates[t]; (r.precedence, r.priority, r.order) };
+                    self.with_tunnel(params, f, locals, || match self.find_template_below(f.node, &mode, below)? {
+                        Some(t2) => self.invoke(t2, *f, &pv, &mode),
+                        None => self.builtin(*f, &mode),
+                    })?;
+                }
+                Instr::ValueOfBody { body, separator, raw } => {
+                    let v = self.capture(body, f, locals)?;
+                    let sep = match separator {
+                        Some(a) => self.avt(a, f, locals)?,
+                        None => String::new(),
+                    };
+                    let s = crate::xpath::items(v).iter().map(|i| i.to_string_value(&self.docs)).collect::<Vec<_>>().join(&sep);
+                    if *raw {
+                        self.out_raw(&s);
+                    } else {
+                        self.out_text(&s);
+                    }
+                }
+                Instr::Sequence(select) => {
+                    let v = self.eval(select, f, locals)?;
+                    self.emit_sequence(v);
+                }
+                Instr::PerformSort { select, sorts, body } => {
+                    let nodes = match select {
+                        Some(s) => self.eval_nodes(s, f, locals)?,
+                        None => match self.capture(body, f, locals)? {
+                            XValue::Nodes(n) => n,
+                            other => match self.docs.atomic_sequence(&[other.to_string_value(&self.docs)]) {
+                                XValue::Nodes(n) => n,
+                                _ => Vec::new(),
+                            },
+                        },
+                    };
+                    let sorted = self.sort(nodes, sorts, f, locals)?;
+                    // the sorted order is kept as an atomic / node sequence in sort order
+                    self.emit_ordered(sorted);
+                }
+                Instr::ForEachGroup { select, kind, sorts, body } => self.for_each_group(select, kind, sorts, body, f, locals)?,
+                Instr::AnalyzeString { select, regex, flags, matching, non_matching } => {
+                    let input = self.eval_string(select, f, locals)?;
+                    let pattern = self.avt(regex, f, locals)?;
+                    let flags = self.avt(flags, f, locals)?;
+                    let re = crate::xpath::f2::regex(&pattern, &flags).map_err(xerr)?;
+                    if re.is_match("") {
+                        return Err(format!("The regular expression in xsl:analyze-string must not match a zero-length string: {}", pattern));
+                    }
+                    let mut pieces: Vec<(bool, String, Vec<String>)> = Vec::new();
+                    let mut last = 0;
+                    for c in re.captures_iter(&input) {
+                        let Some((s0, e0)) = c.span(0) else { continue };
+                        if s0 > last {
+                            pieces.push((false, input[last..s0].to_string(), Vec::new()));
+                        }
+                        let groups: Vec<String> = (0..c.len()).map(|i| c.get(i).unwrap_or("").to_string()).collect();
+                        pieces.push((true, input[s0..e0].to_string(), groups));
+                        last = e0;
+                    }
+                    if last < input.len() {
+                        pieces.push((false, input[last..].to_string(), Vec::new()));
+                    }
+                    let size = pieces.len();
+                    for (i, (m, text, groups)) in pieces.into_iter().enumerate() {
+                        let node = match self.docs.atomic_sequence(&[text]) {
+                            XValue::Nodes(n) => n[0],
+                            _ => unreachable!(),
+                        };
+                        let nf = Frame { node, pos: i + 1, size };
+                        if m {
+                            self.regex_groups.borrow_mut().push(Rc::new(groups));
+                            let r = self.exec_body(matching, &nf, locals);
+                            self.regex_groups.borrow_mut().pop();
+                            r?;
+                        } else {
+                            self.exec_body(non_matching, &nf, locals)?;
+                        }
+                    }
+                }
+                Instr::ResultDocument { href, method, indent, omit_decl, body } => {
+                    let href = self.avt(href, f, locals)?;
+                    if href.trim().is_empty() {
+                        self.exec_body(body, f, locals)?;
+                        continue;
+                    }
+                    let doc = self.build_tree(body, f, locals)?;
+                    let mut opts = self.ss.output.clone();
+                    if let Some(m) = method {
+                        opts.method = Some(match self.avt(m, f, locals)?.trim() {
+                            "html" => Method::Html,
+                            "text" => Method::Text,
+                            _ => Method::Xml,
+                        });
+                    }
+                    if let Some(i) = indent {
+                        opts.indent = self.avt(i, f, locals)?.trim() == "yes";
+                    }
+                    if let Some(o) = omit_decl {
+                        opts.omit_xml_declaration = self.avt(o, f, locals)?.trim() == "yes";
+                    }
+                    let text = crate::serialize::serialize(&doc, 0, &opts);
+                    if self.secondary.borrow().iter().any(|(h, _)| *h == href) {
+                        return Err(format!("xsl:result-document: cannot write more than one result document to {}", href));
+                    }
+                    let path = resolve_href(&href, None);
+                    if let Some(parent) = path.parent() {
+                        if !parent.as_os_str().is_empty() {
+                            std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create directory {}: {}", parent.display(), e))?;
+                        }
+                    }
+                    std::fs::write(&path, text.as_bytes()).map_err(|e| format!("Cannot write result document {}: {}", path.display(), e))?;
+                    self.secondary.borrow_mut().push((href, text));
+                }
+                Instr::Namespace { name, select, body } => {
+                    let prefix = self.avt(name, f, locals)?;
+                    let uri = match select {
+                        Some(x) => self.eval_string(x, f, locals)?,
+                        None => self.body_string(body, f, locals)?,
+                    };
+                    self.out_namespace(prefix.trim(), &uri);
                 }
                 Instr::ApplyImports => {
                     let cur = self.rules.borrow().last().cloned();
@@ -1036,10 +1554,114 @@ impl<'s> Exec<'s> {
                     }
                 }
                 Instr::Unsupported(what) => {
-                    return Err(format!("{} is not supported by this XSLT 1.0 processor and has no xsl:fallback", what));
+                    return Err(format!("{} is not supported by this XSLT processor and has no xsl:fallback", what));
                 }
             }
         }
         Ok(())
     }
+}
+
+/// A collation for `xsl:sort` (`lang` / `collation`).
+struct Collation {
+    codepoint: bool,
+    /// 1 = primary (base letters), 2 = secondary (+ accents), 3 = tertiary (+ case).
+    strength: u8,
+    /// Letters sorted after `z` for the language (Nordic alphabets).
+    tail: &'static [char],
+}
+
+impl Collation {
+    fn new(uri: Option<&str>, lang: &str) -> XR<Collation> {
+        let mut c = Collation { codepoint: false, strength: 3, tail: &[] };
+        let mut lang = lang.to_ascii_lowercase();
+        if let Some(u) = uri {
+            let u = u.trim();
+            if u == "http://www.w3.org/2005/xpath-functions/collation/codepoint" || u == "http://www.w3.org/2005/04/xpath-functions/collation/codepoint" {
+                c.codepoint = true;
+                return Ok(c);
+            }
+            let known = ["http://www.w3.org/2013/collation/UCA", "http://saxon.sf.net/collation", "http://www.w3.org/2005/xpath-functions/collation/html-ascii-case-insensitive"];
+            if !known.iter().any(|k| u.starts_with(k)) {
+                return Err(format!("Unknown collation {}", u));
+            }
+            if u.ends_with("html-ascii-case-insensitive") {
+                c.strength = 2;
+            }
+            if let Some((_, q)) = u.split_once('?') {
+                for kv in q.split([';', '&']) {
+                    let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+                    match k {
+                        "strength" => {
+                            c.strength = match v {
+                                "primary" | "1" => 1,
+                                "secondary" | "2" => 2,
+                                _ => 3,
+                            }
+                        }
+                        "lang" => lang = v.to_ascii_lowercase(),
+                        "ignore-case" if v == "yes" => c.strength = c.strength.min(2),
+                        _ => {}
+                    }
+                }
+            }
+        }
+        c.tail = match lang.split(['-', '_']).next().unwrap_or("") {
+            "sv" | "fi" => &['å', 'ä', 'ö'],
+            "da" | "no" | "nb" | "nn" => &['æ', 'ø', 'å'],
+            _ => &[],
+        };
+        Ok(c)
+    }
+
+    /// Primary key (base letters, case-folded) and secondary key (accents kept, lower case).
+    fn keys(&self, s: &str) -> (Vec<u32>, String) {
+        let lower = s.to_lowercase();
+        let mut primary = Vec::with_capacity(lower.len());
+        for ch in lower.chars() {
+            if let Some(i) = self.tail.iter().position(|&t| t == ch) {
+                primary.push('z' as u32);
+                primary.push(0x10_0000 + i as u32);
+                continue;
+            }
+            match fold_accent(ch) {
+                Some(b) => {
+                    for c in b.chars() {
+                        primary.push(c as u32);
+                    }
+                }
+                None => primary.push(ch as u32),
+            }
+        }
+        (primary, lower)
+    }
+}
+
+/// The base letter(s) of an accented Latin letter.
+fn fold_accent(c: char) -> Option<&'static str> {
+    Some(match c {
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => "a",
+        'æ' => "ae",
+        'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => "c",
+        'ď' | 'đ' => "d",
+        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
+        'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
+        'ĥ' | 'ħ' => "h",
+        'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
+        'ĵ' => "j",
+        'ķ' => "k",
+        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
+        'ñ' | 'ń' | 'ņ' | 'ň' => "n",
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => "o",
+        'œ' => "oe",
+        'ŕ' | 'ŗ' | 'ř' => "r",
+        'ś' | 'ŝ' | 'ş' | 'š' => "s",
+        'ß' => "ss",
+        'ţ' | 'ť' | 'ŧ' => "t",
+        'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => "u",
+        'ŵ' => "w",
+        'ý' | 'ÿ' | 'ŷ' => "y",
+        'ź' | 'ż' | 'ž' => "z",
+        _ => return None,
+    })
 }

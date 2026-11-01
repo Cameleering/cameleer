@@ -7,7 +7,7 @@
 //!   namespace`, `declare variable $v [as T] := expr` / `external [:= default]`,
 //!   `declare function local:f($a as T, ...) as T { ... }` (recursive), `declare
 //!   boundary-space`, `declare default order empty`, `declare option` (ignored), other
-//!   setters accepted and ignored. No library modules, schema import or schema types.
+//!   setters accepted and ignored. No schema import or schema types.
 //! * FLWOR: `for $x [as T] [at $i] in`, `let $x [as T] :=`, `where`, `[stable] order by ...
 //!   [ascending|descending] [empty greatest|least]`, `return`; XQuery 3.0 `count $n` and
 //!   `group by $k [:= expr]`.
@@ -36,6 +36,20 @@
 //!   `current-dateTime`, `number`, `round`, `floor`, `ceiling`, `abs`, `boolean`, `not`,
 //!   `name`, `local-name`, `root`, date component accessors, `error`, `trace`, `serialize`,
 //!   `parse-xml`, `math:*`...).
+//! * XQuery 3.1: maps (`map { k : v }`, `map:*`), arrays (`[a, b]`, `array { }`,
+//!   `array:*`), lookups (`$m?key`, `?*`, unary `?k`), inline functions, named function
+//!   references (`local:f#1`), dynamic calls, partial application (`f(?, 1)`), the arrow
+//!   operator `=>`, and `for-each`, `filter`, `fold-left`, `fold-right`, `for-each-pair`,
+//!   `sort`, `apply`, `function-arity`, `function-name`, `function-lookup`.
+//! * Library modules (`module namespace p = "uri";`) imported with `import module namespace
+//!   p = "uri" at "file.xqm";` (relative to the query file) or registered with
+//!   [`register_module`].
+//! * Arbitrary-precision `xs:decimal` arithmetic ([`decimal`]), date / time / duration
+//!   arithmetic and accessors ([`datetime`]), timezone adjustment.
+//! * XQuery Update Facility basics ([`update`]): `insert node(s) ... into | as first into |
+//!   as last into | before | after`, `delete node(s)`, `replace node ... with`, `replace
+//!   value of node`, `rename node ... as`, and `copy $c := ... modify ... return`. An
+//!   updating query applies its pending updates to the context document and returns it.
 //!
 //! ```
 //! use camel_xml::xquery::XQuery;
@@ -46,10 +60,14 @@
 //! ```
 
 pub mod ast;
+pub mod datetime;
+pub mod decimal;
 mod eval;
 pub mod funcs;
+mod hof;
 mod parse;
 pub mod types;
+pub mod update;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -78,6 +96,24 @@ pub const LOCAL_NS: &str = "http://www.w3.org/2005/xquery-local-functions";
 pub const ERR_NS: &str = "http://www.w3.org/2005/xqt-errors";
 /// Math functions (`math:`).
 pub const MATH_NS: &str = "http://www.w3.org/2005/xpath-functions/math";
+/// Map functions (`map:`).
+pub const MAP_NS: &str = "http://www.w3.org/2005/xpath-functions/map";
+/// Array functions (`array:`).
+pub const ARRAY_NS: &str = "http://www.w3.org/2005/xpath-functions/array";
+
+static MODULES: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Register the source of a library module for `import module namespace p = "uri";`
+/// without an `at` location hint (Saxon's module URI resolver).
+pub fn register_module(uri: &str, source: &str) {
+    let mut m = MODULES.lock().unwrap_or_else(|e| e.into_inner());
+    m.retain(|(u, _)| u != uri);
+    m.push((uri.to_string(), source.to_string()));
+}
+
+pub(crate) fn registered_module(uri: &str) -> Option<String> {
+    MODULES.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(u, _)| u == uri).map(|(_, s)| s.clone())
+}
 
 /// Stack size of the evaluation thread (deeply recursive user functions).
 const EVAL_STACK: usize = 256 * 1024 * 1024;
@@ -104,15 +140,21 @@ impl XQuery {
     /// Compile a query with extra `(prefix, uri)` namespace bindings.
     pub fn compile(text: &str, namespaces: &[(String, String)]) -> XqResult<XQuery> {
         let module = parse::parse_module(text, namespaces)?;
+        if module.library_ns.is_some() {
+            return Err(XqError::static_err("XQST0009", "A library module cannot be evaluated (a main module is required)"));
+        }
         Ok(XQuery { text: text.to_string(), module, base_dir: None, strip_whitespace: false })
     }
 
     /// Compile a query file (`doc()` resolves relative paths against its directory).
     pub fn compile_file(path: &Path, namespaces: &[(String, String)]) -> XqResult<XQuery> {
         let text = std::fs::read_to_string(path).map_err(|e| XqError::static_err("XQST0059", format!("Cannot read query file {}: {}", path.display(), e)))?;
-        let mut q = XQuery::compile(&text, namespaces)?;
-        q.base_dir = path.parent().map(|p| p.to_path_buf());
-        Ok(q)
+        let base = path.parent().map(|p| p.to_path_buf());
+        let module = parse::parse_module_at(&text, namespaces, base.as_deref(), 0)?;
+        if module.library_ns.is_some() {
+            return Err(XqError::static_err("XQST0009", format!("{} is a library module, not a main module", path.display())));
+        }
+        Ok(XQuery { text, module, base_dir: base, strip_whitespace: false })
     }
 
     /// Set the directory relative `doc()` uris resolve against.
@@ -201,6 +243,7 @@ impl XQuery {
             base_dir: self.base_dir.clone(),
             context_error,
             now,
+            pul: Vec::new(),
         };
         for v in &self.module.vars {
             let mut val = None;
@@ -232,7 +275,16 @@ impl XQuery {
             it.globals.insert(v.name.clone(), std::rc::Rc::new(val));
         }
         let body = self.module.body.as_ref().expect("module body");
-        let out = it.eval(body, &focus)?;
+        let mut out = it.eval(body, &focus)?;
+        let pul = std::mem::take(&mut it.pul);
+        let updated = !pul.is_empty();
+        it.apply_updates(pul)?;
+        if (updated || self.module.updating) && out.is_empty() {
+            // an updating query returns the updated context document
+            if let Some(Item::Node(n)) = &focus.item {
+                out = vec![Item::Node(*n)];
+            }
+        }
         Ok(convert(&docs, &out))
     }
 }
@@ -335,9 +387,45 @@ pub fn serialize_items(docs: &Docs, items: &[Item]) -> String {
                 out.push_str(&escape_text(&a.to_string()));
                 prev_atomic = true;
             }
+            other => {
+                if prev_atomic {
+                    out.push(' ');
+                }
+                out.push_str(&escape_text(&adaptive(docs, other)));
+                prev_atomic = true;
+            }
         }
     }
     out
+}
+
+/// Adaptive serialization of maps, arrays and functions (`map{"a":1}`, `[1,(2,3)]`).
+fn adaptive(docs: &Docs, item: &Item) -> String {
+    let seq = |s: &[Item]| -> String {
+        let parts: Vec<String> = s.iter().map(|i| adaptive(docs, i)).collect();
+        if parts.len() == 1 {
+            parts.into_iter().next().unwrap()
+        } else {
+            format!("({})", parts.join(","))
+        }
+    };
+    match item {
+        Item::Node(n) => node_xml(docs, *n),
+        Item::Atomic(a) => match a {
+            Atomic::Str(s) | Atomic::Untyped(s) | Atomic::AnyUri(s) => {
+                let mut o = String::new();
+                camel_core::value::json_escape(s, &mut o);
+                o
+            }
+            other => other.to_string(),
+        },
+        Item::Map(m) => format!("map{{{}}}", m.entries.iter().map(|(k, v)| format!("{}:{}", adaptive(docs, &Item::Atomic(k.clone())), seq(v))).collect::<Vec<_>>().join(",")),
+        Item::Array(a) => format!("[{}]", a.iter().map(|m| seq(m)).collect::<Vec<_>>().join(",")),
+        Item::Func(f) => match f.as_ref() {
+            types::FuncItem::Named { name, arity } => format!("{}#{}", name.local, arity),
+            other => format!("(anonymous-function)#{}", other.arity()),
+        },
+    }
 }
 
 /// The string values of the items, concatenated (Camel `resultsFormat=String`).
@@ -347,6 +435,7 @@ pub fn items_to_string(docs: &Docs, items: &[Item]) -> String {
         .map(|i| match i {
             Item::Node(n) => docs.string_value(*n),
             Item::Atomic(a) => a.to_string(),
+            other => adaptive(docs, other),
         })
         .collect()
 }
@@ -361,10 +450,22 @@ pub fn item_to_value(docs: &Docs, item: &Item) -> Value {
         },
         Item::Atomic(a) => match a {
             Atomic::Int(i) => Value::Int(*i),
-            Atomic::Dec(f) | Atomic::Dbl(f) | Atomic::Flt(f) => Value::Float(*f),
+            Atomic::Dec(d) => Value::Float(d.to_f64()),
+            Atomic::Dbl(f) | Atomic::Flt(f) => Value::Float(*f),
             Atomic::Bool(b) => Value::Bool(*b),
             other => Value::String(other.to_string()),
         },
+        Item::Map(m) => Value::object(m.entries.iter().map(|(k, v)| (k.to_string(), seq_to_value(docs, v)))),
+        Item::Array(a) => Value::Array(a.iter().map(|m| seq_to_value(docs, m)).collect()),
+        Item::Func(_) => Value::String(adaptive(docs, item)),
+    }
+}
+
+fn seq_to_value(docs: &Docs, s: &[Item]) -> Value {
+    match s {
+        [] => Value::Null,
+        [one] => item_to_value(docs, one),
+        many => Value::Array(many.iter().map(|i| item_to_value(docs, i)).collect()),
     }
 }
 

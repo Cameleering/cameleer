@@ -47,7 +47,39 @@
 //! valid envelope signature. Other options: `soapVersion=1.1|1.2` (producer without
 //! WSDL), `username`/`password` (HTTP basic auth), `sslContextParameters`, `receiveTimeout`,
 //! `connectionTimeout`, `attributePrefix` (POJO attribute keys, default `@`), `loggingFeatureEnabled`
-//! and a few other accepted-and-ignored Camel options. MTOM (`mtomEnabled=true`) is not supported.
+//! and a few other accepted-and-ignored Camel options.
+//!
+//! **More WS-Security.** `wsSecuritySignatureKeyIdentifier=DirectReference` (default with a
+//! certificate: X.509 `BinarySecurityToken` + `SecurityTokenReference`; `X509Data` for the
+//! certificate in `ds:KeyInfo`); consumer `wsSecuritySignatureTrustedCertificates=#pem,...`
+//! accepts signatures by those certificates or certificates they issued. XML Encryption:
+//! `wsSecurityEncryptionCertificate` / `wsSecurityEncryptionKey` (RSA recipient) and
+//! `wsSecurityEncryptionAlgorithm=aes128-cbc|aes256-cbc|aes128-gcm|aes256-gcm` encrypt the
+//! outgoing body (after signing); `wsSecurityDecryptionKey` decrypts incoming ones (see
+//! [`crate::xmlenc`]). SAML: `wsSecuritySamlSubject`, `wsSecuritySamlIssuer`,
+//! `wsSecuritySamlAttributes=k=v,...` add a SAML 2.0 assertion; consumer
+//! `wsSecuritySamlRequired`, `wsSecuritySamlTrustedIssuers` check it and set
+//! `CamelCxfSamlSubject` / `CamelCxfSamlIssuer` / `CamelCxfSamlAttributes`.
+//!
+//! **MTOM / attachments.** `mtomEnabled=true` (`mtomThreshold`, default 1024 characters)
+//! sends large base64 content as XOP binary parts; attachments in the `CamelAttachments`
+//! exchange property (`content-id -> bytes`) are sent as SwA MIME parts; received
+//! `multipart/related` messages are decoded both ways (see [`crate::mtom`]).
+//!
+//! **WS-Addressing / WS-RM.** `wsAddressingEnabled=true` (or `features=wsa`) adds and checks
+//! `wsa:` headers (`CamelCxfWsaAction`, `CamelCxfWsaMessageId`, `CamelCxfWsaRelatesTo`,
+//! `CamelCxfWsaReplyTo`); services answer requests carrying `wsa:MessageID` with
+//! `RelatesTo`, and a non-anonymous `ReplyTo` gets a decoupled response. `wsrmEnabled=true`
+//! adds WS-ReliableMessaging basics (sequences, acknowledgements, duplicate suppression;
+//! `CamelCxfRmSequenceId` / `CamelCxfRmMessageNumber`), see [`crate::wsa`].
+//!
+//! **Endpoints.** `cxf:bean:<name>` takes the endpoint options (`address`, `wsdlURL`,
+//! `serviceName`...) from an object / map bean. `serviceClass=#descriptor` uses a
+//! [`crate::codefirst::ServiceDescriptor`] (code-first service, WSDL generated and served at
+//! `?wsdl`). In POJO mode, `soap:header` parts are bound too: request header parts follow
+//! the body parameters (array) or are named entries (object), response header parts are
+//! entries of the result object. rpc/encoded operations get `xsi:type` accessors and
+//! multi-reference (`href`) decoding.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -71,7 +103,10 @@ use crate::support::{load_text, parse_clark, split_fragments, Key};
 use crate::transport::{http_failed, Binding, Client, ListenAddress};
 use crate::wsdl::{OperationInfo, Wsdl};
 use crate::wssec::{self, PasswordType, SecurityPolicy};
+use crate::xmlenc::{self, EncAlg};
 use crate::xsdmodel::{BindOptions, SchemaSet};
+use crate::{mtom, wsa};
+use camel_tls::keys::PublicKey;
 
 /// Header: operation name.
 pub const OPERATION_NAME: &str = "operationName";
@@ -120,6 +155,14 @@ pub struct CxfComponent;
 pub(crate) struct WsSecClient {
     pub user: Option<(String, String, PasswordType)>,
     pub sign: Option<(PrivateKey, Option<Certificate>)>,
+    /// Reference the signing certificate as a BinarySecurityToken (else `ds:X509Data`).
+    pub bst: bool,
+    /// SAML assertion: issuer, subject, attributes.
+    pub saml: Option<(String, String, Vec<(String, String)>)>,
+    /// Encrypt outgoing bodies for this recipient.
+    pub encrypt: Option<(PublicKey, Option<Certificate>, EncAlg)>,
+    /// Decrypt incoming encrypted bodies.
+    pub decrypt: Option<PrivateKey>,
 }
 
 impl WsSecClient {
@@ -137,21 +180,84 @@ impl WsSecClient {
             Some(k) => Some((crate::support::load_private_key(Some(ctx), &k)?, cert.map(|c| crate::support::load_certificate(Some(ctx), &c)).transpose()?)),
             None => None,
         };
-        Ok(WsSecClient { user: user.map(|u| (u, pw.unwrap_or_default(), ty)), sign })
+        let bst = match take(params, &["wsSecuritySignatureKeyIdentifier", "properties.ws-security.signature.key.identifier"]) {
+            Some(k) => matches!(k.trim(), "DirectReference" | "BinarySecurityToken" | "BST"),
+            None => true,
+        };
+        let saml = match take(params, &["wsSecuritySamlSubject"]) {
+            Some(subject) => {
+                let issuer = take(params, &["wsSecuritySamlIssuer"]).unwrap_or_else(|| "rust-camel".into());
+                let attrs = take(params, &["wsSecuritySamlAttributes"])
+                    .map(|a| a.split(',').filter_map(|kv| kv.split_once('=').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))).collect())
+                    .unwrap_or_default();
+                Some((issuer, subject, attrs))
+            }
+            None => {
+                params.take("wsSecuritySamlIssuer");
+                params.take("wsSecuritySamlAttributes");
+                None
+            }
+        };
+        let alg = match take(params, &["wsSecurityEncryptionAlgorithm"]) {
+            Some(a) => EncAlg::parse(&a).ok_or_else(|| CamelError::illegal_argument(format!("Unknown wsSecurityEncryptionAlgorithm {} (aes128-cbc, aes256-cbc, aes128-gcm, aes256-gcm)", a)))?,
+            None => EncAlg::Aes256Gcm,
+        };
+        let encrypt = match take(params, &["wsSecurityEncryptionCertificate", "wsSecurityEncryptionKey"]) {
+            Some(spec) => match crate::support::load_certificate(Some(ctx), &spec) {
+                Ok(c) => {
+                    let pk = c.public_key.clone().ok_or_else(|| CamelError::illegal_argument("The encryption certificate has no supported public key"))?;
+                    Some((pk, Some(c), alg))
+                }
+                Err(_) => Some((crate::support::load_public_key(Some(ctx), &spec)?, None, alg)),
+            },
+            None => None,
+        };
+        let decrypt = match take(params, &["wsSecurityDecryptionKey"]) {
+            Some(k) => Some(crate::support::load_private_key(Some(ctx), &k)?),
+            None => None,
+        };
+        Ok(WsSecClient { user: user.map(|u| (u, pw.unwrap_or_default(), ty)), sign, bst, saml, encrypt, decrypt })
+    }
+
+    /// Decrypt an incoming envelope when it carries encrypted data and a key is configured.
+    pub(crate) fn decrypt_text(&self, text: String) -> Result<String> {
+        match &self.decrypt {
+            Some(k) if xmlenc::is_encrypted(&text) => xmlenc::decrypt_envelope(&text, k),
+            _ => Ok(text),
+        }
+    }
+
+    /// Encrypt an outgoing envelope when a recipient is configured.
+    pub(crate) fn encrypt_text(&self, version: SoapVersion, env: String) -> Result<String> {
+        match &self.encrypt {
+            Some((pk, cert, alg)) => xmlenc::encrypt_envelope(&env, version, pk, cert.as_ref(), *alg),
+            None => Ok(env),
+        }
     }
 
     /// Add the security header (and signature) to an envelope built from parts.
     pub(crate) fn envelope(&self, version: SoapVersion, mut headers: Vec<String>, body: &[String]) -> Result<String> {
-        if let Some((u, p, t)) = &self.user {
-            headers.insert(0, wssec::security_header(version, u, p, *t));
-        } else if self.sign.is_some() {
-            headers.insert(0, wssec::empty_security_header(version));
+        let mut sec = if let Some((u, p, t)) = &self.user {
+            Some(wssec::security_header(version, u, p, *t))
+        } else if self.sign.is_some() || self.saml.is_some() {
+            Some(wssec::empty_security_header(version))
+        } else {
+            None
+        };
+        if let (Some(s), Some((issuer, subject, attrs))) = (&mut sec, &self.saml) {
+            let a = wssec::saml_assertion(issuer, subject, attrs, 300_000);
+            *s = if let Some(open) = s.strip_suffix("/>") { format!("{}>{}</wsse:Security>", open, a) } else { s.replacen("</wsse:Security>", &format!("{}</wsse:Security>", a), 1) };
+        }
+        if let Some(s) = sec {
+            headers.insert(0, s);
         }
         let env = build_envelope(version, &headers, body);
-        match &self.sign {
-            Some((k, c)) => wssec::sign_envelope(&env, k, c.as_ref()),
-            None => Ok(env),
-        }
+        let env = match &self.sign {
+            Some((k, Some(c))) if self.bst => wssec::sign_envelope_bst(&env, k, c)?,
+            Some((k, c)) => wssec::sign_envelope(&env, k, c.as_ref())?,
+            None => env,
+        };
+        self.encrypt_text(version, env)
     }
 }
 
@@ -180,6 +286,17 @@ pub(crate) fn security_policy(ctx: &CamelContext, params: &mut Parameters) -> Re
     if let Some(c) = params.take("wsSecuritySignatureVerifyCertificate") {
         policy.signature_key = Some(crate::support::load_public_key(Some(ctx), &c)?);
     }
+    if let Some(spec) = params.take("wsSecuritySignatureTrustedCertificates") {
+        for s in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let (text, _) = load_text(Some(ctx), s).map_err(|e| CamelError::illegal_argument(format!("Cannot load trusted certificates {}: {}", s, e.message)))?;
+            let certs = Certificate::from_pem_all(text.as_bytes()).map_err(CamelError::illegal_argument)?;
+            policy.trusted_certs.extend(certs);
+        }
+    }
+    policy.saml_required = params.take_bool("wsSecuritySamlRequired", false)?;
+    if let Some(i) = params.take("wsSecuritySamlTrustedIssuers") {
+        policy.saml_issuers = i.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect();
+    }
     if let Some(age) = params.take("wsSecurityTimestampTTL") {
         policy.max_age_ms = age.trim().parse::<i64>().map_err(|_| CamelError::illegal_argument("wsSecurityTimestampTTL must be seconds"))? * 1000;
     }
@@ -203,6 +320,12 @@ pub(crate) struct Config {
     client: Client,
     listen: Option<std::result::Result<ListenAddress, String>>,
     empty_schema: SchemaSet,
+    mtom: bool,
+    mtom_threshold: usize,
+    wsa: bool,
+    wsrm: bool,
+    rm_source: wsa::RmSource,
+    rm_dest: wsa::RmDestination,
 }
 
 impl Config {
@@ -214,19 +337,49 @@ impl Config {
 impl Component for CxfComponent {
     fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
         crate::register_kinds();
-        if remaining.starts_with("bean:") {
-            return Err(CamelError::illegal_argument("cxf:bean: endpoints need a Spring CxfEndpoint bean; use cxf://http://host:port/path?wsdlURL=... instead"));
+        let mut remaining = remaining.to_string();
+        if let Some(name) = remaining.strip_prefix("bean:").map(str::to_string) {
+            // a CxfEndpoint bean: an object / map of endpoint options (address, wsdlURL...)
+            let opts: Vec<(String, String)> = if let Some(v) = ctx.registry().lookup::<Value>(&name) {
+                match &*v {
+                    Value::Object(m) => m.iter().map(|(k, v)| (k.clone(), v.to_string())).collect(),
+                    _ => return Err(CamelError::illegal_argument(format!("cxf:bean:{} must be an object of endpoint options", name))),
+                }
+            } else if let Some(m) = ctx.registry().lookup::<HashMap<String, String>>(&name) {
+                m.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                return Err(CamelError::no_such_bean(&name));
+            };
+            remaining = String::new();
+            for (k, v) in opts {
+                if k == "address" {
+                    remaining = v;
+                } else if params.get(&k).is_none() {
+                    params.insert(&k, v);
+                }
+            }
         }
-        if params.take_bool("mtomEnabled", false)? {
-            return Err(CamelError::illegal_argument("cxf: MTOM (mtomEnabled=true) is not supported"));
-        }
+        let remaining = remaining.as_str();
+        let mtom = params.take_bool("mtomEnabled", false)? || params.take_bool("properties.mtom-enabled", false)?;
+        let mtom_threshold = params.take("mtomThreshold").and_then(|t| t.trim().parse().ok()).unwrap_or(1024usize);
+        let features = params.take("features").unwrap_or_default().to_ascii_lowercase();
+        let wsrm = params.take_bool("wsrmEnabled", false)? || features.contains("wsrm") || features.contains("reliablemessaging");
+        let wsa_on = params.take_bool("wsAddressingEnabled", false)? || params.take_bool("wsaEnabled", false)? || features.contains("wsa") || features.contains("addressing") || wsrm;
         let address = params.take("address").unwrap_or_else(|| remaining.to_string());
         let wsdl = match params.take("wsdlURL").or_else(|| params.take("wsdlUrl")) {
             Some(loc) => {
                 let (text, dir) = load_text(Some(ctx), &loc)?;
                 Some(Arc::new(Wsdl::parse(&text, dir.as_deref())?))
             }
-            None => None,
+            None => match params.get("serviceClass").and_then(|s| s.strip_prefix('#').map(str::to_string)) {
+                Some(bean) => {
+                    params.take("serviceClass");
+                    let d = ctx.registry().lookup::<crate::codefirst::ServiceDescriptor>(&bean).ok_or_else(|| CamelError::no_such_bean(&bean))?;
+                    let addr = if address.starts_with("http") { address.clone() } else { format!("http://localhost{}", address) };
+                    Some(Arc::new(Wsdl::parse(&d.to_wsdl(&addr), None)?))
+                }
+                None => None,
+            },
         };
         let data_format = CxfDataFormat::parse(&params.take("dataFormat").unwrap_or_else(|| "POJO".into()))?;
         let attr_prefix = params.take("attributePrefix").unwrap_or_else(|| "@".into());
@@ -273,6 +426,12 @@ impl Component for CxfComponent {
             client,
             listen,
             empty_schema: SchemaSet::new(),
+            mtom,
+            mtom_threshold,
+            wsa: wsa_on,
+            wsrm,
+            rm_source: wsa::RmSource::default(),
+            rm_dest: wsa::RmDestination::default(),
         };
         for k in [
             "loggingFeatureEnabled",
@@ -364,7 +523,6 @@ struct CxfProducer {
     address: String,
 }
 
-impl Service for CxfProducer {}
 
 fn header_str(ex: &Exchange, name: &str) -> Option<String> {
     ex.message.headers.get(name).filter(|v| !v.is_null()).map(|v| v.to_string()).filter(|s| !s.is_empty())
@@ -438,6 +596,82 @@ impl CxfProducer {
     }
 }
 
+/// Header: WS-Addressing action of a received message.
+pub const WSA_ACTION: &str = "CamelCxfWsaAction";
+/// Header: WS-Addressing message id of a received message.
+pub const WSA_MESSAGE_ID: &str = "CamelCxfWsaMessageId";
+/// Header: WS-Addressing `RelatesTo` of a received response.
+pub const WSA_RELATES_TO: &str = "CamelCxfWsaRelatesTo";
+/// Header: WS-Addressing `ReplyTo` of a received request.
+pub const WSA_REPLY_TO: &str = "CamelCxfWsaReplyTo";
+/// Header: WS-RM sequence identifier of a received message.
+pub const RM_SEQUENCE: &str = "CamelCxfRmSequenceId";
+/// Header: WS-RM message number of a received message.
+pub const RM_MESSAGE_NUMBER: &str = "CamelCxfRmMessageNumber";
+/// Header: SAML subject of a received request.
+pub const SAML_SUBJECT: &str = "CamelCxfSamlSubject";
+/// Header: SAML issuer of a received request.
+pub const SAML_ISSUER: &str = "CamelCxfSamlIssuer";
+/// Header: SAML attributes (object) of a received request.
+pub const SAML_ATTRIBUTES: &str = "CamelCxfSamlAttributes";
+
+/// Read an HTTP message body as a SOAP envelope (multipart/related: XOP parts inlined,
+/// other parts returned as attachments).
+fn read_message(content_type: Option<&str>, body: &[u8]) -> Result<(String, Vec<mtom::Part>)> {
+    if mtom::is_multipart(content_type) {
+        let (root, parts) = mtom::parse_multipart(content_type.unwrap_or(""), body)?;
+        let text = String::from_utf8_lossy(&root).into_owned();
+        return mtom::xop_inline(&text, parts);
+    }
+    Ok((String::from_utf8_lossy(body).into_owned(), Vec::new()))
+}
+
+/// Write an envelope (MTOM / attachments as multipart/related): (Content-Type, bytes).
+fn write_message(cfg: &Config, version: SoapVersion, action: &str, envelope: String, attachments: Vec<mtom::Part>) -> Result<(String, Vec<u8>)> {
+    let (env, mut parts) = if cfg.mtom { mtom::xop_optimize(&envelope, cfg.mtom_threshold)? } else { (envelope, Vec::new()) };
+    parts.extend(attachments);
+    if parts.is_empty() && !(cfg.mtom && env.contains(mtom::XOP_NS)) {
+        return Ok((version.content_type(action), env.into_bytes()));
+    }
+    Ok(mtom::build_multipart(&env, version, cfg.mtom, action, &parts))
+}
+
+impl CxfProducer {
+    /// The WS-RM sequence of this producer (created on first use).
+    fn rm_sequence(&self, version: SoapVersion) -> Result<(String, u64)> {
+        let cfg = &self.cfg;
+        let mut st = cfg.rm_source.state.lock().unwrap();
+        if let Some((id, n)) = st.as_mut() {
+            *n += 1;
+            return Ok((id.clone(), *n));
+        }
+        let mut headers = wsa::request_headers(wsa::CREATE_SEQUENCE, &self.address, &wsa::new_message_id(), None);
+        headers.retain(|h| !h.contains("ReplyTo"));
+        let env = build_envelope(version, &headers, &[wsa::create_sequence_body()]);
+        let resp = cfg.client.send("POST", &self.address, &[("Content-Type".into(), version.content_type(wsa::CREATE_SEQUENCE))], Some(env.as_bytes()))?;
+        let parsed = parse_envelope(&resp.body_text()).map_err(|_| http_failed(&self.address, &resp))?;
+        if let Some(f) = parsed.fault {
+            return Err(f.into_error());
+        }
+        let id = wsa::parse_create_sequence_response(&parsed.body).ok_or_else(|| CamelError::illegal_state("WS-RM: no sequence identifier in CreateSequenceResponse"))?;
+        *st = Some((id.clone(), 1));
+        Ok((id, 1))
+    }
+}
+
+impl Service for CxfProducer {
+    fn stop(&self) -> Result<()> {
+        let cfg = &self.cfg;
+        if let Some((id, last)) = cfg.rm_source.state.lock().unwrap().take() {
+            let version = cfg.soap_version.unwrap_or(SoapVersion::V11);
+            let headers = wsa::request_headers(wsa::TERMINATE_SEQUENCE, &self.address, &wsa::new_message_id(), None);
+            let env = build_envelope(version, &headers, &[wsa::terminate_sequence_body(&id, last)]);
+            let _ = cfg.client.send("POST", &self.address, &[("Content-Type".into(), version.content_type(wsa::TERMINATE_SEQUENCE))], Some(env.as_bytes()));
+        }
+        Ok(())
+    }
+}
+
 impl Processor for CxfProducer {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         let cfg = &self.cfg;
@@ -449,12 +683,14 @@ impl Processor for CxfProducer {
             .or_else(|| op.as_ref().map(|o| o.namespace.clone()))
             .or_else(|| cfg.wsdl.as_ref().map(|w| w.target_namespace.clone()))
             .unwrap_or_default();
+        let mut message_id = None;
         let envelope = if cfg.data_format.is_raw() {
             match &ex.message.body {
                 Value::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
                 other => other.to_string(),
             }
         } else {
+            let mut headers = header_fragments(ex.message.headers.get(SOAP_HEADERS))?;
             let body = match cfg.data_format {
                 CxfDataFormat::Pojo => {
                     let shape = match &op {
@@ -466,21 +702,48 @@ impl Processor for CxfProducer {
                             Shape::structural(&op_ns, &op_name, false)
                         }
                     };
-                    pojo::encode(cfg.schema(), &shape, &ex.message.body, &cfg.bind)?
+                    // soap:header parts bound from the POJO body
+                    let hparams = match (&op, &cfg.wsdl, shape.param_count()) {
+                        (Some(o), Some(w), Some(_)) => pojo::header_params(w, &o.input),
+                        _ => Vec::new(),
+                    };
+                    let (body, hvals) = pojo::split_header_values(shape.param_count().unwrap_or(0), &hparams, &ex.message.body);
+                    headers.extend(pojo::encode_header_values(cfg.schema(), &hparams, &hvals, &cfg.bind)?);
+                    pojo::encode(cfg.schema(), &shape, &body, &cfg.bind)?
                 }
                 _ => payload_fragments(&ex.message.body)?,
             };
-            let headers = header_fragments(ex.message.headers.get(SOAP_HEADERS))?;
+            if cfg.wsa {
+                let a = if action.is_empty() { format!("{}/{}", op_ns.trim_end_matches('/'), op_name) } else { action.clone() };
+                let id = wsa::new_message_id();
+                headers.extend(wsa::request_headers(&a, &self.address, &id, None));
+                message_id = Some(id);
+            }
+            if cfg.wsrm {
+                let (id, n) = self.rm_sequence(version)?;
+                headers.push(wsa::sequence_header(&id, n));
+            }
             cfg.wssec.envelope(version, headers, &body)?
         };
-        let mut http_headers = vec![("Content-Type".to_string(), version.content_type(&action))];
+        let attachments = mtom::attachments_from(ex.property(mtom::ATTACHMENTS));
+        let (content_type, payload) = if cfg.data_format.is_raw() && attachments.is_empty() && !cfg.mtom {
+            (version.content_type(&action), envelope.into_bytes())
+        } else {
+            write_message(cfg, version, &action, envelope, attachments)?
+        };
+        let mut http_headers = vec![("Content-Type".to_string(), content_type)];
         if version == SoapVersion::V11 {
             http_headers.push(("SOAPAction".to_string(), format!("\"{}\"", action)));
         }
         http_headers.push(("Accept".to_string(), "text/xml, application/soap+xml, multipart/related".to_string()));
-        let resp = cfg.client.send("POST", &self.address, &http_headers, Some(envelope.as_bytes()))?;
+        let resp = cfg.client.send("POST", &self.address, &http_headers, Some(&payload))?;
         ex.message.headers.set("CamelHttpResponseCode", resp.status as i64);
-        let text = resp.body_text();
+        let (text, parts) = read_message(resp.headers.get("Content-Type"), &resp.body)?;
+        if !parts.is_empty() {
+            ex.set_property(mtom::ATTACHMENTS, mtom::attachments_value(parts));
+        } else {
+            ex.remove_property(mtom::ATTACHMENTS);
+        }
         let one_way = op.as_ref().map(|o| o.output.is_none()).unwrap_or(false);
         if text.trim().is_empty() {
             if resp.status >= 300 {
@@ -493,6 +756,7 @@ impl Processor for CxfProducer {
             ex.message.body = Value::String(text);
             return Ok(());
         }
+        let text = cfg.wssec.decrypt_text(text)?;
         let env = match parse_envelope(&text) {
             Ok(e) => e,
             Err(e) => {
@@ -506,8 +770,23 @@ impl Processor for CxfProducer {
             set_fault_headers(ex, &f);
             return Err(f.into_error());
         }
-        if !env.headers.is_empty() {
-            ex.message.headers.set(SOAP_HEADERS, Value::Array(env.headers.iter().cloned().map(Value::String).collect()));
+        if cfg.wsa {
+            let a = wsa::parse(&env.headers);
+            if let (Some(sent), Some(rel)) = (&message_id, &a.relates_to) {
+                if sent != rel {
+                    return Err(CamelError::illegal_state(format!("WS-Addressing: response RelatesTo {} does not match the request MessageID {}", rel, sent)));
+                }
+            }
+            if let Some(v) = a.action {
+                ex.message.headers.set(WSA_ACTION, v);
+            }
+            if let Some(v) = a.relates_to {
+                ex.message.headers.set(WSA_RELATES_TO, v);
+            }
+        }
+        let user_headers: Vec<String> = env.headers.iter().filter(|h| !cfg.wsa || !wsa::is_wsa_or_rm(h)).cloned().collect();
+        if !user_headers.is_empty() {
+            ex.message.headers.set(SOAP_HEADERS, Value::Array(user_headers.iter().cloned().map(Value::String).collect()));
         } else {
             ex.message.headers.remove(SOAP_HEADERS);
         }
@@ -517,9 +796,34 @@ impl Processor for CxfProducer {
                     Some(o) => Shape::of(cfg.wsdl.as_ref().unwrap_or_else(|| unreachable!()), o, true),
                     None => Some(Shape::structural(&op_ns, &op_name, true)),
                 };
-                match shape {
-                    Some(s) => pojo::decode(cfg.schema(), &s, &env.body, true, &cfg.bind)?,
+                let result = match &shape {
+                    Some(s) => pojo::decode(cfg.schema(), s, &env.body, true, &cfg.bind)?,
                     None => Value::Null,
+                };
+                // response soap:header parts
+                match (&op, &cfg.wsdl) {
+                    (Some(o), Some(w)) if o.output.as_ref().is_some_and(|m| !m.header_parts.is_empty()) => {
+                        let hparams = pojo::header_params(w, o.output.as_ref().unwrap());
+                        let hv = pojo::decode_header_values(cfg.schema(), &hparams, &user_headers, &cfg.bind);
+                        let mut m = match result {
+                            Value::Object(m) if shape.as_ref().and_then(|s| s.param_count()).unwrap_or(0) > 1 => m,
+                            other => {
+                                let mut m = camel_core::value::ObjectMap::new();
+                                let name = match &shape {
+                                    Some(Shape::Wrapper { params: Some(ps), .. }) if ps.len() == 1 => ps[0].name.1.clone(),
+                                    Some(Shape::Bare { params }) if params.len() == 1 => params[0].name.1.clone(),
+                                    _ => "return".to_string(),
+                                };
+                                m.insert(name, other);
+                                m
+                            }
+                        };
+                        for (k, v) in hv {
+                            m.insert(k, v);
+                        }
+                        Value::Object(m)
+                    }
+                    _ => result,
                 }
             }
             CxfDataFormat::Pojo => Value::Null,
@@ -575,8 +879,15 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
         Some(c) => c,
         None => return HttpResponse::text(503, "Service Unavailable"),
     };
-    let text = req.body_text();
-    let guess = if req.content_type().map(|c| c.contains("soap+xml")).unwrap_or(false) { SoapVersion::V12 } else { SoapVersion::V11 };
+    let guess = if req.content_type().map(|c| c.contains("soap+xml") || c.contains("application/soap")).unwrap_or(false) { SoapVersion::V12 } else { SoapVersion::V11 };
+    let (text, attachments) = match read_message(req.content_type(), &req.body) {
+        Ok(x) => x,
+        Err(e) => return fault_response(guess, &SoapFault::new(guess.client_code(), format!("Error reading the multipart message: {}", e.message))),
+    };
+    let text = match cfg.wssec.decrypt_text(text) {
+        Ok(t) => t,
+        Err(e) => return fault_response(guess, &SoapFault::new(format!("{{{}}}FailedCheck", wssec::WSSE_NS), e.message)),
+    };
     let doc = match Document::parse(&text) {
         Ok(d) => d,
         Err(e) => return fault_response(guess, &SoapFault::new(guess.client_code(), format!("Error reading XMLStreamReader: {}", e))),
@@ -592,7 +903,27 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
     if let Err(f) = wssec::verify_security(&doc, version, &cfg.policy) {
         return fault_response(version, &f);
     }
-    let action = request_action(req.headers.get("SOAPAction"), req.content_type());
+    let saml = match wssec::verify_saml(&doc, version, &cfg.policy) {
+        Ok(s) => s,
+        Err(f) => return fault_response(version, &f),
+    };
+    let addressing = wsa::parse(&env.headers);
+    // WS-RM protocol messages and duplicates
+    let mut rm_ack = None;
+    if cfg.wsrm {
+        match cfg.rm_dest.on_request(&addressing, &env.body) {
+            wsa::RmAction::Reply(body, action) => {
+                let headers = wsa::reply_headers(&addressing, action);
+                return soap_response(version, 200, build_envelope(version, &headers, &[body]));
+            }
+            wsa::RmAction::Duplicate(status, resp) => return soap_response(version, status, resp),
+            wsa::RmAction::UnknownSequence(id) => {
+                return fault_response(version, &SoapFault::new(version.client_code(), format!("The value of wsrm:Identifier is not a known Sequence identifier: {}", id)).with_subcode(format!("{{{}}}UnknownSequence", wsa::WSRM_NS)));
+            }
+            wsa::RmAction::Process(ack) => rm_ack = ack,
+        }
+    }
+    let action = request_action(req.headers.get("SOAPAction"), req.content_type()).filter(|a| !a.is_empty()).or_else(|| addressing.action.clone());
     let body_name = env.body_element_name();
     let op: Option<&OperationInfo> = if cfg.wsdl.is_some() {
         let by_action = action.as_deref().and_then(|a| ops.iter().find(|o| !o.soap_action.is_empty() && o.soap_action == a));
@@ -622,6 +953,7 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
             }
         }
     }
+    let user_headers: Vec<String> = wssec::strip_security(&env.headers).into_iter().filter(|h| !wsa::is_wsa_or_rm(h)).collect();
     let mut ex = Exchange::new(Some(ctx));
     ex.pattern = ExchangePattern::InOut;
     {
@@ -638,10 +970,30 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
         if let Some(ct) = req.content_type() {
             h.set("Content-Type", ct.to_string());
         }
-        let user_headers = wssec::strip_security(&env.headers);
         if !user_headers.is_empty() {
-            h.set(SOAP_HEADERS, Value::Array(user_headers.into_iter().map(Value::String).collect()));
+            h.set(SOAP_HEADERS, Value::Array(user_headers.iter().cloned().map(Value::String).collect()));
         }
+        if let Some(v) = &addressing.action {
+            h.set(WSA_ACTION, v.clone());
+        }
+        if let Some(v) = &addressing.message_id {
+            h.set(WSA_MESSAGE_ID, v.clone());
+        }
+        if let Some(v) = &addressing.reply_to {
+            h.set(WSA_REPLY_TO, v.clone());
+        }
+        if let Some((id, n)) = &addressing.sequence {
+            h.set(RM_SEQUENCE, id.clone());
+            h.set(RM_MESSAGE_NUMBER, *n as i64);
+        }
+        if let Some(s) = &saml {
+            h.set(SAML_SUBJECT, s.subject.clone());
+            h.set(SAML_ISSUER, s.issuer.clone());
+            h.set(SAML_ATTRIBUTES, Value::object(s.attributes.iter().map(|(k, v)| (k.clone(), v.clone()))));
+        }
+    }
+    if !attachments.is_empty() {
+        ex.set_property(mtom::ATTACHMENTS, mtom::attachments_value(attachments));
     }
     let decoded = match cfg.data_format {
         CxfDataFormat::Raw | CxfDataFormat::CxfMessage => Ok(Value::String(text.clone())),
@@ -652,7 +1004,15 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
                 _ => Some(Shape::structural(&op_ns, &op_name, false)),
             };
             match shape {
-                Some(s) => pojo::decode(cfg.schema(), &s, &env.body, false, &cfg.bind),
+                Some(s) => pojo::decode(cfg.schema(), &s, &env.body, false, &cfg.bind).map(|v| match (op, &cfg.wsdl, v) {
+                    // soap:header parts follow the body parameters
+                    (Some(o), Some(w), Value::Array(mut items)) if !o.input.header_parts.is_empty() => {
+                        let hp = pojo::header_params(w, &o.input);
+                        items.extend(pojo::decode_header_values(cfg.schema(), &hp, &user_headers, &cfg.bind).into_iter().map(|(_, v)| v));
+                        Value::Array(items)
+                    }
+                    (_, _, v) => v,
+                }),
                 None => Ok(Value::Null),
             }
         }
@@ -664,8 +1024,18 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
     if let Err(e) = processor.process(&mut ex) {
         ex.set_exception(e);
     }
+    let mut reply_headers: Vec<String> = Vec::new();
+    if addressing.message_id.is_some() || cfg.wsa {
+        let a = format!("{}Response", action.clone().unwrap_or_else(|| format!("{}/{}", op_ns.trim_end_matches('/'), op_name)));
+        reply_headers.extend(wsa::reply_headers(&addressing, &a));
+    }
+    if let Some(ack) = rm_ack {
+        reply_headers.push(ack);
+    }
     if let Some(e) = ex.take_exception() {
-        return fault_response(version, &SoapFault::from_error(&e, version));
+        let r = fault_response(version, &SoapFault::from_error(&e, version));
+        cfg.rm_dest.store(&addressing, 500, &String::from_utf8_lossy(&r.body));
+        return r;
     }
     let one_way = op.map(|o| o.output.is_none()).unwrap_or(false);
     if one_way {
@@ -690,15 +1060,45 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
                 _ => Some(Shape::structural(&op_ns, &op_name, true)),
             };
             match shape {
-                Some(s) => pojo::encode(cfg.schema(), &s, &ex.message.body, &cfg.bind),
+                Some(s) => {
+                    let hparams = match (op, &cfg.wsdl) {
+                        (Some(o), Some(w)) => o.output.as_ref().map(|m| pojo::header_params(w, m)).unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    let (body, hvals) = pojo::split_header_values(s.param_count().unwrap_or(0), &hparams, &ex.message.body);
+                    match pojo::encode_header_values(cfg.schema(), &hparams, &hvals, &cfg.bind) {
+                        Ok(h) => reply_headers.extend(h),
+                        Err(e) => return fault_response(version, &SoapFault::from_error(&e, version)),
+                    }
+                    pojo::encode(cfg.schema(), &s, &body, &cfg.bind)
+                }
                 None => Ok(Vec::new()),
             }
         }
     };
-    match out {
-        Ok(body) => soap_response(version, 200, build_envelope(version, &[], &body)),
-        Err(e) => fault_response(version, &SoapFault::from_error(&e, version)),
+    let body = match out {
+        Ok(b) => b,
+        Err(e) => return fault_response(version, &SoapFault::from_error(&e, version)),
+    };
+    let envelope = match cfg.wssec.encrypt_text(version, build_envelope(version, &reply_headers, &body)) {
+        Ok(e) => e,
+        Err(e) => return fault_response(version, &SoapFault::from_error(&e, version)),
+    };
+    cfg.rm_dest.store(&addressing, 200, &envelope);
+    let atts = mtom::attachments_from(ex.property(mtom::ATTACHMENTS));
+    let (ct, bytes) = match write_message(cfg, version, "", envelope, atts) {
+        Ok(x) => x,
+        Err(e) => return fault_response(version, &SoapFault::from_error(&e, version)),
+    };
+    // decoupled response (non-anonymous wsa:ReplyTo)
+    if let Some(reply_to) = addressing.reply_to.as_ref().filter(|r| (r.starts_with("http://") || r.starts_with("https://")) && !r.starts_with("http://www.w3.org/2005/08/addressing/")) {
+        let (url, client) = (reply_to.clone(), cfg.client.clone());
+        std::thread::spawn(move || {
+            let _ = client.send("POST", &url, &[("Content-Type".into(), ct)], Some(&bytes));
+        });
+        return HttpResponse::new(202);
     }
+    HttpResponse::new(200).with_header("Content-Type", &ct).with_body(bytes)
 }
 
 impl Service for CxfConsumer {

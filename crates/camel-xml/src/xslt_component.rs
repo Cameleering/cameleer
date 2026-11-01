@@ -22,9 +22,9 @@
 //!   `saxonExtensionFunctions`, `saxonConfiguration`, `saxonReaderProperties`,
 //!   `secureProcessing`.
 //!
-//! `xslt-saxon` uses the same XSLT 1.0 processor: stylesheets using XSLT 2.0/3.0
-//! instructions or XPath 2.0 expressions fail with a `TransformerConfigurationException`
-//! naming the unsupported feature.
+//! `xslt-saxon` uses the same processor: `version="2.0"` stylesheets get XPath 2.0 and the
+//! XSLT 2.0 core (see [`crate::xslt`]); XSLT 3.0-only instructions fail with a
+//! `TransformerConfigurationException` naming the unsupported feature.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};

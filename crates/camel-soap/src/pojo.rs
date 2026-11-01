@@ -37,7 +37,7 @@ pub struct Param {
 #[derive(Clone, Debug)]
 pub enum Shape {
     /// Wrapper element with typed parameters (`None` = structural, JAX-WS default names).
-    Wrapper { element: Key, params: Option<Vec<Param>>, default_name: String },
+    Wrapper { element: Key, params: Option<Vec<Param>>, default_name: String, encoded: bool },
     /// Each parameter is a body element.
     Bare { params: Vec<Param> },
 }
@@ -53,6 +53,7 @@ impl Shape {
                 element: if response { op.response_element()? } else { op.request_element()? },
                 params: Some(msg.body_parts.iter().map(param).collect()),
                 default_name: String::new(),
+                encoded: op.encoded,
             },
             Style::Document => {
                 let wrapped = msg.body_parts.len() == 1
@@ -70,7 +71,7 @@ impl Shape {
                             .collect(),
                         _ => Vec::new(),
                     };
-                    Shape::Wrapper { element: p.element.clone(), params: Some(params), default_name: String::new() }
+                    Shape::Wrapper { element: p.element.clone(), params: Some(params), default_name: String::new(), encoded: false }
                 } else {
                     Shape::Bare { params: msg.body_parts.iter().map(param).collect() }
                 }
@@ -84,6 +85,16 @@ impl Shape {
             element: (ns.to_string(), if response { format!("{}Response", op) } else { op.to_string() }),
             params: None,
             default_name: if response { "return".into() } else { "arg".into() },
+            encoded: false,
+        }
+    }
+
+    /// Number of body parameters (`None` for a structural shape).
+    pub fn param_count(&self) -> Option<usize> {
+        match self {
+            Shape::Wrapper { params: Some(p), .. } => Some(p.len()),
+            Shape::Wrapper { params: None, .. } => None,
+            Shape::Bare { params } => Some(params.len()),
         }
     }
 }
@@ -114,7 +125,7 @@ fn assign<'a>(params: &[Param], body: &'a Value) -> Vec<Option<&'a Value>> {
 /// Encode a body value to body element fragments.
 pub fn encode(schema: &SchemaSet, shape: &Shape, body: &Value, o: &BindOptions) -> Result<Vec<String>> {
     match shape {
-        Shape::Wrapper { element, params, default_name } => {
+        Shape::Wrapper { element, params, default_name, encoded } => {
             let mut w = XmlWriter::new(&o.prefixes);
             let root = w.element(0, element);
             match params {
@@ -139,6 +150,9 @@ pub fn encode(schema: &SchemaSet, shape: &Shape, body: &Value, o: &BindOptions) 
                     }
                 }
             }
+            if *encoded {
+                return Ok(vec![soap_encode(&w.doc, params.as_deref().unwrap_or(&[]))]);
+            }
             Ok(vec![w.doc.to_xml_string()])
         }
         Shape::Bare { params } => {
@@ -160,8 +174,15 @@ pub fn decode(schema: &SchemaSet, shape: &Shape, body: &[String], response: bool
     let parse = |x: &String| Document::parse(x).map_err(|e| CamelError::new(camel_xml::SAX_PARSE_EXCEPTION, e.to_string()));
     let mut named: Vec<(String, Value)> = Vec::new();
     match shape {
-        Shape::Wrapper { params, .. } => {
+        Shape::Wrapper { params, encoded, .. } => {
             let Some(first) = body.first() else { return Ok(Value::Null) };
+            let resolved;
+            let first = if *encoded || body.len() > 1 {
+                resolved = resolve_multirefs(body);
+                &resolved
+            } else {
+                first
+            };
             let doc = parse(first)?;
             let root = doc.document_element().unwrap_or(0);
             match params {
@@ -225,6 +246,135 @@ pub fn decode(schema: &SchemaSet, shape: &Shape, body: &[String], response: bool
     } else {
         Ok(Value::Array(named.into_iter().map(|(_, v)| v).collect()))
     }
+}
+
+const SOAP_ENC: &str = "http://schemas.xmlsoap.org/soap/encoding/";
+const XSI: &str = "http://www.w3.org/2001/XMLSchema-instance";
+const XSD: &str = "http://www.w3.org/2001/XMLSchema";
+
+/// rpc/encoded: `soap:encodingStyle` on the wrapper and `xsi:type` on simple accessors.
+fn soap_encode(doc: &Document, params: &[Param]) -> String {
+    let mut d = doc.clone();
+    let Some(root) = d.document_element() else { return doc.to_xml_string() };
+    d.declare_namespace(root, "xsi", XSI);
+    d.declare_namespace(root, "xsd", XSD);
+    d.declare_namespace(root, "soapenc", SOAP_ENC);
+    d.set_attribute(root, camel_xml::dom::QName::ns("soapenc", "encodingStyle", SOAP_ENC), SOAP_ENC);
+    for c in d.element_children(root) {
+        let local = d.local_name(c).to_string();
+        if let Some(p) = params.iter().find(|p| p.name.1 == local) {
+            if let TypeInfo::Simple { builtin, list: false } = &p.info {
+                d.set_attribute(c, camel_xml::dom::QName::ns("xsi", "type", XSI), format!("xsd:{}", builtin));
+            }
+        }
+    }
+    d.to_xml_string()
+}
+
+/// Resolve SOAP-encoding multi-reference accessors (`href="#id"`) of the first body
+/// element against the other body elements (`id="..."`).
+pub fn resolve_multirefs(body: &[String]) -> String {
+    let Some(first) = body.first() else { return String::new() };
+    if !first.contains("href=") {
+        return first.clone();
+    }
+    let Ok(mut doc) = Document::parse(first) else { return first.clone() };
+    let refs: Vec<Document> = body[1..].iter().filter_map(|b| Document::parse(b).ok()).collect();
+    for _round in 0..8 {
+        let mut changed = false;
+        let all: Vec<camel_xml::dom::NodeId> = (0..doc.len()).filter(|&i| doc.node_type(i) == camel_xml::dom::NodeType::Element && doc.parent(i).is_some()).collect();
+        for el in all {
+            let Some(href) = doc.attribute(el, "href").map(|h| h.trim_start_matches('#').to_string()) else { continue };
+            let target = refs.iter().find_map(|r| {
+                let root = r.document_element()?;
+                (r.attribute(root, "id") == Some(href.as_str())).then_some((r, root))
+            });
+            let Some((r, root)) = target else { continue };
+            let attrs: Vec<camel_xml::dom::NodeId> = doc.node(el).attrs.clone();
+            doc.node_mut(el).attrs = attrs.into_iter().filter(|&a| doc.node(a).name.local != "href").collect();
+            for &a in r.attributes(root) {
+                let an = r.node(a);
+                if an.name.local != "id" {
+                    doc.set_attribute(el, an.name.clone(), an.value.clone());
+                }
+            }
+            for &c in r.children(root) {
+                if r.node_type(c) == camel_xml::dom::NodeType::Text {
+                    doc.append_text_node(el, r.value(c));
+                } else {
+                    doc.import_node(r, c, el);
+                }
+            }
+            changed = true;
+        }
+        if !changed {
+            break;
+        }
+    }
+    doc.to_xml_string()
+}
+
+/// Typed parameters of a message's `soap:header` parts.
+pub fn header_params(wsdl: &Wsdl, msg: &MessageInfo) -> Vec<Param> {
+    msg.header_parts.iter().map(|p| Param { name: p.element.clone(), info: wsdl.part_type(p), nillable: p.decl.nillable, repeated: p.decl.repeated() }).collect()
+}
+
+/// Separate header parameter values from a POJO body: extra positional items after the
+/// body parameters, or object entries named after header parts.
+pub fn split_header_values(body_count: usize, headers: &[Param], body: &Value) -> (Value, Vec<Option<Value>>) {
+    let mut vals: Vec<Option<Value>> = vec![None; headers.len()];
+    if headers.is_empty() {
+        return (body.clone(), vals);
+    }
+    match body {
+        Value::Array(items) if items.len() > body_count => {
+            for (i, v) in items[body_count..].iter().enumerate().take(headers.len()) {
+                vals[i] = Some(v.clone());
+            }
+            (Value::Array(items[..body_count].to_vec()), vals)
+        }
+        Value::Object(m) if headers.iter().any(|h| m.contains_key(&h.name.1)) => {
+            let mut rest = m.clone();
+            for (i, h) in headers.iter().enumerate() {
+                vals[i] = rest.remove(&h.name.1);
+            }
+            let body = if rest.len() == 1 && body_count == 1 { rest.into_iter().next().map(|(_, v)| v).unwrap_or(Value::Null) } else { Value::Object(rest) };
+            (body, vals)
+        }
+        other => (other.clone(), vals),
+    }
+}
+
+/// Encode header parameter values as SOAP header blocks.
+pub fn encode_header_values(schema: &SchemaSet, headers: &[Param], vals: &[Option<Value>], o: &BindOptions) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for (p, v) in headers.iter().zip(vals) {
+        if let Some(v) = v {
+            let mut w = XmlWriter::new(&o.prefixes);
+            schema.write_value(&mut w, 0, &p.name, v, &p.info, p.nillable, o)?;
+            out.push(w.doc.to_xml_string());
+        }
+    }
+    Ok(out)
+}
+
+/// Decode header parameters from SOAP header blocks (`Null` when absent).
+pub fn decode_header_values(schema: &SchemaSet, headers: &[Param], blocks: &[String], o: &BindOptions) -> Vec<(String, Value)> {
+    let docs: Vec<Document> = blocks.iter().filter_map(|b| Document::parse(b).ok()).collect();
+    headers
+        .iter()
+        .map(|p| {
+            let v = docs
+                .iter()
+                .find_map(|d| {
+                    let r = d.document_element()?;
+                    let k = key_of(d, r);
+                    (k.1 == p.name.1 && (p.name.0.is_empty() || k.0 == p.name.0)).then(|| schema.element_to_value(d, r, &p.info, o))
+                })
+                .unwrap_or(Value::Null);
+            (p.name.1.clone(), v)
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -6,7 +6,11 @@
 //! |---|---|
 //! | [`wsdl`] | WSDL 1.1 parser (types, messages, portTypes, SOAP 1.1 / 1.2 bindings, document and rpc literal, services, ports, `soapAction`) |
 //! | [`envelope`] | SOAP 1.1 / 1.2 envelopes, faults (`faultcode`/`faultstring`/`detail`, `Code`/`Subcode`/`Reason`/`Detail`) |
-//! | [`wssec`] | WS-Security UsernameToken (text / digest), timestamps, envelope signatures (camel-xml `xmlsecurity`) |
+//! | [`wssec`] | WS-Security UsernameToken (text / digest), timestamps, envelope signatures (camel-xml `xmlsecurity`), X.509 BinarySecurityToken, SAML 2.0 assertions |
+//! | [`xmlenc`] | XML Encryption of the SOAP body (AES-CBC / AES-GCM, RSA-OAEP key transport) |
+//! | [`mtom`] | MTOM / XOP and SOAP with Attachments (`multipart/related`) |
+//! | [`wsa`] | WS-Addressing and WS-ReliableMessaging basics |
+//! | [`codefirst`] | code-first service descriptors with WSDL generation |
 //! | [`xsdmodel`], [`pojo`] | XSD-typed XML ⇄ `Value` binding; POJO-mode parameter mapping |
 //! | [`cxf`] | the `cxf:` component (producer + consumer, `POJO` / `PAYLOAD` / `RAW` / `CXF_MESSAGE`) |
 //! | [`cxfrs`] | the `cxfrs:` component (JAX-RS style REST consumer / producer) |
@@ -26,18 +30,22 @@
 //! }).unwrap();
 //! ```
 
+pub mod codefirst;
 pub mod cxf;
 pub mod cxfrs;
 pub mod envelope;
 pub mod fhir;
 pub mod jaxb;
+pub mod mtom;
 pub mod pojo;
 pub mod springws;
 pub mod support;
 pub mod testing;
 pub mod transport;
 pub mod wsdl;
+pub mod wsa;
 pub mod wssec;
+pub mod xmlenc;
 pub mod xsdmodel;
 
 use std::sync::Arc;
@@ -64,7 +72,8 @@ pub fn register(ctx: &CamelContext) {
     ctx.add_component_factory("spring-ws", || Arc::new(springws::SpringWsComponent));
     ctx.add_component_factory("fhir", || Arc::new(fhir::component::FhirComponent));
     let reg = ctx.registry();
-    register_data_format_factory(reg, "jaxb", jaxb::factory);
+    let weak = ctx.downgrade();
+    register_data_format_factory(reg, "jaxb", move |o| Ok(Arc::new(jaxb::JaxbDataFormat::from_options_ctx(o, weak.upgrade().as_ref())?) as Arc<dyn camel_core::dataformat::DataFormat>));
     register_data_format_factory(reg, "fhirJson", fhir::dataformat::json_factory);
     register_data_format_factory(reg, "fhirXml", fhir::dataformat::xml_factory);
 }

@@ -85,3 +85,82 @@ fn ecdsa_components_roundtrip_and_failures() {
     std::fs::remove_dir_all(&dir).ok();
     assert!(ctx.get_endpoint("xmlsecurity-sign:x").is_err(), "privateKey is required");
 }
+
+#[test]
+fn enveloping_detached_xpath_keyvalue_and_keystores() {
+    use camel_tls::keystore::KeyStore;
+    use camel_tls::x509::Certificate;
+    let signer = camel_tls::self_signed("signer");
+    let other = camel_tls::self_signed("other");
+    let key = PrivateKey::from_pem(signer.key_pem.as_bytes()).unwrap();
+    let cert = Certificate::from_pem_all(signer.cert_pem.as_bytes()).unwrap().remove(0);
+    let dir = std::env::temp_dir().join(format!("camel-xmlsec2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p12 = dir.join("signer.p12");
+    std::fs::write(&p12, KeyStore::from_key_entry("signer", key.clone(), vec![cert.der.clone()]).to_pkcs12("secret")).unwrap();
+    let ctx = CamelContext::new();
+    camel_xml::register(&ctx);
+    // a trust store bean with only the signer's certificate
+    ctx.registry().bind("trust", KeyStore::new().add_cert("signer", cert.der.clone()));
+    let other_cert = Certificate::from_pem_all(other.cert_pem.as_bytes()).unwrap().remove(0);
+    ctx.registry().bind("otherTrust", KeyStore::new().add_cert("other", other_cert.der.clone()));
+    let ks = format!("keyStore=file:{}&keyStorePassword=secret&alias=signer", p12.display());
+    let routes = vec![
+        ("direct:enveloping", format!("xmlsecurity-sign:a?{}&contentObjectId=obj1&omitXmlDeclaration=true", ks)),
+        ("direct:detached", format!("xmlsecurity-sign:b?{}&xpathsToIdAttributes=//@Id&omitXmlDeclaration=true", ks)),
+        ("direct:xpath", format!("xmlsecurity-sign:c?{}&parentLocalName=order&xpathFilter=not(ancestor-or-self::o:note)&xpathNamespaces=o=urn:orders&omitXmlDeclaration=true", ks)),
+        ("direct:xpath2", format!("xmlsecurity-sign:d?{}&xpath2Filter=intersect://o:item;subtract://o:item[2]&xpathNamespaces=o=urn:orders&omitXmlDeclaration=true", ks)),
+        ("direct:keyvalue", format!("xmlsecurity-sign:e?privateKey=file:{}&addKeyValue=true&keyName=signer&omitXmlDeclaration=true", { let k = dir.join("k.pem"); std::fs::write(&k, &signer.key_pem).unwrap(); k.display().to_string() })),
+        ("direct:verifyTrust", "xmlsecurity-verify:v?keyStore=#trust&omitXmlDeclaration=true".to_string()),
+        ("direct:verifyOther", "xmlsecurity-verify:w?keyStore=#otherTrust".to_string()),
+        ("direct:verifyKeyInfo", "xmlsecurity-verify:x?trustKeyInfoCertificate=true&omitXmlDeclaration=true".to_string()),
+    ];
+    let r2 = routes.clone();
+    ctx.add_routes(move |b| {
+        for (from, to) in &r2 {
+            b.from(*from).to(to.as_str());
+        }
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    let doc = r#"<order xmlns="urn:orders"><item Id="i1">a</item><item Id="i2">b</item><note>free text</note></order>"#;
+
+    // enveloping: the signature is the document element and wraps the content in ds:Object
+    let s = t.request_body("direct:enveloping", doc).unwrap().to_string();
+    assert!(s.starts_with("<ds:Signature"), "{}", s);
+    assert!(s.contains("<ds:Reference URI=\"#obj1\">") && s.contains("<ds:Object Id=\"obj1\"><order xmlns=\"urn:orders\">"), "{}", s);
+    assert_eq!(t.request_body("direct:verifyTrust", s.clone()).unwrap().to_string(), doc);
+    let tampered = s.replace(">a</item>", ">z</item>");
+    assert!(format!("{:?}", t.request_body("direct:verifyTrust", tampered).unwrap_err()).contains("XmlSignatureInvalidContentHashException"));
+    assert!(format!("{:?}", t.request_body("direct:verifyOther", s).unwrap_err()).contains("XmlSignatureInvalidKeyException"));
+
+    // detached: one reference per Id, signature after the last signed element
+    let s = t.request_body("direct:detached", doc).unwrap().to_string();
+    assert!(s.contains("<ds:Reference URI=\"#i1\">") && s.contains("<ds:Reference URI=\"#i2\">"), "{}", s);
+    assert!(s.contains("<item Id=\"i2\">b</item><ds:Signature"), "{}", s);
+    assert_eq!(t.request_body("direct:verifyTrust", s.clone()).unwrap().to_string(), doc);
+    // the unsigned note may change, the signed items may not
+    assert!(t.request_body("direct:verifyTrust", s.replace("free text", "other")).is_ok());
+    assert!(t.request_body("direct:verifyTrust", s.replace(">b</item>", ">c</item>")).is_err());
+
+    // XPath filter: the note is excluded from the digest
+    let s = t.request_body("direct:xpath", doc).unwrap().to_string();
+    assert!(s.contains(&format!("Algorithm=\"{}\"", camel_xml::xmlsecurity::XPATH_FILTER)), "{}", s);
+    assert!(t.request_body("direct:verifyKeyInfo", s.replace("free text", "changed")).is_ok());
+    assert!(t.request_body("direct:verifyKeyInfo", s.replace(">a</item>", ">x</item>")).is_err());
+
+    // XPath Filter 2.0: only the first item is covered
+    let s = t.request_body("direct:xpath2", doc).unwrap().to_string();
+    assert!(t.request_body("direct:verifyKeyInfo", s.replace(">b</item>", ">B</item>")).is_ok());
+    assert!(t.request_body("direct:verifyKeyInfo", s.replace(">a</item>", ">A</item>")).is_err());
+
+    // KeyValue + KeyName (no certificate): verified with the key value
+    let s = t.request_body("direct:keyvalue", doc).unwrap().to_string();
+    assert!(s.contains("<ds:KeyName>signer</ds:KeyName><ds:KeyValue><dsig11:ECKeyValue") || s.contains("<ds:RSAKeyValue>"), "{}", s);
+    assert_eq!(t.request_body("direct:verifyKeyInfo", s.clone()).unwrap().to_string(), doc);
+    // and with the trust store (KeyName = alias)
+    assert_eq!(t.request_body("direct:verifyTrust", s).unwrap().to_string(), doc);
+    ctx.stop().unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -1,6 +1,7 @@
 //! XQuery abstract syntax tree. Names are resolved to expanded names at parse time.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::xpath::ast::{Axis, NodeTest};
 
@@ -186,6 +187,47 @@ pub enum Expr {
     Comment(Box<Expr>),
     Pi { target: CtorName, value: Box<Expr> },
     Document(Box<Expr>),
+    // ---- XQuery 3.1 ----
+    /// `map { k : v, ... }`
+    MapCtor(Vec<(Expr, Expr)>),
+    /// `[a, b]` (square: one member per expression) or `array { e }` (one member per item).
+    ArrayCtor { square: bool, members: Vec<Expr> },
+    /// `function ($a as T) as R { body }`
+    InlineFunc { params: Vec<(QN, Option<SeqType>)>, ret: Option<SeqType>, body: Arc<Expr> },
+    /// `name#arity`
+    FuncRef(QN, usize),
+    /// `f(args)` on a function / map / array value; `None` arguments are `?` placeholders.
+    DynCall(Box<Expr>, Vec<Option<Expr>>),
+    /// Static call with `?` placeholders (partial function application).
+    PartialCall { name: QN, args: Vec<Option<Expr>> },
+    /// `E?key` (postfix) or `?key` (unary, `None` = context item).
+    Lookup(Option<Box<Expr>>, LookupKey),
+    // ---- XQuery Update Facility ----
+    Insert { source: Box<Expr>, pos: InsertPos, target: Box<Expr> },
+    Delete(Box<Expr>),
+    Replace { value_of: bool, target: Box<Expr>, with: Box<Expr> },
+    Rename { target: Box<Expr>, name: Box<Expr> },
+    /// `copy $v := E, ... modify U return R`
+    Transform { copies: Vec<(QN, Expr)>, modify: Box<Expr>, ret: Box<Expr> },
+}
+
+/// The key of a lookup (`?name`, `?2`, `?*`, `?(expr)`).
+#[derive(Clone, Debug)]
+pub enum LookupKey {
+    Name(String),
+    Int(i64),
+    Wildcard,
+    Expr(Box<Expr>),
+}
+
+/// Where `insert node` puts the new nodes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InsertPos {
+    Into,
+    First,
+    Last,
+    Before,
+    After,
 }
 
 /// A user-defined function.
@@ -217,4 +259,8 @@ pub struct Module {
     pub empty_greatest: bool,
     /// Statically known namespaces after the prolog (for messages / result conversion).
     pub namespaces: Vec<(String, String)>,
+    /// `module namespace p = "uri";` for a library module.
+    pub library_ns: Option<(String, String)>,
+    /// Whether the body contains updating expressions (XQuery Update Facility).
+    pub updating: bool,
 }

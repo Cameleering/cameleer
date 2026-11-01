@@ -44,6 +44,14 @@ fn ncname(c: &[char], i: &mut usize) -> Option<String> {
 }
 
 pub(crate) fn tokenize(expr: &str) -> Result<Vec<Tok>, XPathError> {
+    tokenize_v(expr, false)
+}
+
+/// XPath 2.0 keywords recognized in operator position.
+const V2_KEYWORDS: &[&str] = &["then", "else", "return", "satisfies", "in", "to", "eq", "ne", "lt", "le", "gt", "ge", "intersect", "except", "union", "idiv"];
+
+/// Tokenize; `v2` adds the XPath 2.0 keywords (`then`, `return`, `eq`, `to`...) and `||`.
+pub(crate) fn tokenize_v(expr: &str, v2: bool) -> Result<Vec<Tok>, XPathError> {
     let c: Vec<char> = expr.chars().collect();
     let mut toks: Vec<Tok> = Vec::new();
     let mut i = 0;
@@ -132,6 +140,10 @@ pub(crate) fn tokenize(expr: &str) -> Result<Vec<Tok>, XPathError> {
                     i += 1;
                 }
             }
+            '|' if v2 && c.get(i + 1) == Some(&'|') => {
+                toks.push(Tok::Op("||"));
+                i += 2;
+            }
             '|' => {
                 toks.push(Tok::Op("|"));
                 i += 1;
@@ -197,6 +209,7 @@ pub(crate) fn tokenize(expr: &str) -> Result<Vec<Tok>, XPathError> {
                         "or" => toks.push(Tok::Op("or")),
                         "mod" => toks.push(Tok::Op("mod")),
                         "div" => toks.push(Tok::Op("div")),
+                        k if v2 && V2_KEYWORDS.contains(&k) => toks.push(Tok::Op(V2_KEYWORDS.iter().find(|x| **x == k).unwrap())),
                         _ => return Err(err(format!("unexpected name '{}' (an operator was expected)", a))),
                     }
                     continue;
@@ -245,6 +258,8 @@ pub(crate) struct Parser<'a> {
     pub i: usize,
     pub text: &'a str,
     pub ns: PrefixResolver<'a>,
+    /// XPath 2.0 syntax (`if`, `for`, `some`/`every`, sequences, value comparisons, `to`...).
+    pub v2: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -290,11 +305,73 @@ impl<'a> Parser<'a> {
         if self.toks.is_empty() {
             return self.err("empty expression");
         }
-        let e = self.or()?;
+        let e = if self.v2 { self.expr_seq()? } else { self.or()? };
         if self.i < self.toks.len() {
             return self.err(format!("unexpected token {}", self.describe()));
         }
         Ok(e)
+    }
+
+    /// `ExprSingle (, ExprSingle)*` (XPath 2.0).
+    fn expr_seq(&mut self) -> Result<Expr, XPathError> {
+        let first = self.expr_single()?;
+        if self.peek() != Some(&Tok::Comma) {
+            return Ok(first);
+        }
+        let mut items = vec![first];
+        while self.peek() == Some(&Tok::Comma) {
+            self.i += 1;
+            items.push(self.expr_single()?);
+        }
+        Ok(Expr::Sequence(items))
+    }
+
+    /// `if`, `for`, `some` / `every` or an `or` expression.
+    fn expr_single(&mut self) -> Result<Expr, XPathError> {
+        if !self.v2 {
+            return self.or();
+        }
+        let next_is_var = matches!(self.toks.get(self.i + 1), Some(Tok::Var(..)));
+        match self.peek().cloned() {
+            Some(Tok::FuncName(None, l)) if l == "if" => {
+                self.i += 1;
+                self.expect(Tok::LParen, "'('")?;
+                let c = self.expr_seq()?;
+                self.expect(Tok::RParen, "')'")?;
+                self.expect(Tok::Op("then"), "'then'")?;
+                let a = self.expr_single()?;
+                self.expect(Tok::Op("else"), "'else'")?;
+                let b = self.expr_single()?;
+                Ok(Expr::If(Box::new(c), Box::new(a), Box::new(b)))
+            }
+            Some(Tok::NameTest(None, l)) if next_is_var && (l == "for" || l == "some" || l == "every") => {
+                self.i += 1;
+                let mut binds = Vec::new();
+                loop {
+                    let (p, v) = match self.peek().cloned() {
+                        Some(Tok::Var(p, v)) => (p, v),
+                        _ => return self.err(format!("expected a variable but found {}", self.describe())),
+                    };
+                    self.i += 1;
+                    self.expect(Tok::Op("in"), "'in'")?;
+                    let e = self.expr_single()?;
+                    binds.push((self.resolve(&p)?, v, e));
+                    if self.peek() == Some(&Tok::Comma) {
+                        self.i += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if l == "for" {
+                    self.expect(Tok::Op("return"), "'return'")?;
+                    Ok(Expr::For(binds, Box::new(self.expr_single()?)))
+                } else {
+                    self.expect(Tok::Op("satisfies"), "'satisfies'")?;
+                    Ok(Expr::Quantified(l == "every", binds, Box::new(self.expr_single()?)))
+                }
+            }
+            _ => self.or(),
+        }
     }
 
     fn or(&mut self) -> Result<Expr, XPathError> {
@@ -318,9 +395,9 @@ impl<'a> Parser<'a> {
     fn equality(&mut self) -> Result<Expr, XPathError> {
         let mut l = self.relational()?;
         loop {
-            let op = if self.is_op("=") {
+            let op = if self.is_op("=") || self.is_op("eq") {
                 CmpOp::Eq
-            } else if self.is_op("!=") {
+            } else if self.is_op("!=") || self.is_op("ne") {
                 CmpOp::Ne
             } else {
                 return Ok(l);
@@ -331,18 +408,39 @@ impl<'a> Parser<'a> {
     }
 
     fn relational(&mut self) -> Result<Expr, XPathError> {
-        let mut l = self.additive()?;
+        let mut l = self.concat()?;
         loop {
             let op = match self.peek() {
-                Some(Tok::Op("<")) => CmpOp::Lt,
-                Some(Tok::Op("<=")) => CmpOp::Le,
-                Some(Tok::Op(">")) => CmpOp::Gt,
-                Some(Tok::Op(">=")) => CmpOp::Ge,
+                Some(Tok::Op("<" | "lt")) => CmpOp::Lt,
+                Some(Tok::Op("<=" | "le")) => CmpOp::Le,
+                Some(Tok::Op(">" | "gt")) => CmpOp::Gt,
+                Some(Tok::Op(">=" | "ge")) => CmpOp::Ge,
                 _ => return Ok(l),
             };
             self.i += 1;
-            l = Expr::Cmp(op, Box::new(l), Box::new(self.additive()?));
+            l = Expr::Cmp(op, Box::new(l), Box::new(self.concat()?));
         }
+    }
+
+    /// `a || b` (XPath 3.0 string concatenation) over range expressions.
+    fn concat(&mut self) -> Result<Expr, XPathError> {
+        let mut l = self.range()?;
+        while self.is_op("||") {
+            self.i += 1;
+            let r = self.range()?;
+            l = Expr::Func { uri: String::new(), local: "concat".into(), prefix: None, args: vec![l, r] };
+        }
+        Ok(l)
+    }
+
+    /// `a to b` (XPath 2.0).
+    fn range(&mut self) -> Result<Expr, XPathError> {
+        let l = self.additive()?;
+        if self.is_op("to") {
+            self.i += 1;
+            return Ok(Expr::Range(Box::new(l), Box::new(self.additive()?)));
+        }
+        Ok(l)
     }
 
     fn additive(&mut self) -> Result<Expr, XPathError> {
@@ -365,6 +463,12 @@ impl<'a> Parser<'a> {
                 Some(Tok::Op("*")) => ArithOp::Mul,
                 Some(Tok::Op("div")) => ArithOp::Div,
                 Some(Tok::Op("mod")) => ArithOp::Mod,
+                Some(Tok::Op("idiv")) => {
+                    self.i += 1;
+                    let r = self.unary()?;
+                    l = Expr::Func { uri: String::new(), local: "\u{0}idiv".into(), prefix: None, args: vec![l, r] };
+                    continue;
+                }
                 _ => return Ok(l),
             };
             self.i += 1;
@@ -382,11 +486,20 @@ impl<'a> Parser<'a> {
 
     fn union(&mut self) -> Result<Expr, XPathError> {
         let mut l = self.path_expr()?;
-        while self.is_op("|") {
-            self.i += 1;
-            l = Expr::Union(Box::new(l), Box::new(self.path_expr()?));
+        loop {
+            if self.is_op("|") || self.is_op("union") {
+                self.i += 1;
+                l = Expr::Union(Box::new(l), Box::new(self.path_expr()?));
+            } else if self.is_op("intersect") {
+                self.i += 1;
+                l = Expr::Intersect(Box::new(l), Box::new(self.path_expr()?));
+            } else if self.is_op("except") {
+                self.i += 1;
+                l = Expr::Except(Box::new(l), Box::new(self.path_expr()?));
+            } else {
+                return Ok(l);
+            }
         }
-        Ok(l)
     }
 
     fn starts_step(&self) -> bool {
@@ -517,7 +630,7 @@ impl<'a> Parser<'a> {
 
     fn predicate(&mut self) -> Result<Expr, XPathError> {
         self.expect(Tok::LBracket, "'['")?;
-        let e = self.or()?;
+        let e = if self.v2 { self.expr_seq()? } else { self.or()? };
         self.expect(Tok::RBracket, "']'")?;
         Ok(e)
     }
@@ -530,7 +643,11 @@ impl<'a> Parser<'a> {
             }
             Some(Tok::LParen) => {
                 self.i += 1;
-                let e = self.or()?;
+                if self.v2 && self.peek() == Some(&Tok::RParen) {
+                    self.i += 1;
+                    return Ok(Expr::Sequence(Vec::new()));
+                }
+                let e = if self.v2 { self.expr_seq()? } else { self.or()? };
                 self.expect(Tok::RParen, "')'")?;
                 Ok(e)
             }
@@ -549,7 +666,8 @@ impl<'a> Parser<'a> {
                 let mut args = Vec::new();
                 if self.peek() != Some(&Tok::RParen) {
                     loop {
-                        args.push(self.or()?);
+                        args.push(self.expr_single()?);
+
                         if self.peek() == Some(&Tok::Comma) {
                             self.i += 1;
                         } else {

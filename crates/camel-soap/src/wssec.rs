@@ -35,6 +35,8 @@ pub const PASSWORD_DIGEST: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-
 pub const BASE64_ENCODING: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary";
 
 const DSIG_NS: &str = "http://www.w3.org/2000/09/xmldsig#";
+pub const X509V3: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-x509-token-profile-1.0#X509v3";
+pub const SAML2_NS: &str = "urn:oasis:names:tc:SAML:2.0:assertion";
 const EXC_C14N: &str = "http://www.w3.org/2001/10/xml-exc-c14n#";
 
 /// Password type of a UsernameToken.
@@ -122,6 +124,135 @@ pub fn sign_envelope(envelope: &str, key: &PrivateKey, cert: Option<&Certificate
     Ok(doc.to_xml_string())
 }
 
+/// Sign an envelope and reference the certificate as an X.509 `wsse:BinarySecurityToken`
+/// (`ds:KeyInfo/wsse:SecurityTokenReference/wsse:Reference URI="#X509-..."`).
+pub fn sign_envelope_bst(envelope: &str, key: &PrivateKey, cert: &Certificate) -> Result<String> {
+    use camel_xml::dom::QName;
+    let mut doc = Document::parse(envelope).map_err(|e| CamelError::illegal_argument(format!("Invalid envelope: {}", e)))?;
+    let sec = find_security(&doc).ok_or_else(|| CamelError::illegal_state("No wsse:Security header to hold the signature"))?;
+    let id = format!("X509-{}", camel_core::message::generate_id().replace('-', ""));
+    // the token first: it is covered by the (enveloped) signature
+    let bst = doc.append_element(sec, QName::ns("wsse", "BinarySecurityToken", WSSE_NS));
+    doc.declare_namespace(bst, "wsu", WSU_NS);
+    doc.set_attribute(bst, QName::ns("wsu", "Id", WSU_NS), id.clone());
+    doc.set_attribute(bst, QName::local("ValueType"), X509V3);
+    doc.set_attribute(bst, QName::local("EncodingType"), BASE64_ENCODING);
+    doc.append_text(bst, &base64_encode(&cert.der));
+    let sig = camel_xml::xmlsecurity::sign_document(&mut doc, sec, key, None, EXC_C14N, "ds")?;
+    // KeyInfo -> SecurityTokenReference (inside the signature, excluded from the digest)
+    let existing = doc.child_elements_named(sig, DSIG_NS, "KeyInfo").next();
+    let ki = match existing {
+        Some(k) => {
+            for c in doc.children(k).to_vec() {
+                doc.node_mut(c).parent = None;
+            }
+            doc.node_mut(k).children.clear();
+            k
+        }
+        None => doc.append_element(sig, QName::ns("ds", "KeyInfo", DSIG_NS)),
+    };
+    let str_ = doc.append_element(ki, QName::ns("wsse", "SecurityTokenReference", WSSE_NS));
+    doc.declare_namespace(str_, "wsse", WSSE_NS);
+    let r = doc.append_element(str_, QName::ns("wsse", "Reference", WSSE_NS));
+    doc.set_attribute(r, QName::local("URI"), format!("#{}", id));
+    doc.set_attribute(r, QName::local("ValueType"), X509V3);
+    Ok(doc.to_xml_string())
+}
+
+/// An unsigned SAML 2.0 assertion (sender-vouches confirmation) for the security header.
+pub fn saml_assertion(issuer: &str, subject: &str, attributes: &[(String, String)], ttl_ms: i64) -> String {
+    let now = camel_core::util_time::now_millis();
+    let attrs: String = if attributes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<saml2:AttributeStatement>{}</saml2:AttributeStatement>",
+            attributes.iter().map(|(k, v)| format!("<saml2:Attribute Name=\"{}\"><saml2:AttributeValue>{}</saml2:AttributeValue></saml2:Attribute>", camel_xml::serialize::escape_attr(k), escape_text(v))).collect::<String>()
+        )
+    };
+    format!(
+        "<saml2:Assertion xmlns:saml2=\"{ns}\" ID=\"_{id}\" IssueInstant=\"{now}\" Version=\"2.0\"><saml2:Issuer>{issuer}</saml2:Issuer>\
+<saml2:Subject><saml2:NameID>{subject}</saml2:NameID><saml2:SubjectConfirmation Method=\"urn:oasis:names:tc:SAML:2.0:cm:sender-vouches\"/></saml2:Subject>\
+<saml2:Conditions NotBefore=\"{nb}\" NotOnOrAfter=\"{na}\"/>{attrs}</saml2:Assertion>",
+        ns = SAML2_NS,
+        id = camel_core::message::generate_id().replace('-', ""),
+        now = format_utc_millis(now),
+        issuer = escape_text(issuer),
+        subject = escape_text(subject),
+        nb = format_utc_millis(now - 60_000),
+        na = format_utc_millis(now + ttl_ms),
+        attrs = attrs,
+    )
+}
+
+/// What a SAML assertion in the security header asserts.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SamlInfo {
+    pub issuer: String,
+    pub subject: String,
+    pub attributes: Vec<(String, String)>,
+}
+
+/// Read and check the SAML 2.0 assertion of the security header (issuer allow-list,
+/// `Conditions` validity window).
+pub fn verify_saml(doc: &Document, version: SoapVersion, policy: &SecurityPolicy) -> std::result::Result<Option<SamlInfo>, SoapFault> {
+    let assertion = find_security(doc).and_then(|sec| doc.child_elements_named(sec, SAML2_NS, "Assertion").next());
+    let Some(a) = assertion else {
+        return if policy.saml_required { Err(invalid(version, "A SAML assertion is required")) } else { Ok(None) };
+    };
+    let text = |p: NodeId, l: &str| doc.child_elements_named(p, SAML2_NS, l).next().map(|e| doc.string_value(e).trim().to_string());
+    let issuer = text(a, "Issuer").unwrap_or_default();
+    if !policy.saml_issuers.is_empty() && !policy.saml_issuers.contains(&issuer) {
+        return Err(invalid(version, &format!("SAML issuer {} is not trusted", issuer)));
+    }
+    let subject = doc.child_elements_named(a, SAML2_NS, "Subject").next().and_then(|s| text(s, "NameID")).unwrap_or_default();
+    if let Some(c) = doc.child_elements_named(a, SAML2_NS, "Conditions").next() {
+        let now = camel_core::util_time::now_millis();
+        if let Some(nb) = doc.attribute(c, "NotBefore").and_then(parse_datetime_millis) {
+            if now + 60_000 < nb {
+                return Err(invalid(version, "The SAML assertion is not yet valid"));
+            }
+        }
+        if let Some(na) = doc.attribute(c, "NotOnOrAfter").and_then(parse_datetime_millis) {
+            if now >= na {
+                return Err(invalid(version, "The SAML assertion has expired"));
+            }
+        }
+    }
+    let mut attributes = Vec::new();
+    for st in doc.child_elements_named(a, SAML2_NS, "AttributeStatement") {
+        for at in doc.child_elements_named(st, SAML2_NS, "Attribute") {
+            let name = doc.attribute(at, "Name").unwrap_or("").to_string();
+            for v in doc.child_elements_named(at, SAML2_NS, "AttributeValue") {
+                attributes.push((name.clone(), doc.string_value(v).trim().to_string()));
+            }
+        }
+    }
+    Ok(Some(SamlInfo { issuer, subject, attributes }))
+}
+
+/// The X.509 certificate a signature references (BinarySecurityToken or X509Data).
+fn signer_certificate(doc: &Document, sec: NodeId, sig: NodeId) -> Option<Certificate> {
+    let ki = doc.child_elements_named(sig, DSIG_NS, "KeyInfo").next()?;
+    if let Some(str_) = doc.child_elements_named(ki, WSSE_NS, "SecurityTokenReference").next() {
+        let uri = doc.child_elements_named(str_, WSSE_NS, "Reference").next().and_then(|r| doc.attribute(r, "URI")).map(|u| u.trim_start_matches('#').to_string())?;
+        let bst = doc.child_elements_named(sec, WSSE_NS, "BinarySecurityToken").find(|&b| doc.attribute_ns(b, WSU_NS, "Id") == Some(uri.as_str()))?;
+        let der = base64_decode(&doc.string_value(bst).split_whitespace().collect::<String>())?;
+        return Certificate::from_der(&der).ok();
+    }
+    let info = camel_xml::xmlsecurity::key_info(doc, sig);
+    info.certificates.first().and_then(|d| Certificate::from_der(d).ok())
+}
+
+fn trusted(cert: &Certificate, anchors: &[Certificate]) -> bool {
+    let now = camel_core::util_time::now_millis() / 1000;
+    if now < cert.not_before || now > cert.not_after {
+        return false;
+    }
+    anchors.iter().any(|a| a.der == cert.der || (a.subject_raw == cert.issuer_raw && a.public_key.as_ref().is_some_and(|k| cert.verify_signed_by(k))))
+}
+
+
 /// Server-side WS-Security policy.
 #[derive(Default)]
 pub struct SecurityPolicy {
@@ -129,6 +260,11 @@ pub struct SecurityPolicy {
     pub users: HashMap<String, String>,
     /// Trusted key; when set a valid signature is required.
     pub signature_key: Option<PublicKey>,
+    /// Trust anchors for signatures carrying their certificate (BinarySecurityToken /
+    /// X509Data): the certificate itself or its issuer.
+    pub trusted_certs: Vec<Certificate>,
+    pub saml_required: bool,
+    pub saml_issuers: Vec<String>,
     /// Maximum age of `Created` in milliseconds (0 = not checked).
     pub max_age_ms: i64,
     seen_nonces: Mutex<VecDeque<String>>,
@@ -142,7 +278,7 @@ impl SecurityPolicy {
 
     /// Whether the policy checks anything.
     pub fn is_active(&self) -> bool {
-        !self.users.is_empty() || self.signature_key.is_some()
+        !self.users.is_empty() || self.signature_key.is_some() || !self.trusted_certs.is_empty()
     }
 }
 
@@ -174,6 +310,14 @@ pub fn verify_security(doc: &Document, version: SoapVersion, policy: &SecurityPo
             return Err(invalid(version, "A signature is required"));
         }
         camel_xml::xmlsecurity::verify_document(doc, Some(key), false).map_err(|e| invalid(version, &format!("The signature or decryption was invalid: {}", e.message)))?;
+    } else if !policy.trusted_certs.is_empty() {
+        let sig = doc.child_elements_named(sec, DSIG_NS, "Signature").next().ok_or_else(|| invalid(version, "A signature is required"))?;
+        let cert = signer_certificate(doc, sec, sig).ok_or_else(|| invalid(version, "The signature does not reference an X.509 certificate"))?;
+        if !trusted(&cert, &policy.trusted_certs) {
+            return Err(failed(version, "untrusted certificate"));
+        }
+        let key = cert.public_key.clone().ok_or_else(|| invalid(version, "Unsupported certificate key"))?;
+        camel_xml::xmlsecurity::verify_document(doc, Some(&key), false).map_err(|e| invalid(version, &format!("The signature or decryption was invalid: {}", e.message)))?;
     }
     if policy.users.is_empty() {
         return Ok(None);
@@ -267,13 +411,42 @@ mod tests {
     }
 
     #[test]
+    fn binary_security_token_and_saml() {
+        let id = &camel_tls::testing::pki().localhost;
+        let cert = Certificate::from_der(&id.cert_der).unwrap();
+        let env = build_envelope(SoapVersion::V11, &[empty_security_header(SoapVersion::V11)], &["<m:x xmlns:m=\"urn:m\">1</m:x>".into()]);
+        let signed = sign_envelope_bst(&env, &id.key, &cert).unwrap();
+        assert!(signed.contains("BinarySecurityToken"), "{}", signed);
+        let policy = SecurityPolicy { trusted_certs: vec![cert.clone()], ..Default::default() };
+        let r = verify_security(&Document::parse(&signed).unwrap(), SoapVersion::V11, &policy);
+        assert!(r.is_ok(), "{:?}\n{}", r.err().map(|f| f.reason), signed);
+        let tampered = signed.replace(">1</m:x>", ">2</m:x>");
+        assert!(verify_security(&Document::parse(&tampered).unwrap(), SoapVersion::V11, &policy).is_err());
+        let other = Certificate::from_der(&camel_tls::testing::pki().unrelated.cert_der).unwrap();
+        let policy2 = SecurityPolicy { trusted_certs: vec![other], ..Default::default() };
+        assert!(verify_security(&Document::parse(&signed).unwrap(), SoapVersion::V11, &policy2).is_err());
+        // SAML
+        let saml = saml_assertion("urn:idp", "alice", &[("role".into(), "admin".into())], 60_000);
+        let with_saml = build_envelope(SoapVersion::V11, &[format!("<wsse:Security xmlns:wsse=\"{}\">{}</wsse:Security>", WSSE_NS, saml)], &["<a/>".into()]);
+        let p = SecurityPolicy { saml_required: true, saml_issuers: vec!["urn:idp".into()], ..Default::default() };
+        let info = verify_saml(&Document::parse(&with_saml).unwrap(), SoapVersion::V11, &p).unwrap().unwrap();
+        assert_eq!(info.subject, "alice");
+        assert_eq!(info.attributes, vec![("role".to_string(), "admin".to_string())]);
+        let p2 = SecurityPolicy { saml_required: true, saml_issuers: vec!["urn:other".into()], ..Default::default() };
+        assert!(verify_saml(&Document::parse(&with_saml).unwrap(), SoapVersion::V11, &p2).is_err());
+        let none = build_envelope(SoapVersion::V11, &[], &["<a/>".into()]);
+        assert!(verify_saml(&Document::parse(&none).unwrap(), SoapVersion::V11, &p).is_err());
+    }
+
+    #[test]
     fn signature() {
         let id = &camel_tls::testing::pki().localhost;
         let cert = Certificate::from_der(&id.cert_der).unwrap();
         let env = build_envelope(SoapVersion::V11, &[empty_security_header(SoapVersion::V11)], &["<m:x xmlns:m=\"urn:m\">1</m:x>".into()]);
         let signed = sign_envelope(&env, &id.key, Some(&cert)).unwrap();
         let policy = SecurityPolicy { signature_key: cert.public_key.clone(), ..Default::default() };
-        assert!(verify_security(&Document::parse(&signed).unwrap(), SoapVersion::V11, &policy).is_ok());
+        let r = verify_security(&Document::parse(&signed).unwrap(), SoapVersion::V11, &policy);
+        assert!(r.is_ok(), "{:?}\n{}", r.err().map(|f| f.reason), signed);
         let tampered = signed.replace(">1</m:x>", ">2</m:x>");
         assert!(verify_security(&Document::parse(&tampered).unwrap(), SoapVersion::V11, &policy).is_err());
         assert!(verify_security(&Document::parse(&env).unwrap(), SoapVersion::V11, &policy).is_err());

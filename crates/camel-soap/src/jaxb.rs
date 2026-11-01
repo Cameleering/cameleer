@@ -15,6 +15,12 @@
 //! | `encoding` | encoding of the declaration / output bytes (`UTF-8` default, `ISO-8859-1` supported for bytes) |
 //! | `namespacePrefix` | preferred prefixes `uri=prefix,uri2=prefix2` (or a `#bean` `Map`) |
 //! | `attributePrefix` | key prefix of attributes (default `@`); `plainAttributes=true` uses plain keys |
+//! | `typedDates` | map `date` / `dateTime` / `time` / `duration` to `XMLGregorianCalendar` / `Duration`-like objects (see [`crate::xsdmodel`]); marshal accepts them, lexical strings and epoch milliseconds |
+//!
+//! Schema locations may name registry beans (`#name`, `ref:name`, `bean:name`): a `String`
+//! / `Value::String` holding XSD text, a [`SchemaSet`] or a `camel_xml::xsd::Schema` (for
+//! `schema`). Polymorphism follows the schema: `xsi:type` selects the derived type (recorded
+//! as `@xsi:type`), substitution group members bind where their head is declared.
 //! | `mustBeJAXBElement`, `objectFactory`, `filterNonXmlChars`, `noNamespaceSchemaLocation`, `schemaLocation`, `contentTypeHeader`, `schemaSeverityLevel`, `jaxbProviderProperties`, `xmlStreamWriterWrapper` | accepted (`filterNonXmlChars` removes characters illegal in XML; `contentTypeHeader` sets `Content-Type`) |
 //!
 //! Marshal root: `partClass`, else a body object with a single key naming a global element,
@@ -28,6 +34,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use camel_core::context::CamelContext;
 use camel_core::dataformat::DataFormat;
 use camel_core::error::{kinds, register_kind_parent, CamelError, Result};
 use camel_core::message::Exchange;
@@ -57,7 +64,7 @@ pub(crate) fn register_kinds() {
 /// The `jaxb` data format.
 pub struct JaxbDataFormat {
     schema: SchemaSet,
-    validator: Option<camel_xml::xsd::Schema>,
+    validator: Option<Arc<camel_xml::xsd::Schema>>,
     part: Option<Key>,
     ignore_element: bool,
     pretty: bool,
@@ -84,13 +91,18 @@ fn flag(o: &BTreeMap<String, String>, k: &str, d: bool) -> Result<bool> {
 impl JaxbDataFormat {
     /// Create from data format options.
     pub fn from_options(o: &BTreeMap<String, String>) -> Result<JaxbDataFormat> {
+        Self::from_options_ctx(o, None)
+    }
+
+    /// Create from data format options, resolving `#bean` schema locations in `ctx`'s registry.
+    pub fn from_options_ctx(o: &BTreeMap<String, String>, ctx: Option<&CamelContext>) -> Result<JaxbDataFormat> {
         register_kinds();
         let mut schema = SchemaSet::new();
         let mut prefixes: Vec<(String, String)> = Vec::new();
         let mut locations: Vec<String> = Vec::new();
         if let Some(cp) = opt(o, "contextPath") {
             if cp.trim_end().ends_with(".properties") {
-                let (text, dir) = load_text(None, cp)?;
+                let (text, dir) = load_text(ctx, cp)?;
                 for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
                     let (k, v) = line.split_once('=').map(|(k, v)| (k.trim(), v.trim())).unwrap_or((line, ""));
                     if k == "schema" {
@@ -112,17 +124,24 @@ impl JaxbDataFormat {
             }
         }
         let validator = match opt(o, "schema") {
-            Some(s) => {
-                let (text, dir) = load_text(None, s)?;
-                if locations.is_empty() {
-                    locations.push(s.to_string());
+            Some(s) => match bean_name(s).and_then(|n| ctx.and_then(|c| c.registry().lookup::<camel_xml::xsd::Schema>(n))) {
+                Some(v) => Some(v),
+                None => {
+                    let (text, dir) = load_bean_text(ctx, s)?;
+                    if locations.is_empty() {
+                        locations.push(s.to_string());
+                    }
+                    Some(Arc::new(camel_xml::xsd::Schema::parse(&text, dir.as_deref()).map_err(CamelError::illegal_argument)?))
                 }
-                Some(camel_xml::xsd::Schema::parse(&text, dir.as_deref()).map_err(CamelError::illegal_argument)?)
-            }
+            },
             None => None,
         };
         for loc in &locations {
-            let (text, dir) = load_text(None, loc)?;
+            if let Some(set) = bean_name(loc).and_then(|n| ctx.and_then(|c| c.registry().lookup::<SchemaSet>(n))) {
+                schema.merge(&set);
+                continue;
+            }
+            let (text, dir) = load_bean_text(ctx, loc)?;
             let doc = Document::parse(&text).map_err(|e| CamelError::illegal_argument(format!("Invalid schema {}: {}", loc, e)))?;
             if let Some(r) = doc.document_element() {
                 schema.add_schema(&doc, r, dir.as_deref())?;
@@ -158,7 +177,7 @@ impl JaxbDataFormat {
             pretty: flag(o, "prettyPrint", true)?,
             fragment: flag(o, "fragment", false)?,
             encoding: opt(o, "encoding").unwrap_or("UTF-8").to_string(),
-            bind: BindOptions { attr_prefix, prefixes, ..Default::default() },
+            bind: BindOptions { attr_prefix, prefixes, typed_dates: flag(o, "typedDates", false)?, ..Default::default() },
             filter_non_xml: flag(o, "filterNonXmlChars", false)?,
             content_type_header: flag(o, "contentTypeHeader", true)?,
         })
@@ -230,7 +249,25 @@ impl JaxbDataFormat {
     }
 }
 
+fn bean_name(loc: &str) -> Option<&str> {
+    let l = loc.trim();
+    l.strip_prefix('#').or_else(|| l.strip_prefix("ref:")).or_else(|| l.strip_prefix("bean:"))
+}
+
+/// [`load_text`] that also accepts `Value::String` beans.
+fn load_bean_text(ctx: Option<&CamelContext>, loc: &str) -> Result<(String, Option<std::path::PathBuf>)> {
+    if let (Some(n), Some(c)) = (bean_name(loc), ctx) {
+        if let Some(v) = c.registry().lookup::<Value>(n) {
+            if let Value::String(s) = &*v {
+                return Ok((s.clone(), None));
+            }
+        }
+    }
+    load_text(ctx, loc)
+}
+
 fn encode_bytes(s: &str, enc: &str) -> Vec<u8> {
+
     match enc.to_ascii_uppercase().as_str() {
         "ISO-8859-1" | "LATIN1" | "US-ASCII" => s.chars().map(|c| if (c as u32) < 256 { c as u8 } else { b'?' }).collect(),
         _ => s.as_bytes().to_vec(),

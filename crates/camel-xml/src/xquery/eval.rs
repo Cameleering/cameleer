@@ -48,6 +48,8 @@ pub(crate) struct Interp<'a> {
     /// Why the context item is absent (e.g. the body is not XML).
     pub context_error: Option<String>,
     pub now: String,
+    /// Pending update list (XQuery Update Facility).
+    pub pul: Vec<super::update::Update>,
 }
 
 pub(crate) fn new_root(ty: NodeType, name: QName, value: String) -> Document {
@@ -68,6 +70,7 @@ impl<'a> Interp<'a> {
         match it {
             Item::Node(n) => self.docs.string_value(*n),
             Item::Atomic(a) => a.to_string(),
+            other => self.atomize(std::slice::from_ref(other)).iter().map(|a| a.to_string()).collect::<Vec<_>>().join(" "),
         }
     }
 
@@ -75,18 +78,37 @@ impl<'a> Interp<'a> {
         match it {
             Item::Node(n) => Atomic::Untyped(self.docs.string_value(*n)),
             Item::Atomic(a) => a.clone(),
+            Item::Array(_) => self.atomize(std::slice::from_ref(it)).into_iter().next().unwrap_or(Atomic::Str(String::new())),
+            Item::Map(_) => Atomic::Str("map(*)".into()),
+            Item::Func(_) => Atomic::Str("function(*)".into()),
         }
     }
 
+    /// Atomization (arrays are flattened).
     pub fn atomize(&self, s: &[Item]) -> Vec<Atomic> {
-        s.iter().map(|i| self.atomize_item(i)).collect()
+        let mut out = Vec::with_capacity(s.len());
+        for i in s {
+            match i {
+                Item::Array(members) => {
+                    for m in members.iter() {
+                        out.extend(self.atomize(m));
+                    }
+                }
+                other => out.push(self.atomize_item(other)),
+            }
+        }
+        out
     }
 
     /// Atomize to at most one value.
     pub fn atomize_opt(&self, s: &[Item], what: &str) -> R<Option<Atomic>> {
-        match s.len() {
+        if s.iter().any(|i| matches!(i, Item::Map(_) | Item::Func(_))) {
+            return Err(XqError::new("FOTY0013", format!("A map or function item cannot be atomized ({})", what)));
+        }
+        let v = if s.iter().any(|i| matches!(i, Item::Array(_))) { self.atomize(s) } else { s.iter().map(|i| self.atomize_item(i)).collect() };
+        match v.len() {
             0 => Ok(None),
-            1 => Ok(Some(self.atomize_item(&s[0]))),
+            1 => Ok(v.into_iter().next()),
             n => Err(XqError::type_err(format!("A sequence of more than one item ({}) is not allowed as {}", n, what))),
         }
     }
@@ -96,6 +118,7 @@ impl<'a> Interp<'a> {
         match s.first() {
             None => Ok(false),
             Some(Item::Node(_)) => Ok(true),
+            Some(Item::Func(_) | Item::Map(_) | Item::Array(_)) => Err(XqError::new("FORG0006", "Effective boolean value is not defined for a function, map or array")),
             Some(Item::Atomic(a)) => {
                 if s.len() > 1 {
                     return Err(XqError::new("FORG0006", "Effective boolean value is not defined for a sequence of two or more items starting with an atomic value"));
@@ -146,6 +169,11 @@ impl<'a> Interp<'a> {
         match (t, it) {
             (ItemType::Item, _) => true,
             (ItemType::Empty, _) => false,
+            (ItemType::Function, Item::Func(_) | Item::Map(_) | Item::Array(_)) => true,
+            (ItemType::Map, Item::Map(_)) => true,
+            (ItemType::Array, Item::Array(_)) => true,
+            (ItemType::Function | ItemType::Map | ItemType::Array, _) => false,
+            (_, Item::Func(_) | Item::Map(_) | Item::Array(_)) => false,
             (ItemType::Atomic(at), Item::Atomic(a)) => a.instance_of(*at),
             (ItemType::Atomic(_), Item::Node(_)) => false,
             (_, Item::Atomic(_)) => false,
@@ -224,6 +252,9 @@ impl<'a> Interp<'a> {
         match s.first() {
             Some(Item::Atomic(a)) => format!(" of type {}", a.type_of().name()),
             Some(Item::Node(n)) => format!(" starting with a {:?} node", self.node_type(*n).map(|t| format!("{:?}", t).to_lowercase()).unwrap_or_else(|| "namespace".into())),
+            Some(Item::Func(_)) => " starting with a function".into(),
+            Some(Item::Map(_)) => " starting with a map".into(),
+            Some(Item::Array(_)) => " starting with an array".into(),
             None => String::new(),
         }
     }
@@ -375,7 +406,7 @@ impl<'a> Interp<'a> {
                 }
                 Ok(vec![Item::Atomic(match x {
                     Atomic::Int(i) => Atomic::Int(-i),
-                    Atomic::Dec(d) => Atomic::Dec(-d),
+                    Atomic::Dec(d) => Atomic::Dec(d.neg()),
                     Atomic::Flt(d) => Atomic::Flt(-d),
                     other => Atomic::Dbl(-other.as_f64()),
                 })])
@@ -487,6 +518,8 @@ impl<'a> Interp<'a> {
                 self.add_content(&mut d, 0, s, false)?;
                 Ok(vec![Item::Node(XNode::new(self.add_doc(d), 0))])
             }
+            Expr::MapCtor(..) | Expr::ArrayCtor { .. } | Expr::InlineFunc { .. } | Expr::FuncRef(..) | Expr::DynCall(..) | Expr::PartialCall { .. } | Expr::Lookup(..) => self.eval31(e, f),
+            Expr::Insert { .. } | Expr::Delete(_) | Expr::Replace { .. } | Expr::Rename { .. } | Expr::Transform { .. } => self.eval_update(e, f),
         }
     }
 
@@ -505,6 +538,7 @@ impl<'a> Interp<'a> {
             .map(|i| match i {
                 Item::Node(n) => Ok(n),
                 Item::Atomic(a) => Err(XqError::type_err(format!("The operands of {} must be nodes, found {}", what, a.type_of().name()))),
+                _ => Err(XqError::type_err(format!("The operands of {} must be nodes, found a function, map or array", what))),
             })
             .collect()
     }
@@ -712,7 +746,7 @@ impl<'a> Interp<'a> {
                 let doc = self.docs.get(n.doc);
                 Ok(XNode::new(n.doc, doc.tree_root(n.node_id())))
             }
-            Item::Atomic(_) => Err(XqError::type_err("The context item for '/' is not a node")),
+            _ => Err(XqError::type_err("The context item for '/' is not a node")),
         }
     }
 
@@ -789,7 +823,7 @@ impl<'a> Interp<'a> {
                     let size = ctx.len();
                     let mut out = Vec::new();
                     for (i, it) in ctx.into_iter().enumerate() {
-                        if let Item::Atomic(_) = it {
+                        if !matches!(it, Item::Node(_)) {
                             return Err(XqError::type_err("The context item of a path step is not a node"));
                         }
                         out.extend(self.eval(e, &Focus::of(it, i + 1, size))?);
@@ -799,7 +833,7 @@ impl<'a> Interp<'a> {
                         let mut ns: Vec<XNode> = out.into_iter().filter_map(|i| if let Item::Node(n) = i { Some(n) } else { None }).collect();
                         sort_nodes(&mut ns);
                         ns.into_iter().map(Item::Node).collect()
-                    } else if out.iter().all(|i| matches!(i, Item::Atomic(_))) {
+                    } else if out.iter().all(|i| !matches!(i, Item::Node(_))) {
                         if k + 1 < steps.len() {
                             return Err(XqError::type_err("Atomic values can only be returned by the last step of a path"));
                         }
@@ -926,6 +960,12 @@ impl<'a> Interp<'a> {
         for it in s {
             match it {
                 Item::Atomic(a) => atoms.push(a.to_string()),
+                Item::Array(_) => {
+                    for a in self.atomize(std::slice::from_ref(&it)) {
+                        atoms.push(a.to_string());
+                    }
+                }
+                Item::Map(_) | Item::Func(_) => return Err(XqError::new("XQTY0105", "A function or map item cannot be used as element content")),
                 Item::Node(n) => {
                     flush(d, &mut atoms);
                     if n.is_namespace() {
@@ -959,17 +999,34 @@ impl<'a> Interp<'a> {
 
     // ---------------------------------------------------------------- functions
 
-    fn call(&mut self, name: &QN, args: &[Expr], f: &Focus) -> R<Seq> {
+    /// Call a user-defined function with argument values.
+    pub(crate) fn call_user(&mut self, func: &Function, vals: Vec<Seq>) -> R<Seq> {
+        let mut conv = Vec::with_capacity(vals.len());
+        for (i, v) in vals.into_iter().enumerate() {
+            conv.push(match &func.params[i].1 {
+                Some(t) => self.convert_to(v, t, &format!("parameter ${} of {}()", func.params[i].0.local, func.name.local))?,
+                None => v,
+            });
+        }
+        self.invoke_user(func, conv)
+    }
+
+    pub(crate) fn call(&mut self, name: &QN, args: &[Expr], f: &Focus) -> R<Seq> {
+        if let Some(r) = self.call_hof(name, args, f) {
+            return r;
+        }
         if let Some(func) = self.module.functions.get(&(name.clone(), args.len())) {
             let mut vals = Vec::with_capacity(args.len());
-            for (i, a) in args.iter().enumerate() {
-                let v = self.eval(a, f)?;
-                let v = match &func.params[i].1 {
-                    Some(t) => self.convert_to(v, t, &format!("parameter ${} of {}()", func.params[i].0.local, func.name.local))?,
-                    None => v,
-                };
-                vals.push(v);
+            for a in args.iter() {
+                vals.push(self.eval(a, f)?);
             }
+            return self.call_user(func, vals);
+        }
+        self.call_static(name, args, f)
+    }
+
+    fn invoke_user(&mut self, func: &Function, vals: Vec<Seq>) -> R<Seq> {
+        {
             if self.depth >= MAX_DEPTH {
                 return Err(XqError::new("XPDY0130", format!("Too many nested function calls (> {}) in {}()", MAX_DEPTH, func.name.local)));
             }
@@ -982,11 +1039,14 @@ impl<'a> Interp<'a> {
             self.vars = saved;
             self.depth -= 1;
             let r = r?;
-            return match &func.ret {
+            match &func.ret {
                 Some(t) => self.convert_to(r, t, &format!("the result of {}()", func.name.local)),
                 None => Ok(r),
-            };
+            }
         }
+    }
+
+    fn call_static(&mut self, name: &QN, args: &[Expr], f: &Focus) -> R<Seq> {
         if (name.uri == super::XS_NS && name.local == "QName" && args.len() == 1) || (name.uri == super::FN_NS && name.local == "QName" && args.len() == 2) {
             let mut vals = Vec::new();
             for a in args {
@@ -1089,13 +1149,25 @@ pub(crate) fn to_integer(a: &Atomic) -> R<i64> {
             Atomic::Int(i) => Ok(i),
             _ => unreachable!(),
         },
-        Atomic::Dec(d) | Atomic::Dbl(d) | Atomic::Flt(d) if d.fract() == 0.0 => Ok(*d as i64),
+        Atomic::Dec(d) if d.is_integer() => d.to_i64().ok_or_else(|| XqError::new("FOAR0002", "Integer overflow")),
+        Atomic::Dbl(d) | Atomic::Flt(d) if d.fract() == 0.0 => Ok(*d as i64),
         other => Err(XqError::type_err(format!("Expected an xs:integer, found {}", other.type_of().name()))),
     }
 }
 
 /// Numeric arithmetic with XQuery type promotion.
 pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
+    let opc = match op {
+        Arith::Add => '+',
+        Arith::Sub => '-',
+        Arith::Mul => '*',
+        Arith::Div => '/',
+        Arith::IDiv => 'i',
+        Arith::Mod => '%',
+    };
+    if let Some(r) = super::datetime::arith(opc, x, y) {
+        return r;
+    }
     let promote = |a: &Atomic| -> R<Atomic> {
         match a {
             Atomic::Untyped(_) => cast(a, AtomicType::Double),
@@ -1125,11 +1197,7 @@ pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
                 if b == 0 {
                     return Err(XqError::new("FOAR0001", "Division by zero"));
                 }
-                if a % b == 0 {
-                    Atomic::Dec((a / b) as f64)
-                } else {
-                    Atomic::Dec(a as f64 / b as f64)
-                }
+                Atomic::Dec(Decimal::from_i64(a).div(&Decimal::from_i64(b)).unwrap_or_default())
             }
             Arith::IDiv => {
                 if b == 0 {
@@ -1145,10 +1213,19 @@ pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
             }
         });
     }
-    let (a, b) = (x.as_f64(), y.as_f64());
-    if r == 1 && b == 0.0 && matches!(op, Arith::Div | Arith::IDiv | Arith::Mod) {
-        return Err(XqError::new("FOAR0001", "Division by zero"));
+    if r == 1 {
+        let (a, b) = (x.as_decimal().unwrap_or_default(), y.as_decimal().unwrap_or_default());
+        let zero = || XqError::new("FOAR0001", "Division by zero");
+        return Ok(match op {
+            Arith::Add => Atomic::Dec(a.add(&b)),
+            Arith::Sub => Atomic::Dec(a.sub(&b)),
+            Arith::Mul => Atomic::Dec(a.mul(&b)),
+            Arith::Div => Atomic::Dec(a.div(&b).ok_or_else(zero)?),
+            Arith::Mod => Atomic::Dec(a.rem(&b).ok_or_else(zero)?),
+            Arith::IDiv => Atomic::Int(a.idiv(&b).ok_or_else(zero)?.to_i64().ok_or_else(|| XqError::new("FOAR0002", "Integer overflow"))?),
+        });
     }
+    let (a, b) = (x.as_f64(), y.as_f64());
     if op == Arith::IDiv {
         if b == 0.0 {
             return Err(XqError::new("FOAR0001", "Integer division by zero"));
@@ -1168,7 +1245,6 @@ pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
         Arith::IDiv => unreachable!(),
     };
     Ok(match r {
-        1 => Atomic::Dec(v),
         2 => Atomic::Flt(v),
         _ => Atomic::Dbl(v),
     })

@@ -387,6 +387,15 @@ impl Document {
         self.nodes[parent].children.push(id);
     }
 
+    /// Append a text node (never merged with a preceding text node; may be empty).
+    pub fn append_text_node(&mut self, parent: NodeId, text: &str) -> NodeId {
+        let mut n = Node::new(NodeType::Text, Some(parent));
+        n.value = text.to_string();
+        let id = self.push(n);
+        self.nodes[parent].children.push(id);
+        id
+    }
+
     /// Append a comment.
     pub fn append_comment(&mut self, parent: NodeId, text: &str) -> NodeId {
         let mut n = Node::new(NodeType::Comment, Some(parent));

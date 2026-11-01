@@ -28,6 +28,7 @@ use crate::error::{CamelError, Result};
 use crate::message::Exchange;
 
 pub mod base64;
+pub mod jacksonxml;
 pub mod compress;
 pub mod csv;
 pub mod formats;
@@ -160,11 +161,7 @@ pub fn create_data_format(name: &str, o: &BTreeMap<String, String>) -> Result<Ar
         "gzipDeflater" | "gzipdeflater" | "gzip" => Arc::new(compress::GzipDataFormat { level: level(o)? }),
         "zipDeflater" | "zipdeflater" | "zip" | "deflate" | "zlib" => Arc::new(compress::ZlibDataFormat { level: level(o)? }),
         "zipFile" | "zipfile" => Arc::new(compress::ZipFileDataFormat { level: level(o)?, using_iterator: opt_bool(o, &["usingIterator"], false)? }),
-        "jacksonXml" | "jacksonxml" | "xml" | "jaxb" => Arc::new(formats::XmlDataFormat {
-            root_name: opt(o, &["rootName"]).unwrap_or("root").to_string(),
-            pretty_print: opt_bool(o, &["prettyPrint"], false)?,
-            content_type_header: opt_bool(o, &["contentTypeHeader"], true)?,
-        }),
+        "jacksonXml" | "jacksonxml" | "xml" | "jaxb" => Arc::new(jacksonxml::XmlDataFormat::from_options(o)?),
         "urlencoded" => Arc::new(formats::UrlEncodedDataFormat),
         other => return Err(CamelError::illegal_argument(format!("Cannot find data format with name: {}", other))),
     })

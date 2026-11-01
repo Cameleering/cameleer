@@ -24,6 +24,10 @@ pub struct C14nOptions {
     pub inclusive_prefixes: Vec<String>,
     /// A subtree left out of the output.
     pub exclude: Option<NodeId>,
+    /// A document subset (XPath transforms): when set, only these nodes are rendered
+    /// (elements outside the set still have their children processed; attributes follow
+    /// their element).
+    pub include: Option<std::collections::HashSet<NodeId>>,
 }
 
 impl C14nOptions {
@@ -104,6 +108,17 @@ fn node_out(doc: &Document, n: NodeId, opts: &C14nOptions, rendered: &BTreeMap<S
         return;
     }
     let node = doc.node(n);
+    if let Some(set) = &opts.include {
+        if !set.contains(&n) {
+            if node.ty == NodeType::Element {
+                for &c in &node.children {
+                    node_out(doc, c, opts, rendered, out);
+                }
+            }
+            return;
+        }
+    }
+
     match node.ty {
         NodeType::Text => esc_text(&node.value, out),
         NodeType::Comment => {
