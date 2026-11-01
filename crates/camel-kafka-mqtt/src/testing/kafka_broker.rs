@@ -169,6 +169,8 @@ struct Data {
     /// Produced record batches kept verbatim (like a real Kafka log): fetches return them
     /// unchanged, compressed or not, so consumers decode the producer's own bytes.
     raw: HashMap<(String, i32), Vec<RawBatch>>,
+    /// Member ids handed out with MEMBER_ID_REQUIRED (JoinGroup v4+), not yet joined.
+    pending_members: std::collections::HashSet<String>,
 }
 
 /// A produced record batch stored as sent (base offset rewritten to its log position).
@@ -558,6 +560,8 @@ fn serve(state: &Arc<State>, tcp: TcpStream) {
             }
         } else if !matches!(auth, Auth::Done) {
             break; // unauthenticated request: Kafka closes the connection
+        } else if let Some(r) = member_id_required(state, header.api_key, header.api_version, body) {
+            Some(r)
         } else {
             match handle(state, header.api_key, body, header.client_id.as_deref().unwrap_or("")) {
                 Ok(r) => r,
@@ -1013,6 +1017,21 @@ fn handle(state: &Arc<State>, key: i16, body: &[u8], client_id: &str) -> Result<
     }))
 }
 
+/// JoinGroup v4+ without a member id: like Kafka (KIP-394), answer MEMBER_ID_REQUIRED with
+/// the id the member must rejoin with.
+fn member_id_required(state: &Arc<State>, key: i16, version: i16, body: &[u8]) -> Option<Vec<u8>> {
+    if key != api::JOIN_GROUP || version < 4 {
+        return None;
+    }
+    let req = JoinGroupRequest::decode(body).ok()?;
+    if !req.member_id.is_empty() || req.group_id.is_empty() {
+        return None;
+    }
+    let member_id = format!("member-{}", unique_id());
+    state.data.lock().unwrap().pending_members.insert(member_id.clone());
+    Some(JoinGroupResponse { error_code: errors::MEMBER_ID_REQUIRED, generation_id: -1, member_id, ..Default::default() }.encode())
+}
+
 fn join_group(state: &Arc<State>, req: JoinGroupRequest) -> JoinGroupResponse {
     let err = |code: i16, member: &str| JoinGroupResponse { error_code: code, generation_id: -1, member_id: member.to_string(), ..Default::default() };
     if req.group_id.is_empty() {
@@ -1023,13 +1042,14 @@ fn join_group(state: &Arc<State>, req: JoinGroupRequest) -> JoinGroupResponse {
     }
     let mut d = state.data.lock().unwrap();
     let member_id;
+    let pending = d.pending_members.remove(&req.member_id);
     {
         let g = d.groups.entry(req.group_id.clone()).or_insert_with(Group::new);
         g.expire();
         if !g.members.is_empty() && g.protocol_type != req.protocol_type {
             return err(errors::INCONSISTENT_GROUP_PROTOCOL, &req.member_id);
         }
-        if !req.member_id.is_empty() && !g.members.contains_key(&req.member_id) {
+        if !req.member_id.is_empty() && !pending && !g.members.contains_key(&req.member_id) {
             return err(errors::UNKNOWN_MEMBER_ID, &req.member_id);
         }
         member_id = if req.member_id.is_empty() { format!("member-{}", unique_id()) } else { req.member_id.clone() };

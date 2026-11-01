@@ -295,6 +295,11 @@ impl Worker {
                     self.member_id.clear();
                     continue;
                 }
+                // KIP-394: rejoin with the member id the coordinator assigned
+                errors::MEMBER_ID_REQUIRED if !resp.member_id.is_empty() => {
+                    self.member_id = resp.member_id.clone();
+                    continue;
+                }
                 errors::REBALANCE_IN_PROGRESS => continue,
                 errors::NOT_COORDINATOR | errors::COORDINATOR_NOT_AVAILABLE | errors::COORDINATOR_LOAD_IN_PROGRESS => {
                     self.membership = None;

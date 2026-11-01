@@ -493,7 +493,11 @@ impl KafkaClient {
             timeout_ms: 10_000,
             validate_only: false,
         };
-        let resp = CreateTopicsResponse::decode(&self.send(Node::Any, api::CREATE_TOPICS, &req.encode(), Duration::from_secs(10))?)?;
+        // CreateTopics must reach the controller (ZooKeeper-mode Kafka and kfake answer
+        // NOT_CONTROLLER elsewhere), which Metadata names; fall back to any broker.
+        let controller = self.metadata(Some(&[]), false).map(|m| m.controller_id).unwrap_or(-1);
+        let node = if controller >= 0 && self.brokers.contains_key(&controller) { Node::Id(controller) } else { Node::Any };
+        let resp = CreateTopicsResponse::decode(&self.send(node, api::CREATE_TOPICS, &req.encode(), Duration::from_secs(10))?)?;
         for (t, err, msg) in resp.topics {
             if err != errors::NONE && err != errors::TOPIC_ALREADY_EXISTS {
                 return Err(CamelError::new(KAFKA_EXCEPTION, format!("Cannot create topic {}: {} {}", t, errors::name(err), msg.unwrap_or_default())));

@@ -13,7 +13,7 @@
 //! | OffsetCommit | 8 | 2 |
 //! | OffsetFetch | 9 | 1 |
 //! | FindCoordinator | 10 | 1 |
-//! | JoinGroup | 11 | 2 |
+//! | JoinGroup | 11 | 4 |
 //! | Heartbeat | 12 | 1 |
 //! | LeaveGroup | 13 | 1 |
 //! | SyncGroup | 14 | 1 |
@@ -54,7 +54,7 @@ pub mod api {
         (OFFSET_COMMIT, 2),
         (OFFSET_FETCH, 1),
         (FIND_COORDINATOR, 1),
-        (JOIN_GROUP, 2),
+        (JOIN_GROUP, 4),
         (HEARTBEAT, 1),
         (LEAVE_GROUP, 1),
         (SYNC_GROUP, 1),
@@ -121,7 +121,12 @@ pub mod errors {
     pub const SASL_AUTHENTICATION_FAILED: i16 = 58;
     pub const TOPIC_ALREADY_EXISTS: i16 = 36;
     pub const INVALID_PARTITIONS: i16 = 37;
+    pub const INVALID_REPLICATION_FACTOR: i16 = 38;
+    pub const MEMBER_ID_REQUIRED: i16 = 79;
+    pub const NOT_CONTROLLER: i16 = 41;
     pub const INVALID_REQUEST: i16 = 42;
+    pub const TOPIC_AUTHORIZATION_FAILED: i16 = 29;
+    pub const GROUP_AUTHORIZATION_FAILED: i16 = 30;
     pub const UNKNOWN_SERVER_ERROR: i16 = -1;
 
     /// The Kafka error name for a code.
@@ -149,7 +154,12 @@ pub mod errors {
             SASL_AUTHENTICATION_FAILED => "SASL_AUTHENTICATION_FAILED",
             TOPIC_ALREADY_EXISTS => "TOPIC_ALREADY_EXISTS",
             INVALID_PARTITIONS => "INVALID_PARTITIONS",
+            INVALID_REPLICATION_FACTOR => "INVALID_REPLICATION_FACTOR",
+            NOT_CONTROLLER => "NOT_CONTROLLER",
+            MEMBER_ID_REQUIRED => "MEMBER_ID_REQUIRED",
             INVALID_REQUEST => "INVALID_REQUEST",
+            TOPIC_AUTHORIZATION_FAILED => "TOPIC_AUTHORIZATION_FAILED",
+            GROUP_AUTHORIZATION_FAILED => "GROUP_AUTHORIZATION_FAILED",
             UNKNOWN_SERVER_ERROR => "UNKNOWN_SERVER_ERROR",
             _ => "UNKNOWN_ERROR_CODE",
         }
@@ -1345,7 +1355,8 @@ impl FindCoordinatorResponse {
     }
 }
 
-/// JoinGroup v2 request.
+/// JoinGroup v4 request (the v2 - v4 layouts are equal; v4 brokers answer a first join
+/// without member id with MEMBER_ID_REQUIRED and the id to rejoin with, KIP-394).
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct JoinGroupRequest {
     pub group_id: String,

@@ -192,3 +192,40 @@ pub mod live {
 
 #[path = "testing_official.rs"]
 pub mod official;
+
+/// Helpers for the third-party simulator suites (`tests/sim_*.rs`), which run against moto,
+/// Azurite, fake-gcs-server, pstest, FerretDB and kfake started by `scripts/simulators.sh`,
+/// and only when `CAMEL_SIMULATORS=1` is set. TLS listeners use the live-interop PKI
+/// ([`live::client_params`]).
+pub mod sim {
+    use std::path::PathBuf;
+
+    /// The password of the simulators' test accounts.
+    pub const PASSWORD: &str = super::live::PASSWORD;
+
+    /// Whether the simulator suites are enabled (`CAMEL_SIMULATORS=1`); prints a skip notice otherwise.
+    pub fn enabled() -> bool {
+        let on = std::env::var("CAMEL_SIMULATORS").map(|v| v == "1").unwrap_or(false);
+        if !on {
+            eprintln!("skipped: set CAMEL_SIMULATORS=1 after `scripts/simulators.sh start`");
+        }
+        on
+    }
+
+    /// The script's state directory (`$CAMEL_SIM_HOME/state`, default `/opt/camel-sim/state`).
+    pub fn state_dir() -> PathBuf {
+        PathBuf::from(std::env::var("CAMEL_SIM_HOME").unwrap_or_else(|_| "/opt/camel-sim".into())).join("state")
+    }
+
+    /// A `key=value` entry of a file the script wrote into its state directory.
+    pub fn state_value(file: &str, key: &str) -> Option<String> {
+        let text = std::fs::read_to_string(state_dir().join(file)).ok()?;
+        text.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')).map(|v| v.trim().to_string()))
+    }
+
+    /// A name unique to this test run (simulators keep their state between runs).
+    pub fn unique(prefix: &str) -> String {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        format!("{}-{:x}{}", prefix, (nanos / 1000) % 0xffff_ffff, super::next_id())
+    }
+}
