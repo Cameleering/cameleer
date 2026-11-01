@@ -49,6 +49,12 @@ pub(super) struct MoreState {
     schemas: Vec<Schema>,
     deployments: Vec<String>,
     openai_requests: Vec<Value>,
+    /// id -> assistant
+    assistants: BTreeMap<String, Value>,
+    /// thread id -> messages (oldest first)
+    threads: BTreeMap<String, Vec<Value>>,
+    /// run id -> (thread, assistant, polls)
+    runs: BTreeMap<String, (String, String, usize)>,
 }
 
 impl AzureMock {
@@ -106,6 +112,7 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, segs: &[String]) -> Optio
         ["eventgrid", topic, "api", "events"] => eventgrid(st, req, topic),
         ["$schemaGroups", rest @ ..] => schema_registry(st, req, rest),
         ["openai", "deployments", d, rest @ ..] => openai(st, req, d, &rest.join("/")),
+        ["openai", "assistants", ..] | ["openai", "threads", ..] => assistants(st, req, &s[1..]),
         _ => return None,
     })
 }
@@ -291,6 +298,24 @@ fn openai(st: &Shared, req: &ServerRequest, deployment: &str, op: &str) -> Respo
                 "stop"
             };
             let (p, c) = (last.split_whitespace().count() as i64, 3);
+            if body.get("stream").is_some_and(|v| v.is_truthy()) {
+                // text/event-stream: one chunk per word, a finish chunk, a usage chunk, [DONE]
+                let id = format!("chatcmpl-{}", uuid());
+                let text = message.get("content").map(|c| c.to_string()).unwrap_or_default();
+                let words: Vec<String> = text.split_inclusive(' ').map(|w| w.to_string()).collect();
+                let mut events: Vec<(Option<&str>, String)> = Vec::new();
+                let chunk = |delta: Value, finish: Value| obj([("id", Value::from(id.clone())), ("object", Value::from("chat.completion.chunk")), ("model", Value::from(deployment)), ("choices", Value::Array(vec![obj([("index", Value::Int(0)), ("delta", delta), ("finish_reason", finish)])]))]).to_json();
+                events.push((None, chunk(obj([("role", Value::from("assistant")), ("content", Value::from(""))]), Value::Null)));
+                for w in words {
+                    events.push((None, chunk(obj([("content", Value::from(w))]), Value::Null)));
+                }
+                events.push((None, chunk(obj([]), Value::from(finish))));
+                if body.get("stream_options").and_then(|o| o.get("include_usage")).is_some_and(|v| v.is_truthy()) {
+                    events.push((None, obj([("id", Value::from(id.clone())), ("object", Value::from("chat.completion.chunk")), ("model", Value::from(deployment)), ("choices", Value::Array(vec![])), ("usage", obj([("prompt_tokens", Value::Int(p)), ("completion_tokens", Value::Int(c)), ("total_tokens", Value::Int(p + c))]))]).to_json()));
+                }
+                events.push((None, "[DONE]".to_string()));
+                return Response::new(200).with_header("Content-Type", "text/event-stream").with_body(crate::sse::encode(&events));
+            }
             Response::json(
                 200,
                 obj([
@@ -316,6 +341,121 @@ fn openai(st: &Shared, req: &ServerRequest, deployment: &str, op: &str) -> Respo
                 .map(|(i, t)| obj([("object", Value::from("embedding")), ("index", Value::Int(i as i64)), ("embedding", Value::Array((0..4).map(|k| Value::Float(((t.len() * (k + 1)) % 10) as f64 / 10.0)).collect()))]))
                 .collect();
             Response::json(200, obj([("object", Value::from("list")), ("data", Value::Array(data)), ("usage", obj([("prompt_tokens", Value::Int(inputs.len() as i64)), ("total_tokens", Value::Int(inputs.len() as i64))]))]).to_json())
+        }
+        "images/generations" => {
+            let prompt = body.get("prompt").map(|p| p.to_string()).unwrap_or_default();
+            if prompt.is_empty() {
+                return json_err(400, "BadRequest", "'prompt' is a required property");
+            }
+            let size = body.get("size").map(|x| x.to_string()).unwrap_or_else(|| "1024x1024".into());
+            if !["1024x1024", "1792x1024", "1024x1792"].contains(&size.as_str()) {
+                return json_err(400, "InvalidRequest", "The size is not supported by this model.");
+            }
+            let n = body.get("n").and_then(|n| n.as_i64()).unwrap_or(1);
+            if n != 1 {
+                return json_err(400, "InvalidRequest", "n must be 1 for dall-e-3");
+            }
+            let b64 = body.get("response_format").map(|f| f.to_string()).as_deref() == Some("b64_json");
+            let mut item = ObjectMap::new();
+            item.insert("revised_prompt".into(), Value::from(format!("A detailed picture of {}", prompt)));
+            if b64 {
+                item.insert("b64_json".into(), Value::from(crate::util::base64_encode(format!("PNG:{}:{}", size, prompt).as_bytes())));
+            } else {
+                item.insert("url".into(), Value::from(format!("https://dalleprodsec.blob.core.windows.net/private/images/{}.png", uuid())));
+            }
+            Response::json(200, obj([("created", Value::Int(crate::util::now_secs())), ("data", Value::Array(vec![Value::Object(item)]))]).to_json())
+        }
+        _ => json_err(404, "404", "Resource not found"),
+    }
+}
+
+/// The Assistants API (`/openai/assistants`, `/openai/threads/...`): runs complete on the
+/// second poll with an assistant message `[instructions] Echo: <last user message>`.
+fn assistants(st: &Shared, req: &ServerRequest, path: &[&str]) -> Response {
+    let mut s = st.lock().unwrap();
+    let key_ok = req.header("api-key").is_some_and(|k| ct_eq(k.as_bytes(), OPENAI_KEY.as_bytes()));
+    if !key_ok && !bearer_ok(&s, req, "https://cognitiveservices.azure.com/.default") {
+        s.auth_failures += 1;
+        return json_err(401, "401", "Access denied due to invalid subscription key or wrong API endpoint.");
+    }
+    if req.query_param("api-version").is_none_or(|v| v.is_empty()) {
+        return json_err(404, "404", "Resource not found");
+    }
+    let body = parse_json(&req.body).unwrap_or_default();
+    let now = Value::Int(crate::util::now_secs());
+    let not_found = |what: &str| json_err(404, "not_found", &format!("No {} found", what));
+    let m = &mut s.more;
+    match (req.method.as_str(), path) {
+        ("POST", ["assistants"]) => {
+            let model = body.get("model").map(|x| x.to_string()).unwrap_or_default();
+            if !m.deployments.contains(&model) {
+                return json_err(400, "invalid_request_error", &format!("The deployment {} does not exist", model));
+            }
+            let id = format!("asst_{}", uuid().replace('-', "")[..20].to_string());
+            let mut a = body.as_object().cloned().unwrap_or_default();
+            a.insert("id".into(), Value::from(id.clone()));
+            a.insert("object".into(), Value::from("assistant"));
+            a.insert("created_at".into(), now);
+            m.assistants.insert(id, Value::Object(a.clone()));
+            Response::json(200, Value::Object(a).to_json())
+        }
+        ("GET", ["assistants"]) => Response::json(200, obj([("object", Value::from("list")), ("data", Value::Array(m.assistants.values().cloned().collect()))]).to_json()),
+        ("GET", ["assistants", id]) => match m.assistants.get(*id) {
+            Some(a) => Response::json(200, a.to_json()),
+            None => not_found("assistant"),
+        },
+        ("DELETE", ["assistants", id]) => match m.assistants.remove(*id) {
+            Some(_) => Response::json(200, obj([("id", Value::from(*id)), ("object", Value::from("assistant.deleted")), ("deleted", Value::Bool(true))]).to_json()),
+            None => not_found("assistant"),
+        },
+        ("POST", ["threads"]) => {
+            let id = format!("thread_{}", &uuid().replace('-', "")[..20]);
+            m.threads.insert(id.clone(), Vec::new());
+            Response::json(200, obj([("id", Value::from(id)), ("object", Value::from("thread")), ("created_at", now)]).to_json())
+        }
+        ("POST", ["threads", t, "messages"]) => {
+            let Some(msgs) = m.threads.get_mut(*t) else { return not_found("thread") };
+            let text = body.get("content").map(|c| c.to_string()).unwrap_or_default();
+            let msg = obj([("id", Value::from(format!("msg_{}", &uuid().replace('-', "")[..20]))), ("object", Value::from("thread.message")), ("thread_id", Value::from(*t)), ("role", Value::from("user")), ("content", Value::Array(vec![obj([("type", Value::from("text")), ("text", obj([("value", Value::from(text)), ("annotations", Value::Array(vec![]))]))])]))]);
+            msgs.push(msg.clone());
+            Response::json(200, msg.to_json())
+        }
+        ("GET", ["threads", t, "messages"]) => match m.threads.get(*t) {
+            Some(msgs) => Response::json(200, obj([("object", Value::from("list")), ("data", Value::Array(msgs.iter().rev().cloned().collect()))]).to_json()),
+            None => not_found("thread"),
+        },
+        ("POST", ["threads", t, "runs"]) => {
+            if !m.threads.contains_key(*t) {
+                return not_found("thread");
+            }
+            let a = body.get("assistant_id").map(|x| x.to_string()).unwrap_or_default();
+            if !m.assistants.contains_key(&a) {
+                return not_found("assistant");
+            }
+            let id = format!("run_{}", &uuid().replace('-', "")[..20]);
+            m.runs.insert(id.clone(), (t.to_string(), a.clone(), 0));
+            Response::json(200, obj([("id", Value::from(id)), ("object", Value::from("thread.run")), ("thread_id", Value::from(*t)), ("assistant_id", Value::from(a)), ("status", Value::from("queued")), ("created_at", now)]).to_json())
+        }
+        ("GET", ["threads", t, "runs", r]) => {
+            let Some((thread, a, polls)) = m.runs.get_mut(*r) else { return not_found("run") };
+            if thread != t {
+                return not_found("run");
+            }
+            *polls += 1;
+            let (a, polls) = (a.clone(), *polls);
+            let status = match polls {
+                1 => "in_progress",
+                2 => {
+                    let instructions = m.assistants.get(&a).and_then(|x| x.get("instructions")).map(|i| i.to_string()).unwrap_or_default();
+                    let msgs = m.threads.get_mut(*t).expect("thread");
+                    let last = msgs.iter().rev().find(|x| x.get("role").map(|r| r.to_string()).as_deref() == Some("user")).and_then(|x| x.get("content")).and_then(|c| c.as_array()).and_then(|c| c.first()).and_then(|p| p.get("text")).and_then(|t| t.get("value")).map(|v| v.to_string()).unwrap_or_default();
+                    let reply = if instructions.is_empty() { format!("Echo: {}", last) } else { format!("[{}] Echo: {}", instructions, last) };
+                    msgs.push(obj([("id", Value::from(format!("msg_{}", &uuid().replace('-', "")[..20]))), ("object", Value::from("thread.message")), ("thread_id", Value::from(*t)), ("role", Value::from("assistant")), ("assistant_id", Value::from(a.clone())), ("run_id", Value::from(*r)), ("content", Value::Array(vec![obj([("type", Value::from("text")), ("text", obj([("value", Value::from(reply)), ("annotations", Value::Array(vec![]))]))])]))]));
+                    "completed"
+                }
+                _ => "completed",
+            };
+            Response::json(200, obj([("id", Value::from(*r)), ("object", Value::from("thread.run")), ("thread_id", Value::from(*t)), ("assistant_id", Value::from(a)), ("status", Value::from(status))]).to_json())
         }
         _ => json_err(404, "404", "Resource not found"),
     }

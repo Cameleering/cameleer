@@ -94,6 +94,31 @@ impl AzureRest {
         unreachable!("loop returns")
     }
 
+    /// Send with authorization and stream a successful response body into `sink`.
+    pub fn send_to(&self, req: Request, sink: &mut dyn std::io::Write) -> Result<Response> {
+        let http = self.http();
+        for attempt in 0..2 {
+            let mut r = req.clone();
+            match &self.auth {
+                AzureAuth::None => {}
+                AzureAuth::Header(k, v) => r.set_header(k, v.clone()),
+                AzureAuth::Bearer(c, scope) => r.set_header("Authorization", format!("Bearer {}", c.token(scope, &http)?)),
+            }
+            let (resp, _) = http.send_to(&r, sink)?;
+            if resp.status == 401 && attempt == 0 {
+                if let AzureAuth::Bearer(c, scope) = &self.auth {
+                    c.invalidate(scope);
+                    continue;
+                }
+            }
+            if resp.is_success() {
+                return Ok(resp);
+            }
+            return Err(rest_error(self.kind, &resp));
+        }
+        unreachable!("loop returns")
+    }
+
     /// Send a JSON body and parse the JSON response.
     pub fn json(&self, method: &str, path: &str, query: &str, body: Option<&camel_core::value::Value>) -> Result<camel_core::value::Value> {
         let mut req = Request::new(method, self.url(path, query)?);

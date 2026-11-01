@@ -86,6 +86,7 @@ pub mod azure;
 pub mod endpoint;
 pub mod gcp;
 pub mod http;
+pub mod sse;
 pub mod testing;
 pub mod util;
 

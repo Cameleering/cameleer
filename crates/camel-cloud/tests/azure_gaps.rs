@@ -492,3 +492,59 @@ fn azure_files_ftp_like_semantics() {
     ctx2.stop().unwrap();
     assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=archive&fileName=flat-renamed.csv"), "", &[]).body()), "flat", "noop leaves the file");
 }
+
+#[test]
+fn azure_openai_streaming_images_and_assistants() {
+    let az = AzureMock::start().unwrap();
+    az.add_openai_deployment("gpt4o");
+    let ctx = context();
+    let chunks: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let c2 = chunks.clone();
+    let p: std::sync::Arc<dyn camel_core::spi::Processor> = std::sync::Arc::new(move |ex: &mut Exchange| -> Result<()> {
+        c2.lock().unwrap().push(s(ex.body()));
+        Ok(())
+    });
+    ctx.registry().bind("onChunk", p);
+    let t = ctx.create_producer_template();
+    let uri = |extra: &str| format!("azure-openai://res/gpt4o?{}{}", az.openai_options(), extra);
+    let ex = req(&t, &uri("&streaming=true&streamingChunkProcessor=#onChunk"), "tell me a story", &[]);
+    assert_eq!(s(ex.body()), "Echo: tell me a story");
+    assert_eq!(ex.header("CamelAzureOpenAIStreamingChunkCount").and_then(|v| v.as_i64()), Some(6), "role chunk + 5 words");
+    assert_eq!(s(ex.header("CamelAzureOpenAIFinishReason").unwrap()), "stop");
+    assert!(ex.header("CamelAzureOpenAIUsage").unwrap().get("total_tokens").is_some());
+    assert_eq!(chunks.lock().unwrap().concat(), "Echo: tell me a story");
+    let sent = az.openai_requests().pop().unwrap();
+    assert_eq!(sent.get("stream"), Some(&Value::Bool(true)));
+    let ex = req(&t, &uri("&operation=chatCompletionStream&streamOutputMode=chunks"), "hi", &[]);
+    assert_eq!(ex.body().as_array().unwrap().iter().map(s).collect::<Vec<_>>(), vec!["", "Echo: ", "hi"]);
+    // images
+    let urls = req(&t, &uri("&operation=imageGeneration"), "a red fox", &[]);
+    assert!(s(&urls.body().as_array().unwrap()[0]).ends_with(".png"));
+    assert_eq!(s(&urls.header("CamelAzureOpenAIRevisedPrompts").unwrap().as_array().unwrap()[0]), "A detailed picture of a red fox");
+    let img = req(&t, &uri("&operation=imageGeneration&imageResponseFormat=b64_json&imageSize=1792x1024"), "a cat", &[]);
+    assert_eq!(img.body().as_array().unwrap()[0].to_bytes(), b"PNG:1792x1024:a cat");
+    assert!(call(&t, &uri("&operation=imageGeneration&imageSize=10x10"), "x", &[]).is_err());
+    // assistants
+    let a = req(&t, &uri("&operation=createAssistant"), "Be terse", &[("CamelAzureOpenAIAssistantName", Value::from("helper"))]);
+    let aid = s(a.header("CamelAzureOpenAIAssistantId").unwrap());
+    assert!(aid.starts_with("asst_"));
+    assert_eq!(s(req(&t, &uri("&operation=getAssistant"), "", &[("CamelAzureOpenAIAssistantId", Value::from(aid.as_str()))]).body().get("name").unwrap()), "helper");
+    assert_eq!(req(&t, &uri("&operation=listAssistants"), "", &[]).body().as_array().unwrap().len(), 1);
+    let ex = req(&t, &uri("&operation=runAssistant&runPollInterval=10"), "what is camel?", &[("CamelAzureOpenAIAssistantId", Value::from(aid.as_str()))]);
+    assert_eq!(s(ex.body()), "[Be terse] Echo: what is camel?");
+    assert_eq!(s(ex.header("CamelAzureOpenAIRunStatus").unwrap()), "completed");
+    let thread = s(ex.header("CamelAzureOpenAIThreadId").unwrap());
+    // step by step on the same thread
+    req(&t, &uri("&operation=createMessage"), "and kafka?", &[("CamelAzureOpenAIThreadId", Value::from(thread.as_str()))]);
+    let run = req(&t, &uri("&operation=createRun"), "", &[("CamelAzureOpenAIThreadId", Value::from(thread.as_str())), ("CamelAzureOpenAIAssistantId", Value::from(aid.as_str()))]);
+    let rid = s(run.header("CamelAzureOpenAIRunId").unwrap());
+    let mut status = String::new();
+    for _ in 0..3 {
+        status = s(req(&t, &uri("&operation=getRun"), "", &[("CamelAzureOpenAIThreadId", Value::from(thread.as_str())), ("CamelAzureOpenAIRunId", Value::from(rid.as_str()))]).header("CamelAzureOpenAIRunStatus").unwrap());
+    }
+    assert_eq!(status, "completed");
+    let msgs = req(&t, &uri("&operation=listMessages"), "", &[("CamelAzureOpenAIThreadId", Value::from(thread.as_str()))]).body().clone();
+    assert_eq!(msgs.as_array().unwrap().len(), 4);
+    req(&t, &uri("&operation=deleteAssistant"), "", &[("CamelAzureOpenAIAssistantId", Value::from(aid.as_str()))]);
+    assert!(req(&t, &uri("&operation=listAssistants"), "", &[]).body().as_array().unwrap().is_empty());
+}
