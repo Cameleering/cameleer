@@ -143,3 +143,49 @@ fn next_id() -> u64 {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
+
+/// Helpers for the live interop suites (`tests/live_*.rs`), which run against real servers
+/// started by `scripts/live-interop.sh` and only when `CAMEL_LIVE_INTEROP=1` is set.
+pub mod live {
+    use crate::params::SslContextParameters;
+    use std::path::PathBuf;
+
+    /// The password of every test account the script creates.
+    pub const PASSWORD: &str = "camelpw";
+
+    /// Whether the live suites are enabled (`CAMEL_LIVE_INTEROP=1`); prints a skip notice otherwise.
+    pub fn enabled() -> bool {
+        let on = std::env::var("CAMEL_LIVE_INTEROP").map(|v| v == "1").unwrap_or(false);
+        if !on {
+            eprintln!("skipped: set CAMEL_LIVE_INTEROP=1 after `scripts/live-interop.sh start`");
+        }
+        on
+    }
+
+    /// The script's state directory (`CAMEL_INTEROP_DIR`, default `/var/lib/camel-interop`).
+    pub fn dir() -> PathBuf {
+        PathBuf::from(std::env::var("CAMEL_INTEROP_DIR").unwrap_or_else(|_| "/var/lib/camel-interop".into()))
+    }
+
+    /// The CA certificate (PEM) that signed the servers' `localhost` certificate.
+    pub fn ca_file() -> PathBuf {
+        dir().join("certs/ca.pem")
+    }
+
+    /// Client TLS parameters trusting only the interop CA.
+    pub fn client_params() -> SslContextParameters {
+        SslContextParameters::new().trust_file(ca_file())
+    }
+
+    /// Client TLS parameters with the interop client certificate (`CN=camel`) for mutual TLS.
+    pub fn mtls_client_params() -> SslContextParameters {
+        client_params().key_pair_files(dir().join("certs/client.pem"), dir().join("certs/client.key"))
+    }
+
+    /// Binds `liveSsl` (trusting the interop CA) and `liveUntrusted` (trusting only the
+    /// unrelated embedded test certificates).
+    pub fn bind_beans(ctx: &camel_core::context::CamelContext) {
+        ctx.registry().bind("liveSsl", client_params());
+        ctx.registry().bind("liveUntrusted", super::client_params());
+    }
+}
