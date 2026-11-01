@@ -172,23 +172,28 @@ setup_mosquitto() {
   mosquitto_passwd -b "$DIR/mosquitto.passwd" camel "$PW"
   chown mosquitto "$DIR/mosquitto.passwd"
   local key; key=$(key_copy mosquitto)
+  # Two instances: `per_listener_settings true` (needed to mix anonymous and authenticated
+  # listeners in one broker) makes mosquitto 2.0 drop messages queued for offline persistent
+  # sessions, so the anonymous broker and the authenticated (plain + TLS) broker are separate.
   cat > "$DIR/mosquitto.conf" <<EOF
-per_listener_settings true
 pid_file $RUN/mosquitto.pid
 persistence false
 log_dest file $LOGS/mosquitto.log
 user mosquitto
-
 listener 11883 127.0.0.1
 allow_anonymous true
+EOF
+  cat > "$DIR/mosquitto-auth.conf" <<EOF
+pid_file $RUN/mosquitto-auth.pid
+persistence false
+log_dest file $LOGS/mosquitto-auth.log
+user mosquitto
+allow_anonymous false
+password_file $DIR/mosquitto.passwd
 
 listener 11884 127.0.0.1
-allow_anonymous false
-password_file $DIR/mosquitto.passwd
 
 listener 18883 127.0.0.1
-allow_anonymous false
-password_file $DIR/mosquitto.passwd
 certfile $CERTS/server.pem
 keyfile $key
 cafile $CERTS/ca.pem
@@ -473,11 +478,16 @@ start_redis() {
 
 start_mosquitto() {
   [ -f "$DIR/mosquitto.conf" ] || return 0
-  port_open 11883 && return 0
-  log "starting mosquitto"
   chown mosquitto "$RUN"
-  mosquitto -c "$DIR/mosquitto.conf" -d
-  wait_port 18883 mosquitto
+  if ! port_open 11883; then
+    log "starting mosquitto"
+    mosquitto -c "$DIR/mosquitto.conf" -d
+    wait_port 11883 mosquitto
+  fi
+  if ! port_open 18883; then
+    mosquitto -c "$DIR/mosquitto-auth.conf" -d
+    wait_port 18883 mosquitto-auth
+  fi
 }
 
 start_rabbitmq() {
@@ -544,6 +554,7 @@ cmd_stop() {
   fi
   if port_open 16379; then redis-cli -p 16379 -a "$PW" --no-auth-warning shutdown nosave >/dev/null 2>&1 || true; fi
   kill_pidfile "$RUN/mosquitto.pid"
+  kill_pidfile "$RUN/mosquitto-auth.pid"
   if [ -f "$DIR/rabbitmq/env" ] && port_open 15673; then
     su rabbitmq -s /bin/bash -c ". $DIR/rabbitmq/env; rabbitmqctl -n camel-interop@localhost stop" >/dev/null 2>&1 || true
   fi
