@@ -13,7 +13,8 @@
 //!
 //! Options: `instanceClass` (the struct name, optionally qualified), `schema` (inline IDL)
 //! or `idlFile`, `contentTypeFormat`: `binary` (TBinaryProtocol, default), `compact`
-//! (TCompactProtocol) or `json` (plain JSON of the value, like TSimpleJSONProtocol),
+//! (TCompactProtocol), `json` (TJSONProtocol: `{"1":{"i32":5},...}`) or `sjson`
+//! (TSimpleJSONProtocol-style plain JSON of the value; unmarshal parses plain JSON),
 //! `contentTypeHeader` (default true). Values are objects keyed by field name; enums are
 //! names; binary fields bytes; sets arrays.
 
@@ -1011,6 +1012,299 @@ pub fn deserialize(idl: &Idl, name: &str, data: &[u8], proto: Protocol) -> Resul
     r.structure(Some(name))
 }
 
+/// Deserialize a struct at the start of `data`, returning the value and the bytes consumed.
+pub fn deserialize_prefix(idl: &Idl, name: &str, data: &[u8], proto: Protocol) -> Result<(Value, usize)> {
+    let mut r = R { idl, proto, d: data, p: 0, depth: 0 };
+    let v = r.structure(Some(name))?;
+    Ok((v, r.p))
+}
+
+// ------------------------------------------------------------------------- messages
+
+/// Message types (`TMessageType`).
+pub mod message_type {
+    pub const CALL: u8 = 1;
+    pub const REPLY: u8 = 2;
+    pub const EXCEPTION: u8 = 3;
+    pub const ONEWAY: u8 = 4;
+}
+
+/// A message header: name, type and sequence id.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessageHeader {
+    pub name: String,
+    pub mtype: u8,
+    pub seqid: i32,
+}
+
+/// Write a strict binary or compact message header.
+pub fn write_message_header(out: &mut Vec<u8>, proto: Protocol, h: &MessageHeader) {
+    match proto {
+        Protocol::Binary => {
+            out.extend_from_slice(&(0x8001_0000u32 | h.mtype as u32).to_be_bytes());
+            out.extend_from_slice(&(h.name.len() as i32).to_be_bytes());
+            out.extend_from_slice(h.name.as_bytes());
+            out.extend_from_slice(&h.seqid.to_be_bytes());
+        }
+        Protocol::Compact => {
+            out.push(0x82);
+            out.push(1 | (h.mtype << 5));
+            varint(out, h.seqid as u32 as u64);
+            varint(out, h.name.len() as u64);
+            out.extend_from_slice(h.name.as_bytes());
+        }
+    }
+}
+
+/// Read a message header (strict or old-style binary, compact). Returns the header and the
+/// bytes consumed.
+pub fn read_message_header(data: &[u8], proto: Protocol) -> Result<(MessageHeader, usize)> {
+    let idl = Idl::default();
+    let mut r = R { idl: &idl, proto, d: data, p: 0, depth: 0 };
+    let h = match proto {
+        Protocol::Binary => {
+            let first = i32::from_be_bytes(r.take(4)?.try_into().unwrap());
+            if first < 0 {
+                if (first as u32) & 0xffff_0000 != 0x8001_0000 {
+                    return Err(terr("Bad version in readMessageBegin"));
+                }
+                let n = r.len()?;
+                let name = String::from_utf8_lossy(r.take(n)?).into_owned();
+                let seqid = i32::from_be_bytes(r.take(4)?.try_into().unwrap());
+                MessageHeader { name, mtype: (first & 0xff) as u8, seqid }
+            } else {
+                let name = String::from_utf8_lossy(r.take(first as usize)?).into_owned();
+                let mtype = r.byte()?;
+                let seqid = i32::from_be_bytes(r.take(4)?.try_into().unwrap());
+                MessageHeader { name, mtype, seqid }
+            }
+        }
+        Protocol::Compact => {
+            if r.byte()? != 0x82 {
+                return Err(terr("Expected protocol id 0x82 in compact message"));
+            }
+            let vt = r.byte()?;
+            if vt & 0x1f != 1 {
+                return Err(terr(format!("Expected compact version 1 but got {}", vt & 0x1f)));
+            }
+            let seqid = r.varint()? as u32 as i32;
+            let n = r.len()?;
+            let name = String::from_utf8_lossy(r.take(n)?).into_owned();
+            MessageHeader { name, mtype: vt >> 5, seqid }
+        }
+    };
+    Ok((h, r.p))
+}
+
+// ------------------------------------------------------------------------- TJSONProtocol
+
+fn tjson_type(t: &TType) -> &'static str {
+    match t {
+        TType::Bool => "tf",
+        TType::Byte => "i8",
+        TType::I16 => "i16",
+        TType::I32 | TType::Enum(_) => "i32",
+        TType::I64 => "i64",
+        TType::Double => "dbl",
+        TType::String | TType::Binary => "str",
+        TType::Uuid => "uid",
+        TType::Struct(_) => "rec",
+        TType::Map(..) => "map",
+        TType::Set(_) => "set",
+        TType::List(_) => "lst",
+    }
+}
+
+fn tjson_value(idl: &Idl, t: &TType, v: &Value) -> Result<Value> {
+    let bad = || terr(format!("Value {} does not match thrift type {:?}", v.to_json(), t));
+    let as_i = |v: &Value| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+    Ok(match t {
+        TType::Bool => Value::Int(v.as_bool().ok_or_else(bad)? as i64),
+        TType::Byte | TType::I16 | TType::I32 | TType::I64 => Value::Int(as_i(v).ok_or_else(bad)?),
+        TType::Enum(e) => Value::Int(match v {
+            Value::String(s) => idl.enums.get(e).and_then(|vals| vals.iter().find(|(n, _)| n == s)).map(|(_, x)| *x as i64).or_else(|| s.parse().ok()).ok_or_else(bad)?,
+            other => as_i(other).ok_or_else(bad)?,
+        }),
+        TType::Double => {
+            let f = v.as_f64().ok_or_else(bad)?;
+            if f.is_nan() {
+                Value::String("NaN".into())
+            } else if f.is_infinite() {
+                Value::String(if f > 0.0 { "Infinity" } else { "-Infinity" }.into())
+            } else {
+                Value::Float(f)
+            }
+        }
+        TType::Binary => Value::String(camel_tls::pem::base64_encode(&v.to_bytes())),
+        TType::String | TType::Uuid => Value::String(v.to_string()),
+        TType::List(e) | TType::Set(e) => {
+            let a = v.as_array().ok_or_else(bad)?;
+            let mut out = vec![Value::String(tjson_type(e).into()), Value::Int(a.len() as i64)];
+            for x in a {
+                out.push(tjson_value(idl, e, x)?);
+            }
+            Value::Array(out)
+        }
+        TType::Map(k, vt) => {
+            let m = v.as_object().ok_or_else(bad)?;
+            let mut o = ObjectMap::new();
+            for (key, x) in m.iter() {
+                let key = match **k {
+                    TType::Enum(ref e) => idl.enums.get(e).and_then(|vals| vals.iter().find(|(n, _)| n == key)).map(|(_, x)| x.to_string()).unwrap_or_else(|| key.clone()),
+                    TType::Bool => (if key == "true" { "1" } else { "0" }).to_string(),
+                    _ => key.clone(),
+                };
+                o.insert(key, tjson_value(idl, vt, x)?);
+            }
+            Value::Array(vec![Value::String(tjson_type(k).into()), Value::String(tjson_type(vt).into()), Value::Int(m.len() as i64), Value::Object(o)])
+        }
+        TType::Struct(name) => tjson_struct(idl, name, v)?,
+    })
+}
+
+fn tjson_struct(idl: &Idl, name: &str, v: &Value) -> Result<Value> {
+    let o = v.as_object().ok_or_else(|| terr(format!("Struct {} expects an object, got {}", name, v.type_name())))?;
+    let mut out = ObjectMap::new();
+    for f in idl.fields(name)? {
+        match o.get(&f.name).filter(|v| !v.is_null()).or(f.default.as_ref()) {
+            None if f.required => return Err(terr(format!("Required field '{}' was not present! Struct: {}", f.name, name))),
+            None => {}
+            Some(x) => {
+                let mut t = ObjectMap::new();
+                t.insert(tjson_type(&f.ty).to_string(), tjson_value(idl, &f.ty, x)?);
+                out.insert(f.id.to_string(), Value::Object(t));
+            }
+        }
+    }
+    Ok(Value::Object(out))
+}
+
+fn from_tjson_value(idl: &Idl, t: &TType, v: &Value) -> Result<Value> {
+    let bad = || terr(format!("Invalid TJSONProtocol value {} for {:?}", v.to_json(), t));
+    let int = |v: &Value| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()));
+    Ok(match t {
+        TType::Bool => Value::Bool(int(v).ok_or_else(bad)? != 0),
+        TType::Byte | TType::I16 | TType::I32 | TType::I64 => Value::Int(int(v).ok_or_else(bad)?),
+        TType::Enum(e) => {
+            let n = int(v).ok_or_else(bad)?;
+            idl.enums.get(e).and_then(|vals| vals.iter().find(|(_, x)| *x as i64 == n)).map(|(name, _)| Value::String(name.clone())).unwrap_or(Value::Int(n))
+        }
+        TType::Double => match v {
+            Value::String(s) => Value::Float(match s.as_str() {
+                "NaN" => f64::NAN,
+                "Infinity" => f64::INFINITY,
+                "-Infinity" => f64::NEG_INFINITY,
+                o => o.parse().map_err(|_| bad())?,
+            }),
+            o => Value::Float(o.as_f64().ok_or_else(bad)?),
+        },
+        TType::Binary => Value::Bytes(camel_tls::pem::base64_decode(v.as_str().ok_or_else(bad)?).ok_or_else(bad)?),
+        TType::String | TType::Uuid => Value::String(v.as_str().ok_or_else(bad)?.to_string()),
+        TType::List(e) | TType::Set(e) => {
+            let a = v.as_array().ok_or_else(bad)?;
+            Value::Array(a.iter().skip(2).map(|x| from_tjson_value(idl, e, x)).collect::<Result<_>>()?)
+        }
+        TType::Map(k, vt) => {
+            let m = v.as_array().and_then(|a| a.get(3)).and_then(|m| m.as_object()).ok_or_else(bad)?;
+            let mut o = ObjectMap::new();
+            for (key, x) in m.iter() {
+                let key = match **k {
+                    TType::Enum(ref e) => key.parse::<i64>().ok().and_then(|n| idl.enums.get(e).and_then(|vals| vals.iter().find(|(_, x)| *x as i64 == n))).map(|(n, _)| n.clone()).unwrap_or_else(|| key.clone()),
+                    TType::Bool => (key == "1" || key == "true").to_string(),
+                    _ => key.clone(),
+                };
+                o.insert(key, from_tjson_value(idl, vt, x)?);
+            }
+            Value::Object(o)
+        }
+        TType::Struct(name) => from_tjson_struct(idl, name, v)?,
+    })
+}
+
+fn from_tjson_struct(idl: &Idl, name: &str, v: &Value) -> Result<Value> {
+    let o = v.as_object().ok_or_else(|| terr(format!("Expected a TJSONProtocol struct for {}", name)))?;
+    let fields = idl.fields(name)?;
+    let mut m = ObjectMap::new();
+    for (id, tv) in o.iter() {
+        let Some(f) = id.parse::<i16>().ok().and_then(|id| fields.iter().find(|f| f.id == id)) else { continue };
+        let Some((_, x)) = tv.as_object().and_then(|t| t.iter().next()) else { return Err(terr("Invalid TJSONProtocol field")) };
+        m.insert(f.name.clone(), from_tjson_value(idl, &f.ty, x)?);
+    }
+    for f in fields {
+        if let (Some(d), false) = (&f.default, m.contains_key(&f.name)) {
+            m.insert(f.name.clone(), d.clone());
+        }
+        if f.required && !m.contains_key(&f.name) {
+            return Err(terr(format!("Required field '{}' was not found in serialized data! Struct: {}", f.name, name)));
+        }
+    }
+    Ok(Value::Object(m))
+}
+
+/// Serialize a struct with TJSONProtocol (`{"1":{"i32":1},...}`).
+pub fn to_tjson(idl: &Idl, name: &str, v: &Value) -> Result<String> {
+    Ok(tjson_struct(idl, name, v)?.to_json())
+}
+
+/// Deserialize TJSONProtocol text.
+pub fn from_tjson(idl: &Idl, name: &str, text: &str) -> Result<Value> {
+    from_tjson_struct(idl, name, &camel_core::json::parse(text)?)
+}
+
+/// A TJSONProtocol message `[1,"name",type,seqid,{struct}]`.
+pub fn tjson_message(idl: &Idl, h: &MessageHeader, struct_name: &str, v: &Value) -> Result<String> {
+    Ok(Value::Array(vec![Value::Int(1), Value::String(h.name.clone()), Value::Int(h.mtype as i64), Value::Int(h.seqid as i64), tjson_struct(idl, struct_name, v)?]).to_json())
+}
+
+/// Parse a TJSONProtocol message: header and the raw struct value (decode it with
+/// [`from_tjson_struct_value`] once the struct name is known).
+pub fn parse_tjson_message(text: &str) -> Result<(MessageHeader, Value)> {
+    let v = camel_core::json::parse(text)?;
+    let a = v.as_array().filter(|a| a.len() >= 5 && a[0].as_i64() == Some(1)).ok_or_else(|| terr("Invalid TJSONProtocol message"))?;
+    let h = MessageHeader { name: a[1].to_string(), mtype: a[2].as_i64().unwrap_or(0) as u8, seqid: a[3].as_i64().unwrap_or(0) as i32 };
+    Ok((h, a[4].clone()))
+}
+
+/// Decode a TJSONProtocol struct value.
+pub fn from_tjson_struct_value(idl: &Idl, name: &str, v: &Value) -> Result<Value> {
+    from_tjson_struct(idl, name, v)
+}
+
+/// Length of the first complete JSON value in `data` (`None` if incomplete).
+pub fn json_value_len(data: &[u8]) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut esc = false;
+    let mut started = false;
+    for (i, &c) in data.iter().enumerate() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == b'\\' {
+                esc = true;
+            } else if c == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            b'"' => in_str = true,
+            b'[' | b'{' => {
+                depth += 1;
+                started = true;
+            }
+            b']' | b'}' => {
+                depth -= 1;
+                if started && depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// The `thrift` data format.
 pub struct ThriftDataFormat {
     pub idl: Idl,
@@ -1025,11 +1319,12 @@ impl DataFormat for ThriftDataFormat {
     }
     fn marshal(&self, ex: &mut Exchange) -> Result<()> {
         let v = match &ex.message.body {
-            Value::String(s) if self.format == "json" => camel_core::json::parse(s)?,
+            Value::String(s) if self.format == "json" || self.format == "sjson" => camel_core::json::parse(s)?,
             other => other.clone(),
         };
         let (body, ct) = match self.format.as_str() {
-            "json" => {
+            "json" => (Value::String(to_tjson(&self.idl, &self.struct_name, &v)?), "application/json"),
+            "sjson" => {
                 serialize(&self.idl, &self.struct_name, &v, Protocol::Binary)?; // validation
                 (Value::String(v.to_json()), "application/json")
             }
@@ -1044,7 +1339,8 @@ impl DataFormat for ThriftDataFormat {
     }
     fn unmarshal(&self, ex: &mut Exchange) -> Result<()> {
         ex.message.body = match self.format.as_str() {
-            "json" => camel_core::json::parse(&body_text(&ex.message.body)?)?,
+            "json" => from_tjson(&self.idl, &self.struct_name, &body_text(&ex.message.body)?)?,
+            "sjson" => camel_core::json::parse(&body_text(&ex.message.body)?)?,
             "compact" => deserialize(&self.idl, &self.struct_name, &body_bytes(&ex.message.body), Protocol::Compact)?,
             _ => deserialize(&self.idl, &self.struct_name, &body_bytes(&ex.message.body), Protocol::Binary)?,
         };
@@ -1062,12 +1358,12 @@ pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
     let name = o.get(&["instanceClass", "instanceClassName"]).map(|n| n.rsplit('.').next().unwrap_or(n).to_string());
     let name = match name {
         Some(n) => n,
-        None if idl.structs.len() == 1 => idl.structs.keys().next().unwrap().clone(),
+        None if idl.structs.keys().filter(|k| !k.contains('.') && *k != "TApplicationException").count() == 1 => idl.structs.keys().find(|k| !k.contains('.') && *k != "TApplicationException").unwrap().clone(),
         None => return Err(CamelError::illegal_argument("The thrift data format requires instanceClass")),
     };
     idl.fields(&name)?;
     let format = o.string(&["contentTypeFormat"], "binary").to_ascii_lowercase();
-    if !matches!(format.as_str(), "binary" | "compact" | "json") {
+    if !matches!(format.as_str(), "binary" | "compact" | "json" | "sjson") {
         return Err(CamelError::illegal_argument(format!("Unsupported thrift contentTypeFormat: {}", format)));
     }
     Ok(Arc::new(ThriftDataFormat { idl, struct_name: name, format, content_type_header: o.bool(&["contentTypeHeader"], true)? }))

@@ -44,6 +44,7 @@ pub mod mime;
 pub mod pgp;
 pub mod tar;
 pub mod thrift;
+pub mod thrift_rpc;
 pub mod univocity;
 pub mod yaml_df;
 pub mod zip;
@@ -219,8 +220,12 @@ pub fn create(name: &str, options: &BTreeMap<String, String>) -> Option<Result<A
     factories().into_iter().find(|(n, _)| *n == name).map(|(_, f)| f(&Opts::new(options)))
 }
 
-/// Register all data formats of this crate on the context.
+/// Register all data formats of this crate on the context, plus the `thrift` component
+/// ([`thrift_rpc`]) unless one is already registered.
 pub fn register(ctx: &CamelContext) {
+    if !ctx.has_component("thrift") {
+        ctx.add_component_factory("thrift", || Arc::new(thrift_rpc::ThriftComponent) as Arc<dyn camel_core::spi::Component>);
+    }
     for (name, f) in factories() {
         register_data_format_factory(ctx.registry(), name, move |o| f(&Opts::new(o)));
     }
