@@ -17,7 +17,7 @@ use camel_xml::dom::{Document, NodeId, QName};
 use camel_xml::serialize::{serialize, OutputOptions};
 
 use super::json::{self, J};
-use super::model::{self, json_kind, JsonKind, FHIR_NS, XHTML_NS};
+use super::model::{self, json_kind, FhirVersion, JsonKind, FHIR_NS, XHTML_NS};
 use super::DATA_FORMAT_EXCEPTION;
 
 fn dfe(m: impl Into<String>) -> CamelError {
@@ -29,17 +29,22 @@ fn dfe(m: impl Into<String>) -> CamelError {
 
 /// Parse FHIR XML into a JSON tree.
 pub fn xml_to_tree(xml: &str) -> Result<J> {
+    xml_to_tree_v(xml, FhirVersion::R4)
+}
+
+/// [`xml_to_tree`] for a given FHIR release.
+pub fn xml_to_tree_v(xml: &str, v: FhirVersion) -> Result<J> {
     let doc = Document::parse(crate::support::strip_xml_decl(xml)).map_err(|e| dfe(format!("Invalid XML: {}", e)))?;
     let root = doc.document_element().ok_or_else(|| dfe("Empty XML document"))?;
     if doc.namespace_uri(root) != FHIR_NS {
         return Err(dfe(format!("Root element <{}> is not in the FHIR namespace {}", doc.qualified_name(root), FHIR_NS)));
     }
-    Ok(resource_from_xml(&doc, root))
+    Ok(resource_from_xml(&doc, root, v))
 }
 
-fn resource_from_xml(doc: &Document, el: NodeId) -> J {
+fn resource_from_xml(doc: &Document, el: NodeId, v: FhirVersion) -> J {
     let ty = doc.local_name(el).to_string();
-    complex_from_xml(doc, el, &ty, true)
+    complex_from_xml(doc, el, &ty, true, v)
 }
 
 fn typed_primitive(v: &str, ty: &str) -> J {
@@ -58,12 +63,12 @@ fn fhir_children(doc: &Document, el: NodeId) -> Vec<NodeId> {
     doc.element_children(el).into_iter().filter(|&c| doc.namespace_uri(c) == FHIR_NS).collect()
 }
 
-fn primitive_extras(doc: &Document, el: NodeId) -> J {
+fn primitive_extras(doc: &Document, el: NodeId, v: FhirVersion) -> J {
     let mut m = Vec::new();
     if let Some(id) = doc.attribute(el, "id") {
         m.push(("id".to_string(), J::Str(id.to_string())));
     }
-    let exts: Vec<J> = fhir_children(doc, el).into_iter().filter(|&c| doc.local_name(c) == "extension").map(|c| complex_from_xml(doc, c, "Extension", false)).collect();
+    let exts: Vec<J> = fhir_children(doc, el).into_iter().filter(|&c| doc.local_name(c) == "extension").map(|c| complex_from_xml(doc, c, "Extension", false, v)).collect();
     if !exts.is_empty() {
         m.push(("extension".to_string(), J::Arr(exts)));
     }
@@ -74,7 +79,7 @@ fn primitive_extras(doc: &Document, el: NodeId) -> J {
     }
 }
 
-fn complex_from_xml(doc: &Document, el: NodeId, ty: &str, resource: bool) -> J {
+fn complex_from_xml(doc: &Document, el: NodeId, ty: &str, resource: bool, v: FhirVersion) -> J {
     let mut out: Vec<(String, J)> = Vec::new();
     if resource {
         out.push(("resourceType".into(), J::Str(ty.to_string())));
@@ -104,7 +109,7 @@ fn complex_from_xml(doc: &Document, el: NodeId, ty: &str, resource: bool) -> J {
     }
     for (name, nodes) in groups {
         let first = nodes[0];
-        let known = model::element(ty, &name, resource);
+        let known = model::element_v(v, ty, &name, resource);
         if doc.namespace_uri(first) == XHTML_NS {
             out.push((name, J::Str(crate::support::fragment(doc, first))));
             continue;
@@ -117,7 +122,7 @@ fn complex_from_xml(doc: &Document, el: NodeId, ty: &str, resource: bool) -> J {
             }
         };
         if cty == "Resource" {
-            let vals: Vec<J> = nodes.iter().filter_map(|&n| fhir_children(doc, n).first().map(|&r| resource_from_xml(doc, r))).collect();
+            let vals: Vec<J> = nodes.iter().filter_map(|&n| fhir_children(doc, n).first().map(|&r| resource_from_xml(doc, r, v))).collect();
             push(&mut out, name, vals, many);
         } else if cty == "xhtml" {
             let div = doc.element_children(first).into_iter().next();
@@ -125,10 +130,10 @@ fn complex_from_xml(doc: &Document, el: NodeId, ty: &str, resource: bool) -> J {
                 out.push((name, J::Str(crate::support::fragment(doc, d))));
             }
         } else if model::is_primitive(&cty) {
-            let values: Vec<J> = nodes.iter().map(|&n| doc.attribute(n, "value").map(|v| typed_primitive(v, &cty)).unwrap_or(J::Null)).collect();
-            let extras: Vec<J> = nodes.iter().map(|&n| primitive_extras(doc, n)).collect();
-            let has_values = values.iter().any(|v| *v != J::Null);
-            let has_extras = extras.iter().any(|v| *v != J::Null);
+            let values: Vec<J> = nodes.iter().map(|&n| doc.attribute(n, "value").map(|x| typed_primitive(x, &cty)).unwrap_or(J::Null)).collect();
+            let extras: Vec<J> = nodes.iter().map(|&n| primitive_extras(doc, n, v)).collect();
+            let has_values = values.iter().any(|x| *x != J::Null);
+            let has_extras = extras.iter().any(|x| *x != J::Null);
             if many {
                 if has_values {
                     out.push((name.clone(), J::Arr(values)));
@@ -137,16 +142,16 @@ fn complex_from_xml(doc: &Document, el: NodeId, ty: &str, resource: bool) -> J {
                     out.push((format!("_{}", name), J::Arr(extras)));
                 }
             } else {
-                let (v, e) = (values.into_iter().next().unwrap_or(J::Null), extras.into_iter().next().unwrap_or(J::Null));
-                if v != J::Null {
-                    out.push((name.clone(), v));
+                let (val, e) = (values.into_iter().next().unwrap_or(J::Null), extras.into_iter().next().unwrap_or(J::Null));
+                if val != J::Null {
+                    out.push((name.clone(), val));
                 }
                 if e != J::Null {
                     out.push((format!("_{}", name), e));
                 }
             }
         } else {
-            let vals: Vec<J> = nodes.iter().map(|&n| complex_from_xml(doc, n, &cty, false)).collect();
+            let vals: Vec<J> = nodes.iter().map(|&n| complex_from_xml(doc, n, &cty, false, v)).collect();
             push(&mut out, name, vals, many);
         }
     }
@@ -168,12 +173,18 @@ fn push(out: &mut Vec<(String, J)>, name: String, mut vals: Vec<J>, many: bool) 
 
 /// Write a JSON resource tree as FHIR XML (`pretty` indents).
 pub fn tree_to_xml(j: &J, pretty: bool) -> Result<String> {
+    tree_to_xml_v(j, pretty, FhirVersion::R4)
+}
+
+/// [`tree_to_xml`] for a given FHIR release. Elements are written in the specification's
+/// order for the types of the registry (unknown elements follow, in JSON order).
+pub fn tree_to_xml_v(j: &J, pretty: bool, v: FhirVersion) -> Result<String> {
     let J::Obj(m) = j else { return Err(dfe("A FHIR resource must be a JSON object")) };
     let ty = j.get("resourceType").and_then(J::as_str).ok_or_else(|| dfe("Missing resourceType"))?;
     let mut doc = Document::new();
     let root = doc.append_element(0, fq(ty));
     doc.declare_namespace(root, "", FHIR_NS);
-    complex_to_xml(&mut doc, root, m, ty, true)?;
+    complex_to_xml(&mut doc, root, m, ty, true, v)?;
     let opts = OutputOptions { method: Some(camel_xml::serialize::Method::Xml), omit_xml_declaration: true, indent: pretty, indent_amount: 2, ..Default::default() };
     Ok(serialize(&doc, 0, &opts))
 }
@@ -191,7 +202,7 @@ fn scalar_text(j: &J) -> Option<String> {
     }
 }
 
-fn write_extras(doc: &mut Document, el: NodeId, extra: Option<&J>) -> Result<()> {
+fn write_extras(doc: &mut Document, el: NodeId, extra: Option<&J>, v: FhirVersion) -> Result<()> {
     let Some(J::Obj(m)) = extra else { return Ok(()) };
     if let Some(id) = m.iter().find(|(k, _)| k == "id").and_then(|(_, v)| scalar_text(v)) {
         doc.set_attribute(el, QName::local("id"), id);
@@ -200,7 +211,7 @@ fn write_extras(doc: &mut Document, el: NodeId, extra: Option<&J>) -> Result<()>
         for e in exts {
             if let J::Obj(em) = e {
                 let x = doc.append_element(el, fq("extension"));
-                complex_to_xml(doc, x, em, "Extension", false)?;
+                complex_to_xml(doc, x, em, "Extension", false, v)?;
             }
         }
     }
@@ -215,10 +226,13 @@ fn embed_xhtml(doc: &mut Document, parent: NodeId, s: &str) -> Result<()> {
     Ok(())
 }
 
-fn complex_to_xml(doc: &mut Document, el: NodeId, m: &[(String, J)], ty: &str, resource: bool) -> Result<()> {
+fn complex_to_xml(doc: &mut Document, el: NodeId, m: &[(String, J)], ty: &str, resource: bool, ver: FhirVersion) -> Result<()> {
     let has = |k: &str| m.iter().any(|(x, _)| x == k);
     let get = |k: &str| m.iter().find(|(x, _)| x == k).map(|(_, v)| v);
-    for (k, v) in m {
+    // spec order: known elements by their definition index, unknown ones after (stable)
+    let mut ordered: Vec<&(String, J)> = m.iter().collect();
+    ordered.sort_by_key(|(k, _)| model::order_key(ver, ty, k, resource).unwrap_or(usize::MAX));
+    for (k, v) in ordered {
         if k == "resourceType" || k == "fhir_comments" {
             continue;
         }
@@ -231,12 +245,12 @@ fn complex_to_xml(doc: &mut Document, el: NodeId, m: &[(String, J)], ty: &str, r
                 J::Arr(items) => {
                     for it in items {
                         let c = doc.append_element(el, fq(base));
-                        write_extras(doc, c, Some(it))?;
+                        write_extras(doc, c, Some(it), ver)?;
                     }
                 }
                 other => {
                     let c = doc.append_element(el, fq(base));
-                    write_extras(doc, c, Some(other))?;
+                    write_extras(doc, c, Some(other), ver)?;
                 }
             }
             continue;
@@ -253,7 +267,7 @@ fn complex_to_xml(doc: &mut Document, el: NodeId, m: &[(String, J)], ty: &str, r
             }
             continue;
         }
-        let cty = model::element(ty, k, resource).map(|(t, _)| t).unwrap_or_default();
+        let cty = model::element_v(ver, ty, k, resource).map(|(t, _)| t).unwrap_or_default();
         let extra = get(&format!("_{}", k));
         match v {
             J::Arr(items) => {
@@ -262,38 +276,38 @@ fn complex_to_xml(doc: &mut Document, el: NodeId, m: &[(String, J)], ty: &str, r
                         Some(J::Arr(a)) => a.get(i),
                         _ => None,
                     };
-                    emit(doc, el, k, it, ex, &cty)?;
+                    emit(doc, el, k, it, ex, &cty, ver)?;
                 }
             }
-            other => emit(doc, el, k, other, extra, &cty)?,
+            other => emit(doc, el, k, other, extra, &cty, ver)?,
         }
     }
     Ok(())
 }
 
-fn emit(doc: &mut Document, parent: NodeId, k: &str, v: &J, extra: Option<&J>, cty: &str) -> Result<()> {
+fn emit(doc: &mut Document, parent: NodeId, k: &str, v: &J, extra: Option<&J>, cty: &str, ver: FhirVersion) -> Result<()> {
     match v {
         J::Obj(o) => {
             if let Some(rt) = v.get("resourceType").and_then(J::as_str) {
                 let wrapper = doc.append_element(parent, fq(k));
                 let r = doc.append_element(wrapper, fq(rt));
-                complex_to_xml(doc, r, o, rt, true)?;
+                complex_to_xml(doc, r, o, rt, true, ver)?;
             } else {
                 let c = doc.append_element(parent, fq(k));
-                complex_to_xml(doc, c, o, cty, false)?;
+                complex_to_xml(doc, c, o, cty, false, ver)?;
             }
         }
         J::Str(s) if cty == "xhtml" || (k == "div" && s.trim_start().starts_with('<')) => embed_xhtml(doc, parent, s)?,
         J::Null => {
             if extra.map(|e| *e != J::Null).unwrap_or(false) {
                 let c = doc.append_element(parent, fq(k));
-                write_extras(doc, c, extra)?;
+                write_extras(doc, c, extra, ver)?;
             }
         }
         J::Arr(_) => return Err(dfe(format!("Nested arrays are not allowed in FHIR JSON (element {})", k))),
         scalar => {
             let c = doc.append_element(parent, fq(k));
-            write_extras(doc, c, extra)?;
+            write_extras(doc, c, extra, ver)?;
             if let Some(t) = scalar_text(scalar) {
                 doc.set_attribute(c, QName::local("value"), t);
             }
@@ -314,7 +328,71 @@ pub fn xml_to_json(text: &str, pretty: bool) -> Result<String> {
     Ok(json::write(&xml_to_tree(text)?, pretty))
 }
 
+/// Retype a resource tree built from a [`camel_core::value::Value`]: strings holding numbers
+/// or booleans in `integer` / `decimal` / `positiveInt` / `unsignedInt` / `boolean` elements
+/// become JSON numbers / booleans (decimals whose lexeme an `f64` would not keep, such as
+/// `1.50`, are unmarshalled as strings), and numbers in string-typed elements become strings.
+pub fn retype(j: &mut J, v: FhirVersion) {
+    let ty = j.get("resourceType").and_then(J::as_str).unwrap_or("").to_string();
+    retype_complex(j, &ty, true, v);
+}
+
+fn retype_complex(j: &mut J, ty: &str, resource: bool, v: FhirVersion) {
+    let J::Obj(m) = j else { return };
+    for (k, val) in m.iter_mut() {
+        if k == "resourceType" {
+            continue;
+        }
+        let name = k.trim_start_matches('_');
+        let Some((cty, _)) = model::element_v(v, ty, name, resource) else {
+            // nested resources of unknown positions still get retyped
+            retype_any(val, v);
+            continue;
+        };
+        let primitive_ext = k.starts_with('_');
+        let fix = |x: &mut J| {
+            if primitive_ext {
+                retype_complex(x, "Element", false, v);
+            } else if cty == "Resource" {
+                if let Some(rt) = x.get("resourceType").and_then(J::as_str).map(str::to_string) {
+                    retype_complex(x, &rt, true, v);
+                }
+            } else if model::is_primitive(&cty) {
+                let new = match (json_kind(&cty), &*x) {
+                    (JsonKind::Number, J::Str(s)) if s.trim().parse::<f64>().is_ok() => Some(J::Num(s.trim().to_string())),
+                    (JsonKind::Bool, J::Str(s)) if s == "true" || s == "false" => Some(J::Bool(s == "true")),
+                    (JsonKind::String, J::Num(n)) => Some(J::Str(n.clone())),
+                    (JsonKind::String, J::Bool(b)) => Some(J::Str(b.to_string())),
+                    _ => None,
+                };
+                if let Some(n) = new {
+                    *x = n;
+                }
+            } else {
+                retype_complex(x, &cty, false, v);
+            }
+        };
+        match val {
+            J::Arr(a) => a.iter_mut().for_each(fix),
+            other => fix(other),
+        }
+    }
+}
+
+fn retype_any(j: &mut J, v: FhirVersion) {
+    match j {
+        J::Obj(_) => {
+            if let Some(rt) = j.get("resourceType").and_then(J::as_str).map(str::to_string) {
+                retype_complex(j, &rt, true, v);
+            }
+        }
+        J::Arr(a) => a.iter_mut().for_each(|x| retype_any(x, v)),
+        _ => {}
+    }
+}
+
 /// Parse and check FHIR JSON (an object with a `resourceType`).
+
 pub fn parse_json(text: &str) -> Result<J> {
     let j = json::parse(text.trim_start_matches('\u{feff}'))?;
     match j.get("resourceType") {

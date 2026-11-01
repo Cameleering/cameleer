@@ -8,6 +8,14 @@
 //! `patient`, `subject`), history (instance, type, server) and `transaction` / `batch`
 //! Bundles (with `urn:uuid:` reference rewriting). JSON and XML (by `Content-Type`,
 //! `Accept`, `_format`). Optional basic or bearer authentication.
+//!
+//! Operations: `$meta` (server, type, instance), `$meta-add` / `$meta-delete` (instance),
+//! `$validate` (type / instance; registry checks of [`super::validation::validate_base`],
+//! failures → 412 with the `OperationOutcome`), `Patient/[id]/$everything`,
+//! `$process-message`, and `$echo` at every level (returns its `Parameters`; GET query
+//! parameters become `valueString`s; the target is added as a `target` parameter). `PATCH`
+//! on instances or conditional urls with JSON Patch (`application/json-patch+json`) or
+//! FHIRPath Patch (`Parameters` with `operation` parts: add / insert / delete / replace).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -298,6 +306,10 @@ fn handle(state: &Mutex<State>, auth: &Auth, req: &mut HttpRequest) -> HttpRespo
     }
     let Some(rest) = req.path.strip_prefix("/fhir") else { return c.err(404, "not-found", "Unknown path") };
     let segs: Vec<String> = rest.split('/').filter(|x| !x.is_empty()).map(str::to_string).collect();
+    if req.method == "PATCH" {
+        let mut st = state.lock().unwrap();
+        return patch(&mut st, &c, &segs, &query, req);
+    }
     let body = if req.body.is_empty() {
         None
     } else {
@@ -313,6 +325,92 @@ fn handle(state: &Mutex<State>, auth: &Auth, req: &mut HttpRequest) -> HttpRespo
     let mut st = state.lock().unwrap();
     match (req.method.as_str(), seg.as_slice()) {
         ("GET", ["metadata"]) => c.resp(200, &capability()),
+        ("GET", ["$meta"]) => c.resp(200, &meta_params(collect_meta(&st, None, None))),
+        ("POST", ["$process-message"]) => match body {
+            Some(b) if b.get("type").and_then(J::as_str) == Some("message") => {
+                let header_id = match b.get("entry") {
+                    Some(J::Arr(es)) => es.first().and_then(|e| e.get("resource")).and_then(|r| r.get("id")).and_then(J::as_str).unwrap_or("").to_string(),
+                    _ => String::new(),
+                };
+                let mh = obj(vec![("resourceType", s("MessageHeader")), ("id", s(camel_core::message::generate_id())), ("response", obj(vec![("identifier", s(header_id)), ("code", s("ok"))]))]);
+                c.resp(200, &bundle("message", None, vec![], vec![obj(vec![("resource", mh)])]))
+            }
+            _ => c.err(400, "invalid", "$process-message expects a message Bundle"),
+        },
+        (m, ["$echo"]) if m == "GET" || m == "POST" => c.resp(200, &echo(body, &query, "server")),
+        (m, [ty, op]) if valid_type(ty) && *op == "$echo" && (m == "GET" || m == "POST") => c.resp(200, &echo(body, &query, ty)),
+        (m, [ty, id, op]) if valid_type(ty) && *op == "$echo" && (m == "GET" || m == "POST") => c.resp(200, &echo(body, &query, &format!("{}/{}", ty, id))),
+        (m, [ty, id, "_history", vid, op]) if valid_type(ty) && *op == "$echo" && (m == "GET" || m == "POST") => c.resp(200, &echo(body, &query, &format!("{}/{}/_history/{}", ty, id, vid))),
+        ("GET", [ty, "$meta"]) if valid_type(ty) => c.resp(200, &meta_params(collect_meta(&st, Some(ty), None))),
+        ("GET", [ty, id, "$meta"]) if valid_type(ty) => match st.current(ty, id) {
+            Some(Version { resource: Some(_), .. }) => c.resp(200, &meta_params(collect_meta(&st, Some(ty), Some(id)))),
+            _ => c.err(404, "not-found", &format!("Resource {}/{} is not known", ty, id)),
+        },
+        ("POST", [ty, id, op]) if valid_type(ty) && (*op == "$meta-add" || *op == "$meta-delete") => {
+            let add = *op == "$meta-add";
+            let Some(meta) = body.as_ref().and_then(|b| param_value(b, "meta", "valueMeta")) else { return c.err(400, "invalid", "Missing meta parameter") };
+            let key = (ty.to_string(), id.to_string());
+            let Some(Version { resource: Some(r), .. }) = st.resources.get_mut(&key).and_then(|v| v.last_mut()) else { return c.err(404, "not-found", &format!("Resource {}/{} is not known", ty, id)) };
+            let mut m = r.get("meta").cloned().unwrap_or(J::Obj(Vec::new()));
+            for list in ["profile", "tag", "security"] {
+                let incoming: Vec<J> = match meta.get(list) {
+                    Some(J::Arr(a)) => a.clone(),
+                    _ => continue,
+                };
+                let mut cur: Vec<J> = match m.get(list) {
+                    Some(J::Arr(a)) => a.clone(),
+                    _ => Vec::new(),
+                };
+                let same = |a: &J, b: &J| match (a, b) {
+                    (J::Str(x), J::Str(y)) => x == y,
+                    _ => a.get("system") == b.get("system") && a.get("code") == b.get("code"),
+                };
+                if add {
+                    for i in incoming {
+                        if !cur.iter().any(|x| same(x, &i)) {
+                            cur.push(i);
+                        }
+                    }
+                } else {
+                    cur.retain(|x| !incoming.iter().any(|i| same(x, i)));
+                }
+                if cur.is_empty() {
+                    if let J::Obj(mm) = &mut m {
+                        mm.retain(|(k, _)| k != list);
+                    }
+                } else {
+                    set(&mut m, list, J::Arr(cur));
+                }
+            }
+            set(r, "meta", m.clone());
+            c.resp(200, &meta_params(m))
+        }
+        ("POST", [ty, "$validate"]) | ("POST", [ty, _, "$validate"]) if valid_type(ty) => {
+            let res = match body {
+                Some(b) if b.get("resourceType").and_then(J::as_str) == Some("Parameters") => param_value(&b, "resource", "resource"),
+                other => other,
+            };
+            let Some(res) = res else { return c.err(400, "invalid", "No resource to validate") };
+            let issues = super::validation::validate_base(&res, super::model::FhirVersion::R4);
+            let oo = super::validation::outcome(&issues);
+            c.resp(if super::validation::is_successful(&issues) { 200 } else { 412 }, &oo)
+        }
+        (m, ["Patient", id, "$everything"]) if m == "GET" || m == "POST" => {
+            if st.current("Patient", id).and_then(|v| v.resource.as_ref()).is_none() {
+                return c.err(404, "not-found", &format!("Resource Patient/{} is not known", id));
+            }
+            let target = format!("Patient/{}", id);
+            let mut entries = Vec::new();
+            for ((t, rid), vs) in &st.resources {
+                let Some(r) = vs.last().and_then(|v| v.resource.as_ref()) else { continue };
+                let is_self = t == "Patient" && rid == id;
+                if is_self || references(r, &target) {
+                    entries.push(obj(vec![("fullUrl", s(format!("{}/{}/{}", c.base, t, rid))), ("resource", r.clone())]));
+                }
+            }
+            let n = entries.len();
+            c.resp(200, &bundle("searchset", Some(n), vec![], entries))
+        }
         ("POST", []) => match body {
             Some(b) if b.get("resourceType").and_then(J::as_str) == Some("Bundle") => transaction(&mut st, &c, b),
             _ => c.err(400, "invalid", "Expected a transaction or batch Bundle"),
@@ -398,7 +496,350 @@ fn handle(state: &Mutex<State>, auth: &Auth, req: &mut HttpRequest) -> HttpRespo
     }
 }
 
+fn references(j: &J, target: &str) -> bool {
+    match j {
+        J::Obj(m) => m.iter().any(|(k, v)| (k == "reference" && v.as_str() == Some(target)) || references(v, target)),
+        J::Arr(a) => a.iter().any(|x| references(x, target)),
+        _ => false,
+    }
+}
+
+/// The value of a `Parameters` parameter (`key` = `valueMeta`, `resource`...).
+fn param_value(p: &J, name: &str, key: &str) -> Option<J> {
+    match p.get("parameter") {
+        Some(J::Arr(ps)) => ps.iter().find(|x| x.get("name").and_then(J::as_str) == Some(name)).and_then(|x| x.get(key)).cloned(),
+        _ => None,
+    }
+}
+
+fn meta_params(meta: J) -> J {
+    obj(vec![("resourceType", s("Parameters")), ("parameter", J::Arr(vec![obj(vec![("name", s("return")), ("valueMeta", meta)])]))])
+}
+
+/// Union of the profiles / tags / security labels of the current resources.
+fn collect_meta(st: &State, ty: Option<&str>, id: Option<&str>) -> J {
+    let mut lists: Vec<(&str, Vec<J>)> = vec![("profile", Vec::new()), ("security", Vec::new()), ("tag", Vec::new())];
+    for ((t, rid), vs) in &st.resources {
+        if ty.map(|x| x != t).unwrap_or(false) || id.map(|x| x != rid).unwrap_or(false) {
+            continue;
+        }
+        let Some(r) = vs.last().and_then(|v| v.resource.as_ref()) else { continue };
+        if id.is_some() {
+            return r.get("meta").cloned().unwrap_or(J::Obj(Vec::new()));
+        }
+        for (name, acc) in lists.iter_mut() {
+            if let Some(J::Arr(a)) = r.get("meta").and_then(|m| m.get(name)) {
+                for x in a {
+                    if !acc.contains(x) {
+                        acc.push(x.clone());
+                    }
+                }
+            }
+        }
+    }
+    J::Obj(lists.into_iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| (k.to_string(), J::Arr(v))).collect())
+}
+
+fn echo(body: Option<J>, q: &[(String, String)], target: &str) -> J {
+    let mut params: Vec<J> = match body.as_ref().and_then(|b| b.get("parameter")) {
+        Some(J::Arr(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    for (k, v) in q.iter().filter(|(k, _)| !k.starts_with('_')) {
+        params.push(obj(vec![("name", s(k.as_str())), ("valueString", s(v.as_str()))]));
+    }
+    params.push(obj(vec![("name", s("target")), ("valueString", s(target))]));
+    obj(vec![("resourceType", s("Parameters")), ("parameter", J::Arr(params))])
+}
+
+// ------------------------------------------------------------------ PATCH
+
+fn patch(st: &mut State, c: &Ctx, segs: &[String], query: &[(String, String)], req: &HttpRequest) -> HttpResponse {
+    let ct = req.content_type().unwrap_or("").to_ascii_lowercase();
+    let text = req.body_text();
+    let (ty, id) = match segs {
+        [ty, id] => (ty.clone(), id.clone()),
+        [ty] => {
+            let crit: Vec<&(String, String)> = query.iter().filter(|(k, _)| !k.starts_with("_format")).collect();
+            let hits: Vec<String> = st
+                .resources
+                .iter()
+                .filter(|((t, _), v)| t == ty && v.last().and_then(|x| x.resource.as_ref()).is_some())
+                .filter(|((_, id), v)| crit.iter().all(|(k, val)| matches(v.last().and_then(|x| x.resource.as_ref()).unwrap_or(&J::Null), id, k, val)))
+                .map(|((_, id), _)| id.clone())
+                .collect();
+            match hits.as_slice() {
+                [one] => (ty.clone(), one.clone()),
+                [] => return c.err(404, "not-found", "No resource matches the conditional patch url"),
+                _ => return c.err(412, "multiple-matches", "Multiple resources match the conditional patch url"),
+            }
+        }
+        _ => return c.err(400, "invalid", "PATCH needs an instance or conditional url"),
+    };
+    let Some(Version { resource: Some(cur), .. }) = st.current(&ty, &id).cloned() else { return c.err(404, "not-found", &format!("Resource {}/{} is not known", ty, id)) };
+    let patched = if ct.contains("json-patch") || text.trim_start().starts_with('[') {
+        json::parse(&text).map_err(|e| e.message).and_then(|p| json_patch(cur, &p))
+    } else if ct.contains("xml-patch") {
+        Err("XML Patch is not supported by this server".to_string())
+    } else {
+        let parsed = if ct.contains("xml") || text.trim_start().starts_with('<') { xml_to_tree(&text) } else { parse_json(&text) };
+        parsed.map_err(|e| e.message).and_then(|p| fhirpath_patch(cur, &p))
+    };
+    match patched {
+        Ok(r) => {
+            let v = st.store(&ty, &id, Some(r), "PATCH");
+            let minimal = req.headers.get("Prefer").map(|p| p.contains("return=minimal")).unwrap_or(false);
+            created(c, &ty, &id, &v, 200, minimal)
+        }
+        Err(e) => c.err(422, "processing", &format!("Failed to apply patch: {}", e)),
+    }
+}
+
+fn pointer_tokens(p: &str) -> Result<Vec<String>, String> {
+    if p.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rest = p.strip_prefix('/').ok_or_else(|| format!("Invalid JSON pointer {}", p))?;
+    Ok(rest.split('/').map(|t| t.replace("~1", "/").replace("~0", "~")).collect())
+}
+
+fn pointer_get<'a>(j: &'a J, toks: &[String]) -> Option<&'a J> {
+    let mut cur = j;
+    for t in toks {
+        cur = match cur {
+            J::Obj(_) => cur.get(t)?,
+            J::Arr(a) => a.get(t.parse::<usize>().ok()?)?,
+            _ => return None,
+        };
+    }
+    Some(cur)
+}
+
+fn pointer_parent<'a>(j: &'a mut J, toks: &[String]) -> Option<&'a mut J> {
+    let mut cur = j;
+    for t in toks {
+        cur = match cur {
+            J::Obj(m) => m.iter_mut().find(|(k, _)| k == t).map(|(_, v)| v)?,
+            J::Arr(a) => a.get_mut(t.parse::<usize>().ok()?)?,
+            _ => return None,
+        };
+    }
+    Some(cur)
+}
+
+fn pointer_remove(j: &mut J, toks: &[String]) -> Result<J, String> {
+    let (last, parent) = toks.split_last().ok_or("Cannot remove the document root")?;
+    match pointer_parent(j, parent) {
+        Some(J::Obj(m)) => {
+            let i = m.iter().position(|(k, _)| k == last).ok_or_else(|| format!("No member {}", last))?;
+            Ok(m.remove(i).1)
+        }
+        Some(J::Arr(a)) => {
+            let i = last.parse::<usize>().map_err(|_| format!("Bad index {}", last))?;
+            if i >= a.len() {
+                return Err(format!("Index {} out of bounds", i));
+            }
+            Ok(a.remove(i))
+        }
+        _ => Err("Path not found".into()),
+    }
+}
+
+fn pointer_add(j: &mut J, toks: &[String], v: J, replace: bool) -> Result<(), String> {
+    let Some((last, parent)) = toks.split_last() else {
+        *j = v;
+        return Ok(());
+    };
+    match pointer_parent(j, parent) {
+        Some(J::Obj(m)) => {
+            match m.iter_mut().find(|(k, _)| k == last) {
+                Some(e) => e.1 = v,
+                None if replace => return Err(format!("No member {} to replace", last)),
+                None => m.push((last.clone(), v)),
+            }
+            Ok(())
+        }
+        Some(J::Arr(a)) => {
+            if last == "-" {
+                a.push(v);
+                return Ok(());
+            }
+            let i = last.parse::<usize>().map_err(|_| format!("Bad index {}", last))?;
+            if replace {
+                *a.get_mut(i).ok_or_else(|| format!("Index {} out of bounds", i))? = v;
+            } else if i <= a.len() {
+                a.insert(i, v);
+            } else {
+                return Err(format!("Index {} out of bounds", i));
+            }
+            Ok(())
+        }
+        _ => Err(format!("Path /{} not found", parent.join("/"))),
+    }
+}
+
+/// Apply an RFC 6902 JSON Patch.
+fn json_patch(mut doc: J, patch: &J) -> Result<J, String> {
+    let J::Arr(ops) = patch else { return Err("A JSON Patch must be an array".into()) };
+    for op in ops {
+        let name = op.get("op").and_then(J::as_str).ok_or("Missing op")?;
+        let path = pointer_tokens(op.get("path").and_then(J::as_str).ok_or("Missing path")?)?;
+        match name {
+            "add" => pointer_add(&mut doc, &path, op.get("value").cloned().ok_or("Missing value")?, false)?,
+            "replace" => pointer_add(&mut doc, &path, op.get("value").cloned().ok_or("Missing value")?, true)?,
+            "remove" => {
+                pointer_remove(&mut doc, &path)?;
+            }
+            "move" | "copy" => {
+                let from = pointer_tokens(op.get("from").and_then(J::as_str).ok_or("Missing from")?)?;
+                let v = if name == "move" { pointer_remove(&mut doc, &from)? } else { pointer_get(&doc, &from).cloned().ok_or("from path not found")? };
+                pointer_add(&mut doc, &path, v, false)?;
+            }
+            "test" => {
+                let expected = op.get("value").ok_or("Missing value")?;
+                if pointer_get(&doc, &path) != Some(expected) {
+                    return Err(format!("Test failed at {}", op.get("path").and_then(J::as_str).unwrap_or("")));
+                }
+            }
+            other => return Err(format!("Unknown JSON Patch op {}", other)),
+        }
+    }
+    Ok(doc)
+}
+
+/// Parse a FHIRPath patch path (`Patient.name[0].given`) into (name, index) steps after the
+/// resource type.
+fn fp_steps(path: &str) -> Vec<(String, Option<usize>)> {
+    path.split('.')
+        .skip(1)
+        .map(|seg| match seg.split_once('[') {
+            Some((n, i)) => (n.to_string(), i.trim_end_matches(']').parse().ok()),
+            None => (seg.to_string(), None),
+        })
+        .collect()
+}
+
+fn fp_target<'a>(j: &'a mut J, steps: &[(String, Option<usize>)]) -> Option<&'a mut J> {
+    let mut cur = j;
+    for (name, idx) in steps {
+        let J::Obj(m) = cur else { return None };
+        let v = m.iter_mut().find(|(k, _)| k == name).map(|(_, v)| v)?;
+        let pick = match (&*v, idx) {
+            (J::Arr(a), Some(i)) if *i < a.len() => Some(*i),
+            (J::Arr(a), None) if a.len() == 1 => Some(0),
+            (J::Arr(_), _) | (_, Some(_)) => return None,
+            _ => None,
+        };
+        cur = match (v, pick) {
+            (J::Arr(a), Some(i)) => &mut a[i],
+            (other, _) => other,
+        };
+    }
+    Some(cur)
+}
+
+/// Apply a FHIRPath Patch (`Parameters` with `operation` parts).
+fn fhirpath_patch(mut doc: J, p: &J) -> Result<J, String> {
+    if p.get("resourceType").and_then(J::as_str) != Some("Parameters") {
+        return Err("A FHIRPath Patch must be a Parameters resource".into());
+    }
+    let ty = doc.get("resourceType").and_then(J::as_str).unwrap_or("").to_string();
+    let ops = match p.get("parameter") {
+        Some(J::Arr(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    for op in ops.iter().filter(|o| o.get("name").and_then(J::as_str) == Some("operation")) {
+        let parts = match op.get("part") {
+            Some(J::Arr(a)) => a.clone(),
+            _ => Vec::new(),
+        };
+        let part = |n: &str| parts.iter().find(|x| x.get("name").and_then(J::as_str) == Some(n));
+        let text = |n: &str| part(n).and_then(|x| match x {
+            J::Obj(m) => m.iter().find(|(k, _)| k.starts_with("value")).and_then(|(_, v)| match v {
+                J::Str(s) | J::Num(s) => Some(s.clone()),
+                _ => None,
+            }),
+            _ => None,
+        });
+        let value = || -> Option<J> {
+            let x = part("value")?;
+            let J::Obj(m) = x else { return None };
+            if let Some((_, v)) = m.iter().find(|(k, _)| k.starts_with("value")) {
+                return Some(v.clone());
+            }
+            // complex values are given as parts
+            if let Some(J::Arr(sub)) = x.get("part") {
+                let mut o = Vec::new();
+                for sp in sub {
+                    if let (Some(n), J::Obj(sm)) = (sp.get("name").and_then(J::as_str), sp) {
+                        if let Some((_, v)) = sm.iter().find(|(k, _)| k.starts_with("value")) {
+                            o.push((n.to_string(), v.clone()));
+                        }
+                    }
+                }
+                return Some(J::Obj(o));
+            }
+            None
+        };
+        let kind = text("type").ok_or("operation without type")?;
+        let path = text("path").ok_or("operation without path")?;
+        if !path.starts_with(&ty) {
+            return Err(format!("Path {} does not start with {}", path, ty));
+        }
+        let steps = fp_steps(&path);
+        match kind.as_str() {
+            "add" => {
+                let name = text("name").ok_or("add without name")?;
+                let v = value().ok_or("add without value")?;
+                let owner_ty = if steps.is_empty() { ty.clone() } else { String::new() };
+                let target = fp_target(&mut doc, &steps).ok_or_else(|| format!("Path {} not found", path))?;
+                let many = !owner_ty.is_empty() && super::model::element(&owner_ty, &name, true).map(|(_, m)| m).unwrap_or(false);
+                let J::Obj(m) = target else { return Err(format!("{} is not an object", path)) };
+                match m.iter_mut().find(|(k, _)| *k == name) {
+                    Some((_, J::Arr(a))) => a.push(v),
+                    Some(e) => e.1 = v,
+                    None => m.push((name, if many { J::Arr(vec![v]) } else { v })),
+                }
+            }
+            "replace" => {
+                let v = value().ok_or("replace without value")?;
+                let target = fp_target(&mut doc, &steps).ok_or_else(|| format!("Path {} not found", path))?;
+                *target = v;
+            }
+            "delete" => {
+                let (last, parent) = steps.split_last().ok_or("Cannot delete the resource")?;
+                let target = fp_target(&mut doc, parent).ok_or_else(|| format!("Path {} not found", path))?;
+                if let J::Obj(m) = target {
+                    match last.1 {
+                        Some(i) => {
+                            if let Some((_, J::Arr(a))) = m.iter_mut().find(|(k, _)| *k == last.0) {
+                                if i < a.len() {
+                                    a.remove(i);
+                                }
+                            }
+                            m.retain(|(k, v)| !(k == &last.0 && matches!(v, J::Arr(a) if a.is_empty())));
+                        }
+                        None => m.retain(|(k, _)| *k != last.0),
+                    }
+                }
+            }
+            "insert" => {
+                let v = value().ok_or("insert without value")?;
+                let index: usize = text("index").and_then(|i| i.parse().ok()).ok_or("insert without index")?;
+                let target = fp_target(&mut doc, &steps).ok_or_else(|| format!("Path {} not found", path))?;
+                match target {
+                    J::Arr(a) if index <= a.len() => a.insert(index, v),
+                    _ => return Err(format!("Cannot insert at {} index {}", path, index)),
+                }
+            }
+            other => return Err(format!("Unsupported FHIRPath Patch operation {}", other)),
+        }
+    }
+    Ok(doc)
+}
+
 fn created(c: &Ctx, ty: &str, id: &str, v: &Version, status: u16, minimal: bool) -> HttpResponse {
+
     let loc = format!("{}/{}/{}/_history/{}", c.base, ty, id, v.version);
     let resp = if minimal { HttpResponse::new(status) } else { c.resp(status, v.resource.as_ref().unwrap_or(&J::Null)) };
     resp.with_header("Location", &loc).with_header("ETag", &format!("W/\"{}\"", v.version))

@@ -38,7 +38,14 @@ impl J {
         match self {
             J::Null => Value::Null,
             J::Bool(b) => Value::Bool(*b),
-            J::Num(n) => n.parse::<i64>().map(Value::Int).unwrap_or_else(|_| n.parse::<f64>().map(Value::Float).unwrap_or(Value::String(n.clone()))),
+            J::Num(n) => match n.parse::<i64>() {
+                Ok(i) => Value::Int(i),
+                // keep the lexeme of decimals an f64 would not reproduce (`1.50`, `1e3`)
+                Err(_) => match n.parse::<f64>() {
+                    Ok(f) if format!("{}", f) == *n || format!("{:?}", f) == *n => Value::Float(f),
+                    _ => Value::String(n.clone()),
+                },
+            },
             J::Str(s) => Value::String(s.clone()),
             J::Arr(a) => Value::Array(a.iter().map(J::to_value).collect()),
             J::Obj(m) => {
@@ -316,6 +323,6 @@ mod tests {
         let j = parse(t).unwrap();
         assert_eq!(write(&j, false), r#"{"a":1.50,"b":[true,null,"xé\n"],"c":{}}"#);
         assert!(parse("{").is_err());
-        assert_eq!(j.get("a").unwrap().to_value(), Value::Float(1.5));
+        assert_eq!(j.get("a").unwrap().to_value(), Value::from("1.50"));
     }
 }

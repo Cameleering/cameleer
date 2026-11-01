@@ -187,7 +187,7 @@ fn fhir_data_formats() {
     assert!(tree.get("text").is_none() && tree.get("contact").is_none() && tree.get("name").is_some());
     let v = t.request_body("direct:parse", OBSERVATION_XML).unwrap();
     assert_eq!(v.get("resourceType"), Some(&Value::from("Observation")));
-    assert_eq!(v.get("valueQuantity").and_then(|q| q.get("value")), Some(&Value::Float(185.0)));
+    assert_eq!(v.get("valueQuantity").and_then(|q| q.get("value")), Some(&Value::from("185.00")));
     let only = t.request_body("direct:only", PATIENT).unwrap().to_string();
     assert_eq!(json::parse(&only).unwrap().get("gender"), None);
     // invalid content
