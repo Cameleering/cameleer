@@ -5,7 +5,7 @@
 //! Producer operations (`operation` / `CamelAzureStorageBlobOperation`; default
 //! `listBlobContainers` as in Camel): `listBlobContainers`, `createBlobContainer`,
 //! `deleteBlobContainer`, `listBlobs` (`prefix` / `CamelAzureStorageBlobPrefix`,
-//! `maxResultsPerPage`), `uploadBlockBlob` (body, `CamelAzureStorageBlobContentType`,
+//! `maxResultsPerPage` = page size, all pages are read), `uploadBlockBlob` (body, `CamelAzureStorageBlobContentType`,
 //! `CamelAzureStorageBlobMetadata` map → `x-ms-meta-*`), `getBlob`, `deleteBlob`.
 //! The blob name comes from `CamelAzureStorageBlobBlobName` or `blobName`, the container from
 //! `CamelAzureStorageBlobContainerName` or the path.
@@ -340,8 +340,10 @@ impl BlobService {
                     content_type: p("Content-Type"),
                 });
             }
+            // `maxResultsPerPage` is the page size: like the Azure SDK's PagedIterable that
+            // Camel collects, every page is read
             marker = x.find_text("NextMarker").filter(|m| !m.is_empty());
-            if marker.is_none() || max_results.is_some() {
+            if marker.is_none() {
                 return Ok(out);
             }
         }
