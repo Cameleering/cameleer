@@ -788,7 +788,8 @@ fn barcode_routes_and_third_party_pngs() {
         df.unmarshal(&mut ex).unwrap();
         assert_eq!(ex.body().to_string(), text, "{}", f);
     }
-    assert!(DataFormatDefinition::new("barcode").option("imageType", "JPG").resolve(&c).is_err());
+    assert!(DataFormatDefinition::new("barcode").option("imageType", "JPG").resolve(&c).is_ok());
+    assert!(DataFormatDefinition::new("barcode").option("imageType", "BMP").resolve(&c).is_err());
     assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "PDF_417").resolve(&c).is_err());
 }
 

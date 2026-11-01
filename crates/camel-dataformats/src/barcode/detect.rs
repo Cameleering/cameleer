@@ -220,8 +220,9 @@ pub fn find_qr(b: &Bin) -> Option<qr::Decoded> {
     None
 }
 
-/// Locate an upright Data Matrix symbol and sample its modules.
-pub fn find_datamatrix(b: &Bin, sizes: &[usize]) -> Option<Matrix> {
+/// Locate an upright Data Matrix symbol (square or rectangular; `dims` = valid
+/// (rows, columns)) and sample its modules.
+pub fn find_datamatrix(b: &Bin, dims: &[(usize, usize)]) -> Option<Matrix> {
     let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0, 0);
     for y in 0..b.height {
         for x in 0..b.width {
@@ -249,14 +250,15 @@ pub fn find_datamatrix(b: &Bin, sizes: &[usize]) -> Option<Matrix> {
     if module == 0 {
         return None;
     }
-    let dim = (w as f64 / module as f64).round() as usize;
-    if !sizes.contains(&dim) || ((h as f64 / module as f64).round() as usize) != dim {
+    let cols = (w as f64 / module as f64).round() as usize;
+    let rows = (h as f64 / module as f64).round() as usize;
+    if !dims.contains(&(rows, cols)) {
         return None;
     }
-    let (sx, sy) = (w as f64 / dim as f64, h as f64 / dim as f64);
-    let mut m = Matrix::new(dim, dim);
-    for r in 0..dim {
-        for c in 0..dim {
+    let (sx, sy) = (w as f64 / cols as f64, h as f64 / rows as f64);
+    let mut m = Matrix::new(cols, rows);
+    for r in 0..rows {
+        for c in 0..cols {
             let x = x0 + ((c as f64 + 0.5) * sx) as usize;
             let y = y0 + ((r as f64 + 0.5) * sy) as usize;
             m.set(c, r, b.get(x.min(x1), y.min(y1)));
