@@ -220,3 +220,57 @@ fn sftp_is_not_supported_and_ftps_resolves() {
     assert!(ctx.get_endpoint("ftps://host/dir?isImplicit=true&execProt=P").is_ok());
     assert!(ctx.get_endpoint("ftps://host/dir?execProt=X").is_err());
 }
+
+#[test]
+fn read_lock_strategies() {
+    let root = temp_dir("readlock");
+    let server = FtpServer::start_with_users(&root, &[("admin", "secret")]).unwrap();
+    fs::create_dir_all(root.join("in")).unwrap();
+    fs::write(root.join("in/stable.txt"), "done").unwrap();
+    let ctx = context();
+    let base = format!("ftp://admin@127.0.0.1:{}/in?password=secret&passiveMode=true&delete=true&initialDelay=0&delay=50", server.port());
+    let changed = format!("{}&readLock=changed&readLockCheckInterval=100&readLockTimeout=1500", base);
+    let c2 = changed.clone();
+    ctx.add_routes(move |b| {
+        b.from(&c2).to("mock:changed");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:changed").unwrap();
+    assert!(wait_until(|| mock.received_counter() == 1));
+    assert!(server.commands().iter().any(|c| c.starts_with("MDTM")));
+    // a growing file is only picked up once it stops changing
+    let growing = root.join("in/growing.txt");
+    fs::write(&growing, "a").unwrap();
+    let g = growing.clone();
+    let writer = std::thread::spawn(move || {
+        for _ in 0..8 {
+            std::thread::sleep(Duration::from_millis(60));
+            let mut d = fs::read(&g).unwrap_or_default();
+            d.push(b'a');
+            let _ = fs::write(&g, d);
+        }
+    });
+    writer.join().unwrap();
+    assert!(wait_until(|| mock.received_counter() == 2));
+    let body = mock.received_exchanges()[1].body().to_bytes();
+    assert_eq!(body, b"aaaaaaaaa".to_vec(), "the whole file is read once stable");
+    ctx.stop().unwrap();
+
+    // rename strategy
+    fs::write(root.join("in/r.txt"), "r").unwrap();
+    let ctx = context();
+    let rename = format!("{}&readLock=rename", base);
+    ctx.add_routes(move |b| {
+        b.from(&rename).to("mock:rename");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:rename").unwrap();
+    assert!(wait_until(|| mock.received_counter() == 1));
+    assert!(server.commands().iter().any(|c| c.contains("camelExclusiveReadLock")));
+    ctx.stop().unwrap();
+    assert!(context().get_endpoint(&format!("{}&readLock=fileLock", base)).is_err());
+    server.stop();
+    let _ = fs::remove_dir_all(&root);
+}

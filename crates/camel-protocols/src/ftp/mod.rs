@@ -28,7 +28,10 @@
 //! `fileName`, `recursive`, `minDepth`/`maxDepth`, `maxMessagesPerPoll`, `sortBy`
 //! (`file:name`/`file:modified`/`file:size`, `reverse:`/`ignoreCase:` prefixes),
 //! `idempotent` (+ `idempotentKey`, `idempotentRepository=#ref`), `download` (false = no
-//! body), `ignoreFileNotFoundOrPermissionError`. As in Camel, consumed files are left
+//! body), `ignoreFileNotFoundOrPermissionError`, `readLock` (`none`, `changed` with
+//! `readLockCheckInterval` (5s) / `readLockTimeout` (20s) / `readLockMinLength` / `readLockMinAge`,
+//! `rename`, `idempotent`, `idempotent-changed`, `idempotent-rename`; a file whose lock cannot
+//! be acquired is skipped until the next poll). As in Camel, consumed files are left
 //! untouched on the server unless `delete`, `move` or `noop`/`idempotent` is configured.
 //!
 //! **Producer**: file name from header `CamelOverruleFileName`, `CamelFileName`, the
@@ -97,6 +100,21 @@ pub struct FtpsConfig {
     pub exec_prot: Option<String>,
 }
 
+/// `readLock` strategies of the FTP consumer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadLock {
+    None,
+    /// Size and modification time unchanged between two checks (`readLockCheckInterval`).
+    Changed,
+    /// The file can be renamed (to `<name>.camelExclusiveReadLock` and back).
+    Rename,
+    /// Not yet in the idempotent repository (clustered consumers sharing one).
+    Idempotent,
+    /// `idempotent-changed` / `idempotent-rename`.
+    IdempotentChanged,
+    IdempotentRename,
+}
+
 /// Configuration of an `ftp` endpoint.
 #[derive(Clone)]
 pub struct FtpConfig {
@@ -128,6 +146,12 @@ pub struct FtpConfig {
     pub move_expr: Option<String>,
     pub move_failed: Option<String>,
     pub pre_move: Option<String>,
+    /// `readLock` strategy.
+    pub read_lock: ReadLock,
+    pub read_lock_check_interval: Duration,
+    pub read_lock_timeout: Duration,
+    pub read_lock_min_length: u64,
+    pub read_lock_min_age: Duration,
     pub include: Option<NamePattern>,
     pub exclude: Option<NamePattern>,
     pub include_ext: Vec<String>,
@@ -213,11 +237,15 @@ impl FtpConfig {
                     .collect()
             })
             .unwrap_or_default();
-        if let Some(rl) = params.take("readLock") {
-            if !matches!(rl.as_str(), "none" | "") {
-                camel_core::camel_warn!("ftp", "readLock={} is not supported by rust-camel ftp and is ignored", rl);
-            }
-        }
+        let read_lock = match params.take("readLock").unwrap_or_default().as_str() {
+            "" | "none" => ReadLock::None,
+            "changed" => ReadLock::Changed,
+            "rename" => ReadLock::Rename,
+            "idempotent" => ReadLock::Idempotent,
+            "idempotent-changed" => ReadLock::IdempotentChanged,
+            "idempotent-rename" => ReadLock::IdempotentRename,
+            other => return Err(CamelError::illegal_argument(format!("Unsupported readLock for ftp: {} (none, changed, rename, idempotent, idempotent-changed, idempotent-rename)", other))),
+        };
         let username = params.take("username").or(a.user).unwrap_or_else(|| "anonymous".to_string());
         let password = params.take("password").or(a.password).unwrap_or_default();
         let include = take_nonempty(params, "include").map(|p| NamePattern::new(&p)).transpose()?;
@@ -249,6 +277,11 @@ impl FtpConfig {
             move_expr,
             move_failed: take_nonempty(params, "moveFailed"),
             pre_move: take_nonempty(params, "preMove"),
+            read_lock,
+            read_lock_check_interval: params.take_duration("readLockCheckInterval", Duration::from_millis(5000))?,
+            read_lock_timeout: params.take_duration("readLockTimeout", Duration::from_millis(20000))?,
+            read_lock_min_length: params.take_u64("readLockMinLength", 1)?,
+            read_lock_min_age: params.take_duration("readLockMinAge", Duration::ZERO)?,
             include,
             exclude,
             include_ext: take_list(params, "includeExt"),
@@ -298,10 +331,6 @@ impl FtpConfig {
                 "resumeDownload",
                 "activePortRange",
                 "bufferSize",
-                "readLockCheckInterval",
-                "readLockTimeout",
-                "readLockMinLength",
-                "readLockMinAge",
                 "readLockLoggingLevel",
                 "readLockDeleteOrphanLockFiles",
                 "readLockMarkerFile",
@@ -836,9 +865,68 @@ impl ConsumerCore {
         Ok(n)
     }
 
+    /// Size and modification time of a remote file (None when it disappeared).
+    fn stat(&self, s: &mut Session, full: &str) -> Result<Option<(u64, i64)>> {
+        let arg = s.target(self.cfg.stepwise, full)?;
+        let Some(size) = s.client.size(&arg)? else { return Ok(None) };
+        let modified = s.client.mdtm(&arg)?.unwrap_or(0);
+        Ok(Some((size, modified)))
+    }
+
+    /// Acquires the configured read lock; false = skip the file in this poll.
+    fn acquire_read_lock(&self, s: &mut Session, info: &FileInfo) -> Result<bool> {
+        let c = &self.cfg;
+        let full = info.absolute.display().to_string();
+        if matches!(c.read_lock, ReadLock::Idempotent | ReadLock::IdempotentChanged | ReadLock::IdempotentRename) {
+            let key = self.idempotent_key(info)?;
+            if self.repo.contains(&key) {
+                return Ok(false);
+            }
+        }
+        match c.read_lock {
+            ReadLock::None | ReadLock::Idempotent => Ok(true),
+            ReadLock::Changed | ReadLock::IdempotentChanged => {
+                let start = std::time::Instant::now();
+                let mut last: Option<(u64, i64)> = None;
+                loop {
+                    let Some(now) = self.stat(s, &full)? else { return Ok(false) };
+                    let age_ok = c.read_lock_min_age.is_zero() || now.1 == 0 || camel_core::util_time::now_millis() - now.1 >= c.read_lock_min_age.as_millis() as i64;
+                    if last == Some(now) && now.0 >= c.read_lock_min_length && age_ok {
+                        return Ok(true);
+                    }
+                    // with readLockMinAge alone, an old enough file needs no second look
+                    if last.is_none() && !c.read_lock_min_age.is_zero() && age_ok && now.1 != 0 && now.0 >= c.read_lock_min_length {
+                        return Ok(true);
+                    }
+                    if !c.read_lock_timeout.is_zero() && start.elapsed() + c.read_lock_check_interval > c.read_lock_timeout {
+                        camel_core::camel_warn!(&self.logger, "Cannot acquire read lock within {} millis. Will skip the file: {}", c.read_lock_timeout.as_millis(), full);
+                        return Ok(false);
+                    }
+                    last = Some(now);
+                    std::thread::sleep(c.read_lock_check_interval);
+                }
+            }
+            ReadLock::Rename | ReadLock::IdempotentRename => {
+                let probe = format!("{}.camelExclusiveReadLock", full);
+                let from = s.target(c.stepwise, &full)?;
+                let to = s.target(c.stepwise, &probe)?;
+                if s.client.rename(&from, &to).is_err() {
+                    return Ok(false);
+                }
+                let back = s.target(c.stepwise, &probe)?;
+                let orig = s.target(c.stepwise, &full)?;
+                s.client.rename(&back, &orig)?;
+                Ok(true)
+            }
+        }
+    }
+
     fn process_file(&self, s: &mut Session, processor: &dyn Processor, info: &mut FileInfo) -> Result<bool> {
         let c = &self.cfg;
         let stepwise = c.stepwise;
+        if !self.acquire_read_lock(s, info)? {
+            return Ok(false);
+        }
         if let Some(pre) = &c.pre_move {
             let target = self.move_target(pre, None, info)?;
             let from = info.absolute.display().to_string();
