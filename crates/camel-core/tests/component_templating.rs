@@ -111,9 +111,22 @@ fn string_template_velocity_freemarker() {
     let ftl = format!("freemarker:{}", dir.join("t.ftl").display());
     assert_eq!(t.request_body_and_header(&ftl, "b", "name", "Ann").unwrap(), Value::from("Hello Ann: b -"));
     let bad = format!("velocity:{}", dir.join("bad.vm").display());
-    let err = t.request_body(&bad, "b").unwrap_err();
-    let cause = err.cause.as_deref().unwrap_or(&err);
-    assert_eq!(cause.kind, "UnsupportedOperationException");
-    assert!(cause.message.contains("not supported"));
+    assert_eq!(t.request_body(&bad, "b").unwrap(), Value::from("x"));
+    std::fs::write(dir.join("broken.vm"), "#if($body)x").unwrap();
+    let broken = format!("velocity:{}", dir.join("broken.vm").display());
+    assert!(t.request_body(&broken, "b").is_err());
+    // CamelVelocityContext replaces the data model, the supplemental context is merged in
+    std::fs::write(dir.join("ctx.vm"), "$who/$extra").unwrap();
+    let ctxvm = format!("velocity:{}", dir.join("ctx.vm").display());
+    let mut ex = camel_core::message::Exchange::with_body(Some(ctx.clone()), "b");
+    ex.message.set_header("CamelVelocityContext", Value::object([("who", Value::from("W")), ("extra", Value::from("0"))]));
+    ex.message.set_header("CamelVelocitySupplementalContext", Value::object([("extra", Value::from("E"))]));
+    let out = t.send(&ctxvm, ex);
+    assert_eq!(out.message.body, Value::from("W/E"));
+    std::fs::write(dir.join("dm.ftl"), "<#list items as i>${i}<#sep>,</#list>").unwrap();
+    let dm = format!("freemarker:{}", dir.join("dm.ftl").display());
+    let mut ex = camel_core::message::Exchange::with_body(Some(ctx.clone()), "b");
+    ex.message.set_header("CamelFreemarkerDataModel", Value::object([("items", Value::from(vec![Value::from(1), Value::from(2)]))]));
+    assert_eq!(t.send(&dm, ex).message.body, Value::from("1,2"));
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -20,7 +20,7 @@
 //! | `cron` | [`cron`] cron-scheduled exchanges ([`cron_expr`] parser) |
 //! | `quartz` | [`quartz`] cron and simple triggers |
 //! | `mustache` | [`mustache`] Mustache templates |
-//! | `string-template`, `velocity`, `freemarker` | [`templating`] minimal template engines |
+//! | `string-template`, `velocity`, `freemarker` | [`templating`] Velocity / FreeMarker / StringTemplate engines |
 //! | `json-validator` | [`json_validator`] JSON Schema validation |
 //! | `validator` | [`xml_validator`] XML well-formedness validation |
 //!
@@ -52,6 +52,7 @@ pub mod scheduled;
 pub mod scheduler;
 pub mod seda;
 pub mod stream;
+pub mod stringtemplate;
 pub mod support;
 pub mod template_support;
 pub mod templating;

@@ -584,7 +584,8 @@ impl Ctx {
             }
             Expr::DynProp(t, k) => {
                 let tv = self.eval(t)?;
-                let key = self.render_value(&self.eval(k)?, None, None)?;
+                let kv = self.eval(k)?;
+                let key = self.render_value(&kv, None, None)?;
                 java_property(&tv, &key).unwrap_or(Value::Null)
             }
             Expr::Indirect(x) => {
@@ -788,7 +789,7 @@ mod tests {
         assert_eq!(r("<headers.list:{x | [<x>]}> <headers.list:{[<it>]}; separator=\",\"> <headers.users:{u | <u.name>=<u.age>}; separator=\" \">"), "[a][b] [a],[b] x=1 y=2");
         assert_eq!(r("<headers.list:{x | <i>.<x>}:{y | (<y>)}>"), "(1.a)(2.b)");
         assert_eq!(r("<headers.list, headers.users:{a, u | <a>-<u.name>}; separator=\";\">"), "a-x;b-y");
-        assert_eq!(r("<first(headers.list)><last(headers.list)><length(headers.list)><rest(headers.list)><reverse(headers.list)><strlen(body)>"), "ab21bba1");
+        assert_eq!(r("<first(headers.list)><last(headers.list)><length(headers.list)><rest(headers.list)><reverse(headers.list)><strlen(body)>"), "ab2bba1");
         assert_eq!(r("<headers.m.(\"k\")> <headers.m:{k | <k>}> <[\"x\", headers.list]>"), "v k xab");
         assert_eq!(r("a<\\n>b<\\t>c<\\ >d<\\u0041>"), "a\nb\tc dA");
         let e = StringTemplateEngine { start: '$', stop: '$' };
@@ -797,9 +798,10 @@ mod tests {
 
     #[test]
     fn conditionals() {
-        assert_eq!(r("<if(headers.name)>yes<else>no<endif> <if(headers.flag)>t<elseif(!headers.empty)>e<else>f<endif>"), "yes f");
+        assert_eq!(r("<if(headers.name)>yes<else>no<endif> <if(headers.flag)>t<elseif(!headers.empty)>e<else>f<endif>"), "yes e");
         assert_eq!(r("<if(headers.name && !missing)>ok<endif><if(missing || headers.list)>ok2<endif>"), "okok2");
-        assert_eq!(r("<ul>\n<if(headers.name)>\n  <li><headers.name></li>\n<endif>\n</ul>"), "<ul>\n  <li>N</li>\n</ul>");
+        let d = StringTemplateEngine { start: '$', stop: '$' };
+        assert_eq!(d.render("<ul>\n$if(headers.name)$\n  <li>$headers.name$</li>\n$endif$\n</ul>", &data(), &|_| None).unwrap(), "<ul>\n  <li>N</li>\n</ul>");
     }
 
     #[test]

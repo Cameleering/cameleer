@@ -44,6 +44,10 @@ pub struct TemplateHeaders {
     pub template: &'static str,
     /// Header carrying a resource uri overriding the endpoint's one.
     pub resource_uri: &'static str,
+    /// Header carrying a map used as the whole data model (e.g. `CamelVelocityContext`).
+    pub data_model: Option<&'static str>,
+    /// Header carrying a map merged into the data model (e.g. `CamelVelocitySupplementalContext`).
+    pub supplemental: Option<&'static str>,
 }
 
 /// Resolve a resource uri to a file path.
@@ -250,7 +254,19 @@ impl Processor for TemplateProducer {
         } else {
             load_resource(ctx.as_ref(), &self.resource_uri)?
         };
-        let model = template_context(ex, self.options.allow_context_map_all);
+        let mut model = template_context(ex, self.options.allow_context_map_all);
+        if let Some(h) = self.headers.data_model {
+            if let Some(v @ Value::Object(_)) = ex.header(h).cloned() {
+                model = v;
+            }
+        }
+        if let Some(h) = self.headers.supplemental {
+            if let (Some(Value::Object(extra)), Value::Object(m)) = (ex.header(h).cloned(), &mut model) {
+                for (k, v) in extra {
+                    m.insert(k, v);
+                }
+            }
+        }
         let partials = |name: &str| -> Option<String> {
             let candidates = [dir.join(name), dir.join(format!("{}.mustache", name))];
             candidates.iter().find_map(|p| std::fs::read_to_string(p).ok())
