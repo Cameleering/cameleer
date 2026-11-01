@@ -208,7 +208,29 @@ pub(super) fn file_op(st: &Shared, req: &ServerRequest, rest: &str) -> Response 
             Response::new(201).with_header("ETag", e)
         }
         ("GET", _) | ("HEAD", _) => match sh.files.get(&path) {
-            Some(f) => Response::new(200).with_header("Content-Type", f.content_type.clone()).with_header("ETag", f.etag.clone()).with_header("Last-Modified", http_date(f.last_modified)).with_header("x-ms-type", "File").with_body(f.data.clone()),
+            Some(f) => {
+                let r = Response::new(200).with_header("Content-Type", f.content_type.clone()).with_header("ETag", f.etag.clone()).with_header("Last-Modified", http_date(f.last_modified)).with_header("x-ms-type", "File");
+                // ranged reads answer 206 with Content-Range (the SDKs always read ranges)
+                match req.header("x-ms-range").or_else(|| req.header("Range")).and_then(|v| v.trim().strip_prefix("bytes=").map(String::from)) {
+                    Some(spec) => {
+                        let total = f.data.len();
+                        let (a, z) = spec.split_once('-').unwrap_or((spec.as_str(), ""));
+                        let Ok(start) = a.trim().parse::<usize>() else { return error(400, "InvalidHeaderValue", "Invalid range") };
+                        let end = z.trim().parse::<usize>().unwrap_or(usize::MAX).min(total.saturating_sub(1));
+                        if start >= total {
+                            return error(416, "InvalidRange", "The range specified is invalid for the current size of the resource.").with_header("Content-Range", format!("bytes */{}", total));
+                        }
+                        let mut r = r.with_header("Content-Range", format!("bytes {}-{}/{}", start, end, total)).with_header("Content-Length", (end + 1 - start).to_string());
+                        r.status = 206;
+                        if req.method == "HEAD" {
+                            r
+                        } else {
+                            r.with_body(f.data[start..=end].to_vec())
+                        }
+                    }
+                    None => r.with_header("Content-Length", f.data.len().to_string()).with_body(if req.method == "HEAD" { Vec::new() } else { f.data.clone() }),
+                }
+            }
             None => error(404, "ResourceNotFound", "The specified resource does not exist."),
         },
         ("DELETE", _) => match sh.files.remove(&path) {

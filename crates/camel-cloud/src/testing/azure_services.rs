@@ -44,6 +44,16 @@ struct KvVersion {
     version: String,
     value: String,
     created: i64,
+    updated: i64,
+    content_type: Option<String>,
+    tags: Option<Value>,
+    enabled: bool,
+}
+
+impl KvVersion {
+    fn new(value: String) -> KvVersion {
+        KvVersion { version: random_hex(16), value, created: now_secs(), updated: now_secs(), content_type: None, tags: None, enabled: true }
+    }
 }
 
 #[derive(Default)]
@@ -74,6 +84,8 @@ struct Offer {
 
 #[derive(Default)]
 struct State {
+    /// Served over HTTPS (Key Vault ids use the request's scheme).
+    tls: bool,
     clients: HashMap<(String, String), String>,
     /// (tenant, client id) -> accepted federated tokens (workload identity)
     federated: HashMap<(String, String), Vec<String>>,
@@ -108,15 +120,32 @@ pub struct AzureMock {
 impl AzureMock {
     /// Start with the default client ([`TENANT_ID`], [`CLIENT_ID`], [`CLIENT_SECRET`]) registered.
     pub fn start() -> io::Result<AzureMock> {
+        Self::start_inner(false)
+    }
+
+    /// Start over HTTPS (self-signed `localhost` certificate, see [`AzureMock::cert_pem`]):
+    /// the Azure SDKs only send bearer tokens over TLS.
+    pub fn start_tls() -> io::Result<AzureMock> {
+        Self::start_inner(true)
+    }
+
+    /// The server certificate (PEM) when started with [`AzureMock::start_tls`].
+    pub fn cert_pem(&self) -> Option<&str> {
+        self.server.cert_pem.as_deref()
+    }
+
+    fn start_inner(tls: bool) -> io::Result<AzureMock> {
         let state: Shared = Arc::new(Mutex::new(State::default()));
         {
             let mut s = state.lock().unwrap();
             s.clients.insert((TENANT_ID.into(), CLIENT_ID.into()), CLIENT_SECRET.into());
+            s.tls = tls;
             s.identity_header = format!("identity-{}", random_hex(8));
         }
         let st = state.clone();
         let handler: Handler = Arc::new(move |r| handle(&st, r));
-        Ok(AzureMock { server: MockServer::start(handler)?, state })
+        let server = if tls { MockServer::start_tls(handler)? } else { MockServer::start(handler)? };
+        Ok(AzureMock { server, state })
     }
 
     pub fn url(&self) -> String {
@@ -179,7 +208,7 @@ impl AzureMock {
     /// Set a Key Vault secret directly.
     pub fn put_secret(&self, name: &str, value: &str) {
         let mut s = self.state.lock().unwrap();
-        s.secrets.entry(name.into()).or_default().push(KvVersion { version: random_hex(16), value: value.into(), created: now_secs() });
+        s.secrets.entry(name.into()).or_default().push(KvVersion::new(value.into()));
     }
 
     /// Latest value of a (non deleted) secret.
@@ -230,6 +259,27 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     let segs = req.segments();
     if segs.len() == 4 && segs[1] == "oauth2" && segs[3] == "token" && req.method == "POST" {
         return token(st, &segs[0], req);
+    }
+    // OpenID Connect discovery (MSAL reads it before requesting tokens from an authority)
+    if req.method == "GET" && segs.len() >= 3 && segs[segs.len() - 2] == ".well-known" && segs[segs.len() - 1] == "openid-configuration" {
+        let tenant = segs[0].clone();
+        let host = req.header("Host").unwrap_or("localhost");
+        let scheme = "https";
+        let base = format!("{}://{}/{}", scheme, host, tenant);
+        return Response::json(
+            200,
+            obj([
+                ("token_endpoint", Value::from(format!("{}/oauth2/v2.0/token", base))),
+                ("authorization_endpoint", Value::from(format!("{}/oauth2/v2.0/authorize", base))),
+                ("device_authorization_endpoint", Value::from(format!("{}/oauth2/v2.0/devicecode", base))),
+                ("issuer", Value::from(format!("{}/v2.0", base))),
+                ("jwks_uri", Value::from(format!("{}/discovery/v2.0/keys", base))),
+                ("token_endpoint_auth_methods_supported", Value::Array(vec![Value::from("client_secret_post"), Value::from("private_key_jwt")])),
+                ("response_types_supported", Value::Array(vec![Value::from("code"), Value::from("token")])),
+                ("tenant_region_scope", Value::Null),
+            ])
+            .to_json(),
+        );
     }
     if req.method == "GET" && (segs == ["metadata", "identity", "oauth2", "token"] || segs == ["msi", "token"]) {
         return managed_identity_token(st, req, segs[0] == "msi");
@@ -341,11 +391,36 @@ fn kv_error(status: u16, code: &str, msg: &str) -> Response {
 }
 
 fn bundle(base: &str, name: &str, v: &KvVersion) -> Value {
-    obj([
-        ("value", Value::from(v.value.clone())),
-        ("id", Value::from(format!("{}/secrets/{}/{}", base, name, v.version))),
-        ("attributes", obj([("enabled", Value::Bool(true)), ("created", Value::Int(v.created)), ("updated", Value::Int(v.created)), ("recoveryLevel", Value::from("Recoverable+Purgeable"))])),
-    ])
+    let mut b = secret_item(base, name, v);
+    if let Value::Object(m) = &mut b {
+        m.insert("value".into(), Value::from(v.value.clone()));
+        let id = m.remove("id").unwrap_or_default();
+        m.insert("id".into(), Value::from(format!("{}/{}", id, v.version)));
+    }
+    b
+}
+
+/// A SecretItem (list entry: id without version, no value).
+fn secret_item(base: &str, name: &str, v: &KvVersion) -> Value {
+    let mut m = camel_core::value::ObjectMap::new();
+    m.insert("id".into(), Value::from(format!("{}/secrets/{}", base, name)));
+    m.insert("attributes".into(), obj([("enabled", Value::Bool(v.enabled)), ("created", Value::Int(v.created)), ("updated", Value::Int(v.updated)), ("recoveryLevel", Value::from("Recoverable+Purgeable")), ("recoverableDays", Value::Int(90))]));
+    if let Some(ct) = &v.content_type {
+        m.insert("contentType".into(), Value::from(ct.clone()));
+    }
+    if let Some(t) = &v.tags {
+        m.insert("tags".into(), t.clone());
+    }
+    Value::Object(m)
+}
+
+fn deleted_fields(b: &mut Value, base: &str, name: &str) {
+    if let Value::Object(m) = b {
+        m.insert("recoveryId".into(), Value::from(format!("{}/deletedsecrets/{}", base, name)));
+        m.insert("deletedDate".into(), Value::Int(now_secs()));
+        m.insert("scheduledPurgeDate".into(), Value::Int(now_secs() + 90 * 86400));
+        m.remove("value");
+    }
 }
 
 fn key_vault(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
@@ -358,41 +433,102 @@ fn key_vault(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
     if req.query_param("api-version").is_none_or(|v| v.is_empty()) {
         return kv_error(400, "BadParameter", "The 'api-version' query parameter is missing.");
     }
-    let base = format!("http://{}", req.header("Host").unwrap_or("localhost"));
+    let base = format!("{}://{}", if s.tls { "https" } else { "http" }, req.header("Host").unwrap_or("localhost"));
     let s_ = segs.iter().map(|x| x.as_str()).collect::<Vec<_>>();
     let not_found = |name: &str| kv_error(404, "SecretNotFound", &format!("A secret with (name/id) {} was not found in this key vault.", name));
     match (req.method.as_str(), s_.as_slice()) {
         ("GET", ["secrets"]) => {
-            let items: Vec<Value> = s.secrets.keys().map(|n| obj([("id", Value::from(format!("{}/secrets/{}", base, n))), ("attributes", obj([("enabled", Value::Bool(true))]))])).collect();
+            let items: Vec<Value> = s.secrets.iter().filter_map(|(n, vs)| vs.last().map(|v| secret_item(&base, n, v))).collect();
             Response::json(200, obj([("value", Value::Array(items)), ("nextLink", Value::Null)]).to_json())
         }
+        ("GET", ["secrets", name, "versions"]) => match s.secrets.get(*name) {
+            Some(vs) => {
+                let items: Vec<Value> = vs
+                    .iter()
+                    .map(|v| {
+                        let mut i = secret_item(&base, name, v);
+                        if let Value::Object(m) = &mut i {
+                            m.insert("id".into(), Value::from(format!("{}/secrets/{}/{}", base, name, v.version)));
+                        }
+                        i
+                    })
+                    .collect();
+                Response::json(200, obj([("value", Value::Array(items)), ("nextLink", Value::Null)]).to_json())
+            }
+            None => not_found(name),
+        },
         ("PUT", ["secrets", name]) => {
             if s.deleted.contains_key(*name) {
-                return kv_error(409, "Conflict", &format!("Secret {} is currently in a deleted but recoverable state.", name));
+                return kv_error(409, "Conflict", &format!("Secret {} is currently in a deleted but recoverable state, and its name cannot be reused; in this state, the secret can only be recovered or purged.", name));
             }
-            let Some(value) = parse_json(&req.body).ok().and_then(|v| v.get("value").map(|x| x.to_string())) else { return kv_error(400, "BadParameter", "Property 'value' is required.") };
-            let v = KvVersion { version: random_hex(16), value, created: now_secs() };
+            let body = parse_json(&req.body).unwrap_or_default();
+            let Some(value) = body.get("value").map(|x| x.to_string()) else { return kv_error(400, "BadParameter", "Property 'value' is required.") };
+            let mut v = KvVersion::new(value);
+            v.content_type = body.get("contentType").map(|c| c.to_string());
+            v.tags = body.get("tags").cloned().filter(|t| !t.is_null());
+            if let Some(e) = body.get("attributes").and_then(|a| a.get("enabled")).and_then(|e| e.as_bool()) {
+                v.enabled = e;
+            }
             let b = bundle(&base, name, &v);
             s.secrets.entry(name.to_string()).or_default().push(v);
             Response::json(200, b.to_json())
         }
+        ("PATCH", ["secrets", name]) | ("PATCH", ["secrets", name, _]) => {
+            let version = s_.get(2).copied().unwrap_or("");
+            let body = parse_json(&req.body).unwrap_or_default();
+            let Some(v) = s.secrets.get_mut(*name).and_then(|vs| if version.is_empty() { vs.last_mut() } else { vs.iter_mut().find(|v| v.version == version) }) else { return not_found(name) };
+            if let Some(ct) = body.get("contentType") {
+                v.content_type = Some(ct.to_string());
+            }
+            if let Some(t) = body.get("tags") {
+                v.tags = Some(t.clone());
+            }
+            if let Some(e) = body.get("attributes").and_then(|a| a.get("enabled")).and_then(|e| e.as_bool()) {
+                v.enabled = e;
+            }
+            v.updated = now_secs();
+            let mut b = bundle(&base, name, v);
+            if let Value::Object(m) = &mut b {
+                m.remove("value");
+            }
+            Response::json(200, b.to_json())
+        }
         ("GET", ["secrets", name]) | ("GET", ["secrets", name, ""]) => match s.secrets.get(*name).and_then(|v| v.last()) {
+            Some(v) if !v.enabled => kv_error(403, "Forbidden", "Operation get is not allowed on a disabled secret."),
             Some(v) => Response::json(200, bundle(&base, name, v).to_json()),
             None => not_found(name),
         },
         ("GET", ["secrets", name, version]) => match s.secrets.get(*name).and_then(|vs| vs.iter().find(|v| v.version == *version)) {
+            Some(v) if !v.enabled => kv_error(403, "Forbidden", "Operation get is not allowed on a disabled secret."),
             Some(v) => Response::json(200, bundle(&base, name, v).to_json()),
             None => not_found(name),
+        },
+        ("GET", ["deletedsecrets"]) => {
+            let items: Vec<Value> = s
+                .deleted
+                .iter()
+                .filter_map(|(n, vs)| {
+                    vs.last().map(|v| {
+                        let mut i = secret_item(&base, n, v);
+                        deleted_fields(&mut i, &base, n);
+                        i
+                    })
+                })
+                .collect();
+            Response::json(200, obj([("value", Value::Array(items)), ("nextLink", Value::Null)]).to_json())
+        }
+        ("GET", ["deletedsecrets", name]) => match s.deleted.get(*name).and_then(|vs| vs.last()) {
+            Some(v) => {
+                let mut b = bundle(&base, name, v);
+                deleted_fields(&mut b, &base, name);
+                Response::json(200, b.to_json())
+            }
+            None => kv_error(404, "SecretNotFound", &format!("Deleted Secret not found: {}", name)),
         },
         ("DELETE", ["secrets", name]) => match s.secrets.remove(*name) {
             Some(vs) => {
                 let mut b = bundle(&base, name, vs.last().expect("non empty"));
-                if let Value::Object(m) = &mut b {
-                    m.insert("recoveryId".into(), Value::from(format!("{}/deletedsecrets/{}", base, name)));
-                    m.insert("deletedDate".into(), Value::Int(now_secs()));
-                    m.insert("scheduledPurgeDate".into(), Value::Int(now_secs() + 90 * 86400));
-                    m.remove("value");
-                }
+                deleted_fields(&mut b, &base, name);
                 s.deleted.insert(name.to_string(), vs);
                 Response::json(200, b.to_json())
             }

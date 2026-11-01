@@ -1203,6 +1203,17 @@ impl Sender {
 
     /// Send an encoded message, optionally within a transaction.
     pub fn send_raw_txn(&self, payload: &[u8], settled: bool, txn: Option<&[u8]>, timeout: Duration) -> Result<Option<DeliveryState>> {
+        self.send_formatted(payload, 0, settled, txn, timeout)
+    }
+
+    /// Send several messages as one Azure batch delivery (message format `0x80013700`: an
+    /// envelope whose data sections are the encoded messages), as the Azure SDKs send batches.
+    pub fn send_azure_batch(&self, msgs: &[Message], timeout: Duration) -> Result<Option<DeliveryState>> {
+        let envelope = Message { body: crate::message::Body::Data(msgs.iter().map(|m| m.encode()).collect()), ..Default::default() };
+        self.send_formatted(&envelope.encode(), 0x8001_3700, false, None, timeout)
+    }
+
+    fn send_formatted(&self, payload: &[u8], format: u32, settled: bool, txn: Option<&[u8]>, timeout: Duration) -> Result<Option<DeliveryState>> {
         let sh = &self.shared;
         let (ch, h) = (self.channel, self.handle);
         let deadline = Instant::now() + timeout;
@@ -1234,7 +1245,7 @@ impl Sender {
             if !settled {
                 s.outcomes.insert(id, None);
             }
-            let mut t = Transfer { handle: h, delivery_id: Some(id), delivery_tag: Some(tag), message_format: Some(0), settled: Some(settled), more: true, ..Default::default() };
+            let mut t = Transfer { handle: h, delivery_id: Some(id), delivery_tag: Some(tag), message_format: Some(format), settled: Some(settled), more: true, ..Default::default() };
             t.state = txn.map(|id| DeliveryState::Transactional { txn_id: id.to_vec(), outcome: None });
             let overhead = 8 + Performative::Transfer(t.clone()).to_value().encode().len();
             let chunk = (max_frame as usize).saturating_sub(overhead).max(1);

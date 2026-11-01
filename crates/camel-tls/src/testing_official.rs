@@ -181,7 +181,7 @@ fn read_all(mut r: impl std::io::Read) -> String {
 /// Runs `scripts/official-clients/<name>` with the system Python and `args`.
 pub fn python_script(name: &str, args: &[&str], env: &[(&str, &str)]) -> Run {
     let mut cmd = Command::new(python());
-    cmd.arg("-I").arg("-W").arg("ignore").arg(script(name)).args(args);
+    cmd.arg("-u").arg("-I").arg("-W").arg("ignore").arg(script(name)).args(args);
     for (k, v) in env {
         cmd.env(k, v);
     }

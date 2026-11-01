@@ -52,6 +52,8 @@ struct Container {
     staged: BTreeMap<String, Vec<(String, Vec<u8>)>>,
     /// ADLS path -> (owner, group, permission bits, extra ACL entries)
     acls: BTreeMap<String, (String, String, u32, Vec<String>)>,
+    /// (blob, snapshot time) -> read-only copy (Snapshot Blob)
+    snapshots: BTreeMap<(String, String), Blob>,
 }
 
 #[derive(Clone)]
@@ -70,6 +72,8 @@ struct State {
     containers: BTreeMap<String, Container>,
     dfs_pending: HashMap<(String, String), Vec<u8>>,
     queues: BTreeMap<String, Vec<QMsg>>,
+    /// queue -> metadata
+    queue_meta: BTreeMap<String, Vec<(String, String)>>,
     shares: BTreeMap<String, files_ext::Share>,
     auth_failures: usize,
     sas_requests: usize,
@@ -281,11 +285,31 @@ fn sas_requirement(service: char, method: &str, segs: &[String], req: &ServerReq
 /// Verify a blob service SAS (`sr=b`) for `/blob/{account}/{container}/{blob}`.
 fn verify_blob_service_sas(params: &[(String, String)], container: &str, blob: &str, perms_needed: &str) -> Result<(), Response> {
     let get = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
-    if get("sr") != "b" {
-        return Err(error(403, "AuthenticationFailed", "Only blob service SAS (sr=b) is supported"));
-    }
-    let resource = format!("/blob/{}/{}/{}", ACCOUNT, container, blob);
+    // blob (sr=b) or container (sr=c) service SAS
+    let resource = match get("sr").as_str() {
+        "b" => format!("/blob/{}/{}/{}", ACCOUNT, container, blob),
+        "c" => format!("/blob/{}/{}", ACCOUNT, container),
+        _ => return Err(error(403, "AuthenticationFailed", "Only blob (sr=b) and container (sr=c) service SAS are supported")),
+    };
     let sts = [get("sp"), get("st"), get("se"), resource, get("si"), get("sip"), get("spr"), get("sv"), get("sr"), String::new(), get("ses"), get("rscc"), get("rscd"), get("rsce"), get("rscl"), get("rsct")].join("\n");
+    let expected = shared_key_signature(ACCOUNT_KEY, &sts).unwrap_or_default();
+    if !ct_eq(expected.as_bytes(), get("sig").as_bytes()) {
+        return Err(error(403, "AuthenticationFailed", "Signature did not match"));
+    }
+    if parse_iso8601(&get("se")).is_none_or(|e| e < now_secs()) {
+        return Err(error(403, "AuthenticationFailed", "Signed expiry time has passed"));
+    }
+    if !perms_needed.chars().any(|p| get("sp").contains(p)) {
+        return Err(error(403, "AuthorizationPermissionMismatch", "This request is not authorized to perform this operation using this permission."));
+    }
+    Ok(())
+}
+
+/// Verify a queue service SAS for `/queue/{account}/{queue}` (no `sr`; version 2015-04-05+).
+fn verify_queue_service_sas(params: &[(String, String)], queue: &str, perms_needed: &str) -> Result<(), Response> {
+    let get = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+    let resource = format!("/queue/{}/{}", ACCOUNT, queue);
+    let sts = [get("sp"), get("st"), get("se"), resource, get("si"), get("sip"), get("spr"), get("sv")].join("\n");
     let expected = shared_key_signature(ACCOUNT_KEY, &sts).unwrap_or_default();
     if !ct_eq(expected.as_bytes(), get("sig").as_bytes()) {
         return Err(error(403, "AuthenticationFailed", "Signature did not match"));
@@ -301,6 +325,12 @@ fn verify_blob_service_sas(params: &[(String, String)], container: &str, blob: &
 
 fn authorize(st: &Shared, req: &ServerRequest, service: char, segs: &[String]) -> Result<(), Response> {
     let params = req.query_params();
+    if service == 'q' && params.iter().any(|(k, _)| k == "sig") && !params.iter().any(|(k, _)| k == "ss") {
+        let (perms, _) = sas_requirement(service, &req.method, segs, req);
+        verify_queue_service_sas(&params, segs.first().map(|s| s.as_str()).unwrap_or(""), perms)?;
+        st.lock().unwrap().sas_requests += 1;
+        return Ok(());
+    }
     if params.iter().any(|(k, _)| k == "sig") && params.iter().any(|(k, _)| k == "sr") && !params.iter().any(|(k, _)| k == "ss") {
         // service SAS of one blob
         let (perms, _) = sas_requirement(service, &req.method, segs, req);
@@ -375,8 +405,18 @@ fn handle(st: &Shared, req: &ServerRequest, service: char) -> Response {
         st.lock().unwrap().auth_failures += 1;
         return resp;
     }
+    if service == 'b' && req.method == "POST" && req.query_param("comp").as_deref() == Some("batch") {
+        return blob_batch(st, req);
+    }
     if service == 'f' {
         return files_ext::file_op(st, req, rest);
+    }
+    // the DFS endpoint also serves Blob API calls on the same data (multi-protocol access):
+    // the ADLS SDKs send container create/delete and ranged reads there in Blob API form
+    let blob_api = req.query_param("restype").is_some() || req.query_param("comp").is_some() || (req.method == "GET" && req.query_param("action").is_none() && req.query_param("resource").is_none() && rest.contains('/'));
+    if service == 'd' && blob_api {
+        let blob = rest.split_once('/').map(|(_, b)| percent_decode(b, false)).filter(|b| !b.is_empty());
+        return blob_op(st, req, segs.first().cloned(), blob);
     }
     if service == 'd' {
         let path = rest.split_once('/').map(|(_, b)| percent_decode(b, false)).filter(|b| !b.is_empty());
@@ -391,14 +431,77 @@ fn handle(st: &Shared, req: &ServerRequest, service: char) -> Response {
     }
 }
 
+/// Blob Batch (`POST ?comp=batch`, multipart/mixed): each part is an HTTP request (Delete Blob
+/// or Set Blob Tier) with its own Shared Key / SAS authorization, answered in a multipart/mixed
+/// response with one embedded HTTP response per part.
+fn blob_batch(st: &Shared, req: &ServerRequest) -> Response {
+    let ct = req.header("Content-Type").unwrap_or("");
+    let Some(boundary) = ct.split(';').find_map(|p| p.trim().strip_prefix("boundary=")).map(|b| b.trim_matches('"').to_string()) else {
+        return error(400, "InvalidInput", "The batch request is missing the multipart boundary.");
+    };
+    let text = String::from_utf8_lossy(&req.body).into_owned();
+    let delim = format!("--{}", boundary);
+    let mut parts = Vec::new();
+    for chunk in text.split(delim.as_str()).skip(1) {
+        if chunk.starts_with("--") {
+            break;
+        }
+        // part headers, blank line, embedded request
+        let Some((_, http)) = chunk.split_once("\r\n\r\n") else { continue };
+        let (head, body) = http.split_once("\r\n\r\n").unwrap_or((http, ""));
+        let mut lines = head.lines();
+        let Some(request_line) = lines.next() else { continue };
+        let mut rl = request_line.split_whitespace();
+        let (method, target) = (rl.next().unwrap_or("").to_string(), rl.next().unwrap_or("").to_string());
+        let headers: Vec<(String, String)> = lines.filter_map(|l| l.split_once(':').map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))).collect();
+        let (path, query) = match target.split_once('?') {
+            Some((p, q)) => (p.to_string(), q.to_string()),
+            None => (target.clone(), String::new()),
+        };
+        // sub-request paths are relative to the account endpoint (no account segment)
+        let path = if path.starts_with(&format!("/{}/", ACCOUNT)) { path } else { format!("/{}{}", ACCOUNT, path) };
+        parts.push(ServerRequest { method, path, query, headers, body: body.trim_end_matches("\r\n").as_bytes().to_vec() });
+    }
+    if parts.is_empty() || parts.len() > 256 {
+        return error(400, "InvalidInput", "One of the request inputs is not valid.");
+    }
+    let rb = format!("batchresponse_{}", uuid());
+    let mut out = String::new();
+    for (i, p) in parts.iter().enumerate() {
+        // the SDKs sign sub-requests over the path they send (relative to the account
+        // endpoint); verify that form, then run the request on the account-qualified path
+        let relative = ServerRequest { path: p.path.trim_start_matches(&format!("/{}", ACCOUNT)).to_string(), ..p.clone() };
+        let segs: Vec<String> = p.path.trim_start_matches('/').split('/').skip(1).filter(|s| !s.is_empty()).map(|s| percent_decode(s, false)).collect();
+        let r = if authorize(st, &relative, 'b', &segs).is_ok() {
+            let rest = p.path.trim_start_matches('/').split_once('/').map(|(_, r)| r.to_string()).unwrap_or_default();
+            let blob = rest.split_once('/').map(|(_, b)| percent_decode(b, false)).filter(|b| !b.is_empty());
+            blob_op(st, p, segs.first().cloned(), blob)
+        } else {
+            handle(st, p, 'b')
+        };
+        out.push_str(&format!("--{}\r\nContent-Type: application/http\r\nContent-ID: {}\r\n\r\nHTTP/1.1 {} {}\r\n", rb, i, r.status, if r.status < 300 { "Accepted" } else { "Error" }));
+        for (k, v) in &r.headers {
+            out.push_str(&format!("{}: {}\r\n", k, v));
+        }
+        out.push_str(&format!("Content-Length: {}\r\n\r\n", r.body.len()));
+        out.push_str(&String::from_utf8_lossy(&r.body));
+        if !r.body.is_empty() {
+            out.push_str("\r\n");
+        }
+    }
+    out.push_str(&format!("--{}--\r\n", rb));
+    Response::new(202).with_header("Content-Type", format!("multipart/mixed; boundary={}", rb)).with_body(out.into_bytes())
+}
+
 fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Option<String>) -> Response {
     let mut s = st.lock().unwrap();
     let Some(container) = container else {
         if req.query_param("comp").as_deref() != Some("list") {
             return error(400, "InvalidQueryParameterValue", "Unsupported service operation");
         }
-        let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults><Containers>");
-        for (n, c) in &s.containers {
+        let prefix = req.query_param("prefix").unwrap_or_default();
+        let mut xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults><Prefix>{}</Prefix><Containers>", xml_escape(&prefix));
+        for (n, c) in s.containers.iter().filter(|(n, _)| n.starts_with(&prefix)) {
             xml.push_str(&format!("<Container><Name>{}</Name><Properties><Last-Modified>{}</Last-Modified><Etag>\"0x1\"</Etag></Properties></Container>", xml_escape(n), http_date(c.created)));
         }
         xml.push_str("</Containers><NextMarker /></EnumerationResults>");
@@ -423,27 +526,46 @@ fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Op
                 let prefix = req.query_param("prefix").unwrap_or_default();
                 let max: usize = req.query_param("maxresults").and_then(|m| m.parse().ok()).unwrap_or(5000);
                 let marker = req.query_param("marker").unwrap_or_default();
-                let mut xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ContainerName=\"{}\"><Prefix>{}</Prefix><Blobs>", xml_escape(&container), xml_escape(&prefix));
+                let delimiter = req.query_param("delimiter").filter(|d| !d.is_empty());
+                let mut xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ContainerName=\"{}\"><Prefix>{}</Prefix>", xml_escape(&container), xml_escape(&prefix));
+                if let Some(d) = &delimiter {
+                    xml.push_str(&format!("<Delimiter>{}</Delimiter>", xml_escape(d)));
+                }
+                xml.push_str("<Blobs>");
                 let mut next = String::new();
                 let mut count = 0;
+                let mut last_prefix = String::new();
                 for (n, b) in c.blobs.range(marker.clone()..).filter(|(n, _)| n.starts_with(&prefix)) {
+                    // with a delimiter, names continuing past it are rolled up into one BlobPrefix
+                    let rolled = delimiter.as_ref().and_then(|d| n[prefix.len()..].find(d.as_str()).map(|i| n[..prefix.len() + i + d.len()].to_string()));
+                    if let Some(p) = &rolled {
+                        if *p == last_prefix {
+                            continue;
+                        }
+                    }
                     if count == max {
                         next = n.clone();
                         break;
                     }
                     count += 1;
+                    if let Some(p) = rolled {
+                        xml.push_str(&format!("<BlobPrefix><Name>{}</Name></BlobPrefix>", xml_escape(&p)));
+                        last_prefix = p;
+                        continue;
+                    }
                     let meta: String = if req.query_param("include").is_some_and(|i| i.split(',').any(|x| x == "metadata")) {
                         format!("<Metadata>{}</Metadata>", b.metadata.iter().map(|(k, v)| format!("<{0}>{1}</{0}>", k, xml_escape(v))).collect::<String>())
                     } else {
                         String::new()
                     };
                     xml.push_str(&format!(
-                        "<Blob><Name>{}</Name><Properties><Last-Modified>{}</Last-Modified><Etag>{}</Etag><Content-Length>{}</Content-Length><Content-Type>{}</Content-Type><BlobType>BlockBlob</BlobType></Properties>{}</Blob>",
+                        "<Blob><Name>{}</Name><Properties><Last-Modified>{}</Last-Modified><Etag>{}</Etag><Content-Length>{}</Content-Length><Content-Type>{}</Content-Type><BlobType>{}</BlobType></Properties>{}</Blob>",
                         xml_escape(n),
                         http_date(b.last_modified),
                         xml_escape(&b.etag),
                         b.data.len(),
                         xml_escape(&b.content_type),
+                        if b.blob_type.is_empty() { "BlockBlob" } else { b.blob_type.as_str() },
                         meta
                     ));
                 }
@@ -527,22 +649,51 @@ fn queue_op(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
     let int = |k: &str, d: i64| req.query_param(k).and_then(|v| v.parse::<i64>().ok()).unwrap_or(d);
     match (segs.len(), req.method.as_str()) {
         (0, "GET") => {
-            let mut xml = String::from("<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults><Queues>");
-            for n in s.queues.keys() {
-                xml.push_str(&format!("<Queue><Name>{}</Name></Queue>", xml_escape(n)));
+            let prefix = req.query_param("prefix").unwrap_or_default();
+            let with_meta = req.query_param("include").is_some_and(|i| i.split(',').any(|x| x == "metadata"));
+            let mut xml = format!("<?xml version=\"1.0\" encoding=\"utf-8\"?><EnumerationResults ServiceEndpoint=\"{}\"><Prefix>{}</Prefix><Queues>", xml_escape(ACCOUNT), xml_escape(&prefix));
+            for n in s.queues.keys().filter(|n| n.starts_with(&prefix)) {
+                let meta = if with_meta {
+                    format!("<Metadata>{}</Metadata>", s.queue_meta.get(n).map(|m| m.iter().map(|(k, v)| format!("<{0}>{1}</{0}>", k, xml_escape(v))).collect::<String>()).unwrap_or_default())
+                } else {
+                    String::new()
+                };
+                xml.push_str(&format!("<Queue><Name>{}</Name>{}</Queue>", xml_escape(n), meta));
             }
             xml.push_str("</Queues><NextMarker /></EnumerationResults>");
             Response::xml(200, xml)
         }
+        (1, "PUT") if req.query_param("comp").as_deref() == Some("metadata") => {
+            if !s.queues.contains_key(&segs[0]) {
+                return error(404, "QueueNotFound", "The specified queue does not exist.");
+            }
+            s.queue_meta.insert(segs[0].clone(), blob_ext::meta_headers(req));
+            Response::new(204)
+        }
+        (1, "GET" | "HEAD") if req.query_param("comp").as_deref() == Some("metadata") => {
+            let Some(q) = s.queues.get(&segs[0]) else { return error(404, "QueueNotFound", "The specified queue does not exist.") };
+            let mut r = Response::new(200).with_header("x-ms-approximate-messages-count", q.len().to_string());
+            for (k, v) in s.queue_meta.get(&segs[0]).cloned().unwrap_or_default() {
+                r = r.with_header(&format!("x-ms-meta-{}", k), v);
+            }
+            r
+        }
         (1, "PUT") => {
+            let meta = blob_ext::meta_headers(req);
             if s.queues.contains_key(&segs[0]) {
-                return Response::new(204);
+                // re-creating with the same metadata is a no-op, with different metadata a conflict
+                let same = s.queue_meta.get(&segs[0]).cloned().unwrap_or_default() == meta;
+                return if same { Response::new(204) } else { error(409, "QueueAlreadyExists", "The specified queue already exists.") };
             }
             s.queues.insert(segs[0].clone(), Vec::new());
+            s.queue_meta.insert(segs[0].clone(), meta);
             Response::new(201)
         }
         (1, "DELETE") => match s.queues.remove(&segs[0]) {
-            Some(_) => Response::new(204),
+            Some(_) => {
+                s.queue_meta.remove(&segs[0]);
+                Response::new(204)
+            }
             None => error(404, "QueueNotFound", "The specified queue does not exist."),
         },
         (n, method) if n >= 2 && segs[1] == "messages" => {

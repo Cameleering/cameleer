@@ -155,7 +155,8 @@ impl Message {
                     if h.priority == 4 { V::Null } else { V::Ubyte(h.priority) },
                     opt_uint(h.ttl),
                     if h.first_acquirer { V::Boolean(true) } else { V::Null },
-                    if h.delivery_count == 0 { V::Null } else { V::Uint(h.delivery_count) },
+                    // explicit, also when 0: SDKs expose the field as given (null -> no count)
+                    V::Uint(h.delivery_count),
                 ],
             )
             .encode_to(&mut out);

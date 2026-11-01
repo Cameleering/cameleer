@@ -40,6 +40,8 @@ struct CertVersion {
 #[derive(Default)]
 pub(super) struct KeysState {
     keys: BTreeMap<String, Vec<KeyVersion>>,
+    /// soft-deleted keys (recoverable / purgeable)
+    deleted_keys: BTreeMap<String, Vec<KeyVersion>>,
     certs: BTreeMap<String, Vec<CertVersion>>,
     pending: BTreeMap<String, (String, bool)>,
 }
@@ -108,8 +110,18 @@ fn ok(v: Value) -> Response {
     Response::json(200, v.to_json())
 }
 
+fn deleted_key_bundle(base: &str, name: &str, k: &KeyVersion) -> Value {
+    let mut b = key_bundle(base, name, k).as_object().cloned().unwrap_or_default();
+    b.insert("recoveryId".into(), Value::from(format!("{}/deletedkeys/{}", base, name)));
+    b.insert("deletedDate".into(), Value::Int(crate::util::now_secs()));
+    b.insert("scheduledPurgeDate".into(), Value::Int(crate::util::now_secs() + 90 * 86400));
+    // list items (DeletedKeyItem) carry the key id at the top level
+    b.insert("kid".into(), Value::from(format!("{}/keys/{}/{}", base, name, k.version)));
+    Value::Object(b)
+}
+
 pub(super) fn handle(st: &Shared, req: &ServerRequest, segs: &[String]) -> Option<Response> {
-    if !matches!(segs.first().map(|s| s.as_str()), Some("keys") | Some("certificates")) {
+    if !matches!(segs.first().map(|s| s.as_str()), Some("keys") | Some("certificates") | Some("deletedkeys")) {
         return None;
     }
     let mut s = st.lock().unwrap();
@@ -123,7 +135,7 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, segs: &[String]) -> Optio
     if req.query_param("api-version").is_none_or(|v| v.is_empty()) {
         return Some(kv_error(400, "BadParameter", "The 'api-version' query parameter is missing."));
     }
-    let base = format!("http://{}", req.header("Host").unwrap_or("localhost"));
+    let base = format!("{}://{}", if s.tls { "https" } else { "http" }, req.header("Host").unwrap_or("localhost"));
     let body = parse_json(&req.body).unwrap_or_default();
     let st_ = |k: &str| body.get(k).map(|v| v.to_string()).unwrap_or_default();
     let segs: Vec<&str> = segs.iter().map(|x| x.as_str()).collect();
@@ -253,11 +265,31 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, segs: &[String]) -> Optio
         },
         ("DELETE", ["keys", name]) => match ks.keys.remove(*name) {
             Some(v) => {
-                let mut b = key_bundle(&base, name, v.last().unwrap()).as_object().cloned().unwrap_or_default();
-                b.insert("recoveryId".into(), Value::from(format!("{}/deletedkeys/{}", base, name)));
-                ok(Value::Object(b))
+                let b = deleted_key_bundle(&base, name, v.last().unwrap());
+                ks.deleted_keys.insert(name.to_string(), v);
+                ok(b)
             }
             None => key_nf(name),
+        },
+        ("GET", ["deletedkeys"]) => ok(obj([
+            ("value", Value::Array(ks.deleted_keys.iter().filter_map(|(n, v)| v.last().map(|k| deleted_key_bundle(&base, n, k))).collect())),
+            ("nextLink", Value::Null),
+        ])),
+        ("GET", ["deletedkeys", name]) => match ks.deleted_keys.get(*name).and_then(|v| v.last()) {
+            Some(k) => ok(deleted_key_bundle(&base, name, k)),
+            None => kv_error(404, "KeyNotFound", &format!("Deleted Key not found: {}", name)),
+        },
+        ("DELETE", ["deletedkeys", name]) => match ks.deleted_keys.remove(*name) {
+            Some(_) => Response::new(204),
+            None => kv_error(404, "KeyNotFound", &format!("Deleted Key not found: {}", name)),
+        },
+        ("POST", ["deletedkeys", name, "recover"]) => match ks.deleted_keys.remove(*name) {
+            Some(v) => {
+                let b = key_bundle(&base, name, v.last().unwrap());
+                ks.keys.insert(name.to_string(), v);
+                ok(b)
+            }
+            None => kv_error(404, "KeyNotFound", &format!("Deleted Key not found: {}", name)),
         },
         ("POST", ["keys", name, rest @ ..]) if matches!(rest.last(), Some(&"sign") | Some(&"verify")) => {
             let action = *rest.last().unwrap();

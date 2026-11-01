@@ -29,6 +29,27 @@ use crate::util::{now_secs, parse_connection_string, sas_token, Opts};
 pub const SESSION_FILTER: &str = "com.microsoft:session-filter";
 /// Numeric descriptor of the session filter.
 pub const SESSION_FILTER_CODE: u64 = 0x0000_0137_0000_000C;
+/// .NET `DateTime` ticks (100 ns since 0001-01-01) at the Unix epoch.
+const TICKS_AT_UNIX_EPOCH: i64 = 621_355_968_000_000_000;
+
+/// Unix milliseconds as .NET ticks (Service Bus `com.microsoft:locked-until-utc`).
+pub fn millis_to_ticks(millis: i64) -> i64 {
+    millis * 10_000 + TICKS_AT_UNIX_EPOCH
+}
+
+/// The `com.microsoft:locked-until-utc` attach property in Unix milliseconds: Service Bus sends
+/// .NET ticks (a long); an AMQP timestamp is accepted too.
+pub fn locked_until_millis(v: &crate::codec::AmqpValue) -> i64 {
+    match v {
+        crate::codec::AmqpValue::Timestamp(ms) => *ms,
+        other => match other.as_i64() {
+            Some(t) if t > TICKS_AT_UNIX_EPOCH => (t - TICKS_AT_UNIX_EPOCH) / 10_000,
+            Some(t) => t,
+            None => 0,
+        },
+    }
+}
+
 /// Event Hubs receiver epoch (owner level) link property.
 pub const EPOCH_PROPERTY: &str = "com.microsoft:epoch";
 

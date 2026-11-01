@@ -84,6 +84,12 @@ impl AmqpValue {
         }
         AmqpValue::described(code, AmqpValue::List(fields))
     }
+    /// A performative: a described list with every field encoded (trailing nulls included).
+    /// Shorter lists are legal AMQP, but some clients (the Azure SDKs' pure-Python AMQP stack)
+    /// index performative fields by position, as brokers such as Azure Service Bus send them.
+    pub fn performative(code: u64, fields: Vec<AmqpValue>) -> AmqpValue {
+        AmqpValue::described(code, AmqpValue::List(fields))
+    }
     pub fn is_null(&self) -> bool {
         matches!(self, AmqpValue::Null)
     }

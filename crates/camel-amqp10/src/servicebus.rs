@@ -901,7 +901,7 @@ impl ServiceBusConsumer {
             };
             let attach = rx.remote_attach();
             let id = attach.source.as_ref().and_then(|s| s.filter.iter().find_map(|(_, v)| (v.descriptor_symbol() == Some(crate::azure::SESSION_FILTER)).then(|| v.undescribed().as_str().map(String::from)).flatten())).or_else(|| cfg.session_id.clone()).unwrap_or_default();
-            let until = attach.properties.iter().find(|(k, _)| k.as_str() == Some("com.microsoft:locked-until-utc")).and_then(|(_, v)| v.as_i64()).unwrap_or(0);
+            let until = attach.properties.iter().find(|(k, _)| k.as_str() == Some("com.microsoft:locked-until-utc")).map(|(_, v)| crate::azure::locked_until_millis(v)).unwrap_or(0);
             let lock = SessionLock { id, locked_until: Mutex::new(until) };
             let mut last_renew = now_millis();
             let mut idle_since = std::time::Instant::now();

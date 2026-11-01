@@ -182,6 +182,8 @@ impl BlobService {
         let mut req = Request::new("PUT", self.azure.url("blob", &Self::blob_path(container, blob), "")?)
             .header("x-ms-blob-type", "BlockBlob")
             .header("Content-Type", content_type.unwrap_or("application/octet-stream"))
+            // the blob's stored type: Put Blob takes it from x-ms-blob-content-type, like the SDKs send it
+            .header("x-ms-blob-content-type", content_type.unwrap_or("application/octet-stream"))
             .body(data);
         for (k, v) in metadata {
             req.set_header(&format!("x-ms-meta-{}", k), v.clone());
@@ -455,6 +457,7 @@ impl CloudService for BlobService {
                     let mut req = Request::new("PUT", self.blob_url(&container, &blob, "")?)
                         .header("x-ms-blob-type", "BlockBlob")
                         .header("Content-Type", ct.as_deref().unwrap_or("application/octet-stream"))
+                        .header("x-ms-blob-content-type", ct.as_deref().unwrap_or("application/octet-stream"))
                         .body(data);
                     for (k, v) in &meta {
                         req.set_header(&format!("x-ms-meta-{}", k), v.clone());

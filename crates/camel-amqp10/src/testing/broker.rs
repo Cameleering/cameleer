@@ -298,7 +298,13 @@ struct BLink {
     session: Option<String>,
     /// Event Hubs receiver epoch.
     epoch: Option<i64>,
+    /// The delivery being received uses the Azure batch message format (0x80013700).
+    batch: bool,
 }
+
+/// Azure Service Bus / Event Hubs batched message format: the data sections of the envelope
+/// are complete encoded messages.
+const BATCH_MESSAGE_FORMAT: u32 = 0x8001_3700;
 
 struct BSession {
     next_outgoing_id: u32,
@@ -843,7 +849,8 @@ impl Inner {
             Performative::Attach(a) => self.attach(st, cid, ch, a)?,
             Performative::Detach(d) => {
                 self.remove_link(st, (cid, ch, d.handle));
-                Self::write(st, cid, Frame::amqp(ch, Performative::Detach(Detach { handle: d.handle, closed: true, error: None })));
+                // the answering detach echoes `closed` (a closing detach must be answered by one)
+                Self::write(st, cid, Frame::amqp(ch, Performative::Detach(Detach { handle: d.handle, closed: d.closed, error: None })));
                 self.dispatch(st);
             }
             Performative::Flow(f) => {
@@ -963,13 +970,22 @@ impl Inner {
         addr == "$cbs" || addr == "$management" || addr.ends_with("/$management")
     }
 
-    fn attach(&self, st: &mut BrokerState, cid: u64, ch: u16, a: Attach) -> std::result::Result<(), AmqpError> {
+    fn attach(&self, st: &mut BrokerState, cid: u64, ch: u16, mut a: Attach) -> std::result::Result<(), AmqpError> {
         if !st.conns.get(&cid).is_some_and(|c| c.sessions.contains_key(&ch)) {
             return Err(AmqpError::new(cond::INVALID_FIELD, "attach on an unknown session"));
         }
         let key: LinkKey = (cid, ch, a.handle);
         let mut source = a.source.clone();
         let mut target = a.target.clone();
+        if self.azure() {
+            // Service Bus / Event Hubs accept entity addresses as absolute URLs
+            // (`amqps://namespace/queue`, as the Azure SDK for Python sends them)
+            for addr in [a.source.as_mut().and_then(|s| s.address.as_mut()), a.target.as_mut().and_then(|t| t.address.as_mut())].into_iter().flatten() {
+                if let Some((_, rest)) = addr.split_once("://") {
+                    *addr = rest.split_once('/').map(|(_, p)| p.to_string()).unwrap_or_default();
+                }
+            }
+        }
         let mut presettle = false;
         let mut peek_lock = false;
         let mut selector = None;
@@ -1072,21 +1088,31 @@ impl Inner {
                             LinkKind::Log { cursor, key: log_key, group }
                         } else if self.azure() {
                             let entity = lower.trim_end_matches(&format!("/{}", DLQ)).to_string();
-                            let session_filter = s.filter.iter().map(|(_, v)| v).find(|v| v.descriptor_symbol() == Some(SESSION_FILTER) || v.descriptor_code() == Some(SESSION_FILTER_CODE));
+                            // the session filter is a described value (Java / .NET SDKs) or a plain
+                            // value under the `com.microsoft:session-filter` key (Python SDK)
+                            let is_session_key = |k: &AmqpValue| k.as_str() == Some(SESSION_FILTER);
+                            let is_session_value = |v: &AmqpValue| v.descriptor_symbol() == Some(SESSION_FILTER) || v.descriptor_code() == Some(SESSION_FILTER_CODE);
+                            let session_filter = s.filter.iter().find(|(k, v)| is_session_value(v) || is_session_key(k)).map(|(_, v)| v.clone());
                             match session_filter {
                                 Some(f) => {
-                                    let requested = f.undescribed().as_str().map(String::from);
+                                    let described = is_session_value(&f);
+                                    let plain = if described { f.undescribed() } else { &f };
+                                    let requested = match plain {
+                                        AmqpValue::Binary(b) => Some(String::from_utf8_lossy(b).into_owned()),
+                                        v => v.as_str().map(String::from),
+                                    };
                                     match self.lock_session(st, &entity, requested, key) {
                                         Ok((sid, until)) => {
                                             if let Some(src) = source.as_mut() {
                                                 for (k, v) in src.filter.iter_mut() {
-                                                    if v.descriptor_symbol() == Some(SESSION_FILTER) || v.descriptor_code() == Some(SESSION_FILTER_CODE) {
+                                                    if is_session_value(v) || is_session_key(k) {
                                                         *k = AmqpValue::sym(SESSION_FILTER);
-                                                        *v = AmqpValue::Described(Box::new(AmqpValue::sym(SESSION_FILTER)), Box::new(AmqpValue::str(sid.clone())));
+                                                        *v = if described { AmqpValue::Described(Box::new(AmqpValue::sym(SESSION_FILTER)), Box::new(AmqpValue::str(sid.clone()))) } else { AmqpValue::str(sid.clone()) };
                                                     }
                                                 }
                                             }
-                                            resp_properties.push((AmqpValue::sym("com.microsoft:locked-until-utc"), AmqpValue::Timestamp(until)));
+                                            // Service Bus reports the session lock expiry as .NET DateTime ticks (a long)
+                                            resp_properties.push((AmqpValue::sym("com.microsoft:locked-until-utc"), AmqpValue::Long(crate::azure::millis_to_ticks(until))));
                                             session = Some(sid);
                                         }
                                         Err(e) => {
@@ -1145,8 +1171,11 @@ impl Inner {
             }
         };
         let is_producer = matches!(kind, LinkKind::Producer(_) | LinkKind::Coordinator);
-        let rcv_second = a.rcv_settle_mode == RcvSettleMode::Second;
-        let link = BLink { kind, credit: 0, delivery_count: 0, presettle, selector, partial: None, reply_address, peek_lock, rcv_second, session, epoch };
+        // Service Bus settles incoming messages at once (receiver settle mode first) even when a
+        // sender asks for `second`, as the Azure SDK for Python does; it announces that in its attach
+        let azure_first = self.azure() && is_producer && a.rcv_settle_mode == RcvSettleMode::Second;
+        let rcv_second = a.rcv_settle_mode == RcvSettleMode::Second && !azure_first;
+        let link = BLink { kind, credit: 0, delivery_count: 0, presettle, selector, partial: None, reply_address, peek_lock, rcv_second, session, epoch, batch: false };
         let sess = st.conns.get_mut(&cid).unwrap().sessions.get_mut(&ch).unwrap();
         sess.links.insert(a.handle, link);
         let resp = Attach {
@@ -1154,7 +1183,7 @@ impl Inner {
             handle: a.handle,
             role: if a.role == Role::Sender { Role::Receiver } else { Role::Sender },
             snd_settle_mode: a.snd_settle_mode,
-            rcv_settle_mode: a.rcv_settle_mode,
+            rcv_settle_mode: if azure_first { RcvSettleMode::First } else { a.rcv_settle_mode },
             source,
             target,
             initial_delivery_count: if a.role == Role::Receiver { Some(0) } else { None },
@@ -1267,6 +1296,7 @@ impl Inner {
                 _ => None,
             };
             l.partial = Some((id, false, Vec::new(), txn));
+            l.batch = self.azure() && t.message_format == Some(BATCH_MESSAGE_FORMAT);
             l.delivery_count = l.delivery_count.wrapping_add(1);
             l.credit = l.credit.saturating_sub(1);
         }
@@ -1281,6 +1311,7 @@ impl Inner {
             return Ok(());
         }
         let (delivery_id, settled, bytes, txn) = l.partial.take().unwrap();
+        let batch = l.batch;
         let topup = l.credit < PRODUCER_CREDIT / 2;
         if topup {
             l.credit = PRODUCER_CREDIT;
@@ -1288,6 +1319,21 @@ impl Inner {
         let state = match Message::decode(&bytes) {
             Err(e) => DeliveryState::Rejected(Some(AmqpError::new(cond::DECODE_ERROR, e.0))),
             Ok(m) if coordinator => self.coordinate(st, cid, &m),
+            Ok(m) if batch && txn.is_none() => {
+                // route every message of the batch envelope
+                let inner: Vec<Message> = match &m.body {
+                    Body::Data(sections) => sections.iter().filter_map(|d| Message::decode(d).ok()).collect(),
+                    _ => Vec::new(),
+                };
+                let mut state = DeliveryState::Accepted;
+                for msg in inner {
+                    if let Err(e) = self.route(st, cid, ch, &addr, msg) {
+                        state = DeliveryState::Rejected(Some(e));
+                        break;
+                    }
+                }
+                state
+            }
             Ok(m) => match txn {
                 Some(id) => match st.txns.get_mut(&id) {
                     Some(tx) => {
@@ -1465,18 +1511,24 @@ impl Inner {
         if let Some(id) = p.message_id.clone() {
             resp.props_mut().correlation_id = Some(id);
         }
-        let reply_to = p.reply_to.clone();
+        // without reply-to (the Azure SDK for Python's management links), answer on the
+        // receiver whose target names the node, like Service Bus pairs management links
+        let reply_to = p.reply_to.clone().or_else(|| Some(node.to_string()));
         let mut target = None;
         if let Some(c) = st.conns.get(&cid) {
-            for (sch, s) in &c.sessions {
-                for (h, l) in &s.links {
-                    if l.reply_address.is_some() && (reply_to.is_none() || l.reply_address == reply_to) && (target.is_none() || *sch == ch) {
-                        target = Some(format!("#reply-{}-{}-{}", cid, sch, h));
+            for wanted in [reply_to.clone(), None] {
+                for (sch, s) in &c.sessions {
+                    for (h, l) in &s.links {
+                        if l.reply_address.is_some() && (wanted.is_none() || l.reply_address == wanted) && (target.is_none() || *sch == ch) {
+                            target = Some(format!("#reply-{}-{}-{}", cid, sch, h));
+                        }
                     }
+                }
+                if target.is_some() {
+                    break;
                 }
             }
         }
-        let _ = node;
         if let Some(q) = target {
             let s = Self::new_stored(st, resp);
             if let Some(queue) = st.queues.get_mut(&q) {
@@ -1495,7 +1547,10 @@ impl Inner {
             Body::Value(v) => v.as_str().unwrap_or("").to_string(),
             _ => String::new(),
         };
-        if req.app_property("type").and_then(|v| v.as_str()) == Some(crate::cbs::JWT_TOKEN_TYPE) {
+        // Service Bus recognizes SAS tokens by their content: the Azure SDK for Python (pyamqp)
+        // puts them with type `jwt`
+        let is_sas = token.starts_with("SharedAccessSignature ");
+        if !is_sas && req.app_property("type").and_then(|v| v.as_str()) == Some(crate::cbs::JWT_TOKEN_TYPE) {
             if !az.jwt.contains(&token) {
                 return reply(401, "Unauthorized: invalid or expired Azure AD token", Body::Empty);
             }
@@ -1776,7 +1831,8 @@ impl Inner {
     /// The message as delivered: header delivery-count, Azure annotations.
     fn decorate(&self, queue: &str, s: &Stored, locked_until: Option<i64>) -> Message {
         let mut m = s.msg.clone();
-        if s.delivery_count > 0 || m.header.is_some() {
+        // Service Bus always sends a header (delivery count 0 on the first delivery)
+        if s.delivery_count > 0 || m.header.is_some() || self.azure() {
             let h = m.header_mut();
             h.delivery_count = s.delivery_count;
             h.first_acquirer = s.delivery_count == 0;

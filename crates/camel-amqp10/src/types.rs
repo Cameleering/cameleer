@@ -82,7 +82,7 @@ impl AmqpError {
         AmqpError { condition: condition.to_string(), description: Some(description.into()), info: Vec::new() }
     }
     pub fn to_value(&self) -> AmqpValue {
-        AmqpValue::composite(desc::ERROR, vec![AmqpValue::sym(self.condition.clone()), opt_str(&self.description), map_value(&self.info)])
+        AmqpValue::performative(desc::ERROR, vec![AmqpValue::sym(self.condition.clone()), opt_str(&self.description), map_value(&self.info)])
     }
     pub fn from_value(v: &AmqpValue) -> Option<AmqpError> {
         if v.descriptor_code() != Some(desc::ERROR) {
@@ -504,13 +504,15 @@ impl Performative {
     pub fn to_value(&self) -> AmqpValue {
         use AmqpValue as V;
         match self {
-            Performative::Open(o) => V::composite(
+            Performative::Open(o) => V::performative(
                 desc::OPEN,
                 vec![
                     V::str(o.container_id.clone()),
                     opt_str(&o.hostname),
-                    if o.max_frame_size == u32::MAX { V::Null } else { V::Uint(o.max_frame_size) },
-                    if o.channel_max == u16::MAX { V::Null } else { V::Ushort(o.channel_max) },
+                    // limits are sent explicitly (also when they equal the defaults): some
+                    // clients do not apply the defaults for null fields
+                    V::Uint(o.max_frame_size),
+                    V::Ushort(o.channel_max),
                     if o.idle_time_out == 0 { V::Null } else { V::Uint(o.idle_time_out) },
                     V::Null,
                     V::Null,
@@ -519,20 +521,20 @@ impl Performative {
                     map_value(&o.properties),
                 ],
             ),
-            Performative::Begin(b) => V::composite(
+            Performative::Begin(b) => V::performative(
                 desc::BEGIN,
                 vec![
                     b.remote_channel.map(V::Ushort).unwrap_or(V::Null),
                     V::Uint(b.next_outgoing_id),
                     V::Uint(b.incoming_window),
                     V::Uint(b.outgoing_window),
-                    if b.handle_max == u32::MAX { V::Null } else { V::Uint(b.handle_max) },
+                    V::Uint(b.handle_max),
                     V::Null,
                     V::Null,
                     map_value(&b.properties),
                 ],
             ),
-            Performative::Attach(a) => V::composite(
+            Performative::Attach(a) => V::performative(
                 desc::ATTACH,
                 vec![
                     V::str(a.name.clone()),
@@ -551,7 +553,7 @@ impl Performative {
                     map_value(&a.properties),
                 ],
             ),
-            Performative::Flow(f) => V::composite(
+            Performative::Flow(f) => V::performative(
                 desc::FLOW,
                 vec![
                     opt_uint(f.next_incoming_id),
@@ -567,7 +569,7 @@ impl Performative {
                     map_value(&f.properties),
                 ],
             ),
-            Performative::Transfer(t) => V::composite(
+            Performative::Transfer(t) => V::performative(
                 desc::TRANSFER,
                 vec![
                     V::Uint(t.handle),
@@ -584,7 +586,7 @@ impl Performative {
                     bool_or_null(t.batchable),
                 ],
             ),
-            Performative::Disposition(d) => V::composite(
+            Performative::Disposition(d) => V::performative(
                 desc::DISPOSITION,
                 vec![
                     d.role.value(),
@@ -595,9 +597,9 @@ impl Performative {
                     bool_or_null(d.batchable),
                 ],
             ),
-            Performative::Detach(d) => V::composite(desc::DETACH, vec![V::Uint(d.handle), V::Boolean(d.closed), error_value(&d.error)]),
-            Performative::End(e) => V::composite(desc::END, vec![error_value(e)]),
-            Performative::Close(e) => V::composite(desc::CLOSE, vec![error_value(e)]),
+            Performative::Detach(d) => V::performative(desc::DETACH, vec![V::Uint(d.handle), V::Boolean(d.closed), error_value(&d.error)]),
+            Performative::End(e) => V::performative(desc::END, vec![error_value(e)]),
+            Performative::Close(e) => V::performative(desc::CLOSE, vec![error_value(e)]),
         }
     }
 
@@ -897,9 +899,12 @@ mod tests {
         let f = Frame { channel: 0, body: FrameBody::Empty };
         assert_eq!(f.encode(), [0, 0, 0, 8, 2, 0, 0, 0]);
         assert_eq!(Frame::decode(&[0, 0, 0, 8, 2, 0, 0, 0]).unwrap(), f);
-        // close frame with no error: 00 53 18 45
+        // close frame with no error: performatives keep their (null) fields: 00 53 18 c0 02 01 40
         let c = Frame::amqp(0, Performative::Close(None)).encode();
-        assert_eq!(c, [0, 0, 0, 12, 2, 0, 0, 0, 0x00, 0x53, 0x18, 0x45]);
+        assert_eq!(c, [0, 0, 0, 15, 2, 0, 0, 0, 0x00, 0x53, 0x18, 0xc0, 0x02, 0x01, 0x40]);
+        // the compact form (list0) other peers send still decodes
+        let compact = [0u8, 0, 0, 12, 2, 0, 0, 0, 0x00, 0x53, 0x18, 0x45];
+        assert_eq!(Frame::decode(&compact).unwrap(), Frame::amqp(0, Performative::Close(None)));
         assert!(read_frame(&mut &[0u8, 0, 0, 4][..], 1024).is_err());
     }
 }

@@ -36,6 +36,11 @@ fn touch(b: &mut Blob) {
     b.last_modified = now_secs();
 }
 
+/// `x-ms-meta-*` headers; names keep their case (Azure is case-preserving).
+pub(super) fn meta_headers(req: &ServerRequest) -> Vec<(String, String)> {
+    req.headers.iter().filter(|(k, _)| k.len() > 10 && k[..10].eq_ignore_ascii_case("x-ms-meta-")).map(|(k, v)| (k[10..].to_string(), v.clone())).collect()
+}
+
 fn parse_range(v: Option<&str>) -> Option<(usize, usize)> {
     let r = v?.trim().strip_prefix("bytes=")?;
     let (a, b) = r.split_once('-')?;
@@ -98,7 +103,7 @@ pub(super) fn block_list_op(c: &mut Container, req: &ServerRequest, blob: &str) 
                 data.extend_from_slice(&block);
             }
             let ct = req.header("x-ms-blob-content-type").unwrap_or("application/octet-stream").to_string();
-            let meta = req.headers.iter().filter_map(|(k, v)| k.to_ascii_lowercase().strip_prefix("x-ms-meta-").map(|m| (m.to_string(), v.clone()))).collect();
+            let meta = meta_headers(req);
             let lease = c.blobs.get(blob).and_then(|b| b.lease.clone());
             let mut b = new_blob(data, ct, meta);
             b.block_list = list;
@@ -157,6 +162,15 @@ pub(super) fn blob_item_op(c: &mut Container, req: &ServerRequest, blob: String)
         }
     }
     match (req.method.as_str(), comp.as_str()) {
+        ("PUT", "snapshot") => {
+            let Some(b) = c.blobs.get(&blob) else { return not_found() };
+            let millis = crate::util::now_millis();
+            let ts = format!("{}{:04}Z", crate::util::iso8601_millis(millis).trim_end_matches('Z'), c.snapshots.len() % 10000);
+            let copy = b.clone();
+            let etag = copy.etag.clone();
+            c.snapshots.insert((blob.clone(), ts.clone()), copy);
+            Response::new(201).with_header("x-ms-snapshot", ts).with_header("ETag", etag).with_header("Last-Modified", crate::util::http_date(now_secs()))
+        }
         ("POST", "query") => {
             let Some(b) = c.blobs.get(&blob) else { return not_found() };
             super::query::query_blob(&b.data, &req.text())
@@ -302,8 +316,9 @@ pub(super) fn blob_item_op(c: &mut Container, req: &ServerRequest, blob: String)
             }
             let lease = c.blobs.get(&blob).and_then(|b| b.lease.clone());
             let btype = req.header("x-ms-blob-type").unwrap_or("").to_string();
-            let meta = req.headers.iter().filter_map(|(k, v)| k.to_ascii_lowercase().strip_prefix("x-ms-meta-").map(|m| (m.to_string(), v.clone()))).collect();
-            let ct = req.header("Content-Type").unwrap_or("application/octet-stream").to_string();
+            let meta = meta_headers(req);
+            // x-ms-blob-content-type (what the SDKs send) wins over the request's Content-Type
+            let ct = req.header("x-ms-blob-content-type").or_else(|| req.header("Content-Type")).unwrap_or("application/octet-stream").to_string();
             let mut b = match btype.as_str() {
                 "BlockBlob" => new_blob(req.body.clone(), ct, meta),
                 "AppendBlob" => new_blob(Vec::new(), ct, meta),
@@ -321,7 +336,7 @@ pub(super) fn blob_item_op(c: &mut Container, req: &ServerRequest, blob: String)
             c.blobs.insert(blob, b);
             r
         }
-        ("GET" | "HEAD", "") => match c.blobs.get(&blob) {
+        ("GET" | "HEAD", "") => match req.query_param("snapshot").map(|ts| c.snapshots.get(&(blob.clone(), ts))).unwrap_or_else(|| c.blobs.get(&blob)) {
             None => error(404, "BlobNotFound", "The specified blob does not exist."),
             Some(b) => {
                 let mut r = blob_headers(Response::new(200), b)
@@ -333,7 +348,31 @@ pub(super) fn blob_item_op(c: &mut Container, req: &ServerRequest, blob: String)
                 for (k, v) in &b.metadata {
                     r = r.with_header(&format!("x-ms-meta-{}", k), v.clone());
                 }
-                r.with_body(b.data.clone())
+                // ranged reads (x-ms-range / Range: bytes=start-[end]) answer 206 + Content-Range
+                let range = req.header("x-ms-range").or_else(|| req.header("Range")).and_then(|v| v.trim().strip_prefix("bytes=").map(String::from));
+                if let Some(spec) = range {
+                    let total = b.data.len();
+                    let (a, z) = spec.split_once('-').unwrap_or((spec.as_str(), ""));
+                    let Ok(start) = a.trim().parse::<usize>() else { return error(400, "InvalidHeaderValue", "The value for one of the HTTP headers is not in the correct format.") };
+                    let end = if z.trim().is_empty() { total.saturating_sub(1) } else { z.trim().parse::<usize>().unwrap_or(usize::MAX).min(total.saturating_sub(1)) };
+                    if start >= total {
+                        return error(416, "InvalidRange", "The range specified is invalid for the current size of the resource.").with_header("Content-Range", format!("bytes */{}", total));
+                    }
+                    let slice = b.data[start..=end].to_vec();
+                    r.status = 206;
+                    r = r.with_header("Content-Range", format!("bytes {}-{}/{}", start, end, total));
+                    r.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("Content-Length") && !k.eq_ignore_ascii_case("Content-MD5"));
+                    r = r.with_header("Content-Length", slice.len().to_string());
+                    if req.header("x-ms-range-get-content-md5") == Some("true") {
+                        r = r.with_header("Content-MD5", base64_encode(&md5(&slice)));
+                    }
+                    return if req.method == "HEAD" { r } else { r.with_body(slice) };
+                }
+                if req.method == "HEAD" {
+                    r
+                } else {
+                    r.with_body(b.data.clone())
+                }
             }
         },
         ("DELETE", "") => {
@@ -462,6 +501,35 @@ pub(super) fn dfs_op(st: &Shared, req: &ServerRequest, fs: Option<String>, path:
     let pending_len = s.dfs_pending.get(&pending_key).map(|p| p.len()).unwrap_or(0);
     let Some(c) = s.containers.get_mut(&fs) else { return dfs_error(404, "FilesystemNotFound", "The specified filesystem does not exist.") };
     let action = req.query_param("action").unwrap_or_default();
+    if req.method == "PUT" && resource.is_empty() {
+        if let Some(src) = req.header("x-ms-rename-source") {
+            // Rename (Path Create with x-ms-rename-source: /{filesystem}/{path}[?sas])
+            let src = src.split('?').next().unwrap_or("").trim_start_matches('/');
+            let src = src.strip_prefix(&format!("{}/", super::ACCOUNT)).unwrap_or(src);
+            let (src_fs, src_path) = src.split_once('/').map(|(a, b)| (crate::util::percent_decode(a, false), crate::util::percent_decode(b, false))).unwrap_or_default();
+            if src_fs != fs {
+                return dfs_error(400, "InvalidSourceUri", "Renames across filesystems are not supported by the emulator.");
+            }
+            let Some(b) = c.blobs.remove(&src_path) else { return dfs_error(404, "SourcePathNotFound", "The source path for a rename operation does not exist.") };
+            let dir = is_dir(&b);
+            if dir {
+                let prefix = format!("{}/", src_path);
+                let children: Vec<String> = c.blobs.keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
+                for k in children {
+                    if let Some(x) = c.blobs.remove(&k) {
+                        c.blobs.insert(format!("{}/{}", path, &k[prefix.len()..]), x);
+                    }
+                }
+            }
+            if let Some(acl) = c.acls.remove(&src_path) {
+                c.acls.insert(path.clone(), acl);
+            }
+            ensure_parents(c, &path);
+            let r = Response::new(201).with_header("ETag", b.etag.clone()).with_header("Last-Modified", http_date(b.last_modified));
+            c.blobs.insert(path, b);
+            return r;
+        }
+    }
     match (req.method.as_str(), resource.as_str(), action.as_str()) {
         ("PUT", "file", _) | ("PUT", "directory", _) => {
             let umask = match req.header("x-ms-umask") {
