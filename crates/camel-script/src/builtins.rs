@@ -61,6 +61,7 @@ pub fn install_globals(it: &mut Interp) {
             );
             it.globals.define("NaN", V::Num(f64::NAN));
             it.globals.define("Infinity", V::Num(f64::INFINITY));
+            crate::jsext::install(it);
         }
         Dialect::Groovy => def_ns(
             it,
@@ -154,6 +155,12 @@ pub fn js_typeof(v: &V) -> &'static str {
         if matches!(o.borrow().kind, ObjKind::Symbol(..)) {
             return "symbol";
         }
+        if let Some(t) = crate::jsext::typeof_of(v) {
+            return t;
+        }
+    }
+    if matches!(v, V::Host(h) if matches!(**h, Host::Ns("globalThis") | Host::Ns("Intl"))) {
+        return "object";
     }
     match v {
         V::Undef => "undefined",
@@ -270,6 +277,9 @@ pub fn display(it: &Interp, v: &V, depth: usize) -> String {
         }
         V::Obj(o) => {
             let ob = o.borrow();
+            if let Some(s) = crate::jsext::display(it, &ob) {
+                return s;
+            }
             match &ob.kind {
                 ObjKind::Error => {
                     let name = ob.props.get("name").map(|n| display(it, n, depth + 1)).unwrap_or_else(|| "Error".into());
@@ -468,6 +478,7 @@ fn date_method(it: &mut Interp, ms: f64, recv: &V, name: &str, args: &[V]) -> R<
         "getSeconds" | "getUTCSeconds" => V::Int(s as i64),
         "getMilliseconds" | "getUTCMilliseconds" => V::Int(mil),
         "getTimezoneOffset" => V::Int(0),
+        "toLocaleString" | "toLocaleDateString" | "toLocaleTimeString" if it.d == Dialect::Js => crate::jsext::date_to_locale(it, ms, name, args)?,
         "toString" | "toUTCString" | "toDateString" | "toLocaleString" => V::string(iso_date(ms)),
         "setTime" => set(args.first().and_then(|v| v.as_f64()).unwrap_or(f64::NAN)),
         "format" => {
@@ -838,7 +849,41 @@ fn match_list(re: &RegexVal, s: &str) -> Vec<V> {
 }
 
 fn js_replacement(r: &str) -> String {
-    r.replace("$&", "$0")
+    // `$&` whole match, `$<name>` named group, `$$` a dollar sign, `\` is literal
+    let mut out = String::new();
+    let cs: Vec<char> = r.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        if c == '\\' {
+            out.push_str("\\\\");
+        } else if c == '$' && i + 1 < cs.len() {
+            match cs[i + 1] {
+                '&' => {
+                    out.push_str("$0");
+                    i += 1;
+                }
+                '$' => {
+                    out.push_str("\\$");
+                    i += 1;
+                }
+                '<' => {
+                    if let Some(end) = cs[i + 2..].iter().position(|x| *x == '>') {
+                        let name: String = cs[i + 2..i + 2 + end].iter().collect();
+                        out.push_str(&format!("${{{}}}", name));
+                        i += end + 2;
+                    } else {
+                        out.push('$');
+                    }
+                }
+                _ => out.push('$'),
+            }
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
 }
 
 fn regex_replace_fn(it: &mut Interp, re: &RegexVal, s: &str, f: &V, global: bool, pos: u32) -> R<String> {
@@ -851,6 +896,10 @@ fn regex_replace_fn(it: &mut Interp, re: &RegexVal, s: &str, f: &V, global: bool
         if it.d == Dialect::Js {
             args.push(V::Int(byte_to_char(s, st) as i64));
             args.push(V::str(s));
+            let groups = crate::jsext::named_groups(&re.re, &c);
+            if !matches!(groups, V::Undef) {
+                args.push(groups);
+            }
         } else if it.d == Dialect::Python {
             args = vec![match_obj(&c, s)];
         }
@@ -878,7 +927,30 @@ fn regex_method(it: &mut Interp, r: &Rc<RegexVal>, name: &str, args: &[V], pos: 
     let s = sarg(it, args, 0);
     Ok(Some(match name {
         "test" => V::Bool(r.re.is_match(&s)),
+        "exec" if it.d == Dialect::Js && r.flags.contains('g') => {
+            // global regexes advance `lastIndex` (kept per regex object)
+            let key = format!("%lastIndex:{:p}", Rc::as_ptr(r));
+            let start = it.globals.lookup(&key).and_then(|v| v.as_f64()).unwrap_or(0.0) as usize;
+            let bstart = char_to_byte(&s, start);
+            let found = if bstart <= s.len() { r.re.captures_iter(&s[bstart..]).into_iter().next() } else { None };
+            match found {
+                Some(_) => {
+                    let all = r.re.captures_iter(&s);
+                    let c = all.into_iter().find(|c| c.span(0).is_some_and(|(st, _)| st >= bstart)).unwrap();
+                    let (_, en) = c.span(0).unwrap_or((0, 0));
+                    let en_c = byte_to_char(&s, en) as i64;
+                    let next = if c.span(0).is_some_and(|(a, b)| a == b) { en_c + 1 } else { en_c };
+                    it.globals.define(&key, V::Int(next));
+                    crate::jsext::js_match(it, &r.re, &c, &s)
+                }
+                None => {
+                    it.globals.define(&key, V::Int(0));
+                    V::Null
+                }
+            }
+        }
         "exec" => match r.re.captures_match(&s) {
+            Some(c) if it.d == Dialect::Js => crate::jsext::js_match(it, &r.re, &c, &s),
             Some(c) => V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect()),
             None => V::Null,
         },
@@ -1198,6 +1270,11 @@ pub fn as_type(it: &mut Interp, v: V, t: &str, pos: u32) -> R<V> {
 
 /// Members of namespaces: constants or functions.
 pub fn ns_member(it: &mut Interp, ns: &'static str, name: &str, _pos: u32) -> R<V> {
+    if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::ns_member(it, ns, name)? {
+            return Ok(v);
+        }
+    }
     let c = match (ns, name) {
         (_, "class") => return Ok(V::host(Host::Ns(ns))),
         ("Math" | "math", "PI" | "pi") => V::Num(std::f64::consts::PI),
@@ -1444,6 +1521,19 @@ fn log_line(it: &Interp, args: &[V]) {
 /// Call a namespace / global function value (`String(x)`, `len(x)`, `parseInt(s)`).
 pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> R<V> {
     let a0 = arg(&args, 0);
+    if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::call_ns(it, n, &args, pos)? {
+            return Ok(v);
+        }
+        if let Some(b) = crate::jsext::bigint_of(&a0) {
+            match n {
+                "Number" => return Ok(norm_num(b.to_f64())),
+                "String" => return Ok(V::string(b.to_string())),
+                "parseInt" | "parseFloat" => return Ok(norm_num(b.to_f64())),
+                _ => {}
+            }
+        }
+    }
     Ok(match n {
         "String" => {
             if args.is_empty() {
@@ -1848,6 +1938,9 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
 pub fn construct_ns(it: &mut Interp, n: &'static str, args: Vec<V>, pos: u32) -> R<V> {
     let a0 = arg(&args, 0);
     if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::construct_ns(it, n, &args, pos)? {
+            return Ok(v);
+        }
         match n {
             "Map" | "Set" | "WeakMap" | "WeakSet" => return it.construct_coll(n, &args, pos),
             "Promise" => return it.construct_promise(&args, pos),
@@ -1954,6 +2047,11 @@ fn json_dumps(it: &Interp, v: &V, kwa: &Option<ObjRef>) -> String {
 
 /// Call a namespace member function (`Math.max`, `JSON.parse`, `json.loads`, `std.length`...).
 pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: u32) -> R<V> {
+    if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::call_ns_fn(it, ns, name, &args, pos)? {
+            return Ok(v);
+        }
+    }
     let a0 = arg(&args, 0);
     let java = it.d != Dialect::Js;
     let r = match (ns, name) {
@@ -2545,6 +2643,11 @@ pub fn value_property(it: &mut Interp, o: &V, name: &str, pos: u32) -> R<V> {
     if it.d == Dialect::Js && matches!(o, V::Str(_) | V::Arr(_)) && name.starts_with(SYM_PREFIX) && name == it.well_known_key("iterator") {
         return Ok(V::Method(Rc::new((o.clone(), "%iter".to_string()))));
     }
+    if let (V::Arr(a), Dialect::Js) = (o, it.d) {
+        if let Some(r) = crate::jsext::arr_prop(it, a, name) {
+            return Ok(r);
+        }
+    }
     match o {
         V::Str(s) => {
             if let Ok(i) = name.parse::<i64>() {
@@ -2630,9 +2733,15 @@ pub fn object_property(it: &mut Interp, o: &V, name: &str, _pos: u32) -> R<V> {
             }
         }
         ObjKind::Generator(_) => {
-            if name.starts_with(SYM_PREFIX) && name == it.well_known_key("iterator") {
+            if name.starts_with(SYM_PREFIX) && (name == it.well_known_key("iterator") || name == it.well_known_key("asyncIterator")) {
                 return Ok(V::Method(Rc::new((o.clone(), "%self".to_string()))));
             }
+            if it.d == Dialect::Js && matches!(name, "next" | "return" | "throw") {
+                return Ok(V::Method(Rc::new((o.clone(), name.to_string()))));
+            }
+        }
+        ObjKind::Promise(_) if it.d == Dialect::Js && matches!(name, "then" | "catch" | "finally") => {
+            return Ok(V::Method(Rc::new((o.clone(), name.to_string()))));
         }
         ObjKind::Symbol(_, desc) => {
             if name == "description" {
@@ -2728,8 +2837,16 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
             let items = it.iterate(recv, Some(pos))?;
             return Ok(crate::collections::list_iterator(items));
         }
+        if let Some(v) = crate::jsext::internal_method(it, recv, name, &args, pos)? {
+            return Ok(v);
+        }
     }
     if let V::Obj(o) = recv {
+        if crate::jsext::is_ext(o) {
+            if let Some(v) = crate::jsext::call_method(it, recv, name, &args, pos)? {
+                return Ok(v);
+            }
+        }
         let kind = o.borrow().kind.clone();
         let r = match &kind {
             ObjKind::Coll(c) => it.coll_method(c, recv, name, &args, pos)?,
@@ -3167,14 +3284,23 @@ fn string_method(it: &mut Interp, s: Rc<str>, name: &str, args: &[V], pos: u32) 
                 }
             } else {
                 match re.re.captures_match(&s) {
-                    Some(c) => V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect()),
+                    Some(c) => crate::jsext::js_match(it, &re.re, &c, &s),
                     None => V::Null,
                 }
             }
         }
         "matchAll" => {
             let re = to_regex(it, &a(0), pos)?;
-            V::arr(re.re.captures_iter(&s).iter().map(|c| V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect())).collect())
+            let caps = re.re.captures_iter(&s);
+            let mut out = vec![];
+            for c in &caps {
+                out.push(if js { crate::jsext::js_match(it, &re.re, c, &s) } else { V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect()) });
+            }
+            if js {
+                crate::collections::list_iterator(out)
+            } else {
+                V::arr(out)
+            }
         }
         "search" => {
             let re = to_regex(it, &a(0), pos)?;
@@ -3339,6 +3465,9 @@ fn string_method(it: &mut Interp, s: Rc<str>, name: &str, args: &[V], pos: u32) 
 fn number_method(it: &mut Interp, recv: &V, name: &str, args: &[V], pos: u32) -> R<Option<V>> {
     let f = recv.as_f64().unwrap_or(f64::NAN);
     let d = it.d;
+    if name == "toLocaleString" && d == Dialect::Js {
+        return crate::jsext::number_to_locale(it, recv, args, pos).map(Some);
+    }
     Ok(Some(match name {
         "toFixed" => {
             let n = iarg(it, args, 0, 0).clamp(0, 100) as usize;

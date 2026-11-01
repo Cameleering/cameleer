@@ -112,6 +112,12 @@ pub struct Interp {
     pub meta_methods: HashMap<String, HashMap<String, V>>,
     /// Bean registry lookups (SpEL `@name`).
     pub beans: HashMap<String, V>,
+    /// Directories of the ES modules / Python modules being loaded (relative imports).
+    pub module_dirs: Vec<std::path::PathBuf>,
+    /// Directory of the script itself (option `scriptDir`), for relative imports.
+    pub script_dir: Option<std::path::PathBuf>,
+    /// Extra properties of arrays (tagged template `raw`, regex match `index` / `groups`), by array address.
+    pub arr_extra: HashMap<usize, (V, PropMap)>,
 }
 
 /// JavaScript number to string.
@@ -216,6 +222,9 @@ impl Interp {
             classes: HashMap::new(),
             meta_methods: HashMap::new(),
             beans: HashMap::new(),
+            module_dirs: Vec::new(),
+            script_dir: None,
+            arr_extra: HashMap::new(),
         };
         crate::builtins::install_globals(&mut it);
         it
@@ -503,7 +512,7 @@ impl Interp {
                         return Ok(last);
                     }
                 }
-                let items = if *values { self.iterate(&o, None)? } else { self.keys_of(&o) };
+                let items = if *values { self.iterate(&o, None)? } else if let Some(k) = crate::jsext::keys(self, &o)? { k } else { self.keys_of(&o) };
                 let mut last = V::Undef;
                 let mut broke = false;
                 for item in items {
@@ -974,6 +983,7 @@ impl Interp {
                 self.construct_class(c, args, pos)
             }
             V::Func(c) => self.call_closure(c, this, args, pos),
+            V::Obj(_) if crate::jsext::is_proxy(f) => crate::jsext::proxy_call(self, f, this, args, pos),
             V::Obj(_) if self.user_method(f, if self.d == Dialect::Python { "__call__" } else { "call" }).is_some() => {
                 let name = if self.d == Dialect::Python { "__call__" } else { "call" };
                 let m = self.user_method(f, name).unwrap();
@@ -1105,7 +1115,7 @@ impl Interp {
         }
         if def.generator || def.is_async {
             // `async function*` runs as a generator whose elements `for await` awaits
-            let g = self.make_generator(c, scope, def.is_async && !def.generator);
+            let g = self.make_generator(c, scope, def.is_async);
             if def.is_async && !def.generator {
                 return self.start_async(g);
             }
@@ -1135,6 +1145,7 @@ impl Interp {
     /// Construct with `new`.
     fn construct(&mut self, f: &V, args: Vec<V>, pos: u32) -> R<V> {
         match f {
+            V::Obj(_) if crate::jsext::is_proxy(f) => crate::jsext::proxy_construct(self, f, args, pos),
             V::Func(c) => self.construct_class(c, args, pos),
             V::Host(h) => match &**h {
                 Host::Ns(n) => crate::builtins::construct_ns(self, n, args, pos),
@@ -1147,6 +1158,13 @@ impl Interp {
 
     /// Call a method on a value: own/prototype functions first, then built-in methods.
     pub fn call_method(&mut self, recv: &V, name: &str, args: Vec<V>, pos: u32) -> R<V> {
+        if crate::jsext::is_proxy(recv) && !name.starts_with('%') {
+            let f = crate::jsext::proxy_get(self, recv, &V::str(name), pos)?;
+            if !f.is_callable() {
+                return self.type_error(format!("{} is not a function", name), Some(pos));
+            }
+            return self.call(&f, recv.clone(), args, pos);
+        }
         match recv {
             V::Obj(o) => {
                 let (f, own) = {
@@ -1266,6 +1284,11 @@ impl Interp {
                 self.null_error("read", name, o, pos)
             }
             V::Obj(ob) => {
+                if crate::jsext::is_ext(ob) {
+                    if let Some(v) = crate::jsext::get_member(self, o, name, pos)? {
+                        return Ok(v);
+                    }
+                }
                 if let (Some(field), Dialect::Groovy) = (name.strip_prefix('@'), self.d) {
                     return Ok(ob.borrow().props.get(field).cloned().unwrap_or(V::Null));
                 }
@@ -1356,6 +1379,11 @@ impl Interp {
             ob.borrow_mut().props.set(field, v);
             return Ok(());
         }
+        if let V::Obj(ob) = o {
+            if crate::jsext::is_ext(ob) && crate::jsext::set_index(self, o, &V::str(name), v.clone(), pos)? {
+                return Ok(());
+            }
+        }
         match o {
             V::Obj(ob) => {
                 let has_proto = ob.borrow().proto.is_some();
@@ -1440,6 +1468,13 @@ impl Interp {
 
     /// Index read (`a[i]`, `m['k']`).
     pub fn get_index(&mut self, o: &V, k: &V, pos: u32) -> R<V> {
+        if let V::Obj(ob) = o {
+            if crate::jsext::is_ext(ob) {
+                if let Some(v) = crate::jsext::get_index(self, o, k, pos)? {
+                    return Ok(v);
+                }
+            }
+        }
         if self.d == Dialect::Python {
             if let V::Obj(ob) = o {
                 if ob.borrow().proto.is_some() {
@@ -1537,6 +1572,11 @@ impl Interp {
 
     /// Index write.
     pub fn set_index(&mut self, o: &V, k: &V, v: V, pos: u32) -> R<()> {
+        if let V::Obj(ob) = o {
+            if crate::jsext::is_ext(ob) && crate::jsext::set_index(self, o, k, v.clone(), pos)? {
+                return Ok(());
+            }
+        }
         if self.d == Dialect::Python {
             if let V::Obj(ob) = o {
                 if ob.borrow().proto.is_some() && self.user_method(o, "__setitem__").is_some() {
@@ -1594,6 +1634,13 @@ impl Interp {
     // ------------------------------------------------------------------ iteration
     /// Values produced by iterating `v` (for-of, Groovy for-in, Python for, spread).
     pub fn iterate(&mut self, v: &V, pos: Option<u32>) -> R<Vec<V>> {
+        if let V::Obj(ob) = v {
+            if crate::jsext::is_ext(ob) {
+                if let Some(items) = crate::jsext::iterate(self, v, pos)? {
+                    return Ok(items);
+                }
+            }
+        }
         Ok(match v {
             V::Arr(a) => a.borrow().clone(),
             V::Str(s) => s.chars().map(|c| V::string(c.to_string())).collect(),
@@ -2087,8 +2134,9 @@ impl Interp {
             }
             Expr::Update { inc, prefix, target, pos } => {
                 let old = self.eval(target, env)?;
-                let oldn = if self.d == Dialect::Js { self.to_number(&old) } else { old.clone() };
-                let one = V::Int(1);
+                let big = crate::jsext::is_bigint(&old);
+                let oldn = if self.d == Dialect::Js && !big { self.to_number(&old) } else { old.clone() };
+                let one = if big { crate::jsext::make_bigint(crate::bigint::BigInt::from_i64(1)) } else { V::Int(1) };
                 let new = self.binary(if *inc { BinOp::Add } else { BinOp::Sub }, oldn.clone(), one, *pos)?;
                 let pat = match &**target {
                     Expr::Ident(n, _) => Pat::Id(n.clone()),
@@ -2357,9 +2405,8 @@ impl Interp {
             },
             Expr::Yield { arg, delegate, pos } => self.eval_yield(arg.as_deref(), *delegate, env, *pos),
             Expr::Await(x, pos) => {
-                if self.ystack.last().is_some_and(|c| c.sync_await) {
-                    let v = self.eval(x, env)?;
-                    return self.await_sync(v, *pos);
+                if self.ystack.last().is_some_and(|c| c.async_gen) {
+                    return self.eval_yield_marked(Some(x), false, env, *pos, true);
                 }
                 if !self.ystack.last().is_some_and(|c| c.is_async) {
                     return self.throw("SyntaxError", "await is only valid in async functions and the top level bodies of modules".into(), Some(*pos));
@@ -2468,6 +2515,10 @@ impl Interp {
     }
 
     fn delete_key(&mut self, o: &V, k: &str) {
+        if crate::jsext::is_proxy(o) {
+            let _ = crate::jsext::proxy_delete(self, o, k, 0);
+            return;
+        }
         match o {
             V::Obj(ob) => {
                 ob.borrow_mut().props.remove(k);
@@ -2493,6 +2544,9 @@ impl Interp {
     // ------------------------------------------------------------------ semantics
     /// Truthiness according to the dialect.
     pub fn truthy(&self, v: &V) -> bool {
+        if let Some(b) = crate::jsext::bigint_of(v) {
+            return !b.is_zero();
+        }
         match v {
             V::Undef | V::Null => false,
             V::Bool(b) => *b,
@@ -2618,6 +2672,11 @@ impl Interp {
     }
 
     fn unary(&mut self, op: UnOp, v: V, pos: u32) -> R<V> {
+        if let Some(b) = crate::jsext::bigint_of(&v) {
+            if let Some(r) = crate::jsext::bigint_unary(self, op, &b, pos)? {
+                return Ok(r);
+            }
+        }
         match op {
             UnOp::Not => Ok(V::Bool(!self.truthy(&v))),
             UnOp::Neg => {
@@ -2643,6 +2702,11 @@ impl Interp {
     pub fn binary(&mut self, op: BinOp, a: V, b: V, pos: u32) -> R<V> {
         use BinOp::*;
         let d = self.d;
+        if d == Dialect::Js && (crate::jsext::is_bigint(&a) || crate::jsext::is_bigint(&b)) {
+            if let Some(r) = crate::jsext::bigint_binary(self, op, &a, &b, pos)? {
+                return Ok(r);
+            }
+        }
         if matches!(d, Dialect::Python | Dialect::Groovy | Dialect::Java) && (matches!(a, V::Obj(_)) || matches!(b, V::Obj(_))) {
             match op {
                 Eq | Ne => {
@@ -3064,6 +3128,9 @@ impl Interp {
 
     /// `needle in haystack`.
     pub fn contains(&mut self, haystack: &V, needle: &V, pos: u32) -> R<bool> {
+        if crate::jsext::is_proxy(haystack) {
+            return crate::jsext::proxy_has(self, haystack, needle, pos);
+        }
         if let V::Obj(o) = haystack {
             if self.d == Dialect::Python && o.borrow().proto.is_some() {
                 if let Some(r) = self.py_special(haystack, "__contains__", vec![needle.clone()], pos)? {

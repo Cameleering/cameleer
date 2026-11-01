@@ -8,6 +8,9 @@ use crate::error::SyntaxError;
 pub enum RawPart {
     Lit(String),
     Code(String, usize),
+    /// JavaScript template literals: the raw text of a literal segment (appended after the
+    /// cooked parts, one per segment, for tagged templates).
+    Raw(String),
 }
 
 /// Token kinds.
@@ -15,6 +18,8 @@ pub enum RawPart {
 pub enum T {
     Int(i64),
     Num(f64),
+    /// JavaScript BigInt literal (decimal digits).
+    BigInt(String),
     Str(String),
     /// Template literal / GString with interpolations.
     Tpl(Vec<RawPart>),
@@ -240,6 +245,10 @@ fn lex_number(src: &str, mut i: usize, d: Dialect) -> Result<(T, usize), String>
             i += 1;
         }
         let digits: String = src[s0..i].chars().filter(|c| *c != '_').collect();
+        if d == Dialect::Js && digits.ends_with('n') {
+            let n = crate::bigint::BigInt::parse_radix(&digits[..digits.len() - 1], radix).ok_or_else(|| format!("invalid number '{}'", &src[start..i]))?;
+            return Ok((T::BigInt(n.to_string()), i));
+        }
         let digits = digits.trim_end_matches(['L', 'l']);
         let v = i64::from_str_radix(digits, radix).map_err(|_| format!("invalid number '{}'", &src[start..i]))?;
         return Ok((T::Int(v), i));
@@ -273,6 +282,9 @@ fn lex_number(src: &str, mut i: usize, d: Dialect) -> Result<(T, usize), String>
         }
     }
     let text: String = src[start..i].chars().filter(|c| *c != '_').collect();
+    if d == Dialect::Js && !is_float && b.get(i) == Some(&b'n') && !b.get(i + 1).is_some_and(|x| x.is_ascii_alphanumeric() || *x == b'_') {
+        return Ok((T::BigInt(text), i + 1));
+    }
     // Java / Groovy suffixes
     if d != Dialect::Js && i < b.len() && matches!(b[i], b'L' | b'l' | b'G' | b'g' | b'D' | b'd' | b'F' | b'f' | b'I' | b'i') {
         let suf = b[i];
@@ -294,6 +306,25 @@ fn lex_number(src: &str, mut i: usize, d: Dialect) -> Result<(T, usize), String>
             Err(_) => Ok((T::Num(text.parse::<f64>().map_err(|_| format!("invalid number '{}'", text))?), i)),
         }
     }
+}
+
+/// Cook the raw text of a template literal segment (None for an invalid escape).
+pub fn unescape_template(raw: &str) -> Option<String> {
+    let b = raw.as_bytes();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            let (s, ni) = escape(raw, i + 1).ok()?;
+            out.push_str(&s);
+            i = ni;
+        } else {
+            let ch = raw[i..].chars().next()?;
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+    }
+    Some(out)
 }
 
 /// Decode one escape sequence starting after the backslash at `i`; returns the char(s) and the new index.
@@ -391,6 +422,8 @@ fn lex_string(src: &str, start: usize, q: u8, triple: bool, interpolate: bool, d
     let mut i = start + if triple { 3 } else { 1 };
     let mut parts: Vec<RawPart> = Vec::new();
     let mut cur = String::new();
+    let mut raws: Vec<String> = Vec::new();
+    let mut seg_start = i;
     let err = |at: usize, msg: &str| SyntaxError { pos: base + at, msg: msg.to_string() };
     loop {
         if i >= b.len() {
@@ -408,6 +441,7 @@ fn lex_string(src: &str, start: usize, q: u8, triple: bool, interpolate: bool, d
                 i += 2;
                 continue;
             } else {
+                raws.push(src[seg_start..i].to_string());
                 i += 1;
                 break;
             }
@@ -416,7 +450,12 @@ fn lex_string(src: &str, start: usize, q: u8, triple: bool, interpolate: bool, d
             return Err(err(start, "unterminated string literal"));
         }
         if c == b'\\' && d != Dialect::Spel {
-            let (s, ni) = escape(src, i + 1).map_err(|m| err(i, &m))?;
+            let (s, ni) = match escape(src, i + 1) {
+                Ok(x) => x,
+                // template literals keep invalid escapes for tagged templates (cooked: undefined)
+                Err(_) if q == b'`' => ("\\".to_string(), i + 1),
+                Err(m) => return Err(err(i, &m)),
+            };
             cur.push_str(&s);
             i = ni;
             continue;
@@ -427,8 +466,10 @@ fn lex_string(src: &str, start: usize, q: u8, triple: bool, interpolate: bool, d
                 if !cur.is_empty() {
                     parts.push(RawPart::Lit(std::mem::take(&mut cur)));
                 }
+                raws.push(src[seg_start..i].to_string());
                 parts.push(RawPart::Code(src[i + 2..end].to_string(), base + i + 2));
                 i = end + 1;
+                seg_start = i;
                 continue;
             }
             if d == Dialect::Groovy && b.get(i + 1).is_some_and(|x| x.is_ascii_alphabetic() || *x == b'_') {
@@ -460,6 +501,9 @@ fn lex_string(src: &str, start: usize, q: u8, triple: bool, interpolate: bool, d
     }
     if !cur.is_empty() {
         parts.push(RawPart::Lit(cur));
+    }
+    if q == b'`' {
+        parts.extend(raws.into_iter().map(RawPart::Raw));
     }
     Ok((T::Tpl(parts), i))
 }

@@ -357,6 +357,10 @@ fn is_map_method(name: &str) -> bool {
 /// Property write on a host object.
 pub fn set_member(it: &mut Interp, h: &Rc<Host>, name: &str, v: V, pos: u32) -> R<()> {
     match &**h {
+        Host::Ns("globalThis") => {
+            it.globals.define(name, v);
+            Ok(())
+        }
         Host::Message | Host::Root if name == "body" => {
             it.host.set_body(v);
             Ok(())

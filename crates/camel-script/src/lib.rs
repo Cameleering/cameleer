@@ -32,6 +32,7 @@ use camel_core::spi::{Expression, Language, Predicate, Processor};
 use camel_core::value::Value;
 
 mod arena;
+mod bigint;
 pub mod ast;
 mod builtins;
 mod classes;
@@ -44,6 +45,7 @@ mod host;
 mod interp;
 mod java;
 mod jobj;
+mod jsext;
 mod json;
 mod jsonnet;
 mod lexer;

@@ -12,8 +12,8 @@ type R<T> = Result<T, SyntaxError>;
 /// Parse a whole program.
 pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
     let toks = tokenize(src, 0, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: d == Dialect::Js };
-    let body = match d {
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: d == Dialect::Js, exports: Vec::new() };
+    let mut body = match d {
         Dialect::Ognl | Dialect::Spel => {
             let e = p.parse_sequence()?;
             p.expect_eof()?;
@@ -30,6 +30,12 @@ pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
             body
         }
     };
+    // ES module exports are recorded after the module body ran (as a declaration, which does
+    // not change the completion value of the script)
+    if !p.exports.is_empty() {
+        let exprs: Vec<Expr> = p.exports.drain(..).filter_map(|s| if let Stmt::Expr(e) = s { Some(e) } else { None }).collect();
+        body.push(Stmt::Var(VarKind::Var, vec![(Pat::Id("%exported".into()), Some(Expr::Seq(exprs)))]));
+    }
     // JavaScript top-level await: run the script body as an async function
     if d == Dialect::Js && crate::gen::stmts_have_yield(&body) {
         let mut f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
@@ -45,7 +51,7 @@ pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
 /// Parse an embedded expression (template interpolation) at absolute offset `base`.
 pub fn parse_embedded(src: &str, base: usize, d: Dialect) -> R<Expr> {
     let toks = tokenize(src, base, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: false };
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: false, exports: Vec::new() };
     if p.at_eof() {
         return Err(SyntaxError { pos: base, msg: "empty expression".into() });
     }
@@ -63,6 +69,8 @@ struct Parser {
     in_gen: bool,
     /// Inside an async function or at the JavaScript top level (`await` is an operator).
     in_async: bool,
+    /// ES module `export`s: assignments to `%exports` run after the module body.
+    exports: Vec<Stmt>,
 }
 
 const JS_KEYWORDS: &[&str] = &[
@@ -75,6 +83,7 @@ fn describe(t: &T) -> String {
         T::Eof => "end of input".into(),
         T::Int(i) => format!("number {}", i),
         T::Num(f) => format!("number {}", f),
+        T::BigInt(s) => format!("bigint {}n", s),
         T::Str(s) => format!("string '{}'", s),
         T::Tpl(_) => "template string".into(),
         T::Regex(s, _) => format!("regex /{}/", s),
@@ -292,6 +301,8 @@ impl Parser {
                     let c = self.parse_class()?;
                     return Ok(Stmt::Class(Arc::new(c)));
                 }
+                "import" if d == Dialect::Js && !self.is_p_at(1, "(") && !self.is_p_at(1, ".") => return self.parse_import(),
+                "export" if d == Dialect::Js => return self.parse_export(),
                 "if" => return self.parse_if(),
                 "for" => return self.parse_for(),
                 "foreach" if d == Dialect::Mvel => return self.parse_for(),
@@ -852,6 +863,198 @@ impl Parser {
         Ok(Pat::Id(self.ident()?))
     }
 
+    /// `import d, {a, b as c} from 'm'` / `import * as ns from 'm'` / `import 'm'`.
+    fn parse_import(&mut self) -> R<Stmt> {
+        let pos = self.pos();
+        self.next();
+        let load = |path: String| Expr::Call { callee: Box::new(Expr::Ident("%import".into(), pos)), args: vec![Elem::Item(Expr::Str(path))], optional: false, pos };
+        if let T::Str(path) = self.peek().clone() {
+            self.next();
+            self.consume_semi()?;
+            return Ok(Stmt::Expr(load(path)));
+        }
+        let mut props: Vec<(PropKey, Pat, Option<Expr>)> = Vec::new();
+        let mut ns: Option<String> = None;
+        if let T::Ident(name) = self.peek().clone() {
+            if name != "from" || self.is_p_at(1, ",") || self.is_kw_at(1, "from") {
+                self.next();
+                props.push((PropKey::Name("default".into()), Pat::Id(name), None));
+                self.eat_p(",");
+            }
+        }
+        if self.eat_p("*") {
+            if !self.eat_kw("as") {
+                return self.err("expected 'as' after 'import *'");
+            }
+            ns = Some(self.ident()?);
+        } else if self.eat_p("{") {
+            while !self.eat_p("}") {
+                let name = match self.next() {
+                    T::Ident(n) => n,
+                    T::Str(n) => n,
+                    t => return self.err(format!("unexpected {} in import list", describe(&t))),
+                };
+                let local = if self.eat_kw("as") { self.ident()? } else { name.clone() };
+                props.push((PropKey::Name(name), Pat::Id(local), None));
+                if !self.eat_p(",") {
+                    self.expect_p("}")?;
+                    break;
+                }
+            }
+        }
+        if !self.eat_kw("from") {
+            return self.err("expected 'from' in import declaration");
+        }
+        let path = match self.next() {
+            T::Str(p) => p,
+            _ => return self.err("expected a module path string"),
+        };
+        self.consume_semi()?;
+        let mut decls = vec![];
+        if let Some(n) = ns {
+            decls.push((Pat::Id(n), Some(load(path.clone()))));
+        }
+        if !props.is_empty() {
+            decls.push((Pat::Obj(props, None), Some(load(path))));
+        }
+        Ok(Stmt::Var(VarKind::Const, decls))
+    }
+
+    fn export_assign(&mut self, name: &str, local: Expr, pos: u32) {
+        let target = Expr::Member { obj: Box::new(Expr::Ident("%exports".into(), pos)), name: name.to_string(), optional: false, pos };
+        self.exports.push(Stmt::Expr(Expr::Assign { op: None, target: Box::new(Pat::Target(target)), value: Box::new(local), pos }));
+    }
+
+    fn pat_names(p: &Pat, out: &mut Vec<String>) {
+        match p {
+            Pat::Id(n) => out.push(n.clone()),
+            Pat::Arr(items, rest) => {
+                for (p, _) in items.iter().flatten() {
+                    Self::pat_names(p, out);
+                }
+                if let Some(r) = rest {
+                    Self::pat_names(r, out);
+                }
+            }
+            Pat::Obj(items, rest) => {
+                for (_, p, _) in items {
+                    Self::pat_names(p, out);
+                }
+                if let Some(r) = rest {
+                    Self::pat_names(r, out);
+                }
+            }
+            Pat::Target(_) => {}
+        }
+    }
+
+    fn module_path(&mut self) -> R<String> {
+        match self.next() {
+            T::Str(p) => Ok(p),
+            _ => self.err("expected a module path string"),
+        }
+    }
+
+    /// `export` declarations (recorded as assignments to `%exports` after the module body).
+    fn parse_export(&mut self) -> R<Stmt> {
+        let pos = self.pos();
+        self.next();
+        let load = |path: String| Expr::Call { callee: Box::new(Expr::Ident("%import".into(), pos)), args: vec![Elem::Item(Expr::Str(path))], optional: false, pos };
+        if self.eat_kw("default") {
+            if self.is_kw("function") || (self.is_kw("async") && self.is_kw_at(1, "function")) || self.is_kw("class") {
+                let k = if self.is_kw("async") { 2 } else { 1 };
+                let named = matches!(self.peek_at(k), T::Ident(_)) || (self.is_p_at(k, "*") && matches!(self.peek_at(k + 1), T::Ident(_)));
+                if named {
+                    let st = self.parse_statement()?;
+                    let name = match &st {
+                        Stmt::Func(f) => f.name.clone(),
+                        Stmt::Class(c) => c.name.clone(),
+                        _ => None,
+                    };
+                    if let Some(n) = name {
+                        self.export_assign("default", Expr::Ident(n, pos), pos);
+                    }
+                    return Ok(st);
+                }
+            }
+            let e = self.parse_assign()?;
+            self.consume_semi()?;
+            let tmp = "%default".to_string();
+            self.export_assign("default", Expr::Ident(tmp.clone(), pos), pos);
+            return Ok(Stmt::Var(VarKind::Const, vec![(Pat::Id(tmp), Some(e))]));
+        }
+        if self.eat_p("*") {
+            // export * from 'm' / export * as ns from 'm'
+            let alias = if self.eat_kw("as") { Some(self.ident()?) } else { None };
+            if !self.eat_kw("from") {
+                return self.err("expected 'from' after 'export *'");
+            }
+            let path = self.module_path()?;
+            self.consume_semi()?;
+            match alias {
+                Some(a) => self.export_assign(&a, load(path), pos),
+                None => {
+                    let assign = Expr::Call {
+                        callee: Box::new(Expr::Member { obj: Box::new(Expr::Ident("Object".into(), pos)), name: "assign".into(), optional: false, pos }),
+                        args: vec![Elem::Item(Expr::Ident("%exports".into(), pos)), Elem::Item(load(path))],
+                        optional: false,
+                        pos,
+                    };
+                    self.exports.push(Stmt::Expr(assign));
+                }
+            }
+            return Ok(Stmt::Empty);
+        }
+        if self.eat_p("{") {
+            let mut names = vec![];
+            while !self.eat_p("}") {
+                let local = match self.next() {
+                    T::Ident(n) => n,
+                    t => return self.err(format!("unexpected {} in export list", describe(&t))),
+                };
+                let exported = if self.eat_kw("as") {
+                    match self.next() {
+                        T::Ident(n) | T::Str(n) => n,
+                        t => return self.err(format!("unexpected {} in export list", describe(&t))),
+                    }
+                } else {
+                    local.clone()
+                };
+                names.push((local, exported));
+                if !self.eat_p(",") {
+                    self.expect_p("}")?;
+                    break;
+                }
+            }
+            let from = if self.eat_kw("from") { Some(self.module_path()?) } else { None };
+            self.consume_semi()?;
+            for (local, exported) in names {
+                let v = match &from {
+                    Some(p) => Expr::Member { obj: Box::new(load(p.clone())), name: local, optional: false, pos },
+                    None => Expr::Ident(local, pos),
+                };
+                self.export_assign(&exported, v, pos);
+            }
+            return Ok(Stmt::Empty);
+        }
+        let st = self.parse_statement()?;
+        let mut names = vec![];
+        match &st {
+            Stmt::Func(f) => names.extend(f.name.clone()),
+            Stmt::Class(c) => names.extend(c.name.clone()),
+            Stmt::Var(_, decls) => {
+                for (p, _) in decls {
+                    Self::pat_names(p, &mut names);
+                }
+            }
+            _ => return self.err("unexpected export"),
+        }
+        for n in names {
+            self.export_assign(&n, Expr::Ident(n.clone(), pos), pos);
+        }
+        Ok(st)
+    }
+
     fn parse_if(&mut self) -> R<Stmt> {
         self.next();
         self.expect_p("(")?;
@@ -877,14 +1080,28 @@ impl Parser {
             let pos = self.pos();
             self.next();
             let st = self.parse_for_rest(foreach)?;
+            // desugared to: for (let %ai = %asyncIter(obj);;) { let %ar = await %ai.next();
+            //   if (%ar.done) break; <pat> = %ar.value; body }
             return match st {
-                Stmt::ForIn { decl, pat, obj, body, values: true, else_body } => {
-                    let tmp = "%forawait".to_string();
+                Stmt::ForIn { decl, pat, obj, body, values: true, .. } => {
+                    let ai = "%ai".to_string();
+                    let ar = "%ar".to_string();
+                    let id = |n: &str| Expr::Ident(n.to_string(), pos);
+                    let member = |o: Expr, n: &str| Expr::Member { obj: Box::new(o), name: n.to_string(), optional: false, pos };
+                    let init = Stmt::Var(VarKind::Let, vec![(Pat::Id(ai.clone()), Some(Expr::Call { callee: Box::new(id("%asyncIter")), args: vec![Elem::Item(obj)], optional: false, pos }))]);
+                    let next = Expr::Await(Box::new(Expr::Call { callee: Box::new(member(id(&ai), "next")), args: vec![], optional: false, pos }), pos);
+                    let value = member(id(&ar), "value");
                     let bind = match decl {
-                        Some(k) => Stmt::Var(k, vec![(pat, Some(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)))]),
-                        None => Stmt::Expr(Expr::Assign { op: None, target: Box::new(pat), value: Box::new(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)), pos }),
+                        Some(k) => Stmt::Var(k, vec![(pat, Some(value))]),
+                        None => Stmt::Expr(Expr::Assign { op: None, target: Box::new(pat), value: Box::new(value), pos }),
                     };
-                    Ok(Stmt::ForIn { decl: Some(VarKind::Let), pat: Pat::Id(tmp), obj, body: Box::new(Stmt::Block(vec![bind, *body])), values: true, else_body })
+                    let body = Stmt::Block(vec![
+                        Stmt::Var(VarKind::Let, vec![(Pat::Id(ar.clone()), Some(next))]),
+                        Stmt::If(member(id(&ar), "done"), Box::new(Stmt::Break(None)), None),
+                        bind,
+                        *body,
+                    ]);
+                    Ok(Stmt::For { init: Some(Box::new(init)), test: None, update: None, body: Box::new(body) })
                 }
                 _ => self.err("expected 'for await (x of iterable)'"),
             };
@@ -2164,9 +2381,10 @@ impl Parser {
                         other => Expr::Call { callee: Box::new(other), args: vec![Elem::Item(c)], optional: false, pos },
                     };
                 }
-                T::Tpl(_) if self.d == Dialect::Js && !nl => {
-                    // tagged templates are not supported
-                    return self.err("tagged template literals are not supported");
+                T::Tpl(parts) if self.d == Dialect::Js => {
+                    let pos = self.pos();
+                    self.next();
+                    e = self.tagged_template(e, parts, pos)?;
                 }
                 _ => break,
             }
@@ -2184,9 +2402,34 @@ impl Parser {
             match p {
                 RawPart::Lit(s) => out.push(TplPart::Lit(s)),
                 RawPart::Code(code, off) => out.push(TplPart::Expr(parse_embedded(&code, off, self.d)?, None, None)),
+                RawPart::Raw(_) => {}
             }
         }
         Ok(Expr::Template(out))
+    }
+
+    /// A tagged template call: `tag(strings, ...values)` where `strings` (cooked) carries `raw`.
+    fn tagged_template(&mut self, tag: Expr, parts: Vec<RawPart>, pos: u32) -> R<Expr> {
+        let mut raws = Vec::new();
+        let mut args = vec![];
+        for p in parts {
+            match p {
+                RawPart::Raw(r) => raws.push(r),
+                RawPart::Code(code, off) => args.push(Elem::Item(parse_embedded(&code, off, self.d)?)),
+                RawPart::Lit(_) => {}
+            }
+        }
+        let cooked: Vec<Elem> = raws
+            .iter()
+            .map(|r| match crate::lexer::unescape_template(r) {
+                Some(c) => Elem::Item(Expr::Str(c)),
+                None => Elem::Item(Expr::Undef),
+            })
+            .collect();
+        let raw: Vec<Elem> = raws.into_iter().map(|r| Elem::Item(Expr::Str(r.replace("\r\n", "\n")))).collect();
+        let strings = Expr::Call { callee: Box::new(Expr::Ident("%tpl".into(), pos)), args: vec![Elem::Item(Expr::Array(cooked)), Elem::Item(Expr::Array(raw))], optional: false, pos };
+        args.insert(0, Elem::Item(strings));
+        Ok(Expr::Call { callee: Box::new(tag), args, optional: false, pos })
     }
 
     fn parse_primary(&mut self) -> R<Expr> {
@@ -2200,6 +2443,10 @@ impl Parser {
             T::Num(f) => {
                 self.next();
                 Ok(Expr::Num(f))
+            }
+            T::BigInt(s) => {
+                self.next();
+                Ok(Expr::Call { callee: Box::new(Expr::Ident("%BigInt".into(), pos)), args: vec![Elem::Item(Expr::Str(s))], optional: false, pos })
             }
             T::Str(s) => {
                 self.next();
