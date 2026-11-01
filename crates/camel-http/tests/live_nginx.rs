@@ -96,8 +96,16 @@ fn live_nginx_gzip_and_keep_alive_pooling() {
     assert_eq!(ex.body_as::<String>().unwrap(), big());
     assert!(ex.header("Content-Encoding").is_none(), "decoded: {:?}", ex.message.headers);
     // nginx's access log (combined format: status then body bytes) proves it was compressed
-    let log = std::fs::read_to_string(live::dir().join("logs/nginx-access.log")).unwrap();
-    let line = log.lines().rev().find(|l| l.contains(&marker)).expect("access log line");
+    // nginx writes the access-log line after the response has been sent: poll briefly for it
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let line = loop {
+        let log = std::fs::read_to_string(live::dir().join("logs/nginx-access.log")).unwrap_or_default();
+        if let Some(l) = log.lines().rev().find(|l| l.contains(&marker)) {
+            break l.to_string();
+        }
+        assert!(std::time::Instant::now() < deadline, "access log line for {} not written", marker);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
     let sent: usize = line.split("\" ").nth(1).and_then(|r| r.split_whitespace().nth(1)).and_then(|n| n.parse().ok()).expect("bytes sent");
     assert!(sent < big().len() / 4, "gzip on the wire: {} of {} bytes ({})", sent, big().len(), line);
     // with content coding disabled nothing is negotiated: identity body
