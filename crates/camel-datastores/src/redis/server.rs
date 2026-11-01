@@ -69,6 +69,9 @@ struct Shared {
     cv: Condvar,
     subs: Mutex<Vec<Arc<Subscriber>>>,
     commands: AtomicU64,
+    /// Modification counters of keys `(db, key)` and of whole databases (FLUSHDB /
+    /// FLUSHALL), checked by `WATCH` ... `EXEC`.
+    versions: Mutex<(HashMap<(usize, Vec<u8>), u64>, Vec<u64>)>,
 }
 
 /// A running embedded Redis server (stopped on drop).
@@ -86,7 +89,7 @@ impl RedisServer {
     /// Starts a server with the given settings.
     pub fn start_with(cfg: RedisServerConfig) -> io::Result<RedisServer> {
         let tls = cfg.tls.clone();
-        let shared = Arc::new(Shared { cfg, cluster: Mutex::new(None), sentinel: Mutex::new(BTreeMap::new()), dbs: Mutex::new((0..16).map(|_| Db::new()).collect()), cv: Condvar::new(), subs: Mutex::new(Vec::new()), commands: AtomicU64::new(0) });
+        let shared = Arc::new(Shared { cfg, cluster: Mutex::new(None), sentinel: Mutex::new(BTreeMap::new()), dbs: Mutex::new((0..16).map(|_| Db::new()).collect()), cv: Condvar::new(), subs: Mutex::new(Vec::new()), commands: AtomicU64::new(0), versions: Mutex::new((HashMap::new(), vec![0; 16])) });
         let sh = shared.clone();
         let tcp = TcpServer::start("redis-server", tls, move |s| {
             let _ = serve(&sh, s);
@@ -121,7 +124,7 @@ impl RedisServer {
     /// Runs a command directly (database 0, RESP2, authenticated).
     pub fn exec(&self, args: &[&str]) -> Resp {
         let a: Vec<Vec<u8>> = args.iter().map(|s| s.as_bytes().to_vec()).collect();
-        let mut st = ConnState { db: 0, resp3: false, authed: true, multi: None, sub: None, asking: false };
+        let mut st = ConnState { db: 0, resp3: false, authed: true, multi: None, sub: None, asking: false, watched: Vec::new() };
         let r = execute(&self.shared, &mut st, &a, None);
         self.shared.cv.notify_all();
         r
@@ -168,12 +171,14 @@ struct ConnState {
     sub: Option<Arc<Subscriber>>,
     /// `ASKING` was sent: the next command may touch a migrating slot.
     asking: bool,
+    /// `WATCH`ed keys `(db, key, key version, db version)`.
+    watched: Vec<(usize, Vec<u8>, u64, u64)>,
 }
 
 fn serve(sh: &Arc<Shared>, stream: NetStream) -> io::Result<()> {
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let mut reader = BufReader::new(stream);
-    let mut st = ConnState { db: 0, resp3: false, authed: sh.cfg.password.is_none() && sh.cfg.users.is_empty(), multi: None, sub: None, asking: false };
+    let mut st = ConnState { db: 0, resp3: false, authed: sh.cfg.password.is_none() && sh.cfg.users.is_empty(), multi: None, sub: None, asking: false, watched: Vec::new() };
     let result = loop {
         let req = match read_resp(&mut reader) {
             Ok(r) => r,
@@ -487,7 +492,48 @@ fn check_auth(sh: &Shared, user: &str, pass: &str) -> bool {
     sh.cfg.users.get(user).is_some_and(|p| p == pass)
 }
 
+/// The keys a write command modifies (for WATCH), or `None` for commands that do not write.
+fn written_keys(name: &str, a: &[Vec<u8>]) -> Option<Vec<Vec<u8>>> {
+    Some(match name {
+        "DEL" | "UNLINK" => a.to_vec(),
+        "MSET" | "MSETNX" => a.iter().step_by(2).cloned().collect(),
+        "RENAME" | "RENAMENX" | "SMOVE" | "RPOPLPUSH" | "LMOVE" | "BRPOPLPUSH" | "BLMOVE" => a.iter().take(2).cloned().collect(),
+        "BLPOP" | "BRPOP" => a[..a.len().saturating_sub(1)].to_vec(),
+        "SET" | "SETEX" | "PSETEX" | "SETNX" | "GETSET" | "GETDEL" | "APPEND" | "INCR" | "DECR" | "INCRBY" | "DECRBY" | "INCRBYFLOAT" | "SETRANGE" | "SETBIT" | "HSET" | "HMSET" | "HSETNX" | "HDEL"
+        | "HINCRBY" | "HINCRBYFLOAT" | "LPUSH" | "RPUSH" | "LPUSHX" | "RPUSHX" | "LPOP" | "RPOP" | "LSET" | "LTRIM" | "LREM" | "LINSERT" | "SADD" | "SREM" | "SPOP" | "ZADD" | "ZREM"
+        | "ZINCRBY" | "ZREMRANGEBYRANK" | "ZREMRANGEBYSCORE" | "GEOADD" | "EXPIRE" | "PEXPIRE" | "EXPIREAT" | "PEXPIREAT" | "PERSIST" | "SUNIONSTORE" | "SINTERSTORE" | "SDIFFSTORE"
+        | "ZUNIONSTORE" | "ZINTERSTORE" | "SORT" => a.iter().take(1).cloned().collect(),
+        _ => return None,
+    })
+}
+
 fn execute(sh: &Shared, st: &mut ConnState, args: &[Vec<u8>], writer: Option<&Arc<Mutex<NetStream>>>) -> Resp {
+    let name = upper(&args[0]);
+    let db = st.db;
+    let reply = execute_command(sh, st, args, writer);
+    if !matches!(reply, Resp::Error(_)) && st.multi.is_none() {
+        let mut v = sh.versions.lock().unwrap();
+        match name.as_str() {
+            "FLUSHDB" => v.1[db] += 1,
+            "FLUSHALL" => v.1.iter_mut().for_each(|e| *e += 1),
+            _ => {
+                if let Some(keys) = written_keys(&name, &args[1..]) {
+                    for k in keys {
+                        *v.0.entry((db, k)).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+    reply
+}
+
+fn key_version(sh: &Shared, db: usize, key: &[u8]) -> (u64, u64) {
+    let v = sh.versions.lock().unwrap();
+    (v.0.get(&(db, key.to_vec())).copied().unwrap_or(0), v.1[db])
+}
+
+fn execute_command(sh: &Shared, st: &mut ConnState, args: &[Vec<u8>], writer: Option<&Arc<Mutex<NetStream>>>) -> Resp {
     let name = upper(&args[0]);
     let a = &args[1..];
     // connection-level commands
@@ -565,11 +611,17 @@ fn execute(sh: &Shared, st: &mut ConnState, args: &[Vec<u8>], writer: Option<&Ar
         match name.as_str() {
             "EXEC" => {
                 let q = st.multi.take().unwrap_or_default();
+                let watched = std::mem::take(&mut st.watched);
+                if watched.iter().any(|(db, k, kv, dv)| key_version(sh, *db, k) != (*kv, *dv)) {
+                    // a watched key was modified: the transaction is aborted
+                    return if st.resp3 { Resp::Null } else { Resp::Array(None) };
+                }
                 let replies = q.iter().map(|c| execute(sh, st, c, writer)).collect();
                 return Resp::array(replies);
             }
             "DISCARD" => {
                 st.multi = None;
+                st.watched.clear();
                 return Resp::ok();
             }
             "MULTI" => return Resp::err("ERR MULTI calls can not be nested"),
@@ -587,7 +639,20 @@ fn execute(sh: &Shared, st: &mut ConnState, args: &[Vec<u8>], writer: Option<&Ar
         }
         "EXEC" => return Resp::err("ERR EXEC without MULTI"),
         "DISCARD" => return Resp::err("ERR DISCARD without MULTI"),
-        "WATCH" | "UNWATCH" => return Resp::ok(),
+        "WATCH" => {
+            if a.is_empty() {
+                return wrong_args(&name);
+            }
+            for k in a {
+                let (kv, dv) = key_version(sh, st.db, k);
+                st.watched.push((st.db, k.clone(), kv, dv));
+            }
+            return Resp::ok();
+        }
+        "UNWATCH" => {
+            st.watched.clear();
+            return Resp::ok();
+        }
         "SUBSCRIBE" | "PSUBSCRIBE" | "UNSUBSCRIBE" | "PUNSUBSCRIBE" => return subscribe_cmd(sh, st, &name, a, writer),
         "PUBLISH" => {
             if a.len() != 2 {
@@ -851,6 +916,80 @@ fn data_command(db: &mut Db, st: &ConnState, name: &str, a: &[Vec<u8>]) -> Resp 
             let mut keys: Vec<Vec<u8>> = db.iter().filter(|(_, e)| e.expire_at.is_none_or(|t| t > now)).map(|(k, _)| k.clone()).filter(|k| glob_match(&a[0], k)).collect();
             keys.sort();
             bulk_list(keys)
+        }
+        "SCAN" | "HSCAN" | "SSCAN" | "ZSCAN" => {
+            // cursor = position in the sorted element list (a full iteration returns every
+            // element present for its whole duration exactly once, like Redis)
+            let keyed = name != "SCAN";
+            need!(if keyed { 2 } else { 1 });
+            let (cur_arg, opts) = if keyed { (&a[1], &a[2..]) } else { (&a[0], &a[1..]) };
+            let Some(cursor) = std::str::from_utf8(cur_arg).ok().and_then(|c| c.parse::<usize>().ok()) else { return Resp::err("ERR invalid cursor") };
+            let (mut pattern, mut count, mut kind): (Option<Vec<u8>>, usize, Option<String>) = (None, 10, None);
+            let mut i = 0;
+            while i < opts.len() {
+                let v = opts.get(i + 1);
+                match (upper(&opts[i]).as_str(), v) {
+                    ("MATCH", Some(p)) => pattern = Some(p.clone()),
+                    ("COUNT", Some(c)) => match int_arg(c) {
+                        Some(c) if c > 0 => count = c as usize,
+                        _ => return Resp::err("ERR syntax error"),
+                    },
+                    ("TYPE", Some(t)) if !keyed => kind = Some(String::from_utf8_lossy(t).to_ascii_lowercase()),
+                    _ => return Resp::err("ERR syntax error"),
+                }
+                i += 2;
+            }
+            let now = Instant::now();
+            // (element, extra reply values)
+            let items: Vec<(Vec<u8>, Option<Vec<u8>>)> = match name {
+                "SCAN" => {
+                    let mut keys: Vec<(Vec<u8>, Option<Vec<u8>>)> = db
+                        .iter()
+                        .filter(|(_, e)| e.expire_at.is_none_or(|t| t > now))
+                        .filter(|(_, e)| {
+                            kind.as_deref().is_none_or(|k| {
+                                k == match e.val {
+                                    RVal::Str(_) => "string",
+                                    RVal::List(_) => "list",
+                                    RVal::Hash(_) => "hash",
+                                    RVal::Set(_) => "set",
+                                    RVal::ZSet(_) => "zset",
+                                }
+                            })
+                        })
+                        .map(|(k, _)| (k.clone(), None))
+                        .collect();
+                    keys.sort();
+                    keys
+                }
+                "HSCAN" => match live(db, &a[0]).map(|e| &e.val) {
+                    None => Vec::new(),
+                    Some(RVal::Hash(h)) => h.iter().map(|(k, v)| (k.clone(), Some(v.clone()))).collect(),
+                    Some(_) => return wrongtype(),
+                },
+                "SSCAN" => match live(db, &a[0]).map(|e| &e.val) {
+                    None => Vec::new(),
+                    Some(RVal::Set(m)) => m.iter().map(|k| (k.clone(), None)).collect(),
+                    Some(_) => return wrongtype(),
+                },
+                _ => match live(db, &a[0]).map(|e| &e.val) {
+                    None => Vec::new(),
+                    Some(RVal::ZSet(z)) => zsorted(z).into_iter().map(|(m, sc)| (m, Some(format_double(sc).into_bytes()))).collect(),
+                    Some(_) => return wrongtype(),
+                },
+            };
+            let end = cursor.saturating_add(count).min(items.len());
+            let mut out = Vec::new();
+            for (k, extra) in items.get(cursor.min(items.len())..end).unwrap_or(&[]) {
+                if pattern.as_ref().is_none_or(|p| glob_match(p, k)) {
+                    out.push(Resp::bulk(k.clone()));
+                    if let Some(x) = extra {
+                        out.push(Resp::bulk(x.clone()));
+                    }
+                }
+            }
+            let next = if end >= items.len() { 0 } else { end };
+            Resp::array(vec![Resp::bulk(next.to_string().into_bytes()), Resp::array(out)])
         }
         "RANDOMKEY" => {
             let now = Instant::now();

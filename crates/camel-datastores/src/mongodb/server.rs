@@ -50,12 +50,35 @@ struct Collection {
     docs: Vec<(u64, Document)>,
     /// (max bytes, max documents)
     capped: Option<(i64, Option<i64>)>,
+    /// Secondary indexes `(name, key pattern, unique)` (`_id_` is implicit).
+    indexes: Vec<(String, Document, bool)>,
 }
 
 impl Collection {
     fn new() -> Collection {
-        Collection { docs: Vec::new(), capped: None }
+        Collection { docs: Vec::new(), capped: None, indexes: Vec::new() }
     }
+
+    /// The first unique index whose key already holds `d`'s key values.
+    fn unique_violation(&self, d: &Document) -> Option<(String, String)> {
+        for (name, key, unique) in &self.indexes {
+            if !unique {
+                continue;
+            }
+            let values = |doc: &Document| key.keys().map(|k| query::get_path(doc, k).unwrap_or(Bson::Null)).collect::<Vec<_>>();
+            let mine = values(d);
+            if self.docs.iter().any(|(_, x)| values(x).iter().zip(&mine).all(|(a, b)| a.eq_bson(b))) {
+                let shown: Vec<String> = key.keys().zip(&mine).map(|(k, v)| format!("{}: {}", k, v.to_value().to_json())).collect();
+                return Some((name.clone(), shown.join(", ")));
+            }
+        }
+        None
+    }
+}
+
+/// The default index name (`a_1_b_-1`) of a key pattern.
+fn index_name(key: &Document) -> String {
+    key.iter().map(|(k, v)| format!("{}_{}", k, v.as_i64().map(|n| n.to_string()).unwrap_or_else(|| v.to_value().to_string()))).collect::<Vec<_>>().join("_")
 }
 
 #[derive(Clone)]
@@ -294,7 +317,7 @@ fn dispatch(sh: &Shared, conn: &mut Conn, cmd: Document) -> Document {
     }
     let r = match name.as_str() {
         "hello" | "isMaster" | "ismaster" => Ok(hello(sh, &cmd, &name)),
-        "ping" | "endSessions" | "createIndexes" | "getLastError" | "whatsmyuri" => Ok(Document::new()),
+        "ping" | "endSessions" | "getLastError" | "whatsmyuri" => Ok(Document::new()),
         "buildInfo" | "buildinfo" => Ok(Document::new().with("version", "7.0.0").with("versionArray", vec![Bson::Int32(7), Bson::Int32(0), Bson::Int32(0), Bson::Int32(0)])),
         "saslStart" | "saslContinue" => sasl(sh, conn, &cmd, &name),
         "authenticate" => {
@@ -409,6 +432,9 @@ fn insert_doc(st: &mut Store, db: &str, coll: &str, mut d: Document) -> std::res
     let c = st.dbs.entry(db.to_string()).or_default().entry(coll.to_string()).or_insert_with(Collection::new);
     if c.docs.iter().any(|(_, x)| x.get("_id").is_some_and(|v| v.eq_bson(&id))) {
         return Err(err(format!("E11000 duplicate key error collection: {}.{} index: _id_ dup key: {{ _id: {} }}", db, coll, id.to_value().to_json()), 11000));
+    }
+    if let Some((index, key)) = c.unique_violation(&d) {
+        return Err(err(format!("E11000 duplicate key error collection: {}.{} index: {} dup key: {{ {} }}", db, coll, index, key), 11000));
     }
     c.docs.push((seq, d.clone()));
     if let Some((size, max)) = c.capped {
@@ -847,6 +873,75 @@ fn data_command(sh: &Shared, db: &str, name: &str, cmd: &Document) -> R {
                 Some(c) => Ok(Document::new().with("nIndexesWas", 1).with("ns", format!("{}.{}", db, coll)).with("n", c.docs.len() as i32)),
                 None => Err(err("ns not found", 26)),
             }
+        }
+        "createIndexes" => {
+            let coll = coll_name(cmd, "createIndexes")?;
+            let specs = cmd.get_array("indexes").cloned().ok_or_else(|| err("missing indexes", 9))?;
+            let dbm = st.dbs.entry(db.to_string()).or_default();
+            let created = !dbm.contains_key(&coll);
+            let c = dbm.entry(coll.clone()).or_insert_with(Collection::new);
+            let before = c.indexes.len() as i32 + 1;
+            for spec in specs {
+                let spec = spec.as_document().cloned().ok_or_else(|| err("index spec must be a document", 9))?;
+                let key = spec.get_doc("key").cloned().filter(|k| !k.is_empty()).ok_or_else(|| err("Index spec is missing the 'key' field", 9))?;
+                let name = spec.get_str("name").map(String::from).unwrap_or_else(|| index_name(&key));
+                let unique = spec.get_bool("unique").unwrap_or(false);
+                match c.indexes.iter().find(|(n, _, _)| *n == name) {
+                    Some((_, k, u)) if *k == key && *u == unique => {}
+                    Some(_) => return Err(err(format!("An existing index has the same name as the requested index: {}", name), 86)),
+                    None => {
+                        let candidate = (name, key, unique);
+                        let mut seen = Collection { indexes: vec![candidate.clone()], ..Collection::new() };
+                        for (seq, d) in &c.docs {
+                            if let Some((index, k)) = seen.unique_violation(d) {
+                                return Err(err(format!("Index build failed: E11000 duplicate key error collection: {}.{} index: {} dup key: {{ {} }}", db, coll, index, k), 11000));
+                            }
+                            seen.docs.push((*seq, d.clone()));
+                        }
+                        c.indexes.push(candidate);
+                    }
+                }
+            }
+            Ok(Document::new().with("createdCollectionAutomatically", created).with("numIndexesBefore", before).with("numIndexesAfter", c.indexes.len() as i32 + 1))
+        }
+        "listIndexes" => {
+            let coll = coll_name(cmd, "listIndexes")?;
+            let c = st.dbs.get(db).and_then(|d| d.get(&coll)).ok_or_else(|| err(format!("ns does not exist: {}.{}", db, coll), 26))?;
+            let mut out = vec![Document::new().with("v", 2).with("key", Document::new().with("_id", 1)).with("name", "_id_")];
+            for (name, key, unique) in &c.indexes {
+                let mut d = Document::new().with("v", 2).with("key", key.clone()).with("name", name.as_str());
+                if *unique {
+                    d.insert("unique", true);
+                }
+                out.push(d);
+            }
+            Ok(cursor_reply(0, &format!("{}.{}", db, coll), "firstBatch", out, None))
+        }
+        "dropIndexes" | "deleteIndexes" => {
+            let coll = coll_name(cmd, name)?;
+            let c = st.dbs.get_mut(db).and_then(|d| d.get_mut(&coll)).ok_or_else(|| err(format!("ns not found {}.{}", db, coll), 26))?;
+            let was = c.indexes.len() as i32 + 1;
+            match cmd.get("index") {
+                Some(Bson::String(n)) if n == "*" => c.indexes.clear(),
+                Some(Bson::String(n)) if n == "_id_" => return Err(err("cannot drop _id index", 72)),
+                Some(Bson::String(n)) => {
+                    let n = n.clone();
+                    let len = c.indexes.len();
+                    c.indexes.retain(|(x, _, _)| *x != n);
+                    if c.indexes.len() == len {
+                        return Err(err(format!("index not found with name [{}]", n), 27));
+                    }
+                }
+                Some(Bson::Document(k)) => {
+                    let len = c.indexes.len();
+                    c.indexes.retain(|(_, x, _)| x != k);
+                    if c.indexes.len() == len {
+                        return Err(err("can't find index with key", 27));
+                    }
+                }
+                _ => return Err(err("missing index", 9)),
+            }
+            Ok(Document::new().with("nIndexesWas", was))
         }
         "dropDatabase" => {
             st.dbs.remove(db);

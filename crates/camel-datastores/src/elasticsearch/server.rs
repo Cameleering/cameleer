@@ -259,7 +259,18 @@ fn ndjson(req: &HttpRequest) -> Result<Vec<Value>, HttpResponse> {
     req.body_text().lines().filter(|l| !l.trim().is_empty()).map(|l| camel_core::json::parse(l).map_err(|e| error(400, "parse_exception", &e.message))).collect()
 }
 
+/// Elasticsearch 7.14+ marks every response with `X-Elastic-Product: Elasticsearch`; the
+/// official clients refuse to talk to servers without it (OpenSearch does not send it).
 fn handle(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
+    let resp = handle_request(sh, req);
+    if sh.cfg.distribution.is_some() {
+        resp
+    } else {
+        resp.with_header("X-Elastic-Product", "Elasticsearch")
+    }
+}
+
+fn handle_request(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
     sh.requests.lock().unwrap().push(format!("{} {}", req.method, req.path));
     if !authorized(&sh.cfg, req) {
         return error(401, "security_exception", "missing authentication credentials for REST request").with_header("WWW-Authenticate", "Basic realm=\"security\" charset=\"UTF-8\"");
@@ -288,7 +299,7 @@ fn handle(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
             let n = (*size).min(rest.len());
             let page: Vec<Value> = rest.drain(..n).collect();
             let total = *total;
-            json(200, Value::object([("_scroll_id", Value::from(id)), ("took", Value::Int(1)), ("timed_out", Value::Bool(false)), ("hits", Value::object([("total", Value::object([("value", Value::Int(total as i64)), ("relation", Value::from("eq"))])), ("hits", Value::Array(page))]))]))
+            json(200, Value::object([("_scroll_id", Value::from(id)), ("took", Value::Int(1)), ("timed_out", Value::Bool(false)), ("_shards", Value::object([("total", 1), ("successful", 1), ("skipped", 0), ("failed", 0)])), ("hits", Value::object([("total", Value::object([("value", Value::Int(total as i64)), ("relation", Value::from("eq"))])), ("hits", Value::Array(page))]))]))
         }
         ("DELETE", ["_search", "scroll", ..]) => {
             let body = body_json(req).unwrap_or(Value::Null);
@@ -308,12 +319,23 @@ fn handle(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
             json(200, Value::object([("succeeded", Value::Bool(true)), ("num_freed", Value::Int(freed as i64))]))
         }
         ("GET" | "HEAD", []) => {
-            let mut version = Value::object([("number", "8.11.0"), ("lucene_version", "9.8.0")]);
+            let mut version = Value::object([
+                ("number", Value::from("8.11.0")),
+                ("build_flavor", Value::from("default")),
+                ("build_type", Value::from("docker")),
+                ("build_hash", Value::from("d9ec3fa628c7b0ba3d25692e277ba26814820b20")),
+                ("build_date", Value::from("2023-11-04T10:04:57.184859352Z")),
+                ("build_snapshot", Value::Bool(false)),
+                ("lucene_version", Value::from("9.8.0")),
+                ("minimum_wire_compatibility_version", Value::from("7.17.0")),
+                ("minimum_index_compatibility_version", Value::from("7.0.0")),
+            ]);
             if let (Some(d), Some(o)) = (&sh.cfg.distribution, version.as_object_mut()) {
+                o.remove("build_flavor");
                 o.insert("distribution".into(), Value::from(d.as_str()));
                 o.insert("number".into(), Value::from("2.11.0"));
             }
-            json(200, Value::object([("name", Value::from("embedded")), ("cluster_name", Value::from("embedded-cluster")), ("version", version), ("tagline", Value::from("You Know, for Search"))]))
+            json(200, Value::object([("name", Value::from("embedded")), ("cluster_name", Value::from("embedded-cluster")), ("cluster_uuid", Value::from("x7Jb8ZqTRKqKpQnJfWQ7uA")), ("version", version), ("tagline", Value::from("You Know, for Search"))]))
         }
         ("POST", ["_bulk"]) => bulk(sh, req, None),
         ("POST", [idx, "_bulk"]) => bulk(sh, req, Some(idx)),
@@ -338,6 +360,41 @@ fn handle(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
             let Some(i) = indices.get(*idx) else { return not_found_index(idx) };
             match run_query(i, b.get("query").unwrap_or(&Value::object([("match_all", Value::object(Vec::<(String, Value)>::new()))]))) {
                 Ok(hits) => json(200, Value::object([("count", hits.len() as i64)])),
+                Err(e) => error(400, "parsing_exception", &e),
+            }
+        }
+        ("POST", [idx, "_delete_by_query"]) => {
+            let b = match body_json(req) {
+                Ok(b) => b,
+                Err(e) => return e,
+            };
+            let mut indices = sh.indices.lock().unwrap();
+            let Some(i) = indices.get_mut(*idx) else { return not_found_index(idx) };
+            let q = b.get("query").cloned().unwrap_or_else(|| Value::object([("match_all", Value::object(Vec::<(String, Value)>::new()))]));
+            match run_query(i, &q) {
+                Ok(hits) => {
+                    let n = hits.len() as i64;
+                    for (id, _) in hits {
+                        i.delete(&id);
+                    }
+                    json(
+                        200,
+                        Value::object([
+                            ("took", Value::Int(1)),
+                            ("timed_out", Value::Bool(false)),
+                            ("total", Value::Int(n)),
+                            ("deleted", Value::Int(n)),
+                            ("batches", Value::Int(if n > 0 { 1 } else { 0 })),
+                            ("version_conflicts", Value::Int(0)),
+                            ("noops", Value::Int(0)),
+                            ("retries", Value::object([("bulk", 0), ("search", 0)])),
+                            ("throttled_millis", Value::Int(0)),
+                            ("requests_per_second", Value::Float(-1.0)),
+                            ("throttled_until_millis", Value::Int(0)),
+                            ("failures", Value::Array(vec![])),
+                        ]),
+                    )
+                }
                 Err(e) => error(400, "parsing_exception", &e),
             }
         }
@@ -906,6 +963,16 @@ fn search_all(sh: &Shared, index: Option<&str>, body: &Value, req: &HttpRequest)
         }
     });
     let total = hits.len();
+    let aggs = match body.get("aggs").or_else(|| body.get("aggregations")) {
+        Some(spec) => {
+            let sources: Vec<&Value> = hits.iter().map(|h| &h.3).collect();
+            match aggregate(spec, &sources) {
+                Ok(a) => Some(a),
+                Err(e) => return error(400, "parsing_exception", &e),
+            }
+        }
+        None => None,
+    };
     let qp = |k: &str| req.query_param(k).and_then(|v| v.parse::<i64>().ok());
     let from = body.get("from").and_then(|v| v.as_i64()).or_else(|| qp("from")).unwrap_or(0).max(0) as usize;
     let size = body.get("size").and_then(|v| v.as_i64()).or_else(|| qp("size")).unwrap_or(10).max(0) as usize;
@@ -948,7 +1015,87 @@ fn search_all(sh: &Shared, index: Option<&str>, body: &Value, req: &HttpRequest)
     if let (Some(id), Some(o)) = (scroll_id, out.as_object_mut()) {
         o.insert("_scroll_id".into(), Value::from(id));
     }
+    if let (Some(a), Some(o)) = (aggs, out.as_object_mut()) {
+        o.insert("aggregations".into(), a);
+    }
     json(200, out)
+}
+
+/// Bucket and metric aggregations over the matching documents: `terms` (with `size`,
+/// `min_doc_count` and sub-aggregations), `avg`, `sum`, `min`, `max`, `value_count`,
+/// `cardinality` and `stats`.
+fn aggregate(spec: &Value, docs: &[&Value]) -> Result<Value, String> {
+    let Some(spec) = spec.as_object() else { return Err("[aggs] must be an object".into()) };
+    let mut out = Vec::new();
+    for (name, def) in spec.iter() {
+        let def_obj = def.as_object().ok_or_else(|| format!("aggregation [{}] must be an object", name))?;
+        let sub = def_obj.get("aggs").or_else(|| def_obj.get("aggregations"));
+        let (kind, params) = def_obj.iter().find(|(k, _)| k.as_str() != "aggs" && k.as_str() != "aggregations").ok_or_else(|| format!("Missing definition for aggregation [{}]", name))?;
+        let field = params.get("field").map(|f| f.to_string()).unwrap_or_default();
+        let values = |d: &Value| field_values(d, &field);
+        let numbers: Vec<f64> = docs.iter().flat_map(|d| values(d)).filter_map(|v| v.as_f64()).collect();
+        let num = |v: Option<f64>| v.map(Value::Float).unwrap_or(Value::Null);
+        let result = match kind.as_str() {
+            "terms" => {
+                let size = params.get("size").and_then(|v| v.as_i64()).unwrap_or(10).max(0) as usize;
+                let min = params.get("min_doc_count").and_then(|v| v.as_i64()).unwrap_or(1);
+                let mut buckets: Vec<(Value, Vec<&Value>)> = Vec::new();
+                for d in docs {
+                    let mut seen: Vec<Value> = Vec::new();
+                    for v in values(d) {
+                        if seen.contains(&v) {
+                            continue;
+                        }
+                        seen.push(v.clone());
+                        match buckets.iter_mut().find(|(k, _)| *k == v) {
+                            Some((_, ds)) => ds.push(d),
+                            None => buckets.push((v, vec![d])),
+                        }
+                    }
+                }
+                // doc_count desc, then key asc (Elasticsearch's default order)
+                buckets.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then_with(|| camel_core::value::compare_values(&a.0, &b.0).unwrap_or(std::cmp::Ordering::Equal)));
+                let others: usize = buckets.iter().skip(size).map(|b| b.1.len()).sum();
+                let mut list = Vec::new();
+                for (key, ds) in buckets.into_iter().filter(|b| b.1.len() as i64 >= min).take(size) {
+                    let mut b = Value::object([("key", key), ("doc_count", Value::Int(ds.len() as i64))]);
+                    if let Some(sub) = sub {
+                        if let (Value::Object(extra), Some(o)) = (aggregate(sub, &ds)?, b.as_object_mut()) {
+                            for (k, v) in extra.iter() {
+                                o.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                    list.push(b);
+                }
+                Value::object([("doc_count_error_upper_bound", Value::Int(0)), ("sum_other_doc_count", Value::Int(others as i64)), ("buckets", Value::Array(list))])
+            }
+            "avg" => Value::object([("value", num((!numbers.is_empty()).then(|| numbers.iter().sum::<f64>() / numbers.len() as f64)))]),
+            "sum" => Value::object([("value", Value::Float(numbers.iter().sum()))]),
+            "min" => Value::object([("value", num(numbers.iter().cloned().reduce(f64::min)))]),
+            "max" => Value::object([("value", num(numbers.iter().cloned().reduce(f64::max)))]),
+            "value_count" => Value::object([("value", Value::Int(docs.iter().map(|d| values(d).len() as i64).sum()))]),
+            "cardinality" => {
+                let mut distinct: Vec<Value> = Vec::new();
+                for v in docs.iter().flat_map(|d| values(d)) {
+                    if !distinct.contains(&v) {
+                        distinct.push(v);
+                    }
+                }
+                Value::object([("value", Value::Int(distinct.len() as i64))])
+            }
+            "stats" => Value::object([
+                ("count", Value::Int(numbers.len() as i64)),
+                ("min", num(numbers.iter().cloned().reduce(f64::min))),
+                ("max", num(numbers.iter().cloned().reduce(f64::max))),
+                ("avg", num((!numbers.is_empty()).then(|| numbers.iter().sum::<f64>() / numbers.len() as f64))),
+                ("sum", Value::Float(numbers.iter().sum())),
+            ]),
+            other => return Err(format!("Unknown aggregation type [{}] did you mean [terms]?", other)),
+        };
+        out.push((name.clone(), result));
+    }
+    Ok(Value::object(out))
 }
 
 #[cfg(test)]

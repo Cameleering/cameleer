@@ -37,6 +37,9 @@ pub struct CassandraServer {
     tcp: TcpServer,
 }
 
+/// `schema_version` reported by every node (drivers wait for schema agreement on it).
+const SCHEMA_VERSION: &str = "5c4e6d61-0000-4000-8000-000000000001";
+
 impl CassandraServer {
     pub fn start() -> io::Result<CassandraServer> {
         Self::start_with(CassandraServerConfig::default())
@@ -47,12 +50,17 @@ impl CassandraServer {
         let mut schema = Schema::default();
         for q in [
             "CREATE KEYSPACE system WITH replication = {'class': 'LocalStrategy'}",
-            "CREATE TABLE system.local (key text PRIMARY KEY, release_version text, cluster_name text, cql_version text, data_center text, rack text, partitioner text, tokens set<text>)",
-            "CREATE TABLE system.peers_v2 (peer inet, peer_port int, native_address inet, native_port int, data_center text, rack text, tokens set<text>, PRIMARY KEY ((peer), peer_port))",
-            "INSERT INTO system.local (key, release_version, cluster_name, cql_version, data_center, rack, partitioner) VALUES ('local', '4.1.0', 'Embedded Cluster', '3.4.6', 'datacenter1', 'rack1', 'org.apache.cassandra.dht.Murmur3Partitioner')",
+            "CREATE TABLE system.local (key text PRIMARY KEY, bootstrapped text, broadcast_address inet, broadcast_port int, cluster_name text, cql_version text, data_center text, host_id uuid, listen_address inet, listen_port int, native_protocol_version text, partitioner text, rack text, release_version text, rpc_address inet, rpc_port int, schema_version uuid, tokens set<text>)",
+            "CREATE TABLE system.peers_v2 (peer inet, peer_port int, data_center text, host_id uuid, native_address inet, native_port int, preferred_ip inet, preferred_port int, rack text, release_version text, schema_version uuid, tokens set<text>, PRIMARY KEY ((peer), peer_port))",
+            "CREATE TABLE system.peers (peer inet PRIMARY KEY, data_center text, host_id uuid, preferred_ip inet, rack text, release_version text, rpc_address inet, schema_version uuid, tokens set<text>)",
+            "INSERT INTO system.local (key, bootstrapped, broadcast_address, broadcast_port, cluster_name, cql_version, data_center, host_id, listen_address, listen_port, native_protocol_version, partitioner, rack, release_version, rpc_address, rpc_port, schema_version) VALUES ('local', 'COMPLETED', '127.0.0.1', 7000, 'Embedded Cluster', '3.4.6', 'datacenter1', 6c6f6361-6c00-4000-8000-000000000001, '127.0.0.1', 7000, '4', 'org.apache.cassandra.dht.Murmur3Partitioner', 'rack1', '4.1.0', '127.0.0.1', 9042, 5c4e6d61-0000-4000-8000-000000000001)",
         ] {
             let (st, _) = engine::parse(q).expect("bootstrap statement");
             schema.execute(&st, &[], None).expect("bootstrap");
+        }
+        for q in engine::SYSTEM_SCHEMA_DDL {
+            let (st, _) = engine::parse(q).expect("system_schema statement");
+            schema.execute(&st, &[], None).expect("system_schema");
         }
         let shared = Arc::new(Shared { cfg, schema: Mutex::new(schema), prepared: Mutex::new(HashMap::new()), consistencies: Mutex::new(Vec::new()), queries: Mutex::new(Vec::new()) });
         let sh = shared.clone();
@@ -68,8 +76,12 @@ impl CassandraServer {
         let set = |ts: &[i64]| format!("{{{}}}", ts.iter().map(|t| format!("'{}'", t)).collect::<Vec<_>>().join(", "));
         let _ = self.execute(&format!("UPDATE system.local SET tokens = {} WHERE key = 'local'", set(tokens)));
         let _ = self.execute("TRUNCATE system.peers_v2");
-        for (h, p, ts) in peers {
-            let _ = self.execute(&format!("INSERT INTO system.peers_v2 (peer, peer_port, native_address, native_port, data_center, rack, tokens) VALUES ('{}', 7000, '{}', {}, 'datacenter1', 'rack1', {})", h, h, p, set(ts)));
+        let _ = self.execute("TRUNCATE system.peers");
+        for (i, (h, p, ts)) in peers.iter().enumerate() {
+            let host_id = format!("6c6f6361-6c00-4000-8000-{:012x}", i + 2);
+            let common = format!("data_center, rack, release_version, schema_version, host_id, tokens) VALUES ('datacenter1', 'rack1', '4.1.0', {}, {}, {})", SCHEMA_VERSION, host_id, set(ts));
+            let _ = self.execute(&format!("INSERT INTO system.peers_v2 (peer, peer_port, native_address, native_port, {}", common).replacen("VALUES (", &format!("VALUES ('{}', 7000, '{}', {}, ", h, h, p), 1));
+            let _ = self.execute(&format!("INSERT INTO system.peers (peer, rpc_address, {}", common).replacen("VALUES (", &format!("VALUES ('{}', '{}', ", h, h), 1));
         }
     }
 
@@ -314,6 +326,9 @@ fn run(sh: &Shared, conn: &mut Conn, stream: i16, q: &str, params: &QueryParams)
     sh.consistencies.lock().unwrap().push(params.consistency);
     let (st, n) = engine::parse(q).map_err(|e| (e, None))?;
     let mut schema = sh.schema.lock().unwrap();
+    if q.to_ascii_lowercase().contains("system_schema") {
+        schema.refresh_system_schema();
+    }
     let ks = conn.keyspace.clone();
     let mut binds = Vec::new();
     if n > 0 || !params.values.is_empty() {

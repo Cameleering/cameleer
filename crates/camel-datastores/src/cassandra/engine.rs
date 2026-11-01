@@ -986,7 +986,116 @@ fn resolve_udts(t: &CqlType, ks: &str, types: &BTreeMap<String, Vec<(String, Cql
     })
 }
 
+/// `system_schema` tables (Cassandra 3.0+ schema tables read by drivers' metadata code).
+pub const SYSTEM_SCHEMA_DDL: &[&str] = &[
+    "CREATE KEYSPACE system_schema WITH replication = {'class': 'LocalStrategy'}",
+    "CREATE TABLE system_schema.keyspaces (keyspace_name text PRIMARY KEY, durable_writes boolean, replication map<text, text>)",
+    "CREATE TABLE system_schema.tables (keyspace_name text, table_name text, bloom_filter_fp_chance double, caching map<text, text>, comment text, compaction map<text, text>, compression map<text, text>, crc_check_chance double, dclocal_read_repair_chance double, default_time_to_live int, extensions map<text, blob>, flags set<text>, gc_grace_seconds int, id uuid, max_index_interval int, memtable_flush_period_in_ms int, min_index_interval int, read_repair_chance double, speculative_retry text, PRIMARY KEY (keyspace_name, table_name))",
+    "CREATE TABLE system_schema.columns (keyspace_name text, table_name text, column_name text, clustering_order text, column_name_bytes blob, kind text, position int, type text, PRIMARY KEY (keyspace_name, table_name, column_name))",
+    "CREATE TABLE system_schema.types (keyspace_name text, type_name text, field_names list<text>, field_types list<text>, PRIMARY KEY (keyspace_name, type_name))",
+    "CREATE TABLE system_schema.functions (keyspace_name text, function_name text, argument_types list<text>, argument_names list<text>, body text, called_on_null_input boolean, language text, return_type text, PRIMARY KEY (keyspace_name, function_name, argument_types))",
+    "CREATE TABLE system_schema.aggregates (keyspace_name text, aggregate_name text, argument_types list<text>, final_func text, initcond text, return_type text, state_func text, state_type text, PRIMARY KEY (keyspace_name, aggregate_name, argument_types))",
+    "CREATE TABLE system_schema.triggers (keyspace_name text, table_name text, trigger_name text, options map<text, text>, PRIMARY KEY (keyspace_name, table_name, trigger_name))",
+    "CREATE TABLE system_schema.indexes (keyspace_name text, table_name text, index_name text, kind text, options map<text, text>, PRIMARY KEY (keyspace_name, table_name, index_name))",
+    "CREATE TABLE system_schema.views (keyspace_name text, view_name text, base_table_id uuid, base_table_name text, include_all_columns boolean, where_clause text, PRIMARY KEY (keyspace_name, view_name))",
+];
+
+/// A stable pseudo table id (UUID text) derived from the qualified name.
+fn table_uuid(ks: &str, t: &str) -> String {
+    let fnv = |data: &[u8], seed: u64| data.iter().fold(seed, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
+    let name = format!("{}.{}", ks, t);
+    let (a, b) = (fnv(name.as_bytes(), 0xcbf29ce484222325), fnv(name.as_bytes(), 0x84222325cbf29ce4));
+    let x = format!("{:016x}{:016x}", a, b);
+    format!("{}-{}-4{}-a{}-{}", &x[0..8], &x[8..12], &x[13..16], &x[17..20], &x[20..32])
+}
+
 impl Schema {
+    /// Rebuilds the `system_schema` rows from the current keyspaces, tables, columns, user
+    /// types and secondary indexes (drivers read them to build their schema metadata).
+    pub fn refresh_system_schema(&mut self) {
+        let text = |s: &str| Value::String(s.to_string());
+        let map = |pairs: &[(&str, &str)]| Value::Object(pairs.iter().map(|(k, v)| (k.to_string(), Value::String(v.to_string()))).collect());
+        let (mut keyspaces, mut tables, mut columns, mut types, mut indexes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for (ks, tbls) in &self.keyspaces {
+            let strategy = if ks.starts_with("system") { "org.apache.cassandra.locator.LocalStrategy" } else { "org.apache.cassandra.locator.SimpleStrategy" };
+            let mut repl = vec![("class", strategy)];
+            if !ks.starts_with("system") {
+                repl.push(("replication_factor", "1"));
+            }
+            let mut r = Row::new();
+            r.insert("keyspace_name".into(), text(ks));
+            r.insert("durable_writes".into(), Value::Bool(true));
+            r.insert("replication".into(), map(&repl));
+            keyspaces.push(r);
+            for (name, t) in tbls {
+                let mut r = Row::new();
+                r.insert("keyspace_name".into(), text(ks));
+                r.insert("table_name".into(), text(name));
+                r.insert("bloom_filter_fp_chance".into(), Value::Float(0.01));
+                r.insert("caching".into(), map(&[("keys", "ALL"), ("rows_per_partition", "NONE")]));
+                r.insert("comment".into(), text(""));
+                r.insert("compaction".into(), map(&[("class", "org.apache.cassandra.db.compaction.SizeTieredCompactionStrategy"), ("max_threshold", "32"), ("min_threshold", "4")]));
+                r.insert("compression".into(), map(&[("chunk_length_in_kb", "16"), ("class", "org.apache.cassandra.io.compress.LZ4Compressor")]));
+                r.insert("crc_check_chance".into(), Value::Float(1.0));
+                r.insert("dclocal_read_repair_chance".into(), Value::Float(0.0));
+                r.insert("default_time_to_live".into(), Value::Int(0));
+                r.insert("flags".into(), Value::Array(vec![text("compound")]));
+                r.insert("gc_grace_seconds".into(), Value::Int(864000));
+                r.insert("id".into(), text(&table_uuid(ks, name)));
+                r.insert("max_index_interval".into(), Value::Int(2048));
+                r.insert("memtable_flush_period_in_ms".into(), Value::Int(0));
+                r.insert("min_index_interval".into(), Value::Int(128));
+                r.insert("read_repair_chance".into(), Value::Float(0.0));
+                r.insert("speculative_retry".into(), text("99p"));
+                tables.push(r);
+                for (cname, ctype) in &t.cols {
+                    let (kind, position) = if let Some(i) = t.partition.iter().position(|c| c == cname) {
+                        ("partition_key", i as i64)
+                    } else if let Some(i) = t.clustering.iter().position(|c| c == cname) {
+                        ("clustering", i as i64)
+                    } else {
+                        ("regular", -1)
+                    };
+                    let mut r = Row::new();
+                    r.insert("keyspace_name".into(), text(ks));
+                    r.insert("table_name".into(), text(name));
+                    r.insert("column_name".into(), text(cname));
+                    r.insert("clustering_order".into(), text(if kind == "clustering" { "asc" } else { "none" }));
+                    r.insert("column_name_bytes".into(), Value::Bytes(cname.as_bytes().to_vec()));
+                    r.insert("kind".into(), text(kind));
+                    r.insert("position".into(), Value::Int(position));
+                    r.insert("type".into(), text(&ctype.name()));
+                    columns.push(r);
+                }
+                for col in &t.indexes {
+                    let mut r = Row::new();
+                    r.insert("keyspace_name".into(), text(ks));
+                    r.insert("table_name".into(), text(name));
+                    r.insert("index_name".into(), text(&format!("{}_{}_idx", name, col)));
+                    r.insert("kind".into(), text("COMPOSITES"));
+                    r.insert("options".into(), map(&[("target", col.as_str())]));
+                    indexes.push(r);
+                }
+            }
+        }
+        for (ks, tys) in &self.types {
+            for (name, fields) in tys {
+                let mut r = Row::new();
+                r.insert("keyspace_name".into(), text(ks));
+                r.insert("type_name".into(), text(name));
+                r.insert("field_names".into(), Value::Array(fields.iter().map(|(n, _)| text(n)).collect()));
+                r.insert("field_types".into(), Value::Array(fields.iter().map(|(_, t)| text(&t.name())).collect()));
+                types.push(r);
+            }
+        }
+        let Some(sys) = self.keyspaces.get_mut("system_schema") else { return };
+        for (table, rows) in [("keyspaces", keyspaces), ("tables", tables), ("columns", columns), ("types", types), ("indexes", indexes)] {
+            if let Some(t) = sys.get_mut(table) {
+                t.rows = rows.into_iter().map(|r| (r, None)).collect();
+            }
+        }
+    }
+
     /// Partition key columns of a table.
     pub fn partition_key(&self, ks: &str, table: &str) -> Vec<String> {
         self.keyspaces.get(ks).and_then(|k| k.get(table)).map(|t| t.partition.clone()).unwrap_or_default()
