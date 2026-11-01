@@ -35,6 +35,8 @@ pub struct ClientConfig {
     pub username: String,
     pub password: Option<String>,
     pub private_keys: Vec<SshPrivateKey>,
+    /// SSH agent socket whose identities are tried after `private_keys`.
+    pub agent: Option<std::path::PathBuf>,
     pub host_key_check: HostKeyCheck,
     pub transport: TransportConfig,
     pub connect_timeout: Duration,
@@ -57,6 +59,7 @@ impl ClientConfig {
             username: username.to_string(),
             password: None,
             private_keys: Vec::new(),
+            agent: None,
             host_key_check: HostKeyCheck::AcceptAny,
             transport: TransportConfig::default(),
             connect_timeout: Duration::from_secs(10),
@@ -273,7 +276,7 @@ impl SshClient {
                 continue;
             }
             let ok = match method.as_str() {
-                "publickey" if !cfg.private_keys.is_empty() => {
+                "publickey" if !cfg.private_keys.is_empty() || cfg.agent.is_some() => {
                     tried.push("publickey");
                     let mut ok = false;
                     for key in &cfg.private_keys {
@@ -283,6 +286,20 @@ impl SshClient {
                         }
                         if !allowed.iter().any(|m| m == "publickey") {
                             break;
+                        }
+                    }
+                    if !ok && allowed.iter().any(|m| m == "publickey") {
+                        if let Some(path) = &cfg.agent {
+                            let mut agent = crate::agent::AgentClient::connect(path)?;
+                            for id in agent.identities()? {
+                                if self.auth_publickey_agent(&user, &mut agent, &id, &mut allowed)? {
+                                    ok = true;
+                                    break;
+                                }
+                                if !allowed.iter().any(|m| m == "publickey") {
+                                    break;
+                                }
+                            }
                         }
                     }
                     ok
@@ -333,6 +350,27 @@ impl SshClient {
         let sig = key.sign(alg, &data.buf)?;
         let mut w = self.auth_request(user, "publickey");
         w.bool(true).str(alg).string(&blob).string(&sig);
+        self.t.send(&w.finish())?;
+        let p = self.recv_auth()?;
+        Self::auth_outcome(&p, allowed)
+    }
+
+    fn auth_publickey_agent(&mut self, user: &str, agent: &mut crate::agent::AgentClient, id: &crate::agent::AgentIdentity, allowed: &mut Vec<String>) -> SshResult<bool> {
+        let Ok(public) = id.public_key() else { return Ok(false) };
+        let flags = match &public {
+            SshPublicKey::Rsa { .. } => match self.t.server_sig_algs() {
+                Some(algs) if algs.iter().any(|a| a == "rsa-sha2-512") => crate::agent::RSA_SHA2_512,
+                _ => crate::agent::RSA_SHA2_256,
+            },
+            _ => 0,
+        };
+        let alg = crate::agent::algorithm_for(&public, flags);
+        let mut data = Writer::new();
+        data.string(self.t.session_id());
+        data.u8(msg::USERAUTH_REQUEST).str(user).str("ssh-connection").str("publickey").bool(true).str(alg).string(&id.blob);
+        let sig = agent.sign(&id.blob, &data.buf, flags)?;
+        let mut w = self.auth_request(user, "publickey");
+        w.bool(true).str(alg).string(&id.blob).string(&sig);
         self.t.send(&w.finish())?;
         let p = self.recv_auth()?;
         Self::auth_outcome(&p, allowed)

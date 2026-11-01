@@ -7,6 +7,7 @@
 //! |---|---|
 //! | `username`, `password` | credentials (also from `user:password@` in the URI) |
 //! | `privateKeyFile` / `privateKeyUri` / `privateKey` | private key: path, `file:` URI, or the key text / `#bean` (an `SshPrivateKey` or `String` bound in the registry); OpenSSH or PEM format, unencrypted |
+//! | `useAgent` / `agentSocket` | authenticate with the identities of an SSH agent (`SSH_AUTH_SOCK` or the given socket) |
 //! | `privateKeyPassphrase` | decrypts passphrase-protected keys (OpenSSH bcrypt-pbkdf, PKCS#8 PBES2, legacy PEM) |
 //! | `knownHostsFile` / `knownHostsUri` / `knownHosts` | `known_hosts` path, URI or text |
 //! | `useUserKnownHostsFile` | also load `~/.ssh/known_hosts` (default true, sftp only) |
@@ -108,6 +109,12 @@ pub(crate) fn client_config(
         } else {
             cfg.private_keys.push(key_from_text(&k, passphrase)?);
         }
+    }
+    let use_agent = params.take_bool("useAgent", false)?;
+    if let Some(sock) = take_nonempty(params, "agentSocket") {
+        cfg.agent = Some(file_path(&sock));
+    } else if use_agent {
+        cfg.agent = Some(std::env::var_os("SSH_AUTH_SOCK").map(PathBuf::from).ok_or_else(|| CamelError::illegal_argument("useAgent=true but SSH_AUTH_SOCK is not set"))?);
     }
     let mut known = String::new();
     let mut have_known = false;

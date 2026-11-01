@@ -22,7 +22,8 @@
 //!   `aes128-ctr`, `aes192-ctr`, `aes256-ctr`
 //! * MACs (CTR ciphers): `hmac-sha2-256(-etm@openssh.com)`, `hmac-sha2-512(-etm@openssh.com)`
 //! * compression: `none` only
-//! * user authentication: `publickey` (Ed25519, ECDSA P-256/P-384, RSA with SHA-2), `password`,
+//! * user authentication: `publickey` (Ed25519, ECDSA P-256/P-384, RSA with SHA-2; local keys,
+//!   also passphrase-protected, or an SSH agent via [`agent`]), `password`,
 //!   `keyboard-interactive`
 //!
 //! ```no_run
@@ -52,6 +53,7 @@
 //! certificates (`*-cert-v01@openssh.com`), agent forwarding, port forwarding,
 //! compression and GSSAPI are not supported.
 
+pub mod agent;
 pub mod client;
 pub mod component;
 pub mod crypto;
