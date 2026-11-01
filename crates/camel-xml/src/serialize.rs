@@ -32,6 +32,9 @@ pub struct OutputOptions {
     pub cdata_section_elements: Vec<(String, String)>,
     pub media_type: Option<String>,
     pub version: String,
+    /// `html` method: add `<META http-equiv="Content-Type" ...>` after `<head>`
+    /// (XSLT 2.0 `include-content-type`; default yes).
+    pub include_content_type: bool,
 }
 
 impl Default for OutputOptions {
@@ -48,6 +51,7 @@ impl Default for OutputOptions {
             cdata_section_elements: Vec::new(),
             media_type: None,
             version: "1.0".into(),
+            include_content_type: true,
         }
     }
 }
@@ -409,7 +413,25 @@ impl<'a> Serializer<'a> {
         }
         self.out.push('>');
         let indent = self.opts.indent && self.indentable(id);
+        let is_head = html && lower == "head" && self.opts.include_content_type;
+        if is_head {
+            if indent {
+                self.newline_indent(level + 1);
+            }
+            let media = self.opts.media_type.clone().unwrap_or_else(|| "text/html".into());
+            let meta = format!("<META http-equiv=\"Content-Type\" content=\"{}; charset={}\">", media, self.opts.encoding);
+            self.out.push_str(&meta);
+        }
         for &c in &n.children {
+            if is_head {
+                let cn = doc.node(c);
+                let is_ct_meta = cn.ty == NodeType::Element
+                    && cn.name.local.eq_ignore_ascii_case("meta")
+                    && cn.attrs.iter().any(|&a| doc.node(a).name.local.eq_ignore_ascii_case("http-equiv") && doc.node(a).value.eq_ignore_ascii_case("content-type"));
+                if is_ct_meta {
+                    continue;
+                }
+            }
             if indent {
                 let cn = doc.node(c);
                 if cn.ty == NodeType::Text && cn.value.trim().is_empty() {

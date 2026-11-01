@@ -20,9 +20,25 @@
 //! `exsl:node-set()` / `msxsl:node-set()` (result tree fragments may also be used as
 //! node-sets directly).
 //!
-//! XSLT 2.0 / 3.0 instructions (`xsl:for-each-group`, `xsl:function`, `xsl:sequence`,
-//! `xsl:analyze-string`, `xsl:result-document`, ...) without an `xsl:fallback` are rejected
-//! with a clear error, as are XPath 2.0 expressions.
+//! `xsl:sort` accepts `lang` and `collation` (codepoint, UCA / Saxon `strength=primary|
+//! secondary|tertiary` URIs; accents fold to their base letter, Swedish / Danish /
+//! Norwegian / Finnish / German alphabets via `lang`); `xsl:number` accepts
+//! `letter-value` (alphabetic / traditional) and `lang` (Greek, Cyrillic and Hebrew
+//! alphabets, Greek and Hebrew traditional numerals). The `html` output method adds the
+//! `META` content-type element after `<head>`.
+//!
+//! Stylesheets declaring `version="2.0"` (or higher) are compiled with XPath 2.0
+//! expressions ([`crate::xpath::XPath::compile_v2`]) and get the XSLT 2.0 core:
+//! `xsl:for-each-group` (`group-by`, `group-adjacent`, `group-starting-with`,
+//! `group-ending-with`, sorting, `current-group()`, `current-grouping-key()`),
+//! `xsl:function` (called from XPath, recursive, returning sequences), `xsl:sequence`,
+//! variables / parameters with `as` (sequence-valued), `xsl:analyze-string`
+//! (`matching-substring` / `non-matching-substring`, `regex-group()`), tunnel parameters,
+//! `xsl:result-document` (secondary outputs written to `href`, also returned in
+//! [`TransformResult::secondary`]), `xsl:next-match`, `xsl:namespace`, `xsl:perform-sort`,
+//! `xsl:value-of` with `separator`. Other XSLT 2.0 / 3.0 instructions (`xsl:iterate`,
+//! `xsl:try`, `xsl:merge`, schema-aware processing...) without an `xsl:fallback` are
+//! rejected with a clear error.
 
 mod exec;
 pub mod number;
@@ -64,6 +80,8 @@ pub(crate) struct Avt(pub Vec<AvtPart>);
 pub(crate) enum VarValue {
     Select(XPath),
     Body(Vec<Instr>),
+    /// A body evaluated as a sequence (XSLT 2.0 `as` attribute).
+    Seq(Vec<Instr>),
     Empty,
 }
 
@@ -71,6 +89,23 @@ pub(crate) enum VarValue {
 pub(crate) struct WithParam {
     pub name: Key,
     pub value: VarValue,
+    pub tunnel: bool,
+}
+
+/// How `xsl:for-each-group` forms groups.
+#[derive(Clone, Debug)]
+pub(crate) enum GroupKind {
+    By(XPath),
+    Adjacent(XPath),
+    StartingWith(Pattern),
+    EndingWith(Pattern),
+}
+
+/// An `xsl:function` (XSLT 2.0).
+#[derive(Debug)]
+pub(crate) struct Function {
+    pub params: Vec<Key>,
+    pub body: Vec<Instr>,
 }
 
 #[derive(Clone, Debug)]
@@ -79,6 +114,8 @@ pub(crate) struct SortSpec {
     pub data_type: Avt,
     pub order: Avt,
     pub case_order: Avt,
+    pub lang: Option<Avt>,
+    pub collation: Option<Avt>,
 }
 
 #[derive(Clone, Debug)]
@@ -90,13 +127,16 @@ pub(crate) struct NumberSpec {
     pub format: Avt,
     pub grouping_separator: Option<Avt>,
     pub grouping_size: Option<Avt>,
+    pub letter_value: Option<Avt>,
+    pub lang: Option<Avt>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum Instr {
     Text(String),
     RawText(String),
-    ValueOf { select: XPath, raw: bool },
+    ValueOf { select: XPath, raw: bool, separator: Option<Avt>, v2: bool },
+    ValueOfBody { body: Vec<Instr>, separator: Option<Avt>, raw: bool },
     LiteralElement { name: QName, ns: Vec<(String, String)>, attrs: Vec<(QName, Avt)>, use_sets: Vec<Key>, body: Vec<Instr> },
     Element { name: Avt, namespace: Option<Avt>, ns_ctx: Vec<(String, String)>, use_sets: Vec<Key>, body: Vec<Instr> },
     Attribute { name: Avt, namespace: Option<Avt>, ns_ctx: Vec<(String, String)>, body: Vec<Instr> },
@@ -113,6 +153,13 @@ pub(crate) enum Instr {
     CopyOf(XPath),
     Number(Box<NumberSpec>),
     Message { terminate: Avt, body: Vec<Instr> },
+    ForEachGroup { select: XPath, kind: GroupKind, sorts: Vec<SortSpec>, body: Vec<Instr> },
+    Sequence(XPath),
+    AnalyzeString { select: XPath, regex: Avt, flags: Avt, matching: Vec<Instr>, non_matching: Vec<Instr> },
+    ResultDocument { href: Avt, method: Option<Avt>, indent: Option<Avt>, omit_decl: Option<Avt>, body: Vec<Instr> },
+    NextMatch { params: Vec<WithParam> },
+    Namespace { name: Avt, select: Option<XPath>, body: Vec<Instr> },
+    PerformSort { select: Option<XPath>, sorts: Vec<SortSpec>, body: Vec<Instr> },
     /// An instruction that is not supported; fails when executed.
     Unsupported(String),
 }
@@ -121,6 +168,7 @@ pub(crate) enum Instr {
 pub(crate) struct Param {
     pub name: Key,
     pub value: VarValue,
+    pub tunnel: bool,
 }
 
 #[derive(Debug)]
@@ -172,12 +220,16 @@ pub struct Stylesheet {
     pub(crate) base_dir: Option<PathBuf>,
     pub(crate) source: Arc<Document>,
     pub(crate) version: f64,
+    pub(crate) functions: HashMap<(Key, usize), Arc<Function>>,
 }
 
 fn cerr(m: impl Into<String>) -> CamelError {
     crate::register_kinds();
     CamelError::new(crate::TRANSFORMER_CONFIGURATION_EXCEPTION, m.into())
 }
+
+/// XSLT 2.0 instructions implemented when the stylesheet version is 2.0 or higher.
+const XSLT2_IMPLEMENTED: &[&str] = &["for-each-group", "function", "sequence", "analyze-string", "result-document", "perform-sort", "next-match", "namespace"];
 
 const XSLT2_INSTRUCTIONS: &[&str] = &[
     "for-each-group",
@@ -237,6 +289,7 @@ struct Compiler {
     order: usize,
     version: f64,
     loading: Vec<PathBuf>,
+    functions: HashMap<(Key, usize), Arc<Function>>,
 }
 
 /// In-scope namespaces of a stylesheet element as a prefix resolver.
@@ -247,9 +300,9 @@ fn resolver<'a>(doc: &'a Document, el: NodeId) -> impl Fn(&str) -> Option<String
 impl Compiler {
     fn xpath(&self, doc: &Document, el: NodeId, text: &str) -> Result<XPath, CamelError> {
         let r = resolver(doc, el);
-        XPath::compile_with(text, &r).map_err(|e| {
-            let hint = if self.version >= 2.0 { " (XPath 2.0 expressions are not supported: rust-camel implements XSLT/XPath 1.0)" } else { "" };
-            cerr(format!("{}{} in <{}> (line {})", e.message, hint, doc.qualified_name(el), doc.node(el).line))
+        let compiled = if self.version >= 2.0 { XPath::compile_v2(text, &r) } else { XPath::compile_with(text, &r) };
+        compiled.map_err(|e| {
+            cerr(format!("{} in <{}> (line {})", e.message, doc.qualified_name(el), doc.node(el).line))
         })
     }
 
@@ -353,7 +406,53 @@ impl Compiler {
             return Ok(VarValue::Select(self.xpath(doc, el, s)?));
         }
         let body = self.body(doc, el)?;
-        Ok(if body.is_empty() && doc.children(el).is_empty() { VarValue::Empty } else { VarValue::Body(body) })
+        if body.is_empty() && doc.children(el).is_empty() {
+            return Ok(VarValue::Empty);
+        }
+        Ok(if self.version >= 2.0 && doc.attribute(el, "as").is_some() { VarValue::Seq(body) } else { VarValue::Body(body) })
+    }
+
+    fn opt_avt(&self, doc: &Document, el: NodeId, attr: &str) -> Result<Option<Avt>, CamelError> {
+        match doc.attribute(el, attr) {
+            Some(v) => Ok(Some(self.avt(doc, el, v)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn opt_xpath(&self, doc: &Document, el: NodeId, attr: &str) -> Result<Option<XPath>, CamelError> {
+        match doc.attribute(el, attr) {
+            Some(v) => Ok(Some(self.xpath(doc, el, v)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Body of an instruction, skipping `xsl:sort` / `xsl:param` children.
+    fn body_except(&mut self, doc: &Document, el: NodeId, skip: &[&str]) -> Result<Vec<Instr>, CamelError> {
+        let mut out = Vec::new();
+        let preserve = Self::preserve_space(doc, el);
+        for &c in doc.children(el) {
+            let n = doc.node(c);
+            match n.ty {
+                NodeType::Text => {
+                    if !n.value.trim().is_empty() || preserve {
+                        out.push(Instr::Text(n.value.clone()));
+                    }
+                }
+                NodeType::Element if n.name.uri == XSLT_NS && skip.contains(&n.name.local.as_str()) => {}
+                NodeType::Element if n.name.uri == XSLT_NS => {
+                    if let Some(i) = self.instruction(doc, c)? {
+                        out.push(i);
+                    }
+                }
+                NodeType::Element => out.push(self.literal(doc, c)?),
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
+    fn is_tunnel(doc: &Document, el: NodeId) -> bool {
+        matches!(doc.attribute(el, "tunnel").map(str::trim), Some("yes" | "true" | "1"))
     }
 
     fn with_params(&mut self, doc: &Document, el: NodeId) -> Result<Vec<WithParam>, CamelError> {
@@ -362,7 +461,7 @@ impl Compiler {
             if Self::is_xsl(doc, c, "with-param") {
                 let name = self.qname(doc, c, doc.attribute(c, "name").ok_or_else(|| cerr("xsl:with-param requires a name"))?)?;
                 let value = self.var_value(doc, c)?;
-                v.push(WithParam { name, value });
+                v.push(WithParam { name, value, tunnel: Self::is_tunnel(doc, c) });
             }
         }
         Ok(v)
@@ -377,6 +476,8 @@ impl Compiler {
                     data_type: self.avt(doc, c, doc.attribute(c, "data-type").unwrap_or("text"))?,
                     order: self.avt(doc, c, doc.attribute(c, "order").unwrap_or("ascending"))?,
                     case_order: self.avt(doc, c, doc.attribute(c, "case-order").unwrap_or("upper-first"))?,
+                    lang: self.opt_avt(doc, c, "lang")?,
+                    collation: self.opt_avt(doc, c, "collation")?,
                 });
             }
         }
@@ -487,10 +588,15 @@ impl Compiler {
                     Instr::Text(s)
                 }
             }
-            "value-of" => Instr::ValueOf {
-                select: self.xpath(doc, el, Self::required(doc, el, "select")?)?,
-                raw: doc.attribute(el, "disable-output-escaping") == Some("yes"),
-            },
+            "value-of" => {
+                let raw = doc.attribute(el, "disable-output-escaping") == Some("yes");
+                let separator = self.opt_avt(doc, el, "separator")?;
+                match doc.attribute(el, "select") {
+                    Some(sel) => Instr::ValueOf { select: self.xpath(doc, el, sel)?, raw, separator, v2: self.version >= 2.0 },
+                    None if self.version >= 2.0 => Instr::ValueOfBody { body: self.body(doc, el)?, separator, raw },
+                    None => return Err(cerr(format!("xsl:value-of requires the 'select' attribute (line {})", doc.node(el).line))),
+                }
+            }
             "apply-templates" => Instr::ApplyTemplates {
                 select: match doc.attribute(el, "select") {
                     Some(s) => Some(self.xpath(doc, el, s)?),
@@ -577,7 +683,10 @@ impl Compiler {
                     Some(v) => Some(self.avt(doc, el, v)?),
                     None => None,
                 },
+                letter_value: self.opt_avt(doc, el, "letter-value")?,
+                lang: self.opt_avt(doc, el, "lang")?,
             })),
+            s if self.version >= 2.0 && XSLT2_IMPLEMENTED.contains(&s) => return self.instruction_v2(doc, el, s).map(Some),
             "message" => Instr::Message { terminate: self.avt(doc, el, doc.attribute(el, "terminate").unwrap_or("no"))?, body: self.body(doc, el)? },
             "fallback" | "sort" | "with-param" | "when" | "otherwise" => return Ok(None),
             other => {
@@ -606,13 +715,71 @@ impl Compiler {
         }))
     }
 
+    /// XSLT 2.0 instructions.
+    fn instruction_v2(&mut self, doc: &Document, el: NodeId, local: &str) -> Result<Instr, CamelError> {
+        Ok(match local {
+            "for-each-group" => {
+                let select = self.xpath(doc, el, Self::required(doc, el, "select")?)?;
+                let kind = if let Some(e) = doc.attribute(el, "group-by") {
+                    GroupKind::By(self.xpath(doc, el, e)?)
+                } else if let Some(e) = doc.attribute(el, "group-adjacent") {
+                    GroupKind::Adjacent(self.xpath(doc, el, e)?)
+                } else if let Some(p) = doc.attribute(el, "group-starting-with") {
+                    GroupKind::StartingWith(self.pattern(doc, el, p)?)
+                } else if let Some(p) = doc.attribute(el, "group-ending-with") {
+                    GroupKind::EndingWith(self.pattern(doc, el, p)?)
+                } else {
+                    return Err(cerr(format!(
+                        "xsl:for-each-group requires one of group-by, group-adjacent, group-starting-with or group-ending-with (line {})",
+                        doc.node(el).line
+                    )));
+                };
+                let sorts = self.sorts(doc, el)?;
+                let body = self.body_except(doc, el, &["sort"])?;
+                Instr::ForEachGroup { select, kind, sorts, body }
+            }
+            "sequence" => Instr::Sequence(self.xpath(doc, el, Self::required(doc, el, "select")?)?),
+            "analyze-string" => {
+                let select = self.xpath(doc, el, Self::required(doc, el, "select")?)?;
+                let regex = self.avt(doc, el, Self::required(doc, el, "regex")?)?;
+                let flags = self.avt(doc, el, doc.attribute(el, "flags").unwrap_or(""))?;
+                let mut matching = Vec::new();
+                let mut non_matching = Vec::new();
+                for c in doc.element_children(el) {
+                    if Self::is_xsl(doc, c, "matching-substring") {
+                        matching = self.body(doc, c)?;
+                    } else if Self::is_xsl(doc, c, "non-matching-substring") {
+                        non_matching = self.body(doc, c)?;
+                    }
+                }
+                Instr::AnalyzeString { select, regex, flags, matching, non_matching }
+            }
+            "result-document" => Instr::ResultDocument {
+                href: self.avt(doc, el, doc.attribute(el, "href").unwrap_or(""))?,
+                method: self.opt_avt(doc, el, "method")?,
+                indent: self.opt_avt(doc, el, "indent")?,
+                omit_decl: self.opt_avt(doc, el, "omit-xml-declaration")?,
+                body: self.body(doc, el)?,
+            },
+            "next-match" => Instr::NextMatch { params: self.with_params(doc, el)? },
+            "namespace" => Instr::Namespace {
+                name: self.avt(doc, el, Self::required(doc, el, "name")?)?,
+                select: self.opt_xpath(doc, el, "select")?,
+                body: self.body(doc, el)?,
+            },
+            "perform-sort" => Instr::PerformSort { select: self.opt_xpath(doc, el, "select")?, sorts: self.sorts(doc, el)?, body: self.body_except(doc, el, &["sort"])? },
+            "function" => return Err(cerr(format!("xsl:function must be a top-level declaration (line {})", doc.node(el).line))),
+            other => return Err(cerr(format!("Unsupported XSLT 2.0 instruction xsl:{}", other))),
+        })
+    }
+
     fn template_params(&mut self, doc: &Document, el: NodeId) -> Result<Vec<Param>, CamelError> {
         let mut v = Vec::new();
         for c in doc.element_children(el) {
             if Self::is_xsl(doc, c, "param") {
                 let name = self.qname(doc, c, Self::required(doc, c, "name")?)?;
                 let value = self.var_value(doc, c)?;
-                v.push(Param { name, value });
+                v.push(Param { name, value, tunnel: Self::is_tunnel(doc, c) });
             }
         }
         Ok(v)
@@ -804,6 +971,24 @@ impl Compiler {
                     self.keys.push(KeyDef { name, pattern, use_expr });
                 }
                 "output" => self.output_decl(doc, c)?,
+                "function" if self.version >= 2.0 => {
+                    let name = self.qname(doc, c, Self::required(doc, c, "name")?)?;
+                    if name.0.is_empty() {
+                        return Err(cerr(format!("xsl:function name '{}' must have a namespace prefix", name.1)));
+                    }
+                    let params: Vec<Key> = self.template_params(doc, c)?.into_iter().map(|p| p.name).collect();
+                    let body = self.template_body(doc, c)?;
+                    let arity = params.len();
+                    let key = (name, arity);
+                    let replace = match self.functions.get(&key) {
+                        Some(_) => doc.attribute(c, "override").map(|v| v.trim() != "no").unwrap_or(true),
+                        None => true,
+                    };
+                    if replace {
+                        self.functions.insert(key, Arc::new(Function { params, body }));
+                    }
+                }
+                "character-map" | "import-schema" if self.version >= 2.0 => {}
                 "strip-space" | "preserve-space" => {
                     let strip = n.name.local == "strip-space";
                     for t in Self::required(doc, c, "elements")?.split_whitespace() {
@@ -905,6 +1090,9 @@ impl Compiler {
         if let Some(v) = doc.attribute(c, "version") {
             o.version = v.to_string();
         }
+        if let Some(v) = doc.attribute(c, "include-content-type") {
+            o.include_content_type = v.trim() != "no";
+        }
         if let Some(v) = doc.attribute(c, "cdata-section-elements") {
             for q in v.split_whitespace() {
                 let (u, l) = match q.split_once(':') {
@@ -971,6 +1159,7 @@ impl Stylesheet {
             order: 0,
             version: 1.0,
             loading: Vec::new(),
+            functions: HashMap::new(),
         };
         c.module(&doc, base_dir, None)?;
         let mut named = HashMap::new();
@@ -1015,6 +1204,7 @@ impl Stylesheet {
             base_dir: base_dir.map(|b| b.to_path_buf()),
             source: Arc::new(doc),
             version: c.version,
+            functions: c.functions,
         })
     }
 

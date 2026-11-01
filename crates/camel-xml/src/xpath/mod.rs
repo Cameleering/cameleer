@@ -349,6 +349,17 @@ pub fn eval_expr(e: &ast::Expr, ctx: &Ctx) -> Result<XValue, XPathError> {
     eval::eval(e, ctx)
 }
 
+/// Combine values into one sequence value (XPath 2.0 `(a, b, ...)` semantics on the
+/// 1.0 data model: node-sets stay node-sets, mixed / atomic items become an atomic sequence).
+pub fn sequence(items: Vec<XValue>, docs: &Docs) -> XValue {
+    eval::sequence_of(items, docs)
+}
+
+/// The items of a value: one single-node value per node, or the atomic value itself.
+pub fn items(v: XValue) -> Vec<XValue> {
+    eval::items_of(v)
+}
+
 /// Sort node references in document order and remove duplicates.
 pub fn sort_nodes(v: &mut Vec<XNode>) {
     v.sort();

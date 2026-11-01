@@ -375,7 +375,7 @@ pub(crate) fn eval(e: &Expr, ctx: &Ctx) -> R<XValue> {
                 items.push(eval(ret, c)?);
                 Ok(true)
             })?;
-            sequence_of(items, ctx)
+            sequence_of(items, ctx.docs)
         }
         Expr::Quantified(every, binds, test) => {
             let mut result = *every;
@@ -394,7 +394,7 @@ pub(crate) fn eval(e: &Expr, ctx: &Ctx) -> R<XValue> {
             for e in es {
                 items.push(eval(e, ctx)?);
             }
-            sequence_of(items, ctx)
+            sequence_of(items, ctx.docs)
         }
         Expr::Range(a, b) => {
             let (x, y) = (num_of(ctx, &eval(a, ctx)?), num_of(ctx, &eval(b, ctx)?));
@@ -465,7 +465,7 @@ fn for_each_binding(binds: &[(String, String, Expr)], ctx: &Ctx, f: &mut dyn FnM
 
 /// Combine values into one: a node-set when every item is a node (document order), the
 /// value itself for a single atomic item, else an atomic sequence of string values.
-pub(crate) fn sequence_of(items: Vec<XValue>, ctx: &Ctx) -> XValue {
+pub(crate) fn sequence_of(items: Vec<XValue>, docs: &Docs) -> XValue {
     if items.iter().all(|i| matches!(i, XValue::Nodes(_))) {
         let mut all: Vec<XNode> = items.into_iter().flat_map(|i| if let XValue::Nodes(n) = i { n } else { Vec::new() }).collect();
         all.sort();
@@ -476,8 +476,8 @@ pub(crate) fn sequence_of(items: Vec<XValue>, ctx: &Ctx) -> XValue {
     if flat.len() == 1 {
         return flat.into_iter().next().unwrap();
     }
-    let strings: Vec<String> = flat.iter().map(|v| v.to_string_value(ctx.docs)).collect();
-    ctx.docs.atomic_sequence(&strings)
+    let strings: Vec<String> = flat.iter().map(|v| v.to_string_value(docs)).collect();
+    docs.atomic_sequence(&strings)
 }
 
 fn arg_nodes_or_ctx(args: &[Expr], ctx: &Ctx, f: &str) -> R<Option<XNode>> {

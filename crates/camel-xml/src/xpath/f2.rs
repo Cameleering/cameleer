@@ -452,6 +452,9 @@ pub fn parse_duration(s: &str) -> Option<(bool, i64, i64, i64, i64, i64, f64)> {
 
 // ------------------------------------------------------------------ dispatch
 
+/// Names of the XPath 2.0 functions implemented here (for `function-available`).
+pub const FUNCTION_NAMES: &[&str] = &["abs", "adjust-date-to-timezone", "adjust-dateTime-to-timezone", "avg", "base-uri", "codepoints-to-string", "compare", "current-date", "current-dateTime", "current-time", "data", "day-from-date", "day-from-dateTime", "days-from-duration", "deep-equal", "default-collation", "distinct-values", "document-uri", "empty", "encode-for-uri", "error", "escape-html-uri", "exactly-one", "exists", "format-date", "format-dateTime", "format-time", "hours-from-dateTime", "hours-from-duration", "hours-from-time", "implicit-timezone", "index-of", "insert-before", "iri-to-uri", "lower-case", "matches", "max", "min", "minutes-from-dateTime", "minutes-from-duration", "minutes-from-time", "month-from-date", "month-from-dateTime", "months-from-duration", "node-name", "normalize-unicode", "one-or-more", "remove", "replace", "reverse", "round-half-to-even", "seconds-from-dateTime", "seconds-from-duration", "seconds-from-time", "static-base-uri", "string-join", "string-pad", "string-to-codepoints", "subsequence", "timezone-from-date", "timezone-from-dateTime", "timezone-from-time", "tokenize", "trace", "unordered", "upper-case", "year-from-date", "year-from-dateTime", "years-from-duration", "zero-or-one"];
+
 /// Call an XPath 2.0 function; `None` when unknown.
 pub fn call(uri: &str, local: &str, a: &[XValue], ctx: &Ctx) -> Option<R<XValue>> {
     if uri == XS_NS {
