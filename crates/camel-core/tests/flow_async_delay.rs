@@ -31,6 +31,7 @@ fn async_delay_releases_the_seda_consumer() {
     // the single seda consumer took all three exchanges without waiting for the delays
     assert!(mock(&ctx, "mock:a-before").wait_for_messages(3, Duration::from_millis(900)), "{:?}", start.elapsed());
     // the synchronous delay blocks the consumer: only the first exchange got through
+    assert!(mock(&ctx, "mock:s-before").wait_for_messages(1, Duration::from_millis(500)));
     assert_eq!(mock(&ctx, "mock:s-before").received_counter(), 1);
     assert!(mock(&ctx, "mock:a-after").wait_for_messages(3, Duration::from_secs(5)));
     // all three delays overlapped (about 1s, not 3s)
