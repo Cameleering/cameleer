@@ -367,7 +367,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     let segs = req.segments();
     let s: Vec<&str> = segs.iter().map(|x| x.as_str()).collect();
     if let ["v1", "operations", id] = s.as_slice() {
-        return ext::function_operation(st, id);
+        if let Some(r) = ext::function_operation(st, id) {
+            return r;
+        }
     }
     if let ["v1", "projects", "-", "serviceAccounts", target] = s.as_slice() {
         if let Some(email) = target.strip_suffix(":generateAccessToken") {

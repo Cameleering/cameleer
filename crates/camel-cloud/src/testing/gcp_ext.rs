@@ -934,19 +934,15 @@ pub(super) fn function_sources(st: &Shared, req: &ServerRequest) -> Option<Respo
     })
 }
 
-/// Long-running operations of Cloud Functions (`GET /v1/operations/{id}`).
-pub(super) fn function_operation(st: &Shared, id: &str) -> Response {
+/// Long-running operations of Cloud Functions (`GET /v1/operations/{id}`); None for other operations.
+pub(super) fn function_operation(st: &Shared, id: &str) -> Option<Response> {
     let mut s = st.lock().unwrap();
-    match s.ext.fn_ops.get_mut(&format!("operations/{}", id)) {
-        Some((resp, polls)) => {
-            if *polls > 0 {
-                *polls -= 1;
-                return Response::json(200, obj([("name", Value::from(format!("operations/{}", id))), ("done", Value::Bool(false))]).to_json());
-            }
-            Response::json(200, obj([("name", Value::from(format!("operations/{}", id))), ("done", Value::Bool(true)), ("response", resp.clone())]).to_json())
-        }
-        None => gerror(404, "NOT_FOUND", "Operation not found"),
+    let (resp, polls) = s.ext.fn_ops.get_mut(&format!("operations/{}", id))?;
+    if *polls > 0 {
+        *polls -= 1;
+        return Some(Response::json(200, obj([("name", Value::from(format!("operations/{}", id))), ("done", Value::Bool(false))]).to_json()));
     }
+    Some(Response::json(200, obj([("name", Value::from(format!("operations/{}", id))), ("done", Value::Bool(true)), ("response", resp.clone())]).to_json()))
 }
 
 fn functions(st: &Shared, req: &ServerRequest, project: &str, location: &str, rest: &[&str]) -> Response {
