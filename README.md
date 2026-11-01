@@ -70,7 +70,8 @@ $ cargo run -p camel-main --bin camel -- run hello.camel.yaml --max-seconds 5
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the internals, and [docs/FEATURES.md](docs/FEATURES.md) for
 the list of what's implemented compared with Apache Camel. [docs/INTEROP.md](docs/INTEROP.md) lists the
 real servers the components are verified against (PostgreSQL, Redis, Mosquitto, RabbitMQ with
-AMQP 0-9-1 / STOMP / AMQP 1.0 / MQTT, vsftpd, Postfix + Dovecot, nginx, JDK JSSE) and the bugs
+AMQP 0-9-1 / STOMP / AMQP 1.0 / MQTT, Apache ActiveMQ 5.17 with STOMP / MQTT, vsftpd,
+Postfix + Dovecot, nginx, JDK JSSE) and the bugs
 that live testing found.
 
 ## Building and testing

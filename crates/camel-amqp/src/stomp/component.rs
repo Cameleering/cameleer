@@ -29,7 +29,11 @@
 //! `AUTO_ACKNOWLEDGE`/`DUPS_OK_ACKNOWLEDGE` always ack, `CLIENT_ACKNOWLEDGE` nacks failed
 //! messages (redelivery) and `transacted=true` processes every message in a STOMP
 //! transaction (`BEGIN`, `ACK`, `COMMIT`; a failure `ABORT`s so the broker redelivers with
-//! `JMSRedelivered=true`). `selector` is a JMS selector evaluated by the broker (it is
+//! `JMSRedelivered=true`). ActiveMQ 5 redelivers neither after an `ABORT` nor after a `NACK`
+//! (a poison ack: dead letter queue), so with it the consumer redelivers failed messages
+//! itself, like ActiveMQ's JMS client ([`RedeliveryPolicy`], `jms.redeliveryPolicy.*` broker
+//! url options). InOnly sends to the same broker made while a transacted consumer processes
+//! an exchange join its transaction. `selector` is a JMS selector evaluated by the broker (it is
 //! validated when the endpoint is created). Messages carry the JMS headers `JMSMessageID`,
 //! `JMSCorrelationID`, `JMSDestination`, `JMSReplyTo`, `JMSDeliveryMode` (1/2),
 //! `JMSPriority`, `JMSTimestamp`, `JMSType`, `JMSRedelivered`, `JMSExpiration`; other

@@ -41,12 +41,19 @@ Run on 2026-11-01. All 45 live tests pass (`CAMEL_LIVE_INTEROP=1 cargo test --wo
 | vsftpd 3.0.5 | `ftp`, `ftps`, FTP client | passive and active mode, mkdirs / STOR / APPE / RETR (200 KB binary) / SIZE / MDTM / LIST / NLST / RNFR-RNTO / DELE / RMD, ASCII mode, wrong password; consumer with `move`, `antInclude`, `sortBy`, recursive `delete` (active mode), `noop` idempotency; producer `fileExist` Fail / Ignore / Append / Override with `tempPrefix` / Move with `moveExisting`, `fileName` expressions, `disconnect`; explicit FTPS (AUTH TLS, PROT P), implicit FTPS, and a `require_ssl_reuse=YES` server (data connections resume the control session; without resumption the transfer is refused with 522) for the client and the `ftps` component; untrusted CA refused | pass |
 | Postfix 3.8.6 + Dovecot 2.3.21 | `smtp`, `smtps`, `imap`, `imaps`, `pop3`, `pop3s` | SMTP into Postfix local delivery (Maildir) with custom headers, Cc, UTF-8 subject, dot-stuffing; POP3 consume with delete; SMTP AUTH through Dovecot SASL over STARTTLS (required) with binary and UTF-8 attachments, wrong password → `AuthenticationFailedException`; IMAP consume with `moveTo=Archive`; SMTPS (implicit TLS) → IMAPS with `\Seen` marking and failed exchanges left unseen (checked in Dovecot's Maildir flags); POP3 STLS and POP3S | pass |
 | nginx 1.24.0 | `http`, `https` producer | GET / POST / PUT / PATCH / DELETE, forwarded query, custom headers, 1 MiB binary POST, 404 with and without `throwExceptionOnFailure`, 302 with and without `followRedirects`, gzip content coding decoded (compression proven from nginx's access log), keep-alive pooling (nginx `$connection` stays the same; `connectionClose=true` opens new ones), HTTPS verified against the CA by host name and IP SAN, TLS keep-alive, untrusted CA refused; HTTP/2 over TLS via ALPN (`$server_protocol` = HTTP/2.0) with POST, 300 KB request bodies across flow-control windows, gzip, multiplexing on one connection, 404; h2c with prior knowledge | pass |
+| Apache ActiveMQ 5.17.6 — STOMP | `stomp`, `jms`, `activemq` | see [Apache ActiveMQ 5.17](#apache-activemq-517): JMS selectors on queues, topics and durable subscriptions, `/temp-queue/` request/reply (also shared `replyTo` queues read with broker-side `JMSCorrelationID` selectors), durable subscriptions, transactions with client-side redelivery and dead-lettering, priority and expiry, persistent / non-persistent, map / object messages, virtual topics, simple authentication, STOMP+SSL | pass |
+| Apache ActiveMQ 5.17.6 — MQTT | `paho` | QoS 0/1/2, broker-side QoS downgrade, 256 KiB payloads, wildcards, retained messages, persistent sessions, simple authentication, MQTT+SSL, MQTT ↔ STOMP topic bridging; MQTT 5 refused (ActiveMQ 5 speaks 3.1.1) | pass |
+| Apache ActiveMQ 5.17.6 — AMQP 1.0 | `amqp` | not verified: Ubuntu's package has no `activemq-amqp` module (suite ready, skipped) | n/a |
 | OpenJDK 21 JSSE (`java` single-file launcher, keytool stores) | `https` producer, `jetty:https` consumer | the https producer against `com.sun.net.httpserver.HttpsServer` restricted to TLS 1.3 and to TLS 1.2 (PKCS#12 key store from openssl, negotiated protocol and cipher echoed back), 300 KB bodies, untrusted CA refused; Java's `HttpClient` (offering HTTP/2 via ALPN, and HTTP/1.1) against a rust-camel `jetty:https` route with a keytool trust store, GET and UTF-8 POST (ALPN falls back to HTTP/1.1, which the camel server speaks) | pass |
 
 Not installable / not verified: nothing from the requested list was missing from the archive.
-ActiveMQ / Artemis (the native STOMP/AMQP 1.0 brokers rust-camel's JMS components are modelled
-on) are not packaged for Ubuntu 24.04, so JMS selectors, dynamic temporary AMQP 1.0 nodes and
-AMQP 1.0 transactions are only covered by the embedded brokers.
+Apache ActiveMQ 5.17.6 *is* packaged (universe) and is covered over STOMP and MQTT (see
+[Apache ActiveMQ 5.17](#apache-activemq-517) below), which now verifies JMS selectors,
+`/temp-queue/` request/reply, ActiveMQ durable subscriptions and ActiveMQ's transaction and
+redelivery semantics against the real broker. Ubuntu's package leaves out the `activemq-amqp`
+module, so AMQP 1.0 selectors, dynamic temporary AMQP 1.0 nodes and AMQP 1.0 transactions are
+still only covered by the embedded AMQP 1.0 broker (a ready suite runs as soon as the module is
+added). Artemis is not packaged.
 
 ## Bugs found and fixed
 
@@ -64,10 +71,17 @@ Every fix has a regression test in the hermetic suite as well.
 | 8 | `amqp` | `amqp:queue:/queue/x` lost its leading slash (`queue:/` was trimmed like `queue://`), so RabbitMQ answered `unknown_destination` | only the `//` of the URL form is stripped (`crates/camel-amqp10/src/jms.rs` `parse_destination`) | `jms::tests::destinations_and_keys` |
 | 9 | `amqp` | consumers always attached an anonymous-relay reply link; RabbitMQ 3.x does not offer `ANONYMOUS-RELAY` and refused the attach (`address_not_utf8_string`), so no consumer could start | anonymous relay only when the broker offers it, else one reply link per reply address (`ReplySenders`) | `tests/amqp_component.rs` `consumers_work_without_anonymous_relay` (embedded broker option `anonymous_relay(false)`) |
 | 10 | `amqp` | redeliveries had `JMSRedelivered=false`: RabbitMQ marks them with `first-acquirer=false` and keeps `delivery-count` at 0 | an explicit `first-acquirer=false` also means redelivered (`Header::acquired_before`, `crates/camel-amqp10/src/message.rs`) | `message::tests::explicit_first_acquirer_false_marks_redelivery` |
+| 11 | `stomp`, `jms`, `activemq` | ActiveMQ's refused login (`User name [camel] or password is invalid.`, repeated in the body) became a `StompException` with the text twice (ActiveMQ 5.17) | recognised as `AuthenticationFailureException`; a body repeating `message` is not appended (`crates/camel-amqp/src/stomp/client.rs` `error_frame_to_error`) | `tests/jms.rs` `activemq_flavoured_broker_conventions` |
+| 12 | `jms` (STOMP) | `transacted=true`: after a failure the consumer sent `ABORT` and expected the broker to redeliver; ActiveMQ only restores the pending ack, so the message was never redelivered and blocked the subscription's prefetch window (ActiveMQ 5.17) | on ActiveMQ 5 (`server:ActiveMQ/...`) the consumer redelivers locally like ActiveMQ's JMS client: `RedeliveryPolicy` (`jms.redeliveryPolicy.maximumRedeliveries` (6) / `initialRedeliveryDelay` / `redeliveryDelay` broker-url options), `JMSRedelivered=true`, `JMSXDeliveryCount`, then a `NACK` (poison ack → DLQ) (`crates/camel-amqp/src/stomp/component.rs` `Worker::handle`) | same, `redelivery_policy_from_broker_url` |
+| 13 | `jms` (STOMP) | `CLIENT_ACKNOWLEDGE`: a failed message was `NACK`ed for redelivery; ActiveMQ treats `NACK` as a poison ack and dead-letters it at once (non-persistent messages are dropped) (ActiveMQ 5.17) | same client-side redelivery; `NACK` only once the policy is exhausted | same |
+| 14 | `jms` (STOMP) | sends made by a route consuming with `transacted=true` were committed on their own, so every failed attempt left a duplicate (found against ActiveMQ 5.17, affected every broker) | InOnly sends to the same broker (address and login) from inside a transacted consumer join its STOMP transaction (exchange property `CamelJmsStompTransaction`), as with Spring's thread-bound JMS session: committed or rolled back with the consumed message | same, and `transacted_rollback_redelivers_with_jms_redelivered` |
+| 15 | `jms` (STOMP) | `subscriptionShared=true` silently duplicated messages on ActiveMQ 5, whose STOMP adapter ignores the shared subscription headers (every member got every message) (ActiveMQ 5.17) | refused at route start with `UnsupportedOperationException` naming ActiveMQ's virtual topics, as ActiveMQ's (JMS 1.1) client refuses shared consumers | same; live test with virtual topics |
 
 The embedded STOMP broker gained a RabbitMQ flavour (`StompBrokerBuilder::rabbitmq()`) that
 reproduces the conventions behind bugs 3-7, and the embedded AMQP 1.0 broker can run without
-`ANONYMOUS-RELAY`.
+`ANONYMOUS-RELAY`. An ActiveMQ flavour (`StompBrokerBuilder::activemq()`) reproduces what bugs
+11-15 depend on: `server:ActiveMQ/5.17.6`, ActiveMQ's login error, `ABORT` restoring the pending
+ack without redelivery and `NACK` as a poison ack.
 
 ## Server-side notes
 
@@ -79,3 +93,84 @@ reproduces the conventions behind bugs 3-7, and the embedded AMQP 1.0 broker can
   name by default, as Spring's STOMP relay does.
 * With RabbitMQ (no selectors) several producers must not share one fixed AMQP 1.0 `replyTo`
   queue: they would compete for each other's replies.
+
+## Apache ActiveMQ 5.17
+
+Apache ActiveMQ 5.17.6 from Ubuntu 24.04 (`activemq`, universe; OpenJDK 21), run on 2026-11-01.
+`scripts/live-interop.sh` runs a dedicated instance under `$CAMEL_INTEROP_DIR/activemq` (the
+package's `activemq.jar` with its own `activemq.xml`; the Debian init script and instances are
+not used):
+
+| Port | Transport connector |
+|---|---|
+| 16615 / 16616 | STOMP / STOMP+SSL |
+| 11886 / 18886 | MQTT / MQTT+SSL |
+| 16617 | OpenWire (not used by rust-camel) |
+| 15675 / 15676 | AMQP / AMQPS — only when the `activemq-amqp` module is present (see below) |
+
+* `simpleAuthenticationPlugin` with user `camel` / `camelpw`, anonymous access refused;
+* TLS with the interop CA: the openssl PKCS#12 server store converted to a JKS key store by
+  `keytool -importkeystore`, plus a JKS trust store with the CA (`<sslContext>`);
+* per-destination dead letter queues (`individualDeadLetterStrategy`, `DLQ.<queue>`) so tests
+  can inspect them, `prioritizedMessages` on queues, KahaDB persistence;
+* Ubuntu's package leaves libraries out of the broker's class path, which the script links
+  into the instance's `lib/`: the MQTT codec (`libmqtt-client-java`, without it every MQTT
+  connection fails with `NoClassDefFoundError: org/fusesource/mqtt/codec/PINGRESP`), and
+  XStream / Jettison (`libxstream-java`, `libjettison-java`, needed for STOMP
+  `transformation: jms-map-json` / `jms-object-json`, without them the broker drops the
+  connection);
+* the package does not include the `activemq-amqp` module at all (Maven Central is not
+  reachable from the test environment, and building it from the upstream sources was not
+  allowed there). Putting `activemq-amqp-5.17.x.jar` into `$CAMEL_INTEROP_DIR/activemq/lib`
+  and re-running `setup` + `restart` adds the AMQP connectors (proton-j comes from
+  `libapache-qpid-proton-j-java`), and `crates/camel-amqp10/tests/live_activemq_amqp.rs`
+  (selectors via `apache.org:selector-filter:string`, AMQP 1.0 transactions, dynamic
+  temporary reply queues, durable subscriptions, SASL PLAIN, AMQPS) then runs instead of
+  skipping. **These AMQP 1.0 tests have not been run against ActiveMQ.**
+
+Suites: `crates/camel-amqp/tests/live_activemq_stomp.rs` (12 tests),
+`crates/camel-kafka-mqtt/tests/live_activemq_mqtt.rs` (5),
+`crates/camel-amqp10/tests/live_activemq_amqp.rs` (6, skipped without the AMQP module).
+
+What the STOMP suite verifies with `stomp`, `jms` and `activemq` endpoints:
+
+* the `stomp` component; bad and missing credentials → `AuthenticationFailureException`;
+* competing consumers, topic fan-out, `JMSDestination` `queue://` / `topic://`, ActiveMQ
+  message ids, `JMSCorrelationID`, `JMSType`, priority, `timeToLive` (`JMSExpiration` -
+  `JMSTimestamp`), persistent (default, `JMSDeliveryMode=2`) vs `deliveryPersistent=false`
+  (1), dotted / hyphenated property keys, NUL-containing bytes and UTF-8 bodies, MapMessage
+  and ObjectMessage through ActiveMQ's JSON transformations;
+* **JMS selectors evaluated by ActiveMQ**: on queues (unmatched messages stay on the queue),
+  on topics (`JMSPriority >= 7 OR severity IN (...)`) and on a durable subscription while it is
+  offline;
+* request/reply over ActiveMQ temporary queues (4 concurrent requesters), a fixed shared
+  `replyTo` queue read with per-request `JMSCorrelationID` selectors by concurrent producers,
+  `replyToType=Exclusive`, `useMessageIDAsCorrelationID`, remote exceptions, timeouts, and no
+  stray replies left behind;
+* `transacted=true`: redelivery with `JMSRedelivered=true`, a send made inside the transaction
+  committed only with the successful attempt, an always-failing message dead-lettered to
+  `DLQ.<queue>` with its transactional send rolled back; `CLIENT_ACKNOWLEDGE` redelivery;
+  `AUTO_ACKNOWLEDGE` acknowledging failures; `jms.redeliveryPolicy.*` options (maximum
+  redeliveries, delays, `JMSXDeliveryCount`);
+* the raw broker semantics the emulation relies on: an aborted transactional `ACK` only
+  restores the pending ack, `NACK` is a poison ack (DLQ for persistent messages), a disconnect
+  redelivers with `redelivered:true` (ActiveMQ sends the header only when true);
+* durable subscriptions (`durableSubscriptionName` + `clientId`, and `subscriptionDurable` +
+  `subscriptionName` with a selector) keeping messages while the route is stopped;
+* priority ordering of waiting messages and expiry of messages whose TTL passed;
+* virtual topics (`VirtualTopic.x` → `Consumer.<sub>.VirtualTopic.x` with concurrent
+  consumers), and `subscriptionShared=true` refused (ActiveMQ 5 has no shared subscriptions);
+* STOMP+SSL by host name and IP SAN, untrusted CA refused.
+
+ActiveMQ notes:
+
+* ActiveMQ 5 does not redeliver after an aborted transaction or a NACK; rust-camel emulates its
+  JMS client's redelivery policy on the consumer (bugs 12 and 13). Its defaults are ActiveMQ's
+  (6 redeliveries, 1 s delays); set `jms.redeliveryPolicy.*` options on the broker url
+  (`camel.component.jms.brokerUrl=tcp://host:61613?jms.redeliveryPolicy.redeliveryDelay=100`).
+  Exponential back-off options are not emulated.
+* ActiveMQ dead-letters only persistent messages (`processNonPersistent=false`); a poisoned
+  non-persistent message is discarded.
+* ActiveMQ 5's STOMP adapter has no JMS 2.0 shared subscriptions; use virtual topics.
+* ActiveMQ bridges protocols: the MQTT topic `a/b/c` is the STOMP / JMS topic `a.b.c` (verified
+  both ways).
