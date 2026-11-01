@@ -7,6 +7,7 @@
 //! |---|---|---|
 //! | `QR_CODE` | versions 1-40, ECC L/M/Q/H (`errorCorrectionLevel`, default L like ZXing), numeric / alphanumeric / Kanji (JIS X 0208 text) / byte (UTF-8 with ECI 26 for non-ASCII), RS, mask by penalty rules | finder patterns, sampling, format/version info, unmasking, RS correction, Kanji to Unicode |
 //! | `DATA_MATRIX` | ECC 200 square 10x10 .. 144x144 and rectangular 8x18 .. 16x48 (`dataMatrixShape` NONE (ZXing order) / SQUARE / RECTANGLE), ASCII encodation | upright symbols; ASCII, C40, Text, X12, EDIFACT, Base 256 |
+//! | `PDF_417` | text / byte / numeric compaction (`pdf417Compaction`, AUTO like ZXing), UTF-8 via ECI 26, error correction level 0-8 (`errorCorrectionLevel`, default 2), ZXing dimensions and rendering | row scanning in all four 90° orientations, per-row voting, RS correction with erasures, Macro PDF417 blocks skipped |
 //! | `AZTEC` | compact 1-4 and full-range 4-32 layers, ZXing's 33% error correction, Upper/Lower/Digit/Punct/Mixed + Binary Shift, ECI 26 for non-Latin-1 | upright symbols via the bullseye; every mode, FLG(n) ECIs, RS correction |
 //! | `CODE_128` | code sets A/B/C, automatic switching | yes |
 //! | `CODE_39` | yes | yes |
@@ -33,6 +34,8 @@ pub mod gif;
 pub mod jpeg;
 mod kanji_table;
 pub mod oned;
+pub mod pdf417;
+mod pdf417_tables;
 pub mod png;
 pub mod qr;
 pub mod rs;
@@ -88,6 +91,7 @@ pub enum Format {
     Code39,
     Ean13,
     UpcA,
+    Pdf417,
 }
 
 impl Format {
@@ -101,7 +105,8 @@ impl Format {
             "CODE39" => Format::Code39,
             "EAN13" => Format::Ean13,
             "UPCA" => Format::UpcA,
-            _ => return Err(CamelError::illegal_argument(format!("Unsupported barcodeFormat: {} (supported: QR_CODE, DATA_MATRIX, AZTEC, CODE_128, CODE_39, EAN_13, UPC_A)", s))),
+            "PDF417" => Format::Pdf417,
+            _ => return Err(CamelError::illegal_argument(format!("Unsupported barcodeFormat: {} (supported: QR_CODE, DATA_MATRIX, AZTEC, PDF_417, CODE_128, CODE_39, EAN_13, UPC_A)", s))),
         })
     }
     pub fn name(&self) -> &'static str {
@@ -113,6 +118,7 @@ impl Format {
             Format::Code39 => "CODE_39",
             Format::Ean13 => "EAN_13",
             Format::UpcA => "UPC_A",
+            Format::Pdf417 => "PDF_417",
         }
     }
 }
@@ -165,7 +171,13 @@ pub fn encode(text: &str, format: Format, ecc: qr::Ecc, width: usize, height: us
 
 /// Encode with a Data Matrix shape preference.
 pub fn encode_with(text: &str, format: Format, ecc: qr::Ecc, width: usize, height: usize, shape: datamatrix::Shape) -> Result<png::Gray> {
+    encode_full(text, format, ecc, width, height, shape, &pdf417::Pdf417Options::default())
+}
+
+/// Encode with every symbology specific option.
+pub fn encode_full(text: &str, format: Format, ecc: qr::Ecc, width: usize, height: usize, shape: datamatrix::Shape, pdf: &pdf417::Pdf417Options) -> Result<png::Gray> {
     Ok(match format {
+        Format::Pdf417 => pdf417::render(&pdf417::encode_symbol(text, pdf)?, width, height),
         Format::QrCode => render_2d(&qr::encode(text, &qr::QrOptions { ecc, version: None, mask: None })?, width, height, 4),
         Format::Aztec => render_2d(&aztec::encode(text, 33)?, width, height, 0),
         Format::DataMatrix => render_2d(&datamatrix::encode_shape(&latin1_or_utf8(text), shape)?, width, height, 0),
@@ -220,6 +232,11 @@ pub fn decode(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
             return Ok(Decoded { text: t, format: Format::Aztec, ecc: None });
         }
     }
+    if want(Format::Pdf417) {
+        if let Some(t) = pdf417::find_and_decode(&bin) {
+            return Ok(Decoded { text: t, format: Format::Pdf417, ecc: None });
+        }
+    }
     for row in detect::scan_rows(&bin) {
         if want(Format::Code128) {
             if let Some(t) = oned::decode_code128(&row) {
@@ -253,6 +270,8 @@ pub struct BarcodeDataFormat {
     pub ecc: qr::Ecc,
     pub image_type: ImageType,
     pub shape: datamatrix::Shape,
+    /// PDF417 options (`errorCorrectionLevel` 0-8 for `PDF_417`, `pdf417Compaction`).
+    pub pdf417: pdf417::Pdf417Options,
 }
 
 /// Output image type (`imageType`).
@@ -289,7 +308,7 @@ impl DataFormat for BarcodeDataFormat {
     }
     fn marshal(&self, ex: &mut Exchange) -> Result<()> {
         let text = body_text(&ex.message.body)?;
-        let img = encode_with(&text, self.format, self.ecc, self.width, self.height, self.shape)?;
+        let img = encode_full(&text, self.format, self.ecc, self.width, self.height, self.shape, &self.pdf417)?;
         ex.message.body = Value::Bytes(write_image(&img, self.image_type));
         Ok(())
     }
@@ -319,10 +338,23 @@ pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
         None => datamatrix::Shape::Any,
     };
     let fmt = o.get(&["barcodeFormat"]);
+    let format = fmt.map(Format::parse).transpose()?.unwrap_or(Format::QrCode);
+    let mut pdf = pdf417::Pdf417Options::default();
     let ecc = match o.get(&["errorCorrectionLevel"]) {
+        // PDF417 levels are numeric (ZXing's ERROR_CORRECTION hint 0..8)
+        Some(e) if format == Format::Pdf417 => {
+            pdf.ec_level = match e.trim().parse::<u8>() {
+                Ok(l) if l <= 8 => l,
+                _ => return Err(CamelError::illegal_argument(format!("Invalid errorCorrectionLevel for PDF_417: {} (0..8)", e))),
+            };
+            qr::Ecc::L
+        }
         Some(e) => qr::Ecc::parse(e).ok_or_else(|| CamelError::illegal_argument(format!("Invalid errorCorrectionLevel: {} (L, M, Q or H)", e)))?,
         None => qr::Ecc::L,
     };
+    if let Some(c) = o.get(&["pdf417Compaction", "compaction"]) {
+        pdf.compaction = pdf417::Compaction::parse(c).ok_or_else(|| CamelError::illegal_argument(format!("Invalid pdf417Compaction: {} (AUTO, TEXT, BYTE, NUMERIC)", c)))?;
+    }
     let dim = |keys: &[&str]| -> Result<usize> {
         let v = o.num(keys, 100)?;
         if v <= 0 || v > 10_000 {
@@ -333,11 +365,12 @@ pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
     Ok(Arc::new(BarcodeDataFormat {
         width: dim(&["width"])?,
         height: dim(&["height"])?,
-        format: fmt.map(Format::parse).transpose()?.unwrap_or(Format::QrCode),
+        format,
         format_explicit: fmt.is_some(),
         ecc,
         image_type,
         shape,
+        pdf417: pdf,
     }))
 }
 

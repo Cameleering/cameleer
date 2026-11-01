@@ -762,6 +762,7 @@ fn barcode_routes_and_third_party_pngs() {
             .unmarshal(DataFormatDefinition::new("barcode").option("barcodeFormat", "EAN_13"));
         b.from("direct:dm").to("dataformat:barcode:marshal?barcodeFormat=DATA_MATRIX&width=200&height=200").to("dataformat:barcode:unmarshal");
         b.from("direct:qrH").to("dataformat:barcode:marshal?errorCorrectionLevel=H").to("dataformat:barcode:unmarshal");
+        b.from("direct:pdf").to("dataformat:barcode:marshal?barcodeFormat=PDF_417&errorCorrectionLevel=4&imageType=JPG").to("dataformat:barcode:unmarshal");
     })
     .unwrap();
     c.start().unwrap();
@@ -778,6 +779,9 @@ fn barcode_routes_and_third_party_pngs() {
     assert_eq!((ex.body().to_string(), ex.header("BarcodeFormat").unwrap().to_string()), ("ECC200 data".to_string(), "DATA_MATRIX".to_string()));
     let ex = t.request("direct:qrH", |e| e.set_body("level H")).unwrap();
     assert_eq!(ex.header("ERROR_CORRECTION_LEVEL").unwrap().to_string(), "H");
+    let ex = t.request("direct:pdf", |e| e.set_body("PDF417 shipping label 0123456789012345")).unwrap();
+    assert!(ex.exception.is_none(), "{:?}", ex.exception);
+    assert_eq!((ex.body().to_string(), ex.header("BarcodeFormat").unwrap().to_string()), ("PDF417 shipping label 0123456789012345".to_string(), "PDF_417".to_string()));
 
     // PNGs re-encoded by Pillow (RGB interlaced, palette, RGBA) from our output
     let fx = |n: &str| std::fs::read(format!("{}/tests/fixtures/barcode/{}", env!("CARGO_MANIFEST_DIR"), n)).unwrap();
@@ -790,7 +794,8 @@ fn barcode_routes_and_third_party_pngs() {
     }
     assert!(DataFormatDefinition::new("barcode").option("imageType", "JPG").resolve(&c).is_ok());
     assert!(DataFormatDefinition::new("barcode").option("imageType", "BMP").resolve(&c).is_err());
-    assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "PDF_417").resolve(&c).is_err());
+    assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "MAXICODE").resolve(&c).is_err());
+    assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "PDF_417").option("errorCorrectionLevel", "9").resolve(&c).is_err());
 }
 
 #[test]

@@ -356,7 +356,12 @@ fn high_level(data: &[u8], eci: Option<u32>) -> Vec<bool> {
         // digit runs (3+ digits) in Digit mode
         let run = data[i..].iter().take_while(|b| b.is_ascii_digit() || **b == b' ' || **b == b',' || **b == b'.').count();
         let digits = data[i..i + run].iter().filter(|b| b.is_ascii_digit()).count();
-        if mode != Mode::Digit && digits >= 3 {
+        // a trailing run of digit-mode characters is cheaper after D/L (5 + 4 bits each) than
+        // shifted one by one (like ZXing's optimal encoder, e.g. a final '.')
+        let stay_cost: usize = data[i..i + run].iter().map(|b| match b { b' ' => 5, b',' | b'.' => 10, _ => 18 }).sum();
+        let trailing = run > 0 && i + run == data.len() && 5 + 4 * run < stay_cost;
+        // (a lone digit also latches: D/L + digit + U/L is shorter than a binary shift)
+        if mode != Mode::Digit && (digits >= 3 || c.is_ascii_digit() || (trailing && matches!(mode, Mode::Upper | Mode::Lower))) {
             match mode {
                 Mode::Upper | Mode::Lower => push_bits(&mut out, 30, 5),
                 _ => unreachable!(),
@@ -815,7 +820,7 @@ mod tests {
     #[test]
     fn round_trips() {
         let long: String = (0..1500).map(|i| (b'a' + (i % 26) as u8) as char).collect();
-        for text in ["A", "Hello Aztec", "UPPER lower 12345 digits, punct: !?#", "Code 2026: x@y.z ~ {}", "Grüße 日本 ✓", "\r\n tabs\tand\u{1}ctl", long.as_str()] {
+        for text in ["A", "a1b", "X9", "Hello Aztec", "UPPER lower 12345 digits, punct: !?#", "Code 2026: x@y.z ~ {}", "Grüße 日本 ✓", "\r\n tabs\tand\u{1}ctl", long.as_str()] {
             let m = encode(text, 33).unwrap();
             assert!(symbol_sizes().contains(&m.width), "{}", m.width);
             assert_eq!(decode_matrix(&m).unwrap(), text, "{}", m.width);
@@ -843,5 +848,99 @@ mod tests {
             assert_eq!(f.decode(&mut block, 6), Some(3));
             assert_eq!(block, orig);
         }
+    }
+
+    fn zxing_rows(rows: &[&str]) -> Matrix {
+        // ZXing's BitMatrix::toString("X ", "  "): two characters per module
+        let rows: Vec<String> = rows.iter().map(|r| r.chars().step_by(2).map(|c| if c == 'X' { '#' } else { '.' }).collect()).collect();
+        let refs: Vec<&str> = rows.iter().map(|s| s.as_str()).collect();
+        Matrix::from_rows(&refs)
+    }
+
+    #[test]
+    fn zxing_reference_symbols() {
+        // ZXing aztec EncoderTest.testEncode1 (compact, 3 layers; Apache License 2.0,
+        // Copyright 2013 ZXing authors)
+        let expected = zxing_rows(&[
+            "X     X X       X     X X     X     X         ",
+            "X         X     X X     X   X X   X X       X ",
+            "X X   X X X X X   X X X                 X     ",
+            "X X                 X X   X       X X X X X X ",
+            "    X X X   X   X     X X X X         X X     ",
+            "  X X X   X X X X   X     X   X     X X   X   ",
+            "        X X X X X     X X X X   X   X     X   ",
+            "X       X   X X X X X X X X X X X     X   X X ",
+            "X   X     X X X               X X X X   X X   ",
+            "X     X X   X X   X X X X X   X X   X   X X X ",
+            "X   X         X   X       X   X X X X       X ",
+            "X       X     X   X   X   X   X   X X   X     ",
+            "      X   X X X   X       X   X     X X X     ",
+            "    X X X X X X   X X X X X   X X X X X X   X ",
+            "  X X   X   X X               X X X   X X X X ",
+            "  X   X       X X X X X X X X X X X X   X X   ",
+            "  X X   X       X X X   X X X       X X       ",
+            "  X               X   X X     X     X X X     ",
+            "  X   X X X   X X   X   X X X X   X   X X X X ",
+            "    X   X   X X X   X   X   X X X X     X     ",
+            "        X               X                 X   ",
+            "        X X     X   X X   X   X   X       X X ",
+            "  X   X   X X       X   X         X X X     X ",
+        ]);
+        let text = "This is an example Aztec symbol for Wikipedia.";
+        assert_eq!(decode_matrix(&expected).unwrap(), text);
+        let m = encode(text, 33).unwrap();
+        assert_eq!(m, expected);
+        // testEncode2 (full range, 6 layers)
+        let expected2 = zxing_rows(&[
+            "        X X     X X     X     X     X   X X X         X   X         X   X X       ",
+            "  X       X X     X   X X   X X       X             X     X   X X   X           X ",
+            "  X   X X X     X   X   X X     X X X   X   X X               X X       X X     X ",
+            "X X X             X   X         X         X     X     X   X     X X       X   X   ",
+            "X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X ",
+            "    X X   X   X   X X X               X       X       X X     X X   X X       X   ",
+            "X X     X       X       X X X X   X   X X       X   X X   X       X X   X X   X   ",
+            "  X       X   X     X X   X   X X   X X   X X X X X X   X X           X   X   X X ",
+            "X X   X X   X   X X X X   X X X X X X X X   X   X       X X   X X X X   X X X     ",
+            "  X       X   X     X       X X     X X   X   X   X     X X   X X X   X     X X X ",
+            "  X   X X X   X X       X X X         X X           X   X   X   X X X   X X     X ",
+            "    X     X   X X     X X X X     X   X     X X X X   X X   X X   X X X     X   X ",
+            "X X X   X             X         X X X X X   X   X X   X   X   X X   X   X   X   X ",
+            "          X       X X X   X X     X   X           X   X X X X   X X               ",
+            "  X     X X   X   X       X X X X X X X X X X X X X X X   X   X X   X   X X X     ",
+            "    X X                 X   X                       X X   X       X         X X X ",
+            "        X   X X   X X X X X X   X X X X X X X X X   X     X X           X X X X   ",
+            "          X X X   X     X   X   X               X   X X     X X X   X X           ",
+            "X X     X     X   X   X   X X   X   X X X X X   X   X X X X X X X       X   X X X ",
+            "X X X X       X       X   X X   X   X       X   X   X     X X X     X X       X X ",
+            "X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X ",
+            "    X     X       X         X   X   X       X   X   X     X   X X                 ",
+            "        X X     X X X X X   X   X   X X X X X   X   X X X     X X X X   X         ",
+            "X     X   X   X         X   X   X               X   X X   X X   X X X     X   X   ",
+            "  X   X X X   X   X X   X X X   X X X X X X X X X   X X         X X     X X X X   ",
+            "    X X   X   X   X X X     X                       X X X   X X   X   X     X     ",
+            "    X X X X   X         X   X X X X X X X X X X X X X X   X       X X   X X   X X ",
+            "            X   X   X X       X X X X X     X X X       X       X X X         X   ",
+            "X       X         X   X X X X   X     X X     X X     X X           X   X       X ",
+            "X     X       X X X X X     X   X X X X   X X X     X       X X X X   X   X X   X ",
+            "  X X X X X               X     X X X   X       X X   X X   X X X X     X X       ",
+            "X             X         X   X X   X X     X     X     X   X   X X X X             ",
+            "    X   X X       X     X       X   X X X X X X   X X   X X X X X X X X X   X   X ",
+            "    X         X X   X       X     X   X   X       X     X X X     X       X X X X ",
+            "X     X X     X X X X X X             X X X   X               X   X     X     X X ",
+            "X   X X     X               X X X X X     X X     X X X X X X X X     X   X   X X ",
+            "X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X   X ",
+            "X           X     X X X X     X     X         X         X   X       X X   X X X   ",
+            "X   X   X X   X X X   X         X X     X X X X     X X   X   X     X   X       X ",
+            "      X     X     X     X X     X   X X   X X   X         X X       X       X   X ",
+            "X       X           X   X   X     X X   X               X     X     X X X         "
+,
+        ]);
+        let text2 = "Aztec Code is a public domain 2D matrix barcode symbology of nominally square symbols built on a square grid with a distinctive square bullseye pattern at their center.";
+        let m2 = encode(text2, 33).unwrap();
+        assert_eq!(decode_matrix(&expected2).unwrap(), text2);
+        assert_eq!(m2.width, 41);
+        assert_eq!(decode_matrix(&m2).unwrap(), text2);
+        // (our greedy high-level encoder picks different, equally valid mode switches than
+        // ZXing's optimal one for this text, so the module patterns differ)
     }
 }
