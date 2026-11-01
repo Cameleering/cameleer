@@ -79,3 +79,85 @@ reproduces the conventions behind bugs 3-7, and the embedded AMQP 1.0 broker can
   name by default, as Spring's STOMP relay does.
 * With RabbitMQ (no selectors) several producers must not share one fixed AMQP 1.0 `replyTo`
   queue: they would compete for each other's replies.
+
+## Official clients
+
+The live suite checks rust-camel *clients* against real servers. Many areas, though, are only
+served by rust-camel's own emulators and embedded servers (Kafka broker, MongoDB / Cassandra /
+Elasticsearch / Redis servers, the AWS / Azure / GCP mocks, the Azure flavour of the AMQP 1.0
+broker), or are protocol stacks written from scratch (TLS, HTTP/2, gRPC). The **official-client
+suite** drives those with independently written, officially published clients, so emulator and
+client cannot simply agree with each other.
+
+```sh
+sudo scripts/official-clients.sh install      # apt-get the clients (Ubuntu 24.04 python3-*, kcat)
+scripts/official-clients.sh versions
+scripts/official-clients.sh test              # CAMEL_OFFICIAL_CLIENTS=1 cargo test --workspace --test 'official_*'
+```
+
+The suites are `crates/<crate>/tests/official_*.rs`; they do nothing unless
+`CAMEL_OFFICIAL_CLIENTS=1` is set. The client programs (Python scripts, a bash driver for the
+Google Cloud CLIs, a Go program) are in `scripts/official-clients/`; helpers are in
+`camel_tls::testing::official`. Each test starts the rust-camel side on an ephemeral port, runs
+the client as a subprocess and checks the client's `key: value` output. The Google Cloud SDK and
+a Go toolchain come from outside apt (see the script header). Every bug fixed along the way also
+has a hermetic regression test: `official_regressions.rs` / `official_*_regressions.rs`,
+`kafka_wire_compat.rs`, and unit tests.
+
+### Results
+
+Run on 2026-11-01. All 34 official-client tests pass
+(`CAMEL_OFFICIAL_CLIENTS=1 cargo test --workspace --test 'official_*'`), together with the 24 hermetic regression tests in the same targets.
+
+| Area | Client (version) | What was exercised | Result |
+|---|---|---|---|
+| Kafka broker (`testing::KafkaBroker`), `kafka` component | confluent-kafka 1.7.0 on librdkafka 2.3.0, kcat 1.7.1 | produce/consume with headers and keys; murmur2 partitioning matching the Java client; gzip, snappy and lz4 batches from librdkafka decoded by rust-camel, and rust-camel's compressed batches decoded by librdkafka; zstd falling back cleanly; a consumer group mixing librdkafka and rust-camel members (join/sync/heartbeat, rebalance, committed offsets); the admin client (create/describe/delete topics); kcat round trip; SASL PLAIN and SCRAM-SHA-256/512, TLS and mutual TLS | pass |
+| MongoDB server | pymongo 3.11.0 | CRUD, bulk writes, aggregation pipelines, indexes (create/list/drop, unique violations → `DuplicateKeyError`), change streams, cursors and `getMore`; SCRAM-SHA-256, TLS and X.509 authentication; documents shared with the `mongodb` component | pass |
+| Cassandra server | DataStax cassandra-driver 3.29.0 (protocol v4) | cluster metadata (`system.local`, `system.peers`, `system_schema` keyspaces/tables/columns), prepared and batch statements, paging, typed values, PlainText auth, TLS, data shared with the `cql` component | pass |
+| Elasticsearch server | elasticsearch-py 7.17.6 | product check, index/get/update/delete, bulk, search with queries and aggregations (terms, avg/sum/min/max, value_count, cardinality, stats), paging, `_delete_by_query`, error mapping | pass |
+| Redis server | redis-py 4.3.4 | strings/hashes/lists/sets/zsets, TTLs, BLPOP, `WRONGTYPE`, SCAN/HSCAN/SSCAN/ZSCAN, pipelines, MULTI/EXEC with WATCH (aborted transactions), pub/sub, username/password AUTH (failures refused), values shared with the `spring-redis` component | pass |
+| AWS mock (`AwsMock`), AWS components | boto3 / botocore 1.34.46 | SigV4 (botocore's own signatures compared byte for byte, unknown keys and bad signatures rejected with the services' error codes); S3 incl. multipart (ListParts, ListMultipartUploads), presigned URLs, HTTPS; SQS in botocore's Query protocol and the JSON protocol (message attributes with MD5, FIFO deduplication, batches, error codes); SNS incl. `MessageStructure=json` to SQS; DynamoDB (tables, items, queries, batch write, transactions); Kinesis; Lambda; KMS (encrypt/decrypt with encryption context, aliases, data keys, random); Secrets Manager; STS; data exchanged with rust-camel's AWS components | pass |
+| Azure mocks (`AzuriteMock`, `AzureMock`), Azure components | azure-core 1.28.0, azure-storage-blob 12.17.0, -queue 12.7.0b1, -file-datalake 12.12.0, -file-share 12.13.0, azure-identity 1.14.0b2, azure-keyvault-secrets 4.8.0b2, -keys 4.9.0b2, azure-cosmos 3.1.1 | Shared Key and account / service / container SAS; blobs (ranges, content type, case-preserving metadata, delimiter walk, block lists, chunked uploads, append blobs, leases, snapshots, Blob Batch); queues (peek, receive, update, metadata, SAS); Data Lake (paths, renames); file shares; client-credential tokens from the mock's Entra endpoint, Key Vault secrets (versions, properties, soft delete) and keys over HTTPS; Cosmos; data exchanged with the storage components | pass |
+| AMQP 1.0 broker in Azure mode, Service Bus / Event Hubs components | azure-servicebus 7.11.1, azure-eventhub 5.11.3 (pyamqp) | CBS SAS authentication; Service Bus peek-lock and receive-and-delete, abandon with delivery counts, peek, scheduled messages, dead-lettering, batches, binary bodies, application properties, sessions with session state; Event Hubs properties and partition management requests, batched sends, partition receive; messages exchanged with rust-camel's components | pass |
+| GCP mock (`GcpMock`) | Google Cloud SDK 570.0.0 (gcloud, gsutil), bq 2.1.32 | service-account JWT login against the mock's token endpoint over HTTPS; `gcloud storage` (buckets, multipart and resumable uploads, cat, ls/-r, describe, custom metadata, cp/mv/rm, missing objects); gsutil (JSON API over HTTPS, md5/crc32c verification); `gcloud pubsub` (topics, subscriptions, publish with attributes, pull/ack, describe, delete); bq (datasets, tables, insert, show, standard-SQL query jobs, head, rm) | pass |
+| GCP mock Pub/Sub gRPC | grpcio 1.51.1, protobuf 4.21.12 | StreamingPull with a bearer token from the service-account JWT grant (unauthenticated streams refused), attributes, acks over the stream | pass |
+| gRPC (`grpc` consumer and producer) | grpcio 1.51.1 | grpcio calling a rust-camel consumer route: unary with metadata, server-, client- and bidirectional streaming, status codes (NOT_FOUND with details), deadlines, 300 KB messages; plaintext h2c, gzip, TLS and mutual TLS (untrusted / missing client certificates refused). The rust-camel producer calling a grpcio server: all four call kinds, headers as metadata, PERMISSION_DENIED, 200 KB messages, plaintext, gzip and TLS (untrusted server certificate refused) | pass |
+| TLS (`camel-tls`) | Go 1.24.7 crypto/tls | both directions: TLS 1.3 with each of AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305; TLS 1.2 with all six ECDHE-ECDSA / ECDHE-RSA AEAD suites; x25519, P-256 and P-384 in both versions, Go's default hybrid X25519MLKEM768 key share (camel picks x25519); RSA certificates (PSS in 1.3); ALPN; session resumption (TLS 1.3 PSK tickets, TLS 1.2 tickets) seen by both sides; mutual TLS incl. resumed sessions keeping the client identity, missing and untrusted client certificates refused; untrusted server and host name mismatch refused | pass |
+| HTTP/2 and HTTPS (camel-grpc `h2`, `camel-http`) | Go 1.24.7 net/http (bundled x/net/http2) | Go's HTTP/2 client against camel's H2 server over TLS (ALPN h2, 1 MiB upload across flow-control windows, 16 concurrent streams on one connection, 404; an HTTP/1.1-only client gets 505), Go's client against a `jetty:https` route (ALPN falls back to HTTP/1.1; echo, 404); camel's HTTP/2 client (3 MB echo, streamed responses, 12 concurrent streams) and the `https` producer with `httpVersion=HTTP/2` (headers sent) against Go's HTTP/2 server, plus HTTP/1.1 | pass |
+
+Not verified: CouchDB (no packaged official client); Kafka zstd (librdkafka uses it only with
+Produce v7+, which the embedded broker does not advertise, so librdkafka falls back to
+uncompressed batches, verified); the Google Cloud Python client libraries (not packaged; the
+CLIs and grpcio stand in); the Azure Cosmos SDK's newer versions (only 3.1.1 is packaged).
+
+### Bugs found and fixed
+
+| # | Area | Bug (found with) | Fix | Regression test |
+|---|---|---|---|---|
+| 1 | Kafka broker | librdkafka never joined consumer groups or compressed: its ApiVersions feature probes need the v0 ranges of FindCoordinator/JoinGroup/SyncGroup/Heartbeat/LeaveGroup and Produce v0-v2 / Fetch v0-v2 (librdkafka 2.3.0) | v0 ranges advertised, legacy request/response shims and magic 0/1 message sets (`crates/camel-kafka-mqtt/src/testing/kafka_broker.rs`, `kafka/protocol.rs`) | `kafka_wire_compat.rs` `api_versions_cover_librdkafka_feature_probes`, `group_coordination_v0`, `legacy_message_sets_produce_and_fetch` |
+| 2 | Kafka broker | produced batches were re-encoded, losing the producer's compression and CRC | batches are stored and served verbatim (`RawBatch`) | `producer_compression_and_verbatim_batches` |
+| 3 | `kafka` component | snappy and lz4 batches could not be decoded or produced (no codecs) | LZ4 frame format with xxHash32 and xerial snappy-java framing (`crates/camel-core/src/dataformat/codecs.rs`), `compressionCodec` option (zstd refused) | `compressed_record_batches_round_trip`, codec unit tests |
+| 4 | Kafka broker | SASL after SaslHandshake v0 sends bare tokens; the broker expected SaslAuthenticate frames | bare length-prefixed tokens supported | `sasl_handshake_v0_with_bare_tokens` |
+| 5 | SCRAM server | librdkafka's client-final nonce is client nonce + server nonce; Kafka accepts a suffix match, the broker refused it | `ScramServer::accept_nonce_suffix` (`crates/camel-tls/src/sasl.rs`) | `sasl::tests::kafka_style_nonce_suffix` |
+| 6 | MongoDB server | `createIndexes` / `listIndexes` / `dropIndexes` missing, unique indexes not enforced (pymongo) | index commands and unique enforcement (`crates/camel-datastores/src/mongodb/server.rs`) | `official_regressions.rs` `mongo_indexes_are_listed_dropped_and_unique` |
+| 7 | Cassandra server | the driver failed on `Keyspace system_schema does not exist`, then on missing `schema_version` / `host_id` columns | `system_schema` tables kept in sync with the schema, full `system.local` / `system.peers(_v2)` (`cassandra/engine.rs`, `cassandra/server.rs`) | `cassandra_system_schema_and_peer_metadata` |
+| 8 | Elasticsearch server | elasticsearch-py raised `UnsupportedProductError` (no `X-Elastic-Product` header); aggregations and `_delete_by_query` missing; scroll responses without `_shards` | header (not in OpenSearch mode), aggregations, delete-by-query (`elasticsearch/server.rs`) | `elasticsearch_product_header_aggregations_and_delete_by_query` |
+| 9 | Redis server | SCAN family and WATCH missing (redis-py) | cursors over keys/hashes/sets/zsets, WATCH with key versions aborting EXEC (`redis/server.rs`) | `redis_scan_family_and_watch` |
+| 10 | AWS mock | botocore speaks SQS's Query protocol: JSON error bodies broke it; unknown keys answered with the wrong code | protocol-aware errors (`x-amzn-query-error`, `InvalidClientTokenId` / `UnrecognizedClientException`) (`crates/camel-cloud/src/testing/aws.rs`) | `official_regressions.rs` `sqs_attribute_md5_fifo_dedup_and_error_codes`, `tests/aws.rs` |
+| 11 | AWS mock | SQS `MD5OfMessageAttributes`, FIFO deduplication, `SequenceNumber` missing; S3 ListParts / ListMultipartUploads missing; SNS `MessageStructure=json` delivered the whole JSON; DynamoDB ListTables / BatchWrite / TransactWrite gaps; KMS ignored the encryption context and lacked aliases and data keys | implemented (`aws.rs`, `aws_gaps.rs`, `aws_more.rs`; KMS blobs are AES-GCM with the context as AAD) | `s3_list_parts_and_multipart_uploads`, `sns_message_structure_json_delivers_the_sqs_entry`, `dynamodb_list_tables_batch_write_and_transactions`, `kms_context_aliases_and_data_keys` |
+| 12 | `aws-secrets-manager` | `updateSecret` called PutSecretValue; Camel (and boto3 users) expect UpdateSecret | `UpdateSecret` in component and mock (`crates/camel-cloud/src/aws/secretsmanager.rs`, `aws_ext.rs`) | `secrets_manager_update_secret` |
+| 13 | HTTP server helper | `Response::with_header("Content-Type")` added a second Content-Type | replaces the existing one (`crates/camel-cloud/src/http.rs`) | covered by the above |
+| 14 | Azure mocks | blob ranges (206/416), `x-ms-blob-content-type`, metadata case, delimiter listings, snapshots, Blob Batch, container and queue SAS, queue metadata, DFS endpoint serving the Blob API, file ranges, Key Vault properties / versions / soft delete / deleted keys, OpenID discovery, HTTPS Key Vault ids | implemented (`crates/camel-cloud/src/testing/azure*.rs`); the `azure-storage-blob` component now sends `x-ms-blob-content-type` (`azure/blob.rs`) | `official_azure_regressions.rs` (5 tests) |
+| 15 | AMQP 1.0 codec | performatives were sent with trailing nulls trimmed; pyamqp indexes fields positionally (`IndexError`), and a null `handle_max` broke it | all fields kept, limits explicit (`crates/camel-amqp10/src/codec.rs`, `types.rs`, `message.rs`) | `amqp10 official_regressions.rs` `performatives_keep_all_fields_and_explicit_limits` |
+| 16 | AMQP 1.0 broker (Azure mode) | SAS tokens sent with CBS type `jwt`, absolute-URL link addresses, rcv-settle-mode second from producers, batch message format `0x80013700`, plain-value session filters, `locked-until-utc` in .NET ticks, management requests without `reply-to` | all accepted / produced as Service Bus does (`testing/broker.rs`, `azure.rs`, `servicebus.rs`; `Sender::send_azure_batch`) | `cbs_jwt_typed_sas_tokens_absolute_addresses_and_settlement`, `plain_session_filters_and_tick_lock_expiry`, `management_replies_without_reply_to` |
+| 17 | GCP mock | gsutil only speaks HTTPS; gcloud signs JWTs for Google's token audience; multipart uploads with single-quoted boundaries and LF line endings; objects lacked `crc32c` / `metadata` / `mediaLink` (gcloud crashed), no metadata PATCH/PUT, delimiter listings, ranged downloads, `moveTo` / `rewriteTo`, `storageLayout`; Pub/Sub list endpoints; BigQuery `datasets.get`, `tabledata.list`, query jobs, and error bodies without the `errors` list bq reads | `GcpMock::start_tls`, all of the above (`crates/camel-cloud/src/testing/gcp.rs`, `gcp_ext.rs`), checksum verification of uploads | `official_gcp_regressions.rs` (4 tests) |
+| 18 | Google components | exceptions dropped BigQuery's `errors[].reason` (`invalidQuery`, `notFound`) once the status is canonical | the reason is appended to the message (`crates/camel-cloud/src/gcp/mod.rs` `google_error`) | `tests/gcp_more.rs` `bigquery_sql_queries_dml_parameters_and_paging` |
+| 19 | `camel-tls` client | TLS 1.3 sessions never resumed against Go's crypto/tls: full-handshake ClientHellos lacked `psk_key_exchange_modes`, and Go (like BoringSSL) issues NewSessionTickets only to clients listing psk_dhe_ke | listed whenever resumption is enabled (`crates/camel-tls/src/tls/client.rs` `client_hello`) | `camel-tls official_regressions.rs` `first_client_hello_lists_psk_modes_when_resumption_is_enabled` |
+
+Notes:
+
+* TLS 1.2 with ECDSA certificates: RFC 8422 lets the client's supported groups constrain the
+  certificate's curve too, so a Go client restricted to x25519 is refused by a P-256 certificate
+  (Go and OpenSSL servers behave the same); the suite checks this explicitly.
+* pyamqp (azure-servicebus 7.11) mis-encodes two-character session ids; the script uses longer
+  ones.
