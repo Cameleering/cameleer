@@ -48,6 +48,20 @@ fn parse_range(v: Option<&str>) -> Option<(usize, usize)> {
 pub(super) fn blob_item_op(c: &mut Container, req: &ServerRequest, blob: String) -> Response {
     let comp = req.query_param("comp").unwrap_or_default();
     let not_found = || error(404, "BlobNotFound", "The specified blob does not exist.");
+    // conditional headers (If-Match / If-None-Match) of writes and deletes
+    if matches!(req.method.as_str(), "PUT" | "DELETE") && comp.is_empty() {
+        let current = c.blobs.get(&blob).map(|b| b.etag.clone());
+        if req.header("If-None-Match").is_some_and(|v| v.trim() == "*") && current.is_some() {
+            return error(409, "BlobAlreadyExists", "The specified blob already exists.");
+        }
+        if let Some(m) = req.header("If-Match").map(|v| v.trim().to_string()) {
+            match &current {
+                None => return not_found(),
+                Some(e) if m != "*" && *e != m => return error(412, "ConditionNotMet", "The condition specified using HTTP conditional header(s) is not met."),
+                _ => {}
+            }
+        }
+    }
     match (req.method.as_str(), comp.as_str()) {
         ("PUT", "lease") => {
             let Some(b) = c.blobs.get_mut(&blob) else { return not_found() };

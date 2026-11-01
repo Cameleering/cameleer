@@ -374,13 +374,19 @@ fn blob_op(st: &Shared, req: &ServerRequest, container: Option<String>, blob: Op
                         break;
                     }
                     count += 1;
+                    let meta: String = if req.query_param("include").is_some_and(|i| i.split(',').any(|x| x == "metadata")) {
+                        format!("<Metadata>{}</Metadata>", b.metadata.iter().map(|(k, v)| format!("<{0}>{1}</{0}>", k, xml_escape(v))).collect::<String>())
+                    } else {
+                        String::new()
+                    };
                     xml.push_str(&format!(
-                        "<Blob><Name>{}</Name><Properties><Last-Modified>{}</Last-Modified><Etag>{}</Etag><Content-Length>{}</Content-Length><Content-Type>{}</Content-Type><BlobType>BlockBlob</BlobType></Properties></Blob>",
+                        "<Blob><Name>{}</Name><Properties><Last-Modified>{}</Last-Modified><Etag>{}</Etag><Content-Length>{}</Content-Length><Content-Type>{}</Content-Type><BlobType>BlockBlob</BlobType></Properties>{}</Blob>",
                         xml_escape(n),
                         http_date(b.last_modified),
                         xml_escape(&b.etag),
                         b.data.len(),
-                        xml_escape(&b.content_type)
+                        xml_escape(&b.content_type),
+                        meta
                     ));
                 }
                 xml.push_str(&format!("</Blobs><NextMarker>{}</NextMarker></EnumerationResults>", xml_escape(&next)));

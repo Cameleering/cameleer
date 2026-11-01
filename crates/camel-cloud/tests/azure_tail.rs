@@ -202,3 +202,78 @@ fn wait(cond: impl Fn() -> bool) {
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+
+#[test]
+fn eventhubs_blob_checkpoint_store_ownership_and_load_balancing() {
+    use camel_amqp10::eventhubs::PartitionOwnership;
+    let az = AzuriteMock::start().unwrap();
+    let opts = camel_amqp10::eventhubs::BlobCheckpointOptions { account_name: ACCOUNT.into(), container_name: "owners".into(), access_key: Some(ACCOUNT_KEY.into()), endpoint: Some(az.blob_url()) };
+    let store = BlobCheckpointStore::new(&opts).unwrap();
+    assert!(store.list_ownership("ns", "hub", "cg").unwrap().is_empty(), "missing container = no ownership");
+    let claim = |p: &str, owner: &str, etag: Option<String>| PartitionOwnership { namespace: "NS".into(), hub: "Hub".into(), consumer_group: "cg".into(), partition_id: p.into(), owner_id: owner.into(), last_modified: 0, etag };
+    // new claims (If-None-Match: *): only the first of two competing claims wins
+    let won = store.claim_ownership(&[claim("0", "a", None), claim("1", "a", None)]).unwrap();
+    assert_eq!(won.len(), 2);
+    assert!(won.iter().all(|o| o.etag.is_some() && o.last_modified > 0));
+    assert!(store.claim_ownership(&[claim("0", "b", None)]).unwrap().is_empty(), "already owned");
+    let (_, meta) = az.blob_info("owners", "ns/hub/cg/ownership/0").expect("ownership blob");
+    assert!(meta.iter().any(|(k, v)| k == "ownerid" && v == "a"), "{:?}", meta);
+    let listed = store.list_ownership("NS", "Hub", "cg").unwrap();
+    assert_eq!(listed.iter().map(|o| (o.partition_id.as_str(), o.owner_id.as_str())).collect::<Vec<_>>(), vec![("0", "a"), ("1", "a")]);
+    assert_eq!(listed[0].etag, won[0].etag);
+    // etag-checked steal: the current etag wins, a stale one loses
+    let stolen = store.claim_ownership(&[claim("0", "b", listed[0].etag.clone())]).unwrap();
+    assert_eq!(stolen.len(), 1);
+    assert_ne!(stolen[0].etag, listed[0].etag);
+    assert!(store.claim_ownership(&[claim("0", "a", listed[0].etag.clone())]).unwrap().is_empty(), "stale etag");
+    let renewed = store.claim_ownership(&[claim("1", "a", listed[1].etag.clone())]).unwrap();
+    assert_eq!(renewed.len(), 1);
+    let owners: Vec<String> = store.list_ownership("ns", "hub", "cg").unwrap().into_iter().map(|o| o.owner_id).collect();
+    assert_eq!(owners, vec!["b", "a"]);
+    // checkpoints and ownership side by side
+    store.update("ns", "hub", "cg", "0", camel_amqp10::eventhubs::Checkpoint { offset: 7, sequence_number: 3 }).unwrap();
+    assert_eq!(store.list_ownership("ns", "hub", "cg").unwrap().len(), 2, "checkpoint blobs are not ownership records");
+
+    // two consumers balance an event hub's partitions through the blob store
+    let b = Amqp10Broker::builder().azure(KEY_NAME, KEY).event_hub("lb", 4).start().unwrap();
+    let eh = |o: &str| format!("azure-eventhubs:?connectionString=RAW({};EntityPath=lb){}", b.connection_string(KEY_NAME, KEY), o);
+    let blob_opts = format!("&blobAccountName={}&blobContainerName=lb&blobAccessKey=RAW({})&blobEndpoint={}", ACCOUNT, ACCOUNT_KEY, az.blob_url());
+    let seen: Arc<std::sync::Mutex<Vec<(String, String)>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mk = |owner: &str| {
+        let ctx = context();
+        let from = eh(&format!("&initialPosition=earliest&checkpointBatchSize=1&loadBalancingUpdateInterval=100&partitionOwnershipExpirationInterval=2000&ownerId={}{}", owner, blob_opts));
+        let (seen, owner) = (seen.clone(), owner.to_string());
+        ctx.add_routes(move |r| {
+            r.from(&from).process(move |ex: &mut Exchange| {
+                seen.lock().unwrap().push((owner.clone(), ex.body_as::<String>().unwrap_or_default()));
+                Ok(())
+            });
+        })
+        .unwrap();
+        ctx
+    };
+    let lb_store = BlobCheckpointStore::new(&camel_amqp10::eventhubs::BlobCheckpointOptions { container_name: "lb".into(), ..opts.clone() }).unwrap();
+    let owned = |owner: &str| lb_store.list_ownership("127.0.0.1", "lb", "$Default").map(|v| v.iter().filter(|o| o.owner_id == owner).count()).unwrap_or(0);
+    let c1 = mk("owner-a");
+    c1.start().unwrap();
+    assert!(b.wait_for(Duration::from_secs(10), |_| owned("owner-a") == 4));
+    let c2 = mk("owner-b");
+    c2.start().unwrap();
+    assert!(b.wait_for(Duration::from_secs(15), |_| owned("owner-a") == 2 && owned("owner-b") == 2), "a={} b={}", owned("owner-a"), owned("owner-b"));
+    let t = c1.create_producer_template();
+    for p in 0..4 {
+        t.send_body(&eh(&format!("&partitionId={}", p)), format!("p{}", p)).unwrap();
+    }
+    assert!(b.wait_for(Duration::from_secs(10), |_| seen.lock().unwrap().len() >= 4));
+    std::thread::sleep(Duration::from_millis(200));
+    {
+        let s = seen.lock().unwrap();
+        let mut bodies: Vec<String> = s.iter().map(|x| x.1.clone()).collect();
+        bodies.sort();
+        assert_eq!(bodies, vec!["p0", "p1", "p2", "p3"], "each event once");
+        assert!(s.iter().any(|x| x.0 == "owner-a") && s.iter().any(|x| x.0 == "owner-b"), "{:?}", s);
+    }
+    c2.stop().unwrap();
+    assert!(b.wait_for(Duration::from_secs(15), |_| owned("owner-a") == 4));
+    c1.stop().unwrap();
+}
