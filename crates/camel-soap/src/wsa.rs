@@ -130,7 +130,8 @@ pub fn parse_create_sequence_response(body: &[String]) -> Option<String> {
     if d.local_name(r) != "CreateSequenceResponse" {
         return None;
     }
-    d.child_elements_named(r, WSRM_NS, "Identifier").next().map(|x| text_of(&d, x))
+    let id = d.child_elements_named(r, WSRM_NS, "Identifier").next().map(|x| text_of(&d, x));
+    id
 }
 
 fn ack_header(id: &str, received: &BTreeSet<u64>) -> String {
