@@ -1281,7 +1281,14 @@ impl Interp {
                                 return Ok(v);
                             }
                         }
-                        crate::builtins::object_property(self, o, name, pos)
+                        let v = crate::builtins::object_property(self, o, name, pos)?;
+                        if self.d == Dialect::Python && matches!(v, V::Undef | V::Null) && !name.starts_with("__") {
+                            if let Some(c) = crate::classes::class_of(o) {
+                                let cname = c.def.name.clone().unwrap_or_else(|| "object".into());
+                                return self.throw("AttributeError", format!("'{}' object has no attribute '{}'", cname, name), Some(pos));
+                            }
+                        }
+                        Ok(v)
                     }
                 }
             }

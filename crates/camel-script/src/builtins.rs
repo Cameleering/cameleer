@@ -1652,7 +1652,7 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
             let kwa = kwargs(&mut args);
             let mut pm = PropMap::default();
             match args.first() {
-                Some(V::Obj(o)) => pm = o.borrow().props.clone(),
+                Some(V::Obj(o)) if matches!(o.borrow().kind, ObjKind::Plain | ObjKind::Kwargs) && o.borrow().proto.is_none() => pm = o.borrow().props.clone(),
                 Some(other) => {
                     let other = other.clone();
                     for pair in it.iterate(&other, Some(pos))? {
