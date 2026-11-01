@@ -334,7 +334,7 @@ pub fn get_member(it: &mut Interp, h: &Rc<Host>, recv: &V, name: &str, pos: u32)
         Host::Meta(_) if name == "static" => V::Host(h.clone()),
         Host::Meta(_) => method(),
         Host::NsFn(..) | Host::Type(_) => {
-            if name == "name" || name == "simpleName" {
+            if name == "name" || name == "simpleName" || name == "__name__" {
                 return Ok(V::string(match &**h {
                     Host::Type(n) => n.clone(),
                     Host::NsFn(_, n) => n.clone(),

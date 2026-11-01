@@ -573,14 +573,30 @@ impl Interp {
         let m = self.py_load(name, pos)?;
         if top && name.contains('.') {
             let root = name.split('.').next().unwrap_or(name);
-            return self.py_load(root, pos);
+            if let Ok(r) = self.py_load(root, pos) {
+                return Ok(r);
+            }
+            // namespace packages: nested objects down to the module
+            let parts: Vec<&str> = name.split('.').collect();
+            let mut cur = m;
+            for p in parts[1..].iter().rev() {
+                let mut o = PropMap::default();
+                o.set(p, cur);
+                cur = V::obj(o);
+            }
+            return Ok(cur);
         }
         Ok(m)
     }
 
     /// `from module import name`: an attribute of the module or a submodule.
     pub fn py_from(&mut self, module: &str, name: &str, pos: u32) -> R<V> {
-        let m = self.py_load(module, pos)?;
+        let sub = if module.ends_with('.') { format!("{}{}", module, name) } else { format!("{}.{}", module, name) };
+        let m = match self.py_load(module, pos) {
+            Ok(m) => m,
+            // a namespace package (directory without __init__.py)
+            Err(e) => return self.py_load(&sub, pos).map_err(|_| e),
+        };
         let has = match &m {
             V::Obj(o) => o.borrow().props.contains(name),
             _ => true,
@@ -588,7 +604,6 @@ impl Interp {
         if has {
             return self.get_member(&m, name, pos);
         }
-        let sub = if module.ends_with('.') { format!("{}{}", module, name) } else { format!("{}.{}", module, name) };
         match self.py_load(&sub, pos) {
             Ok(v) => Ok(v),
             Err(_) => self.throw("ImportError", format!("cannot import name '{}' from '{}'", name, module), Some(pos)),

@@ -1728,10 +1728,11 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
             }
         }
         "int" => {
+            let kwa = kwargs(&mut args);
             if args.is_empty() {
                 V::Int(0)
             } else {
-                let base = if args.len() > 1 { Some(iarg(it, &args, 1, 10)) } else { None };
+                let base = if args.len() > 1 { Some(iarg(it, &args, 1, 10)) } else { kw(&kwa, "base").map(|b| b.as_f64().unwrap_or(10.0) as i64) };
                 py_int(it, &a0, base, pos)?
             }
         }
@@ -1923,6 +1924,7 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
         "type" if args.len() == 3 => it.py_type3(&a0, &arg(&args, 1), &arg(&args, 2), pos)?,
         "type" => match crate::classes::class_of(&a0) {
             Some(c) => V::Func(c),
+            None if matches!(&a0, V::Obj(o) if o.borrow().kind == ObjKind::Error) => V::host(Host::Type(error_name(&a0))),
             None => V::host(Host::Type(py_type_name(&a0).to_string())),
         },
         "divmod" => {

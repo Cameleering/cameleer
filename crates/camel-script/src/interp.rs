@@ -1301,6 +1301,11 @@ impl Interp {
                 if name == "new" {
                     return self.construct_class(c, args, pos);
                 }
+                if self.d == Dialect::Python {
+                    if let Some(f) = self.py_meta_attr(c, name) {
+                        return self.call(&f, V::Undef, args, pos);
+                    }
+                }
                 if self.d == Dialect::Groovy {
                     if let Some(v) = self.groovy_class_call(c, name, &args, pos)? {
                         return Ok(v);
@@ -2047,7 +2052,8 @@ impl Interp {
                     return Ok(None);
                 }
                 let a = self.eval_args(args, env)?;
-                if !f.is_callable() && !matches!(f, V::Host(_)) {
+                let callable_obj = matches!(f, V::Obj(_)) && self.user_method(&f, if self.d == Dialect::Python { "__call__" } else { "call" }).is_some();
+                if !f.is_callable() && !matches!(f, V::Host(_)) && !callable_obj {
                     // Groovy: calling a non-callable variable
                     let msg = match self.d {
                         Dialect::Js => format!("{} is not a function", name),

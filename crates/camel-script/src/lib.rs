@@ -243,6 +243,8 @@ impl Script {
         let state = host::HostState::new(parts.exchange_id, parts.pattern, parts.message_id, parts.context, parts.headers, parts.body, parts.properties, parts.exception, parts.route_id);
         let host = Rc::new(state);
         let mut it = interp::Interp::new(self.dialect, self.src.clone(), host.clone());
+        // relative ES module / Python imports resolve against the script's directory
+        it.script_dir = self.options.get("scriptDir").filter(|d| !d.is_empty()).map(std::path::PathBuf::from);
         if self.dialect == Dialect::Jsonnet {
             let payload = match self.payload(&host) {
                 Ok(p) => p,
