@@ -32,12 +32,24 @@
 //! `JMS_AMQP_MA_<key>` headers.
 //!
 //! Consumers settle after processing: `AUTO_ACKNOWLEDGE`/`DUPS_OK_ACKNOWLEDGE` accept,
-//! `CLIENT_ACKNOWLEDGE` and `transacted` accept successful exchanges and return failed
-//! ones with `modified(delivery-failed)` (redelivered with `JMSRedelivered=true`). A message
+//! `CLIENT_ACKNOWLEDGE` accepts successful exchanges and returns failed ones with
+//! `modified(delivery-failed)` (redelivered with `JMSRedelivered=true`). `transacted=true`
+//! (or `SESSION_TRANSACTED`) uses AMQP local transactions (a coordinator link per
+//! connection): every message is acknowledged, and its reply sent, inside a declared
+//! transaction that commits on success and rolls back on failure (the broker redelivers);
+//! transacted producers send within a transaction too. A message
 //! with a reply-to makes the exchange InOut and the reply goes to that address with the
 //! request's correlation id (or message id); producers of InOut exchanges send with a
 //! reply-to (a dynamic temporary queue, or `replyTo`) and wait `requestTimeout`.
+//! `subscriptionShared=true` with `subscriptionName` uses JMS 2.0 shared subscriptions
+//! (Qpid JMS link names and the `shared` / `global` capabilities; durable with
+//! `subscriptionDurable=true`). `jmsMessageType=Object` sends ObjectMessages as AMQP typed
+//! values (`x-opt-jms-msg-type = 1`), so structured bodies round-trip. A
+//! [`AmqpConnectionFactory`] bean (`connectionFactory=#name`) supplies the remote URI,
+//! credentials, client id and TLS settings; `amqpws://` / `amqpwss://` urls connect over
+//! WebSockets.
 //! Persistent sends wait for the broker's `accepted` outcome; non-persistent ones are
+
 //! sent pre-settled.
 
 use std::any::Any;
@@ -54,7 +66,8 @@ use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Servic
 use camel_core::util::Parameters;
 use camel_core::value::Value;
 
-use crate::client::{Connection, ConnectionOptions, Delivery, LinkOptions, Receiver, Sender, Session};
+use crate::client::{Connection, ConnectionOptions, Coordinator, Delivery, LinkOptions, Receiver, Sender, Session};
+
 use crate::codec::AmqpValue;
 use crate::message::{id_to_string, Body, Message};
 use crate::types::SELECTOR_FILTER;
@@ -147,6 +160,54 @@ pub enum MessageType {
     Text,
     Bytes,
     Map,
+    /// ObjectMessage: the body is serialized as an AMQP typed value (Qpid JMS "AMQP typed
+    /// encoding", `x-opt-jms-msg-type = 1`), so maps, lists, numbers, bytes... round-trip.
+    Object,
+}
+
+/// A connection factory bean, the counterpart of Qpid JMS' `JmsConnectionFactory`: bind
+/// one in the registry and reference it with `connectionFactory=#name` (or
+/// `camel.component.amqp.connectionFactory=#name`). Endpoint options override its fields.
+#[derive(Clone, Debug, Default)]
+pub struct AmqpConnectionFactory {
+    /// `amqp[s]://host:port`, `amqpws[s]://host:port/path` or `failover:(...)`.
+    pub remote_uri: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub client_id: Option<String>,
+    pub sasl_mechanism: Option<String>,
+    pub idle_timeout: Option<Duration>,
+    pub ssl_context_parameters: Option<Arc<camel_tls::params::SslContextParameters>>,
+}
+
+impl AmqpConnectionFactory {
+    pub fn new(remote_uri: &str) -> Self {
+        AmqpConnectionFactory { remote_uri: remote_uri.to_string(), ..Default::default() }
+    }
+    pub fn credentials(mut self, username: &str, password: &str) -> Self {
+        self.username = Some(username.to_string());
+        self.password = Some(password.to_string());
+        self
+    }
+    pub fn client_id(mut self, id: &str) -> Self {
+        self.client_id = Some(id.to_string());
+        self
+    }
+    pub fn ssl(mut self, params: Arc<camel_tls::params::SslContextParameters>) -> Self {
+        self.ssl_context_parameters = Some(params);
+        self
+    }
+}
+
+fn lookup_factory(ctx: &CamelContext, reference: &str) -> Result<AmqpConnectionFactory> {
+    let name = reference.trim().trim_start_matches('#').trim_start_matches("bean:");
+    if let Some(f) = ctx.registry().lookup::<AmqpConnectionFactory>(name) {
+        return Ok((*f).clone());
+    }
+    if let Some(f) = ctx.registry().lookup::<Arc<AmqpConnectionFactory>>(name) {
+        return Ok((**f).clone());
+    }
+    Err(CamelError::new(core_kinds::NO_SUCH_BEAN, format!("No AmqpConnectionFactory bean named {}", name)))
 }
 
 /// Resolved endpoint configuration.
@@ -169,6 +230,8 @@ pub struct AmqpConfig {
     pub message_type: Option<MessageType>,
     pub prefetch: u32,
     pub durable_subscription: Option<String>,
+    /// JMS 2.0 shared subscription name (`subscriptionShared=true`).
+    pub shared_subscription: Option<String>,
     pub include_amqp_annotations: bool,
     pub recovery_interval: Duration,
 }
@@ -185,12 +248,17 @@ pub fn decode_key(k: &str) -> String {
 
 /// Resolve the connection settings of an `amqp` endpoint.
 fn connection_options(ctx: &CamelContext, scheme: &str, o: &mut Opts) -> Result<ConnectionOptions> {
+    let factory = match o.string("connectionFactory") {
+        Some(r) => Some(lookup_factory(ctx, &r)?),
+        None => None,
+    };
     let url = o
         .string("remoteAddress")
         .or_else(|| o.string("remoteURI"))
         .or_else(|| o.string("brokerURL"))
         .or_else(|| o.string("brokerUrl"))
-        .or_else(|| o.string("connectionFactory.remoteURI"));
+        .or_else(|| o.string("connectionFactory.remoteURI"))
+        .or_else(|| factory.as_ref().map(|f| f.remote_uri.clone()).filter(|u| !u.is_empty()));
     let host = o.string("host");
     let port: Option<u16> = match o.get("port") {
         Some(p) => Some(p.trim().parse().map_err(|_| CamelError::illegal_argument(format!("Invalid port: {}", p)))?),
@@ -201,12 +269,21 @@ fn connection_options(ctx: &CamelContext, scheme: &str, o: &mut Opts) -> Result<
         Some(u) => parse_amqp_url(&u)?,
         None => {
             let tls = use_ssl;
-            crate::util::AmqpUrl { tls, host: host.clone().unwrap_or_else(|| "localhost".into()), port: port.unwrap_or(if tls { 5671 } else { 5672 }), username: None, password: None }
+            crate::util::AmqpUrl {
+                tls,
+                host: host.clone().unwrap_or_else(|| "localhost".into()),
+                port: port.unwrap_or(if tls { 5671 } else { 5672 }),
+                username: None,
+                password: None,
+                websocket: false,
+                ws_path: "/".into(),
+            }
         }
     };
     let tls = camel_tls::camel_support::endpoint_tls(ctx, o.params, scheme, u.tls || use_ssl, &[])?;
     let tls = match tls {
         Some(t) => Some(t),
+        None if factory.as_ref().is_some_and(|f| f.ssl_context_parameters.is_some()) => Some(camel_tls::camel_support::EndpointTls::new(factory.as_ref().unwrap().ssl_context_parameters.clone().unwrap())),
         None if ctx.properties().get(&format!("camel.component.{}.sslContextParameters", scheme)).is_some() => {
             let r = ctx.properties().get(&format!("camel.component.{}.sslContextParameters", scheme)).unwrap();
             let p = camel_tls::camel_support::lookup_ssl_context_parameters(ctx, r.trim_start_matches('#'))?;
@@ -216,11 +293,15 @@ fn connection_options(ctx: &CamelContext, scheme: &str, o: &mut Opts) -> Result<
     };
     let mut c = ConnectionOptions::new(&u.host, u.port);
     c.tls = tls;
-    c.username = o.string("username").or(u.username);
-    c.password = o.string("password").or(u.password);
-    c.sasl_mechanism = o.string("saslMechanism");
-    c.container_id = o.string("clientId");
-    c.idle_timeout = o.millis("idleTimeout", Duration::from_secs(60))?;
+    let f = factory.unwrap_or_default();
+    c.username = o.string("username").or(f.username).or(u.username);
+    c.password = o.string("password").or(f.password).or(u.password);
+    c.sasl_mechanism = o.string("saslMechanism").or(f.sasl_mechanism);
+    c.container_id = o.string("clientId").or(f.client_id);
+    c.idle_timeout = o.millis("idleTimeout", f.idle_timeout.unwrap_or(Duration::from_secs(60)))?;
+    if u.websocket {
+        c.websocket_path = Some(u.ws_path.clone());
+    }
     c.connect_timeout = o.millis("connectTimeout", Duration::from_secs(10))?;
     c.max_frame_size = o.num("maxFrameSize", 1u32 << 20)?;
     c.hostname = o.string("vhost");
@@ -274,17 +355,21 @@ impl AmqpConfig {
             Some("Text") => Some(MessageType::Text),
             Some("Bytes") => Some(MessageType::Bytes),
             Some("Map") => Some(MessageType::Map),
-            Some(other) => return Err(CamelError::illegal_argument(format!("Unsupported jmsMessageType (Text, Bytes or Map): {}", other))),
+            Some("Object") => Some(MessageType::Object),
+            Some(other) => return Err(CamelError::illegal_argument(format!("Unsupported jmsMessageType (Text, Bytes, Map or Object): {}", other))),
         };
         let prefetch = o.num("prefetchSize", 100u32)?.max(1);
-        let durable_name = o.string("durableSubscriptionName").or_else(|| o.string("subscriptionName"));
-        let durable = o.bool("subscriptionDurable", false)? || durable_name.is_some();
-        let durable_subscription = if durable && kind == DestKind::Topic { Some(durable_name.unwrap_or_else(|| destination.clone())) } else { None };
+        let durable_name = o.string("durableSubscriptionName");
+        let sub_name = o.string("subscriptionName");
+        let shared = o.bool("subscriptionShared", false)?;
+        let durable = o.bool("subscriptionDurable", false)? || durable_name.is_some() || (sub_name.is_some() && !shared);
+        let name = durable_name.or(sub_name);
+        let durable_subscription = if durable && kind == DestKind::Topic { Some(name.clone().unwrap_or_else(|| destination.clone())) } else { None };
+        let shared_subscription = if shared && kind == DestKind::Topic { Some(name.unwrap_or_else(|| destination.clone())) } else { None };
         let include_amqp_annotations = o.bool("includeAmqpAnnotations", false)?;
         let recovery_interval = o.millis("recoveryInterval", Duration::from_millis(5000))?;
         o.ignore(COMMON_IGNORED);
         o.ignore(&[
-            "connectionFactory",
             "replyToType",
             "receiveTimeout",
             "testConnectionOnStartup",
@@ -295,7 +380,6 @@ impl AmqpConfig {
             "asyncStartListener",
             "asyncStopListener",
             "cacheLevelName",
-            "subscriptionShared",
             "pubSubNoLocal",
             "headerFilterStrategy",
             "messageConverter",
@@ -327,6 +411,7 @@ impl AmqpConfig {
             message_type,
             prefetch,
             durable_subscription,
+            shared_subscription,
             include_amqp_annotations,
             recovery_interval,
         })
@@ -471,6 +556,7 @@ pub fn exchange_to_message(cfg: &AmqpConfig, ex: &Exchange, to: &str, kind: Dest
     let (body, ty) = match (cfg.message_type, ex.body()) {
         (Some(MessageType::Bytes), v) => (Body::Data(vec![value_bytes(v)]), msg_type::BYTES),
         (Some(MessageType::Text), v) => (Body::Value(AmqpValue::String(v.to_string())), msg_type::TEXT),
+        (Some(MessageType::Object), v) => (Body::Value(to_amqp(v)), msg_type::OBJECT),
         (Some(MessageType::Map), Value::Object(_)) | (None, Value::Object(_)) => (Body::Value(to_amqp(ex.body())), msg_type::MAP),
         (_, Value::Null) => (Body::Value(AmqpValue::Null), msg_type::MESSAGE),
         (_, Value::Bytes(b)) => (Body::Data(vec![b.clone()]), msg_type::BYTES),
@@ -561,6 +647,7 @@ struct ProducerState {
     session: Session,
     senders: HashMap<String, Arc<Sender>>,
     reply: Option<ReplyRouter>,
+    coordinator: Option<Arc<Coordinator>>,
 }
 
 impl ProducerState {
@@ -595,7 +682,7 @@ impl AmqpProducer {
         if g.is_none() {
             let conn = Connection::open(&self.cfg.conn)?;
             let session = conn.session()?;
-            *g = Some(ProducerState { conn, session, senders: HashMap::new(), reply: None });
+            *g = Some(ProducerState { conn, session, senders: HashMap::new(), reply: None, coordinator: None });
         }
         Ok(g.as_mut().unwrap())
     }
@@ -657,13 +744,17 @@ impl AmqpProducer {
         let result = (|| {
             let s = self.state(&mut g)?;
             let snd = Self::sender(s, &address, kind)?;
+            if cfg.transacted && s.coordinator.is_none() {
+                s.coordinator = Some(Arc::new(s.session.coordinator()?));
+            }
+            let coord = s.coordinator.clone();
             if !in_out {
-                return Ok((snd, None));
+                return Ok((snd, coord, None));
             }
             let (reply_addr, pending) = self.reply_router(s)?;
-            Ok((snd, Some((reply_addr, pending))))
+            Ok((snd, coord, Some((reply_addr, pending))))
         })();
-        let (snd, reply) = match result {
+        let (snd, coord, reply) = match result {
             Ok(x) => x,
             Err(e) => {
                 if let Some(old) = g.take() {
@@ -674,6 +765,15 @@ impl AmqpProducer {
         };
         drop(g);
         let send = |m: &Message| -> Result<()> {
+            if let Some(c) = &coord {
+                // a local AMQP transaction around the send
+                let id = c.declare()?;
+                if let Err(e) = snd.send_accepted_in_txn(m, &id, cfg.request_timeout) {
+                    let _ = c.rollback(&id);
+                    return Err(e);
+                }
+                return c.commit(&id);
+            }
             if cfg.delivery_persistent {
                 match snd.send_with(m, false, cfg.request_timeout)? {
                     None | Some(DeliveryState::Accepted) => Ok(()),
@@ -761,8 +861,19 @@ struct Worker {
 }
 
 impl Worker {
-    fn handle(&self, rx: &Receiver, replies: &Sender, d: Delivery) {
+    fn handle(&self, rx: &Receiver, replies: &Sender, coord: Option<&Coordinator>, d: Delivery) {
         let cfg = &self.cfg;
+        let txn = match coord {
+            Some(c) => match c.declare() {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    camel_core::camel_warn!(&self.uri, "Cannot begin a transaction: {} - releasing the message", e.message);
+                    let _ = rx.release(&d);
+                    return;
+                }
+            },
+            None => None,
+        };
         let mut ex = Exchange::new(self.ctx.upgrade());
         message_to_exchange(cfg, &d.message, &mut ex);
         let reply_to = if cfg.disable_reply_to { None } else { d.message.properties.as_ref().and_then(|p| p.reply_to.clone()) };
@@ -793,11 +904,24 @@ impl Worker {
                 m.set_app_property(headers::EXCEPTION_KIND, AmqpValue::str(e.kind.clone()));
                 m.set_app_property(headers::EXCEPTION_MESSAGE, AmqpValue::str(e.message.clone()));
             }
-            if let Err(e) = replies.send_with(&m, false, cfg.request_timeout) {
+            let sent = match &txn {
+                Some(id) => replies.send_accepted_in_txn(&m, id, cfg.request_timeout),
+                None => replies.send_with(&m, false, cfg.request_timeout).map(|_| ()),
+            };
+            if let Err(e) = sent {
                 camel_core::camel_warn!(&self.uri, "Cannot send reply to {}: {}", rt, e.message);
             }
         }
-        let r = if failed && (cfg.ack == JmsAck::Client || cfg.transacted) { rx.modify(&d, true, false, vec![]) } else { rx.accept(&d) };
+        if let (Some(c), Some(id)) = (coord, &txn) {
+            // the acknowledgement (and any reply) commit together; a failure rolls back so
+            // the broker redelivers the message (JMSRedelivered=true)
+            let r = rx.settle_in_txn(&d, id, DeliveryState::Accepted).and_then(|_| c.discharge(id, failed));
+            if let Err(e) = r {
+                camel_core::camel_warn!(&self.uri, "Cannot complete the transaction: {}", e.message);
+            }
+            return;
+        }
+        let r = if failed && cfg.ack == JmsAck::Client { rx.modify(&d, true, false, vec![]) } else { rx.accept(&d) };
         if let Err(e) = r {
             camel_core::camel_warn!(&self.uri, "Cannot settle message: {}", e.message);
         }
@@ -809,7 +933,28 @@ fn consumer_link(cfg: &AmqpConfig, index: usize) -> LinkOptions {
     if let Some(s) = &cfg.selector {
         o = o.filter("jms-selector", SELECTOR_FILTER, AmqpValue::str(s.clone()));
     }
-    if let Some(sub) = &cfg.durable_subscription {
+    if let Some(sub) = &cfg.shared_subscription {
+        // Qpid JMS link naming: `name`, `name|2`... (durable), `name|volatileN` (non-durable),
+        // `|global` variants without a client id
+        let global = cfg.conn.container_id.is_none();
+        let durable = cfg.durable_subscription.is_some();
+        let name = match (durable, global) {
+            (true, false) if index == 0 => sub.clone(),
+            (true, false) => format!("{}|{}", sub, index + 1),
+            (true, true) if index == 0 => format!("{}|global", sub),
+            (true, true) => format!("{}|global{}", sub, index + 1),
+            (false, false) => format!("{}|volatile{}", sub, index + 1),
+            (false, true) => format!("{}|global-volatile{}", sub, index + 1),
+        };
+        o = o.name(&name).capability("shared");
+        if global {
+            o = o.capability("global");
+        }
+        if durable {
+            o.durable = 2;
+            o.expiry_policy = Some("never".into());
+        }
+    } else if let Some(sub) = &cfg.durable_subscription {
         o = o.name(&if index == 0 { sub.clone() } else { format!("{}-{}", sub, index) });
         o.durable = 2;
         o.expiry_policy = Some("never".into());
@@ -828,7 +973,7 @@ impl Service for AmqpConsumer {
         self.threads.spawn(&format!("Camel {} supervisor", self.uri), move |stop| {
             let mut ready = Some(ready_tx);
             while !stop.is_stopped() {
-                let setup = (|| -> Result<(Connection, Session, Vec<Receiver>, Sender)> {
+                let setup = (|| -> Result<(Connection, Session, Vec<Receiver>, Sender, Option<Coordinator>)> {
                     let conn = Connection::open(&worker.cfg.conn)?;
                     let session = conn.session()?;
                     let mut rxs = Vec::new();
@@ -838,9 +983,10 @@ impl Service for AmqpConsumer {
                     let mut anon = LinkOptions::new("");
                     anon.address = None;
                     let replies = session.sender(anon)?;
-                    Ok((conn, session, rxs, replies))
+                    let coord = if worker.cfg.transacted { Some(session.coordinator()?) } else { None };
+                    Ok((conn, session, rxs, replies, coord))
                 })();
-                let (conn, _session, rxs, replies) = match setup {
+                let (conn, _session, rxs, replies, coord) = match setup {
                     Ok(x) => x,
                     Err(e) => {
                         camel_core::camel_warn!(&uri, "Cannot start consumer on {}: {} - retrying in {} ms", uri, e.message, worker.cfg.recovery_interval.as_millis());
@@ -858,13 +1004,13 @@ impl Service for AmqpConsumer {
                 }
                 std::thread::scope(|scope| {
                     for rx in &rxs {
-                        let (w, st, replies) = (worker.clone(), stop.clone(), &replies);
+                        let (w, st, replies, coord) = (worker.clone(), stop.clone(), &replies, coord.as_ref());
                         scope.spawn(move || loop {
                             if st.is_stopped() {
                                 break;
                             }
                             match rx.receive(Duration::from_millis(50)) {
-                                Ok(Some(d)) => w.handle(rx, replies, d),
+                                Ok(Some(d)) => w.handle(rx, replies, coord, d),
                                 Ok(None) => {}
                                 Err(_) => break,
                             }
@@ -873,6 +1019,9 @@ impl Service for AmqpConsumer {
                 });
                 let lost = !stop.is_stopped();
                 if !lost {
+                    if let Some(c) = &coord {
+                        c.close();
+                    }
                     for rx in &rxs {
                         // durable subscriptions survive: detach without closing them
                         if worker.cfg.durable_subscription.is_some() {

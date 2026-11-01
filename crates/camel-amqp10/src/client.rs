@@ -16,7 +16,7 @@
 //! conn.close();
 //! ```
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -31,6 +31,7 @@ use crate::message::Message;
 use crate::transport::Transport;
 use crate::types::*;
 use crate::util::{amqp_error, amqp_failure, kinds, register_kinds};
+use crate::ws::AmqpStream;
 
 /// The session incoming window we advertise (in transfer frames).
 const INCOMING_WINDOW: u32 = 2048;
@@ -62,6 +63,9 @@ pub struct ConnectionOptions {
     /// How long to wait for open/begin/attach/close handshakes.
     pub request_timeout: Duration,
     pub properties: Vec<(AmqpValue, AmqpValue)>,
+    /// AMQP over WebSockets: the HTTP path of the upgrade request (Azure:
+    /// [`crate::ws::AMQP_WS_PATH`]); `None` = AMQP directly on the socket.
+    pub websocket_path: Option<String>,
 }
 
 impl ConnectionOptions {
@@ -82,7 +86,13 @@ impl ConnectionOptions {
             connect_timeout: Duration::from_secs(10),
             request_timeout: Duration::from_secs(20),
             properties: Vec::new(),
+            websocket_path: None,
         }
+    }
+    /// Carry AMQP over a WebSocket opened on `path` (subprotocol `AMQPWSB10`).
+    pub fn websocket(mut self, path: &str) -> Self {
+        self.websocket_path = Some(path.to_string());
+        self
     }
     pub fn credentials(mut self, user: &str, password: &str) -> Self {
         self.username = Some(user.to_string());
@@ -134,6 +144,8 @@ pub struct LinkOptions {
     pub local_address: Option<String>,
     pub properties: Vec<(AmqpValue, AmqpValue)>,
     pub desired_capabilities: Vec<String>,
+    /// Senders: attach to the transaction coordinator instead of a node.
+    pub coordinator: bool,
 }
 
 impl LinkOptions {
@@ -152,7 +164,12 @@ impl LinkOptions {
             local_address: None,
             properties: Vec::new(),
             desired_capabilities: Vec::new(),
+            coordinator: false,
         }
+    }
+    /// The transaction coordinator (`amqp:coordinator:list` target).
+    pub fn coordinator() -> Self {
+        LinkOptions { address: None, coordinator: true, ..LinkOptions::new("") }
     }
     /// A dynamic (temporary) node.
     pub fn dynamic() -> Self {
@@ -252,6 +269,8 @@ struct LinkState {
     queue: VecDeque<Delivery>,
     partial: Option<Partial>,
     snd_settle_mode: SndSettleMode,
+    /// Receivers in `rcv-settle-mode = second`: dispositions wait for the sender to settle.
+    rcv_second: bool,
     next_tag: u64,
 }
 
@@ -269,6 +288,8 @@ struct SessionState {
     next_delivery_id: u32,
     /// Unsettled deliveries we sent: delivery id -> outcome once settled by the peer.
     outcomes: HashMap<u32, Option<DeliveryState>>,
+    /// Deliveries we received that the sender settled after our (unsettled) disposition.
+    peer_settled: HashSet<u32>,
 }
 
 enum Status {
@@ -455,6 +476,7 @@ fn process_session(s: &mut SessionState, local: u16, p: Performative, payload: V
                     l.remote_handle = Some(a.handle);
                     if l.role == Role::Receiver {
                         l.delivery_count = a.initial_delivery_count.unwrap_or(0);
+                        l.rcv_second = l.rcv_second && a.rcv_settle_mode == RcvSettleMode::Second;
                     } else {
                         l.snd_settle_mode = a.snd_settle_mode;
                     }
@@ -590,6 +612,16 @@ fn process_session(s: &mut SessionState, local: u16, p: Performative, payload: V
                 if !d.settled {
                     outs.push(Out::Frame(Frame::amqp(local, Performative::Disposition(Disposition { role: Role::Sender, first: d.first, last: d.last, settled: true, state: d.state, batchable: false }))));
                 }
+            } else if d.settled {
+                // the sender settled deliveries we received (rcv-settle-mode second)
+                let mut id = d.first;
+                loop {
+                    s.peer_settled.insert(id);
+                    if id == last {
+                        break;
+                    }
+                    id = id.wrapping_add(1);
+                }
             }
         }
         _ => {}
@@ -642,7 +674,7 @@ impl std::fmt::Debug for Connection {
     }
 }
 
-fn sasl_negotiate(stream: &mut NetStream, opts: &ConnectionOptions) -> Result<()> {
+fn sasl_negotiate(stream: &mut AmqpStream, opts: &ConnectionOptions) -> Result<()> {
     use std::io::Write;
     let what = format!("{}:{}", opts.host, opts.port);
     let io = |e: std::io::Error| camel_tls::camel_support::io_to_camel(e, &what);
@@ -651,7 +683,7 @@ fn sasl_negotiate(stream: &mut NetStream, opts: &ConnectionOptions) -> Result<()
     if h != SASL_HEADER {
         return Err(amqp_failure(format!("Peer {} does not support the SASL layer (header {:?})", what, h)));
     }
-    let next = |s: &mut NetStream| -> Result<SaslFrame> {
+    let next = |s: &mut AmqpStream| -> Result<SaslFrame> {
         match read_frame(s, 65536).map_err(io)? {
             Some(Frame { body: FrameBody::Sasl(f), .. }) => Ok(f),
             Some(_) => Err(amqp_failure("Unexpected frame during SASL negotiation")),
@@ -692,7 +724,7 @@ fn sasl_negotiate(stream: &mut NetStream, opts: &ConnectionOptions) -> Result<()
         _ => scram.as_mut().map(|s| s.client_first().into_bytes()),
     };
     let hostname = opts.hostname.clone().or_else(|| Some(opts.host.clone()));
-    let send = |s: &mut NetStream, f: SaslFrame| s.write_all(&Frame { channel: 0, body: FrameBody::Sasl(f) }.encode()).map_err(io);
+    let send = |s: &mut AmqpStream, f: SaslFrame| s.write_all(&Frame { channel: 0, body: FrameBody::Sasl(f) }.encode()).map_err(io);
     send(stream, SaslFrame::Init { mechanism: mech.clone(), initial_response: initial, hostname })?;
     loop {
         match next(stream)? {
@@ -727,7 +759,7 @@ impl Connection {
         use std::io::Write;
         register_kinds();
         let what = format!("{}:{}", opts.host, opts.port);
-        let mut stream = match &opts.tls {
+        let net = match &opts.tls {
             Some(t) => t.connect(&opts.host, opts.port, opts.connect_timeout)?,
             None => {
                 let tcp = camel_tls::net::connect_tcp(&opts.host, opts.port, opts.connect_timeout).map_err(|e| match e.kind() {
@@ -737,7 +769,12 @@ impl Connection {
                 NetStream::plain(tcp)
             }
         };
-        let _ = stream.set_nodelay(true);
+        let _ = net.set_nodelay(true);
+        let _ = net.set_read_timeout(Some(opts.request_timeout.max(Duration::from_secs(1))));
+        let mut stream = match &opts.websocket_path {
+            Some(path) => AmqpStream::websocket_client(net, &opts.host, opts.port, path, crate::ws::AMQP_WS_PROTOCOL).map_err(|e| CamelError::new(core_kinds::CONNECT, format!("WebSocket connection to {} failed: {}", what, e)))?,
+            None => AmqpStream::from(net),
+        };
         let _ = stream.set_read_timeout(Some(opts.request_timeout.max(Duration::from_secs(1))));
         if opts.sasl {
             sasl_negotiate(&mut stream, opts)?;
@@ -871,6 +908,7 @@ impl Connection {
                     next_handle: 0,
                     next_delivery_id: 0,
                     outcomes: HashMap::new(),
+                    peer_settled: HashSet::new(),
                 },
             );
             let b = Begin { remote_channel: None, next_outgoing_id: 0, incoming_window: INCOMING_WINDOW, outgoing_window: OUTGOING_WINDOW, handle_max: u32::MAX, properties: vec![] };
@@ -956,6 +994,17 @@ impl Session {
         self.channel
     }
 
+    /// Whether the session (and its connection) is still usable.
+    pub fn is_open(&self) -> bool {
+        check_session(&self.shared.lock(), self.channel).is_ok() && !self.shared.transport.is_closed()
+    }
+
+    /// Attach a link to the transaction coordinator (local transactions).
+    pub fn coordinator(&self) -> Result<Coordinator> {
+        let sender = self.sender(LinkOptions::coordinator().name(&format!("txn-controller-{}", crate::util::unique_id())))?;
+        Ok(Coordinator { sender, timeout: self.shared.opts.request_timeout })
+    }
+
     fn attach(&self, role: Role, opts: &LinkOptions) -> Result<(u32, Attach)> {
         let sh = &self.shared;
         let name = opts.name.clone().unwrap_or_else(|| format!("{}-{}", if role == Role::Sender { "sender" } else { "receiver" }, crate::util::unique_id()));
@@ -981,6 +1030,7 @@ impl Session {
                     queue: VecDeque::new(),
                     partial: None,
                     snd_settle_mode: opts.snd_settle_mode,
+                    rcv_second: role == Role::Receiver && opts.rcv_settle_mode == RcvSettleMode::Second,
                     next_tag: 0,
                 },
             );
@@ -1001,6 +1051,7 @@ impl Session {
                 capabilities: opts.capabilities.clone(),
                 ..Default::default()
             };
+            let node_target = if opts.coordinator { Target::coordinator() } else { node_target };
             let (source, target) = match role {
                 Role::Sender => (Source { address: Some(name.clone()), ..Default::default() }, node_target),
                 Role::Receiver => (node_source, Target { address: opts.local_address.clone().or_else(|| Some(name.clone())), ..Default::default() }),
@@ -1142,6 +1193,16 @@ impl Sender {
 
     /// Send an encoded message.
     pub fn send_raw(&self, payload: &[u8], settled: bool, timeout: Duration) -> Result<Option<DeliveryState>> {
+        self.send_raw_txn(payload, settled, None, timeout)
+    }
+
+    /// Send a message as part of a transaction (unsettled; the outcome is transactional).
+    pub fn send_in_txn(&self, msg: &Message, txn_id: &[u8], timeout: Duration) -> Result<Option<DeliveryState>> {
+        self.send_raw_txn(&msg.encode(), false, Some(txn_id), timeout)
+    }
+
+    /// Send an encoded message, optionally within a transaction.
+    pub fn send_raw_txn(&self, payload: &[u8], settled: bool, txn: Option<&[u8]>, timeout: Duration) -> Result<Option<DeliveryState>> {
         let sh = &self.shared;
         let (ch, h) = (self.channel, self.handle);
         let deadline = Instant::now() + timeout;
@@ -1174,6 +1235,7 @@ impl Sender {
                 s.outcomes.insert(id, None);
             }
             let mut t = Transfer { handle: h, delivery_id: Some(id), delivery_tag: Some(tag), message_format: Some(0), settled: Some(settled), more: true, ..Default::default() };
+            t.state = txn.map(|id| DeliveryState::Transactional { txn_id: id.to_vec(), outcome: None });
             let overhead = 8 + Performative::Transfer(t.clone()).to_value().encode().len();
             let chunk = (max_frame as usize).saturating_sub(overhead).max(1);
             let mut bytes = Vec::with_capacity(payload.len() + 64);
@@ -1219,11 +1281,12 @@ impl Sender {
 
     /// Send and require the `accepted` outcome (rejections become errors).
     pub fn send_accepted(&self, msg: &Message, timeout: Duration) -> Result<()> {
-        match self.send(msg, timeout)? {
-            None | Some(DeliveryState::Accepted) => Ok(()),
-            Some(DeliveryState::Rejected(Some(e))) => Err(amqp_error(&e, "Message rejected")),
-            Some(other) => Err(amqp_failure(format!("Message not accepted: {:?}", other))),
-        }
+        check_accepted(self.send(msg, timeout)?)
+    }
+
+    /// Send within a transaction and require the (provisional) `accepted` outcome.
+    pub fn send_accepted_in_txn(&self, msg: &Message, txn_id: &[u8], timeout: Duration) -> Result<()> {
+        check_accepted(self.send_in_txn(msg, txn_id, timeout)?)
     }
 
     /// Detach (close) the link.
@@ -1234,6 +1297,58 @@ impl Sender {
     /// Detach without closing the link (a durable subscription survives).
     pub fn detach(&self) {
         detach_link(&self.shared, self.channel, self.handle, false);
+    }
+}
+
+fn check_accepted(state: Option<DeliveryState>) -> Result<()> {
+    match state.as_ref().map(|s| s.outcome()) {
+        None | Some(DeliveryState::Accepted) => Ok(()),
+        Some(DeliveryState::Rejected(Some(e))) => Err(amqp_error(e, "Message rejected")),
+        Some(other) => Err(amqp_failure(format!("Message not accepted: {:?}", other))),
+    }
+}
+
+/// A link to a transaction coordinator: declares and discharges local transactions
+/// (AMQP 1.0 part 4). Transfers and dispositions join a transaction through
+/// [`Sender::send_in_txn`] and [`Receiver::settle_in_txn`].
+pub struct Coordinator {
+    sender: Sender,
+    timeout: Duration,
+}
+
+impl Coordinator {
+    /// Declare a transaction; returns its id.
+    pub fn declare(&self) -> Result<Vec<u8>> {
+        let msg = Message { body: crate::message::Body::Value(AmqpValue::composite(desc::DECLARE, vec![])), ..Default::default() };
+        match self.sender.send(&msg, self.timeout)? {
+            Some(DeliveryState::Declared(id)) => Ok(id),
+            Some(DeliveryState::Rejected(Some(e))) => Err(amqp_error(&e, "Transaction declaration refused")),
+            other => Err(amqp_failure(format!("Unexpected outcome of a transaction declaration: {:?}", other))),
+        }
+    }
+
+    /// Commit (`fail = false`) or roll back (`fail = true`) a transaction.
+    pub fn discharge(&self, txn_id: &[u8], fail: bool) -> Result<()> {
+        let body = AmqpValue::composite(desc::DISCHARGE, vec![AmqpValue::Binary(txn_id.to_vec()), AmqpValue::Boolean(fail)]);
+        let msg = Message { body: crate::message::Body::Value(body), ..Default::default() };
+        match self.sender.send(&msg, self.timeout)? {
+            None | Some(DeliveryState::Accepted) => Ok(()),
+            Some(DeliveryState::Rejected(Some(e))) => Err(amqp_error(&e, if fail { "Transaction rollback failed" } else { "Transaction commit failed" })),
+            other => Err(amqp_failure(format!("Unexpected outcome of a transaction discharge: {:?}", other))),
+        }
+    }
+
+    pub fn commit(&self, txn_id: &[u8]) -> Result<()> {
+        self.discharge(txn_id, false)
+    }
+
+    pub fn rollback(&self, txn_id: &[u8]) -> Result<()> {
+        self.discharge(txn_id, true)
+    }
+
+    /// Detach the coordinator link (open transactions are rolled back by the peer).
+    pub fn close(&self) {
+        self.sender.close();
     }
 }
 
@@ -1331,16 +1446,44 @@ impl Receiver {
         }
     }
 
-    /// Settle a delivery with an outcome.
+    /// Settle a delivery with an outcome. In `rcv-settle-mode = second` the outcome is
+    /// sent unsettled and this waits until the sender has settled the delivery.
     pub fn settle(&self, d: &Delivery, state: DeliveryState) -> Result<()> {
         if d.settled {
             return Ok(());
         }
-        let ch = self.channel;
+        let (ch, h) = (self.channel, self.handle);
+        let mut second = false;
         self.shared.write_with(|st| {
             check_session(st, ch)?;
-            Ok(Frame::amqp(ch, Performative::Disposition(Disposition { role: Role::Receiver, first: d.delivery_id, last: None, settled: true, state: Some(state), batchable: false })).encode())
-        })
+            let s = st.sessions.get_mut(&ch).unwrap();
+            second = s.links.get(&h).is_some_and(|l| l.rcv_second);
+            if second {
+                s.peer_settled.remove(&d.delivery_id);
+            }
+            Ok(Frame::amqp(ch, Performative::Disposition(Disposition { role: Role::Receiver, first: d.delivery_id, last: None, settled: !second, state: Some(state), batchable: false })).encode())
+        })?;
+        if second {
+            let sh = &self.shared;
+            let st = sh.lock();
+            let id = d.delivery_id;
+            let mut st = sh.wait(st, Instant::now() + sh.opts.request_timeout, "settlement by the sender", |st| {
+                check_session(st, ch)?;
+                Ok(st.sessions[&ch].peer_settled.contains(&id))
+            })?;
+            st.sessions.get_mut(&ch).unwrap().peer_settled.remove(&id);
+        }
+        Ok(())
+    }
+    /// Settle a delivery within a transaction: the outcome takes effect when the
+    /// transaction commits (a rollback makes the message available again).
+    pub fn settle_in_txn(&self, d: &Delivery, txn_id: &[u8], outcome: DeliveryState) -> Result<()> {
+        self.settle(d, DeliveryState::Transactional { txn_id: txn_id.to_vec(), outcome: Some(Box::new(outcome)) })
+    }
+    /// Whether dispositions use `rcv-settle-mode = second` (agreed with the sender).
+    pub fn settles_second(&self) -> bool {
+        let st = self.shared.lock();
+        st.sessions.get(&self.channel).and_then(|s| s.links.get(&self.handle)).is_some_and(|l| l.rcv_second)
     }
     pub fn accept(&self, d: &Delivery) -> Result<()> {
         self.settle(d, DeliveryState::Accepted)
