@@ -254,10 +254,8 @@ fn csimple_and_joor() {
     let p = ctx.resolve_language("csimple").unwrap().create_predicate("${header.num} > 3", &Default::default()).unwrap();
     assert!(p.matches(&ex).unwrap());
     for name in ["joor", "java"] {
-        let e = ctx.resolve_language(name).unwrap().create_expression("return 1;", &Default::default()).err().unwrap();
-        assert_eq!(e.kind, "UnsupportedOperationException");
-        assert!(e.message.contains("not supported by rust-camel"), "{}", e.message);
-        assert!(e.message.contains("JDK compiler"), "{}", e.message);
+        let e = ctx.resolve_language(name).unwrap().create_expression("return \"Hi \" + body;", &Default::default()).unwrap();
+        assert_eq!(e.evaluate(&ex).unwrap().to_string(), "Hi Hello World");
     }
     // all names are registered
     let names = ctx.language_names();

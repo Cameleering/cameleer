@@ -1101,8 +1101,9 @@ impl Interp {
             self.assign_pat(r, V::arr(tail), &Mode::Declare(VarKind::Let), &scope)?;
         }
         if def.generator || def.is_async {
-            let g = self.make_generator(c, scope, def.is_async);
-            if def.is_async {
+            // `async function*` runs as a generator whose elements `for await` awaits
+            let g = self.make_generator(c, scope, def.is_async && !def.generator);
+            if def.is_async && !def.generator {
                 return self.start_async(g);
             }
             return Ok(self.generator_value(g));
@@ -1255,6 +1256,9 @@ impl Interp {
                 self.null_error("read", name, o, pos)
             }
             V::Obj(ob) => {
+                if let (Some(field), Dialect::Groovy) = (name.strip_prefix('@'), self.d) {
+                    return Ok(ob.borrow().props.get(field).cloned().unwrap_or(V::Null));
+                }
                 if self.d.groovy_like() && ob.borrow().proto.is_some() {
                     if let Some(v) = self.groovy_get_property(o, ob, name, pos)? {
                         return Ok(v);
@@ -1331,6 +1335,10 @@ impl Interp {
 
     /// Property write.
     pub fn set_member(&mut self, o: &V, name: &str, v: V, pos: u32) -> R<()> {
+        if let (Some(field), V::Obj(ob), Dialect::Groovy) = (name.strip_prefix('@'), o, self.d) {
+            ob.borrow_mut().props.set(field, v);
+            return Ok(());
+        }
         match o {
             V::Obj(ob) => {
                 let has_proto = ob.borrow().proto.is_some();
@@ -1572,7 +1580,8 @@ impl Interp {
             V::Obj(ob) if !matches!(ob.borrow().kind, ObjKind::Plain | ObjKind::Set | ObjKind::Kwargs | ObjKind::Jsonnet(_)) || (ob.borrow().proto.is_some() && self.d != Dialect::Groovy) || (self.d == Dialect::Js && ob.borrow().kind == ObjKind::Plain) => {
                 let kind = ob.borrow().kind.clone();
                 if let ObjKind::Coll(c) = &kind {
-                    if let Some(items) = crate::collections::iterate_coll(&c.0.borrow()) {
+                    let items = crate::collections::iterate_coll(&c.0.borrow());
+                    if let Some(items) = items {
                         if matches!(&*c.0.borrow(), crate::collections::Coll::Iter(..)) {
                             if let crate::collections::Coll::Iter(_, i) = &mut *c.0.borrow_mut() {
                                 *i = usize::MAX / 2;
@@ -1806,6 +1815,28 @@ impl Interp {
                 let found = if self.d.groovy_like() { self.lookup_with_fields(name, env) } else { env.lookup(name) };
                 if found.is_none() && self.d.groovy_like() {
                     // a method of `this` called by its bare name inside a class
+                    if let Some(this @ V::Func(_)) = env.lookup("this") {
+                        if let V::Func(c) = &this {
+                            if c.flavor == Flavor::Class {
+                                let mut cur = Some(this.clone());
+                                let mut has = false;
+                                while let Some(V::Func(k)) = cur {
+                                    if k.flavor != Flavor::Class {
+                                        break;
+                                    }
+                                    if k.props.borrow().get(name).is_some_and(|f| f.is_callable()) {
+                                        has = true;
+                                        break;
+                                    }
+                                    cur = k.parent.clone();
+                                }
+                                if has {
+                                    let a = self.eval_args(args, env)?;
+                                    return Ok(Some(self.call_method(&this, name, a, *ipos)?));
+                                }
+                            }
+                        }
+                    }
                     if let Some(this @ V::Obj(_)) = env.lookup("this") {
                         if crate::classes::class_of(&this).is_some() {
                             let has = self.user_method(&this, name).is_some() || crate::classes::class_of(&this).is_some_and(|c| c.props.borrow().get(name).is_some_and(|f| f.is_callable()));
@@ -2305,6 +2336,10 @@ impl Interp {
             },
             Expr::Yield { arg, delegate, pos } => self.eval_yield(arg.as_deref(), *delegate, env, *pos),
             Expr::Await(x, pos) => {
+                if self.ystack.last().is_some_and(|c| c.sync_await) {
+                    let v = self.eval(x, env)?;
+                    return self.await_sync(v, *pos);
+                }
                 if !self.ystack.last().is_some_and(|c| c.is_async) {
                     return self.throw("SyntaxError", "await is only valid in async functions and the top level bodies of modules".into(), Some(*pos));
                 }

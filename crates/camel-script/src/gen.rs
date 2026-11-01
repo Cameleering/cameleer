@@ -34,6 +34,8 @@ pub struct YieldCtx {
     /// Resume value for the active delegate.
     pub pending: Option<Resume>,
     pub is_async: bool,
+    /// Async generators: `await` settles the promise synchronously (draining the job queues).
+    pub sync_await: bool,
 }
 
 /// A statement pointer into the generator function's AST (kept alive by [`GenState::func`] /
@@ -224,6 +226,7 @@ impl Interp {
     pub fn make_generator(&mut self, c: &Rc<Closure>, scope: Env, is_async: bool) -> Internal<GenState> {
         let mut st = GenState { func: Some(c.clone()), is_async, implicit_return: c.def.implicit_return, ..Default::default() };
         st.ctx.is_async = is_async;
+        st.ctx.sync_await = c.def.is_async && c.def.generator;
         if let FuncBody::Block(b) = &c.def.body {
             let lp = LP(b.as_slice() as *const [Stmt]);
             let env = self.block_env(b, &scope);

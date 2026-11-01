@@ -2538,6 +2538,9 @@ fn py_repl(r: &str) -> String {
 /// Property of a primitive / array / regex value.
 pub fn value_property(it: &mut Interp, o: &V, name: &str, pos: u32) -> R<V> {
     let java = it.d.is_java() || it.d == Dialect::Groovy;
+    if it.d == Dialect::Js && matches!(o, V::Str(_) | V::Arr(_)) && name.starts_with(SYM_PREFIX) && name == it.well_known_key("iterator") {
+        return Ok(V::Method(Rc::new((o.clone(), "%iter".to_string()))));
+    }
     match o {
         V::Str(s) => {
             if let Ok(i) = name.parse::<i64>() {
@@ -2716,6 +2719,10 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
         }
         if name == "%self" {
             return Ok(recv.clone());
+        }
+        if name == "%iter" {
+            let items = it.iterate(recv, Some(pos))?;
+            return Ok(crate::collections::list_iterator(items));
         }
     }
     if let V::Obj(o) = recv {

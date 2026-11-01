@@ -274,6 +274,43 @@ impl Interp {
         Ok(p)
     }
 
+    /// `await` inside an async generator: run the job queues until the promise settles.
+    pub fn await_sync(&mut self, v: V, pos: u32) -> R<V> {
+        if !is_promise(&v) {
+            return Ok(v);
+        }
+        loop {
+            match settled(&v) {
+                Some(PState::Fulfilled(x)) => return Ok(x),
+                Some(PState::Rejected(e)) => return Err(Ctrl::Throw(e)),
+                _ => {}
+            }
+            if self.queues.micro.is_empty() && self.queues.timers.is_empty() {
+                return self.throw("Error", "await: the promise never settles".into(), Some(pos));
+            }
+            if let Some(job) = self.queues.micro.pop_front() {
+                self.step_pub()?;
+                self.run_job(job)?;
+                continue;
+            }
+            let mut best = 0;
+            for (i, t) in self.queues.timers.iter().enumerate() {
+                let b = &self.queues.timers[best];
+                if t.due < b.due || (t.due == b.due && t.seq < b.seq) {
+                    best = i;
+                }
+            }
+            let t = self.queues.timers.remove(best);
+            self.queues.now = self.queues.now.max(t.due);
+            if let Some(iv) = t.interval {
+                self.queues.seq += 1;
+                self.queues.timers.push(Timer { due: self.queues.now + iv.max(1.0), seq: self.queues.seq, id: t.id, f: t.f.clone(), args: t.args.clone(), interval: t.interval });
+            }
+            self.step_pub()?;
+            self.call(&t.f, V::Undef, t.args, 0)?;
+        }
+    }
+
     /// Run all queued microtasks and timers.
     pub fn drain_jobs(&mut self) -> R<()> {
         loop {

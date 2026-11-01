@@ -184,6 +184,11 @@ impl Parser {
                 self.next();
                 Ok(s)
             }
+            T::P("@") if self.d == Dialect::Groovy && matches!(self.peek_at(1), T::Ident(_)) => {
+                // direct field access `obj.@field`
+                self.next();
+                Ok(format!("@{}", self.ident()?))
+            }
             _ => self.err(format!("expected property name but found {}", describe(self.peek()))),
         }
     }
@@ -246,6 +251,11 @@ impl Parser {
             return Ok(Stmt::Empty);
         }
         let d = self.d;
+        if d == Dialect::Groovy && self.is_groovy_type_decl_start() {
+            let annotations = self.parse_groovy_annotations()?;
+            let c = self.parse_groovy_class(annotations)?;
+            return Ok(Stmt::Class(Arc::new(c)));
+        }
         if let T::Ident(w) = self.peek().clone() {
             // labels
             if self.is_p_at(1, ":") && matches!(d, Dialect::Js | Dialect::Groovy) && !JS_KEYWORDS.contains(&w.as_str()) && w != "default" {
@@ -411,6 +421,266 @@ impl Parser {
         let e = self.parse_expr()?;
         self.consume_semi()?;
         Ok(Stmt::Expr(e))
+    }
+
+    // ------------------------------------------------------------------ Groovy classes
+    /// At `@Annotation`, modifiers and `class` / `interface` / `trait` / `enum` + name.
+    fn is_groovy_type_decl_start(&self) -> bool {
+        let mut n = 0;
+        loop {
+            match self.peek_at(n) {
+                T::P("@") if matches!(self.peek_at(n + 1), T::Ident(_)) => {
+                    n += 2;
+                    while self.is_p_at(n, ".") && matches!(self.peek_at(n + 1), T::Ident(_)) {
+                        n += 2;
+                    }
+                    if self.is_p_at(n, "(") {
+                        let mut depth = 0;
+                        loop {
+                            match self.peek_at(n) {
+                                T::P("(") => depth += 1,
+                                T::P(")") => depth -= 1,
+                                T::Eof => return false,
+                                _ => {}
+                            }
+                            n += 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                T::Ident(w) if matches!(w.as_str(), "public" | "private" | "protected" | "abstract" | "final" | "static" | "sealed") => n += 1,
+                T::Ident(w) if matches!(w.as_str(), "class" | "interface" | "trait" | "enum") => return matches!(self.peek_at(n + 1), T::Ident(_)),
+                _ => return false,
+            }
+        }
+    }
+
+    /// `@Name`, `@a.b.Name(...)`: the simple names.
+    fn parse_groovy_annotations(&mut self) -> R<Vec<String>> {
+        let mut out = Vec::new();
+        while self.is_p("@") && matches!(self.peek_at(1), T::Ident(_)) {
+            self.next();
+            let mut name = self.ident()?;
+            while self.is_p(".") && matches!(self.peek_at(1), T::Ident(_)) {
+                self.next();
+                name = self.ident()?;
+            }
+            if self.is_p("(") {
+                self.skip_balanced()?;
+            }
+            out.push(name);
+        }
+        Ok(out)
+    }
+
+    /// Skip a balanced `( ... )`, `< ... >` or `{ ... }` group starting at the current token.
+    fn skip_balanced(&mut self) -> R<()> {
+        let mut depth = 0i32;
+        loop {
+            match self.next() {
+                T::P("(") | T::P("{") | T::P("[") | T::P("<") => depth += 1,
+                T::P(")") | T::P("}") | T::P("]") | T::P(">") => depth -= 1,
+                T::P(">>") => depth -= 2,
+                T::Eof => return self.err("unbalanced brackets"),
+                _ => {}
+            }
+            if depth <= 0 {
+                return Ok(());
+            }
+        }
+    }
+
+    fn groovy_type_name(&mut self) -> R<String> {
+        let mut name = self.ident()?;
+        while self.is_p(".") && matches!(self.peek_at(1), T::Ident(_)) {
+            self.next();
+            name = self.ident()?;
+        }
+        if self.is_p("<") {
+            self.skip_balanced()?;
+        }
+        Ok(name)
+    }
+
+    fn parse_groovy_class(&mut self, mut annotations: Vec<String>) -> R<ClassDef> {
+        while matches!(self.peek(), T::Ident(w) if matches!(w.as_str(), "public" | "private" | "protected" | "abstract" | "final" | "static" | "sealed")) {
+            self.next();
+        }
+        let kind = self.ident()?;
+        let name = self.ident()?;
+        if self.is_p("<") {
+            self.skip_balanced()?;
+        }
+        let mut extends = None;
+        let mut mixins = Vec::new();
+        loop {
+            if self.eat_kw("extends") {
+                loop {
+                    let pos = self.pos();
+                    let t = self.groovy_type_name()?;
+                    if kind == "interface" || kind == "trait" || extends.is_some() {
+                        mixins.push(Expr::Ident(t, pos));
+                    } else {
+                        extends = Some(Expr::Ident(t, pos));
+                    }
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else if self.eat_kw("implements") {
+                loop {
+                    let pos = self.pos();
+                    mixins.push(Expr::Ident(self.groovy_type_name()?, pos));
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else if self.eat_kw("permits") {
+                while !self.is_p("{") && !self.at_eof() {
+                    self.next();
+                }
+            } else {
+                break;
+            }
+        }
+        self.expect_p("{")?;
+        let mut ctors = Vec::new();
+        let mut methods: Vec<ClassMember> = Vec::new();
+        let mut fields = Vec::new();
+        let mut constants: Vec<(String, Vec<Elem>, u32)> = Vec::new();
+        if kind == "enum" {
+            while let T::Ident(c) = self.peek().clone() {
+                let pos = self.pos();
+                self.next();
+                let args = if self.is_p("(") { self.parse_args()? } else { vec![] };
+                if self.is_p("{") {
+                    self.skip_balanced()?;
+                }
+                constants.push((c, args, pos));
+                if !self.eat_p(",") {
+                    break;
+                }
+            }
+            self.eat_p(";");
+        }
+        while !self.eat_p("}") {
+            if self.at_eof() {
+                return self.err("expected '}' but found end of input");
+            }
+            if self.eat_p(";") {
+                continue;
+            }
+            self.parse_groovy_annotations()?;
+            if self.is_groovy_type_decl_start() {
+                let a = self.parse_groovy_annotations()?;
+                let inner = self.parse_groovy_class(a)?;
+                let n = inner.name.clone().unwrap_or_default();
+                fields.push(ClassField { name: n, init: Some(Expr::Class(Arc::new(inner))), is_static: true });
+                continue;
+            }
+            let mut is_static = false;
+            let mut is_abstract = kind == "interface";
+            while let T::Ident(m) = self.peek().clone() {
+                match m.as_str() {
+                    "static" => is_static = true,
+                    "abstract" => is_abstract = true,
+                    "default" => is_abstract = false,
+                    "public" | "private" | "protected" | "final" | "synchronized" | "transient" | "volatile" | "native" | "strictfp" => {}
+                    _ => break,
+                }
+                self.next();
+            }
+            if is_static && self.is_p("{") {
+                let body = self.parse_block_body()?;
+                let f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
+                let call = Expr::Call { callee: Box::new(Expr::Member { obj: Box::new(Expr::Func(Arc::new(f))), name: "call".into(), optional: false, pos: 0 }), args: vec![Elem::Item(Expr::This)], optional: false, pos: 0 };
+                fields.push(ClassField { name: format!("%static{}", fields.len()), init: Some(call), is_static: true });
+                continue;
+            }
+            if self.is_p("<") {
+                self.skip_balanced()?;
+            }
+            let mut typed = false;
+            if self.is_kw("def") || self.is_kw("var") {
+                self.next();
+                typed = true;
+            } else if self.is_groovy_typed_decl() {
+                self.skip_groovy_type();
+                typed = true;
+            }
+            let mpos = self.pos();
+            let mname = self.ident()?;
+            if self.is_p("(") {
+                let (params, rest) = self.parse_params()?;
+                if self.eat_kw("throws") {
+                    while !self.is_p("{") && !self.is_p(";") && !self.is_p("}") && !self.nl() && !self.at_eof() {
+                        self.next();
+                    }
+                }
+                if !self.is_p("{") {
+                    // abstract / interface method declaration
+                    self.consume_semi()?;
+                    continue;
+                }
+                let _ = is_abstract;
+                let body = self.parse_block_body()?;
+                let f = FuncDef { name: Some(mname.clone()), params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: true, generator: false, is_async: false };
+                if !typed && mname == name {
+                    ctors.push(Arc::new(f));
+                } else {
+                    methods.push(ClassMember { name: mname, key: None, func: Arc::new(f), kind: MemberKind::Method, is_static });
+                }
+                continue;
+            }
+            let _ = mpos;
+            let mut fname = mname;
+            loop {
+                let init = if self.eat_p("=") { Some(self.parse_expr()?) } else { None };
+                fields.push(ClassField { name: fname, init, is_static: is_static || kind == "interface" });
+                if !self.eat_p(",") {
+                    break;
+                }
+                self.skip_groovy_type();
+                fname = self.ident()?;
+            }
+            self.consume_semi()?;
+        }
+        if kind == "enum" {
+            let list = constants.iter().map(|(c, _, _)| format!("{}.{}", name, c)).collect::<Vec<_>>().join(", ");
+            let src = format!(
+                "class {n} {{\n def $enumName\n def $enumOrdinal\n static $mk(n, o, e) {{ e.$enumName = n; e.$enumOrdinal = o; e }}\n String name() {{ this.$enumName }}\n int ordinal() {{ this.$enumOrdinal }}\n String toString() {{ this.$enumName }}\n int compareTo(o) {{ this.$enumOrdinal <=> o.$enumOrdinal }}\n static values() {{ [{l}] }}\n static valueOf(String s) {{ def r = values().find {{ it.name() == s }}; if (r == null) throw new IllegalArgumentException(\"No enum constant {n}.\" + s); r }}\n}}",
+                n = name,
+                l = list
+            );
+            let prog = parse_program(&src, Dialect::Groovy)?;
+            if let Some(Stmt::Class(g)) = prog.body.into_iter().next() {
+                for m in &g.methods {
+                    if !methods.iter().any(|x| x.name == m.name) {
+                        methods.push(m.clone());
+                    }
+                }
+                let mut consts = Vec::new();
+                for (i, (c, args, pos)) in constants.into_iter().enumerate() {
+                    let make = Expr::New { callee: Box::new(Expr::Ident(name.clone(), pos)), args, pos };
+                    let init = Expr::Call {
+                        callee: Box::new(Expr::Member { obj: Box::new(Expr::Ident(name.clone(), pos)), name: "$mk".into(), optional: false, pos }),
+                        args: vec![Elem::Item(Expr::Str(c.clone())), Elem::Item(Expr::Int(i as i64)), Elem::Item(make)],
+                        optional: false,
+                        pos,
+                    };
+                    consts.push(ClassField { name: c, init: Some(init), is_static: true });
+                }
+                let mut all: Vec<ClassField> = g.fields.clone();
+                all.extend(fields.iter().filter(|f| !f.is_static).cloned());
+                consts.extend(fields.into_iter().filter(|f| f.is_static));
+                all.extend(consts);
+                fields = all;
+            }
+            annotations.push("%enum".into());
+        }
+        Ok(ClassDef { name: Some(name), extends, ctors, methods, fields, mixins, style: ClassStyle::Groovy, annotations })
     }
 
     /// `println "x"` / `log.info msg` (Groovy command expressions).
@@ -586,6 +856,27 @@ impl Parser {
     fn parse_for(&mut self) -> R<Stmt> {
         let foreach = self.is_kw("foreach");
         self.next();
+        if self.d == Dialect::Js && matches!(self.peek(), T::Ident(w) if w == "await") {
+            // `for await (x of xs)`: each element is awaited
+            let pos = self.pos();
+            self.next();
+            let st = self.parse_for_rest(foreach)?;
+            return match st {
+                Stmt::ForIn { decl, pat, obj, body, values: true, else_body } => {
+                    let tmp = "%forawait".to_string();
+                    let bind = match decl {
+                        Some(k) => Stmt::Var(k, vec![(pat, Some(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)))]),
+                        None => Stmt::Expr(Expr::Assign { op: None, target: Box::new(pat), value: Box::new(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)), pos }),
+                    };
+                    Ok(Stmt::ForIn { decl: Some(VarKind::Let), pat: Pat::Id(tmp), obj, body: Box::new(Stmt::Block(vec![bind, *body])), values: true, else_body })
+                }
+                _ => self.err("expected 'for await (x of iterable)'"),
+            };
+        }
+        self.parse_for_rest(foreach)
+    }
+
+    fn parse_for_rest(&mut self, foreach: bool) -> R<Stmt> {
         self.expect_p("(")?;
         // for-each forms of Groovy / MVEL: `x in list`, `Type x : list`, `def x in list`
         if self.groovy_like() {

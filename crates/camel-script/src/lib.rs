@@ -9,7 +9,7 @@
 //! | `ognl`, `mvel`, `spel` | Java expression languages (with Camel's root object) |
 //! | `datasonnet` | DataSonnet (Jsonnet subset) with `payload` and `cml` |
 //! | `csimple` | alias of the Simple language |
-//! | `joor`, `java` | not supported (explains why) |
+//! | `joor`, `java` | Java snippets (Camel jOOR style), interpreted |
 //!
 //! Scripts see the exchange through bindings: `exchange` (with Java-like accessors such as
 //! `exchange.getIn().setHeader(..)`), `request`/`message`, `body`, `headers`, `properties` /
@@ -73,6 +73,7 @@ pub fn dialect_for(name: &str) -> Option<Dialect> {
         "mvel" => Dialect::Mvel,
         "spel" => Dialect::Spel,
         "datasonnet" => Dialect::Jsonnet,
+        "joor" | "java" => Dialect::Java,
         _ => return None,
     })
 }
@@ -387,26 +388,6 @@ impl Language for CSimpleLanguage {
     }
 }
 
-/// `joor` / `java`: not supported.
-pub struct JoorLanguage(pub &'static str);
-
-impl Language for JoorLanguage {
-    fn name(&self) -> &str {
-        self.0
-    }
-    fn create_expression(&self, text: &str, _options: &BTreeMap<String, String>) -> Result<Arc<dyn Expression>> {
-        Err(CamelError::new(
-            kinds::UNSUPPORTED_OPERATION,
-            format!(
-                "The {} language is not supported by rust-camel: it compiles Java source code at runtime with the JDK compiler and runs it on the JVM, \
-                 neither of which exists in a native Rust runtime. Use groovy, js, python or simple instead (expression: {})",
-                self.0,
-                text.trim()
-            ),
-        ))
-    }
-}
-
 /// Register all script languages (and the YAML `script` processor factory) on a context.
 pub fn register(ctx: &CamelContext) {
     for (name, d) in [
@@ -419,12 +400,12 @@ pub fn register(ctx: &CamelContext) {
         ("mvel", Dialect::Mvel),
         ("spel", Dialect::Spel),
         ("datasonnet", Dialect::Jsonnet),
+        ("joor", Dialect::Java),
+        ("java", Dialect::Java),
     ] {
         ctx.add_language(ScriptLanguage::new(name, d));
     }
     ctx.add_language(CSimpleLanguage);
-    ctx.add_language(JoorLanguage("joor"));
-    ctx.add_language(JoorLanguage("java"));
     let factory: ScriptProcessorFactory = Box::new(|language: &str, text: &str, options: &BTreeMap<String, String>| {
         let d = dialect_for(language)?;
         Some(Script::compile(d, text, options).map(|s| Arc::new(ScriptProcessor(Arc::new(s))) as Arc<dyn Processor>))
@@ -459,6 +440,10 @@ pub fn mvel(text: impl Into<String>) -> ValueBuilder {
 /// SpEL expression for the Rust DSL.
 pub fn spel(text: impl Into<String>) -> ValueBuilder {
     lang("spel", text)
+}
+/// Java (jOOR) expression for the Rust DSL.
+pub fn joor(text: impl Into<String>) -> ValueBuilder {
+    lang("joor", text)
 }
 /// DataSonnet expression for the Rust DSL.
 pub fn datasonnet(text: impl Into<String>) -> ValueBuilder {

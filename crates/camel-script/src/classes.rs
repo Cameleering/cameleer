@@ -568,9 +568,11 @@ impl Interp {
         if let Some(g) = self.user_method(recv, &format!("is{}", cap(name))) {
             return self.call(&g, recv.clone(), vec![], pos).map(Some);
         }
-        for k in self.class_chain(&c).iter().rev() {
-            if let Some(v) = k.props.borrow().get(name).cloned() {
-                return Ok(Some(v));
+        if !is_class_meta(name) {
+            for k in self.class_chain(&c).iter().rev() {
+                if let Some(v) = k.props.borrow().get(name).cloned() {
+                    return Ok(Some(v));
+                }
             }
         }
         if let Some(f) = o.borrow().lookup(name) {
@@ -581,7 +583,24 @@ impl Interp {
         if let Some(pm) = self.user_method(recv, "propertyMissing") {
             return self.call(&pm, recv.clone(), vec![V::str(name)], pos).map(Some);
         }
+        if name == "properties" {
+            return Ok(Some(self.groovy_properties(o)));
+        }
+        if self.d == Dialect::Groovy && o.borrow().lookup(name).is_none() && self.meta_method(recv, name).is_none() {
+            return self.throw("MissingPropertyException", format!("No such property: {} for class: {}", name, func_name(&c)), Some(pos)).map(Some);
+        }
         Ok(None)
+    }
+
+    /// Groovy `obj.properties`: the instance fields (and `class`).
+    fn groovy_properties(&self, o: &ObjRef) -> V {
+        let mut m = Obj::new();
+        for (k, v) in o.borrow().props.iter() {
+            if !k.starts_with('%') && !k.starts_with('$') {
+                m.props.set(k, v.clone());
+            }
+        }
+        V::Obj(new_obj_ref(m))
     }
 
     /// Groovy method fallback on an instance: bean accessors, `methodMissing`, metaclass methods.
@@ -590,8 +609,32 @@ impl Interp {
             return self.call(&m, recv.clone(), args.to_vec(), pos).map(Some);
         }
         let V::Obj(o) = recv else { return Ok(None) };
-        if class_of(recv).is_none() {
-            return Ok(None);
+        let Some(c) = class_of(recv) else { return Ok(None) };
+        match (name, args.len()) {
+            ("getClass", 0) => return Ok(Some(V::Func(c))),
+            ("toString", 0) => {
+                let s = self.to_str(recv)?;
+                return Ok(Some(V::string(s)));
+            }
+            ("getProperties", 0) => return Ok(Some(self.groovy_properties(o))),
+            ("hasProperty", 1) => {
+                let n = self.display(&args[0]);
+                let has = o.borrow().props.contains(&n) || self.user_method(recv, &format!("get{}", cap(&n))).is_some();
+                return Ok(Some(if has {
+                    let mut m = Obj::new();
+                    m.props.set("name", V::string(n));
+                    V::Obj(new_obj_ref(m))
+                } else {
+                    V::Null
+                }));
+            }
+            ("respondsTo", 1) => {
+                let n = self.display(&args[0]);
+                let has = self.user_method(recv, &n).is_some();
+                return Ok(Some(V::arr(if has { vec![V::string(n)] } else { vec![] })));
+            }
+            ("hashCode", 0) => return Ok(Some(V::Int((Rc::as_ptr(o) as usize as i64) & 0x7fff_ffff))),
+            _ => {}
         }
         if let Some(p) = name.strip_prefix("get").filter(|p| !p.is_empty() && args.is_empty()) {
             let prop = crate::host::lc_first_pub(p);
@@ -650,16 +693,42 @@ impl Interp {
             }
             if sc.func && sc.vars.borrow().contains_key("%home") {
                 let this = sc.vars.borrow().get("this").cloned();
-                if let Some(this @ V::Obj(_)) = this {
+                if let Some(this @ V::Obj(_)) = this.clone() {
                     let V::Obj(o) = &this else { unreachable!() };
                     if let Some(v) = o.borrow().props.get(name) {
                         return Some(v.clone());
                     }
                     if let Some(c) = class_of(&this) {
+                        if !is_class_meta(name) {
+                            for k in self.class_chain(&c).iter().rev() {
+                                if let Some(v) = k.props.borrow().get(name) {
+                                    return Some(v.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(V::Func(c)) = this {
+                    // static context: the statics of the class chain
+                    if c.flavor == Flavor::Class && !is_class_meta(name) {
                         for k in self.class_chain(&c).iter().rev() {
                             if let Some(v) = k.props.borrow().get(name) {
-                                return Some(v.clone());
+                                if !v.is_callable() {
+                                    return Some(v.clone());
+                                }
                             }
+                        }
+                    }
+                }
+            }
+            if sc.func && self.d == Dialect::Groovy {
+                // closures run by `with` / `tap` / metaclass methods: the delegate's properties
+                let del = sc.vars.borrow().get("delegate").cloned();
+                if let Some(d @ V::Obj(_)) = del {
+                    if class_of(&d).is_some() {
+                        let V::Obj(o) = &d else { unreachable!() };
+                        if let Some(v) = o.borrow().props.get(name) {
+                            return Some(v.clone());
                         }
                     }
                 }
@@ -802,6 +871,11 @@ impl Interp {
             },
         }
     }
+}
+
+/// Properties of a class closure that are not static members.
+fn is_class_meta(n: &str) -> bool {
+    matches!(n, "name" | "prototype" | "length") || n.starts_with('%')
 }
 
 fn is_error_type(n: &str) -> bool {
