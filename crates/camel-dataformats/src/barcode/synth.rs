@@ -365,4 +365,18 @@ mod tests {
         let f = failures_of(&src, true, "9780735200449", Format::Ean13, Some(Format::UpcEanExtension));
         assert!(f.is_empty(), "{:#?}", f);
     }
+
+    #[test]
+    fn camera_rss14() {
+        let src = printed_modules(&crate::barcode::rss::encode::rss14("2001234567890"));
+        let f = failures_of(&src, true, "20012345678909", Format::Rss14, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_rss_expanded() {
+        let src = printed_modules(&crate::barcode::rss::encode::rss_expanded_3103("001234567890", 1750));
+        let f = failures_of(&src, true, "(01)90012345678908(3103)001750", Format::RssExpanded, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
 }

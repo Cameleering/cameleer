@@ -44,6 +44,7 @@ pub mod png;
 pub mod qr;
 pub mod qr_detect;
 pub mod rs;
+pub mod rss;
 #[cfg(test)]
 mod synth;
 pub mod vision;
@@ -282,7 +283,7 @@ fn upc_or_ean(t: String, only: Option<Format>) -> Decoded {
     Decoded::new(t, Format::Ean13)
 }
 
-fn decode_row(row: &[bool], want: &dyn Fn(Format) -> bool, only: Option<Format>) -> Option<Decoded> {
+fn decode_row(row: &[bool], want: &dyn Fn(Format) -> bool, only: Option<Format>, rss14: &mut rss::Rss14Collector) -> Option<Decoded> {
     // ZXing MultiFormatOneDReader order: UPC/EAN, Code 39, Code 93, Code 128, ITF, Codabar, RSS
     if want(Format::Ean13) || want(Format::Ean8) || want(Format::UpcE) {
         let kinds = |k: linear::UpcKind| match k {
@@ -325,6 +326,16 @@ fn decode_row(row: &[bool], want: &dyn Fn(Format) -> bool, only: Option<Format>)
             }
         }
     }
+    if want(Format::Rss14) {
+        if let Some(t) = rss14.add_row(row) {
+            return Some(Decoded::new(t, Format::Rss14));
+        }
+    }
+    if want(Format::RssExpanded) {
+        if let Some(t) = rss::decode_rss_expanded(row) {
+            return Some(Decoded::new(t, Format::RssExpanded));
+        }
+    }
     None
 }
 
@@ -352,7 +363,8 @@ fn decode_clean(bin: &detect::Bin, want: &dyn Fn(Format) -> bool, only: Option<F
             return Some(Decoded::new(t, Format::Pdf417));
         }
     }
-    detect::scan_rows(bin).iter().find_map(|row| decode_row(row, want, only))
+    let mut rss14 = rss::Rss14Collector::default();
+    detect::scan_rows(bin).iter().find_map(|row| decode_row(row, want, only, &mut rss14))
 }
 
 /// Linear symbologies on band-averaged, locally thresholded scan lines (rows of the image
@@ -371,6 +383,7 @@ fn decode_linear(g: &png::Gray, want: &dyn Fn(Format) -> bool, only: Option<Form
         if h == 0 || v.width < 20 {
             continue;
         }
+        let mut rss14 = rss::Rss14Collector::default();
         let step = (h / 32).max(1);
         let half = (h / 120).clamp(1, 3);
         for k in 0..32usize {
@@ -380,11 +393,11 @@ fn decode_linear(g: &png::Gray, want: &dyn Fn(Format) -> bool, only: Option<Form
                 continue;
             }
             let mut row = vision::threshold_profile(&vision::row_profile(v, y, half));
-            if let Some(d) = decode_row(&row, want, only) {
+            if let Some(d) = decode_row(&row, want, only, &mut rss14) {
                 return Some(d);
             }
             row.reverse();
-            if let Some(d) = decode_row(&row, want, only) {
+            if let Some(d) = decode_row(&row, want, only, &mut rss14) {
                 return Some(d);
             }
         }
@@ -703,6 +716,30 @@ mod tests {
                         failed.push(format!("case {}: {:?} {:?} {:?}", i, d.format, d.text, d.meta));
                     }
                 }
+                Err(e) => failed.push(format!("case {}: {}", i, e)),
+            }
+        }
+        assert!(failed.is_empty(), "{:#?}", failed);
+    }
+
+    /// ZXing blackbox images of GS1 DataBar (rss14-1 incl. a stacked symbol, rssexpanded-1).
+    #[test]
+    fn zxing_blackbox_rss() {
+        let cases: [(&[u8], Format, &str); 7] = [
+            (include_bytes!("testdata/zxing/rss14-1_1.png"), Format::Rss14, "04412345678909"),
+            (include_bytes!("testdata/zxing/rss14-1_2.png"), Format::Rss14, "00821935106427"),
+            (include_bytes!("testdata/zxing/rss14-1_3.png"), Format::Rss14, "00075678164125"),
+            (include_bytes!("testdata/zxing/rssexpanded-1_1.png"), Format::RssExpanded, "(11)100224(17)110224(3102)000100"),
+            (include_bytes!("testdata/zxing/rssexpanded-1_2.png"), Format::RssExpanded, "(01)90012345678908(3103)001750"),
+            (include_bytes!("testdata/zxing/rssexpanded-1_3.png"), Format::RssExpanded, "(10)12A"),
+            (include_bytes!("testdata/zxing/rssexpanded-1_4.png"), Format::RssExpanded, "(01)98898765432106(3202)012345(15)991231"),
+        ];
+        let mut failed = Vec::new();
+        for (i, (bytes, format, text)) in cases.iter().enumerate() {
+            let img = read_image(bytes).unwrap();
+            match decode(&img, None) {
+                Ok(d) if (d.format, d.text.as_str()) == (*format, *text) => {}
+                Ok(d) => failed.push(format!("case {}: {:?} {:?}", i, d.format, d.text)),
                 Err(e) => failed.push(format!("case {}: {}", i, e)),
             }
         }

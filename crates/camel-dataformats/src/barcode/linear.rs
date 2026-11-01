@@ -937,18 +937,4 @@ mod tests {
         assert_eq!(suggested_price("02495").as_deref(), Some("\u{a3}24.95"));
         assert_eq!(suggested_price("90000"), None);
     }
-
-    #[test]
-    #[ignore]
-    fn dump_runs() {
-        let name = std::env::var("IMG").unwrap();
-        let b = std::fs::read(format!("{}/src/barcode/testdata/zxing/{}", env!("CARGO_MANIFEST_DIR"), name)).unwrap();
-        let g = super::super::read_image(&b).unwrap();
-        let bin = super::super::detect::binarize(&g).unwrap();
-        let y: usize = std::env::var("Y").map(|v| v.parse().unwrap()).unwrap_or(bin.height / 2);
-        let r = runs(bin.row(y));
-        println!("{}x{} y={} runs={:?}", g.width, g.height, y, r);
-        let p = super::super::vision::threshold_profile(&super::super::vision::row_profile(&g, y, 1));
-        println!("camera runs={:?}", runs(&p));
-    }
 }
