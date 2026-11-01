@@ -33,6 +33,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::{CamelContext, Value};
 
 pub mod asn1;
+pub mod asn1_module;
 pub mod avro;
 pub mod barcode;
 pub mod bindy;

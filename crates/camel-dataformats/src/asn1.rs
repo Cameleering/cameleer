@@ -14,6 +14,10 @@
 //!   `{"printable"|"ia5"|"utcTime"|"generalizedTime": "..."}`, tagged objects as above
 //!   (implicit for `bytes`, explicit/constructed for `value`), and other objects as a
 //!   SEQUENCE of their values. Bytes bodies are passed through unchanged.
+//! * typed mode (instead of jASN1-generated classes): `schema` (inline ASN.1 module text) or
+//!   `moduleFile` plus `clazzName` (the type name, optionally qualified) encode / decode
+//!   values of that type with the module compiler in [`crate::asn1_module`]; with
+//!   `usingIterator=true` unmarshal decodes a stream of records into an array.
 
 use std::sync::Arc;
 
@@ -25,16 +29,16 @@ use camel_core::Value;
 
 use crate::{body_bytes, df_err, Opts};
 
-struct Tlv<'a> {
-    class: u8,
-    constructed: bool,
-    tag: u64,
-    content: &'a [u8],
+pub(crate) struct Tlv<'a> {
+    pub class: u8,
+    pub constructed: bool,
+    pub tag: u64,
+    pub content: &'a [u8],
     /// Content of an indefinite length element includes nested elements up to end-of-contents.
-    total: usize,
+    pub total: usize,
 }
 
-fn read_tlv(d: &[u8], depth: usize) -> Result<Tlv<'_>> {
+pub(crate) fn read_tlv(d: &[u8], depth: usize) -> Result<Tlv<'_>> {
     if depth > 64 {
         return Err(df_err("ASN.1 nesting too deep"));
     }
@@ -122,7 +126,7 @@ fn parse_tag_name(s: &str) -> Option<(u8, u64)> {
     }
 }
 
-fn decode_int(c: &[u8]) -> Value {
+pub(crate) fn decode_int(c: &[u8]) -> Value {
     if c.is_empty() {
         return Value::Int(0);
     }
@@ -143,7 +147,7 @@ fn decode_int(c: &[u8]) -> Value {
     Value::Bytes(c.to_vec())
 }
 
-fn decode_oid(c: &[u8]) -> String {
+pub(crate) fn decode_oid(c: &[u8]) -> String {
     let mut parts: Vec<u128> = Vec::new();
     let mut v: u128 = 0;
     for b in c {
@@ -241,7 +245,7 @@ pub fn ber_split(d: &[u8]) -> Result<Vec<Vec<u8>>> {
     Ok(out)
 }
 
-fn tlv(out: &mut Vec<u8>, class: u8, constructed: bool, tag: u64, content: &[u8]) {
+pub(crate) fn tlv(out: &mut Vec<u8>, class: u8, constructed: bool, tag: u64, content: &[u8]) {
     let b0 = (class << 6) | if constructed { 0x20 } else { 0 };
     if tag < 31 {
         out.push(b0 | tag as u8);
@@ -271,7 +275,7 @@ fn tlv(out: &mut Vec<u8>, class: u8, constructed: bool, tag: u64, content: &[u8]
     out.extend_from_slice(content);
 }
 
-fn encode_int(v: i128) -> Vec<u8> {
+pub(crate) fn encode_int(v: i128) -> Vec<u8> {
     let b = v.to_be_bytes();
     let mut i = 0;
     while i < 15 && ((b[i] == 0 && b[i + 1] & 0x80 == 0) || (b[i] == 0xff && b[i + 1] & 0x80 != 0)) {
@@ -280,7 +284,7 @@ fn encode_int(v: i128) -> Vec<u8> {
     b[i..].to_vec()
 }
 
-fn encode_oid(s: &str) -> Result<Vec<u8>> {
+pub(crate) fn encode_oid(s: &str) -> Result<Vec<u8>> {
     let parts: Vec<u128> = s.split('.').map(|p| p.trim().parse().map_err(|_| df_err(format!("Invalid OID: {}", s)))).collect::<Result<_>>()?;
     if parts.len() < 2 || parts[0] > 2 {
         return Err(df_err(format!("Invalid OID: {}", s)));
@@ -382,6 +386,8 @@ fn enc(v: &Value, out: &mut Vec<u8>) -> Result<()> {
 /// The `asn1` data format.
 pub struct Asn1DataFormat {
     pub using_iterator: bool,
+    /// Typed mode: a compiled ASN.1 module and the type (`clazzName`).
+    pub typed: Option<(Arc<crate::asn1_module::Asn1Module>, String)>,
 }
 
 impl DataFormat for Asn1DataFormat {
@@ -390,6 +396,21 @@ impl DataFormat for Asn1DataFormat {
     }
     fn marshal(&self, ex: &mut Exchange) -> Result<()> {
         if let Value::Bytes(_) = ex.message.body {
+            return Ok(());
+        }
+        if let Some((m, name)) = &self.typed {
+            let out = match &ex.message.body {
+                Value::Array(a) if self.using_iterator => {
+                    let mut out = Vec::new();
+                    for x in a {
+                        out.extend(m.encode(name, x)?);
+                    }
+                    out
+                }
+                Value::String(s) => m.encode(name, &camel_core::json::parse(s)?)?,
+                other => m.encode(name, other)?,
+            };
+            ex.message.body = Value::Bytes(out);
             return Ok(());
         }
         let v = match &ex.message.body {
@@ -410,13 +431,42 @@ impl DataFormat for Asn1DataFormat {
     }
     fn unmarshal(&self, ex: &mut Exchange) -> Result<()> {
         let d = body_bytes(&ex.message.body);
+        if let Some((m, name)) = &self.typed {
+            ex.message.body = if self.using_iterator {
+                let mut out = Vec::new();
+                let mut i = 0;
+                while i < d.len() {
+                    let (v, n) = m.decode_prefix(name, &d[i..])?;
+                    out.push(v);
+                    i += n;
+                }
+                Value::Array(out)
+            } else {
+                m.decode(name, &d)?
+            };
+            return Ok(());
+        }
         ex.message.body = if self.using_iterator { Value::Array(ber_split(&d)?.into_iter().map(Value::Bytes).collect()) } else { ber_decode(&d)? };
         Ok(())
     }
 }
 
 pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
-    Ok(Arc::new(Asn1DataFormat { using_iterator: o.bool(&["usingIterator"], false)? }))
+    let src = match (o.get(&["schema", "module", "asn1Module"]), o.get(&["moduleFile", "schemaFile", "asn1File"])) {
+        (Some(s), _) => Some(s.to_string()),
+        (None, Some(f)) => Some(String::from_utf8(crate::read_resource(f)?).map_err(|_| df_err("ASN.1 module file is not UTF-8"))?),
+        _ => None,
+    };
+    let typed = match (src, o.get(&["clazzName", "className", "typeName"])) {
+        (Some(src), Some(name)) => {
+            let m = crate::asn1_module::Asn1Module::parse(&src)?;
+            m.type_named(name)?;
+            Some((Arc::new(m), name.to_string()))
+        }
+        (Some(_), None) => return Err(camel_core::error::CamelError::illegal_argument("The asn1 data format needs clazzName (the ASN.1 type) with a schema / moduleFile")),
+        (None, _) => None,
+    };
+    Ok(Arc::new(Asn1DataFormat { using_iterator: o.bool(&["usingIterator"], false)?, typed }))
 }
 
 #[cfg(test)]
