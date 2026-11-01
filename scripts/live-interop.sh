@@ -24,6 +24,7 @@
 #                   16613  STOMP       16614 STOMP over TLS     11885 MQTT
 #   vsftpd          2121   FTP + explicit FTPS (AUTH TLS), passive ports 30000-30049
 #                   2990   implicit FTPS
+#                   2991   explicit FTPS with require_ssl_reuse=YES
 #   Postfix         2525   SMTP (+STARTTLS, AUTH via Dovecot SASL)   4465 SMTPS (implicit TLS)
 #   Dovecot         11143  IMAP (+STARTTLS)  11993 IMAPS  11110 POP3 (+STLS)  11995 POP3S
 #   nginx           18080  HTTP/1.1 (gzip)   18443 HTTPS with HTTP/2 (ALPN h2, http/1.1)
@@ -284,6 +285,8 @@ force_local_data_ssl=NO
 force_local_logins_ssl=NO"
   printf '%s\nlisten_port=2121\nvsftpd_log_file=%s/vsftpd.log\nxferlog_enable=YES\n' "$common" "$LOGS" > "$DIR/vsftpd.conf"
   printf '%s\nlisten_port=2990\nimplicit_ssl=YES\nvsftpd_log_file=%s/vsftpd-implicit.log\nxferlog_enable=YES\n' "$common" "$LOGS" > "$DIR/vsftpd-implicit.conf"
+  # explicit FTPS whose data connections must resume the control connection's TLS session
+  printf '%s\nlisten_port=2991\nvsftpd_log_file=%s/vsftpd-reuse.log\nxferlog_enable=YES\n' "${common/require_ssl_reuse=NO/require_ssl_reuse=YES}" "$LOGS" > "$DIR/vsftpd-reuse.conf"
 }
 
 setup_mail() {
@@ -504,6 +507,7 @@ start_vsftpd() {
   [ -f "$DIR/vsftpd.conf" ] || return 0
   if ! port_open 2121; then log "starting vsftpd"; vsftpd "$DIR/vsftpd.conf"; wait_port 2121 vsftpd; fi
   if ! port_open 2990; then vsftpd "$DIR/vsftpd-implicit.conf"; wait_port 2990 vsftpd-implicit; fi
+  if ! port_open 2991; then vsftpd "$DIR/vsftpd-reuse.conf"; wait_port 2991 vsftpd-reuse; fi
 }
 
 start_mail() {
@@ -569,7 +573,7 @@ cmd_status() {
   local name port
   for entry in postgresql:15432 redis:16379 redis-tls:16380 mosquitto:11883 mosquitto-auth:11884 \
     mosquitto-tls:18883 rabbitmq-amqp:15673 rabbitmq-amqps:15674 rabbitmq-stomp:16613 \
-    rabbitmq-stomp-tls:16614 rabbitmq-mqtt:11885 vsftpd:2121 vsftpd-implicit:2990 \
+    rabbitmq-stomp-tls:16614 rabbitmq-mqtt:11885 vsftpd:2121 vsftpd-implicit:2990 vsftpd-reuse:2991 \
     postfix-smtp:2525 postfix-smtps:4465 dovecot-imap:11143 dovecot-imaps:11993 \
     dovecot-pop3:11110 dovecot-pop3s:11995 nginx-http:18080 nginx-https:18443; do
     name=${entry%%:*}; port=${entry##*:}
