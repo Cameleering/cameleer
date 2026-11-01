@@ -1,14 +1,17 @@
 //! Live interop: the `amqp` component (JMS over AMQP 1.0) against the AMQP transport connector
 //! of the Apache ActiveMQ 5.17 broker started by `scripts/live-interop.sh`. Runs only with
 //! `CAMEL_LIVE_INTEROP=1`, and only when the broker has its AMQP connector (port 15675):
-//! Ubuntu's `activemq` package does not ship the `activemq-amqp` module, so the script enables
-//! the connector only when `activemq-amqp-5.17.x.jar` has been put into
+//! Ubuntu's `activemq` package does not ship the `activemq-amqp` module; `scripts/live-interop.sh
+//! install` fetches `activemq-amqp-5.17.6.jar` from Maven Central (SHA-1 pinned) into
 //! `$CAMEL_INTEROP_DIR/activemq/lib` (proton-j comes from `libapache-qpid-proton-j-java`).
 //! Without it every test prints a skip notice and passes.
 //!
 //! Covers what RabbitMQ's AMQP 1.0 plugin cannot: JMS selectors
 //! (`apache.org:selector-filter:string`), AMQP 1.0 transactions (coordinator), dynamic
-//! temporary reply queues for InOut and durable subscriptions, plus AMQPS and SASL PLAIN.
+//! temporary reply queues for InOut and durable subscriptions, plus AMQPS and SASL PLAIN; and
+//! ActiveMQ specifics: `queue://` / `topic://` address prefixes, the JMS mapping through
+//! ActiveMQ's JMS transformer, multi-frame messages, redelivery counts and the refusal of
+//! JMS 2.0 shared subscriptions. `CAMEL_AMQP10_TRACE=1` (with `--nocapture`) prints every frame.
 
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -212,4 +215,197 @@ fn live_activemq_amqps() {
     ctx.create_producer_template().send_body(&uri, "tls+sasl").unwrap();
     mock.assert_is_satisfied_within(WAIT).unwrap();
     ctx.stop().unwrap();
+}
+
+/// The AMQP JMS mapping through ActiveMQ's JMS transformer (`transport.transformer=jms`: every
+/// message is converted to an ActiveMQ JMS message and back), with message annotations.
+#[test]
+fn live_activemq_amqp_jms_mapping_round_trip() {
+    if !enabled() {
+        return;
+    }
+    let (q, topic) = (n("mapping"), n("mapping-topic"));
+    let ctx = context();
+    let (q2, t2) = (q.clone(), topic.clone());
+    ctx.add_routes(move |r| {
+        r.from(&format!("amqp:queue:{}?includeAmqpAnnotations=true", q2)).to("mock:mapping");
+        r.from(&format!("amqp:topic:{}", t2)).to("mock:topic");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let mock = ctx.mock_endpoint("mock:mapping").unwrap();
+    mock.expected_message_count(5);
+    let t = ctx.create_producer_template();
+    let before = live_now_millis();
+    t.send_body_and_headers(
+        &format!("amqp:queue:{}?priority=6&timeToLive=60000", q),
+        "text body ü",
+        vec![
+            ("JMSType", Value::from("order")),
+            ("JMSCorrelationID", Value::from("c-9")),
+            ("JMSXGroupID", Value::from("group-1")),
+            ("JMSReplyTo", Value::from(format!("topic:{}", topic))),
+            ("my.int", Value::from(42)),
+            ("flag", Value::Bool(true)),
+            ("ratio", Value::Float(1.5)),
+            ("dashed-key", Value::from("d")),
+        ],
+    )
+    .unwrap();
+    t.send_body(&format!("amqp:queue:{}", q), Value::Bytes(vec![0, 1, 2, 255])).unwrap();
+    t.send_body(&format!("amqp:queue:{}", q), Value::object([("id", Value::Int(1)), ("name", Value::from("x"))])).unwrap();
+    t.send_body(&format!("amqp:queue:{}?deliveryPersistent=false", q), "non-persistent").unwrap();
+    t.send_body(&format!("amqp:queue:{}?jmsMessageType=Object", q), Value::object([("n", Value::Int(7))])).unwrap();
+    mock.assert_is_satisfied_within(WAIT).unwrap();
+    let ex = mock.exchange(0).unwrap();
+    let s = |h: &str| ex.header(h).map(|v| v.to_string()).unwrap_or_default();
+    assert_eq!(ex.body(), &Value::from("text body ü"));
+    assert_eq!(s("JMSType"), "order");
+    assert_eq!(s("JMSCorrelationID"), "c-9");
+    assert_eq!(s("JMSXGroupID"), "group-1");
+    assert_eq!(s("JMSDestination"), q, "queue:// prefix stripped");
+    assert_eq!(s("JMSReplyTo"), format!("topic:{}", topic), "topic reply-to keeps its type");
+    assert_eq!(ex.header("JMSPriority").and_then(|v| v.as_i64()), Some(6));
+    assert_eq!(ex.header("JMSDeliveryMode").and_then(|v| v.as_i64()), Some(2));
+    assert_eq!(ex.header("JMSRedelivered").and_then(|v| v.as_bool()), Some(false));
+    let ts = ex.header("JMSTimestamp").and_then(|v| v.as_i64()).unwrap();
+    assert!(ts >= before - 5_000 && ts <= live_now_millis() + 5_000, "JMSTimestamp {}", ts);
+    let exp = ex.header("JMSExpiration").and_then(|v| v.as_i64()).unwrap();
+    assert!((exp - ts - 60_000).abs() < 5_000, "JMSExpiration - JMSTimestamp ~ timeToLive: {} {}", exp, ts);
+    assert!(s("JMSMessageID").starts_with("ID:"), "{}", s("JMSMessageID"));
+    assert_eq!(ex.header("my.int").and_then(|v| v.as_i64()), Some(42));
+    assert_eq!(ex.header("flag").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(ex.header("ratio"), Some(&Value::Float(1.5)));
+    assert_eq!(s("dashed-key"), "d");
+    // annotations set by ActiveMQ's outbound transformer
+    assert_eq!(ex.header("JMS_AMQP_MA_x-opt-jms-msg-type").and_then(|v| v.as_i64()), Some(5));
+    assert_eq!(ex.header("JMS_AMQP_MA_x-opt-jms-dest").and_then(|v| v.as_i64()), Some(0));
+    assert_eq!(ex.header("JMS_AMQP_MA_x-opt-jms-reply-to").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(mock.exchange(1).unwrap().body(), &Value::Bytes(vec![0, 1, 2, 255]));
+    assert_eq!(mock.exchange(1).unwrap().header("JMS_AMQP_MA_x-opt-jms-msg-type").and_then(|v| v.as_i64()), Some(3));
+    let map = mock.exchange(2).unwrap();
+    assert_eq!(map.body().get("name"), Some(&Value::from("x")));
+    assert_eq!(map.body().get("id").and_then(|v| v.as_i64()), Some(1));
+    assert_eq!(map.header("JMS_AMQP_MA_x-opt-jms-msg-type").and_then(|v| v.as_i64()), Some(2));
+    assert_eq!(mock.exchange(3).unwrap().header("JMSDeliveryMode").and_then(|v| v.as_i64()), Some(1));
+    let obj = mock.exchange(4).unwrap();
+    assert_eq!(obj.body().get("n").and_then(|v| v.as_i64()), Some(7), "{:?}", obj.body());
+    // the consumer replied to the topic named by JMSReplyTo (the exchange was InOut), and the
+    // stripped header names the topic again as a destination
+    let sub = ctx.mock_endpoint("mock:topic").unwrap();
+    sub.expected_bodies_received_in_any_order(vec!["text body ü", "to the topic"]);
+    t.send_body_and_headers("amqp:queue:unused", "to the topic", vec![("CamelJmsDestinationName", Value::from(s("JMSReplyTo")))]).unwrap();
+    sub.assert_is_satisfied_within(WAIT).unwrap();
+    for i in 0..2 {
+        let e = sub.exchange(i).unwrap();
+        assert_eq!(e.header("JMSDestination").map(|v| v.to_string()), Some(format!("topic:{}", topic)));
+        if e.body() == &Value::from("text body ü") {
+            assert_eq!(e.header("JMSCorrelationID").map(|v| v.to_string()), Some("c-9".into()));
+        }
+    }
+    ctx.stop().unwrap();
+}
+
+fn live_now_millis() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+}
+
+/// Messages larger than ActiveMQ's 128 KiB max-frame-size (and than ours), split into many
+/// transfer frames in both directions.
+#[test]
+fn live_activemq_amqp_large_messages() {
+    if !enabled() {
+        return;
+    }
+    let q = n("large");
+    let ctx = context();
+    let q2 = q.clone();
+    ctx.add_routes(move |r| {
+        r.from(&format!("amqp:queue:{}?maxFrameSize=16384", q2)).to("mock:large");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:large").unwrap();
+    mock.expected_message_count(2);
+    let bytes: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+    let text: String = (0..600_000).map(|i| char::from(b'a' + (i % 26) as u8)).collect();
+    let t = ctx.create_producer_template();
+    t.send_body(&format!("amqp:queue:{}", q), Value::Bytes(bytes.clone())).unwrap();
+    t.send_body(&format!("amqp:queue:{}", q), text.clone()).unwrap();
+    mock.assert_is_satisfied_within(Duration::from_secs(30)).unwrap();
+    assert!(mock.exchange(0).unwrap().body() == &Value::Bytes(bytes), "3 MB bytes body intact");
+    assert!(mock.exchange(1).unwrap().body() == &Value::from(text), "600 KB text body intact");
+    ctx.stop().unwrap();
+}
+
+/// Redelivery: `CLIENT_ACKNOWLEDGE` returns a failed message with `modified(delivery-failed)`,
+/// and a rolled back AMQP transaction returns it to the queue; ActiveMQ redelivers it with a
+/// delivery count (`JMSRedelivered=true`, `JMSXDeliveryCount`).
+#[test]
+fn live_activemq_amqp_redelivery() {
+    if !enabled() {
+        return;
+    }
+    let (cq, tq) = (n("client-ack"), n("tx-redeliver"));
+    let ctx = context();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (s1, s2) = (seen.clone(), seen.clone());
+    let (c2, t2) = (cq.clone(), tq.clone());
+    ctx.add_routes(move |r| {
+        r.from(&format!("amqp:queue:{}?acknowledgementModeName=CLIENT_ACKNOWLEDGE", c2))
+            .process(move |ex: &mut Exchange| {
+                let red = ex.header("JMSRedelivered").and_then(|v| v.as_bool()).unwrap_or(false);
+                let count = ex.header("JMSXDeliveryCount").and_then(|v| v.as_i64()).unwrap_or(0);
+                s1.lock().unwrap().push(("client", red, count));
+                if count < 3 {
+                    return Err(CamelError::new("IOException", "not yet"));
+                }
+                Ok(())
+            })
+            .to("mock:client");
+        r.from(&format!("amqp:queue:{}?transacted=true", t2))
+            .process(move |ex: &mut Exchange| {
+                let red = ex.header("JMSRedelivered").and_then(|v| v.as_bool()).unwrap_or(false);
+                let count = ex.header("JMSXDeliveryCount").and_then(|v| v.as_i64()).unwrap_or(0);
+                s2.lock().unwrap().push(("tx", red, count));
+                if count < 2 {
+                    return Err(CamelError::new("IOException", "roll back"));
+                }
+                Ok(())
+            })
+            .to("mock:tx");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let (client, tx) = (ctx.mock_endpoint("mock:client").unwrap(), ctx.mock_endpoint("mock:tx").unwrap());
+    client.expected_bodies_received(vec!["c"]);
+    tx.expected_bodies_received(vec!["t"]);
+    let t = ctx.create_producer_template();
+    t.send_body(&format!("amqp:queue:{}", cq), "c").unwrap();
+    t.send_body(&format!("amqp:queue:{}", tq), "t").unwrap();
+    MockEndpoint::assert_all_satisfied(&[&client, &tx]).unwrap();
+    let seen = seen.lock().unwrap().clone();
+    let of = |k: &str| seen.iter().filter(|s| s.0 == k).map(|s| (s.1, s.2)).collect::<Vec<_>>();
+    assert_eq!(of("client"), vec![(false, 1), (true, 2), (true, 3)], "{:?}", seen);
+    assert_eq!(of("tx"), vec![(false, 1), (true, 2)], "{:?}", seen);
+    ctx.stop().unwrap();
+}
+
+/// ActiveMQ 5 has no JMS 2.0 shared subscriptions (it ignores the `shared` capability, so
+/// every member would get every message): refused at route start.
+#[test]
+fn live_activemq_amqp_shared_subscriptions_refused() {
+    if !enabled() {
+        return;
+    }
+    let topic = n("shared");
+    let ctx = context();
+    ctx.add_routes(move |r| {
+        r.from(&format!("amqp:topic:{}?subscriptionShared=true&subscriptionName=workers&concurrentConsumers=2", topic)).to("mock:never");
+    })
+    .unwrap();
+    let err = ctx.start().unwrap_err();
+    assert!(err.chain().any(|c| c.kind == "UnsupportedOperationException" && c.message.contains("ActiveMQ 5.17") && c.message.contains("shared subscriptions")), "{:?}", err);
+    let _ = ctx.stop();
 }
