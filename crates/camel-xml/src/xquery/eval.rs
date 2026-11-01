@@ -375,7 +375,7 @@ impl<'a> Interp<'a> {
                 }
                 Ok(vec![Item::Atomic(match x {
                     Atomic::Int(i) => Atomic::Int(-i),
-                    Atomic::Dec(d) => Atomic::Dec(-d),
+                    Atomic::Dec(d) => Atomic::Dec(d.neg()),
                     Atomic::Flt(d) => Atomic::Flt(-d),
                     other => Atomic::Dbl(-other.as_f64()),
                 })])
@@ -1089,13 +1089,25 @@ pub(crate) fn to_integer(a: &Atomic) -> R<i64> {
             Atomic::Int(i) => Ok(i),
             _ => unreachable!(),
         },
-        Atomic::Dec(d) | Atomic::Dbl(d) | Atomic::Flt(d) if d.fract() == 0.0 => Ok(*d as i64),
+        Atomic::Dec(d) if d.is_integer() => d.to_i64().ok_or_else(|| XqError::new("FOAR0002", "Integer overflow")),
+        Atomic::Dbl(d) | Atomic::Flt(d) if d.fract() == 0.0 => Ok(*d as i64),
         other => Err(XqError::type_err(format!("Expected an xs:integer, found {}", other.type_of().name()))),
     }
 }
 
 /// Numeric arithmetic with XQuery type promotion.
 pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
+    let opc = match op {
+        Arith::Add => '+',
+        Arith::Sub => '-',
+        Arith::Mul => '*',
+        Arith::Div => '/',
+        Arith::IDiv => 'i',
+        Arith::Mod => '%',
+    };
+    if let Some(r) = super::datetime::arith(opc, x, y) {
+        return r;
+    }
     let promote = |a: &Atomic| -> R<Atomic> {
         match a {
             Atomic::Untyped(_) => cast(a, AtomicType::Double),
@@ -1125,11 +1137,7 @@ pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
                 if b == 0 {
                     return Err(XqError::new("FOAR0001", "Division by zero"));
                 }
-                if a % b == 0 {
-                    Atomic::Dec((a / b) as f64)
-                } else {
-                    Atomic::Dec(a as f64 / b as f64)
-                }
+                Atomic::Dec(Decimal::from_i64(a).div(&Decimal::from_i64(b)).unwrap_or_default())
             }
             Arith::IDiv => {
                 if b == 0 {
@@ -1145,10 +1153,19 @@ pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
             }
         });
     }
-    let (a, b) = (x.as_f64(), y.as_f64());
-    if r == 1 && b == 0.0 && matches!(op, Arith::Div | Arith::IDiv | Arith::Mod) {
-        return Err(XqError::new("FOAR0001", "Division by zero"));
+    if r == 1 {
+        let (a, b) = (x.as_decimal().unwrap_or_default(), y.as_decimal().unwrap_or_default());
+        let zero = || XqError::new("FOAR0001", "Division by zero");
+        return Ok(match op {
+            Arith::Add => Atomic::Dec(a.add(&b)),
+            Arith::Sub => Atomic::Dec(a.sub(&b)),
+            Arith::Mul => Atomic::Dec(a.mul(&b)),
+            Arith::Div => Atomic::Dec(a.div(&b).ok_or_else(zero)?),
+            Arith::Mod => Atomic::Dec(a.rem(&b).ok_or_else(zero)?),
+            Arith::IDiv => Atomic::Int(a.idiv(&b).ok_or_else(zero)?.to_i64().ok_or_else(|| XqError::new("FOAR0002", "Integer overflow"))?),
+        });
     }
+    let (a, b) = (x.as_f64(), y.as_f64());
     if op == Arith::IDiv {
         if b == 0.0 {
             return Err(XqError::new("FOAR0001", "Integer division by zero"));
@@ -1168,7 +1185,6 @@ pub(crate) fn arith(op: Arith, x: &Atomic, y: &Atomic) -> R<Atomic> {
         Arith::IDiv => unreachable!(),
     };
     Ok(match r {
-        1 => Atomic::Dec(v),
         2 => Atomic::Flt(v),
         _ => Atomic::Dbl(v),
     })

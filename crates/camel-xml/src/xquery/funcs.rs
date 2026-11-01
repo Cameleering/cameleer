@@ -51,7 +51,7 @@ fn round_half_even(f: f64, prec: i64) -> f64 {
 fn map_numeric(a: Atomic, f: impl Fn(f64) -> f64) -> R<Atomic> {
     Ok(match a {
         Atomic::Int(i) => Atomic::Int(f(i as f64) as i64),
-        Atomic::Dec(d) => Atomic::Dec(f(d)),
+        Atomic::Dec(d) => Atomic::Dec(Decimal::from_f64(f(d.to_f64())).unwrap_or_default()),
         Atomic::Flt(d) => Atomic::Flt(f(d)),
         Atomic::Dbl(d) => Atomic::Dbl(f(d)),
         Atomic::Untyped(_) => Atomic::Dbl(f(cast(&a, AtomicType::Double)?.as_f64())),
@@ -121,7 +121,7 @@ fn date_part(a: &Atomic, part: &str) -> R<Item> {
         "seconds" => {
             let v = tparts.get(2).ok_or_else(|| XqError::new("FORG0001", format!("Invalid time value '{}'", s)))?;
             if v.contains('.') {
-                Item::Atomic(Atomic::Dec(v.parse().unwrap_or(0.0)))
+                Item::Atomic(Atomic::Dec(Decimal::parse(v).unwrap_or_default()))
             } else {
                 Item::int(v.parse().unwrap_or(0))
             }
@@ -625,6 +625,46 @@ pub(crate) fn call_builtin(it: &mut Interp, name: &QN, args: &[Expr], f: &Focus)
         ("hours-from-dateTime" | "hours-from-time", 1) => date_fn(it, &a[0], "hours"),
         ("minutes-from-dateTime" | "minutes-from-time", 1) => date_fn(it, &a[0], "minutes"),
         ("seconds-from-dateTime" | "seconds-from-time", 1) => date_fn(it, &a[0], "seconds"),
+        ("years-from-duration" | "months-from-duration" | "days-from-duration" | "hours-from-duration" | "minutes-from-duration" | "seconds-from-duration", 1) => {
+            match it.atomize_opt(&a[0], "a duration argument")? {
+                None => Ok(Vec::new()),
+                Some(Atomic::Untyped(s)) => Ok(vec![Item::Atomic(super::datetime::duration_component(&Atomic::Duration(s), local.split('-').next().unwrap())?)]),
+                Some(d) => Ok(vec![Item::Atomic(super::datetime::duration_component(&d, local.split('-').next().unwrap())?)]),
+            }
+        }
+        ("adjust-dateTime-to-timezone" | "adjust-date-to-timezone" | "adjust-time-to-timezone", 1 | 2) => {
+            let Some(v) = it.atomize_opt(&a[0], "a date/time argument")? else { return Ok(Vec::new()) };
+            let v = match v {
+                Atomic::Untyped(s) => cast(&Atomic::Untyped(s), if local.contains("dateTime") { AtomicType::DateTime } else if local.contains("date") { AtomicType::Date } else { AtomicType::Time })?,
+                other => other,
+            };
+            let tz = if na == 2 {
+                match it.atomize_opt(&a[1], "a timezone argument")? {
+                    None => Some(None),
+                    Some(d) => {
+                        let us = super::datetime::Duration::of(&d).ok_or_else(|| XqError::type_err("The timezone must be an xs:dayTimeDuration"))?.micros;
+                        if us % 60_000_000 != 0 || us.abs() > 14 * 3_600_000_000 {
+                            return Err(XqError::new("FODT0003", format!("Invalid timezone {}", d)));
+                        }
+                        Some(Some((us / 60_000_000) as i32))
+                    }
+                }
+            } else {
+                None
+            };
+            Ok(vec![Item::Atomic(super::datetime::adjust(&v, tz)?)])
+        }
+        ("dateTime", 2) => {
+            let (Some(d), Some(t)) = (it.atomize_opt(&a[0], "a date argument")?, it.atomize_opt(&a[1], "a time argument")?) else { return Ok(Vec::new()) };
+            let d = cast(&d, AtomicType::Date)?;
+            let t = cast(&t, AtomicType::Time)?;
+            Ok(vec![Item::Atomic(super::datetime::date_time(&d, &t)?)])
+        }
+        ("timezone-from-dateTime" | "timezone-from-date" | "timezone-from-time", 1) => {
+            let Some(v) = it.atomize_opt(&a[0], "a date/time argument")? else { return Ok(Vec::new()) };
+            Ok(super::datetime::timezone_of(&v).map(Item::Atomic).into_iter().collect())
+        }
+        ("implicit-timezone", 0) => Ok(vec![Item::Atomic(Atomic::Duration("PT0S".into()))]),
         ("lang", 1 | 2) => {
             let node = if na == 2 {
                 one_node(&a[1])?

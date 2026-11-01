@@ -5,7 +5,7 @@
 use crate::xpath::ast::{Axis, NodeTest};
 
 use super::ast::*;
-use super::types::{Atomic, AtomicType, ItemType, Occ, SeqType, XqError, XqResult};
+use super::types::{Atomic, AtomicType, Decimal, ItemType, Occ, SeqType, XqError, XqResult};
 use super::{ERR_NS, FN_NS, LOCAL_NS, MATH_NS, XSI_NS, XS_NS};
 
 type R<T> = XqResult<T>;
@@ -1255,11 +1255,11 @@ impl Parser<'_> {
         Ok(Expr::Lit(if dbl {
             Atomic::Dbl(text.parse().map_err(|_| XqError::syntax(format!("Invalid number {}", text)))?)
         } else if dec {
-            Atomic::Dec(text.parse().map_err(|_| XqError::syntax(format!("Invalid number {}", text)))?)
+            Atomic::Dec(Decimal::parse(&text).ok_or_else(|| XqError::syntax(format!("Invalid number {}", text)))?)
         } else {
             match text.parse::<i64>() {
                 Ok(i) => Atomic::Int(i),
-                Err(_) => Atomic::Dec(text.parse().unwrap_or(f64::NAN)),
+                Err(_) => Atomic::Dec(Decimal::parse(&text).unwrap_or_default()),
             }
         }))
     }

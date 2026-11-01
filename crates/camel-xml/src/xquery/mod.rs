@@ -46,6 +46,8 @@
 //! ```
 
 pub mod ast;
+pub mod datetime;
+pub mod decimal;
 mod eval;
 pub mod funcs;
 mod parse;
@@ -361,7 +363,8 @@ pub fn item_to_value(docs: &Docs, item: &Item) -> Value {
         },
         Item::Atomic(a) => match a {
             Atomic::Int(i) => Value::Int(*i),
-            Atomic::Dec(f) | Atomic::Dbl(f) | Atomic::Flt(f) => Value::Float(*f),
+            Atomic::Dec(d) => Value::Float(d.to_f64()),
+            Atomic::Dbl(f) | Atomic::Flt(f) => Value::Float(*f),
             Atomic::Bool(b) => Value::Bool(*b),
             other => Value::String(other.to_string()),
         },
