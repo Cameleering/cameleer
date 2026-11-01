@@ -110,5 +110,8 @@ embedded test servers take a `TlsServerConfig` (tests use `camel_tls::testing` i
   exception kinds, Simple language syntax). When in doubt, follow the Camel documentation.
 - Every feature needs tests (unit tests in-module and/or integration tests in `tests/`).
   Tests must be deterministic and fast (avoid long sleeps; use mock `assert_is_satisfied`).
+- Live interop suites (`crates/*/tests/live_*.rs`) run against real servers set up by
+  `scripts/live-interop.sh` and return early unless `CAMEL_LIVE_INTEROP=1`
+  (helpers in `camel_tls::testing::live`); results and the bugs they found are in `docs/INTEROP.md`.
 - `cargo build` must produce no warnings; `cargo test` must pass for the whole workspace.
 - Keep public APIs documented with `///` doc comments.
