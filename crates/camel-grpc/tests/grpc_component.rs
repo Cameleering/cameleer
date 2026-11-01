@@ -350,3 +350,93 @@ fn curl_grpc_call_to_camel_consumer() {
     assert_eq!(reply.get("message"), Some(&Value::from("Hello Bob from curl")));
     f.ctx.stop().unwrap();
 }
+
+#[test]
+fn mutual_tls_interceptors_and_compression() {
+    use camel_grpc::component::{ClientInterceptorBean, GrpcServerInterceptor, ServerInterceptorBean};
+    use camel_grpc::grpc::{Metadata, Status};
+    use camel_tls::certgen::{issue, CertParams};
+    use camel_tls::PrivateKey;
+    use std::sync::Arc;
+    let dir = std::env::temp_dir().join(format!("camel-grpc-mtls-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ca = issue(&CertParams::ca("Test CA"), PrivateKey::generate_ec(camel_tls::crypto::ec::EcCurve::P256), None);
+    let server = issue(&CertParams::server(&["localhost"]), PrivateKey::generate_ec(camel_tls::crypto::ec::EcCurve::P256), Some(&ca));
+    let client = issue(&CertParams::client("grpc-client"), PrivateKey::generate_ec(camel_tls::crypto::ec::EcCurve::P256), Some(&ca));
+    let w = |n: &str, d: &str| {
+        let p = dir.join(n);
+        std::fs::write(&p, d).unwrap();
+        p.display().to_string()
+    };
+    let (ca_pem, srv_cert, srv_key, cli_cert, cli_key) = (w("ca.pem", &ca.cert_pem), w("s.pem", &server.cert_pem), w("s.key", &server.key_pem), w("c.pem", &client.cert_pem), w("c.key", &client.key_pem));
+
+    struct Auth;
+    impl GrpcServerInterceptor for Auth {
+        fn intercept_call(&self, path: &str, md: &Metadata) -> std::result::Result<(), Status> {
+            if md.iter().any(|(k, v)| k == "authorization" && v == "Bearer secret") {
+                Ok(())
+            } else {
+                Err(Status::new(Code::Unauthenticated, format!("no token for {}", path)))
+            }
+        }
+    }
+    let ctx = CamelContext::new();
+    camel_grpc::register(&ctx);
+    ctx.registry().bind("auth", ServerInterceptorBean(Arc::new(Auth)));
+    ctx.registry().bind(
+        "token",
+        ClientInterceptorBean(Arc::new(|_path: &str, md: &mut Metadata| -> Result<()> {
+            md.push(("authorization".into(), "Bearer secret".into()));
+            Ok(())
+        })),
+    );
+    let consumer = format!("grpc://localhost:0/helloworld.Greeter?protoFile={}&usePlainText=false&keyCertChainResource={}&keyResource={}&trustCertCollectionResource={}&compression=gzip&autoDiscoverClientInterceptors=false", PROTO, srv_cert, srv_key, ca_pem);
+    let c2 = consumer.clone();
+    ctx.add_routes(move |b| {
+        b.from(&c2).process(greeter);
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let port = camel_grpc::local_port(&ctx, &consumer).unwrap();
+    let t = ctx.create_producer_template();
+    let base = format!("grpc://localhost:{}/helloworld.Greeter?method=sayHello&protoFile={}&usePlainText=false&trustCertCollectionResource={}&autoDiscoverServerInterceptors=false", port, PROTO, ca_pem);
+    // client certificate + auto-discovered token interceptor + gzip requests
+    let ok = format!("{}&keyCertChainResource={}&keyResource={}&compression=gzip", base, cli_cert, cli_key);
+    let long = "x".repeat(5000);
+    let reply = t.request_body(&ok, Value::object([("name", Value::from(long.clone()))])).map_err(|e| e.kind).unwrap();
+    assert!(reply.get("message").map(|m| m.to_string() == format!("Hello {}", long)).unwrap_or(false));
+    // without the interceptor: UNAUTHENTICATED
+    let err = t.request_body(&format!("{}&keyCertChainResource={}&keyResource={}&autoDiscoverClientInterceptors=false", base, cli_cert, cli_key), Value::object([("name", "x")])).unwrap_err();
+    assert!(status_of(&err).starts_with("UNAUTHENTICATED"), "{}", status_of(&err));
+    // without a client certificate the handshake fails
+    let err = t.request_body(&format!("{}&deadline=3s", base), Value::object([("name", "x")])).unwrap_err();
+    assert!(!status_of(&err).starts_with("OK"));
+    ctx.stop().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn compressed_responses_on_the_wire() {
+    let ctx = CamelContext::new();
+    camel_grpc::register(&ctx);
+    let consumer = format!("grpc://127.0.0.1:0/helloworld.Greeter?protoFile={}&compression=deflate", PROTO);
+    let c2 = consumer.clone();
+    ctx.add_routes(move |b| {
+        b.from(&c2).process(greeter);
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let port = camel_grpc::local_port(&ctx, &consumer).unwrap();
+    let mut client = GrpcClient::plaintext(&format!("127.0.0.1:{}", port));
+    client.send_compression = Some("gzip".into());
+    let pool = DescriptorPool::from_file(PROTO).unwrap();
+    let req = pool.encode("helloworld.HelloRequest", &Value::object([("name", "zip")])).unwrap();
+    let mut call = client.start_call("/helloworld.Greeter/SayHello", &vec![], None).unwrap();
+    call.send(&req).unwrap();
+    call.close_send().unwrap();
+    let resp = call.recv().unwrap().unwrap();
+    assert_eq!(call.response_headers().unwrap().iter().find(|(k, _)| k == "grpc-encoding").map(|(_, v)| v.as_str()), Some("deflate"));
+    let v = pool.decode("helloworld.HelloReply", &resp).unwrap();
+    assert_eq!(v.get("message"), Some(&Value::from("Hello zip")));
+    ctx.stop().unwrap();
+}

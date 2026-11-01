@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use camel_tls::TlsServerConfig;
 
-use super::{encode_grpc_message, frame_message, is_reserved_header, parse_timeout, Code, MessageDecoder, Metadata, Status};
+use super::{encode_grpc_message, frame_message_with, is_reserved_header, parse_timeout, Code, MessageDecoder, Metadata, Status};
 use crate::h2::{H2Config, H2Error, H2Server, H2Stream, ServerRequest};
 
 /// Implements the methods of one or more services. Return the final status of the call.
@@ -25,6 +25,7 @@ where
 }
 
 struct CallState {
+    send_encoding: Option<String>,
     headers_sent: bool,
     finished: bool,
     response_headers: Metadata,
@@ -39,6 +40,7 @@ struct CallInner {
     user_agent: Option<String>,
     deadline: Option<Instant>,
     peer: Option<SocketAddr>,
+    accept_encoding: Option<String>,
     decoder: Mutex<MessageDecoder>,
     state: Mutex<CallState>,
 }
@@ -77,6 +79,21 @@ impl ServerCall {
     /// True once the call was finished (e.g. deadline exceeded) or cancelled by the client.
     pub fn is_cancelled(&self) -> bool {
         self.inner.state.lock().unwrap().finished || self.inner.stream.reset_code().is_some()
+    }
+
+    /// The client's `grpc-accept-encoding`.
+    pub fn accept_encoding(&self) -> Option<&str> {
+        self.inner.accept_encoding.as_deref()
+    }
+
+    /// Compresses response messages with `encoding` (`gzip` / `deflate`) when the client
+    /// accepts it; returns whether it is used.
+    pub fn set_send_compression(&self, encoding: &str) -> bool {
+        let ok = self.accept_encoding().map(|a| a.split(',').any(|e| e.trim().eq_ignore_ascii_case(encoding))).unwrap_or(false);
+        if ok {
+            self.inner.state.lock().unwrap().send_encoding = Some(encoding.to_ascii_lowercase());
+        }
+        ok
     }
 
     /// Adds a response header (before the first message).
@@ -132,6 +149,9 @@ impl ServerCall {
                 ("content-type".to_string(), "application/grpc".to_string()),
                 ("grpc-accept-encoding".to_string(), "identity,gzip,deflate".to_string()),
             ];
+            if let Some(e) = &st.send_encoding {
+                h.push(("grpc-encoding".to_string(), e.clone()));
+            }
             h.extend(st.response_headers.iter().filter(|(n, _)| !is_reserved_header(n)).cloned());
             self.inner.stream.send_headers(&h, false).map_err(|e| self.map_err(e))?;
             st.headers_sent = true;
@@ -142,7 +162,8 @@ impl ServerCall {
     /// Sends one response message.
     pub fn send(&self, msg: &[u8]) -> Result<(), Status> {
         self.ensure_headers()?;
-        self.inner.stream.send_data(&frame_message(msg), false).map_err(|e| self.map_err(e))
+        let enc = self.inner.state.lock().unwrap().send_encoding.clone();
+        self.inner.stream.send_data(&frame_message_with(msg, enc.as_deref()), false).map_err(|e| self.map_err(e))
     }
 
     /// Completes the call with `status` (idempotent).
@@ -222,8 +243,9 @@ fn handle(service: &Arc<dyn GrpcService>, max_message_size: usize, req: ServerRe
             user_agent: req.header("user-agent").map(|s| s.to_string()),
             deadline,
             peer: req.peer_addr,
+            accept_encoding: req.header("grpc-accept-encoding").map(|s| s.to_string()),
             decoder: Mutex::new(MessageDecoder::new(encoding, max_message_size)),
-            state: Mutex::new(CallState { headers_sent: false, finished: false, response_headers: Vec::new(), trailers: Vec::new() }),
+            state: Mutex::new(CallState { send_encoding: None, headers_sent: false, finished: false, response_headers: Vec::new(), trailers: Vec::new() }),
         }),
     };
     if call.service().is_empty() {
