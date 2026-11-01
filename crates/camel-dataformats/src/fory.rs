@@ -41,11 +41,23 @@
 //! there is no Java `Fory` bean to wire), `unmarshalType` (accepted, ignored), plus
 //! `refTracking` (default false).
 //!
+//! Compatible mode (`compatible=true` or `compatibleMode=COMPATIBLE`): `@type` objects are
+//! written as `NAMED_COMPATIBLE_STRUCT` followed by a shared TypeDef (meta share marker
+//! `(index << 1) | flag`: a new definition — 8-byte global header with body size and murmur3
+//! hash, struct meta header, namespace/type name, field infos with name encoding, size,
+//! nullable flag and field type — or a reference to an earlier one); field values follow in
+//! definition order (primitives with a null flag + raw data, others as ref values). Readers
+//! match fields by the names in the TypeDef, so no `structTypes` is needed.
+//! `DECIMAL`: objects `{"@decimal": "123.45"}` are written with the scale / small-or-big
+//! unscaled encoding; decimals read as their plain string. Extension types: objects
+//! `{"@ext": "ns.Name", ...}` are written as `NAMED_EXT` by an [`ExtSerializer`] registered in
+//! [`ForyConfig::extensions`] (Rust API), which also reads them back.
+//!
 //! Deviations from the Java implementation: only the xlang protocol is implemented — the Java
 //! native mode (class names, JDK serializers, `Externalizable`, ...) has no meaning for
-//! dynamic values; compatible structs (`COMPATIBLE_STRUCT` and the shared type-def meta),
-//! extension types, out-of-band buffers and DECIMAL are not supported; numeric ids of
-//! registered (unnamed) structs are read through `structTypes` entries named `#id`.
+//! dynamic values; out-of-band buffers are rejected; type ids follow the Fory 0.10/0.11 xlang
+//! table above; numeric ids of registered (unnamed) structs are read through `structTypes`
+//! entries named `#id`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -490,6 +502,32 @@ pub struct ForyConfig {
     pub require_class_registration: bool,
     /// Struct field names by full type name (`ns.Name`, or `#id` for numeric ids).
     pub struct_types: BTreeMap<String, Vec<String>>,
+    /// Compatible mode: structs are written as `NAMED_COMPATIBLE_STRUCT` with a shared
+    /// TypeDef (field names and types), so readers need no `structTypes`.
+    pub compatible: bool,
+    /// Extension type serializers by full type name (`NAMED_EXT`).
+    pub extensions: BTreeMap<String, ExtSerializer>,
+}
+
+/// A user serializer for an extension type: values `{"@ext": "ns.Name", ...}` are written
+/// as `NAMED_EXT` with the bytes of `write`; `read` decodes them back (it must consume
+/// exactly what `write` produced).
+#[derive(Clone)]
+pub struct ExtSerializer {
+    pub write: Arc<dyn Fn(&Value, &mut Vec<u8>) -> Result<()> + Send + Sync>,
+    pub read: Arc<dyn Fn(&mut Reader) -> Result<Value> + Send + Sync>,
+}
+
+impl std::fmt::Debug for ExtSerializer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExtSerializer")
+    }
+}
+
+impl ExtSerializer {
+    pub fn new(write: impl Fn(&Value, &mut Vec<u8>) -> Result<()> + Send + Sync + 'static, read: impl Fn(&mut Reader) -> Result<Value> + Send + Sync + 'static) -> ExtSerializer {
+        ExtSerializer { write: Arc::new(write), read: Arc::new(read) }
+    }
 }
 
 struct Writer<'c> {
@@ -497,6 +535,273 @@ struct Writer<'c> {
     out: Vec<u8>,
     meta_strings: HashMap<Vec<u8>, u32>,
     refs: Vec<Value>,
+    type_defs: HashMap<Vec<u8>, u32>,
+}
+
+// ----------------------------------------------------------------------------- DECIMAL
+
+/// Parses a plain decimal string into (negative, magnitude digits, scale).
+fn parse_decimal(s: &str) -> Result<(bool, Vec<u8>, i32)> {
+    let t = s.trim();
+    let (neg, t) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let (mant, exp) = match t.find(['e', 'E']) {
+        Some(i) => (&t[..i], t[i + 1..].parse::<i32>().map_err(|_| df_err(format!("Invalid decimal {}", s)))?),
+        None => (t, 0),
+    };
+    let (ip, fp) = mant.split_once('.').unwrap_or((mant, ""));
+    if ip.is_empty() && fp.is_empty() || !ip.chars().chain(fp.chars()).all(|c| c.is_ascii_digit()) {
+        return Err(df_err(format!("Invalid decimal {}", s)));
+    }
+    let digits: Vec<u8> = ip.bytes().chain(fp.bytes()).map(|b| b - b'0').collect();
+    Ok((neg, digits, fp.len() as i32 - exp))
+}
+
+/// Decimal digits (most significant first) to minimal little-endian magnitude bytes.
+fn digits_to_le(digits: &[u8]) -> Vec<u8> {
+    let mut d: Vec<u32> = digits.iter().map(|x| *x as u32).collect();
+    let mut out = Vec::new();
+    while d.iter().any(|x| *x != 0) {
+        let mut rem = 0u32;
+        let mut next = Vec::with_capacity(d.len());
+        for x in &d {
+            let cur = rem * 10 + x;
+            next.push(cur / 256);
+            rem = cur % 256;
+        }
+        out.push(rem as u8);
+        let nz = next.iter().position(|x| *x != 0).unwrap_or(next.len());
+        d = next[nz..].to_vec();
+    }
+    out
+}
+
+fn le_to_digits(le: &[u8]) -> String {
+    let mut digits: Vec<u32> = vec![0];
+    for &b in le.iter().rev() {
+        let mut carry = b as u32;
+        for d in digits.iter_mut() {
+            let v = *d * 256 + carry;
+            *d = v % 10;
+            carry = v / 10;
+        }
+        while carry > 0 {
+            digits.push(carry % 10);
+            carry /= 10;
+        }
+    }
+    digits.iter().rev().map(|d| char::from(b'0' + *d as u8)).collect()
+}
+
+/// Writes a DECIMAL (`scale` varint32, unscaled header varuint64, optional magnitude).
+pub fn write_decimal(out: &mut Vec<u8>, text: &str) -> Result<()> {
+    let (neg, digits, scale) = parse_decimal(text)?;
+    write_varint32(out, scale);
+    let mag = digits_to_le(&digits);
+    let small = mag.len() <= 8 && {
+        let mut b = [0u8; 8];
+        b[..mag.len()].copy_from_slice(&mag);
+        u64::from_le_bytes(b) < (1u64 << 62)
+    };
+    if small {
+        let mut b = [0u8; 8];
+        b[..mag.len()].copy_from_slice(&mag);
+        let u = u64::from_le_bytes(b) as i64;
+        let v = if neg { -u } else { u };
+        let zz = ((v << 1) ^ (v >> 63)) as u64;
+        write_varuint64(out, zz << 1);
+    } else {
+        write_varuint64(out, ((((mag.len() as u64) << 1) | neg as u64) << 1) | 1);
+        out.extend_from_slice(&mag);
+    }
+    Ok(())
+}
+
+fn format_decimal(neg: bool, digits: String, scale: i32) -> String {
+    let digits = digits.trim_start_matches('0').to_string();
+    let digits = if digits.is_empty() { "0".to_string() } else { digits };
+    let neg = neg && digits != "0";
+    let body = if scale <= 0 {
+        format!("{}{}", digits, "0".repeat((-scale) as usize))
+    } else {
+        let sc = scale as usize;
+        let padded = if digits.len() <= sc { format!("{}{}", "0".repeat(sc + 1 - digits.len()), digits) } else { digits };
+        format!("{}.{}", &padded[..padded.len() - sc], &padded[padded.len() - sc..])
+    };
+    if neg {
+        format!("-{}", body)
+    } else {
+        body
+    }
+}
+
+/// Reads a DECIMAL as its plain string form.
+pub fn read_decimal(r: &mut Reader) -> Result<String> {
+    let scale = r.varint32()?;
+    if !(-10000..=10000).contains(&scale) {
+        return Err(df_err(format!("Decimal scale {} out of range", scale)));
+    }
+    let h = r.varuint64()?;
+    if h & 1 == 0 {
+        let zz = h >> 1;
+        let v = ((zz >> 1) as i64) ^ -((zz & 1) as i64);
+        return Ok(format_decimal(v < 0, v.unsigned_abs().to_string(), scale));
+    }
+    let meta = h >> 1;
+    let len = (meta >> 1) as usize;
+    if len == 0 || len > 10000 {
+        return Err(df_err("Invalid decimal magnitude length"));
+    }
+    let mag = r.take(len)?;
+    Ok(format_decimal(meta & 1 == 1, le_to_digits(mag), scale))
+}
+
+// ----------------------------------------------------------------------------- TypeDef
+
+/// A struct type definition (compatible mode).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TypeDef {
+    pub name: String,
+    /// (field name, type id, nullable)
+    pub fields: Vec<(String, u32, bool)>,
+}
+
+fn is_primitive_field(t: u32) -> bool {
+    matches!(t, types::BOOL | types::INT8 | types::INT16 | types::INT32 | types::VAR_INT32 | types::INT64 | types::VAR_INT64 | types::SLI_INT64 | types::FLOAT16 | types::FLOAT32 | types::FLOAT64)
+}
+
+fn inline_meta_string(out: &mut Vec<u8>, s: &str) {
+    let (enc, data) = encode_meta_string(s);
+    write_varuint32(out, (data.len() as u32) << 1);
+    if data.len() > 16 {
+        out.extend_from_slice(&meta_hash(&data, enc as u8).to_le_bytes());
+    } else {
+        out.push(enc as u8);
+    }
+    out.extend_from_slice(&data);
+}
+
+fn read_inline_meta_string(r: &mut Reader) -> Result<String> {
+    let h = r.varuint32()?;
+    let len = (h >> 1) as usize;
+    let enc = if len > 16 { (u64::from_le_bytes(r.arr::<8>()?) & 0xff) as u8 } else { r.u8()? };
+    decode_meta_string(enc, r.take(len)?)
+}
+
+/// Encodes a TypeDef: 8-byte global header (size, murmur3 hash), meta header, type spec,
+/// field infos.
+pub fn encode_type_def(td: &TypeDef) -> Vec<u8> {
+    let mut body = Vec::new();
+    let n = td.fields.len();
+    body.push(0x80 | 0x40 | 0x20 | (n.min(31) as u8));
+    if n >= 31 {
+        write_varuint32(&mut body, (n - 31) as u32);
+    }
+    let (ns, name) = split_type_name(&td.name);
+    inline_meta_string(&mut body, ns);
+    inline_meta_string(&mut body, name);
+    for (fname, t, nullable) in &td.fields {
+        // name: LOWER_UPPER_DIGIT_SPECIAL when possible, else UTF-8
+        let (enc, data) = if !fname.is_empty() && fname.chars().all(|c| lud_code(c).is_some()) {
+            (2u8, pack_bits(&fname.chars().map(|c| lud_code(c).unwrap()).collect::<Vec<_>>(), 6))
+        } else {
+            (0u8, fname.as_bytes().to_vec())
+        };
+        let size = data.len().max(1) - 1;
+        body.push((enc << 6) | ((size.min(15) as u8) << 2) | ((*nullable as u8) << 1));
+        if size >= 15 {
+            write_varuint32(&mut body, (size - 15) as u32);
+        }
+        write_varuint32(&mut body, *t);
+        match *t {
+            types::LIST | types::SET => write_varuint32(&mut body, 2),
+            types::MAP => {
+                write_varuint32(&mut body, 2);
+                write_varuint32(&mut body, 2);
+            }
+            _ => {}
+        }
+        body.extend_from_slice(&data);
+    }
+    let size_bits = body.len().min(0xff) as u64;
+    let hash = murmur3_x64_128(&body, 47).0;
+    let header = (hash << 12) | size_bits;
+    let mut out = header.to_le_bytes().to_vec();
+    if body.len() >= 0xff {
+        write_varuint32(&mut out, (body.len() - 0xff) as u32);
+    }
+    out.extend(body);
+    out
+}
+
+/// Decodes a TypeDef written by [`encode_type_def`] (or another Fory implementation).
+pub fn decode_type_def(r: &mut Reader) -> Result<TypeDef> {
+    let header = u64::from_le_bytes(r.arr::<8>()?);
+    if header & 0x100 != 0 {
+        return Err(df_err("Compressed Fory type meta is not supported"));
+    }
+    let mut size = (header & 0xff) as usize;
+    if size == 0xff {
+        size += r.varuint32()? as usize;
+    }
+    let body = r.take(size)?;
+    let mut br = Reader::new(body);
+    let mh = br.u8()?;
+    if mh & 0x80 == 0 {
+        return Err(df_err("Only struct type definitions are supported"));
+    }
+    let mut n = (mh & 0x1f) as usize;
+    if n == 31 {
+        n += br.varuint32()? as usize;
+    }
+    let name = if mh & 0x20 != 0 {
+        let ns = read_inline_meta_string(&mut br)?;
+        let name = read_inline_meta_string(&mut br)?;
+        if ns.is_empty() {
+            name
+        } else {
+            format!("{}.{}", ns, name)
+        }
+    } else {
+        format!("#{}", br.varuint32()?)
+    };
+    let mut fields = Vec::with_capacity(n.min(1024));
+    for _ in 0..n {
+        let fh = br.u8()?;
+        let enc = fh >> 6;
+        let mut size = ((fh >> 2) & 0x0f) as usize;
+        if size == 15 {
+            size += br.varuint32()? as usize;
+        }
+        let t = br.varuint32()?;
+        match t & 0xff {
+            types::LIST | types::SET => {
+                br.varuint32()?;
+            }
+            types::MAP => {
+                br.varuint32()?;
+                br.varuint32()?;
+            }
+            _ => {}
+        }
+        let fname = match enc {
+            3 => format!("#{}", size),
+            0 => decode_meta_string(0, br.take(size + 1)?)?,
+            1 => decode_meta_string(4, br.take(size + 1)?)?,
+            _ => decode_meta_string(2, br.take(size + 1)?)?,
+        };
+        fields.push((fname, t & 0xff, fh & 0b10 != 0));
+    }
+    Ok(TypeDef { name, fields })
+}
+
+fn field_type_id(v: &Value) -> u32 {
+    match v {
+        Value::Null => 0,
+        other => Writer::type_id_of(other, false),
+    }
 }
 
 fn snake(name: &str) -> String {
@@ -548,8 +853,15 @@ impl Writer<'_> {
         self.out.extend_from_slice(&data);
     }
 
-    fn type_id(v: &Value) -> u32 {
+    fn type_id(&self, v: &Value) -> u32 {
+        Self::type_id_of(v, self.cfg.compatible)
+    }
+
+    fn type_id_of(v: &Value, compatible: bool) -> u32 {
         match v {
+            Value::Object(m) if m.len() == 1 && m.get("@decimal").is_some() => types::DECIMAL,
+            Value::Object(m) if m.get("@ext").and_then(|t| t.as_str()).is_some() => types::NAMED_EXT,
+            Value::Object(m) if compatible && m.get("@type").and_then(|t| t.as_str()).is_some() => types::NAMED_COMPATIBLE_STRUCT,
             Value::Null => 0,
             Value::Bool(_) => types::BOOL,
             Value::Int(_) => types::VAR_INT64,
@@ -564,8 +876,34 @@ impl Writer<'_> {
 
     /// Type info: id, plus namespace/type name meta strings for named types.
     fn write_type(&mut self, v: &Value) -> Result<()> {
-        let id = Self::type_id(v);
+        let id = self.type_id(v);
         write_varuint32(&mut self.out, id);
+        if id == types::NAMED_EXT {
+            let full = v.get("@ext").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            if !self.cfg.extensions.contains_key(&full) {
+                return Err(df_err(format!("No Fory extension serializer registered for {}", full)));
+            }
+            let (ns, name) = split_type_name(&full);
+            self.write_meta_string(ns);
+            self.write_meta_string(name);
+        }
+        if id == types::NAMED_COMPATIBLE_STRUCT {
+            let full = v.get("@type").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            if self.cfg.require_class_registration && !self.cfg.struct_types.contains_key(&full) {
+                return Err(df_err(format!("Class {} is not registered (requireClassRegistration=true): add it to structTypes", full)));
+            }
+            let td = Self::type_def_of(v);
+            let enc = encode_type_def(&td);
+            match self.type_defs.get(&enc) {
+                Some(i) => write_varuint32(&mut self.out, (i << 1) | 1),
+                None => {
+                    let i = self.type_defs.len() as u32;
+                    write_varuint32(&mut self.out, i << 1);
+                    self.out.extend_from_slice(&enc);
+                    self.type_defs.insert(enc, i);
+                }
+            }
+        }
         if id == types::NAMED_STRUCT {
             let full = v.get("@type").and_then(|t| t.as_str()).unwrap_or("").to_string();
             if self.cfg.require_class_registration && !self.cfg.struct_types.contains_key(&full) {
@@ -576,6 +914,16 @@ impl Writer<'_> {
             self.write_meta_string(name);
         }
         Ok(())
+    }
+
+    fn type_def_of(v: &Value) -> TypeDef {
+        let m = v.as_object().unwrap();
+        let names: Vec<&String> = m.keys().filter(|k| k.as_str() != "@type").collect();
+        let fields = sorted_fields(names).into_iter().map(|f| {
+            let t = field_type_id(&m[&f]);
+            (f, t, true)
+        });
+        TypeDef { name: v.get("@type").and_then(|t| t.as_str()).unwrap_or("").to_string(), fields: fields.collect() }
     }
 
     fn tracks(&self, v: &Value) -> bool {
@@ -626,7 +974,23 @@ impl Writer<'_> {
                 self.out.extend_from_slice(b);
             }
             Value::Array(a) => self.write_list(a)?,
-            Value::Object(m) if Self::type_id(v) == types::NAMED_STRUCT => {
+            Value::Object(m) if self.type_id(v) == types::DECIMAL => write_decimal(&mut self.out, &m["@decimal"].to_string())?,
+            Value::Object(m) if self.type_id(v) == types::NAMED_EXT => {
+                let ext = self.cfg.extensions[&m["@ext"].to_string()].clone();
+                (ext.write)(v, &mut self.out)?;
+            }
+            Value::Object(m) if self.type_id(v) == types::NAMED_COMPATIBLE_STRUCT => {
+                for (f, t, _) in Self::type_def_of(v).fields {
+                    let fv = &m[&f];
+                    if is_primitive_field(t) {
+                        self.out.push(NOT_NULL_VALUE_FLAG as u8);
+                        self.write_data(fv)?;
+                    } else {
+                        self.write_ref_value(fv)?;
+                    }
+                }
+            }
+            Value::Object(m) if self.type_id(v) == types::NAMED_STRUCT => {
                 let names: Vec<&String> = m.keys().filter(|k| k.as_str() != "@type").collect();
                 for f in sorted_fields(names) {
                     self.write_ref_value(&m[&f])?;
@@ -644,10 +1008,10 @@ impl Writer<'_> {
         }
         let has_null = a.iter().any(|v| v.is_null());
         let non_null: Vec<&Value> = a.iter().filter(|v| !v.is_null()).collect();
-        let first_type = non_null.first().map(|v| Self::type_id(v));
+        let first_type = non_null.first().map(|v| self.type_id(v));
         // named structs of different names are not "the same type"
         let same = first_type.is_some()
-            && non_null.iter().all(|v| Some(Self::type_id(v)) == first_type && v.get("@type") == non_null[0].get("@type"));
+            && non_null.iter().all(|v| Some(self.type_id(v)) == first_type && v.get("@type") == non_null[0].get("@type"));
         let track = self.cfg.ref_tracking && non_null.iter().any(|v| self.tracks(v));
         let mut header = 0u8;
         if track {
@@ -714,9 +1078,9 @@ impl Writer<'_> {
                 continue;
             }
             // collect a chunk of entries whose values share the type
-            let vt = Self::type_id(v);
+            let vt = self.type_id(v);
             let mut j = i;
-            while j < entries.len() && j - i < MAX_CHUNK && !entries[j].1.is_null() && Self::type_id(entries[j].1) == vt && entries[j].1.get("@type") == v.get("@type") {
+            while j < entries.len() && j - i < MAX_CHUNK && !entries[j].1.is_null() && self.type_id(entries[j].1) == vt && entries[j].1.get("@type") == v.get("@type") {
                 j += 1;
             }
             let track_v = self.tracks(v);
@@ -766,7 +1130,7 @@ impl DeepEq for Value {
 
 /// Serialize a value (header + root reference + type + data).
 pub fn serialize(v: &Value, cfg: &ForyConfig) -> Result<Vec<u8>> {
-    let mut w = Writer { cfg, out: Vec::new(), meta_strings: HashMap::new(), refs: Vec::new() };
+    let mut w = Writer { cfg, out: Vec::new(), meta_strings: HashMap::new(), refs: Vec::new(), type_defs: HashMap::new() };
     let mut bitmap = 0b0110u8; // little endian + xlang
     if v.is_null() {
         bitmap |= 1;
@@ -786,12 +1150,13 @@ pub fn serialize(v: &Value, cfg: &ForyConfig) -> Result<Vec<u8>> {
 enum TypeInfo {
     Id(u32),
     Named(u32, String),
+    Def(u32, Arc<TypeDef>),
 }
 
 impl TypeInfo {
     fn id(&self) -> u32 {
         match self {
-            TypeInfo::Id(i) | TypeInfo::Named(i, _) => *i & 0xff,
+            TypeInfo::Id(i) | TypeInfo::Named(i, _) | TypeInfo::Def(i, _) => *i & 0xff,
         }
     }
 }
@@ -802,6 +1167,7 @@ struct Decoder<'a, 'c> {
     meta_strings: Vec<String>,
     refs: Vec<Value>,
     depth: usize,
+    type_defs: Vec<Arc<TypeDef>>,
 }
 
 impl Decoder<'_, '_> {
@@ -822,7 +1188,18 @@ impl Decoder<'_, '_> {
     fn read_type(&mut self) -> Result<TypeInfo> {
         let id = self.r.varuint32()?;
         match id & 0xff {
-            types::NAMED_STRUCT | types::NAMED_ENUM | types::NAMED_COMPATIBLE_STRUCT | types::NAMED_EXT => {
+            types::NAMED_COMPATIBLE_STRUCT | types::COMPATIBLE_STRUCT => {
+                let marker = self.r.varuint32()?;
+                let td = if marker & 1 == 1 {
+                    self.type_defs.get((marker >> 1) as usize).cloned().ok_or_else(|| df_err(format!("Unknown Fory type meta index {}", marker >> 1)))?
+                } else {
+                    let td = Arc::new(decode_type_def(&mut self.r)?);
+                    self.type_defs.push(td.clone());
+                    td
+                };
+                Ok(TypeInfo::Def(id, td))
+            }
+            types::NAMED_STRUCT | types::NAMED_ENUM | types::NAMED_EXT => {
                 let ns = self.read_meta_string()?;
                 let name = self.read_meta_string()?;
                 Ok(TypeInfo::Named(id, if ns.is_empty() { name } else { format!("{}.{}", ns, name) }))
@@ -933,12 +1310,39 @@ impl Decoder<'_, '_> {
             FLOAT16_ARRAY => self.prim_array(2, |c| Value::Float(half_to_f64(u16::from_le_bytes([c[0], c[1]]))))?,
             FLOAT32_ARRAY => self.prim_array(4, |c| Value::Float(f32::from_le_bytes(c.try_into().unwrap()) as f64))?,
             FLOAT64_ARRAY => self.prim_array(8, |c| Value::Float(f64::from_le_bytes(c.try_into().unwrap())))?,
+            DECIMAL => Value::String(read_decimal(r)?),
+            NAMED_EXT | EXT => {
+                let full = match t {
+                    TypeInfo::Named(_, n) => n.clone(),
+                    _ => format!("#{}", t_raw(t) >> 8),
+                };
+                let ext = self.cfg.extensions.get(&full).cloned().ok_or_else(|| df_err(format!("No Fory extension serializer registered for {}", full)))?;
+                (ext.read)(&mut self.r)?
+            }
+            COMPATIBLE_STRUCT | NAMED_COMPATIBLE_STRUCT => {
+                let TypeInfo::Def(_, td) = t else { return Err(df_err("Missing Fory type meta")) };
+                let mut m = ObjectMap::new();
+                m.insert("@type".to_string(), Value::String(td.name.clone()));
+                for (f, ft, nullable) in td.fields.iter() {
+                    let v = if is_primitive_field(*ft) {
+                        if *nullable && self.r.u8()? as i8 == NULL_FLAG {
+                            Value::Null
+                        } else {
+                            self.read_data(&TypeInfo::Id(*ft))?
+                        }
+                    } else {
+                        self.read_ref_value()?
+                    };
+                    m.insert(f.clone(), v);
+                }
+                Value::Object(m)
+            }
             LIST | SET | ARRAY => self.read_list()?,
             MAP => self.read_map()?,
             STRUCT | NAMED_STRUCT => {
                 let full = match t {
                     TypeInfo::Named(_, n) => n.clone(),
-                    TypeInfo::Id(id) => format!("#{}", id >> 8),
+                    TypeInfo::Id(id) | TypeInfo::Def(id, _) => format!("#{}", id >> 8),
                 };
                 let fields = self
                     .cfg
@@ -1091,6 +1495,12 @@ impl Decoder<'_, '_> {
     }
 }
 
+fn t_raw(t: &TypeInfo) -> u32 {
+    match t {
+        TypeInfo::Id(i) | TypeInfo::Named(i, _) | TypeInfo::Def(i, _) => *i,
+    }
+}
+
 /// Deserialize Fory xlang bytes.
 pub fn deserialize(b: &[u8], cfg: &ForyConfig) -> Result<Value> {
     let mut r = Reader::new(b);
@@ -1111,7 +1521,7 @@ pub fn deserialize(b: &[u8], cfg: &ForyConfig) -> Result<Value> {
     if bitmap & 1 != 0 {
         return Ok(Value::Null);
     }
-    let mut d = Decoder { r, cfg, meta_strings: Vec::new(), refs: Vec::new(), depth: 0 };
+    let mut d = Decoder { r, cfg, meta_strings: Vec::new(), refs: Vec::new(), depth: 0, type_defs: Vec::new() };
     d.read_ref_value()
 }
 
@@ -1152,6 +1562,8 @@ pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
         ref_tracking: o.bool(&["refTracking", "trackingRef"], false)?,
         require_class_registration: o.bool(&["requireClassRegistration"], false)?,
         struct_types: parse_struct_types(&o.string(&["structTypes"], ""))?,
+        compatible: o.bool(&["compatible"], false)? || o.string(&["compatibleMode"], "").eq_ignore_ascii_case("COMPATIBLE"),
+        extensions: BTreeMap::new(),
     };
     // accepted Camel options without effect here
     let _ = (o.bool(&["threadSafe"], true)?, o.bool(&["allowAutoWiredFory"], true)?, o.get(&["unmarshalType"]));
@@ -1300,5 +1712,95 @@ mod tests {
         let v = Value::object([("@type", Value::from("org.apache.camel.component.fory.model.VeryLongName")), ("x", Value::Int(1))]);
         let b = serialize(&v, &cfg).unwrap();
         assert_eq!(deserialize(&b, &cfg).unwrap(), v);
+    }
+
+    #[test]
+    fn decimals() {
+        let cases = ["0", "1", "-1", "123.45", "-0.001", "4611686018427387903", "4611686018427387904", "-123456789012345678901234567890.12345", "1E+3", "100"];
+        let want = ["0", "1", "-1", "123.45", "-0.001", "4611686018427387903", "4611686018427387904", "-123456789012345678901234567890.12345", "1000", "100"];
+        for (c, w) in cases.iter().zip(want) {
+            let mut o = Vec::new();
+            write_decimal(&mut o, c).unwrap();
+            assert_eq!(read_decimal(&mut Reader::new(&o)).unwrap(), w, "{}", c);
+        }
+        // 123.45: scale 2 (zigzag 4), unscaled 12345 small: zigzag 24690 << 1 = 49380
+        let mut o = Vec::new();
+        write_decimal(&mut o, "123.45").unwrap();
+        let mut e = vec![4u8];
+        write_varuint64(&mut e, 49380);
+        assert_eq!(o, e);
+        // big encoding: 2^62 -> len 8, sign 0: header ((8<<1)<<1)|1 = 33, magnitude LE
+        let mut o = Vec::new();
+        write_decimal(&mut o, "4611686018427387904").unwrap();
+        assert_eq!(hex(&o), "00210000000000000040");
+        let cfg = ForyConfig::default();
+        let v = Value::object([("@decimal", Value::from("-9.99"))]);
+        assert_eq!(deserialize(&serialize(&v, &cfg).unwrap(), &cfg).unwrap(), Value::from("-9.99"));
+        assert!(write_decimal(&mut Vec::new(), "1.2.3").is_err());
+    }
+
+    #[test]
+    fn compatible_structs_need_no_struct_types() {
+        let cfg = ForyConfig { compatible: true, ..Default::default() };
+        let person = Value::object([
+            ("@type", Value::from("example.Person")),
+            ("name", Value::from("Ann")),
+            ("age", Value::Int(42)),
+            ("score", Value::Float(1.5)),
+            ("active", Value::Bool(true)),
+            ("tags", Value::from(vec![Value::from("a")])),
+            ("attrs", Value::object([("k", Value::from("v"))])),
+            ("nick", Value::Null),
+            ("address", Value::object([("@type", Value::from("example.Address")), ("city", Value::from("Bern"))])),
+        ]);
+        let v = Value::Array(vec![person.clone(), person.clone()]);
+        let b = serialize(&v, &cfg).unwrap();
+        // the second struct references the shared type definition
+        let back = deserialize(&b, &ForyConfig::default()).unwrap();
+        let fields = |v: &Value| {
+            let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+            k.sort();
+            k
+        };
+        for p in back.as_array().unwrap() {
+            assert_eq!(fields(p), fields(&person));
+            for (k, x) in person.as_object().unwrap().iter() {
+                assert_eq!(p.get(k), Some(x), "{}", k);
+            }
+        }
+        let td = TypeDef { name: "example.Person".into(), fields: vec![("a".into(), types::VAR_INT64, true), ("long_field_name_over_sixteen".into(), types::LIST, false)] };
+        let enc = encode_type_def(&td);
+        assert_eq!(decode_type_def(&mut Reader::new(&enc)).unwrap(), td);
+        assert_eq!(u64::from_le_bytes(enc[..8].try_into().unwrap()) & 0xff, (enc.len() - 8) as u64);
+        // many fields (escape in the meta header and the size byte)
+        let many = TypeDef { name: "x.Y".into(), fields: (0..40).map(|i| (format!("field_with_a_long_name_{}", i), types::STRING, true)).collect() };
+        let enc = encode_type_def(&many);
+        assert_eq!(decode_type_def(&mut Reader::new(&enc)).unwrap(), many);
+    }
+
+    #[test]
+    fn extension_types() {
+        let mut cfg = ForyConfig::default();
+        cfg.extensions.insert(
+            "geo.Point".into(),
+            ExtSerializer::new(
+                |v, out| {
+                    out.extend_from_slice(&v.get("x").and_then(|x| x.as_f64()).unwrap_or(0.0).to_le_bytes());
+                    out.extend_from_slice(&v.get("y").and_then(|x| x.as_f64()).unwrap_or(0.0).to_le_bytes());
+                    Ok(())
+                },
+                |r| {
+                    let x = f64::from_le_bytes(r.take(8)?.try_into().unwrap());
+                    let y = f64::from_le_bytes(r.take(8)?.try_into().unwrap());
+                    Ok(Value::object([("@ext", Value::from("geo.Point")), ("x", Value::Float(x)), ("y", Value::Float(y))]))
+                },
+            ),
+        );
+        let p = Value::object([("@ext", Value::from("geo.Point")), ("x", Value::Float(1.0)), ("y", Value::Float(-2.5))]);
+        let v = Value::object([("p", p.clone()), ("n", Value::Int(1))]);
+        let b = serialize(&v, &cfg).unwrap();
+        assert_eq!(deserialize(&b, &cfg).unwrap(), v);
+        assert!(deserialize(&b, &ForyConfig::default()).is_err());
+        assert!(serialize(&p, &ForyConfig::default()).is_err());
     }
 }
