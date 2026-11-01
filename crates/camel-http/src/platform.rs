@@ -24,7 +24,10 @@
 //! `muteException`, `chunked`, `mapHttpMessageBody`, `mapHttpMessageHeaders`,
 //! `mapHttpMessageFormUrlEncodedBody`, `port`, `host`, `ssl`, `sslContextParameters`,
 //! `useGlobalSslContextParameters` (plus a few accepted and ignored
-//! Camel options such as `disableStreamCache`, `transferException`, `useStreaming`).
+//! Camel options such as `transferException`, `useStreaming`). `disableStreamCache=true`: request
+//! bodies are not read into memory but passed as `camel_tls::stream_body` handles (the
+//! connection closes after such a request); stream-handle response bodies are always sent with
+//! chunked transfer coding without buffering.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -163,9 +166,9 @@ impl Component for HttpConsumerComponent {
             mute_exception: params.take_bool("muteException", false)?,
             chunked: params.take_bool("chunked", false)?,
             produces: spec.produces.clone(),
+            disable_stream_cache: params.take_bool("disableStreamCache", false)?,
         };
         for ignored in [
-            "disableStreamCache",
             "transferException",
             "useStreaming",
             "headerFilterStrategy",
@@ -320,6 +323,9 @@ impl Service for HttpConsumer {
             }
             None => registry().register(&self.host, self.port, &self.server_config, self.spec.clone(), handler)?,
         };
+        if self.binding.disable_stream_cache {
+            registry().set_streaming(&registration, true);
+        }
         *self.bound_port.lock().unwrap() = Some(registration.port);
         *reg = Some(registration);
         Ok(())

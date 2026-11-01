@@ -115,6 +115,9 @@ pub struct HttpRequest {
     pub remote_addr: Option<SocketAddr>,
     /// HTTPS with client authentication: the verified client certificate chain (DER, leaf first).
     pub peer_certificates: Vec<Vec<u8>>,
+    /// Streamed request body (a `camel_tls::stream_body` handle) when the handler asked for
+    /// streaming ([`crate::server::HttpHandler::stream_request`]); `body` is empty then.
+    pub body_stream: Option<camel_core::Value>,
 }
 
 impl HttpRequest {
@@ -177,6 +180,9 @@ pub struct HttpResponse {
     /// Send the body with `Transfer-Encoding: chunked` (HTTP/1.1 only). Set by
     /// [`read_response`] when the received response was chunked.
     pub chunked: bool,
+    /// A `camel_tls::stream_body` handle sent instead of `body`, with chunked transfer coding
+    /// (HTTP/1.1) without buffering the payload.
+    pub stream: Option<camel_core::Value>,
 }
 
 impl Default for HttpResponse {
@@ -187,7 +193,7 @@ impl Default for HttpResponse {
 
 impl HttpResponse {
     pub fn new(status: u16) -> Self {
-        HttpResponse { status, reason: String::new(), version: Version::Http11, headers: HttpHeaders::new(), body: Vec::new(), chunked: false }
+        HttpResponse { status, reason: String::new(), version: Version::Http11, headers: HttpHeaders::new(), body: Vec::new(), chunked: false, stream: None }
     }
     /// A `text/plain` response.
     pub fn text(status: u16, text: impl Into<String>) -> Self {
@@ -393,7 +399,8 @@ fn read_head<R: BufRead>(r: &mut R, limits: &Limits) -> Result<Option<(String, H
 }
 
 /// How a message body is delimited.
-enum BodyKind {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyKind {
     None,
     Length(usize),
     Chunked,
@@ -466,10 +473,175 @@ pub fn read_chunked<R: BufRead>(r: &mut R, max: usize) -> Result<Vec<u8>, HttpEr
     }
 }
 
+/// A lazily decoding body reader (Content-Length, chunked or until-close framing) over the
+/// connection: the payload is never buffered as a whole.
+pub struct BodyReader<R: BufRead> {
+    inner: R,
+    kind: BodyKind,
+    /// Remaining bytes of the current chunk / of the Content-Length body.
+    remaining: usize,
+    done: bool,
+}
+
+impl<R: BufRead> BodyReader<R> {
+    pub fn new(inner: R, kind: BodyKind) -> Self {
+        let (remaining, done) = match kind {
+            BodyKind::None => (0, true),
+            BodyKind::Length(n) => (n, n == 0),
+            _ => (0, false),
+        };
+        BodyReader { inner, kind, remaining, done }
+    }
+
+    /// The body length when known in advance.
+    pub fn content_length(&self) -> Option<u64> {
+        match self.kind {
+            BodyKind::Length(n) => Some(n as u64),
+            BodyKind::None => Some(0),
+            _ => None,
+        }
+    }
+
+    fn next_chunk(&mut self) -> io::Result<()> {
+        let mut budget = 4096;
+        let line = read_line(&mut self.inner, &mut budget, || HttpError::BadRequest("chunk size line too long".into()))
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "eof in chunked body"))?;
+        let size_str = line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_str, 16).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, format!("invalid chunk size: {}", line)))?;
+        if size == 0 {
+            let mut budget = 16 * 1024;
+            loop {
+                let t = read_line(&mut self.inner, &mut budget, || HttpError::HeaderTooLarge)
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "eof in trailers"))?;
+                if t.is_empty() {
+                    break;
+                }
+            }
+            self.done = true;
+        }
+        self.remaining = size;
+        Ok(())
+    }
+}
+
+impl<R: BufRead> Read for BodyReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if self.done || buf.is_empty() {
+            return Ok(0);
+        }
+        match self.kind {
+            BodyKind::None => Ok(0),
+            BodyKind::UntilClose => self.inner.read(buf),
+            BodyKind::Length(_) => {
+                let lim = buf.len().min(self.remaining);
+                let n = self.inner.read(&mut buf[..lim])?;
+                if n == 0 {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed before the end of the body"));
+                }
+                self.remaining -= n;
+                if self.remaining == 0 {
+                    self.done = true;
+                }
+                Ok(n)
+            }
+            BodyKind::Chunked => {
+                if self.remaining == 0 {
+                    self.next_chunk()?;
+                    if self.done {
+                        return Ok(0);
+                    }
+                }
+                let lim = buf.len().min(self.remaining);
+                let n = self.inner.read(&mut buf[..lim])?;
+                if n == 0 {
+                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed inside a chunk"));
+                }
+                self.remaining -= n;
+                if self.remaining == 0 {
+                    let mut crlf = [0u8; 1];
+                    self.inner.read_exact(&mut crlf)?;
+                    if crlf[0] == b'\r' {
+                        self.inner.read_exact(&mut crlf)?;
+                    }
+                }
+                Ok(n)
+            }
+        }
+    }
+}
+
+/// Copy `r` to `w` with chunked transfer coding (`CHUNK_SIZE` chunks), then the last chunk.
+pub fn write_chunked_stream<W: Write, R: Read + ?Sized>(w: &mut W, r: &mut R) -> io::Result<u64> {
+    let mut buf = vec![0u8; CHUNK_SIZE];
+    let mut total = 0u64;
+    loop {
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        write!(w, "{:X}\r\n", n)?;
+        w.write_all(&buf[..n])?;
+        w.write_all(b"\r\n")?;
+        total += n as u64;
+    }
+    w.write_all(b"0\r\n\r\n")?;
+    w.flush()?;
+    Ok(total)
+}
+
+/// Write a request head announcing a chunked body (send it with [`write_chunked_stream`]).
+pub fn write_request_head_chunked<W: Write>(w: &mut W, method: &str, target: &str, headers: &HttpHeaders) -> io::Result<()> {
+    let mut out = Vec::with_capacity(256);
+    write!(out, "{} {} HTTP/1.1\r\n", method, target)?;
+    for (k, v) in headers.iter() {
+        if k.eq_ignore_ascii_case("Content-Length") || k.eq_ignore_ascii_case("Transfer-Encoding") || !is_valid_header_name(k) || !is_valid_header_value(v) {
+            continue;
+        }
+        write!(out, "{}: {}\r\n", k, v)?;
+    }
+    out.extend_from_slice(b"Transfer-Encoding: chunked\r\n\r\n");
+    w.write_all(&out)?;
+    w.flush()
+}
+
+/// Read a response head and return the response (empty body) with a lazy [`BodyReader`].
+pub fn read_response_streaming<R: BufRead>(mut r: R, request_method: &str, limits: &Limits) -> Result<(HttpResponse, BodyReader<R>), HttpError> {
+    loop {
+        let (start, headers) = read_head(&mut r, limits)?.ok_or(HttpError::UnexpectedEof)?;
+        let mut parts = start.splitn(3, ' ');
+        let version = parts.next().and_then(Version::parse).ok_or_else(|| HttpError::BadRequest(format!("malformed status line: {}", start)))?;
+        let status: u16 = parts
+            .next()
+            .and_then(|s| s.parse().ok())
+            .filter(|s| (100..1000).contains(s))
+            .ok_or_else(|| HttpError::BadRequest(format!("malformed status line: {}", start)))?;
+        let reason = parts.next().unwrap_or("").to_string();
+        if (100..200).contains(&status) && status != 101 {
+            continue;
+        }
+        let mut resp = HttpResponse { status, reason, version, headers, body: Vec::new(), chunked: false, stream: None };
+        let kind = if request_method.eq_ignore_ascii_case("HEAD") || status_has_no_body(status) { BodyKind::None } else { body_kind(&resp.headers, false)? };
+        resp.chunked = kind == BodyKind::Chunked;
+        return Ok((resp, BodyReader::new(r, kind)));
+    }
+}
+
+/// Read a request head only; the body (of the returned kind) is left on the connection.
+/// `Expect: 100-continue` is answered like [`read_request`] does.
+pub fn read_request_head<R: BufRead, W: Write>(r: &mut R, w: Option<&mut W>, limits: &Limits) -> Result<Option<(HttpRequest, BodyKind)>, HttpError> {
+    read_request_inner(r, w, limits, false)
+}
+
 /// Read a request from `r`. If the request carries `Expect: 100-continue`, an interim
 /// `100 Continue` response is written to `w` before the body is read.
 /// Returns `Ok(None)` when the connection was closed before a new request started.
 pub fn read_request<R: BufRead, W: Write>(r: &mut R, w: Option<&mut W>, limits: &Limits) -> Result<Option<HttpRequest>, HttpError> {
+    Ok(read_request_inner(r, w, limits, true)?.map(|(req, _)| req))
+}
+
+fn read_request_inner<R: BufRead, W: Write>(r: &mut R, w: Option<&mut W>, limits: &Limits, with_body: bool) -> Result<Option<(HttpRequest, BodyKind)>, HttpError> {
     let (start, headers) = match read_head(r, limits)? {
         None => return Ok(None),
         Some(h) => h,
@@ -520,6 +692,9 @@ pub fn read_request<R: BufRead, W: Write>(r: &mut R, w: Option<&mut W>, limits: 
             }
         }
     }
+    if !with_body {
+        return Ok(Some((req, kind)));
+    }
     req.body = match kind {
         BodyKind::None | BodyKind::UntilClose => Vec::new(),
         BodyKind::Length(n) => {
@@ -532,7 +707,7 @@ pub fn read_request<R: BufRead, W: Write>(r: &mut R, w: Option<&mut W>, limits: 
         }
         BodyKind::Chunked => read_chunked(r, limits.max_body_bytes)?,
     };
-    Ok(Some(req))
+    Ok(Some((req, kind)))
 }
 
 fn status_has_no_body(status: u16) -> bool {
@@ -555,7 +730,7 @@ pub fn read_response<R: BufRead>(r: &mut R, request_method: &str, limits: &Limit
         if (100..200).contains(&status) && status != 101 {
             continue;
         }
-        let mut resp = HttpResponse { status, reason, version, headers, body: Vec::new(), chunked: false };
+        let mut resp = HttpResponse { status, reason, version, headers, body: Vec::new(), chunked: false, stream: None };
         if request_method.eq_ignore_ascii_case("HEAD") || status_has_no_body(status) {
             return Ok(resp);
         }
@@ -614,6 +789,42 @@ fn is_framing_header(name: &str) -> bool {
 /// `keep_alive`: whether the connection stays open. The response version should be
 /// the request version; chunked encoding falls back to `Content-Length` on HTTP/1.0.
 pub fn write_response<W: Write>(w: &mut W, resp: &HttpResponse, head_request: bool, keep_alive: bool) -> io::Result<()> {
+    if let Some(handle) = &resp.stream {
+        if let Some((mut reader, len)) = camel_tls::stream_body::take(handle) {
+            let mut head = resp.clone();
+            head.stream = None;
+            if resp.version == Version::Http10 || head_request || status_has_no_body(resp.status) {
+                // no chunked coding on HTTP/1.0: buffer (HEAD / bodiless: drop the stream)
+                if !head_request && !status_has_no_body(resp.status) {
+                    reader.read_to_end(&mut head.body)?;
+                } else if let Some(l) = len {
+                    head.headers.set("Content-Length", l.to_string());
+                }
+                return write_response(w, &head, head_request, keep_alive);
+            }
+            let mut out = Vec::with_capacity(256);
+            write!(out, "{} {} {}\r\n", resp.version.as_str(), resp.status, resp.reason_phrase())?;
+            let mut has_date = false;
+            for (k, v) in resp.headers.iter() {
+                if is_framing_header(k) || !is_valid_header_name(k) || !is_valid_header_value(v) {
+                    continue;
+                }
+                has_date |= k.eq_ignore_ascii_case("Date");
+                write!(out, "{}: {}\r\n", k, v)?;
+            }
+            if !has_date {
+                write!(out, "Date: {}\r\n", http_date_now())?;
+            }
+            out.extend_from_slice(b"Transfer-Encoding: chunked\r\n");
+            if !keep_alive {
+                out.extend_from_slice(b"Connection: close\r\n");
+            }
+            out.extend_from_slice(b"\r\n");
+            w.write_all(&out)?;
+            write_chunked_stream(w, &mut reader)?;
+            return Ok(());
+        }
+    }
     let mut out = Vec::with_capacity(256 + resp.body.len());
     write!(out, "{} {} {}\r\n", resp.version.as_str(), resp.status, resp.reason_phrase())?;
     let mut has_date = false;

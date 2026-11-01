@@ -145,6 +145,8 @@ pub struct ConsumerBinding {
     pub chunked: bool,
     /// Default response content type (first `produces` entry).
     pub produces: Option<String>,
+    /// `disableStreamCache`: request bodies arrive as `camel_tls::stream_body` handles.
+    pub disable_stream_cache: bool,
 }
 
 impl Default for ConsumerBinding {
@@ -152,6 +154,7 @@ impl Default for ConsumerBinding {
         ConsumerBinding {
             map_http_message_headers: true,
             map_http_message_body: true,
+            disable_stream_cache: false,
             map_form_url_encoded_body: true,
             mute_exception: false,
             chunked: false,
@@ -199,7 +202,10 @@ impl ConsumerBinding {
             msg.headers.set(headers::CONTENT_TYPE, ct.to_string());
         }
         if self.map_http_message_body {
-            msg.body = body_to_value(&req.body, req.content_type());
+            msg.body = match &req.body_stream {
+                Some(h) => h.clone(),
+                None => body_to_value(&req.body, req.content_type()),
+            };
         }
     }
 
@@ -218,8 +224,9 @@ impl ConsumerBinding {
             }
             return resp;
         }
-        let (body, default_ct) = value_to_body(&msg.body);
-        let blank = match &msg.body {
+        let streamed = camel_tls::stream_body::is_available(&msg.body);
+        let (body, default_ct) = if streamed { (Vec::new(), Some("application/octet-stream")) } else { value_to_body(&msg.body) };
+        let blank = !streamed && match &msg.body {
             Value::Null => true,
             Value::String(s) => s.trim().is_empty(),
             _ => false,
@@ -241,12 +248,16 @@ impl ConsumerBinding {
             .or_else(|| default_ct.map(|s| s.to_string()))
             .or_else(|| self.produces.as_ref().map(|p| p.split(',').next().unwrap_or("").trim().to_string()));
         if let Some(ct) = ct {
-            if !body.is_empty() && is_valid_header_value(&ct) {
+            if (streamed || !body.is_empty()) && is_valid_header_value(&ct) {
                 resp.headers.set("Content-Type", ct);
             }
         }
         resp.chunked = self.chunked || msg.headers.get(headers::HTTP_CHUNKED).map(|v| v.is_truthy()).unwrap_or(false);
         resp.body = body;
+        if streamed {
+            resp.stream = Some(msg.body.clone());
+            resp.chunked = true;
+        }
         resp
     }
 }

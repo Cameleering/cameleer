@@ -41,6 +41,7 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::io::{Read, Write};
 use std::time::Duration;
 
 use camel_core::context::CamelContext;
@@ -89,6 +90,9 @@ pub struct HttpProducerOptions {
     pub get_with_body: bool,
     pub delete_with_body: bool,
     pub ignore_response_body: bool,
+    /// `disableStreamCache`: the response body is a `camel_tls::stream_body` handle reading
+    /// the connection lazily instead of a buffered byte array.
+    pub disable_stream_cache: bool,
     pub custom_host_header: Option<String>,
     pub preserve_host_header: bool,
     /// TLS configuration for `https` targets (None = system trust store).
@@ -186,11 +190,11 @@ impl Component for HttpComponent {
             },
             content_compression: !params.take_bool("contentCompressionDisabled", false)?,
             pooling: !params.take_bool("connectionClose", false)?,
+            disable_stream_cache: params.take_bool("disableStreamCache", false)?,
             connections_per_route: params.take_usize("connectionsPerRoute", 20)?,
         };
         for ignored in [
             "connectionRequestTimeout",
-            "disableStreamCache",
             "headerFilterStrategy",
             "httpClientConfigurer",
             "clientConnectionManager",
@@ -341,6 +345,49 @@ impl HttpProducer {
         Err(CamelError::io(format!("Cannot send request to {}", url)))
     }
 
+    /// One request on a dedicated connection: a streamed (chunked) request body when `reader`
+    /// is given, and a lazy response body reader.
+    fn send_streaming(
+        &self,
+        method: &str,
+        url: &Url,
+        headers: &HttpHeaders,
+        reader: Option<Box<dyn std::io::Read + Send>>,
+        body: Option<&[u8]>,
+    ) -> Result<(HttpResponse, crate::http::BodyReader<std::io::BufReader<camel_tls::net::NetStream>>)> {
+        let what = url.to_string();
+        let proxy = self.opts.proxy.as_ref().and_then(|p| p.proxy_for(url));
+        let t = if self.opts.socket_timeout.is_zero() { None } else { Some(self.opts.socket_timeout) };
+        let (stream, absolute) = crate::client::open_stream(url, self.opts.tls.as_deref(), self.opts.tls_server_name.as_deref(), proxy, self.opts.connect_timeout, t)?;
+        let mut h = headers.clone();
+        if !h.contains("Host") {
+            h.set("Host", url.host_header());
+        }
+        h.set("Connection", "close");
+        let target = if absolute {
+            if let Some(c) = proxy.and_then(|p| p.credentials.as_ref()) {
+                h.set("Proxy-Authorization", format!("Basic {}", base64_encode(c.as_bytes())));
+            }
+            url.to_string()
+        } else {
+            url.request_target()
+        };
+        let mut w = stream.try_clone().map_err(|e| crate::client::map_io_error(e, &what))?;
+        match reader {
+            Some(mut r) => {
+                crate::http::write_request_head_chunked(&mut w, method, &target, &h).map_err(|e| crate::client::map_io_error(e, &what))?;
+                crate::http::write_chunked_stream(&mut w, &mut r).map_err(|e| crate::client::map_io_error(e, &what))?;
+            }
+            None => {
+                let mut buf = Vec::new();
+                crate::http::write_request(&mut buf, method, &target, &h, body, self.opts.chunked && body.is_some()).map_err(|e| crate::client::map_io_error(e, &what))?;
+                w.write_all(&buf).map_err(|e| crate::client::map_io_error(e, &what))?;
+            }
+        }
+        crate::http::read_response_streaming(std::io::BufReader::new(stream), method, &crate::http::Limits::default())
+            .map_err(|e| CamelError::io(format!("Invalid HTTP response from {}: {}", what, e)))
+    }
+
     fn send_h2(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>) -> Result<HttpResponse> {
         let key = format!("{}://{}", url.scheme, url.authority());
         let what = url.to_string();
@@ -487,7 +534,20 @@ impl Processor for HttpProducer {
                 "HEAD" | "OPTIONS" | "TRACE" => false,
                 _ => true,
             };
-        let (body, default_ct) = value_to_body(ex.body());
+        // a stream handle body is sent with chunked transfer coding without buffering
+        let mut stream_reader = if send_body { camel_tls::stream_body::take(ex.body()) } else { None };
+        let (body, default_ct) = match stream_reader.take() {
+            Some((mut r, _)) if self.opts.http2 => {
+                let mut b = Vec::new();
+                r.read_to_end(&mut b).map_err(|e| CamelError::io(format!("Cannot read the stream body: {}", e)))?;
+                (b, Some("application/octet-stream"))
+            }
+            Some(sr) => {
+                stream_reader = Some(sr);
+                (Vec::new(), Some("application/octet-stream"))
+            }
+            None => value_to_body(ex.body()),
+        };
         let mut req_headers = HttpHeaders::new();
         if self.opts.copy_headers && !self.opts.skip_request_headers {
             write_message_headers(&ex.message.headers, &mut req_headers);
@@ -512,7 +572,7 @@ impl Processor for HttpProducer {
             req_headers.set("Authorization", format!("Basic {}", base64_encode(format!("{}:{}", u, p).as_bytes())));
         }
         let mut body = body;
-        if send_body {
+        if send_body && stream_reader.is_none() {
             let enc = req_headers.get("Content-Encoding").map(|s| s.to_string()).or_else(|| ex.header("Content-Encoding").map(|v| v.to_string()));
             if let Some(enc) = enc.map(|s| s.trim().to_ascii_lowercase()) {
                 let compressed = match enc.as_str() {
@@ -529,8 +589,23 @@ impl Processor for HttpProducer {
         if self.opts.content_compression && !req_headers.contains("Accept-Encoding") {
             req_headers.set("Accept-Encoding", "gzip, deflate");
         }
-        let mut resp = self.send(&method, &url, &req_headers, if send_body { Some(&body) } else { None })?;
-        if self.opts.content_compression {
+        let streaming = !self.opts.http2 && (stream_reader.is_some() || self.opts.disable_stream_cache);
+        let mut streamed_body: Option<Value> = None;
+        let mut resp = if streaming {
+            let reader = stream_reader.take().map(|(r, _)| r);
+            let (mut resp, mut body_reader) = self.send_streaming(&method, &url, &req_headers, reader, if send_body { Some(&body) } else { None })?;
+            let ok = self.opts.ok_status_code_range.iter().any(|(a, b)| (*a..=*b).contains(&resp.status));
+            if self.opts.disable_stream_cache && !self.opts.ignore_response_body && (ok || !self.opts.throw_exception_on_failure) {
+                let len = body_reader.content_length();
+                streamed_body = Some(camel_tls::stream_body::register(Box::new(body_reader), len, &url.to_string()));
+            } else {
+                body_reader.read_to_end(&mut resp.body).map_err(|e| CamelError::io(format!("Cannot read the response of {}: {}", url, e)))?;
+            }
+            resp
+        } else {
+            self.send(&method, &url, &req_headers, if send_body { Some(&body) } else { None })?
+        };
+        if self.opts.content_compression && streamed_body.is_none() {
             if let Some(enc) = resp.headers.get("Content-Encoding").map(|s| s.to_string()) {
                 if !resp.body.is_empty() && !enc.eq_ignore_ascii_case("identity") {
                     resp.body = decode_content(&enc, &resp.body)?;
@@ -559,7 +634,11 @@ impl Processor for HttpProducer {
         }
         msg.headers.set(headers::HTTP_RESPONSE_CODE, resp.status as i64);
         msg.headers.set(headers::HTTP_RESPONSE_TEXT, resp.reason_phrase().to_string());
-        msg.body = if self.opts.ignore_response_body { Value::Null } else { body_to_value(&resp.body, ct.as_deref()) };
+        msg.body = match streamed_body {
+            Some(h) => h,
+            None if self.opts.ignore_response_body => Value::Null,
+            None => body_to_value(&resp.body, ct.as_deref()),
+        };
 
         let ok = self.opts.ok_status_code_range.iter().any(|(a, b)| (*a..=*b).contains(&resp.status));
         if !ok && self.opts.throw_exception_on_failure {

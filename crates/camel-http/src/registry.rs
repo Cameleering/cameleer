@@ -133,6 +133,8 @@ struct RouteEntry {
     spec: HttpRouteSpec,
     template: PathTemplate,
     handler: RouteHandler,
+    /// Request bodies are streamed (`disableStreamCache=true`).
+    streaming: bool,
 }
 
 /// Path based dispatcher.
@@ -167,7 +169,7 @@ impl Router {
             }
         }
         let id = ROUTE_IDS.fetch_add(1, Ordering::Relaxed);
-        entries.push(RouteEntry { id, spec, template, handler });
+        entries.push(RouteEntry { id, spec, template, handler, streaming: false });
         Ok(id)
     }
 
@@ -186,6 +188,24 @@ impl Router {
     /// Registered paths (for diagnostics).
     pub fn paths(&self) -> Vec<String> {
         self.entries.read().unwrap().iter().map(|e| e.spec.path.clone()).collect()
+    }
+
+    /// Stream request bodies of a route (instead of reading them into memory).
+    pub fn set_streaming(&self, id: u64, streaming: bool) {
+        for e in self.entries.write().unwrap().iter_mut().filter(|e| e.id == id) {
+            e.streaming = streaming;
+        }
+    }
+
+    /// Whether the route a request (head) would be dispatched to streams its body.
+    pub fn wants_stream(&self, req: &HttpRequest) -> bool {
+        let entries = self.entries.read().unwrap();
+        let mut candidates: Vec<&RouteEntry> = entries.iter().filter(|e| e.template.matches(&req.raw_path, e.spec.match_on_uri_prefix).is_some() && e.spec.allows(&req.method)).collect();
+        candidates.sort_by_key(|e| {
+            let prefix = e.spec.match_on_uri_prefix || e.template.wildcard;
+            (prefix, std::cmp::Reverse(e.template.literal_count()), std::cmp::Reverse(e.template.segments.len()))
+        });
+        candidates.first().is_some_and(|e| e.streaming)
     }
 
     /// Dispatch a request to the best matching route.
@@ -241,6 +261,18 @@ impl Router {
     }
 }
 
+/// The server handler of a [`Router`].
+struct RouterHandler(Arc<Router>);
+
+impl crate::server::HttpHandler for RouterHandler {
+    fn handle(&self, request: &mut HttpRequest) -> HttpResponse {
+        self.0.dispatch(request)
+    }
+    fn stream_request(&self, request: &HttpRequest) -> bool {
+        self.0.wants_stream(request)
+    }
+}
+
 /// A server shared by all consumers bound to its port.
 pub struct SharedServer {
     pub server: HttpServer,
@@ -268,6 +300,13 @@ pub fn registry() -> &'static ServerRegistry {
 }
 
 impl ServerRegistry {
+    /// Stream the request bodies of a registered route (`disableStreamCache=true`).
+    pub fn set_streaming(&self, reg: &Registration, streaming: bool) {
+        if let Some(s) = self.servers.lock().unwrap().get(&reg.port) {
+            s.router.set_streaming(reg.route_id, streaming);
+        }
+    }
+
     /// Register a route on `host:port`, binding a new server if no server owns the port.
     /// Port 0 always binds a new server on a free port.
     pub fn register(&self, host: &str, port: u16, config: &ServerConfig, spec: HttpRouteSpec, handler: RouteHandler) -> Result<Registration> {
@@ -290,7 +329,7 @@ impl ServerRegistry {
         let route_id = router.add(spec, handler)?;
         let r2 = router.clone();
         let bind_host = if host.contains(':') && !host.starts_with('[') { format!("[{}]", host) } else { host.to_string() };
-        let server = HttpServer::bind(format!("{}:{}", bind_host, port), config.clone(), move |req: &mut HttpRequest| r2.dispatch(req))
+        let server = HttpServer::bind(format!("{}:{}", bind_host, port), config.clone(), RouterHandler(r2))
             .map_err(|e| CamelError::io(format!("Failed to bind HTTP server on {}:{}: {}", host, port, e)))?;
         let actual = server.port();
         camel_core::camel_info!("camel-http", "HTTP server started on {}:{}", host, actual);

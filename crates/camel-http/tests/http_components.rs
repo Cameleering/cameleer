@@ -465,3 +465,88 @@ fn suspended_http_consumer_answers_503() {
     assert_eq!(get(&url).body_text(), "up");
     ctx.stop().unwrap();
 }
+
+/// A reader producing `n` deterministic bytes without holding them in memory.
+struct Gen {
+    pos: usize,
+    n: usize,
+}
+
+impl Read for Gen {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let k = buf.len().min(self.n - self.pos);
+        for (i, b) in buf[..k].iter_mut().enumerate() {
+            *b = ((self.pos + i) % 253) as u8;
+        }
+        self.pos += k;
+        Ok(k)
+    }
+}
+
+#[test]
+fn streaming_request_and_response_bodies() {
+    use camel_tls::stream_body;
+    const N: usize = 3 * 1024 * 1024 + 17;
+    let ctx = context();
+    ctx.add_routes(|b| {
+        // consumes the request as a stream: counts and checksums it chunk by chunk
+        b.from("platform-http:/upload?disableStreamCache=true").process(|ex: &mut Exchange| {
+            assert!(stream_body::is_available(ex.body()), "request body is a stream handle");
+            let (mut r, _) = stream_body::take(ex.body()).unwrap();
+            let mut buf = vec![0u8; 8192];
+            let (mut total, mut sum) = (0usize, 0u64);
+            loop {
+                let n = r.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                sum += buf[..n].iter().map(|b| *b as u64).sum::<u64>();
+                total += n;
+            }
+            ex.set_body(format!("{} {}", total, sum));
+            Ok(())
+        });
+        // answers with a streamed body (chunked on the wire)
+        b.from("platform-http:/download").process(|ex: &mut Exchange| {
+            ex.set_body(stream_body::register(Box::new(Gen { pos: 0, n: N }), Some(N as u64), "gen"));
+            Ok(())
+        });
+        // echo: the request stream becomes the response stream
+        b.from("platform-http:/echo?disableStreamCache=true").log("echo");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let p = port(&ctx);
+    let expected_sum: u64 = (0..N).map(|i| (i % 253) as u64).sum();
+
+    // producer: a stream handle body is sent chunked without buffering
+    let t = ctx.create_producer_template();
+    let body = stream_body::register(Box::new(Gen { pos: 0, n: N }), None, "test");
+    let out = t.request_body(&format!("http://127.0.0.1:{}/upload", p), body).unwrap();
+    assert_eq!(out.to_string(), format!("{} {}", N, expected_sum));
+    assert!(!stream_body::is_available(&out));
+
+    // producer with disableStreamCache: the response is a lazy stream handle
+    let ex = t.request(&format!("http://127.0.0.1:{}/download?disableStreamCache=true", p), |_| {}).unwrap();
+    assert!(ex.exception.is_none(), "{:?}", ex.exception);
+    assert!(stream_body::is_available(ex.body()));
+    let bytes = stream_body::body_bytes(ex.body()).unwrap();
+    assert_eq!(bytes.len(), N);
+    assert_eq!(bytes.iter().map(|b| *b as u64).sum::<u64>(), expected_sum);
+    // without the option the (chunked) response is buffered as usual
+    let ex = t.request(&format!("http://127.0.0.1:{}/download", p), |_| {}).unwrap();
+    assert_eq!(ex.body().to_bytes().len(), N);
+
+    // on the wire: the streamed response uses chunked transfer coding
+    let reply = raw(p, "GET /download HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    assert!(reply.contains("Transfer-Encoding: chunked\r\n"), "{}", &reply[..200]);
+    assert!(!reply[..reply.find("\r\n\r\n").unwrap()].contains("Content-Length"));
+
+    // echo of a streamed request into a streamed response
+    let body = stream_body::register(Box::new(Gen { pos: 0, n: 100_000 }), None, "echo");
+    let ex = t.request(&format!("http://127.0.0.1:{}/echo?disableStreamCache=true", p), move |e| e.set_body(body)).unwrap();
+    let bytes = stream_body::body_bytes(ex.body()).unwrap();
+    assert_eq!(bytes, (0..100_000).map(|i| (i % 253) as u8).collect::<Vec<u8>>());
+    ctx.stop().unwrap();
+    assert_eq!(stream_body::pending(), 0, "no stream left behind");
+}

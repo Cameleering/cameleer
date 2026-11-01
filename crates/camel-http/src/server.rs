@@ -17,7 +17,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::io::{self, BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Read};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -28,11 +28,19 @@ use camel_core::executor::ThreadPool;
 use camel_tls::net::NetStream;
 use camel_tls::TlsServerConfig;
 
-use crate::http::{read_request, write_response, HttpRequest, HttpResponse, Limits};
+use crate::http::{read_chunked, read_request_head, write_response, BodyKind, BodyReader, HttpRequest, HttpResponse, Limits};
 
 /// Handles a request and produces a response.
 pub trait HttpHandler: Send + Sync {
     fn handle(&self, request: &mut HttpRequest) -> HttpResponse;
+
+    /// Whether the body of this request (head only, body still on the connection) should be
+    /// streamed: it is then passed as a `camel_tls::stream_body` handle in
+    /// [`HttpRequest::body_stream`] instead of being read into memory (the connection is
+    /// closed after such a request).
+    fn stream_request(&self, _request: &HttpRequest) -> bool {
+        false
+    }
 }
 
 impl<F> HttpHandler for F
@@ -273,7 +281,11 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
         let _ = stream.set_read_timeout(Some(cfg.read_timeout));
         inner.busy.fetch_add(1, Ordering::SeqCst);
         let _guard = BusyGuard(&inner.busy);
-        let mut req = match read_request(&mut reader, Some(&mut writer), &cfg.limits) {
+        let head = read_request_head(&mut reader, Some(&mut writer), &cfg.limits).and_then(|h| match h {
+            None => Ok(None),
+            Some((req, kind)) => Ok(Some((req, kind))),
+        });
+        let (mut req, kind) = match head {
             Ok(Some(r)) => r,
             Ok(None) => break,
             Err(e) => {
@@ -284,12 +296,49 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
                 break;
             }
         };
+        let mut streamed = false;
+        if matches!(kind, BodyKind::Chunked | BodyKind::Length(_)) && inner.handler.stream_request(&req) {
+            // hand the rest of the connection (buffered bytes first) to a lazy body reader
+            let buffered = reader.buffer().to_vec();
+            reader.consume(buffered.len());
+            match stream.try_clone() {
+                Ok(owned) => {
+                    let src = std::io::BufReader::new(std::io::Cursor::new(buffered).chain(owned));
+                    let body = BodyReader::new(src, kind);
+                    let len = body.content_length();
+                    req.body_stream = Some(camel_tls::stream_body::register(Box::new(body), len, &req.target));
+                    streamed = true;
+                }
+                Err(_) => break,
+            }
+        } else {
+            let body = match kind {
+                BodyKind::Length(n) if n > cfg.limits.max_body_bytes => Err(crate::http::HttpError::PayloadTooLarge),
+                BodyKind::Length(n) => {
+                    let mut b = vec![0u8; n];
+                    reader.read_exact(&mut b).map(|_| b).map_err(crate::http::HttpError::from)
+                }
+                BodyKind::Chunked => read_chunked(&mut reader, cfg.limits.max_body_bytes),
+                _ => Ok(Vec::new()),
+            };
+            match body {
+                Ok(b) => req.body = b,
+                Err(e) => {
+                    if let Some(status) = e.status() {
+                        let resp = HttpResponse::text(status, format!("{}\n", e));
+                        let _ = write_response(&mut writer, &resp, false, false);
+                    }
+                    break;
+                }
+            }
+        }
         req.remote_addr = peer;
         if !stream.peer_certificates().is_empty() {
             req.peer_certificates = stream.peer_certificates().to_vec();
         }
         served += 1;
-        let mut keep_alive = req.wants_keep_alive()
+        let mut keep_alive = !streamed
+            && req.wants_keep_alive()
             && inner.running.load(Ordering::SeqCst)
             && served < cfg.max_keep_alive_requests
             && inner.pool.pending_count() == 0;
@@ -304,7 +353,11 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
         if resp.headers.has_token("Connection", "close") {
             keep_alive = false;
         }
-        if write_response(&mut writer, &resp, head, keep_alive).is_err() || !keep_alive {
+        let failed = write_response(&mut writer, &resp, head, keep_alive).is_err();
+        if let Some(h) = &req.body_stream {
+            camel_tls::stream_body::release(h);
+        }
+        if failed || !keep_alive {
             break;
         }
     }
