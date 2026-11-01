@@ -1,0 +1,7 @@
+These images are from the ZXing project's blackbox test suite
+(https://github.com/zxing/zxing, core/src/test/resources/blackbox/<set>/<file>),
+Copyright ZXing authors, licensed under the Apache License, Version 2.0.
+File names are <set>_<original name>; the expected texts are the ZXing .txt files.
+
+ean13-1_3-gray.png was converted from RGB to 8-bit grayscale (ITU-R 601 luma,
+the same conversion the decoder applies) to keep the repository small.

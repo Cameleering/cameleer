@@ -258,6 +258,30 @@ mod debug {
 
     #[test]
     #[ignore]
+    fn debug_dir() {
+        let dir = std::env::var("BARCODE_DIR").unwrap();
+        let mut names: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+        names.sort();
+        for p in names {
+            let b = std::fs::read(&p).unwrap();
+            let t = std::time::Instant::now();
+            let r = crate::barcode::read_image(&b).and_then(|g| decode(&g, None));
+            eprintln!("{:?} {:?} {:?}", p.file_name().unwrap(), t.elapsed(), r.map(|d| (d.format, d.text)));
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn debug_aztec_file() {
+        let b = std::fs::read(std::env::var("BARCODE_FILE").unwrap()).unwrap();
+        let g = crate::barcode::read_image(&b).unwrap();
+        eprintln!("sigma {}", vision::noise_sigma(&g));
+        let bin = vision::hybrid(&g).unwrap();
+        aztec_detect::debug(&bin);
+    }
+
+    #[test]
+    #[ignore]
     fn debug_aztec() {
         let src = printed("Aztec camera test 0123456789", Format::Aztec);
         for rot in [0.0, 17.0] {

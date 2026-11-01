@@ -663,11 +663,97 @@ fn bytes_to_text(b: &[u8], eci: Option<u32>) -> String {
     match eci {
         Some(26) => String::from_utf8_lossy(b).into_owned(),
         Some(1) | Some(3) => b.iter().map(|c| *c as char).collect(),
+        Some(20) => decode_shift_jis(b),
         _ => match std::str::from_utf8(b) {
             Ok(s) => s.to_string(),
+            Err(_) if eci.is_none() && guess_shift_jis(b) => decode_shift_jis(b),
             Err(_) => b.iter().map(|c| *c as char).collect(),
         },
     }
+}
+
+/// ZXing `StringUtils.guessEncoding` for byte segments without ECI that are not UTF-8:
+/// Shift_JIS when the bytes are valid Shift_JIS and either hold a run of three double-byte or
+/// katakana characters, or cannot be ISO-8859-1, or look more like Shift_JIS than Latin-1.
+pub fn guess_shift_jis(b: &[u8]) -> bool {
+    let (mut can_iso, mut can_sjis) = (true, true);
+    let (mut left, mut kana, mut cur_kana, mut max_kana, mut cur_dbl, mut max_dbl, mut iso_high_other) = (0, 0, 0, 0, 0, 0, 0);
+    for &v in b {
+        if can_iso {
+            if v > 0x7f && v < 0xa0 {
+                can_iso = false;
+            } else if v > 0x9f && (v < 0xc0 || v == 0xd7 || v == 0xf7) {
+                iso_high_other += 1;
+            }
+        }
+        if can_sjis {
+            if left > 0 {
+                if v < 0x40 || v == 0x7f || v > 0xfc {
+                    can_sjis = false;
+                } else {
+                    left -= 1;
+                }
+            } else if v == 0x80 || v == 0xa0 || v > 0xef {
+                can_sjis = false;
+            } else if v > 0xa0 && v < 0xe0 {
+                kana += 1;
+                cur_dbl = 0;
+                cur_kana += 1;
+                max_kana = max_kana.max(cur_kana);
+            } else if v > 0x7f {
+                left += 1;
+                cur_kana = 0;
+                cur_dbl += 1;
+                max_dbl = max_dbl.max(cur_dbl);
+            } else {
+                cur_kana = 0;
+                cur_dbl = 0;
+            }
+        }
+    }
+    if left > 0 {
+        can_sjis = false;
+    }
+    if !can_sjis {
+        return false;
+    }
+    if max_kana >= 3 || max_dbl >= 3 {
+        return true;
+    }
+    if can_iso {
+        return (max_kana == 2 && kana == 2) || iso_high_other * 10 >= b.len();
+    }
+    true
+}
+
+/// Shift_JIS to text (JIS X 0208 double bytes via the Kanji table, half-width katakana).
+pub fn decode_shift_jis(b: &[u8]) -> String {
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if c < 0x80 {
+            out.push(c as char);
+            i += 1;
+        } else if (0xa1..=0xdf).contains(&c) {
+            out.push(char::from_u32(0xff61 + (c - 0xa1) as u32).unwrap_or('\u{fffd}'));
+            i += 1;
+        } else if i + 1 < b.len() {
+            let code = (c as u32) << 8 | b[i + 1] as u32;
+            let v = match code {
+                0x8140..=0x9ffc => Some(code - 0x8140),
+                0xe040..=0xebbf => Some(code - 0xc140),
+                _ => None,
+            };
+            let ch = v.and_then(|v| kanji_chars().get(((v >> 8) * 0xc0 + (v & 0xff)) as usize).copied()).filter(|c| *c != '\0');
+            out.push(ch.unwrap_or('\u{fffd}'));
+            i += 2;
+        } else {
+            out.push('\u{fffd}');
+            i += 1;
+        }
+    }
+    out
 }
 
 fn parse_segments(data: &[u8], ver: usize) -> Result<String> {

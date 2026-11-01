@@ -368,12 +368,16 @@ pub fn decode(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
 pub fn decode_camera_path(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
     let want = |f: Format| only.is_none_or(|o| o == f || (o == Format::Ean13 && f == Format::UpcA) || (o == Format::UpcA && f == Format::Ean13));
     let sigma = vision::noise_sigma(img);
-    let mut bases = Vec::new();
-    if sigma >= 3.0 {
-        let s = vision::smooth(img);
-        bases.push(if sigma >= 8.0 { vision::smooth(&s) } else { s });
-    }
-    bases.push(img.clone());
+    // noisy images are smoothed first; otherwise smoothing is the fallback (it also helps
+    // against binarisation speckle on soft, out-of-focus edges)
+    let smoothed = vision::smooth(img);
+    let bases: Vec<std::borrow::Cow<png::Gray>> = if sigma >= 8.0 {
+        vec![std::borrow::Cow::Owned(vision::smooth(&smoothed)), std::borrow::Cow::Owned(smoothed), std::borrow::Cow::Borrowed(img)]
+    } else if sigma >= 3.0 {
+        vec![std::borrow::Cow::Owned(smoothed), std::borrow::Cow::Borrowed(img)]
+    } else {
+        vec![std::borrow::Cow::Borrowed(img), std::borrow::Cow::Owned(smoothed)]
+    };
     for g in &bases {
         if let Some(d) = decode_camera(g, &want, only) {
             return Ok(d);
@@ -547,6 +551,31 @@ mod tests {
             mirror.pixels[y * small.width..(y + 1) * small.width].reverse();
         }
         assert_eq!(decode(&mirror, None).unwrap().text, "rotate me");
+    }
+
+    /// Real photographs from ZXing's blackbox test suite (see testdata/zxing/ATTRIBUTION.txt).
+    #[test]
+    fn zxing_blackbox_photographs() {
+        let cases: [(&[u8], Format, &str); 12] = [
+            (include_bytes!("testdata/zxing/qrcode-1_1.png"), Format::QrCode, "MEBKM:URL:http\\://en.wikipedia.org/wiki/Main_Page;;"),
+            (include_bytes!("testdata/zxing/qrcode-3_01.png"), Format::QrCode, "http://arnaud.sahuguet.com/graffiti/test.php?ll=-74.00309961503218,40.74102573163046,0"),
+            (include_bytes!("testdata/zxing/qrcode-3_10.png"), Format::QrCode, "MECARD:N:Google 411,;TEL:18665881077;;"),
+            // byte mode without ECI holding Shift_JIS (ZXing guesses the encoding)
+            (include_bytes!("testdata/zxing/qrcode-2_10.png"), Format::QrCode, "Google \u{30e2}\u{30d0}\u{30a4}\u{30eb}\r\nhttp://google.jp"),
+            (include_bytes!("testdata/zxing/datamatrix-2_01.png"), Format::DataMatrix, "http://google.com/m"),
+            (include_bytes!("testdata/zxing/datamatrix-2_10.png"), Format::DataMatrix, "This is a test of our DataMatrix support using a longer piece of text, and therefore a more dense barcode."),
+            (include_bytes!("testdata/zxing/aztec-2_02.png"), Format::Aztec, "This is a real world Aztec barcode test."),
+            (include_bytes!("testdata/zxing/aztec-2_18.png"), Format::Aztec, "http://code.google.com/p/zxing/source/browse/trunk/android/src/com/google/zxing/client/android/result/URIResultHandler.java"),
+            (include_bytes!("testdata/zxing/pdf417-2_01.png"), Format::Pdf417, "1234567890"),
+            (include_bytes!("testdata/zxing/pdf417-3_01.png"), Format::Pdf417, "A larger PDF417 barcode with text and error correction level 8."),
+            (include_bytes!("testdata/zxing/code128-1_1.png"), Format::Code128, "168901"),
+            (include_bytes!("testdata/zxing/ean13-1_3-gray.png"), Format::Ean13, "8480000823274"),
+        ];
+        for (i, (bytes, format, text)) in cases.iter().enumerate() {
+            let img = read_image(bytes).unwrap();
+            let d = decode(&img, None).unwrap_or_else(|e| panic!("case {}: {}", i, e));
+            assert_eq!((d.format, d.text.as_str()), (*format, *text), "case {}", i);
+        }
     }
 
     #[test]

@@ -140,7 +140,7 @@ const DIRS: [(f64, f64); 8] = [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (-1.0, 1.0), 
 
 /// Fit the bull's-eye transform (module coordinates centred on the middle module) using
 /// `rings` ring boundaries.
-fn fit(b: &Bin, c: P, module: f64, rings: usize) -> Option<Homography> {
+fn fit(b: &Bin, c: P, module: f64, rings: usize) -> Option<(Homography, Vec<P>, Vec<P>)> {
     let max = module * (rings as f64 + 2.0) * 2.5;
     let (sn, cs) = ring_angle(b, c, module).sin_cos();
     let mut src = Vec::new();
@@ -159,6 +159,7 @@ fn fit(b: &Bin, c: P, module: f64, rings: usize) -> Option<Homography> {
         return None;
     }
     let mut h = Homography::from_points(&src, &dst)?;
+    let (mut best_src, mut best_dst) = (src, dst);
     // refine: cast rays towards the predicted boundary points
     for _ in 0..3 {
         let centre = h.map(0.0, 0.0);
@@ -188,11 +189,53 @@ fn fit(b: &Bin, c: P, module: f64, rings: usize) -> Option<Homography> {
             break;
         }
         match Homography::from_points(&s2, &d2) {
+            Some(n) => {
+                h = n;
+                best_src = s2;
+                best_dst = d2;
+            }
+            None => break,
+        }
+    }
+    Some((h, best_src, best_dst))
+}
+
+/// Full-range symbols: the central row and column belong to the reference grid, so they
+/// alternate module by module from the centre to the edge. Rays along their images (straight
+/// lines through the centre under a perspective transform) give transitions out to the
+/// symbol edge, which pin down the transform far better than the bull's-eye alone.
+fn refine_axes(b: &Bin, h: &Homography, src: &[P], dst: &[P], n: usize, module: f64) -> Homography {
+    let half = (n / 2) as f64;
+    let mut h = *h;
+    for _ in 0..2 {
+        let centre = h.map(0.0, 0.0);
+        let (mut s2, mut d2) = (src.to_vec(), dst.to_vec());
+        for (ax, ay) in [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)] {
+            let far = h.map(ax * half, ay * half);
+            let (vx, vy) = (far.0 - centre.0, far.1 - centre.1);
+            let len = (vx * vx + vy * vy).sqrt();
+            if len < 1.0 {
+                continue;
+            }
+            let u = (vx / len, vy / len);
+            let Some(ts) = transitions(b, centre, u, n / 2 + 1, len * 1.3 + 2.0 * module) else { continue };
+            for (k, t) in ts.iter().enumerate().skip(4) {
+                let r = k as f64 + 0.5;
+                let pred = h.map(ax * r, ay * r);
+                let pt = (centre.0 + u.0 * t, centre.1 + u.1 * t);
+                if ((pred.0 - pt.0).powi(2) + (pred.1 - pt.1).powi(2)).sqrt() > 0.6 * module {
+                    break;
+                }
+                s2.push((ax * r, ay * r));
+                d2.push(pt);
+            }
+        }
+        match Homography::from_points(&s2, &d2) {
             Some(n) => h = n,
             None => break,
         }
     }
-    Some(h)
+    h
 }
 
 fn orient(o: usize, u: f64, v: f64) -> P {
@@ -222,7 +265,7 @@ pub fn detect_and_decode(b: &Bin) -> Option<String> {
     for (cx, cy, module) in centres(b) {
         for compact in [true, false] {
             let rings = if compact { 4 } else { 6 };
-            let Some(h) = fit(b, (cx, cy), module, rings) else { continue };
+            let Some((h, src, dst)) = fit(b, (cx, cy), module, rings) else { continue };
             for o in 0..8 {
                 let core = sample(b, &h, o, if compact { 15 } else { 19 });
                 let Some((layers, _)) = aztec::read_mode(&core, compact) else { continue };
@@ -233,6 +276,12 @@ pub fn detect_and_decode(b: &Bin) -> Option<String> {
                 let m = sample(b, &h, o, n);
                 if let Ok(t) = aztec::decode_matrix(&m) {
                     return Some(t);
+                }
+                if !compact {
+                    let h2 = refine_axes(b, &h, &src, &dst, n, module);
+                    if let Ok(t) = aztec::decode_matrix(&sample(b, &h2, o, n)) {
+                        return Some(t);
+                    }
                 }
             }
         }
@@ -247,7 +296,7 @@ pub fn debug(b: &Bin) {
     for (cx, cy, module) in cs {
         for compact in [true, false] {
             let rings = if compact { 4 } else { 6 };
-            let h = fit(b, (cx, cy), module, rings);
+            let h = fit(b, (cx, cy), module, rings).map(|f| f.0);
             eprintln!("compact {} fit {:?}", compact, h.map(|h| (h.map(0.0, 0.0), h.map(1.0, 0.0), h.map(0.0, 1.0))));
             if let Some(h) = h {
                 for o in 0..8 {
@@ -257,7 +306,16 @@ pub fn debug(b: &Bin) {
                             eprintln!("{}", (0..core.width).map(|x| if core.get(x, y) { '#' } else { '.' }).collect::<String>());
                         }
                     }
-                    eprintln!("o {} mode {:?}", o, aztec::read_mode(&core, compact));
+                    let md = aztec::read_mode(&core, compact);
+                    eprintln!("o {} mode {:?}", o, md);
+                    if let Some((layers, _)) = md {
+                        let n = aztec::matrix_size(layers, compact);
+                        let m = sample(b, &h, o, n);
+                        for y in 0..n {
+                            eprintln!("{}", (0..n).map(|x| if m.get(x, y) { '#' } else { '.' }).collect::<String>());
+                        }
+                        eprintln!("{:?}", aztec::decode_matrix(&m));
+                    }
                 }
             }
         }
