@@ -28,6 +28,11 @@
 #   Postfix         2525   SMTP (+STARTTLS, AUTH via Dovecot SASL)   4465 SMTPS (implicit TLS)
 #   Dovecot         11143  IMAP (+STARTTLS)  11993 IMAPS  11110 POP3 (+STLS)  11995 POP3S
 #   nginx           18080  HTTP/1.1 (gzip)   18443 HTTPS with HTTP/2 (ALPN h2, http/1.1)   18081 h2c (prior knowledge)
+#   ActiveMQ 5.17   16615  STOMP       16616 STOMP+SSL   11886 MQTT   18886 MQTT+SSL   16617 OpenWire
+#                   15675  AMQP 1.0    15676 AMQPS  (only when the activemq-amqp module is on the
+#                          broker's class path: Ubuntu's package does not ship it; put
+#                          activemq-amqp-5.17.x.jar into $CAMEL_INTEROP_DIR/activemq/lib to enable)
+#                   simple authentication plugin: camel/camelpw, anonymous access refused
 #
 # Credentials: user `camel` / password `camelpw` everywhere (system users `camelftp` and
 # `camelmail` for FTP and mail, same password; mail address camelmail@localhost).
@@ -41,7 +46,8 @@ PW=camelpw
 PGBIN=/usr/lib/postgresql/16/bin
 
 PACKAGES=(postgresql redis-server mosquitto mosquitto-clients rabbitmq-server vsftpd
-  dovecot-imapd dovecot-pop3d postfix nginx libnginx-mod-http-echo openssl)
+  dovecot-imapd dovecot-pop3d postfix nginx libnginx-mod-http-echo openssl activemq
+  libmqtt-client-java libapache-qpid-proton-j-java)
 
 log() { echo "[live-interop] $*"; }
 
@@ -453,6 +459,94 @@ http {
 EOF
 }
 
+# Apache ActiveMQ 5.17 (Ubuntu package) as a dedicated instance under $DIR/activemq, started
+# directly with the package's activemq.jar (the Debian init script and instances are not used).
+AMQ_HOME=/usr/share/activemq
+amq_has_amqp() {
+  ls "$AMQ_HOME"/lib/activemq-amqp*.jar "$AMQ_HOME"/lib/optional/activemq-amqp*.jar \
+    "$DIR"/activemq/lib/activemq-amqp*.jar >/dev/null 2>&1
+}
+
+setup_activemq() {
+  [ -f "$AMQ_HOME/bin/activemq.jar" ] || { log "activemq not installed, skipping"; return; }
+  local base="$DIR/activemq"
+  mkdir -p "$base/conf" "$base/data" "$base/tmp" "$base/lib"
+  # the broker's TLS identity: the openssl PKCS#12 store converted to a JKS key store by keytool
+  if [ ! -f "$base/conf/broker.jks" ]; then
+    keytool -importkeystore -noprompt -srckeystore "$CERTS/server.p12" -srcstoretype PKCS12 \
+      -srcstorepass "$PW" -destkeystore "$base/conf/broker.jks" -deststoretype JKS \
+      -deststorepass "$PW" -destkeypass "$PW" >/dev/null 2>&1
+    keytool -importcert -noprompt -alias interop-ca -file "$CERTS/ca.pem" \
+      -keystore "$base/conf/trust.jks" -storetype JKS -storepass "$PW" >/dev/null 2>&1
+  fi
+  # Libraries the package leaves out of the broker's class path: the MQTT codec (fusesource
+  # mqtt-client, needed by activemq-mqtt) and proton-j for a user-supplied activemq-amqp jar.
+  local jar
+  for jar in mqtt-client hawtdispatch proton-j; do
+    if [ -f "/usr/share/java/$jar.jar" ] && [ ! -e "$base/lib/$jar.jar" ]; then
+      ln -s "/usr/share/java/$jar.jar" "$base/lib/$jar.jar"
+    fi
+  done
+  local amqp=""
+  if amq_has_amqp; then
+    amqp='<transportConnector name="amqp" uri="amqp://127.0.0.1:15675?transport.transformer=jms"/>
+      <transportConnector name="amqp+ssl" uri="amqp+ssl://127.0.0.1:15676?transport.transformer=jms"/>'
+  fi
+  cat > "$base/conf/activemq.xml" <<EOF
+<beans xmlns="http://www.springframework.org/schema/beans"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+  http://activemq.apache.org/schema/core http://activemq.apache.org/schema/core/activemq-core.xsd">
+  <broker xmlns="http://activemq.apache.org/schema/core" brokerName="camel-interop" useJmx="false"
+          dataDirectory="$base/data" schedulerSupport="false">
+    <destinationPolicy>
+      <policyMap>
+        <policyEntries>
+          <!-- per-destination dead letter queues (DLQ.<name>) so tests can inspect them -->
+          <policyEntry queue=">" prioritizedMessages="true">
+            <deadLetterStrategy>
+              <individualDeadLetterStrategy queuePrefix="DLQ." useQueueForQueueMessages="true"/>
+            </deadLetterStrategy>
+          </policyEntry>
+        </policyEntries>
+      </policyMap>
+    </destinationPolicy>
+    <persistenceAdapter>
+      <kahaDB directory="$base/data/kahadb"/>
+    </persistenceAdapter>
+    <plugins>
+      <simpleAuthenticationPlugin anonymousAccessAllowed="false">
+        <users>
+          <authenticationUser username="camel" password="$PW" groups="admins,users"/>
+        </users>
+      </simpleAuthenticationPlugin>
+    </plugins>
+    <sslContext>
+      <sslContext keyStore="file:$base/conf/broker.jks" keyStorePassword="$PW"
+                  trustStore="file:$base/conf/trust.jks" trustStorePassword="$PW"/>
+    </sslContext>
+    <transportConnectors>
+      <transportConnector name="openwire" uri="tcp://127.0.0.1:16617"/>
+      <transportConnector name="stomp" uri="stomp://127.0.0.1:16615"/>
+      <transportConnector name="stomp+ssl" uri="stomp+ssl://127.0.0.1:16616"/>
+      <transportConnector name="mqtt" uri="mqtt://127.0.0.1:11886"/>
+      <transportConnector name="mqtt+ssl" uri="mqtt+ssl://127.0.0.1:18886"/>
+      $amqp
+    </transportConnectors>
+  </broker>
+</beans>
+EOF
+  # the package logs through slf4j-log4j12 (log4j 1.2)
+  cat > "$base/conf/log4j.properties" <<EOF
+log4j.rootLogger=INFO, file
+log4j.appender.file=org.apache.log4j.FileAppender
+log4j.appender.file.File=$LOGS/activemq.log
+log4j.appender.file.layout=org.apache.log4j.PatternLayout
+log4j.appender.file.layout.ConversionPattern=%d %-5p [%t] %c - %m%n
+EOF
+  chown -R activemq:activemq "$base"
+}
+
 cmd_setup() {
   need_root
   mkdir -p "$DIR" "$LOGS" "$RUN"
@@ -467,6 +561,7 @@ cmd_setup() {
   setup_vsftpd
   setup_mail
   setup_nginx
+  setup_activemq
   log "setup done in $DIR"
 }
 
@@ -546,6 +641,24 @@ start_nginx() {
   wait_port 18443 nginx
 }
 
+start_activemq() {
+  [ -f "$DIR/activemq/conf/activemq.xml" ] || return 0
+  port_open 16615 && return 0
+  log "starting activemq (takes a few seconds)"
+  local base="$DIR/activemq"
+  touch "$RUN/activemq.pid" "$LOGS/activemq.out"
+  chown activemq "$RUN/activemq.pid" "$LOGS/activemq.out"
+  su activemq -s /bin/bash -c "cd $base; nohup java -Xms256M -Xmx512M \
+    -Djava.io.tmpdir=$base/tmp -Dactivemq.home=$AMQ_HOME -Dactivemq.base=$base \
+    -Dactivemq.conf=$base/conf -Dactivemq.data=$base/data \
+    -Djava.security.egd=file:/dev/./urandom \
+    -Dlog4j.configuration=file:$base/conf/log4j.properties \
+    -jar $AMQ_HOME/bin/activemq.jar start xbean:file:$base/conf/activemq.xml \
+    >$LOGS/activemq.out 2>&1 </dev/null & echo \$! > $RUN/activemq.pid"
+  wait_port 16615 activemq-stomp
+  wait_port 11886 activemq-mqtt
+}
+
 cmd_start() {
   need_root
   [ -d "$CERTS" ] || cmd_setup
@@ -556,6 +669,7 @@ cmd_start() {
   start_vsftpd
   start_mail
   start_nginx
+  start_activemq
   cmd_status
 }
 
@@ -579,6 +693,8 @@ cmd_stop() {
   if [ -f "$DIR/dovecot.conf" ]; then doveadm -c "$DIR/dovecot.conf" stop 2>/dev/null || true; fi
   postfix stop >/dev/null 2>&1 || true
   if [ -f "$RUN/nginx.pid" ]; then nginx -c "$DIR/nginx.conf" -s quit 2>/dev/null || true; fi
+  kill_pidfile "$RUN/activemq.pid"
+  for _ in $(seq 1 60); do port_open 16615 || break; sleep 0.5; done
   log "stopped"
 }
 
@@ -588,10 +704,20 @@ cmd_status() {
     mosquitto-tls:18883 rabbitmq-amqp:15673 rabbitmq-amqps:15674 rabbitmq-stomp:16613 \
     rabbitmq-stomp-tls:16614 rabbitmq-mqtt:11885 vsftpd:2121 vsftpd-implicit:2990 vsftpd-reuse:2991 \
     postfix-smtp:2525 postfix-smtps:4465 dovecot-imap:11143 dovecot-imaps:11993 \
-    dovecot-pop3:11110 dovecot-pop3s:11995 nginx-http:18080 nginx-https:18443 nginx-h2c:18081; do
+    dovecot-pop3:11110 dovecot-pop3s:11995 nginx-http:18080 nginx-https:18443 nginx-h2c:18081 \
+    activemq-openwire:16617 activemq-stomp:16615 activemq-stomp-ssl:16616 activemq-mqtt:11886 \
+    activemq-mqtt-ssl:18886; do
     name=${entry%%:*}; port=${entry##*:}
     if port_open "$port"; then echo "  up    $name ($port)"; else echo "  DOWN  $name ($port)"; fi
   done
+  if amq_has_amqp; then
+    for entry in activemq-amqp:15675 activemq-amqps:15676; do
+      name=${entry%%:*}; port=${entry##*:}
+      if port_open "$port"; then echo "  up    $name ($port)"; else echo "  DOWN  $name ($port)"; fi
+    done
+  else
+    echo "  n/a   activemq-amqp (the activemq-amqp module is not installed)"
+  fi
 }
 
 cmd_versions() {
@@ -604,6 +730,7 @@ cmd_versions() {
   echo "postfix $(postconf -h mail_version 2>/dev/null)"
   echo "dovecot $(dovecot --version 2>/dev/null)"
   nginx -v 2>&1 || true
+  dpkg -s activemq 2>/dev/null | grep '^Version' | sed 's/^/activemq /' || true
   openssl version
 }
 
