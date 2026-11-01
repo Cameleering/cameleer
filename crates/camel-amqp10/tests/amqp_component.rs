@@ -350,3 +350,47 @@ fn consumers_work_without_anonymous_relay() {
     assert_eq!(t.request_body("amqp:queue:upper?replyTo=replies", "again").unwrap(), Value::from("AGAIN"));
     ctx.stop().unwrap();
 }
+
+/// ActiveMQ 5 types nodes by the `queue://` / `topic://` prefixes it announces in its open
+/// frame and ignores the `topic` capability: two topic routes were competing consumers of a
+/// queue (found against ActiveMQ 5.17.6).
+#[test]
+fn activemq_flavoured_broker_address_prefixes() {
+    let b = Amqp10Broker::builder().activemq().start().unwrap();
+    let ctx = context(&b);
+    ctx.add_routes(|r| {
+        r.from("amqp:topic:news").to("mock:sub1");
+        r.from("amqp:topic:news").to("mock:sub2");
+        r.from("amqp:queue:orders").to("mock:orders");
+        r.from("amqp:queue:upper").transform(simple("${body.toUpperCase()}"));
+        r.from("amqp:queue:fixed").transform(simple("fixed-${body}"));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    assert!(b.wait_for(Duration::from_secs(5), |b| b.subscriber_count("topic://news") == 2));
+    assert_eq!(b.consumer_count("news"), 0, "no queue named like the topic");
+    let (s1, s2, orders) = (ctx.mock_endpoint("mock:sub1").unwrap(), ctx.mock_endpoint("mock:sub2").unwrap(), ctx.mock_endpoint("mock:orders").unwrap());
+    s1.expected_bodies_received(vec!["breaking"]);
+    s2.expected_bodies_received(vec!["breaking"]);
+    s1.expected_header_received("JMSDestination", "topic:news");
+    orders.expected_bodies_received(vec!["o1"]);
+    orders.expected_header_received("JMSDestination", "orders");
+    orders.expected_header_received("JMSReplyTo", "topic:answers");
+    let t = ctx.create_producer_template();
+    t.send_body("amqp:topic:news", "breaking").unwrap();
+    t.send_body_and_headers("amqp:queue:orders", "o1", vec![("JMSReplyTo", Value::from("topic:answers"))]).unwrap();
+    MockEndpoint::assert_all_satisfied(&[&s1, &s2, &orders]).unwrap();
+    // request/reply over dynamic and fixed (prefixed) reply queues
+    assert_eq!(t.request_body("amqp:queue:upper", "hello").unwrap(), Value::from("HELLO"));
+    assert_eq!(t.request_body("amqp:queue:fixed?replyTo=replies", "y").unwrap(), Value::from("fixed-y"));
+    ctx.stop().unwrap();
+    // JMS 2.0 shared subscriptions are refused instead of silently duplicating messages
+    let ctx = context(&b);
+    ctx.add_routes(|r| {
+        r.from("amqp:topic:feed?subscriptionShared=true&subscriptionName=workers&concurrentConsumers=2").to("mock:never");
+    })
+    .unwrap();
+    let err = ctx.start().unwrap_err();
+    assert!(err.chain().any(|c| c.kind == "UnsupportedOperationException" && c.message.contains("shared subscriptions")), "{:?}", err);
+    let _ = ctx.stop();
+}

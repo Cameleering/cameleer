@@ -1199,4 +1199,20 @@ mod tests {
         assert_eq!(encode_key("a.b-c"), "a_DOT_b_HYPHEN_c");
         assert_eq!(decode_key("a_DOT_b_HYPHEN_c"), "a.b-c");
     }
+
+    #[test]
+    fn broker_address_prefixes() {
+        // ActiveMQ 5 announces `queue-prefix` / `topic-prefix` (found against 5.17.6)
+        let p = AddressPrefixes { queue: Some("queue://".into()), topic: Some("topic://".into()) };
+        assert_eq!(p.apply("a", DestKind::Queue), "queue://a");
+        assert_eq!(p.apply("t", DestKind::Topic), "topic://t");
+        assert_eq!(p.apply("queue://a", DestKind::Queue), "queue://a");
+        assert_eq!(p.apply("temp-queue://ID:x", DestKind::TempQueue), "temp-queue://ID:x");
+        assert_eq!(p.strip("queue://a"), "a");
+        assert_eq!(p.strip("topic://t"), "topic:t");
+        assert_eq!(p.strip("temp-queue://ID:x"), "temp-queue://ID:x");
+        let none = AddressPrefixes::default();
+        assert_eq!(none.apply("a", DestKind::Topic), "a");
+        assert_eq!(none.strip("queue://a"), "queue://a");
+    }
 }
