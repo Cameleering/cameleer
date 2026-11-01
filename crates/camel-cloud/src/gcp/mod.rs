@@ -542,9 +542,15 @@ impl GcpConfig {
         self.endpoint.clone().unwrap_or_else(|| default.to_string()).trim_end_matches('/').to_string()
     }
 
-    /// The project id of the key.
+    /// The project id of the key, else (like the Google Cloud client libraries' default
+    /// project, e.g. with `authenticate=false` against an emulator) `GOOGLE_CLOUD_PROJECT` /
+    /// `GCLOUD_PROJECT`.
     pub fn project_id(&self) -> Option<String> {
-        self.key.as_ref().map(|k| k.project_id.clone()).filter(|p| !p.is_empty())
+        self.key
+            .as_ref()
+            .map(|k| k.project_id.clone())
+            .filter(|p| !p.is_empty())
+            .or_else(|| ["GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT"].iter().find_map(|v| std::env::var(v).ok().filter(|p| !p.is_empty())))
     }
 
     /// A bearer token for `scope` (None when authentication is disabled): the fixed

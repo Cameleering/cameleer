@@ -280,7 +280,7 @@ impl StorageService {
     }
 
     fn project(&self) -> Result<String> {
-        self.gcp.project_id().ok_or_else(|| CamelError::illegal_argument("A project id (from the service account key) is required for bucket operations"))
+        self.gcp.project_id().ok_or_else(|| CamelError::illegal_argument("A project id (from the service account key or GOOGLE_CLOUD_PROJECT) is required for bucket operations"))
     }
 
     pub fn bucket_exists(&self, bucket: &str) -> Result<bool> {

@@ -23,7 +23,8 @@
 #   Azurite (Azure)       20000 / 20001 / 20002  Blob / Queue / Table (HTTP, Shared Key + SAS)
 #                         20010 / 20011 / 20012  Blob / Queue / Table (HTTPS, + OAuth "basic")
 #   fake-gcs-server (GCS) 14443  HTTP JSON + XML API         14444 HTTPS
-#   pstest (Pub/Sub)      18085  gRPC (plaintext)
+#   pstest (Pub/Sub)      18085  gRPC (plaintext)              18086 HTTP control API (topics,
+#                                subscriptions, publish, acks; scripts/simulators/pstest)
 #   FerretDB (MongoDB)    27117  wire protocol               27118 TLS
 #                                backed by the live-interop PostgreSQL 16 (127.0.0.1:15432,
 #                                database `ferretdb`), SCRAM-SHA-256/SHA-1 user camel/camelpw
@@ -250,7 +251,7 @@ start_gcs() {
 
 start_pstest() {
   [ -x "$BIN/pstest-server" ] || return 0
-  spawn pstest 18085 "$BIN/pstest-server" -port 18085
+  spawn pstest 18085 "$BIN/pstest-server" -port 18085 -control 127.0.0.1:18086
 }
 
 start_ferretdb() {
@@ -304,7 +305,7 @@ cmd_status() {
   local name port
   for entry in moto:15000 moto-tls:15001 moto-iam:15002 azurite-blob:20000 azurite-queue:20001 \
     azurite-table:20002 azurite-blob-tls:20010 azurite-queue-tls:20011 azurite-table-tls:20012 \
-    fake-gcs:14443 fake-gcs-tls:14444 pstest:18085 ferretdb:27117 ferretdb-tls:27118 \
+    fake-gcs:14443 fake-gcs-tls:14444 pstest:18085 pstest-control:18086 ferretdb:27117 ferretdb-tls:27118 \
     kfake:19092 kfake-sasl:19095 kfake-tls:19096 kfake-sasl-ssl:19097; do
     name=${entry%%:*}; port=${entry##*:}
     if port_open "$port"; then echo "  up    $name ($port)"; else echo "  DOWN  $name ($port)"; fi

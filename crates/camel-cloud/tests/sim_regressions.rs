@@ -24,3 +24,18 @@ fn list_blobs_reads_every_page() {
     let names: Vec<String> = all.as_array().unwrap().iter().map(|b| b.get("name").unwrap().to_string()).collect();
     assert_eq!(names, vec!["a", "b", "c"]);
 }
+
+/// fake-gcs-server: with `authenticate=false` (emulators) there is no service account key, so
+/// bucket operations had no project; like the Google client libraries the default project
+/// comes from `GOOGLE_CLOUD_PROJECT`.
+#[test]
+fn storage_bucket_operations_use_the_default_project_without_a_key() {
+    let mock = camel_cloud::testing::GcpMock::start().unwrap();
+    mock.set_require_auth(false);
+    std::env::set_var("GOOGLE_CLOUD_PROJECT", "default-project");
+    let ctx = context();
+    let uri = format!("google-storage://fresh-bucket?authenticate=false&uriEndpointOverride={}&overrideEndpoint=true", mock.url());
+    ctx.create_producer_template().send_body_and_header(&uri, "x", "CamelGoogleCloudStorageObjectName", "o.txt").unwrap();
+    assert!(mock.bucket_exists("fresh-bucket"));
+    assert_eq!(mock.object("fresh-bucket", "o.txt").unwrap(), b"x");
+}
