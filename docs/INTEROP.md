@@ -339,7 +339,8 @@ proxy.golang.org / GitHub over TLS at pinned versions / commits.
 
 Run on 2026-11-01. All 31 simulator tests pass
 (`CAMEL_SIMULATORS=1 cargo test --workspace --test 'sim_*'`), together with the 4 hermetic
-regression tests in `sim_regressions.rs`.
+regression tests in `sim_regressions.rs`; the hermetic workspace suite (`cargo test --workspace`)
+stays green, and `official_kafka.rs` (librdkafka, now joining groups with JoinGroup v4) passes.
 
 | Simulator (version) | Components | What was verified | Result |
 |---|---|---|---|
