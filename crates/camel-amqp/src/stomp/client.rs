@@ -140,7 +140,10 @@ fn error_frame_to_error(f: &Frame) -> CamelError {
     let msg = f.get("message").unwrap_or("").to_string();
     let body = f.body_string();
     let text = if body.trim().is_empty() { msg.clone() } else { format!("{}: {}", msg, body.trim()) };
-    let kind = if msg.to_ascii_lowercase().contains("auth") || msg.to_ascii_lowercase().contains("login") { AUTHENTICATION_FAILURE } else { STOMP_ERROR };
+    // ActiveMQ / Artemis put the reason in `message`; RabbitMQ sends `message:Bad CONNECT`
+    // with "Access refused for user 'x'" in the body
+    let lower = text.to_ascii_lowercase();
+    let kind = if lower.contains("auth") || lower.contains("login") || lower.contains("access refused") { AUTHENTICATION_FAILURE } else { STOMP_ERROR };
     CamelError::new(kind, text)
 }
 
@@ -338,9 +341,34 @@ impl StompConnection {
         self.send_frame(f, receipt)
     }
 
+    /// Whether the broker is RabbitMQ (its STOMP adapter has its own temporary queue and
+    /// durable subscription conventions).
+    pub fn is_rabbitmq(&self) -> bool {
+        self.server.starts_with("RabbitMQ")
+    }
+
+    /// Receive the replies sent to a `/temp-queue/...` reply destination. RabbitMQ refuses
+    /// `SUBSCRIBE` to temporary queues: it creates one when a `SEND` names it in `reply-to`
+    /// and delivers the replies with `subscription` set to that destination, so only a local
+    /// route is registered there. Other brokers get a normal (auto-ack) subscription.
+    pub fn subscribe_reply_queue(&self, destination: &str) -> Result<Subscription> {
+        if self.is_rabbitmq() && destination.starts_with("/temp-queue/") {
+            let (tx, rx) = mpsc::channel();
+            self.inner.subs.lock().unwrap().insert(destination.to_string(), tx);
+            return Ok(Subscription { id: destination.to_string(), messages: rx });
+        }
+        self.subscribe(destination, AckMode::Auto, &[])
+    }
+
     /// `SUBSCRIBE` (synchronously, with a receipt).
     pub fn subscribe(&self, destination: &str, ack: AckMode, extra: &[(String, String)]) -> Result<Subscription> {
         let id = format!("sub-{}-{}", self.inner.ids.fetch_add(1, Ordering::Relaxed), unique_id());
+        self.subscribe_with_id(destination, &id, ack, extra)
+    }
+
+    /// `SUBSCRIBE` with a given subscription id (stable ids name RabbitMQ durable subscriptions).
+    pub fn subscribe_with_id(&self, destination: &str, id: &str, ack: AckMode, extra: &[(String, String)]) -> Result<Subscription> {
+        let id = id.to_string();
         let (tx, rx) = mpsc::channel();
         self.inner.subs.lock().unwrap().insert(id.clone(), tx);
         let mut f = Frame::new("SUBSCRIBE").header("destination", destination).header("id", id.clone()).header("ack", ack.as_str());
@@ -356,6 +384,11 @@ impl StompConnection {
 
     /// `UNSUBSCRIBE`.
     pub fn unsubscribe(&self, id: &str) -> Result<()> {
+        if self.is_rabbitmq() && id.starts_with("/temp-queue/") {
+            // a local route registered by `subscribe_reply_queue`
+            self.inner.subs.lock().unwrap().remove(id);
+            return Ok(());
+        }
         let r = self.send_frame(Frame::new("UNSUBSCRIBE").header("id", id), true);
         self.inner.subs.lock().unwrap().remove(id);
         r

@@ -26,7 +26,16 @@
 //!   restarts; messages delivered but not acknowledged before a restart come back with
 //!   `redelivered:true`. The journal is compacted on start;
 //! * receipts, `ERROR` frames (then the connection is closed), login/passcode checks,
-//!   heart-beats.
+//!   heart-beats;
+//! * a RabbitMQ flavour ([`StompBrokerBuilder::rabbitmq`]) reproducing the RabbitMQ STOMP
+//!   adapter's conventions seen by the live interop suite: `server:RabbitMQ/...`, the
+//!   `host` header names the virtual host (only `/` exists), `Bad CONNECT` errors with the
+//!   reason in the body, no `SUBSCRIBE` to `/temp-queue/` (a `reply-to: /temp-queue/x` on
+//!   `SEND` creates the queue, is rewritten to `/reply-queue/...` and replies arrive with
+//!   `subscription:/temp-queue/x`), `persistent:false` on a `SEND` to an existing queue is
+//!   refused (it is the queue's `durable` flag), durable topic subscriptions are
+//!   `durable:true` subscriptions named by their `id`, and an aborted transactional `ACK`
+//!   leaves the message unacknowledged (no redelivery until `NACK`).
 
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -156,6 +165,7 @@ fn is_topic(dest: &str) -> bool {
 
 struct Shared {
     state: Mutex<State>,
+    rabbitmq: bool,
     users: Vec<(String, String)>,
     heartbeat: (u64, u64),
     max_redeliveries: u32,
@@ -571,6 +581,7 @@ impl State {
 
 /// Builder for [`StompBroker`].
 pub struct StompBrokerBuilder {
+    rabbitmq: bool,
     users: Vec<(String, String)>,
     heartbeat: (u64, u64),
     max_redeliveries: u32,
@@ -584,6 +595,11 @@ impl StompBrokerBuilder {
     /// Serve STOMP over TLS (`ssl://` / `stomp+ssl://` broker urls) with this configuration.
     pub fn tls(mut self, cfg: TlsServerConfig) -> Self {
         self.tls = Some(Arc::new(cfg));
+        self
+    }
+    /// Behave like RabbitMQ's STOMP adapter (see the module documentation).
+    pub fn rabbitmq(mut self) -> Self {
+        self.rabbitmq = true;
         self
     }
     /// Require a login (any number of users; none = anonymous access).
@@ -648,6 +664,7 @@ impl StompBrokerBuilder {
         }
         let shared = Arc::new(Shared {
             state: Mutex::new(state),
+            rabbitmq: self.rabbitmq,
             users: self.users,
             heartbeat: self.heartbeat,
             max_redeliveries: self.max_redeliveries,
@@ -688,7 +705,7 @@ impl StompBroker {
         Self::builder().start()
     }
     pub fn builder() -> StompBrokerBuilder {
-        StompBrokerBuilder { users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0, tls: None, persistence: None }
+        StompBrokerBuilder { rabbitmq: false, users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0, tls: None, persistence: None }
     }
     pub fn port(&self) -> u16 {
         self.server.port()
@@ -808,6 +825,31 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
             if dest.is_empty() {
                 return Err("SEND frame with an empty destination".into());
             }
+            let mut rewritten;
+            let mut f = f;
+            if shared.rabbitmq {
+                let queue = normalize_destination(dest);
+                if queue.starts_with("/queue/") && f.get("persistent") == Some("false") && st.queues.contains_key(&queue) {
+                    return Err(format!("PRECONDITION_FAILED - inequivalent arg 'durable' for queue '{}'", &queue[7..]));
+                }
+                rewritten = f.clone();
+                if let Some(rest) = dest.strip_prefix("/reply-queue/") {
+                    rewritten.set("destination", format!("/temp-queue/{}", rest));
+                }
+                if let Some(name) = f.get("reply-to").and_then(|r| r.strip_prefix("/temp-queue/")) {
+                    let internal = format!("rabbit-{}-{}", conn, name);
+                    let id = format!("/temp-queue/{}", name);
+                    if !st.subs.iter().any(|s| s.conn == conn && s.id == id) {
+                        let dest = format!("/temp-queue/{}", internal);
+                        if let Some(c) = st.conns.get_mut(&conn) {
+                            c.temps.push(dest.clone());
+                        }
+                        st.subs.push(Sub { conn, id, dest: dest.clone(), source: dest, ack: AckMode::Auto, selector: None, prefetch: 0, pending: Vec::new() });
+                    }
+                    rewritten.set("reply-to", format!("/reply-queue/{}", internal));
+                }
+                f = &rewritten;
+            }
             let msg = to_message(&mut st, f);
             match f.get("transaction") {
                 Some(tx) => {
@@ -833,6 +875,9 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
             if st.subs.iter().any(|s| s.conn == conn && s.id == id) {
                 return Err(format!("Duplicate subscription id: {}", id));
             }
+            if shared.rabbitmq && dest.starts_with("/temp-queue/") {
+                return Err(format!("Invalid destination: '{}' is not a valid destination for 'SUBSCRIBE'", dest));
+            }
             if dest.starts_with("/temp-") {
                 if let Some(c) = st.conns.get_mut(&conn) {
                     if !c.temps.contains(&dest) {
@@ -841,10 +886,11 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
                 }
             }
             let shared_sub = f.get("subscription-shared") == Some("true") || f.get("shared-subscription-name").is_some();
-            let durable = durable_name(f);
+            // RabbitMQ: `durable:true` (alias `persistent`) subscriptions are named by their id
+            let durable = if shared.rabbitmq { (f.get("durable") == Some("true") || f.get("persistent") == Some("true")).then(|| id.clone()) } else { durable_name(f) };
             let mut source = dest.clone();
             if is_topic(&dest) && (durable.is_some() || shared_sub) {
-                let client_id = st.conns.get(&conn).and_then(|c| c.client_id.clone());
+                let client_id = if shared.rabbitmq { Some("rabbitmq".to_string()) } else { st.conns.get(&conn).and_then(|c| c.client_id.clone()) };
                 let (key, is_durable) = match (durable, shared_sub) {
                     (Some(name), false) => {
                         let cid = client_id.ok_or("A durable subscription requires a client-id on CONNECT")?;
@@ -910,6 +956,8 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
                 match op {
                     TxOp::Send(m) if commit => st.route(m),
                     TxOp::Send(_) => {}
+                    // RabbitMQ: the aborted ACK leaves the message unacknowledged
+                    TxOp::Ack(_) if !commit && shared.rabbitmq => {}
                     TxOp::Ack(id) => apply_ack(&mut st, conn, &id, commit, max),
                     TxOp::Nack(id) => apply_ack(&mut st, conn, &id, false, max),
                 }
@@ -985,10 +1033,24 @@ fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
             return;
         }
     }
+    if shared.rabbitmq {
+        if let Some(h) = connect.get("host").filter(|h| *h != "/") {
+            let mut e = error_frame("Bad CONNECT", None);
+            e.body = format!("Virtual host '{}' access denied", h).into_bytes();
+            send_now(&e);
+            std::thread::sleep(Duration::from_millis(20));
+            return;
+        }
+    }
     if !shared.users.is_empty() {
         let (l, p) = (connect.get("login").unwrap_or(""), connect.get("passcode").unwrap_or(""));
         if !shared.users.iter().any(|(u, pw)| u == l && pw == p) {
-            send_now(&error_frame(&format!("Authentication failed: user '{}'", l), None));
+            let mut e = error_frame(&format!("Authentication failed: user '{}'", l), None);
+            if shared.rabbitmq {
+                e = error_frame("Bad CONNECT", None);
+                e.body = format!("Access refused for user '{}'", l).into_bytes();
+            }
+            send_now(&e);
             std::thread::sleep(Duration::from_millis(20));
             return;
         }
@@ -1009,7 +1071,7 @@ fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
             .header("version", "1.2")
             .header("heart-beat", format!("{},{}", sx, sy))
             .header("session", format!("session-{}", conn))
-            .header("server", format!("rust-camel-stomp-broker/{}", env!("CARGO_PKG_VERSION"))),
+            .header("server", if shared.rabbitmq { "RabbitMQ/3.12.1".to_string() } else { format!("rust-camel-stomp-broker/{}", env!("CARGO_PKG_VERSION")) }),
     );
     let client_id = connect.get("client-id").map(String::from).filter(|c| !c.is_empty());
     shared.state.lock().unwrap().conns.insert(conn, ConnSt { writer: writer.clone(), txs: HashMap::new(), temps: Vec::new(), client_id });

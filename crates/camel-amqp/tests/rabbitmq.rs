@@ -326,6 +326,6 @@ fn endpoint_addresses_take_precedence_over_component_host_and_port() {
     let t = ctx.create_producer_template();
     t.send_body(&format!("spring-rabbitmq:default?routingKey=addr&addresses=amqp://127.0.0.1:{}", broker.port()), "spring").unwrap();
     t.send_body(&format!("rabbitmq:?routingKey=addr&declare=false&addresses=127.0.0.1:{}", broker.port()), "legacy").unwrap();
-    assert_eq!(broker.queue_depth("addr"), 2);
+    wait_until("both messages queued", || broker.queue_depth("addr") == 2);
     ctx.stop().unwrap();
 }

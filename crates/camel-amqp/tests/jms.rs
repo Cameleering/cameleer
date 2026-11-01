@@ -317,3 +317,61 @@ fn consumer_reconnects_and_options_are_validated() {
     }
     ctx.stop().unwrap();
 }
+
+/// Regressions found against a real RabbitMQ (live interop suite), reproduced with the
+/// embedded broker's RabbitMQ flavour.
+#[test]
+fn rabbitmq_flavoured_broker_conventions() {
+    let broker = StompBroker::builder().rabbitmq().user("camel", "pw").start().unwrap();
+    let ctx = CamelContext::new();
+    camel_amqp::register(&ctx);
+    for (k, v) in [("brokerUrl", broker.url()), ("username", "camel".into()), ("password", "pw".into()), ("host", "/".into())] {
+        ctx.properties().set(format!("camel.component.jms.{}", k), v);
+    }
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let a2 = attempts.clone();
+    ctx.add_routes(move |b| {
+        b.from("jms:queue:greeter").transform(simple("Hello ${body}"));
+        b.from("jms:queue:np").to("mock:np");
+        b.from("jms:queue:payments?transacted=true")
+            .process(move |_ex: &mut Exchange| if a2.fetch_add(1, Ordering::SeqCst) == 0 { Err(CamelError::illegal_state("deadlock")) } else { Ok(()) })
+            .to("mock:committed");
+        b.from("jms:topic:news?durableSubscriptionName=reader&clientId=app").route_id("durable").to("mock:durable");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    // a "Bad CONNECT" error whose body says "Access refused" is an authentication failure
+    let ex = t.send(&format!("jms:queue:x?brokerURL={}&username=camel&password=wrong&host=/", broker.url()), Exchange::with_body(Some(ctx.clone()), "x"));
+    assert_eq!(ex.exception.unwrap().kind, "AuthenticationFailureException");
+    // request/reply over RabbitMQ temporary queues (reply-to only, no SUBSCRIBE)
+    for i in 0..3 {
+        assert_eq!(t.request_body("jms:queue:greeter", format!("R{}", i)).unwrap().to_string(), format!("Hello R{}", i));
+    }
+    // NON_PERSISTENT sends omit `persistent` (RabbitMQ: `persistent:false` = non-durable queue)
+    let np = ctx.mock_endpoint("mock:np").unwrap();
+    np.expected_header_received("JMSDeliveryMode", 1i64);
+    np.expected_message_count(1);
+    t.send_body("jms:queue:np?deliveryPersistent=false", "transient").unwrap();
+    np.assert_is_satisfied().unwrap();
+    // a failed transacted exchange is redelivered (ABORT + NACK)
+    let committed = ctx.mock_endpoint("mock:committed").unwrap();
+    committed.expected_header_received("JMSRedelivered", true);
+    committed.expected_message_count(1);
+    t.send_body("jms:queue:payments", "pay").unwrap();
+    committed.assert_is_satisfied().unwrap();
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    // durable topic subscription (durable:true + stable id)
+    let durable = ctx.mock_endpoint("mock:durable").unwrap();
+    ctx.stop_route("durable").unwrap();
+    t.send_body("jms:topic:news", "while-offline").unwrap();
+    durable.expected_bodies_received(vec!["while-offline"]);
+    ctx.start_route("durable").unwrap();
+    durable.assert_is_satisfied().unwrap();
+    ctx.stop().unwrap();
+    // without host=/ the RabbitMQ vhost check refuses the connection
+    let ctx2 = context(&broker);
+    ctx2.start().unwrap();
+    let ex = ctx2.create_producer_template().send(&format!("jms:queue:x?username=camel&password=pw&brokerURL={}", broker.url()), Exchange::with_body(Some(ctx2.clone()), "x"));
+    assert!(ex.exception.unwrap().message.contains("Virtual host"));
+}

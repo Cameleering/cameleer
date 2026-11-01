@@ -593,7 +593,12 @@ fn exchange_to_frame(cfg: &JmsConfig, ex: &Exchange, include_reply_to: bool) -> 
             expires = e;
         }
     }
-    h.push(("persistent".into(), persistent.to_string()));
+    // NON_PERSISTENT is the absence of the header: RabbitMQ reads `persistent` on a SEND to
+    // `/queue/x` as the queue's `durable` flag, so `persistent:false` fails against the
+    // existing (durable) queue
+    if persistent {
+        h.push(("persistent".into(), "true".into()));
+    }
     if let Some(p) = priority {
         h.push(("priority".into(), p.to_string()));
     }
@@ -676,7 +681,7 @@ impl JmsProducer {
                 ReplyToType::Exclusive => self.cfg.reply_to.clone().unwrap_or_default(),
                 _ => format!("/temp-queue/camel-reply-{}", unique_id()),
             };
-            let sub: Subscription = s.conn.subscribe(&destination, AckMode::Auto, &[])?;
+            let sub: Subscription = s.conn.subscribe_reply_queue(&destination)?;
             let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
             let stop = StopFlag::new();
             let (p2, s2) = (pending.clone(), stop.clone());
@@ -742,7 +747,7 @@ impl JmsProducer {
                 (cfg.reply_to.clone().unwrap_or_default(), Some(format!("JMSCorrelationID = '{}'", correlation.replace('\'', "''"))))
             };
             let extra: Vec<(String, String)> = selector.into_iter().map(|s| ("selector".to_string(), s)).collect();
-            let sub = conn.subscribe(&reply_dest, AckMode::Auto, &extra)?;
+            let sub = if extra.is_empty() { conn.subscribe_reply_queue(&reply_dest)? } else { conn.subscribe(&reply_dest, AckMode::Auto, &extra)? };
             hdrs.push(("reply-to".into(), reply_dest));
             let r = self.send_frame(&conn, &destination, &hdrs, &body, receipt).and_then(|_| sub.messages.recv_timeout(timeout).map_err(|_| CamelError::new(kinds::EXCHANGE_TIMED_OUT, "")));
             let _ = conn.unsubscribe(&sub.id);
@@ -884,7 +889,18 @@ impl Worker {
         }
         let Some(ack_id) = f.get("ack").map(String::from) else { return };
         let r = match &tx {
-            Some(t) => conn.ack(&ack_id, Some(t)).and_then(|_| if failed { conn.abort(t) } else { conn.commit(t) }),
+            // RabbitMQ (AMQP transaction semantics) keeps a message whose transactional ACK was
+            // aborted unacknowledged instead of redelivering it: NACK it so it is requeued
+            // (ActiveMQ redelivers by itself, and treats NACK as a poison ack)
+            Some(t) => conn.ack(&ack_id, Some(t)).and_then(|_| {
+                if !failed {
+                    conn.commit(t)
+                } else if conn.is_rabbitmq() {
+                    conn.abort(t).and_then(|_| conn.nack(&ack_id, None))
+                } else {
+                    conn.abort(t)
+                }
+            }),
             None if failed && cfg.ack == JmsAck::Client => conn.nack(&ack_id, None),
             None => conn.ack(&ack_id, None),
         };
@@ -915,9 +931,21 @@ fn setup(cfg: &JmsConfig) -> Result<(StompConnection, Vec<Subscription>)> {
                 extra.push(("shared-subscription-name".to_string(), name.clone()));
             }
             if let Some(name) = &cfg.durable_subscription {
-                // ActiveMQ (with the CONNECT client-id) and Artemis header names
+                // ActiveMQ (with the CONNECT client-id) and Artemis header names, plus
+                // RabbitMQ's `durable` / `auto-delete` with a stable subscription id (which
+                // names the subscription's queue there)
                 extra.push(("activemq.subscriptionName".to_string(), name.clone()));
                 extra.push(("durable-subscription-name".to_string(), name.clone()));
+                if cfg.shared_subscription.is_none() {
+                    extra.push(("durable".to_string(), "true".to_string()));
+                    extra.push(("auto-delete".to_string(), "false".to_string()));
+                    let id = match &cfg.conn.client_id {
+                        Some(c) => format!("{}:{}", c, name),
+                        None => name.clone(),
+                    };
+                    subs.push(conn.subscribe_with_id(&cfg.destination, &id, AckMode::ClientIndividual, &extra)?);
+                    continue;
+                }
             }
             conn.subscribe(&cfg.destination, AckMode::ClientIndividual, &extra)?
 
