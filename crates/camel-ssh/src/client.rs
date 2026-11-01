@@ -125,6 +125,51 @@ pub struct SshClient {
     banner: Option<String>,
     host_key: SshPublicKey,
     auth_method: String,
+    /// `forwarded-tcpip` channels are accepted (a remote forward was requested).
+    accept_forwarded: bool,
+    /// Accepted `forwarded-tcpip` channels: (local id, connected address, port).
+    forwarded: VecDeque<(u32, String, u16)>,
+}
+
+/// A running port forward (see [`SshClient::start_local_forward`] and
+/// [`SshClient::start_remote_forward`]): the client connection is owned by a background
+/// thread that pipes every forwarded TCP connection through its own channel.
+pub struct PortForward {
+    /// Local listening port (`-L` style forwards).
+    pub local_port: Option<u16>,
+    /// Port bound on the server (`-R` style forwards).
+    pub remote_port: Option<u16>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl PortForward {
+    /// Stops forwarding and disconnects.
+    pub fn stop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+impl Drop for PortForward {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn write_all_nb(s: &mut TcpStream, mut data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    while !data.is_empty() {
+        match s.write(data) {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => data = &data[n..],
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
 }
 
 fn connect_tcp(host: &str, port: u16, timeout: Duration) -> SshResult<TcpStream> {
@@ -207,6 +252,8 @@ impl SshClient {
             banner: None,
             host_key,
             auth_method: String::new(),
+            accept_forwarded: false,
+            forwarded: VecDeque::new(),
         };
         if let Err(e) = c.authenticate(cfg) {
             let code = if matches!(e, SshError::Auth(_)) { reason::NO_MORE_AUTH_METHODS } else { reason::BY_APPLICATION };
@@ -494,10 +541,23 @@ impl SshClient {
             msg::GLOBAL_REQUEST => self.handle_global_request(&p)?,
             msg::REQUEST_SUCCESS | msg::REQUEST_FAILURE | msg::USERAUTH_BANNER => {}
             msg::CHANNEL_OPEN => {
-                let _type = r.str()?;
+                let kind = r.str()?;
                 let sender = r.u32()?;
-                let w = Writer::msg(msg::CHANNEL_OPEN_FAILURE).u32(sender).u32(1).str("not supported").str("").finish();
-                self.t.send(&w)?;
+                if kind == "forwarded-tcpip" && self.accept_forwarded {
+                    let window = r.u32()?;
+                    let max = r.u32()?;
+                    let addr = r.str()?;
+                    let port = r.u32()? as u16;
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    self.channels.insert(id, ChannelState { remote_id: sender, remote_window: window as u64, remote_max: max.max(1), local_window: self.window, open: Some(Ok(())), ..ChannelState::default() });
+                    self.forwarded.push_back((id, addr, port));
+                    let w = Writer::msg(msg::CHANNEL_OPEN_CONFIRMATION).u32(sender).u32(id).u32(self.window).u32(self.max_packet).finish();
+                    self.t.send(&w)?;
+                } else {
+                    let w = Writer::msg(msg::CHANNEL_OPEN_FAILURE).u32(sender).u32(1).str("not supported").str("").finish();
+                    self.t.send(&w)?;
+                }
             }
             t @ msg::CHANNEL_OPEN_CONFIRMATION..=msg::CHANNEL_FAILURE => {
                 let id = r.u32()?;
@@ -577,10 +637,15 @@ impl SshClient {
 
     /// Opens a `session` channel; returns its local id.
     pub fn open_session(&mut self) -> SshResult<u32> {
+        self.open_channel("session", &[])
+    }
+
+    /// Opens a channel of `kind` with type specific `extra` data; returns its local id.
+    pub fn open_channel(&mut self, kind: &str, extra: &[u8]) -> SshResult<u32> {
         let id = self.next_id;
         self.next_id += 1;
         self.channels.insert(id, ChannelState { local_window: self.window, ..ChannelState::default() });
-        let w = Writer::msg(msg::CHANNEL_OPEN).str("session").u32(id).u32(self.window).u32(self.max_packet).finish();
+        let w = Writer::msg(msg::CHANNEL_OPEN).str(kind).u32(id).u32(self.window).u32(self.max_packet).raw(extra).finish();
         self.t.send(&w)?;
         loop {
             match &self.chan(id)?.open {
@@ -588,11 +653,171 @@ impl SshClient {
                 Some(Err(e)) => {
                     let e = e.clone();
                     self.channels.remove(&id);
-                    return Err(SshError::Channel(format!("cannot open session channel: {}", e)));
+                    return Err(SshError::Channel(format!("cannot open {} channel: {}", kind, e)));
                 }
                 None => self.pump()?,
             }
         }
+    }
+
+    /// Opens a `direct-tcpip` channel (RFC 4254 7.2): the server connects to `host:port`;
+    /// read and write the channel like a session's stdout / stdin.
+    pub fn open_direct_tcpip(&mut self, host: &str, port: u16, originator: &str, originator_port: u16) -> SshResult<u32> {
+        let extra = Writer::new().str(host).u32(port as u32).str(originator).u32(originator_port as u32).finish();
+        self.open_channel("direct-tcpip", &extra)
+    }
+
+    /// Asks the server to listen on `addr:port` (`tcpip-forward`, RFC 4254 7.1; port 0 = any)
+    /// and forward connections back as `forwarded-tcpip` channels ([`Self::accept_forwarded`]).
+    /// Returns the bound port.
+    pub fn request_remote_forward(&mut self, addr: &str, port: u16) -> SshResult<u16> {
+        self.accept_forwarded = true;
+        self.t.send(&Writer::msg(msg::GLOBAL_REQUEST).str("tcpip-forward").bool(true).str(addr).u32(port as u32).finish())?;
+        loop {
+            let p = self.t.recv()?;
+            match p[0] {
+                msg::REQUEST_SUCCESS => {
+                    let bound = if port == 0 { Reader::new(&p[1..]).u32()? as u16 } else { port };
+                    return Ok(bound);
+                }
+                msg::REQUEST_FAILURE => return Err(SshError::Channel(format!("the server refused to listen on {}:{}", addr, port))),
+                _ => {
+                    self.t.push_front(p);
+                    self.pump()?;
+                }
+            }
+        }
+    }
+
+    /// Takes the next accepted `forwarded-tcpip` channel: (channel id, address, port).
+    pub fn accept_forwarded(&mut self) -> Option<(u32, String, u16)> {
+        self.forwarded.pop_front()
+    }
+
+    /// Local port forwarding (`ssh -L`): listens on `bind` (e.g. `127.0.0.1:0`) and pipes each
+    /// connection through a `direct-tcpip` channel to `host:port` as seen from the server.
+    pub fn start_local_forward(self, bind: &str, host: &str, port: u16) -> SshResult<PortForward> {
+        let l = std::net::TcpListener::bind(bind)?;
+        l.set_nonblocking(true)?;
+        let local = l.local_addr()?.port();
+        let target = (host.to_string(), port);
+        Ok(self.spawn_forward(Some(local), None, move |c, socks| {
+            while let Ok((tcp, peer)) = l.accept() {
+                let _ = tcp.set_nonblocking(true);
+                if let Ok(id) = c.open_direct_tcpip(&target.0, target.1, &peer.ip().to_string(), peer.port()) {
+                    socks.insert(id, (tcp, false, false));
+                }
+            }
+        }))
+    }
+
+    /// Remote port forwarding (`ssh -R`): the server listens on `remote_port` (0 = any) and
+    /// each connection is piped to `target_host:target_port` from this side.
+    pub fn start_remote_forward(mut self, remote_port: u16, target_host: &str, target_port: u16) -> SshResult<PortForward> {
+        let bound = self.request_remote_forward("localhost", remote_port)?;
+        let target = (target_host.to_string(), target_port);
+        Ok(self.spawn_forward(None, Some(bound), move |c, socks| {
+            while let Some((id, _, _)) = c.accept_forwarded() {
+                match TcpStream::connect((target.0.as_str(), target.1)) {
+                    Ok(tcp) => {
+                        let _ = tcp.set_nonblocking(true);
+                        socks.insert(id, (tcp, false, false));
+                    }
+                    Err(_) => {
+                        let _ = c.send_close(id);
+                    }
+                }
+            }
+        }))
+    }
+
+    fn send_close(&mut self, id: u32) -> SshResult<()> {
+        let st = self.chan(id)?;
+        if !st.close_sent {
+            st.close_sent = true;
+            let w = Writer::msg(msg::CHANNEL_CLOSE).u32(st.remote_id).finish();
+            self.t.send(&w)?;
+        }
+        Ok(())
+    }
+
+    /// Runs the forwarding loop on a background thread; `accept` adds new (channel, socket)
+    /// pairs (socket, socket EOF seen, channel EOF propagated).
+    fn spawn_forward(mut self, local_port: Option<u16>, remote_port: Option<u16>, mut accept: impl FnMut(&mut SshClient, &mut HashMap<u32, (TcpStream, bool, bool)>) + Send + 'static) -> PortForward {
+        use std::io::Read;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let handle = std::thread::spawn(move || {
+            let mut socks: HashMap<u32, (TcpStream, bool, bool)> = HashMap::new();
+            let mut buf = vec![0u8; 32768];
+            let result: SshResult<()> = (|| {
+                while !stop2.load(std::sync::atomic::Ordering::SeqCst) {
+                    let before = socks.len();
+                    accept(&mut self, &mut socks);
+                    let mut busy = socks.len() != before;
+                    let ids: Vec<u32> = socks.keys().copied().collect();
+                    for id in ids {
+                        let (tcp, tcp_eof, _) = socks.get_mut(&id).unwrap();
+                        let mut dead = false;
+                        if !*tcp_eof {
+                            match tcp.read(&mut buf) {
+                                Ok(0) => {
+                                    *tcp_eof = true;
+                                    let _ = self.send_eof(id);
+                                }
+                                Ok(n) => {
+                                    busy = true;
+                                    let data = buf[..n].to_vec();
+                                    if self.write(id, &data).is_err() {
+                                        dead = true;
+                                    }
+                                }
+                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                                Err(_) => dead = true,
+                            }
+                        }
+                        let (tcp, tcp_eof, chan_eof) = socks.get_mut(&id).unwrap();
+                        let st = match self.channels.get_mut(&id) {
+                            Some(st) => st,
+                            None => {
+                                socks.remove(&id);
+                                continue;
+                            }
+                        };
+                        if !st.stdout.is_empty() {
+                            busy = true;
+                            let data: Vec<u8> = st.stdout.drain(..).collect();
+                            if write_all_nb(tcp, &data).is_err() {
+                                dead = true;
+                            }
+                        }
+                        if st.eof && !*chan_eof {
+                            *chan_eof = true;
+                            let _ = tcp.shutdown(std::net::Shutdown::Write);
+                        }
+                        let finished = st.closed || dead || (*tcp_eof && *chan_eof);
+                        if finished {
+                            let _ = self.send_close(id);
+                            if self.channels.get(&id).map(|s| s.closed).unwrap_or(true) {
+                                self.channels.remove(&id);
+                                socks.remove(&id);
+                            }
+                        }
+                    }
+                    while self.t.data_available() {
+                        busy = true;
+                        self.pump()?;
+                    }
+                    if !busy {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                }
+                Ok(())
+            })();
+            let _ = result;
+            self.disconnect();
+        });
+        PortForward { local_port, remote_port, stop, handle: Some(handle) }
     }
 
     /// Sends a channel request; with `want_reply`, waits for the answer.

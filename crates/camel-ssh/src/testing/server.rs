@@ -45,6 +45,9 @@ pub struct SshServerConfig {
     /// CA keys whose user certificates are accepted (`TrustedUserCAKeys`); the user name must
     /// be a principal of the certificate.
     pub trusted_user_ca_keys: Vec<SshPublicKey>,
+    /// Accept `direct-tcpip` channels and `tcpip-forward` requests (default true, like sshd's
+    /// `AllowTcpForwarding yes`).
+    pub allow_tcp_forwarding: bool,
 }
 
 impl Default for SshServerConfig {
@@ -59,6 +62,7 @@ impl Default for SshServerConfig {
             keyboard_interactive: true,
             command_handler: None,
             trusted_user_ca_keys: Vec::new(),
+            allow_tcp_forwarding: true,
         }
     }
 }
@@ -282,7 +286,85 @@ enum Kind {
     Exec(String),
     Shell(Vec<u8>),
     Sftp(SftpServer),
+    /// `direct-tcpip` / `forwarded-tcpip`: a TCP connection (non-blocking) piped to the
+    /// channel; `open` is false until the client confirms a `forwarded-tcpip` channel.
+    Forward { tcp: TcpStream, open: bool, eof_in: bool, eof_out: bool, eof_sent: bool },
     Done,
+}
+
+/// Writes all bytes to a non-blocking socket.
+fn write_all_nb(s: &mut TcpStream, mut data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    while !data.is_empty() {
+        match s.write(data) {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => data = &data[n..],
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(1)),
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// Polls forwarding sockets and `tcpip-forward` listeners until SSH data arrives.
+fn pump_forwards(t: &mut Transport<TcpStream>, chans: &mut HashMap<u32, Chan>, listeners: &mut [(String, u16, std::net::TcpListener)], next: &mut u32) -> SshResult<()> {
+    use std::io::Read;
+    loop {
+        let mut busy = false;
+        for (addr, port, l) in listeners.iter() {
+            while let Ok((tcp, peer)) = l.accept() {
+                busy = true;
+                let _ = tcp.set_nonblocking(true);
+                let id = *next;
+                *next += 1;
+                let w = Writer::msg(msg::CHANNEL_OPEN)
+                    .str("forwarded-tcpip")
+                    .u32(id)
+                    .u32(WINDOW)
+                    .u32(32768)
+                    .str(addr)
+                    .u32(*port as u32)
+                    .str(&peer.ip().to_string())
+                    .u32(peer.port() as u32)
+                    .finish();
+                t.send(&w)?;
+                chans.insert(id, Chan { remote_id: 0, remote_window: 0, remote_max: 1, consumed: 0, kind: Kind::Forward { tcp, open: false, eof_in: false, eof_out: false, eof_sent: false }, stdin: Vec::new(), out: VecDeque::new(), finish: None, close_sent: false });
+            }
+        }
+        for c in chans.values_mut() {
+            if let Kind::Forward { tcp, open: true, eof_in, eof_out, eof_sent } = &mut c.kind {
+                if !*eof_in && c.out.iter().map(|(_, d)| d.len()).sum::<usize>() < 256 * 1024 {
+                    let mut buf = [0u8; 32768];
+                    match tcp.read(&mut buf) {
+                        Ok(0) => *eof_in = true,
+                        Ok(n) => {
+                            busy = true;
+                            c.out.push_back((false, buf[..n].to_vec()));
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                        Err(_) => *eof_in = true,
+                    }
+                }
+                if *eof_in && c.out.is_empty() && !c.close_sent {
+                    if !*eof_sent {
+                        *eof_sent = true;
+                        t.send(&Writer::msg(msg::CHANNEL_EOF).u32(c.remote_id).finish())?;
+                    }
+                    if *eof_out {
+                        t.send(&Writer::msg(msg::CHANNEL_CLOSE).u32(c.remote_id).finish())?;
+                        c.close_sent = true;
+                    }
+                }
+            }
+        }
+        flush(t, chans)?;
+        if t.data_available() {
+            return Ok(());
+        }
+        if !busy {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 }
 
 struct Chan {
@@ -440,14 +522,63 @@ fn queue_output(c: &mut Chan, out: CommandOutput) {
 fn connection(t: &mut Transport<TcpStream>, sh: &Shared) -> SshResult<()> {
     let mut chans: HashMap<u32, Chan> = HashMap::new();
     let mut next = 0u32;
+    let mut listeners: Vec<(String, u16, std::net::TcpListener)> = Vec::new();
     loop {
+        if !listeners.is_empty() || chans.values().any(|c| matches!(c.kind, Kind::Forward { .. })) {
+            pump_forwards(t, &mut chans, &mut listeners, &mut next)?;
+        }
         let p = t.recv()?;
         let mut r = Reader::new(&p[1..]);
         match p[0] {
             msg::GLOBAL_REQUEST => {
-                let _name = r.str()?;
-                if r.bool()? {
-                    t.send(&[msg::REQUEST_FAILURE])?;
+                let name = r.str()?;
+                let want = r.bool()?;
+                match name.as_str() {
+                    "tcpip-forward" if sh.cfg.allow_tcp_forwarding => {
+                        let addr = r.str()?;
+                        let port = r.u32()? as u16;
+                        let bind = if addr.is_empty() || addr == "localhost" { "127.0.0.1".to_string() } else { addr.clone() };
+                        match std::net::TcpListener::bind((bind.as_str(), port)) {
+                            Ok(l) => {
+                                let bound = l.local_addr().map(|a| a.port()).unwrap_or(port);
+                                let _ = l.set_nonblocking(true);
+                                listeners.push((addr, bound, l));
+                                if want {
+                                    let mut w = Writer::msg(msg::REQUEST_SUCCESS);
+                                    if port == 0 {
+                                        w.u32(bound as u32);
+                                    }
+                                    t.send(&w.finish())?;
+                                }
+                            }
+                            Err(_) if want => t.send(&[msg::REQUEST_FAILURE])?,
+                            Err(_) => {}
+                        }
+                    }
+                    "cancel-tcpip-forward" => {
+                        let addr = r.str()?;
+                        let port = r.u32()? as u16;
+                        let before = listeners.len();
+                        listeners.retain(|(a, p, _)| !(a == &addr && *p == port));
+                        if want {
+                            t.send(&[if listeners.len() < before { msg::REQUEST_SUCCESS } else { msg::REQUEST_FAILURE }])?;
+                        }
+                    }
+                    _ if want => t.send(&[msg::REQUEST_FAILURE])?,
+                    _ => {}
+                }
+            }
+            msg::CHANNEL_OPEN_CONFIRMATION | msg::CHANNEL_OPEN_FAILURE => {
+                let id = r.u32()?;
+                if p[0] == msg::CHANNEL_OPEN_FAILURE {
+                    chans.remove(&id);
+                } else if let Some(c) = chans.get_mut(&id) {
+                    c.remote_id = r.u32()?;
+                    c.remote_window = r.u32()? as u64;
+                    c.remote_max = r.u32()?.max(1);
+                    if let Kind::Forward { open, .. } = &mut c.kind {
+                        *open = true;
+                    }
                 }
             }
             msg::CHANNEL_OPEN => {
@@ -455,6 +586,23 @@ fn connection(t: &mut Transport<TcpStream>, sh: &Shared) -> SshResult<()> {
                 let sender = r.u32()?;
                 let window = r.u32()?;
                 let max = r.u32()?;
+                if kind == "direct-tcpip" && sh.cfg.allow_tcp_forwarding {
+                    let host = r.str()?;
+                    let port = r.u32()? as u16;
+                    match TcpStream::connect((host.as_str(), port)) {
+                        Ok(tcp) => {
+                            let _ = tcp.set_nonblocking(true);
+                            let id = next;
+                            next += 1;
+                            chans.insert(id, Chan { remote_id: sender, remote_window: window as u64, remote_max: max.max(1), consumed: 0, kind: Kind::Forward { tcp, open: true, eof_in: false, eof_out: false, eof_sent: false }, stdin: Vec::new(), out: VecDeque::new(), finish: None, close_sent: false });
+                            t.send(&Writer::msg(msg::CHANNEL_OPEN_CONFIRMATION).u32(sender).u32(id).u32(WINDOW).u32(32768).finish())?;
+                        }
+                        Err(e) => {
+                            t.send(&Writer::msg(msg::CHANNEL_OPEN_FAILURE).u32(sender).u32(2).str(&format!("connect failed: {}", e)).str("").finish())?;
+                        }
+                    }
+                    continue;
+                }
                 if kind != "session" {
                     t.send(&Writer::msg(msg::CHANNEL_OPEN_FAILURE).u32(sender).u32(3).str("unknown channel type").str("").finish())?;
                     continue;
@@ -543,6 +691,11 @@ fn connection(t: &mut Transport<TcpStream>, sh: &Shared) -> SshResult<()> {
                     continue;
                 }
                 match &mut c.kind {
+                    Kind::Forward { tcp, .. } => {
+                        if write_all_nb(tcp, data).is_err() {
+                            c.finish = None;
+                        }
+                    }
                     Kind::Exec(_) => c.stdin.extend_from_slice(data),
                     Kind::Sftp(s) => {
                         let reply = s.feed(data);
@@ -573,6 +726,15 @@ fn connection(t: &mut Transport<TcpStream>, sh: &Shared) -> SshResult<()> {
             msg::CHANNEL_EOF => {
                 let id = r.u32()?;
                 if let Some(c) = chans.get_mut(&id) {
+                    if let Kind::Forward { tcp, eof_out, eof_sent, .. } = &mut c.kind {
+                        let _ = tcp.shutdown(std::net::Shutdown::Write);
+                        *eof_out = true;
+                        if *eof_sent && c.out.is_empty() && !c.close_sent {
+                            t.send(&Writer::msg(msg::CHANNEL_CLOSE).u32(c.remote_id).finish())?;
+                            c.close_sent = true;
+                        }
+                        continue;
+                    }
                     match std::mem::replace(&mut c.kind, Kind::Done) {
                         Kind::Exec(cmd) => {
                             let stdin = std::mem::take(&mut c.stdin);
@@ -581,7 +743,7 @@ fn connection(t: &mut Transport<TcpStream>, sh: &Shared) -> SshResult<()> {
                         }
                         Kind::Shell(_) => c.finish = Some(0),
                         Kind::Sftp(_) | Kind::Session => c.finish = Some(0),
-                        Kind::Done => {}
+                        Kind::Forward { .. } | Kind::Done => {}
                     }
                 }
             }

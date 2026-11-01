@@ -525,3 +525,111 @@ fn openssh_certificates_user_and_host() {
     assert_eq!(c.execute("echo sshd cert", None).unwrap().stdout, b"sshd cert\n");
     c.disconnect();
 }
+
+/// A TCP echo server (each connection echoed until EOF); returns its port.
+fn echo_server() -> u16 {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            std::thread::spawn(move || {
+                let mut r = s.try_clone().unwrap();
+                let mut w = s;
+                let _ = std::io::copy(&mut r, &mut w);
+                let _ = w.shutdown(std::net::Shutdown::Write);
+            });
+        }
+    });
+    port
+}
+
+/// Sends `data` through `port` and reads the echo back.
+fn through(port: u16, data: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let s = loop {
+        match std::net::TcpStream::connect(("127.0.0.1", port)) {
+            Ok(s) => break s,
+            Err(e) if Instant::now() < deadline => {
+                let _ = e;
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => panic!("connect {}: {}", port, e),
+        }
+    };
+    s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let mut w = s.try_clone().unwrap();
+    let d = data.to_vec();
+    let h = std::thread::spawn(move || {
+        w.write_all(&d).unwrap();
+        w.shutdown(std::net::Shutdown::Write).unwrap();
+    });
+    let mut out = Vec::new();
+    let mut r = s;
+    let _ = r.read_to_end(&mut out);
+    h.join().unwrap();
+    out
+}
+
+#[test]
+fn port_forwarding_ours_and_openssh() {
+    let echo = echo_server();
+    let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    // our client <-> our server
+    let server = SshServer::start(SshServerConfig::default().user("test", "secret")).unwrap();
+    let ccfg = ClientConfig::new("127.0.0.1", server.port(), "test").password("secret");
+    let mut c = SshClient::connect(&ccfg).unwrap();
+    let id = c.open_direct_tcpip("127.0.0.1", echo, "127.0.0.1", 1234).unwrap();
+    c.write(id, b"direct").unwrap();
+    c.send_eof(id).unwrap();
+    assert_eq!(c.wait_close(id).unwrap().stdout, b"direct");
+    let mut fwd = c.start_local_forward("127.0.0.1:0", "127.0.0.1", echo).unwrap();
+    let lp = fwd.local_port.unwrap();
+    assert_eq!(through(lp, &data), data);
+    assert_eq!(through(lp, b"second connection"), b"second connection");
+    fwd.stop();
+    let c = SshClient::connect(&ccfg).unwrap();
+    let mut rfwd = c.start_remote_forward(0, "127.0.0.1", echo).unwrap();
+    let rp = rfwd.remote_port.unwrap();
+    assert_eq!(through(rp, &data), data);
+    rfwd.stop();
+    server.stop();
+
+    let (ssh, kg) = match (find("ssh"), find("ssh-keygen")) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return eprintln!("skipping: OpenSSH not installed"),
+    };
+    // OpenSSH ssh -L / -R against our server
+    let dir = temp_dir("interop-fwd");
+    let (ukey, upub) = openssh_key(&kg, &dir, "ed25519", None);
+    let server = SshServer::start(SshServerConfig::default().authorized_key("test", camel_ssh::SshPublicKey::from_openssh(&upub).unwrap()).host_key(SshPrivateKey::generate_ed25519())).unwrap();
+    fs::write(dir.join("known_hosts"), server.known_hosts_text("127.0.0.1")).unwrap();
+    for (flag, check_port) in [("-L", free_port()), ("-R", free_port())] {
+        let spec = format!("{}:127.0.0.1:{}", check_port, echo);
+        let mut child = Command::new(&ssh)
+            .args(ssh_args(&dir, &dir.join("user_ed25519")))
+            .args(["-N", "-o", "ExitOnForwardFailure=yes", flag, &spec, "-p", &server.port().to_string(), "test@127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        assert_eq!(through(check_port, &data), data, "ssh {}", flag);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    server.stop();
+
+    // our client against OpenSSH sshd: local and remote forwards
+    let sshd = match start_sshd(&[upub]) {
+        Some(s) => s,
+        None => return,
+    };
+    let cfg = ClientConfig::new("127.0.0.1", sshd.port, &current_user()).private_key(ukey);
+    let mut fwd = SshClient::connect(&cfg).unwrap().start_local_forward("127.0.0.1:0", "127.0.0.1", echo).unwrap();
+    assert_eq!(through(fwd.local_port.unwrap(), &data), data);
+    fwd.stop();
+    let mut rfwd = SshClient::connect(&cfg).unwrap().start_remote_forward(0, "127.0.0.1", echo).unwrap();
+    assert_eq!(through(rfwd.remote_port.unwrap(), &data), data);
+    rfwd.stop();
+}
