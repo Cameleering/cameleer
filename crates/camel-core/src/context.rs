@@ -508,6 +508,23 @@ impl Default for CamelContext {
     }
 }
 
+/// `queue-size` -> `queueSize`.
+pub fn dashed_to_camel_case(s: &str) -> String {
+    let mut out = String::new();
+    let mut up = false;
+    for c in s.chars() {
+        if c == '-' {
+            up = true;
+        } else if up {
+            out.extend(c.to_uppercase());
+            up = false;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 static CONTEXT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 impl CamelContext {
@@ -663,6 +680,34 @@ impl CamelContext {
         Some(c)
     }
 
+    /// Set a component-level option (Camel `camel.component.<scheme>.<option>`): used as the
+    /// default of the endpoint option with the same name for endpoints created afterwards.
+    pub fn set_component_option(&self, scheme: &str, option: &str, value: impl Into<String>) {
+        self.set_global_option(format!("camel.component.{}.{}", scheme, option), value);
+    }
+
+    /// The component-level options of a scheme: `set_component_option` values and
+    /// `camel.component.<scheme>.<option>` properties (dashed names are accepted:
+    /// `queue-size` = `queueSize`).
+    pub fn component_options(&self, scheme: &str) -> BTreeMap<String, String> {
+        let prefix = format!("camel.component.{}.", scheme);
+        let mut out = BTreeMap::new();
+        let mut add = |k: &str, v: &str| {
+            if let Some(opt) = k.strip_prefix(&prefix) {
+                if !opt.is_empty() && !opt.contains('.') {
+                    out.insert(dashed_to_camel_case(opt), self.resolve_placeholders(v).unwrap_or_else(|_| v.to_string()));
+                }
+            }
+        };
+        for (k, v) in self.inner.properties.all() {
+            add(&k, &v);
+        }
+        for (k, v) in self.inner.global_options.read().unwrap().iter() {
+            add(k, v);
+        }
+        out
+    }
+
     /// Typed access to a component.
     pub fn component<T: 'static>(&self, scheme: &str) -> Option<Arc<dyn Component>> {
         self.get_component(scheme).filter(|c| c.as_any().is::<T>())
@@ -683,6 +728,18 @@ impl CamelContext {
             CamelError::resolve_endpoint_failed(&key, format!("No component found with scheme: {}", parsed.scheme))
         })?;
         let mut params = Parameters::new(parsed.params.clone());
+        // component-level options (`camel.component.<scheme>.<option>` properties or
+        // `set_component_option`) are defaults for endpoint options not given in the uri;
+        // ones the endpoint does not know are ignored
+        let mut injected = Vec::new();
+        if !component.lenient_properties() {
+            for (k, v) in self.component_options(&parsed.scheme) {
+                if params.get(&k).is_none() {
+                    params.insert(k.clone(), v);
+                    injected.push(k);
+                }
+            }
+        }
         let endpoint = component
             .create_endpoint(self, &key, &parsed.path, &mut params)
             .map_err(|e| {
@@ -692,6 +749,9 @@ impl CamelContext {
                     CamelError::resolve_endpoint_failed(&key, &e.message).with_cause(e)
                 }
             })?;
+        for k in injected {
+            params.take(&k);
+        }
         if !params.is_empty() && !component.lenient_properties() {
             let unknown: Vec<String> = params.keys().cloned().collect();
             return Err(CamelError::resolve_endpoint_failed(
