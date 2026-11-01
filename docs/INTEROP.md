@@ -27,7 +27,9 @@ script). Every account uses the password `camelpw` (system users `camelftp` and 
 
 ## Results
 
-Run on 2026-11-01. All 45 live tests pass (`CAMEL_LIVE_INTEROP=1 cargo test --workspace live_`).
+Run on 2026-11-01. All 70 live tests pass (`CAMEL_LIVE_INTEROP=1 cargo test --workspace live_`), including
+17 against Apache ActiveMQ 5.17; the 6 ActiveMQ AMQP 1.0 tests skip because the broker has no
+AMQP module (see below).
 
 | Server (version) | Components | What was verified | Result |
 |---|---|---|---|
