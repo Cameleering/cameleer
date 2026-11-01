@@ -63,13 +63,16 @@ pub fn install_globals(it: &mut Interp) {
             it.globals.define("Infinity", V::Num(f64::INFINITY));
             crate::jsext::install(it);
         }
-        Dialect::Groovy => def_ns(
-            it,
-            &[
-                "Math", "Integer", "Long", "Double", "Float", "Boolean", "String", "BigDecimal", "BigInteger", "List", "Map", "Set", "Date", "Object", "Number", "System", "UUID",
-                "JsonSlurper", "JsonOutput", "Collections", "Arrays", "Pattern", "println", "print", "sprintf",
-            ],
-        ),
+        Dialect::Groovy => {
+            def_ns(
+                it,
+                &[
+                    "Math", "Integer", "Long", "Double", "Float", "Boolean", "String", "BigDecimal", "BigInteger", "List", "Map", "Set", "Date", "Object", "Number", "System", "UUID",
+                    "JsonSlurper", "JsonOutput", "Collections", "Arrays", "Pattern", "println", "print", "sprintf",
+                ],
+            );
+            crate::groovyext::install(it);
+        }
         Dialect::Python => {
             def_ns(
                 it,
@@ -2020,6 +2023,16 @@ pub fn construct_type(it: &mut Interp, n: &str, args: Vec<V>, pos: u32) -> R<V> 
     if n == "Object" {
         return Ok(V::new_obj());
     }
+    if n == "Expando" && it.d == Dialect::Groovy {
+        // a dynamic bean: properties and closures (called as methods) can be added freely
+        let props = match args.first() {
+            Some(V::Obj(o)) => o.borrow().props.clone(),
+            _ => PropMap::default(),
+        };
+        let mut marker = Obj::new();
+        marker.props.set("%expando", V::Bool(true));
+        return Ok(V::Obj(new_obj_ref(Obj { props, proto: Some(new_obj_ref(marker)), kind: ObjKind::Plain })));
+    }
     let msg = match it.d {
         Dialect::Groovy => format!("unable to resolve class {}", n),
         _ => format!("{} is not a constructor", n),
@@ -2839,6 +2852,9 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
         }
         if let Some(v) = crate::jsext::internal_method(it, recv, name, &args, pos)? {
             return Ok(v);
+        }
+        if name == "%groovy_use" {
+            return it.groovy_use(&args, pos);
         }
     }
     if let V::Obj(o) = recv {

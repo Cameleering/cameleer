@@ -264,6 +264,14 @@ impl Parser {
             return Ok(Stmt::Empty);
         }
         let d = self.d;
+        if d == Dialect::Groovy && self.is_p("@") && !self.is_groovy_type_decl_start() {
+            // statement annotations: `@Grab` cannot work without a JVM; others are ignored
+            let names = self.parse_groovy_annotations()?;
+            if let Some(g) = names.iter().find(|n| matches!(n.as_str(), "Grab" | "Grapes" | "GrabResolver" | "GrabConfig" | "GrabExclude")) {
+                return self.err(format!("@{} is not supported: rust-camel Groovy scripts are interpreted without a JVM, so dependencies cannot be downloaded or loaded (use the built-in GDK / Camel bindings instead)", g));
+            }
+            return self.parse_statement();
+        }
         if d == Dialect::Groovy && self.is_groovy_type_decl_start() {
             let annotations = self.parse_groovy_annotations()?;
             let c = self.parse_groovy_class(annotations)?;
@@ -375,7 +383,7 @@ impl Parser {
                     self.eat_p(";");
                     return Ok(Stmt::Empty);
                 }
-                "yield" if d == Dialect::Java && !matches!(self.peek_at(1), T::P("=") | T::P("(") | T::P(".") | T::P(";")) => {
+                "yield" if matches!(d, Dialect::Java | Dialect::Groovy) && !matches!(self.peek_at(1), T::P("=") | T::P("(") | T::P(".") | T::P(";")) => {
                     // value of a switch expression arm
                     self.next();
                     let e = self.parse_expr()?;
@@ -769,6 +777,41 @@ impl Parser {
         }
         let after = self.tok_at(n + 1);
         after.nl || matches!(after.t, T::P("=") | T::P(";") | T::P("(") | T::P(",") | T::Eof | T::P("}") | T::P(":") | T::P(")")) || matches!(&after.t, T::Ident(x) if x == "in")
+    }
+
+    /// Consume a (qualified, generic, array) type name; returns its simple name with `[]`s.
+    fn capture_type(&mut self) -> String {
+        let mut name = match self.next() {
+            T::Ident(w) => w,
+            _ => return String::new(),
+        };
+        while self.is_p(".") && matches!(self.peek_at(1), T::Ident(_)) {
+            self.next();
+            if let T::Ident(w) = self.next() {
+                name = w;
+            }
+        }
+        if self.is_p("<") {
+            let mut depth = 0;
+            loop {
+                match self.next() {
+                    T::P("<") => depth += 1,
+                    T::P(">") => depth -= 1,
+                    T::P(">>") => depth -= 2,
+                    T::Eof => break,
+                    _ => {}
+                }
+                if depth <= 0 {
+                    break;
+                }
+            }
+        }
+        while self.is_p("[") && self.is_p_at(1, "]") {
+            self.next();
+            self.next();
+            name.push_str("[]");
+        }
+        name
     }
 
     fn skip_groovy_type(&mut self) {
@@ -1274,7 +1317,7 @@ impl Parser {
     }
 
     fn parse_switch(&mut self) -> R<Stmt> {
-        if self.d == Dialect::Java && self.switch_has_arrows() {
+        if matches!(self.d, Dialect::Java | Dialect::Groovy) && self.switch_has_arrows() {
             let e = self.parse_java_switch(true)?;
             self.eat_p(";");
             return Ok(Stmt::Expr(e));
@@ -1401,6 +1444,9 @@ impl Parser {
             if self.at_eof() {
                 return self.err("unterminated switch");
             }
+            if self.eat_p(";") {
+                continue;
+            }
             let mut labels = Vec::new();
             if self.eat_kw("default") {
                 has_default = true;
@@ -1436,7 +1482,11 @@ impl Parser {
                     vec![self.parse_statement()?]
                 } else {
                     let e = self.parse_expr()?;
-                    self.expect_p(";")?;
+                    if self.d == Dialect::Groovy {
+                        self.consume_semi()?;
+                    } else {
+                        self.expect_p(";")?;
+                    }
                     vec![Stmt::Expr(e)]
                 }
             } else {
@@ -1563,14 +1613,14 @@ impl Parser {
                         self.next();
                     }
                 }
-                params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+                params.push(Param { pat: Pat::Id(self.ident()?), default: None, ty: None });
                 if !self.eat_p(",") {
                     break;
                 }
             }
             self.expect_p(")")?;
         } else {
-            params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+            params.push(Param { pat: Pat::Id(self.ident()?), default: None, ty: None });
         }
         self.expect_p("->")?;
         let body = if self.is_p("{") { FuncBody::Block(self.parse_block_body()?) } else { FuncBody::Expr(Box::new(self.parse_assign()?)) };
@@ -1709,9 +1759,40 @@ impl Parser {
                 rest = Some(self.parse_binding_pattern()?);
                 break;
             }
+            // Groovy / Java declared parameter types (overload resolution) and varargs `T... xs`
+            let mut ty = None;
+            if self.typed_like() {
+                while self.is_p("@") {
+                    self.next();
+                    self.qualified_name()?;
+                    if self.is_p("(") {
+                        self.skip_balanced()?;
+                    }
+                }
+                if self.is_kw("final") {
+                    self.next();
+                }
+                let varargs = matches!(self.peek(), T::Ident(_)) && {
+                    let mut n = 1;
+                    while self.is_p_at(n, ".") && matches!(self.peek_at(n + 1), T::Ident(_)) {
+                        n += 2;
+                    }
+                    self.is_p_at(n, "...")
+                };
+                if varargs {
+                    let t = self.capture_type();
+                    self.expect_p("...")?;
+                    let _ = t;
+                    rest = Some(Pat::Id(self.ident()?));
+                    break;
+                }
+                if self.is_groovy_typed_decl() {
+                    ty = Some(self.capture_type());
+                }
+            }
             let pat = self.parse_binding_pattern()?;
             let default = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
-            params.push(Param { pat, default });
+            params.push(Param { pat, default, ty });
             if !self.eat_p(",") {
                 break;
             }
@@ -1790,7 +1871,7 @@ impl Parser {
                 self.skip_groovy_type();
                 let name = self.ident()?;
                 let default = if self.eat_p("=") { Some(self.parse_cond()?) } else { None };
-                params.push(Param { pat: Pat::Id(name), default });
+                params.push(Param { pat: Pat::Id(name), default, ty: None });
                 if !self.eat_p(",") {
                     break;
                 }
@@ -1874,7 +1955,7 @@ impl Parser {
                 self.next();
                 let name = self.ident()?;
                 self.next();
-                return self.parse_arrow_body_async(vec![Param { pat: Pat::Id(name), default: None }], None, true);
+                return self.parse_arrow_body_async(vec![Param { pat: Pat::Id(name), default: None, ty: None }], None, true);
             }
             if self.is_p_at(1, "(") {
                 let save = self.i;
@@ -1891,7 +1972,7 @@ impl Parser {
             if matches!(self.peek(), T::Ident(w) if !JS_KEYWORDS.contains(&w.as_str())) && self.is_p_at(1, "=>") {
                 let name = self.ident()?;
                 self.next();
-                return self.parse_arrow_body(vec![Param { pat: Pat::Id(name), default: None }], None);
+                return self.parse_arrow_body(vec![Param { pat: Pat::Id(name), default: None, ty: None }], None);
             }
             if self.is_p("(") && self.is_arrow_ahead() {
                 let (params, rest) = self.parse_params()?;
@@ -2235,7 +2316,11 @@ impl Parser {
         let save = self.no_in;
         self.no_in = false;
         while !self.is_p(")") {
-            if self.eat_p("...") || (self.d == Dialect::Groovy && self.is_p("*") && self.eat_p("*")) {
+            if self.d == Dialect::Groovy && self.is_p("*") && self.is_p_at(1, ":") {
+                self.next();
+                self.next();
+                named.push(Prop::Spread(self.parse_assign()?));
+            } else if self.eat_p("...") || (self.d == Dialect::Groovy && self.is_p("*") && self.eat_p("*")) {
                 args.push(Elem::Spread(self.parse_assign()?));
             } else if self.d == Dialect::Groovy && matches!(self.peek(), T::Ident(_) | T::Str(_)) && self.is_p_at(1, ":") {
                 let k = match self.next() {
@@ -2306,6 +2391,14 @@ impl Parser {
                     e = Expr::Member { obj: Box::new(e), name, optional, pos };
                 }
                 T::P("?.[") => {
+                    self.next();
+                    let idx = self.parse_expr()?;
+                    self.expect_p("]")?;
+                    e = Expr::Index { obj: Box::new(e), index: Box::new(idx), optional: true, pos };
+                }
+                T::P("?") if self.d == Dialect::Groovy && self.is_p_at(1, "[") && self.tok_at(1).pos == self.tok_at(0).pos + 1 && !self.ternary_after_bracket() => {
+                    // Groovy safe index `list?[i]`
+                    self.next();
                     self.next();
                     let idx = self.parse_expr()?;
                     self.expect_p("]")?;
@@ -2582,7 +2675,7 @@ impl Parser {
                         let c = self.parse_class()?;
                         return Ok(Expr::Class(Arc::new(c)));
                     }
-                    "switch" if d == Dialect::Java => {
+                    "switch" if d == Dialect::Java || (d == Dialect::Groovy && self.is_p("(")) => {
                         self.i -= 1;
                         return self.parse_java_switch(false);
                     }
@@ -2723,10 +2816,20 @@ impl Parser {
             self.next();
             return Ok(Expr::Object(vec![]));
         }
-        let is_map_entry = |p: &Parser| groovy && matches!(p.peek(), T::Ident(_) | T::Str(_) | T::Int(_) | T::Num(_)) && p.is_p_at(1, ":");
+        let is_map_entry = |p: &Parser| groovy && (matches!(p.peek(), T::Ident(_) | T::Str(_) | T::Int(_) | T::Num(_)) && p.is_p_at(1, ":") || p.is_p("*") && p.is_p_at(1, ":"));
         if is_map_entry(self) || (groovy && self.is_p("(") && self.paren_then_colon()) {
             let mut props = Vec::new();
             while !self.is_p("]") {
+                if self.is_p("*") && self.is_p_at(1, ":") {
+                    // spread map entry `*: otherMap`
+                    self.next();
+                    self.next();
+                    props.push(Prop::Spread(self.parse_assign()?));
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                    continue;
+                }
                 let key = if self.is_p("(") {
                     self.next();
                     let k = self.parse_expr()?;
@@ -2768,6 +2871,26 @@ impl Parser {
         }
         self.expect_p("]")?;
         Ok(Expr::Array(items))
+    }
+
+    /// At `?` `[`: whether the bracket group is followed by `:` (a ternary with a list literal).
+    fn ternary_after_bracket(&self) -> bool {
+        let mut depth = 0;
+        let mut n = 1;
+        loop {
+            match self.peek_at(n) {
+                T::P("(") | T::P("[") | T::P("{") => depth += 1,
+                T::P(")") | T::P("]") | T::P("}") => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.is_p_at(n + 1, ":");
+                    }
+                }
+                T::Eof => return false,
+                _ => {}
+            }
+            n += 1;
+        }
     }
 
     fn paren_then_colon(&self) -> bool {

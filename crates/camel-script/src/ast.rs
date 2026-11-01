@@ -276,6 +276,8 @@ pub enum Pat {
 pub struct Param {
     pub pat: Pat,
     pub default: Option<Expr>,
+    /// Declared type (Groovy / Java), used for overload resolution.
+    pub ty: Option<String>,
 }
 
 /// Function body.

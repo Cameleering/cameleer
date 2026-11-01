@@ -121,6 +121,7 @@ impl Interp {
             cenv.define(n, class_v.clone());
         }
         self.track_env_pub(&cenv);
+        let mut seen_methods: Vec<(String, bool)> = Vec::new();
         for m in &c.methods {
             let mname = match &m.key {
                 Some(k) => {
@@ -156,6 +157,13 @@ impl Interp {
                     }
                 }
                 _ => {
+                    // Groovy / Java: methods declared several times are overloads
+                    let existing = if on_class { closure.props.borrow().get(&m.name).cloned() } else { proto.borrow().props.get(&m.name).cloned() };
+                    let f = match existing {
+                        Some(prev @ V::Func(_)) if !py && seen_methods.contains(&(m.name.clone(), on_class)) => self.add_overload(&prev, f),
+                        _ => f,
+                    };
+                    seen_methods.push((m.name.clone(), on_class));
                     if on_class {
                         closure.props.borrow_mut().set(&m.name, f);
                     } else {
@@ -301,6 +309,7 @@ impl Interp {
             }
             ClassStyle::Groovy => {
                 self.groovy_construct(c, &def, &this, args, pos)?;
+                self.groovy_after_construct(&def, &this);
             }
         }
         Ok(this)
@@ -377,7 +386,7 @@ impl Interp {
 
     fn groovy_construct(&mut self, c: &Rc<Closure>, def: &Arc<ClassDef>, this: &V, args: Vec<V>, pos: u32) -> R<()> {
         let named = matches!(args.as_slice(), [V::Obj(o)] if o.borrow().kind == ObjKind::Plain && o.borrow().proto.is_none());
-        let ctor = def.ctors.iter().find(|f| f.params.len() == args.len() || (f.rest.is_some() && args.len() >= f.params.len())).cloned();
+        let ctor = if def.ctors.len() > 1 { self.select_ctor(&def.ctors, &args) } else { def.ctors.iter().find(|f| f.params.len() == args.len() || (f.rest.is_some() && args.len() >= f.params.len())).cloned() };
         match ctor {
             Some(f) => {
                 // implicit super(): call the parent's no-arg constructor unless the body calls super(...)
@@ -725,7 +734,8 @@ impl Interp {
                 // closures run by `with` / `tap` / metaclass methods: the delegate's properties
                 let del = sc.vars.borrow().get("delegate").cloned();
                 if let Some(d @ V::Obj(_)) = del {
-                    if class_of(&d).is_some() {
+                    let expando = matches!(&d, V::Obj(o) if o.borrow().proto.as_ref().is_some_and(|p| p.borrow().props.contains("%expando")));
+                    if class_of(&d).is_some() || expando {
                         let V::Obj(o) = &d else { unreachable!() };
                         if let Some(v) = o.borrow().props.get(name) {
                             return Some(v.clone());

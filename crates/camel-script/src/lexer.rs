@@ -46,7 +46,7 @@ const PUNCTS: &[&str] = &[
 fn punct_allowed(p: &str, d: Dialect) -> bool {
     match p {
         ">>>=" | ">>>" => matches!(d, Dialect::Js | Dialect::Java),
-        "..." => matches!(d, Dialect::Js | Dialect::Java),
+        "..." => matches!(d, Dialect::Js | Dialect::Java | Dialect::Groovy),
         "::" => d == Dialect::Java,
         "===" | "!==" | "=>" | "??" | "??=" | "&&=" | "||=" => d == Dialect::Js,
         "..<" | "<=>" | "==~" | "=~" | "*." => d == Dialect::Groovy,

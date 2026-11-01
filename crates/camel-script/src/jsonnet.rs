@@ -279,7 +279,7 @@ impl P {
         while !self.is_op(")") {
             let n = self.id()?;
             let default = if self.eat_op("=") { Some(self.expr()?) } else { None };
-            v.push(Param { pat: Pat::Id(n), default });
+            v.push(Param { pat: Pat::Id(n), default, ty: None });
             if !self.eat_op(",") {
                 break;
             }

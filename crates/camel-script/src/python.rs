@@ -931,7 +931,7 @@ impl P {
         while !self.is_op(close) {
             if self.eat_op("**") {
                 let n = self.name()?;
-                params.push(Param { pat: Pat::Id(n), default: Some(Expr::Object(vec![])) });
+                params.push(Param { pat: Pat::Id(n), default: Some(Expr::Object(vec![])), ty: None });
             } else if self.eat_op("*") {
                 if let PT::Name(_) = self.peek() {
                     rest = Some(Pat::Id(self.name()?));
@@ -942,7 +942,7 @@ impl P {
                     self.test()?;
                 }
                 let default = if self.eat_op("=") { Some(self.test()?) } else { None };
-                params.push(Param { pat: Pat::Id(n), default });
+                params.push(Param { pat: Pat::Id(n), default, ty: None });
             }
             if !self.eat_op(",") {
                 break;

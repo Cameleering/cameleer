@@ -118,6 +118,10 @@ pub struct Interp {
     pub script_dir: Option<std::path::PathBuf>,
     /// Extra properties of arrays (tagged template `raw`, regex match `index` / `groups`), by array address.
     pub arr_extra: HashMap<usize, (V, PropMap)>,
+    /// Groovy `@Immutable` instances (read-only after construction), by address.
+    pub frozen: HashMap<usize, std::rc::Weak<RefCell<Obj>>>,
+    /// Groovy categories of the enclosing `use(...) {}` blocks.
+    pub categories: Vec<V>,
 }
 
 /// JavaScript number to string.
@@ -225,6 +229,8 @@ impl Interp {
             module_dirs: Vec::new(),
             script_dir: None,
             arr_extra: HashMap::new(),
+            frozen: HashMap::new(),
+            categories: Vec::new(),
         };
         crate::builtins::install_globals(&mut it);
         it
@@ -346,10 +352,21 @@ impl Interp {
     }
 
     fn hoist(&mut self, stmts: &[Stmt], env: &Env) {
+        let mut seen: Vec<&str> = Vec::new();
         for s in stmts {
             if let Stmt::Func(f) = s {
                 if let Some(n) = &f.name {
                     let c = self.make_closure(f.clone(), env);
+                    // Groovy / Java: same-named methods of one scope are overloads
+                    if self.d.groovy_like() && seen.contains(&n.as_str()) {
+                        let prev = env.vars.borrow().get(n.as_str()).cloned();
+                        if let Some(prev) = prev {
+                            let d = self.add_overload(&prev, c);
+                            env.define(n, d);
+                            continue;
+                        }
+                    }
+                    seen.push(n);
                     env.define(n, c);
                 }
             }
@@ -982,6 +999,13 @@ impl Interp {
                 }
                 self.construct_class(c, args, pos)
             }
+            V::Func(c) if c.props.borrow().contains("%overloads") => {
+                let cands = crate::overload::candidates(c).unwrap_or_default();
+                match self.select_overload(&cands, &args) {
+                    Some(k) => self.call_closure(&k, this, args, pos),
+                    None => self.no_overload(c, &args, pos),
+                }
+            }
             V::Func(c) => self.call_closure(c, this, args, pos),
             V::Obj(_) if crate::jsext::is_proxy(f) => crate::jsext::proxy_call(self, f, this, args, pos),
             V::Obj(_) if self.user_method(f, if self.d == Dialect::Python { "__call__" } else { "call" }).is_some() => {
@@ -1188,6 +1212,17 @@ impl Interp {
                         return self.call(&f, recv.clone(), args, pos);
                     }
                 }
+                if self.d == Dialect::Groovy {
+                    if o.borrow().props.contains("%builder") {
+                        let o = o.clone();
+                        if let Some(v) = self.groovy_builder_method(&o, recv, name, &args, pos)? {
+                            return Ok(v);
+                        }
+                    }
+                    if let Some(v) = self.groovy_transform_method(recv, name, &args, pos)? {
+                        return Ok(v);
+                    }
+                }
                 if self.d.groovy_like() {
                     if let Some(v) = self.groovy_method_fallback(recv, name, &args, pos)? {
                         return Ok(v);
@@ -1224,6 +1259,11 @@ impl Interp {
                 }
                 if name == "new" {
                     return self.construct_class(c, args, pos);
+                }
+                if self.d == Dialect::Groovy {
+                    if let Some(v) = self.groovy_class_call(c, name, &args, pos)? {
+                        return Ok(v);
+                    }
                 }
             }
             V::Func(c) => {
@@ -1270,6 +1310,11 @@ impl Interp {
                 return self.call(&m, recv.clone(), args, pos);
             }
         }
+        if !self.categories.is_empty() {
+            if let Some(v) = self.category_call(recv, name, &args, pos)? {
+                return Ok(v);
+            }
+        }
         crate::builtins::call_method(self, recv, name, args, pos)
     }
 
@@ -1288,6 +1333,10 @@ impl Interp {
                     if let Some(v) = crate::jsext::get_member(self, o, name, pos)? {
                         return Ok(v);
                     }
+                }
+                if self.d == Dialect::Groovy && name == "metaClass" && ob.borrow().proto.is_some() {
+                    // per-instance metaclass: closures assigned to it become methods of the instance
+                    return Ok(o.clone());
                 }
                 if let (Some(field), Dialect::Groovy) = (name.strip_prefix('@'), self.d) {
                     return Ok(ob.borrow().props.get(field).cloned().unwrap_or(V::Null));
@@ -1359,6 +1408,11 @@ impl Interp {
                         return self.get_member(&pv, name, pos);
                     }
                 }
+                if c.flavor == Flavor::Class && self.d == Dialect::Groovy {
+                    if let Some(v) = self.groovy_class_property(c, name, pos)? {
+                        return Ok(v);
+                    }
+                }
                 match name {
                     "name" => Ok(V::str(c.def.name.as_deref().unwrap_or(""))),
                     "length" => Ok(V::Int(c.def.params.len() as i64)),
@@ -1382,6 +1436,9 @@ impl Interp {
         if let V::Obj(ob) = o {
             if crate::jsext::is_ext(ob) && crate::jsext::set_index(self, o, &V::str(name), v.clone(), pos)? {
                 return Ok(());
+            }
+            if self.d == Dialect::Groovy && self.is_frozen(ob) {
+                return self.frozen_error(o, name, pos);
             }
         }
         match o {
