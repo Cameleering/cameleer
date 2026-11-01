@@ -11,11 +11,17 @@
 //!   `BOOLEAN`, `DOUBLE`/`FLOAT`/`REAL`, `DECIMAL(p,s)`/`NUMERIC`, `TIMESTAMP`/`DATE`, `BYTEA`/`BLOB`;
 //!   column constraints `PRIMARY KEY`, `NOT NULL`, `UNIQUE`, `DEFAULT expr` (`REFERENCES`/`CHECK`
 //!   are parsed and ignored); table constraints `PRIMARY KEY (..)`, `UNIQUE (..)`.
-//! * `DROP TABLE [IF EXISTS]`, `TRUNCATE`, `CREATE INDEX`/`ALTER` (accepted, no-op).
+//! * `DROP TABLE [IF EXISTS]`, `TRUNCATE`, `CREATE INDEX` (accepted, no-op), `ALTER TABLE [IF EXISTS] t
+//!   ADD [COLUMN] [IF NOT EXISTS] | DROP [COLUMN] [IF EXISTS] | RENAME [COLUMN] a TO b | RENAME TO n |
+//!   ALTER [COLUMN] c SET/DROP DEFAULT, SET/DROP NOT NULL, [SET DATA] TYPE t | ADD [CONSTRAINT n]
+//!   PRIMARY KEY/UNIQUE (..) | DROP CONSTRAINT n` (undone by ROLLBACK).
 //! * `INSERT INTO t [(cols)] VALUES (..), (..) | SELECT ... | DEFAULT VALUES [RETURNING ..]`.
-//! * `SELECT [DISTINCT] ... FROM t [alias] [INNER|LEFT|RIGHT|CROSS JOIN ... ON|USING] WHERE ...
+//! * `[WITH [RECURSIVE] name [(cols)] AS (query), ...] SELECT [DISTINCT] ... FROM t [alias]
+//!   [INNER|LEFT|RIGHT|FULL [OUTER]|CROSS JOIN ... ON|USING] WHERE ...
 //!   GROUP BY ... HAVING ... ORDER BY ... [ASC|DESC] [NULLS FIRST|LAST] LIMIT n OFFSET m`,
-//!   `UNION [ALL]`, subqueries (`IN (SELECT ..)`, `EXISTS`, scalar, in FROM), `FOR UPDATE` (no-op).
+//!   `UNION [ALL]`, subqueries (`IN (SELECT ..)`, `EXISTS`, scalar, in FROM), `FOR UPDATE` (no-op),
+//!   window functions `f(..) OVER ([PARTITION BY ..] [ORDER BY ..])` (ranking, offset, value and
+//!   aggregate functions, default frame).
 //! * Expressions: `AND`/`OR`/`NOT`, comparisons, `LIKE`/`ILIKE`, `IN`, `BETWEEN`, `IS [NOT] NULL`,
 //!   arithmetic, `||`, `CASE`, `CAST(x AS t)`/`x::t`, functions `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`,
 //!   `STRING_AGG`, `UPPER`, `LOWER`, `LENGTH`, `COALESCE`, `NULLIF`, `NOW`/`CURRENT_TIMESTAMP`,

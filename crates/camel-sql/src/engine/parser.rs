@@ -179,6 +179,7 @@ impl Parser {
                 let name = self.table_name()?;
                 Ok(Statement::Truncate { name })
             }
+            "ALTER" if matches!(self.peek_at(1), Tok::Ident(ref w) if w.eq_ignore_ascii_case("TABLE")) => self.alter_table(),
             "ALTER" | "SET" | "COMMENT" | "ANALYZE" | "VACUUM" | "GRANT" => {
                 self.advance();
                 while !self.at_eof() && !self.is_op(";") {
@@ -619,7 +620,133 @@ impl Parser {
 
     // ------------------------------------------------------------------ SELECT
 
+    pub(crate) fn alter_table(&mut self) -> SqlResult<Statement> {
+        self.expect_kw("ALTER")?;
+        self.expect_kw("TABLE")?;
+        let mut if_exists = false;
+        if self.eat_kw("IF") {
+            self.expect_kw("EXISTS")?;
+            if_exists = true;
+        }
+        self.eat_kw("ONLY");
+        let name = self.table_name()?;
+        let action = if self.eat_kw("ADD") {
+            if self.is_kw("CONSTRAINT") || self.is_kw("PRIMARY") || self.is_kw("UNIQUE") || self.is_kw("FOREIGN") || self.is_kw("CHECK") {
+                let cname = if self.eat_kw("CONSTRAINT") { Some(self.ident("constraint name")?) } else { None };
+                if self.eat_kw("PRIMARY") {
+                    self.expect_kw("KEY")?;
+                    AlterAction::AddConstraint { name: cname, constraint: TableConstraint::PrimaryKey(self.ident_list()?) }
+                } else if self.eat_kw("UNIQUE") {
+                    AlterAction::AddConstraint { name: cname, constraint: TableConstraint::Unique(self.ident_list()?) }
+                } else {
+                    // FOREIGN KEY / CHECK: accepted, not enforced
+                    while !self.at_eof() && !self.is_op(";") {
+                        self.advance();
+                    }
+                    return Ok(Statement::NoOp { command: "ALTER TABLE".into() });
+                }
+            } else {
+                self.eat_kw("COLUMN");
+                let mut if_not_exists = false;
+                if self.eat_kw("IF") {
+                    self.expect_kw("NOT")?;
+                    self.expect_kw("EXISTS")?;
+                    if_not_exists = true;
+                }
+                AlterAction::AddColumn { def: self.column_def()?, if_not_exists }
+            }
+        } else if self.eat_kw("DROP") {
+            if self.eat_kw("CONSTRAINT") {
+                let mut ie = false;
+                if self.eat_kw("IF") {
+                    self.expect_kw("EXISTS")?;
+                    ie = true;
+                }
+                AlterAction::DropConstraint { name: self.ident("constraint name")?, if_exists: ie }
+            } else {
+                self.eat_kw("COLUMN");
+                let mut ie = false;
+                if self.eat_kw("IF") {
+                    self.expect_kw("EXISTS")?;
+                    ie = true;
+                }
+                let col = self.ident("column name")?;
+                if !self.eat_kw("CASCADE") {
+                    self.eat_kw("RESTRICT");
+                }
+                AlterAction::DropColumn { name: col, if_exists: ie }
+            }
+        } else if self.eat_kw("RENAME") {
+            if self.eat_kw("TO") {
+                AlterAction::RenameTable { to: self.ident("table name")? }
+            } else {
+                self.eat_kw("COLUMN");
+                let from = self.ident("column name")?;
+                self.expect_kw("TO")?;
+                AlterAction::RenameColumn { from, to: self.ident("column name")? }
+            }
+        } else if self.eat_kw("ALTER") || self.eat_kw("MODIFY") {
+            self.eat_kw("COLUMN");
+            let column = self.ident("column name")?;
+            if self.eat_kw("SET") {
+                if self.eat_kw("DEFAULT") {
+                    AlterAction::SetDefault { column, default: Some(self.expr()?) }
+                } else if self.eat_kw("NOT") {
+                    self.expect_kw("NULL")?;
+                    AlterAction::SetNotNull { column, not_null: true }
+                } else {
+                    self.expect_kw("DATA")?;
+                    self.expect_kw("TYPE")?;
+                    AlterAction::SetType { column, ty: self.data_type()?.0 }
+                }
+            } else if self.eat_kw("DROP") {
+                if self.eat_kw("DEFAULT") {
+                    AlterAction::SetDefault { column, default: None }
+                } else {
+                    self.expect_kw("NOT")?;
+                    self.expect_kw("NULL")?;
+                    AlterAction::SetNotNull { column, not_null: false }
+                }
+            } else {
+                self.eat_kw("TYPE");
+                let ty = self.data_type()?.0;
+                if self.eat_kw("USING") {
+                    self.expr()?;
+                }
+                AlterAction::SetType { column, ty }
+            }
+        } else {
+            return Err(self.unexpected("ADD, DROP, RENAME or ALTER"));
+        };
+        Ok(Statement::AlterTable { name, if_exists, action })
+    }
+
     pub(crate) fn select(&mut self) -> SqlResult<Select> {
+        if self.eat_kw("WITH") {
+            let recursive = self.eat_kw("RECURSIVE");
+            let mut ctes = Vec::new();
+            loop {
+                let name = self.ident("CTE name")?;
+                let columns = if self.is_op("(") { Some(self.ident_list()?) } else { None };
+                self.expect_kw("AS")?;
+                if self.eat_kw("NOT") {
+                    self.expect_kw("MATERIALIZED")?;
+                } else {
+                    self.eat_kw("MATERIALIZED");
+                }
+                self.expect_op("(")?;
+                let query = self.select()?;
+                self.expect_op(")")?;
+                ctes.push(Cte { name, columns, query: Box::new(query), recursive });
+                if !self.eat_op(",") {
+                    break;
+                }
+            }
+            let mut main = self.select()?;
+            ctes.extend(std::mem::take(&mut main.ctes));
+            main.ctes = ctes;
+            return Ok(main);
+        }
         let mut s = self.select_core()?;
         loop {
             if self.eat_kw("UNION") {
@@ -772,7 +899,10 @@ impl Parser {
                     self.expect_kw("JOIN")?;
                     JoinKind::Cross
                 } else if self.is_kw("FULL") {
-                    return Err(SqlErr::new("0A000", "FULL JOIN is not supported"));
+                    self.advance();
+                    self.eat_kw("OUTER");
+                    self.expect_kw("JOIN")?;
+                    JoinKind::Full
                 } else {
                     break;
                 };
@@ -1206,7 +1336,55 @@ impl Parser {
         if star && name != "COUNT" {
             return Err(SqlErr::syntax(format!("{}(*) is only valid for COUNT", name)));
         }
-        Ok(Expr::Function { name, args, distinct, star })
+        let f = Expr::Function { name, args, distinct, star };
+        if self.eat_kw("OVER") {
+            self.expect_op("(")?;
+            let mut partition = Vec::new();
+            let mut order = Vec::new();
+            if self.eat_kw("PARTITION") {
+                self.expect_kw("BY")?;
+                partition.push(self.expr()?);
+                while self.eat_op(",") {
+                    partition.push(self.expr()?);
+                }
+            }
+            if self.eat_kw("ORDER") {
+                self.expect_kw("BY")?;
+                loop {
+                    let expr = self.expr()?;
+                    let desc = if self.eat_kw("DESC") {
+                        true
+                    } else {
+                        self.eat_kw("ASC");
+                        false
+                    };
+                    let mut nulls_first = None;
+                    if self.eat_kw("NULLS") {
+                        nulls_first = Some(self.eat_kw("FIRST"));
+                        if nulls_first == Some(false) {
+                            self.expect_kw("LAST")?;
+                        }
+                    }
+                    order.push(OrderItem { expr, desc, nulls_first });
+                    if !self.eat_op(",") {
+                        break;
+                    }
+                }
+            }
+            // frame clauses (ROWS / RANGE ...) are accepted; the default frame applies
+            let mut depth = 0;
+            while !self.at_eof() && !(depth == 0 && self.is_op(")")) {
+                if self.is_op("(") {
+                    depth += 1;
+                } else if self.is_op(")") {
+                    depth -= 1;
+                }
+                self.advance();
+            }
+            self.expect_op(")")?;
+            return Ok(Expr::Window { func: Box::new(f), partition, order });
+        }
+        Ok(f)
     }
 
     pub(crate) fn case_expr(&mut self) -> SqlResult<Expr> {
