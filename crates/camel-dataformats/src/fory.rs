@@ -3,15 +3,23 @@
 //! Implements the cross-language serialization protocol of the Fory specification for
 //! dynamic values:
 //!
-//! * header: bitmap byte (bit 0 null root, bit 1 little endian, bit 2 xlang, bit 3 out-of-band)
-//!   + language byte (written as `RUST` = 6). On read a leading legacy magic number
+//! * protocol edition (`xlangSpec`): `CURRENT` (default) follows the current xlang
+//!   specification — one header byte (bit 0 xlang, bit 1 out-of-band), the renumbered internal
+//!   type id table (`BOOL` 1 .. `TAGGED_INT64` 8, `UINT8`..`TAGGED_UINT64` 9-15, `FLOAT8` 16,
+//!   `FLOAT16` 17, `BFLOAT16` 18, `FLOAT32` 19, `FLOAT64` 20, `STRING` 21, `LIST` 22, `SET` 23,
+//!   `MAP` 24, `ENUM` 25 .. `NAMED_EXT` 32, unions 33-35, `NONE` 36, `DURATION` 37,
+//!   `TIMESTAMP` 38, `DATE` 39, `DECIMAL` 40, `BINARY` 41, arrays 42-56) and numeric user type
+//!   ids written as a separate varuint32 after the internal id. `LEGACY` writes the Fory
+//!   0.10/0.11 layout described below. Readers detect the edition from the header byte.
+//! * legacy header: bitmap byte (bit 0 null root, bit 1 little endian, bit 2 xlang, bit 3
+//!   out-of-band) + language byte (written as `RUST` = 6). On read a leading legacy magic number
 //!   (`0x62d4`, Fury <= 0.10) is accepted and skipped; non-xlang (Java native) payloads are
 //!   rejected.
 //! * reference meta: `NULL_FLAG` (-3), `REF_FLAG` (-2, followed by a varuint ref id),
 //!   `NOT_NULL_VALUE_FLAG` (-1) and `REF_VALUE_FLAG` (0). With `refTracking=true` lists, maps,
 //!   structs and binaries are written with `REF_VALUE_FLAG` (and identical strings/containers
 //!   occurring again are written as back references); reading resolves `REF_FLAG`s.
-//! * type ids (varuint32): `BOOL` 1, `INT8` 2, `INT16` 3, `INT32` 4, `VAR_INT32` 5, `INT64` 6,
+//! * legacy type ids (varuint32, `(user_id << 8) | internal_id`): `BOOL` 1, `INT8` 2, `INT16` 3, `INT32` 4, `VAR_INT32` 5, `INT64` 6,
 //!   `VAR_INT64` 7, `SLI_INT64` 8, `FLOAT16` 9, `FLOAT32` 10, `FLOAT64` 11, `STRING` 12,
 //!   `ENUM` 13, `NAMED_ENUM` 14, `STRUCT` 15, `NAMED_STRUCT` 17, `LIST` 21, `SET` 22, `MAP` 23,
 //!   `DURATION` 24, `TIMESTAMP` 25, `LOCAL_DATE` 26, `BINARY` 28, primitive arrays 30..37.
@@ -55,8 +63,8 @@
 //!
 //! Deviations from the Java implementation: only the xlang protocol is implemented — the Java
 //! native mode (class names, JDK serializers, `Externalizable`, ...) has no meaning for
-//! dynamic values; out-of-band buffers are rejected; type ids follow the Fory 0.10/0.11 xlang
-//! table above; numeric ids of registered (unnamed) structs are read through `structTypes`
+//! dynamic values; out-of-band buffers are rejected; `FLOAT8` and union types (current spec) are
+//! not supported; numeric ids of registered (unnamed) structs are read through `structTypes`
 //! entries named `#id`.
 
 use std::collections::{BTreeMap, HashMap};
@@ -115,6 +123,127 @@ pub mod types {
     pub const FLOAT16_ARRAY: u32 = 35;
     pub const FLOAT32_ARRAY: u32 = 36;
     pub const FLOAT64_ARRAY: u32 = 37;
+    // types only present in the current xlang spec (canonical ids local to this crate; the
+    // wire ids come from [`super::XlangSpec`])
+    pub const UINT8: u32 = 64;
+    pub const UINT16: u32 = 65;
+    pub const UINT32: u32 = 66;
+    pub const VAR_UINT32: u32 = 67;
+    pub const UINT64: u32 = 68;
+    pub const VAR_UINT64: u32 = 69;
+    pub const TAGGED_UINT64: u32 = 70;
+    pub const FLOAT8: u32 = 71;
+    pub const BFLOAT16: u32 = 72;
+    pub const UNION: u32 = 73;
+    pub const TYPED_UNION: u32 = 74;
+    pub const NAMED_UNION: u32 = 75;
+    pub const NONE: u32 = 76;
+    pub const UINT8_ARRAY: u32 = 77;
+    pub const UINT16_ARRAY: u32 = 78;
+    pub const UINT32_ARRAY: u32 = 79;
+    pub const UINT64_ARRAY: u32 = 80;
+    pub const FLOAT8_ARRAY: u32 = 81;
+    pub const BFLOAT16_ARRAY: u32 = 82;
+}
+
+/// Which edition of the xlang protocol is written (`xlangSpec`): the current specification
+/// (one-byte header with the xlang / out-of-band bits, the renumbered internal type id table
+/// incl. unsigned and bfloat16 types, user type ids written after the internal id) or the
+/// Fory 0.10/0.11 one (bitmap + language byte, `(user_id << 8) | internal_id`). Readers detect
+/// the edition from the header.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum XlangSpec {
+    #[default]
+    Current,
+    Legacy,
+}
+
+/// (canonical id, id in the current spec table)
+const CURRENT_IDS: [(u32, u32); 57] = [
+    (types::BOOL, 1),
+    (types::INT8, 2),
+    (types::INT16, 3),
+    (types::INT32, 4),
+    (types::VAR_INT32, 5),
+    (types::INT64, 6),
+    (types::VAR_INT64, 7),
+    (types::SLI_INT64, 8),
+    (types::UINT8, 9),
+    (types::UINT16, 10),
+    (types::UINT32, 11),
+    (types::VAR_UINT32, 12),
+    (types::UINT64, 13),
+    (types::VAR_UINT64, 14),
+    (types::TAGGED_UINT64, 15),
+    (types::FLOAT8, 16),
+    (types::FLOAT16, 17),
+    (types::BFLOAT16, 18),
+    (types::FLOAT32, 19),
+    (types::FLOAT64, 20),
+    (types::STRING, 21),
+    (types::LIST, 22),
+    (types::SET, 23),
+    (types::MAP, 24),
+    (types::ENUM, 25),
+    (types::NAMED_ENUM, 26),
+    (types::STRUCT, 27),
+    (types::COMPATIBLE_STRUCT, 28),
+    (types::NAMED_STRUCT, 29),
+    (types::NAMED_COMPATIBLE_STRUCT, 30),
+    (types::EXT, 31),
+    (types::NAMED_EXT, 32),
+    (types::UNION, 33),
+    (types::TYPED_UNION, 34),
+    (types::NAMED_UNION, 35),
+    (types::NONE, 36),
+    (types::DURATION, 37),
+    (types::TIMESTAMP, 38),
+    (types::LOCAL_DATE, 39),
+    (types::DECIMAL, 40),
+    (types::BINARY, 41),
+    (types::ARRAY, 42),
+    (types::BOOL_ARRAY, 43),
+    (types::INT8_ARRAY, 44),
+    (types::INT16_ARRAY, 45),
+    (types::INT32_ARRAY, 46),
+    (types::INT64_ARRAY, 47),
+    (types::UINT8_ARRAY, 48),
+    (types::UINT16_ARRAY, 49),
+    (types::UINT32_ARRAY, 50),
+    (types::UINT64_ARRAY, 51),
+    (types::FLOAT8_ARRAY, 52),
+    (types::FLOAT16_ARRAY, 53),
+    (types::BFLOAT16_ARRAY, 54),
+    (types::FLOAT32_ARRAY, 55),
+    (types::FLOAT64_ARRAY, 56),
+    (0, 0),
+];
+
+impl XlangSpec {
+    /// Parses `CURRENT` / `LEGACY` (also `0.10`, `0.11`).
+    pub fn parse(s: &str) -> Option<XlangSpec> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "CURRENT" | "LATEST" | "" => Some(XlangSpec::Current),
+            "LEGACY" | "0.10" | "0.11" | "V0_11" => Some(XlangSpec::Legacy),
+            _ => None,
+        }
+    }
+
+    /// Wire id of a canonical internal type id.
+    pub fn to_wire(self, canonical: u32) -> u32 {
+        match self {
+            XlangSpec::Legacy => canonical,
+            XlangSpec::Current => CURRENT_IDS.iter().find(|(c, _)| *c == canonical).map(|(_, w)| *w).unwrap_or(canonical),
+        }
+    }
+
+    /// Canonical id of a wire internal type id.
+    pub fn from_wire(self, wire: u32) -> Option<u32> {
+        match self {
+            XlangSpec::Legacy => (wire < 64).then_some(wire),
+            XlangSpec::Current => CURRENT_IDS.iter().find(|(_, w)| *w == wire).map(|(c, _)| *c),
+        }
+    }
 }
 
 /// Writer language id (Fory `Language.RUST`).
@@ -507,6 +636,8 @@ pub struct ForyConfig {
     pub compatible: bool,
     /// Extension type serializers by full type name (`NAMED_EXT`).
     pub extensions: BTreeMap<String, ExtSerializer>,
+    /// Protocol edition written (`xlangSpec`, default the current spec).
+    pub spec: XlangSpec,
 }
 
 /// A user serializer for an extension type: values `{"@ext": "ns.Name", ...}` are written
@@ -669,7 +800,8 @@ pub struct TypeDef {
 }
 
 fn is_primitive_field(t: u32) -> bool {
-    matches!(t, types::BOOL | types::INT8 | types::INT16 | types::INT32 | types::VAR_INT32 | types::INT64 | types::VAR_INT64 | types::SLI_INT64 | types::FLOAT16 | types::FLOAT32 | types::FLOAT64)
+    use types::*;
+    matches!(t, BOOL | INT8 | INT16 | INT32 | VAR_INT32 | INT64 | VAR_INT64 | SLI_INT64 | FLOAT16 | FLOAT32 | FLOAT64 | UINT8 | UINT16 | UINT32 | VAR_UINT32 | UINT64 | VAR_UINT64 | TAGGED_UINT64 | BFLOAT16)
 }
 
 fn inline_meta_string(out: &mut Vec<u8>, s: &str) {
@@ -693,6 +825,11 @@ fn read_inline_meta_string(r: &mut Reader) -> Result<String> {
 /// Encodes a TypeDef: 8-byte global header (size, murmur3 hash), meta header, type spec,
 /// field infos.
 pub fn encode_type_def(td: &TypeDef) -> Vec<u8> {
+    encode_type_def_spec(td, XlangSpec::Legacy)
+}
+
+/// [`encode_type_def`] with the field type ids of a protocol edition.
+pub fn encode_type_def_spec(td: &TypeDef, spec: XlangSpec) -> Vec<u8> {
     let mut body = Vec::new();
     let n = td.fields.len();
     body.push(0x80 | 0x40 | 0x20 | (n.min(31) as u8));
@@ -714,7 +851,7 @@ pub fn encode_type_def(td: &TypeDef) -> Vec<u8> {
         if size >= 15 {
             write_varuint32(&mut body, (size - 15) as u32);
         }
-        write_varuint32(&mut body, *t);
+        write_varuint32(&mut body, spec.to_wire(*t));
         match *t {
             types::LIST | types::SET => write_varuint32(&mut body, 2),
             types::MAP => {
@@ -738,6 +875,11 @@ pub fn encode_type_def(td: &TypeDef) -> Vec<u8> {
 
 /// Decodes a TypeDef written by [`encode_type_def`] (or another Fory implementation).
 pub fn decode_type_def(r: &mut Reader) -> Result<TypeDef> {
+    decode_type_def_spec(r, XlangSpec::Legacy)
+}
+
+/// [`decode_type_def`] for a protocol edition.
+pub fn decode_type_def_spec(r: &mut Reader, spec: XlangSpec) -> Result<TypeDef> {
     let header = u64::from_le_bytes(r.arr::<8>()?);
     if header & 0x100 != 0 {
         return Err(df_err("Compressed Fory type meta is not supported"));
@@ -776,7 +918,8 @@ pub fn decode_type_def(r: &mut Reader) -> Result<TypeDef> {
             size += br.varuint32()? as usize;
         }
         let t = br.varuint32()?;
-        match t & 0xff {
+        let t = spec.from_wire(t & 0xff).unwrap_or(t & 0xff);
+        match t {
             types::LIST | types::SET => {
                 br.varuint32()?;
             }
@@ -792,7 +935,7 @@ pub fn decode_type_def(r: &mut Reader) -> Result<TypeDef> {
             1 => decode_meta_string(4, br.take(size + 1)?)?,
             _ => decode_meta_string(2, br.take(size + 1)?)?,
         };
-        fields.push((fname, t & 0xff, fh & 0b10 != 0));
+        fields.push((fname, t, fh & 0b10 != 0));
     }
     Ok(TypeDef { name, fields })
 }
@@ -877,7 +1020,7 @@ impl Writer<'_> {
     /// Type info: id, plus namespace/type name meta strings for named types.
     fn write_type(&mut self, v: &Value) -> Result<()> {
         let id = self.type_id(v);
-        write_varuint32(&mut self.out, id);
+        write_varuint32(&mut self.out, self.cfg.spec.to_wire(id));
         if id == types::NAMED_EXT {
             let full = v.get("@ext").and_then(|t| t.as_str()).unwrap_or("").to_string();
             if !self.cfg.extensions.contains_key(&full) {
@@ -893,7 +1036,7 @@ impl Writer<'_> {
                 return Err(df_err(format!("Class {} is not registered (requireClassRegistration=true): add it to structTypes", full)));
             }
             let td = Self::type_def_of(v);
-            let enc = encode_type_def(&td);
+            let enc = encode_type_def_spec(&td, self.cfg.spec);
             match self.type_defs.get(&enc) {
                 Some(i) => write_varuint32(&mut self.out, (i << 1) | 1),
                 None => {
@@ -1090,7 +1233,7 @@ impl Writer<'_> {
             }
             self.out.push(header);
             self.out.push((j - i) as u8);
-            write_varuint32(&mut self.out, types::STRING);
+            write_varuint32(&mut self.out, self.cfg.spec.to_wire(types::STRING));
             self.write_type(v)?;
             for (k, v) in &entries[i..j] {
                 self.write_string(k);
@@ -1131,6 +1274,16 @@ impl DeepEq for Value {
 /// Serialize a value (header + root reference + type + data).
 pub fn serialize(v: &Value, cfg: &ForyConfig) -> Result<Vec<u8>> {
     let mut w = Writer { cfg, out: Vec::new(), meta_strings: HashMap::new(), refs: Vec::new(), type_defs: HashMap::new() };
+    if cfg.spec == XlangSpec::Current {
+        // current spec: bitmap with the xlang flag only; a null root is a NULL_FLAG
+        w.out.push(0b01);
+        if v.is_null() {
+            w.out.push(NULL_FLAG as u8);
+            return Ok(w.out);
+        }
+        w.write_ref_value(v)?;
+        return Ok(w.out);
+    }
     let mut bitmap = 0b0110u8; // little endian + xlang
     if v.is_null() {
         bitmap |= 1;
@@ -1168,6 +1321,7 @@ struct Decoder<'a, 'c> {
     refs: Vec<Value>,
     depth: usize,
     type_defs: Vec<Arc<TypeDef>>,
+    spec: XlangSpec,
 }
 
 impl Decoder<'_, '_> {
@@ -1186,14 +1340,27 @@ impl Decoder<'_, '_> {
     }
 
     fn read_type(&mut self) -> Result<TypeInfo> {
-        let id = self.r.varuint32()?;
+        let raw = self.r.varuint32()?;
+        let id = match self.spec {
+            XlangSpec::Legacy => raw,
+            XlangSpec::Current => {
+                let canon = self.spec.from_wire(raw).ok_or_else(|| df_err(format!("Unknown Fory xlang type id {}", raw)))?;
+                if matches!(canon, types::ENUM | types::STRUCT | types::COMPATIBLE_STRUCT | types::EXT | types::TYPED_UNION) {
+                    // registered by numeric id: the user type id follows as a varuint32
+                    let user = self.r.varuint32()?;
+                    canon | (user << 8)
+                } else {
+                    canon
+                }
+            }
+        };
         match id & 0xff {
             types::NAMED_COMPATIBLE_STRUCT | types::COMPATIBLE_STRUCT => {
                 let marker = self.r.varuint32()?;
                 let td = if marker & 1 == 1 {
                     self.type_defs.get((marker >> 1) as usize).cloned().ok_or_else(|| df_err(format!("Unknown Fory type meta index {}", marker >> 1)))?
                 } else {
-                    let td = Arc::new(decode_type_def(&mut self.r)?);
+                    let td = Arc::new(decode_type_def_spec(&mut self.r, self.spec)?);
                     self.type_defs.push(td.clone());
                     td
                 };
@@ -1310,6 +1477,20 @@ impl Decoder<'_, '_> {
             FLOAT16_ARRAY => self.prim_array(2, |c| Value::Float(half_to_f64(u16::from_le_bytes([c[0], c[1]]))))?,
             FLOAT32_ARRAY => self.prim_array(4, |c| Value::Float(f32::from_le_bytes(c.try_into().unwrap()) as f64))?,
             FLOAT64_ARRAY => self.prim_array(8, |c| Value::Float(f64::from_le_bytes(c.try_into().unwrap())))?,
+            UINT8 => Value::Int(r.u8()? as i64),
+            UINT16 => Value::Int(u16::from_le_bytes(r.arr::<2>()?) as i64),
+            UINT32 => Value::Int(u32::from_le_bytes(r.arr::<4>()?) as i64),
+            VAR_UINT32 => Value::Int(r.varuint32()? as i64),
+            UINT64 => u64_value(u64::from_le_bytes(r.arr::<8>()?)),
+            VAR_UINT64 => u64_value(r.varuint64()?),
+            TAGGED_UINT64 => u64_value(r.sli_int64()? as u64),
+            BFLOAT16 => Value::Float(f32::from_bits((u16::from_le_bytes(r.arr::<2>()?) as u32) << 16) as f64),
+            NONE => Value::Null,
+            UINT8_ARRAY => self.prim_array(1, |c| Value::Int(c[0] as i64))?,
+            UINT16_ARRAY => self.prim_array(2, |c| Value::Int(u16::from_le_bytes([c[0], c[1]]) as i64))?,
+            UINT32_ARRAY => self.prim_array(4, |c| Value::Int(u32::from_le_bytes(c.try_into().unwrap()) as i64))?,
+            UINT64_ARRAY => self.prim_array(8, |c| u64_value(u64::from_le_bytes(c.try_into().unwrap())))?,
+            BFLOAT16_ARRAY => self.prim_array(2, |c| Value::Float(f32::from_bits((u16::from_le_bytes([c[0], c[1]]) as u32) << 16) as f64))?,
             DECIMAL => Value::String(read_decimal(r)?),
             NAMED_EXT | EXT => {
                 let full = match t {
@@ -1495,6 +1676,11 @@ impl Decoder<'_, '_> {
     }
 }
 
+/// Unsigned 64-bit values above `i64::MAX` are returned as floats.
+fn u64_value(v: u64) -> Value {
+    i64::try_from(v).map(Value::Int).unwrap_or(Value::Float(v as f64))
+}
+
 fn t_raw(t: &TypeInfo) -> u32 {
     match t {
         TypeInfo::Id(i) | TypeInfo::Named(i, _) | TypeInfo::Def(i, _) => *i,
@@ -1508,6 +1694,19 @@ pub fn deserialize(b: &[u8], cfg: &ForyConfig) -> Result<Value> {
         r.pos = 2;
     }
     let bitmap = r.u8()?;
+    // the current spec only defines bits 0 (xlang) and 1 (out-of-band); Fory 0.10/0.11
+    // headers always carry bit 2 (xlang) and a language byte
+    let legacy = r.pos > 1 || bitmap & 0xfc != 0;
+    if !legacy {
+        if bitmap & 0b01 == 0 {
+            return Err(df_err("Not a Fory xlang payload (Java native serialization is not supported)"));
+        }
+        if bitmap & 0b10 != 0 {
+            return Err(df_err("Fory out-of-band buffers are not supported"));
+        }
+        let mut d = Decoder { r, cfg, meta_strings: Vec::new(), refs: Vec::new(), depth: 0, type_defs: Vec::new(), spec: XlangSpec::Current };
+        return d.read_ref_value();
+    }
     if bitmap & 0b0100 == 0 {
         return Err(df_err("Not a Fory xlang payload (Java native serialization is not supported)"));
     }
@@ -1521,7 +1720,7 @@ pub fn deserialize(b: &[u8], cfg: &ForyConfig) -> Result<Value> {
     if bitmap & 1 != 0 {
         return Ok(Value::Null);
     }
-    let mut d = Decoder { r, cfg, meta_strings: Vec::new(), refs: Vec::new(), depth: 0, type_defs: Vec::new() };
+    let mut d = Decoder { r, cfg, meta_strings: Vec::new(), refs: Vec::new(), depth: 0, type_defs: Vec::new(), spec: XlangSpec::Legacy };
     d.read_ref_value()
 }
 
@@ -1564,6 +1763,10 @@ pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
         struct_types: parse_struct_types(&o.string(&["structTypes"], ""))?,
         compatible: o.bool(&["compatible"], false)? || o.string(&["compatibleMode"], "").eq_ignore_ascii_case("COMPATIBLE"),
         extensions: BTreeMap::new(),
+        spec: match o.get(&["xlangSpec", "typeIdTable"]) {
+            Some(v) => XlangSpec::parse(v).ok_or_else(|| CamelError::illegal_argument(format!("Invalid xlangSpec: {} (CURRENT or LEGACY)", v)))?,
+            None => XlangSpec::Current,
+        },
     };
     // accepted Camel options without effect here
     let _ = (o.bool(&["threadSafe"], true)?, o.bool(&["allowAutoWiredFory"], true)?, o.get(&["unmarshalType"]));
@@ -1607,8 +1810,47 @@ mod tests {
     }
 
     #[test]
-    fn exact_bytes_of_simple_values() {
+    fn exact_bytes_current_spec() {
         let cfg = ForyConfig::default();
+        assert_eq!(cfg.spec, XlangSpec::Current);
+        // header 01 (xlang), NOT_NULL ff, STRING 21, (3<<2|latin1) 0c, "abc"
+        assert_eq!(hex(&serialize(&Value::from("abc"), &cfg).unwrap()), "01ff150c616263");
+        assert_eq!(hex(&serialize(&Value::Int(-2), &cfg).unwrap()), "01ff0703");
+        assert_eq!(hex(&serialize(&Value::Float(0.5), &cfg).unwrap()), format!("01ff14{}", hex(&0.5f64.to_le_bytes())));
+        assert_eq!(hex(&serialize(&Value::Null, &cfg).unwrap()), "01fd");
+        // LIST 22, MAP 24 with STRING 21 keys
+        assert_eq!(hex(&serialize(&Value::from(vec![Value::Int(1), Value::Int(2)]), &cfg).unwrap()), "01ff1602080702 04".replace(' ', ""));
+        let m = Value::object([("a", Value::Int(1))]);
+        assert_eq!(hex(&serialize(&m, &cfg).unwrap()), "01ff18010001150704 6102".replace(' ', ""));
+        assert_eq!(deserialize(&serialize(&m, &cfg).unwrap(), &cfg).unwrap(), m);
+        // current-only types: UINT8 9, UINT64 13, BFLOAT16 18, NONE 36, UINT16_ARRAY 49
+        assert_eq!(deserialize(&[0x01, 0xff, 9, 200], &cfg).unwrap(), Value::Int(200));
+        let mut b = vec![0x01, 0xff, 13];
+        b.extend_from_slice(&u64::MAX.to_le_bytes());
+        assert_eq!(deserialize(&b, &cfg).unwrap(), Value::Float(u64::MAX as f64));
+        assert_eq!(deserialize(&[0x01, 0xff, 18, 0xc0, 0x3f], &cfg).unwrap(), Value::Float(1.5));
+        assert_eq!(deserialize(&[0x01, 0xff, 36], &cfg).unwrap(), Value::Null);
+        assert_eq!(deserialize(&[0x01, 0xff, 49, 4, 1, 0, 0xff, 0xff], &cfg).unwrap(), Value::from(vec![Value::Int(1), Value::Int(65535)]));
+        // STRUCT 27 registered by id: the user type id follows as its own varuint32
+        let cfg_s = ForyConfig { struct_types: parse_struct_types("#300=a").unwrap(), ..Default::default() };
+        let v = deserialize(&[0x01, 0xff, 27, 0xac, 0x02, 0xff, 7, 2], &cfg_s).unwrap();
+        assert_eq!(v, Value::object([("@type", Value::from("#300")), ("a", Value::Int(1))]));
+        // out-of-band / non-xlang headers are rejected; legacy headers still decode
+        assert!(deserialize(&[0x03, 0xff, 9, 1], &cfg).is_err());
+        assert!(deserialize(&[0x00, 0xff, 9, 1], &cfg).is_err());
+        assert_eq!(deserialize(&[0x06, 0x06, 0xff, 0x07, 0x03], &cfg).unwrap(), Value::Int(-2));
+        // compatible structs round trip with the current TypeDef field ids
+        let cc = ForyConfig { compatible: true, ..Default::default() };
+        let p = Value::object([("@type", Value::from("example.P")), ("name", Value::from("x")), ("age", Value::Int(3))]);
+        assert_eq!(deserialize(&serialize(&p, &cc).unwrap(), &cc).unwrap(), p);
+        assert_eq!(XlangSpec::parse("0.11"), Some(XlangSpec::Legacy));
+        assert_eq!(XlangSpec::Current.to_wire(types::LOCAL_DATE), 39);
+        assert_eq!(XlangSpec::Current.from_wire(41), Some(types::BINARY));
+    }
+
+    #[test]
+    fn exact_bytes_of_simple_values() {
+        let cfg = ForyConfig { spec: XlangSpec::Legacy, ..Default::default() };
         // header 06 (LE | xlang), language 06, NOT_NULL ff, STRING 0c, (3<<2|latin1) 0c, "abc"
         assert_eq!(hex(&serialize(&Value::from("abc"), &cfg).unwrap()), "0606ff0c0c616263");
         // UTF-8 for non latin-1

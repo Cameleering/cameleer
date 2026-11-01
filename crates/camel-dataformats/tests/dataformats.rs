@@ -738,10 +738,19 @@ fn fory_routes_and_struct_types() {
     let json = r#"{"name":"Ann","n":-5,"f":2.5,"ok":true,"none":null,"list":[1,2,3],"nested":{"k":"v€"}}"#;
     assert_eq!(t.request_body("direct:fory", json).unwrap().to_string(), json);
     let wire = c.mock_endpoint("mock:fory").unwrap().received_exchanges()[0].body().to_bytes();
-    // xlang header: little endian + xlang flags, language RUST, root not-null flag
-    assert_eq!(&wire[..3], &[0x06, 0x06, 0xff]);
+    // current xlang spec header: xlang flag, root not-null flag, MAP (24)
+    assert_eq!(&wire[..3], &[0x01, 0xff, 24]);
     let order = Value::object([("@type", Value::from("demo.Order")), ("id", Value::Int(7)), ("lines", Value::from(vec!["a", "b"]))]);
     assert_eq!(t.request_body("direct:foryStruct", order.clone()).unwrap(), order);
+    // the Fory 0.10/0.11 layout on request (bitmap + language byte)
+    let legacy = DataFormatDefinition::new("fory").option("xlangSpec", "LEGACY").resolve(&c).unwrap();
+    let mut ex = Exchange::new(None);
+    ex.message.body = Value::from("x");
+    legacy.marshal(&mut ex).unwrap();
+    assert_eq!(&ex.body().to_bytes()[..4], &[0x06, 0x06, 0xff, 0x0c]);
+    legacy.unmarshal(&mut ex).unwrap();
+    assert_eq!(ex.body(), &Value::from("x"));
+    assert!(DataFormatDefinition::new("fory").option("xlangSpec", "0.9").resolve(&c).is_err());
     assert!(DataFormatDefinition::new("fory").option("requireClassRegistration", "true").option("threadSafe", "false").option("allowAutoWiredFory", "false").resolve(&c).is_ok());
     // YAML DSL
     let y = ctx();
