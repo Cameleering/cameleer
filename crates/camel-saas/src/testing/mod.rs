@@ -81,7 +81,8 @@ impl Recorded {
             let seg = &body[w[0] + boundary.len()..w[1]];
             let seg = seg.strip_prefix(b"\r\n").unwrap_or(seg);
             let Some(hend) = find_all(seg, b"\r\n\r\n").first().copied() else { continue };
-            let head = String::from_utf8_lossy(&seg[..hend]).into_owned();
+            let all = String::from_utf8_lossy(&seg[..hend]).into_owned();
+            let head = all.lines().find(|l| l.to_ascii_lowercase().starts_with("content-disposition")).unwrap_or("").to_string();
             let mut data = seg[hend + 4..].to_vec();
             if data.ends_with(b"\r\n") {
                 data.truncate(data.len() - 2);

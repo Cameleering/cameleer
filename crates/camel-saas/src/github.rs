@@ -11,6 +11,9 @@
 //!   commits, `beginning` delivers all, oldest first); body = commit message, headers
 //!   `GitHubCommitSha`, `GitHubCommitAuthor`, `GitHubCommitCommitter`, `GitHubCommitUrl`.
 //! * `tag`: new tags; body = tag object.
+//! * `event`: new repository events (`/repos/{owner}/{repo}/events`, newest event id
+//!   tracked); body = event type (`PushEvent`...), headers `CamelGitHubEventPayload` (the
+//!   event payload), `GitHubEvent` (= type) and `GitHubEventId`.
 //!
 //! Producers:
 //! * `createIssue`: title from header `GitHubIssueTitle`, body = issue text; the body becomes
@@ -20,6 +23,12 @@
 //! * `issueComment` (extension): comment issue `GitHubIssue`.
 //! * `pullRequestState`: set the commit status of `GitHubPullRequestHeadCommitSHA` (option
 //!   `state`: success / error / failure / pending, `targetUrl`; body = description).
+//! * `pullRequestFiles`: the files changed by pull request `GitHubPullRequest`; body = list
+//!   of file objects (`filename`, `status`, `additions`, `sha`...).
+//! * `getCommitFile`: content of a commit file: body = a commit file object (its `sha`) or a
+//!   blob sha; reads `/git/blobs/{sha}` and returns the decoded content (text, or the
+//!   base64 text itself with `encoding=base64`).
+//! * `closePullRequest`: close pull request `GitHubPullRequest`; body = updated pull request.
 //!
 //! Webhooks: `webhook:github:pullRequest?...` creates a repository hook (`hookEvents`, default
 //! `push,pull_request,issues`) and removes it on stop; incoming payloads become the body
@@ -52,6 +61,8 @@ pub const GITHUB_COMMIT_AUTHOR: &str = "GitHubCommitAuthor";
 pub const GITHUB_COMMIT_COMMITTER: &str = "GitHubCommitCommitter";
 pub const GITHUB_COMMIT_URL: &str = "GitHubCommitUrl";
 pub const GITHUB_EVENT: &str = "GitHubEvent";
+pub const GITHUB_EVENT_PAYLOAD: &str = "CamelGitHubEventPayload";
+pub const GITHUB_EVENT_ID: &str = "GitHubEventId";
 
 /// The `github` component.
 #[derive(Default)]
@@ -69,6 +80,7 @@ struct Config {
     state: Option<String>,
     target_url: Option<String>,
     hook_events: Vec<String>,
+    encoding: Option<String>,
 }
 
 impl Config {
@@ -91,7 +103,7 @@ impl Component for GithubComponent {
             Some((t, b)) => (t.to_string(), Some(b.to_string())),
             None => (remaining.trim().to_string(), None),
         };
-        const TYPES: &[&str] = &["pullRequest", "issue", "commit", "tag", "createIssue", "pullRequestComment", "issueComment", "pullRequestState", "event"];
+        const TYPES: &[&str] = &["pullRequest", "issue", "commit", "tag", "createIssue", "pullRequestComment", "issueComment", "pullRequestState", "event", "pullRequestFiles", "getCommitFile", "closePullRequest"];
         if !TYPES.contains(&ty.as_str()) {
             return Err(CamelError::illegal_argument(format!("github: unknown type '{}' (one of {})", ty, TYPES.join(", "))));
         }
@@ -105,9 +117,10 @@ impl Component for GithubComponent {
             starting_sha: params.take("startingSha").unwrap_or_else(|| "last".into()),
             state: params.take("state"),
             target_url: params.take("targetUrl"),
+            encoding: params.take("encoding").filter(|s| !s.is_empty()),
             hook_events: params.take("hookEvents").unwrap_or_else(|| "push,pull_request,issues".into()).split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
         };
-        for k in ["encoding", "eventFetchStrategy", "lazyStartProducer"] {
+        for k in ["eventFetchStrategy", "lazyStartProducer"] {
             params.take(k);
         }
         let poll = poll_config(params, Duration::from_secs(10))?;
@@ -138,7 +151,7 @@ impl Endpoint for GithubEndpoint {
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
         match self.cfg.ty.as_str() {
-            "createIssue" | "pullRequestComment" | "issueComment" | "pullRequestState" => Ok(Arc::new(GithubProducer { cfg: self.cfg.clone(), rest: self.rest.clone() })),
+            "createIssue" | "pullRequestComment" | "issueComment" | "pullRequestState" | "pullRequestFiles" | "getCommitFile" | "closePullRequest" => Ok(Arc::new(GithubProducer { cfg: self.cfg.clone(), rest: self.rest.clone() })),
             other => Err(CamelError::illegal_argument(format!("github: '{}' is a consumer type", other))),
         }
     }
@@ -235,7 +248,32 @@ impl Endpoint for GithubEndpoint {
                     Ok(n)
                 })))
             }
-            other => Err(CamelError::illegal_argument(format!("github: '{}' does not support consumers (use pullRequest, issue, commit/<branch> or tag)", other))),
+            "event" => {
+                let last: Arc<Mutex<Option<i64>>> = Arc::new(Mutex::new(None));
+                Ok(Arc::new(poll_consumer("github", self.poll.clone(), move || {
+                    let list = rest.json(cfg.req(Req::get(format!("{}?per_page=100", cfg.repo_url("/events")))))?;
+                    let ev_id = |e: &Value| e.get("id").and_then(|i| i.as_i64().or_else(|| i.to_string().parse().ok())).unwrap_or(0);
+                    let events: Vec<Value> = list.as_array().cloned().unwrap_or_default();
+                    let max = events.iter().map(ev_id).max().unwrap_or(0);
+                    let mut l = last.lock().unwrap();
+                    let Some(prev) = *l else {
+                        *l = Some(max);
+                        return Ok(0);
+                    };
+                    let mut fresh: Vec<Value> = events.into_iter().filter(|e| ev_id(e) > prev).collect();
+                    fresh.sort_by_key(ev_id);
+                    *l = Some(prev.max(max));
+                    drop(l);
+                    let n = fresh.len();
+                    for e in fresh {
+                        let ty = e.get("type").cloned().unwrap_or(Value::Null);
+                        let headers = vec![(GITHUB_EVENT_PAYLOAD, e.get("payload").cloned().unwrap_or(Value::Null)), (GITHUB_EVENT, ty.clone()), (GITHUB_EVENT_ID, Value::Int(ev_id(&e)))];
+                        emit(&ctx, processor.as_ref(), "github", ty, headers);
+                    }
+                    Ok(n)
+                })))
+            }
+            other => Err(CamelError::illegal_argument(format!("github: '{}' does not support consumers (use pullRequest, issue, commit/<branch>, tag or event)", other))),
         }
     }
     fn as_any(&self) -> &dyn Any {
@@ -318,6 +356,35 @@ impl Processor for GithubProducer {
                     body.push(("target_url", Value::String(t.clone())));
                 }
                 ex.message.body = self.rest.json(self.cfg.req(Req::post(self.cfg.repo_url(&format!("/statuses/{}", sha))).json(&Value::object(body))))?;
+            }
+            "pullRequestFiles" => {
+                let n = number_header(ex, GITHUB_PULL_REQUEST)?;
+                ex.message.body = self.rest.json(self.cfg.req(Req::get(format!("{}?per_page=100", self.cfg.repo_url(&format!("/pulls/{}/files", n))))))?;
+            }
+            "closePullRequest" => {
+                let n = number_header(ex, GITHUB_PULL_REQUEST)?;
+                ex.message.body = self.rest.json(self.cfg.req(Req::new("PATCH", self.cfg.repo_url(&format!("/pulls/{}", n))).json(&Value::object([("state", "closed")]))))?;
+            }
+            "getCommitFile" => {
+                let sha = match &ex.message.body {
+                    Value::Object(_) => ex.message.body.get("sha").map(|s| s.to_string()),
+                    _ => Some(text.trim().to_string()),
+                }
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| CamelError::illegal_argument("github: getCommitFile requires a commit file (with a sha) or a blob sha as body"))?;
+                let blob = self.rest.json(self.cfg.req(Req::get(self.cfg.repo_url(&format!("/git/blobs/{}", sha)))))?;
+                let content = blob.get("content").map(|c| c.to_string()).unwrap_or_default();
+                let enc = blob.get("encoding").map(|c| c.to_string()).unwrap_or_default();
+                ex.message.body = if self.cfg.encoding.as_deref().map(|e| e.eq_ignore_ascii_case("base64")).unwrap_or(false) || enc != "base64" {
+                    Value::String(content)
+                } else {
+                    let clean: String = content.chars().filter(|c| !c.is_whitespace()).collect();
+                    let bytes = crate::rest::base64_decode(&clean).ok_or_else(|| crate::rest::api_error("github", "invalid base64 blob content"))?;
+                    match String::from_utf8(bytes) {
+                        Ok(s) => Value::String(s),
+                        Err(e) => Value::Bytes(e.into_bytes()),
+                    }
+                };
             }
             _ => unreachable!(),
         }
