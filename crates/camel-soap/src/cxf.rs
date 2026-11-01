@@ -1059,7 +1059,7 @@ fn handle(cfg: &Config, ctx: &WeakContext, processor: &Arc<dyn Processor>, ops: 
         Err(e) => return fault_response(version, &SoapFault::from_error(&e, version)),
     };
     // decoupled response (non-anonymous wsa:ReplyTo)
-    if let Some(reply_to) = addressing.reply_to.as_ref().filter(|r| r.starts_with("http://") || r.starts_with("https://")) {
+    if let Some(reply_to) = addressing.reply_to.as_ref().filter(|r| (r.starts_with("http://") || r.starts_with("https://")) && !r.starts_with("http://www.w3.org/2005/08/addressing/")) {
         let (url, client) = (reply_to.clone(), cfg.client.clone());
         std::thread::spawn(move || {
             let _ = client.send("POST", &url, &[("Content-Type".into(), ct)], Some(&bytes));
