@@ -245,7 +245,8 @@ impl Symbol {
     }
 }
 
-/// Penalty score of a symbol (rules N1..N4).
+/// Penalty score of a symbol (rules N1..N4, evaluated like ZXing's `MaskUtil` so that the
+/// automatic mask choice matches ZXing / Camel).
 pub fn penalty(m: &Matrix) -> u32 {
     let n = m.width;
     let mut score = 0u32;
@@ -270,7 +271,8 @@ pub fn penalty(m: &Matrix) -> u32 {
             let pat = [true, false, true, true, true, false, true];
             for b in 0..n.saturating_sub(6) {
                 if (0..7).all(|i| get(b + i) == pat[i]) {
-                    let light = |from: i32, to: i32| (from..to).all(|i| i < 0 || i >= n as i32 || !get(i as usize));
+                    // like ZXing's MaskUtil: the four light modules must lie inside the symbol
+                    let light = |from: i32, to: i32| from >= 0 && to <= n as i32 && (from..to).all(|i| !get(i as usize));
                     if light(b as i32 - 4, b as i32) || light(b as i32 + 7, b as i32 + 11) {
                         score += 40;
                     }
@@ -290,7 +292,8 @@ pub fn penalty(m: &Matrix) -> u32 {
     // N4: dark proportion
     let dark = m.bits.iter().filter(|b| **b).count();
     let total = n * n;
-    let k = (dark * 20).abs_diff(total * 10).div_ceil(total).saturating_sub(1);
+    // ZXing: floor(|2 dark - total| * 10 / total) steps of 5%
+    let k = (dark * 2).abs_diff(total) * 10 / total;
     score + k as u32 * 10
 }
 
@@ -901,5 +904,77 @@ mod tests {
         assert_eq!(cw0.iter().fold(0u8, |a, b| (a << 1) | *b as u8), 0x10);
         let d = decode_matrix(&m).unwrap();
         assert_eq!(&d.raw_bytes[..16], &[0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11]);
+    }
+
+    fn zxing_matrix(rows: &[&str]) -> Matrix {
+        let rows: Vec<String> = rows.iter().map(|r| r.split_whitespace().collect::<String>()).collect();
+        let refs: Vec<&str> = rows.iter().map(|s| s.as_str()).collect();
+        Matrix::from_rows(&refs)
+    }
+
+    #[test]
+    fn zxing_reference_symbols() {
+        // Full symbols from ZXing's EncoderTestCase (Apache License 2.0, Copyright 2008
+        // ZXing authors): testEncode ("ABCDEF", H, mask 0) and testEncodeShiftjisNumeric
+        // ("0123", M, mask 0). Both the module placement and the automatic mask choice match.
+        let abcdef = zxing_matrix(&[
+            "1 1 1 1 1 1 1 0 1 1 1 1 0 0 1 1 1 1 1 1 1",
+            "1 0 0 0 0 0 1 0 0 1 1 1 0 0 1 0 0 0 0 0 1",
+            "1 0 1 1 1 0 1 0 0 1 0 1 1 0 1 0 1 1 1 0 1",
+            "1 0 1 1 1 0 1 0 1 1 1 0 1 0 1 0 1 1 1 0 1",
+            "1 0 1 1 1 0 1 0 0 1 1 1 0 0 1 0 1 1 1 0 1",
+            "1 0 0 0 0 0 1 0 0 1 0 0 0 0 1 0 0 0 0 0 1",
+            "1 1 1 1 1 1 1 0 1 0 1 0 1 0 1 1 1 1 1 1 1",
+            "0 0 0 0 0 0 0 0 0 0 1 0 1 0 0 0 0 0 0 0 0",
+            "0 0 1 0 1 1 1 0 1 1 0 0 1 1 0 0 0 1 0 0 1",
+            "1 0 1 1 1 0 0 1 0 0 0 1 0 1 0 0 0 0 0 0 0",
+            "0 0 1 1 0 0 1 0 1 0 0 0 1 0 1 0 1 0 1 1 0",
+            "1 1 0 1 0 1 0 1 1 1 0 1 0 1 0 0 0 0 0 1 0",
+            "0 0 1 1 0 1 1 1 1 0 0 0 1 0 1 0 1 1 1 1 0",
+            "0 0 0 0 0 0 0 0 1 0 0 1 1 1 0 1 0 1 0 0 0",
+            "1 1 1 1 1 1 1 0 0 0 1 0 1 0 1 1 0 0 0 0 1",
+            "1 0 0 0 0 0 1 0 1 1 1 1 0 1 0 1 1 1 1 0 1",
+            "1 0 1 1 1 0 1 0 1 0 1 1 0 1 0 1 0 0 0 0 1",
+            "1 0 1 1 1 0 1 0 0 1 1 0 1 1 1 1 0 1 0 1 0",
+            "1 0 1 1 1 0 1 0 1 0 0 0 1 0 1 0 1 1 1 0 1",
+            "1 0 0 0 0 0 1 0 0 1 1 0 1 1 0 1 0 0 0 1 1",
+            "1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 1 0 1 0 1",
+        ]);
+        let numeric = zxing_matrix(&[
+            "1 1 1 1 1 1 1 0 0 0 0 0 1 0 1 1 1 1 1 1 1",
+            "1 0 0 0 0 0 1 0 1 1 0 1 0 0 1 0 0 0 0 0 1",
+            "1 0 1 1 1 0 1 0 0 1 1 0 0 0 1 0 1 1 1 0 1",
+            "1 0 1 1 1 0 1 0 0 0 1 0 0 0 1 0 1 1 1 0 1",
+            "1 0 1 1 1 0 1 0 1 0 1 1 1 0 1 0 1 1 1 0 1",
+            "1 0 0 0 0 0 1 0 0 1 0 1 0 0 1 0 0 0 0 0 1",
+            "1 1 1 1 1 1 1 0 1 0 1 0 1 0 1 1 1 1 1 1 1",
+            "0 0 0 0 0 0 0 0 0 1 1 0 0 0 0 0 0 0 0 0 0",
+            "1 0 1 0 1 0 1 0 0 0 0 0 1 0 0 0 1 0 0 1 0",
+            "0 0 0 0 0 0 0 1 1 0 1 1 0 1 0 1 0 1 0 1 0",
+            "0 1 0 1 0 1 1 1 1 0 0 1 0 1 1 1 0 1 0 1 0",
+            "0 1 1 1 0 0 0 0 0 0 1 1 1 1 0 1 1 1 0 1 0",
+            "0 0 0 1 1 1 1 1 1 1 1 1 0 1 1 1 0 0 1 0 1",
+            "0 0 0 0 0 0 0 0 1 1 0 0 0 0 1 0 0 0 1 1 0",
+            "1 1 1 1 1 1 1 0 0 1 0 0 1 0 0 0 1 0 0 0 1",
+            "1 0 0 0 0 0 1 0 0 1 0 0 0 0 1 0 0 0 1 0 0",
+            "1 0 1 1 1 0 1 0 1 1 0 0 1 0 1 0 1 0 1 0 1",
+            "1 0 1 1 1 0 1 0 0 1 1 1 0 1 0 1 0 1 0 1 0",
+            "1 0 1 1 1 0 1 0 1 0 1 1 0 1 1 1 0 1 1 0 1",
+            "1 0 0 0 0 0 1 0 0 0 1 1 1 1 0 1 1 1 0 0 0",
+            "1 1 1 1 1 1 1 0 1 0 1 1 0 1 1 1 0 1 1 0 1",
+        ]);
+        let forced = encode("ABCDEF", &QrOptions { ecc: Ecc::H, version: Some(1), mask: Some(0) }).unwrap();
+        assert_eq!(forced, abcdef);
+        let forced = encode("0123", &QrOptions { ecc: Ecc::M, version: Some(1), mask: Some(0) }).unwrap();
+        assert_eq!(forced, numeric);
+        assert_eq!(decode_matrix(&abcdef).unwrap().text, "ABCDEF");
+        assert_eq!(decode_matrix(&numeric).unwrap().text, "0123");
+        // automatic mask selection agrees with ZXing's
+        for (text, ecc, want) in [("ABCDEF", Ecc::H, &abcdef), ("0123", Ecc::M, &numeric)] {
+            let auto = encode(text, &QrOptions { ecc, ..Default::default() }).unwrap();
+            let d = decode_matrix(&auto).unwrap();
+            assert_eq!((d.mask, penalty(&auto) <= penalty(want)), (0, true), "{} penalty {} vs {}", text, penalty(&auto), penalty(want));
+            assert_eq!(&auto, want, "{}", text);
+        }
     }
 }
