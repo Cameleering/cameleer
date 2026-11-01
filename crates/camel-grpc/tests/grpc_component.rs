@@ -440,3 +440,131 @@ fn compressed_responses_on_the_wire() {
     assert_eq!(v.get("message"), Some(&Value::from("Hello zip")));
     ctx.stop().unwrap();
 }
+
+#[test]
+fn jwt_and_google_authentication() {
+    use camel_grpc::component::{GrpcServerInterceptor, ServerInterceptorBean};
+    use camel_grpc::grpc::{Metadata, Status};
+    use std::sync::{Arc, Mutex};
+    let ctx = CamelContext::new();
+    camel_grpc::register(&ctx);
+    // captures the bearer token the GOOGLE producer sends
+    struct Capture(Arc<Mutex<Option<String>>>);
+    impl GrpcServerInterceptor for Capture {
+        fn intercept_call(&self, _path: &str, md: &Metadata) -> std::result::Result<(), Status> {
+            *self.0.lock().unwrap() = md.iter().find(|(k, _)| k == "authorization").map(|(_, v)| v.clone());
+            Ok(())
+        }
+    }
+    let seen = Arc::new(Mutex::new(None));
+    ctx.registry().bind("capture", ServerInterceptorBean(Arc::new(Capture(seen.clone()))));
+    let jwt_consumer = format!("grpc://127.0.0.1:0/helloworld.Greeter?protoFile={}&authenticationType=JWT&jwtSecret=s3cret&jwtIssuer=camel&autoDiscoverServerInterceptors=false", PROTO);
+    let open_consumer = format!("grpc://127.0.0.1:0/helloworld.Greeter?protoFile={}&serverInterceptors=#capture", PROTO);
+    let (c1, c2) = (jwt_consumer.clone(), open_consumer.clone());
+    ctx.add_routes(move |b| {
+        b.from(&c1).process(greeter);
+        b.from(&c2).process(greeter);
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let jwt_port = camel_grpc::local_port(&ctx, &jwt_consumer).unwrap();
+    let open_port = camel_grpc::local_port(&ctx, &open_consumer).unwrap();
+    let t = ctx.create_producer_template();
+    let uri = |port: u16, extra: &str| format!("grpc://127.0.0.1:{}/helloworld.Greeter?method=sayHello&protoFile={}&autoDiscoverClientInterceptors=false{}", port, PROTO, extra);
+    let reply = t.request_body(&uri(jwt_port, "&authenticationType=JWT&jwtSecret=s3cret&jwtIssuer=camel&jwtSubject=me"), Value::object([("name", "Jwt")])).unwrap();
+    assert_eq!(reply.get("message"), Some(&Value::from("Hello Jwt")));
+    for bad in ["", "&authenticationType=JWT&jwtSecret=wrong&jwtIssuer=camel", "&authenticationType=JWT&jwtSecret=s3cret&jwtIssuer=other", "&authenticationType=JWT&jwtSecret=s3cret&jwtIssuer=camel&jwtAlgorithm=HMAC512"] {
+        let err = t.request_body(&uri(jwt_port, bad), Value::object([("name", "x")])).unwrap_err();
+        assert!(status_of(&err).starts_with("UNAUTHENTICATED"), "{} -> {}", bad, status_of(&err));
+    }
+    assert!(ctx.get_endpoint(&uri(jwt_port, "&authenticationType=JWT")).is_err(), "jwtSecret is required");
+    assert!(ctx.get_endpoint(&uri(jwt_port, "&authenticationType=KERBEROS")).is_err());
+
+    // GOOGLE: service account JSON -> RS256 JWT access token
+    let key_pem = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../camel-tls/testdata/rsa2048.pkcs8.pem")).unwrap();
+    let sa = Value::object([("type", Value::from("service_account")), ("client_email", Value::from("svc@proj.iam.gserviceaccount.com")), ("private_key_id", Value::from("kid-1")), ("private_key", Value::from(key_pem.clone()))]);
+    let sa_path = std::env::temp_dir().join(format!("camel-grpc-sa-{}.json", std::process::id()));
+    std::fs::write(&sa_path, sa.to_json()).unwrap();
+    let reply = t.request_body(&uri(open_port, &format!("&authenticationType=GOOGLE&serviceAccountResource=file:{}", sa_path.display())), Value::object([("name", "Google")])).unwrap();
+    assert_eq!(reply.get("message"), Some(&Value::from("Hello Google")));
+    let auth = seen.lock().unwrap().clone().expect("authorization metadata");
+    let token = auth.strip_prefix("Bearer ").unwrap();
+    let parts: Vec<&str> = token.split('.').collect();
+    let dec = |s: &str| {
+        let mut t = s.replace('-', "+").replace('_', "/");
+        while t.len() % 4 != 0 {
+            t.push('=');
+        }
+        camel_tls::pem::base64_decode(&t).unwrap()
+    };
+    let header = camel_core::json::parse(&String::from_utf8(dec(parts[0])).unwrap()).unwrap();
+    let claims = camel_core::json::parse(&String::from_utf8(dec(parts[1])).unwrap()).unwrap();
+    assert_eq!(header.get("alg"), Some(&Value::from("RS256")));
+    assert_eq!(header.get("kid"), Some(&Value::from("kid-1")));
+    assert_eq!(claims.get("iss"), Some(&Value::from("svc@proj.iam.gserviceaccount.com")));
+    assert_eq!(claims.get("aud"), Some(&Value::from("https://127.0.0.1/helloworld.Greeter")));
+    assert_eq!(claims.get("exp").unwrap().as_i64().unwrap() - claims.get("iat").unwrap().as_i64().unwrap(), 3600);
+    // the signature verifies with the service account's public key
+    let camel_tls::PrivateKey::Rsa(rsa) = camel_tls::PrivateKey::from_pem(key_pem.as_bytes()).unwrap() else { panic!("rsa") };
+    let digest = camel_tls::crypto::hash::HashAlg::Sha256.hash(format!("{}.{}", parts[0], parts[1]).as_bytes());
+    let camel_tls::keys::PublicKey::Rsa(public) = camel_tls::PrivateKey::Rsa(rsa).public_key() else { panic!("rsa") };
+    assert!(public.verify_pkcs1(camel_tls::crypto::hash::HashAlg::Sha256, &digest, &dec(parts[2])));
+    ctx.stop().unwrap();
+    let _ = std::fs::remove_file(sa_path);
+}
+
+#[test]
+fn h2c_upgrade_and_route_controlled_stream_observer() {
+    let ctx = CamelContext::new();
+    camel_grpc::register(&ctx);
+    let consumer = format!("grpc://127.0.0.1:0/helloworld.Greeter?protoFile={}&consumerStrategy=PROPAGATION&routeControlledStreamObserver=true", PROTO);
+    let c2 = consumer.clone();
+    ctx.add_routes(move |b| {
+        b.from(&c2).process(|ex: &mut Exchange| {
+            let obs = camel_grpc::component::response_observer(ex).expect("observer");
+            let name = ex.body().get("name").map(|v| v.to_string()).unwrap_or_default();
+            if name == "fail" {
+                obs.on_error(&CamelError::new("StatusRuntimeException", "PERMISSION_DENIED: nope"));
+                return Ok(());
+            }
+            for i in 0..3 {
+                obs.on_next(Value::object([("message", Value::from(format!("{} {}", name, i))), ("index", Value::Int(i))]));
+            }
+            obs.on_completed();
+            // the route's own body is not sent
+            ex.set_body(Value::object([("message", Value::from("ignored"))]));
+            Ok(())
+        });
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let port = camel_grpc::local_port(&ctx, &consumer).unwrap();
+    let t = ctx.create_producer_template();
+    // the producer upgrades its cleartext connection from HTTP/1.1 (Upgrade: h2c)
+    let uri = format!("grpc://127.0.0.1:{}/helloworld.Greeter?method=sayHelloStream&protoFile={}&negotiationType=PLAINTEXT_UPGRADE", port, PROTO);
+    let reply = t.request_body(&uri, Value::object([("name", Value::from("obs")), ("times", Value::Int(1))])).unwrap();
+    let msgs: Vec<String> = reply.as_array().unwrap().iter().map(|m| m.get("message").unwrap().to_string()).collect();
+    assert_eq!(msgs, vec!["obs 0", "obs 1", "obs 2"]);
+    let err = t.request_body(&uri, Value::object([("name", "fail")])).unwrap_err();
+    assert!(status_of(&err).starts_with("PERMISSION_DENIED"), "{}", status_of(&err));
+    ctx.stop().unwrap();
+
+    // raw h2 level: upgrade request served as stream 1 by an H2Server, then normal requests
+    use camel_grpc::h2::{H2Config, H2Connection, H2Request, H2Server, H2Stream, ServerRequest};
+    let server = H2Server::bind("127.0.0.1:0", H2Config::default(), None, |req: ServerRequest, stream: H2Stream| {
+        let body = stream.read_body(None).unwrap_or_default();
+        let _ = ServerRequest::respond(&stream, 200, &[("content-type", "text/plain")], format!("{} {}", req.path, body.len()).as_bytes());
+    })
+    .unwrap();
+    let conn = H2Connection::connect_upgrade(&server.local_addr().to_string(), H2Config::default()).unwrap();
+    let resp = conn.request(&H2Request::post("/echo", b"hello".to_vec()), Some(Duration::from_secs(5))).unwrap();
+    assert_eq!(resp.body, b"/echo 5");
+    // a plain HTTP/1.1 client without the upgrade is refused
+    let mut s = std::net::TcpStream::connect(server.local_addr()).unwrap();
+    use std::io::{Read, Write};
+    s.write_all(b"GET /x HTTP/1.1\r\nHost: a\r\n\r\n").unwrap();
+    let mut out = String::new();
+    let _ = s.read_to_string(&mut out);
+    assert!(out.starts_with("HTTP/1.1 505"), "{}", out);
+    server.stop();
+}

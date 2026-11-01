@@ -202,16 +202,45 @@ impl Shared {
     /// Performs the connection preface + SETTINGS exchange start and spawns the reader
     /// and writer threads.
     pub(crate) fn start(role: Role, transport: Transport, config: H2Config, on_new_stream: Option<NewStreamFn>) -> Result<Arc<Shared>, H2Error> {
-        let Transport { mut reader, writer, socket, alpn, tls, peer_addr, local_addr } = transport;
+        Self::start_with(role, transport, config, on_new_stream, false)
+    }
+
+    /// `client_upgraded`: the client already sent its first request (stream 1) as the
+    /// HTTP/1.1 `Upgrade: h2c` request. Servers accept both prior knowledge and the upgrade.
+    pub(crate) fn start_with(role: Role, transport: Transport, config: H2Config, on_new_stream: Option<NewStreamFn>, client_upgraded: bool) -> Result<Arc<Shared>, H2Error> {
+        let Transport { mut reader, mut writer, socket, alpn, tls, peer_addr, local_addr } = transport;
         let _ = socket.set_write_timeout(Some(config.write_timeout));
+        let mut upgraded: Option<super::upgrade::UpgradeRequest> = None;
         if role == Role::Server {
             // read and check the client preface
             let _ = socket.set_read_timeout(Some(config.connect_timeout));
             let mut pre = [0u8; 24];
             read_full(&mut reader, &mut pre).map_err(|e| H2Error::Io(format!("reading connection preface: {}", e)))?;
             if &pre != PREFACE {
-                let _ = socket.shutdown(Shutdown::Both);
-                return Err(conn_err(ErrorCode::PROTOCOL_ERROR, "invalid connection preface (not an HTTP/2 prior-knowledge client?)"));
+                // HTTP/1.1 request with `Upgrade: h2c` (RFC 7540 section 3.2)?
+                match super::upgrade::read_upgrade_request(&pre, &mut reader) {
+                    Ok(Some(req)) => {
+                        writer
+                            .write_all(b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")
+                            .and_then(|_| writer.flush())
+                            .map_err(|e| H2Error::Io(format!("writing 101 response: {}", e)))?;
+                        read_full(&mut reader, &mut pre).map_err(|e| H2Error::Io(format!("reading connection preface: {}", e)))?;
+                        if &pre != PREFACE {
+                            let _ = socket.shutdown(Shutdown::Both);
+                            return Err(conn_err(ErrorCode::PROTOCOL_ERROR, "invalid connection preface after the h2c upgrade"));
+                        }
+                        upgraded = Some(req);
+                    }
+                    Ok(None) => {
+                        let _ = writer.write_all(b"HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+                        let _ = socket.shutdown(Shutdown::Both);
+                        return Err(conn_err(ErrorCode::PROTOCOL_ERROR, "HTTP/1.1 request without Upgrade: h2c"));
+                    }
+                    Err(_) => {
+                        let _ = socket.shutdown(Shutdown::Both);
+                        return Err(conn_err(ErrorCode::PROTOCOL_ERROR, "invalid connection preface (not an HTTP/2 prior-knowledge client?)"));
+                    }
+                }
             }
             let _ = socket.set_read_timeout(None);
         }
@@ -268,6 +297,38 @@ impl Shared {
             Frame::window_update(0, c.connection_window_size - DEFAULT_WINDOW).encode(&mut first);
         }
         shared.queue(first)?;
+        if client_upgraded {
+            // stream 1 carried the upgrade request: its response is read (and ignored) like
+            // any other stream; new requests start at 3
+            let mut st = shared.lock();
+            let mut s = StreamState::new(DEFAULT_WINDOW as i64, shared.config.initial_window_size as i64);
+            s.local_end = true;
+            st.streams.insert(1, s);
+            st.next_stream_id = 3;
+        }
+        if let Some(req) = upgraded {
+            {
+                let mut st = shared.lock();
+                for (id, v) in &req.settings {
+                    match *id {
+                        settings_id::INITIAL_WINDOW_SIZE => st.peer.initial_window = *v,
+                        settings_id::MAX_FRAME_SIZE => st.peer.max_frame_size = *v,
+                        settings_id::MAX_CONCURRENT_STREAMS => st.peer.max_concurrent = *v,
+                        _ => {}
+                    }
+                }
+                let mut s = StreamState::new(st.peer.initial_window as i64, shared.config.initial_window_size as i64);
+                s.remote_end = true;
+                if !req.body.is_empty() {
+                    s.data.push_back(req.body.clone());
+                }
+                st.streams.insert(1, s);
+                st.last_peer_stream = 1;
+            }
+            if let Some(cb) = on_new_stream.as_ref() {
+                cb(H2Stream { shared: shared.clone(), id: 1 }, req.headers.clone());
+            }
+        }
 
         let w = shared.clone();
         std::thread::Builder::new()

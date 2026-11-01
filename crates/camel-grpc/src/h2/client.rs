@@ -71,6 +71,19 @@ impl H2Connection {
         Self::with_transport(t, addr, config)
     }
 
+    /// Connects over cleartext TCP starting with an HTTP/1.1 `Upgrade: h2c` request
+    /// (`GET /` with `HTTP2-Settings`); after `101 Switching Protocols` the connection speaks
+    /// HTTP/2 (the upgrade request's response arrives on stream 1 and is ignored).
+    pub fn connect_upgrade(addr: &str, config: H2Config) -> Result<H2Connection, H2Error> {
+        let mut tcp = tcp_connect(addr, config.connect_timeout)?;
+        let _ = tcp.set_read_timeout(Some(config.connect_timeout));
+        super::upgrade::client_upgrade(&mut tcp, addr, &config)?;
+        let _ = tcp.set_read_timeout(None);
+        let t = Transport::tcp(tcp).map_err(|e| H2Error::Io(e.to_string()))?;
+        let shared = Shared::start_with(Role::Client, t, config, None, true)?;
+        Ok(H2Connection { inner: Arc::new(ClientInner { shared, authority: addr.to_string() }) })
+    }
+
     /// Runs HTTP/2 over an already established transport.
     pub fn with_transport(t: Transport, authority: &str, config: H2Config) -> Result<H2Connection, H2Error> {
         let shared = Shared::start(Role::Client, t, config, None)?;

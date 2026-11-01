@@ -157,8 +157,8 @@ fn protocol_errors_from_raw_client() {
     s.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
     let mut buf = Vec::new();
     let _ = s.read_to_end(&mut buf);
-    // the server never answers with HTTP/1.1
-    assert!(!buf.starts_with(b"HTTP/1.1"));
+    // an HTTP/1.1 request without Upgrade: h2c is refused (505) and the connection dropped
+    assert!(buf.starts_with(b"HTTP/1.1 505"), "{}", String::from_utf8_lossy(&buf));
 
     // valid preface, then a DATA frame on stream 0 -> GOAWAY(PROTOCOL_ERROR)
     let mut s = TcpStream::connect(server.local_addr()).unwrap();

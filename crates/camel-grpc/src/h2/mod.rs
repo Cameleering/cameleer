@@ -16,8 +16,10 @@
 //! (idle/open/half-closed/closed with the RFC's connection/stream error rules) and
 //! concurrent streams bounded by `SETTINGS_MAX_CONCURRENT_STREAMS`.
 //!
-//! Not implemented: server push (always disabled), the HTTP/1.1 `Upgrade: h2c` dance
-//! (prior knowledge only), RFC 8441 extended CONNECT, priority scheduling.
+//! HTTP/1.1 `Upgrade: h2c` (RFC 7540 section 3.2): servers answer an upgrade request with
+//! `101 Switching Protocols` (applying its `HTTP2-Settings`) and serve the request as stream
+//! 1; [`H2Connection::connect_upgrade`] is the client side. Not implemented: server push
+//! (always disabled), RFC 8441 extended CONNECT, priority scheduling.
 //!
 //! This module is public so it can be reused, e.g. to add HTTP/2 to `camel-http`:
 //! accept a connection, and when TLS negotiated ALPN `h2` (or the first 24 bytes are the
@@ -41,6 +43,7 @@ pub mod client;
 pub mod frame;
 pub mod server;
 pub mod transport;
+pub(crate) mod upgrade;
 
 pub use client::{read_response, H2Connection};
 pub use conn::{H2Config, H2Error, H2Stream, DEFAULT_WINDOW};

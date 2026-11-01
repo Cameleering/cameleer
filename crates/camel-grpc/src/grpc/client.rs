@@ -27,13 +27,16 @@ pub struct GrpcClient {
     pub max_message_size: usize,
     /// `grpc-encoding` used for request messages (`gzip` / `deflate`; None = identity).
     pub send_compression: Option<String>,
+    /// Plaintext connections start with an HTTP/1.1 `Upgrade: h2c` request
+    /// (`negotiationType=PLAINTEXT_UPGRADE`) instead of prior knowledge.
+    pub upgrade: bool,
     conn: Mutex<Option<H2Connection>>,
 }
 
 impl GrpcClient {
     /// Plaintext channel (HTTP/2 prior knowledge).
     pub fn plaintext(addr: &str) -> GrpcClient {
-        GrpcClient { addr: addr.to_string(), tls: None, config: H2Config::default(), max_message_size: 4 << 20, send_compression: None, conn: Mutex::new(None) }
+        GrpcClient { addr: addr.to_string(), tls: None, config: H2Config::default(), max_message_size: 4 << 20, send_compression: None, upgrade: false, conn: Mutex::new(None) }
     }
 
     /// TLS channel; `tls` should offer ALPN `h2` (added automatically when absent is not
@@ -56,6 +59,7 @@ impl GrpcClient {
             }
         }
         let c = match &self.tls {
+            None if self.upgrade => H2Connection::connect_upgrade(&self.addr, self.config.clone()),
             None => H2Connection::connect(&self.addr, self.config.clone()),
             Some((name, cfg)) => H2Connection::connect_tls(&self.addr, name, cfg, self.config.clone()),
         }

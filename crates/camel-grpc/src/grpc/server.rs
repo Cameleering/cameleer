@@ -43,6 +43,7 @@ struct CallInner {
     accept_encoding: Option<String>,
     decoder: Mutex<MessageDecoder>,
     state: Mutex<CallState>,
+    observer: std::sync::atomic::AtomicI64,
 }
 
 /// One server-side call. Cheap to clone (shared state).
@@ -59,6 +60,14 @@ impl ServerCall {
     /// Method name as in the path (`SayHello`).
     pub fn method(&self) -> &str {
         &self.inner.method
+    }
+    /// Id of the response observer handed to routes (`routeControlledStreamObserver`).
+    pub fn observer_id(&self) -> Option<i64> {
+        Some(self.inner.observer.load(std::sync::atomic::Ordering::Relaxed)).filter(|i| *i != 0)
+    }
+    /// Associates a response observer id with this call.
+    pub fn set_observer_id(&self, id: i64) {
+        self.inner.observer.store(id, std::sync::atomic::Ordering::Relaxed);
     }
     /// Request metadata (user headers, lower-case).
     pub fn metadata(&self) -> &Metadata {
@@ -246,6 +255,7 @@ fn handle(service: &Arc<dyn GrpcService>, max_message_size: usize, req: ServerRe
             accept_encoding: req.header("grpc-accept-encoding").map(|s| s.to_string()),
             decoder: Mutex::new(MessageDecoder::new(encoding, max_message_size)),
             state: Mutex::new(CallState { send_encoding: None, headers_sent: false, finished: false, response_headers: Vec::new(), trailers: Vec::new() }),
+            observer: std::sync::atomic::AtomicI64::new(0),
         }),
     };
     if call.service().is_empty() {

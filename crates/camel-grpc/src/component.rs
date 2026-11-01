@@ -43,6 +43,22 @@
 //! with `keyCertChainResource` + `keyResource` presents a client certificate; a consumer
 //! with `trustCertCollectionResource` requires one issued by those CAs.
 //!
+//! `negotiationType=PLAINTEXT_UPGRADE`: the producer starts plaintext connections with an
+//! HTTP/1.1 `Upgrade: h2c` request; consumers accept both prior knowledge and the upgrade.
+//!
+//! Authentication (`authenticationType`): `JWT` — the producer sends
+//! `authorization: Bearer <jwt>` signed with `jwtSecret` (`jwtAlgorithm` HMAC256 / HMAC384 /
+//! HMAC512, claims `jwtIssuer` / `jwtSubject`), the consumer rejects calls without a valid
+//! token (signature, algorithm, expiry, issuer / subject) with UNAUTHENTICATED; `GOOGLE` —
+//! the producer signs service-account JWT access tokens (RS256, audience
+//! `https://<host>/<package.Service>`) with the key of `serviceAccountResource` (a Google
+//! JSON key file), see [`crate::auth`].
+//!
+//! `routeControlledStreamObserver=true` (consumer): the route answers through the
+//! [`ResponseObserver`] found with [`response_observer`] (exchange property
+//! `CamelGrpcResponseObserver`) — `on_next` sends response messages, `on_completed` ends the
+//! call, `on_error` fails it — instead of its result body being sent.
+//!
 //! Interceptors: `clientInterceptors` / `serverInterceptors` (`#bean` lists of
 //! [`ClientInterceptorBean`] / [`ServerInterceptorBean`]), or every bound bean of that type
 //! with `autoDiscoverClientInterceptors` / `autoDiscoverServerInterceptors` (default true).
@@ -118,6 +134,10 @@ pub struct GrpcConfig {
     pub compression: Option<String>,
     pub client_interceptors: Vec<Arc<dyn GrpcClientInterceptor>>,
     pub server_interceptors: Vec<Arc<dyn GrpcServerInterceptor>>,
+    /// `negotiationType=PLAINTEXT_UPGRADE`.
+    pub plain_text_upgrade: bool,
+    /// `routeControlledStreamObserver`.
+    pub route_controlled_stream_observer: bool,
 }
 
 /// A client interceptor (Camel `clientInterceptors`): sees every outgoing call and may add
@@ -229,7 +249,9 @@ impl Component for GrpcComponent {
             other => return Err(CamelError::illegal_argument(format!("Invalid producerStrategy: {}", other))),
         };
         let mut plain_text = params.take_bool("usePlainText", true)?;
+        let mut plain_text_upgrade = false;
         if let Some(n) = params.take("negotiationType") {
+            plain_text_upgrade = n.eq_ignore_ascii_case("PLAINTEXT_UPGRADE");
             plain_text = match n.to_ascii_uppercase().as_str() {
                 "PLAINTEXT" | "PLAINTEXT_UPGRADE" => true,
                 "TLS" => false,
@@ -240,7 +262,34 @@ impl Component for GrpcComponent {
             Some(d) => Some(camel_core::util::parse_duration(&d)?),
             None => None,
         };
+        let auth_type = params.take_string("authenticationType", "NONE").to_ascii_uppercase();
+        let jwt_alg = params.take_string("jwtAlgorithm", "HMAC256");
+        let jwt_alg = crate::auth::JwtAlgorithm::parse(&jwt_alg).ok_or_else(|| CamelError::illegal_argument(format!("Invalid jwtAlgorithm: {} (HMAC256, HMAC384, HMAC512)", jwt_alg)))?;
+        let jwt_secret = params.take("jwtSecret");
+        let jwt_issuer = params.take("jwtIssuer");
+        let jwt_subject = params.take("jwtSubject");
+        let service_account = params.take("serviceAccountResource").map(|p| strip_resource(&p));
+        let mut auth_client: Option<Arc<dyn GrpcClientInterceptor>> = None;
+        let mut auth_server: Option<Arc<dyn GrpcServerInterceptor>> = None;
+        match auth_type.as_str() {
+            "NONE" => {}
+            "JWT" => {
+                let secret = jwt_secret.clone().ok_or_else(|| CamelError::illegal_argument("authenticationType=JWT requires jwtSecret"))?;
+                auth_client = Some(Arc::new(crate::auth::JwtClientInterceptor::new(jwt_alg, &secret, jwt_issuer.as_deref(), jwt_subject.as_deref())));
+                auth_server = Some(Arc::new(crate::auth::JwtServerInterceptor { algorithm: jwt_alg, secret, issuer: jwt_issuer.clone(), subject: jwt_subject.clone() }));
+            }
+            "GOOGLE" => {
+                let path = service_account.ok_or_else(|| CamelError::illegal_argument("authenticationType=GOOGLE requires serviceAccountResource"))?;
+                let text = std::fs::read_to_string(&path).map_err(|e| CamelError::illegal_argument(format!("Cannot read serviceAccountResource {}: {}", path, e)))?;
+                let account = crate::auth::ServiceAccount::from_json(&text)?;
+                let audience = format!("https://{}/{}", host, service);
+                auth_client = Some(Arc::new(crate::auth::GoogleClientInterceptor::new(account, audience)));
+            }
+            other => return Err(CamelError::illegal_argument(format!("Invalid authenticationType: {} (NONE, GOOGLE, JWT)", other))),
+        }
         let cfg = GrpcConfig {
+            plain_text_upgrade,
+            route_controlled_stream_observer: params.take_bool("routeControlledStreamObserver", false)?,
             host,
             port,
             service,
@@ -283,7 +332,6 @@ impl Component for GrpcComponent {
             "exceptionHandler",
             "userAgent",
             "keyPassword",
-            "authenticationType",
             "keepAliveTime",
             "keepAliveTimeout",
             "maxInboundMetadataSize",
@@ -291,13 +339,19 @@ impl Component for GrpcComponent {
             "maxRstPeriodSeconds",
             "permitKeepAliveTime",
             "permitKeepAliveWithoutCalls",
-            "routeControlledStreamObserver",
             "toRouteControlledStreamObserver",
             "inheritExchangePropertiesForReplies",
             "initialFlowControlWindow",
             "idleTimeout",
         ] {
             params.take(ignored);
+        }
+        let mut cfg = cfg;
+        if let Some(a) = auth_client {
+            cfg.client_interceptors.insert(0, a);
+        }
+        if let Some(a) = auth_server {
+            cfg.server_interceptors.insert(0, a);
         }
         let pool = match &cfg.proto_file {
             Some(p) => {
@@ -457,6 +511,7 @@ impl GrpcProducer {
         client.config = self.cfg.h2_config();
         client.max_message_size = self.cfg.max_message_size;
         client.send_compression = self.cfg.compression.clone();
+        client.upgrade = self.cfg.plain_text_upgrade;
         let c = Arc::new(client);
         *g = Some(c.clone());
         Ok(c)
@@ -651,6 +706,68 @@ impl Service for GrpcProducer {
 // consumer
 // ---------------------------------------------------------------------------
 
+/// Exchange property holding the [`ResponseObserver`] id (`routeControlledStreamObserver`).
+pub const GRPC_RESPONSE_OBSERVER: &str = "CamelGrpcResponseObserver";
+
+#[derive(Default)]
+struct ObserverState {
+    queue: Vec<Value>,
+    completed: bool,
+    error: Option<Status>,
+}
+
+/// The response side of a call handed to the route with `routeControlledStreamObserver=true`
+/// (Camel's `StreamObserver` in the `CamelGrpcResponseObserver` property).
+#[derive(Clone, Default)]
+pub struct ResponseObserver {
+    state: Arc<Mutex<ObserverState>>,
+}
+
+impl ResponseObserver {
+    /// Send a response message (encoded with the method's output type).
+    pub fn on_next(&self, v: impl Into<Value>) {
+        let mut s = self.state.lock().unwrap();
+        if !s.completed {
+            s.queue.push(v.into());
+        }
+    }
+    /// Finish the call with a status derived from the error.
+    pub fn on_error(&self, e: &CamelError) {
+        let mut s = self.state.lock().unwrap();
+        s.error = Some(Status::from_camel_error(e));
+        s.completed = true;
+    }
+    /// Finish the call successfully.
+    pub fn on_completed(&self) {
+        self.state.lock().unwrap().completed = true;
+    }
+    fn drain(&self) -> (Vec<Value>, bool, Option<Status>) {
+        let mut s = self.state.lock().unwrap();
+        (std::mem::take(&mut s.queue), s.completed, s.error.take())
+    }
+}
+
+fn observers() -> &'static Mutex<std::collections::HashMap<i64, ResponseObserver>> {
+    static O: std::sync::OnceLock<Mutex<std::collections::HashMap<i64, ResponseObserver>>> = std::sync::OnceLock::new();
+    O.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+static OBSERVER_IDS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
+
+/// The response observer of the call an exchange belongs to (`routeControlledStreamObserver`).
+pub fn response_observer(ex: &Exchange) -> Option<ResponseObserver> {
+    let id = ex.property(GRPC_RESPONSE_OBSERVER).and_then(|v| v.as_i64())?;
+    observers().lock().unwrap().get(&id).cloned()
+}
+
+struct ObserverGuard(i64);
+
+impl Drop for ObserverGuard {
+    fn drop(&mut self) {
+        observers().lock().unwrap().remove(&self.0);
+    }
+}
+
 struct ConsumerShared {
     cfg: GrpcConfig,
     pool: Option<Arc<DescriptorPool>>,
@@ -661,6 +778,9 @@ struct ConsumerShared {
 impl ConsumerShared {
     fn route(&self, ctx: &CamelContext, call: &ServerCall, method: &str, body: Value, event: Option<&str>) -> std::result::Result<Value, Status> {
         let mut ex = Exchange::new(Some(ctx.clone()));
+        if let Some(id) = call.observer_id() {
+            ex.set_property(GRPC_RESPONSE_OBSERVER, Value::Int(id));
+        }
         ex.pattern = ExchangePattern::InOut;
         for (k, v) in call.metadata() {
             ex.set_header(k.clone(), v.clone());
@@ -710,10 +830,71 @@ impl ConsumerShared {
     }
 
     fn serve(&self, call: &ServerCall) -> Status {
+        if self.cfg.route_controlled_stream_observer {
+            return match self.serve_observed(call) {
+                Ok(()) => Status::ok(),
+                Err(s) => s,
+            };
+        }
         match self.serve_inner(call) {
             Ok(()) => Status::ok(),
             Err(s) => s,
         }
+    }
+
+    /// `routeControlledStreamObserver`: every request message is routed (`onNext`, plus
+    /// `onCompleted` with `forwardOnCompleted`); responses come from the observer only.
+    fn serve_observed(&self, call: &ServerCall) -> std::result::Result<(), Status> {
+        let ctx = self.ctx.upgrade().ok_or_else(|| Status::new(Code::Unavailable, "CamelContext stopped"))?;
+        let path = format!("/{}/{}", call.service(), call.method());
+        for i in &self.cfg.server_interceptors {
+            i.intercept_call(&path, call.metadata())?;
+        }
+        if let Some(c) = &self.cfg.compression {
+            call.set_send_compression(c);
+        }
+        let (method, input, output) = match &self.pool {
+            Some(pool) => {
+                let svc = pool.service(&self.cfg.service).ok_or_else(|| Status::new(Code::Unimplemented, "unknown service"))?;
+                let m = svc.methods.iter().find(|m| m.name == call.method()).ok_or_else(|| Status::new(Code::Unimplemented, format!("unknown method {}", call.method())))?;
+                (m.name.clone(), Some(m.input_type.clone()), Some(m.output_type.clone()))
+            }
+            None => (call.method().to_string(), None, None),
+        };
+        let observer = ResponseObserver::default();
+        let id = OBSERVER_IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        observers().lock().unwrap().insert(id, observer.clone());
+        let _guard = ObserverGuard(id);
+        call.set_observer_id(id);
+        let pool = self.pool.as_deref();
+        let flush = |obs: &ResponseObserver| -> std::result::Result<bool, Status> {
+            let (values, completed, error) = obs.drain();
+            for v in values {
+                let b = encode_value(pool, output.as_deref(), &v).map_err(|e| Status::new(Code::Internal, format!("cannot encode response: {}", e.message)))?;
+                call.send(&b)?;
+            }
+            if let Some(e) = error {
+                return Err(e);
+            }
+            Ok(completed)
+        };
+        loop {
+            match call.recv()? {
+                Some(m) => {
+                    let v = decode_value(pool, input.as_deref(), &m).map_err(|e| Status::new(Code::Internal, format!("cannot parse request: {}", e.message)))?;
+                    self.route(&ctx, call, &method, v, Some(GRPC_EVENT_TYPE_ON_NEXT))?;
+                    if flush(&observer)? {
+                        return Ok(());
+                    }
+                }
+                None => break,
+            }
+        }
+        if self.cfg.forward_on_completed {
+            self.route(&ctx, call, &method, Value::Null, Some(GRPC_EVENT_TYPE_ON_COMPLETED))?;
+        }
+        flush(&observer)?;
+        Ok(())
     }
 
     fn serve_inner(&self, call: &ServerCall) -> std::result::Result<(), Status> {

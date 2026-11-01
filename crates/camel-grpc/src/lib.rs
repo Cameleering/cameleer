@@ -35,6 +35,7 @@
 //! ctx.start().unwrap();
 //! ```
 
+pub mod auth;
 pub mod component;
 pub mod dataformat;
 pub mod grpc;
