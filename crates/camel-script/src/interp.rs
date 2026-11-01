@@ -665,6 +665,13 @@ impl Interp {
                 let mut matched = None;
                 for (i, (test, _)) in cases.iter().enumerate() {
                     if let Some(t) = test {
+                        if let Some(hit) = self.enum_label(t, &dv, &scope) {
+                            if hit {
+                                matched = Some(i);
+                                break;
+                            }
+                            continue;
+                        }
                         let tv = self.eval(t, &scope)?;
                         if self.case_matches(&dv, &tv)? {
                             matched = Some(i);
@@ -2572,6 +2579,13 @@ impl Interp {
                             }
                             continue;
                         }
+                        if let Some(h) = self.enum_label(l, &dv, env) {
+                            if h {
+                                hit = true;
+                                break;
+                            }
+                            continue;
+                        }
                         let lv = self.eval(l, env)?;
                         if self.case_matches(&dv, &lv)? {
                             hit = true;
@@ -2668,6 +2682,20 @@ impl Interp {
             }
             _ => {}
         }
+    }
+
+    /// Java / Groovy `case CONSTANT:` of an enum switch (an unqualified constant name):
+    /// Some(matches) when the label is such a name, None otherwise.
+    fn enum_label(&self, label: &Expr, dv: &V, env: &Env) -> Option<bool> {
+        let Expr::Ident(n, _) = label else { return None };
+        if !self.d.groovy_like() || env.lookup(n).is_some() {
+            return None;
+        }
+        let name = match dv {
+            V::Obj(o) => o.borrow().props.get("$enumName").cloned(),
+            _ => None,
+        }?;
+        Some(matches!(name, V::Str(s) if *s == **n))
     }
 
     fn returns_operand(&self) -> bool {
@@ -3198,7 +3226,7 @@ impl Interp {
                     Ok(V::arr(v))
                 }
                 (V::Obj(x), V::Obj(y)) if d == Dialect::Groovy => Ok(merge_objects(x, y)),
-                (_, V::Str(y)) if !matches!(a, V::Arr(_)) => Ok(V::string(format!("{}{}", self.display(&a), y))),
+                (_, V::Str(y)) if !matches!(a, V::Arr(_)) || d == Dialect::Java => Ok(V::string(format!("{}{}", self.display(&a), y))),
                 _ => {
                     let x = self.arith_operand(&a, "+", &b, pos)?;
                     let y = self.arith_operand(&b, "+", &a, pos)?;

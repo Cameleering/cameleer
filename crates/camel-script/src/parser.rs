@@ -410,6 +410,10 @@ impl Parser {
                     while matches!(self.peek(), T::Ident(m) if matches!(m.as_str(), "final" | "static" | "private" | "public" | "protected" | "synchronized")) {
                         self.next();
                     }
+                    // generic method type parameters `static <T extends X> T f(...)`
+                    if self.is_p("<") {
+                        self.skip_balanced()?;
+                    }
                     if self.is_kw("def") || self.is_kw("var") {
                         self.next();
                     }
@@ -764,9 +768,9 @@ impl Parser {
             ctors.push(Arc::new(FuncDef { name: Some(name.to_string()), params: comps, rest: None, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: false, generator: false, is_async: false }));
         }
         let to_string = names.iter().map(|n| format!("\"{0}=\" + this.{0}", n)).collect::<Vec<_>>().join(" + \", \" + ");
-        let eq = names.iter().map(|n| format!("java.util.Objects.equals(this.{0}, other.{0})", n)).collect::<Vec<_>>().join(" && ");
+        let eq = names.iter().map(|n| format!("Objects.equals(this.{0}, other.{0})", n)).collect::<Vec<_>>().join(" && ");
         let mut src = format!(
-            "class {n} {{\n public String toString() {{ return \"{n}[\" + {ts} + \"]\"; }}\n public boolean equals(Object other) {{ return other instanceof {n} && {eq}; }}\n public int hashCode() {{ return java.util.Objects.hash({args}); }}\n",
+            "class {n} {{\n public String toString() {{ return \"{n}[\" + {ts} + \"]\"; }}\n public boolean equals(Object other) {{ return other instanceof {n} && {eq}; }}\n public int hashCode() {{ return Objects.hash({args}); }}\n",
             n = name,
             ts = if to_string.is_empty() { "\"\"".to_string() } else { to_string },
             eq = if eq.is_empty() { "true".to_string() } else { eq },
@@ -1349,10 +1353,14 @@ impl Parser {
             let typed = self.groovy_type_len(n);
             let nm = n + typed;
             if matches!(self.peek_at(nm), T::Ident(_)) && (self.is_kw_at(nm + 1, "in") || self.is_p_at(nm + 1, ":")) {
-                for _ in 0..nm {
+                for _ in 0..n {
                     self.next();
                 }
+                let ty = if typed > 0 { Some(self.capture_type()) } else { None };
                 let name = self.ident()?;
+                if let (Some(t), Dialect::Java) = (ty, self.d) {
+                    self.jtypes.push((name.clone(), t));
+                }
                 self.next();
                 let obj = self.parse_expr()?;
                 self.expect_p(")")?;
@@ -1373,11 +1381,20 @@ impl Parser {
                 if self.is_kw("def") || self.is_kw("var") {
                     self.next();
                 }
-                self.skip_groovy_type();
+                let ty = if self.is_groovy_typed_decl() { Some(self.capture_type()) } else { None };
                 let mut decls = Vec::new();
                 loop {
                     let name = self.ident()?;
-                    let init = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
+                    let mut init = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
+                    if self.d == Dialect::Java {
+                        let declared = ty.clone().or_else(|| init.as_ref().and_then(|e| self.jtype(e)));
+                        if let Some(t) = declared {
+                            if let Some(e) = init.take() {
+                                init = Some(self.java_convert(e, &t));
+                            }
+                            self.jtypes.push((name.clone(), t));
+                        }
+                    }
                     decls.push((Pat::Id(name), init));
                     if !self.eat_p(",") {
                         break;
@@ -2923,6 +2940,11 @@ impl Parser {
                         self.i -= 1;
                         let c = self.parse_class()?;
                         return Ok(Expr::Class(Arc::new(c)));
+                    }
+                    "import" if d == Dialect::Js && self.is_p("(") => {
+                        // dynamic `import(path)`: a promise of the module namespace
+                        let args = self.parse_args()?;
+                        return Ok(Expr::Call { callee: Box::new(Expr::Ident("%dynimport".into(), pos)), args, optional: false, pos });
                     }
                     "switch" if d == Dialect::Java || (d == Dialect::Groovy && self.is_p("(")) => {
                         self.i -= 1;

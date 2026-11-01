@@ -2387,7 +2387,8 @@ pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: 
         }
         ("String", "join") => {
             let sep = sarg(it, &args, 0);
-            let items = if args.len() == 2 && matches!(args[1], V::Arr(_)) { it.iterate(&args[1], Some(pos))? } else { args.iter().skip(1).cloned().collect() };
+            let iterable = args.len() == 2 && (matches!(args[1], V::Arr(_)) || matches!(&args[1], V::Obj(o) if o.borrow().kind == ObjKind::Set));
+            let items = if iterable { it.iterate(&args[1], Some(pos))? } else { args.iter().skip(1).cloned().collect() };
             V::string(items.iter().map(|x| it.display(x)).collect::<Vec<_>>().join(&sep))
         }
         ("Date", "now") => V::Int(now_millis()),
@@ -3725,6 +3726,32 @@ fn set_method(it: &mut Interp, o: ObjRef, recv: &V, name: &str, args: Vec<V>, po
         "contains" | "has" | "__contains__" => {
             let k = set_key(it, &x);
             return Ok(Some(V::Bool(o.borrow().props.contains(&k))));
+        }
+        "addAll" if it.d != Dialect::Python => {
+            let mut changed = false;
+            for v in it.clone_iter(&x)? {
+                let k = set_key(it, &v);
+                changed |= !o.borrow().props.contains(&k);
+                o.borrow_mut().props.set(&k, v);
+            }
+            return Ok(Some(V::Bool(changed)));
+        }
+        "removeAll" | "retainAll" if it.d != Dialect::Python => {
+            let other: Vec<String> = it.clone_iter(&x)?.iter().map(|v| set_key(it, v)).collect();
+            let keys: Vec<Rc<str>> = o.borrow().props.keys().cloned().collect();
+            let mut changed = false;
+            for k in keys {
+                let present = other.iter().any(|x| **x == *k);
+                if (name == "removeAll") == present {
+                    o.borrow_mut().props.remove(&k);
+                    changed = true;
+                }
+            }
+            return Ok(Some(V::Bool(changed)));
+        }
+        "containsAll" if it.d != Dialect::Python => {
+            let all = it.clone_iter(&x)?.iter().all(|v| o.borrow().props.contains(&set_key(it, v)));
+            return Ok(Some(V::Bool(all)));
         }
         "size" | "__len__" => return Ok(Some(V::Int(o.borrow().props.len() as i64))),
         "isEmpty" => return Ok(Some(V::Bool(o.borrow().props.is_empty()))),

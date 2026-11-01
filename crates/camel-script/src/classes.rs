@@ -759,13 +759,24 @@ impl Interp {
             }
             if sc.func && sc.vars.borrow().contains_key("%home") {
                 let this = sc.vars.borrow().get("this").cloned();
-                if let Some(this @ V::Obj(_)) = this {
+                if let Some(this @ V::Obj(_)) = this.clone() {
                     let V::Obj(o) = &this else { unreachable!() };
                     if o.borrow().props.contains(name) {
                         o.borrow_mut().props.set(name, v.clone());
                         return true;
                     }
                     if let Some(c) = class_of(&this) {
+                        for k in self.class_chain(&c).iter().rev() {
+                            if k.props.borrow().contains(name) {
+                                k.props.borrow_mut().set(name, v.clone());
+                                return true;
+                            }
+                        }
+                    }
+                }
+                if let Some(V::Func(c)) = this {
+                    // static methods: static fields of the class chain
+                    if c.flavor == Flavor::Class {
                         for k in self.class_chain(&c).iter().rev() {
                             if k.props.borrow().contains(name) {
                                 k.props.borrow_mut().set(name, v.clone());

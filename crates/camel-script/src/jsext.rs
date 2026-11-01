@@ -15,7 +15,7 @@ use crate::value::*;
 pub const NS: &[&str] = &[
     "Proxy", "BigInt", "%BigInt", "ArrayBuffer", "DataView", "Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array",
     "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array", "TextEncoder", "TextDecoder", "Intl", "Intl.NumberFormat", "Intl.DateTimeFormat",
-    "Intl.PluralRules", "Intl.Collator", "Intl.ListFormat", "Intl.RelativeTimeFormat", "globalThis", "structuredClone", "%tpl", "%import",
+    "Intl.PluralRules", "Intl.Collator", "Intl.ListFormat", "Intl.RelativeTimeFormat", "globalThis", "structuredClone", "%tpl", "%import", "%dynimport",
 ];
 
 fn ns_name(n: &str) -> Option<&'static str> {
@@ -966,6 +966,16 @@ pub fn call_ns(it: &mut Interp, n: &str, args: &[V], pos: u32) -> R<Option<V>> {
         "%import" => {
             let path = it.display(&a0);
             return import_module(it, &path, pos).map(Some);
+        }
+        "%dynimport" => {
+            let path = it.display(&a0);
+            let p = it.new_promise();
+            match import_module(it, &path, pos) {
+                Ok(ns) => it.resolve_promise(&p, ns)?,
+                Err(crate::interp::Ctrl::Throw(e)) => it.reject_promise(&p, e),
+                Err(e) => return Err(e),
+            }
+            p
         }
         "Proxy" => return it.type_error("Constructor Proxy requires 'new'".into(), Some(pos)),
         _ if TK::of(n).is_some() || n == "ArrayBuffer" || n == "DataView" => return it.type_error(format!("Constructor {} requires 'new'", n), Some(pos)),

@@ -140,6 +140,8 @@ fn js_modules() {
             ("import cfg from './tests/fixtures/js/config.json'; cfg.port", "8080"),
             ("import { square } from 'classpath:tests/fixtures/js/math.js'; square(3)", "9"),
             ("export const local = 1; export default 5; local + 1", "2"),
+            ("(async () => { const m = await import('./tests/fixtures/js/math.js'); return m.square(5); })()", "25"),
+            ("import('./tests/fixtures/js/nothing.js').then(() => 'loaded', e => 'failed: ' + e.message)", "\"failed: Cannot find module './tests/fixtures/js/nothing.js'\""),
         ],
     );
     check_err("js", &ex, &[("import x from './tests/fixtures/js/missing.js'; x", "Cannot find module")]);
