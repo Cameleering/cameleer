@@ -803,7 +803,22 @@ fn barcode_routes_and_third_party_pngs() {
     }
     assert!(DataFormatDefinition::new("barcode").option("imageType", "JPG").resolve(&c).is_ok());
     assert!(DataFormatDefinition::new("barcode").option("imageType", "BMP").resolve(&c).is_err());
-    assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "MAXICODE").resolve(&c).is_err());
+    // MaxiCode is decode-only (ZXing has no MaxiCode writer): marshalling fails
+    let maxi = DataFormatDefinition::new("barcode").option("barcodeFormat", "MAXICODE").resolve(&c).unwrap();
+    let mut ex = Exchange::new(None);
+    ex.message.body = Value::String("x".into());
+    assert!(maxi.marshal(&mut ex).is_err());
+    assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "BOGUS").resolve(&c).is_err());
+    // the further linear symbologies through a route, with format headers
+    for (fmt, text, want) in [("CODABAR", "A40156B", "40156"), ("CODE_93", "Code 93!", "Code 93!"), ("EAN_8", "9638507", "96385074"), ("ITF", "30712345000010", "30712345000010"), ("UPC_E", "0123456", "01234565")] {
+        let m = DataFormatDefinition::new("barcode").option("barcodeFormat", fmt).option("width", 400).option("height", 100).resolve(&c).unwrap();
+        let u = DataFormatDefinition::new("barcode").resolve(&c).unwrap();
+        let mut ex = Exchange::new(None);
+        ex.message.body = Value::String(text.into());
+        m.marshal(&mut ex).unwrap();
+        u.unmarshal(&mut ex).unwrap();
+        assert_eq!((ex.body().to_string(), ex.header("BarcodeFormat").unwrap().to_string()), (want.to_string(), fmt.to_string()));
+    }
     assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "PDF_417").option("errorCorrectionLevel", "9").resolve(&c).is_err());
 }
 

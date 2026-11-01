@@ -196,7 +196,7 @@ pub fn distortions() -> Vec<(&'static str, Camera)> {
 pub fn printed(text: &str, f: Format) -> Gray {
     let pdf = pdf417::Pdf417Options::default();
     let (w, h) = match f {
-        Format::Code128 | Format::Ean13 | Format::UpcA | Format::Code39 => (600, 200),
+        f if is_linear(f) => (600, 200),
         Format::Pdf417 => (600, 300),
         _ => (240, 240),
     };
@@ -215,22 +215,34 @@ pub fn printed(text: &str, f: Format) -> Gray {
     out
 }
 
+/// Whether `f` is a linear (1D) symbology (photographed on a wide image).
+pub fn is_linear(f: Format) -> bool {
+    use Format::*;
+    matches!(f, Code128 | Code39 | Code93 | Codabar | Itf | Ean13 | Ean8 | UpcA | UpcE | UpcEanExtension | Rss14 | RssExpanded)
+}
+
+/// Render linear modules like the writers do (for symbologies without a writer).
+pub fn printed_modules(m: &[bool]) -> Gray {
+    super::render_1d(m, 600, 200, 10)
+}
+
 /// Decode every distortion; returns the names that failed.
 pub fn failures(text: &str, f: Format, only: Option<Format>) -> Vec<String> {
-    let src = printed(text, f);
+    failures_of(&printed(text, f), is_linear(f) || f == Format::Pdf417, text, f, only)
+}
+
+/// Decode every distortion of a printed source image; the expected format is checked too.
+pub fn failures_of(src: &Gray, wide: bool, text: &str, f: Format, only: Option<Format>) -> Vec<String> {
     let mut failed = Vec::new();
     for (i, (name, cam)) in distortions().into_iter().enumerate() {
-        let cam = match f {
-            Format::Code128 | Format::Ean13 | Format::Pdf417 | Format::Code39 | Format::UpcA => Camera { width: 640, height: 440, scale: 0.75, ..cam },
-            _ => cam,
-        };
-        let img = photograph(&src, &cam, 1000 + i as u64);
+        let cam = if wide { Camera { width: 640, height: 440, scale: 0.75, ..cam } } else { cam };
+        let img = photograph(src, &cam, 1000 + i as u64);
         match decode_camera_path(&img, only) {
-            Ok(d) if d.text == text => {
+            Ok(d) if d.text == text && (d.format == f || (f == Format::UpcA && d.format == Format::Ean13)) => {
                 // the public entry point must agree
                 assert_eq!(decode(&img, only).unwrap().text, text, "{}", name);
             }
-            Ok(d) => failed.push(format!("{}: wrong text {:?}", name, d.text)),
+            Ok(d) => failed.push(format!("{}: wrong result {:?} {:?}", name, d.format, d.text)),
             Err(e) => failed.push(format!("{}: {}", name, e)),
         }
     }
@@ -311,6 +323,46 @@ mod tests {
     #[test]
     fn camera_ean13() {
         let f = failures("5901234123457", Format::Ean13, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_codabar() {
+        let f = failures("31117013206375", Format::Codabar, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_code93() {
+        let f = failures("CAMEL-93/x", Format::Code93, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_ean8() {
+        let f = failures("96385074", Format::Ean8, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_itf() {
+        let f = failures("30712345000010", Format::Itf, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_upce() {
+        let f = failures("01234565", Format::UpcE, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_upc_ean_extension() {
+        let mut m = crate::barcode::oned::encode_ean13("978073520044").unwrap();
+        m.extend(vec![false; 9]);
+        m.extend(crate::barcode::linear::encode_extension("51299").unwrap());
+        let src = printed_modules(&m);
+        let f = failures_of(&src, true, "9780735200449", Format::Ean13, Some(Format::UpcEanExtension));
         assert!(f.is_empty(), "{:#?}", f);
     }
 }

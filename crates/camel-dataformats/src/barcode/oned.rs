@@ -38,7 +38,7 @@ const CODE_C: usize = 99;
 const CODE_B: usize = 100;
 const CODE_A: usize = 101;
 
-fn push_widths(out: &mut Vec<bool>, widths: &[u8], start_bar: bool) {
+pub(crate) fn push_widths(out: &mut Vec<bool>, widths: &[u8], start_bar: bool) {
     let mut bar = start_bar;
     for w in widths {
         out.extend(std::iter::repeat_n(bar, *w as usize));
@@ -136,8 +136,8 @@ pub fn encode_code39(text: &str) -> Result<Vec<bool>> {
     Ok(out)
 }
 
-const L_PATTERNS: [[u8; 4]; 10] = [[3, 2, 1, 1], [2, 2, 2, 1], [2, 1, 2, 2], [1, 4, 1, 1], [1, 1, 3, 2], [1, 2, 3, 1], [1, 1, 1, 4], [1, 3, 1, 2], [1, 2, 1, 3], [3, 1, 1, 2]];
-const FIRST_DIGIT: [u8; 10] = [0x00, 0x0B, 0x0D, 0x0E, 0x13, 0x19, 0x1C, 0x15, 0x16, 0x1A];
+pub(crate) const L_PATTERNS: [[u8; 4]; 10] = [[3, 2, 1, 1], [2, 2, 2, 1], [2, 1, 2, 2], [1, 4, 1, 1], [1, 1, 3, 2], [1, 2, 3, 1], [1, 1, 1, 4], [1, 3, 1, 2], [1, 2, 1, 3], [3, 1, 1, 2]];
+pub(crate) const FIRST_DIGIT: [u8; 10] = [0x00, 0x0B, 0x0D, 0x0E, 0x13, 0x19, 0x1C, 0x15, 0x16, 0x1A];
 
 /// EAN/UPC check digit of the leading digits.
 pub fn ean_check_digit(digits: &[u8]) -> u8 {
@@ -211,7 +211,7 @@ pub fn runs(row: &[bool]) -> Vec<usize> {
 }
 
 /// Mean absolute deviation (in modules) of `runs` from `pattern` scaled to the same width.
-fn variance(runs: &[usize], pattern: &[u8]) -> f64 {
+pub(crate) fn variance(runs: &[usize], pattern: &[u8]) -> f64 {
     let total: usize = runs.iter().sum();
     let modules: u32 = pattern.iter().map(|p| *p as u32).sum();
     let unit = total as f64 / modules as f64;
@@ -334,7 +334,7 @@ pub fn decode_code39(row: &[bool]) -> Option<String> {
     None
 }
 
-fn match_digit(r: &[usize], reversed_ok: bool) -> Option<(u8, bool)> {
+pub(crate) fn match_digit(r: &[usize], reversed_ok: bool) -> Option<(u8, bool)> {
     let mut best: Option<(u8, bool, f64)> = None;
     for (d, p) in L_PATTERNS.iter().enumerate() {
         let mut cands = vec![(*p, false)];

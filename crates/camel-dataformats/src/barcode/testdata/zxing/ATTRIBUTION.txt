@@ -1,7 +1,13 @@
 These images are from the ZXing project's blackbox test suite
 (https://github.com/zxing/zxing, core/src/test/resources/blackbox/<set>/<file>),
 Copyright ZXing authors, licensed under the Apache License, Version 2.0.
-File names are <set>_<original name>; the expected texts are the ZXing .txt files.
+File names are <set>_<original name>; the expected texts are the ZXing .txt files
+(and, for upcean-extension-1, the SUGGESTED_PRICE from the .metadata.txt files).
 
-ean13-1_3-gray.png was converted from RGB to 8-bit grayscale (ITU-R 601 luma,
-the same conversion the decoder applies) to keep the repository small.
+Sets: aztec-2, codabar-1, code128-1, code93-1, datamatrix-1, datamatrix-2, ean13-1,
+ean8-1, itf-1, maxicode-1, pdf417-2, pdf417-3, qrcode-1, qrcode-2, qrcode-3, rss14-1,
+rssexpanded-1, upce-1, upcean-extension-1.
+
+Files named *-gray.png were converted from RGB to 8-bit grayscale (ITU-R 601 luma, the
+same conversion the decoder applies) to keep the repository small: ean13-1_3,
+itf-1_2, itf-1_3, upcean-extension-1_2.

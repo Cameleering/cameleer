@@ -35,6 +35,7 @@ pub mod detect;
 pub mod dm_detect;
 pub mod gif;
 pub mod jpeg;
+pub mod linear;
 mod kanji_table;
 pub mod oned;
 pub mod pdf417;
@@ -99,6 +100,15 @@ pub enum Format {
     Ean13,
     UpcA,
     Pdf417,
+    Codabar,
+    Code93,
+    Ean8,
+    Itf,
+    UpcE,
+    MaxiCode,
+    Rss14,
+    RssExpanded,
+    UpcEanExtension,
 }
 
 impl Format {
@@ -113,7 +123,16 @@ impl Format {
             "EAN13" => Format::Ean13,
             "UPCA" => Format::UpcA,
             "PDF417" => Format::Pdf417,
-            _ => return Err(CamelError::illegal_argument(format!("Unsupported barcodeFormat: {} (supported: QR_CODE, DATA_MATRIX, AZTEC, PDF_417, CODE_128, CODE_39, EAN_13, UPC_A)", s))),
+            "CODABAR" => Format::Codabar,
+            "CODE93" => Format::Code93,
+            "EAN8" => Format::Ean8,
+            "ITF" => Format::Itf,
+            "UPCE" => Format::UpcE,
+            "MAXICODE" => Format::MaxiCode,
+            "RSS14" => Format::Rss14,
+            "RSSEXPANDED" => Format::RssExpanded,
+            "UPCEANEXTENSION" => Format::UpcEanExtension,
+            _ => return Err(CamelError::illegal_argument(format!("Unsupported barcodeFormat: {} (supported: AZTEC, CODABAR, CODE_39, CODE_93, CODE_128, DATA_MATRIX, EAN_8, EAN_13, ITF, MAXICODE, PDF_417, QR_CODE, RSS_14, RSS_EXPANDED, UPC_A, UPC_E, UPC_EAN_EXTENSION)", s))),
         })
     }
     pub fn name(&self) -> &'static str {
@@ -126,6 +145,15 @@ impl Format {
             Format::Ean13 => "EAN_13",
             Format::UpcA => "UPC_A",
             Format::Pdf417 => "PDF_417",
+            Format::Codabar => "CODABAR",
+            Format::Code93 => "CODE_93",
+            Format::Ean8 => "EAN_8",
+            Format::Itf => "ITF",
+            Format::UpcE => "UPC_E",
+            Format::MaxiCode => "MAXICODE",
+            Format::Rss14 => "RSS_14",
+            Format::RssExpanded => "RSS_EXPANDED",
+            Format::UpcEanExtension => "UPC_EAN_EXTENSION",
         }
     }
 }
@@ -192,6 +220,15 @@ pub fn encode_full(text: &str, format: Format, ecc: qr::Ecc, width: usize, heigh
         Format::Code39 => render_1d(&oned::encode_code39(text)?, width, height, 10),
         Format::Ean13 => render_1d(&oned::encode_ean13(text)?, width, height, 9),
         Format::UpcA => render_1d(&oned::encode_upca(text)?, width, height, 9),
+        Format::Ean8 => render_1d(&linear::encode_ean8(text)?, width, height, 9),
+        Format::UpcE => render_1d(&linear::encode_upce(text)?, width, height, 9),
+        Format::Codabar => render_1d(&linear::encode_codabar(text)?, width, height, 10),
+        Format::Code93 => render_1d(&linear::encode_code93(text)?, width, height, 10),
+        Format::Itf => render_1d(&linear::encode_itf(text)?, width, height, 10),
+        // ZXing has readers only for these (MultiFormatWriter rejects them)
+        Format::MaxiCode | Format::Rss14 | Format::RssExpanded | Format::UpcEanExtension => {
+            return Err(CamelError::illegal_argument(format!("No encoder available for format {}", format.name())))
+        }
     })
 }
 
@@ -216,29 +253,76 @@ pub struct Decoded {
     pub text: String,
     pub format: Format,
     pub ecc: Option<qr::Ecc>,
+    /// Further result metadata (ZXing `ResultMetadataType` names, set as headers).
+    pub meta: Vec<(&'static str, String)>,
+}
+
+impl Decoded {
+    pub fn new(text: String, format: Format) -> Decoded {
+        Decoded { text, format, ecc: None, meta: Vec::new() }
+    }
+}
+
+/// Whether a decoder for `f` runs when decoding is restricted to `only`.
+pub fn wanted(only: Option<Format>, f: Format) -> bool {
+    use Format::*;
+    match only {
+        None => true,
+        Some(o) if o == f => true,
+        Some(Ean13) | Some(UpcA) => matches!(f, Ean13 | UpcA),
+        Some(UpcEanExtension) => matches!(f, Ean13 | UpcA | Ean8 | UpcE),
+        _ => false,
+    }
 }
 
 fn upc_or_ean(t: String, only: Option<Format>) -> Decoded {
     if t.starts_with('0') && only != Some(Format::Ean13) {
-        return Decoded { text: t[1..].to_string(), format: Format::UpcA, ecc: None };
+        return Decoded::new(t[1..].to_string(), Format::UpcA);
     }
-    Decoded { text: t, format: Format::Ean13, ecc: None }
+    Decoded::new(t, Format::Ean13)
 }
 
 fn decode_row(row: &[bool], want: &dyn Fn(Format) -> bool, only: Option<Format>) -> Option<Decoded> {
-    if want(Format::Code128) {
-        if let Some(t) = oned::decode_code128(row) {
-            return Some(Decoded { text: t, format: Format::Code128, ecc: None });
+    // ZXing MultiFormatOneDReader order: UPC/EAN, Code 39, Code 93, Code 128, ITF, Codabar, RSS
+    if want(Format::Ean13) || want(Format::Ean8) || want(Format::UpcE) {
+        let kinds = |k: linear::UpcKind| match k {
+            linear::UpcKind::Ean13 => want(Format::Ean13),
+            linear::UpcKind::Ean8 => want(Format::Ean8),
+            linear::UpcKind::UpcE => want(Format::UpcE),
+        };
+        if let Some(u) = linear::decode_upcean(row, &kinds) {
+            if only != Some(Format::UpcEanExtension) || u.extension.is_some() {
+                let mut d = match u.kind {
+                    linear::UpcKind::Ean13 => upc_or_ean(u.text, only),
+                    linear::UpcKind::Ean8 => Decoded::new(u.text, Format::Ean8),
+                    linear::UpcKind::UpcE => Decoded::new(u.text, Format::UpcE),
+                };
+                if let Some(e) = u.extension {
+                    if e.len() == 5 {
+                        if let Some(p) = linear::suggested_price(&e) {
+                            d.meta.push(("SUGGESTED_PRICE", p));
+                        }
+                    } else {
+                        d.meta.push(("ISSUE_NUMBER", e.parse::<u32>().unwrap_or(0).to_string()));
+                    }
+                    d.meta.insert(0, ("UPC_EAN_EXTENSION", e));
+                }
+                return Some(d);
+            }
         }
     }
-    if want(Format::Ean13) {
-        if let Some(t) = oned::decode_ean13(row) {
-            return Some(upc_or_ean(t, only));
-        }
-    }
-    if want(Format::Code39) {
-        if let Some(t) = oned::decode_code39(row) {
-            return Some(Decoded { text: t, format: Format::Code39, ecc: None });
+    let simple: [(Format, fn(&[bool]) -> Option<String>); 5] = [
+        (Format::Code39, oned::decode_code39),
+        (Format::Code93, linear::decode_code93),
+        (Format::Code128, oned::decode_code128),
+        (Format::Itf, linear::decode_itf),
+        (Format::Codabar, linear::decode_codabar),
+    ];
+    for (f, dec) in simple {
+        if want(f) {
+            if let Some(t) = dec(row) {
+                return Some(Decoded::new(t, f));
+            }
         }
     }
     None
@@ -248,24 +332,24 @@ fn decode_row(row: &[bool], want: &dyn Fn(Format) -> bool, only: Option<Format>)
 fn decode_clean(bin: &detect::Bin, want: &dyn Fn(Format) -> bool, only: Option<Format>) -> Option<Decoded> {
     if want(Format::QrCode) {
         if let Some(d) = detect::find_qr(bin) {
-            return Some(Decoded { text: d.text, format: Format::QrCode, ecc: Some(d.ecc) });
+            return Some(Decoded { text: d.text, format: Format::QrCode, ecc: Some(d.ecc), meta: Vec::new() });
         }
     }
     if want(Format::DataMatrix) {
         if let Some(m) = detect::find_datamatrix(bin, &datamatrix::symbol_dims()) {
             if let Ok((b, _)) = datamatrix::decode_matrix(&m) {
-                return Some(Decoded { text: dm_text(&b), format: Format::DataMatrix, ecc: None });
+                return Some(Decoded::new(dm_text(&b), Format::DataMatrix));
             }
         }
     }
     if want(Format::Aztec) {
         if let Some(t) = aztec::find_and_decode(&|x, y| bin.get(x, y), bin.width, bin.height) {
-            return Some(Decoded { text: t, format: Format::Aztec, ecc: None });
+            return Some(Decoded::new(t, Format::Aztec));
         }
     }
     if want(Format::Pdf417) {
         if let Some(t) = pdf417::find_and_decode(bin) {
-            return Some(Decoded { text: t, format: Format::Pdf417, ecc: None });
+            return Some(Decoded::new(t, Format::Pdf417));
         }
     }
     detect::scan_rows(bin).iter().find_map(|row| decode_row(row, want, only))
@@ -317,24 +401,24 @@ fn decode_camera(g: &png::Gray, want: &dyn Fn(Format) -> bool, only: Option<Form
         let Some(bin) = vision::hybrid(v) else { continue };
         if want(Format::QrCode) {
             if let Some(d) = qr_detect::detect_and_decode(&bin) {
-                return Some(Decoded { text: d.text, format: Format::QrCode, ecc: Some(d.ecc) });
+                return Some(Decoded { text: d.text, format: Format::QrCode, ecc: Some(d.ecc), meta: Vec::new() });
             }
         }
         if want(Format::DataMatrix) {
             for m in dm_detect::detect(&bin) {
                 if let Ok((b, _)) = datamatrix::decode_matrix(&m) {
-                    return Some(Decoded { text: dm_text(&b), format: Format::DataMatrix, ecc: None });
+                    return Some(Decoded::new(dm_text(&b), Format::DataMatrix));
                 }
             }
         }
         if want(Format::Aztec) {
             if let Some(t) = aztec_detect::detect_and_decode(&bin) {
-                return Some(Decoded { text: t, format: Format::Aztec, ecc: None });
+                return Some(Decoded::new(t, Format::Aztec));
             }
         }
         if want(Format::Pdf417) {
             if let Some(t) = pdf417::find_and_decode(&bin) {
-                return Some(Decoded { text: t, format: Format::Pdf417, ecc: None });
+                return Some(Decoded::new(t, Format::Pdf417));
             }
         }
         if let Some(d) = decode_linear(v, want, only) {
@@ -352,7 +436,7 @@ fn decode_camera(g: &png::Gray, want: &dyn Fn(Format) -> bool, only: Option<Form
 /// L finder by white-rectangle detection and edge fitting, Aztec bull's-eye) and, for linear
 /// and stacked symbols, a copy deskewed by the dominant edge orientation.
 pub fn decode(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
-    let want = |f: Format| only.is_none_or(|o| o == f || (o == Format::Ean13 && f == Format::UpcA) || (o == Format::UpcA && f == Format::Ean13));
+    let want = |f: Format| wanted(only, f);
     let clean = detect::binarize(img);
     if let Some(bin) = &clean {
         if let Some(d) = decode_clean(bin, &want, only) {
@@ -367,7 +451,7 @@ pub fn decode(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
 
 /// The camera path alone (no clean-image fast path).
 pub fn decode_camera_path(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
-    let want = |f: Format| only.is_none_or(|o| o == f || (o == Format::Ean13 && f == Format::UpcA) || (o == Format::UpcA && f == Format::Ean13));
+    let want = |f: Format| wanted(only, f);
     let sigma = vision::noise_sigma(img);
     // noisy images are smoothed first; otherwise smoothing is the fallback (it also helps
     // against binarisation speckle on soft, out-of-focus edges)
@@ -447,6 +531,9 @@ impl DataFormat for BarcodeDataFormat {
         ex.message.set_header("BarcodeFormat", d.format.name());
         if let Some(e) = d.ecc {
             ex.message.set_header("ERROR_CORRECTION_LEVEL", format!("{:?}", e));
+        }
+        for (k, v) in &d.meta {
+            ex.message.set_header(*k, v.clone());
         }
         ex.message.body = Value::String(d.text);
         Ok(())
@@ -580,6 +667,46 @@ mod tests {
             let d = decode(&img, None).unwrap_or_else(|e| panic!("case {}: {}", i, e));
             assert_eq!((d.format, d.text.as_str()), (*format, *text), "case {}", i);
         }
+    }
+
+    /// ZXing blackbox images of the further linear formats (codabar-1, code93-1, ean8-1,
+    /// itf-1, upce-1, upcean-extension-1; see testdata/zxing/ATTRIBUTION.txt).
+    #[test]
+    fn zxing_blackbox_linear_formats() {
+        let cases: [(&[u8], Format, &str, Option<&str>); 18] = [
+            (include_bytes!("testdata/zxing/codabar-1_01.png"), Format::Codabar, "1234567890", None),
+            (include_bytes!("testdata/zxing/codabar-1_02.png"), Format::Codabar, "1234567890", None),
+            (include_bytes!("testdata/zxing/codabar-1_03.png"), Format::Codabar, "294/586", None),
+            (include_bytes!("testdata/zxing/codabar-1_04.png"), Format::Codabar, "123455", None),
+            (include_bytes!("testdata/zxing/code93-1_1.png"), Format::Code93, "1234567890", None),
+            (include_bytes!("testdata/zxing/code93-1_2.png"), Format::Code93, "CODE 93", None),
+            (include_bytes!("testdata/zxing/code93-1_3.png"), Format::Code93, "DATA", None),
+            (include_bytes!("testdata/zxing/ean8-1_1.png"), Format::Ean8, "48512343", None),
+            (include_bytes!("testdata/zxing/ean8-1_2.png"), Format::Ean8, "12345670", None),
+            (include_bytes!("testdata/zxing/ean8-1_3.png"), Format::Ean8, "12345670", None),
+            (include_bytes!("testdata/zxing/itf-1_1.png"), Format::Itf, "30712345000010", None),
+            (include_bytes!("testdata/zxing/itf-1_2-gray.png"), Format::Itf, "00012345678905", None),
+            (include_bytes!("testdata/zxing/itf-1_3-gray.png"), Format::Itf, "0053611912", None),
+            (include_bytes!("testdata/zxing/upce-1_1.png"), Format::UpcE, "01234565", None),
+            (include_bytes!("testdata/zxing/upce-1_2.png"), Format::UpcE, "00123457", None),
+            (include_bytes!("testdata/zxing/upce-1_4.png"), Format::UpcE, "01234531", None),
+            (include_bytes!("testdata/zxing/upcean-extension-1_1.png"), Format::Ean13, "9780735200449", Some("$12.99")),
+            (include_bytes!("testdata/zxing/upcean-extension-1_2-gray.png"), Format::Ean13, "9780884271789", Some("$24.95")),
+        ];
+        let mut failed = Vec::new();
+        for (i, (bytes, format, text, price)) in cases.iter().enumerate() {
+            let img = read_image(bytes).unwrap();
+            match decode(&img, None) {
+                Ok(d) => {
+                    let p = d.meta.iter().find(|m| m.0 == "SUGGESTED_PRICE").map(|m| m.1.as_str());
+                    if (d.format, d.text.as_str()) != (*format, *text) || (price.is_some() && p != *price) {
+                        failed.push(format!("case {}: {:?} {:?} {:?}", i, d.format, d.text, d.meta));
+                    }
+                }
+                Err(e) => failed.push(format!("case {}: {}", i, e)),
+            }
+        }
+        assert!(failed.is_empty(), "{:#?}", failed);
     }
 
     /// ZXing's rectangular Data Matrix blackbox symbols (all six ECC 200 rectangle sizes):
