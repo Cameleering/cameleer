@@ -89,9 +89,16 @@ pub struct BrokerBuilder {
     max_delivery_count: u32,
     lock_duration: Duration,
     session_entities: Vec<String>,
+    anonymous_relay: bool,
 }
 
 impl BrokerBuilder {
+    /// Whether to offer `ANONYMOUS-RELAY` (default true). Without it, sending links must name
+    /// a target address, like RabbitMQ 3.x refusing them with `address_not_utf8_string`.
+    pub fn anonymous_relay(mut self, yes: bool) -> Self {
+        self.anonymous_relay = yes;
+        self
+    }
     /// Require SASL PLAIN / SCRAM with this user (repeatable). Disables anonymous access
     /// unless [`allow_anonymous`](Self::allow_anonymous) is set.
     pub fn user(mut self, user: &str, password: &str) -> Self {
@@ -196,6 +203,7 @@ impl BrokerBuilder {
             state: Mutex::new(st),
             cond: Condvar::new(),
             allow_anonymous: self.allow_anonymous.unwrap_or(self.users.is_empty()),
+            anonymous_relay: self.anonymous_relay,
             users: self.users,
             tls: self.tls,
             azure: self.azure,
@@ -363,6 +371,7 @@ struct Inner {
     heartbeats: bool,
     max_delivery_count: u32,
     lock_duration: Duration,
+    anonymous_relay: bool,
     running: AtomicBool,
 }
 
@@ -398,6 +407,7 @@ impl Amqp10Broker {
             event_hubs: Vec::new(),
             max_delivery_count: 10,
             lock_duration: Duration::from_secs(30),
+            anonymous_relay: true,
             session_entities: Vec::new(),
         }
     }
@@ -807,7 +817,7 @@ impl Inner {
                     max_frame_size: self.max_frame_size,
                     channel_max: 255,
                     idle_time_out: self.idle_timeout.as_millis() as u32,
-                    offered_capabilities: vec!["ANONYMOUS-RELAY".into()],
+                    offered_capabilities: if self.anonymous_relay { vec!["ANONYMOUS-RELAY".into()] } else { vec![] },
                     ..Default::default()
                 };
                 Self::write(st, cid, Frame::amqp(0, Performative::Open(open)));
@@ -984,7 +994,14 @@ impl Inner {
                     target.as_mut().unwrap().address = Some(name.clone());
                     name
                 } else {
-                    t.address.clone().unwrap_or_default()
+                    match &t.address {
+                        Some(a) => a.clone(),
+                        None if !self.anonymous_relay => {
+                            self.refuse(st, cid, ch, &a, AmqpError::new(cond::INVALID_FIELD, "Attach rejected: {address_not_utf8_string,undefined}"));
+                            return Ok(());
+                        }
+                        None => String::new(),
+                    }
                 };
                 let entity = addr.trim_end_matches("/$management").to_string();
                 if !addr.is_empty() && !self.authorized(st, cid, &entity) {

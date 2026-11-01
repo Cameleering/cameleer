@@ -332,3 +332,21 @@ fn amqp_over_websocket_urls() {
     mock.assert_is_satisfied().unwrap();
     ctx.stop().unwrap();
 }
+
+/// Regression (live RabbitMQ 3.12): a broker without `ANONYMOUS-RELAY` refuses the consumer's
+/// anonymous reply link; consumers must still start and reply through per-address links.
+#[test]
+fn consumers_work_without_anonymous_relay() {
+    let b = Amqp10Broker::builder().anonymous_relay(false).start().unwrap();
+    let ctx = context(&b);
+    ctx.add_routes(|r| {
+        r.from("amqp:queue:upper").transform(simple("${body.toUpperCase()}")).to("mock:upper");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    assert!(b.wait_for(Duration::from_secs(5), |b| b.consumer_count("upper") == 1), "the consumer started");
+    let t = ctx.create_producer_template();
+    assert_eq!(t.request_body("amqp:queue:upper?replyTo=replies", "hello").unwrap(), Value::from("HELLO"));
+    assert_eq!(t.request_body("amqp:queue:upper?replyTo=replies", "again").unwrap(), Value::from("AGAIN"));
+    ctx.stop().unwrap();
+}

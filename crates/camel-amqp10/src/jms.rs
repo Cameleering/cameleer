@@ -21,7 +21,7 @@
 //! correlation-id, `JMSDestination` = to, `JMSReplyTo` = reply-to, `JMSType` = subject,
 //! `JMSTimestamp` = creation-time, `JMSExpiration` = absolute-expiry-time,
 //! `JMSDeliveryMode` = header durable (2/1), `JMSPriority` = header priority,
-//! `JMSRedelivered` = delivery-count > 0, `JMSXDeliveryCount`, `JMSXUserID`, `JMSXGroupID`,
+//! `JMSRedelivered` = delivery-count > 0 or first-acquirer explicitly false, `JMSXDeliveryCount`, `JMSXUserID`, `JMSXGroupID`,
 //! `JMSXGroupSeq`; application-properties are the other headers (keys through Camel's
 //! default key format strategy `_DOT_` / `_HYPHEN_`); the message type is in the
 //! `x-opt-jms-msg-type` annotation (text = amqp-value string, bytes = data section,
@@ -140,7 +140,9 @@ pub fn parse_destination(s: &str) -> (DestKind, String) {
     let s = s.trim();
     for (p, k) in [("temp-queue:", DestKind::TempQueue), ("temp-topic:", DestKind::TempTopic), ("queue:", DestKind::Queue), ("topic:", DestKind::Topic)] {
         if let Some(rest) = s.strip_prefix(p) {
-            return (k, rest.trim_start_matches('/').to_string());
+            // `queue://name` is the URL form; a single leading slash belongs to the address
+            // (RabbitMQ: `/queue/name`, `/exchange/x/key`, `/topic/key`)
+            return (k, rest.strip_prefix("//").unwrap_or(rest).to_string());
         }
     }
     (DestKind::Queue, s.to_string())
@@ -519,7 +521,8 @@ pub fn message_to_exchange(cfg: &AmqpConfig, m: &Message, ex: &mut Exchange) {
     let h = m.header.clone().unwrap_or_default();
     ex.set_header(JMS_DELIVERY_MODE, if h.durable { 2i64 } else { 1i64 });
     ex.set_header(JMS_PRIORITY, h.priority as i64);
-    ex.set_header(JMS_REDELIVERED, h.delivery_count > 0);
+    // RabbitMQ signals a redelivery with `first-acquirer = false` (delivery-count stays 0)
+    ex.set_header(JMS_REDELIVERED, h.delivery_count > 0 || h.acquired_before);
     ex.set_header(JMSX_DELIVERY_COUNT, h.delivery_count as i64 + 1);
     if let Some(t) = p.creation_time {
         ex.set_header(JMS_TIMESTAMP, t);
@@ -860,8 +863,51 @@ struct Worker {
     processor: Arc<dyn Processor>,
 }
 
+/// The consumer's reply senders: one anonymous-relay link when the broker offers
+/// `ANONYMOUS-RELAY` (Artemis, Qpid, the embedded broker), else a link per reply address
+/// (RabbitMQ 3.x refuses attaches without a target address).
+struct ReplySenders {
+    session: Session,
+    anonymous: Option<Sender>,
+    by_address: Mutex<HashMap<String, Sender>>,
+}
+
+impl ReplySenders {
+    fn open(conn: &Connection, session: &Session) -> Result<ReplySenders> {
+        let relay = conn.remote_open().is_some_and(|o| o.offered_capabilities.iter().any(|c| c == "ANONYMOUS-RELAY"));
+        let anonymous = if relay {
+            let mut anon = LinkOptions::new("");
+            anon.address = None;
+            Some(session.sender(anon)?)
+        } else {
+            None
+        };
+        Ok(ReplySenders { session: session.clone(), anonymous, by_address: Mutex::new(HashMap::new()) })
+    }
+
+    fn send(&self, m: &Message, address: &str, kind: DestKind, txn: Option<&Vec<u8>>, timeout: Duration) -> Result<()> {
+        let go = |s: &Sender| match txn {
+            Some(id) => s.send_accepted_in_txn(m, id, timeout),
+            None => s.send_with(m, false, timeout).map(|_| ()),
+        };
+        if let Some(a) = &self.anonymous {
+            return go(a);
+        }
+        let mut map = self.by_address.lock().unwrap();
+        if !map.contains_key(address) {
+            let s = self.session.sender(capability_opts(address, kind))?;
+            map.insert(address.to_string(), s);
+        }
+        let r = go(&map[address]);
+        if r.is_err() {
+            map.remove(address);
+        }
+        r
+    }
+}
+
 impl Worker {
-    fn handle(&self, rx: &Receiver, replies: &Sender, coord: Option<&Coordinator>, d: Delivery) {
+    fn handle(&self, rx: &Receiver, replies: &ReplySenders, coord: Option<&Coordinator>, d: Delivery) {
         let cfg = &self.cfg;
         let txn = match coord {
             Some(c) => match c.declare() {
@@ -904,10 +950,7 @@ impl Worker {
                 m.set_app_property(headers::EXCEPTION_KIND, AmqpValue::str(e.kind.clone()));
                 m.set_app_property(headers::EXCEPTION_MESSAGE, AmqpValue::str(e.message.clone()));
             }
-            let sent = match &txn {
-                Some(id) => replies.send_accepted_in_txn(&m, id, cfg.request_timeout),
-                None => replies.send_with(&m, false, cfg.request_timeout).map(|_| ()),
-            };
+            let sent = replies.send(&m, &rt, kind, txn.as_ref(), cfg.request_timeout);
             if let Err(e) = sent {
                 camel_core::camel_warn!(&self.uri, "Cannot send reply to {}: {}", rt, e.message);
             }
@@ -973,16 +1016,14 @@ impl Service for AmqpConsumer {
         self.threads.spawn(&format!("Camel {} supervisor", self.uri), move |stop| {
             let mut ready = Some(ready_tx);
             while !stop.is_stopped() {
-                let setup = (|| -> Result<(Connection, Session, Vec<Receiver>, Sender, Option<Coordinator>)> {
+                let setup = (|| -> Result<(Connection, Session, Vec<Receiver>, ReplySenders, Option<Coordinator>)> {
                     let conn = Connection::open(&worker.cfg.conn)?;
                     let session = conn.session()?;
                     let mut rxs = Vec::new();
                     for i in 0..worker.cfg.concurrent_consumers {
                         rxs.push(session.receiver(consumer_link(&worker.cfg, i))?);
                     }
-                    let mut anon = LinkOptions::new("");
-                    anon.address = None;
-                    let replies = session.sender(anon)?;
+                    let replies = ReplySenders::open(&conn, &session)?;
                     let coord = if worker.cfg.transacted { Some(session.coordinator()?) } else { None };
                     Ok((conn, session, rxs, replies, coord))
                 })();
@@ -1062,6 +1103,10 @@ mod tests {
         assert_eq!(parse_destination("topic:t"), (DestKind::Topic, "t".into()));
         assert_eq!(parse_destination("temp-queue:x"), (DestKind::TempQueue, "x".into()));
         assert_eq!(parse_destination("plain"), (DestKind::Queue, "plain".into()));
+        assert_eq!(parse_destination("queue://a"), (DestKind::Queue, "a".into()));
+        // RabbitMQ AMQP 1.0 addresses keep their leading slash (found against a real broker)
+        assert_eq!(parse_destination("queue:/queue/a"), (DestKind::Queue, "/queue/a".into()));
+        assert_eq!(parse_destination("topic:/exchange/amq.topic/k"), (DestKind::Topic, "/exchange/amq.topic/k".into()));
         assert_eq!(encode_key("a.b-c"), "a_DOT_b_HYPHEN_c");
         assert_eq!(decode_key("a_DOT_b_HYPHEN_c"), "a.b-c");
     }

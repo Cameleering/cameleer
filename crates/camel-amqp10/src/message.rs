@@ -26,11 +26,15 @@ pub struct Header {
     pub ttl: Option<u32>,
     pub first_acquirer: bool,
     pub delivery_count: u32,
+    /// Decoded `first-acquirer` was explicitly `false`: the message was acquired before
+    /// (RabbitMQ marks redeliveries this way and keeps `delivery-count` at 0 on classic
+    /// queues). Not encoded.
+    pub acquired_before: bool,
 }
 
 impl Default for Header {
     fn default() -> Self {
-        Header { durable: false, priority: 4, ttl: None, first_acquirer: false, delivery_count: 0 }
+        Header { durable: false, priority: 4, ttl: None, first_acquirer: false, delivery_count: 0, acquired_before: false }
     }
 }
 
@@ -224,6 +228,7 @@ impl Message {
                         ttl: field(f, 2).as_u32(),
                         first_acquirer: field(f, 3).as_bool().unwrap_or(false),
                         delivery_count: field(f, 4).as_u32().unwrap_or(0),
+                        acquired_before: field(f, 3).as_bool() == Some(false),
                     })
                 }
                 section::DELIVERY_ANNOTATIONS => m.delivery_annotations = map_of(inner),
@@ -316,10 +321,23 @@ pub fn random_uuid() -> [u8; 16] {
 mod tests {
     use super::*;
 
+    /// Regression (live RabbitMQ): a redelivered message has `first-acquirer = false` and
+    /// `delivery-count = 0`; an absent first-acquirer is not a redelivery.
+    #[test]
+    fn explicit_first_acquirer_false_marks_redelivery() {
+        let header = |fa: AmqpValue| AmqpValue::described(section::HEADER, AmqpValue::List(vec![AmqpValue::Boolean(true), AmqpValue::Null, AmqpValue::Null, fa, AmqpValue::Uint(0)])).encode();
+        let m = Message::decode(&header(AmqpValue::Boolean(false))).unwrap();
+        assert!(m.header.unwrap().acquired_before);
+        let m = Message::decode(&header(AmqpValue::Null)).unwrap();
+        assert!(!m.header.unwrap().acquired_before);
+        let m = Message::decode(&header(AmqpValue::Boolean(true))).unwrap();
+        assert!(!m.header.unwrap().acquired_before);
+    }
+
     #[test]
     fn sections_round_trip() {
         let mut m = Message {
-            header: Some(Header { durable: true, priority: 7, ttl: Some(1000), first_acquirer: true, delivery_count: 2 }),
+            header: Some(Header { durable: true, priority: 7, ttl: Some(1000), first_acquirer: true, delivery_count: 2, acquired_before: false }),
             delivery_annotations: vec![(AmqpValue::sym("x-da"), AmqpValue::Int(1))],
             message_annotations: vec![(AmqpValue::sym("x-opt-jms-msg-type"), AmqpValue::Byte(5))],
             properties: Some(Properties {
