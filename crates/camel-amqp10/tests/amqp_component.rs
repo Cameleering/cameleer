@@ -221,3 +221,114 @@ fn credentials_and_tls() {
     assert!(err.chain().any(|c| c.kind == "AuthenticationFailureException"), "{:?}", err);
     ctx.stop().unwrap();
 }
+
+#[test]
+fn transacted_consumer_uses_amqp_transactions() {
+    let b = Amqp10Broker::start().unwrap();
+    let ctx = context(&b);
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let a2 = attempts.clone();
+    ctx.add_routes(move |r| {
+        r.from("amqp:queue:tx-in?transacted=true")
+            .process(move |ex: &mut Exchange| {
+                if a2.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return Err(CamelError::new("IOException", "roll back"));
+                }
+                assert_eq!(ex.header("JMSRedelivered"), Some(&Value::Bool(true)));
+                Ok(())
+            })
+            .to("mock:tx");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:tx").unwrap();
+    mock.expected_bodies_received(vec!["atomic"]);
+    let t = ctx.create_producer_template();
+    t.send_body("amqp:queue:tx-in?transacted=true", "atomic").unwrap();
+    mock.assert_is_satisfied().unwrap();
+    // producer txn and consumer commit, consumer rollback
+    assert!(b.wait_for(Duration::from_secs(5), |b| b.transaction_counts() == (2, 1)), "{:?}", b.transaction_counts());
+    assert!(b.wait_for(Duration::from_secs(5), |b| b.inflight_count() == 0 && b.queue_depth("tx-in") == 0));
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn shared_subscription_members_compete() {
+    let b = Amqp10Broker::start().unwrap();
+    let ctx = context(&b);
+    let count = Arc::new(AtomicUsize::new(0));
+    let (c1, c2) = (count.clone(), count.clone());
+    ctx.add_routes(move |r| {
+        r.from("amqp:topic:feed?clientId=app&subscriptionShared=true&subscriptionDurable=true&subscriptionName=workers&concurrentConsumers=2")
+            .process(move |_: &mut Exchange| {
+                c1.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .to("mock:shared");
+        r.from("amqp:topic:feed?subscriptionShared=true&subscriptionName=other").process(move |_: &mut Exchange| {
+            c2.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    assert!(b.wait_for(Duration::from_secs(5), |b| b.subscriber_count("feed") == 2), "one queue per shared subscription");
+    let mock = ctx.mock_endpoint("mock:shared").unwrap();
+    mock.expected_message_count(6);
+    let t = ctx.create_producer_template();
+    for i in 0..6 {
+        t.send_body("amqp:topic:feed", format!("f{}", i)).unwrap();
+    }
+    mock.assert_is_satisfied().unwrap();
+    // each message once per subscription (6 + 6), never twice within a subscription
+    assert!(b.wait_for(Duration::from_secs(5), |_| count.load(Ordering::SeqCst) == 12));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(mock.received_counter(), 6);
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn object_messages_and_connection_factory_beans() {
+    let b = Amqp10Broker::builder().user("app", "pw").start().unwrap();
+    let ctx = CamelContext::new();
+    camel_amqp10::register(&ctx);
+    ctx.registry().bind("cf", camel_amqp10::jms::AmqpConnectionFactory::new(&b.url()).credentials("app", "pw").client_id("cf-client"));
+    ctx.properties().set("camel.component.amqp.connectionFactory", "#cf");
+    ctx.add_routes(|r| {
+        r.from("amqp:queue:objects?jmsMessageType=Object").to("mock:objects");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:objects").unwrap();
+    mock.expected_message_count(1);
+    let mut map = camel_core::value::ObjectMap::new();
+    map.insert("id".into(), Value::Int(7));
+    map.insert("raw".into(), Value::Bytes(vec![0, 1, 2]));
+    map.insert("tags".into(), Value::Array(vec![Value::from("a"), Value::Float(1.5)]));
+    let t = ctx.create_producer_template();
+    t.send_body("amqp:queue:objects?jmsMessageType=Object", Value::Object(map.clone())).unwrap();
+    mock.assert_is_satisfied().unwrap();
+    assert_eq!(mock.exchange(0).unwrap().body(), &Value::Object(map));
+    // a missing bean is an error
+    assert!(ctx.get_endpoint("amqp:queue:x?connectionFactory=#missing").is_err());
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn amqp_over_websocket_urls() {
+    let b = Amqp10Broker::start().unwrap();
+    let ctx = CamelContext::new();
+    camel_amqp10::register(&ctx);
+    let uri = format!("amqp:queue:ws?remoteAddress=amqpws://127.0.0.1:{}/amqp", b.port());
+    let from = uri.clone();
+    ctx.add_routes(move |r| {
+        r.from(&from).to("mock:ws");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mock = ctx.mock_endpoint("mock:ws").unwrap();
+    mock.expected_bodies_received(vec!["over websockets"]);
+    ctx.create_producer_template().send_body(&uri, "over websockets").unwrap();
+    mock.assert_is_satisfied().unwrap();
+    ctx.stop().unwrap();
+}

@@ -34,6 +34,11 @@ pub mod desc {
     pub const SOURCE: u64 = 0x28;
     pub const TARGET: u64 = 0x29;
     pub const DELETE_ON_CLOSE: u64 = 0x2b;
+    pub const COORDINATOR: u64 = 0x30;
+    pub const DECLARE: u64 = 0x31;
+    pub const DISCHARGE: u64 = 0x32;
+    pub const DECLARED: u64 = 0x33;
+    pub const TRANSACTIONAL_STATE: u64 = 0x34;
     pub const SASL_MECHANISMS: u64 = 0x40;
     pub const SASL_INIT: u64 = 0x41;
     pub const SASL_CHALLENGE: u64 = 0x42;
@@ -59,6 +64,9 @@ pub mod cond {
     pub const TRANSFER_LIMIT_EXCEEDED: &str = "amqp:link:transfer-limit-exceeded";
     pub const MESSAGE_SIZE_EXCEEDED: &str = "amqp:link:message-size-exceeded";
     pub const STOLEN: &str = "amqp:link:stolen";
+    pub const TRANSACTION_UNKNOWN_ID: &str = "amqp:transaction:unknown-id";
+    pub const TRANSACTION_ROLLBACK: &str = "amqp:transaction:rollback";
+    pub const TRANSACTION_TIMEOUT: &str = "amqp:transaction:timeout";
 }
 
 /// An AMQP error (`amqp:error:list`).
@@ -254,6 +262,9 @@ impl Source {
 /// `amqp:target:list`.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Target {
+    /// A transaction coordinator (`amqp:coordinator:list`) instead of a node; only
+    /// `capabilities` apply.
+    pub coordinator: bool,
     pub address: Option<String>,
     pub durable: u32,
     pub expiry_policy: Option<String>,
@@ -264,7 +275,14 @@ pub struct Target {
 }
 
 impl Target {
+    /// A transaction coordinator target offering local transactions.
+    pub fn coordinator() -> Target {
+        Target { coordinator: true, capabilities: vec!["amqp:local-transactions".into()], ..Default::default() }
+    }
     pub fn to_value(&self) -> AmqpValue {
+        if self.coordinator {
+            return AmqpValue::composite(desc::COORDINATOR, vec![symbols_value(&self.capabilities)]);
+        }
         AmqpValue::composite(
             desc::TARGET,
             vec![
@@ -279,11 +297,16 @@ impl Target {
         )
     }
     pub fn from_value(v: &AmqpValue) -> Option<Target> {
+        if v.descriptor_code() == Some(desc::COORDINATOR) {
+            let f = v.undescribed().as_list().unwrap_or(&[]);
+            return Some(Target { coordinator: true, capabilities: symbols(field(f, 0)), ..Default::default() });
+        }
         if v.descriptor_code() != Some(desc::TARGET) {
             return None;
         }
         let f = v.undescribed().as_list().unwrap_or(&[]);
         Some(Target {
+            coordinator: false,
             address: field(f, 0).as_str().map(String::from),
             durable: field(f, 1).as_u32().unwrap_or(0),
             expiry_policy: field(f, 2).as_str().map(String::from),
@@ -336,7 +359,12 @@ pub enum DeliveryState {
     Rejected(Option<AmqpError>),
     Released,
     Modified { delivery_failed: bool, undeliverable_here: bool, message_annotations: Vec<(AmqpValue, AmqpValue)> },
-    /// Any other (e.g. transactional) state, kept raw.
+    /// `declared` outcome of a transaction declaration (the transaction id).
+    Declared(Vec<u8>),
+    /// `transactional-state`: a transfer or disposition within a transaction, with the
+    /// provisional outcome.
+    Transactional { txn_id: Vec<u8>, outcome: Option<Box<DeliveryState>> },
+    /// Any other state, kept raw.
     Other(AmqpValue),
 }
 
@@ -353,6 +381,10 @@ impl DeliveryState {
                 desc::MODIFIED,
                 vec![AmqpValue::Boolean(*delivery_failed), AmqpValue::Boolean(*undeliverable_here), map_value(message_annotations)],
             ),
+            DeliveryState::Declared(id) => AmqpValue::composite(desc::DECLARED, vec![AmqpValue::Binary(id.clone())]),
+            DeliveryState::Transactional { txn_id, outcome } => {
+                AmqpValue::composite(desc::TRANSACTIONAL_STATE, vec![AmqpValue::Binary(txn_id.clone()), outcome.as_ref().map(|o| o.to_value()).unwrap_or(AmqpValue::Null)])
+            }
             DeliveryState::Other(v) => v.clone(),
         }
     }
@@ -371,12 +403,28 @@ impl DeliveryState {
                 undeliverable_here: field(f, 1).as_bool().unwrap_or(false),
                 message_annotations: map_of(field(f, 2)),
             },
+            Some(desc::DECLARED) => DeliveryState::Declared(field(f, 0).as_binary().unwrap_or(&[]).to_vec()),
+            Some(desc::TRANSACTIONAL_STATE) => DeliveryState::Transactional {
+                txn_id: field(f, 0).as_binary().unwrap_or(&[]).to_vec(),
+                outcome: DeliveryState::from_value(field(f, 1)).map(Box::new),
+            },
             _ => DeliveryState::Other(v.clone()),
         })
     }
-    /// Whether this is a terminal outcome.
+    /// Whether this is a terminal outcome (a transactional state only with its outcome).
     pub fn is_outcome(&self) -> bool {
-        !matches!(self, DeliveryState::Received { .. })
+        match self {
+            DeliveryState::Received { .. } => false,
+            DeliveryState::Transactional { outcome, .. } => outcome.is_some(),
+            _ => true,
+        }
+    }
+    /// The outcome itself: the provisional outcome of a transactional state.
+    pub fn outcome(&self) -> &DeliveryState {
+        match self {
+            DeliveryState::Transactional { outcome: Some(o), .. } => o.outcome(),
+            other => other,
+        }
     }
 }
 

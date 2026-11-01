@@ -207,6 +207,10 @@ pub struct AmqpUrl {
     pub port: u16,
     pub username: Option<String>,
     pub password: Option<String>,
+    /// `amqpws://` / `amqpwss://`: AMQP over WebSockets (path in `ws_path`).
+    pub websocket: bool,
+    /// The WebSocket path (the url path, `/` by default).
+    pub ws_path: String,
 }
 
 /// Parse `amqp[s]://[user:pass@]host[:port]` (also `failover:(...)` - first address - and
@@ -227,6 +231,11 @@ pub fn parse_amqp_url(url: &str) -> Result<AmqpUrl> {
         None => ("amqp".to_string(), u),
     };
     let tls = matches!(scheme.as_str(), "amqps" | "amqpwss" | "ssl" | "tls");
+    let websocket = matches!(scheme.as_str(), "amqpws" | "amqpwss");
+    let ws_path = match rest.find('/') {
+        Some(i) => rest[i..].to_string(),
+        None => "/".to_string(),
+    };
     let rest = rest.split('/').next().unwrap_or("");
     let (userinfo, hostport) = match rest.rsplit_once('@') {
         Some((ui, hp)) => (Some(ui), hp),
@@ -239,7 +248,12 @@ pub fn parse_amqp_url(url: &str) -> Result<AmqpUrl> {
         },
         None => (None, None),
     };
-    let default_port = if tls { 5671 } else { 5672 };
+    let default_port = match (websocket, tls) {
+        (true, true) => 443,
+        (true, false) => 80,
+        (false, true) => 5671,
+        (false, false) => 5672,
+    };
     let bad = || CamelError::illegal_argument(format!("Invalid AMQP url: {}", url));
     let (host, port) = if let Some(r) = hostport.strip_prefix('[') {
         let end = r.find(']').ok_or_else(bad)?;
@@ -255,7 +269,7 @@ pub fn parse_amqp_url(url: &str) -> Result<AmqpUrl> {
         }
     };
     let host = if host.is_empty() { "localhost".to_string() } else { host };
-    Ok(AmqpUrl { tls, host, port, username, password })
+    Ok(AmqpUrl { tls, host, port, username, password, websocket, ws_path })
 }
 
 /// Lookup of component-level properties by option name.
@@ -413,7 +427,9 @@ mod tests {
         assert_eq!((cs.host.as_str(), cs.port, cs.emulator), ("127.0.0.1", Some(5673), true));
         assert!(parse_connection_string("SharedAccessKey=x").is_err());
         let u = parse_amqp_url("amqps://u:p%40@broker:1234").unwrap();
-        assert_eq!(u, AmqpUrl { tls: true, host: "broker".into(), port: 1234, username: Some("u".into()), password: Some("p@".into()) });
+        assert_eq!(u, AmqpUrl { tls: true, host: "broker".into(), port: 1234, username: Some("u".into()), password: Some("p@".into()), websocket: false, ws_path: "/".into() });
+        let w = parse_amqp_url("amqpwss://ns.servicebus.windows.net/$servicebus/websocket").unwrap();
+        assert!(w.websocket && w.tls && w.port == 443 && w.ws_path == "/$servicebus/websocket");
         assert_eq!(parse_amqp_url("amqp://h").unwrap().port, 5672);
         assert_eq!(parse_amqp_url("failover:(amqp://a:1,amqp://b:2)").unwrap().host, "a");
         assert_eq!(parse_amqp_url("amqp://[::1]:9").unwrap().host, "::1");
