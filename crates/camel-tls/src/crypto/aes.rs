@@ -1,12 +1,16 @@
 //! AES-128 / AES-256 block cipher (FIPS-197, encryption direction only) and
 //! AES-GCM (NIST SP 800-38D).
 //!
-//! Limitation: SubBytes uses a 256-byte lookup table, so the block cipher is not
-//! constant-time with respect to cache-timing attackers sharing the CPU. GHASH is
-//! implemented with branch-free bitwise multiplication.
+//! SubBytes (cipher, inverse cipher and key schedule) is computed without table lookups:
+//! the 16 state bytes are bitsliced into eight 16-bit planes and the S-box is evaluated
+//! as inversion in GF(2^8) (x^254 by an addition chain of bitsliced multiplications)
+//! followed by the affine map, so no memory access depends on secret data (constant time
+//! with respect to cache-timing attackers). GHASH is implemented with branch-free
+//! bitwise multiplication.
 
 use crate::util::ct_eq;
 
+#[cfg(test)]
 const fn gf_mul(mut a: u8, mut b: u8) -> u8 {
     let mut p = 0u8;
     let mut i = 0;
@@ -25,6 +29,7 @@ const fn gf_mul(mut a: u8, mut b: u8) -> u8 {
     p
 }
 
+#[cfg(test)]
 const fn make_sbox() -> [u8; 256] {
     let mut sbox = [0u8; 256];
     let mut x = 0usize;
@@ -50,8 +55,106 @@ const fn make_sbox() -> [u8; 256] {
     sbox
 }
 
+#[cfg(test)]
 static SBOX: [u8; 256] = make_sbox();
 
+/// Bitsliced state: plane j holds bit j of each lane (byte).
+type Planes = [u16; 8];
+
+fn pack(bytes: &[u8]) -> Planes {
+    let mut p = [0u16; 8];
+    for (i, b) in bytes.iter().enumerate() {
+        for (j, plane) in p.iter_mut().enumerate() {
+            *plane |= (((*b >> j) & 1) as u16) << i;
+        }
+    }
+    p
+}
+
+fn unpack(p: &Planes, bytes: &mut [u8]) {
+    for (i, b) in bytes.iter_mut().enumerate() {
+        let mut v = 0u8;
+        for (j, plane) in p.iter().enumerate() {
+            v |= (((plane >> i) & 1) as u8) << j;
+        }
+        *b = v;
+    }
+}
+
+/// Bitsliced GF(2^8) multiplication modulo x^8 + x^4 + x^3 + x + 1.
+fn bs_mul(a: &Planes, b: &Planes) -> Planes {
+    let mut p = [0u16; 15];
+    for i in 0..8 {
+        for j in 0..8 {
+            p[i + j] ^= a[i] & b[j];
+        }
+    }
+    for k in (8..15).rev() {
+        let t = p[k];
+        p[k - 4] ^= t;
+        p[k - 5] ^= t;
+        p[k - 7] ^= t;
+        p[k - 8] ^= t;
+    }
+    [p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]]
+}
+
+/// Bitsliced squaring (linear over GF(2): a_i moves to x^(2i), then reduction).
+fn bs_sq(a: &Planes) -> Planes {
+    let mut p = [0u16; 15];
+    for i in 0..8 {
+        p[2 * i] = a[i];
+    }
+    for k in (8..15).rev() {
+        let t = p[k];
+        p[k - 4] ^= t;
+        p[k - 5] ^= t;
+        p[k - 7] ^= t;
+        p[k - 8] ^= t;
+    }
+    [p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]]
+}
+
+/// x^254 (= x^-1, with 0 -> 0).
+fn bs_inv(x: &Planes) -> Planes {
+    let x3 = bs_mul(&bs_sq(x), x);
+    let x7 = bs_mul(&bs_sq(&x3), x);
+    let x15 = bs_mul(&bs_sq(&x7), x);
+    let x31 = bs_mul(&bs_sq(&x15), x);
+    let x63 = bs_mul(&bs_sq(&x31), x);
+    let x127 = bs_mul(&bs_sq(&x63), x);
+    bs_sq(&x127)
+}
+
+/// Constant-time SubBytes of up to 16 bytes.
+fn sub_bytes_ct(bytes: &mut [u8]) {
+    let mask = if bytes.len() >= 16 { 0xffff } else { (1u16 << bytes.len()) - 1 };
+    let b = bs_inv(&pack(bytes));
+    let mut s = [0u16; 8];
+    for i in 0..8 {
+        s[i] = b[i] ^ b[(i + 7) % 8] ^ b[(i + 6) % 8] ^ b[(i + 5) % 8] ^ b[(i + 4) % 8];
+        if (0x63 >> i) & 1 == 1 {
+            s[i] ^= mask;
+        }
+    }
+    unpack(&s, bytes);
+}
+
+/// Constant-time InvSubBytes of up to 16 bytes.
+fn inv_sub_bytes_ct(bytes: &mut [u8]) {
+    let mask = if bytes.len() >= 16 { 0xffff } else { (1u16 << bytes.len()) - 1 };
+    let s = pack(bytes);
+    let mut b = [0u16; 8];
+    for i in 0..8 {
+        b[i] = s[(i + 7) % 8] ^ s[(i + 5) % 8] ^ s[(i + 2) % 8];
+        if (0x05 >> i) & 1 == 1 {
+            b[i] ^= mask;
+        }
+    }
+    unpack(&bs_inv(&b), bytes);
+}
+
+#[cfg(test)]
 const fn make_inv_sbox() -> [u8; 256] {
     let s = make_sbox();
     let mut inv = [0u8; 256];
@@ -63,10 +166,18 @@ const fn make_inv_sbox() -> [u8; 256] {
     inv
 }
 
+#[cfg(test)]
 static INV_SBOX: [u8; 256] = make_inv_sbox();
 
-fn gmul(a: u8, b: u8) -> u8 {
-    gf_mul(a, b)
+/// Branch-free GF(2^8) multiplication (used with secret `a`).
+fn gmul(mut a: u8, mut b: u8) -> u8 {
+    let mut p = 0u8;
+    for _ in 0..8 {
+        p ^= a & (b & 1).wrapping_neg();
+        a = xtime(a);
+        b >>= 1;
+    }
+    p
 }
 
 #[inline]
@@ -94,10 +205,13 @@ impl Aes {
         for i in nk..total {
             let mut t = w[i - 1];
             if i % nk == 0 {
-                t = [SBOX[t[1] as usize] ^ rcon, SBOX[t[2] as usize], SBOX[t[3] as usize], SBOX[t[0] as usize]];
+                let mut r = [t[1], t[2], t[3], t[0]];
+                sub_bytes_ct(&mut r);
+                r[0] ^= rcon;
+                t = r;
                 rcon = xtime(rcon);
             } else if nk > 6 && i % nk == 4 {
-                t = [SBOX[t[0] as usize], SBOX[t[1] as usize], SBOX[t[2] as usize], SBOX[t[3] as usize]];
+                sub_bytes_ct(&mut t);
             }
             let p = w[i - nk];
             w.push([p[0] ^ t[0], p[1] ^ t[1], p[2] ^ t[2], p[3] ^ t[3]]);
@@ -123,9 +237,7 @@ impl Aes {
         }
         for round in 1..=nr {
             // SubBytes
-            for b in s.iter_mut() {
-                *b = SBOX[*b as usize];
-            }
+            sub_bytes_ct(&mut s[..]);
             // ShiftRows (state is column-major: s[4*c + r])
             let t = *s;
             for c in 0..4 {
@@ -170,9 +282,7 @@ impl Aes {
                     s[4 * ((c + r) % 4) + r] = t[4 * c + r];
                 }
             }
-            for b in s.iter_mut() {
-                *b = INV_SBOX[*b as usize];
-            }
+            inv_sub_bytes_ct(&mut s[..]);
             for (b, k) in s.iter_mut().zip(&self.round_keys[round]) {
                 *b ^= k;
             }
@@ -345,6 +455,32 @@ impl AesGcm {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn constant_time_sbox_matches_table() {
+        let mut all: Vec<u8> = (0..=255).collect();
+        for chunk in all.chunks_mut(16) {
+            let orig = chunk.to_vec();
+            sub_bytes_ct(chunk);
+            for (o, c) in orig.iter().zip(chunk.iter()) {
+                assert_eq!(*c, super::SBOX[*o as usize]);
+            }
+            let mut back = chunk.to_vec();
+            inv_sub_bytes_ct(&mut back);
+            assert_eq!(back, orig);
+            for (o, c) in orig.iter().zip(chunk.iter()) {
+                assert_eq!(super::INV_SBOX[*c as usize], *o);
+            }
+        }
+        let mut short = [0x53u8, 0x00, 0xff];
+        sub_bytes_ct(&mut short);
+        assert_eq!(short, [0xed, 0x63, 0x16]);
+        for a in 0..=255u8 {
+            for b in [2u8, 3, 9, 11, 13, 14] {
+                assert_eq!(gmul(a, b), super::gf_mul(a, b));
+            }
+        }
+    }
+
     use super::*;
     use crate::util::{hex, unhex};
 
