@@ -648,3 +648,216 @@ fn sns_subscribe_to_sqs_fifo_attributes_and_batches() {
     assert_eq!(ex.body().get("successful").unwrap().as_array().unwrap().len(), 12);
     assert_eq!(mock.queue_messages("inbox").len(), 14);
 }
+
+#[test]
+fn iam_access_key_status_roles_policies_and_profiles() {
+    let mock = AwsMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let uri = |op: &str| format!("aws2-iam://iam?operation={}&{}", op, mock.endpoint_options());
+    let u = |n: &str| ("CamelAwsIAMUsername", Value::from(n));
+    req(&t, &uri("createUser"), "", &[u("carol")]);
+    let key = req(&t, &uri("createAccessKey"), "", &[u("carol")]).body().clone();
+    let (ak, sk) = (s(key.get("accessKeyId").unwrap()), s(key.get("secretAccessKey").unwrap()));
+    let as_carol = format!("aws2-iam://iam?operation=listUsers&accessKey=RAW({})&secretKey=RAW({})&uriEndpointOverride={}&overrideEndpoint=true", ak, sk, mock.url());
+    assert_eq!(req(&t, &as_carol, "", &[]).body().as_array().unwrap().len(), 1);
+    req(&t, &uri("updateAccessKey"), "", &[u("carol"), ("CamelAwsIAMAccessKeyID", Value::from(ak.as_str())), ("CamelAwsIAMAccessKeyStatus", Value::from("Inactive"))]);
+    let keys = req(&t, &uri("listAccessKeys"), "", &[u("carol")]).body().clone();
+    assert_eq!(s(keys.as_array().unwrap()[0].get("status").unwrap()), "Inactive");
+    assert!(t.request_body(&as_carol, "").is_err(), "inactive keys cannot sign");
+    req(&t, &uri("updateAccessKey"), "", &[("CamelAwsIAMAccessKeyID", Value::from(ak.as_str())), ("CamelAwsIAMAccessKeyStatus", Value::from("Active"))]);
+    assert!(t.request_body(&as_carol, "").is_ok());
+    // groups with members
+    req(&t, &uri("createGroup"), "", &[("CamelAwsIAMGroupName", Value::from("ops"))]);
+    req(&t, &uri("addUserToGroup"), "", &[u("carol"), ("CamelAwsIAMGroupName", Value::from("ops"))]);
+    let g = req(&t, &uri("getGroup"), "", &[("CamelAwsIAMGroupName", Value::from("ops"))]).body().clone();
+    assert_eq!(s(g.get("users").unwrap().as_array().unwrap()[0].get("userName").unwrap()), "carol");
+    // roles
+    let trust = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}"#;
+    let role = req(&t, &uri("createRole"), "", &[("CamelAwsIAMRoleName", Value::from("app")), ("CamelAwsIAMAssumeRolePolicyDocument", Value::from(trust)), ("CamelAwsIAMDescription", Value::from("the app"))]).body().clone();
+    assert_eq!(s(role.get("arn").unwrap()), "arn:aws:iam::000000000000:role/app");
+    assert_eq!(s(req(&t, &uri("getRole"), "", &[("CamelAwsIAMRoleName", Value::from("app"))]).body().get("description").unwrap()), "the app");
+    assert_eq!(mock.iam_roles(), vec!["app"]);
+    // managed policies + attachments
+    let doc = r#"{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}"#;
+    let pol = req(&t, &uri("createPolicy"), doc, &[("CamelAwsIAMPolicyName", Value::from("s3-all"))]).body().clone();
+    let arn = s(pol.get("arn").unwrap());
+    assert_eq!(arn, "arn:aws:iam::000000000000:policy/s3-all");
+    let pa = ("CamelAwsIAMPolicyArn", Value::from(arn.as_str()));
+    req(&t, &uri("attachUserPolicy"), "", &[u("carol"), pa.clone()]);
+    req(&t, &uri("attachRolePolicy"), "", &[("CamelAwsIAMRoleName", Value::from("app")), pa.clone()]);
+    req(&t, &uri("attachGroupPolicy"), "", &[("CamelAwsIAMGroupName", Value::from("ops")), pa.clone()]);
+    let att = req(&t, &uri("listAttachedUserPolicies"), "", &[u("carol")]).body().clone();
+    assert_eq!(s(att.as_array().unwrap()[0].get("policyName").unwrap()), "s3-all");
+    assert_eq!(req(&t, &uri("getPolicy"), "", &[pa.clone()]).body().get("attachmentCount").unwrap().as_i64(), Some(3));
+    assert_eq!(req(&t, &uri("listPolicies"), "", &[]).body().as_array().unwrap().len(), 1);
+    let e = req_err(&t, &uri("deletePolicy"), "", &[pa.clone()]);
+    assert!(e.message.contains("DeleteConflict"), "{}", e);
+    req(&t, &uri("detachUserPolicy"), "", &[u("carol"), pa.clone()]);
+    req(&t, &uri("detachRolePolicy"), "", &[("CamelAwsIAMRoleName", Value::from("app")), pa.clone()]);
+    req(&t, &uri("detachGroupPolicy"), "", &[("CamelAwsIAMGroupName", Value::from("ops")), pa.clone()]);
+    assert!(req(&t, &uri("listAttachedRolePolicies"), "", &[("CamelAwsIAMRoleName", Value::from("app"))]).body().as_array().unwrap().is_empty());
+    req(&t, &uri("deletePolicy"), "", &[pa]);
+    // instance profiles
+    let ip = ("CamelAwsIAMInstanceProfileName", Value::from("app-profile"));
+    req(&t, &uri("createInstanceProfile"), "", &[ip.clone()]);
+    req(&t, &uri("addRoleToInstanceProfile"), "", &[ip.clone(), ("CamelAwsIAMRoleName", Value::from("app"))]);
+    let prof = req(&t, &uri("getInstanceProfile"), "", &[ip.clone()]).body().clone();
+    assert_eq!(s(&prof.get("roles").unwrap().as_array().unwrap()[0]), "app");
+    assert_eq!(req(&t, &uri("listInstanceProfiles"), "", &[]).body().as_array().unwrap().len(), 1);
+    req(&t, &uri("removeRoleFromInstanceProfile"), "", &[ip.clone(), ("CamelAwsIAMRoleName", Value::from("app"))]);
+    req(&t, &uri("deleteInstanceProfile"), "", &[ip]);
+    assert_eq!(req(&t, &uri("listRoles"), "", &[]).body().as_array().unwrap().len(), 1);
+    req(&t, &uri("deleteRole"), "", &[("CamelAwsIAMRoleName", Value::from("app"))]);
+    let e = req_err(&t, &uri("getRole"), "", &[("CamelAwsIAMRoleName", Value::from("app"))]);
+    assert!(e.message.contains("NoSuchEntity"), "{}", e);
+}
+
+#[test]
+fn ec2_monitoring_tags_and_security_groups() {
+    let mock = AwsMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let uri = |op: &str| format!("aws2-ec2://ec2?operation={}&{}", op, mock.endpoint_options());
+    let started = req(
+        &t,
+        &uri("createAndRunInstances"),
+        "",
+        &[
+            ("CamelAwsEC2ImageId", Value::from("ami-1")),
+            ("CamelAwsEC2InstanceType", Value::from("t3.small")),
+            ("CamelAwsEC2InstanceMonitoring", Value::Bool(true)),
+            ("CamelAwsEC2InstanceEbsOptimized", Value::Bool(true)),
+            ("CamelAwsEC2InstanceKernelId", Value::from("aki-1")),
+            ("CamelAwsEC2InstanceSecurityGroups", Value::from(vec!["web", "sg-0123"])),
+            ("CamelAwsEC2InstancesPlacement", Value::from("us-east-1b")),
+            ("CamelAwsEC2SubnetId", Value::from("subnet-9")),
+            ("CamelAwsEC2InstancesClientToken", Value::from("tok-1")),
+            ("CamelAwsEC2InstancesTags", Value::object([("env", "prod")])),
+        ],
+    )
+    .body()
+    .clone();
+    let inst = started.as_array().unwrap()[0].clone();
+    let id = s(inst.get("instanceId").unwrap());
+    assert_eq!(s(inst.get("monitoring").unwrap()), "enabled");
+    assert_eq!(s(inst.get("availabilityZone").unwrap()), "us-east-1b");
+    assert_eq!(s(inst.get("subnetId").unwrap()), "subnet-9");
+    assert_eq!(inst.get("ebsOptimized"), Some(&Value::Bool(true)));
+    assert_eq!(inst.get("securityGroups").unwrap().as_array().unwrap().len(), 2);
+    assert_eq!(s(inst.get("tags").unwrap().get("env").unwrap()), "prod");
+    // the client token makes the call idempotent
+    let again = req(&t, &uri("createAndRunInstances"), "", &[("CamelAwsEC2ImageId", Value::from("ami-1")), ("CamelAwsEC2InstanceType", Value::from("t3.small")), ("CamelAwsEC2InstancesClientToken", Value::from("tok-1"))]).body().clone();
+    assert_eq!(s(again.as_array().unwrap()[0].get("instanceId").unwrap()), id);
+    assert_eq!(mock.ec2_instances().len(), 1);
+    let ids = ("CamelAwsEC2InstancesIds", Value::from(vec![id.clone()]));
+    let m = req(&t, &uri("unmonitorInstances"), "", &[ids.clone()]).body().clone();
+    assert_eq!(s(m.as_array().unwrap()[0].get("monitoring").unwrap()), "disabling");
+    let m = req(&t, &uri("monitorInstances"), "", &[ids.clone()]).body().clone();
+    assert_eq!(s(m.as_array().unwrap()[0].get("monitoring").unwrap()), "pending");
+    req(&t, &uri("createTags"), "", &[ids.clone(), ("CamelAwsEC2InstancesTags", Value::object([("team", "a"), ("tier", "web")]))]);
+    req(&t, &uri("deleteTags"), "", &[ids.clone(), ("CamelAwsEC2InstancesTags", Value::from(vec!["env"]))]);
+    req(&t, &uri("deleteTags"), "", &[ids.clone(), ("CamelAwsEC2InstancesTags", Value::object([("tier", "other")]))]);
+    let d = req(&t, &uri("describeInstances"), "", &[ids.clone()]).body().clone();
+    let tags = d.as_array().unwrap()[0].get("tags").unwrap().clone();
+    assert_eq!(tags.as_object().unwrap().len(), 2, "{:?}", tags);
+    assert!(tags.get("env").is_none() && s(tags.get("tier").unwrap()) == "web");
+    req(&t, &uri("rebootInstances"), "", &[ids]);
+}
+
+#[test]
+fn step_functions_activities_and_update_state_machine() {
+    let mock = AwsMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let uri = |op: &str| format!("aws2-step-functions://sfn?operation={}&{}", op, mock.endpoint_options());
+    let act = req(&t, &uri("createActivity"), "", &[("CamelAwsStepFunctionsActivityName", Value::from("approve"))]);
+    let act_arn = s(act.header("CamelAwsStepFunctionsActivityArn").unwrap());
+    assert!(act_arn.ends_with(":activity:approve"));
+    assert_eq!(s(req(&t, &uri("describeActivity"), "", &[("CamelAwsStepFunctionsActivityArn", Value::from(act_arn.as_str()))]).body().get("name").unwrap()), "approve");
+    assert_eq!(req(&t, &uri("listActivities"), "", &[]).body().as_array().unwrap().len(), 1);
+    let def = format!(r#"{{"StartAt":"Ask","States":{{"Ask":{{"Type":"Task","Resource":"{}","Next":"Done"}},"Done":{{"Type":"Succeed"}}}}}}"#, act_arn);
+    let sm = s(req(&t, &uri("createStateMachine"), "", &[("CamelAwsStepFunctionsStateMachineName", Value::from("flow")), ("CamelAwsStepFunctionsStateMachineDefinition", Value::from(def.as_str())), ("CamelAwsStepFunctionsStateMachineRoleArn", Value::from("arn:aws:iam::000000000000:role/sfn"))]).body());
+    let smh = ("CamelAwsStepFunctionsStateMachineArn", Value::from(sm.as_str()));
+    let run = |name: &str| s(req(&t, &uri("startExecution"), Value::object([("amount", 42)]), &[smh.clone(), ("CamelAwsStepFunctionsExecutionName", Value::from(name))]).header("CamelAwsStepFunctionsExecutionArn").unwrap());
+    let status = |exec: &str| s(req(&t, &uri("describeExecution"), "", &[("CamelAwsStepFunctionsExecutionArn", Value::from(exec))]).body().get("status").unwrap());
+    let ah = ("CamelAwsStepFunctionsActivityArn", Value::from(act_arn.as_str()));
+    // worker: succeed
+    let e1 = run("one");
+    assert_eq!(status(&e1), "RUNNING");
+    let task = req(&t, &uri("getActivityTask"), "", &[ah.clone(), ("CamelAwsStepFunctionsActivityWorkerName", Value::from("w1"))]);
+    let token = s(task.header("CamelAwsStepFunctionsTaskToken").unwrap());
+    assert_eq!(task.body().get("amount").and_then(|a| a.as_i64()), Some(42));
+    req(&t, &uri("sendTaskHeartbeat"), "", &[("CamelAwsStepFunctionsTaskToken", Value::from(token.as_str()))]);
+    req(&t, &uri("sendTaskSuccess"), Value::object([("approved", true)]), &[("CamelAwsStepFunctionsTaskToken", Value::from(token.as_str()))]);
+    assert_eq!(status(&e1), "SUCCEEDED");
+    let e = req_err(&t, &uri("sendTaskSuccess"), "{}", &[("CamelAwsStepFunctionsTaskToken", Value::from(token.as_str()))]);
+    assert!(e.message.contains("TaskDoesNotExist"), "{}", e);
+    // worker: fail
+    let e2 = run("two");
+    let token = s(req(&t, &uri("getActivityTask"), "", &[ah.clone()]).header("CamelAwsStepFunctionsTaskToken").unwrap());
+    req(&t, &uri("sendTaskFailure"), "", &[("CamelAwsStepFunctionsTaskToken", Value::from(token.as_str())), ("CamelAwsStepFunctionsTaskError", Value::from("Rejected")), ("CamelAwsStepFunctionsTaskCause", Value::from("too much"))]);
+    let d = req(&t, &uri("describeExecution"), "", &[("CamelAwsStepFunctionsExecutionArn", Value::from(e2.as_str()))]).body().clone();
+    assert_eq!((s(d.get("status").unwrap()), s(d.get("error").unwrap())), ("FAILED".to_string(), "Rejected".to_string()));
+    // update the machine to a plain Pass machine
+    let pass = r#"{"StartAt":"P","States":{"P":{"Type":"Pass","Result":"ok","End":true}}}"#;
+    let upd = req(&t, &uri("updateStateMachine"), "", &[smh.clone(), ("CamelAwsStepFunctionsStateMachineDefinition", Value::from(pass))]);
+    assert!(!upd.body().is_null());
+    let e3 = run("three");
+    assert_eq!(status(&e3), "SUCCEEDED");
+    let e = req_err(&t, &uri("updateStateMachine"), "", &[smh, ("CamelAwsStepFunctionsStateMachineDefinition", Value::from("{}"))]);
+    assert!(e.message.contains("InvalidDefinition"), "{}", e);
+    req(&t, &uri("deleteActivity"), "", &[ah.clone()]);
+    let e = req_err(&t, &uri("describeActivity"), "", &[ah]);
+    assert!(e.message.contains("ActivityDoesNotExist"), "{}", e);
+}
+
+#[test]
+fn rekognition_collections_face_search_and_video() {
+    let mock = AwsMock::start().unwrap();
+    mock.create_bucket("media");
+    mock.put_object("media", "team.jpg", b"face:alice face:bob");
+    mock.put_object("media", "clip.mp4", b"face:alice walking dog\nsign STOP face:carol");
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let uri = |op: &str| format!("aws2-rekognition://r?operation={}&collectionId=staff&{}", op, mock.endpoint_options());
+    req(&t, &uri("createCollection"), "", &[]);
+    let e = req_err(&t, &uri("createCollection"), "", &[]);
+    assert!(e.message.contains("ResourceAlreadyExists"), "{}", e);
+    let recs = req(&t, &uri("indexFaces"), "", &[("CamelAwsRekognitionS3Bucket", Value::from("media")), ("CamelAwsRekognitionS3Object", Value::from("team.jpg")), ("CamelAwsRekognitionExternalImageId", Value::from("team"))]).body().clone();
+    assert_eq!(recs.as_array().unwrap().len(), 2);
+    req(&t, &uri("indexFaces"), Value::Bytes(b"face:alice".to_vec()), &[]);
+    assert_eq!(req(&t, &uri("describeCollection"), "", &[]).body().get("FaceCount").and_then(|c| c.as_i64()), Some(3));
+    assert_eq!(req(&t, &uri("listCollections"), "", &[]).body().as_array().unwrap().len(), 1);
+    let faces = req(&t, &uri("listFaces"), "", &[]).body().clone();
+    assert_eq!(faces.as_array().unwrap().len(), 3);
+    let alice = s(recs.as_array().unwrap()[0].get("Face").unwrap().get("FaceId").unwrap());
+    let m = req(&t, &uri("searchFaces"), "", &[("CamelAwsRekognitionFaceId", Value::from(alice.as_str()))]).body().clone();
+    assert_eq!(m.as_array().unwrap().len(), 1, "the other alice face");
+    let m = req(&t, &uri("searchFacesByImage"), Value::Bytes(b"face:bob".to_vec()), &[("CamelAwsRekognitionFaceMatchThreshold", Value::from("90"))]).body().clone();
+    assert_eq!(s(m.as_array().unwrap()[0].get("Face").unwrap().get("ExternalImageId").unwrap()), "team");
+    let cmp = req(&t, &uri("compareFaces"), Value::Bytes(b"face:bob".to_vec()), &[("CamelAwsRekognitionTargetS3Bucket", Value::from("media")), ("CamelAwsRekognitionTargetS3Object", Value::from("team.jpg"))]);
+    assert_eq!(cmp.body().as_array().unwrap().len(), 1);
+    assert_eq!(cmp.header("CamelAwsRekognitionUnmatchedFaces").unwrap().as_array().unwrap().len(), 1);
+    let del = req(&t, &uri("deleteFaces"), Value::from(vec![alice.clone()]), &[]).body().clone();
+    assert_eq!(del.as_array().unwrap().len(), 1);
+    // stored video
+    let video = [("CamelAwsRekognitionS3Bucket", Value::from("media")), ("CamelAwsRekognitionS3Object", Value::from("clip.mp4"))];
+    let job = s(req(&t, &uri("startLabelDetection"), "", &video).body());
+    let r = req(&t, &uri("getLabelDetection"), "", &[("CamelAwsRekognitionJobId", Value::from(job.as_str()))]);
+    assert_eq!(s(r.header("CamelAwsRekognitionJobStatus").unwrap()), "SUCCEEDED");
+    assert!(r.body().as_array().unwrap().iter().any(|l| s(l.get("Label").unwrap().get("Name").unwrap()) == "Dog"));
+    let job = s(req(&t, &uri("startTextDetection"), "", &video).body());
+    assert_eq!(req(&t, &uri("getTextDetection"), "", &[("CamelAwsRekognitionJobId", Value::from(job.as_str()))]).body().as_array().unwrap().len(), 2);
+    let job = s(req(&t, &uri("startFaceDetection"), "", &video).body());
+    assert_eq!(req(&t, &uri("getFaceDetection"), "", &[("CamelAwsRekognitionJobId", Value::from(job.as_str()))]).body().as_array().unwrap().len(), 2);
+    let job = s(req(&t, &uri("startFaceSearch"), "", &video).body());
+    let persons = req(&t, &uri("getFaceSearch"), "", &[("CamelAwsRekognitionJobId", Value::from(job.as_str()))]).body().clone();
+    let p = persons.as_array().unwrap();
+    assert_eq!(p.len(), 2);
+    assert_eq!(p[0].get("FaceMatches").unwrap().as_array().unwrap().len(), 1, "one alice face is left in the collection");
+    assert!(p[1].get("FaceMatches").unwrap().as_array().unwrap().is_empty());
+    req(&t, &uri("deleteCollection"), "", &[]);
+    let e = req_err(&t, &uri("describeCollection"), "", &[]);
+    assert!(e.message.contains("ResourceNotFound"), "{}", e);
+}
