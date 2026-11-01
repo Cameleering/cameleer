@@ -504,7 +504,10 @@ fn write_xml(name: &str, v: &Value, out: &mut String, indent: Option<usize>, xo:
             out.push('<');
             out.push_str(name);
             let xmlns_key = format!("{}xmlns", xo.attr);
-            for (k, a) in o.iter() {
+            // namespace declarations first, then the attributes
+            let mut attrs: Vec<(&String, &Value)> = o.iter().collect();
+            attrs.sort_by_key(|(k, _)| **k != xmlns_key);
+            for (k, a) in attrs {
                 if *k == xmlns_key {
                     if let Value::Object(ns) = a {
                         for (p, u) in ns.iter() {

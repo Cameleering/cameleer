@@ -379,29 +379,29 @@ fn days_in_month(y: i64, m: u32) -> u32 {
 }
 
 /// `ds.read` / `ds.write` media type conversions.
-fn read_media(it: &mut Interp, data: &V, mime: &str, params: &V, pos: u32) -> R<V> {
-    let mut mt = mime.to_string();
+fn media_params(it: &Interp, params: &V) -> std::collections::BTreeMap<String, String> {
+    let mut m = std::collections::BTreeMap::new();
     if let V::Obj(o) = params {
         for (k, v) in o.borrow().props.iter() {
-            mt.push_str(&format!("; {}={}", k, crate::builtins::jsonnet_to_string(it, v)));
+            m.insert(k.to_string(), crate::builtins::jsonnet_to_string(it, v));
         }
     }
+    m
+}
+
+fn read_media(it: &mut Interp, data: &V, mime: &str, params: &V, pos: u32) -> R<V> {
+    let opts = media_params(it, params);
     let body = camel_core::value::Value::String(s(it, data));
-    match crate::media::read_payload(&body, &mt, &Default::default()) {
+    match crate::media::read_payload(&body, mime, &opts) {
         Ok(v) => Ok(v),
         Err(e) => err(it, e.message, pos),
     }
 }
 
 fn write_media(it: &mut Interp, data: &V, mime: &str, params: &V, pos: u32) -> R<V> {
-    let mut mt = mime.to_string();
-    if let V::Obj(o) = params {
-        for (k, v) in o.borrow().props.iter() {
-            mt.push_str(&format!("; {}={}", k, crate::builtins::jsonnet_to_string(it, v)));
-        }
-    }
+    let opts = media_params(it, params);
     let out = to_value(data);
-    match crate::media::write_output(it, data, out, &mt, &Default::default()) {
+    match crate::media::write_output(it, data, out, mime, &opts) {
         Ok(camel_core::value::Value::String(x)) => Ok(V::string(x)),
         Ok(other) => Ok(from_value(&other)),
         Err(e) => err(it, e.message, pos),
