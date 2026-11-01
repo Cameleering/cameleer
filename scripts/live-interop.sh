@@ -107,6 +107,17 @@ gen_certs() {
   chmod 644 ./*.pem ./*.key
 }
 
+# Java stores for the JSSE checks: the server identity as PKCS#12 and a trust store with the CA.
+gen_java_stores() {
+  [ -f "$CERTS/server.p12" ] || openssl pkcs12 -export -in "$CERTS/server.pem" -inkey "$CERTS/server.key" \
+    -name server -passout "pass:$PW" -out "$CERTS/server.p12"
+  if command -v keytool >/dev/null && [ ! -f "$CERTS/ca-trust.p12" ]; then
+    keytool -importcert -noprompt -alias interop-ca -file "$CERTS/ca.pem" -keystore "$CERTS/ca-trust.p12" \
+      -storetype PKCS12 -storepass "$PW" >/dev/null 2>&1
+  fi
+  chmod 644 "$CERTS"/*.p12 2>/dev/null || true
+}
+
 # A copy of the server key owned by a service account (some servers insist on strict modes).
 key_copy() {
   local owner=$1 dest="$CERTS/server-$1.key"
@@ -448,6 +459,7 @@ cmd_setup() {
   chmod 755 "$DIR" "$LOGS" "$RUN"
   chmod 777 "$LOGS"
   gen_certs
+  gen_java_stores
   setup_postgres
   setup_redis
   setup_mosquitto
