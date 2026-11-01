@@ -52,6 +52,12 @@ pub(super) struct ExtState {
     bq_datasets: BTreeMap<String, (String, i64)>,
     /// table metadata (partitioning, clustering, description) by `project.dataset.table`
     bq_table_meta: BTreeMap<String, Value>,
+    /// Cloud Functions resources created / updated through the API
+    fn_meta: BTreeMap<String, Value>,
+    /// uploaded source archives (upload id -> zip bytes)
+    fn_uploads: BTreeMap<String, Vec<u8>>,
+    /// long-running operations (name -> (resource, polls before done))
+    fn_ops: BTreeMap<String, (Value, usize)>,
 }
 
 impl GcpMock {
@@ -126,6 +132,7 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, s: &[&str]) -> Option<Res
         ["bigquery", "v2", "projects", project, rest @ ..] => bigquery(st, req, project, rest),
         ["v1", "projects", project, "secrets", rest @ ..] => secrets(st, req, project, rest),
         ["v1", "projects", project, "locations", location, "functions", rest @ ..] => functions(st, req, project, location, rest),
+        ["v1", "projects", project, "locations", location, "functions:generateUploadUrl"] => functions(st, req, project, location, &[":generateUploadUrl"]),
         ["v1", "projects", project, "databases", db, rest @ ..] => firestore(st, req, project, db, rest),
         ["v4", "spreadsheets", rest @ ..] => sheets(st, req, rest),
         _ => return None,
@@ -895,14 +902,108 @@ fn secrets(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> Re
 // Cloud Functions
 // ---------------------------------------------------------------------------
 
+/// Source archive uploads (`PUT /fn-uploads/{id}`, signed upload URLs) and downloads.
+pub(super) fn function_sources(st: &Shared, req: &ServerRequest) -> Option<Response> {
+    let id = req.path.strip_prefix("/fn-uploads/")?.split('?').next().unwrap_or("").to_string();
+    let mut s = st.lock().unwrap();
+    Some(match req.method.as_str() {
+        "PUT" => {
+            if req.header("Content-Type") != Some("application/zip") || req.header("x-goog-content-length-range").is_none() {
+                return Some(gerror(400, "INVALID_ARGUMENT", "Uploads require Content-Type: application/zip and x-goog-content-length-range"));
+            }
+            match s.ext.fn_uploads.get_mut(&id) {
+                Some(slot) => {
+                    *slot = req.body.clone();
+                    Response::new(200)
+                }
+                None => gerror(403, "PERMISSION_DENIED", "Invalid upload URL"),
+            }
+        }
+        "GET" => match s.ext.fn_uploads.get(&id) {
+            Some(d) => Response::new(200).with_header("Content-Type", "application/zip").with_body(d.clone()),
+            None => gerror(404, "NOT_FOUND", "No such archive"),
+        },
+        _ => gerror(405, "METHOD_NOT_ALLOWED", "Method not allowed"),
+    })
+}
+
+/// Long-running operations of Cloud Functions (`GET /v1/operations/{id}`).
+pub(super) fn function_operation(st: &Shared, id: &str) -> Response {
+    let mut s = st.lock().unwrap();
+    match s.ext.fn_ops.get_mut(&format!("operations/{}", id)) {
+        Some((resp, polls)) => {
+            if *polls > 0 {
+                *polls -= 1;
+                return Response::json(200, obj([("name", Value::from(format!("operations/{}", id))), ("done", Value::Bool(false))]).to_json());
+            }
+            Response::json(200, obj([("name", Value::from(format!("operations/{}", id))), ("done", Value::Bool(true)), ("response", resp.clone())]).to_json())
+        }
+        None => gerror(404, "NOT_FOUND", "Operation not found"),
+    }
+}
+
 fn functions(st: &Shared, req: &ServerRequest, project: &str, location: &str, rest: &[&str]) -> Response {
     let prefix = format!("projects/{}/locations/{}/functions", project, location);
-    let resource = |name: &str| obj([("name", Value::from(name)), ("status", Value::from("ACTIVE")), ("entryPoint", Value::from(name.rsplit('/').next().unwrap_or(""))), ("runtime", Value::from("rust-camel-mock"))]);
+    let meta = st.lock().unwrap().ext.fn_meta.clone();
+    let resource = |name: &str| meta.get(name).cloned().unwrap_or_else(|| obj([("name", Value::from(name)), ("status", Value::from("ACTIVE")), ("entryPoint", Value::from(name.rsplit('/').next().unwrap_or(""))), ("runtime", Value::from("rust-camel-mock"))]));
+    let host = req.header("Host").unwrap_or("localhost").to_string();
+    let new_op = |s: &mut super::State, resource: Value| {
+        let name = format!("operations/{}", random_hex(10));
+        s.ext.fn_ops.insert(name.clone(), (resource, 1));
+        Response::json(200, obj([("name", Value::from(name)), ("done", Value::Bool(false))]).to_json())
+    };
+    let body = parse_json(&req.body).unwrap_or_default();
+    let validate = |s: &super::State, f: &Value| -> Option<Response> {
+        if f.get("entryPoint").is_none_or(|e| e.to_string().is_empty()) || f.get("runtime").is_none_or(|r| r.to_string().is_empty()) {
+            return Some(gerror(400, "INVALID_ARGUMENT", "entryPoint and runtime are required"));
+        }
+        match (f.get("sourceUploadUrl").map(|u| u.to_string()), f.get("sourceArchiveUrl").map(|u| u.to_string())) {
+            (Some(u), _) => {
+                let id = u.rsplit('/').next().unwrap_or("").split('?').next().unwrap_or("").to_string();
+                if s.ext.fn_uploads.get(&id).is_none_or(|d| d.is_empty()) {
+                    return Some(gerror(400, "INVALID_ARGUMENT", "The source upload URL has no uploaded archive"));
+                }
+            }
+            (None, Some(a)) if a.starts_with("gs://") => {}
+            _ => return Some(gerror(400, "INVALID_ARGUMENT", "A source (sourceUploadUrl or a gs:// sourceArchiveUrl) is required")),
+        }
+        None
+    };
     match (req.method.as_str(), rest) {
         ("GET", []) => {
             let s = st.lock().unwrap();
             let list: Vec<Value> = s.ext.functions.keys().filter(|k| k.starts_with(&prefix)).map(|k| resource(k)).collect();
             Response::json(200, obj([("functions", Value::Array(list))]).to_json())
+        }
+        ("POST", []) => {
+            let mut s = st.lock().unwrap();
+            let name = body.get("name").map(|n| n.to_string()).unwrap_or_default();
+            if !name.starts_with(&format!("{}/", prefix)) {
+                return gerror(400, "INVALID_ARGUMENT", "The function name must be projects/*/locations/*/functions/*");
+            }
+            if s.ext.functions.contains_key(&name) {
+                return gerror(409, "ALREADY_EXISTS", &format!("Function {} already exists", name));
+            }
+            if let Some(r) = validate(&s, &body) {
+                return r;
+            }
+            let mut m = body.as_object().cloned().unwrap_or_default();
+            m.insert("status".into(), Value::from("ACTIVE"));
+            m.insert("versionId".into(), Value::from("1"));
+            if m.contains_key("httpsTrigger") {
+                m.insert("httpsTrigger".into(), obj([("url", Value::from(format!("https://{}-{}.cloudfunctions.net/{}", location, project, name.rsplit('/').next().unwrap_or(""))))]));
+            }
+            let res = Value::Object(m);
+            s.ext.fn_meta.insert(name.clone(), res.clone());
+            // a deployed function echoes its call data
+            s.ext.functions.insert(name, std::sync::Arc::new(|d: &str| Ok(d.to_string())));
+            new_op(&mut s, res)
+        }
+        ("POST", [":generateUploadUrl"]) => {
+            let mut s = st.lock().unwrap();
+            let id = random_hex(12);
+            s.ext.fn_uploads.insert(id.clone(), Vec::new());
+            Response::json(200, obj([("uploadUrl", Value::from(format!("http://{}/fn-uploads/{}?GoogleAccessId=mock&Signature=sig", host, id)))]).to_json())
         }
         (m, [one]) => {
             let (fname, verb) = one.split_once(':').unwrap_or((one, ""));
@@ -919,6 +1020,32 @@ fn functions(st: &Shared, req: &ServerRequest, project: &str, location: &str, re
                     }
                 }
                 ("GET", "") => Response::json(200, resource(&name).to_json()),
+                ("PATCH", "") => {
+                    let mut s = st.lock().unwrap();
+                    let mut cur = resource(&name).as_object().cloned().unwrap_or_default();
+                    let mask = req.query_param("updateMask").unwrap_or_default();
+                    for (k, v) in body.as_object().cloned().unwrap_or_default() {
+                        if mask.is_empty() || mask.split(',').any(|f| f.trim() == k) {
+                            cur.insert(k, v);
+                        }
+                    }
+                    if let Some(r) = validate(&s, &Value::Object(cur.clone())) {
+                        return r;
+                    }
+                    let v = cur.get("versionId").and_then(|v| v.to_string().parse::<i64>().ok()).unwrap_or(1) + 1;
+                    cur.insert("versionId".into(), Value::from(v.to_string()));
+                    let res = Value::Object(cur);
+                    s.ext.fn_meta.insert(name.clone(), res.clone());
+                    new_op(&mut s, res)
+                }
+                ("POST", "generateDownloadUrl") => {
+                    let s = st.lock().unwrap();
+                    let url = s.ext.fn_meta.get(&name).and_then(|m| m.get("sourceUploadUrl").map(|u| u.to_string()));
+                    match url {
+                        Some(u) => Response::json(200, obj([("downloadUrl", Value::from(u))]).to_json()),
+                        None => gerror(400, "FAILED_PRECONDITION", "The function has no uploaded source"),
+                    }
+                }
                 ("DELETE", "") => {
                     st.lock().unwrap().ext.functions.remove(&name);
                     Response::json(200, obj([("name", Value::from(format!("operations/{}", random_hex(8)))), ("done", Value::Bool(true))]).to_json())

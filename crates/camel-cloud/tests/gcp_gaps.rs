@@ -222,3 +222,30 @@ fn bigquery_datasets_and_tables() {
     req(&t, &bq("", "&operation=deleteDataset&deleteContents=true"), "", &[]);
     assert!(req(&t, &bq("", "&operation=listTables"), "", &[]).body().as_array().unwrap().is_empty());
 }
+
+#[test]
+fn cloud_functions_management() {
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let f = |name: &str, op: &str| format!("google-functions://{}?project={}&operation={}&{}", name, PROJECT, op, env.opts());
+    // upload a source archive through a signed upload URL, then deploy
+    let url = s(req(&t, &f("hello", "generateUploadUrl"), Value::Bytes(b"PK\x03\x04zip".to_vec()), &[]).body());
+    assert!(url.contains("/fn-uploads/"));
+    let e = call(&t, &f("hello", "createFunction"), "", &[("CamelGoogleCloudFunctionsRuntime", Value::from("nodejs20"))]).unwrap_err();
+    assert!(e.message.contains("entryPoint and runtime"), "{}", e);
+    let created = req(&t, &f("hello", "createFunction"), "", &[("CamelGoogleCloudFunctionsEntryPoint", Value::from("handler")), ("CamelGoogleCloudFunctionsRuntime", Value::from("nodejs20")), ("CamelGoogleCloudFunctionsSourceUploadUrl", Value::from(url.as_str()))]).body().clone();
+    assert_eq!(s(created.get("status").unwrap()), "ACTIVE");
+    assert!(s(created.get("httpsTrigger").unwrap().get("url").unwrap()).ends_with("/hello"));
+    assert_eq!(s(req(&t, &f("hello", "callFunction"), "ping", &[]).body()), "ping");
+    let dl = s(req(&t, &f("hello", "generateDownloadUrl"), "", &[]).body());
+    let r = camel_cloud::http::HttpClient::new().send(&camel_cloud::http::Request::new("GET", camel_cloud::http::Url::parse(&dl).unwrap())).unwrap();
+    assert_eq!(r.body, b"PK\x03\x04zip");
+    // update from a gs:// archive
+    let updated = req(&t, &f("hello", "updateFunction"), "", &[("CamelGoogleCloudFunctionsRuntime", Value::from("nodejs22")), ("CamelGoogleCloudFunctionsSourceArchiveUrl", Value::from("gs://src/hello-v2.zip"))]).body().clone();
+    assert_eq!((s(updated.get("runtime").unwrap()), s(updated.get("versionId").unwrap())), ("nodejs22".to_string(), "2".to_string()));
+    assert_eq!(s(req(&t, &f("hello", "getFunction"), "", &[]).body().get("sourceArchiveUrl").unwrap()), "gs://src/hello-v2.zip");
+    assert!(call(&t, &f("hello", "createFunction"), "", &[("CamelGoogleCloudFunctionsEntryPoint", Value::from("h")), ("CamelGoogleCloudFunctionsRuntime", Value::from("go122")), ("CamelGoogleCloudFunctionsSourceArchiveUrl", Value::from("gs://x/y.zip"))]).unwrap_err().message.contains("already exists"));
+    assert!(req(&t, &f("hello", "listFunctions"), "", &[]).body().as_array().unwrap().iter().any(|n| s(n).ends_with("/hello")));
+    req(&t, &f("hello", "deleteFunction"), "", &[]);
+}

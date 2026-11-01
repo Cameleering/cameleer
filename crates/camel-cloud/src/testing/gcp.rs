@@ -342,6 +342,10 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     if req.path.starts_with("/computeMetadata/v1/instance/service-accounts/") && req.method == "GET" {
         return metadata_token(st, req);
     }
+    // signed source archive URLs carry their own authorization
+    if let Some(r) = ext::function_sources(st, req) {
+        return r;
+    }
     if let Some(r) = more::signed_url(st, req) {
         return r;
     }
@@ -358,6 +362,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     }
     let segs = req.segments();
     let s: Vec<&str> = segs.iter().map(|x| x.as_str()).collect();
+    if let ["v1", "operations", id] = s.as_slice() {
+        return ext::function_operation(st, id);
+    }
     if let ["v1", "projects", "-", "serviceAccounts", target] = s.as_slice() {
         if let Some(email) = target.strip_suffix(":generateAccessToken") {
             return generate_access_token(st, req, email);
