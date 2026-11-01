@@ -72,6 +72,18 @@ fn default_groups() -> Vec<NamedGroup> {
     NamedGroup::ALL.to_vec()
 }
 
+/// OCSP stapling on the client (`status_request`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OcspMode {
+    /// Do not request a stapled response (default).
+    #[default]
+    Off,
+    /// Request one and validate it when the server staples (revoked / invalid fails).
+    Request,
+    /// Request one and fail the handshake without a valid "good" response.
+    Require,
+}
+
 /// Client-side configuration. Build with [`TlsClientConfig::builder`].
 #[derive(Clone, Debug)]
 pub struct TlsClientConfig {
@@ -90,6 +102,8 @@ pub struct TlsClientConfig {
     pub(crate) crls: Arc<Vec<Crl>>,
     /// Session cache for resumption (None disables resumption).
     pub(crate) session_cache: Option<Arc<ClientSessionCache>>,
+    /// OCSP stapling.
+    pub(crate) ocsp: OcspMode,
 }
 
 impl Default for TlsClientConfig {
@@ -114,6 +128,7 @@ impl TlsClientConfig {
                 client_cert: None,
                 crls: Arc::new(Vec::new()),
                 session_cache: Some(Arc::new(ClientSessionCache::default())),
+                ocsp: OcspMode::Off,
             },
             system_roots: true,
         }
@@ -246,6 +261,12 @@ impl TlsClientConfigBuilder {
         self
     }
 
+    /// OCSP stapling: request (and validate) the server's stapled OCSP response.
+    pub fn ocsp_stapling(mut self, mode: OcspMode) -> Self {
+        self.cfg.ocsp = mode;
+        self
+    }
+
     pub fn build(mut self) -> TlsClientConfig {
         if self.system_roots {
             let mut store = RootStore::system();
@@ -271,6 +292,8 @@ pub struct TlsServerConfig {
     pub(crate) crls: Arc<Vec<Crl>>,
     /// Resumption state (None disables resumption).
     pub(crate) sessions: Option<Arc<ServerSessions>>,
+    /// DER OCSP response stapled when the client sends `status_request`.
+    pub(crate) ocsp_response: Option<Arc<Vec<u8>>>,
 }
 
 impl TlsServerConfig {
@@ -289,8 +312,14 @@ impl TlsServerConfig {
             resumption: true,
             tickets: true,
             lifetime: DEFAULT_SESSION_LIFETIME,
+            ocsp_response: None,
             error: None,
         }
+    }
+
+    /// Replaces the stapled OCSP response (e.g. after refreshing it from the responder).
+    pub fn set_ocsp_response(&mut self, der: Option<Vec<u8>>) {
+        self.ocsp_response = der.map(Arc::new);
     }
 
     pub fn client_auth(&self) -> ClientAuth {
@@ -327,6 +356,7 @@ pub struct TlsServerConfigBuilder {
     resumption: bool,
     tickets: bool,
     lifetime: u32,
+    ocsp_response: Option<Vec<u8>>,
     error: Option<String>,
 }
 
@@ -471,6 +501,13 @@ impl TlsServerConfigBuilder {
         self
     }
 
+    /// A DER OCSP response for the leaf certificate, stapled (TLS 1.3 certificate entry
+    /// extension / TLS 1.2 CertificateStatus) when clients send `status_request`.
+    pub fn ocsp_response(mut self, der: Vec<u8>) -> Self {
+        self.ocsp_response = Some(der);
+        self
+    }
+
     /// Session / ticket lifetime in seconds (default 86400, at most 7 days).
     pub fn session_lifetime_secs(mut self, secs: u32) -> Self {
         self.lifetime = secs;
@@ -501,6 +538,7 @@ impl TlsServerConfigBuilder {
             client_roots: self.client_roots,
             crls: Arc::new(self.crls),
             sessions: if self.resumption { Some(Arc::new(ServerSessions::new(self.lifetime, self.tickets))) } else { None },
+            ocsp_response: self.ocsp_response.map(Arc::new),
         })
     }
 }

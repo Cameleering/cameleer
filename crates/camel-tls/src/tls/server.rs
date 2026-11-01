@@ -353,11 +353,19 @@ impl<S: Read + Write> Conn<S> {
                 body.extend(codec::extensions(&cr_exts));
                 self.send_hs(&handshake_msg(hs::CERTIFICATE_REQUEST, &body))?;
             }
-            // Certificate
+            // Certificate (the leaf entry carries the stapled OCSP response when requested)
+            let staple = cfg.ocsp_response.as_ref().filter(|_| find_ext(&ch.exts, ext::STATUS_REQUEST).is_some_and(|s| s.first() == Some(&1)));
             let mut list = Vec::new();
-            for c in &cfg.cert_chain {
+            for (i, c) in cfg.cert_chain.iter().enumerate() {
                 put_vec24(&mut list, c);
-                put_u16(&mut list, 0);
+                match staple.filter(|_| i == 0) {
+                    Some(resp) => {
+                        let mut status = vec![1u8];
+                        put_vec24(&mut status, resp);
+                        list.extend(codec::extensions(&[(ext::STATUS_REQUEST, status)]));
+                    }
+                    None => put_u16(&mut list, 0),
+                }
             }
             let mut body = vec![0u8];
             put_vec24(&mut body, &list);
@@ -585,6 +593,10 @@ impl<S: Read + Write> Conn<S> {
             exts.push((ext::SESSION_TICKET, Vec::new()));
         }
         exts.push((ext::EC_POINT_FORMATS, vec![1, 0]));
+        let staple = cfg.ocsp_response.clone().filter(|_| find_ext(&ch.exts, ext::STATUS_REQUEST).is_some_and(|s| s.first() == Some(&1)));
+        if staple.is_some() {
+            exts.push((ext::STATUS_REQUEST, Vec::new()));
+        }
         body.extend(codec::extensions(&exts));
         self.send_hs(&handshake_msg(hs::SERVER_HELLO, &body))?;
 
@@ -595,6 +607,11 @@ impl<S: Read + Write> Conn<S> {
         let mut body = Vec::new();
         put_vec24(&mut body, &list);
         self.send_hs(&handshake_msg(hs::CERTIFICATE, &body))?;
+        if let Some(resp) = staple {
+            let mut body = vec![1u8];
+            put_vec24(&mut body, &resp);
+            self.send_hs(&handshake_msg(hs::CERTIFICATE_STATUS, &body))?;
+        }
 
         let share = KeyShare::generate(group);
         let mut params = vec![3u8];

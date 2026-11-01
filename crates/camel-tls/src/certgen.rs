@@ -136,7 +136,7 @@ impl CertParams {
     }
 }
 
-fn sig_alg_for(key: &PrivateKey) -> Vec<u8> {
+pub(crate) fn sig_alg_for(key: &PrivateKey) -> Vec<u8> {
     match key {
         PrivateKey::Ec { curve: crate::crypto::ec::EcCurve::P384, .. } => asn1::seq(&[asn1::oid("1.2.840.10045.4.3.3")]),
         PrivateKey::Ec { .. } => asn1::seq(&[asn1::oid("1.2.840.10045.4.3.2")]),
@@ -145,7 +145,7 @@ fn sig_alg_for(key: &PrivateKey) -> Vec<u8> {
     }
 }
 
-fn sign_with(key: &PrivateKey, tbs: &[u8]) -> Vec<u8> {
+pub(crate) fn sign_with(key: &PrivateKey, tbs: &[u8]) -> Vec<u8> {
     use crate::crypto::hash::HashAlg;
     match key {
         PrivateKey::Ec { curve, d, .. } => {

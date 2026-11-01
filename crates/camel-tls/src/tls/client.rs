@@ -86,6 +86,10 @@ fn client_hello(cfg: &TlsClientConfig, p: &HelloParams) -> Vec<u8> {
         exts.push((ext::EC_POINT_FORMATS, vec![1, 0]));
     }
     exts.push((ext::SIGNATURE_ALGORITHMS, codec::u16_list(&sigscheme::SUPPORTED)));
+    if cfg.ocsp != crate::tls::config::OcspMode::Off {
+        // status_type ocsp, empty responder_id_list and request_extensions
+        exts.push((ext::STATUS_REQUEST, vec![1, 0, 0, 0, 0]));
+    }
     if !cfg.alpn.is_empty() {
         exts.push((ext::ALPN, codec::alpn_list(&cfg.alpn)));
     }
@@ -331,6 +335,36 @@ impl<S: Read + Write> Conn<S> {
         leaf.public_key.ok_or_else(|| TlsError::proto(alert::UNSUPPORTED_CERTIFICATE, "unsupported server key type"))
     }
 
+    /// Validates a stapled OCSP response (CertificateStatus body) for the verified chain.
+    fn check_ocsp(&mut self, cfg: &TlsClientConfig, status: Option<&[u8]>) -> TlsResult<()> {
+        use crate::tls::config::OcspMode;
+        let bad = |m: String| TlsError::proto(113, m); // bad_certificate_status_response
+        let resp = match status {
+            Some(s) => {
+                let mut r = Reader::new(s, "CertificateStatus");
+                if r.u8()? != 1 {
+                    return Err(bad("unsupported certificate status type".into()));
+                }
+                let d = r.vec24()?.to_vec();
+                r.finish()?;
+                Some(d)
+            }
+            None => None,
+        };
+        match (cfg.ocsp, resp) {
+            (OcspMode::Off, _) => Ok(()),
+            (OcspMode::Require, None) => Err(bad("the server did not staple an OCSP response".into())),
+            (_, None) => Ok(()),
+            (_, Some(d)) => {
+                if cfg.verify {
+                    crate::ocsp::check_stapled(&d, &self.peer_certs, &cfg.roots, x509::now_unix()).map_err(bad)?;
+                }
+                self.peer_ocsp = Some(d);
+                Ok(())
+            }
+        }
+    }
+
     fn client13(&mut self, cfg: &TlsClientConfig, sh: &ServerHello, p: &Client13, psk: Option<&ClientSession>) -> TlsResult<()> {
         let illegal = |m: &str| TlsError::proto(alert::ILLEGAL_PARAMETER, m.to_string());
         let suite =
@@ -400,9 +434,11 @@ impl<S: Read + Write> Conn<S> {
             if msg[0] != hs::CERTIFICATE {
                 return Err(TlsError::proto(alert::UNEXPECTED_MESSAGE, "expected Certificate"));
             }
-            let certs = parse_certificate13(&msg)?;
+            let (certs, leaf_exts) = parse_certificate13_exts(&msg)?;
             self.transcript.extend_from_slice(&msg);
             let leaf_key = self.check_server_certs(cfg, p.host, certs)?;
+            let status = find_ext(&leaf_exts, ext::STATUS_REQUEST).map(|s| s.to_vec());
+            self.check_ocsp(cfg, status.as_deref())?;
 
             let cv = self.expect(hs::CERTIFICATE_VERIFY)?;
             let mut r = Reader::new(&cv[4..], "CertificateVerify");
@@ -562,7 +598,18 @@ impl<S: Read + Write> Conn<S> {
             return Err(TlsError::proto(alert::UNSUPPORTED_CERTIFICATE, "certificate key does not match cipher suite"));
         }
 
-        let ske = self.expect(hs::SERVER_KEY_EXCHANGE)?;
+        let mut ske = self.read_hs()?;
+        if ske[0] == hs::CERTIFICATE_STATUS {
+            self.transcript.extend_from_slice(&ske);
+            let body = ske[4..].to_vec();
+            self.check_ocsp(cfg, Some(&body))?;
+            ske = self.read_hs()?;
+        } else {
+            self.check_ocsp(cfg, None)?;
+        }
+        if ske[0] != hs::SERVER_KEY_EXCHANGE {
+            return Err(TlsError::proto(alert::UNEXPECTED_MESSAGE, "expected ServerKeyExchange"));
+        }
         let body = &ske[4..];
         let mut r = Reader::new(body, "ServerKeyExchange");
         if r.u8()? != 3 {
@@ -711,6 +758,25 @@ pub(crate) fn cv_content(server: bool, transcript_hash: &[u8]) -> Vec<u8> {
     signed.extend_from_slice(if server { b"TLS 1.3, server CertificateVerify\0" } else { b"TLS 1.3, client CertificateVerify\0" });
     signed.extend_from_slice(transcript_hash);
     signed
+}
+
+/// Parses a TLS 1.3 Certificate message into the DER chain and the leaf's extensions.
+pub(crate) fn parse_certificate13_exts(msg: &[u8]) -> TlsResult<(Vec<Vec<u8>>, Vec<(u16, Vec<u8>)>)> {
+    let mut r = Reader::new(&msg[4..], "Certificate");
+    let _ctx = r.vec8()?;
+    let list = r.vec24()?;
+    r.finish()?;
+    let mut lr = Reader::new(list, "Certificate");
+    let mut certs = Vec::new();
+    let mut leaf_exts = Vec::new();
+    while !lr.is_empty() {
+        certs.push(lr.vec24()?.to_vec());
+        let e = lr.vec16()?;
+        if certs.len() == 1 {
+            leaf_exts = parse_extensions(e)?;
+        }
+    }
+    Ok((certs, leaf_exts))
 }
 
 /// Parses a TLS 1.3 Certificate message into the DER chain.

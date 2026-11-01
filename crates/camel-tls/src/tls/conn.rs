@@ -40,6 +40,8 @@ pub(crate) struct Conn<S> {
     pub group: Option<NamedGroup>,
     pub alpn: Option<Vec<u8>>,
     pub peer_certs: Vec<Vec<u8>>,
+    /// Client side: the stapled OCSP response (validated), if any.
+    pub peer_ocsp: Option<Vec<u8>>,
     pub sni: Option<String>,
     /// Whether the session was resumed (abbreviated handshake / PSK).
     pub resumed: bool,
@@ -105,6 +107,7 @@ impl<S: Read + Write> Conn<S> {
             group: None,
             alpn: None,
             peer_certs: Vec::new(),
+            peer_ocsp: None,
             sni: None,
             resumed: false,
             session_origin: Vec::new(),

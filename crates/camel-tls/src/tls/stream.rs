@@ -94,6 +94,11 @@ impl<S: Read + Write> TlsStream<S> {
         &self.conn.peer_certs
     }
 
+    /// Client side: the server's stapled OCSP response (DER, already validated), if any.
+    pub fn ocsp_response(&self) -> Option<&[u8]> {
+        self.conn.peer_ocsp.as_deref()
+    }
+
     /// Server side: the SNI host name sent by the client.
     pub fn sni_hostname(&self) -> Option<&str> {
         self.conn.sni.as_deref()

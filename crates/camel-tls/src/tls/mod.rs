@@ -34,7 +34,9 @@ pub(crate) mod hs {
     pub const CLIENT_HELLO: u8 = 1;
     pub const SERVER_HELLO: u8 = 2;
     pub const NEW_SESSION_TICKET: u8 = 4;
+    pub const END_OF_EARLY_DATA: u8 = 5;
     pub const ENCRYPTED_EXTENSIONS: u8 = 8;
+    pub const CERTIFICATE_STATUS: u8 = 22;
     pub const CERTIFICATE: u8 = 11;
     pub const SERVER_KEY_EXCHANGE: u8 = 12;
     pub const CERTIFICATE_REQUEST: u8 = 13;
@@ -48,6 +50,8 @@ pub(crate) mod hs {
 
 pub(crate) mod ext {
     pub const SERVER_NAME: u16 = 0;
+    pub const STATUS_REQUEST: u16 = 5;
+    pub const EARLY_DATA: u16 = 42;
     pub const SUPPORTED_GROUPS: u16 = 10;
     pub const EC_POINT_FORMATS: u16 = 11;
     pub const SIGNATURE_ALGORITHMS: u16 = 13;

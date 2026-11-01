@@ -363,3 +363,100 @@ fn openssl_client_vs_server_tls12_matrix() {
     }
 }
 
+
+#[test]
+fn ocsp_stapling_both_ways() {
+    use camel_tls::certgen::{issue, CertParams};
+    use camel_tls::ocsp::{build_response, CertStatus, OcspResponse};
+    use camel_tls::x509::Certificate;
+    use camel_tls::{OcspMode, PrivateKey};
+    if !openssl_available() {
+        return;
+    }
+    let ca = issue(&CertParams::ca("OCSP Test CA"), PrivateKey::generate_ec(camel_tls::crypto::ec::EcCurve::P256), None);
+    let leaf = issue(&CertParams::server(&["localhost"]), PrivateKey::generate_ec(camel_tls::crypto::ec::EcCurve::P256), Some(&ca));
+    let files = Files::new();
+    let ca_pem = files.write("ca.pem", &ca.cert_pem);
+    let ca_key = files.write("ca.key", &ca.key_pem);
+    let leaf_pem = files.write("leaf.pem", &leaf.cert_pem);
+    let leafc = Certificate::from_der(&leaf.cert_der).unwrap();
+    let cac = Certificate::from_der(&ca.cert_der).unwrap();
+    let serial: String = leafc.serial.iter().map(|b| format!("{:02X}", b)).collect();
+    files.write("index.txt", &format!("V\t351231235959Z\t\t{}\tunknown\t/CN=localhost\n", serial));
+    // an OCSP response made by `openssl ocsp` (third-party vector)
+    let d = files.dir.clone();
+    let st = Command::new("openssl").args(["ocsp", "-issuer", &ca_pem, "-cert", &leaf_pem, "-no_nonce", "-reqout"]).arg(d.join("req.der")).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    assert!(st.success());
+    let st = Command::new("openssl")
+        .args(["ocsp", "-index"])
+        .arg(d.join("index.txt"))
+        .args(["-CA", &ca_pem, "-rsigner", &ca_pem, "-rkey", &ca_key, "-ndays", "1", "-reqin"])
+        .arg(d.join("req.der"))
+        .arg("-respout")
+        .arg(d.join("resp.der"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let openssl_resp = std::fs::read(d.join("resp.der")).unwrap();
+    let parsed = OcspResponse::parse(&openssl_resp).unwrap();
+    assert_eq!(parsed.validate(&leafc, &cac, camel_tls::x509::now_unix()), Ok(CertStatus::Good));
+    let resp_file = d.join("resp.der").to_string_lossy().into_owned();
+    let chain = format!("{}{}", leaf.cert_pem, ca.cert_pem);
+
+    // our client (Require) against s_server -status_file, TLS 1.3 and 1.2
+    for version in ["-tls1_3", "-tls1_2"] {
+        let srv = start_s_server(&leaf.cert_pem, &leaf.key_pem, None, &["-status_file", &resp_file, version]);
+        let cfg = TlsClientConfig::builder().system_roots(false).add_root_pem(ca.cert_pem.as_bytes()).unwrap().ocsp_stapling(OcspMode::Require).build();
+        let sock = TcpStream::connect(("127.0.0.1", srv.port)).unwrap();
+        sock.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        let tls = TlsStream::connect(sock, "localhost", &cfg).unwrap_or_else(|e| panic!("{}: {}", version, e));
+        assert_eq!(tls.ocsp_response(), Some(&openssl_resp[..]), "{}", version);
+    }
+    // a server that does not staple fails under Require, passes under Request
+    let srv = start_s_server(&leaf.cert_pem, &leaf.key_pem, None, &[]);
+    let cfg = TlsClientConfig::builder().system_roots(false).add_root_pem(ca.cert_pem.as_bytes()).unwrap().ocsp_stapling(OcspMode::Require).build();
+    let sock = TcpStream::connect(("127.0.0.1", srv.port)).unwrap();
+    assert!(TlsStream::connect(sock, "localhost", &cfg).is_err());
+    drop(srv);
+
+    // openssl s_client -status against our stapling server
+    let now = camel_tls::x509::now_unix();
+    let ours = build_response(&leafc, &cac, &ca.key, &CertStatus::Good, now - 60, Some(now + 3600));
+    for version in ["-tls1_3", "-tls1_2"] {
+        let server_cfg = TlsServerConfig::builder().cert_chain_pem(chain.as_bytes()).private_key_pem(leaf.key_pem.as_bytes()).ocsp_response(ours.clone()).build().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let h = thread::spawn(move || {
+            let (sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+            if let Ok(mut tls) = TlsStream::accept(sock, &server_cfg) {
+                let mut rest = Vec::new();
+                let _ = tls.read_to_end(&mut rest);
+            }
+        });
+        let out = Command::new("openssl")
+            .args(["s_client", "-connect", &format!("127.0.0.1:{port}"), "-servername", "localhost", "-CAfile", &ca_pem, "-status", version])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        h.join().unwrap();
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(all.contains("OCSP Response Status: successful"), "{}: {}", version, all);
+        assert!(all.contains("Cert Status: good"), "{}: {}", version, all);
+    }
+    // our client against our server with a revoked status fails
+    let revoked = build_response(&leafc, &cac, &ca.key, &CertStatus::Revoked { time: now - 30, reason: None }, now - 60, Some(now + 3600));
+    let server_cfg = TlsServerConfig::builder().cert_chain_pem(chain.as_bytes()).private_key_pem(leaf.key_pem.as_bytes()).ocsp_response(revoked).build().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let h = thread::spawn(move || {
+        let (sock, _) = listener.accept().unwrap();
+        let _ = TlsStream::accept(sock, &server_cfg);
+    });
+    let cfg = TlsClientConfig::builder().system_roots(false).add_root_pem(ca.cert_pem.as_bytes()).unwrap().ocsp_stapling(OcspMode::Request).build();
+    let err = TlsStream::connect(TcpStream::connect(("127.0.0.1", port)).unwrap(), "localhost", &cfg).unwrap_err();
+    assert!(err.to_string().contains("revoked"), "{}", err);
+    h.join().unwrap();
+}
