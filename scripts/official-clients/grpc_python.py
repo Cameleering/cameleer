@@ -3,7 +3,7 @@ stack: as a client of a rust-camel `grpc` consumer route, as a server called by 
 `grpc` producer, and as a Pub/Sub StreamingPull client of the GcpMock gRPC service.
 
 usage:
-  grpc_python.py client <host:port> <proto-dir> [ca.pem] [gzip]
+  grpc_python.py client <host:port> <proto-dir> [--ca ca.pem] [--cert c.pem --key c.key] [--gzip] [--authority name]
   grpc_python.py server <proto-dir> <portfile> [cert.pem key.pem]    (serves until stdin closes)
   grpc_python.py pubsub <host:port> <subscription> <count> [service-account.json]
 
@@ -49,17 +49,39 @@ def greeter_modules(proto_dir):
     return importlib.import_module("greeter_pb2"), importlib.import_module("greeter_pb2_grpc"), importlib.import_module("common_pb2")
 
 
-def client(target, proto_dir, ca=None, compression=None):
+def flags(args):
+    out, i = {}, 0
+    while i < len(args):
+        if args[i] == "--gzip":
+            out["gzip"] = True
+            i += 1
+        else:
+            out[args[i][2:]] = args[i + 1]
+            i += 2
+    return out
+
+
+def client(target, proto_dir, *rest):
+    f = flags(rest)
     pb, rpc, common = greeter_modules(proto_dir)
     opts = [("grpc.enable_http_proxy", 0)]
-    comp = grpc.Compression.Gzip if compression == "gzip" else None
+    if "authority" in f:
+        opts.append(("grpc.ssl_target_name_override", f["authority"]))
+    comp = grpc.Compression.Gzip if f.get("gzip") else None
+    ca = f.get("ca")
     if ca:
-        creds = grpc.ssl_channel_credentials(root_certificates=open(ca, "rb").read())
+        key = open(f["key"], "rb").read() if "key" in f else None
+        cert = open(f["cert"], "rb").read() if "cert" in f else None
+        creds = grpc.ssl_channel_credentials(root_certificates=open(ca, "rb").read(), private_key=key, certificate_chain=cert)
         channel = grpc.secure_channel(target, creds, options=opts, compression=comp)
     else:
         channel = grpc.insecure_channel(target, options=opts, compression=comp)
     stub = rpc.GreeterStub(channel)
-    r = stub.SayHello(pb.HelloRequest(name="grpcio", mood=common.HAPPY), metadata=[("x-tenant", "python")], timeout=10)
+    try:
+        r = stub.SayHello(pb.HelloRequest(name="grpcio", mood=common.HAPPY), metadata=[("x-tenant", "python")], timeout=10)
+    except grpc.RpcError as e:
+        print("connect-error: %s" % e.code().name)
+        return
     print("unary: %s|%d" % (r.message, r.index))
     replies = list(stub.SayHelloStream(pb.HelloRequest(name="S", times=3), timeout=10))
     print("server-stream: %s" % ",".join("%s/%d" % (x.message, x.index) for x in replies))
@@ -190,7 +212,7 @@ def main():
     cmd = sys.argv[1]
     a = sys.argv[2:]
     if cmd == "client":
-        client(a[0], a[1], a[2] if len(a) > 2 and a[2] else None, a[3] if len(a) > 3 else None)
+        client(*a)
     elif cmd == "server":
         server(a[0], a[1], *(a[2:4] if len(a) > 3 else []))
     elif cmd == "pubsub":
