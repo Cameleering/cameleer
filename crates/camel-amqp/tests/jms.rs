@@ -375,3 +375,87 @@ fn rabbitmq_flavoured_broker_conventions() {
     let ex = ctx2.create_producer_template().send(&format!("jms:queue:x?username=camel&password=pw&brokerURL={}", broker.url()), Exchange::with_body(Some(ctx2.clone()), "x"));
     assert!(ex.exception.unwrap().message.contains("Virtual host"));
 }
+
+/// Regressions found against a real Apache ActiveMQ 5.17 (live interop suite), reproduced with
+/// the embedded broker's ActiveMQ flavour: ActiveMQ does not redeliver after an aborted
+/// transactional ACK and dead-letters NACKed messages, so the consumer redelivers locally
+/// (ActiveMQ JMS client redelivery policy), and its login error is an authentication failure.
+#[test]
+fn activemq_flavoured_broker_conventions() {
+    let broker = StompBroker::builder().activemq().user("camel", "pw").start().unwrap();
+    let ctx = CamelContext::new();
+    camel_amqp::register(&ctx);
+    let url = format!("{}?jms.redeliveryPolicy.initialRedeliveryDelay=0&jms.redeliveryPolicy.redeliveryDelay=0", broker.url());
+    for (k, v) in [("brokerUrl", url), ("username", "camel".into()), ("password", "pw".into())] {
+        ctx.properties().set(format!("camel.component.jms.{}", k), v);
+    }
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let a2 = attempts.clone();
+    let flags = Arc::new(Mutex::new(Vec::new()));
+    let f2 = flags.clone();
+    let client_attempts = Arc::new(AtomicUsize::new(0));
+    let c2 = client_attempts.clone();
+    let doomed = Arc::new(AtomicUsize::new(0));
+    let d2 = doomed.clone();
+    ctx.add_routes(move |b| {
+        b.from("jms:queue:payments?transacted=true")
+            .process(move |ex: &mut Exchange| {
+                f2.lock().unwrap().push((ex.header("JMSRedelivered").and_then(|v| v.as_bool()).unwrap_or(false), ex.header("JMSXDeliveryCount").and_then(|v| v.as_i64())));
+                // the send joins the consumer's transaction: rolled back with each failure
+                Ok(())
+            })
+            .to("jms:queue:audit")
+            .process(move |_ex: &mut Exchange| if a2.fetch_add(1, Ordering::SeqCst) < 2 { Err(CamelError::illegal_state("deadlock")) } else { Ok(()) })
+            .to("mock:committed");
+        b.from("jms:queue:client?acknowledgementModeName=CLIENT_ACKNOWLEDGE")
+            .process(move |_ex: &mut Exchange| if c2.fetch_add(1, Ordering::SeqCst) == 0 { Err(CamelError::illegal_state("first time fails")) } else { Ok(()) })
+            .to("mock:client");
+        b.from("jms:queue:doomed?transacted=true").process(move |_ex: &mut Exchange| {
+            d2.fetch_add(1, Ordering::SeqCst);
+            Err(CamelError::illegal_state("always fails"))
+        });
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    // ActiveMQ's "User name [x] or password is invalid." is an authentication failure
+    let ex = t.send(&format!("jms:queue:x?brokerURL={}&username=camel&password=wrong", broker.url()), Exchange::with_body(Some(ctx.clone()), "x"));
+    let e = ex.exception.unwrap();
+    assert_eq!(e.kind, "AuthenticationFailureException");
+    assert_eq!(e.message, "User name [camel] or password is invalid.");
+    // a failed transacted exchange is redelivered by the consumer (the broker would not)
+    let committed = ctx.mock_endpoint("mock:committed").unwrap();
+    committed.expected_header_received("JMSRedelivered", true);
+    committed.expected_message_count(1);
+    t.send_body("jms:queue:payments", "pay").unwrap();
+    committed.assert_is_satisfied().unwrap();
+    assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    assert_eq!(*flags.lock().unwrap(), vec![(false, None), (true, Some(2)), (true, Some(3))]);
+    wait_until("transaction settled", || broker.pending_count("payments") == 0 && broker.queue_depth("payments") == 0);
+    assert_eq!(broker.queue_depth("audit"), 1, "only the committed attempt's send");
+    // CLIENT_ACKNOWLEDGE: redelivered by the consumer, not NACKed (a poison ack on ActiveMQ)
+    let client = ctx.mock_endpoint("mock:client").unwrap();
+    client.expected_header_received("JMSRedelivered", true);
+    client.expected_message_count(1);
+    t.send_body("jms:queue:client", "c").unwrap();
+    client.assert_is_satisfied().unwrap();
+    assert_eq!(broker.queue_depth("ActiveMQ.DLQ"), 0);
+    // exhausted after 6 redeliveries: NACKed, so ActiveMQ dead-letters it
+    t.send_body("jms:queue:doomed", "poison").unwrap();
+    wait_until("dead-lettered", || broker.queue_depth("ActiveMQ.DLQ") == 1);
+    assert_eq!(doomed.load(Ordering::SeqCst), 7);
+    assert_eq!(broker.queue_messages("ActiveMQ.DLQ")[0].header("originalDestination"), Some("/queue/doomed"));
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn redelivery_policy_from_broker_url() {
+    use camel_amqp::stomp::component::RedeliveryPolicy;
+    let d = RedeliveryPolicy::from_broker_url("tcp://h:61613").unwrap();
+    assert_eq!((d.maximum_redeliveries, d.initial_redelivery_delay, d.redelivery_delay), (6, Duration::from_millis(1000), Duration::from_millis(1000)));
+    let p = RedeliveryPolicy::from_broker_url("failover:(tcp://a:1,tcp://b:2)?randomize=false&jms.redeliveryPolicy.maximumRedeliveries=-1&jms.redeliveryPolicy.initialRedeliveryDelay=0&jms.redeliveryPolicy.redeliveryDelay=250").unwrap();
+    assert_eq!((p.maximum_redeliveries, p.delay(1), p.delay(2)), (-1, Duration::ZERO, Duration::from_millis(250)));
+    assert!(p.allows(1_000));
+    assert!(d.allows(6) && !d.allows(7));
+    assert!(RedeliveryPolicy::from_broker_url("tcp://h:1?jms.redeliveryPolicy.maximumRedeliveries=x").is_err());
+}

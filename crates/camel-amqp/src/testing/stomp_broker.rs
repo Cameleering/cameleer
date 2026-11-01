@@ -35,7 +35,12 @@
 //!   `subscription:/temp-queue/x`), `persistent:false` on a `SEND` to an existing queue is
 //!   refused (it is the queue's `durable` flag), durable topic subscriptions are
 //!   `durable:true` subscriptions named by their `id`, and an aborted transactional `ACK`
-//!   leaves the message unacknowledged (no redelivery until `NACK`).
+//!   leaves the message unacknowledged (no redelivery until `NACK`);
+//! * an Apache ActiveMQ 5 flavour ([`StompBrokerBuilder::activemq`]) reproducing what the
+//!   live interop suite saw on a real ActiveMQ 5.17: `server:ActiveMQ/5.17.6`, refused logins
+//!   answered with `User name [x] or password is invalid.`, an aborted transactional `ACK`
+//!   only restores the pending acknowledgement (no redelivery), and a `NACK` is a poison ack:
+//!   the message goes straight to `/queue/ActiveMQ.DLQ` (non-persistent ones are dropped).
 
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
@@ -166,6 +171,7 @@ fn is_topic(dest: &str) -> bool {
 struct Shared {
     state: Mutex<State>,
     rabbitmq: bool,
+    activemq: bool,
     users: Vec<(String, String)>,
     heartbeat: (u64, u64),
     max_redeliveries: u32,
@@ -582,6 +588,7 @@ impl State {
 /// Builder for [`StompBroker`].
 pub struct StompBrokerBuilder {
     rabbitmq: bool,
+    activemq: bool,
     users: Vec<(String, String)>,
     heartbeat: (u64, u64),
     max_redeliveries: u32,
@@ -600,6 +607,11 @@ impl StompBrokerBuilder {
     /// Behave like RabbitMQ's STOMP adapter (see the module documentation).
     pub fn rabbitmq(mut self) -> Self {
         self.rabbitmq = true;
+        self
+    }
+    /// Behave like Apache ActiveMQ 5 (see the module documentation).
+    pub fn activemq(mut self) -> Self {
+        self.activemq = true;
         self
     }
     /// Require a login (any number of users; none = anonymous access).
@@ -665,6 +677,7 @@ impl StompBrokerBuilder {
         let shared = Arc::new(Shared {
             state: Mutex::new(state),
             rabbitmq: self.rabbitmq,
+            activemq: self.activemq,
             users: self.users,
             heartbeat: self.heartbeat,
             max_redeliveries: self.max_redeliveries,
@@ -705,7 +718,7 @@ impl StompBroker {
         Self::builder().start()
     }
     pub fn builder() -> StompBrokerBuilder {
-        StompBrokerBuilder { rabbitmq: false, users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0, tls: None, persistence: None }
+        StompBrokerBuilder { rabbitmq: false, activemq: false, users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0, tls: None, persistence: None }
     }
     pub fn port(&self) -> u16 {
         self.server.port()
@@ -938,7 +951,11 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
                 ops.push(if f.command == "ACK" { TxOp::Ack(id) } else { TxOp::Nack(id) });
                 return Ok(true);
             }
-            apply_ack(&mut st, conn, &id, f.command == "ACK", max);
+            if f.command == "NACK" && shared.activemq {
+                poison_ack(&mut st, conn, &id);
+            } else {
+                apply_ack(&mut st, conn, &id, f.command == "ACK", max);
+            }
         }
         "BEGIN" => {
             let tx = f.get("transaction").ok_or("BEGIN frame without transaction header")?.to_string();
@@ -956,9 +973,12 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
                 match op {
                     TxOp::Send(m) if commit => st.route(m),
                     TxOp::Send(_) => {}
-                    // RabbitMQ: the aborted ACK leaves the message unacknowledged
-                    TxOp::Ack(_) if !commit && shared.rabbitmq => {}
+                    // RabbitMQ: the aborted ACK leaves the message unacknowledged; ActiveMQ
+                    // restores the pending ack (the client may ACK / NACK it again)
+                    TxOp::Ack(_) if !commit && (shared.rabbitmq || shared.activemq) => {}
                     TxOp::Ack(id) => apply_ack(&mut st, conn, &id, commit, max),
+                    TxOp::Nack(id) if commit && shared.activemq => poison_ack(&mut st, conn, &id),
+                    TxOp::Nack(_) if shared.activemq => {}
                     TxOp::Nack(id) => apply_ack(&mut st, conn, &id, false, max),
                 }
             }
@@ -968,6 +988,26 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
         other => return Err(format!("Unknown STOMP action: {}", other)),
     }
     Ok(true)
+}
+
+/// ActiveMQ's poison ack (`NACK`): the message goes to the DLQ without redelivery
+/// (non-persistent messages are discarded, ActiveMQ's `processNonPersistent=false`).
+fn poison_ack(st: &mut State, conn: u64, ack_id: &str) {
+    let Some((si, msgs)) = st.take_acked(conn, ack_id) else { return };
+    let source = st.subs[si].source.clone();
+    for mut m in msgs {
+        st.journal_key(REC_DEL, &m);
+        if !m.persistent {
+            continue;
+        }
+        m.headers.push(("dlqDeliveryFailureCause".into(), "Poison ack".into()));
+        m.headers.push(("originalDestination".into(), m.destination.clone()));
+        m.destination = DLQ.to_string();
+        m.subscription_queue = None;
+        m.redelivered = false;
+        st.route(m);
+    }
+    st.dispatch(&source);
 }
 
 /// Acknowledge (`ack=true`) or redeliver (`ack=false`) a pending delivery.
@@ -1046,6 +1086,11 @@ fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
         let (l, p) = (connect.get("login").unwrap_or(""), connect.get("passcode").unwrap_or(""));
         if !shared.users.iter().any(|(u, pw)| u == l && pw == p) {
             let mut e = error_frame(&format!("Authentication failed: user '{}'", l), None);
+            if shared.activemq {
+                let text = format!("User name [{}] or password is invalid.", l);
+                e = error_frame(&text, None);
+                e.body = text.into_bytes();
+            }
             if shared.rabbitmq {
                 e = error_frame("Bad CONNECT", None);
                 e.body = format!("Access refused for user '{}'", l).into_bytes();
@@ -1071,7 +1116,16 @@ fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
             .header("version", "1.2")
             .header("heart-beat", format!("{},{}", sx, sy))
             .header("session", format!("session-{}", conn))
-            .header("server", if shared.rabbitmq { "RabbitMQ/3.12.1".to_string() } else { format!("rust-camel-stomp-broker/{}", env!("CARGO_PKG_VERSION")) }),
+            .header(
+                "server",
+                if shared.rabbitmq {
+                    "RabbitMQ/3.12.1".to_string()
+                } else if shared.activemq {
+                    "ActiveMQ/5.17.6".to_string()
+                } else {
+                    format!("rust-camel-stomp-broker/{}", env!("CARGO_PKG_VERSION"))
+                },
+            ),
     );
     let client_id = connect.get("client-id").map(String::from).filter(|c| !c.is_empty());
     shared.state.lock().unwrap().conns.insert(conn, ConnSt { writer: writer.clone(), txs: HashMap::new(), temps: Vec::new(), client_id });
