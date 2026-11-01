@@ -1,11 +1,20 @@
 //! The `cxfrs:` component (Camel `camel-cxf-rest`), a modest JAX-RS style REST endpoint.
 //!
-//! There are no Java resource classes: `resourceClasses` is accepted (and ignored) and the
-//! resource model can instead be described with `operations`:
+//! The resource model is described by [`ResourceDescriptor`] beans (the stand-in for JAX-RS
+//! resource classes: class-level path, methods with HTTP method, path template, `consumes`
+//! and `produces` media types) given as `resourceClasses=#customers[,#orders]`, or inline
+//! with `operations`:
 //!
 //! ```text
 //! cxfrs:http://0.0.0.0:9000/api?operations=getCustomer:GET:/customers/{id};addCustomer:POST:/customers
+//! cxfrs:http://0.0.0.0:9000/api?resourceClasses=#customers&providers=#csvProvider
 //! ```
+//!
+//! Requests matching a resource method's path but not its `consumes` get `415`, not its
+//! `produces` (`Accept`) `406`. Entity providers ([`EntityProvider`] beans, `providers=#a,#b`
+//! — JAX-RS `MessageBodyReader`/`Writer`) read request entities and write response
+//! entities of their media types (consumer), and write request / read response entities
+//! (producer); JSON is built in.
 //!
 //! **Consumer** — serves every request under the base address. Headers: `operationName`
 //! (the matching operation, else the HTTP method), `CamelHttpMethod`, `CamelHttpPath` (path
@@ -47,6 +56,95 @@ struct Operation {
     name: String,
     method: String,
     template: PathTemplate,
+    consumes: Vec<String>,
+    produces: Vec<String>,
+}
+
+/// A resource method of a [`ResourceDescriptor`].
+#[derive(Clone, Debug, Default)]
+pub struct ResourceMethod {
+    pub name: String,
+    pub method: String,
+    pub path: String,
+    pub consumes: Vec<String>,
+    pub produces: Vec<String>,
+}
+
+impl ResourceMethod {
+    pub fn new(name: &str, method: &str, path: &str) -> ResourceMethod {
+        ResourceMethod { name: name.into(), method: method.to_ascii_uppercase(), path: path.into(), ..Default::default() }
+    }
+    pub fn consumes(mut self, media: &str) -> Self {
+        self.consumes.push(media.to_string());
+        self
+    }
+    pub fn produces(mut self, media: &str) -> Self {
+        self.produces.push(media.to_string());
+        self
+    }
+}
+
+/// A JAX-RS style resource description (`resourceClasses=#bean`).
+#[derive(Clone, Debug, Default)]
+pub struct ResourceDescriptor {
+    /// Class-level path (`@Path` on the class), prefixed to every method path.
+    pub path: String,
+    pub methods: Vec<ResourceMethod>,
+    /// Class-level `@Consumes` / `@Produces` defaults.
+    pub consumes: Vec<String>,
+    pub produces: Vec<String>,
+}
+
+impl ResourceDescriptor {
+    pub fn new(path: &str) -> ResourceDescriptor {
+        ResourceDescriptor { path: path.to_string(), ..Default::default() }
+    }
+    pub fn method(mut self, m: ResourceMethod) -> Self {
+        self.methods.push(m);
+        self
+    }
+    pub fn consumes(mut self, media: &str) -> Self {
+        self.consumes.push(media.to_string());
+        self
+    }
+    pub fn produces(mut self, media: &str) -> Self {
+        self.produces.push(media.to_string());
+        self
+    }
+}
+
+type ReadFn = dyn Fn(&str, &[u8]) -> Result<Value> + Send + Sync;
+type WriteFn = dyn Fn(&str, &Value) -> Result<Vec<u8>> + Send + Sync;
+
+/// An entity provider (`providers=#bean`): reads and writes entities of its media types.
+#[derive(Clone)]
+pub struct EntityProvider {
+    pub media_types: Vec<String>,
+    read: Arc<ReadFn>,
+    write: Arc<WriteFn>,
+}
+
+impl EntityProvider {
+    pub fn new(media_types: &[&str], read: impl Fn(&str, &[u8]) -> Result<Value> + Send + Sync + 'static, write: impl Fn(&str, &Value) -> Result<Vec<u8>> + Send + Sync + 'static) -> EntityProvider {
+        EntityProvider { media_types: media_types.iter().map(|s| s.to_string()).collect(), read: Arc::new(read), write: Arc::new(write) }
+    }
+    fn handles(&self, media: &str) -> bool {
+        self.media_types.iter().any(|m| media_matches(m, media))
+    }
+}
+
+/// `type/subtype` match with `*` wildcards (parameters ignored).
+fn media_matches(pattern: &str, actual: &str) -> bool {
+    let norm = |s: &str| s.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let (p, a) = (norm(pattern), norm(actual));
+    let (pt, ps) = p.split_once('/').unwrap_or((p.as_str(), "*"));
+    let (at, as_) = a.split_once('/').unwrap_or((a.as_str(), "*"));
+    (pt == "*" || at == "*" || pt == at) && (ps == "*" || as_ == "*" || ps == as_)
+}
+
+fn provider_for<'a>(providers: &'a [EntityProvider], media: Option<&str>) -> Option<&'a EntityProvider> {
+    let m = media?;
+    providers.iter().find(|p| p.handles(m))
 }
 
 struct Config {
@@ -58,6 +156,7 @@ struct Config {
     parse_json: bool,
     client: Client,
     listen: Option<std::result::Result<ListenAddress, String>>,
+    providers: Vec<EntityProvider>,
 }
 
 impl Component for CxfRsComponent {
@@ -66,16 +165,36 @@ impl Component for CxfRsComponent {
             return Err(CamelError::illegal_argument("cxfrs:bean: endpoints need a Spring bean; use cxfrs:http://host:port/path"));
         }
         let address = params.take("address").unwrap_or_else(|| remaining.to_string());
-        params.take("resourceClasses");
         params.take("serviceBeans");
         let mut operations = Vec::new();
+        for r in params.take("resourceClasses").unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let Some(bean) = r.strip_prefix('#') else { continue }; // Java class names: ignored
+            let d = ctx.registry().lookup::<ResourceDescriptor>(bean).ok_or_else(|| CamelError::no_such_bean(bean))?;
+            for m in &d.methods {
+                let path = format!("{}/{}", d.path.trim_end_matches('/'), m.path.trim_start_matches('/'));
+                let path = if path.starts_with('/') { path } else { format!("/{}", path) };
+                operations.push(Operation {
+                    name: m.name.clone(),
+                    method: m.method.clone(),
+                    template: PathTemplate::parse(path.trim_end_matches('/')),
+                    consumes: if m.consumes.is_empty() { d.consumes.clone() } else { m.consumes.clone() },
+                    produces: if m.produces.is_empty() { d.produces.clone() } else { m.produces.clone() },
+                });
+            }
+        }
+        let mut providers = Vec::new();
+        for p in params.take("providers").unwrap_or_default().split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let Some(bean) = p.strip_prefix('#') else { continue };
+            let pr = ctx.registry().lookup::<EntityProvider>(bean).ok_or_else(|| CamelError::no_such_bean(bean))?;
+            providers.push((*pr).clone());
+        }
         if let Some(spec) = params.take("operations") {
             for item in spec.split(';').map(str::trim).filter(|s| !s.is_empty()) {
                 let mut it = item.splitn(3, ':');
                 let (Some(name), Some(method), Some(path)) = (it.next(), it.next(), it.next()) else {
                     return Err(CamelError::illegal_argument(format!("cxfrs operations entry '{}' must be name:METHOD:/path", item)));
                 };
-                operations.push(Operation { name: name.to_string(), method: method.to_ascii_uppercase(), template: PathTemplate::parse(path) });
+                operations.push(Operation { name: name.to_string(), method: method.to_ascii_uppercase(), template: PathTemplate::parse(path), consumes: Vec::new(), produces: Vec::new() });
             }
         }
         let simple_consumer = !params.take("bindingStyle").map(|b| b.eq_ignore_ascii_case("Default")).unwrap_or(false);
@@ -95,8 +214,9 @@ impl Component for CxfRsComponent {
             parse_json: params.take_bool("parseJson", false)?,
             client,
             listen,
+            providers,
         };
-        for k in ["httpClientAPI", "loggingFeatureEnabled", "providers", "features", "synchronous", "lazyStartProducer", "bridgeErrorHandler", "exchangePattern", "clientAuth", "useGlobalSslContextParameters", "performInvocation", "propagateContexts", "ignoreDeleteMethodMessageBody", "maxClientCacheSize"] {
+        for k in ["httpClientAPI", "loggingFeatureEnabled", "features", "synchronous", "lazyStartProducer", "bridgeErrorHandler", "exchangePattern", "clientAuth", "useGlobalSslContextParameters", "performInvocation", "propagateContexts", "ignoreDeleteMethodMessageBody", "maxClientCacheSize"] {
             params.take(k);
         }
         Ok(Arc::new(CxfRsEndpoint { uri: uri.to_string(), cfg: Arc::new(cfg), ctx: ctx.downgrade(), binding: Arc::new(Binding::default()) }))
@@ -181,21 +301,40 @@ fn handle(cfg: &Config, base: &str, ctx: &WeakContext, processor: &Arc<dyn Proce
     let rel = req.path.strip_prefix(base.trim_end_matches('/')).unwrap_or(&req.path).to_string();
     let rel = if rel.is_empty() { "/".to_string() } else { rel };
     let mut path_params = Vec::new();
+    let mut chosen_produces: Option<String> = None;
     let op_name = if cfg.operations.is_empty() {
         req.method.clone()
     } else {
-        let found = cfg.operations.iter().find_map(|o| {
-            if o.method != req.method && !(req.method == "HEAD" && o.method == "GET") {
-                return None;
+        let rel_t = if rel.len() > 1 { rel.trim_end_matches('/') } else { rel.as_str() };
+        let cands: Vec<(&Operation, Vec<(String, String)>)> = cfg
+            .operations
+            .iter()
+            .filter(|o| o.method == req.method || (req.method == "HEAD" && o.method == "GET"))
+            .filter_map(|o| o.template.matches(rel_t, false).map(|p| (o, p)))
+            .collect();
+        if cands.is_empty() {
+            return HttpResponse::text(404, format!("No resource method matches {} {}", req.method, rel));
+        }
+        let ct = req.content_type().map(str::to_string);
+        let by_media: Vec<_> = cands.into_iter().filter(|(o, _)| o.consumes.is_empty() || req.body.is_empty() || ct.as_deref().is_some_and(|c| o.consumes.iter().any(|m| media_matches(m, c)))).collect();
+        if by_media.is_empty() {
+            return HttpResponse::text(415, format!("Unsupported Media Type: {}", ct.unwrap_or_default()));
+        }
+        let accept: Vec<String> = req.headers.get("Accept").map(|a| a.split(',').map(|x| x.trim().to_string()).collect()).unwrap_or_default();
+        let pick = by_media.into_iter().find_map(|(o, p)| {
+            if o.produces.is_empty() || accept.is_empty() {
+                return Some((o, p, o.produces.first().cloned()));
             }
-            o.template.matches(&rel, false).map(|p| (o.name.clone(), p))
+            let m = o.produces.iter().find(|pm| accept.iter().any(|a| media_matches(a, pm)))?;
+            Some((o, p, Some(m.clone())))
         });
-        match found {
-            Some((n, p)) => {
+        match pick {
+            Some((o, p, prod)) => {
                 path_params = p;
-                n
+                chosen_produces = prod;
+                o.name.clone()
             }
-            None => return HttpResponse::text(404, format!("No resource method matches {} {}", req.method, rel)),
+            None => return HttpResponse::text(406, format!("Not Acceptable: {}", accept.join(", "))),
         }
     };
     let mut ex = Exchange::new(Some(ctx));
@@ -224,7 +363,13 @@ fn handle(cfg: &Config, base: &str, ctx: &WeakContext, processor: &Arc<dyn Proce
             }
         }
     }
-    ex.message.body = entity_value(&req.body, req.content_type());
+    ex.message.body = match provider_for(&cfg.providers, req.content_type()) {
+        Some(p) if !req.body.is_empty() => match (p.read)(req.content_type().unwrap_or(""), &req.body) {
+            Ok(v) => v,
+            Err(e) => return HttpResponse::text(400, format!("Cannot read the entity: {}", e.message)),
+        },
+        _ => entity_value(&req.body, req.content_type()),
+    };
     if let Err(e) = processor.process(&mut ex) {
         ex.set_exception(e);
     }
@@ -232,15 +377,24 @@ fn handle(cfg: &Config, base: &str, ctx: &WeakContext, processor: &Arc<dyn Proce
         let status = ex.message.headers.get("CamelHttpResponseCode").and_then(|v| v.as_i64()).filter(|s| *s >= 400).unwrap_or(500) as u16;
         return HttpResponse::text(status, e.message);
     }
-    let (body, default_ct) = entity_bytes(&ex.message.body);
-    let status = ex.message.headers.get("CamelHttpResponseCode").and_then(|v| v.as_i64()).map(|s| s as u16).unwrap_or(if body.is_some() { 200 } else { 204 });
-    let ct = ex
+    let explicit_ct = ex
         .message
         .headers
         .get("Content-Type")
         .map(|v| v.to_string())
         // a Content-Type left over from the request does not describe the reply
-        .filter(|c| !c.is_empty() && req.content_type() != Some(c.as_str()))
+        .filter(|c| !c.is_empty() && req.content_type() != Some(c.as_str()));
+    let target = explicit_ct.clone().or_else(|| chosen_produces.clone());
+    let (body, default_ct) = match provider_for(&cfg.providers, target.as_deref()) {
+        Some(p) if !ex.message.body.is_null() => match (p.write)(target.as_deref().unwrap_or(""), &ex.message.body) {
+            Ok(b) => (Some(b), "application/octet-stream"),
+            Err(e) => return HttpResponse::text(500, format!("Cannot write the entity: {}", e.message)),
+        },
+        _ => entity_bytes(&ex.message.body),
+    };
+    let status = ex.message.headers.get("CamelHttpResponseCode").and_then(|v| v.as_i64()).map(|s| s as u16).unwrap_or(if body.is_some() { 200 } else { 204 });
+    let ct = explicit_ct
+        .or(chosen_produces)
         .or_else(|| if default_ct == "text/plain" { cfg.produces.clone() } else { None })
         .unwrap_or_else(|| default_ct.to_string());
     let mut resp = HttpResponse::new(status);
@@ -274,7 +428,10 @@ impl Service for CxfRsProducer {}
 impl Processor for CxfRsProducer {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         let h = |n: &str| ex.message.headers.get(n).filter(|v| !v.is_null()).map(|v| v.to_string()).filter(|s| !s.is_empty());
-        let (body, default_ct) = entity_bytes(&ex.message.body);
+        let (body, default_ct) = match provider_for(&self.cfg.providers, h("Content-Type").as_deref()) {
+            Some(p) if !ex.message.body.is_null() => (Some((p.write)(&h("Content-Type").unwrap_or_default(), &ex.message.body)?), "application/octet-stream"),
+            _ => entity_bytes(&ex.message.body),
+        };
         let method = h("CamelHttpMethod").map(|m| m.to_ascii_uppercase()).unwrap_or_else(|| if body.is_some() { "POST".into() } else { "GET".into() });
         let mut url = self.cfg.address.trim_end_matches('/').to_string();
         if let Some(p) = h("CamelHttpPath") {
@@ -304,7 +461,9 @@ impl Processor for CxfRsProducer {
         if let Some(c) = &ct {
             ex.message.headers.set("Content-Type", c.clone());
         }
-        ex.message.body = if self.cfg.parse_json {
+        ex.message.body = if let Some(p) = provider_for(&self.cfg.providers, ct.as_deref()).filter(|_| !resp.body.is_empty()) {
+            (p.read)(ct.as_deref().unwrap_or(""), &resp.body)?
+        } else if self.cfg.parse_json {
             entity_value(&resp.body, ct.as_deref())
         } else if resp.body.is_empty() {
             Value::Null

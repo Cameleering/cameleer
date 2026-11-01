@@ -47,7 +47,39 @@
 //! valid envelope signature. Other options: `soapVersion=1.1|1.2` (producer without
 //! WSDL), `username`/`password` (HTTP basic auth), `sslContextParameters`, `receiveTimeout`,
 //! `connectionTimeout`, `attributePrefix` (POJO attribute keys, default `@`), `loggingFeatureEnabled`
-//! and a few other accepted-and-ignored Camel options. MTOM (`mtomEnabled=true`) is not supported.
+//! and a few other accepted-and-ignored Camel options.
+//!
+//! **More WS-Security.** `wsSecuritySignatureKeyIdentifier=DirectReference` (default with a
+//! certificate: X.509 `BinarySecurityToken` + `SecurityTokenReference`; `X509Data` for the
+//! certificate in `ds:KeyInfo`); consumer `wsSecuritySignatureTrustedCertificates=#pem,...`
+//! accepts signatures by those certificates or certificates they issued. XML Encryption:
+//! `wsSecurityEncryptionCertificate` / `wsSecurityEncryptionKey` (RSA recipient) and
+//! `wsSecurityEncryptionAlgorithm=aes128-cbc|aes256-cbc|aes128-gcm|aes256-gcm` encrypt the
+//! outgoing body (after signing); `wsSecurityDecryptionKey` decrypts incoming ones (see
+//! [`crate::xmlenc`]). SAML: `wsSecuritySamlSubject`, `wsSecuritySamlIssuer`,
+//! `wsSecuritySamlAttributes=k=v,...` add a SAML 2.0 assertion; consumer
+//! `wsSecuritySamlRequired`, `wsSecuritySamlTrustedIssuers` check it and set
+//! `CamelCxfSamlSubject` / `CamelCxfSamlIssuer` / `CamelCxfSamlAttributes`.
+//!
+//! **MTOM / attachments.** `mtomEnabled=true` (`mtomThreshold`, default 1024 characters)
+//! sends large base64 content as XOP binary parts; attachments in the `CamelAttachments`
+//! exchange property (`content-id -> bytes`) are sent as SwA MIME parts; received
+//! `multipart/related` messages are decoded both ways (see [`crate::mtom`]).
+//!
+//! **WS-Addressing / WS-RM.** `wsAddressingEnabled=true` (or `features=wsa`) adds and checks
+//! `wsa:` headers (`CamelCxfWsaAction`, `CamelCxfWsaMessageId`, `CamelCxfWsaRelatesTo`,
+//! `CamelCxfWsaReplyTo`); services answer requests carrying `wsa:MessageID` with
+//! `RelatesTo`, and a non-anonymous `ReplyTo` gets a decoupled response. `wsrmEnabled=true`
+//! adds WS-ReliableMessaging basics (sequences, acknowledgements, duplicate suppression;
+//! `CamelCxfRmSequenceId` / `CamelCxfRmMessageNumber`), see [`crate::wsa`].
+//!
+//! **Endpoints.** `cxf:bean:<name>` takes the endpoint options (`address`, `wsdlURL`,
+//! `serviceName`...) from an object / map bean. `serviceClass=#descriptor` uses a
+//! [`crate::codefirst::ServiceDescriptor`] (code-first service, WSDL generated and served at
+//! `?wsdl`). In POJO mode, `soap:header` parts are bound too: request header parts follow
+//! the body parameters (array) or are named entries (object), response header parts are
+//! entries of the result object. rpc/encoded operations get `xsi:type` accessors and
+//! multi-reference (`href`) decoding.
 
 use std::any::Any;
 use std::collections::HashMap;
