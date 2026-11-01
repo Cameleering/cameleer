@@ -1,7 +1,7 @@
 //! XPath 1.0 evaluation.
 
 use super::ast::*;
-use super::{Ctx, Docs, XNode, XPathError, XValue};
+use super::{Ctx, Docs, Env, XNode, XPathError, XValue};
 use crate::dom::{Document, NodeType};
 
 type R<T> = Result<T, XPathError>;
@@ -362,7 +362,122 @@ pub(crate) fn eval(e: &Expr, ctx: &Ctx) -> R<XValue> {
             };
             XValue::Nodes(eval_steps(ctx, start, &p.steps)?)
         }
+        Expr::If(c, a, b) => {
+            if eval(c, ctx)?.to_bool() {
+                eval(a, ctx)?
+            } else {
+                eval(b, ctx)?
+            }
+        }
+        Expr::For(binds, ret) => {
+            let mut items = Vec::new();
+            for_each_binding(binds, ctx, &mut |c| {
+                items.push(eval(ret, c)?);
+                Ok(true)
+            })?;
+            sequence_of(items, ctx)
+        }
+        Expr::Quantified(every, binds, test) => {
+            let mut result = *every;
+            for_each_binding(binds, ctx, &mut |c| {
+                let t = eval(test, c)?.to_bool();
+                if t != *every {
+                    result = !*every;
+                    return Ok(false);
+                }
+                Ok(true)
+            })?;
+            XValue::Bool(result)
+        }
+        Expr::Sequence(es) => {
+            let mut items = Vec::with_capacity(es.len());
+            for e in es {
+                items.push(eval(e, ctx)?);
+            }
+            sequence_of(items, ctx)
+        }
+        Expr::Range(a, b) => {
+            let (x, y) = (num_of(ctx, &eval(a, ctx)?), num_of(ctx, &eval(b, ctx)?));
+            if x.is_nan() || y.is_nan() || y < x {
+                XValue::Nodes(Vec::new())
+            } else if x == y {
+                XValue::Num(x)
+            } else {
+                let (x, y) = (x.round() as i64, y.round() as i64);
+                if y - x > 10_000_000 {
+                    return Err(XPathError::eval("Range too large"));
+                }
+                ctx.docs.atomic_sequence(&(x..=y).map(|i| i.to_string()).collect::<Vec<_>>())
+            }
+        }
+        Expr::Intersect(a, b) | Expr::Except(a, b) => {
+            let x = nodes(eval(a, ctx)?, "intersect/except")?;
+            let y = nodes(eval(b, ctx)?, "intersect/except")?;
+            let keep = matches!(e, Expr::Intersect(..));
+            let mut r: Vec<XNode> = x.into_iter().filter(|n| y.contains(n) == keep).collect();
+            r.sort();
+            r.dedup();
+            XValue::Nodes(r)
+        }
     })
+}
+
+/// An environment binding one variable on top of another (`for` / quantified expressions).
+struct Bound<'a> {
+    parent: &'a dyn Env,
+    uri: &'a str,
+    local: &'a str,
+    value: XValue,
+}
+
+impl Env for Bound<'_> {
+    fn variable(&self, uri: &str, local: &str) -> R<XValue> {
+        if uri == self.uri && local == self.local {
+            return Ok(self.value.clone());
+        }
+        self.parent.variable(uri, local)
+    }
+    fn function(&self, uri: &str, local: &str, args: &[XValue], ctx: &Ctx) -> Option<R<XValue>> {
+        self.parent.function(uri, local, args, ctx)
+    }
+}
+
+/// The items of a value: one per node, or the atomic value itself.
+pub(crate) fn items_of(v: XValue) -> Vec<XValue> {
+    match v {
+        XValue::Nodes(ns) => ns.into_iter().map(|n| XValue::Nodes(vec![n])).collect(),
+        other => vec![other],
+    }
+}
+
+/// Iterate the cartesian product of `for` bindings; `f` returns false to stop.
+fn for_each_binding(binds: &[(String, String, Expr)], ctx: &Ctx, f: &mut dyn FnMut(&Ctx) -> R<bool>) -> R<bool> {
+    let Some(((uri, local, e), rest)) = binds.split_first() else { return f(ctx) };
+    for item in items_of(eval(e, ctx)?) {
+        let env = Bound { parent: ctx.env, uri, local, value: item };
+        let c = Ctx { docs: ctx.docs, node: ctx.node, pos: ctx.pos, size: ctx.size, env: &env };
+        if !for_each_binding(rest, &c, f)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Combine values into one: a node-set when every item is a node (document order), the
+/// value itself for a single atomic item, else an atomic sequence of string values.
+pub(crate) fn sequence_of(items: Vec<XValue>, ctx: &Ctx) -> XValue {
+    if items.iter().all(|i| matches!(i, XValue::Nodes(_))) {
+        let mut all: Vec<XNode> = items.into_iter().flat_map(|i| if let XValue::Nodes(n) = i { n } else { Vec::new() }).collect();
+        all.sort();
+        all.dedup();
+        return XValue::Nodes(all);
+    }
+    let flat: Vec<XValue> = items.into_iter().flat_map(items_of).collect();
+    if flat.len() == 1 {
+        return flat.into_iter().next().unwrap();
+    }
+    let strings: Vec<String> = flat.iter().map(|v| v.to_string_value(ctx.docs)).collect();
+    ctx.docs.atomic_sequence(&strings)
 }
 
 fn arg_nodes_or_ctx(args: &[Expr], ctx: &Ctx, f: &str) -> R<Option<XNode>> {
@@ -395,6 +510,9 @@ fn call(uri: &str, local: &str, prefix: Option<&str>, args: &[Expr], ctx: &Ctx) 
             vals.push(eval(a, ctx)?);
         }
         if let Some(r) = ctx.env.function(uri, local, &vals, ctx) {
+            return r;
+        }
+        if let Some(r) = super::f2::call(uri, local, &vals, ctx) {
             return r;
         }
         if !uri.is_empty() {
@@ -542,7 +660,11 @@ fn call(uri: &str, local: &str, prefix: Option<&str>, args: &[Expr], ctx: &Ctx) 
             if let Some(r) = ctx.env.function("", local, &vals, ctx) {
                 return r;
             }
+            if let Some(r) = super::f2::call("", local, &vals, ctx) {
+                return r;
+            }
             return Err(XPathError::eval(format!("Could not find function: {}", local)));
+
         }
     })
 }
