@@ -4,7 +4,9 @@
 //! queries `match_all`, `match_none`, `match` (`operator`), `match_phrase`, `multi_match`,
 //! `term`, `terms`, `range`, `exists`, `ids`, `prefix`, `wildcard`, `bool`
 //! (`must`/`filter`/`should`/`must_not`/`minimum_should_match`), `sort`, `from`/`size`,
-//! `_source` filtering, and basic or API-key authentication.
+//! `_source` filtering, scroll searches (`?scroll=` + `_search/scroll`, clear scroll),
+//! node info for sniffing (`GET /_nodes/http`, addresses from
+//! [`ElasticsearchServer::set_nodes`]) and basic or API-key authentication.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -133,6 +135,11 @@ struct Shared {
     indices: Mutex<BTreeMap<String, Index>>,
     requests: Mutex<Vec<String>>,
     auto_id: Mutex<u64>,
+    /// scroll id → (remaining hits, page size, total)
+    scrolls: Mutex<HashMap<String, (Vec<Value>, usize, usize)>>,
+    /// `publish_address`es reported by `GET /_nodes/http` (empty = this server only)
+    nodes: Mutex<Vec<String>>,
+    self_address: Mutex<String>,
 }
 
 /// A running embedded Elasticsearch server (stopped on drop).
@@ -148,11 +155,30 @@ impl ElasticsearchServer {
 
     pub fn start_with(cfg: ElasticsearchServerConfig) -> io::Result<ElasticsearchServer> {
         let tls = cfg.tls.clone();
-        let shared = Arc::new(Shared { cfg, indices: Mutex::new(BTreeMap::new()), requests: Mutex::new(Vec::new()), auto_id: Mutex::new(0) });
+        let shared = Arc::new(Shared {
+            cfg,
+            indices: Mutex::new(BTreeMap::new()),
+            requests: Mutex::new(Vec::new()),
+            auto_id: Mutex::new(0),
+            scrolls: Mutex::new(HashMap::new()),
+            nodes: Mutex::new(Vec::new()),
+            self_address: Mutex::new(String::new()),
+        });
         let sh = shared.clone();
         let config = ServerConfig { name: "es-server".into(), pool_size: 8, tls, ..ServerConfig::default() };
         let http = HttpServer::bind("127.0.0.1:0", config, move |req: &mut HttpRequest| handle(&sh, req))?;
+        *shared.self_address.lock().unwrap() = format!("127.0.0.1:{}", http.port());
         Ok(ElasticsearchServer { shared, http })
+    }
+
+    /// The cluster nodes (`host:port`) reported by `GET /_nodes/http`.
+    pub fn set_nodes(&self, nodes: Vec<String>) {
+        *self.shared.nodes.lock().unwrap() = nodes;
+    }
+
+    /// Number of open scroll contexts.
+    pub fn open_scrolls(&self) -> usize {
+        self.shared.scrolls.lock().unwrap().len()
     }
 
     pub fn port(&self) -> u16 {
@@ -242,6 +268,45 @@ fn handle(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
     let s: Vec<&str> = segs.iter().map(|x| x.as_str()).collect();
     let m = req.method.as_str();
     match (m, s.as_slice()) {
+        ("GET", ["_nodes", ..]) => {
+            let mut nodes = sh.nodes.lock().unwrap().clone();
+            if nodes.is_empty() {
+                nodes.push(sh.self_address.lock().unwrap().clone());
+            }
+            let map: Vec<(String, Value)> = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, a)| (format!("node-{}", i), Value::object([("name", Value::from(format!("node-{}", i))), ("roles", Value::Array(vec!["data".into(), "master".into()])), ("http", Value::object([("publish_address", Value::from(a.as_str())), ("bound_address", Value::Array(vec![Value::from(a.as_str())]))]))])))
+                .collect();
+            json(200, Value::object([("_nodes", Value::object([("total", Value::Int(nodes.len() as i64)), ("successful", Value::Int(nodes.len() as i64)), ("failed", Value::Int(0))])), ("cluster_name", Value::from("embedded-cluster")), ("nodes", Value::object(map))]))
+        }
+        ("GET" | "POST", ["_search", "scroll"]) | ("GET" | "POST", ["_search", "scroll", _]) => {
+            let body = body_json(req).unwrap_or(Value::Null);
+            let id = body.get("scroll_id").map(|v| v.to_string()).or_else(|| s.get(2).map(|x| x.to_string())).or_else(|| req.query_param("scroll_id")).unwrap_or_default();
+            let mut scrolls = sh.scrolls.lock().unwrap();
+            let Some((rest, size, total)) = scrolls.get_mut(&id) else { return error(404, "search_context_missing_exception", &format!("No search context found for id [{}]", id)) };
+            let n = (*size).min(rest.len());
+            let page: Vec<Value> = rest.drain(..n).collect();
+            let total = *total;
+            json(200, Value::object([("_scroll_id", Value::from(id)), ("took", Value::Int(1)), ("timed_out", Value::Bool(false)), ("hits", Value::object([("total", Value::object([("value", Value::Int(total as i64)), ("relation", Value::from("eq"))])), ("hits", Value::Array(page))]))]))
+        }
+        ("DELETE", ["_search", "scroll", ..]) => {
+            let body = body_json(req).unwrap_or(Value::Null);
+            let ids: Vec<String> = match body.get("scroll_id") {
+                Some(Value::Array(a)) => a.iter().map(|v| v.to_string()).collect(),
+                Some(v) => vec![v.to_string()],
+                None => s.get(2).map(|x| x.split(',').map(String::from).collect()).unwrap_or_default(),
+            };
+            let mut scrolls = sh.scrolls.lock().unwrap();
+            let freed = if ids.iter().any(|i| i == "_all") {
+                let n = scrolls.len();
+                scrolls.clear();
+                n
+            } else {
+                ids.iter().filter(|i| scrolls.remove(*i).is_some()).count()
+            };
+            json(200, Value::object([("succeeded", Value::Bool(true)), ("num_freed", Value::Int(freed as i64))]))
+        }
         ("GET" | "HEAD", []) => {
             let mut version = Value::object([("number", "8.11.0"), ("lucene_version", "9.8.0")]);
             if let (Some(d), Some(o)) = (&sh.cfg.distribution, version.as_object_mut()) {
@@ -846,10 +911,11 @@ fn search_all(sh: &Shared, index: Option<&str>, body: &Value, req: &HttpRequest)
     let size = body.get("size").and_then(|v| v.as_i64()).or_else(|| qp("size")).unwrap_or(10).max(0) as usize;
     let max_score = hits.iter().map(|h| h.2).fold(None, |m: Option<f64>, s| Some(m.map_or(s, |m| m.max(s))));
     let src_spec = body.get("_source");
-    let page: Vec<Value> = hits
+    let scroll = req.query_param("scroll").is_some();
+    let mut all: Vec<Value> = hits
         .into_iter()
         .skip(from)
-        .take(size)
+        .take(if scroll { usize::MAX } else { size })
         .map(|(idx, id, score, src)| {
             let mut h = Value::object([("_index", Value::from(idx)), ("_id", Value::from(id)), ("_score", Value::Float(score))]);
             if let (Some(s), Some(o)) = (source_filter(&src, src_spec), h.as_object_mut()) {
@@ -858,9 +924,15 @@ fn search_all(sh: &Shared, index: Option<&str>, body: &Value, req: &HttpRequest)
             h
         })
         .collect();
-    json(
-        200,
-        Value::object([
+    let rest = all.split_off(size.min(all.len()));
+    let page = all;
+    let mut scroll_id = None;
+    if scroll {
+        let id = format!("scroll-{}", crate::util::next_id());
+        sh.scrolls.lock().unwrap().insert(id.clone(), (rest, size.max(1), total));
+        scroll_id = Some(id);
+    }
+    let mut out = Value::object([
             ("took", Value::Int(1)),
             ("timed_out", Value::Bool(false)),
             ("_shards", Value::object([("total", 1), ("successful", 1), ("skipped", 0), ("failed", 0)])),
@@ -872,8 +944,11 @@ fn search_all(sh: &Shared, index: Option<&str>, body: &Value, req: &HttpRequest)
                     ("hits", Value::Array(page)),
                 ]),
             ),
-        ]),
-    )
+        ]);
+    if let (Some(id), Some(o)) = (scroll_id, out.as_object_mut()) {
+        o.insert("_scroll_id".into(), Value::from(id));
+    }
+    json(200, out)
 }
 
 #[cfg(test)]
