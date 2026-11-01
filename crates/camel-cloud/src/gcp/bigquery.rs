@@ -23,6 +23,15 @@
 //! Body = the finished job resource; `CamelGoogleBigQueryJobId` is set; a job finishing with an
 //! `errorResult` raises `BigQueryException`.
 //!
+//! Tables and datasets (rust-camel operations): `createTable` (schema from `tableSchema` /
+//! `CamelGoogleBigQueryTableSchema`: a list of `{name, type, mode, description}` maps, a JSON
+//! text of it, or `name:TYPE,name:TYPE`; `timePartitioningField` + `timePartitioningType`
+//! (`DAY` default), `clusteringFields`, `tableDescription`, `expirationMs`; body = the table
+//! resource), `getTable`, `listTables` (body = table ids), `deleteTable`; `createDataset`
+//! (`datasetLocation`, default `US`), `listDatasets` (body = dataset ids), `deleteDataset`
+//! (`deleteContents`). `createTableIfNotExists=true` makes the streaming insert create a missing
+//! table (with the configured schema) first.
+//!
 //! `google-bigquery-sql://projectId:query?...` runs a standard SQL query with `jobs.query`
 //! (polling `getQueryResults` until complete, reading all pages). The query may be
 //! `classpath:`/`file:` resource. `@name` parameters are bound from the header `name`, else
@@ -70,7 +79,12 @@ pub struct BigQueryService {
     pub job_options: std::collections::BTreeMap<String, String>,
     pub job_poll_interval: std::time::Duration,
     pub job_timeout: std::time::Duration,
+    /// Table / dataset options (`tableSchema`, `timePartitioningField`, ...).
+    pub table_options: std::collections::BTreeMap<String, String>,
+    pub create_table_if_not_exists: bool,
 }
+
+const TABLE_OPTIONS: &[&str] = &["tableSchema", "timePartitioningField", "timePartitioningType", "clusteringFields", "tableDescription", "expirationMs", "datasetLocation", "deleteContents"];
 
 const JOB_OPTIONS: &[&str] = &[
     "sourceUris",
@@ -109,11 +123,116 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         job_options,
         job_poll_interval: std::time::Duration::from_millis(o.i64("jobPollInterval", 200)?.max(1) as u64),
         job_timeout: std::time::Duration::from_millis(o.i64("jobTimeout", 60_000)?.max(1) as u64),
+        table_options: TABLE_OPTIONS.iter().filter_map(|k| o.get(k).map(|v| (k.to_string(), v))).collect(),
+        create_table_if_not_exists: o.bool("createTableIfNotExists", false)?,
         gcp,
     }))
 }
 
+/// A table schema (`fields`) from a list of maps, JSON text or `name:TYPE,...`.
+pub fn schema_fields(v: &Value) -> Result<Vec<Value>> {
+    match v {
+        Value::Array(a) => Ok(a
+            .iter()
+            .map(|f| match f {
+                Value::Object(_) => f.clone(),
+                other => {
+                    let t = other.to_string();
+                    let (n, ty) = t.split_once(':').unwrap_or((&t, "STRING"));
+                    obj([("name", Value::from(n.trim())), ("type", Value::from(ty.trim().to_ascii_uppercase()))])
+                }
+            })
+            .collect()),
+        Value::String(s) if s.trim_start().starts_with('[') || s.trim_start().starts_with('{') => {
+            let v = crate::util::parse_json(s.as_bytes())?;
+            match v.get("fields") {
+                Some(f) => schema_fields(f),
+                None => schema_fields(&v),
+            }
+        }
+        Value::Object(m) if m.contains_key("fields") => schema_fields(&m["fields"]),
+        other => schema_fields(&Value::Array(other.to_string().split(',').filter(|x| !x.trim().is_empty()).map(|x| Value::from(x.trim())).collect())),
+    }
+}
+
 impl BigQueryService {
+    fn table_option(&self, ex: &Exchange, header: &str, option: &str) -> Option<Value> {
+        ex.header(header).cloned().filter(|v| !v.is_null()).or_else(|| self.table_options.get(option).map(|v| Value::from(v.clone())))
+    }
+
+    fn create_table(&self, ex: &Exchange, table: &str) -> Result<Value> {
+        let schema = self.table_option(ex, "CamelGoogleBigQueryTableSchema", "tableSchema").ok_or_else(|| CamelError::illegal_argument("createTable requires a schema (tableSchema option or CamelGoogleBigQueryTableSchema header)"))?;
+        let mut m = ObjectMap::new();
+        m.insert("tableReference".into(), obj([("projectId", Value::from(self.project.clone())), ("datasetId", Value::from(self.dataset.clone())), ("tableId", Value::from(table))]));
+        m.insert("schema".into(), obj([("fields", Value::Array(schema_fields(&schema)?))]));
+        if let Some(f) = self.table_option(ex, "CamelGoogleBigQueryTimePartitioningField", "timePartitioningField") {
+            let ty = self.table_options.get("timePartitioningType").cloned().unwrap_or_else(|| "DAY".into());
+            m.insert("timePartitioning".into(), obj([("type", Value::from(ty)), ("field", f)]));
+        }
+        if let Some(c) = self.table_options.get("clusteringFields") {
+            m.insert("clustering".into(), obj([("fields", Value::from(c.split(',').map(|x| x.trim().to_string()).collect::<Vec<_>>()))]));
+        }
+        if let Some(d) = self.table_option(ex, "CamelGoogleBigQueryTableDescription", "tableDescription") {
+            m.insert("description".into(), d);
+        }
+        if let Some(e) = self.table_options.get("expirationMs") {
+            let ms: i64 = e.parse().map_err(|_| CamelError::illegal_argument(format!("Invalid expirationMs: {}", e)))?;
+            m.insert("expirationTime".into(), Value::from((crate::util::now_millis() + ms).to_string()));
+        }
+        let url = format!("{}/datasets/{}/tables", base(&self.gcp, &self.project), uri_encode(&self.dataset, false));
+        self.gcp.json("POST", &url, Some(&Value::Object(m)), kinds::BIGQUERY)
+    }
+
+    fn table_op(&self, ex: &mut Exchange, op: &str) -> Result<()> {
+        let b = base(&self.gcp, &self.project);
+        let table = || header_str(ex, headers::TABLE_ID).or_else(|| self.table.clone()).ok_or_else(|| CamelError::illegal_argument("Table id must be specified (uri or CamelGoogleBigQueryTableId)"));
+        let ds = uri_encode(&self.dataset, false);
+        match op {
+            "createTable" => {
+                let t = table()?;
+                let r = self.create_table(ex, &t)?;
+                ex.set_body(r);
+            }
+            "getTable" => {
+                let r = self.gcp.json("GET", &format!("{}/datasets/{}/tables/{}", b, ds, uri_encode(&table()?, false)), None, kinds::BIGQUERY)?;
+                ex.set_body(r);
+            }
+            "deleteTable" => {
+                self.gcp.send(crate::http::Request::new("DELETE", crate::http::Url::parse(&format!("{}/datasets/{}/tables/{}", b, ds, uri_encode(&table()?, false)))?), kinds::BIGQUERY)?;
+            }
+            "listTables" | "listDatasets" => {
+                let (url, field, id) = if op == "listTables" { (format!("{}/datasets/{}/tables", b, ds), "tables", ("tableReference", "tableId")) } else { (format!("{}/datasets", b), "datasets", ("datasetReference", "datasetId")) };
+                let mut out = Vec::new();
+                let mut token: Option<String> = None;
+                loop {
+                    let u = match &token {
+                        Some(t) => format!("{}?pageToken={}", url, uri_encode(t, false)),
+                        None => url.clone(),
+                    };
+                    let r = self.gcp.json("GET", &u, None, kinds::BIGQUERY)?;
+                    out.extend(r.get(field).and_then(|a| a.as_array()).cloned().unwrap_or_default().iter().map(|x| x.get(id.0).and_then(|r| r.get(id.1)).cloned().unwrap_or_default()));
+                    token = r.get("nextPageToken").map(|t| t.to_string()).filter(|t| !t.is_empty());
+                    if token.is_none() {
+                        break;
+                    }
+                }
+                ex.set_body(Value::Array(out));
+            }
+            "createDataset" => {
+                let mut m = ObjectMap::new();
+                m.insert("datasetReference".into(), obj([("projectId", Value::from(self.project.clone())), ("datasetId", Value::from(self.dataset.clone()))]));
+                m.insert("location".into(), Value::from(self.table_options.get("datasetLocation").cloned().unwrap_or_else(|| "US".into())));
+                let r = self.gcp.json("POST", &format!("{}/datasets", b), Some(&Value::Object(m)), kinds::BIGQUERY)?;
+                ex.set_body(r);
+            }
+            _ => {
+                let contents = self.table_options.get("deleteContents").is_some_and(|v| v == "true");
+                self.gcp.send(crate::http::Request::new("DELETE", crate::http::Url::parse(&format!("{}/datasets/{}?deleteContents={}", b, ds, contents))?), kinds::BIGQUERY)?;
+            }
+        }
+        Ok(())
+    }
+
     fn uris(&self, ex: &Exchange, header: &str, option: &str) -> Vec<String> {
         let from_header = crate::util::header_list(ex, header);
         if !from_header.is_empty() {
@@ -196,8 +315,20 @@ impl CloudService for BigQueryService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = crate::endpoint::operation(ex, headers::OPERATION, &self.operation, "insert");
         match op.as_str() {
-            "insert" => {}
+            "insert" => {
+                if self.create_table_if_not_exists {
+                    let table = header_str(ex, headers::TABLE_ID).or_else(|| self.table.clone()).ok_or_else(|| CamelError::illegal_argument("Table id must be specified (uri or CamelGoogleBigQueryTableId)"))?;
+                    let url = format!("{}/datasets/{}/tables/{}", base(&self.gcp, &self.project), uri_encode(&self.dataset, false), uri_encode(&table, false));
+                    if let Err(e) = self.gcp.json("GET", &url, None, kinds::BIGQUERY) {
+                        if super::error_status(&e) != Some(404) {
+                            return Err(e);
+                        }
+                        self.create_table(ex, &table)?;
+                    }
+                }
+            }
             "load" | "extract" => return self.job(ex, &op),
+            "createTable" | "getTable" | "listTables" | "deleteTable" | "createDataset" | "listDatasets" | "deleteDataset" => return self.table_op(ex, &op),
             other => return Err(crate::endpoint::unsupported("google-bigquery", other)),
         }
         let mut table = header_str(ex, headers::TABLE_ID).or_else(|| self.table.clone()).ok_or_else(|| CamelError::illegal_argument("Table id must be specified (uri or CamelGoogleBigQueryTableId)"))?;

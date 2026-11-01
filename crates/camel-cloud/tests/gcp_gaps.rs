@@ -190,3 +190,35 @@ fn pubsub_streaming_exactly_once_confirmations_and_dead_letters() {
     assert_eq!(retry_seen.load(Ordering::SeqCst), 1, "confirmed: not redelivered");
     ctx.stop().unwrap();
 }
+
+#[test]
+fn bigquery_datasets_and_tables() {
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let bq = |table: &str, extra: &str| format!("google-bigquery://{}:sales{}?{}{}", PROJECT, table, env.opts(), extra);
+    req(&t, &bq("", "&operation=createDataset&datasetLocation=EU"), "", &[]);
+    assert!(call(&t, &bq("", "&operation=createDataset"), "", &[]).unwrap_err().message.contains("Already Exists"));
+    let schema = Value::Array(vec![Value::object([("name", "id"), ("type", "STRING"), ("mode", "REQUIRED")]), Value::object([("name", "amount"), ("type", "FLOAT")]), Value::object([("name", "ts"), ("type", "TIMESTAMP")])]);
+    let table = req(&t, &bq(":orders", "&operation=createTable&timePartitioningField=ts&clusteringFields=id&tableDescription=Orders"), "", &[("CamelGoogleBigQueryTableSchema", schema)]).body().clone();
+    assert_eq!(s(table.get("id").unwrap()), format!("{}:sales.orders", PROJECT));
+    assert_eq!(s(table.get("timePartitioning").unwrap().get("field").unwrap()), "ts");
+    req(&t, &bq(":orders", ""), Value::object([("id", Value::from("o1")), ("amount", Value::Float(9.5)), ("ts", Value::from("2026-01-01T00:00:00Z"))]), &[]);
+    assert_eq!(env.mock.bq_rows(PROJECT, "sales", "orders").len(), 1);
+    let got = req(&t, &bq(":orders", "&operation=getTable"), "", &[]).body().clone();
+    assert_eq!(s(got.get("numRows").unwrap()), "1");
+    assert_eq!(got.get("schema").unwrap().get("fields").unwrap().as_array().unwrap().len(), 3);
+    assert!(call(&t, &bq(":bad", "&operation=createTable&tableSchema=RAW(x:FLOAT)&timePartitioningField=x"), "", &[]).unwrap_err().message.contains("TIMESTAMP or DATE"));
+    // streaming insert creating a missing table from the configured schema
+    req(&t, &bq(":events", "&createTableIfNotExists=true&tableSchema=RAW(name:STRING,count:INTEGER)"), Value::object([("name", Value::from("click")), ("count", Value::Int(3))]), &[]);
+    assert_eq!(env.mock.bq_rows(PROJECT, "sales", "events").len(), 1);
+    let mut tables: Vec<String> = req(&t, &bq("", "&operation=listTables"), "", &[]).body().as_array().unwrap().iter().map(s).collect();
+    tables.sort();
+    assert_eq!(tables, vec!["events", "orders"]);
+    assert!(req(&t, &bq("", "&operation=listDatasets"), "", &[]).body().as_array().unwrap().iter().any(|d| s(d) == "sales"));
+    req(&t, &bq(":events", "&operation=deleteTable"), "", &[]);
+    assert!(call(&t, &bq(":events", "&operation=getTable"), "", &[]).is_err());
+    assert!(call(&t, &bq("", "&operation=deleteDataset"), "", &[]).unwrap_err().message.contains("still in use"));
+    req(&t, &bq("", "&operation=deleteDataset&deleteContents=true"), "", &[]);
+    assert!(req(&t, &bq("", "&operation=listTables"), "", &[]).body().as_array().unwrap().is_empty());
+}

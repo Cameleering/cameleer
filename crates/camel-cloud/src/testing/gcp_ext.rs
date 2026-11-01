@@ -48,6 +48,10 @@ pub(super) struct ExtState {
     pub(super) token_scopes: HashMap<String, String>,
     /// BigQuery load / extract jobs: id -> (job resource, polls left before DONE)
     bq_jobs: HashMap<String, (Value, usize)>,
+    /// BigQuery datasets `project.dataset` -> (location, created)
+    bq_datasets: BTreeMap<String, (String, i64)>,
+    /// table metadata (partitioning, clustering, description) by `project.dataset.table`
+    bq_table_meta: BTreeMap<String, Value>,
 }
 
 impl GcpMock {
@@ -201,6 +205,99 @@ fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> R
         ("POST", ["jobs"]) => {
             drop(guard);
             bq_job(st, project, &body)
+        }
+        ("POST", ["datasets"]) => {
+            let id = body.get("datasetReference").and_then(|r| r.get("datasetId")).map(|d| d.to_string()).unwrap_or_default();
+            if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return gerror(400, "invalid", "Invalid dataset ID");
+            }
+            let key = format!("{}.{}", project, id);
+            if ext.bq_datasets.contains_key(&key) {
+                return gerror(409, "duplicate", &format!("Already Exists: Dataset {}:{}", project, id));
+            }
+            let location = body.get("location").map(|l| l.to_string()).unwrap_or_else(|| "US".into());
+            ext.bq_datasets.insert(key, (location.clone(), crate::util::now_millis()));
+            Response::json(200, obj([("kind", Value::from("bigquery#dataset")), ("id", Value::from(format!("{}:{}", project, id))), ("datasetReference", obj([("projectId", Value::from(project)), ("datasetId", Value::from(id))])), ("location", Value::from(location))]).to_json())
+        }
+        ("GET", ["datasets"]) => {
+            let mut ids: std::collections::BTreeSet<String> = ext.bq_datasets.keys().filter_map(|k| k.strip_prefix(&format!("{}.", project)).map(|d| d.to_string())).collect();
+            ids.extend(ext.tables.keys().filter_map(|k| k.strip_prefix(&format!("{}.", project)).and_then(|r| r.split('.').next()).map(|d| d.to_string())));
+            let list: Vec<Value> = ids.into_iter().map(|d| obj([("kind", Value::from("bigquery#dataset")), ("datasetReference", obj([("projectId", Value::from(project)), ("datasetId", Value::from(d))]))])).collect();
+            Response::json(200, obj([("kind", Value::from("bigquery#datasetList")), ("datasets", Value::Array(list))]).to_json())
+        }
+        ("DELETE", ["datasets", dataset]) => {
+            let key = format!("{}.{}", project, dataset);
+            let prefix = format!("{}.", key);
+            let has_tables = ext.tables.keys().any(|k| k.starts_with(&prefix));
+            if has_tables && req.query_param("deleteContents").as_deref() != Some("true") {
+                return gerror(400, "resourceInUse", &format!("Dataset {}:{} is still in use", project, dataset));
+            }
+            if ext.bq_datasets.remove(&key).is_none() && !has_tables {
+                return gerror(404, "notFound", &format!("Not found: Dataset {}:{}", project, dataset));
+            }
+            ext.tables.retain(|k, _| !k.starts_with(&prefix));
+            Response::new(204)
+        }
+        ("POST", ["datasets", dataset, "tables"]) => {
+            let dkey = format!("{}.{}", project, dataset);
+            let prefix = format!("{}.", dkey);
+            if !ext.bq_datasets.contains_key(&dkey) && !ext.tables.keys().any(|k| k.starts_with(&prefix)) {
+                return gerror(404, "notFound", &format!("Not found: Dataset {}:{}", project, dataset));
+            }
+            let table = body.get("tableReference").and_then(|r| r.get("tableId")).map(|t| t.to_string()).unwrap_or_default();
+            if table.is_empty() {
+                return gerror(400, "invalid", "Invalid table ID");
+            }
+            let key = format!("{}{}", prefix, table);
+            if ext.tables.contains_key(&key) {
+                return gerror(409, "duplicate", &format!("Already Exists: Table {}:{}.{}", project, dataset, table));
+            }
+            let fields = body.get("schema").and_then(|sc| sc.get("fields")).and_then(|f| f.as_array()).cloned().unwrap_or_default();
+            let mut schema = Vec::new();
+            for f in &fields {
+                let (n, t) = (f.get("name").map(|x| x.to_string()).unwrap_or_default(), f.get("type").map(|x| x.to_string()).unwrap_or_default().to_ascii_uppercase());
+                if n.is_empty() || !["STRING", "INTEGER", "INT64", "FLOAT", "FLOAT64", "BOOLEAN", "BOOL", "TIMESTAMP", "DATE", "NUMERIC", "BYTES", "JSON"].contains(&t.as_str()) {
+                    return gerror(400, "invalid", &format!("Invalid field: {}", f.to_json()));
+                }
+                schema.push((n, t));
+            }
+            if let Some(tp) = body.get("timePartitioning").and_then(|t| t.get("field")) {
+                if !schema.iter().any(|(n, t)| *n == tp.to_string() && matches!(t.as_str(), "TIMESTAMP" | "DATE")) {
+                    return gerror(400, "invalid", "The field specified for time partitioning must be a TIMESTAMP or DATE column");
+                }
+            }
+            ext.tables.insert(key.clone(), BqTable { schema, rows: vec![], insert_ids: vec![] });
+            let mut meta = body.as_object().cloned().unwrap_or_default();
+            meta.insert("kind".into(), Value::from("bigquery#table"));
+            meta.insert("id".into(), Value::from(format!("{}:{}.{}", project, dataset, table)));
+            meta.insert("tableReference".into(), obj([("projectId", Value::from(project)), ("datasetId", Value::from(*dataset)), ("tableId", Value::from(table.clone()))]));
+            meta.insert("type".into(), Value::from("TABLE"));
+            meta.insert("creationTime".into(), Value::from(crate::util::now_millis().to_string()));
+            ext.bq_table_meta.insert(key, Value::Object(meta.clone()));
+            Response::json(200, Value::Object(meta).to_json())
+        }
+        ("GET", ["datasets", dataset, "tables"]) => {
+            let prefix = format!("{}.{}.", project, dataset);
+            let list: Vec<Value> = ext.tables.keys().filter_map(|k| k.strip_prefix(&prefix)).map(|t| obj([("kind", Value::from("bigquery#table")), ("tableReference", obj([("projectId", Value::from(project)), ("datasetId", Value::from(*dataset)), ("tableId", Value::from(t))]))])).collect();
+            Response::json(200, obj([("kind", Value::from("bigquery#tableList")), ("totalItems", Value::Int(list.len() as i64)), ("tables", Value::Array(list))]).to_json())
+        }
+        ("GET", ["datasets", dataset, "tables", table]) => {
+            let key = format!("{}.{}.{}", project, dataset, table);
+            let Some(t) = ext.tables.get(&key) else { return gerror(404, "notFound", &format!("Not found: Table {}:{}.{}", project, dataset, table)) };
+            let mut meta = ext.bq_table_meta.get(&key).and_then(|m| m.as_object().cloned()).unwrap_or_default();
+            meta.insert("kind".into(), Value::from("bigquery#table"));
+            meta.insert("tableReference".into(), obj([("projectId", Value::from(project)), ("datasetId", Value::from(*dataset)), ("tableId", Value::from(*table))]));
+            meta.insert("schema".into(), obj([("fields", Value::Array(t.schema.iter().map(|(n, ty)| obj([("name", Value::from(n.clone())), ("type", Value::from(ty.clone()))])).collect()))]));
+            meta.insert("numRows".into(), Value::from(t.rows.len().to_string()));
+            Response::json(200, Value::Object(meta).to_json())
+        }
+        ("DELETE", ["datasets", dataset, "tables", table]) => {
+            let key = format!("{}.{}.{}", project, dataset, table);
+            ext.bq_table_meta.remove(&key);
+            match ext.tables.remove(&key) {
+                Some(_) => Response::new(204),
+                None => gerror(404, "notFound", &format!("Not found: Table {}:{}.{}", project, dataset, table)),
+            }
         }
         ("GET", ["jobs", id]) => match ext.bq_jobs.get_mut(*id) {
             Some((job, polls)) => {
