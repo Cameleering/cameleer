@@ -440,13 +440,35 @@ struct SqlStoredProducer {
 impl Service for SqlStoredProducer {}
 
 /// The SQL statement for a template call.
+///
+/// Parameters whose declared type is narrower than the type their value is bound with (an
+/// integer value is sent as `int8`, a floating point one as `float8`) are wrapped in
+/// `CAST(? AS type)`: PostgreSQL resolves routines by argument type and does not implicitly
+/// narrow `bigint` to `integer` (`procedure subnumbers(bigint, bigint, unknown) does not
+/// exist`), so this binds them like pgJDBC's `setInt` (`int4`).
 pub fn call_sql(t: &Template, function: bool) -> String {
+    let arg = |p: &TemplateParam| match narrow_cast(&p.sql_type) {
+        Some(ty) => format!("CAST(? AS {})", ty),
+        None => "?".to_string(),
+    };
     if function {
-        let args: Vec<&str> = t.params.iter().filter(|p| p.direction != Direction::Out).map(|_| "?").collect();
+        let args: Vec<String> = t.params.iter().filter(|p| p.direction != Direction::Out).map(arg).collect();
         format!("SELECT * FROM {}({})", t.procedure, args.join(", "))
     } else {
-        let args: Vec<&str> = t.params.iter().map(|p| if p.direction == Direction::Out { "NULL" } else { "?" }).collect();
+        let args: Vec<String> = t.params.iter().map(|p| if p.direction == Direction::Out { "NULL".to_string() } else { arg(p) }).collect();
         format!("CALL {}({})", t.procedure, args.join(", "))
+    }
+}
+
+/// The SQL type a parameter declared as `java.sql.Types` `sql_type` is cast to, when its natural
+/// binding (`int8` / `float8`) would not match the routine signature.
+fn narrow_cast(sql_type: &str) -> Option<&'static str> {
+    match sql_type {
+        "INTEGER" | "INT" => Some("INTEGER"),
+        "SMALLINT" | "TINYINT" => Some("SMALLINT"),
+        "REAL" => Some("REAL"),
+        "DECIMAL" | "NUMERIC" => Some("NUMERIC"),
+        _ => None,
     }
 }
 
@@ -572,8 +594,11 @@ mod tests {
         assert_eq!(t.params[0].value, Some(ValueSource::Simple("${headers.num1}".into())));
         assert_eq!(t.params[2].direction, Direction::Out);
         assert_eq!(t.params[2].name.as_deref(), Some("resultofsub"));
-        assert_eq!(call_sql(&t, false), "CALL SUBNUMBERS(?, ?, NULL)");
-        assert_eq!(call_sql(&t, true), "SELECT * FROM SUBNUMBERS(?, ?)");
+        // INTEGER values are bound as int8: cast so PostgreSQL finds the integer signature
+        assert_eq!(call_sql(&t, false), "CALL SUBNUMBERS(CAST(? AS INTEGER), CAST(? AS INTEGER), NULL)");
+        assert_eq!(call_sql(&t, true), "SELECT * FROM SUBNUMBERS(CAST(? AS INTEGER), CAST(? AS INTEGER))");
+        let t = parse_template("p(BIGINT 1, VARCHAR 'a', DOUBLE 1.5, NUMERIC 2, OUT REAL r)").unwrap();
+        assert_eq!(call_sql(&t, false), "CALL p(?, ?, ?, CAST(? AS NUMERIC), NULL)");
         let t = parse_template("MYFUNC('param1' org.example.Types.INTEGER(10) 'com.Type' :#srcValue, INOUT DECIMAL(10) ${headers.in} outheader, IN 12 'x', OUT -5 big 'java.lang.Long')").unwrap();
         assert_eq!(t.params[0].name.as_deref(), Some("param1"));
         assert_eq!(t.params[0].sql_type, "INTEGER");

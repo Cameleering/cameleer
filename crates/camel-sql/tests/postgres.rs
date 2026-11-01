@@ -41,7 +41,7 @@ fn stored_procedure_suite_over_postgres() {
     stored_suite(&ctx, &ds, &dir, true);
     std::fs::remove_dir_all(&dir).ok();
     assert!(s.received_queries().iter().any(|q| q.starts_with("CALL ") && q.contains("$1")), "{:?}", s.received_queries());
-    assert!(s.received_queries().iter().any(|q| q.starts_with("SELECT * FROM subnumbers_function($1, $2)")));
+    assert!(s.received_queries().iter().any(|q| q.starts_with("SELECT * FROM subnumbers_function(CAST($1 AS INTEGER), CAST($2 AS INTEGER))")));
 }
 
 #[test]
