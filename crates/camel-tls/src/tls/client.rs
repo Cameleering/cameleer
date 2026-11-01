@@ -124,8 +124,13 @@ fn client_hello(cfg: &TlsClientConfig, p: &HelloParams) -> Vec<u8> {
         if p.early_data && p.psk.is_some() {
             exts.push((ext::EARLY_DATA, Vec::new()));
         }
+        // psk_dhe_ke whenever resumption is possible, also on full handshakes: servers send
+        // NewSessionTickets only to clients that list a usable mode (RFC 8446 section 4.2.9;
+        // Go's crypto/tls and BoringSSL issue none otherwise)
+        if p.psk.is_some() || cfg.session_cache.is_some() {
+            exts.push((ext::PSK_KEY_EXCHANGE_MODES, vec![1, 1]));
+        }
         if let Some(s) = p.psk {
-            exts.push((ext::PSK_KEY_EXCHANGE_MODES, vec![1, 1])); // psk_dhe_ke
             let age = (now_ms().saturating_sub(s.received_ms) as u32).wrapping_add(s.age_add);
             let mut ident = Vec::new();
             put_vec16(&mut ident, &s.ticket);

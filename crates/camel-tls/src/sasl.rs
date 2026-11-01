@@ -311,15 +311,21 @@ mod tests {
     fn kafka_style_nonce_suffix() {
         let lookup = |_: &str| Some(ScramCredentials::derive(ScramMechanism::Sha256, "pw", b"salt", 4096));
         // librdkafka: client-final nonce = client nonce + full server nonce
+        // (the proof covers the client-final as sent, with the server-first as received)
         let run = |lenient: bool| {
             let mut server = ScramServer::new(ScramMechanism::Sha256, lookup).accept_nonce_suffix(lenient);
             let mut c = ScramClient::new(ScramMechanism::Sha256, "u", "pw");
             let first = c.client_first();
             let sf = server.handle_client_first(&first).unwrap();
             let r = attr(&sf, 'r').unwrap().to_string();
-            let doubled = sf.replacen(&format!("r={}", r), &format!("r={}{}", c.nonce, r), 1);
-            let fin = c.handle_server_first(&doubled).unwrap();
-            server.handle_client_final(&fin)
+            let alg = ScramMechanism::Sha256.alg();
+            let salt = attr(&sf, 's').and_then(base64_decode).unwrap();
+            let salted = pbkdf2_hmac(alg, b"pw", &salt, 4096, alg.output_len());
+            let client_key = alg.hmac(&salted, b"Client Key");
+            let without_proof = format!("c=biws,r={}{}", c.nonce, r);
+            let auth_message = format!("{},{},{}", &first[3..], sf, without_proof);
+            let proof = xor(&client_key, &alg.hmac(&alg.hash(&client_key), auth_message.as_bytes()));
+            server.handle_client_final(&format!("{},p={}", without_proof, base64_encode(&proof)))
         };
         assert!(run(true).is_ok());
         assert!(run(false).is_err());
