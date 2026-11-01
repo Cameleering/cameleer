@@ -1502,7 +1502,11 @@ impl Interp {
             }
             (V::Obj(ob), _) => {
                 let key = self.key_string(k);
-                let r = ob.borrow().lookup(&key);
+                let mut r = ob.borrow().lookup(&key);
+                if r.is_none() && matches!(ob.borrow().kind, ObjKind::Jsonnet(_)) {
+                    let ob = ob.clone();
+                    r = self.jfield(&ob, &key)?;
+                }
                 match r {
                     Some(v) => Ok(v),
                     None => match self.d {
@@ -3125,6 +3129,14 @@ impl Interp {
         }
         match v {
             V::Obj(o) => {
+                if matches!(o.borrow().kind, ObjKind::Jsonnet(_)) {
+                    self.jcomplete(o)?;
+                    let items: Vec<V> = o.borrow().props.values().cloned().collect();
+                    for x in items {
+                        self.materialize_depth(&x, depth + 1)?;
+                    }
+                    return Ok(v.clone());
+                }
                 if o.borrow().kind != ObjKind::Plain {
                     return Ok(v.clone());
                 }

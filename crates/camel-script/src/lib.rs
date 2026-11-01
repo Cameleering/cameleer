@@ -36,6 +36,7 @@ pub mod ast;
 mod builtins;
 mod classes;
 mod collections;
+mod dstime;
 pub mod error;
 mod format;
 mod gen;

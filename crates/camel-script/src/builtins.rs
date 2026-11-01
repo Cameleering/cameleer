@@ -1960,6 +1960,7 @@ pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: 
     let r = match (ns, name) {
         ("std" | "cml" | "ds", _) => return crate::jsonnet::std_call(it, ns, name, args, pos),
         ("jOOR", _) => return crate::java::call_fn(it, name, args, pos),
+        ("ds.datetime", _) => return crate::dstime::call(it, name, args, pos),
         ("Comparator" | "Function" | "Collectors" | "Optional" | "Objects" | "Character" | "Stream" | "IntStream" | "LongStream" | "DoubleStream" | "SystemOut" | "List" | "Set" | "Map" | "JavaString" | "JavaSystem", _)
             if matches!(ns, "Comparator" | "Function" | "Collectors" | "Optional" | "Objects" | "Character" | "Stream" | "IntStream" | "LongStream" | "DoubleStream" | "SystemOut" | "JavaString" | "JavaSystem") || matches!((ns, name), ("List" | "Set", "of" | "copyOf") | ("Map", "of" | "entry" | "ofEntries" | "copyOf")) =>
         {

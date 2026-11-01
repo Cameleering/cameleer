@@ -341,7 +341,18 @@ impl P {
             return Ok(Expr::Error(Box::new(e), pos));
         }
         if self.is_kw("import") || self.is_kw("importstr") || self.is_kw("importbin") {
-            return self.err("imports are not supported");
+            let kind = match self.next() {
+                JT::Id(k) if k == "importstr" => 1,
+                JT::Id(k) if k == "importbin" => 2,
+                _ => 0,
+            };
+            return match self.next() {
+                JT::Str(path) => Ok(Expr::Import(kind, path, pos)),
+                other => {
+                    self.i -= 1;
+                    self.err(format!("expected a string literal after import but found {}", describe(&other)))
+                }
+            };
         }
         self.binary(1)
     }
@@ -504,16 +515,11 @@ impl P {
                 "null" => Expr::Null,
                 "true" => Expr::Bool(true),
                 "false" => Expr::Bool(false),
-                "self" | "super" => {
-                    self.i -= 1;
-                    return self.err(format!("'{}' is not supported", k));
-                }
+                "self" => Expr::JSelf(0, pos),
+                "super" => Expr::JSelf(1, pos),
                 _ => Expr::Ident(k, pos),
             }),
-            JT::Op("$") => {
-                self.i -= 1;
-                self.err("'$' is not supported")
-            }
+            JT::Op("$") => Ok(Expr::JSelf(2, pos)),
             JT::Op("(") => {
                 let e = self.expr()?;
                 self.expect_op(")")?;
@@ -549,7 +555,7 @@ impl P {
 
     fn object(&mut self) -> PR<Expr> {
         let mut locals: Vec<(String, Expr)> = Vec::new();
-        let mut fields: Vec<(PropKey, Expr)> = Vec::new();
+        let mut fields: Vec<JFieldDef> = Vec::new();
         let mut asserts: Vec<(Expr, Expr, u32)> = Vec::new();
         while !self.is_op("}") {
             let pos = self.pos();
@@ -573,12 +579,37 @@ impl P {
                     }
                 };
                 let params = if self.is_op("(") { Some(self.params()?) } else { None };
-                if !(self.eat_op(":") || self.eat_op("::") || self.eat_op(":::") || self.eat_op("+:")) {
-                    // `+::` style
-                    if self.eat_op("+") && (self.eat_op(":") || self.eat_op("::") || self.eat_op(":::")) {
+                let mut plus = false;
+                let vis;
+                if self.eat_op(":") {
+                    vis = Vis::Default;
+                } else if self.eat_op("::") {
+                    vis = Vis::Hidden;
+                } else if self.eat_op(":::") {
+                    vis = Vis::Visible;
+                } else if self.eat_op("+:") {
+                    // `+:`, `+::` (lexed `+:` `:`), `+:::` (`+:` `::`)
+                    plus = true;
+                    vis = if self.eat_op("::") {
+                        Vis::Visible
+                    } else if self.eat_op(":") {
+                        Vis::Hidden
+                    } else {
+                        Vis::Default
+                    };
+                } else if self.eat_op("+") {
+                    plus = true;
+                    vis = if self.eat_op(":") {
+                        Vis::Default
+                    } else if self.eat_op("::") {
+                        Vis::Hidden
+                    } else if self.eat_op(":::") {
+                        Vis::Visible
                     } else {
                         return self.err(format!("expected ':' but found {}", describe(self.peek())));
-                    }
+                    };
+                } else {
+                    return self.err(format!("expected ':' but found {}", describe(self.peek())));
                 }
                 let mut v = self.expr()?;
                 if let Some(ps) = params {
@@ -596,30 +627,14 @@ impl P {
                     let (k, v) = if locals.is_empty() { (k, v) } else { (Expr::Let(locals.clone(), Box::new(k)), Expr::Let(locals, Box::new(v))) };
                     return Ok(Expr::Comp { kind: CompKind::Dict, key: Box::new(k), value: Some(Box::new(v)), clauses });
                 }
-                fields.push((key, v));
+                fields.push(JFieldDef { key, vis, plus, value: v });
             }
             if !self.eat_op(",") {
                 break;
             }
         }
         self.expect_op("}")?;
-        let props = fields
-            .into_iter()
-            .map(|(k, v)| {
-                let v = if locals.is_empty() { v } else { Expr::Let(locals.clone(), Box::new(v)) };
-                let k = match k {
-                    PropKey::Computed(e) if !locals.is_empty() => PropKey::Computed(Expr::Let(locals.clone(), Box::new(e))),
-                    other => other,
-                };
-                Prop::KV(k, v)
-            })
-            .collect();
-        let mut obj = Expr::Object(props);
-        for (c, m, pos) in asserts.into_iter().rev() {
-            let c = if locals.is_empty() { c } else { Expr::Let(locals.clone(), Box::new(c)) };
-            obj = Expr::Cond(Box::new(c), Box::new(obj), Box::new(Expr::Error(Box::new(m), pos)));
-        }
-        Ok(obj)
+        Ok(Expr::JObject(Arc::new(JObjDef { locals, fields, asserts })))
     }
 }
 
@@ -669,6 +684,7 @@ pub fn std_member(_it: &mut Interp, ns: &'static str, name: &str) -> R<V> {
     Ok(match (ns, name) {
         ("std", "thisFile") => V::str(""),
         ("std", "pi") => V::Num(std::f64::consts::PI),
+        ("ds", "datetime") => V::host(Host::Ns("ds.datetime")),
         _ => V::host(Host::NsFn(ns, name.to_string())),
     })
 }

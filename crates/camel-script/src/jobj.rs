@@ -56,6 +56,9 @@ pub struct JMeta {
     cache: HashMap<String, V>,
     busy: HashSet<String>,
     scopes: HashMap<usize, Env>,
+    /// Visible fields whose evaluation failed when the object was created (e.g. a `super`
+    /// reference resolved only after a later `+`): evaluated again when the object is used.
+    pending: Vec<String>,
 }
 
 fn meta_of(o: &ObjRef) -> Option<Internal<JMeta>> {
@@ -114,7 +117,7 @@ impl Interp {
 
     fn make_jobject(&mut self, layers: Vec<Rc<JLayer>>) -> R<V> {
         let n = layers.len();
-        let meta = JMeta { layers: Rc::new(layers), upto: n, self_obj: None, cache: HashMap::new(), busy: HashSet::new(), scopes: HashMap::new() };
+        let meta = JMeta { layers: Rc::new(layers), upto: n, self_obj: None, cache: HashMap::new(), busy: HashSet::new(), scopes: HashMap::new(), pending: Vec::new() };
         let o = new_obj_ref(Obj { props: PropMap::default(), proto: None, kind: ObjKind::Jsonnet(Internal::new(meta)) });
         let v = V::Obj(o.clone());
         // final visibility of every field
@@ -153,14 +156,33 @@ impl Interp {
                 }
             }
         }
+        let mut pending = Vec::new();
         for (k, visible) in keys {
             if visible {
-                if let Some(x) = self.jfield(&o, &k)? {
-                    o.borrow_mut().props.set(&k, x);
+                match self.jfield(&o, &k) {
+                    Ok(Some(x)) => o.borrow_mut().props.set(&k, x),
+                    Ok(None) => {}
+                    Err(crate::interp::Ctrl::Throw(_)) => pending.push(k),
+                    Err(e) => return Err(e),
                 }
             }
         }
+        if !pending.is_empty() {
+            meta_of(&o).unwrap().0.borrow_mut().pending = pending;
+        }
         Ok(v)
+    }
+
+    /// Evaluate the pending visible fields of a DataSonnet object (errors surface here).
+    pub fn jcomplete(&mut self, o: &ObjRef) -> R<()> {
+        let Some(m) = meta_of(o) else { return Ok(()) };
+        let pending = std::mem::take(&mut m.0.borrow_mut().pending);
+        for k in pending {
+            if let Some(x) = self.jfield(o, &k)? {
+                o.borrow_mut().props.set(&k, x);
+            }
+        }
+        Ok(())
     }
 
     /// Scope for evaluating fields of layer `i` with `self` = `selfv`.
@@ -175,7 +197,7 @@ impl Interp {
         scope.define("self", selfv.clone());
         let sup = {
             let b = m.0.borrow();
-            JMeta { layers: b.layers.clone(), upto: i, self_obj: Some(selfv.clone()), cache: HashMap::new(), busy: HashSet::new(), scopes: HashMap::new() }
+            JMeta { layers: b.layers.clone(), upto: i, self_obj: Some(selfv.clone()), cache: HashMap::new(), busy: HashSet::new(), scopes: HashMap::new(), pending: Vec::new() }
         };
         scope.define("super", V::Obj(new_obj_ref(Obj { props: PropMap::default(), proto: None, kind: ObjKind::Jsonnet(Internal::new(sup)) })));
         scope.define("$", layer.dollar.clone().unwrap_or_else(|| selfv.clone()));
