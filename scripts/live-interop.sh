@@ -47,7 +47,7 @@ PGBIN=/usr/lib/postgresql/16/bin
 
 PACKAGES=(postgresql redis-server mosquitto mosquitto-clients rabbitmq-server vsftpd
   dovecot-imapd dovecot-pop3d postfix nginx libnginx-mod-http-echo openssl activemq
-  libmqtt-client-java libapache-qpid-proton-j-java)
+  libmqtt-client-java libxstream-java libjettison-java libapache-qpid-proton-j-java)
 
 log() { echo "[live-interop] $*"; }
 
@@ -480,9 +480,10 @@ setup_activemq() {
       -keystore "$base/conf/trust.jks" -storetype JKS -storepass "$PW" >/dev/null 2>&1
   fi
   # Libraries the package leaves out of the broker's class path: the MQTT codec (fusesource
-  # mqtt-client, needed by activemq-mqtt) and proton-j for a user-supplied activemq-amqp jar.
+  # mqtt-client, needed by activemq-mqtt), XStream + Jettison (STOMP `transformation`
+  # jms-map-json / jms-object-json) and proton-j for a user-supplied activemq-amqp jar.
   local jar
-  for jar in mqtt-client hawtdispatch proton-j; do
+  for jar in mqtt-client hawtdispatch xstream jettison proton-j; do
     if [ -f "/usr/share/java/$jar.jar" ] && [ ! -e "$base/lib/$jar.jar" ]; then
       ln -s "/usr/share/java/$jar.jar" "$base/lib/$jar.jar"
     fi

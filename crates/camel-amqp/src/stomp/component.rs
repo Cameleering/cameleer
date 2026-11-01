@@ -183,6 +183,64 @@ pub struct JmsConfig {
     /// `useMessageIDAsCorrelationID`.
     pub use_message_id_as_correlation_id: bool,
     pub reply_to_type: ReplyToType,
+    /// Client-side redelivery on ActiveMQ 5 ([`RedeliveryPolicy`]).
+    pub redelivery: RedeliveryPolicy,
+}
+
+/// The ActiveMQ JMS client's redelivery policy, emulated over STOMP for ActiveMQ 5 (see
+/// [`StompConnection::is_activemq_classic`]): a failed transacted / `CLIENT_ACKNOWLEDGE`
+/// message is redelivered to the route by the consumer (`JMSRedelivered=true`,
+/// `JMSXDeliveryCount`) up to `maximumRedeliveries` times (-1 = forever), then NACKed,
+/// which ActiveMQ treats as a poison ack (dead letter queue). Configured like the
+/// ActiveMQ connection factory, with broker url options
+/// `jms.redeliveryPolicy.maximumRedeliveries` (6), `initialRedeliveryDelay` (1000 ms) and
+/// `redeliveryDelay` (1000 ms).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RedeliveryPolicy {
+    pub maximum_redeliveries: i64,
+    pub initial_redelivery_delay: Duration,
+    pub redelivery_delay: Duration,
+}
+
+impl Default for RedeliveryPolicy {
+    fn default() -> Self {
+        RedeliveryPolicy { maximum_redeliveries: 6, initial_redelivery_delay: Duration::from_millis(1000), redelivery_delay: Duration::from_millis(1000) }
+    }
+}
+
+impl RedeliveryPolicy {
+    /// The `jms.redeliveryPolicy.*` options of an ActiveMQ broker url
+    /// (`tcp://h:p?jms.redeliveryPolicy.maximumRedeliveries=2`).
+    pub fn from_broker_url(url: &str) -> Result<RedeliveryPolicy> {
+        let mut p = RedeliveryPolicy::default();
+        let Some((_, query)) = url.split_once('?') else { return Ok(p) };
+        for kv in query.split('&') {
+            let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+            let Some(k) = k.trim().strip_prefix("jms.redeliveryPolicy.") else { continue };
+            let n = |v: &str| v.trim().parse::<i64>().map_err(|_| CamelError::illegal_argument(format!("Invalid number for jms.redeliveryPolicy.{}: {}", k, v)));
+            match k {
+                "maximumRedeliveries" => p.maximum_redeliveries = n(v)?,
+                "initialRedeliveryDelay" => p.initial_redelivery_delay = Duration::from_millis(n(v)?.max(0) as u64),
+                "redeliveryDelay" => p.redelivery_delay = Duration::from_millis(n(v)?.max(0) as u64),
+                _ => {}
+            }
+        }
+        Ok(p)
+    }
+
+    /// The delay before redelivery number `n` (1-based).
+    pub fn delay(&self, n: u64) -> Duration {
+        if n <= 1 {
+            self.initial_redelivery_delay
+        } else {
+            self.redelivery_delay
+        }
+    }
+
+    /// Whether redelivery number `n` (1-based) is allowed.
+    pub fn allows(&self, n: u64) -> bool {
+        self.maximum_redeliveries < 0 || n <= self.maximum_redeliveries as u64
+    }
 }
 
 /// Camel's default `JmsKeyFormatStrategy`: `.` → `_DOT_`, `-` → `_HYPHEN_`.
@@ -234,6 +292,7 @@ impl JmsConfig {
             .or_else(|| comp("connectionFactory.brokerURL"))
             .unwrap_or_else(|| "tcp://localhost:61613".to_string());
         let (host, port) = parse_broker_url(&url, 61613)?;
+        let redelivery = RedeliveryPolicy::from_broker_url(&url)?;
         let tls = camel_tls::camel_support::endpoint_tls(ctx, params, scheme, broker_url_is_tls(&url), &[])?;
         let (login_key, pass_key) = if flavor == Flavor::Stomp { ("login", "passcode") } else { ("username", "password") };
         let login = params.take(login_key).or_else(|| comp(login_key)).or_else(|| params.take("login")).or_else(|| comp("login"));
@@ -388,6 +447,7 @@ impl JmsConfig {
             shared_subscription,
             use_message_id_as_correlation_id,
             reply_to_type,
+            redelivery,
         })
     }
 }
@@ -632,6 +692,27 @@ fn exchange_to_frame(cfg: &JmsConfig, ex: &Exchange, include_reply_to: bool) -> 
 
 type Pending = Arc<Mutex<HashMap<String, Sender<Frame>>>>;
 
+/// Exchange property naming the STOMP transaction of the transacted consumer processing the
+/// exchange (`<broker>|<transaction id>`).
+pub const TRANSACTION_PROPERTY: &str = "CamelJmsStompTransaction";
+
+/// A message sent by a producer inside a transacted consumer's transaction.
+type TxSend = (String, Vec<(String, String)>, Vec<u8>);
+
+/// Sends made while a transacted consumer processes an exchange, by transaction key. Like a
+/// JMS session bound to the thread by Spring's transaction manager, InOnly sends to the same
+/// broker (same address and login) join the consumer's transaction: they are sent with the
+/// consumer's `transaction` header and committed or rolled back with the consumed message.
+fn tx_sends() -> &'static Mutex<HashMap<String, Vec<TxSend>>> {
+    static M: std::sync::OnceLock<Mutex<HashMap<String, Vec<TxSend>>>> = std::sync::OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The broker identity transactions are shared on.
+fn tx_broker(c: &StompConfig) -> String {
+    format!("{}:{}@{}", c.host, c.port, c.login.as_deref().unwrap_or(""))
+}
+
 struct ReplyRouter {
     destination: String,
     pending: Pending,
@@ -717,6 +798,17 @@ impl JmsProducer {
         };
         let in_out = cfg.flavor == Flavor::Jms && exchange.is_out_capable() && !cfg.disable_reply_to;
         let (mut hdrs, body) = exchange_to_frame(cfg, exchange, !in_out);
+        if cfg.flavor == Flavor::Jms && !in_out {
+            // inside a transacted consumer on the same broker: join its transaction
+            if let Some(key) = exchange.property(TRANSACTION_PROPERTY).map(|v| v.to_string()) {
+                if key.split_once('|').map(|(b, _)| b) == Some(tx_broker(&cfg.conn).as_str()) {
+                    if let Some(list) = tx_sends().lock().unwrap().get_mut(&key) {
+                        list.push((destination, hdrs, body));
+                        return Ok(());
+                    }
+                }
+            }
+        }
         let mut g = self.state.lock().unwrap();
         let conn = match self.connection(&mut g) {
             Ok(c) => c,
@@ -843,10 +935,47 @@ struct Worker {
 }
 
 impl Worker {
-    fn handle(&self, conn: &StompConnection, f: Frame) {
+    /// Process a received message. On ActiveMQ 5 a failed transacted / `CLIENT_ACKNOWLEDGE`
+    /// message is redelivered here (the broker does not redeliver after an `ABORT`, and
+    /// treats `NACK` as a poison ack), following [`RedeliveryPolicy`].
+    fn handle(&self, conn: &StompConnection, f: Frame, stop: &StopFlag) {
+        let cfg = &self.cfg;
+        let local = cfg.flavor == Flavor::Jms && (cfg.transacted || cfg.ack == JmsAck::Client) && conn.is_activemq_classic();
+        let mut redeliveries = 0u64;
+        loop {
+            match self.attempt(conn, &f, redeliveries, local) {
+                Attempt::Done => return,
+                Attempt::Failed { ack_id } => {
+                    redeliveries += 1;
+                    if cfg.redelivery.allows(redeliveries) {
+                        if stop.sleep(cfg.redelivery.delay(redeliveries)) {
+                            // stopping: the broker redelivers the unacknowledged message
+                            return;
+                        }
+                        continue;
+                    }
+                    // exhausted: a poison ack (ActiveMQ moves the message to its DLQ)
+                    camel_core::camel_warn!(&self.uri, "Message {} failed after {} redeliveries; NACKing it (dead letter queue)", f.get("message-id").unwrap_or(""), redeliveries - 1);
+                    if let Err(e) = conn.nack(&ack_id, None) {
+                        camel_core::camel_warn!(&self.uri, "Cannot NACK message {}: {}", ack_id, e.message);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /// One delivery attempt (`redeliveries` local redeliveries before it). With `local`
+    /// redelivery a failure leaves the message unacknowledged and returns
+    /// [`Attempt::Failed`].
+    fn attempt(&self, conn: &StompConnection, f: &Frame, redeliveries: u64, local: bool) -> Attempt {
         let cfg = &self.cfg;
         let mut ex = Exchange::new(self.ctx.upgrade());
-        frame_to_exchange(cfg, &f, &mut ex);
+        frame_to_exchange(cfg, f, &mut ex);
+        if redeliveries > 0 {
+            ex.set_header(headers::JMS_REDELIVERED, true);
+            ex.set_header("JMSXDeliveryCount", (redeliveries + 1) as i64);
+        }
         let jms = cfg.flavor == Flavor::Jms;
         let reply_to = if jms && !cfg.disable_reply_to { f.get("reply-to").map(String::from) } else { None };
         if reply_to.is_some() {
@@ -858,16 +987,32 @@ impl Worker {
                 Ok(()) => Some(id),
                 Err(e) => {
                     camel_core::camel_warn!(&self.uri, "Cannot begin transaction: {}", e.message);
-                    return;
+                    return Attempt::Done;
                 }
             }
         } else {
             None
         };
+        let tx_key = tx.as_ref().map(|t| format!("{}|{}", tx_broker(&cfg.conn), t));
+        if let Some(k) = &tx_key {
+            tx_sends().lock().unwrap().insert(k.clone(), Vec::new());
+            ex.set_property(TRANSACTION_PROPERTY, k.clone());
+        }
         if let Err(e) = self.processor.process(&mut ex) {
             ex.set_exception(e);
         }
-        let failed = ex.exception.is_some();
+        let joined = tx_key.and_then(|k| tx_sends().lock().unwrap().remove(&k)).unwrap_or_default();
+        let mut failed = ex.exception.is_some();
+        if !failed {
+            // the producers' sends that joined the transaction
+            for (dest, hdrs, body) in &joined {
+                if let Err(e) = conn.send(dest, hdrs, body, tx.as_deref(), false) {
+                    camel_core::camel_warn!(&self.uri, "Cannot send to {} in transaction: {}", dest, e.message);
+                    failed = true;
+                    break;
+                }
+            }
+        }
         if let Some(e) = &ex.exception {
             camel_core::camel_warn!(&self.uri, "Error processing exchange. Exchange[{}]. Caused by: [{} - {}]", ex.exchange_id, e.kind, e.message);
         }
@@ -887,7 +1032,18 @@ impl Worker {
                 camel_core::camel_warn!(&self.uri, "Cannot send reply to {}: {}", rt, e.message);
             }
         }
-        let Some(ack_id) = f.get("ack").map(String::from) else { return };
+        let Some(ack_id) = f.get("ack").map(String::from) else { return Attempt::Done };
+        if failed && local {
+            // ActiveMQ: ABORT restores the pending ack (the broker does not redeliver), and
+            // in CLIENT_ACKNOWLEDGE mode the message simply stays unacknowledged
+            if let Some(t) = &tx {
+                if let Err(e) = conn.abort(t) {
+                    camel_core::camel_warn!(&self.uri, "Cannot roll back transaction {}: {}", t, e.message);
+                    return Attempt::Done;
+                }
+            }
+            return Attempt::Failed { ack_id };
+        }
         let r = match &tx {
             // RabbitMQ (AMQP transaction semantics) keeps a message whose transactional ACK was
             // aborted unacknowledged instead of redelivering it: NACK it so it is requeued
@@ -907,7 +1063,16 @@ impl Worker {
         if let Err(e) = r {
             camel_core::camel_warn!(&self.uri, "Cannot acknowledge message {}: {}", ack_id, e.message);
         }
+        Attempt::Done
     }
+}
+
+/// The outcome of [`Worker::attempt`].
+enum Attempt {
+    /// Settled (acknowledged, committed, rolled back by the broker or given up).
+    Done,
+    /// Failed and still unacknowledged: redeliver locally (ActiveMQ 5).
+    Failed { ack_id: String },
 }
 
 fn setup(cfg: &JmsConfig) -> Result<(StompConnection, Vec<Subscription>)> {
@@ -991,7 +1156,7 @@ impl Service for JmsConsumer {
                                 break;
                             }
                             match sub.messages.recv_timeout(Duration::from_millis(50)) {
-                                Ok(f) => w.handle(c, f),
+                                Ok(f) => w.handle(c, f, &st),
                                 Err(RecvTimeoutError::Timeout) => {}
                                 Err(RecvTimeoutError::Disconnected) => break,
                             }
