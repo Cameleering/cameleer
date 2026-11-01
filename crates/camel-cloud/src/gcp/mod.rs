@@ -644,13 +644,19 @@ impl GcpConfig {
     }
 }
 
-/// Build the exception for a Google API error (`{"error": {"code", "message", "status"}}`).
+/// Build the exception for a Google API error (`{"error": {"code", "message", "status",
+/// "errors": [{"reason", ...}]}}`); the first `errors[].reason` (BigQuery's `invalidQuery`,
+/// `notFound`, ...) is part of the message when present.
 pub fn google_error(kind: &str, resp: &Response) -> CamelError {
     let v = parse_json(&resp.body).unwrap_or_default();
     let e = v.get("error").cloned().unwrap_or_default();
     let msg = e.get("message").map(|m| m.to_string()).unwrap_or_else(|| resp.text());
     let status = e.get("status").map(|m| m.to_string()).unwrap_or_default();
-    cloud_error(kind, format!("{} {} (code: {}, status: {})", resp.status, msg, resp.status, status))
+    let reason = e.get("errors").and_then(|l| l.as_array().and_then(|a| a.first().cloned())).and_then(|f| f.get("reason").map(|r| r.to_string())).filter(|r| !r.is_empty() && *r != status);
+    match reason {
+        Some(r) => cloud_error(kind, format!("{} {} (code: {}, status: {}, reason: {})", resp.status, msg, resp.status, status, r)),
+        None => cloud_error(kind, format!("{} {} (code: {}, status: {})", resp.status, msg, resp.status, status)),
+    }
 }
 
 /// HTTP status from a Google exception message.

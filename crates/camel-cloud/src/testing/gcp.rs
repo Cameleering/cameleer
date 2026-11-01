@@ -45,6 +45,55 @@ struct GcsObj {
     generation: i64,
     created: i64,
     updated: i64,
+    /// Custom metadata (`metadata` of the object resource).
+    metadata: ObjectMap,
+}
+
+/// CRC32C (Castagnoli), the checksum Cloud Storage reports as `crc32c` (big-endian, base64).
+fn crc32c(data: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0x82F6_3B78 } else { crc >> 1 };
+        }
+    }
+    !crc
+}
+
+/// Splits a `multipart/related` upload body into (metadata JSON, media bytes).
+fn multipart_related(req: &ServerRequest) -> Option<(Value, Vec<u8>)> {
+    let ct = req.header("Content-Type")?;
+    // (Python's email package quotes the boundary with single quotes)
+    let boundary = ct.split(';').find_map(|p| p.trim().strip_prefix("boundary=")).map(|b| b.trim_matches(|c| c == '"' || c == '\'').to_string())?;
+    let delim = format!("--{}", boundary).into_bytes();
+    let body = &req.body;
+    let find = |from: usize, pat: &[u8]| body.get(from..).and_then(|b| b.windows(pat.len()).position(|w| w == pat)).map(|i| i + from);
+    let mut parts = Vec::new();
+    let mut pos = find(0, &delim)? + delim.len();
+    loop {
+        if body.get(pos..pos + 2) == Some(b"--") {
+            break;
+        }
+        // part headers end with an empty line (CRLF or, from Python's email package, LF)
+        let head_end = match (find(pos, b"\r\n\r\n"), find(pos, b"\n\n")) {
+            (Some(a), Some(b)) if b + 2 <= a + 4 && b < a => b + 2,
+            (Some(a), _) => a + 4,
+            (None, Some(b)) => b + 2,
+            (None, None) => return None,
+        };
+        let next = find(head_end, &delim)?;
+        let mut end = next;
+        if end >= 2 && &body[end - 2..end] == b"\r\n" {
+            end -= 2;
+        } else if end >= 1 && body[end - 1] == b'\n' {
+            end -= 1;
+        }
+        parts.push(body[head_end..end].to_vec());
+        pos = next + delim.len();
+    }
+    let meta = parse_json(parts.first()?).ok()?;
+    Some((meta, parts.get(1).cloned().unwrap_or_default()))
 }
 
 #[derive(Default)]
@@ -75,6 +124,8 @@ struct Subscription {
 }
 
 struct State {
+    /// Served over HTTPS (absolute URLs the emulator hands out use https).
+    tls: bool,
     keys: HashMap<String, PublicKey>,
     tokens: HashMap<String, i64>,
     require_auth: bool,
@@ -111,7 +162,23 @@ pub struct GcpMock {
 impl GcpMock {
     /// Start; the generated test service account ([`GcpMock::service_account_json`]) is trusted.
     pub fn start() -> io::Result<GcpMock> {
+        Self::start_inner(false)
+    }
+
+    /// Start over HTTPS (self-signed `localhost` certificate, see [`GcpMock::cert_pem`]):
+    /// gsutil's JSON API client only speaks HTTPS.
+    pub fn start_tls() -> io::Result<GcpMock> {
+        Self::start_inner(true)
+    }
+
+    /// The server certificate (PEM) when started with [`GcpMock::start_tls`].
+    pub fn cert_pem(&self) -> Option<&str> {
+        self.server.cert_pem.as_deref()
+    }
+
+    fn start_inner(tls: bool) -> io::Result<GcpMock> {
         let state: Shared = Arc::new(Mutex::new(State {
+            tls,
             keys: HashMap::new(),
             tokens: HashMap::new(),
             require_auth: true,
@@ -135,7 +202,8 @@ impl GcpMock {
         let st = state.clone();
         let handler: Handler = Arc::new(move |r| handle(&st, r));
         let grpc = more::start_grpc(state.clone())?;
-        let mock = GcpMock { server: MockServer::start(handler)?, state, grpc };
+        let server = if tls { MockServer::start_tls(handler)? } else { MockServer::start(handler)? };
+        let mock = GcpMock { server, state, grpc };
         let key = ServiceAccountKey::parse(&mock.service_account_json()).map_err(|e| io::Error::other(e.to_string()))?;
         mock.trust_key(CLIENT_EMAIL, key.public_key());
         Ok(mock)
@@ -309,7 +377,7 @@ fn next(s: &mut State) -> i64 {
 
 fn new_obj(data: Vec<u8>, content_type: String, generation: i64) -> GcsObj {
     let now = now_millis();
-    GcsObj { data, content_type, generation, created: now, updated: now }
+    GcsObj { data, content_type, generation, created: now, updated: now, metadata: ObjectMap::new() }
 }
 
 fn publish_one(s: &mut State, topic: &str, data: String, attributes: Value, ordering_key: String) -> Option<String> {
@@ -384,6 +452,8 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     }
     match s.as_slice() {
         ["storage", "v1", ..] | ["upload", "storage", "v1", ..] => storage(st, req, &s),
+        // media links (`mediaLink`) point at the download path
+        ["download", "storage", "v1", ..] => storage(st, req, &s[1..]),
         ["v1", "projects", ..] => pubsub(st, req, &s),
         _ => gerror(404, "NOT_FOUND", "Unknown resource"),
     }
@@ -480,8 +550,13 @@ fn token(st: &Shared, req: &ServerRequest) -> Response {
     let now = now_secs();
     let num = |k: &str| claims.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
     let aud = claims.get("aud").map(|a| a.to_string()).unwrap_or_default();
-    let expected_aud = format!("http://{}/token", req.header("Host").unwrap_or(""));
-    if aud != expected_aud {
+    let host = req.header("Host").unwrap_or("");
+    let expected_aud = format!("http://{}/token", host);
+    let expected_tls_aud = format!("https://{}/token", host);
+    // Google's token endpoint accepts its well-known audiences too (gcloud signs the assertion
+    // for https://oauth2.googleapis.com/token even when the key file names another token_uri)
+    let google_aud = matches!(aud.as_str(), "https://oauth2.googleapis.com/token" | "https://www.googleapis.com/oauth2/v4/token" | "https://accounts.google.com/o/oauth2/token");
+    if aud != expected_aud && aud != expected_tls_aud && !google_aud {
         return fail(st, "Invalid JWT: audience mismatch");
     }
     if num("exp") <= now || num("iat") > now + 300 || num("exp") - num("iat") > 3600 {
@@ -506,12 +581,18 @@ fn object_resource(bucket: &str, name: &str, o: &GcsObj) -> Value {
     obj([
         ("kind", Value::from("storage#object")),
         ("id", Value::from(format!("{}/{}/{}", bucket, name, o.generation))),
+        // like Cloud Storage; clients with an endpoint override rewrite scheme and host
+        ("selfLink", Value::from(format!("https://www.googleapis.com/storage/v1/b/{}/o/{}", bucket, crate::util::uri_encode(name, false)))),
+        ("mediaLink", Value::from(format!("https://storage.googleapis.com/download/storage/v1/b/{}/o/{}?generation={}&alt=media", bucket, crate::util::uri_encode(name, false), o.generation))),
         ("name", Value::from(name)),
         ("bucket", Value::from(bucket)),
         ("generation", Value::from(o.generation.to_string())),
         ("size", Value::from(o.data.len().to_string())),
         ("contentType", Value::from(o.content_type.clone())),
         ("md5Hash", Value::from(base64_encode(&md5(&o.data)))),
+        ("crc32c", Value::from(base64_encode(&crc32c(&o.data).to_be_bytes()))),
+        ("metageneration", Value::from("1")),
+        ("metadata", Value::Object(o.metadata.clone())),
         ("etag", Value::from(format!("C{}", o.generation))),
         ("timeCreated", Value::from(iso8601_millis(o.created))),
         ("updated", Value::from(iso8601_millis(o.updated))),
@@ -526,7 +607,10 @@ fn bucket_resource(name: &str, b: &GcsBucket) -> Value {
         ("name", Value::from(name)),
         ("timeCreated", Value::from(iso8601_millis(b.created * 1000))),
         ("location", Value::from("US-EAST1")),
+        ("locationType", Value::from("region")),
         ("storageClass", Value::from("STANDARD")),
+        ("metageneration", Value::from("1")),
+        ("etag", Value::from("CAE=")),
     ])
 }
 
@@ -545,7 +629,8 @@ fn storage(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
             let id = random_hex(16);
             state.resumable.insert(id.clone(), (bucket.to_string(), name, ct, size, Vec::new()));
             let host = req.header("Host").unwrap_or("localhost").to_string();
-            Response::new(200).with_header("Location", format!("http://{}/upload/storage/v1/b/{}/o?uploadType=resumable&upload_id={}", host, bucket, id)).with_header("X-GUploader-UploadID", id)
+            let scheme = if state.tls { "https" } else { "http" };
+            Response::new(200).with_header("Location", format!("{}://{}/upload/storage/v1/b/{}/o?uploadType=resumable&upload_id={}", scheme, host, bucket, id)).with_header("X-GUploader-UploadID", id)
         }
         ("PUT", ["upload", "storage", "v1", "b", _bucket, "o"]) => {
             let Some(id) = req.query_param("upload_id") else { return gerror(400, "INVALID_ARGUMENT", "Missing upload_id") };
@@ -598,13 +683,97 @@ fn storage(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
             }
         }
         ("POST", ["upload", "storage", "v1", "b", bucket, "o"]) => {
-            let Some(name) = req.query_param("name") else { return gerror(400, "INVALID_ARGUMENT", "Missing name") };
+            // uploadType=multipart: metadata JSON part + media part; media: the body itself
+            let (meta, data, ct) = if req.query_param("uploadType").as_deref() == Some("multipart") {
+                let Some((meta, data)) = multipart_related(req) else { return gerror(400, "INVALID_ARGUMENT", "Invalid multipart/related upload body") };
+                let ct = meta.get("contentType").map(|c| c.to_string()).unwrap_or_else(|| "application/octet-stream".into());
+                (meta, data, ct)
+            } else {
+                (Value::Null, req.body.clone(), req.header("Content-Type").unwrap_or("application/octet-stream").to_string())
+            };
+            let Some(name) = req.query_param("name").or_else(|| meta.get("name").map(|n| n.to_string())).filter(|n| !n.is_empty()) else { return gerror(400, "INVALID_ARGUMENT", "Missing name") };
+            // the client's checksums are verified like Cloud Storage does
+            if let Some(c) = meta.get("crc32c").map(|c| c.to_string()) {
+                let actual = base64_encode(&crc32c(&data).to_be_bytes());
+                if c != actual {
+                    return gerror(400, "INVALID_ARGUMENT", &format!("Provided CRC32C \"{}\" doesn't match calculated CRC32C \"{}\".", c, actual));
+                }
+            }
+            if let Some(m) = meta.get("md5Hash").map(|c| c.to_string()) {
+                if m != base64_encode(&md5(&data)) {
+                    return gerror(400, "INVALID_ARGUMENT", "Provided MD5 hash doesn't match calculated MD5 hash");
+                }
+            }
             let gen = next(&mut state);
             let Some(b) = state.buckets.get_mut(*bucket) else { return gerror(404, "NOT_FOUND", "The specified bucket does not exist.") };
-            let o = new_obj(req.body.clone(), req.header("Content-Type").unwrap_or("application/octet-stream").to_string(), gen);
+            let mut o = new_obj(data, ct, gen);
+            if let Some(Value::Object(m)) = meta.get("metadata") {
+                o.metadata = m.clone();
+            }
             let r = object_resource(bucket, &name, &o);
             b.objects.insert(name, o);
             Response::json(200, r.to_json())
+        }
+        ("GET", ["storage", "v1", "b", bucket, "storageLayout"]) => match state.buckets.get(*bucket) {
+            Some(_) => Response::json(
+                200,
+                obj([
+                    ("kind", Value::from("storage#storageLayout")),
+                    ("bucket", Value::from(*bucket)),
+                    ("location", Value::from("US-EAST1")),
+                    ("locationType", Value::from("region")),
+                    ("hierarchicalNamespace", obj([("enabled", Value::Bool(false))])),
+                ])
+                .to_json(),
+            ),
+            None => not_found(),
+        },
+        ("PATCH" | "PUT", ["storage", "v1", "b", bucket, "o", name]) => {
+            let patch = parse_json(&req.body).unwrap_or_default();
+            let Some(o) = state.buckets.get_mut(*bucket).and_then(|b| b.objects.get_mut(*name)) else { return not_found() };
+            if let Some(ct) = patch.get("contentType") {
+                o.content_type = ct.to_string();
+            }
+            match patch.get("metadata") {
+                // PATCH merges keys (null removes one), PUT replaces
+                Some(Value::Object(m)) if req.method == "PATCH" => {
+                    for (k, v) in m {
+                        if v.is_null() {
+                            o.metadata.remove(k);
+                        } else {
+                            o.metadata.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                Some(Value::Object(m)) => o.metadata = m.clone(),
+                Some(Value::Null) => o.metadata.clear(),
+                _ => {}
+            }
+            o.updated = now_millis();
+            Response::json(200, object_resource(bucket, name, o).to_json())
+        }
+        // atomic move within a bucket (Objects: move)
+        ("POST", ["storage", "v1", "b", bucket, "o", src, "moveTo", "o", dst]) => {
+            let gen = next(&mut state);
+            let Some(b) = state.buckets.get_mut(*bucket) else { return not_found() };
+            if req.query_param("ifSourceGenerationMatch").is_some_and(|g| b.objects.get(*src).is_some_and(|o| o.generation.to_string() != g)) {
+                return gerror(412, "FAILED_PRECONDITION", "At least one of the pre-conditions you specified did not hold.");
+            }
+            let Some(o) = b.objects.remove(*src) else { return not_found() };
+            let o = GcsObj { generation: gen, updated: now_millis(), ..o };
+            let r = object_resource(bucket, dst, &o);
+            b.objects.insert(dst.to_string(), o);
+            Response::json(200, r.to_json())
+        }
+        ("POST", ["storage", "v1", "b", sb, "o", so, "rewriteTo", "b", db, "o", dobj]) => {
+            let Some(src) = state.buckets.get(*sb).and_then(|b| b.objects.get(*so)).cloned() else { return not_found() };
+            let gen = next(&mut state);
+            let Some(dst) = state.buckets.get_mut(*db) else { return not_found() };
+            let o = GcsObj { generation: gen, updated: now_millis(), ..src };
+            let size = o.data.len().to_string();
+            let r = object_resource(db, dobj, &o);
+            dst.objects.insert(dobj.to_string(), o);
+            Response::json(200, obj([("kind", Value::from("storage#rewriteResponse")), ("totalBytesRewritten", Value::from(size.clone())), ("objectSize", Value::from(size)), ("done", Value::Bool(true)), ("resource", r)]).to_json())
         }
         ("GET", ["storage", "v1", "b"]) => {
             let items: Vec<Value> = state.buckets.iter().map(|(n, b)| bucket_resource(n, b)).collect();
@@ -640,10 +809,22 @@ fn storage(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
             let prefix = req.query_param("prefix").unwrap_or_default();
             let max: usize = req.query_param("maxResults").and_then(|m| m.parse().ok()).unwrap_or(1000);
             let token = req.query_param("pageToken").unwrap_or_default();
+            let delimiter = req.query_param("delimiter").filter(|d| !d.is_empty());
             let mut items = Vec::new();
+            let mut prefixes: Vec<String> = Vec::new();
             let mut next_token = None;
             for (n, o) in b.objects.range(token..).filter(|(n, _)| n.starts_with(&prefix)) {
-                if items.len() == max {
+                // with a delimiter, names continuing past it roll up into `prefixes`
+                if let Some(d) = &delimiter {
+                    if let Some(i) = n[prefix.len()..].find(d.as_str()) {
+                        let p = n[..prefix.len() + i + d.len()].to_string();
+                        if prefixes.last() != Some(&p) {
+                            prefixes.push(p);
+                        }
+                        continue;
+                    }
+                }
+                if items.len() + prefixes.len() >= max {
                     next_token = Some(n.clone());
                     break;
                 }
@@ -652,6 +833,9 @@ fn storage(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
             let mut m = ObjectMap::new();
             m.insert("kind".to_string(), Value::from("storage#objects"));
             m.insert("items".to_string(), Value::Array(items));
+            if !prefixes.is_empty() {
+                m.insert("prefixes".to_string(), Value::Array(prefixes.into_iter().map(Value::from).collect()));
+            }
             if let Some(t) = next_token {
                 m.insert("nextPageToken".to_string(), Value::from(t));
             }
@@ -659,7 +843,30 @@ fn storage(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
         }
         ("GET", ["storage", "v1", "b", bucket, "o", name]) => match state.buckets.get(*bucket).and_then(|b| b.objects.get(*name)) {
             None => not_found(),
-            Some(o) if req.query_param("alt").as_deref() == Some("media") => Response::new(200).with_header("Content-Type", o.content_type.clone()).with_body(o.data.clone()),
+            Some(o) if req.query_param("alt").as_deref() == Some("media") => {
+                let hashes = format!("crc32c={},md5={}", base64_encode(&crc32c(&o.data).to_be_bytes()), base64_encode(&md5(&o.data)));
+                let r = Response::new(200).with_header("Content-Type", o.content_type.clone()).with_header("x-goog-hash", hashes).with_header("x-goog-generation", o.generation.to_string()).with_header("x-goog-stored-content-length", o.data.len().to_string());
+                // ranged (sliced) downloads: Range: bytes=a-b / a- / -n
+                match req.header("Range").and_then(|v| v.trim().strip_prefix("bytes=").map(String::from)) {
+                    Some(spec) => {
+                        let total = o.data.len();
+                        let (a, z) = spec.split_once('-').unwrap_or((spec.as_str(), ""));
+                        let (start, end) = if a.trim().is_empty() {
+                            let n: usize = z.trim().parse().unwrap_or(0);
+                            (total.saturating_sub(n), total.saturating_sub(1))
+                        } else {
+                            (a.trim().parse().unwrap_or(0), z.trim().parse::<usize>().unwrap_or(usize::MAX).min(total.saturating_sub(1)))
+                        };
+                        if start >= total {
+                            return gerror(416, "OUT_OF_RANGE", "Request range not satisfiable").with_header("Content-Range", format!("bytes */{}", total));
+                        }
+                        let mut r = r.with_header("Content-Range", format!("bytes {}-{}/{}", start, end, total)).with_body(o.data[start..=end].to_vec());
+                        r.status = 206;
+                        r
+                    }
+                    None => r.with_body(o.data.clone()),
+                }
+            }
             Some(o) => Response::json(200, object_resource(bucket, name, o).to_json()),
         },
         ("DELETE", ["storage", "v1", "b", bucket, "o", name]) => match state.buckets.get_mut(*bucket).and_then(|b| b.objects.remove(*name)) {
@@ -720,6 +927,35 @@ fn pubsub(st: &Shared, req: &ServerRequest, s: &[&str]) -> Response {
     let body = parse_json(&req.body).unwrap_or_default();
     let ok = |v: Value| Response::json(200, v.to_json());
     match s {
+        // projects.topics.list / projects.subscriptions.list / topics.subscriptions.list
+        ["v1", "projects", project, kind @ ("topics" | "subscriptions")] if req.method == "GET" => {
+            let prefix = format!("projects/{}/{}/", project, kind);
+            let size = req.query_param("pageSize").and_then(|p| p.parse::<usize>().ok()).filter(|p| *p > 0).unwrap_or(100);
+            let token = req.query_param("pageToken").unwrap_or_default();
+            let names: Vec<String> = if *kind == "topics" { state.topics.keys().cloned().collect() } else { state.subscriptions.keys().cloned().collect() };
+            let mut names: Vec<String> = names.into_iter().filter(|n| n.starts_with(&prefix) && n.as_str() > token.as_str()).collect();
+            names.sort();
+            let next = if names.len() > size { names.get(size - 1).cloned() } else { None };
+            names.truncate(size);
+            let items: Vec<Value> = names
+                .iter()
+                .map(|n| if *kind == "topics" { obj([("name", Value::from(n.as_str()))]) } else { sub_resource(n, &state.subscriptions[n]) })
+                .collect();
+            let mut m = ObjectMap::new();
+            m.insert(kind.to_string(), Value::Array(items));
+            if let Some(t) = next {
+                m.insert("nextPageToken".into(), Value::from(t));
+            }
+            ok(Value::Object(m))
+        }
+        ["v1", "projects", project, "topics", topic, "subscriptions"] if req.method == "GET" => {
+            let name = format!("projects/{}/topics/{}", project, topic);
+            if !state.topics.contains_key(&name) {
+                return gerror(404, "NOT_FOUND", "Resource not found (resource=topic).");
+            }
+            let subs: Vec<Value> = state.subscriptions.iter().filter(|(_, sub)| sub.topic == name).map(|(n, _)| Value::from(n.as_str())).collect();
+            ok(obj([("subscriptions", Value::Array(subs))]))
+        }
         ["v1", "projects", project, "topics", rest] => {
             let (topic, verb) = rest.split_once(':').unwrap_or((rest, ""));
             let name = format!("projects/{}/topics/{}", project, topic);

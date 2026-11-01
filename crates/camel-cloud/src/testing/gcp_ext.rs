@@ -136,7 +136,7 @@ impl GcpMock {
 /// Dispatch a request for one of the extra services (`None` = not handled here).
 pub(super) fn handle(st: &Shared, req: &ServerRequest, s: &[&str]) -> Option<Response> {
     Some(match s {
-        ["bigquery", "v2", "projects", project, rest @ ..] => bigquery(st, req, project, rest),
+        ["bigquery", "v2", "projects", project, rest @ ..] => bq_error_format(bigquery(st, req, project, rest)),
         ["v1", "projects", project, "secrets", rest @ ..] => secrets(st, req, project, rest),
         ["v1", "projects", project, "locations", location, "functions", rest @ ..] => functions(st, req, project, location, rest),
         ["v1", "projects", project, "locations", location, "functions:generateUploadUrl"] => functions(st, req, project, location, &[":generateUploadUrl"]),
@@ -158,6 +158,40 @@ fn bq_coerce(v: &Value, ty: &str) -> Result<Value, String> {
         (_, "BOOLEAN" | "BOOL") => Value::Bool(v.as_bool().ok_or_else(|| format!("Cannot convert value to boolean: {}", v))?),
         _ => Value::from(v.to_string()),
     })
+}
+
+/// BigQuery error bodies carry an `errors` list with the reason (`notFound`, `duplicate`,
+/// `invalid`, ...) and a canonical gRPC-style status, as clients (bq, the Java SDK) read them.
+fn bq_error_format(resp: Response) -> Response {
+    if resp.status < 400 {
+        return resp;
+    }
+    let Ok(v) = parse_json(&resp.body) else { return resp };
+    let Some(e) = v.get("error") else { return resp };
+    if e.get("errors").is_some() {
+        return resp;
+    }
+    let reason = e.get("status").map(|r| r.to_string()).unwrap_or_else(|| "backendError".into());
+    let message = e.get("message").map(|m| m.to_string()).unwrap_or_default();
+    let status = match resp.status {
+        400 => "INVALID_ARGUMENT",
+        401 => "UNAUTHENTICATED",
+        403 => "PERMISSION_DENIED",
+        404 => "NOT_FOUND",
+        409 => "ALREADY_EXISTS",
+        412 => "FAILED_PRECONDITION",
+        _ => "INTERNAL",
+    };
+    let body = obj([(
+        "error",
+        obj([
+            ("code", Value::Int(resp.status as i64)),
+            ("message", Value::from(message.clone())),
+            ("errors", Value::Array(vec![obj([("message", Value::from(message)), ("domain", Value::from("global")), ("reason", Value::from(reason))])])),
+            ("status", Value::from(status)),
+        ]),
+    )]);
+    Response::json(resp.status, body.to_json())
 }
 
 fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> Response {
@@ -239,6 +273,41 @@ fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> R
             let list: Vec<Value> = ids.into_iter().map(|d| obj([("kind", Value::from("bigquery#dataset")), ("datasetReference", obj([("projectId", Value::from(project)), ("datasetId", Value::from(d))]))])).collect();
             Response::json(200, obj([("kind", Value::from("bigquery#datasetList")), ("datasets", Value::Array(list))]).to_json())
         }
+        ("GET", ["datasets", dataset]) => {
+            let key = format!("{}.{}", project, dataset);
+            let prefix = format!("{}.", key);
+            let loc = ext.bq_datasets.get(&key).map(|(l, t)| (l.clone(), *t)).or_else(|| ext.tables.keys().any(|k| k.starts_with(&prefix)).then(|| ("US".to_string(), 0)));
+            match loc {
+                Some((location, created)) => Response::json(
+                    200,
+                    obj([
+                        ("kind", Value::from("bigquery#dataset")),
+                        ("id", Value::from(format!("{}:{}", project, dataset))),
+                        ("datasetReference", obj([("projectId", Value::from(project)), ("datasetId", Value::from(*dataset))])),
+                        ("location", Value::from(location)),
+                        ("creationTime", Value::from(created.to_string())),
+                        ("lastModifiedTime", Value::from(created.to_string())),
+                        ("etag", Value::from(format!("\"{}\"", created))),
+                    ])
+                    .to_json(),
+                ),
+                None => gerror(404, "notFound", &format!("Not found: Dataset {}:{}", project, dataset)),
+            }
+        }
+        // tabledata.list: rows as {f: [{v: ...}]} in schema order (string-encoded scalars)
+        ("GET", ["datasets", dataset, "tables", table, "data"]) => {
+            let key = format!("{}.{}.{}", project, dataset, table);
+            let Some(t) = ext.tables.get(&key) else { return gerror(404, "notFound", &format!("Not found: Table {}:{}.{}", project, dataset, table)) };
+            let start = req.query_param("startIndex").and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+            let max = req.query_param("maxResults").and_then(|v| v.parse::<usize>().ok()).unwrap_or(100_000);
+            let cell = |v: Option<&Value>| match v {
+                None | Some(Value::Null) => obj([("v", Value::Null)]),
+                Some(Value::String(s)) => obj([("v", Value::from(s.clone()))]),
+                Some(other) => obj([("v", Value::from(other.to_string()))]),
+            };
+            let rows: Vec<Value> = t.rows.iter().skip(start).take(max).map(|r| obj([("f", Value::Array(t.schema.iter().map(|(n, _)| cell(r.get(n))).collect()))])).collect();
+            Response::json(200, obj([("kind", Value::from("bigquery#tableDataList")), ("totalRows", Value::from(t.rows.len().to_string())), ("rows", Value::Array(rows))]).to_json())
+        }
         ("DELETE", ["datasets", dataset]) => {
             let key = format!("{}.{}", project, dataset);
             let prefix = format!("{}.", key);
@@ -292,7 +361,12 @@ fn bigquery(st: &Shared, req: &ServerRequest, project: &str, rest: &[&str]) -> R
         }
         ("GET", ["datasets", dataset, "tables"]) => {
             let prefix = format!("{}.{}.", project, dataset);
-            let list: Vec<Value> = ext.tables.keys().filter_map(|k| k.strip_prefix(&prefix)).map(|t| obj([("kind", Value::from("bigquery#table")), ("tableReference", obj([("projectId", Value::from(project)), ("datasetId", Value::from(*dataset)), ("tableId", Value::from(t))]))])).collect();
+            let list: Vec<Value> = ext
+                .tables
+                .keys()
+                .filter_map(|k| k.strip_prefix(&prefix))
+                .map(|t| obj([("kind", Value::from("bigquery#table")), ("id", Value::from(format!("{}:{}.{}", project, dataset, t))), ("type", Value::from("TABLE")), ("tableReference", obj([("projectId", Value::from(project)), ("datasetId", Value::from(*dataset)), ("tableId", Value::from(t))]))]))
+                .collect();
             Response::json(200, obj([("kind", Value::from("bigquery#tableList")), ("totalItems", Value::Int(list.len() as i64)), ("tables", Value::Array(list))]).to_json())
         }
         ("GET", ["datasets", dataset, "tables", table]) => {
@@ -479,8 +553,25 @@ fn bq_job(st: &Shared, project: &str, body: &Value) -> Response {
             }
             stats.insert("extract".into(), obj([("destinationUriFileCounts", Value::Array(vec![Value::from("1")]))]));
             Ok(())
+        } else if let Some(query) = cfg.get("query") {
+            // query jobs (bq query, client libraries' query()): results via getQueryResults
+            if query.get("useLegacySql").is_some_and(|l| l.is_truthy()) {
+                return Err(("invalidQuery".into(), "Legacy SQL is not supported by the emulator".into()));
+            }
+            let text = query.get("query").map(|q| q.to_string()).unwrap_or_default();
+            let mut params = HashMap::new();
+            for p in query.get("queryParameters").and_then(|a| a.as_array()).cloned().unwrap_or_default() {
+                let name = p.get("name").map(|n| n.to_string()).unwrap_or_default();
+                let ty = p.get("parameterType").and_then(|t| t.get("type")).map(|t| t.to_string()).unwrap_or_else(|| "STRING".into());
+                let raw = p.get("parameterValue").and_then(|v| v.get("value")).cloned().unwrap_or_default();
+                params.insert(name, bq_coerce(&raw, &ty).unwrap_or(raw));
+            }
+            let job = run_sql(&mut guard.ext, project, &text, &params).map_err(|e| ("invalidQuery".to_string(), e))?;
+            stats.insert("query".into(), obj([("totalBytesProcessed", Value::from("0")), ("cacheHit", Value::Bool(false)), ("statementType", Value::from("SELECT"))]));
+            guard.ext.jobs.insert(job_id.clone(), BqJob { pending_polls: 0, ..job });
+            Ok(())
         } else {
-            Err(("invalid".into(), "Only load and extract jobs are supported by the emulator (use jobs.query)".into()))
+            Err(("invalid".into(), "Only load, extract and query jobs are supported by the emulator".into()))
         }
     })();
     let mut status = ObjectMap::new();
