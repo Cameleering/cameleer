@@ -105,6 +105,17 @@ impl Interp {
         if is_promise(&v) {
             return Ok(v);
         }
+        if let Some(g) = crate::pyext::coroutine_of(&v) {
+            // a Python coroutine becomes a task when awaited / scheduled
+            let p = g.0.borrow().promise.clone();
+            if let Some(p) = p {
+                return Ok(p);
+            }
+            g.0.borrow_mut().coroutine = false;
+            let p = self.start_async(g.clone())?;
+            g.0.borrow_mut().coroutine = true;
+            return Ok(p);
+        }
         let p = self.new_promise();
         self.resolve_promise(&p, v)?;
         Ok(p)

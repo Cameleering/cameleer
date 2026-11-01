@@ -54,6 +54,7 @@ mod overload;
 mod media;
 mod parser;
 mod promise;
+mod pyext;
 mod python;
 mod stack;
 mod value;

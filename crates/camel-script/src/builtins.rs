@@ -82,6 +82,7 @@ pub fn install_globals(it: &mut Interp) {
                     "next", "iter", "issubclass", "setattr", "callable", "id", "vars",
                 ],
             );
+            crate::pyext::install(it);
             for e in ["Exception", "ValueError", "TypeError", "KeyError", "IndexError", "ZeroDivisionError", "RuntimeError", "AttributeError", "NameError", "AssertionError", "StopIteration", "NotImplementedError"] {
                 it.globals.define(e, V::host(Host::Type(e.to_string())));
             }
@@ -271,6 +272,11 @@ pub fn display(it: &Interp, v: &V, depth: usize) -> String {
             }
         }
         V::Arr(a) => {
+            if d == Dialect::Python {
+                if let Some(s) = it.namedtuple_display(a) {
+                    return s;
+                }
+            }
             let items = a.borrow().clone();
             match d {
                 Dialect::Js => items.iter().map(|x| if x.is_nullish() { String::new() } else { display(it, x, depth + 1) }).collect::<Vec<_>>().join(","),
@@ -337,7 +343,10 @@ pub fn display(it: &Interp, v: &V, depth: usize) -> String {
                     match d {
                         Dialect::Js => "[object Object]".into(),
                         Dialect::Jsonnet => jsonnet_manifest(v),
-                        Dialect::Python => format!("{{{}}}", items.iter().map(|(k, x)| format!("{}: {}", py_repr(it, &V::Str(k.clone())), display_nested(it, x, depth))).collect::<Vec<_>>().join(", ")),
+                        Dialect::Python => {
+                            let inner = format!("{{{}}}", items.iter().map(|(k, x)| format!("{}: {}", py_repr(it, &V::Str(k.clone())), display_nested(it, x, depth))).collect::<Vec<_>>().join(", "));
+                            it.py_dict_display(o, inner.clone()).unwrap_or(inner)
+                        }
                         Dialect::Groovy => {
                             if items.is_empty() {
                                 return "[:]".into();
@@ -776,7 +785,7 @@ fn sort_with(it: &mut Interp, items: Vec<V>, f: Option<&V>, js_default: bool, po
                     })
                 })
             } else {
-                sort_vals(it, items, &mut |it, a, b| Ok(natural(it, a, b)))
+                sort_vals(it, items, &mut |it, a, b| it.py_order(a, b, pos))
             }
         }
     }
@@ -1273,6 +1282,11 @@ pub fn as_type(it: &mut Interp, v: V, t: &str, pos: u32) -> R<V> {
 
 /// Members of namespaces: constants or functions.
 pub fn ns_member(it: &mut Interp, ns: &'static str, name: &str, _pos: u32) -> R<V> {
+    if it.d == Dialect::Python {
+        if let Some(v) = it.py_ns_member(ns, name) {
+            return Ok(v);
+        }
+    }
     if it.d == Dialect::Js {
         if let Some(v) = crate::jsext::ns_member(it, ns, name)? {
             return Ok(v);
@@ -1798,7 +1812,7 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
                         let kv = it.call(&k, V::Undef, vec![x.clone()], pos)?;
                         keyed.push(V::arr(vec![kv, x]));
                     }
-                    let sorted = sort_vals(it, keyed, &mut |it, a, b| Ok(natural(it, &first(a), &first(b))))?;
+                    let sorted = sort_vals(it, keyed, &mut |it, a, b| it.py_order(&first(a), &first(b), pos))?;
                     sorted.iter().map(|p| if let V::Arr(a) = p { a.borrow()[1].clone() } else { V::Null }).collect()
                 }
                 None => sort_with(it, items, None, false, pos)?,
@@ -1906,6 +1920,7 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
             let i = iarg(it, &args, 0, 0);
             V::string(if i < 0 { format!("-0x{:x}", -i) } else { format!("0x{:x}", i) })
         }
+        "type" if args.len() == 3 => it.py_type3(&a0, &arg(&args, 1), &arg(&args, 2), pos)?,
         "type" => match crate::classes::class_of(&a0) {
             Some(c) => V::Func(c),
             None => V::host(Host::Type(py_type_name(&a0).to_string())),
@@ -2060,6 +2075,11 @@ fn json_dumps(it: &Interp, v: &V, kwa: &Option<ObjRef>) -> String {
 
 /// Call a namespace member function (`Math.max`, `JSON.parse`, `json.loads`, `std.length`...).
 pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: u32) -> R<V> {
+    if it.d == Dialect::Python {
+        if let Some(v) = it.py_call_ns_fn(ns, name, args.clone(), pos)? {
+            return Ok(v);
+        }
+    }
     if it.d == Dialect::Js {
         if let Some(v) = crate::jsext::call_ns_fn(it, ns, name, &args, pos)? {
             return Ok(v);
@@ -2661,6 +2681,11 @@ pub fn value_property(it: &mut Interp, o: &V, name: &str, pos: u32) -> R<V> {
             return Ok(r);
         }
     }
+    if let (V::Arr(a), Dialect::Python) = (o, it.d) {
+        if let Some(r) = it.namedtuple_member(a, name, pos)? {
+            return Ok(r);
+        }
+    }
     match o {
         V::Str(s) => {
             if let Ok(i) = name.parse::<i64>() {
@@ -2856,6 +2881,16 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
         if name == "%groovy_use" {
             return it.groovy_use(&args, pos);
         }
+        if it.d == Dialect::Python {
+            if let Some(v) = it.py_internal(recv, name, &args, pos)? {
+                return Ok(v);
+            }
+            if let (V::Arr(a), Some(m)) = (recv, name.strip_prefix("%nt")) {
+                if let Some(v) = it.namedtuple_method(a, m, &args, pos)? {
+                    return Ok(v);
+                }
+            }
+        }
     }
     if let V::Obj(o) = recv {
         if crate::jsext::is_ext(o) {
@@ -2910,6 +2945,7 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
                 string_method(it, s, name, &args, pos)?
             }
         },
+        V::Arr(a) if it.d == Dialect::Python && name.starts_with('_') && it.namedtuple_method(a, name, &args, pos)?.is_some() => it.namedtuple_method(a, name, &args, pos)?,
         V::Arr(a) => array_method(it, a.clone(), recv, name, args.clone(), pos)?,
         V::Obj(o) => {
             let kind = o.borrow().kind.clone();
@@ -2921,6 +2957,10 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
                     "getCause" => Some(V::Null),
                     "printStackTrace" => Some(V::Null),
                     _ => None,
+                },
+                ObjKind::Plain if it.d == Dialect::Python && !it.py_dicts.is_empty() => match it.py_dict_method(o, recv, name, &args, pos)? {
+                    Some(v) => Some(v),
+                    None => object_method(it, o.clone(), recv, name, args.clone(), pos)?,
                 },
                 _ => object_method(it, o.clone(), recv, name, args.clone(), pos)?,
             }
@@ -4406,7 +4446,7 @@ fn array_method(it: &mut Interp, a: ArrRef, recv: &V, name: &str, mut args: Vec<
                     let kv = it.call(&k, V::Undef, vec![x.clone()], pos)?;
                     keyed.push(V::arr(vec![kv, x]));
                 }
-                let s = sort_vals(it, keyed, &mut |it, a, b| Ok(natural(it, &first(a), &first(b))))?;
+                let s = sort_vals(it, keyed, &mut |it, a, b| it.py_order(&first(a), &first(b), pos))?;
                 s.iter().map(|p| if let V::Arr(a) = p { a.borrow()[1].clone() } else { V::Null }).collect()
             } else {
                 sort_with(it, items(), if f.is_nullish() { None } else { Some(&f) }, js, pos)?

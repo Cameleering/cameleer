@@ -286,6 +286,7 @@ impl Interp {
                         let mut a = vec![this.clone()];
                         a.extend(args);
                         self.call(&f, V::Undef, a, pos)?;
+                        self.py_after_construct(&def, &this);
                     }
                     _ => {
                         if error_base.is_some() {
@@ -872,6 +873,15 @@ impl Interp {
                 self.set_error_args(recv, args);
                 Ok(V::Null)
             }
+            "__new__" if self.d == Dialect::Python && args.len() >= 4 => self.py_type_new(args, pos),
+            "__new__" if self.d == Dialect::Python => match args.first() {
+                Some(V::Func(c)) => self.construct_class(c, args[1..].to_vec(), pos),
+                _ => Ok(V::Null),
+            },
+            "__call__" if self.d == Dialect::Python => match recv {
+                V::Func(c) => self.construct_class(c, args.to_vec(), pos),
+                _ => Ok(V::Null),
+            },
             "toString" | "__str__" | "__repr__" => Ok(V::string(self.display(recv))),
             "equals" | "__eq__" => Ok(V::Bool(recv.same(args.first().unwrap_or(&V::Null)))),
             "hashCode" | "__hash__" => Ok(V::Int(0)),

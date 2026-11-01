@@ -141,6 +141,8 @@ pub struct GenState {
     pub requests: std::collections::VecDeque<(Resume, V)>,
     /// Async generator: suspended at an `await` (requests wait).
     pub awaiting: bool,
+    /// Python coroutine object (an `async def` call not yet awaited / scheduled).
+    pub coroutine: bool,
 }
 
 impl Default for V {
