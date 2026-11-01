@@ -37,6 +37,7 @@ pub mod ast;
 mod builtins;
 mod classes;
 mod collections;
+mod dslib;
 mod dstime;
 pub mod error;
 mod format;
@@ -246,6 +247,7 @@ impl Script {
         let mut it = interp::Interp::new(self.dialect, self.src.clone(), host.clone());
         // relative ES module / Python imports resolve against the script's directory
         it.script_dir = self.options.get("scriptDir").filter(|d| !d.is_empty()).map(std::path::PathBuf::from);
+        it.script_options = self.options.clone();
         if self.dialect == Dialect::Jsonnet {
             let payload = match self.payload(&host) {
                 Ok(p) => p,
@@ -256,7 +258,27 @@ impl Script {
             };
             it.globals.define("payload", payload);
         }
-        let r = it.run_program(&self.prog);
+        let mut r = it.run_program(&self.prog);
+        if self.dialect == Dialect::Jsonnet {
+            // top-level arguments: a program evaluating to a function is called with them
+            if let Ok(value::V::Func(f)) = &r {
+                let f = f.clone();
+                let mut args = Vec::new();
+                for p in &f.def.params {
+                    let name = match &p.pat {
+                        ast::Pat::Id(n) => n.clone(),
+                        _ => String::new(),
+                    };
+                    args.push(match jsonnet::external_value(&it, "tla", &name) {
+                        Some(v) => v,
+                        None if name == "payload" => it.globals.lookup("payload").unwrap_or(value::V::Null),
+                        None if p.default.is_some() => value::V::Undef,
+                        None => value::V::Null,
+                    });
+                }
+                r = it.call(&value::V::Func(f), value::V::Undef, args, 0);
+            }
+        }
         let result = match r {
             Ok(v) | Err(interp::Ctrl::Return(v)) | Err(interp::Ctrl::Value(v)) => self.finish(&mut it, v),
             Err(interp::Ctrl::Throw(e)) => Err(self.to_error(&it, &e)),

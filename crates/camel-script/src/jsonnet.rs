@@ -679,12 +679,28 @@ fn fields(v: &V) -> Vec<String> {
     }
 }
 
+/// An external variable / top-level argument: script option `<kind>.<name>` (JSON when it
+/// parses, else a string), then the exchange variable, header or property of that name.
+pub fn external_value(it: &Interp, kind: &str, name: &str) -> Option<V> {
+    if let Some(s) = it.script_options.get(&format!("{}.{}", kind, name)) {
+        return Some(crate::json::parse(s).unwrap_or_else(|_| V::str(s)));
+    }
+    if let Some(v) = it.host.properties.borrow().get(&format!("CamelVariable.{}", name)) {
+        return Some(from_value(v));
+    }
+    if let Some(v) = it.host.headers.borrow().get(name) {
+        return Some(from_value(v));
+    }
+    it.host.properties.borrow().get(name).map(from_value)
+}
+
 /// Members of `std` / `cml` / `ds` that are values.
 pub fn std_member(_it: &mut Interp, ns: &'static str, name: &str) -> R<V> {
     Ok(match (ns, name) {
         ("std", "thisFile") => V::str(""),
         ("std", "pi") => V::Num(std::f64::consts::PI),
         ("ds", "datetime") => V::host(Host::Ns("ds.datetime")),
+        ("ds", m) if crate::dslib::module(m).is_some() => crate::dslib::module(m).unwrap(),
         _ => V::host(Host::NsFn(ns, name.to_string())),
     })
 }
@@ -715,7 +731,11 @@ pub fn std_call(it: &mut Interp, ns: &str, name: &str, args: Vec<V>, pos: u32) -
             });
         }
         "ds" => {
-            // DataSonnet `ds` library subset (argument order: collection first)
+            match crate::dslib::call(it, "ds", name, args.clone(), pos) {
+                Err(crate::interp::Ctrl::Throw(e)) if crate::builtins::error_name(&e) == "RUNTIME ERROR" && it.display(&e).contains("field does not exist") => {}
+                other => return other,
+            }
+            // remaining aliases of the std library (argument order: collection first)
             let mapped: Option<(&str, Vec<V>)> = match name {
                 "upper" | "uppercase" => Some(("asciiUpper", vec![a0.clone()])),
                 "lower" | "lowercase" => Some(("asciiLower", vec![a0.clone()])),
@@ -750,6 +770,13 @@ pub fn std_call(it: &mut Interp, ns: &str, name: &str, args: Vec<V>, pos: u32) -
     }
     let call = |it: &mut Interp, f: &V, a: Vec<V>| it.call(f, V::Undef, a, pos);
     Ok(match name {
+        "extVar" => {
+            let k = str_arg(it, &args, 0);
+            match external_value(it, "extVar", &k) {
+                Some(v) => v,
+                None => return it.throw("RUNTIME ERROR", format!("undefined external variable: {}", k), Some(pos)),
+            }
+        }
         "length" => match &a0 {
             V::Str(s) => V::Int(s.chars().count() as i64),
             V::Arr(a) => V::Int(a.borrow().len() as i64),

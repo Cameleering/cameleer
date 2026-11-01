@@ -126,6 +126,8 @@ pub struct Interp {
     pub py_dicts: HashMap<usize, (std::rc::Weak<RefCell<Obj>>, crate::pyext::PyDict)>,
     /// Python classes being created by a metaclass `__new__` (for `type.__new__`).
     pub pending_class: Vec<V>,
+    /// The script's options (DataSonnet `extVar.*` / `tla.*`).
+    pub script_options: std::collections::BTreeMap<String, String>,
 }
 
 /// JavaScript number to string.
@@ -237,6 +239,7 @@ impl Interp {
             categories: Vec::new(),
             py_dicts: HashMap::new(),
             pending_class: Vec::new(),
+            script_options: std::collections::BTreeMap::new(),
         };
         crate::builtins::install_globals(&mut it);
         it

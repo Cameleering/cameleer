@@ -123,6 +123,7 @@ name = "camel-script"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-tls",
  "camel-yaml",
 ]
 
