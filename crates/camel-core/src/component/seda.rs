@@ -26,10 +26,10 @@ use std::time::Duration;
 use crate::context::{CamelContext, WeakContext};
 use crate::error::{kinds, CamelError, Result};
 use crate::message::Exchange;
-use crate::spi::{Component, Consumer, Endpoint, PollingConsumer, Processor, Producer, Service};
+use crate::spi::{Component, Consumer, Endpoint, PollingConsumer, Processor, Producer, Service, SuspendableService};
 use crate::util::Parameters;
 
-use super::support::{copy_results, deadline_after, process_consumer_exchange, BackgroundThreads, StopFlag, ThreadSpawner};
+use super::support::{copy_results, deadline_after, process_consumer_exchange, BackgroundThreads, StopFlag, SuspendState, ThreadSpawner};
 use crate::async_delay;
 
 /// Default queue capacity.
@@ -415,6 +415,7 @@ impl Endpoint for SedaEndpoint {
             processor,
             threads: BackgroundThreads::new(),
             started: Mutex::new(false),
+            suspend: SuspendState::new(),
         }))
     }
     fn create_polling_consumer(&self) -> Result<Arc<dyn PollingConsumer>> {
@@ -498,6 +499,7 @@ struct SedaConsumer {
     processor: Arc<dyn Processor>,
     threads: BackgroundThreads,
     started: Mutex<bool>,
+    suspend: Arc<SuspendState>,
 }
 
 fn dispatch(item: QueueItem, queue: &SedaQueue, multiple: bool, processor: &Arc<dyn Processor>, ctx: &WeakContext, logger: &str) {
@@ -537,6 +539,7 @@ struct SedaWorker {
     poll_timeout: Duration,
     spawner: ThreadSpawner,
     name: String,
+    suspend: Arc<SuspendState>,
 }
 
 /// The consumer loop. Each exchange runs inside [`async_delay::run_detachable`]: when an
@@ -547,6 +550,15 @@ fn seda_worker(w: Arc<SedaWorker>, flag: Arc<StopFlag>) {
     loop {
         if flag.is_stopped() {
             break;
+        }
+        if w.suspend.get() {
+            // suspended: leave the messages queued until resumed
+            drop(st);
+            if w.suspend.wait_while_suspended(&flag) {
+                break;
+            }
+            st = w.queue.state.lock().unwrap();
+            continue;
         }
         if let Some(item) = st.items.pop_front() {
             w.queue.not_full.notify_one();
@@ -587,10 +599,14 @@ impl Service for SedaConsumer {
             let (multiple, poll_timeout) = (self.config.multiple_consumers, self.config.poll_timeout);
             let logger = self.uri.clone();
             let spawner = self.threads.spawner();
+            let suspend = self.suspend.clone();
             self.threads.spawn(&format!("Camel {} #{}", self.uri, i + 1), move |flag| {
                 if multiple {
                     // pub/sub: pop + fan-out under one lock to preserve ordering
                     while !flag.is_stopped() {
+                        if suspend.wait_while_suspended(&flag) {
+                            break;
+                        }
                         let _guard = match queue.pubsub.try_lock() {
                             Ok(g) => g,
                             Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
@@ -616,11 +632,15 @@ impl Service for SedaConsumer {
                     return;
                 }
                 let name = std::thread::current().name().unwrap_or("Camel seda").to_string();
-                seda_worker(Arc::new(SedaWorker { queue, processor, ctx, logger, poll_timeout, spawner, name }), flag);
+                seda_worker(Arc::new(SedaWorker { queue, processor, ctx, logger, poll_timeout, spawner, name, suspend }), flag);
             })?;
         }
         *started = true;
         Ok(())
+    }
+
+    fn as_suspendable(&self) -> Option<&dyn SuspendableService> {
+        Some(&*self.suspend)
     }
 
     fn stop(&self) -> Result<()> {
@@ -630,7 +650,7 @@ impl Service for SedaConsumer {
         }
         // Graceful shutdown (Camel's ShutdownAware seda consumer): pending exchanges in the
         // queue are completed before the consumer stops, unless purgeWhenStopping=true.
-        if !self.config.purge_when_stopping && !self.threads.is_current_thread() {
+        if !self.config.purge_when_stopping && !self.suspend.get() && !self.threads.is_current_thread() {
             let timeout = self.ctx.upgrade().map(|c| c.shutdown_timeout()).unwrap_or(Duration::from_secs(45));
             let deadline = std::time::Instant::now() + timeout;
             while self.queue.size() > 0 && std::time::Instant::now() < deadline {
@@ -651,6 +671,7 @@ impl Service for SedaConsumer {
         if self.config.purge_when_stopping {
             self.queue.purge();
         }
+        self.suspend.set(false);
         *started = false;
         Ok(())
     }

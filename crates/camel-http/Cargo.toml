@@ -8,3 +8,4 @@ description = "rust-camel HTTP/1.1 server and client, http/platform-http compone
 [dependencies]
 camel-core = { path = "../camel-core" }
 camel-tls = { path = "../camel-tls" }
+camel-grpc = { path = "../camel-grpc" }

@@ -51,8 +51,17 @@
 //! is removed. Other placeholders are left to the context's property placeholders.
 //!
 //! `kind: Pipe` (and the older `KameletBinding`) resources with `spec.source`,
-//! `spec.steps` and `spec.sink` (each a `ref` to a Kamelet with `properties`, or a
-//! `uri`) are turned into a route whose id is `metadata.name` ([`pipe_to_route`]).
+//! `spec.steps` and `spec.sink` are turned into a route whose id is `metadata.name`
+//! ([`pipe_to_route`]). Each endpoint is a `uri`, a `ref` to a Kamelet with `properties`,
+//! or a `ref` of another kind: Strimzi `KafkaTopic` (`kafka:<name>`), Knative `Channel`/
+//! `Broker` (`vm:<name>`, an in-process channel), Kubernetes `Service`
+//! (`http://<name>[.<namespace>]`), `Endpoint`, or kinds handled by a resolver registered
+//! with [`register_pipe_ref_resolver`]. `dataTypes: {in|out: {format: X}}` on an endpoint
+//! inserts a `transformDataType` to `X` (validated against the Kamelet's
+//! `spec.dataTypes.<slot>.types`, whose `format`/`mediaType` are applied) after a source /
+//! action and before an action / sink. `spec.errorHandler` becomes the route error handler:
+//! `sink` (dead letter channel to its `endpoint` with redelivery `parameters`), `log`
+//! (default error handler) or `none`.
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
@@ -64,7 +73,7 @@ use camel_core::context::WeakContext;
 use camel_core::model::RouteDefinition;
 use camel_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
 use camel_core::util::Parameters;
-use camel_core::{camel_warn, CamelContext, CamelError, Result, Value};
+use camel_core::{CamelContext, CamelError, Result, Value};
 
 use crate::dsl::{build_uri, scalar_string, YamlLoader};
 
@@ -107,8 +116,30 @@ pub struct KameletDefinition {
     pub template: Value,
     /// Template local beans (`spec.template.beans`), created for each Kamelet route.
     pub beans: Vec<Value>,
+    /// Declared data types (`spec.dataTypes.in|out|error`).
+    pub data_types: BTreeMap<String, KameletDataTypes>,
     /// The whole resource.
     pub raw: Value,
+}
+
+/// The data types a Kamelet declares for one slot (`in`, `out`, `error`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KameletDataTypes {
+    pub default: Option<String>,
+    /// name -> (format, mediaType)
+    pub types: BTreeMap<String, (Option<String>, Option<String>)>,
+}
+
+impl KameletDataTypes {
+    fn parse(v: &Value) -> Self {
+        let mut d = KameletDataTypes { default: v.get("default").and_then(scalar_string), types: BTreeMap::new() };
+        if let Some(Value::Object(types)) = v.get("types") {
+            for (name, t) in types {
+                d.types.insert(name.clone(), (t.get("format").and_then(scalar_string), t.get("mediaType").and_then(scalar_string)));
+            }
+        }
+        d
+    }
 }
 
 impl KameletDefinition {
@@ -174,9 +205,16 @@ impl KameletDefinition {
                 return Err(kamelet_error(format!("Kamelet '{}': every template bean requires a 'name'", name)));
             }
         }
+        let mut data_types = BTreeMap::new();
+        if let Some(Value::Object(dt)) = spec.get("dataTypes") {
+            for (slot, v) in dt {
+                data_types.insert(slot.clone(), KameletDataTypes::parse(v));
+            }
+        }
         Ok(KameletDefinition {
             name,
             kamelet_type,
+            data_types,
             title: definition.and_then(|d| d.get("title")).and_then(scalar_string),
             description: definition.and_then(|d| d.get("description")).and_then(scalar_string),
             properties,
@@ -483,7 +521,7 @@ pub fn load_resource_document(loader: &YamlLoader, ctx: &CamelContext, doc: &Val
         }
         "Pipe" | "KameletBinding" => {
             register_kamelet_component(ctx);
-            let route = pipe_to_route(doc)?;
+            let route = pipe_to_route_with(Some(ctx), doc)?;
             Ok(Some(vec![loader.build_route(ctx, &route)?]))
         }
         "Integration" => {
@@ -497,40 +535,175 @@ pub fn load_resource_document(loader: &YamlLoader, ctx: &CamelContext, doc: &Val
     }
 }
 
-fn pipe_endpoint(v: &Value, what: &str) -> Result<String> {
+/// Resolves a Pipe `ref` of a kind other than `Kamelet` to an endpoint uri:
+/// `(kind, apiVersion, name, namespace) -> uri`.
+pub type PipeRefResolver = Arc<dyn Fn(&str, Option<&str>, &str, Option<&str>) -> Option<String> + Send + Sync>;
+
+fn ref_resolvers() -> &'static RwLock<Vec<PipeRefResolver>> {
+    static R: std::sync::OnceLock<RwLock<Vec<PipeRefResolver>>> = std::sync::OnceLock::new();
+    R.get_or_init(Default::default)
+}
+
+/// Register a resolver for Pipe references of non-Kamelet kinds (consulted before the
+/// built-in ones).
+pub fn register_pipe_ref_resolver(f: impl Fn(&str, Option<&str>, &str, Option<&str>) -> Option<String> + Send + Sync + 'static) {
+    ref_resolvers().write().unwrap().insert(0, Arc::new(f));
+}
+
+/// Built-in references: Strimzi `KafkaTopic` -> `kafka:<name>`; Knative `Channel`,
+/// `InMemoryChannel`, `Broker` -> `vm:<name>` (an in-process channel shared by the
+/// integrations of this process, standing in for the Knative eventing mesh); Kubernetes
+/// `Service` -> `http://<name>[.<namespace>]`; `Endpoint`/`Uri` with the uri as name.
+fn builtin_ref(kind: &str, name: &str, namespace: Option<&str>) -> Option<String> {
+    Some(match kind {
+        "KafkaTopic" => format!("kafka:{}", name),
+        "Channel" | "InMemoryChannel" | "KafkaChannel" | "Broker" => format!("vm:{}", name),
+        "Service" => match namespace {
+            Some(ns) => format!("http://{}.{}", name, ns),
+            None => format!("http://{}", name),
+        },
+        "Endpoint" | "Uri" => name.to_string(),
+        _ => return None,
+    })
+}
+
+/// The endpoint of a Pipe source/step/sink: (uri, Kamelet name when it is a Kamelet).
+fn pipe_endpoint_ref(v: &Value, what: &str) -> Result<(String, Option<String>)> {
     let props = v.get("properties");
     if let Some(uri) = v.get("uri").and_then(scalar_string) {
-        return build_uri(&uri, props);
+        return Ok((build_uri(&uri, props)?, None));
     }
     let r = v.get("ref").ok_or_else(|| kamelet_error(format!("Pipe {} requires a 'ref' or a 'uri'", what)))?;
     let kind = r.get("kind").and_then(scalar_string).unwrap_or_else(|| "Kamelet".into());
     let name = r.get("name").and_then(scalar_string).ok_or_else(|| kamelet_error(format!("Pipe {} 'ref' requires a 'name'", what)))?;
-    if kind != "Kamelet" {
-        return Err(kamelet_error(format!("Pipe {}: references of kind '{}' are not supported (only Kamelet)", what, kind)));
+    if kind == "Kamelet" {
+        return Ok((build_uri(&format!("kamelet:{}", name), props)?, Some(name)));
     }
-    build_uri(&format!("kamelet:{}", name), props)
+    let api = r.get("apiVersion").and_then(scalar_string);
+    let ns = r.get("namespace").and_then(scalar_string);
+    let resolved = ref_resolvers().read().unwrap().iter().find_map(|f| f(&kind, api.as_deref(), &name, ns.as_deref()));
+    let uri = resolved.or_else(|| builtin_ref(&kind, &name, ns.as_deref())).ok_or_else(|| {
+        kamelet_error(format!(
+            "Pipe {}: references of kind '{}' are not supported (Kamelet, KafkaTopic, Channel, Broker, Service, Endpoint, or a registered resolver)",
+            what, kind
+        ))
+    })?;
+    Ok((build_uri(&uri, props)?, None))
+}
+
+fn pipe_endpoint(v: &Value, what: &str) -> Result<String> {
+    pipe_endpoint_ref(v, what).map(|(u, _)| u)
+}
+
+/// The steps applying a Pipe endpoint's `dataTypes.<slot>.format`: `transformDataType`
+/// to the format (the `format` declared by the Kamelet for that type name, else the name)
+/// and the declared `mediaType` as `Content-Type`.
+fn data_type_steps(ctx: Option<&CamelContext>, v: &Value, kamelet: Option<&str>, slot: &str, what: &str) -> Result<Vec<Value>> {
+    let Some(format) = v.get("dataTypes").and_then(|d| d.get(slot)).and_then(|d| d.get("format")).and_then(scalar_string) else {
+        return Ok(Vec::new());
+    };
+    let declared = match (ctx, kamelet) {
+        (Some(c), Some(k)) => kamelet_registry(c).get(k).and_then(|d| d.data_types.get(slot).cloned()),
+        _ => None,
+    };
+    let (target, media) = match &declared {
+        Some(d) if !d.types.is_empty() => {
+            let (f, m) = d.types.get(&format).cloned().ok_or_else(|| {
+                kamelet_error(format!(
+                    "Pipe {}: Kamelet '{}' does not support the {} data type '{}' (supported: {})",
+                    what,
+                    kamelet.unwrap_or_default(),
+                    slot,
+                    format,
+                    d.types.keys().cloned().collect::<Vec<_>>().join(", ")
+                ))
+            })?;
+            (f.unwrap_or_else(|| format.clone()), m)
+        }
+        _ => (format.clone(), None),
+    };
+    let mut steps = vec![Value::object([("transformDataType", Value::object([("toType", Value::String(target))]))])];
+    if let Some(m) = media {
+        steps.push(Value::object([("setHeader", Value::object([("name", Value::from("Content-Type")), ("constant", Value::String(m))]))]));
+    }
+    Ok(steps)
+}
+
+/// The route `errorHandler` of a Pipe `spec.errorHandler`: `sink` (dead letter channel to
+/// `endpoint` — a Kamelet `ref` or a `uri` — with `parameters`), `log` (default error
+/// handler with `parameters`), `none`. Parameters are redelivery options
+/// (`maximumRedeliveries`, `redeliveryDelay`, ...) or `useOriginalMessage`,
+/// `useOriginalBody`, `deadLetterHandleNewException`.
+fn pipe_error_handler(v: &Value) -> Result<Value> {
+    let Value::Object(m) = v else { return Err(kamelet_error("Pipe 'errorHandler' must be a mapping")) };
+    let (kind, cfg) = m.iter().next().ok_or_else(|| kamelet_error("Pipe 'errorHandler' is empty"))?;
+    let split = |params: Option<&Value>| -> (camel_core::value::ObjectMap, camel_core::value::ObjectMap) {
+        let mut top = camel_core::value::ObjectMap::new();
+        let mut policy = camel_core::value::ObjectMap::new();
+        if let Some(Value::Object(p)) = params {
+            for (k, x) in p {
+                if ["useOriginalMessage", "useOriginalBody", "deadLetterHandleNewException"].contains(&k.as_str()) {
+                    top.insert(k.clone(), x.clone());
+                } else {
+                    policy.insert(k.clone(), x.clone());
+                }
+            }
+        }
+        if !policy.is_empty() {
+            top.insert("redeliveryPolicy".into(), Value::Object(policy.clone()));
+        }
+        (top, policy)
+    };
+    Ok(match kind.as_str() {
+        "none" => Value::object([("noErrorHandler", Value::Object(Default::default()))]),
+        "log" => {
+            let (top, _) = split(cfg.get("parameters"));
+            Value::object([("defaultErrorHandler", Value::Object(top))])
+        }
+        "sink" => {
+            let ep = cfg.get("endpoint").ok_or_else(|| kamelet_error("Pipe errorHandler 'sink' requires an 'endpoint'"))?;
+            let uri = pipe_endpoint(ep, "errorHandler sink")?;
+            let (mut top, _) = split(cfg.get("parameters"));
+            top.insert("deadLetterUri".into(), Value::String(uri));
+            Value::object([("deadLetterChannel", Value::Object(top))])
+        }
+        "ref" => Value::object([("refErrorHandler", cfg.clone())]),
+        other => return Err(kamelet_error(format!("Pipe errorHandler '{}' is not supported (sink, log, none, ref)", other))),
+    })
 }
 
 /// Convert a `Pipe` / `KameletBinding` resource into a route-shaped value.
 pub fn pipe_to_route(doc: &Value) -> Result<Value> {
+    pipe_to_route_with(None, doc)
+}
+
+/// [`pipe_to_route`] with the context whose Kamelets validate the requested data types.
+pub fn pipe_to_route_with(ctx: Option<&CamelContext>, doc: &Value) -> Result<Value> {
     let name = doc.get("metadata").and_then(|m| m.get("name")).and_then(scalar_string);
     let spec = doc.get("spec").ok_or_else(|| kamelet_error("A Pipe requires a 'spec'"))?;
-    let source = pipe_endpoint(spec.get("source").ok_or_else(|| kamelet_error("A Pipe requires 'spec.source'"))?, "source")?;
-    let mut steps = Vec::new();
+    let source_v = spec.get("source").ok_or_else(|| kamelet_error("A Pipe requires 'spec.source'"))?;
+    let (source, source_k) = pipe_endpoint_ref(source_v, "source")?;
+    let mut steps = data_type_steps(ctx, source_v, source_k.as_deref(), "out", "source")?;
     if let Some(Value::Array(items)) = spec.get("steps") {
         for (i, s) in items.iter().enumerate() {
-            steps.push(Value::object([("to", Value::String(pipe_endpoint(s, &format!("step {}", i))?))]));
+            let what = format!("step {}", i);
+            let (uri, k) = pipe_endpoint_ref(s, &what)?;
+            steps.extend(data_type_steps(ctx, s, k.as_deref(), "in", &what)?);
+            steps.push(Value::object([("to", Value::String(uri))]));
+            steps.extend(data_type_steps(ctx, s, k.as_deref(), "out", &what)?);
         }
     }
     if let Some(sink) = spec.get("sink") {
-        steps.push(Value::object([("to", Value::String(pipe_endpoint(sink, "sink")?))]));
-    }
-    if spec.get("errorHandler").is_some() {
-        camel_warn!("camel-yaml", "Pipe {:?}: 'errorHandler' is not supported and is ignored", name);
+        let (uri, k) = pipe_endpoint_ref(sink, "sink")?;
+        steps.extend(data_type_steps(ctx, sink, k.as_deref(), "in", "sink")?);
+        steps.push(Value::object([("to", Value::String(uri))]));
     }
     let mut route = camel_core::value::ObjectMap::new();
     if let Some(n) = name {
         route.insert("id".to_string(), Value::String(n));
+    }
+    if let Some(eh) = spec.get("errorHandler") {
+        route.insert("errorHandler".to_string(), pipe_error_handler(eh)?);
     }
     route.insert("from".to_string(), Value::object([("uri", Value::String(source)), ("steps", Value::Array(steps))]));
     Ok(Value::Object(route))

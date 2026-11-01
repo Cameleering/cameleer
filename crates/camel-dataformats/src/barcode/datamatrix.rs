@@ -38,9 +38,78 @@ const SIZES: [(usize, usize, usize, usize, usize); 24] = [
     (144, 22, 1558, 620, 10),
 ];
 
+/// Rectangular symbols: (rows, columns, data region rows, data region columns, data
+/// codewords, EC codewords); one block each, regions side by side.
+const RECT: [(usize, usize, usize, usize, usize, usize); 6] = [(8, 18, 6, 16, 5, 7), (8, 32, 6, 14, 10, 11), (12, 26, 10, 24, 16, 14), (12, 36, 10, 16, 22, 18), (16, 36, 14, 16, 32, 24), (16, 48, 14, 22, 49, 28)];
+
+/// A symbol size (square or rectangular).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub rows: usize,
+    pub cols: usize,
+    /// Data region rows / columns.
+    pub rh: usize,
+    pub rw: usize,
+    pub ndata: usize,
+    pub necc: usize,
+    pub nblocks: usize,
+}
+
+impl Entry {
+    fn square(e: (usize, usize, usize, usize, usize)) -> Entry {
+        Entry { rows: e.0, cols: e.0, rh: e.1, rw: e.1, ndata: e.2, necc: e.3, nblocks: e.4 }
+    }
+    fn regions(&self) -> (usize, usize) {
+        (self.rows / (self.rh + 2), self.cols / (self.rw + 2))
+    }
+    /// Mapping matrix size (rows, columns).
+    fn mapping(&self) -> (usize, usize) {
+        let (ry, rx) = self.regions();
+        (self.rh * ry, self.rw * rx)
+    }
+}
+
+/// Symbol shape preference (ZXing `SymbolShapeHint`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Shape {
+    /// Smallest symbol of either shape, in ZXing's table order.
+    #[default]
+    Any,
+    Square,
+    Rectangle,
+}
+
+impl Shape {
+    pub fn parse(s: &str) -> Option<Shape> {
+        match s.trim().to_ascii_uppercase().trim_start_matches("FORCE_") {
+            "NONE" | "ANY" => Some(Shape::Any),
+            "SQUARE" => Some(Shape::Square),
+            "RECTANGLE" | "RECT" => Some(Shape::Rectangle),
+            _ => None,
+        }
+    }
+}
+
+/// Every symbol size in ZXing's lookup order (rectangles interleaved by capacity).
+pub fn entries() -> Vec<Entry> {
+    let mut v: Vec<Entry> = SIZES.iter().map(|e| Entry::square(*e)).collect();
+    v.extend(RECT.iter().map(|r| Entry { rows: r.0, cols: r.1, rh: r.2, rw: r.3, ndata: r.4, necc: r.5, nblocks: 1 }));
+    v.sort_by_key(|e| (e.ndata, e.rows != e.cols));
+    v
+}
+
+fn entry_for(rows: usize, cols: usize) -> Option<Entry> {
+    entries().into_iter().find(|e| e.rows == rows && e.cols == cols)
+}
+
 /// Symbol sizes supported.
 pub fn symbol_sizes() -> Vec<usize> {
     SIZES.iter().map(|s| s.0).collect()
+}
+
+/// Valid (rows, columns) of every symbol.
+pub fn symbol_dims() -> Vec<(usize, usize)> {
+    entries().iter().map(|e| (e.rows, e.cols)).collect()
 }
 
 /// ASCII encodation.
@@ -161,13 +230,14 @@ fn placement(nrow: usize, ncol: usize) -> (Vec<Option<(usize, u8)>>, Vec<bool>) 
     (cells, dark)
 }
 
-fn size_entry(size: usize) -> Option<(usize, usize, usize, usize, usize)> {
-    SIZES.iter().copied().find(|s| s.0 == size)
+#[cfg(test)]
+fn size_entry(size: usize) -> Option<Entry> {
+    entry_for(size, size)
 }
 
 /// Codewords (data + interleaved EC) for a symbol entry.
-fn with_ecc(data: &[u8], entry: (usize, usize, usize, usize, usize)) -> Vec<u8> {
-    let (_, _, ndata, necc, nblocks) = entry;
+fn with_ecc(data: &[u8], entry: Entry) -> Vec<u8> {
+    let (ndata, necc, nblocks) = (entry.ndata, entry.necc, entry.nblocks);
     let gf = Gf::datamatrix();
     let mut out = data.to_vec();
     out.resize(ndata + necc, 0);
@@ -182,19 +252,44 @@ fn with_ecc(data: &[u8], entry: (usize, usize, usize, usize, usize)) -> Vec<u8> 
     out
 }
 
-/// Map a mapping-matrix cell to symbol coordinates.
-fn to_symbol(r: usize, c: usize, region: usize) -> (usize, usize) {
-    (c / region * (region + 2) + 1 + c % region, r / region * (region + 2) + 1 + r % region)
+/// Map a mapping-matrix cell to symbol coordinates (x, y).
+fn to_symbol(r: usize, c: usize, e: &Entry) -> (usize, usize) {
+    (c / e.rw * (e.rw + 2) + 1 + c % e.rw, r / e.rh * (e.rh + 2) + 1 + r % e.rh)
 }
 
-/// Encode bytes as a Data Matrix symbol (smallest square size, or `size` when given).
+/// Encode bytes as a square Data Matrix symbol (smallest size, or `size` when given).
 pub fn encode(data: &[u8], size: Option<usize>) -> Result<Matrix> {
+    match size {
+        Some(s) => {
+            let e = entry_for(s, s).ok_or_else(|| df_err(format!("Invalid Data Matrix size {}x{}", s, s)))?;
+            encode_entry(data, e)
+        }
+        None => encode_shape(data, Shape::Square),
+    }
+}
+
+/// Encode with a shape preference (the smallest fitting symbol).
+pub fn encode_shape(data: &[u8], shape: Shape) -> Result<Matrix> {
+    let n = encode_ascii(data).len();
+    let e = entries()
+        .into_iter()
+        .filter(|e| match shape {
+            Shape::Any => true,
+            Shape::Square => e.rows == e.cols,
+            Shape::Rectangle => e.rows != e.cols,
+        })
+        .find(|e| e.ndata >= n)
+        .ok_or_else(|| df_err("Data too big for a Data Matrix symbol of that shape"))?;
+    encode_entry(data, e)
+}
+
+/// Encode into a given symbol size.
+pub fn encode_entry(data: &[u8], entry: Entry) -> Result<Matrix> {
     let mut cw = encode_ascii(data);
-    let entry = match size {
-        Some(s) => size_entry(s).filter(|e| e.2 >= cw.len()).ok_or_else(|| df_err(format!("Data does not fit a {}x{} Data Matrix (or invalid size)", s, s)))?,
-        None => SIZES.iter().copied().find(|e| e.2 >= cw.len()).ok_or_else(|| df_err("Data too big for a Data Matrix symbol"))?,
-    };
-    let (sz, region, ndata, _, _) = entry;
+    if cw.len() > entry.ndata {
+        return Err(df_err(format!("Data does not fit a {}x{} Data Matrix", entry.rows, entry.cols)));
+    }
+    let ndata = entry.ndata;
     if cw.len() < ndata {
         cw.push(129);
         while cw.len() < ndata {
@@ -207,30 +302,32 @@ pub fn encode(data: &[u8], size: Option<usize>) -> Result<Matrix> {
         }
     }
     let all = with_ecc(&cw, entry);
-    let regions = sz / (region + 2);
-    let n = region * regions;
-    let (cells, dark) = placement(n, n);
-    let mut m = Matrix::new(sz, sz);
+    let (regions_y, regions_x) = entry.regions();
+    let (nr, nc) = entry.mapping();
+    let (cells, dark) = placement(nr, nc);
+    let mut m = Matrix::new(entry.cols, entry.rows);
     // finder and timing patterns of each region
-    for ry in 0..regions {
-        for rx in 0..regions {
-            let (x0, y0) = (rx * (region + 2), ry * (region + 2));
-            let b = region + 2;
-            for i in 0..b {
+    let (bh, bw) = (entry.rh + 2, entry.rw + 2);
+    for ry in 0..regions_y {
+        for rx in 0..regions_x {
+            let (x0, y0) = (rx * bw, ry * bh);
+            for i in 0..bh {
                 m.set(x0, y0 + i, true); // left solid
-                m.set(x0 + i, y0 + b - 1, true); // bottom solid
+                m.set(x0 + bw - 1, y0 + i, i % 2 == 1); // right timing
+            }
+            for i in 0..bw {
+                m.set(x0 + i, y0 + bh - 1, true); // bottom solid
                 m.set(x0 + i, y0, i % 2 == 0); // top timing
-                m.set(x0 + b - 1, y0 + i, i % 2 == 1); // right timing
             }
         }
     }
-    for r in 0..n {
-        for c in 0..n {
-            let v = match cells[r * n + c] {
+    for r in 0..nr {
+        for c in 0..nc {
+            let v = match cells[r * nc + c] {
                 Some((chr, bit)) => (all[chr] >> (8 - bit)) & 1 == 1,
-                None => dark[r * n + c],
+                None => dark[r * nc + c],
             };
-            let (x, y) = to_symbol(r, c, region);
+            let (x, y) = to_symbol(r, c, &entry);
             m.set(x, y, v);
         }
     }
@@ -239,16 +336,15 @@ pub fn encode(data: &[u8], size: Option<usize>) -> Result<Matrix> {
 
 /// Decode a Data Matrix module matrix; returns (bytes, corrected codewords).
 pub fn decode_matrix(m: &Matrix) -> Result<(Vec<u8>, usize)> {
-    let entry = size_entry(m.width).filter(|_| m.height == m.width).ok_or_else(|| df_err(format!("Invalid Data Matrix size {}x{}", m.width, m.height)))?;
-    let (sz, region, ndata, necc, nblocks) = entry;
-    let regions = sz / (region + 2);
-    let n = region * regions;
-    let (cells, _) = placement(n, n);
+    let entry = entry_for(m.height, m.width).ok_or_else(|| df_err(format!("Invalid Data Matrix size {}x{}", m.height, m.width)))?;
+    let (ndata, necc, nblocks) = (entry.ndata, entry.necc, entry.nblocks);
+    let (nr, nc) = entry.mapping();
+    let (cells, _) = placement(nr, nc);
     let mut cw = vec![0u8; ndata + necc];
-    for r in 0..n {
-        for c in 0..n {
-            if let Some((chr, bit)) = cells[r * n + c] {
-                let (x, y) = to_symbol(r, c, region);
+    for r in 0..nr {
+        for c in 0..nc {
+            if let Some((chr, bit)) = cells[r * nc + c] {
+                let (x, y) = to_symbol(r, c, &entry);
                 if m.get(x, y) {
                     cw[chr] |= 1 << (8 - bit);
                 }
@@ -439,28 +535,35 @@ mod tests {
 
     #[test]
     fn placement_covers_every_codeword_bit() {
-        for e in SIZES {
-            let regions = e.0 / (e.1 + 2);
-            let n = e.1 * regions;
-            let (cells, _) = placement(n, n);
-            let mut seen = vec![0u8; e.2 + e.3];
+        for e in entries() {
+            let (nr, nc) = e.mapping();
+            let (cells, _) = placement(nr, nc);
+            let mut seen = vec![0u8; e.ndata + e.necc];
             for c in cells.iter().flatten() {
                 seen[c.0] |= 1 << (8 - c.1);
             }
-            assert!(seen.iter().all(|s| *s == 0xff), "size {}", e.0);
+            assert!(seen.iter().all(|s| *s == 0xff), "size {:?}", e);
         }
     }
 
     #[test]
     fn round_trip_all_sizes_and_errors() {
-        for e in SIZES {
-            let cap = e.2;
+        for e in entries() {
+            let cap = e.ndata;
             let text: Vec<u8> = (0..cap.saturating_sub(1)).map(|i| b'A' + (i % 26) as u8).collect();
-            let m = encode(&text, Some(e.0)).unwrap();
-            assert_eq!(m.width, e.0);
+            let m = encode_entry(&text, e).unwrap();
+            assert_eq!((m.width, m.height), (e.cols, e.rows));
             let (d, _) = decode_matrix(&m).unwrap();
-            assert_eq!(d, text, "size {}", e.0);
+            assert_eq!(d, text, "size {:?}", e);
         }
+        // shapes: 4 ASCII codewords fit 12x12 (5) but the rectangle 8x18 (5) when forced
+        let m = encode_shape(b"ABCD", Shape::Rectangle).unwrap();
+        assert_eq!((m.height, m.width), (8, 18));
+        assert_eq!(decode_matrix(&m).unwrap().0, b"ABCD");
+        let m = encode_shape(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklm", Shape::Rectangle).unwrap();
+        assert_eq!((m.height, m.width), (16, 48));
+        assert!(encode_shape(&[b'x'; 50], Shape::Rectangle).is_err());
+        assert_eq!(encode_shape(b"ABCDEF", Shape::Any).unwrap().height, 14);
         let m = encode("Hello Data Matrix 2026 é".as_bytes(), None).unwrap();
         let mut damaged = m.clone();
         for x in 3..7 {

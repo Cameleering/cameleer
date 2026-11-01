@@ -1,11 +1,16 @@
 //! RSA signatures: PKCS#1 v1.5 and RSASSA-PSS (RFC 8017) verify and sign.
 //!
 //! Private-key operations use a fixed square-and-multiply-always Montgomery
-//! exponentiation over the full exponent width (no CRT, no blinding). This hides
-//! the exponent bit pattern from simple timing measurements but is not
-//! hardened against cache or power side channels.
+//! exponentiation over the full exponent width, with base blinding (the input is
+//! multiplied by `r^e` and the result by `r^-1` for a random `r`, the pair being
+//! squared after every use) and the Chinese Remainder Theorem when the key carries its
+//! CRT parameters (PKCS#1 keys); every result is verified with the public exponent before
+//! it is released (fault attacks on CRT). Not hardened against cache or power analysis
+//! beyond that.
 
-use super::bigint::{bit_len, from_be_bytes, lt, to_be_bytes, MontCtx};
+use std::sync::{Arc, Mutex};
+
+use super::bigint::{adc, bit_len, from_be_bytes, lt, mac, mod_sub, reduce_be, sbb, to_be_bytes, MontCtx};
 use super::hash::HashAlg;
 use super::rng;
 use crate::util::ct_eq;
@@ -25,6 +30,61 @@ pub struct RsaPrivateKey {
     d: Vec<u64>,
     /// The original PKCS#1 encoding (with CRT parameters), when parsed from one.
     pub(crate) pkcs1: Option<Vec<u8>>,
+    crt: Option<Crt>,
+    blinding: Arc<Mutex<Option<Blinding>>>,
+}
+
+/// CRT parameters: Montgomery contexts for p and q, d mod (p-1), d mod (q-1), q^-1 mod p.
+#[derive(Clone)]
+struct Crt {
+    p: MontCtx,
+    q: MontCtx,
+    dp: Vec<u64>,
+    dq: Vec<u64>,
+    qinv: Vec<u64>,
+}
+
+/// Base blinding pair: `vi = r^e mod n`, `vf = r^-1 mod n`.
+struct Blinding {
+    vi: Vec<u64>,
+    vf: Vec<u64>,
+}
+
+/// a * b mod m (plain representations).
+fn mod_mul(ctx: &MontCtx, a: &[u64], b: &[u64]) -> Vec<u64> {
+    ctx.mul(&ctx.to_mont(a), b)
+}
+
+/// Full product a * b.
+fn mul_full(a: &[u64], b: &[u64]) -> Vec<u64> {
+    let mut r = vec![0u64; a.len() + b.len()];
+    for (i, &x) in a.iter().enumerate() {
+        let mut carry = 0;
+        for (j, &y) in b.iter().enumerate() {
+            let (lo, hi) = mac(r[i + j], x, y, carry);
+            r[i + j] = lo;
+            carry = hi;
+        }
+        r[i + b.len()] = carry;
+    }
+    r
+}
+
+fn add_assign(r: &mut [u64], b: &[u64]) {
+    let mut carry = 0;
+    for i in 0..r.len() {
+        let (v, c) = adc(r[i], *b.get(i).unwrap_or(&0), carry);
+        r[i] = v;
+        carry = c;
+    }
+}
+
+fn trim_to(mut v: Vec<u64>, n: usize) -> Option<Vec<u64>> {
+    if v[n.min(v.len())..].iter().any(|x| *x != 0) {
+        return None;
+    }
+    v.resize(n, 0);
+    Some(v)
 }
 
 impl std::fmt::Debug for RsaPublicKey {
@@ -205,7 +265,91 @@ impl RsaPrivateKey {
         if !lt(&d, &public.ctx.m) {
             return None;
         }
-        Some(RsaPrivateKey { public, d, pkcs1: None })
+        Some(RsaPrivateKey { public, d, pkcs1: None, crt: None, blinding: Arc::new(Mutex::new(None)) })
+    }
+
+    /// Adds the CRT parameters (big-endian p, q, d mod (p-1), d mod (q-1), q^-1 mod p);
+    /// returns false (and keeps the plain exponentiation) when they do not match the key.
+    pub fn set_crt(&mut self, p: &[u8], q: &[u8], dp: &[u8], dq: &[u8], qinv: &[u8]) -> bool {
+        let strip = |b: &[u8]| -> Vec<u8> { b.iter().copied().skip_while(|x| *x == 0).collect() };
+        let (p, q) = (strip(p), strip(q));
+        if p.is_empty() || q.is_empty() || p.last().unwrap() & 1 == 0 || q.last().unwrap() & 1 == 0 {
+            return false;
+        }
+        let limbs = |b: &[u8]| b.len().div_ceil(8).max(1);
+        let (Some(pl), Some(ql)) = (from_be_bytes(&p, limbs(&p)), from_be_bytes(&q, limbs(&q))) else { return false };
+        // p * q must be n
+        match trim_to(mul_full(&pl, &ql), self.public.ctx.n()) {
+            Some(n) if n == self.public.ctx.m => {}
+            _ => return false,
+        }
+        let (Some(dp), Some(dq), Some(qinv)) = (from_be_bytes(&strip(dp), pl.len()), from_be_bytes(&strip(dq), ql.len()), from_be_bytes(&strip(qinv), pl.len())) else { return false };
+        self.crt = Some(Crt { p: MontCtx::new(pl), q: MontCtx::new(ql), dp, dq, qinv });
+        true
+    }
+
+    /// Whether private operations use the CRT.
+    pub fn has_crt(&self) -> bool {
+        self.crt.is_some()
+    }
+
+    /// c^d mod n with the CRT.
+    fn crt_pow(&self, crt: &Crt, c: &[u64]) -> Option<Vec<u64>> {
+        let k = self.public.k;
+        let cb = to_be_bytes(c, k);
+        let m1 = crt.p.pow(&reduce_be(&cb, &crt.p.m), &crt.dp, true);
+        let m2 = crt.q.pow(&reduce_be(&cb, &crt.q.m), &crt.dq, true);
+        let m2p = reduce_be(&to_be_bytes(&m2, crt.q.n() * 8), &crt.p.m);
+        let mut diff = vec![0u64; crt.p.n()];
+        mod_sub(&mut diff, &m1, &m2p, &crt.p.m);
+        let h = mod_mul(&crt.p, &crt.qinv, &diff);
+        let mut s = mul_full(&h, &crt.q.m);
+        add_assign(&mut s, &m2);
+        trim_to(s, self.public.ctx.n())
+    }
+
+    /// The blinding pair for this operation (created on first use, then squared).
+    fn next_blinding(&self) -> Option<(Vec<u64>, Vec<u64>)> {
+        let ctx = &self.public.ctx;
+        let mut g = self.blinding.lock().unwrap();
+        if g.is_none() {
+            // r^-1 = r^(e*d - 2) mod n, as r^(e*d - 1) = 1 for r coprime to n
+            if self.public.e.iter().skip(1).any(|x| *x != 0) {
+                return None;
+            }
+            let e = self.public.e[0];
+            let mut ed = vec![0u64; self.d.len() + 1];
+            let mut carry = 0;
+            for (i, &x) in self.d.iter().enumerate() {
+                let (lo, hi) = mac(0, x, e, carry);
+                ed[i] = lo;
+                carry = hi;
+            }
+            ed[self.d.len()] = carry;
+            let mut borrow = 0;
+            for (i, limb) in ed.iter_mut().enumerate() {
+                let (v, b) = sbb(*limb, if i == 0 { 2 } else { 0 }, borrow);
+                *limb = v;
+                borrow = b;
+            }
+            let r = loop {
+                let r = reduce_be(&rng::random_bytes(self.public.k + 8), &ctx.m);
+                if bit_len(&r) > 64 {
+                    break r;
+                }
+            };
+            let vi = ctx.pow(&r, &self.public.e, false);
+            let vf = ctx.pow(&r, &ed, true);
+            if mod_mul(ctx, &vi, &ctx.pow(&vf, &self.public.e, false)).iter().enumerate().any(|(i, x)| *x != (i == 0) as u64) {
+                return None; // r not coprime to n (practically impossible)
+            }
+            *g = Some(Blinding { vi, vf });
+        }
+        let b = g.as_mut().unwrap();
+        let out = (b.vi.clone(), b.vf.clone());
+        b.vi = mod_mul(ctx, &b.vi, &b.vi);
+        b.vf = mod_mul(ctx, &b.vf, &b.vf);
+        Some(out)
     }
 
     /// The PKCS#1 `RSAPrivateKey` encoding this key was parsed from (keys built with
@@ -219,7 +363,20 @@ impl RsaPrivateKey {
         if !lt(&m, &self.public.ctx.m) {
             return None;
         }
-        let s = self.public.ctx.pow(&m, &self.d, true);
+        let ctx = &self.public.ctx;
+        let blinding = self.next_blinding();
+        let mb = match &blinding {
+            Some((vi, _)) => mod_mul(ctx, &m, vi),
+            None => m.clone(),
+        };
+        let sb = match &self.crt {
+            Some(crt) => self.crt_pow(crt, &mb)?,
+            None => ctx.pow(&mb, &self.d, true),
+        };
+        let s = match &blinding {
+            Some((_, vf)) => mod_mul(ctx, &sb, vf),
+            None => sb,
+        };
         let sig = to_be_bytes(&s, self.public.k);
         // guard against faults: verify before releasing
         if self.public.encrypt_raw(&sig)? != to_be_bytes(&m, self.public.k) {
@@ -265,6 +422,63 @@ impl RsaPrivateKey {
         let mut full = vec![0u8; self.public.k - em_len];
         full.extend(em);
         self.decrypt_raw(&full)
+    }
+}
+
+// ---------------------------------------------------------------- RSAES-OAEP (RFC 8017 7.1)
+
+impl RsaPublicKey {
+    /// RSAES-OAEP encryption with `hash` for both the label hash and MGF1 (XML Encryption
+    /// `rsa-oaep-mgf1p` uses SHA-1). `None` when the message is too long.
+    pub fn encrypt_oaep(&self, hash: HashAlg, label: &[u8], msg: &[u8]) -> Option<Vec<u8>> {
+        let k = self.k;
+        let hlen = hash.output_len();
+        if msg.len() + 2 * hlen + 2 > k {
+            return None;
+        }
+        let mut db = hash.hash(label);
+        db.resize(k - msg.len() - hlen - 2, 0);
+        db.push(1);
+        db.extend_from_slice(msg);
+        let seed = rng::random_bytes(hlen);
+        let db_mask = mgf1(hash, &seed, k - hlen - 1);
+        let masked_db: Vec<u8> = db.iter().zip(&db_mask).map(|(a, b)| a ^ b).collect();
+        let seed_mask = mgf1(hash, &masked_db, hlen);
+        let masked_seed: Vec<u8> = seed.iter().zip(&seed_mask).map(|(a, b)| a ^ b).collect();
+        let mut em = vec![0u8];
+        em.extend(masked_seed);
+        em.extend(masked_db);
+        let m = from_be_bytes(&em, self.ctx.n())?;
+        let c = self.ctx.pow(&m, &self.e, false);
+        Some(to_be_bytes(&c, k))
+    }
+}
+
+impl RsaPrivateKey {
+    /// RSAES-OAEP decryption (see [`RsaPublicKey::encrypt_oaep`]).
+    pub fn decrypt_oaep(&self, hash: HashAlg, label: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
+        let k = self.public.k;
+        let hlen = hash.output_len();
+        if ciphertext.len() != k || k < 2 * hlen + 2 {
+            return None;
+        }
+        let em = self.decrypt_raw(ciphertext)?;
+        let (y, rest) = em.split_first()?;
+        let (masked_seed, masked_db) = rest.split_at(hlen);
+        let seed_mask = mgf1(hash, masked_db, hlen);
+        let seed: Vec<u8> = masked_seed.iter().zip(&seed_mask).map(|(a, b)| a ^ b).collect();
+        let db_mask = mgf1(hash, &seed, k - hlen - 1);
+        let db: Vec<u8> = masked_db.iter().zip(&db_mask).map(|(a, b)| a ^ b).collect();
+        let lhash = hash.hash(label);
+        if *y != 0 || !ct_eq(&db[..hlen], &lhash) {
+            return None;
+        }
+        let rest = &db[hlen..];
+        let one = rest.iter().position(|&b| b != 0)?;
+        if rest[one] != 1 {
+            return None;
+        }
+        Some(rest[one + 1..].to_vec())
     }
 }
 

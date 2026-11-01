@@ -2,8 +2,11 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::rc::Rc;
 
 use crate::xpath::XNode;
+
+pub use super::decimal::Decimal;
 
 /// An XQuery error with its W3C error code (`XPTY0004`, `FOAR0001`, ...).
 #[derive(Clone, Debug, PartialEq)]
@@ -124,7 +127,7 @@ pub enum Atomic {
     Str(String),
     AnyUri(String),
     Int(i64),
-    Dec(f64),
+    Dec(Decimal),
     Dbl(f64),
     Flt(f64),
     Bool(bool),
@@ -155,6 +158,15 @@ impl Atomic {
         }
     }
 
+    /// The exact decimal value of an `xs:integer` / `xs:decimal`.
+    pub fn as_decimal(&self) -> Option<Decimal> {
+        match self {
+            Atomic::Int(i) => Some(Decimal::from_i64(*i)),
+            Atomic::Dec(d) => Some(d.clone()),
+            _ => None,
+        }
+    }
+
     pub fn is_numeric(&self) -> bool {
         matches!(self, Atomic::Int(_) | Atomic::Dec(_) | Atomic::Dbl(_) | Atomic::Flt(_))
     }
@@ -167,7 +179,8 @@ impl Atomic {
     pub fn as_f64(&self) -> f64 {
         match self {
             Atomic::Int(i) => *i as f64,
-            Atomic::Dec(f) | Atomic::Dbl(f) | Atomic::Flt(f) => *f,
+            Atomic::Dec(d) => d.to_f64(),
+            Atomic::Dbl(f) | Atomic::Flt(f) => *f,
             Atomic::Bool(b) => {
                 if *b {
                     1.0
@@ -242,7 +255,7 @@ impl fmt::Display for Atomic {
         match self {
             Atomic::Untyped(s) | Atomic::Str(s) | Atomic::AnyUri(s) => f.write_str(s),
             Atomic::Int(i) => write!(f, "{}", i),
-            Atomic::Dec(d) => f.write_str(&format_decimal(*d)),
+            Atomic::Dec(d) => write!(f, "{}", d),
             Atomic::Dbl(d) | Atomic::Flt(d) => f.write_str(&format_double(*d)),
             Atomic::Bool(b) => write!(f, "{}", b),
             Atomic::DateTime(s) | Atomic::Date(s) | Atomic::Time(s) | Atomic::Duration(s) => f.write_str(s),
@@ -257,11 +270,77 @@ impl fmt::Display for Atomic {
     }
 }
 
-/// An item: a node or an atomic value.
+/// An item: a node, an atomic value, or (XQuery 3.1) a function, map or array.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
     Node(XNode),
     Atomic(Atomic),
+    Func(Rc<FuncItem>),
+    Map(Rc<XqMap>),
+    Array(Rc<Vec<Vec<Item>>>),
+}
+
+/// A function item.
+#[derive(Debug)]
+pub enum FuncItem {
+    /// A named function reference (`local:f#2`, `fn:upper-case#1`).
+    Named { name: super::ast::QN, arity: usize },
+    /// An inline function with its captured variables.
+    Inline { params: Vec<(super::ast::QN, Option<SeqType>)>, ret: Option<SeqType>, body: std::sync::Arc<super::ast::Expr>, closure: Vec<(super::ast::QN, Rc<Vec<Item>>)> },
+    /// A partial application (`f(?, 2)`): `None` arguments are the placeholders.
+    Partial { base: Item, args: Vec<Option<Vec<Item>>> },
+}
+
+impl FuncItem {
+    pub fn arity(&self) -> usize {
+        match self {
+            FuncItem::Named { arity, .. } => *arity,
+            FuncItem::Inline { params, .. } => params.len(),
+            FuncItem::Partial { args, .. } => args.iter().filter(|a| a.is_none()).count(),
+        }
+    }
+}
+
+impl PartialEq for FuncItem {
+    fn eq(&self, other: &FuncItem) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+/// An XQuery 3.1 map (insertion-ordered entries, keys compared with `op:same-key`).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct XqMap {
+    pub entries: Vec<(Atomic, Vec<Item>)>,
+}
+
+/// `op:same-key`: string-like keys compare as strings, numerics by value.
+pub fn same_key(a: &Atomic, b: &Atomic) -> bool {
+    if a.is_stringlike() && b.is_stringlike() {
+        return a.to_string() == b.to_string();
+    }
+    if a.is_numeric() && b.is_numeric() {
+        let (x, y) = (a.as_f64(), b.as_f64());
+        return x == y || (x.is_nan() && y.is_nan());
+    }
+    if a.type_of() != b.type_of() {
+        return false;
+    }
+    matches!(compare_atomic(a, b), Ok(Some(Ordering::Equal)))
+}
+
+impl XqMap {
+    pub fn get(&self, k: &Atomic) -> Option<&Vec<Item>> {
+        self.entries.iter().find(|(x, _)| same_key(x, k)).map(|(_, v)| v)
+    }
+    pub fn put(&mut self, k: Atomic, v: Vec<Item>) {
+        match self.entries.iter_mut().find(|(x, _)| same_key(x, &k)) {
+            Some(e) => e.1 = v,
+            None => self.entries.push((k, v)),
+        }
+    }
+    pub fn remove(&mut self, k: &Atomic) {
+        self.entries.retain(|(x, _)| !same_key(x, k));
+    }
 }
 
 impl Item {
@@ -294,6 +373,12 @@ pub enum ItemType {
     Atomic(AtomicType),
     /// `empty-sequence()`
     Empty,
+    /// `function(*)` / `function(T, ...) as R` (signatures are not checked).
+    Function,
+    /// `map(*)` / `map(K, V)`.
+    Map,
+    /// `array(*)` / `array(T)`.
+    Array,
 }
 
 /// Occurrence indicators.
@@ -327,6 +412,9 @@ impl SeqType {
             ItemType::Pi(_) => "processing-instruction()".into(),
             ItemType::Atomic(t) => t.name().into(),
             ItemType::Empty => return "empty-sequence()".into(),
+            ItemType::Function => "function(*)".into(),
+            ItemType::Map => "map(*)".into(),
+            ItemType::Array => "array(*)".into(),
         };
         let o = match self.occ {
             Occ::One => "",
@@ -353,13 +441,13 @@ pub fn parse_double(s: &str) -> Option<f64> {
     t.parse::<f64>().ok()
 }
 
-fn parse_decimal(s: &str) -> Option<f64> {
+fn parse_decimal(s: &str) -> Option<Decimal> {
     let t = s.trim();
     let body = t.strip_prefix(['-', '+']).unwrap_or(t);
     if body.is_empty() || body == "." || !body.chars().all(|c| c.is_ascii_digit() || c == '.') || body.matches('.').count() > 1 {
         return None;
     }
-    t.parse::<f64>().ok()
+    Decimal::parse(t)
 }
 
 fn parse_integer(s: &str) -> Option<i64> {
@@ -458,22 +546,21 @@ pub fn cast(a: &Atomic, t: AtomicType) -> XqResult<Atomic> {
             }
         }
         AtomicType::Decimal => match a {
-            Atomic::Int(i) => Atomic::Dec(*i as f64),
-            Atomic::Dec(d) => Atomic::Dec(*d),
-            Atomic::Dbl(d) | Atomic::Flt(d) => {
-                if d.is_nan() || d.is_infinite() {
-                    return Err(XqError::new("FOCA0002", format!("Cannot convert {} to xs:decimal", s)));
-                }
-                Atomic::Dec(*d)
-            }
-            Atomic::Bool(b) => Atomic::Dec(if *b { 1.0 } else { 0.0 }),
+            Atomic::Int(i) => Atomic::Dec(Decimal::from_i64(*i)),
+            Atomic::Dec(d) => Atomic::Dec(d.clone()),
+            Atomic::Dbl(d) | Atomic::Flt(d) => match Decimal::from_f64(*d) {
+                Some(x) => Atomic::Dec(x),
+                None => return Err(XqError::new("FOCA0002", format!("Cannot convert {} to xs:decimal", s))),
+            },
+            Atomic::Bool(b) => Atomic::Dec(Decimal::from_i64(*b as i64)),
             x if x.is_stringlike() => Atomic::Dec(parse_decimal(ws).ok_or_else(bad)?),
             _ => return Err(XqError::type_err(format!("Cannot cast {} to xs:decimal", a.type_of().name()))),
         },
         AtomicType::Integer | AtomicType::IntegerRange(..) => {
             let i = match a {
                 Atomic::Int(i) => *i,
-                Atomic::Dec(d) | Atomic::Dbl(d) | Atomic::Flt(d) => {
+                Atomic::Dec(d) => d.trunc().to_i64().ok_or_else(|| XqError::new("FOCA0003", format!("Value {} is too large for xs:integer", s)))?,
+                Atomic::Dbl(d) | Atomic::Flt(d) => {
                     if d.is_nan() || d.is_infinite() {
                         return Err(XqError::new("FOCA0002", format!("Cannot convert {} to xs:integer", s)));
                     }
@@ -529,7 +616,7 @@ pub fn cast(a: &Atomic, t: AtomicType) -> XqResult<Atomic> {
         },
         AtomicType::Duration => match a {
             Atomic::Duration(s) => Atomic::Duration(s.clone()),
-            x if x.is_stringlike() && valid_duration(ws) => Atomic::Duration(ws.to_string()),
+            x if x.is_stringlike() && valid_duration(ws) => Atomic::Duration(super::datetime::Duration::parse(ws).map_err(|_| bad())?.format()),
             _ => return Err(bad()),
         },
         AtomicType::QName => match a {
@@ -545,6 +632,9 @@ pub fn compare_atomic(a: &Atomic, b: &Atomic) -> XqResult<Option<Ordering>> {
         if let (Atomic::Int(x), Atomic::Int(y)) = (a, b) {
             return Ok(Some(x.cmp(y)));
         }
+        if let (Some(x), Some(y)) = (a.as_decimal(), b.as_decimal()) {
+            return Ok(Some(x.cmp(&y)));
+        }
         return Ok(a.as_f64().partial_cmp(&b.as_f64()));
     }
     if a.is_stringlike() && b.is_stringlike() {
@@ -552,8 +642,8 @@ pub fn compare_atomic(a: &Atomic, b: &Atomic) -> XqResult<Option<Ordering>> {
     }
     match (a, b) {
         (Atomic::Bool(x), Atomic::Bool(y)) => Ok(Some(x.cmp(y))),
-        (Atomic::DateTime(x), Atomic::DateTime(y)) => Ok(Some(datetime_key(x).cmp(&datetime_key(y)))),
-        (Atomic::Date(x), Atomic::Date(y)) | (Atomic::Time(x), Atomic::Time(y)) | (Atomic::Duration(x), Atomic::Duration(y)) => Ok(Some(x.cmp(y))),
+        (Atomic::DateTime(x), Atomic::DateTime(y)) => Ok(Some(super::datetime::compare(a, b).unwrap_or_else(|| datetime_key(x).cmp(&datetime_key(y))))),
+        (Atomic::Date(x), Atomic::Date(y)) | (Atomic::Time(x), Atomic::Time(y)) | (Atomic::Duration(x), Atomic::Duration(y)) => Ok(Some(super::datetime::compare(a, b).unwrap_or_else(|| x.cmp(y)))),
         (Atomic::QName(_, l1, u1), Atomic::QName(_, l2, u2)) => Ok(if l1 == l2 && u1 == u2 { Some(Ordering::Equal) } else { Some(Ordering::Less) }),
         _ => Err(XqError::type_err(format!("Cannot compare {} with {}", a.type_of().name(), b.type_of().name()))),
     }

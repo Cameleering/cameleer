@@ -19,14 +19,31 @@
 //! `enableSSL` (HTTPS; trust from `sslContextParameters=#bean`, the global `camel.ssl.*`
 //! parameters, else the system trust store), `user`/`password` (basic auth), `apiKey`
 //! (`Authorization: ApiKey ...`), `connectionTimeout`, `socketTimeout`,
-//! `enableDocumentOnlyMode`; accepted and ignored: `maxRetryTimeout`, `enableSniffing`,
-//! `sniffer*`, `documentClass`, `certificatePath` (use `sslContextParameters`).
+//! `enableDocumentOnlyMode`; accepted and ignored: `maxRetryTimeout`,
+//! `certificatePath` (use `sslContextParameters`).
+//!
+//! Scrolling: `useScroll=true` (with `scrollKeepAliveMs`, default 60000) runs `Search` as a
+//! scroll search, fetching every page with `_search/scroll` and clearing the scroll
+//! context; the body becomes all hits (or documents) and the exchange property
+//! `CamelElasticsearchScrollQueryCount` the number of scroll requests.
+//!
+//! Sniffing: `enableSniffing=true` replaces `hostAddresses` by the nodes reported by
+//! `GET /_nodes/http` (their `http.publish_address`) on first use, every `sniffInterval`
+//! ms (default 300000) and `sniffAfterFailureDelay` ms (default 60000) after a connection
+//! failure.
+//!
+//! Typed documents: `documentClass` (option or header) names an [`EsDocumentClass`]: a
+//! `#bean`, or an inline field list `name:string,year:int,price:double,active:boolean,...`
+//! (types `string`, `int`/`long`, `double`/`float`, `boolean`, `object`, `array`). The
+//! `_source` documents returned by `GetById`, `MultiGet`, `Search` and `MultiSearch` are
+//! mapped to it: listed fields only, values coerced to the declared types (missing = null).
+//! Java class names such as `java.util.Map` / `ObjectNode` keep the generic documents.
 
 pub mod server;
 
 use std::any::Any;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use camel_core::context::CamelContext;
 use camel_core::error::{CamelError, Result};
@@ -49,6 +66,108 @@ pub mod headers {
     pub const FROM: &str = "from";
     pub const DOCUMENT_CLASS: &str = "documentClass";
     pub const WAIT_FOR_ACTIVE_SHARDS: &str = "waitForActiveShards";
+}
+
+/// Exchange property with the number of scroll requests of a `useScroll` search.
+pub const SCROLL_QUERY_COUNT: &str = "CamelElasticsearchScrollQueryCount";
+
+/// A field type of an [`EsDocumentClass`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FieldKind {
+    String,
+    Long,
+    Double,
+    Boolean,
+    Object,
+    Array,
+}
+
+/// A typed document shape (the `documentClass` of Camel's component).
+#[derive(Clone, Debug, PartialEq)]
+pub struct EsDocumentClass {
+    pub fields: Vec<(String, FieldKind)>,
+}
+
+impl EsDocumentClass {
+    /// Parses `name:type,...`.
+    pub fn parse(spec: &str) -> Result<EsDocumentClass> {
+        let mut fields = Vec::new();
+        for part in spec.split(',').map(|p| p.trim()).filter(|p| !p.is_empty()) {
+            let (name, ty) = part.split_once(':').unwrap_or((part, "string"));
+            let kind = match ty.trim().to_ascii_lowercase().as_str() {
+                "string" | "text" | "keyword" | "date" => FieldKind::String,
+                "int" | "integer" | "long" | "short" => FieldKind::Long,
+                "double" | "float" | "number" => FieldKind::Double,
+                "boolean" | "bool" => FieldKind::Boolean,
+                "object" | "map" => FieldKind::Object,
+                "array" | "list" => FieldKind::Array,
+                other => return Err(CamelError::illegal_argument(format!("elasticsearch documentClass: unknown field type '{}'", other))),
+            };
+            fields.push((name.trim().to_string(), kind));
+        }
+        if fields.is_empty() {
+            return Err(CamelError::illegal_argument("elasticsearch documentClass: no fields"));
+        }
+        Ok(EsDocumentClass { fields })
+    }
+
+    /// Maps a `_source` document to this shape.
+    pub fn map(&self, src: &Value) -> Value {
+        let out: Vec<(String, Value)> = self.fields.iter().map(|(name, kind)| (name.clone(), coerce(src.get(name).cloned().unwrap_or(Value::Null), *kind))).collect();
+        Value::object(out)
+    }
+}
+
+fn coerce(v: Value, kind: FieldKind) -> Value {
+    if v.is_null() {
+        return v;
+    }
+    match kind {
+        FieldKind::String => match v {
+            Value::String(_) => v,
+            Value::Array(_) | Value::Object(_) => Value::String(v.to_json()),
+            other => Value::String(other.to_string()),
+        },
+        FieldKind::Long => match &v {
+            Value::Int(_) => v,
+            Value::Float(f) => Value::Int(*f as i64),
+            Value::Bool(b) => Value::Int(*b as i64),
+            other => other.to_string().trim().parse::<i64>().ok().or_else(|| other.to_string().trim().parse::<f64>().ok().map(|f| f as i64)).map(Value::Int).unwrap_or(Value::Null),
+        },
+        FieldKind::Double => match &v {
+            Value::Float(_) => v,
+            Value::Int(i) => Value::Float(*i as f64),
+            other => other.to_string().trim().parse::<f64>().map(Value::Float).unwrap_or(Value::Null),
+        },
+        FieldKind::Boolean => match &v {
+            Value::Bool(_) => v,
+            Value::Int(i) => Value::Bool(*i != 0),
+            other => Value::Bool(other.to_string().eq_ignore_ascii_case("true")),
+        },
+        FieldKind::Object => match v {
+            Value::Object(_) => v,
+            Value::String(s) => camel_core::json::parse(&s).unwrap_or(Value::String(s)),
+            other => other,
+        },
+        FieldKind::Array => match v {
+            Value::Array(_) => v,
+            other => Value::Array(vec![other]),
+        },
+    }
+}
+
+/// Generic document classes (no mapping).
+fn is_generic_class(name: &str) -> bool {
+    let simple = name.rsplit('.').next().unwrap_or(name);
+    matches!(simple, "Map" | "HashMap" | "LinkedHashMap" | "ObjectNode" | "JsonNode" | "Object" | "String")
+}
+
+/// Sniffing state.
+struct Sniffer {
+    enabled: bool,
+    interval: Duration,
+    after_failure: Duration,
+    next: Mutex<Option<Instant>>,
 }
 
 /// Operations.
@@ -101,7 +220,8 @@ impl ElasticsearchComponent {
 #[derive(Clone)]
 pub struct EsConfig {
     pub cluster_name: String,
-    pub hosts: Vec<String>,
+    /// Current hosts (replaced by sniffing).
+    pub hosts: Arc<Mutex<Vec<String>>>,
     pub https: bool,
     pub operation: Option<EsOperation>,
     pub index_name: Option<String>,
@@ -110,22 +230,13 @@ pub struct EsConfig {
     pub authorization: Option<String>,
     pub document_only: bool,
     pub client: HttpClient,
+    pub document_class: Option<String>,
+    pub use_scroll: bool,
+    pub scroll_keep_alive_ms: u64,
+    sniffer: Arc<Sniffer>,
 }
 
-const IGNORED: &[&str] = &[
-    "lazyStartProducer",
-    "maxRetryTimeout",
-    "enableSniffing",
-    "sniffInterval",
-    "sniffAfterFailureDelay",
-    "snifferInterval",
-    "documentClass",
-    "certificatePath",
-    "waitForActiveShards",
-    "scrollKeepAliveMs",
-    "useScroll",
-    "connectionManagerMaxConnections",
-];
+const IGNORED: &[&str] = &["lazyStartProducer", "maxRetryTimeout", "certificatePath", "waitForActiveShards", "connectionManagerMaxConnections"];
 
 impl Component for ElasticsearchComponent {
     fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
@@ -152,9 +263,26 @@ impl Component for ElasticsearchComponent {
             Some(o) => Some(EsOperation::parse(&o)?),
             None => None,
         };
+        let sniffer = Arc::new(Sniffer {
+            enabled: params.take_bool("enableSniffing", false)?,
+            interval: Duration::from_millis({
+                let legacy = params.take_u64("snifferInterval", 300_000)?;
+                params.take_u64("sniffInterval", legacy)?
+            }),
+            after_failure: Duration::from_millis(params.take_u64("sniffAfterFailureDelay", 60_000)?),
+            next: Mutex::new(None),
+        });
+        let document_class = params.take("documentClass").filter(|s| !s.is_empty());
+        if let Some(dc) = &document_class {
+            resolve_document_class(ctx, dc)?;
+        }
         let cfg = EsConfig {
             cluster_name: remaining.to_string(),
-            hosts,
+            hosts: Arc::new(Mutex::new(hosts)),
+            document_class,
+            use_scroll: params.take_bool("useScroll", false)?,
+            scroll_keep_alive_ms: params.take_u64("scrollKeepAliveMs", 60_000)?,
+            sniffer,
             https,
             operation,
             index_name: params.take("indexName"),
@@ -167,7 +295,7 @@ impl Component for ElasticsearchComponent {
         for k in IGNORED {
             params.take(k);
         }
-        Ok(Arc::new(EsEndpoint { uri: uri.to_string(), cfg }))
+        Ok(Arc::new(EsEndpoint { uri: uri.to_string(), cfg, ctx: ctx.downgrade() }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -178,6 +306,25 @@ impl Component for ElasticsearchComponent {
 pub struct EsEndpoint {
     uri: String,
     cfg: EsConfig,
+    ctx: camel_core::context::WeakContext,
+}
+
+/// Resolves a `documentClass` value (`#bean`, inline spec, or a generic Java class → None).
+fn resolve_document_class(ctx: &CamelContext, name: &str) -> Result<Option<EsDocumentClass>> {
+    if let Some(bean) = name.strip_prefix('#') {
+        let b = ctx.registry().lookup::<EsDocumentClass>(bean).ok_or_else(|| CamelError::no_such_bean(bean))?;
+        return Ok(Some((*b).clone()));
+    }
+    if is_generic_class(name) {
+        return Ok(None);
+    }
+    if !name.contains(':') {
+        if let Some(b) = ctx.registry().lookup::<EsDocumentClass>(name) {
+            return Ok(Some((*b).clone()));
+        }
+        return Err(CamelError::illegal_argument(format!("elasticsearch: unknown documentClass '{}' (bind an EsDocumentClass bean or use name:type,...)", name)));
+    }
+    EsDocumentClass::parse(name).map(Some)
 }
 
 impl EsEndpoint {
@@ -191,7 +338,7 @@ impl Endpoint for EsEndpoint {
         &self.uri
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
-        Ok(Arc::new(EsProducer { cfg: self.cfg.clone() }))
+        Ok(Arc::new(EsProducer { cfg: self.cfg.clone(), ctx: self.ctx.clone() }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -204,18 +351,83 @@ fn es_error(resp: &HttpResponse, what: &str) -> CamelError {
     CamelError::new(kinds::ELASTICSEARCH, format!("{} failed with status {}: {}", what, resp.status, reason))
 }
 
+fn map_source(doc: &mut Value, dc: &EsDocumentClass) {
+    if let Some(o) = doc.as_object_mut() {
+        if let Some(src) = o.get("_source").cloned() {
+            o.insert("_source".into(), dc.map(&src));
+        }
+    }
+}
+
 fn enc(s: &str) -> String {
     camel_core::util::url_encode(s)
 }
 
 struct EsProducer {
     cfg: EsConfig,
+    ctx: camel_core::context::WeakContext,
 }
 
 impl EsProducer {
+    /// Refreshes the host list from `GET /_nodes/http` when sniffing is due.
+    fn sniff_if_due(&self) {
+        let sn = &self.cfg.sniffer;
+        if !sn.enabled {
+            return;
+        }
+        let due = sn.next.lock().unwrap().map(|t| Instant::now() >= t).unwrap_or(true);
+        if !due {
+            return;
+        }
+        *sn.next.lock().unwrap() = Some(Instant::now() + sn.interval);
+        let current = self.cfg.hosts.lock().unwrap().clone();
+        for host in &current {
+            let url = format!("{}://{}/_nodes/http", if self.cfg.https { "https" } else { "http" }, host);
+            let mut headers: Vec<(&str, &str)> = vec![("Accept", "application/json")];
+            if let Some(a) = &self.cfg.authorization {
+                headers.push(("Authorization", a.as_str()));
+            }
+            let Ok(r) = self.cfg.client.request("GET", &url, &headers, None, None) else { continue };
+            if r.status != 200 {
+                continue;
+            }
+            let Ok(v) = camel_core::json::parse(&String::from_utf8_lossy(&r.body)) else { continue };
+            let found: Vec<String> = v
+                .get("nodes")
+                .and_then(|n| n.as_object())
+                .map(|o| {
+                    o.values()
+                        .filter_map(|n| n.get("http").and_then(|h| h.get("publish_address")).map(|a| a.to_string()))
+                        // `hostname/ip:port` publish addresses
+                        .map(|a| match a.split_once('/') {
+                            Some((_, ip)) => ip.to_string(),
+                            None => a,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !found.is_empty() {
+                camel_core::camel_debug!("elasticsearch", "Sniffed nodes {:?}", found);
+                *self.cfg.hosts.lock().unwrap() = found;
+            }
+            return;
+        }
+    }
+
+    fn document_class(&self, ex: &Exchange) -> Result<Option<EsDocumentClass>> {
+        let name = header_str(ex, headers::DOCUMENT_CLASS).or_else(|| self.cfg.document_class.clone());
+        match (name, self.ctx.upgrade()) {
+            (Some(n), Some(ctx)) => resolve_document_class(&ctx, &n),
+            (Some(n), None) if n.contains(':') => EsDocumentClass::parse(&n).map(Some),
+            _ => Ok(None),
+        }
+    }
+
     fn request(&self, method: &str, path: &str, body: Option<(&str, Vec<u8>)>) -> Result<HttpResponse> {
+        self.sniff_if_due();
         let mut last = None;
-        for host in &self.cfg.hosts {
+        let hosts = self.cfg.hosts.lock().unwrap().clone();
+        for host in &hosts {
             let url = format!("{}://{}{}", if self.cfg.https { "https" } else { "http" }, host, path);
             let mut headers: Vec<(&str, &str)> = vec![("Accept", "application/json")];
             if let Some(a) = &self.cfg.authorization {
@@ -226,7 +438,12 @@ impl EsProducer {
             }
             match self.cfg.client.request(method, &url, &headers, body.as_ref().map(|(_, b)| b.as_slice()), None) {
                 Ok(r) => return Ok(r),
-                Err(e) if e.is_a(camel_core::error::kinds::CONNECT) => last = Some(e),
+                Err(e) if e.is_a(camel_core::error::kinds::CONNECT) => {
+                    if self.cfg.sniffer.enabled {
+                        *self.cfg.sniffer.next.lock().unwrap() = Some(Instant::now() + self.cfg.sniffer.after_failure);
+                    }
+                    last = Some(e)
+                }
                 Err(e) => return Err(e),
             }
         }
@@ -277,8 +494,18 @@ impl EsProducer {
         Ok(req)
     }
 
-    fn hits_result(&self, resp: &Value) -> Value {
-        let hits = resp.get("hits").cloned().unwrap_or(Value::Null);
+    fn hits_result(&self, resp: &Value, dc: Option<&EsDocumentClass>) -> Value {
+        let mut hits = resp.get("hits").cloned().unwrap_or(Value::Null);
+        if let Some(dc) = dc {
+            if let Some(list) = hits.as_object_mut().and_then(|o| o.get_mut("hits")).and_then(|h| match h {
+                Value::Array(a) => Some(a),
+                _ => None,
+            }) {
+                for h in list.iter_mut() {
+                    map_source(h, dc);
+                }
+            }
+        }
         if self.cfg.document_only {
             Value::Array(hits.get("hits").and_then(|h| h.as_array()).map(|a| a.iter().filter_map(|h| h.get("_source").cloned()).collect()).unwrap_or_default())
         } else {
@@ -295,6 +522,7 @@ impl Processor for EsProducer {
             Some(o) => EsOperation::parse(&o)?,
             None => self.cfg.operation.ok_or_else(|| CamelError::illegal_argument("elasticsearch: operation is not set"))?,
         };
+        let dc = self.document_class(ex)?;
         let result = match op {
             EsOperation::Ping => {
                 let r = self.request("HEAD", "/", None);
@@ -335,7 +563,10 @@ impl Processor for EsProducer {
             EsOperation::GetById => {
                 let idx = self.index(ex)?;
                 let id = self.id(ex, true)?;
-                let (_, v) = self.json_request("GET", &format!("/{}/_doc/{}", enc(&idx), enc(&id)), None, "GetById", true)?;
+                let (_, mut v) = self.json_request("GET", &format!("/{}/_doc/{}", enc(&idx), enc(&id)), None, "GetById", true)?;
+                if let Some(dc) = &dc {
+                    map_source(&mut v, dc);
+                }
                 if v.get("error").is_some() {
                     return Err(CamelError::new(kinds::ELASTICSEARCH, format!("GetById failed: {}", v.get("error").map(|e| e.to_json()).unwrap_or_default())));
                 }
@@ -359,7 +590,10 @@ impl Processor for EsProducer {
                     })
                     .collect();
                 let (_, v) = self.json_request("POST", "/_mget", Some(&Value::object([("docs", Value::Array(docs))])), "MultiGet", false)?;
-                let items = v.get("docs").and_then(|d| d.as_array()).cloned().unwrap_or_default();
+                let mut items = v.get("docs").and_then(|d| d.as_array()).cloned().unwrap_or_default();
+                if let Some(dc) = &dc {
+                    items.iter_mut().for_each(|d| map_source(d, dc));
+                }
                 if self.cfg.document_only {
                     Value::Array(items.iter().map(|d| d.get("_source").cloned().unwrap_or(Value::Null)).collect())
                 } else {
@@ -381,8 +615,35 @@ impl Processor for EsProducer {
                     Some(i) => format!("/{}/_search", enc(&i)),
                     None => "/_search".into(),
                 };
-                let (_, v) = self.json_request("POST", &path, Some(&req), "Search", false)?;
-                self.hits_result(&v)
+                if self.cfg.use_scroll {
+                    let keep = format!("{}ms", self.cfg.scroll_keep_alive_ms);
+                    let (_, mut v) = self.json_request("POST", &format!("{}?scroll={}", path, keep), Some(&req), "Search", false)?;
+                    let mut all: Vec<Value> = Vec::new();
+                    let mut queries = 1i64;
+                    let mut scroll_id = v.get("_scroll_id").map(|s| s.to_string());
+                    loop {
+                        let page = v.get("hits").and_then(|h| h.get("hits")).and_then(|h| h.as_array()).cloned().unwrap_or_default();
+                        if page.is_empty() {
+                            break;
+                        }
+                        all.extend(page);
+                        let Some(id) = scroll_id.clone() else { break };
+                        let (_, next) = self.json_request("POST", "/_search/scroll", Some(&Value::object([("scroll", Value::from(keep.as_str())), ("scroll_id", Value::from(id))])), "Scroll", false)?;
+                        queries += 1;
+                        scroll_id = next.get("_scroll_id").map(|s| s.to_string()).or(scroll_id);
+                        v = next;
+                    }
+                    if let Some(id) = scroll_id {
+                        let _ = self.json_request("DELETE", "/_search/scroll", Some(&Value::object([("scroll_id", Value::Array(vec![Value::from(id)]))])), "ClearScroll", true);
+                    }
+                    ex.set_property(SCROLL_QUERY_COUNT, Value::Int(queries));
+                    let resp = Value::object([("hits", Value::object([("hits", Value::Array(all))]))]);
+                    let r = self.hits_result(&resp, dc.as_ref());
+                    if self.cfg.document_only { r } else { r.get("hits").cloned().unwrap_or(Value::Array(vec![])) }
+                } else {
+                    let (_, v) = self.json_request("POST", &path, Some(&req), "Search", false)?;
+                    self.hits_result(&v, dc.as_ref())
+                }
             }
             EsOperation::MultiSearch => {
                 let reqs = match body_to_json_value(ex.body())? {
@@ -410,7 +671,7 @@ impl Processor for EsProducer {
                     return Err(es_error(&r, "MultiSearch"));
                 }
                 let v = camel_core::json::parse(&String::from_utf8_lossy(&r.body))?;
-                Value::Array(v.get("responses").and_then(|r| r.as_array()).map(|a| a.iter().map(|resp| self.hits_result(resp)).collect()).unwrap_or_default())
+                Value::Array(v.get("responses").and_then(|r| r.as_array()).map(|a| a.iter().map(|resp| self.hits_result(resp, dc.as_ref())).collect()).unwrap_or_default())
             }
             EsOperation::Bulk => {
                 let idx = self.index(ex).ok();

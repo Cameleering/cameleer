@@ -66,6 +66,7 @@ name = "camel-http"
 version = "0.1.0"
 dependencies = [
  "camel-core",
+ "camel-grpc",
  "camel-tls",
 ]
 

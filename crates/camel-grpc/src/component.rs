@@ -39,7 +39,15 @@
 //!
 //! TLS: `usePlainText=false` (or `negotiationType=TLS`) uses camel-tls with ALPN `h2`;
 //! the consumer needs `keyCertChainResource` + `keyResource` (PEM files), the producer
-//! trusts `trustCertCollectionResource` (PEM) or the system store.
+//! trusts `trustCertCollectionResource` (PEM) or the system store. Mutual TLS: a producer
+//! with `keyCertChainResource` + `keyResource` presents a client certificate; a consumer
+//! with `trustCertCollectionResource` requires one issued by those CAs.
+//!
+//! Interceptors: `clientInterceptors` / `serverInterceptors` (`#bean` lists of
+//! [`ClientInterceptorBean`] / [`ServerInterceptorBean`]), or every bound bean of that type
+//! with `autoDiscoverClientInterceptors` / `autoDiscoverServerInterceptors` (default true).
+//! `compression=gzip|deflate` compresses request messages (producer) and response messages
+//! (consumer, when the client accepts the encoding); compressed messages are always accepted.
 
 use std::any::Any;
 use std::collections::BTreeMap;
@@ -85,7 +93,7 @@ pub enum ProducerStrategy {
 }
 
 /// Endpoint configuration.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct GrpcConfig {
     pub host: String,
     pub port: u16,
@@ -106,6 +114,66 @@ pub struct GrpcConfig {
     pub key_cert_chain_resource: Option<String>,
     pub key_resource: Option<String>,
     pub shutdown_timeout: Duration,
+    /// `compression`: `gzip` / `deflate` for request (producer) and response (consumer) messages.
+    pub compression: Option<String>,
+    pub client_interceptors: Vec<Arc<dyn GrpcClientInterceptor>>,
+    pub server_interceptors: Vec<Arc<dyn GrpcServerInterceptor>>,
+}
+
+/// A client interceptor (Camel `clientInterceptors`): sees every outgoing call and may add
+/// or change its metadata, or fail it.
+pub trait GrpcClientInterceptor: Send + Sync {
+    fn intercept_call(&self, method_path: &str, metadata: &mut Metadata) -> Result<()>;
+}
+
+/// A server interceptor (Camel `serverInterceptors`): sees every incoming call before the
+/// route; an error status rejects the call.
+pub trait GrpcServerInterceptor: Send + Sync {
+    fn intercept_call(&self, method_path: &str, metadata: &Metadata) -> std::result::Result<(), Status>;
+}
+
+/// Registry bean wrapping a client interceptor (`#name` in `clientInterceptors`; every
+/// bound one is used with `autoDiscoverClientInterceptors=true`, the default).
+#[derive(Clone)]
+pub struct ClientInterceptorBean(pub Arc<dyn GrpcClientInterceptor>);
+
+/// Registry bean wrapping a server interceptor.
+#[derive(Clone)]
+pub struct ServerInterceptorBean(pub Arc<dyn GrpcServerInterceptor>);
+
+impl<F: Fn(&str, &mut Metadata) -> Result<()> + Send + Sync> GrpcClientInterceptor for F {
+    fn intercept_call(&self, method_path: &str, metadata: &mut Metadata) -> Result<()> {
+        self(method_path, metadata)
+    }
+}
+
+impl std::fmt::Debug for GrpcConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GrpcConfig({}:{}/{})", self.host, self.port, self.service)
+    }
+}
+
+fn interceptors<T: Clone + Send + Sync + 'static, I: ?Sized>(ctx: &CamelContext, list: Option<String>, auto: bool, get: impl Fn(&T) -> Arc<I>) -> Result<Vec<Arc<I>>> {
+    let mut out = Vec::new();
+    match list {
+        Some(l) => {
+            for n in l.split(',').map(|x| x.trim().trim_start_matches('#').trim_start_matches("bean:")).filter(|x| !x.is_empty()) {
+                let b = ctx.registry().lookup::<T>(n).ok_or_else(|| CamelError::no_such_bean(n))?;
+                out.push(get(&b));
+            }
+        }
+        None if auto => {
+            let mut names = ctx.registry().names();
+            names.sort();
+            for n in names {
+                if let Some(b) = ctx.registry().lookup::<T>(&n) {
+                    out.push(get(&b));
+                }
+            }
+        }
+        None => {}
+    }
+    Ok(out)
 }
 
 impl GrpcConfig {
@@ -192,6 +260,20 @@ impl Component for GrpcComponent {
             key_cert_chain_resource: params.take("keyCertChainResource").map(|p| strip_resource(&p)),
             key_resource: params.take("keyResource").map(|p| strip_resource(&p)),
             shutdown_timeout: params.take_duration("shutdownTimeout", Duration::from_secs(5))?,
+            compression: match params.take("compression").or_else(|| params.take("compressorName")).map(|c| c.to_ascii_lowercase()) {
+                None => None,
+                Some(c) if c == "identity" || c == "none" || c.is_empty() => None,
+                Some(c) if c == "gzip" || c == "deflate" => Some(c),
+                Some(c) => return Err(CamelError::illegal_argument(format!("Unsupported grpc compression: {} (gzip, deflate, identity)", c))),
+            },
+            client_interceptors: {
+                let auto = params.take_bool("autoDiscoverClientInterceptors", true)?;
+                interceptors::<ClientInterceptorBean, dyn GrpcClientInterceptor>(ctx, params.take("clientInterceptors"), auto, |b| b.0.clone())?
+            },
+            server_interceptors: {
+                let auto = params.take_bool("autoDiscoverServerInterceptors", true)?;
+                interceptors::<ServerInterceptorBean, dyn GrpcServerInterceptor>(ctx, params.take("serverInterceptors"), auto, |b| b.0.clone())?
+            },
         };
         for ignored in [
             "synchronous",
@@ -202,8 +284,6 @@ impl Component for GrpcComponent {
             "userAgent",
             "keyPassword",
             "authenticationType",
-            "autoDiscoverClientInterceptors",
-            "autoDiscoverServerInterceptors",
             "keepAliveTime",
             "keepAliveTimeout",
             "maxInboundMetadataSize",
@@ -368,13 +448,15 @@ impl GrpcProducer {
             if let Some(trust) = &self.cfg.trust_cert_collection_resource {
                 b = b.system_roots(false).add_root_pem_file(trust).map_err(|e| CamelError::illegal_argument(format!("trustCertCollectionResource {}: {}", trust, e)))?;
             }
-            if self.cfg.key_cert_chain_resource.is_some() {
-                camel_core::camel_warn!("grpc", "Client certificates (keyCertChainResource on a producer) are not supported by camel-tls and are ignored");
+            if let (Some(chain), Some(key)) = (&self.cfg.key_cert_chain_resource, &self.cfg.key_resource) {
+                let read = |p: &str| std::fs::read(p).map_err(|e| CamelError::illegal_argument(format!("Cannot read {}: {}", p, e)));
+                b = b.client_cert_pem(&read(chain)?, &read(key)?).map_err(|e| CamelError::illegal_argument(format!("Invalid client certificate: {}", e)))?;
             }
             GrpcClient::tls(&addr, &self.cfg.host, b.build())
         };
         client.config = self.cfg.h2_config();
         client.max_message_size = self.cfg.max_message_size;
+        client.send_compression = self.cfg.compression.clone();
         let c = Arc::new(client);
         *g = Some(c.clone());
         Ok(c)
@@ -416,7 +498,10 @@ impl GrpcProducer {
         let pool = self.pool.as_deref();
         let input = md.as_ref().map(|m| m.input_type.as_str());
         let output = md.as_ref().map(|m| m.output_type.as_str());
-        let metadata = headers_to_metadata(ex);
+        let mut metadata = headers_to_metadata(ex);
+        for i in &self.cfg.client_interceptors {
+            i.intercept_call(&path, &mut metadata)?;
+        }
         let body = ex.message.body.clone();
         let (cs, ss) = match &md {
             Some(m) => (m.client_streaming, m.server_streaming),
@@ -481,7 +566,10 @@ impl GrpcProducer {
         let mut guard = self.streaming.lock().unwrap();
         if guard.is_none() {
             let client = self.client()?;
-            let metadata = headers_to_metadata(ex);
+            let mut metadata = headers_to_metadata(ex);
+            for i in &self.cfg.client_interceptors {
+                i.intercept_call(&path, &mut metadata)?;
+            }
             let mut call = client.start_call(&path, &metadata, self.cfg.deadline).map_err(|s| s.to_camel_error())?;
             let sender = call.sender();
             let (ctx, replies_to) = (self.ctx.clone(), self.cfg.stream_replies_to.clone());
@@ -630,6 +718,13 @@ impl ConsumerShared {
 
     fn serve_inner(&self, call: &ServerCall) -> std::result::Result<(), Status> {
         let ctx = self.ctx.upgrade().ok_or_else(|| Status::new(Code::Unavailable, "CamelContext stopped"))?;
+        let path = format!("/{}/{}", call.service(), call.method());
+        for i in &self.cfg.server_interceptors {
+            i.intercept_call(&path, call.metadata())?;
+        }
+        if let Some(c) = &self.cfg.compression {
+            call.set_send_compression(c);
+        }
         let (method, input, output, cs, ss) = match &self.pool {
             Some(pool) => {
                 let svc = pool.service(&self.cfg.service).ok_or_else(|| Status::new(Code::Unimplemented, "unknown service"))?;
@@ -722,12 +817,14 @@ impl Service for GrpcConsumer {
             let (Some(chain), Some(key)) = (&cfg.key_cert_chain_resource, &cfg.key_resource) else {
                 return Err(CamelError::illegal_argument("grpc consumer with TLS requires keyCertChainResource and keyResource"));
             };
+            let mut b = TlsServerConfig::builder().cert_chain_pem_file(chain).private_key_pem_file(key).alpn_protocols(&["h2"]);
+            if let Some(trust) = &cfg.trust_cert_collection_resource {
+                // mutual TLS: clients must present a certificate issued by these CAs
+                let pem = std::fs::read(trust).map_err(|e| CamelError::illegal_argument(format!("Cannot read {}: {}", trust, e)))?;
+                b = b.add_client_root_pem(&pem).client_auth(camel_tls::ClientAuth::Need);
+            }
             Some(
-                TlsServerConfig::builder()
-                    .cert_chain_pem_file(chain)
-                    .private_key_pem_file(key)
-                    .alpn_protocols(&["h2"])
-                    .build()
+                b.build()
                     .map_err(|e| CamelError::illegal_argument(format!("Invalid TLS configuration: {}", e)))?,
             )
         };

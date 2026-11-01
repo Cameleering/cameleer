@@ -286,3 +286,45 @@ fn errors_are_reported_cleanly() {
     let c = SshClient::connect(&base(&server).password("wonderland")).unwrap();
     assert!(SftpClient::new(c).is_err());
 }
+
+#[test]
+fn agent_authentication() {
+    let ed = SshPrivateKey::generate_ed25519();
+    let rsa_key = rsa();
+    let stranger = SshPrivateKey::generate_ed25519();
+    let server = server_with(&[&ed, &rsa_key], vec![]);
+    // our test agent: the first identity is unknown to the server, the next ones are tried
+    let agent = camel_ssh::agent::TestAgent::start(vec![stranger, rsa_key.clone(), ed.clone()]).unwrap();
+    let mut cfg = base(&server);
+    cfg.agent = Some(agent.path().to_path_buf());
+    let c = SshClient::connect(&cfg).unwrap();
+    assert_eq!(c.auth_method(), "publickey");
+    let mut a = camel_ssh::agent::AgentClient::connect(agent.path()).unwrap();
+    assert_eq!(a.identities().unwrap().len(), 3);
+    // OpenSSH's ssh-agent, when installed
+    let (Some(agent_bin), Some(add)) = (["/usr/bin/ssh-agent", "/usr/local/bin/ssh-agent"].iter().find(|p| std::path::Path::new(p).exists()), ["/usr/bin/ssh-add", "/usr/local/bin/ssh-add"].iter().find(|p| std::path::Path::new(p).exists())) else {
+        return;
+    };
+    let dir = temp_dir("ssh-agent");
+    let sock = dir.join("s");
+    let mut child = std::process::Command::new(agent_bin).arg("-D").arg("-a").arg(&sock).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
+    for _ in 0..100 {
+        if sock.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let keyfile = dir.join("id");
+    std::fs::write(&keyfile, rsa_key.to_openssh_pem("t").unwrap()).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&keyfile, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let st = std::process::Command::new(add).arg(&keyfile).env("SSH_AUTH_SOCK", &sock).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().unwrap();
+    assert!(st.success());
+    let mut cfg = base(&server);
+    cfg.agent = Some(sock.clone());
+    let c = SshClient::connect(&cfg).unwrap();
+    assert_eq!(c.auth_method(), "publickey");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&dir);
+}

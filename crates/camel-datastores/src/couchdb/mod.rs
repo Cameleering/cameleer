@@ -10,11 +10,15 @@
 //!   with id `CouchDbId` (or the body) into the body; `CouchDbMethod=DELETE` deletes the
 //!   document identified by the body's `_id`/`_rev` (or the `CouchDbId`/`CouchDbRev` headers).
 //!   Conflicts raise `DocumentConflictException`, missing documents `NoDocumentException`.
+//!   An array body is saved in one `_bulk_docs` request; the body becomes the per-document
+//!   results (`ok`/`id`/`rev` or `error`/`reason`) and `CouchDbId`/`CouchDbRev` hold the
+//!   lists of ids/revisions.
 //! - **Consumer**: follows the `_changes` feed (`feed=longpoll`, `include_docs=true`) from the
 //!   current update sequence (or `since`) and routes each change with body = the document and
 //!   headers `CouchDbDatabase`, `CouchDbSeq`, `CouchDbId`, `CouchDbRev`, `CouchDbMethod`
 //!   (`UPDATE` or `DELETE`). Options `updates` (true), `deletes` (true), `heartbeat` (longpoll
-//!   timeout, 30000 ms), `style` (`main_only`/`all_docs`).
+//!   timeout, 30000 ms), `style` (`main_only`/`all_docs`), `maxMessagesPerPoll` (changes per
+//!   feed request, `limit`; 0 = unlimited).
 //!
 //! `https://` urls use TLS (trust from `sslContextParameters=#bean`, the global
 //! `camel.ssl.*` parameters, else the system trust store).
@@ -64,6 +68,7 @@ pub struct CouchDbConfig {
     pub deletes: bool,
     pub updates: bool,
     pub since: Option<String>,
+    pub max_messages_per_poll: usize,
     pub client: HttpClient,
 }
 
@@ -104,9 +109,10 @@ impl Component for CouchDbComponent {
             deletes: params.take_bool("deletes", true)?,
             updates: params.take_bool("updates", true)?,
             since: params.take("since"),
+            max_messages_per_poll: params.take_usize("maxMessagesPerPoll", 0)?,
             client,
         };
-        for k in ["lazyStartProducer", "bridgeErrorHandler", "exceptionHandler", "exchangePattern", "maxMessagesPerPoll"] {
+        for k in ["lazyStartProducer", "bridgeErrorHandler", "exceptionHandler", "exchangePattern"] {
             params.take(k);
         }
         Ok(Arc::new(CouchDbEndpoint { uri: uri.to_string(), ctx: ctx.downgrade(), cfg }))
@@ -227,6 +233,14 @@ impl Processor for CouchDbProducer {
                 ex.set_header(headers::ID, id);
                 ex.set_header(headers::REV, r.get("rev").cloned().unwrap_or(Value::Null));
             }
+            Some("PUT") | Some("POST") | None if matches!(ex.body(), Value::Array(_)) => {
+                let docs = body_to_json_value(ex.body())?;
+                let r = self.api.check(self.api.request("POST", "/_bulk_docs", Some(&Value::object([("docs", docs)])), None)?, "Bulk save")?;
+                let items = r.as_array().cloned().unwrap_or_default();
+                ex.set_header(headers::ID, Value::Array(items.iter().map(|i| i.get("id").cloned().unwrap_or(Value::Null)).collect()));
+                ex.set_header(headers::REV, Value::Array(items.iter().map(|i| i.get("rev").cloned().unwrap_or(Value::Null)).collect()));
+                ex.set_body(Value::Array(items));
+            }
             Some("PUT") | Some("POST") | None => {
                 let doc = body_to_json_value(ex.body())?;
                 if !matches!(doc, Value::Object(_)) {
@@ -270,7 +284,10 @@ impl Service for CouchDbConsumer {
             let mut since = since;
             let poll = api.cfg.heartbeat.min(Duration::from_millis(500)).max(Duration::from_millis(10));
             while !stop.is_stopped() {
-                let path = format!("/_changes?feed=longpoll&include_docs=true&style={}&since={}&timeout={}", api.cfg.style, enc(&since), poll.as_millis());
+                let mut path = format!("/_changes?feed=longpoll&include_docs=true&style={}&since={}&timeout={}", api.cfg.style, enc(&since), poll.as_millis());
+                if api.cfg.max_messages_per_poll > 0 {
+                    path.push_str(&format!("&limit={}", api.cfg.max_messages_per_poll));
+                }
                 let res = api.request("GET", &path, None, Some(poll + Duration::from_secs(10))).and_then(|r| api.check(r, "Changes feed"));
                 let feed = match res {
                     Ok(f) => f,

@@ -9,8 +9,18 @@
 //!   `Channel`, `Message`, `Pivot`, `Position`, `Count`, `Timestamp`, `Pattern`, `Db`,
 //!   `Score`, `Min`, `Max`, `Increment`, `WithScore`) like Camel's `RedisProducer`, and
 //!   stores the result in the body (commands that return nothing in Spring Data Redis, e.g.
-//!   `SET`, `HSET`, `PUBLISH`, keep the body). Values are written as UTF-8 text (bytes as is,
-//!   arrays/objects as JSON); replies become text when valid UTF-8, else bytes.
+//!   `SET`, `HSET`, `PUBLISH`, keep the body). Values go through the `serializer`
+//!   ([`RedisSerializer`]): by default UTF-8 text (bytes as is, arrays/objects as JSON) with
+//!   replies as text when valid UTF-8, else bytes; `serializer=string` (Spring's
+//!   `StringRedisSerializer`), `json` (`GenericJackson2JsonRedisSerializer`: JSON written,
+//!   replies parsed), `bytes` (`ByteArrayRedisSerializer`: replies stay bytes) or a `#bean`
+//!   of type [`RedisSerializerBean`]. There is no Java serialization (Camel's
+//!   `JdkSerializationRedisSerializer` default). Keys and field names are always text.
+//!   Geo commands: `GEOADD` (`Key`, `Longitude`, `Latitude`, `Value`), `GEODIST` (`Key`,
+//!   `Values` = two members; meters as float), `GEOHASH` / `GEOPOS` (`Key`, `Values`),
+//!   `GEORADIUS` (`Key`, `Longitude`, `Latitude`, `Radius` in meters, optional `Count`) and
+//!   `GEORADIUSBYMEMBER` (`Key`, `Value`, `Radius`, `Count`), results as objects `{name,
+//!   distance, longitude, latitude}` nearest first.
 //! - **Consumer**: `SUBSCRIBE` to `channels` (or `PSUBSCRIBE` when `command=PSUBSCRIBE`); body
 //!   = message, headers `CamelRedis.Channel` and `CamelRedis.Pattern`.
 //!
@@ -18,9 +28,14 @@
 //! `protocol` (2 or 3: RESP3 via `HELLO 3`), `connectTimeout`, `timeout` (reply timeout),
 //! `redisTemplate` / `connectionFactory` (`#bean` of type [`RedisClient`]), TLS with
 //! `ssl=true` / `sslContextParameters=#bean` / `useGlobalSslContextParameters=true`,
-//! accepted and ignored: `serializer`, `listenerContainer`.
+//! `serializer`; accepted and ignored: `listenerContainer`.
+//! Topologies (rust-camel options): `sentinels=host:port,...` with `sentinelMaster=name`
+//! resolve the master through Redis Sentinel; `cluster=true` routes commands by key slot
+//! and follows `MOVED`/`ASK` redirections (see [`client`]).
 
 pub mod client;
+pub mod cluster;
+pub mod geo;
 pub mod repository;
 pub mod resp;
 pub mod server;
@@ -71,6 +86,96 @@ pub mod headers {
     pub const MAX: &str = "CamelRedis.Max";
     pub const INCREMENT: &str = "CamelRedis.Increment";
     pub const WITHSCORE: &str = "CamelRedis.WithScore";
+    pub const LONGITUDE: &str = "CamelRedis.Longitude";
+    pub const LATITUDE: &str = "CamelRedis.Latitude";
+    pub const RADIUS: &str = "CamelRedis.Radius";
+}
+
+/// Converts message values to Redis values and back (Spring Data Redis `RedisSerializer`).
+pub trait RedisSerializer: Send + Sync {
+    fn serialize(&self, v: &Value) -> Vec<u8>;
+    fn deserialize(&self, b: &[u8]) -> Value;
+}
+
+/// Registry bean wrapping a custom serializer (`serializer=#name`).
+#[derive(Clone)]
+pub struct RedisSerializerBean(pub Arc<dyn RedisSerializer>);
+
+/// Default: text (bytes as is, arrays/objects as JSON); replies as text when UTF-8.
+pub struct TextRedisSerializer;
+/// `StringRedisSerializer`: everything as UTF-8 text.
+pub struct StringRedisSerializer;
+/// `GenericJackson2JsonRedisSerializer`: JSON both ways.
+pub struct JsonRedisSerializer;
+/// `ByteArrayRedisSerializer`: raw bytes both ways.
+pub struct ByteArrayRedisSerializer;
+
+impl RedisSerializer for TextRedisSerializer {
+    fn serialize(&self, v: &Value) -> Vec<u8> {
+        value_bytes(v)
+    }
+    fn deserialize(&self, b: &[u8]) -> Value {
+        resp::bytes_to_value(b)
+    }
+}
+
+impl RedisSerializer for StringRedisSerializer {
+    fn serialize(&self, v: &Value) -> Vec<u8> {
+        match v {
+            Value::Bytes(b) => String::from_utf8_lossy(b).into_owned().into_bytes(),
+            other => value_bytes(other),
+        }
+    }
+    fn deserialize(&self, b: &[u8]) -> Value {
+        Value::String(String::from_utf8_lossy(b).into_owned())
+    }
+}
+
+impl RedisSerializer for JsonRedisSerializer {
+    fn serialize(&self, v: &Value) -> Vec<u8> {
+        v.to_json().into_bytes()
+    }
+    fn deserialize(&self, b: &[u8]) -> Value {
+        let text = String::from_utf8_lossy(b);
+        camel_core::json::parse(&text).unwrap_or_else(|_| Value::String(text.into_owned()))
+    }
+}
+
+impl RedisSerializer for ByteArrayRedisSerializer {
+    fn serialize(&self, v: &Value) -> Vec<u8> {
+        value_bytes(v)
+    }
+    fn deserialize(&self, b: &[u8]) -> Value {
+        Value::Bytes(b.to_vec())
+    }
+}
+
+/// Resolves the `serializer` option (name, Spring class name or `#bean`).
+pub fn serializer_for(ctx: &CamelContext, name: Option<&str>) -> Result<Arc<dyn RedisSerializer>> {
+    let Some(n) = name.map(|s| s.trim()).filter(|s| !s.is_empty()) else { return Ok(Arc::new(TextRedisSerializer)) };
+    if let Some(bean) = n.strip_prefix('#') {
+        let b = ctx.registry().lookup::<RedisSerializerBean>(bean).ok_or_else(|| CamelError::no_such_bean(bean))?;
+        return Ok(b.0.clone());
+    }
+    let simple = n.rsplit('.').next().unwrap_or(n).to_ascii_lowercase();
+    Ok(match simple.as_str() {
+        "text" | "default" => Arc::new(TextRedisSerializer),
+        "string" | "stringredisserializer" => Arc::new(StringRedisSerializer),
+        "json" | "jackson2jsonredisserializer" | "genericjackson2jsonredisserializer" | "jackson" => Arc::new(JsonRedisSerializer),
+        "bytes" | "byte" | "bytearrayredisserializer" | "raw" => Arc::new(ByteArrayRedisSerializer),
+        "jdkserializationredisserializer" | "jdk" => return Err(CamelError::illegal_argument("spring-redis: Java serialization is not supported (use string, json or bytes)")),
+        _ => return Err(CamelError::illegal_argument(format!("spring-redis: unknown serializer '{}' (string, json, bytes or #bean)", n))),
+    })
+}
+
+/// Reply → value, running bulk strings through the serializer.
+fn decode(r: &Resp, ser: &dyn RedisSerializer) -> Value {
+    match r {
+        Resp::Bulk(Some(b)) => ser.deserialize(b),
+        Resp::Verbatim(_, b) => ser.deserialize(b),
+        Resp::Array(Some(items)) | Resp::Set(items) | Resp::Push(items) => Value::Array(items.iter().map(|i| decode(i, ser)).collect()),
+        other => other.to_value(),
+    }
 }
 
 /// Serializes a Camel value for Redis (text as UTF-8, bytes as is, numbers as text,
@@ -94,6 +199,7 @@ pub struct RedisEndpointConfig {
     pub command: String,
     pub channels: Vec<String>,
     pub client: Arc<RedisClient>,
+    pub serializer: Arc<dyn RedisSerializer>,
 }
 
 impl Component for RedisComponent {
@@ -114,7 +220,17 @@ impl Component for RedisComponent {
         cfg.connect_timeout = params.take_duration("connectTimeout", Duration::from_secs(10))?;
         cfg.read_timeout = Some(params.take_duration("timeout", Duration::from_secs(30))?);
         cfg.tls = tls;
-        for k in ["serializer", "listenerContainer", "lazyStartProducer", "bridgeErrorHandler", "exceptionHandler", "exchangePattern"] {
+        cfg.sentinels = match params.take("sentinels") {
+            Some(list) => list.split(',').map(|h| h.trim()).filter(|h| !h.is_empty()).map(|h| split_host_port(h, 26379)).collect::<Result<Vec<_>>>()?,
+            None => Vec::new(),
+        };
+        cfg.master_name = params.take("sentinelMaster").or_else(|| params.take("masterName")).filter(|s| !s.is_empty());
+        if !cfg.sentinels.is_empty() && cfg.master_name.is_none() {
+            cfg.master_name = Some("mymaster".into());
+        }
+        cfg.cluster = params.take_bool("cluster", false)?;
+        let serializer = serializer_for(ctx, params.take("serializer").as_deref())?;
+        for k in ["listenerContainer", "lazyStartProducer", "bridgeErrorHandler", "exceptionHandler", "exchangePattern"] {
             params.take(k);
         }
         let client = match bean {
@@ -124,7 +240,7 @@ impl Component for RedisComponent {
             }
             None => Arc::new(RedisClient::new(cfg)),
         };
-        Ok(Arc::new(RedisEndpoint { uri: uri.to_string(), ctx: ctx.downgrade(), cfg: RedisEndpointConfig { command, channels, client } }))
+        Ok(Arc::new(RedisEndpoint { uri: uri.to_string(), ctx: ctx.downgrade(), cfg: RedisEndpointConfig { command, channels, client, serializer } }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -177,6 +293,17 @@ enum Out {
     Float,
     /// `WITHSCORES` reply → array of `{value, score}`.
     Scored,
+    /// `GEOPOS` reply → array of `{longitude, latitude}` (or null).
+    GeoPos,
+    /// `GEORADIUS ... WITHDIST WITHCOORD` → array of `{name, distance, longitude, latitude}`.
+    GeoResults,
+}
+
+fn num(r: &Resp) -> Value {
+    match r {
+        Resp::Double(d) => Value::Float(*d),
+        other => other.as_text().and_then(|t| t.parse::<f64>().ok()).map(Value::Float).unwrap_or(Value::Null),
+    }
 }
 
 struct RedisProducer {
@@ -199,32 +326,28 @@ fn list_header(ex: &Exchange, name: &str) -> Result<Vec<Vec<u8>>> {
     }
 }
 
-fn map_header(ex: &Exchange, name: &str) -> Result<Vec<Vec<u8>>> {
-    match req(ex, name)? {
-        Value::Object(m) => Ok(m.iter().flat_map(|(k, v)| [k.as_bytes().to_vec(), value_bytes(v)]).collect()),
-        Value::Array(a) => Ok(a.iter().map(value_bytes).collect()),
-        other => Err(CamelError::illegal_argument(format!("Header {} must be a map, got {}", name, other.type_name()))),
-    }
-}
-
 fn hs(ex: &Exchange, name: &str) -> Result<Vec<u8>> {
     Ok(req(ex, name)?.to_string().into_bytes())
 }
 
-fn to_object(r: &Resp) -> Value {
+fn to_object(r: &Resp, ser: &dyn RedisSerializer) -> Value {
+    let mut m = ObjectMap::new();
     match r {
-        Resp::Map(_) => r.to_value(),
+        Resp::Map(pairs) => {
+            for (k, v) in pairs {
+                m.insert(k.to_value().to_string(), decode(v, ser));
+            }
+        }
         _ => {
             let items = r.items().unwrap_or_default();
-            let mut m = ObjectMap::new();
             for p in items.chunks(2) {
                 if p.len() == 2 {
-                    m.insert(p[0].to_value().to_string(), p[1].to_value());
+                    m.insert(p[0].to_value().to_string(), decode(&p[1], ser));
                 }
             }
-            Value::Object(m)
         }
     }
+    Value::Object(m)
 }
 
 fn scored(r: &Resp) -> Value {
@@ -249,8 +372,22 @@ impl RedisProducer {
     fn build(&self, ex: &Exchange, cmd: &str) -> Result<(Vec<Vec<u8>>, Out)> {
         use headers::*;
         let c = cmd.as_bytes().to_vec();
+        let ser = self.cfg.serializer.as_ref();
         let k = || hb(ex, KEY);
-        let v = || hb(ex, VALUE);
+        let v = || req(ex, VALUE).map(|x| ser.serialize(x));
+        let sv = |name: &str| -> Result<Vec<Vec<u8>>> {
+            Ok(match req(ex, name)? {
+                Value::Array(a) => a.iter().map(|x| ser.serialize(x)).collect(),
+                other => vec![ser.serialize(other)],
+            })
+        };
+        let smap = |name: &str| -> Result<Vec<Vec<u8>>> {
+            match req(ex, name)? {
+                Value::Object(m) => Ok(m.iter().flat_map(|(k, v)| [k.as_bytes().to_vec(), ser.serialize(v)]).collect()),
+                Value::Array(a) => Ok(a.iter().map(value_bytes).collect()),
+                other => Err(CamelError::illegal_argument(format!("Header {} must be a map, got {}", name, other.type_name()))),
+            }
+        };
         let timeout = || hs(ex, TIMEOUT);
         let mut a = vec![c];
         let out = match cmd {
@@ -350,11 +487,11 @@ impl RedisProducer {
                 Out::Raw
             }
             "MSET" => {
-                a.extend(map_header(ex, VALUES)?);
+                a.extend(smap(VALUES)?);
                 Out::Void
             }
             "MSETNX" => {
-                a.extend(map_header(ex, VALUES)?);
+                a.extend(smap(VALUES)?);
                 Out::Bool
             }
             // hashes
@@ -385,7 +522,7 @@ impl RedisProducer {
             }
             "HMSET" => {
                 a.push(k()?);
-                a.extend(map_header(ex, VALUES)?);
+                a.extend(smap(VALUES)?);
                 Out::Void
             }
             // lists
@@ -477,11 +614,47 @@ impl RedisProducer {
                 a.extend(keys);
                 Out::Void
             }
+            // geo
+            "GEOADD" => {
+                a.extend([k()?, hs(ex, LONGITUDE)?, hs(ex, LATITUDE)?, hb(ex, VALUE)?]);
+                Out::Raw
+            }
+            "GEODIST" => {
+                a.push(k()?);
+                let members = list_header(ex, VALUES)?;
+                if members.len() != 2 {
+                    return Err(CamelError::illegal_argument("GEODIST needs two members in the CamelRedis.Values header"));
+                }
+                a.extend(members);
+                a.push(b"m".to_vec());
+                Out::Float
+            }
+            "GEOHASH" | "GEOPOS" => {
+                a.push(k()?);
+                match header(ex, VALUES) {
+                    Some(_) => a.extend(list_header(ex, VALUES)?),
+                    None => a.push(hb(ex, VALUE)?),
+                }
+                if cmd == "GEOPOS" { Out::GeoPos } else { Out::Raw }
+            }
+            "GEORADIUS" | "GEORADIUSBYMEMBER" => {
+                a.push(k()?);
+                if cmd == "GEORADIUS" {
+                    a.extend([hs(ex, LONGITUDE)?, hs(ex, LATITUDE)?]);
+                } else {
+                    a.push(hb(ex, VALUE)?);
+                }
+                a.extend([hs(ex, RADIUS)?, b"m".to_vec(), b"WITHDIST".to_vec(), b"WITHCOORD".to_vec(), b"ASC".to_vec()]);
+                if let Some(c) = header(ex, COUNT) {
+                    a.extend([b"COUNT".to_vec(), c.to_string().into_bytes()]);
+                }
+                Out::GeoResults
+            }
             // pub/sub
             "PUBLISH" => {
                 let msg = match header(ex, MESSAGE) {
-                    Some(m) => value_bytes(m),
-                    None => value_bytes(ex.body()),
+                    Some(m) => ser.serialize(m),
+                    None => ser.serialize(ex.body()),
                 };
                 a.extend([hb(ex, CHANNEL)?, msg]);
                 Out::Void
@@ -497,10 +670,10 @@ impl RedisProducer {
                 if let Some(key) = header(ex, KEY) {
                     a.push(value_bytes(key));
                 }
-                if let Some(Value::Array(vals)) = header(ex, VALUES) {
-                    a.extend(vals.iter().map(value_bytes));
-                } else if let Some(val) = header(ex, VALUE) {
-                    a.push(value_bytes(val));
+                if let Some(Value::Array(_)) = header(ex, VALUES) {
+                    a.extend(sv(VALUES)?);
+                } else if header(ex, VALUE).is_some() {
+                    a.push(v()?);
                 }
                 let _ = other;
                 Out::Raw
@@ -523,19 +696,50 @@ impl Processor for RedisProducer {
         let value = {
             match out {
                 Out::Scored => scored(&reply),
+                Out::GeoPos => Value::Array(
+                    reply
+                        .items()
+                        .unwrap_or_default()
+                        .iter()
+                        .map(|p| match p.items() {
+                            Some(c) if c.len() == 2 => Value::object([("longitude", num(&c[0])), ("latitude", num(&c[1]))]),
+                            _ => Value::Null,
+                        })
+                        .collect(),
+                ),
+                Out::GeoResults => Value::Array(
+                    reply
+                        .items()
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|h| {
+                            let it = h.items()?;
+                            let coords = it.get(2).and_then(|c| c.items()).unwrap_or_default();
+                            Some(Value::object([
+                                ("name", decode(&it[0], self.cfg.serializer.as_ref())),
+                                ("distance", it.get(1).map(num).unwrap_or(Value::Null)),
+                                ("longitude", coords.first().map(num).unwrap_or(Value::Null)),
+                                ("latitude", coords.get(1).map(num).unwrap_or(Value::Null)),
+                            ]))
+                        })
+                        .collect(),
+                ),
                 Out::Void => return Ok(()),
                 Out::Bool => Value::Bool(reply.as_int().map(|i| i != 0).unwrap_or(!reply.is_null())),
-                Out::Map => to_object(&reply),
+                Out::Map => to_object(&reply, self.cfg.serializer.as_ref()),
                 Out::Float => match &reply {
                     Resp::Double(d) => Value::Float(*d),
                     r if r.is_null() => Value::Null,
                     r => r.as_text().and_then(|t| t.parse().ok()).map(Value::Float).unwrap_or(Value::Null),
                 },
                 Out::Raw => {
+                    let ser = self.cfg.serializer.as_ref();
                     if matches!(cmd.as_str(), "BLPOP" | "BRPOP") {
-                        reply.items().and_then(|i| i.get(1)).map(|v| v.to_value()).unwrap_or(Value::Null)
-                    } else {
+                        reply.items().and_then(|i| i.get(1)).map(|v| decode(v, ser)).unwrap_or(Value::Null)
+                    } else if matches!(cmd.as_str(), "KEYS" | "RANDOMKEY" | "TYPE" | "PING" | "ECHO" | "GEOHASH") {
                         reply.to_value()
+                    } else {
+                        decode(&reply, ser)
                     }
                 }
             }
@@ -560,7 +764,7 @@ impl Service for RedisConsumer {
         let (channels, patterns) = if pattern { (vec![], self.cfg.channels.clone()) } else { (self.cfg.channels.clone(), vec![]) };
         let sub = self.cfg.client.subscribe(&channels, &patterns)?;
         *self.closer.lock().unwrap() = sub.closer().ok();
-        let (client, ctx, processor, logger) = (self.cfg.client.clone(), self.ctx.clone(), self.processor.clone(), self.logger.clone());
+        let (client, ctx, processor, logger, ser) = (self.cfg.client.clone(), self.ctx.clone(), self.processor.clone(), self.logger.clone(), self.cfg.serializer.clone());
         camel_core::camel_info!("spring-redis", "Subscribed to {:?} on {}:{}", self.cfg.channels, client.config().host, client.config().port);
         self.threads.spawn("spring-redis-consumer", move |stop| {
             let mut sub = Some(sub);
@@ -579,7 +783,7 @@ impl Service for RedisConsumer {
                 match s.next_message(Duration::from_millis(200)) {
                     Ok(Some(m)) => {
                         let mut ex = Exchange::new(ctx.upgrade());
-                        ex.set_body(resp::bytes_to_value(&m.payload));
+                        ex.set_body(ser.deserialize(&m.payload));
                         ex.set_header(headers::CHANNEL, m.channel.clone());
                         ex.set_header(headers::PATTERN, m.pattern.clone().unwrap_or(m.channel));
                         process_consumer_exchange(&logger, processor.as_ref(), &mut ex);

@@ -995,6 +995,19 @@ fn threads_transacted_and_policy() {
     let count = Arc::new(AtomicUsize::new(0));
     let p: Arc<dyn Policy> = Arc::new(CountingPolicy(count.clone()));
     ctx.registry().bind("myPolicy", p);
+    let commits = Arc::new(AtomicUsize::new(0));
+    let c2 = commits.clone();
+    ctx.registry().bind_transaction_manager(
+        "transactionManager",
+        camel_core::transaction::FnTransactionManager::new(
+            |_| Ok(Box::new(())),
+            move |_| {
+                c2.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            |_| Ok(()),
+        ),
+    );
     start_with(
         &ctx,
         r##"
@@ -1003,6 +1016,12 @@ fn threads_transacted_and_policy() {
     steps:
       - threads:
           poolSize: 2
+          maxPoolSize: 4
+          keepAliveTime: 30
+          maxQueueSize: 10
+          allowCoreThreadTimeOut: true
+          rejectedPolicy: Abort
+          callerRunsWhenRejected: false
           threadName: worker
       - setBody: {simple: "${body} in pool"}
       - to: mock:threads
@@ -1026,6 +1045,7 @@ fn threads_transacted_and_policy() {
     mock(&ctx, "mock:policy").assert_is_satisfied().unwrap();
     mock(&ctx, "mock:afterPolicy").assert_is_satisfied().unwrap();
     assert_eq!(count.load(Ordering::SeqCst), 1);
+    assert_eq!(commits.load(Ordering::SeqCst), 1);
 }
 
 #[test]

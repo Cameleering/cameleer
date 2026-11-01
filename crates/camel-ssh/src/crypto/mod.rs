@@ -3,3 +3,4 @@
 
 pub mod cipher;
 pub mod ed25519;
+pub mod bcrypt;

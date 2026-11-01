@@ -447,3 +447,21 @@ fn consumer_to_producer_proxy() {
     assert_eq!(r.body_text(), "backend saw ping via proxy");
     ctx.stop().unwrap();
 }
+
+#[test]
+fn suspended_http_consumer_answers_503() {
+    let ctx = context();
+    ctx.add_routes(|b| {
+        b.from("platform-http:/sus").route_id("sus").set_body(constant("up"));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let url = format!("http://127.0.0.1:{}/sus", port(&ctx));
+    assert_eq!(get(&url).body_text(), "up");
+    ctx.suspend_route("sus").unwrap();
+    assert!(ctx.is_route_suspended_in_place("sus"));
+    assert_eq!(get(&url).status, 503);
+    ctx.resume_route("sus").unwrap();
+    assert_eq!(get(&url).body_text(), "up");
+    ctx.stop().unwrap();
+}

@@ -1,6 +1,10 @@
 //! Redis client: connection setup (TLS, `HELLO 3` / `AUTH`, `SELECT`), commands,
-//! pipelining, a small connection pool and pub/sub subscriptions.
+//! pipelining, a small connection pool per node and pub/sub subscriptions, plus the
+//! basics of Redis Sentinel (master discovery with `SENTINEL get-master-addr-by-name`,
+//! re-resolved after connection failures) and Redis Cluster (key-slot routing with a slot
+//! cache learnt from `MOVED` redirections, one-shot `ASK` redirections with `ASKING`).
 
+use std::collections::{BTreeMap, HashMap};
 use std::io::{BufReader, Write};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -30,6 +34,12 @@ pub struct RedisConfig {
     pub read_timeout: Option<Duration>,
     /// Client name (`CLIENT SETNAME` / `HELLO ... SETNAME`).
     pub client_name: Option<String>,
+    /// Sentinel nodes; with [`RedisConfig::master_name`] the master address is asked from them.
+    pub sentinels: Vec<(String, u16)>,
+    /// Name of the master monitored by the sentinels.
+    pub master_name: Option<String>,
+    /// Cluster mode: route commands by key slot and follow `MOVED` / `ASK`.
+    pub cluster: bool,
 }
 
 impl RedisConfig {
@@ -45,7 +55,15 @@ impl RedisConfig {
             connect_timeout: Duration::from_secs(10),
             read_timeout: Some(Duration::from_secs(30)),
             client_name: None,
+            sentinels: Vec::new(),
+            master_name: None,
+            cluster: false,
         }
+    }
+
+    /// The same settings for another node.
+    pub fn for_node(&self, host: &str, port: u16) -> RedisConfig {
+        RedisConfig { host: host.to_string(), port, ..self.clone() }
     }
 }
 
@@ -251,41 +269,138 @@ impl Subscription {
     }
 }
 
+type Node = (String, u16);
+
 /// A pooled Redis client (cheap to share behind an `Arc`).
 pub struct RedisClient {
     cfg: RedisConfig,
-    pool: Mutex<Vec<RedisConnection>>,
+    pool: Mutex<HashMap<Node, Vec<RedisConnection>>>,
+    /// Master address resolved through the sentinels.
+    master: Mutex<Option<Node>>,
+    /// Cluster slot cache (slot → node), learnt from `MOVED` redirections.
+    slots: Mutex<BTreeMap<u16, Node>>,
 }
 
 impl RedisClient {
     pub fn new(cfg: RedisConfig) -> RedisClient {
-        RedisClient { cfg, pool: Mutex::new(Vec::new()) }
+        RedisClient { cfg, pool: Mutex::new(HashMap::new()), master: Mutex::new(None), slots: Mutex::new(BTreeMap::new()) }
     }
 
     pub fn config(&self) -> &RedisConfig {
         &self.cfg
     }
 
-    /// Runs `f` with a pooled connection (broken connections are dropped).
-    pub fn with_connection<T>(&self, f: impl FnOnce(&mut RedisConnection) -> Result<T>) -> Result<T> {
-        let pooled = self.pool.lock().unwrap().pop();
+    /// Asks the sentinels for the address of the master.
+    pub fn resolve_master(&self) -> Result<Node> {
+        let name = self.cfg.master_name.clone().unwrap_or_else(|| "mymaster".into());
+        let mut last = None;
+        for (h, p) in &self.cfg.sentinels {
+            let mut scfg = RedisConfig::new(h, *p);
+            scfg.connect_timeout = self.cfg.connect_timeout;
+            scfg.read_timeout = self.cfg.read_timeout;
+            scfg.tls = self.cfg.tls.clone();
+            let r = RedisConnection::connect(&scfg).and_then(|mut c| c.command(&args(["SENTINEL", "get-master-addr-by-name", name.as_str()])));
+            match r {
+                Ok(reply) => {
+                    let items = reply.items().unwrap_or_default();
+                    if let (Some(host), Some(port)) = (items.first().and_then(|x| x.as_text()), items.get(1).and_then(|x| x.as_text()).and_then(|p| p.parse::<u16>().ok())) {
+                        let node = (host, port);
+                        *self.master.lock().unwrap() = Some(node.clone());
+                        return Ok(node);
+                    }
+                    last = Some(CamelError::new(kinds::REDIS_CONNECTION_FAILURE, format!("Sentinel {}:{} does not know master '{}'", h, p, name)));
+                }
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| CamelError::new(kinds::REDIS_CONNECTION_FAILURE, "No sentinels configured")))
+    }
+
+    /// The default node: the sentinel-resolved master, or the configured host.
+    pub fn primary(&self) -> Result<Node> {
+        if self.cfg.master_name.is_some() && !self.cfg.sentinels.is_empty() {
+            if let Some(m) = self.master.lock().unwrap().clone() {
+                return Ok(m);
+            }
+            return self.resolve_master();
+        }
+        Ok((self.cfg.host.clone(), self.cfg.port))
+    }
+
+    /// Runs `f` with a pooled connection to `node` (broken connections are dropped).
+    pub fn with_node<T>(&self, node: &Node, f: impl FnOnce(&mut RedisConnection) -> Result<T>) -> Result<T> {
+        let pooled = self.pool.lock().unwrap().get_mut(node).and_then(|v| v.pop());
         let mut conn = match pooled {
             Some(c) => c,
-            None => RedisConnection::connect(&self.cfg)?,
+            None => match RedisConnection::connect(&self.cfg.for_node(&node.0, node.1)) {
+                Ok(c) => c,
+                Err(e) => {
+                    // the master may have failed over: ask the sentinels again next time
+                    *self.master.lock().unwrap() = None;
+                    return Err(e);
+                }
+            },
         };
         let r = f(&mut conn);
         if !conn.is_broken() {
             let mut p = self.pool.lock().unwrap();
-            if p.len() < 8 {
-                p.push(conn);
+            let v = p.entry(node.clone()).or_default();
+            if v.len() < 8 {
+                v.push(conn);
             }
+        } else {
+            *self.master.lock().unwrap() = None;
         }
         r
     }
 
-    /// Runs one command.
+    /// Runs `f` with a pooled connection to the default node.
+    pub fn with_connection<T>(&self, f: impl FnOnce(&mut RedisConnection) -> Result<T>) -> Result<T> {
+        let node = self.primary()?;
+        self.with_node(&node, f)
+    }
+
+    /// Runs one command (routed by key slot and following redirections in cluster mode).
     pub fn command(&self, args: &[Vec<u8>]) -> Result<Resp> {
-        self.with_connection(|c| c.command(args))
+        if !self.cfg.cluster {
+            return self.with_connection(|c| c.command(args));
+        }
+        let slot = args.get(1).map(|k| super::cluster::key_slot(k));
+        let mut node = match slot.and_then(|s| self.slots.lock().unwrap().get(&s).cloned()) {
+            Some(n) => n,
+            None => self.primary()?,
+        };
+        let mut asking = false;
+        for _ in 0..5 {
+            let r = if asking {
+                self.with_node(&node, |c| {
+                    let mut replies = c.pipeline(&[vec![b"ASKING".to_vec()], args.to_vec()])?;
+                    let r = replies.pop().unwrap_or(Resp::Null);
+                    match reply_error(&r) {
+                        Some(e) => Err(e),
+                        None => Ok(r),
+                    }
+                })
+            } else {
+                self.with_node(&node, |c| c.command(args))
+            };
+            match r {
+                Err(e) if e.kind == kinds::REDIS_SYSTEM => match super::cluster::parse_redirect(&e.message) {
+                    Some(super::cluster::Redirect::Moved(s, h, p)) => {
+                        node = (h, p);
+                        self.slots.lock().unwrap().insert(s, node.clone());
+                        asking = false;
+                    }
+                    Some(super::cluster::Redirect::Ask(_, h, p)) => {
+                        node = (h, p);
+                        asking = true;
+                    }
+                    None => return Err(e),
+                },
+                other => return other,
+            }
+        }
+        Err(CamelError::new(kinds::REDIS_SYSTEM, "Too many cluster redirections"))
     }
 
     /// Runs one command given as text arguments.
@@ -306,7 +421,8 @@ impl RedisClient {
     /// Opens a dedicated connection subscribed to `channels` (SUBSCRIBE) and `patterns` (PSUBSCRIBE).
     /// Returns once the server confirmed the subscriptions.
     pub fn subscribe(&self, channels: &[String], patterns: &[String]) -> Result<Subscription> {
-        let mut conn = RedisConnection::connect(&self.cfg)?;
+        let node = self.primary()?;
+        let mut conn = RedisConnection::connect(&self.cfg.for_node(&node.0, node.1))?;
         let mut cmds = Vec::new();
         if !channels.is_empty() {
             let mut c = vec![b"SUBSCRIBE".to_vec()];

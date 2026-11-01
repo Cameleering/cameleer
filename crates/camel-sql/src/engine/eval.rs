@@ -476,6 +476,7 @@ fn lookup_column(env: &Env, table: Option<&str>, name: &str) -> SqlResult<Value>
 /// Evaluate an expression.
 pub fn eval(expr: &Expr, env: &Env) -> SqlResult<Value> {
     match expr {
+        Expr::Window { .. } => Err(SqlErr::new("42P20", "window functions are not allowed here")),
         Expr::Literal(v) => Ok(v.clone()),
         Expr::Column { table, name } => lookup_column(env, table.as_deref(), name),
         Expr::Param(i) => env

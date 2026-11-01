@@ -5,26 +5,33 @@
 //!
 //! | format | encode | decode |
 //! |---|---|---|
-//! | `QR_CODE` | versions 1-40, ECC L/M/Q/H (`errorCorrectionLevel`, default L like ZXing), numeric / alphanumeric / byte (UTF-8 with ECI 26 for non-ASCII), RS, mask by penalty rules | finder patterns, sampling, format/version info, unmasking, RS correction |
-//! | `DATA_MATRIX` | ECC 200 square 10x10 .. 144x144, ASCII encodation | upright symbols; ASCII, C40, Text, X12, EDIFACT, Base 256 |
+//! | `QR_CODE` | versions 1-40, ECC L/M/Q/H (`errorCorrectionLevel`, default L like ZXing), numeric / alphanumeric / Kanji (JIS X 0208 text) / byte (UTF-8 with ECI 26 for non-ASCII), RS, mask by penalty rules | finder patterns, sampling, format/version info, unmasking, RS correction, Kanji to Unicode |
+//! | `DATA_MATRIX` | ECC 200 square 10x10 .. 144x144 and rectangular 8x18 .. 16x48 (`dataMatrixShape` NONE (ZXing order) / SQUARE / RECTANGLE), ASCII encodation | upright symbols; ASCII, C40, Text, X12, EDIFACT, Base 256 |
+//! | `AZTEC` | compact 1-4 and full-range 4-32 layers, ZXing's 33% error correction, Upper/Lower/Digit/Punct/Mixed + Binary Shift, ECI 26 for non-Latin-1 | upright symbols via the bullseye; every mode, FLG(n) ECIs, RS correction |
 //! | `CODE_128` | code sets A/B/C, automatic switching | yes |
 //! | `CODE_39` | yes | yes |
 //! | `EAN_13`, `UPC_A` | 12/13 (11/12) digits, check digit computed or verified | yes (an EAN-13 starting with 0 is reported as `UPC_A` unless `barcodeFormat=EAN_13`) |
 //!
 //! Options: `width` / `height` (default 100, ZXing rendering: the symbol is scaled by the
 //! largest integer factor that fits, with a 4-module quiet zone for QR and 10 modules of side
-//! margin for linear codes, centred), `imageType` (`PNG`; `GIF` / `JPG` are rejected),
+//! margin for linear codes, centred), `imageType` (`PNG`, `GIF` (gray palette, LZW) or `JPG`
+//! (baseline grayscale, quality 95)),
 //! `barcodeFormat`, `errorCorrectionLevel` (`L`, `M`, `Q`, `H`).
 //!
-//! Unmarshal accepts any PNG (grayscale, RGB(A), palette, all bit depths, interlaced), finds the
+//! Unmarshal accepts any PNG (grayscale, RGB(A), palette, all bit depths, interlaced), GIF or
+//! baseline JPEG (detected by signature), finds the
 //! symbol (when `barcodeFormat` is the default QR_CODE every supported format is tried) and sets
 //! the body to the text and the `BarcodeFormat` header (plus `ERROR_CORRECTION_LEVEL` for QR).
 //! Detection targets clean, axis-aligned images such as generated ones (QR also in 90° steps
 //! and mirrored); it is not a camera-image reader (no perspective correction, local
 //! thresholding or damaged finder recovery).
 
+pub mod aztec;
 pub mod datamatrix;
 pub mod detect;
+pub mod gif;
+pub mod jpeg;
+mod kanji_table;
 pub mod oned;
 pub mod png;
 pub mod qr;
@@ -37,7 +44,7 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::Value;
 
-use crate::{body_bytes, body_text, df_err, Opts};
+use crate::{body_bytes, body_text, Opts};
 
 /// A matrix of modules (`true` = dark).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +83,7 @@ impl Matrix {
 pub enum Format {
     QrCode,
     DataMatrix,
+    Aztec,
     Code128,
     Code39,
     Ean13,
@@ -88,17 +96,19 @@ impl Format {
         Ok(match n.as_str() {
             "QRCODE" | "QR" => Format::QrCode,
             "DATAMATRIX" => Format::DataMatrix,
+            "AZTEC" => Format::Aztec,
             "CODE128" => Format::Code128,
             "CODE39" => Format::Code39,
             "EAN13" => Format::Ean13,
             "UPCA" => Format::UpcA,
-            _ => return Err(CamelError::illegal_argument(format!("Unsupported barcodeFormat: {} (supported: QR_CODE, DATA_MATRIX, CODE_128, CODE_39, EAN_13, UPC_A)", s))),
+            _ => return Err(CamelError::illegal_argument(format!("Unsupported barcodeFormat: {} (supported: QR_CODE, DATA_MATRIX, AZTEC, CODE_128, CODE_39, EAN_13, UPC_A)", s))),
         })
     }
     pub fn name(&self) -> &'static str {
         match self {
             Format::QrCode => "QR_CODE",
             Format::DataMatrix => "DATA_MATRIX",
+            Format::Aztec => "AZTEC",
             Format::Code128 => "CODE_128",
             Format::Code39 => "CODE_39",
             Format::Ean13 => "EAN_13",
@@ -150,9 +160,15 @@ pub fn render_1d(code: &[bool], width: usize, height: usize, margin: usize) -> p
 
 /// Encode `text` as an image raster.
 pub fn encode(text: &str, format: Format, ecc: qr::Ecc, width: usize, height: usize) -> Result<png::Gray> {
+    encode_with(text, format, ecc, width, height, datamatrix::Shape::Any)
+}
+
+/// Encode with a Data Matrix shape preference.
+pub fn encode_with(text: &str, format: Format, ecc: qr::Ecc, width: usize, height: usize, shape: datamatrix::Shape) -> Result<png::Gray> {
     Ok(match format {
         Format::QrCode => render_2d(&qr::encode(text, &qr::QrOptions { ecc, version: None, mask: None })?, width, height, 4),
-        Format::DataMatrix => render_2d(&datamatrix::encode(&latin1_or_utf8(text), None)?, width, height, 0),
+        Format::Aztec => render_2d(&aztec::encode(text, 33)?, width, height, 0),
+        Format::DataMatrix => render_2d(&datamatrix::encode_shape(&latin1_or_utf8(text), shape)?, width, height, 0),
         Format::Code128 => render_1d(&oned::encode_code128(text)?, width, height, 10),
         Format::Code39 => render_1d(&oned::encode_code39(text)?, width, height, 10),
         Format::Ean13 => render_1d(&oned::encode_ean13(text)?, width, height, 9),
@@ -193,10 +209,15 @@ pub fn decode(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
         }
     }
     if want(Format::DataMatrix) {
-        if let Some(m) = detect::find_datamatrix(&bin, &datamatrix::symbol_sizes()) {
+        if let Some(m) = detect::find_datamatrix(&bin, &datamatrix::symbol_dims()) {
             if let Ok((b, _)) = datamatrix::decode_matrix(&m) {
                 return Ok(Decoded { text: dm_text(&b), format: Format::DataMatrix, ecc: None });
             }
+        }
+    }
+    if want(Format::Aztec) {
+        if let Some(t) = aztec::find_and_decode(&|x, y| bin.get(x, y), bin.width, bin.height) {
+            return Ok(Decoded { text: t, format: Format::Aztec, ecc: None });
         }
     }
     for row in detect::scan_rows(&bin) {
@@ -230,6 +251,36 @@ pub struct BarcodeDataFormat {
     /// Whether `barcodeFormat` was configured explicitly (restricts decoding).
     pub format_explicit: bool,
     pub ecc: qr::Ecc,
+    pub image_type: ImageType,
+    pub shape: datamatrix::Shape,
+}
+
+/// Output image type (`imageType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageType {
+    Png,
+    Gif,
+    Jpg,
+}
+
+/// Write a raster in an image format.
+pub fn write_image(img: &png::Gray, t: ImageType) -> Vec<u8> {
+    match t {
+        ImageType::Png => png::encode(img),
+        ImageType::Gif => gif::encode(img),
+        ImageType::Jpg => jpeg::encode(img, 95),
+    }
+}
+
+/// Read a PNG, GIF or JPEG (detected from the signature).
+pub fn read_image(b: &[u8]) -> Result<png::Gray> {
+    if gif::is_gif(b) {
+        gif::decode(b)
+    } else if jpeg::is_jpeg(b) {
+        jpeg::decode(b)
+    } else {
+        png::decode(b)
+    }
 }
 
 impl DataFormat for BarcodeDataFormat {
@@ -238,13 +289,13 @@ impl DataFormat for BarcodeDataFormat {
     }
     fn marshal(&self, ex: &mut Exchange) -> Result<()> {
         let text = body_text(&ex.message.body)?;
-        let img = encode(&text, self.format, self.ecc, self.width, self.height)?;
-        ex.message.body = Value::Bytes(png::encode(&img));
+        let img = encode_with(&text, self.format, self.ecc, self.width, self.height, self.shape)?;
+        ex.message.body = Value::Bytes(write_image(&img, self.image_type));
         Ok(())
     }
     fn unmarshal(&self, ex: &mut Exchange) -> Result<()> {
         let b = body_bytes(&ex.message.body);
-        let img = png::decode(&b)?;
+        let img = read_image(&b)?;
         let only = if self.format_explicit && self.format != Format::QrCode { Some(self.format) } else { None };
         let d = decode(&img, only)?;
         ex.message.set_header("BarcodeFormat", d.format.name());
@@ -257,12 +308,16 @@ impl DataFormat for BarcodeDataFormat {
 }
 
 pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
-    let image_type = o.string(&["imageType"], "PNG").to_ascii_uppercase();
-    match image_type.as_str() {
-        "PNG" => {}
-        "GIF" | "JPG" | "JPEG" => return Err(df_err(format!("Barcode imageType {} is not supported (only PNG)", image_type))),
-        other => return Err(CamelError::illegal_argument(format!("Unknown barcode imageType: {}", other))),
-    }
+    let image_type = match o.string(&["imageType"], "PNG").to_ascii_uppercase().as_str() {
+        "PNG" => ImageType::Png,
+        "GIF" => ImageType::Gif,
+        "JPG" | "JPEG" => ImageType::Jpg,
+        other => return Err(CamelError::illegal_argument(format!("Unknown barcode imageType: {} (PNG, GIF or JPG)", other))),
+    };
+    let shape = match o.get(&["dataMatrixShape", "shape"]) {
+        Some(s) => datamatrix::Shape::parse(s).ok_or_else(|| CamelError::illegal_argument(format!("Invalid dataMatrixShape: {} (NONE, SQUARE, RECTANGLE)", s)))?,
+        None => datamatrix::Shape::Any,
+    };
     let fmt = o.get(&["barcodeFormat"]);
     let ecc = match o.get(&["errorCorrectionLevel"]) {
         Some(e) => qr::Ecc::parse(e).ok_or_else(|| CamelError::illegal_argument(format!("Invalid errorCorrectionLevel: {} (L, M, Q or H)", e)))?,
@@ -281,6 +336,8 @@ pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
         format: fmt.map(Format::parse).transpose()?.unwrap_or(Format::QrCode),
         format_explicit: fmt.is_some(),
         ecc,
+        image_type,
+        shape,
     }))
 }
 
@@ -299,6 +356,10 @@ mod tests {
         let qr = round("Hello Camel ✓", Format::QrCode, 100, 100);
         assert_eq!((qr.text.as_str(), qr.format, qr.ecc), ("Hello Camel ✓", Format::QrCode, Some(qr::Ecc::M)));
         assert_eq!(round("https://camel.apache.org/manual/data-format.html?x=1", Format::QrCode, 300, 200).text, "https://camel.apache.org/manual/data-format.html?x=1");
+        let az = round("Aztec ✓ 2026", Format::Aztec, 120, 120);
+        assert_eq!((az.text.as_str(), az.format), ("Aztec ✓ 2026", Format::Aztec));
+        let long = "x".repeat(700);
+        assert_eq!(round(&long, Format::Aztec, 300, 300).text, long);
         let dm = round("Data Matrix 123456", Format::DataMatrix, 100, 100);
         assert_eq!((dm.text.as_str(), dm.format), ("Data Matrix 123456", Format::DataMatrix));
         assert_eq!(round("Code128-Ab12345", Format::Code128, 100, 60).format, Format::Code128);
@@ -344,5 +405,18 @@ mod tests {
         assert_eq!(g.get(18 + 63 - 1, 18), 0);
         assert_eq!(g.get(18 + 63, 18), 255);
         assert!(decode(&png::Gray { width: 10, height: 10, pixels: vec![255; 100] }, None).is_err());
+    }
+
+    #[test]
+    fn gif_jpg_output_and_rectangular_data_matrix() {
+        for t in [ImageType::Png, ImageType::Gif, ImageType::Jpg] {
+            let img = encode("image type round trip", Format::QrCode, qr::Ecc::M, 150, 150).unwrap();
+            let bytes = write_image(&img, t);
+            assert_eq!(decode(&read_image(&bytes).unwrap(), None).unwrap().text, "image type round trip", "{:?}", t);
+            let img = encode_with("RECT1234", Format::DataMatrix, qr::Ecc::L, 200, 80, datamatrix::Shape::Rectangle).unwrap();
+            let d = decode(&read_image(&write_image(&img, t)).unwrap(), None).unwrap();
+            assert_eq!((d.text.as_str(), d.format), ("RECT1234", Format::DataMatrix), "{:?}", t);
+        }
+        assert!(write_image(&png::Gray { width: 1, height: 1, pixels: vec![0] }, ImageType::Gif).starts_with(b"GIF89a"));
     }
 }

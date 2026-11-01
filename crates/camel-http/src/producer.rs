@@ -18,6 +18,17 @@
 //! `preserveHostHeader` (and some accepted-and-ignored options). Any other query
 //! parameter is forwarded to the target URL.
 //!
+//! Connections: HTTP/1.1 keep-alive connections are pooled per producer and target
+//! (`connectionsPerRoute` idle connections, default 20; `connectionClose=true` disables
+//! pooling; stale pooled connections are retried once). `httpVersion=HTTP/2` (or `2`, `h2`)
+//! uses HTTP/2 through camel-grpc's client (`https`: TLS with ALPN `h2`; `http`: h2c prior
+//! knowledge), one multiplexed connection per target.
+//!
+//! Content coding: unless `contentCompressionDisabled=true`, requests advertise
+//! `Accept-Encoding: gzip, deflate` and `gzip` / `deflate` (zlib or raw) response bodies are
+//! decoded (`Content-Encoding` is removed); a request whose `Content-Encoding` header is
+//! `gzip` or `deflate` has its body compressed accordingly.
+//!
 //! Message mapping: the method comes from header `CamelHttpMethod`, else the
 //! `httpMethod` option, else `POST` when there is a body and `GET` otherwise. Headers
 //! `CamelHttpUri` (ignored with `bridgeEndpoint`), `CamelHttpPath` (appended to the
@@ -40,7 +51,11 @@ use camel_core::util::Parameters;
 use camel_core::value::{ObjectMap, Value};
 
 use crate::binding::{add_header_value, body_to_value, headers, value_to_body, write_message_headers};
-use crate::client::{HttpClient, ProxyAddr, ProxyConfig, Url};
+use crate::client::{HttpClient, HttpConnection, ProxyAddr, ProxyConfig, Url};
+use crate::http::HttpResponse;
+use camel_grpc::h2::{H2Config, H2Connection, H2Request};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use camel_tls::TlsClientConfig;
 use crate::http::{base64_encode, percent_encode, HttpHeaders};
 
@@ -81,6 +96,12 @@ pub struct HttpProducerOptions {
     /// TLS server name override (`SslContextParameters::server_name`).
     pub tls_server_name: Option<String>,
     pub proxy: Option<ProxyConfig>,
+    /// `httpVersion=HTTP/2`.
+    pub http2: bool,
+    pub content_compression: bool,
+    /// Pool keep-alive connections (`connectionClose=false`).
+    pub pooling: bool,
+    pub connections_per_route: usize,
 }
 
 fn parse_ranges(s: &str) -> Result<Vec<(u16, u16)>> {
@@ -155,6 +176,17 @@ impl Component for HttpComponent {
             tls,
             tls_server_name,
             proxy,
+            http2: match params.take("httpVersion").or_else(|| params.take("protocolVersion")) {
+                None => false,
+                Some(v) => match v.trim().to_ascii_uppercase().trim_start_matches("HTTP/") {
+                    "2" | "2.0" | "H2" | "H2C" => true,
+                    "1.1" | "1.0" | "1" => false,
+                    other => return Err(CamelError::illegal_argument(format!("Unsupported httpVersion: {} (HTTP/1.1 or HTTP/2)", other))),
+                },
+            },
+            content_compression: !params.take_bool("contentCompressionDisabled", false)?,
+            pooling: !params.take_bool("connectionClose", false)?,
+            connections_per_route: params.take_usize("connectionsPerRoute", 20)?,
         };
         for ignored in [
             "connectionRequestTimeout",
@@ -162,8 +194,6 @@ impl Component for HttpComponent {
             "headerFilterStrategy",
             "httpClientConfigurer",
             "clientConnectionManager",
-            "connectionClose",
-            "connectionsPerRoute",
             "maxTotalConnections",
             "cookieHandler",
             "clearExpiredCookies",
@@ -217,7 +247,7 @@ impl Endpoint for HttpEndpoint {
         &self.uri
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
-        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone() }))
+        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone(), pool: Mutex::new(HashMap::new()), h2: Mutex::new(HashMap::new()) }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -228,9 +258,129 @@ impl Endpoint for HttpEndpoint {
 pub struct HttpProducer {
     base: Url,
     opts: HttpProducerOptions,
+    pool: Mutex<HashMap<String, Vec<HttpConnection>>>,
+    h2: Mutex<HashMap<String, H2Connection>>,
 }
 
-impl Service for HttpProducer {}
+impl Service for HttpProducer {
+    fn stop(&self) -> Result<()> {
+        self.pool.lock().unwrap().clear();
+        for (_, c) in self.h2.lock().unwrap().drain() {
+            c.close();
+        }
+        Ok(())
+    }
+}
+
+/// Decodes a `gzip` / `deflate` body (deflate: zlib, or raw DEFLATE as some servers send).
+pub fn decode_content(encoding: &str, body: &[u8]) -> Result<Vec<u8>> {
+    use camel_core::dataformat::compress::{gzip_decompress, inflate_raw, zlib_decompress};
+    match encoding.trim().to_ascii_lowercase().as_str() {
+        "gzip" | "x-gzip" => gzip_decompress(body),
+        "deflate" => zlib_decompress(body).or_else(|_| inflate_raw(body).map(|(d, _)| d)),
+        "identity" | "" => Ok(body.to_vec()),
+        other => Err(CamelError::io(format!("Unsupported Content-Encoding: {}", other))),
+    }
+}
+
+impl HttpProducer {
+    fn client(&self) -> HttpClient {
+        HttpClient {
+            connect_timeout: self.opts.connect_timeout,
+            read_timeout: self.opts.socket_timeout,
+            follow_redirects: self.opts.follow_redirects,
+            chunked_requests: self.opts.chunked,
+            tls: self.opts.tls.clone(),
+            tls_server_name: self.opts.tls_server_name.clone(),
+            proxy: self.opts.proxy.clone(),
+            ..HttpClient::default()
+        }
+    }
+
+    fn send(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>) -> Result<HttpResponse> {
+        if self.opts.http2 {
+            return self.send_h2(method, url, headers, body);
+        }
+        let proxied = self.opts.proxy.as_ref().and_then(|p| p.proxy_for(url)).is_some();
+        if !self.opts.pooling || proxied || self.opts.tls_server_name.is_some() || self.opts.follow_redirects || self.opts.chunked {
+            return self.client().execute(method, url, headers, body, None);
+        }
+        let key = format!("{}://{}", url.scheme, url.authority());
+        let mut h: Vec<(String, String)> = headers.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("Connection")).map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        if !headers.contains("Host") {
+            h.push(("Host".into(), url.host_header()));
+        }
+        let hr: Vec<(&str, &str)> = h.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let target = url.request_target();
+        for attempt in 0..2 {
+            let pooled = if attempt == 0 { self.pool.lock().unwrap().get_mut(&key).and_then(|v| v.pop()) } else { None };
+            let reused = pooled.is_some();
+            let mut conn = match pooled {
+                Some(c) => c,
+                None => {
+                    let tls = if url.is_https() { Some(self.opts.tls.clone().unwrap_or_else(crate::client::default_tls_config)) } else { None };
+                    HttpConnection::connect_with(&url.host, url.port, tls.as_deref(), self.opts.socket_timeout.max(self.opts.connect_timeout))?
+                }
+            };
+            match conn.send(method, &target, &hr, body) {
+                Ok(resp) => {
+                    if !conn.is_closed() {
+                        let mut g = self.pool.lock().unwrap();
+                        let v = g.entry(key.clone()).or_default();
+                        if v.len() < self.opts.connections_per_route.max(1) {
+                            v.push(conn);
+                        }
+                    }
+                    return Ok(resp);
+                }
+                // a pooled connection the server closed meanwhile: retry on a new one
+                Err(_) if reused => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(CamelError::io(format!("Cannot send request to {}", url)))
+    }
+
+    fn send_h2(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>) -> Result<HttpResponse> {
+        let key = format!("{}://{}", url.scheme, url.authority());
+        let what = url.to_string();
+        let conn = {
+            let mut g = self.h2.lock().unwrap();
+            match g.get(&key).filter(|c| !c.is_closed()) {
+                Some(c) => c.clone(),
+                None => {
+                    let cfg = H2Config::default();
+                    let addr = url.authority();
+                    let c = if url.is_https() {
+                        let tls = self.opts.tls.clone().unwrap_or_else(crate::client::default_tls_config).with_alpn(&["h2"]);
+                        H2Connection::connect_tls(&addr, self.opts.tls_server_name.as_deref().unwrap_or(&url.host), &tls, cfg)
+                    } else {
+                        H2Connection::connect(&addr, cfg)
+                    }
+                    .map_err(|e| CamelError::new(kinds::CONNECT, format!("HTTP/2 connection to {} failed: {}", addr, e)))?;
+                    g.insert(key.clone(), c.clone());
+                    c
+                }
+            }
+        };
+        let mut req = H2Request { method: method.to_string(), path: url.request_target(), authority: Some(headers.get("Host").map(|s| s.to_string()).unwrap_or_else(|| url.host_header())), headers: Vec::new(), body: body.map(|b| b.to_vec()).unwrap_or_default() };
+        for (k, v) in headers.iter() {
+            let lower = k.to_ascii_lowercase();
+            if matches!(lower.as_str(), "host" | "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" | "te") {
+                continue;
+            }
+            req.headers.push((lower, v.to_string()));
+        }
+        let t = if self.opts.socket_timeout.is_zero() { None } else { Some(self.opts.socket_timeout) };
+        let r = conn.request(&req, t).map_err(|e| CamelError::io(format!("HTTP/2 request to {} failed: {}", what, e)))?;
+        let mut resp = HttpResponse::new(r.status);
+        for (k, v) in r.headers.iter().chain(r.trailers.iter()) {
+            resp.headers.add(k.clone(), v.clone());
+        }
+        resp.body = r.body;
+        Ok(resp)
+    }
+}
 
 impl HttpProducer {
     fn target_url(&self, ex: &Exchange) -> Result<Url> {
@@ -361,17 +511,34 @@ impl Processor for HttpProducer {
         if let Some((u, p)) = &self.opts.auth {
             req_headers.set("Authorization", format!("Basic {}", base64_encode(format!("{}:{}", u, p).as_bytes())));
         }
-        let client = HttpClient {
-            connect_timeout: self.opts.connect_timeout,
-            read_timeout: self.opts.socket_timeout,
-            follow_redirects: self.opts.follow_redirects,
-            chunked_requests: self.opts.chunked,
-            tls: self.opts.tls.clone(),
-            tls_server_name: self.opts.tls_server_name.clone(),
-            proxy: self.opts.proxy.clone(),
-            ..HttpClient::default()
-        };
-        let resp = client.execute(&method, &url, &req_headers, if send_body { Some(&body) } else { None }, None)?;
+        let mut body = body;
+        if send_body {
+            let enc = req_headers.get("Content-Encoding").map(|s| s.to_string()).or_else(|| ex.header("Content-Encoding").map(|v| v.to_string()));
+            if let Some(enc) = enc.map(|s| s.trim().to_ascii_lowercase()) {
+                let compressed = match enc.as_str() {
+                    "gzip" | "x-gzip" => Some(camel_core::dataformat::compress::gzip_compress(&body, 6)),
+                    "deflate" => Some(camel_core::dataformat::compress::zlib_compress(&body, 6)),
+                    _ => None,
+                };
+                if let Some(c) = compressed {
+                    body = c;
+                    req_headers.set("Content-Encoding", enc);
+                }
+            }
+        }
+        if self.opts.content_compression && !req_headers.contains("Accept-Encoding") {
+            req_headers.set("Accept-Encoding", "gzip, deflate");
+        }
+        let mut resp = self.send(&method, &url, &req_headers, if send_body { Some(&body) } else { None })?;
+        if self.opts.content_compression {
+            if let Some(enc) = resp.headers.get("Content-Encoding").map(|s| s.to_string()) {
+                if !resp.body.is_empty() && !enc.eq_ignore_ascii_case("identity") {
+                    resp.body = decode_content(&enc, &resp.body)?;
+                    resp.headers.remove("Content-Encoding");
+                    resp.headers.set("Content-Length", resp.body.len().to_string());
+                }
+            }
+        }
 
         // populate the response
         let ct = resp.headers.get("Content-Type").map(|s| s.to_string());

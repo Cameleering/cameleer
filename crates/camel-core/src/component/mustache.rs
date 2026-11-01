@@ -44,7 +44,7 @@ impl Component for MustacheComponent {
             start: params.take("startDelimiter").unwrap_or_else(|| "{{".into()),
             end: params.take("endDelimiter").unwrap_or_else(|| "}}".into()),
         };
-        let headers = TemplateHeaders { template: MUSTACHE_TEMPLATE, resource_uri: MUSTACHE_RESOURCE_URI };
+        let headers = TemplateHeaders { template: MUSTACHE_TEMPLATE, resource_uri: MUSTACHE_RESOURCE_URI, data_model: None, supplemental: None };
         Ok(Arc::new(TemplateEndpoint::new(ctx, uri, remaining, options, headers, Arc::new(engine))?))
     }
     fn as_any(&self) -> &dyn Any {

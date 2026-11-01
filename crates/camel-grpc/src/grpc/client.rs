@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use camel_tls::TlsClientConfig;
 
-use super::{code_from_http_status, format_timeout, frame_message, is_reserved_header, status_from_trailers, Code, MessageDecoder, Metadata, Status};
+use super::{code_from_http_status, format_timeout, frame_message_with, is_reserved_header, status_from_trailers, Code, MessageDecoder, Metadata, Status};
 use crate::h2::{ErrorCode, H2Config, H2Connection, H2Error, H2Stream};
 
 /// User agent sent with every call.
@@ -25,13 +25,15 @@ pub struct GrpcClient {
     pub config: H2Config,
     /// Maximum accepted response message size (default 4 MiB).
     pub max_message_size: usize,
+    /// `grpc-encoding` used for request messages (`gzip` / `deflate`; None = identity).
+    pub send_compression: Option<String>,
     conn: Mutex<Option<H2Connection>>,
 }
 
 impl GrpcClient {
     /// Plaintext channel (HTTP/2 prior knowledge).
     pub fn plaintext(addr: &str) -> GrpcClient {
-        GrpcClient { addr: addr.to_string(), tls: None, config: H2Config::default(), max_message_size: 4 << 20, conn: Mutex::new(None) }
+        GrpcClient { addr: addr.to_string(), tls: None, config: H2Config::default(), max_message_size: 4 << 20, send_compression: None, conn: Mutex::new(None) }
     }
 
     /// TLS channel; `tls` should offer ALPN `h2` (added automatically when absent is not
@@ -85,6 +87,9 @@ impl GrpcClient {
         if let Some(d) = deadline {
             headers.push(("grpc-timeout".to_string(), format_timeout(d)));
         }
+        if let Some(e) = &self.send_compression {
+            headers.push(("grpc-encoding".to_string(), e.clone()));
+        }
         for (k, v) in metadata {
             let k = k.to_ascii_lowercase();
             if !is_reserved_header(&k) {
@@ -98,6 +103,7 @@ impl GrpcClient {
         }
         .map_err(Status::from)?;
         Ok(ClientCall {
+            send_encoding: self.send_compression.clone(),
             stream: Arc::new(stream),
             deadline,
             decoder: MessageDecoder::new(None, self.max_message_size),
@@ -157,6 +163,7 @@ impl GrpcClient {
 
 /// An in-flight call.
 pub struct ClientCall {
+    send_encoding: Option<String>,
     stream: Arc<H2Stream>,
     deadline: Option<Instant>,
     decoder: MessageDecoder,
@@ -190,7 +197,7 @@ impl ClientCall {
     /// Sends one request message.
     pub fn send(&self, msg: &[u8]) -> Result<(), Status> {
         let left = self.left()?;
-        self.stream.send_data_timeout(&frame_message(msg), false, left).map_err(|e| self.map_err(e))
+        self.stream.send_data_timeout(&frame_message_with(msg, self.send_encoding.as_deref()), false, left).map_err(|e| self.map_err(e))
     }
 
     /// Half-closes the request stream.
@@ -200,7 +207,7 @@ impl ClientCall {
 
     /// A handle that sends requests while another thread receives responses.
     pub fn sender(&self) -> CallSender {
-        CallSender { stream: self.stream.clone() }
+        CallSender { stream: self.stream.clone(), send_encoding: self.send_encoding.clone() }
     }
 
     /// Cancels the call (RST_STREAM CANCEL).
@@ -298,12 +305,13 @@ impl ClientCall {
 #[derive(Clone)]
 pub struct CallSender {
     stream: Arc<H2Stream>,
+    send_encoding: Option<String>,
 }
 
 impl CallSender {
     /// Sends one request message.
     pub fn send(&self, msg: &[u8]) -> Result<(), Status> {
-        self.stream.send_data(&frame_message(msg), false).map_err(Status::from)
+        self.stream.send_data(&frame_message_with(msg, self.send_encoding.as_deref()), false).map_err(Status::from)
     }
     /// Half-closes the request stream.
     pub fn close_send(&self) -> Result<(), Status> {

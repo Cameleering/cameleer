@@ -788,6 +788,31 @@ fn barcode_routes_and_third_party_pngs() {
         df.unmarshal(&mut ex).unwrap();
         assert_eq!(ex.body().to_string(), text, "{}", f);
     }
-    assert!(DataFormatDefinition::new("barcode").option("imageType", "JPG").resolve(&c).is_err());
+    assert!(DataFormatDefinition::new("barcode").option("imageType", "JPG").resolve(&c).is_ok());
+    assert!(DataFormatDefinition::new("barcode").option("imageType", "BMP").resolve(&c).is_err());
     assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "PDF_417").resolve(&c).is_err());
+}
+
+#[test]
+fn asn1_typed_module_routes() {
+    let module = "M DEFINITIONS AUTOMATIC TAGS ::= BEGIN Rec ::= SEQUENCE { id INTEGER, name UTF8String OPTIONAL, ok BOOLEAN DEFAULT TRUE } END";
+    let c = ctx();
+    c.add_routes(|r| {
+        r.from("direct:asn1-typed")
+            .marshal(DataFormatDefinition::new("asn1").option("schema", module).option("clazzName", "com.example.Rec"))
+            .to("mock:asn1-typed")
+            .unmarshal(DataFormatDefinition::new("asn1").option("schema", module).option("clazzName", "Rec"))
+            .marshal_json();
+        r.from("direct:asn1-iter").unmarshal(DataFormatDefinition::new("asn1").option("schema", module).option("clazzName", "Rec").option("usingIterator", "true")).marshal_json();
+    })
+    .unwrap();
+    c.start().unwrap();
+    let t = c.create_producer_template();
+    let out = t.request_body("direct:asn1-typed", r#"{"id":5,"name":"x"}"#).unwrap();
+    assert_eq!(out.to_string(), r#"{"id":5,"name":"x","ok":true}"#);
+    assert_eq!(hex(&c.mock_endpoint("mock:asn1-typed").unwrap().received_exchanges()[0].body().to_bytes()), "3006800105810178");
+    let recs = [unhex("3003800101"), unhex("3006800102820100")].concat();
+    let out = t.request_body("direct:asn1-iter", recs).unwrap();
+    assert_eq!(out.to_string(), r#"[{"id":1,"ok":true},{"id":2,"ok":false}]"#);
+    assert!(DataFormatDefinition::new("asn1").option("schema", module).resolve(&c).is_err());
 }

@@ -314,6 +314,9 @@ struct GithubState {
     comments: Vec<(i64, Value)>,
     statuses: Vec<(String, Value)>,
     hooks: Vec<Value>,
+    files: Vec<(i64, Value)>,
+    blobs: Vec<(String, Vec<u8>)>,
+    events: Vec<Value>,
     next_id: i64,
     next_number: i64,
 }
@@ -363,6 +366,40 @@ impl GithubMock {
                 ("GET", ["commits"]) => {
                     let branch = r.query_param("sha").unwrap_or("main").to_string();
                     let mut v: Vec<Value> = s.commits.iter().filter(|c| c.get("branch").map(|b| b.to_string() == branch).unwrap_or(false)).cloned().collect();
+                    v.reverse();
+                    json(200, &Value::Array(v))
+                }
+                ("GET", ["pulls", n, "files"]) => {
+                    let n: i64 = n.parse().unwrap_or(-1);
+                    if !s.pulls.iter().any(|p| p.get("number").and_then(|x| x.as_i64()) == Some(n)) {
+                        return json(404, &obj(vec![("message", "Not Found".into())]));
+                    }
+                    json(200, &Value::Array(s.files.iter().filter(|(p, _)| *p == n).map(|(_, f)| f.clone()).collect()))
+                }
+                ("PATCH", ["pulls", n]) => {
+                    let n: i64 = n.parse().unwrap_or(-1);
+                    let b = r.json();
+                    match s.pulls.iter_mut().find(|p| p.get("number").and_then(|x| x.as_i64()) == Some(n)) {
+                        Some(p) => {
+                            if let Some(st) = b.get("state") {
+                                p.as_object_mut().unwrap().insert("state".into(), st.clone());
+                            }
+                            json(200, p)
+                        }
+                        None => json(404, &obj(vec![("message", "Not Found".into())])),
+                    }
+                }
+                ("GET", ["git", "blobs", sha]) => match s.blobs.iter().find(|(b, _)| b == sha) {
+                    Some((b, data)) => {
+                        // GitHub wraps base64 content at 60 columns
+                        let enc = crate::rest::base64(data);
+                        let wrapped: Vec<String> = enc.as_bytes().chunks(60).map(|c| String::from_utf8_lossy(c).into_owned()).collect();
+                        json(200, &obj(vec![("sha", b.clone().into()), ("size", Value::Int(data.len() as i64)), ("encoding", "base64".into()), ("content", (wrapped.join("\n") + "\n").into())]))
+                    }
+                    None => json(404, &obj(vec![("message", "Not Found".into())])),
+                },
+                ("GET", ["events"]) => {
+                    let mut v = s.events.clone();
                     v.reverse();
                     json(200, &Value::Array(v))
                 }
@@ -485,6 +522,27 @@ impl GithubMock {
         ]));
     }
 
+    /// Add a changed file to pull request `pull` with blob `sha` holding `content`.
+    pub fn add_pull_file(&self, pull: i64, filename: &str, sha: &str, content: &[u8]) {
+        let mut s = self.state.lock().unwrap();
+        s.files.push((pull, obj(vec![("sha", sha.into()), ("filename", filename.into()), ("status", "modified".into()), ("additions", Value::Int(1)), ("deletions", Value::Int(0)), ("changes", Value::Int(1))])));
+        s.blobs.push((sha.to_string(), content.to_vec()));
+    }
+
+    /// Record a repository event (`PushEvent`...); returns its id.
+    pub fn add_event(&self, ty: &str, payload: Value) -> i64 {
+        let mut s = self.state.lock().unwrap();
+        s.next_id += 1;
+        let id = s.next_id;
+        s.events.push(obj(vec![("id", id.to_string().into()), ("type", ty.into()), ("payload", payload), ("public", Value::Bool(true))]));
+        id
+    }
+
+    /// Pull requests (with their current state).
+    pub fn pulls(&self) -> Vec<Value> {
+        self.state.lock().unwrap().pulls.clone()
+    }
+
     /// Create a tag.
     pub fn add_tag(&self, name: &str) {
         self.state.lock().unwrap().tags.push(obj(vec![("name", name.into())]));
@@ -516,10 +574,28 @@ impl GithubMock {
 // ---------------------------------------------------------------------------
 
 /// Twilio REST API mock for account [`TwilioMock::ACCOUNT_SID`] / auth token
-/// [`TwilioMock::AUTH_TOKEN`].
+/// [`TwilioMock::AUTH_TOKEN`]. Any collection below `/2010-04-01/` is a generic in-memory
+/// resource store (create = POST to `<collection>.json`, list = GET, fetch / update /
+/// delete on `<collection>/<sid>.json`, form fields stored in snake_case); `Messages`
+/// validates `To` / `From` / `Body` like the real API.
 pub struct TwilioMock {
     pub server: MockServer,
-    messages: Arc<Mutex<Vec<Value>>>,
+    store: Arc<Mutex<Vec<(String, Value)>>>,
+}
+
+fn snake_case(s: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 impl TwilioMock {
@@ -527,62 +603,114 @@ impl TwilioMock {
     pub const AUTH_TOKEN: &'static str = "twilio-secret";
 
     pub fn start() -> TwilioMock {
-        let messages: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
-        let ms = messages.clone();
+        let store: Arc<Mutex<Vec<(String, Value)>>> = Arc::new(Mutex::new(Vec::new()));
+        let st = store.clone();
         let server = MockServer::start(move |r| {
             let err = |status: u16, code: i64, m: &str| json(status, &obj(vec![("code", Value::Int(code)), ("message", m.into()), ("status", Value::Int(status as i64))]));
             if basic(r) != Some((Self::ACCOUNT_SID.to_string(), Self::AUTH_TOKEN.to_string())) {
                 return err(401, 20003, "Authenticate");
             }
-            let base = format!("/2010-04-01/Accounts/{}/Messages", Self::ACCOUNT_SID);
-            let mut msgs = ms.lock().unwrap();
-            if r.path == format!("{}.json", base) {
-                match r.method.as_str() {
-                    "POST" => {
-                        if !r.header("Content-Type").map(|c| c.starts_with("application/x-www-form-urlencoded")).unwrap_or(false) {
-                            return err(400, 20001, "Content-Type must be application/x-www-form-urlencoded");
+            let Some(path) = r.path.strip_prefix("/2010-04-01/").and_then(|p| p.strip_suffix(".json")) else { return err(404, 20404, "The requested resource was not found") };
+            let mut s = st.lock().unwrap();
+            // `<collection>/<sid>` when the last segment is a Twilio sid (2 letters + 32 chars)
+            let (collection, sid) = match path.rsplit_once('/') {
+                Some((c, last)) if last.len() == 34 && last.chars().take(2).all(|ch| ch.is_ascii_uppercase()) => (c.to_string(), Some(last.to_string())),
+                _ => (path.to_string(), None),
+            };
+            let leaf = collection.rsplit('/').next().unwrap_or("").to_string();
+            match (r.method.as_str(), sid) {
+                ("POST", None) => {
+                    if !r.header("Content-Type").map(|c| c.starts_with("application/x-www-form-urlencoded")).unwrap_or(false) {
+                        return err(400, 20001, "Content-Type must be application/x-www-form-urlencoded");
+                    }
+                    if leaf == "Messages" {
+                        if r.form_param("To").is_none() {
+                            return err(400, 21604, "A 'To' phone number is required.");
                         }
-                        let (to, from, body) = (r.form_param("To"), r.form_param("From"), r.form_param("Body"));
-                        let Some(to) = to else { return err(400, 21604, "A 'To' phone number is required.") };
-                        if from.is_none() && r.form_param("MessagingServiceSid").is_none() {
+                        if r.form_param("From").is_none() && r.form_param("MessagingServiceSid").is_none() {
                             return err(400, 21603, "A 'From' phone number is required.");
                         }
-                        if body.is_none() && r.form_param("MediaUrl").is_none() {
+                        if r.form_param("Body").is_none() && r.form_param("MediaUrl").is_none() {
                             return err(400, 21602, "Message body is required.");
                         }
-                        let sid = format!("SM{:032}", msgs.len() + 1);
-                        let m = obj(vec![
-                            ("sid", sid.into()),
-                            ("account_sid", Self::ACCOUNT_SID.into()),
-                            ("to", to.into()),
-                            ("from", from.map(Value::String).unwrap_or(Value::Null)),
-                            ("body", body.map(Value::String).unwrap_or(Value::Null)),
-                            ("status", "queued".into()),
-                        ]);
-                        msgs.push(m.clone());
-                        json(201, &m)
                     }
-                    "GET" => json(200, &obj(vec![("messages", Value::Array(msgs.clone()))])),
-                    _ => err(405, 20004, "Method not allowed"),
+                    let prefix = match leaf.as_str() {
+                        "Messages" => "SM",
+                        "Calls" => "CA",
+                        "Queues" => "QU",
+                        "Addresses" => "AD",
+                        "Applications" => "AP",
+                        "IncomingPhoneNumbers" => "PN",
+                        _ => "XX",
+                    };
+                    let n = s.len() + 1;
+                    let sid = format!("{}{:032}", prefix, n);
+                    let mut m = obj(vec![("sid", sid.into()), ("account_sid", Self::ACCOUNT_SID.into())]);
+                    let mut fields: Vec<(String, Vec<String>)> = Vec::new();
+                    for (k, v) in r.form() {
+                        match fields.iter_mut().find(|(fk, _)| *fk == k) {
+                            Some((_, vs)) => vs.push(v),
+                            None => fields.push((k, vec![v])),
+                        }
+                    }
+                    for (k, vs) in fields {
+                        let v = if vs.len() == 1 { Value::String(vs[0].clone()) } else { Value::Array(vs.into_iter().map(Value::String).collect()) };
+                        m.as_object_mut().unwrap().insert(snake_case(&k), v);
+                    }
+                    if leaf == "Messages" {
+                        for k in ["from", "body"] {
+                            if m.get(k).is_none() {
+                                m.as_object_mut().unwrap().insert(k.into(), Value::Null);
+                            }
+                        }
+                        m.as_object_mut().unwrap().insert("status".into(), "queued".into());
+                    } else if leaf == "Calls" {
+                        m.as_object_mut().unwrap().insert("status".into(), "queued".into());
+                    }
+                    s.push((collection.clone(), m.clone()));
+                    json(201, &m)
                 }
-            } else if let Some(sid) = r.path.strip_prefix(&format!("{}/", base)).and_then(|s| s.strip_suffix(".json")) {
-                match msgs.iter().find(|m| m.get("sid").map(|s| s.to_string() == sid).unwrap_or(false)) {
-                    Some(m) => json(200, m),
-                    None => err(404, 20404, "The requested resource was not found"),
+                ("GET", None) => {
+                    let items: Vec<Value> = s.iter().filter(|(c, _)| *c == collection).map(|(_, v)| v.clone()).collect();
+                    json(200, &obj(vec![(snake_case(&leaf).as_str(), Value::Array(items)), ("page", Value::Int(0)), ("page_size", Value::Int(50)), ("uri", format!("/2010-04-01/{}.json", collection).into())]))
                 }
-            } else {
-                err(404, 20404, "The requested resource was not found")
+                (method, Some(sid)) => {
+                    let pos = s.iter().position(|(c, v)| *c == collection && v.get("sid").map(|x| x.to_string() == sid).unwrap_or(false));
+                    let Some(pos) = pos else { return err(404, 20404, "The requested resource was not found") };
+                    match method {
+                        "GET" => json(200, &s[pos].1),
+                        "POST" => {
+                            let obj_mut = s[pos].1.as_object_mut().unwrap();
+                            for (k, v) in r.form() {
+                                obj_mut.insert(snake_case(&k), Value::String(v));
+                            }
+                            json(200, &s[pos].1)
+                        }
+                        "DELETE" => {
+                            s.remove(pos);
+                            HttpResponse::new(204)
+                        }
+                        _ => err(405, 20004, "Method not allowed"),
+                    }
+                }
+                _ => err(405, 20004, "Method not allowed"),
             }
         });
-        TwilioMock { server, messages }
+        TwilioMock { server, store }
     }
 
     pub fn url(&self) -> String {
         self.server.url()
     }
 
+    /// Resources of a collection path below `/2010-04-01/` (`Accounts/AC.../Calls`).
+    pub fn resources(&self, collection: &str) -> Vec<Value> {
+        self.store.lock().unwrap().iter().filter(|(c, _)| c == collection).map(|(_, v)| v.clone()).collect()
+    }
+
+    /// Sent messages.
     pub fn messages(&self) -> Vec<Value> {
-        self.messages.lock().unwrap().clone()
+        self.resources(&format!("Accounts/{}/Messages", Self::ACCOUNT_SID))
     }
 }
 
@@ -594,6 +722,11 @@ impl TwilioMock {
 struct JiraState {
     issues: Vec<Value>,
     comments: Vec<(String, Value)>,
+    transitions: Vec<(String, Value)>,
+    attachments: Vec<(String, String, Vec<u8>)>,
+    watchers: Vec<(String, String)>,
+    links: Vec<Value>,
+    worklogs: Vec<(String, Value)>,
     next_id: i64,
 }
 
@@ -667,6 +800,94 @@ impl JiraMock {
                     s.comments.push((key.to_string(), c.clone()));
                     json(201, &c)
                 }
+                ("GET", ["rest", "api", "2", "issue", key, "comment"]) => {
+                    let v: Vec<Value> = s.comments.iter().filter(|(k, _)| k == key).map(|(_, c)| c.clone()).collect();
+                    json(200, &obj(vec![("startAt", Value::Int(0)), ("total", Value::Int(v.len() as i64)), ("comments", Value::Array(v))]))
+                }
+                ("PUT", ["rest", "api", "2", "issue", key]) => {
+                    let b = r.json();
+                    let Some(issue) = s.issues.iter_mut().find(|i| i.get("key").map(|k| k.to_string() == *key).unwrap_or(false)) else {
+                        return json(404, &obj(vec![("errorMessages", Value::Array(vec!["Issue Does Not Exist".into()]))]));
+                    };
+                    if let (Some(fields), Some(upd)) = (issue.as_object_mut().and_then(|o| o.get_mut("fields")).and_then(|f| f.as_object_mut()), b.get("fields").and_then(|f| f.as_object())) {
+                        for (k, v) in upd.iter() {
+                            fields.insert(k.clone(), v.clone());
+                        }
+                    }
+                    HttpResponse::new(204)
+                }
+                ("GET", ["rest", "api", "2", "issue", _key, "transitions"]) => json(200, &obj(vec![("transitions", Value::Array(vec![obj(vec![("id", "11".into()), ("name", "To Do".into())]), obj(vec![("id", "21".into()), ("name", "In Progress".into())]), obj(vec![("id", "31".into()), ("name", "Done".into())])]))])),
+                ("POST", ["rest", "api", "2", "issue", key, "transitions"]) => {
+                    let b = r.json();
+                    let id = b.get("transition").and_then(|t| t.get("id")).map(|i| i.to_string()).unwrap_or_default();
+                    let name = match id.as_str() {
+                        "11" => "To Do",
+                        "21" => "In Progress",
+                        "31" => "Done",
+                        _ => return errs("It seems that you have tried to perform an invalid workflow operation."),
+                    };
+                    let Some(issue) = s.issues.iter_mut().find(|i| i.get("key").map(|k| k.to_string() == *key).unwrap_or(false)) else {
+                        return json(404, &obj(vec![("errorMessages", Value::Array(vec!["Issue Does Not Exist".into()]))]));
+                    };
+                    if let Some(f) = issue.as_object_mut().and_then(|o| o.get_mut("fields")).and_then(|f| f.as_object_mut()) {
+                        f.insert("status".into(), obj(vec![("name", name.into())]));
+                    }
+                    if let Some(c) = b.get("update").and_then(|u| u.get("comment")).and_then(|c| c.as_array()).and_then(|a| a.first()).and_then(|c| c.get("add")).and_then(|a| a.get("body")).cloned() {
+                        s.next_id += 1;
+                        let cm = obj(vec![("id", s.next_id.to_string().into()), ("body", c)]);
+                        s.comments.push((key.to_string(), cm));
+                    }
+                    s.transitions.push((key.to_string(), b));
+                    HttpResponse::new(204)
+                }
+                ("POST", ["rest", "api", "2", "issue", key, "attachments"]) => {
+                    if r.header("X-Atlassian-Token") != Some("no-check") {
+                        return HttpResponse::text(403, "XSRF check failed");
+                    }
+                    let parts = r.multipart();
+                    let Some((_, fname, data)) = parts.into_iter().find(|(n, _, _)| n == "file") else { return errs("no file part") };
+                    let fname = fname.unwrap_or_default();
+                    s.next_id += 1;
+                    let a = obj(vec![("id", s.next_id.to_string().into()), ("filename", fname.clone().into()), ("size", Value::Int(data.len() as i64))]);
+                    s.attachments.push((key.to_string(), fname, data));
+                    json(200, &Value::Array(vec![a]))
+                }
+                ("GET", ["rest", "api", "2", "issue", key, "watchers"]) => {
+                    let w: Vec<Value> = s.watchers.iter().filter(|(k, _)| k == key).map(|(_, u)| obj(vec![("name", u.clone().into())])).collect();
+                    json(200, &obj(vec![("isWatching", Value::Bool(false)), ("watchCount", Value::Int(w.len() as i64)), ("watchers", Value::Array(w))]))
+                }
+                ("POST", ["rest", "api", "2", "issue", key, "watchers"]) => {
+                    let u = r.json().to_string();
+                    if u.is_empty() {
+                        return errs("user name required");
+                    }
+                    s.watchers.push((key.to_string(), u));
+                    HttpResponse::new(204)
+                }
+                ("DELETE", ["rest", "api", "2", "issue", key, "watchers"]) => {
+                    let u = r.query_param("username").unwrap_or("").to_string();
+                    s.watchers.retain(|(k, w)| !(k == key && *w == u));
+                    HttpResponse::new(204)
+                }
+                ("POST", ["rest", "api", "2", "issueLink"]) => {
+                    let b = r.json();
+                    if b.get("type").and_then(|t| t.get("name")).is_none() {
+                        return errs("link type required");
+                    }
+                    s.links.push(b);
+                    HttpResponse::new(201)
+                }
+                ("POST", ["rest", "api", "2", "issue", key, "worklog"]) => {
+                    let b = r.json();
+                    if b.get("timeSpentSeconds").and_then(|t| t.as_i64()).unwrap_or(0) <= 0 {
+                        return errs("timeSpent required");
+                    }
+                    s.next_id += 1;
+                    let mut w = b.clone();
+                    w.as_object_mut().unwrap().insert("id".into(), s.next_id.to_string().into());
+                    s.worklogs.push((key.to_string(), w.clone()));
+                    json(201, &w)
+                }
                 ("GET", ["rest", "api", "2", "issue", key]) => match s.issues.iter().find(|i| i.get("key").map(|k| k.to_string() == *key).unwrap_or(false)) {
                     Some(i) => json(200, i),
                     None => json(404, &obj(vec![("errorMessages", Value::Array(vec!["Issue Does Not Exist".into()]))])),
@@ -706,6 +927,43 @@ impl JiraMock {
 
     pub fn comments(&self) -> Vec<(String, Value)> {
         self.state.lock().unwrap().comments.clone()
+    }
+
+    /// Add a comment as another user; returns its id.
+    pub fn add_comment(&self, key: &str, body: &str) -> String {
+        let mut s = self.state.lock().unwrap();
+        s.next_id += 1;
+        let id = s.next_id.to_string();
+        s.comments.push((key.to_string(), obj(vec![("id", id.clone().into()), ("body", body.into())])));
+        id
+    }
+
+    /// Set a field of an issue (as if edited by someone else).
+    pub fn set_field(&self, key: &str, field: &str, value: Value) {
+        let mut s = self.state.lock().unwrap();
+        if let Some(f) = s.issues.iter_mut().find(|i| i.get("key").map(|k| k.to_string() == key).unwrap_or(false)).and_then(|i| i.as_object_mut()).and_then(|o| o.get_mut("fields")).and_then(|f| f.as_object_mut()) {
+            f.insert(field.to_string(), value);
+        }
+    }
+
+    /// Attachments `(issue key, file name, content)`.
+    pub fn attachments(&self) -> Vec<(String, String, Vec<u8>)> {
+        self.state.lock().unwrap().attachments.clone()
+    }
+
+    /// Watchers `(issue key, user)`.
+    pub fn watchers(&self) -> Vec<(String, String)> {
+        self.state.lock().unwrap().watchers.clone()
+    }
+
+    /// Issue links (request bodies).
+    pub fn links(&self) -> Vec<Value> {
+        self.state.lock().unwrap().links.clone()
+    }
+
+    /// Work logs `(issue key, worklog)`.
+    pub fn worklogs(&self) -> Vec<(String, Value)> {
+        self.state.lock().unwrap().worklogs.clone()
     }
 }
 

@@ -47,6 +47,40 @@ pub fn base64(data: &[u8]) -> String {
     out
 }
 
+/// Standard base64 decoding (padding optional, URL-safe alphabet accepted); `None` on
+/// invalid input.
+pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => (c - b'A') as u32,
+            b'a'..=b'z' => (c - b'a' + 26) as u32,
+            b'0'..=b'9' => (c - b'0' + 52) as u32,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => return None,
+        })
+    };
+    let bytes: Vec<u8> = s.bytes().filter(|&c| c != b'=').collect();
+    let mut out = Vec::new();
+    for chunk in bytes.chunks(4) {
+        if chunk.len() == 1 {
+            return None;
+        }
+        let mut n = 0u32;
+        for (i, &c) in chunk.iter().enumerate() {
+            n |= val(c)? << (18 - 6 * i);
+        }
+        out.push((n >> 16) as u8);
+        if chunk.len() > 2 {
+            out.push((n >> 8) as u8);
+        }
+        if chunk.len() > 3 {
+            out.push(n as u8);
+        }
+    }
+    Some(out)
+}
+
 /// Join a base URL and a path.
 pub fn join_url(base: &str, path: &str) -> String {
     if path.starts_with("http://") || path.starts_with("https://") {
@@ -285,6 +319,8 @@ mod tests {
     fn helpers() {
         assert_eq!(base64(b"user:pass"), "dXNlcjpwYXNz");
         assert_eq!(base64(b"a"), "YQ==");
+        assert_eq!(base64_decode("dXNlcjpwYXNz").unwrap(), b"user:pass");
+        assert_eq!(base64_decode("YQ==").unwrap(), b"a");
         assert_eq!(join_url("http://h/api/", "/x"), "http://h/api/x");
         assert_eq!(query(&[("a b", "c&d".into())]), "a%20b=c%26d");
         assert_eq!(strip_secrets("https://api.telegram.org/bot123:ABC/sendMessage"), "https://api.telegram.org/bot***/sendMessage");

@@ -11,7 +11,13 @@
 //!
 //! **Producer operations** (`operation`, overridden by header `CamelMongoDbOperation`):
 //! `findById`, `findOneByQuery`, `findAll`, `findDistinct`, `count`, `insert`, `save`,
-//! `update`, `remove`, `aggregate`, `getDbStats`, `getColStats`, `command`.
+//! `update`, `remove`, `bulkWrite`, `aggregate`, `getDbStats`, `getColStats`, `command`.
+//! `bulkWrite` takes a list of write models (`{"insertOne": {"document": ..}}`,
+//! `updateOne`/`updateMany` (`filter`, `update`, `upsert`), `replaceOne` (`filter`,
+//! `replacement`, `upsert`), `deleteOne`/`deleteMany` (`filter`); plain documents are
+//! inserts), ordered unless header `CamelMongoDbBulkOrdered=false`; the result is
+//! `{insertedCount, matchedCount, modifiedCount, deletedCount, upserts}` and write errors
+//! raise `MongoBulkWriteException`.
 //! Bodies are documents (objects, JSON text with Extended JSON/shell syntax, or arrays of
 //! them); results are objects/arrays with Extended JSON for BSON-only types
 //! (`{"$oid": ..}`, `{"$date": ..}`, ...). Headers: `CamelMongoDbCriteria`,
@@ -30,6 +36,7 @@
 
 pub mod bson;
 pub mod client;
+pub mod gridfs;
 pub mod query;
 pub mod server;
 pub mod wire;
@@ -47,7 +54,8 @@ use camel_core::util::Parameters;
 use camel_core::value::Value;
 
 pub use bson::{Bson, Decimal128, Document, ObjectId};
-pub use client::{FindOptions, MongoClient, MongoClientOptions, MongoConnection, UpdateResult};
+pub use client::{BulkWriteResult, FindOptions, MongoClient, MongoClientOptions, MongoConnection, UpdateResult, WriteModel};
+pub use gridfs::{GridFsBucket, GridFsComponent};
 
 use crate::kinds;
 use crate::util::{header, header_bool, header_i64, header_str};
@@ -74,6 +82,7 @@ pub mod headers {
     pub const DISTINCT_QUERY_FIELD: &str = "CamelMongoDbDistinctQueryField";
     pub const ALLOW_DISK_USE: &str = "CamelMongoDbAllowDiskUse";
     pub const STREAM_OPERATION_TYPE: &str = "CamelMongoDbStreamOperationType";
+    pub const BULK_ORDERED: &str = "CamelMongoDbBulkOrdered";
     pub const MONGO_ID: &str = "_id";
 }
 
@@ -89,6 +98,7 @@ pub enum Operation {
     Save,
     Update,
     Remove,
+    BulkWrite,
     Aggregate,
     GetDbStats,
     GetColStats,
@@ -111,7 +121,7 @@ impl Operation {
             "getDbStats" => Operation::GetDbStats,
             "getColStats" => Operation::GetColStats,
             "command" => Operation::Command,
-            "bulkWrite" => return Err(CamelError::new(camel_core::error::kinds::UNSUPPORTED_OPERATION, "The mongodb bulkWrite operation is not supported")),
+            "bulkWrite" => Operation::BulkWrite,
             other => return Err(CamelError::illegal_argument(format!("Unknown mongodb operation: {}", other))),
         })
     }
@@ -472,6 +482,21 @@ impl Processor for MongoProducer {
                 let n = client.delete(&db, &coll, self.criteria(ex)?, 0)?;
                 ex.set_header(headers::RECORDS_AFFECTED, n);
                 self.write_result(ex, Value::object([("deletedCount", n)]));
+            }
+            Operation::BulkWrite => {
+                need_coll()?;
+                let models = body_docs(ex.body())?.iter().map(WriteModel::from_document).collect::<Result<Vec<_>>>()?;
+                let ordered = header_bool(ex, headers::BULK_ORDERED).unwrap_or(true);
+                let r = client.bulk_write(&db, &coll, models, ordered)?;
+                if !r.errors.is_empty() {
+                    let (i, code, m) = &r.errors[0];
+                    return Err(CamelError::new(kinds::MONGO_BULK_WRITE, format!("Bulk write operation error, write errors: [index {}, code {}: {}] ({} errors)", i, code, m, r.errors.len())));
+                }
+                ex.set_header(headers::RECORDS_AFFECTED, r.inserted + r.modified + r.deleted + r.upserts.len() as i64);
+                ex.set_header(headers::RECORDS_MATCHED, r.matched);
+                let upserts = Value::Array(r.upserts.iter().map(|(i, id)| Value::object([("index", Value::Int(*i)), ("id", id.to_value())])).collect());
+                let v = Value::object([("insertedCount", Value::Int(r.inserted)), ("matchedCount", Value::Int(r.matched)), ("modifiedCount", Value::Int(r.modified)), ("deletedCount", Value::Int(r.deleted)), ("upsertedCount", Value::Int(r.upserts.len() as i64)), ("upserts", upserts)]);
+                self.write_result(ex, v);
             }
             Operation::Aggregate => {
                 need_coll()?;

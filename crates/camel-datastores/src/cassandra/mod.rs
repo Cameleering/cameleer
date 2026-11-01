@@ -15,11 +15,15 @@
 //! Options: `cql`, `consistencyLevel` (default `LOCAL_ONE`), `serialConsistencyLevel`,
 //! `prepareStatements` (true), `resultSetConversionStrategy`, `username`/`password`
 //! (PasswordAuthenticator), `fetchSize` (page size, 5000), `connectTimeout`, `readTimeout`,
-//! TLS with `ssl=true` / `sslContextParameters=#bean` / `useGlobalSslContextParameters`;
+//! TLS with `ssl=true` / `sslContextParameters=#bean` / `useGlobalSslContextParameters`,
+//! `compression` (`lz4` / `snappy` frame compression), `tokenAware` (default true: prepared
+//! statements are routed to the node owning the partition key token);
 //! accepted and ignored: `clusterName`, `loadBalancingPolicyClass`, `datacenter`,
 //! `extraTypeCodecs`, `session`.
 //! Values: timestamps are returned as ISO-8601 text (numbers = epoch millis accepted on
-//! input), uuids as text, dates as `YYYY-MM-DD`, decimals as text, blobs as bytes.
+//! input), uuids as text, dates as `YYYY-MM-DD`, decimals as text, blobs as bytes,
+//! durations as Cassandra duration text (`1mo2d3h`; ISO 8601 `P1M2DT3H` or objects
+//! `{months, days, nanoseconds}` accepted), UDTs as objects.
 
 pub mod client;
 pub mod engine;
@@ -151,6 +155,11 @@ impl Component for CqlComponent {
                 tls,
                 connect_timeout: params.take_duration("connectTimeout", Duration::from_secs(10))?,
                 read_timeout: Some(params.take_duration("readTimeout", Duration::from_secs(30))?),
+                compression: match params.take("compression").filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("none")) {
+                    Some(c) => Some(frame::Compression::parse(&c).ok_or_else(|| CamelError::illegal_argument(format!("Unknown cql compression '{}' (lz4 or snappy)", c)))?),
+                    None => None,
+                },
+                token_aware: params.take_bool("tokenAware", true)?,
             };
             Arc::new(CqlSession::new(cfg))
         };

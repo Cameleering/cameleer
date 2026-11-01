@@ -33,21 +33,24 @@ pub struct Tok {
 }
 
 const PUNCTS: &[&str] = &[
-    ">>>=", "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "..<", "<=>", "==~", "&&=", "||=", "??=", ".?[", ".![", ".^[", ".$[", "?.[", "?:", "?.", "=>", "->",
+    ">>>=", "...", "===", "!==", "**=", "<<=", ">>=", ">>>", "..<", "<=>", "==~", "&&=", "||=", "??=", ".?[", ".![", ".^[", ".$[", "?.[", "?:", "?.", "=>", "->", "::",
     "==", "!=", "<=", ">=", "&&", "||", "??", "++", "--", "+=", "-=", "*=", "/=", "%=", "**", "<<", ">>", "=~", "..", "*.", "#{", ".?", "{", "}", "(",
     ")", "[", "]", ";", ",", "<", ">", "+", "-", "*", "/", "%", "&", "|", "^", "!", "~", "?", ":", "=", ".", "@", "#",
 ];
 
 fn punct_allowed(p: &str, d: Dialect) -> bool {
     match p {
-        "..." | "===" | "!==" | "=>" | "??" | "??=" | ">>>=" | ">>>" | "&&=" | "||=" => d == Dialect::Js,
+        ">>>=" | ">>>" => matches!(d, Dialect::Js | Dialect::Java),
+        "..." => matches!(d, Dialect::Js | Dialect::Java),
+        "::" => d == Dialect::Java,
+        "===" | "!==" | "=>" | "??" | "??=" | "&&=" | "||=" => d == Dialect::Js,
         "..<" | "<=>" | "==~" | "=~" | "*." => d == Dialect::Groovy,
         ".." => matches!(d, Dialect::Groovy),
         ".?[" | ".![" | ".^[" | ".$[" => d == Dialect::Spel,
         ".?" => d == Dialect::Mvel,
         "?.[" => d == Dialect::Js,
         "#{" => d == Dialect::Ognl,
-        "->" => matches!(d, Dialect::Groovy | Dialect::Mvel),
+        "->" => matches!(d, Dialect::Groovy | Dialect::Mvel | Dialect::Java),
         "**" | "**=" => matches!(d, Dialect::Js | Dialect::Groovy),
         _ => true,
     }
@@ -136,9 +139,14 @@ pub fn tokenize(src: &str, base: usize, d: Dialect) -> Result<Vec<Tok>, SyntaxEr
             t = T::Ident(src[i..j].to_string());
             i = j;
         } else if c == b'\'' || c == b'"' || c == b'`' {
-            let triple = d == Dialect::Groovy && c != b'`' && b.get(i + 1) == Some(&c) && b.get(i + 2) == Some(&c);
+            let triple = (d == Dialect::Groovy && c != b'`' || d == Dialect::Java && c == b'"') && b.get(i + 1) == Some(&c) && b.get(i + 2) == Some(&c);
             let interpolate = (d == Dialect::Js && c == b'`') || (d == Dialect::Groovy && c == b'"');
-            let (tok, ni) = lex_string(src, i, c, triple, interpolate, d, base)?;
+            let (mut tok, ni) = lex_string(src, i, c, triple, interpolate, d, base)?;
+            if triple && d == Dialect::Java {
+                if let T::Str(text) = &tok {
+                    tok = T::Str(java_text_block(text));
+                }
+            }
             t = tok;
             i = ni;
         } else if c == b'/' && regex_ok && matches!(d, Dialect::Js | Dialect::Groovy) && b.get(i + 1) != Some(&b'=') {
@@ -359,6 +367,25 @@ pub fn matching_brace(src: &str, mut i: usize) -> Option<usize> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Java text block content: drop the opening line break, strip the common indentation and
+/// trailing spaces.
+fn java_text_block(raw: &str) -> String {
+    let body = match raw.find('\n') {
+        Some(i) if raw[..i].trim().is_empty() => &raw[i + 1..],
+        _ => raw,
+    };
+    let lines: Vec<&str> = body.split('\n').collect();
+    let indent = lines
+        .iter()
+        .enumerate()
+        .filter(|(i, l)| !l.trim().is_empty() || *i == lines.len() - 1)
+        .map(|(_, l)| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    let out: Vec<String> = lines.iter().map(|l| if l.len() >= indent { l[indent..].trim_end().to_string() } else { l.trim().to_string() }).collect();
+    out.join("\n")
+}
+
 fn lex_string(src: &str, start: usize, q: u8, triple: bool, interpolate: bool, d: Dialect, base: usize) -> Result<(T, usize), SyntaxError> {
     let b = src.as_bytes();
     let mut i = start + if triple { 3 } else { 1 };

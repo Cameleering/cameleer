@@ -1,5 +1,7 @@
 //! Embedded MongoDB server for tests (in memory, `OP_MSG` + legacy `OP_QUERY` handshake):
-//! `hello`, SCRAM-SHA-256 authentication, TLS, CRUD commands (`find`, `getMore`,
+//! `hello`, SCRAM-SHA-256 / SCRAM-SHA-1 / MONGODB-X509 authentication, TLS, replica set
+//! roles ([`MongoServer::set_replica_set`]: `setName`, `hosts`, `primary`, writes refused
+//! with `NotWritablePrimary` on secondaries), CRUD commands (`find`, `getMore`,
 //! `insert`, `update`, `delete`, `count`, `distinct`, `aggregate`, `findAndModify`),
 //! capped collections with tailable/awaitData cursors, change streams
 //! (`$changeStream`), and admin commands (`create`, `drop`, `listCollections`,
@@ -27,6 +29,21 @@ pub struct MongoServerConfig {
     /// When empty, authentication is not required.
     pub users: BTreeMap<String, String>,
     pub tls: Option<Arc<TlsServerConfig>>,
+    /// Client certificate subjects (RFC 2253, e.g. `CN=client,O=Acme`) accepted with
+    /// MONGODB-X509 (the TLS config must request client certificates).
+    pub x509_users: Vec<String>,
+}
+
+/// Replica set role of an embedded server.
+#[derive(Clone, Debug)]
+pub struct ReplicaSetRole {
+    pub set_name: String,
+    /// `host:port` of all members.
+    pub hosts: Vec<String>,
+    /// `host:port` of the primary (None = no primary known).
+    pub primary: Option<String>,
+    /// This member's `host:port`.
+    pub me: String,
 }
 
 struct Collection {
@@ -74,6 +91,9 @@ struct Store {
 
 struct Shared {
     creds: HashMap<String, ScramCredentials>,
+    creds_sha1: HashMap<String, ScramCredentials>,
+    x509_users: Vec<String>,
+    replica: Mutex<Option<ReplicaSetRole>>,
     auth_required: bool,
     store: Mutex<Store>,
     cv: Condvar,
@@ -125,9 +145,17 @@ impl MongoServer {
             .iter()
             .map(|(u, p)| (u.clone(), ScramCredentials::derive(ScramMechanism::Sha256, p, format!("salt-{}", u).as_bytes(), 4096)))
             .collect();
+        let creds_sha1 = cfg
+            .users
+            .iter()
+            .map(|(u, p)| (u.clone(), ScramCredentials::derive(ScramMechanism::Sha1, &super::client::mongo_password_digest(u, p), format!("salt1-{}", u).as_bytes(), 4096)))
+            .collect();
         let shared = Arc::new(Shared {
             creds,
-            auth_required: !cfg.users.is_empty(),
+            creds_sha1,
+            x509_users: cfg.x509_users.clone(),
+            replica: Mutex::new(None),
+            auth_required: !cfg.users.is_empty() || !cfg.x509_users.is_empty(),
             store: Mutex::new(Store::default()),
             cv: Condvar::new(),
             next_cursor: AtomicI64::new(1000),
@@ -175,6 +203,17 @@ impl MongoServer {
         self.shared.cv.notify_all();
     }
 
+    /// Makes this server a replica set member (`primary` = the primary's `host:port`; this
+    /// server is the primary when it equals [`MongoServer::address`]).
+    pub fn set_replica_set(&self, set_name: &str, hosts: Vec<String>, primary: Option<String>) {
+        *self.shared.replica.lock().unwrap() = Some(ReplicaSetRole { set_name: set_name.to_string(), hosts, primary, me: self.address() });
+    }
+
+    /// `127.0.0.1:port`.
+    pub fn address(&self) -> String {
+        format!("127.0.0.1:{}", self.port())
+    }
+
     /// Number of open client connections.
     pub fn connection_count(&self) -> usize {
         self.tcp.connection_count()
@@ -187,13 +226,16 @@ impl MongoServer {
 
 struct Conn {
     authed: bool,
+    /// Subject of the TLS client certificate.
+    peer_subject: Option<String>,
     scram: Option<ScramServer<Box<dyn Fn(&str) -> Option<ScramCredentials> + Send>>>,
 }
 
 fn serve(sh: &Arc<Shared>, stream: NetStream) -> io::Result<()> {
+    let peer_subject = stream.peer_certificates().first().and_then(|der| camel_tls::x509::Certificate::from_der(der).ok()).map(|c| c.subject.to_dn_string().replace(", ", ","));
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
-    let mut conn = Conn { authed: !sh.auth_required, scram: None };
+    let mut conn = Conn { authed: !sh.auth_required, scram: None, peer_subject };
     let mut reply_id = 1i32;
     loop {
         let (h, body) = read_message(&mut reader)?;
@@ -240,7 +282,13 @@ fn dispatch(sh: &Shared, conn: &mut Conn, cmd: Document) -> Document {
     let Some(name) = cmd.keys().next().map(String::from) else { return error_doc(&err("empty command", 9)) };
     sh.commands.lock().unwrap().push(name.clone());
     let db = cmd.get_str("$db").unwrap_or("admin").to_string();
-    let open = matches!(name.as_str(), "hello" | "isMaster" | "ismaster" | "ping" | "buildInfo" | "buildinfo" | "saslStart" | "saslContinue" | "endSessions" | "whatsmyuri");
+    let open = matches!(name.as_str(), "hello" | "isMaster" | "ismaster" | "ping" | "buildInfo" | "buildinfo" | "saslStart" | "saslContinue" | "endSessions" | "whatsmyuri" | "authenticate");
+    if let Some(r) = sh.replica.lock().unwrap().as_ref() {
+        let writes = matches!(name.as_str(), "insert" | "update" | "delete" | "findAndModify" | "findandmodify" | "create" | "drop" | "dropDatabase" | "createIndexes");
+        if writes && r.primary.as_deref() != Some(r.me.as_str()) {
+            return error_doc(&err("not primary (NotWritablePrimary)", 10107));
+        }
+    }
     if !conn.authed && !open {
         return error_doc(&err(format!("command {} requires authentication", name), 13));
     }
@@ -249,6 +297,21 @@ fn dispatch(sh: &Shared, conn: &mut Conn, cmd: Document) -> Document {
         "ping" | "endSessions" | "createIndexes" | "getLastError" | "whatsmyuri" => Ok(Document::new()),
         "buildInfo" | "buildinfo" => Ok(Document::new().with("version", "7.0.0").with("versionArray", vec![Bson::Int32(7), Bson::Int32(0), Bson::Int32(0), Bson::Int32(0)])),
         "saslStart" | "saslContinue" => sasl(sh, conn, &cmd, &name),
+        "authenticate" => {
+            if cmd.get_str("mechanism") != Some("MONGODB-X509") {
+                Err(err("Unsupported mechanism for authenticate", 2))
+            } else {
+                match &conn.peer_subject {
+                    None => Err(err("No verified subject name available from client", 18)),
+                    Some(subj) if cmd.get_str("user").map(|u| u != subj).unwrap_or(false) => Err(err("There is no x.509 client certificate matching the user.", 18)),
+                    Some(subj) if sh.x509_users.iter().any(|u| u == subj) => {
+                        conn.authed = true;
+                        Ok(Document::new().with("dbname", "$external").with("user", subj.as_str()))
+                    }
+                    Some(_) => Err(err("Could not find user", 18)),
+                }
+            }
+        }
         _ => data_command(sh, &db, &name, &cmd),
     };
     match r {
@@ -273,10 +336,22 @@ fn hello(sh: &Shared, cmd: &Document, name: &str) -> Document {
         .with("minWireVersion", 0)
         .with("maxWireVersion", 21)
         .with("readOnly", false);
+    if let Some(r) = sh.replica.lock().unwrap().as_ref() {
+        let primary = r.primary.as_deref() == Some(r.me.as_str());
+        d.insert(if name == "hello" { "isWritablePrimary" } else { "ismaster" }, primary);
+        d.insert("secondary", !primary);
+        d.insert("setName", r.set_name.as_str());
+        d.insert("setVersion", 1);
+        d.insert("hosts", Bson::Array(r.hosts.iter().map(|h| Bson::from(h.as_str())).collect()));
+        d.insert("me", r.me.as_str());
+        if let Some(p) = &r.primary {
+            d.insert("primary", p.as_str());
+        }
+    }
     if let Some(u) = cmd.get_str("saslSupportedMechs") {
         let user = u.split_once('.').map(|(_, u)| u).unwrap_or(u);
         if sh.creds.contains_key(user) {
-            d.insert("saslSupportedMechs", vec![Bson::from("SCRAM-SHA-256")]);
+            d.insert("saslSupportedMechs", vec![Bson::from("SCRAM-SHA-1"), Bson::from("SCRAM-SHA-256")]);
         }
     }
     d
@@ -293,12 +368,13 @@ fn payload(cmd: &Document) -> String {
 fn sasl(sh: &Shared, conn: &mut Conn, cmd: &Document, name: &str) -> R {
     let fail = || err("Authentication failed.", 18);
     if name == "saslStart" {
-        if cmd.get_str("mechanism") != Some("SCRAM-SHA-256") {
-            return Err(err(format!("Received authentication for mechanism {} which is not enabled", cmd.get_str("mechanism").unwrap_or("")), 334));
-        }
-        let creds = sh.creds.clone();
+        let (mech, creds) = match cmd.get_str("mechanism") {
+            Some("SCRAM-SHA-256") => (ScramMechanism::Sha256, sh.creds.clone()),
+            Some("SCRAM-SHA-1") => (ScramMechanism::Sha1, sh.creds_sha1.clone()),
+            other => return Err(err(format!("Received authentication for mechanism {} which is not enabled", other.unwrap_or("")), 334)),
+        };
         let lookup: Box<dyn Fn(&str) -> Option<ScramCredentials> + Send> = Box::new(move |u: &str| creds.get(u).cloned());
-        let mut s = ScramServer::new(ScramMechanism::Sha256, lookup);
+        let mut s = ScramServer::new(mech, lookup);
         let first = s.handle_client_first(&payload(cmd)).map_err(|_| fail())?;
         conn.scram = Some(s);
         return Ok(Document::new().with("conversationId", 1).with("done", false).with("payload", Bson::Binary(0, first.into_bytes())));

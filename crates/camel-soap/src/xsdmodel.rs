@@ -15,11 +15,13 @@
 //! | `decimal`, `float`, `double` | `Float` |
 //! | `boolean` | `Bool` |
 //! | `base64Binary`, `hexBinary` | `Bytes` |
-//! | `date`, `dateTime`, `time`, `duration`, strings... | `String` (lexical form) |
+//! | `date`, `dateTime`, `time`, `duration`, strings... | `String` (lexical form); with [`BindOptions::typed_dates`] `date`/`dateTime`/`time` are `XMLGregorianCalendar`-like objects (`year`, `month`, `day`, `hour`, `minute`, `second`, `millisecond`, `timezone` in minutes) and `duration` an object (`negative`, `years`, `months`, `days`, `hours`, `minutes`, `seconds`); marshal also accepts epoch milliseconds (`Int`) for `dateTime`/`date` |
 //! | complex type | `Object` (child elements by local name, attributes as `@name` or `name`) |
 //! | `maxOccurs > 1` | `Array` (always, even with one item) |
 //! | simple content with attributes | `Object` with the text under the text key (`value`) |
 //! | `xsi:nil="true"` | `Null` |
+//! | `xsi:type="p:Derived"` | the derived type's mapping, plus `@xsi:type: "Derived"` (attribute prefix + `xsi:type`; marshal writes `xsi:type` and uses the named type) |
+//! | substitution group members | keyed by the member's own name where the head element is declared (marshal accepts members in place of the head) |
 //!
 //! Without a declaration the mapping is structural: element-only content becomes an object,
 //! repeated sibling names become arrays and text-only elements become strings.
@@ -32,7 +34,7 @@ use camel_core::value::{ObjectMap, Value};
 use camel_xml::dom::{Document, NodeId, NodeType, QName, XMLNS_NS};
 use camel_xml::xsd::{XSD_NS, XSI_NS};
 
-use crate::support::{resolve_qname, Key};
+use crate::support::{clark, resolve_qname, Key};
 
 /// An element declaration (global or local).
 #[derive(Clone, Debug)]
@@ -127,11 +129,29 @@ pub struct BindOptions {
     pub text_key: String,
     /// Preferred prefixes `(uri, prefix)` when writing.
     pub prefixes: Vec<(String, String)>,
+    /// Map `date` / `dateTime` / `time` / `duration` to objects instead of lexical strings.
+    pub typed_dates: bool,
 }
 
 impl Default for BindOptions {
     fn default() -> Self {
-        BindOptions { attr_prefix: "@".into(), text_key: "value".into(), prefixes: Vec::new() }
+        BindOptions { attr_prefix: "@".into(), text_key: "value".into(), prefixes: Vec::new(), typed_dates: false }
+    }
+}
+
+impl BindOptions {
+    /// The key holding an `xsi:type` (attribute prefix + `xsi:type`).
+    pub fn type_key(&self) -> String {
+        format!("{}xsi:type", self.attr_prefix)
+    }
+
+    fn typed(&self, text: &str, builtin: &str, list: bool) -> Value {
+        if self.typed_dates && !list {
+            if let Some(v) = temporal_value(text.trim(), builtin) {
+                return v;
+            }
+        }
+        typed_text(text, builtin, list)
     }
 }
 
@@ -143,6 +163,8 @@ pub struct SchemaSet {
     groups: HashMap<Key, Vec<Item>>,
     attr_groups: HashMap<Key, Vec<AttrItem>>,
     attributes: HashMap<Key, AttrDecl>,
+    /// Substitution group head → direct members.
+    substitutions: HashMap<Key, Vec<Key>>,
     loaded: Vec<PathBuf>,
     /// Target namespaces of the loaded schemas.
     pub target_namespaces: Vec<String>,
@@ -233,6 +255,22 @@ impl SchemaSet {
                     let mut d = self.element(doc, n, &c, true);
                     d.min = 1;
                     d.max = Some(1);
+                    if let Some(head) = doc.attribute(n, "substitutionGroup") {
+                        // XSD 1.1 allows a list of heads
+                        for h in head.split_whitespace() {
+                            let hk = resolve_qname(doc, n, h);
+                            let members = self.substitutions.entry(hk).or_default();
+                            if !members.contains(&key) {
+                                members.push(key.clone());
+                            }
+                        }
+                        // a member without a type takes the head's type
+                        if doc.attribute(n, "type").is_none() && !xs(doc, n).iter().any(|&x| matches!(doc.local_name(x), "complexType" | "simpleType")) {
+                            if let Some(h) = head.split_whitespace().next() {
+                                d.ty = TypeRef::Named((String::from("\u{0}head"), clark(&resolve_qname(doc, n, h))));
+                            }
+                        }
+                    }
                     self.elements.insert(key, d);
                 }
                 "complexType" => {
@@ -441,6 +479,79 @@ impl SchemaSet {
         self.elements.get(&(ns.to_string(), local.to_string()))
     }
 
+    /// Merge another schema set into this one.
+    pub fn merge(&mut self, other: &SchemaSet) {
+        self.elements.extend(other.elements.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.types.extend(other.types.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.groups.extend(other.groups.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.attr_groups.extend(other.attr_groups.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.attributes.extend(other.attributes.iter().map(|(k, v)| (k.clone(), v.clone())));
+        for (h, ms) in &other.substitutions {
+            let e = self.substitutions.entry(h.clone()).or_default();
+            for m in ms {
+                if !e.contains(m) {
+                    e.push(m.clone());
+                }
+            }
+        }
+        for ns in &other.target_namespaces {
+            if !self.target_namespaces.contains(ns) {
+                self.target_namespaces.push(ns.clone());
+            }
+        }
+    }
+
+    /// All (transitive) members of the substitution group headed by `head`.
+    pub fn substitution_members(&self, head: &Key) -> Vec<Key> {
+        let mut out: Vec<Key> = Vec::new();
+        let mut todo = vec![head.clone()];
+        while let Some(h) = todo.pop() {
+            for m in self.substitutions.get(&h).into_iter().flatten() {
+                if !out.contains(m) && m != head {
+                    out.push(m.clone());
+                    todo.push(m.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Find a named type by `local`, `{uri}local` or `prefix:local` (prefix bound in
+    /// `prefixes` `(uri, prefix)` or matching a target namespace's preferred prefix).
+    pub fn find_type(&self, name: &str, prefixes: &[(String, String)]) -> Option<Key> {
+        let k = crate::support::parse_clark(name);
+        if !k.0.is_empty() {
+            return (self.types.contains_key(&k) || k.0 == XSD_NS).then_some(k);
+        }
+        if let Some((p, local)) = name.split_once(':') {
+            if let Some((u, _)) = prefixes.iter().find(|(_, x)| x == p) {
+                let k = (u.clone(), local.to_string());
+                return self.types.contains_key(&k).then_some(k);
+            }
+            if p == "xs" || p == "xsd" {
+                return Some((XSD_NS.to_string(), local.to_string()));
+            }
+            return self.find_type(local, prefixes);
+        }
+        let mut hits: Vec<&Key> = self.types.keys().filter(|k| k.1 == name).collect();
+        hits.sort();
+        hits.first().map(|k| (*k).clone())
+    }
+
+    /// The name to record for a type in `@xsi:type`: its local name when unambiguous, else `{uri}local`.
+    fn type_label(&self, k: &Key) -> String {
+        if self.types.keys().filter(|x| x.1 == k.1).count() <= 1 {
+            k.1.clone()
+        } else {
+            clark(k)
+        }
+    }
+
+    /// The shape of a named type.
+    pub fn named_type_info(&self, k: &Key) -> TypeInfo {
+        self.info_of_key(k, 0)
+    }
+
     /// Global element names, sorted.
     pub fn global_elements(&self) -> Vec<Key> {
         let mut v: Vec<Key> = self.elements.keys().cloned().collect();
@@ -552,6 +663,17 @@ impl SchemaSet {
     }
 
     fn info_of_key(&self, k: &Key, depth: usize) -> TypeInfo {
+        if k.0 == "\u{0}head" {
+            // substitution group member without its own type: the head element's type
+            let hk = crate::support::parse_clark(&k.1);
+            return match self.elements.get(&hk) {
+                Some(h) if depth < 32 => match &h.ty {
+                    TypeRef::Named(t) => self.info_of_key(t, depth + 1),
+                    other => self.type_info(other),
+                },
+                _ => TypeInfo::Unknown,
+            };
+        }
         if k.0 == XSD_NS {
             return if k.1 == "anyType" { TypeInfo::Unknown } else { TypeInfo::Simple { builtin: k.1.clone(), list: false } };
         }
@@ -594,8 +716,27 @@ impl SchemaSet {
         if doc.attribute_ns(el, XSI_NS, "nil").map(|v| v.trim() == "true" || v.trim() == "1").unwrap_or(false) {
             return Value::Null;
         }
+        if let Some(t) = doc.attribute_ns(el, XSI_NS, "type") {
+            let k = resolve_qname(doc, el, t.trim());
+            if k.0 == XSD_NS || self.types.contains_key(&k) {
+                let derived = self.info_of_key(&k, 0);
+                if !matches!(derived, TypeInfo::Unknown) {
+                    let mut v = self.element_to_value_typed(doc, el, &derived, o);
+                    if let Value::Object(m) = &mut v {
+                        if k.0 != XSD_NS {
+                            m.insert(o.type_key(), Value::String(self.type_label(&k)));
+                        }
+                    }
+                    return v;
+                }
+            }
+        }
+        self.element_to_value_typed(doc, el, info, o)
+    }
+
+    fn element_to_value_typed(&self, doc: &Document, el: NodeId, info: &TypeInfo, o: &BindOptions) -> Value {
         match info {
-            TypeInfo::Simple { builtin, list } => typed_text(&doc.string_value(el), builtin, *list),
+            TypeInfo::Simple { builtin, list } => o.typed(&doc.string_value(el), builtin, *list),
             TypeInfo::Complex { children, attrs, simple, .. } => {
                 let mut m = ObjectMap::new();
                 for &a in doc.attributes(el) {
@@ -606,14 +747,14 @@ impl SchemaSet {
                     let v = match attrs.iter().find(|d| d.name.1 == n.local) {
                         Some(d) => {
                             let (b, l) = self.ref_builtin(&d.ty, 0);
-                            typed_text(doc.value(a), &b, l)
+                            o.typed(doc.value(a), &b, l)
                         }
                         None => Value::String(doc.value(a).to_string()),
                     };
                     m.insert(format!("{}{}", o.attr_prefix, n.local), v);
                 }
                 if let Some((b, l)) = simple {
-                    let v = typed_text(&doc.string_value(el), b, *l);
+                    let v = o.typed(&doc.string_value(el), b, *l);
                     if attrs.is_empty() && m.is_empty() {
                         return v;
                     }
@@ -654,9 +795,17 @@ impl SchemaSet {
         for &c in &kids {
             let (ns, local) = (doc.namespace_uri(c), doc.local_name(c));
             let decl = decls.and_then(|ds| ds.iter().find(|d| d.name.1 == local && (d.name.0 == ns || d.reference)).or_else(|| ds.iter().find(|d| d.name.1 == local)));
-            let (info, repeated) = match decl {
-                Some(d) => (self.element_info(d), d.repeated()),
-                None => {
+            // a substitution group member standing for a declared head
+            let member_of = if decl.is_none() {
+                let k = (ns.to_string(), local.to_string());
+                decls.and_then(|ds| ds.iter().find(|d| self.substitution_members(&self.resolve_element(d).name).contains(&k)))
+            } else {
+                None
+            };
+            let (info, repeated) = match (decl, member_of) {
+                (Some(d), _) => (self.element_info(d), d.repeated()),
+                (None, Some(head)) => (self.global_element(ns, local).map(|g| self.element_info(g)).unwrap_or(TypeInfo::Unknown), head.repeated()),
+                (None, None) => {
                     let info = match self.global_element(ns, local) {
                         Some(g) => self.element_info(g),
                         None => TypeInfo::Unknown,
@@ -701,6 +850,20 @@ impl SchemaSet {
             w.doc.set_attribute(el, q, "true");
             return Ok(());
         }
+        // xsi:type polymorphism
+        let type_key = o.type_key();
+        let mut derived = None;
+        if let Value::Object(m) = v {
+            if let Some(t) = m.get(&type_key).map(|t| t.to_string()) {
+                let k = self.find_type(&t, &o.prefixes).ok_or_else(|| CamelError::illegal_argument(format!("Unknown xsi:type '{}' for element {}", t, name.1)))?;
+                let tq = w.qname(&k, true);
+                let lexical = if tq.prefix.is_empty() { tq.local.clone() } else { format!("{}:{}", tq.prefix, tq.local) };
+                let q = w.qname(&(XSI_NS.to_string(), "type".to_string()), true);
+                w.doc.set_attribute(el, q, lexical);
+                derived = Some(self.info_of_key(&k, 0));
+            }
+        }
+        let info = derived.as_ref().unwrap_or(info);
         match info {
             TypeInfo::Simple { builtin, .. } => {
                 w.doc.append_text(el, &value_text(v, builtin));
@@ -719,7 +882,7 @@ impl SchemaSet {
                     }
                     return Err(CamelError::illegal_argument(format!("Cannot bind {} value to complex element {}", v.type_name(), name.1)));
                 };
-                let mut used: Vec<&str> = Vec::new();
+                let mut used: Vec<&str> = vec![type_key.as_str()];
                 for a in attrs {
                     let pk = format!("{}{}", o.attr_prefix, a.name.1);
                     let found = m.get_key_value(&pk).or_else(|| if simple.is_some() || children.iter().all(|c| c.name.1 != a.name.1) { m.get_key_value(&a.name.1) } else { None });
@@ -744,6 +907,15 @@ impl SchemaSet {
                         used.push(k.as_str());
                         let ci = self.element_info(&d);
                         self.write_value(w, el, &d.name, cv, &ci, d.nillable, o)?;
+                    } else {
+                        for mk in self.substitution_members(&d.name) {
+                            if let Some((k, cv)) = m.get_key_value(&mk.1) {
+                                used.push(k.as_str());
+                                let g = self.global_element(&mk.0, &mk.1).cloned();
+                                let ci = g.as_ref().map(|g| self.element_info(g)).unwrap_or(TypeInfo::Unknown);
+                                self.write_value(w, el, &mk, cv, &ci, g.map(|g| g.nillable).unwrap_or(false), o)?;
+                            }
+                        }
                     }
                 }
                 let rest: Vec<(&String, &Value)> = m.iter().filter(|(k, _)| !used.contains(&k.as_str())).collect();
@@ -896,9 +1068,213 @@ pub fn typed_text(text: &str, builtin: &str, list: bool) -> Value {
     }
 }
 
+// ------------------------------------------------------------------ typed dates
+
+fn num<T: std::str::FromStr>(s: &str) -> Option<T> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// Split a trailing time zone (`Z`, `+hh:mm`, `-hh:mm`) off; returns (rest, minutes).
+fn split_zone(s: &str) -> (&str, Option<i64>) {
+    if let Some(r) = s.strip_suffix('Z') {
+        return (r, Some(0));
+    }
+    if s.len() > 6 {
+        let (r, z) = s.split_at(s.len() - 6);
+        let zb = z.as_bytes();
+        if (zb[0] == b'+' || zb[0] == b'-') && zb[3] == b':' {
+            if let (Some(h), Some(m)) = (num::<i64>(&z[1..3]), num::<i64>(&z[4..6])) {
+                let mins = h * 60 + m;
+                return (r, Some(if zb[0] == b'-' { -mins } else { mins }));
+            }
+        }
+    }
+    (s, None)
+}
+
+fn parse_date_part(s: &str, m: &mut ObjectMap) -> Option<()> {
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, s),
+    };
+    let mut p = s.splitn(3, '-');
+    let (y, mo, d) = (p.next()?, p.next()?, p.next()?);
+    if y.len() < 4 || mo.len() != 2 || d.len() != 2 {
+        return None;
+    }
+    let y: i64 = num(y)?;
+    m.insert("year".into(), Value::Int(if neg { -y } else { y }));
+    m.insert("month".into(), Value::Int(num(mo)?));
+    m.insert("day".into(), Value::Int(num(d)?));
+    Some(())
+}
+
+fn parse_time_part(s: &str, m: &mut ObjectMap) -> Option<()> {
+    let mut p = s.splitn(3, ':');
+    let (h, mi, sec) = (p.next()?, p.next()?, p.next()?);
+    if h.len() != 2 || mi.len() != 2 {
+        return None;
+    }
+    m.insert("hour".into(), Value::Int(num(h)?));
+    m.insert("minute".into(), Value::Int(num(mi)?));
+    let (whole, frac) = sec.split_once('.').unwrap_or((sec, ""));
+    if whole.len() != 2 {
+        return None;
+    }
+    m.insert("second".into(), Value::Int(num(whole)?));
+    if !frac.is_empty() {
+        let ms: String = frac.chars().chain("000".chars()).take(3).collect();
+        m.insert("millisecond".into(), Value::Int(num(&ms)?));
+    }
+    Some(())
+}
+
+/// The object form of a `date` / `dateTime` / `time` / `duration` lexical value.
+pub fn temporal_value(text: &str, builtin: &str) -> Option<Value> {
+    let mut m = ObjectMap::new();
+    match builtin {
+        "date" => {
+            let (rest, tz) = split_zone(text);
+            parse_date_part(rest, &mut m)?;
+            if let Some(z) = tz {
+                m.insert("timezone".into(), Value::Int(z));
+            }
+        }
+        "dateTime" | "dateTimeStamp" => {
+            let (rest, tz) = split_zone(text);
+            let (d, t) = rest.split_once('T')?;
+            parse_date_part(d, &mut m)?;
+            parse_time_part(t, &mut m)?;
+            if let Some(z) = tz {
+                m.insert("timezone".into(), Value::Int(z));
+            }
+        }
+        "time" => {
+            let (rest, tz) = split_zone(text);
+            parse_time_part(rest, &mut m)?;
+            if let Some(z) = tz {
+                m.insert("timezone".into(), Value::Int(z));
+            }
+        }
+        "duration" => {
+            let (neg, s) = match text.strip_prefix('-') {
+                Some(r) => (true, r),
+                None => (false, text),
+            };
+            let s = s.strip_prefix('P')?;
+            let (date, time) = s.split_once('T').unwrap_or((s, ""));
+            m.insert("negative".into(), Value::Bool(neg));
+            let mut take = |part: &str, units: &[(char, &str)]| -> Option<()> {
+                let mut cur = String::new();
+                for c in part.chars() {
+                    if c.is_ascii_digit() || c == '.' {
+                        cur.push(c);
+                    } else {
+                        let (_, name) = units.iter().find(|(u, _)| *u == c)?;
+                        let v = if cur.contains('.') { Value::Float(cur.parse().ok()?) } else { Value::Int(num(&cur)?) };
+                        m.insert((*name).into(), v);
+                        cur.clear();
+                    }
+                }
+                if cur.is_empty() {
+                    Some(())
+                } else {
+                    None
+                }
+            };
+            take(date, &[('Y', "years"), ('M', "months"), ('D', "days")])?;
+            take(time, &[('H', "hours"), ('M', "minutes"), ('S', "seconds")])?;
+        }
+        _ => return None,
+    }
+    Some(Value::Object(m))
+}
+
+fn days_to_civil(z: i64) -> (i64, i64, i64) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn zone_text(m: &ObjectMap) -> String {
+    match m.get("timezone") {
+        Some(Value::Int(0)) => "Z".into(),
+        Some(Value::Int(z)) => format!("{}{:02}:{:02}", if *z < 0 { '-' } else { '+' }, z.abs() / 60, z.abs() % 60),
+        _ => String::new(),
+    }
+}
+
+/// Lexical form of an object / epoch-millis value for a temporal built-in type.
+fn temporal_text(v: &Value, builtin: &str) -> Option<String> {
+    let int = |m: &ObjectMap, k: &str| m.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+    match (v, builtin) {
+        (Value::Int(ms), "dateTime" | "dateTimeStamp" | "date") => {
+            let secs = ms.div_euclid(1000);
+            let (y, mo, d) = days_to_civil(secs.div_euclid(86_400));
+            if builtin == "date" {
+                return Some(format!("{:04}-{:02}-{:02}Z", y, mo, d));
+            }
+            let sod = secs.rem_euclid(86_400);
+            Some(format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", y, mo, d, sod / 3600, sod / 60 % 60, sod % 60, ms.rem_euclid(1000)))
+        }
+        (Value::Object(m), "date" | "dateTime" | "dateTimeStamp" | "time") if m.contains_key("year") || m.contains_key("hour") => {
+            let date = || format!("{}{:04}-{:02}-{:02}", if int(m, "year") < 0 { "-" } else { "" }, int(m, "year").abs(), int(m, "month"), int(m, "day"));
+            let time = || {
+                let mut t = format!("{:02}:{:02}:{:02}", int(m, "hour"), int(m, "minute"), int(m, "second"));
+                if let Some(ms) = m.get("millisecond").and_then(|v| v.as_i64()) {
+                    t.push_str(&format!(".{:03}", ms));
+                }
+                t
+            };
+            Some(match builtin {
+                "date" => format!("{}{}", date(), zone_text(m)),
+                "time" => format!("{}{}", time(), zone_text(m)),
+                _ => format!("{}T{}{}", date(), time(), zone_text(m)),
+            })
+        }
+        (Value::Object(m), "duration") => {
+            let mut s = String::new();
+            if m.get("negative").and_then(|v| v.as_bool()).unwrap_or(false) {
+                s.push('-');
+            }
+            s.push('P');
+            let part = |k: &str| m.get(k).filter(|v| !v.is_null()).map(|v| v.to_string());
+            for (k, u) in [("years", 'Y'), ("months", 'M'), ("days", 'D')] {
+                if let Some(x) = part(k) {
+                    s.push_str(&format!("{}{}", x, u));
+                }
+            }
+            let t: Vec<String> = [("hours", 'H'), ("minutes", 'M'), ("seconds", 'S')].iter().filter_map(|(k, u)| part(k).map(|x| format!("{}{}", x, u))).collect();
+            if !t.is_empty() {
+                s.push('T');
+                s.push_str(&t.concat());
+            }
+            if s.ends_with('P') {
+                s.push_str("T0S");
+            }
+            Some(s)
+        }
+        _ => None,
+    }
+}
+
 /// Lexical text of a value for a built-in type.
 pub fn value_text(v: &Value, builtin: &str) -> String {
+    if let Some(t) = temporal_text(v, builtin) {
+        return t;
+    }
     match v {
+
         Value::Null => String::new(),
         Value::Bool(b) => b.to_string(),
         Value::Int(i) => i.to_string(),
@@ -968,6 +1344,47 @@ mod tests {
             w.doc.to_xml_string(),
             r#"<o:order xmlns:o="urn:o" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><o:id>7</o:id><o:paid>true</o:paid><o:line sku="A"><o:qty>2</o:qty><o:price>1.5</o:price></o:line><o:note xsi:nil="true"/><o:amount currency="EUR">3</o:amount></o:order>"#
         );
+    }
+
+    const POLY: &str = r#"<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="urn:z" xmlns:z="urn:z" elementFormDefault="qualified">
+      <xs:element name="zoo"><xs:complexType><xs:sequence>
+        <xs:element name="animal" type="z:Animal" maxOccurs="unbounded"/>
+        <xs:element ref="z:shape" minOccurs="0" maxOccurs="unbounded"/>
+        <xs:element name="opened" type="xs:date"/><xs:element name="fed" type="xs:dateTime"/><xs:element name="stay" type="xs:duration"/>
+      </xs:sequence></xs:complexType></xs:element>
+      <xs:complexType name="Animal"><xs:sequence><xs:element name="name" type="xs:string"/></xs:sequence></xs:complexType>
+      <xs:complexType name="Dog"><xs:complexContent><xs:extension base="z:Animal"><xs:sequence><xs:element name="barks" type="xs:int"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType>
+      <xs:element name="shape" type="z:Shape" abstract="true"/>
+      <xs:complexType name="Shape"><xs:sequence><xs:element name="color" type="xs:string"/></xs:sequence></xs:complexType>
+      <xs:element name="circle" substitutionGroup="z:shape"><xs:complexType><xs:complexContent><xs:extension base="z:Shape"><xs:sequence><xs:element name="radius" type="xs:double"/></xs:sequence></xs:extension></xs:complexContent></xs:complexType></xs:element>
+      <xs:element name="square" substitutionGroup="z:shape"/>
+    </xs:schema>"#;
+
+    #[test]
+    fn xsi_type_substitution_groups_and_typed_dates() {
+        let s = SchemaSet::parse(POLY, None).unwrap();
+        let xml = r#"<z:zoo xmlns:z="urn:z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><z:animal><z:name>generic</z:name></z:animal><z:animal xsi:type="z:Dog"><z:name>Rex</z:name><z:barks>3</z:barks></z:animal><z:circle><z:color>red</z:color><z:radius>2.5</z:radius></z:circle><z:square><z:color>blue</z:color></z:square><z:opened>2024-05-01+02:00</z:opened><z:fed>2024-05-01T10:20:30.5Z</z:fed><z:stay>P1DT2H</z:stay></z:zoo>"#;
+        let doc = Document::parse(xml).unwrap();
+        let g = s.global_element("urn:z", "zoo").unwrap().clone();
+        let info = s.element_info(&g);
+        let o = BindOptions { typed_dates: true, prefixes: vec![("urn:z".into(), "z".into())], ..Default::default() };
+        let v = s.element_to_value(&doc, doc.document_element().unwrap(), &info, &o);
+        let animals = v.get("animal").unwrap().as_array().unwrap();
+        assert_eq!(animals[1].get("@xsi:type"), Some(&Value::from("Dog")));
+        assert_eq!(animals[1].get("barks"), Some(&Value::Int(3)));
+        assert_eq!(v.get("circle").unwrap().as_array().unwrap()[0].get("radius"), Some(&Value::Float(2.5)));
+        assert_eq!(v.get("square").unwrap().as_array().unwrap()[0].get("color"), Some(&Value::from("blue")));
+        assert_eq!(v.get("opened").unwrap().to_json(), r#"{"year":2024,"month":5,"day":1,"timezone":120}"#);
+        assert_eq!(v.get("fed").unwrap().get("millisecond"), Some(&Value::Int(500)));
+        assert_eq!(v.get("stay").unwrap().to_json(), r#"{"negative":false,"days":1,"hours":2}"#);
+        let mut w = XmlWriter::new(&o.prefixes);
+        s.write_value(&mut w, 0, &g.name, &v, &info, false, &o).unwrap();
+        assert_eq!(
+            w.doc.to_xml_string(),
+            r#"<z:zoo xmlns:z="urn:z" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><z:animal><z:name>generic</z:name></z:animal><z:animal xsi:type="z:Dog"><z:name>Rex</z:name><z:barks>3</z:barks></z:animal><z:circle><z:color>red</z:color><z:radius>2.5</z:radius></z:circle><z:square><z:color>blue</z:color></z:square><z:opened>2024-05-01+02:00</z:opened><z:fed>2024-05-01T10:20:30.500Z</z:fed><z:stay>P1DT2H</z:stay></z:zoo>"#
+        );
+        assert_eq!(value_text(&Value::Int(86_400_000 + 1), "dateTime"), "1970-01-02T00:00:00.001Z");
+        assert_eq!(value_text(&Value::Int(0), "date"), "1970-01-01Z");
     }
 
     #[test]

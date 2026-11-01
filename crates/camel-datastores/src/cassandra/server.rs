@@ -47,7 +47,8 @@ impl CassandraServer {
         let mut schema = Schema::default();
         for q in [
             "CREATE KEYSPACE system WITH replication = {'class': 'LocalStrategy'}",
-            "CREATE TABLE system.local (key text PRIMARY KEY, release_version text, cluster_name text, cql_version text, data_center text, rack text, partitioner text)",
+            "CREATE TABLE system.local (key text PRIMARY KEY, release_version text, cluster_name text, cql_version text, data_center text, rack text, partitioner text, tokens set<text>)",
+            "CREATE TABLE system.peers_v2 (peer inet, peer_port int, native_address inet, native_port int, data_center text, rack text, tokens set<text>, PRIMARY KEY ((peer), peer_port))",
             "INSERT INTO system.local (key, release_version, cluster_name, cql_version, data_center, rack, partitioner) VALUES ('local', '4.1.0', 'Embedded Cluster', '3.4.6', 'datacenter1', 'rack1', 'org.apache.cassandra.dht.Murmur3Partitioner')",
         ] {
             let (st, _) = engine::parse(q).expect("bootstrap statement");
@@ -59,6 +60,17 @@ impl CassandraServer {
             let _ = serve(&sh, s);
         })?;
         Ok(CassandraServer { shared, tcp })
+    }
+
+    /// Sets the token ring: this node's tokens and the peers `(host, native port, tokens)`
+    /// reported in `system.local` / `system.peers_v2` (for token-aware clients).
+    pub fn set_ring(&self, tokens: &[i64], peers: &[(String, u16, Vec<i64>)]) {
+        let set = |ts: &[i64]| format!("{{{}}}", ts.iter().map(|t| format!("'{}'", t)).collect::<Vec<_>>().join(", "));
+        let _ = self.execute(&format!("UPDATE system.local SET tokens = {} WHERE key = 'local'", set(tokens)));
+        let _ = self.execute("TRUNCATE system.peers_v2");
+        for (h, p, ts) in peers {
+            let _ = self.execute(&format!("INSERT INTO system.peers_v2 (peer, peer_port, native_address, native_port, data_center, rack, tokens) VALUES ('{}', 7000, '{}', {}, 'datacenter1', 'rack1', {})", h, h, p, set(ts)));
+        }
     }
 
     pub fn port(&self) -> u16 {
@@ -94,6 +106,7 @@ struct Conn {
     started: bool,
     authed: bool,
     keyspace: Option<String>,
+    compression: Option<super::frame::Compression>,
 }
 
 fn error_frame(stream: i16, e: &CqlError, extra: Option<&[u8]>) -> Frame {
@@ -116,9 +129,21 @@ fn error_frame(stream: i16, e: &CqlError, extra: Option<&[u8]>) -> Frame {
 fn serve(sh: &Shared, stream: NetStream) -> io::Result<()> {
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream);
-    let mut conn = Conn { started: false, authed: sh.cfg.users.is_empty(), keyspace: None };
+    let mut conn = Conn { started: false, authed: sh.cfg.users.is_empty(), keyspace: None, compression: None };
     loop {
         let f = read_frame(&mut reader)?;
+        let sid = f.stream;
+        let f = match f.decompressed(conn.compression) {
+            Ok(f) => f,
+            Err(e) => {
+                let mut fr = error_frame(sid, &CqlError(error_code::PROTOCOL_ERROR, e.message), None);
+                fr = fr.compressed(conn.compression);
+                writer.write_all(&fr.encode())?;
+                writer.flush()?;
+                continue;
+            }
+        };
+        let startup = f.opcode == opcode::STARTUP;
         let resp = if f.version & 0x7f != VERSION {
             let e = CqlError(error_code::PROTOCOL_ERROR, format!("Invalid or unsupported protocol version ({}); supported versions are (4/v4)", f.version & 0x7f));
             let mut fr = error_frame(f.stream, &e, None);
@@ -130,6 +155,8 @@ fn serve(sh: &Shared, stream: NetStream) -> io::Result<()> {
                 Err((e, extra)) => error_frame(f.stream, &e, extra.as_deref()),
             }
         };
+        // the READY / AUTHENTICATE answer to STARTUP is not compressed yet
+        let resp = if startup { resp } else { resp.compressed(conn.compression) };
         writer.write_all(&resp.encode())?;
         writer.flush()?;
     }
@@ -151,13 +178,16 @@ fn handle(sh: &Shared, conn: &mut Conn, f: &Frame) -> HResult {
             w.string("CQL_VERSION");
             w.string_list(&["3.4.6"]);
             w.string("COMPRESSION");
-            w.string_list(&[]);
+            w.string_list(&["lz4", "snappy"]);
             w.string("PROTOCOL_VERSIONS");
             w.string_list(&["4/v4"]);
             Ok(Frame::response(f.stream, opcode::SUPPORTED, w.0))
         }
         opcode::STARTUP => {
-            r.string_map().map_err(pe)?;
+            let opts = r.string_map().map_err(pe)?;
+            if let Some((_, c)) = opts.iter().find(|(k, _)| k.eq_ignore_ascii_case("COMPRESSION")) {
+                conn.compression = Some(super::frame::Compression::parse(c).ok_or_else(|| perr(&format!("Unknown compression algorithm: {}", c)))?);
+            }
             conn.started = true;
             if sh.cfg.users.is_empty() {
                 Ok(Frame::response(f.stream, opcode::READY, Vec::new()))
@@ -200,7 +230,19 @@ fn handle(sh: &Shared, conn: &mut Conn, f: &Frame) -> HResult {
             w.short_bytes(&id);
             w.int(0); // flags: no global table spec
             w.int(binds.len() as i32);
-            w.int(0); // pk count
+            // partition key bind indexes (for token-aware routing)
+            let pk: Vec<u16> = match binds.first() {
+                Some(b0) => {
+                    let cols = sh.schema.lock().unwrap().partition_key(&b0.keyspace, &b0.table);
+                    let idx: Vec<Option<u16>> = cols.iter().map(|c| binds.iter().position(|b| &b.name == c && b.table == b0.table).map(|i| i as u16)).collect();
+                    if !idx.is_empty() && idx.iter().all(|i| i.is_some()) { idx.into_iter().flatten().collect() } else { Vec::new() }
+                }
+                None => Vec::new(),
+            };
+            w.int(pk.len() as i32);
+            for i in &pk {
+                w.short(*i);
+            }
             for b in &binds {
                 w.string(&b.keyspace);
                 w.string(&b.table);

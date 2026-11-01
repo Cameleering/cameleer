@@ -132,6 +132,13 @@ impl TlsClientConfig {
     pub fn has_client_certificate(&self) -> bool {
         self.client_cert.is_some()
     }
+
+    /// A copy of this configuration offering the given ALPN protocols.
+    pub fn with_alpn(&self, protos: &[&str]) -> TlsClientConfig {
+        let mut c = self.clone();
+        c.alpn = protos.iter().map(|p| p.as_bytes().to_vec()).collect();
+        c
+    }
 }
 
 /// Builder for [`TlsClientConfig`].

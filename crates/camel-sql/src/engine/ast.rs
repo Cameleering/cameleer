@@ -65,8 +65,10 @@ pub enum Statement {
     CreateTable { name: String, if_not_exists: bool, columns: Vec<ColumnDef>, constraints: Vec<TableConstraint> },
     DropTable { names: Vec<String>, if_exists: bool },
     Truncate { name: String },
-    /// CREATE INDEX / ALTER ... statements that are accepted and ignored.
+    /// CREATE INDEX / ... statements that are accepted and ignored.
     NoOp { command: String },
+    /// `ALTER TABLE name action`.
+    AlterTable { name: String, if_exists: bool, action: AlterAction },
     Insert { table: String, columns: Option<Vec<String>>, source: InsertSource, returning: Option<Vec<SelectItem>> },
     Select(Box<Select>),
     Update { table: String, alias: Option<String>, sets: Vec<(String, Expr)>, where_: Option<Expr>, returning: Option<Vec<SelectItem>> },
@@ -82,6 +84,29 @@ pub enum Statement {
     Begin,
     Commit,
     Rollback,
+}
+
+/// An `ALTER TABLE` action.
+#[derive(Clone, Debug)]
+pub enum AlterAction {
+    AddColumn { def: ColumnDef, if_not_exists: bool },
+    DropColumn { name: String, if_exists: bool },
+    RenameColumn { from: String, to: String },
+    RenameTable { to: String },
+    SetDefault { column: String, default: Option<Expr> },
+    SetNotNull { column: String, not_null: bool },
+    SetType { column: String, ty: DataType },
+    AddConstraint { name: Option<String>, constraint: TableConstraint },
+    DropConstraint { name: String, if_exists: bool },
+}
+
+/// A common table expression (`WITH name [(cols)] AS (query)`).
+#[derive(Clone, Debug)]
+pub struct Cte {
+    pub name: String,
+    pub columns: Option<Vec<String>>,
+    pub query: Box<Select>,
+    pub recursive: bool,
 }
 
 /// Rows of an INSERT.
@@ -106,6 +131,8 @@ pub struct Select {
     pub offset: Option<Expr>,
     /// `UNION [ALL] select` parts (applied before ORDER BY / LIMIT).
     pub unions: Vec<(bool, Select)>,
+    /// `WITH [RECURSIVE]` common table expressions.
+    pub ctes: Vec<Cte>,
 }
 
 /// An ORDER BY item.
@@ -149,6 +176,7 @@ pub enum JoinKind {
     Inner,
     Left,
     Right,
+    Full,
     Cross,
 }
 
@@ -201,6 +229,8 @@ pub enum Expr {
     Cast { expr: Box<Expr>, ty: DataType },
     Exists(Box<Select>),
     Subquery(Box<Select>),
+    /// `fn(args) OVER ([PARTITION BY ..] [ORDER BY ..])`.
+    Window { func: Box<Expr>, partition: Vec<Expr>, order: Vec<OrderItem> },
 }
 
 /// Aggregate function names.

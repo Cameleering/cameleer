@@ -40,6 +40,7 @@ struct Shared {
     cfg: CouchDbServerConfig,
     dbs: Mutex<BTreeMap<String, Db>>,
     cv: Condvar,
+    log: Mutex<Vec<String>>,
 }
 
 /// A running embedded CouchDB server (stopped on drop).
@@ -54,7 +55,7 @@ impl CouchDbServer {
     }
 
     pub fn start_with(cfg: CouchDbServerConfig) -> io::Result<CouchDbServer> {
-        let shared = Arc::new(Shared { cfg, dbs: Mutex::new(BTreeMap::new()), cv: Condvar::new() });
+        let shared = Arc::new(Shared { cfg, dbs: Mutex::new(BTreeMap::new()), cv: Condvar::new(), log: Mutex::new(Vec::new()) });
         let sh = shared.clone();
         let config = ServerConfig { name: "couchdb-server".into(), pool_size: 16, ..ServerConfig::default() };
         let http = HttpServer::bind("127.0.0.1:0", config, move |req: &mut HttpRequest| handle(&sh, req))?;
@@ -84,6 +85,11 @@ impl CouchDbServer {
     /// Number of live documents.
     pub fn doc_count(&self, db: &str) -> usize {
         self.shared.dbs.lock().unwrap().get(db).map(|d| d.docs.values().filter(|e| !e.deleted).count()).unwrap_or(0)
+    }
+
+    /// Number of received requests whose `METHOD path?query` contains `needle`.
+    pub fn requests_containing(&self, needle: &str) -> usize {
+        self.shared.log.lock().unwrap().iter().filter(|r| r.contains(needle)).count()
     }
 
     pub fn stop(&self) {
@@ -135,6 +141,8 @@ fn new_rev(n: u64, body: &Value) -> String {
 }
 
 fn handle(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
+    let q: Vec<String> = req.query_params().into_iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+    sh.log.lock().unwrap().push(format!("{} {}?{}", req.method, req.path, q.join("&")));
     if !authorized(&sh.cfg, req) {
         return err(401, "unauthorized", "Name or password is incorrect.");
     }
@@ -181,6 +189,26 @@ fn handle(sh: &Shared, req: &mut HttpRequest) -> HttpResponse {
                 })
                 .collect();
             json(200, Value::object([("total_rows", Value::Int(rows.len() as i64)), ("offset", Value::Int(0)), ("rows", Value::Array(rows))]))
+        }
+        ("POST", [db, "_bulk_docs"]) => {
+            let body = camel_core::json::parse(&req.body_text()).unwrap_or(Value::Null);
+            let Some(docs) = body.get("docs").and_then(|d| d.as_array()).cloned() else { return err(400, "bad_request", "POST body must include `docs` parameter.") };
+            let mut out = Vec::new();
+            for doc in docs {
+                if !matches!(doc, Value::Object(_)) {
+                    out.push(Value::object([("error", "bad_request"), ("reason", "Document must be a JSON object")]));
+                    continue;
+                }
+                let id = doc.get("_id").map(|v| v.to_string()).unwrap_or_else(|| crate::cassandra::frame::random_uuid().replace('-', ""));
+                let r = save(sh, db, &id, doc, None);
+                let v = camel_core::json::parse(&String::from_utf8_lossy(&r.body)).unwrap_or(Value::Null);
+                out.push(if r.status == 201 {
+                    Value::object([("ok", Value::Bool(true)), ("id", Value::from(id)), ("rev", v.get("rev").cloned().unwrap_or(Value::Null))])
+                } else {
+                    Value::object([("id", Value::from(id)), ("error", v.get("error").cloned().unwrap_or(Value::Null)), ("reason", v.get("reason").cloned().unwrap_or(Value::Null))])
+                });
+            }
+            json(201, Value::Array(out))
         }
         ("POST", [db]) => {
             let body = match camel_core::json::parse(&req.body_text()) {

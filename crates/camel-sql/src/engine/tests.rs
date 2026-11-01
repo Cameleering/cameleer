@@ -486,3 +486,63 @@ fn insert_select_and_misc() {
     assert_eq!(scalar(&mut c, "SELECT COUNT(*) FROM customers WHERE name LIKE '50\\% %'"), i(1));
     assert_eq!(scalar(&mut c, "SELECT COUNT(*) FROM customers WHERE name LIKE '50!%%' ESCAPE '!'"), i(1));
 }
+
+#[test]
+fn full_join_ctes_windows_alter() {
+    let mut c = conn();
+    run(&mut c, "create table a (id int, x text); create table b (id int, y text)");
+    run(&mut c, "insert into a values (1,'a1'),(2,'a2'); insert into b values (2,'b2'),(3,'b3')");
+    let r = rows(&mut c, "select a.id, b.id, x, y from a full outer join b on a.id = b.id order by coalesce(a.id, b.id)");
+    assert_eq!(r, vec![vec![i(1), Value::Null, s("a1"), Value::Null], vec![i(2), i(2), s("a2"), s("b2")], vec![Value::Null, i(3), Value::Null, s("b3")]]);
+
+    // CTEs (chained, column list, recursive)
+    let r = rows(&mut c, "with t(n) as (select id from a), u as (select n * 10 as m from t) select m from u order by m desc");
+    assert_eq!(r, vec![vec![i(20)], vec![i(10)]]);
+    let r = rows(&mut c, "with recursive cnt(n) as (select 1 union all select n + 1 from cnt where n < 5) select sum(n), count(*) from cnt");
+    assert_eq!(r, vec![vec![i(15), i(5)]]);
+    run(&mut c, "create table emp (id int, boss int, name text, dept text, sal int)");
+    run(&mut c, "insert into emp values (1,null,'ceo','x',300),(2,1,'vp','x',200),(3,2,'dev','y',100),(4,2,'ops','y',100),(5,3,'intern','y',50)");
+    let r = rows(&mut c, "with recursive chain as (select id, name, 0 as depth from emp where boss is null union all select e.id, e.name, chain.depth + 1 from emp e join chain on e.boss = chain.id) select name, depth from chain order by depth, name");
+    assert_eq!(r.iter().map(|r| r[1].clone()).collect::<Vec<_>>(), vec![i(0), i(1), i(2), i(2), i(3)]);
+    assert_eq!(scalar(&mut c, "select (with q as (select max(sal) as m from emp) select m from q)"), i(300));
+
+    // window functions
+    let r = rows(&mut c, "select name, row_number() over (order by sal desc, id), rank() over (order by sal desc), dense_rank() over (order by sal desc) from emp order by id");
+    assert_eq!(r.iter().map(|r| (r[1].clone(), r[2].clone(), r[3].clone())).collect::<Vec<_>>(), vec![(i(1), i(1), i(1)), (i(2), i(2), i(2)), (i(3), i(3), i(3)), (i(4), i(3), i(3)), (i(5), i(5), i(4))]);
+    let r = rows(&mut c, "select id, sum(sal) over (partition by dept order by id), sum(sal) over (partition by dept), lag(name) over (order by id), lead(name, 2, 'none') over (order by id) from emp order by id");
+    assert_eq!(r[1], vec![i(2), i(500), i(500), s("ceo"), s("ops")]);
+    assert_eq!(r[4], vec![i(5), i(250), i(250), s("ops"), s("none")]);
+    let r = rows(&mut c, "select id, ntile(2) over (order by id), first_value(name) over (partition by dept order by sal), count(*) over () from emp order by id");
+    assert_eq!(r.iter().map(|r| r[1].clone()).collect::<Vec<_>>(), vec![i(1), i(1), i(1), i(2), i(2)]);
+    assert_eq!(r[2][2], s("intern"));
+    assert_eq!(r[0][3], i(5));
+    // windows over grouped rows and ordering by a window
+    let r = rows(&mut c, "select dept, sum(sal), rank() over (order by sum(sal) desc) from emp group by dept order by 3");
+    assert_eq!(r, vec![vec![s("x"), i(500), i(1)], vec![s("y"), i(250), i(2)]]);
+    let r = rows(&mut c, "select name from emp order by row_number() over (order by name desc) limit 2");
+    assert_eq!(r, vec![vec![s("vp")], vec![s("ops")]]);
+    assert!(err(&mut c, "select id from emp where row_number() over () > 1").message.contains("window"));
+
+    // ALTER TABLE
+    run(&mut c, "alter table a add column z int default 7");
+    assert_eq!(rows(&mut c, "select z from a order by id"), vec![vec![i(7)], vec![i(7)]]);
+    run(&mut c, "alter table a add column if not exists z int");
+    run(&mut c, "alter table a rename column x to label");
+    assert_eq!(scalar(&mut c, "select label from a where id = 2"), s("a2"));
+    run(&mut c, "alter table a alter column z set not null");
+    assert!(err(&mut c, "insert into a (id, label, z) values (9, 'q', null)").message.contains("null"));
+    run(&mut c, "alter table a alter column z drop not null; alter table a alter column z type text");
+    assert_eq!(scalar(&mut c, "select z from a where id = 1"), s("7"));
+    run(&mut c, "alter table a add constraint a_pk primary key (id)");
+    assert!(err(&mut c, "insert into a (id) values (1)").message.contains("a_pk"));
+    run(&mut c, "alter table a drop constraint a_pk; alter table a drop column z");
+    run(&mut c, "insert into a (id) values (1)");
+    assert_eq!(run(&mut c, "select * from a").columns, vec!["id".to_string(), "label".to_string()]);
+    run(&mut c, "alter table a rename to a2");
+    assert_eq!(scalar(&mut c, "select count(*) from a2"), i(3));
+    assert!(err(&mut c, "select * from a").message.contains("does not exist"));
+    run(&mut c, "alter table if exists nope add column q int");
+    // DDL inside a rolled back transaction is undone
+    run(&mut c, "begin; alter table a2 add column w int; rollback");
+    assert_eq!(run(&mut c, "select * from a2").columns.len(), 2);
+}

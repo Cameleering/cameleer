@@ -192,6 +192,21 @@ pub fn frame_message(msg: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Frames one message compressed with `encoding` (`gzip` or `deflate`; anything else is
+/// sent uncompressed with flag 0).
+pub fn frame_message_with(msg: &[u8], encoding: Option<&str>) -> Vec<u8> {
+    let payload = match encoding {
+        Some("gzip") => compress::gzip_compress(msg, 6),
+        Some("deflate") => compress::zlib_compress(msg, 6),
+        _ => return frame_message(msg),
+    };
+    let mut out = Vec::with_capacity(5 + payload.len());
+    out.push(1);
+    out.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    out.extend_from_slice(&payload);
+    out
+}
+
 /// Incremental decoder of length-prefixed messages from DATA chunks.
 #[derive(Default, Debug)]
 pub struct MessageDecoder {

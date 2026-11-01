@@ -309,6 +309,22 @@ enum Mode {
     Numeric,
     Alnum,
     Byte,
+    Kanji,
+}
+
+fn kanji_chars() -> &'static Vec<char> {
+    static T: std::sync::OnceLock<Vec<char>> = std::sync::OnceLock::new();
+    T.get_or_init(|| super::kanji_table::KANJI.chars().collect())
+}
+
+fn kanji_index() -> &'static std::collections::HashMap<char, u32> {
+    static T: std::sync::OnceLock<std::collections::HashMap<char, u32>> = std::sync::OnceLock::new();
+    T.get_or_init(|| kanji_chars().iter().enumerate().filter(|(_, c)| **c != '\0').map(|(i, c)| (*c, i as u32)).collect())
+}
+
+/// The QR Kanji mode value (13 bits) of a JIS X 0208 character.
+pub fn kanji_value(c: char) -> Option<u32> {
+    kanji_index().get(&c).copied()
 }
 
 fn count_bits(mode: Mode, ver: usize) -> usize {
@@ -323,6 +339,7 @@ fn count_bits(mode: Mode, ver: usize) -> usize {
         Mode::Numeric => [10, 12, 14][idx],
         Mode::Alnum => [9, 11, 13][idx],
         Mode::Byte => [8, 16, 16][idx],
+        Mode::Kanji => [8, 10, 12][idx],
     }
 }
 
@@ -348,6 +365,8 @@ fn data_bits(text: &str, ver: usize) -> (Bits, Mode) {
         Mode::Numeric
     } else if !text.is_empty() && text.chars().all(|c| ALNUM.contains(c)) {
         Mode::Alnum
+    } else if !text.is_empty() && text.chars().all(|c| kanji_value(c).is_some()) {
+        Mode::Kanji
     } else {
         Mode::Byte
     };
@@ -371,6 +390,13 @@ fn data_bits(text: &str, ver: usize) -> (Bits, Mode) {
                 } else {
                     bb.push(p[0], 6);
                 }
+            }
+        }
+        Mode::Kanji => {
+            bb.push(8, 4);
+            bb.push(text.chars().count() as u32, count_bits(mode, ver));
+            for c in text.chars() {
+                bb.push(kanji_value(c).unwrap(), 13);
             }
         }
         Mode::Byte => {
@@ -401,7 +427,7 @@ pub fn encode(text: &str, opts: &QrOptions) -> Result<Matrix> {
         let (bb, mode) = data_bits(text, ver);
         let cap = data_codewords(ver, ecc) * 8;
         let len_ok = match mode {
-            Mode::Byte => text.len() < (1 << count_bits(mode, ver)),
+            Mode::Kanji => text.chars().count() < (1 << count_bits(mode, ver)),
             _ => text.len() < (1 << count_bits(mode, ver)),
         };
         if bb.0.len() <= cap && len_ok {
@@ -708,17 +734,12 @@ fn parse_segments(data: &[u8], ver: usize) -> Result<String> {
                 flush(&mut pending, &mut out, eci);
                 let bits = [8, 10, 12][if ver <= 9 { 0 } else if ver <= 26 { 1 } else { 2 }];
                 let n = r.read(bits)? as usize;
-                let mut sjis = Vec::new();
                 for _ in 0..n {
-                    let v = r.read(13)?;
-                    let mut a = ((v / 0xC0) << 8) | (v % 0xC0);
-                    a += if a < 0x1F00 { 0x8140 } else { 0xC140 };
-                    sjis.push((a >> 8) as u8);
-                    sjis.push(a as u8);
-                }
-                // no Shift_JIS tables here: keep the code points as escaped hex
-                for p in sjis.chunks(2) {
-                    out.push_str(&format!("\\x{:02X}{:02X}", p[0], p[1]));
+                    let v = r.read(13)? as usize;
+                    match kanji_chars().get(v).filter(|c| **c != '\0') {
+                        Some(c) => out.push(*c),
+                        None => out.push('\u{fffd}'),
+                    }
                 }
             }
             3 => {
@@ -832,5 +853,53 @@ mod tests {
             let m = encode("01234567", &QrOptions { mask: Some(mk), ..opts.clone() }).unwrap();
             assert!(penalty(&m) >= p, "mask {} beats chosen {}", mk, chosen);
         }
+    }
+
+    #[test]
+    fn kanji_mode() {
+        assert_eq!(super::super::kanji_table::KANJI.chars().count(), 8192);
+        // ISO/IEC 18004 8.4.5 examples: 点 (0x935F) -> 0x0D9F, 茗 (0xE4AA) -> 0x1AAA
+        assert_eq!(kanji_value('点'), Some(0x0D9F));
+        assert_eq!(kanji_value('茗'), Some(0x1AAA));
+        let (bb, mode) = data_bits("点茗", 1);
+        assert_eq!(mode, Mode::Kanji);
+        let s: String = bb.0.iter().map(|b| if *b { '1' } else { '0' }).collect();
+        assert_eq!(s, "1000".to_string() + "00000010" + "0110110011111" + "1101010101010");
+        for text in ["日本語のテキスト", "漢字モード：ＡＢＣ１２３"] {
+            let m = encode(text, &QrOptions { ecc: Ecc::Q, ..Default::default() }).unwrap();
+            let d = decode_matrix(&m).unwrap();
+            assert_eq!(d.text, text);
+            assert_eq!(d.raw_bytes[0] >> 4, 8, "kanji mode indicator");
+        }
+        // mixed with ASCII: byte mode with the UTF-8 ECI
+        let m = encode("日本 abc", &QrOptions::default()).unwrap();
+        assert_eq!(decode_matrix(&m).unwrap().text, "日本 abc");
+    }
+
+    #[test]
+    fn iso_annex_i_symbol_structure() {
+        // Annex I symbol: 1-M, mask pattern 010
+        let m = encode("01234567", &QrOptions { ecc: Ecc::M, version: Some(1), mask: Some(2) }).unwrap();
+        assert_eq!(format!("{:015b}", format_info(Ecc::M, 2)), "101111001111100");
+        // format information around the top-left finder (bit 14 first, x=8 column upwards
+        // then the y=8 row): read it back from the symbol
+        let mut bits = Vec::new();
+        for x in [0usize, 1, 2, 3, 4, 5, 7, 8] {
+            bits.push(m.get(x, 8));
+        }
+        for y in [7usize, 5, 4, 3, 2, 1, 0] {
+            bits.push(m.get(8, y));
+        }
+        let read: String = bits.iter().map(|b| if *b { '1' } else { '0' }).collect();
+        assert_eq!(read, "101111001111100");
+        // dark module and timing patterns
+        assert!(m.get(8, 13));
+        assert!((8..13).all(|i| m.get(i, 6) == (i % 2 == 0) && m.get(6, i) == (i % 2 == 0)));
+        // the first codeword 0x10 occupies the bottom-right 2x4 modules (upward placement),
+        // masked with (x + y) mod 3 == 0 ... pattern 010 is x mod 3 == 0
+        let cw0: Vec<bool> = [(20, 20), (19, 20), (20, 19), (19, 19), (20, 18), (19, 18), (20, 17), (19, 17)].iter().map(|&(x, y)| m.get(x, y) ^ (x % 3 == 0)).collect();
+        assert_eq!(cw0.iter().fold(0u8, |a, b| (a << 1) | *b as u8), 0x10);
+        let d = decode_matrix(&m).unwrap();
+        assert_eq!(&d.raw_bytes[..16], &[0x10, 0x20, 0x0C, 0x56, 0x61, 0x80, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11, 0xEC, 0x11]);
     }
 }

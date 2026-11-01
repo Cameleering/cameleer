@@ -7,7 +7,8 @@
 //! |---|---|
 //! | `username`, `password` | credentials (also from `user:password@` in the URI) |
 //! | `privateKeyFile` / `privateKeyUri` / `privateKey` | private key: path, `file:` URI, or the key text / `#bean` (an `SshPrivateKey` or `String` bound in the registry); OpenSSH or PEM format, unencrypted |
-//! | `privateKeyPassphrase` | accepted; passphrase-protected keys are rejected with a clear error |
+//! | `useAgent` / `agentSocket` | authenticate with the identities of an SSH agent (`SSH_AUTH_SOCK` or the given socket) |
+//! | `privateKeyPassphrase` | decrypts passphrase-protected keys (OpenSSH bcrypt-pbkdf, PKCS#8 PBES2, legacy PEM) |
 //! | `knownHostsFile` / `knownHostsUri` / `knownHosts` | `known_hosts` path, URI or text |
 //! | `useUserKnownHostsFile` | also load `~/.ssh/known_hosts` (default true, sftp only) |
 //! | `strictHostKeyChecking` | `yes`: the host key must be known; `no` (Camel default): unknown hosts are accepted. Changed or revoked keys are always rejected |
@@ -63,11 +64,8 @@ fn read_text(path: &Path, what: &str) -> Result<String> {
     std::fs::read_to_string(path).map_err(|e| CamelError::illegal_argument(format!("Cannot read {} {}: {}", what, path.display(), e)))
 }
 
-fn key_from_text(text: &str, passphrase: bool) -> Result<SshPrivateKey> {
-    SshPrivateKey::from_text(text).map_err(|e| {
-        let hint = if passphrase { " (privateKeyPassphrase is set, but encrypted keys are not supported)" } else { "" };
-        CamelError::illegal_argument(format!("Cannot load private key: {}{}", e, hint))
-    })
+fn key_from_text(text: &str, passphrase: Option<&str>) -> Result<SshPrivateKey> {
+    SshPrivateKey::from_text_with_passphrase(text, passphrase).map_err(|e| CamelError::illegal_argument(format!("Cannot load private key: {}", e)))
 }
 
 /// Options that select how the host key is checked.
@@ -90,7 +88,8 @@ pub(crate) fn client_config(
 ) -> Result<ClientConfig> {
     let mut cfg = ClientConfig::new(host, port, &username);
     cfg.password = password;
-    let passphrase = take_nonempty(params, "privateKeyPassphrase").is_some();
+    let passphrase_value = take_nonempty(params, "privateKeyPassphrase");
+    let passphrase = passphrase_value.as_deref();
     if let Some(f) = take_nonempty(params, "privateKeyFile") {
         cfg.private_keys.push(key_from_text(&read_text(&file_path(&f), "private key file")?, passphrase)?);
     }
@@ -110,6 +109,12 @@ pub(crate) fn client_config(
         } else {
             cfg.private_keys.push(key_from_text(&k, passphrase)?);
         }
+    }
+    let use_agent = params.take_bool("useAgent", false)?;
+    if let Some(sock) = take_nonempty(params, "agentSocket") {
+        cfg.agent = Some(file_path(&sock));
+    } else if use_agent {
+        cfg.agent = Some(std::env::var_os("SSH_AUTH_SOCK").map(PathBuf::from).ok_or_else(|| CamelError::illegal_argument("useAgent=true but SSH_AUTH_SOCK is not set"))?);
     }
     let mut known = String::new();
     let mut have_known = false;

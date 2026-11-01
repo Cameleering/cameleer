@@ -124,41 +124,7 @@ impl DataFormat for HexDataFormat {
     }
 }
 
-/// The `jacksonXml` data format: structured value <-> XML (see [`crate::language::xml`]).
-/// Options: `rootName` (default `root`), `prettyPrint`, `contentTypeHeader`.
-pub struct XmlDataFormat {
-    pub root_name: String,
-    pub pretty_print: bool,
-    pub content_type_header: bool,
-}
-
-impl DataFormat for XmlDataFormat {
-    fn name(&self) -> &str {
-        "jacksonXml"
-    }
-    fn marshal(&self, ex: &mut Exchange) -> Result<()> {
-        let v = match &ex.message.body {
-            Value::String(_) | Value::Bytes(_) => {
-                let t = body_text(&ex.message.body)?;
-                match crate::json::parse(&t) {
-                    Ok(j @ (Value::Object(_) | Value::Array(_))) => j,
-                    _ => Value::String(t),
-                }
-            }
-            other => other.clone(),
-        };
-        ex.message.body = Value::String(crate::language::xml::value_to_xml(&v, &self.root_name, self.pretty_print));
-        if self.content_type_header {
-            ex.message.headers.set(crate::message::props::CONTENT_TYPE, "application/xml");
-        }
-        Ok(())
-    }
-    fn unmarshal(&self, ex: &mut Exchange) -> Result<()> {
-        let t = body_text(&ex.message.body)?;
-        ex.message.body = crate::language::xml::xml_to_value(&t)?;
-        Ok(())
-    }
-}
+pub use super::jacksonxml::XmlDataFormat;
 
 /// `urlencoded` data format: object <-> `application/x-www-form-urlencoded` text.
 pub struct UrlEncodedDataFormat;

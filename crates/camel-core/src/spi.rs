@@ -40,6 +40,22 @@ pub trait Service: Send + Sync {
     fn stop(&self) -> Result<()> {
         Ok(())
     }
+    /// The suspend/resume view of this service (Camel `SuspendableService`), if supported.
+    /// Consumers returning `Some` are suspended in place by `CamelContext::suspend_route`
+    /// (threads, sockets and queues are kept); others are stopped instead, as in Camel.
+    fn as_suspendable(&self) -> Option<&dyn SuspendableService> {
+        None
+    }
+}
+
+/// A service that can be suspended and resumed without being stopped (Camel
+/// `SuspendableService`). A suspended consumer creates no new exchanges: seda leaves
+/// messages queued, timer/scheduler/cron skip fires, the file consumer skips polls and the
+/// HTTP consumer answers `503 Service Unavailable`.
+pub trait SuspendableService: Send + Sync {
+    fn suspend(&self) -> Result<()>;
+    fn resume(&self) -> Result<()>;
+    fn is_suspended(&self) -> bool;
 }
 
 /// An expression evaluates to a value against an exchange.

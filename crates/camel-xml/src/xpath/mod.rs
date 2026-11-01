@@ -9,6 +9,13 @@
 //!   as the specification requires.
 //! * Extension functions and variables come from an [`Env`] (used by XSLT and by the
 //!   Camel `xpath` language for `in:body()`, `$header` etc.).
+//! * [`XPath::compile_v2`] adds the commonly used XPath 2.0 syntax (`if then else`,
+//!   `for ... return`, `some` / `every`, sequences `(a, b)`, `()`, `to`, value comparisons,
+//!   `intersect` / `except`, `idiv`, `||`) and the XPath 2.0 function library of [`f2`]
+//!   (regular expressions, `string-join`, `distinct-values`, dates and `format-date`,
+//!   `xs:*` constructors...). Sequences of atomic values are represented as node-sets of
+//!   text nodes (one per item, in order) in a scratch document, so XPath 1.0 consumers keep
+//!   working; the functions are also available to 1.0 expressions.
 //!
 //! ```
 //! use camel_xml::xpath::XPath;
@@ -18,6 +25,7 @@
 
 pub mod ast;
 mod eval;
+pub mod f2;
 mod parse;
 
 use std::cell::RefCell;
@@ -166,6 +174,20 @@ impl Docs {
         self.add_rc(Rc::new(doc))
     }
 
+    /// A sequence of atomic values: one text node per item, in order, in a new document.
+    pub fn atomic_sequence(&self, items: &[String]) -> XValue {
+        let mut d = Document::new();
+        let ids: Vec<NodeId> = items.iter().map(|s| d.append_text_node(0, s)).collect();
+        let di = self.add(d);
+        XValue::Nodes(ids.into_iter().map(|i| XNode::new(di, i)).collect())
+    }
+
+    /// Replace document `d` (XQuery updates); node ids of the old document stay valid when
+    /// the new one only appends nodes.
+    pub fn replace(&self, d: u32, doc: Document) {
+        self.list.borrow_mut()[d as usize] = Rc::new(doc);
+    }
+
     pub fn add_rc(&self, doc: Rc<Document>) -> u32 {
         let mut l = self.list.borrow_mut();
         l.push(doc);
@@ -281,7 +303,15 @@ impl XPath {
     /// Compile with a prefix resolver.
     pub fn compile_with(text: &str, ns: PrefixResolver<'_>) -> Result<XPath, XPathError> {
         let toks = parse::tokenize(text)?;
-        let mut p = parse::Parser { toks, i: 0, text, ns };
+        let mut p = parse::Parser { toks, i: 0, text, ns, v2: false };
+        let expr = p.parse_all()?;
+        Ok(XPath { text: text.to_string(), expr })
+    }
+
+    /// Compile an XPath 2.0 expression (see the module documentation for the subset).
+    pub fn compile_v2(text: &str, ns: PrefixResolver<'_>) -> Result<XPath, XPathError> {
+        let toks = parse::tokenize_v(text, true)?;
+        let mut p = parse::Parser { toks, i: 0, text, ns, v2: true };
         let expr = p.parse_all()?;
         Ok(XPath { text: text.to_string(), expr })
     }
@@ -323,6 +353,17 @@ impl XPath {
 /// Evaluate an expression AST (used by XSLT).
 pub fn eval_expr(e: &ast::Expr, ctx: &Ctx) -> Result<XValue, XPathError> {
     eval::eval(e, ctx)
+}
+
+/// Combine values into one sequence value (XPath 2.0 `(a, b, ...)` semantics on the
+/// 1.0 data model: node-sets stay node-sets, mixed / atomic items become an atomic sequence).
+pub fn sequence(items: Vec<XValue>, docs: &Docs) -> XValue {
+    eval::sequence_of(items, docs)
+}
+
+/// The items of a value: one single-node value per node, or the atomic value itself.
+pub fn items(v: XValue) -> Vec<XValue> {
+    eval::items_of(v)
 }
 
 /// Sort node references in document order and remove duplicates.

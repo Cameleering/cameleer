@@ -224,6 +224,9 @@ impl PrivateKey {
         let e = s.uint()?;
         let d = s.uint()?;
         let mut k = RsaPrivateKey::new(n, e, d).ok_or(DerError("invalid RSA private key".into()))?;
+        if let (Ok(p), Ok(q), Ok(dp), Ok(dq), Ok(qinv)) = (s.uint(), s.uint(), s.uint(), s.uint(), s.uint()) {
+            k.set_crt(p, q, dp, dq, qinv);
+        }
         k.pkcs1 = Some(der.to_vec());
         Ok(PrivateKey::Rsa(k))
     }
@@ -440,6 +443,35 @@ mod tests {
         // our PSS signatures verify
         let s = key.sign_pss(HashAlg::Sha256, &h256).unwrap();
         assert!(key.public.verify_pss(HashAlg::Sha256, &h256, &s, Some(32)));
+    }
+
+    #[test]
+    fn rsa_crt_and_blinding_match_plain_exponentiation() {
+        let key = match PrivateKey::from_pem(RSA_PKCS1.as_bytes()).unwrap() {
+            PrivateKey::Rsa(r) => r,
+            _ => unreachable!(),
+        };
+        assert!(key.has_crt());
+        let (n, e) = key.public.components();
+        // the same key without CRT parameters: d from the PKCS#1 structure
+        let der = key.pkcs1_der().unwrap().to_vec();
+        let mut sq = Der::new(&der).sequence().unwrap();
+        sq.small_uint().unwrap();
+        sq.uint().unwrap();
+        sq.uint().unwrap();
+        let d = sq.uint().unwrap().to_vec();
+        let plain = RsaPrivateKey::new(&n, &e, &d).unwrap();
+        assert!(!plain.has_crt());
+        let h256 = HashAlg::Sha256.hash(MSG);
+        for _ in 0..3 {
+            // blinding factors change between calls; results must not
+            assert_eq!(key.sign_pkcs1(HashAlg::Sha256, &h256).unwrap(), SIG_PKCS1);
+            assert_eq!(plain.sign_pkcs1(HashAlg::Sha256, &h256).unwrap(), SIG_PKCS1);
+        }
+        // inconsistent CRT parameters are refused
+        let mut k2 = plain.clone();
+        assert!(!k2.set_crt(&[7], &[11], &[1], &[1], &[1]));
+        assert!(!k2.has_crt());
     }
 
     #[test]

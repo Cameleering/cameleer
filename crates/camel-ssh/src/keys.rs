@@ -323,10 +323,33 @@ impl SshPrivateKey {
 
     /// Parses a private key file: OpenSSH format or PEM (PKCS#1, SEC1, PKCS#8).
     pub fn from_text(text: &str) -> SshResult<SshPrivateKey> {
+        Self::from_text_with_passphrase(text, None)
+    }
+
+    /// Like [`SshPrivateKey::from_text`], decrypting passphrase-protected keys: OpenSSH
+    /// `openssh-key-v1` with the `bcrypt` KDF (aes128/192/256-ctr, -cbc, aes128/256-gcm@openssh.com,
+    /// chacha20-poly1305@openssh.com, 3des-cbc), PKCS#8 `ENCRYPTED PRIVATE KEY` (PBES2 / PKCS#12 PBE)
+    /// and legacy OpenSSL PEM (`Proc-Type: 4,ENCRYPTED`, AES-128/192/256-CBC or DES-EDE3-CBC).
+    pub fn from_text_with_passphrase(text: &str, passphrase: Option<&str>) -> SshResult<SshPrivateKey> {
+        if text.contains("Proc-Type: 4,ENCRYPTED") {
+            let (label, der) = decrypt_legacy_pem(text, passphrase)?;
+            return match label.as_str() {
+                "RSA PRIVATE KEY" => Self::from_pkcs1_rsa(&der),
+                _ => Self::from_camel_tls_key(camel_tls::PrivateKey::from_sec1(&der, None).map_err(|e| key_err(e.to_string()))?),
+            };
+        }
         let blocks = parse_pem(text.as_bytes()).map_err(key_err)?;
         for b in blocks {
             match b.label.as_str() {
-                "OPENSSH PRIVATE KEY" => return SshPrivateKey::from_openssh_bytes(&b.der),
+                "OPENSSH PRIVATE KEY" => return SshPrivateKey::from_openssh_bytes_with(&b.der, passphrase),
+                "ENCRYPTED PRIVATE KEY" => {
+                    let pw = passphrase.ok_or_else(|| key_err("the private key is encrypted: set privateKeyPassphrase"))?;
+                    let der = camel_tls::pbe::decrypt_encrypted_private_key_info(&b.der, pw).map_err(|e| key_err(format!("cannot decrypt the private key (wrong passphrase?): {}", e)))?;
+                    if let Some(k) = Self::try_pkcs8_rsa(&der) {
+                        return k;
+                    }
+                    return Self::from_camel_tls_key(camel_tls::PrivateKey::from_pkcs8(&der).map_err(|e| key_err(e.to_string()))?);
+                }
                 "RSA PRIVATE KEY" => return Self::from_pkcs1_rsa(&b.der),
                 "PRIVATE KEY" => {
                     if let Some(k) = Self::try_pkcs8_rsa(&b.der) {
@@ -335,7 +358,6 @@ impl SshPrivateKey {
                     return Self::from_camel_tls(text);
                 }
                 "EC PRIVATE KEY" => return Self::from_camel_tls(text),
-                "ENCRYPTED PRIVATE KEY" => return Err(key_err("encrypted private keys are not supported")),
                 _ => continue,
             }
         }
@@ -346,7 +368,11 @@ impl SshPrivateKey {
         if text.contains("Proc-Type: 4,ENCRYPTED") {
             return Err(key_err("encrypted PEM private keys are not supported"));
         }
-        match camel_tls::PrivateKey::from_pem(text.as_bytes()).map_err(key_err)? {
+        Self::from_camel_tls_key(camel_tls::PrivateKey::from_pem(text.as_bytes()).map_err(key_err)?)
+    }
+
+    fn from_camel_tls_key(k: camel_tls::PrivateKey) -> SshResult<SshPrivateKey> {
+        match k {
             camel_tls::PrivateKey::Ec { curve, d, public } => Ok(SshPrivateKey::Ecdsa { curve, d, point: public }),
             camel_tls::PrivateKey::Ed25519 { seed, public } => Ok(SshPrivateKey::Ed25519 { seed, public }),
             camel_tls::PrivateKey::Rsa(_) => Err(key_err("unexpected RSA key")),
@@ -387,6 +413,11 @@ impl SshPrivateKey {
 
     /// Parses the binary `openssh-key-v1` structure (unencrypted keys only).
     pub fn from_openssh_bytes(data: &[u8]) -> SshResult<SshPrivateKey> {
+        Self::from_openssh_bytes_with(data, None)
+    }
+
+    /// Parses the binary `openssh-key-v1` structure, decrypting it with `passphrase`.
+    pub fn from_openssh_bytes_with(data: &[u8], passphrase: Option<&str>) -> SshResult<SshPrivateKey> {
         const MAGIC: &[u8] = b"openssh-key-v1\0";
         if !data.starts_with(MAGIC) {
             return Err(key_err("not an openssh-key-v1 key"));
@@ -394,21 +425,32 @@ impl SshPrivateKey {
         let mut r = Reader::new(&data[MAGIC.len()..]);
         let cipher = r.str()?;
         let kdf = r.str()?;
-        let _kdf_opts = r.string()?;
-        if cipher != "none" || kdf != "none" {
-            return Err(key_err(format!(
-                "passphrase protected OpenSSH keys ({} / {}) are not supported; remove the passphrase with ssh-keygen -p",
-                cipher, kdf
-            )));
+        let kdf_opts = r.string()?;
+        if (cipher != "none" || kdf != "none") && passphrase.is_none() {
+            return Err(key_err(format!("passphrase protected OpenSSH key ({} / {}): set privateKeyPassphrase", cipher, kdf)));
         }
         if r.u32()? != 1 {
             return Err(key_err("only single-key OpenSSH files are supported"));
         }
         let pub_blob = r.string()?.to_vec();
-        let priv_list = r.string()?;
+        let enc_list = r.string()?;
+        let decrypted;
+        let priv_list: &[u8] = if cipher == "none" && kdf == "none" {
+            enc_list
+        } else {
+            if kdf != "bcrypt" {
+                return Err(key_err(format!("unsupported OpenSSH key KDF {}", kdf)));
+            }
+            let pw = passphrase.ok_or_else(|| key_err(format!("passphrase protected OpenSSH key ({} / {}): set privateKeyPassphrase", cipher, kdf)))?;
+            let mut o = Reader::new(kdf_opts);
+            let salt = o.string()?.to_vec();
+            let rounds = o.u32()?;
+            decrypted = decrypt_openssh_private(&cipher, pw, &salt, rounds, enc_list, r.remaining())?;
+            &decrypted
+        };
         let mut p = Reader::new(priv_list);
         if p.u32()? != p.u32()? {
-            return Err(key_err("corrupt OpenSSH key (check bytes differ)"));
+            return Err(key_err(if cipher == "none" { "corrupt OpenSSH key (check bytes differ)".to_string() } else { "wrong passphrase for the OpenSSH key (check bytes differ)".to_string() }));
         }
         let t = p.str()?;
         let key = match t.as_str() {
@@ -500,6 +542,146 @@ pub fn host_key_algorithms(k: &SshPrivateKey) -> Vec<&'static str> {
     k.public_key().signature_algorithms().to_vec()
 }
 
+/// Decrypts the private section of an `openssh-key-v1` file (`tail` holds an AEAD tag).
+fn decrypt_openssh_private(cipher: &str, pass: &str, salt: &[u8], rounds: u32, enc: &[u8], tail: &[u8]) -> SshResult<Vec<u8>> {
+    use camel_tls::crypto::aes::{Aes, AesGcm};
+    let (klen, ivlen) = match cipher {
+        "aes128-ctr" | "aes128-cbc" => (16, 16),
+        "aes192-ctr" | "aes192-cbc" => (24, 16),
+        "aes256-ctr" | "aes256-cbc" => (32, 16),
+        "aes128-gcm@openssh.com" => (16, 12),
+        "aes256-gcm@openssh.com" => (32, 12),
+        "chacha20-poly1305@openssh.com" => (64, 0),
+        "3des-cbc" => (24, 8),
+        other => return Err(key_err(format!("unsupported OpenSSH key cipher {}", other))),
+    };
+    if rounds == 0 || rounds > 1 << 20 {
+        return Err(key_err("invalid bcrypt rounds in OpenSSH key"));
+    }
+    let km = crate::crypto::bcrypt::bcrypt_pbkdf(pass.as_bytes(), salt, rounds, klen + ivlen);
+    let (key, iv) = km.split_at(klen);
+    let wrong = || key_err("wrong passphrase for the OpenSSH key");
+    Ok(match cipher {
+        c if c.ends_with("-ctr") => {
+            let mut out = enc.to_vec();
+            crate::crypto::cipher::AesCtr::new(key, iv).apply(&mut out);
+            out
+        }
+        c if c.starts_with("aes") && c.ends_with("-cbc") => {
+            let a = Aes::new(key);
+            raw_cbc_decrypt(&a, iv, enc).ok_or_else(wrong)?
+        }
+        "3des-cbc" => {
+            let d = camel_tls::crypto::des::TripleDes::new(key);
+            raw_cbc_decrypt(&d, iv, enc).ok_or_else(wrong)?
+        }
+        c if c.contains("gcm") => {
+            let tag = tail.get(..16).ok_or_else(|| key_err("missing AES-GCM tag in OpenSSH key"))?;
+            let nonce: [u8; 12] = iv.try_into().unwrap();
+            let mut data = enc.to_vec();
+            data.extend_from_slice(tag);
+            AesGcm::new(key).open(&nonce, &[], &data).ok_or_else(wrong)?
+        }
+        _ => {
+            // chacha20-poly1305@openssh.com without additional data (sequence number 0)
+            use camel_tls::crypto::chacha::{chacha20_block, chacha20_xor, Poly1305};
+            let tag = tail.get(..16).ok_or_else(|| key_err("missing Poly1305 tag in OpenSSH key"))?;
+            let main: [u8; 32] = key[..32].try_into().unwrap();
+            let nonce = [0u8; 12];
+            let block = chacha20_block(&main, 0, &nonce);
+            let pk: [u8; 32] = block[..32].try_into().unwrap();
+            let mut p = Poly1305::new(&pk);
+            p.update(enc);
+            if !camel_tls::util::ct_eq(&p.finish(), tag) {
+                return Err(wrong());
+            }
+            let mut out = enc.to_vec();
+            chacha20_xor(&main, 1, &nonce, &mut out);
+            out
+        }
+    })
+}
+
+/// CBC decryption without padding removal (OpenSSH pads the private section itself).
+fn raw_cbc_decrypt<C: camel_tls::crypto::aes::BlockCipher>(c: &C, iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
+    let bs = C::BLOCK;
+    if data.len() % bs != 0 {
+        return None;
+    }
+    let mut prev = iv.to_vec();
+    let mut out = Vec::with_capacity(data.len());
+    for chunk in data.chunks(bs) {
+        let mut b = chunk.to_vec();
+        c.decrypt(&mut b);
+        for (x, p) in b.iter_mut().zip(&prev) {
+            *x ^= p;
+        }
+        out.extend(b);
+        prev = chunk.to_vec();
+    }
+    Some(out)
+}
+
+/// Decrypts a legacy OpenSSL encrypted PEM key (`Proc-Type: 4,ENCRYPTED`, `DEK-Info`).
+fn decrypt_legacy_pem(text: &str, passphrase: Option<&str>) -> SshResult<(String, Vec<u8>)> {
+    use camel_tls::crypto::aes::{cbc_decrypt, Aes};
+    use camel_tls::crypto::md5::Md5;
+    let pw = passphrase.ok_or_else(|| key_err("the PEM private key is encrypted: set privateKeyPassphrase"))?;
+    let mut label = String::new();
+    let mut dek = None;
+    let mut body = String::new();
+    let mut inside = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(l) = line.strip_prefix("-----BEGIN ") {
+            label = l.trim_end_matches('-').to_string();
+            inside = true;
+        } else if line.starts_with("-----END ") {
+            break;
+        } else if inside {
+            if let Some(v) = line.strip_prefix("DEK-Info:") {
+                dek = Some(v.trim().to_string());
+            } else if !line.contains(':') {
+                body.push_str(line);
+            }
+        }
+    }
+    let dek = dek.ok_or_else(|| key_err("encrypted PEM key without DEK-Info"))?;
+    let (alg, iv_hex) = dek.split_once(',').ok_or_else(|| key_err("invalid DEK-Info"))?;
+    let iv = camel_tls::util::try_unhex(iv_hex.trim()).ok_or_else(|| key_err("invalid DEK-Info IV"))?;
+    let klen = match alg.trim() {
+        "AES-128-CBC" => 16,
+        "AES-192-CBC" => 24,
+        "AES-256-CBC" => 32,
+        "DES-EDE3-CBC" => 24,
+        other => return Err(key_err(format!("unsupported PEM encryption {}", other))),
+    };
+    if iv.len() < 8 {
+        return Err(key_err("invalid DEK-Info IV"));
+    }
+    // EVP_BytesToKey(MD5, 1 iteration, salt = first 8 bytes of the IV)
+    let mut key = Vec::new();
+    let mut prev: Vec<u8> = Vec::new();
+    while key.len() < klen {
+        let mut d = prev.clone();
+        d.extend_from_slice(pw.as_bytes());
+        d.extend_from_slice(&iv[..8]);
+        prev = Md5::digest(&d);
+        key.extend_from_slice(&prev);
+    }
+    key.truncate(klen);
+    let enc = base64_decode(&body).ok_or_else(|| key_err("invalid base64 in PEM key"))?;
+    let der = if alg.trim() == "DES-EDE3-CBC" {
+        cbc_decrypt(&camel_tls::crypto::des::TripleDes::new(&key), &iv, &enc)
+    } else {
+        cbc_decrypt(&Aes::new(&key), &iv, &enc)
+    }
+    .ok_or_else(|| key_err("cannot decrypt the PEM key (wrong passphrase?)"))?;
+    if der.first() != Some(&0x30) {
+        return Err(key_err("cannot decrypt the PEM key (wrong passphrase?)"));
+    }
+    Ok((label, der))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,5 +712,39 @@ mod tests {
         let mut w = Writer::new();
         w.raw(b"openssh-key-v1\0").str("aes256-ctr").str("bcrypt").string(b"x").u32(1);
         assert!(SshPrivateKey::from_openssh_bytes(&w.buf).unwrap_err().to_string().contains("passphrase"));
+    }
+
+    #[test]
+    fn passphrase_protected_keys_from_ssh_keygen() {
+        // generated with OpenSSH 9.6 ssh-keygen (-N, -Z, -m PEM / PKCS8, -a)
+        let cases: [(&str, &str, &str); 6] = [
+            (include_str!("../tests/fixtures/keys/enc_ed25519"), include_str!("../tests/fixtures/keys/enc_ed25519.pub"), "correct horse"),
+            (include_str!("../tests/fixtures/keys/enc_ed25519_r4"), include_str!("../tests/fixtures/keys/enc_ed25519_r4.pub"), "secret"),
+            (include_str!("../tests/fixtures/keys/enc_ecdsa_gcm"), include_str!("../tests/fixtures/keys/enc_ecdsa_gcm.pub"), "pw"),
+            (include_str!("../tests/fixtures/keys/enc_rsa_cbc"), include_str!("../tests/fixtures/keys/enc_rsa_cbc.pub"), "pw"),
+            (include_str!("../tests/fixtures/keys/enc_rsa_pem"), include_str!("../tests/fixtures/keys/enc_rsa_pem.pub"), "secret"),
+            (include_str!("../tests/fixtures/keys/enc_ec_pkcs8"), include_str!("../tests/fixtures/keys/enc_ec_pkcs8.pub"), "secret"),
+        ];
+        for (key, public, pw) in cases {
+            let k = SshPrivateKey::from_text_with_passphrase(key, Some(pw)).unwrap_or_else(|e| panic!("{}: {}", public, e));
+            let expect = SshPublicKey::from_openssh(public.trim()).unwrap();
+            assert_eq!(k.public_key().to_blob(), expect.to_blob(), "{}", public);
+            // signatures verify with the public key
+            let alg = match k.public_key().key_type() {
+                "ssh-rsa" => "rsa-sha2-256".to_string(),
+                t => t.to_string(),
+            };
+            let sig = k.sign(&alg, b"data").unwrap();
+            assert!(expect.verify(&alg, b"data", &sig), "{}", public);
+            assert!(SshPrivateKey::from_text_with_passphrase(key, Some("wrong")).is_err());
+            assert!(SshPrivateKey::from_text(key).is_err());
+        }
+    }
+
+    #[test]
+    fn bcrypt_pbkdf_vector() {
+        // OpenBSD bcrypt_pbkdf / python-bcrypt kdf("password", "salt", 4 rounds, 32 bytes)
+        let k = crate::crypto::bcrypt::bcrypt_pbkdf(b"password", b"salt", 4, 32);
+        assert_eq!(camel_tls::util::hex(&k), "5bbf0cc293587f1c3635555c27796598d47e579071bf427e9d8fbe842aba34d9");
     }
 }

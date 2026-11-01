@@ -1,6 +1,10 @@
 //! Embedded Redis server for tests: RESP2/RESP3 (`HELLO`), `AUTH` (password or ACL
 //! users), `SELECT`, key expiry, strings, hashes, lists (incl. blocking pops), sets,
-//! sorted sets, `MULTI`/`EXEC`, pub/sub (`SUBSCRIBE`, `PSUBSCRIBE`, `PUBLISH`) and TLS.
+//! sorted sets, geo commands (`GEOADD`, `GEODIST`, `GEOHASH`, `GEOPOS`, `GEORADIUS`,
+//! `GEORADIUSBYMEMBER`), `MULTI`/`EXEC`, pub/sub (`SUBSCRIBE`, `PSUBSCRIBE`, `PUBLISH`) and
+//! TLS. It can also play a cluster node ([`RedisServer::set_cluster`]: `MOVED` redirections
+//! for keys outside its slot range, `CLUSTER SLOTS` / `KEYSLOT` / `INFO`) or a Sentinel
+//! ([`RedisServer::set_sentinel_master`]: `SENTINEL get-master-addr-by-name`).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::io::{self, BufReader, Write};
@@ -49,8 +53,18 @@ struct Subscriber {
     patterns: Mutex<BTreeSet<Vec<u8>>>,
 }
 
+/// Cluster role: own slot range and the other nodes `(first, last, "host:port")`.
+#[derive(Clone, Default)]
+struct ClusterState {
+    own: (u16, u16),
+    me: String,
+    peers: Vec<(u16, u16, String)>,
+}
+
 struct Shared {
     cfg: RedisServerConfig,
+    cluster: Mutex<Option<ClusterState>>,
+    sentinel: Mutex<BTreeMap<String, String>>,
     dbs: Mutex<Vec<Db>>,
     cv: Condvar,
     subs: Mutex<Vec<Arc<Subscriber>>>,
@@ -72,7 +86,7 @@ impl RedisServer {
     /// Starts a server with the given settings.
     pub fn start_with(cfg: RedisServerConfig) -> io::Result<RedisServer> {
         let tls = cfg.tls.clone();
-        let shared = Arc::new(Shared { cfg, dbs: Mutex::new((0..16).map(|_| Db::new()).collect()), cv: Condvar::new(), subs: Mutex::new(Vec::new()), commands: AtomicU64::new(0) });
+        let shared = Arc::new(Shared { cfg, cluster: Mutex::new(None), sentinel: Mutex::new(BTreeMap::new()), dbs: Mutex::new((0..16).map(|_| Db::new()).collect()), cv: Condvar::new(), subs: Mutex::new(Vec::new()), commands: AtomicU64::new(0) });
         let sh = shared.clone();
         let tcp = TcpServer::start("redis-server", tls, move |s| {
             let _ = serve(&sh, s);
@@ -107,7 +121,7 @@ impl RedisServer {
     /// Runs a command directly (database 0, RESP2, authenticated).
     pub fn exec(&self, args: &[&str]) -> Resp {
         let a: Vec<Vec<u8>> = args.iter().map(|s| s.as_bytes().to_vec()).collect();
-        let mut st = ConnState { db: 0, resp3: false, authed: true, multi: None, sub: None };
+        let mut st = ConnState { db: 0, resp3: false, authed: true, multi: None, sub: None, asking: false };
         let r = execute(&self.shared, &mut st, &a, None);
         self.shared.cv.notify_all();
         r
@@ -128,6 +142,22 @@ impl RedisServer {
     pub fn stop(&self) {
         self.tcp.stop();
     }
+
+    /// Makes this server a cluster node owning slots `first..=last`; keys of other slots are
+    /// answered with `MOVED <slot> <host:port>` of the peer owning them.
+    pub fn set_cluster(&self, first: u16, last: u16, peers: Vec<(u16, u16, String)>) {
+        *self.shared.cluster.lock().unwrap() = Some(ClusterState { own: (first, last), me: self.address(), peers });
+    }
+
+    /// Makes this server a Sentinel monitoring master `name` at `host:port`.
+    pub fn set_sentinel_master(&self, name: &str, address: &str) {
+        self.shared.sentinel.lock().unwrap().insert(name.to_string(), address.to_string());
+    }
+}
+
+/// Commands whose first argument is not a key (no cluster redirection).
+fn keyless(name: &str) -> bool {
+    matches!(name, "DBSIZE" | "FLUSHDB" | "KEYS" | "RANDOMKEY" | "MOVE" | "SCAN" | "TIME" | "LASTSAVE" | "SAVE")
 }
 
 struct ConnState {
@@ -136,12 +166,14 @@ struct ConnState {
     authed: bool,
     multi: Option<Vec<Vec<Vec<u8>>>>,
     sub: Option<Arc<Subscriber>>,
+    /// `ASKING` was sent: the next command may touch a migrating slot.
+    asking: bool,
 }
 
 fn serve(sh: &Arc<Shared>, stream: NetStream) -> io::Result<()> {
     let writer = Arc::new(Mutex::new(stream.try_clone()?));
     let mut reader = BufReader::new(stream);
-    let mut st = ConnState { db: 0, resp3: false, authed: sh.cfg.password.is_none() && sh.cfg.users.is_empty(), multi: None, sub: None };
+    let mut st = ConnState { db: 0, resp3: false, authed: sh.cfg.password.is_none() && sh.cfg.users.is_empty(), multi: None, sub: None, asking: false };
     let result = loop {
         let req = match read_resp(&mut reader) {
             Ok(r) => r,
@@ -516,6 +548,10 @@ fn execute(sh: &Shared, st: &mut ConnState, args: &[Vec<u8>], writer: Option<&Ar
             return if st.resp3 { Resp::Map(info) } else { Resp::array(info.into_iter().flat_map(|(k, v)| [k, v]).collect()) };
         }
         "QUIT" => return Resp::ok(),
+        "ASKING" => {
+            st.asking = true;
+            return Resp::ok();
+        }
         _ => {}
     }
     if !st.authed {
@@ -598,9 +634,67 @@ fn execute(sh: &Shared, st: &mut ConnState, args: &[Vec<u8>], writer: Option<&Ar
             }
             return Resp::ok();
         }
+        "CLUSTER" => {
+            let Some(c) = sh.cluster.lock().unwrap().clone() else { return Resp::err("ERR This instance has cluster support disabled") };
+            let sub = a.first().map(|s| upper(s)).unwrap_or_default();
+            let node = |addr: &str| {
+                let (h, p) = addr.rsplit_once(':').unwrap_or((addr, "0"));
+                Resp::array(vec![Resp::bulk(h), Resp::Int(p.parse().unwrap_or(0))])
+            };
+            return match sub.as_str() {
+                "KEYSLOT" if a.len() == 2 => Resp::Int(super::cluster::key_slot(&a[1]) as i64),
+                "SLOTS" => {
+                    let mut v = vec![Resp::array(vec![Resp::Int(c.own.0 as i64), Resp::Int(c.own.1 as i64), node(&c.me)])];
+                    v.extend(c.peers.iter().map(|(f, l, addr)| Resp::array(vec![Resp::Int(*f as i64), Resp::Int(*l as i64), node(addr)])));
+                    Resp::array(v)
+                }
+                "INFO" => Resp::bulk("cluster_state:ok\r\ncluster_slots_assigned:16384\r\ncluster_known_nodes:".to_string() + &(c.peers.len() + 1).to_string() + "\r\n"),
+                _ => syntax(),
+            };
+        }
+        "SENTINEL" => {
+            let sub = a.first().map(|s| upper(s)).unwrap_or_default();
+            let masters = sh.sentinel.lock().unwrap().clone();
+            if masters.is_empty() {
+                return Resp::err("ERR unknown command 'sentinel'");
+            }
+            return match sub.as_str() {
+                "GET-MASTER-ADDR-BY-NAME" if a.len() == 2 => match masters.get(String::from_utf8_lossy(&a[1]).as_ref()) {
+                    Some(addr) => {
+                        let (h, p) = addr.rsplit_once(':').unwrap_or((addr, "0"));
+                        bulk_list([h.as_bytes().to_vec(), p.as_bytes().to_vec()])
+                    }
+                    None => null(st),
+                },
+                "MASTERS" => Resp::array(
+                    masters
+                        .iter()
+                        .map(|(n, addr)| {
+                            let (h, p) = addr.rsplit_once(':').unwrap_or((addr, "0"));
+                            bulk_list([b"name".to_vec(), n.as_bytes().to_vec(), b"ip".to_vec(), h.as_bytes().to_vec(), b"port".to_vec(), p.as_bytes().to_vec(), b"flags".to_vec(), b"master".to_vec()])
+                        })
+                        .collect(),
+                ),
+                _ => syntax(),
+            };
+        }
         "BLPOP" | "BRPOP" | "BRPOPLPUSH" | "BLMOVE" => return blocking(sh, st, &name, a),
         _ => {}
     }
+    if let (Some(c), Some(key)) = (sh.cluster.lock().unwrap().as_ref(), a.first()) {
+        if !keyless(&name) {
+            let slot = super::cluster::key_slot(key);
+            if slot < c.own.0 || slot > c.own.1 {
+                if !st.asking {
+                    return match c.peers.iter().find(|(f, l, _)| (*f..=*l).contains(&slot)) {
+                        Some((_, _, addr)) => Resp::err(format!("MOVED {} {}", slot, addr)),
+                        None => Resp::err(format!("CLUSTERDOWN Hash slot {} not served", slot)),
+                    };
+                }
+            }
+        }
+    }
+    st.asking = false;
     let mut dbs = sh.dbs.lock().unwrap();
     let cur = st.db;
     if name == "MOVE" {
@@ -1529,6 +1623,150 @@ fn data_command(db: &mut Db, st: &ConnState, name: &str, a: &[Vec<u8>]) -> Resp 
                 db.insert(a[0].clone(), Entry { val: RVal::ZSet(acc), expire_at: None });
             }
             Resp::Int(len as i64)
+        }
+        // ---------------------------------------------------------------- geo
+        "GEOADD" => {
+            need!(4);
+            let mut i = 1;
+            while i < a.len() && matches!(upper(&a[i]).as_str(), "NX" | "XX" | "CH") {
+                i += 1;
+            }
+            let rest = &a[i..];
+            if rest.is_empty() || rest.len() % 3 != 0 {
+                return syntax();
+            }
+            let mut items = Vec::new();
+            for t in rest.chunks(3) {
+                let (Some(lon), Some(lat)) = (float_arg(&t[0]), float_arg(&t[1])) else { return Resp::err("ERR value is not a valid float") };
+                if !super::geo::valid(lon, lat) {
+                    return Resp::err(format!("ERR invalid longitude,latitude pair {:.6},{:.6}", lon, lat));
+                }
+                items.push((super::geo::encode(lon, lat) as f64, t[2].clone()));
+            }
+            let z = get_or_create!(db, &a[0], ZSet, BTreeMap::new());
+            let mut n = 0;
+            for (score, m) in items {
+                if z.insert(m, score).is_none() {
+                    n += 1;
+                }
+            }
+            Resp::Int(n)
+        }
+        "GEODIST" => {
+            need!(3);
+            let factor = match a.get(3) {
+                Some(u) => match super::geo::unit_factor(&String::from_utf8_lossy(u)) {
+                    Some(f) => f,
+                    None => return Resp::err("ERR unsupported unit provided. please use M, KM, FT, MI"),
+                },
+                None => 1.0,
+            };
+            let Some(z) = get_typed!(db, &a[0], ZSet) else { return null(st) };
+            match (z.get(&a[1]), z.get(&a[2])) {
+                (Some(s1), Some(s2)) => {
+                    let (lo1, la1) = super::geo::decode(*s1 as u64);
+                    let (lo2, la2) = super::geo::decode(*s2 as u64);
+                    Resp::bulk(format!("{:.4}", super::geo::distance(lo1, la1, lo2, la2) / factor))
+                }
+                _ => null(st),
+            }
+        }
+        "GEOHASH" | "GEOPOS" => {
+            need!(1);
+            let z = get_typed!(db, &a[0], ZSet).cloned().unwrap_or_default();
+            Resp::array(
+                a[1..]
+                    .iter()
+                    .map(|m| match z.get(m) {
+                        Some(s) if name == "GEOHASH" => Resp::bulk(super::geo::geohash_text(*s as u64)),
+                        Some(s) => {
+                            let (lon, lat) = super::geo::decode(*s as u64);
+                            Resp::array(vec![Resp::bulk(format!("{:.17}", lon)), Resp::bulk(format!("{:.17}", lat))])
+                        }
+                        None if name == "GEOHASH" => null(st),
+                        None => Resp::Array(None),
+                    })
+                    .collect(),
+            )
+        }
+        "GEORADIUS" | "GEORADIUSBYMEMBER" | "GEORADIUS_RO" | "GEORADIUSBYMEMBER_RO" => {
+            let by_member = name.starts_with("GEORADIUSBYMEMBER");
+            let fixed = if by_member { 4 } else { 5 };
+            need!(fixed);
+            let z = get_typed!(db, &a[0], ZSet).cloned().unwrap_or_default();
+            let (lon, lat) = if by_member {
+                match z.get(&a[1]) {
+                    Some(s) => super::geo::decode(*s as u64),
+                    None => return Resp::err("ERR could not decode requested zset member"),
+                }
+            } else {
+                match (float_arg(&a[1]), float_arg(&a[2])) {
+                    (Some(lo), Some(la)) => (lo, la),
+                    _ => return Resp::err("ERR value is not a valid float"),
+                }
+            };
+            let (r_idx, u_idx) = if by_member { (2, 3) } else { (3, 4) };
+            let Some(radius) = float_arg(&a[r_idx]) else { return Resp::err("ERR need numeric radius") };
+            let Some(factor) = super::geo::unit_factor(&String::from_utf8_lossy(&a[u_idx])) else { return Resp::err("ERR unsupported unit provided. please use M, KM, FT, MI") };
+            let (mut wc, mut wd, mut wh, mut count, mut desc) = (false, false, false, None, None);
+            let mut i = fixed;
+            while i < a.len() {
+                match upper(&a[i]).as_str() {
+                    "WITHCOORD" => wc = true,
+                    "WITHDIST" => wd = true,
+                    "WITHHASH" => wh = true,
+                    "ASC" => desc = Some(false),
+                    "DESC" => desc = Some(true),
+                    "COUNT" => {
+                        i += 1;
+                        match a.get(i).and_then(|c| int_arg(c)).filter(|c| *c > 0) {
+                            Some(c) => count = Some(c as usize),
+                            None => return Resp::err("ERR COUNT must be > 0"),
+                        }
+                    }
+                    "ANY" => {}
+                    _ => return syntax(),
+                }
+                i += 1;
+            }
+            let mut hits: Vec<(f64, Vec<u8>, f64)> = z
+                .iter()
+                .filter_map(|(m, s)| {
+                    let (mlo, mla) = super::geo::decode(*s as u64);
+                    let d = super::geo::distance(lon, lat, mlo, mla);
+                    (d <= radius * factor).then(|| (d, m.clone(), *s))
+                })
+                .collect();
+            if desc.is_some() || count.is_some() {
+                hits.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+                if desc == Some(true) {
+                    hits.reverse();
+                }
+            }
+            if let Some(c) = count {
+                hits.truncate(c);
+            }
+            Resp::array(
+                hits.into_iter()
+                    .map(|(d, m, s)| {
+                        if !(wc || wd || wh) {
+                            return Resp::bulk(m);
+                        }
+                        let mut v = vec![Resp::bulk(m)];
+                        if wd {
+                            v.push(Resp::bulk(format!("{:.4}", d / factor)));
+                        }
+                        if wh {
+                            v.push(Resp::Int(s as i64));
+                        }
+                        if wc {
+                            let (lo, la) = super::geo::decode(s as u64);
+                            v.push(Resp::array(vec![Resp::bulk(format!("{:.17}", lo)), Resp::bulk(format!("{:.17}", la))]));
+                        }
+                        Resp::array(v)
+                    })
+                    .collect(),
+            )
         }
         _ => Resp::err(format!("ERR unknown command '{}', with args beginning with: ", name.to_ascii_lowercase())),
     }

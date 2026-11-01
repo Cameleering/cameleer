@@ -6,7 +6,12 @@
 //! * `soapaction:<action>` — the SOAP action,
 //! * `uri:http://host:port/path` — every request to that address,
 //! * `xpathresult:<value>?expression=<xpath>` — the XPath result (string) on the payload,
-//! * `action:<wsa action>` / `to:<wsa to>` — the WS-Addressing `Action` / `To` headers.
+//! * `action:<wsa action>` / `to:<wsa to>` — the WS-Addressing `Action` / `To` headers,
+//! * `beanname:<bean>` — a registry bean deciding which requests the endpoint receives: a
+//!   [`SpringWsMapping`] (predicate over the request, with constructors for the common
+//!   mappings) or a `String` holding another endpoint spec (`rootqname:{ns}local`,
+//!   `soapaction:...`, `xpathresult:value?expression=...`), as a Spring
+//!   `CamelEndpointMapping` bean would be configured.
 //!
 //! Endpoints of the non-`uri` types listen on `address` (default `/ws` on the platform port
 //! `camel.component.spring-ws.port` / `camel.server.port` / 8080; `http(s)://host:port/path`
@@ -69,6 +74,62 @@ pub(crate) fn register_kinds() {
 #[derive(Default)]
 pub struct SpringWsComponent;
 
+/// What a [`SpringWsMapping`] sees of a request.
+pub struct SpringWsRequest<'a> {
+    /// Expanded name of the payload root element.
+    pub root: Option<&'a Key>,
+    pub soap_action: &'a str,
+    /// The payload XML.
+    pub payload: Option<&'a str>,
+    pub wsa_action: Option<&'a str>,
+    pub wsa_to: Option<&'a str>,
+    /// The HTTP request path.
+    pub path: &'a str,
+}
+
+type MappingFn = dyn Fn(&SpringWsRequest) -> bool + Send + Sync;
+
+/// An endpoint mapping bean for `spring-ws:beanname:<bean>`.
+#[derive(Clone)]
+pub struct SpringWsMapping {
+    predicate: Arc<MappingFn>,
+}
+
+impl std::fmt::Debug for SpringWsMapping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SpringWsMapping")
+    }
+}
+
+impl SpringWsMapping {
+    /// A custom predicate.
+    pub fn new(f: impl Fn(&SpringWsRequest) -> bool + Send + Sync + 'static) -> SpringWsMapping {
+        SpringWsMapping { predicate: Arc::new(f) }
+    }
+    /// Payload root element (`{ns}local`, or `local` for any namespace).
+    pub fn root_qname(clark: &str) -> SpringWsMapping {
+        let k = parse_clark(clark);
+        SpringWsMapping::new(move |r| r.root.is_some_and(|x| *x == k || (k.0.is_empty() && x.1 == k.1)))
+    }
+    /// SOAP action.
+    pub fn soap_action(action: &str) -> SpringWsMapping {
+        let a = action.to_string();
+        SpringWsMapping::new(move |r| r.soap_action == a)
+    }
+    /// WS-Addressing action.
+    pub fn wsa_action(action: &str) -> SpringWsMapping {
+        let a = action.to_string();
+        SpringWsMapping::new(move |r| r.wsa_action == Some(a.as_str()))
+    }
+    /// Any of several mappings.
+    pub fn any(mappings: Vec<SpringWsMapping>) -> SpringWsMapping {
+        SpringWsMapping::new(move |r| mappings.iter().any(|m| (m.predicate)(r)))
+    }
+    pub fn matches(&self, r: &SpringWsRequest) -> bool {
+        (self.predicate)(r)
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Mapping {
     RootQName(Key),
@@ -77,6 +138,7 @@ enum Mapping {
     XPathResult(String, Arc<camel_xml::XPath>),
     Action(String),
     To(String),
+    Bean(SpringWsMapping),
 }
 
 enum Kind {
@@ -123,7 +185,34 @@ impl Component for SpringWsComponent {
                 }
                 "action" => Mapping::Action(key.to_string()),
                 "to" => Mapping::To(key.to_string()),
-                "beanname" => return Err(CamelError::illegal_argument("spring-ws beanname: endpoints need a Spring bean registry; use rootqname/soapaction/uri/xpathresult")),
+                "beanname" => {
+                    if let Some(m) = ctx.registry().lookup::<SpringWsMapping>(key) {
+                        Mapping::Bean((*m).clone())
+                    } else if let Some(spec) = ctx.registry().lookup::<String>(key) {
+                        // an endpoint spec held by the bean: rootqname:..., soapaction:..., xpathresult:...?expression=...
+                        let (spec_path, query) = spec.split_once('?').unwrap_or((spec.as_str(), ""));
+                        let (t, k) = spec_path.split_once(':').ok_or_else(|| CamelError::illegal_argument(format!("spring-ws bean {} must hold <type>:<lookupKey>", key)))?;
+                        let mut q = Parameters::default();
+                        for kv in query.split('&').filter(|s| !s.is_empty()) {
+                            let (a, b) = kv.split_once('=').unwrap_or((kv, ""));
+                            q.insert(a, camel_core::util::url_decode(b));
+                        }
+                        match t.to_ascii_lowercase().as_str() {
+                            "rootqname" => Mapping::RootQName(parse_clark(k)),
+                            "soapaction" => Mapping::SoapAction(k.to_string()),
+                            "action" => Mapping::Action(k.to_string()),
+                            "to" => Mapping::To(k.to_string()),
+                            "xpathresult" => {
+                                let expr = q.take("expression").ok_or_else(|| CamelError::illegal_argument("spring-ws xpathresult needs the expression option"))?;
+                                let xp = camel_xml::XPath::compile_ns(&expr, &namespace_bindings(q.take("namespaces"))).map_err(|e| CamelError::illegal_argument(format!("Invalid XPath {}: {}", expr, e)))?;
+                                Mapping::XPathResult(k.to_string(), Arc::new(xp))
+                            }
+                            other => return Err(CamelError::illegal_argument(format!("Unsupported endpoint type '{}' in spring-ws bean {}", other, key))),
+                        }
+                    } else {
+                        return Err(CamelError::no_such_bean(key));
+                    }
+                }
                 other => return Err(CamelError::illegal_argument(format!("Unknown spring-ws endpoint type '{}'", other))),
             };
             let listen = ListenAddress::parse(ctx, "spring-ws", &address, params)?;
@@ -308,6 +397,14 @@ impl Dispatcher {
             Mapping::XPathResult(v, xp) => payload_doc.as_ref().and_then(|d| xp.eval_string(d).ok()).map(|r| r == *v).unwrap_or(false),
             Mapping::Action(a) => wsa_action.as_deref() == Some(a.as_str()),
             Mapping::To(t) => wsa_to.as_deref() == Some(t.as_str()),
+            Mapping::Bean(m) => m.matches(&SpringWsRequest {
+                root: root.as_ref(),
+                soap_action: &action,
+                payload: env.body.first().map(String::as_str),
+                wsa_action: wsa_action.as_deref(),
+                wsa_to: wsa_to.as_deref(),
+                path: &req.path,
+            }),
         });
         let Some(entry) = found else {
             return HttpResponse::text(404, format!("No endpoint mapping found for {}", root.as_ref().map(crate::support::clark).unwrap_or_default()));

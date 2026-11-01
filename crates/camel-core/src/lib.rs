@@ -28,6 +28,8 @@ pub mod supervising;
 pub mod template;
 pub mod template_routes;
 pub mod tracer;
+pub mod transaction;
+pub mod typeconverter;
 pub mod tz;
 pub mod util;
 pub mod util_time;

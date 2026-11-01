@@ -110,6 +110,8 @@ pub enum Undo {
     DropTable { table: Table },
     Truncate { table: String, rows: Vec<Row> },
     Routine { name: String, old: Option<Routine> },
+    /// ALTER TABLE: the table before (under `key`), now stored under `new_key`.
+    Replace { key: String, new_key: String, table: Table },
 }
 
 /// Apply undo records (newest first).
@@ -146,6 +148,10 @@ pub fn apply_undo(db: &mut Database, undo: Vec<Undo>) {
                 if let Some(t) = db.tables.get_mut(&table) {
                     t.rows = rows;
                 }
+            }
+            Undo::Replace { key, new_key, table } => {
+                db.tables.remove(&new_key);
+                db.tables.insert(key, table);
             }
             Undo::Routine { name, old } => match old {
                 Some(r) => {
@@ -258,6 +264,7 @@ pub fn execute_statement(db: &mut Database, stmt: &Statement, params: &Params, u
             Ok(QueryResult::update("TRUNCATE TABLE", n))
         }
         Statement::NoOp { command } => Ok(QueryResult::update(command, 0)),
+        Statement::AlterTable { name, if_exists, action } => exec_alter(db, name, *if_exists, action, params, undo, now),
         Statement::Begin | Statement::Commit | Statement::Rollback => Err(SqlErr::new("XX000", "transaction control must be handled by the connection")),
     }
 }
@@ -306,6 +313,143 @@ fn exec_create(db: &mut Database, name: &str, if_not_exists: bool, defs: &[Colum
     db.tables.insert(key.clone(), table);
     undo.push(Undo::CreateTable { table: key });
     Ok(QueryResult::update("CREATE TABLE", 0))
+}
+
+fn exec_alter(db: &mut Database, name: &str, if_exists: bool, action: &AlterAction, params: &Params, undo: &mut Vec<Undo>, now: &str) -> SqlResult<QueryResult> {
+    let key = name.to_ascii_lowercase();
+    let Some(old) = db.tables.get(&key).cloned() else {
+        if if_exists {
+            return Ok(QueryResult::update("ALTER TABLE", 0));
+        }
+        return Err(SqlErr::new("42P01", format!("relation \"{}\" does not exist", name)));
+    };
+    let mut t = old.clone();
+    let mut new_key = key.clone();
+    match action {
+        AlterAction::AddColumn { def, if_not_exists } => {
+            if t.columns.iter().any(|c| c.name.eq_ignore_ascii_case(&def.name)) {
+                if *if_not_exists {
+                    return Ok(QueryResult::update("ALTER TABLE", 0));
+                }
+                return Err(SqlErr::new("42701", format!("column \"{}\" of relation \"{}\" already exists", def.name, t.name)));
+            }
+            let scope = Scope::default();
+            let fill = match &def.default {
+                Some(d) => coerce(eval(d, &empty_env(&scope, params, db, now))?, &def.ty)?,
+                None => Value::Null,
+            };
+            let idx = t.columns.len();
+            for r in t.rows.iter_mut() {
+                let v = if def.auto_increment {
+                    let v = Value::Int(t.serial);
+                    t.serial += 1;
+                    v
+                } else {
+                    fill.clone()
+                };
+                r.values.push(v);
+            }
+            if (def.not_null || def.primary_key) && t.rows.iter().any(|r| r.values[idx].is_null()) {
+                return Err(SqlErr::new("23502", format!("column \"{}\" of relation \"{}\" contains null values", def.name, t.name)));
+            }
+            t.columns.push(Column { name: def.name.clone(), ty: def.ty.clone(), not_null: def.not_null || def.primary_key, default: def.default.clone(), auto_increment: def.auto_increment });
+            if def.primary_key {
+                if t.uniques.iter().any(|(_, n)| n.ends_with("_pkey")) {
+                    return Err(SqlErr::new("42P16", format!("multiple primary keys for table \"{}\" are not allowed", t.name)));
+                }
+                t.uniques.push((vec![idx], format!("{}_pkey", t.name)));
+            } else if def.unique {
+                t.uniques.push((vec![idx], format!("{}_{}_key", t.name, def.name)));
+            }
+        }
+        AlterAction::DropColumn { name: col, if_exists } => {
+            let Some(i) = t.columns.iter().position(|c| c.name.eq_ignore_ascii_case(col)) else {
+                if *if_exists {
+                    return Ok(QueryResult::update("ALTER TABLE", 0));
+                }
+                return Err(SqlErr::new("42703", format!("column \"{}\" of relation \"{}\" does not exist", col, t.name)));
+            };
+            t.columns.remove(i);
+            for r in t.rows.iter_mut() {
+                r.values.remove(i);
+            }
+            t.uniques.retain(|(cols, _)| !cols.contains(&i));
+            for (cols, _) in t.uniques.iter_mut() {
+                for c in cols.iter_mut() {
+                    if *c > i {
+                        *c -= 1;
+                    }
+                }
+            }
+        }
+        AlterAction::RenameColumn { from, to } => {
+            let i = t.col_index(from)?;
+            if t.columns.iter().any(|c| c.name.eq_ignore_ascii_case(to)) {
+                return Err(SqlErr::new("42701", format!("column \"{}\" of relation \"{}\" already exists", to, t.name)));
+            }
+            t.columns[i].name = to.clone();
+        }
+        AlterAction::RenameTable { to } => {
+            new_key = to.to_ascii_lowercase();
+            if db.tables.contains_key(&new_key) {
+                return Err(SqlErr::new("42P07", format!("relation \"{}\" already exists", to)));
+            }
+            t.name = to.clone();
+        }
+        AlterAction::SetDefault { column, default } => {
+            let i = t.col_index(column)?;
+            t.columns[i].default = default.clone();
+        }
+        AlterAction::SetNotNull { column, not_null } => {
+            let i = t.col_index(column)?;
+            if *not_null && t.rows.iter().any(|r| r.values[i].is_null()) {
+                return Err(SqlErr::new("23502", format!("column \"{}\" of relation \"{}\" contains null values", t.columns[i].name, t.name)));
+            }
+            t.columns[i].not_null = *not_null;
+        }
+        AlterAction::SetType { column, ty } => {
+            let i = t.col_index(column)?;
+            for r in t.rows.iter_mut() {
+                let v = std::mem::take(&mut r.values[i]);
+                r.values[i] = coerce(v, ty)?;
+            }
+            t.columns[i].ty = ty.clone();
+        }
+        AlterAction::AddConstraint { name: cname, constraint } => {
+            let (cols, pk) = match constraint {
+                TableConstraint::PrimaryKey(c) => (c, true),
+                TableConstraint::Unique(c) => (c, false),
+            };
+            let mut idx = Vec::new();
+            for n in cols {
+                let i = t.col_index(n)?;
+                if pk {
+                    if t.rows.iter().any(|r| r.values[i].is_null()) {
+                        return Err(SqlErr::new("23502", format!("column \"{}\" of relation \"{}\" contains null values", t.columns[i].name, t.name)));
+                    }
+                    t.columns[i].not_null = true;
+                }
+                idx.push(i);
+            }
+            if pk && t.uniques.iter().any(|(_, n)| n.ends_with("_pkey")) {
+                return Err(SqlErr::new("42P16", format!("multiple primary keys for table \"{}\" are not allowed", t.name)));
+            }
+            let cn = cname.clone().unwrap_or_else(|| if pk { format!("{}_pkey", t.name) } else { format!("{}_{}_key", t.name, cols.join("_")) });
+            t.uniques.push((idx, cn));
+            t.validate()?;
+        }
+        AlterAction::DropConstraint { name: cname, if_exists } => {
+            let before = t.uniques.len();
+            t.uniques.retain(|(_, n)| !n.eq_ignore_ascii_case(cname));
+            if before == t.uniques.len() && !*if_exists {
+                return Err(SqlErr::new("42704", format!("constraint \"{}\" of relation \"{}\" does not exist", cname, t.name)));
+            }
+        }
+    }
+    db.tables.remove(&key);
+    db.tables.insert(new_key.clone(), t);
+    undo.push(Undo::Replace { key, new_key, table: old });
+    Ok(QueryResult::update("ALTER TABLE", 0))
 }
 
 fn empty_env<'a>(scope: &'a Scope, params: &'a Params<'a>, db: &'a Database, now: &'a str) -> Env<'a> {
@@ -659,19 +803,30 @@ fn build_source(db: &Database, from: Option<&From>, params: &Params, outer: Opti
                 }
             }
             _ => {
+                let mut right_hit = vec![false; rrows.len()];
                 for l in &rows {
                     let mut hit = false;
-                    for r in &rrows {
+                    for (ri, r) in rrows.iter().enumerate() {
                         let (ok, row) = matches(l, r)?;
                         if ok {
                             hit = true;
+                            right_hit[ri] = true;
                             out.push(row);
                         }
                     }
-                    if !hit && j.kind == JoinKind::Left {
+                    if !hit && matches!(j.kind, JoinKind::Left | JoinKind::Full) {
                         let mut row = l.clone();
                         row.extend(std::iter::repeat_n(Value::Null, rw));
                         out.push(row);
+                    }
+                }
+                if j.kind == JoinKind::Full {
+                    for (ri, r) in rrows.iter().enumerate() {
+                        if !right_hit[ri] {
+                            let mut row = vec![Value::Null; lw];
+                            row.extend_from_slice(r);
+                            out.push(row);
+                        }
                     }
                 }
             }
@@ -831,6 +986,7 @@ fn run_core(db: &Database, sel: &Select, params: &Params, outer: Option<&Env>, n
             }
         }
         let null_row = vec![Value::Null; scope.cols.len()];
+        let mut kept: Vec<&Vec<Vec<Value>>> = Vec::new();
         for g in &groups {
             let rep = g.first().map(|r| r.as_slice()).unwrap_or(&null_row);
             let env = Env { scope: &scope, row: rep, group: Some(g), params, db, outer, now };
@@ -839,26 +995,84 @@ fn run_core(db: &Database, sel: &Select, params: &Params, outer: Option<&Env>, n
                     continue;
                 }
             }
+            kept.push(g);
+        }
+        let order_exprs: Vec<Expr> = order.iter().map(|o| o.expr.clone()).collect();
+        let windows = collect_windows(&[exprs.clone(), order_exprs].concat());
+        fn env_of<'g>(g: &'g [Vec<Value>], null_row: &'g [Value]) -> (&'g [Value], &'g [Vec<Value>]) {
+            (g.first().map(|r| r.as_slice()).unwrap_or(null_row), g)
+        }
+        let win_vals: Vec<Vec<Value>> = if windows.is_empty() {
+            Vec::new()
+        } else {
+            let envs: Vec<Env> = kept
+                .iter()
+                .map(|g| {
+                    let (rep, g) = env_of(g, &null_row);
+                    Env { scope: &scope, row: rep, group: Some(g), params, db, outer, now }
+                })
+                .collect();
+            windows.iter().map(|w| compute_window(w, &envs, None)).collect::<SqlResult<_>>()?
+        };
+        for (gi, g) in kept.iter().enumerate() {
+            let (rep, g) = env_of(g, &null_row);
+            let env = Env { scope: &scope, row: rep, group: Some(g), params, db, outer, now };
             let mut o = Vec::with_capacity(exprs.len());
+            let mut k = 0;
             for e in &exprs {
-                o.push(eval(e, &env)?);
+                o.push(if win_vals.is_empty() { eval(e, &env)? } else { eval(&subst_windows(e, &win_vals, gi, &mut k), &env)? });
             }
             let mut keys = Vec::new();
             for it in order {
-                keys.push(order_key(it, &names, &o, Some(&env))?);
+                if win_vals.is_empty() {
+                    keys.push(order_key(it, &names, &o, Some(&env))?);
+                } else {
+                    let e2 = subst_windows(&it.expr, &win_vals, gi, &mut k);
+                    if matches!(it.expr, Expr::Window { .. }) {
+                        // a window value, not an output position
+                        keys.push(eval(&e2, &env)?);
+                    } else {
+                        let it2 = OrderItem { expr: e2, desc: it.desc, nulls_first: it.nulls_first };
+                        keys.push(order_key(&it2, &names, &o, Some(&env))?);
+                    }
+                }
             }
             out.push((o, keys));
         }
     } else {
-        for r in &filtered {
+        let order_exprs: Vec<Expr> = order.iter().map(|o| o.expr.clone()).collect();
+        let windows = collect_windows(&[exprs.clone(), order_exprs].concat());
+        let win_vals: Vec<Vec<Value>> = if windows.is_empty() {
+            Vec::new()
+        } else {
+            let envs: Vec<Env> = filtered.iter().map(|r| Env { scope: &scope, row: r, group: None, params, db, outer, now }).collect();
+            windows.iter().map(|w| compute_window(w, &envs, Some(&filtered))).collect::<SqlResult<_>>()?
+        };
+        for (ri, r) in filtered.iter().enumerate() {
             let env = Env { scope: &scope, row: r, group: None, params, db, outer, now };
             let mut o = Vec::with_capacity(exprs.len());
+            let mut k = 0;
             for e in &exprs {
-                o.push(eval(e, &env)?);
+                if win_vals.is_empty() {
+                    o.push(eval(e, &env)?);
+                } else {
+                    o.push(eval(&subst_windows(e, &win_vals, ri, &mut k), &env)?);
+                }
             }
             let mut keys = Vec::new();
             for it in order {
-                keys.push(order_key(it, &names, &o, Some(&env))?);
+                if win_vals.is_empty() {
+                    keys.push(order_key(it, &names, &o, Some(&env))?);
+                } else {
+                    let e2 = subst_windows(&it.expr, &win_vals, ri, &mut k);
+                    if matches!(it.expr, Expr::Window { .. }) {
+                        // a window value, not an output position
+                        keys.push(eval(&e2, &env)?);
+                    } else {
+                        let it2 = OrderItem { expr: e2, desc: it.desc, nulls_first: it.nulls_first };
+                        keys.push(order_key(&it2, &names, &o, Some(&env))?);
+                    }
+                }
             }
             out.push((o, keys));
         }
@@ -913,6 +1127,9 @@ fn sort_rows(rows: &mut [(Vec<Value>, Vec<Value>)], order: &[OrderItem]) {
 
 /// Run a SELECT query.
 pub fn run_select(db: &Database, sel: &Select, params: &Params, outer: Option<&Env>, now: &str) -> SqlResult<Relation> {
+    if !sel.ctes.is_empty() {
+        return run_with_ctes(db, sel, params, outer, now);
+    }
     let core_order: &[OrderItem] = if sel.unions.is_empty() { &sel.order_by } else { &[] };
     let mut core = run_core(db, sel, params, outer, now, core_order)?;
     if !sel.unions.is_empty() {
@@ -956,6 +1173,234 @@ pub fn run_select(db: &Database, sel: &Select, params: &Params, outer: Option<&E
     let rows: Vec<Vec<Value>> = core.rows.into_iter().map(|(o, _)| o).skip(offset).take(limit.unwrap_or(usize::MAX)).collect();
     let types = finish_types(core.types, &rows);
     Ok(Relation { columns: core.names, types, rows })
+}
+
+/// Replaces references to a CTE by its materialized rows.
+fn subst_cte(sel: &mut Select, name: &str, columns: &[String], rows: &[Vec<Value>]) {
+    sel.walk_tables_mut(&mut |t| {
+        if let TableRef::Table { name: n, alias } = t {
+            if n.eq_ignore_ascii_case(name) {
+                *t = TableRef::Values { name: name.to_string(), columns: columns.to_vec(), rows: rows.to_vec(), alias: alias.clone() };
+            }
+        }
+    });
+}
+
+fn references_table(sel: &Select, name: &str) -> bool {
+    let mut s = sel.clone();
+    let mut hit = false;
+    s.walk_tables_mut(&mut |t| {
+        if let TableRef::Table { name: n, .. } = t {
+            if n.eq_ignore_ascii_case(name) {
+                hit = true;
+            }
+        }
+    });
+    hit
+}
+
+fn run_with_ctes(db: &Database, sel: &Select, params: &Params, outer: Option<&Env>, now: &str) -> SqlResult<Relation> {
+    let mut main = sel.clone();
+    let ctes = std::mem::take(&mut main.ctes);
+    let mut done: Vec<(String, Vec<String>, Vec<Vec<Value>>)> = Vec::new();
+    for cte in ctes {
+        let mut q = (*cte.query).clone();
+        for (n, c, r) in &done {
+            subst_cte(&mut q, n, c, r);
+        }
+        let rename = |cols: Vec<String>| -> SqlResult<Vec<String>> {
+            match &cte.columns {
+                Some(names) if names.len() != cols.len() => Err(SqlErr::new("42P10", format!("WITH query \"{}\" has {} columns available but {} columns specified", cte.name, cols.len(), names.len()))),
+                Some(names) => Ok(names.clone()),
+                None => Ok(cols),
+            }
+        };
+        let (cols, rows) = if cte.recursive && references_table(&q, &cte.name) {
+            let mut anchor = q.clone();
+            let parts = std::mem::take(&mut anchor.unions);
+            anchor.order_by.clear();
+            if parts.is_empty() || references_table(&anchor, &cte.name) {
+                return Err(SqlErr::new("42P19", format!("recursive query \"{}\" must have the form non-recursive-term UNION [ALL] recursive-term", cte.name)));
+            }
+            let first = run_select(db, &anchor, params, outer, now)?;
+            let cols = rename(first.columns)?;
+            let mut seen: HashSet<String> = HashSet::new();
+            let distinct = parts.iter().any(|(all, _)| !*all);
+            let mut all_rows = Vec::new();
+            for r in first.rows {
+                if !distinct || seen.insert(group_key(&r)) {
+                    all_rows.push(r);
+                }
+            }
+            let mut working = all_rows.clone();
+            let mut iterations = 0;
+            while !working.is_empty() {
+                iterations += 1;
+                if iterations > 100_000 || all_rows.len() > 1_000_000 {
+                    return Err(SqlErr::new("54001", format!("recursive query \"{}\" does not terminate", cte.name)));
+                }
+                let mut fresh = Vec::new();
+                for (_, part) in &parts {
+                    let mut p = part.clone();
+                    subst_cte(&mut p, &cte.name, &cols, &working);
+                    for r in run_select(db, &p, params, outer, now)?.rows {
+                        if !distinct || seen.insert(group_key(&r)) {
+                            fresh.push(r);
+                        }
+                    }
+                }
+                all_rows.extend(fresh.iter().cloned());
+                working = fresh;
+            }
+            (cols, all_rows)
+        } else {
+            let r = run_select(db, &q, params, outer, now)?;
+            (rename(r.columns)?, r.rows)
+        };
+        done.push((cte.name.clone(), cols, rows));
+    }
+    for (n, c, r) in &done {
+        subst_cte(&mut main, n, c, r);
+    }
+    run_select(db, &main, params, outer, now)
+}
+
+/// Window expressions of a list of expressions, in [`Expr::walk_mut`] order.
+fn collect_windows(exprs: &[Expr]) -> Vec<Expr> {
+    let mut out = Vec::new();
+    for e in exprs {
+        let mut c = e.clone();
+        c.walk_mut(&mut |x| {
+            if let Expr::Window { .. } = x {
+                out.push(x.clone());
+            }
+        });
+    }
+    out
+}
+
+/// Replaces window expressions (in walk order, continuing at `*k`) by literal values.
+fn subst_windows(e: &Expr, vals: &[Vec<Value>], row: usize, k: &mut usize) -> Expr {
+    let mut c = e.clone();
+    c.walk_mut(&mut |x| {
+        if let Expr::Window { .. } = x {
+            *x = Expr::Literal(vals[*k][row].clone());
+            *k += 1;
+        }
+    });
+    c
+}
+
+/// Values of one window expression for every row (`envs[i]` evaluates row i; `rows` are the
+/// source rows for window aggregates).
+fn compute_window(win: &Expr, envs: &[Env], rows: Option<&[Vec<Value>]>) -> SqlResult<Vec<Value>> {
+    let Expr::Window { func, partition, order } = win else { unreachable!() };
+    let n = envs.len();
+    let mut out = vec![Value::Null; n];
+    // partitions in first-seen order
+    let mut parts: Vec<Vec<usize>> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for (i, env) in envs.iter().enumerate() {
+        let key: Vec<Value> = partition.iter().map(|p| eval(p, env)).collect::<SqlResult<_>>()?;
+        let k = group_key(&key);
+        match index.get(&k) {
+            Some(p) => parts[*p].push(i),
+            None => {
+                index.insert(k, parts.len());
+                parts.push(vec![i]);
+            }
+        }
+    }
+    let (name, args) = match &**func {
+        Expr::Function { name, args, .. } => (name.as_str(), args.as_slice()),
+        _ => return Err(SqlErr::new("42809", "OVER requires a function call")),
+    };
+    for part in parts {
+        // sort by the ORDER BY keys
+        let mut keyed: Vec<((Vec<Value>, Vec<Value>), usize)> = Vec::new();
+        for &i in &part {
+            let keys: Vec<Value> = order.iter().map(|o| eval(&o.expr, &envs[i])).collect::<SqlResult<_>>()?;
+            keyed.push(((Vec::new(), keys), i));
+        }
+        let mut sortable: Vec<(Vec<Value>, Vec<Value>)> = keyed.iter().map(|((_, k), i)| (vec![Value::Int(*i as i64)], k.clone())).collect();
+        sort_rows(&mut sortable, order);
+        let sorted: Vec<usize> = sortable.iter().map(|(i, _)| i[0].as_i64().unwrap() as usize).collect();
+        let keys: Vec<Vec<Value>> = sortable.into_iter().map(|(_, k)| k).collect();
+        let m = sorted.len();
+        let peer = |a: usize, b: usize| group_key(&keys[a]) == group_key(&keys[b]);
+        // last peer index of each position
+        let mut last_peer = vec![0; m];
+        let mut j = m;
+        while j > 0 {
+            j -= 1;
+            last_peer[j] = if j + 1 < m && peer(j, j + 1) { last_peer[j + 1] } else { j };
+        }
+        let arg = |k: usize, pos: usize| -> SqlResult<Value> {
+            match args.get(k) {
+                Some(a) => eval(a, &envs[sorted[pos]]),
+                None => Ok(Value::Null),
+            }
+        };
+        let const_int = |k: usize, default: i64| -> SqlResult<i64> {
+            match args.get(k) {
+                Some(a) => int_of(&eval(a, &envs[sorted[0]])?, name),
+                None => Ok(default),
+            }
+        };
+        let mut rank = 0usize;
+        let mut dense = 0usize;
+        for pos in 0..m {
+            if pos == 0 || !peer(pos, pos - 1) {
+                rank = pos + 1;
+                dense += 1;
+            }
+            let v = match name {
+                "ROW_NUMBER" => Value::Int(pos as i64 + 1),
+                "RANK" => Value::Int(rank as i64),
+                "DENSE_RANK" => Value::Int(dense as i64),
+                "PERCENT_RANK" => Value::Float(if m > 1 { (rank - 1) as f64 / (m - 1) as f64 } else { 0.0 }),
+                "CUME_DIST" => Value::Float((last_peer[pos] + 1) as f64 / m as f64),
+                "NTILE" => {
+                    let buckets = const_int(0, 1)?.max(1) as usize;
+                    let (q, r) = (m / buckets, m % buckets);
+                    // the first r buckets have q + 1 rows
+                    let b = if pos < r * (q + 1) { pos / (q + 1) } else { r + (pos - r * (q + 1)) / q.max(1) };
+                    Value::Int(b as i64 + 1)
+                }
+                "LAG" | "LEAD" => {
+                    let off = const_int(1, 1)?;
+                    let target = if name == "LAG" { pos as i64 - off } else { pos as i64 + off };
+                    if target >= 0 && (target as usize) < m {
+                        arg(0, target as usize)?
+                    } else {
+                        arg(2, pos)?
+                    }
+                }
+                "FIRST_VALUE" => arg(0, 0)?,
+                "LAST_VALUE" => arg(0, if order.is_empty() { m - 1 } else { last_peer[pos] })?,
+                "NTH_VALUE" => {
+                    let k = const_int(1, 1)?;
+                    let end = if order.is_empty() { m - 1 } else { last_peer[pos] };
+                    if k >= 1 && (k as usize - 1) <= end {
+                        arg(0, k as usize - 1)?
+                    } else {
+                        Value::Null
+                    }
+                }
+                agg if is_aggregate(agg) => {
+                    let rows = rows.ok_or_else(|| SqlErr::new("0A000", "aggregate window functions over grouped rows are not supported"))?;
+                    let end = if order.is_empty() { m - 1 } else { last_peer[pos] };
+                    let frame: Vec<Vec<Value>> = sorted[..=end].iter().map(|i| rows[*i].clone()).collect();
+                    let e = &envs[sorted[pos]];
+                    let env = Env { scope: e.scope, row: e.row, group: Some(&frame), params: e.params, db: e.db, outer: e.outer, now: e.now };
+                    eval(func, &env)?
+                }
+                other => return Err(SqlErr::new("42883", format!("function {}() is not a window function", other.to_ascii_lowercase()))),
+            };
+            out[sorted[pos]] = v;
+        }
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------

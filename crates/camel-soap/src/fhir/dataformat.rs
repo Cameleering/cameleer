@@ -15,8 +15,11 @@
 //! `overrideResourceIdWithBundleEntryFullUrl`, `encodeElementsAppliesToChildResourcesOnly`
 //! and `dontStripVersionsFromReferencesAtPaths` are accepted.
 //!
-//! Decimals go through `f64` in the `Value` model (`1.50` becomes `1.5`); the text-level
-//! conversions [`super::json_to_xml`] / [`super::xml_to_json`] keep lexemes exactly.
+//! `fhirVersion` selects the type registry (DSTU3 / R4 / R4B / R5, see [`super::model`]).
+//! XML output follows the specification's element order. Decimals keep their lexeme: a
+//! decimal an `f64` reproduces exactly unmarshals to a `Float`, others (`1.50`, `1e3`) to a
+//! `String`, which is written back as a JSON number / XML value (values built by hand are
+//! retyped by the registry, so `"value": "5.0"` in a `Quantity` is marshalled as `5.0`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -26,13 +29,15 @@ use camel_core::error::{CamelError, Result};
 use camel_core::message::Exchange;
 use camel_core::value::Value;
 
-use super::convert::{parse_json, tree_to_xml, xml_to_tree};
+use super::convert::{parse_json, retype, tree_to_xml_v, xml_to_tree_v};
 use super::json::{self, J};
+use super::model::FhirVersion;
 use super::DATA_FORMAT_EXCEPTION;
 
 /// A FHIR data format.
 pub struct FhirDataFormat {
     xml: bool,
+    version: FhirVersion,
     pretty: bool,
     suppress_narratives: bool,
     omit_id: bool,
@@ -55,12 +60,11 @@ fn flag(o: &BTreeMap<String, String>, k: &str, d: bool) -> Result<bool> {
     }
 }
 
-/// Check a `fhirVersion` option.
-pub fn check_version(v: Option<&str>) -> Result<()> {
-    match v.map(|s| s.trim().to_ascii_uppercase()) {
-        None => Ok(()),
-        Some(v) if matches!(v.as_str(), "R4" | "R4B" | "R5" | "DSTU3") => Ok(()),
-        Some(v) => Err(CamelError::illegal_argument(format!("Unsupported fhirVersion {} (R4; R4B, R5 and DSTU3 share its serialization rules)", v))),
+/// Check a `fhirVersion` option (default R4).
+pub fn check_version(v: Option<&str>) -> Result<FhirVersion> {
+    match v {
+        None => Ok(FhirVersion::R4),
+        Some(s) => FhirVersion::parse(s).ok_or_else(|| CamelError::illegal_argument(format!("Unsupported fhirVersion {} (DSTU3, R4, R4B, R5)", s))),
     }
 }
 
@@ -68,10 +72,11 @@ impl FhirDataFormat {
     /// Create from options; `xml` selects `fhirXml`.
     pub fn from_options(o: &BTreeMap<String, String>, xml: bool) -> Result<FhirDataFormat> {
         super::register_kinds();
-        check_version(opt(o, "fhirVersion"))?;
+        let version = check_version(opt(o, "fhirVersion"))?;
         let list = |k: &str| opt(o, k).map(|s| s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
         Ok(FhirDataFormat {
             xml,
+            version,
             pretty: flag(o, "prettyPrint", false)?,
             suppress_narratives: flag(o, "suppressNarratives", false)?,
             omit_id: flag(o, "omitResourceId", false)?,
@@ -120,10 +125,10 @@ impl FhirDataFormat {
 
     /// Serialize a body (resource value, or FHIR JSON / XML text).
     pub fn encode(&self, body: &Value) -> Result<String> {
-        let mut j = body_tree(body)?;
+        let mut j = body_tree_v(body, self.version)?;
         self.filter(&mut j, true);
         if self.xml {
-            tree_to_xml(&j, self.pretty)
+            tree_to_xml_v(&j, self.pretty, self.version)
         } else {
             Ok(json::write(&j, self.pretty))
         }
@@ -131,23 +136,33 @@ impl FhirDataFormat {
 
     /// Parse text of this format.
     pub fn decode(&self, text: &str) -> Result<Value> {
-        let j = if self.xml { xml_to_tree(text)? } else { parse_json(text)? };
+        let j = if self.xml { xml_to_tree_v(text, self.version)? } else { parse_json(text)? };
         Ok(j.to_value())
     }
 }
 
 /// A resource tree from a body: a resource value, or FHIR JSON / XML text.
 pub fn body_tree(body: &Value) -> Result<J> {
+    body_tree_v(body, FhirVersion::R4)
+}
+
+/// [`body_tree`] for a FHIR release (values are retyped with its registry).
+pub fn body_tree_v(body: &Value, v: FhirVersion) -> Result<J> {
     let text = match body {
         Value::String(s) => Some(s.clone()),
         Value::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
         _ => None,
     };
     let j = match text {
-        Some(t) if crate::support::strip_xml_decl(&t).starts_with('<') => xml_to_tree(&t)?,
+        Some(t) if crate::support::strip_xml_decl(&t).starts_with('<') => xml_to_tree_v(&t, v)?,
         Some(t) => parse_json(&t)?,
-        None => J::from_value(body),
+        None => {
+            let mut j = J::from_value(body);
+            retype(&mut j, v);
+            j
+        }
     };
+
     match j.get("resourceType") {
         Some(J::Str(_)) => Ok(j),
         _ => Err(CamelError::new(DATA_FORMAT_EXCEPTION, format!("Not a FHIR resource (no resourceType): {}", body.type_name()))),

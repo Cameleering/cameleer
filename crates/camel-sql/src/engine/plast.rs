@@ -162,6 +162,15 @@ impl Expr {
                 }
             }
             Expr::Exists(q) | Expr::Subquery(q) => q.walk_mut(f),
+            Expr::Window { func, partition, order } => {
+                func.walk_mut(f);
+                for e in partition {
+                    e.walk_mut(f);
+                }
+                for o in order {
+                    o.expr.walk_mut(f);
+                }
+            }
             Expr::Literal(_) | Expr::Column { .. } | Expr::Param(_) | Expr::Named(_) => {}
         }
         f(self);
@@ -224,6 +233,9 @@ impl Select {
         for (_, u) in &mut self.unions {
             u.walk_mut(f);
         }
+        for c in &mut self.ctes {
+            c.query.walk_mut(f);
+        }
     }
 
     /// Visit every table reference of the query, including those of subqueries.
@@ -240,6 +252,9 @@ impl Select {
         }
         for (_, u) in &mut self.unions {
             u.walk_tables_mut(f);
+        }
+        for c in &mut self.ctes {
+            c.query.walk_tables_mut(f);
         }
         self.walk_mut(&mut |e| {
             if let Expr::Exists(q) | Expr::Subquery(q) | Expr::InSubquery { query: q, .. } = e {

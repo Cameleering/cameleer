@@ -81,8 +81,8 @@ impl SshConfig {
         if let Some(cert) = params.take("certResource").filter(|s| !s.is_empty()) {
             params.insert("privateKeyFile", cert.trim_start_matches("classpath:").to_string());
         }
-        if params.take("certResourcePassword").filter(|s| !s.is_empty()).is_some() {
-            params.insert("privateKeyPassphrase", "set");
+        if let Some(pw) = params.take("certResourcePassword").filter(|s| !s.is_empty()) {
+            params.insert("privateKeyPassphrase", pw);
         }
         let strict = match (params.take("failOnUnknownHost"), params.take("strictHostKeyChecking")) {
             (Some(v), _) => yes_no(&v)?,

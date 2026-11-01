@@ -16,10 +16,10 @@ use std::time::{Duration, Instant};
 
 use crate::error::{CamelError, Result};
 use crate::log::Level;
-use crate::spi::Service;
+use crate::spi::{Service, SuspendableService};
 use crate::util::Parameters;
 
-use super::support::{parse_duration_with_unit, time_unit_millis, BackgroundThreads, StopFlag};
+use super::support::{parse_duration_with_unit, time_unit_millis, BackgroundThreads, StopFlag, SuspendState};
 
 /// Scheduling configuration of a [`ScheduledPollConsumer`].
 #[derive(Clone, Debug)]
@@ -118,10 +118,14 @@ struct PollInner {
     empty: Option<EmptyFn>,
     polls: AtomicU64,
     lock: Mutex<()>,
+    suspend: Arc<SuspendState>,
 }
 
 impl PollInner {
     fn run_poll(&self) -> Result<usize> {
+        if self.suspend.get() {
+            return Ok(0); // suspended: skip the poll (Camel ScheduledPollConsumer)
+        }
         let _g = self.lock.lock().unwrap();
         self.polls.fetch_add(1, Ordering::SeqCst);
         crate::log::log(self.config.run_logging_level, &self.name, "Scheduled task started");
@@ -245,6 +249,7 @@ impl ScheduledPollConsumer {
                 empty: None,
                 polls: AtomicU64::new(0),
                 lock: Mutex::new(()),
+                suspend: SuspendState::new(),
             }),
             threads: BackgroundThreads::new(),
         }
@@ -287,7 +292,11 @@ impl Service for ScheduledPollConsumer {
     }
     fn stop(&self) -> Result<()> {
         self.threads.stop();
+        self.inner.suspend.set(false);
         Ok(())
+    }
+    fn as_suspendable(&self) -> Option<&dyn SuspendableService> {
+        Some(&*self.inner.suspend)
     }
 }
 
