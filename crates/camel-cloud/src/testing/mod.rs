@@ -38,6 +38,9 @@ use crate::http::{read_request, write_response, Response, ServerRequest};
 /// Request handler of a [`MockServer`].
 pub type Handler = Arc<dyn Fn(&ServerRequest) -> Response + Send + Sync>;
 
+/// HTTP/2 stream handler of a [`MockServer`] (cleartext h2c prior-knowledge connections).
+pub type H2Handler = Arc<dyn Fn(camel_grpc::h2::ServerRequest, camel_grpc::h2::H2Stream) + Send + Sync>;
+
 /// A small threaded HTTP/1.1 server (one thread per connection, keep-alive supported).
 pub struct MockServer {
     port: u16,
@@ -55,19 +58,25 @@ impl<T: Read + Write + Send> Conn for T {}
 impl MockServer {
     /// Start a plain HTTP server.
     pub fn start(handler: Handler) -> io::Result<MockServer> {
-        Self::start_inner(handler, None)
+        Self::start_inner(handler, None, None)
+    }
+
+    /// Start a plain HTTP server that also serves HTTP/2 (h2c prior knowledge: connections
+    /// starting with the client preface) on the same port with `h2`.
+    pub fn start_with_h2(handler: Handler, h2: H2Handler) -> io::Result<MockServer> {
+        Self::start_inner(handler, None, Some(h2))
     }
 
     /// Start an HTTPS server with a generated self-signed certificate for `localhost` / 127.0.0.1.
     pub fn start_tls(handler: Handler) -> io::Result<MockServer> {
         let ss = camel_tls::self_signed("localhost");
         let cfg = TlsServerConfig::from_pem(ss.cert_pem.as_bytes(), ss.key_pem.as_bytes()).map_err(|e| io::Error::other(e.to_string()))?;
-        let mut s = Self::start_inner(handler, Some(Arc::new(cfg)))?;
+        let mut s = Self::start_inner(handler, Some(Arc::new(cfg)), None)?;
         s.cert_pem = Some(ss.cert_pem);
         Ok(s)
     }
 
-    fn start_inner(handler: Handler, tls: Option<Arc<TlsServerConfig>>) -> io::Result<MockServer> {
+    fn start_inner(handler: Handler, tls: Option<Arc<TlsServerConfig>>, h2: Option<H2Handler>) -> io::Result<MockServer> {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         let port = listener.local_addr()?.port();
         let stop = Arc::new(AtomicBool::new(false));
@@ -79,10 +88,22 @@ impl MockServer {
                     break;
                 }
                 let Ok(sock) = conn else { continue };
-                let (h, tls, reqs, stop3) = (handler.clone(), tls.clone(), req2.clone(), stop2.clone());
+                let (h, tls, reqs, stop3, h2) = (handler.clone(), tls.clone(), req2.clone(), stop2.clone(), h2.clone());
                 std::thread::spawn(move || {
                     let _ = sock.set_read_timeout(Some(Duration::from_secs(30)));
                     let _ = sock.set_nodelay(true);
+                    if let (Some(h2), None) = (&h2, &tls) {
+                        let mut pre = [0u8; 3];
+                        if matches!(sock.peek(&mut pre), Ok(3)) && &pre == b"PRI" {
+                            let _ = sock.set_read_timeout(None);
+                            reqs.fetch_add(1, Ordering::SeqCst);
+                            let h2 = h2.clone();
+                            if let Ok(t) = camel_grpc::h2::Transport::tcp(sock) {
+                                let _ = camel_grpc::h2::serve_transport(t, camel_grpc::h2::H2Config::default(), move |r: camel_grpc::h2::ServerRequest, s: camel_grpc::h2::H2Stream| h2(r, s));
+                            }
+                            return;
+                        }
+                    }
                     let stream: Box<dyn Conn> = match tls {
                         Some(cfg) => match TlsStream::accept(sock, &cfg) {
                             Ok(s) => Box::new(s),

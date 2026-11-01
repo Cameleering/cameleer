@@ -1,5 +1,6 @@
-//! Remote credential providers of the AWS default chain: the ECS/EKS container credentials
-//! endpoint and the EC2 instance metadata service (IMDSv2, falling back to IMDSv1).
+//! Remote credential providers of the AWS default chain: web identity tokens (STS
+//! `AssumeRoleWithWebIdentity`), the ECS/EKS container credentials endpoint and the EC2
+//! instance metadata service (IMDSv2, falling back to IMDSv1).
 //!
 //! * Container: `AWS_CONTAINER_CREDENTIALS_FULL_URI`, or `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`
 //!   relative to `http://169.254.170.2`; the `Authorization` header comes from
@@ -138,6 +139,38 @@ pub fn imds_credentials(env: &dyn Fn(&str) -> Option<String>) -> Option<Credenti
         let role = roles.lines().map(|l| l.trim()).find(|l| !l.is_empty()).ok_or("no instance profile role")?.to_string();
         let doc = get(&format!("/latest/meta-data/iam/security-credentials/{}", role))?;
         parse_credentials_json(&parse_json(doc.as_bytes()).map_err(|e| e.to_string())?)
+    })
+}
+
+/// Web identity credentials (EKS IRSA / workload identity federation): the OIDC token of
+/// `AWS_WEB_IDENTITY_TOKEN_FILE` is exchanged for temporary credentials of `AWS_ROLE_ARN`
+/// (session `AWS_ROLE_SESSION_NAME`) with the unsigned STS `AssumeRoleWithWebIdentity`
+/// call. The STS endpoint is `AWS_ENDPOINT_URL_STS` / `AWS_ENDPOINT_URL`, else `sts_override`,
+/// else `https://sts.{region}.amazonaws.com`. Cached until five minutes before expiry (the
+/// token file is re-read on every refresh, as Kubernetes rotates it).
+pub fn web_identity_credentials(env: &dyn Fn(&str) -> Option<String>, region: &str, sts_override: Option<&str>) -> Option<Credentials> {
+    let token_file = env("AWS_WEB_IDENTITY_TOKEN_FILE")?;
+    let role = env("AWS_ROLE_ARN")?;
+    let session = env("AWS_ROLE_SESSION_NAME").unwrap_or_else(|| format!("camel-{}", now_secs()));
+    let endpoint = env("AWS_ENDPOINT_URL_STS").or_else(|| env("AWS_ENDPOINT_URL")).or_else(|| sts_override.map(|s| s.to_string())).unwrap_or_else(|| format!("https://sts.{}.amazonaws.com", region));
+    cached(&format!("web-identity:{}:{}:{}", endpoint, role, token_file), || {
+        let token = std::fs::read_to_string(&token_file).map_err(|e| format!("cannot read {}: {}", token_file, e))?;
+        let form = crate::util::encode_form(&[
+            ("Action".to_string(), "AssumeRoleWithWebIdentity".to_string()),
+            ("Version".to_string(), "2011-06-15".to_string()),
+            ("RoleArn".to_string(), role.clone()),
+            ("RoleSessionName".to_string(), session.clone()),
+            ("WebIdentityToken".to_string(), token.trim().to_string()),
+        ]);
+        let req = Request::new("POST", Url::parse(&endpoint).map_err(|e| e.to_string())?).header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8").body(form.into_bytes());
+        let resp = HttpClient::new().with_timeout(Duration::from_secs(10)).send(&req).map_err(|e| e.to_string())?;
+        let x = crate::util::Xml::parse(&resp.text()).map_err(|e| e.to_string())?;
+        if !resp.is_success() {
+            return Err(format!("AssumeRoleWithWebIdentity failed with HTTP {}: {} {}", resp.status, x.find_text("Code").unwrap_or_default(), x.find_text("Message").unwrap_or_default()));
+        }
+        let t = |n: &str| x.find_text(n).filter(|v| !v.is_empty()).ok_or_else(|| format!("missing {}", n));
+        let exp = t("Expiration").ok().and_then(|e| parse_iso8601(&e)).unwrap_or(now_secs() + 3600);
+        Ok((Credentials { access_key: t("AccessKeyId")?, secret_key: t("SecretAccessKey")?, session_token: Some(t("SessionToken")?) }, exp))
     })
 }
 

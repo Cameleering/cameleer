@@ -6,8 +6,16 @@
 //! message structure (`messageStructure` / `CamelAwsSnsMessageStructure`) and the user headers
 //! as message attributes; sets `CamelAwsSnsMessageId`. The topic ARN is the path when it is an
 //! ARN, otherwise it is created (`autoCreateTopic`, default false) or looked up with
-//! `ListTopics`. FIFO topics (`.fifo`) get `MessageGroupId` (`messageGroupIdStrategy`) and a
-//! deduplication id (`messageDeduplicationIdStrategy`).
+//! `ListTopics`. FIFO topics (`.fifo`) are created with `FifoTopic=true` (and
+//! `ContentBasedDeduplication` with `messageDeduplicationIdStrategy=useContentBasedDeduplication`);
+//! messages get `MessageGroupId` (`messageGroupIdStrategy`) and a deduplication id.
+//!
+//! * `subscribeSNStoSQS=true` + `queueArn`: subscribes the SQS queue to the topic when the
+//!   endpoint starts (`Subscribe`, protocol `sqs`; idempotent).
+//! * `policy` (JSON text or `file:` / `classpath:` resource), `serverSideEncryptionEnabled` +
+//!   `kmsMasterKeyId`: topic attributes set at creation and with `SetTopicAttributes`.
+//! * `batchEnabled=true`: a list body is published with `PublishBatch` (10 per request); body =
+//!   `{successful, failed}`.
 
 use std::sync::{Arc, Mutex};
 
@@ -37,6 +45,12 @@ pub struct SnsService {
     pub auto_create_topic: bool,
     pub message_group_id_strategy: Option<String>,
     pub message_deduplication_id_strategy: String,
+    pub subscribe_sns_to_sqs: bool,
+    pub queue_arn: Option<String>,
+    pub policy: Option<String>,
+    pub server_side_encryption_enabled: bool,
+    pub kms_master_key_id: Option<String>,
+    pub batch_enabled: bool,
     topic_arn: Mutex<Option<String>>,
 }
 
@@ -53,10 +67,22 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         auto_create_topic: o.bool("autoCreateTopic", false)?,
         message_group_id_strategy: o.get("messageGroupIdStrategy"),
         message_deduplication_id_strategy: o.string("messageDeduplicationIdStrategy", "useExchangeId"),
+        subscribe_sns_to_sqs: o.bool("subscribeSNStoSQS", false)?,
+        queue_arn: o.get("queueArn"),
+        policy: match o.get("policy") {
+            Some(p) if p.starts_with("file:") => Some(std::fs::read_to_string(&p[5..]).map_err(|e| CamelError::illegal_argument(format!("Cannot read policy {}: {}", p, e)))?),
+            other => other,
+        },
+        server_side_encryption_enabled: o.bool("serverSideEncryptionEnabled", false)?,
+        kms_master_key_id: o.get("kmsMasterKeyId"),
+        batch_enabled: o.bool("batchEnabled", false)?,
         topic_arn: Mutex::new(None),
         aws,
     };
-    o.ignore(&["subscribeSNStoSQS", "queueArn", "policy", "serverSideEncryptionEnabled", "kmsMasterKeyId", "queueUrl"]);
+    if s.subscribe_sns_to_sqs && s.queue_arn.is_none() {
+        return Err(CamelError::illegal_argument("subscribeSNStoSQS=true requires the queueArn option"));
+    }
+    o.ignore(&["queueUrl", "amazonSNSClient", "overrideEndpoint"]);
     Ok(Arc::new(s))
 }
 
@@ -82,9 +108,9 @@ impl SnsService {
         }
         let arn = if self.auto_create_topic {
             let mut p = vec![("Name".to_string(), self.topic.clone())];
-            if self.topic.ends_with(".fifo") {
-                p.push(("Attributes.entry.1.key".into(), "FifoTopic".into()));
-                p.push(("Attributes.entry.1.value".into(), "true".into()));
+            for (i, (k, v)) in self.topic_attributes(true).into_iter().enumerate() {
+                p.push((format!("Attributes.entry.{}.key", i + 1), k));
+                p.push((format!("Attributes.entry.{}.value", i + 1), v));
             }
             self.call("CreateTopic", p)?.find_text("TopicArn").unwrap_or_default()
         } else {
@@ -106,8 +132,77 @@ impl SnsService {
     }
 }
 
+impl SnsService {
+    /// Topic attributes from the options (`create` adds the FIFO ones).
+    fn topic_attributes(&self, create: bool) -> Vec<(String, String)> {
+        let mut a = Vec::new();
+        if create && self.topic.ends_with(".fifo") {
+            a.push(("FifoTopic".to_string(), "true".to_string()));
+            if self.message_deduplication_id_strategy == "useContentBasedDeduplication" {
+                a.push(("ContentBasedDeduplication".to_string(), "true".to_string()));
+            }
+        }
+        if let Some(p) = &self.policy {
+            a.push(("Policy".to_string(), p.clone()));
+        }
+        if self.server_side_encryption_enabled {
+            a.push(("KmsMasterKeyId".to_string(), self.kms_master_key_id.clone().unwrap_or_else(|| "alias/aws/sns".into())));
+        }
+        a
+    }
+
+    fn fifo_params(&self, ex: &Exchange, prefix: &str, dedup: &str) -> Vec<(String, String)> {
+        let mut p = Vec::new();
+        if self.topic.ends_with(".fifo") {
+            let group = match self.message_group_id_strategy.as_deref() {
+                Some("useExchangeId") => ex.exchange_id.clone(),
+                Some("usePropertyValue") => ex.property(headers::MESSAGE_GROUP_ID_PROPERTY).map(|v| v.to_string()).unwrap_or_default(),
+                _ => "CamelSingleMessageGroup".to_string(),
+            };
+            p.push((format!("{}MessageGroupId", prefix), group));
+            if self.message_deduplication_id_strategy != "useContentBasedDeduplication" {
+                p.push((format!("{}MessageDeduplicationId", prefix), dedup.to_string()));
+            }
+        }
+        p
+    }
+
+    fn publish_batch(&self, ex: &mut Exchange, items: Vec<Value>) -> Result<()> {
+        let arn = self.topic_arn()?;
+        let (mut ok, mut failed) = (Vec::new(), Vec::new());
+        for (c, chunk) in items.chunks(10).enumerate() {
+            let mut p = vec![("TopicArn".to_string(), arn.clone())];
+            for (i, item) in chunk.iter().enumerate() {
+                let pre = format!("PublishBatchRequestEntries.member.{}.", i + 1);
+                p.push((format!("{}Id", pre), format!("{}", c * 10 + i)));
+                p.push((format!("{}Message", pre), item.to_string()));
+                if let Some(s) = header_str(ex, headers::SUBJECT).or_else(|| self.subject.clone()) {
+                    p.push((format!("{}Subject", pre), s));
+                }
+                p.extend(self.fifo_params(ex, &pre, &format!("{}-{}", ex.exchange_id, c * 10 + i)));
+            }
+            let x = self.call("PublishBatch", p)?;
+            for m in x.descendants("member") {
+                let id = x.child_text(m, "Id").unwrap_or_default();
+                match x.child_text(m, "MessageId") {
+                    Some(mid) => ok.push(crate::util::obj([("id", Value::from(id)), ("messageId", Value::from(mid))])),
+                    None => failed.push(crate::util::obj([("id", Value::from(id)), ("code", Value::from(x.child_text(m, "Code").unwrap_or_default())), ("message", Value::from(x.child_text(m, "Message").unwrap_or_default()))])),
+                }
+            }
+        }
+        ex.set_body(crate::util::obj([("successful", Value::Array(ok)), ("failed", Value::Array(failed))]));
+        Ok(())
+    }
+}
+
 impl CloudService for SnsService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
+        if self.batch_enabled {
+            if let Value::Array(items) = ex.body() {
+                let items = items.clone();
+                return self.publish_batch(ex, items);
+            }
+        }
         let message = ex.body_as::<String>()?;
         let mut p = vec![("TopicArn".to_string(), self.topic_arn()?), ("Message".to_string(), message.clone())];
         if let Some(s) = header_str(ex, headers::SUBJECT).or_else(|| self.subject.clone()) {
@@ -123,17 +218,7 @@ impl CloudService for SnsService {
             p.push((format!("MessageAttributes.entry.{}.Value.DataType", n), dt.into()));
             p.push((format!("MessageAttributes.entry.{}.Value.StringValue", n), v.to_string()));
         }
-        if self.topic.ends_with(".fifo") {
-            let group = match self.message_group_id_strategy.as_deref() {
-                Some("useExchangeId") => ex.exchange_id.clone(),
-                Some("usePropertyValue") => ex.property(headers::MESSAGE_GROUP_ID_PROPERTY).map(|v| v.to_string()).unwrap_or_default(),
-                _ => "CamelSingleMessageGroup".to_string(),
-            };
-            p.push(("MessageGroupId".into(), group));
-            if self.message_deduplication_id_strategy != "useContentBasedDeduplication" {
-                p.push(("MessageDeduplicationId".into(), ex.exchange_id.clone()));
-            }
-        }
+        p.extend(self.fifo_params(ex, "", &ex.exchange_id.clone()));
         let x = self.call("Publish", p)?;
         ex.set_header(headers::MESSAGE_ID, x.find_text("MessageId").unwrap_or_default());
         Ok(())
@@ -142,6 +227,16 @@ impl CloudService for SnsService {
     fn on_start(&self) -> Result<()> {
         if self.auto_create_topic {
             self.topic_arn()?;
+        } else if !self.topic_attributes(false).is_empty() {
+            let arn = self.topic_arn()?;
+            for (k, v) in self.topic_attributes(false) {
+                self.call("SetTopicAttributes", vec![("TopicArn".into(), arn.clone()), ("AttributeName".into(), k), ("AttributeValue".into(), v)])?;
+            }
+        }
+        if self.subscribe_sns_to_sqs {
+            let arn = self.topic_arn()?;
+            let q = self.queue_arn.clone().unwrap_or_default();
+            self.call("Subscribe", vec![("TopicArn".into(), arn), ("Protocol".into(), "sqs".into()), ("Endpoint".into(), q), ("ReturnSubscriptionArn".into(), "true".into())])?;
         }
         Ok(())
     }

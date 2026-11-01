@@ -12,21 +12,23 @@ use crate::http::{Response, ServerRequest};
 use crate::util::{base64_decode, base64_encode, iso8601, iso8601_millis, md5, now_millis, now_secs, obj, parse_form, parse_json, random_hex, uuid, xml_escape};
 
 #[derive(Clone, Debug)]
-struct KRecord {
-    seq: u128,
-    data: Vec<u8>,
-    partition_key: String,
-    arrival_millis: i64,
+pub(super) struct KRecord {
+    pub(super) seq: u128,
+    pub(super) data: Vec<u8>,
+    pub(super) partition_key: String,
+    pub(super) arrival_millis: i64,
 }
 
-struct KStream {
-    shards: Vec<Vec<KRecord>>,
-    closed: Vec<bool>,
+pub(super) struct KStream {
+    pub(super) shards: Vec<Vec<KRecord>>,
+    pub(super) closed: Vec<bool>,
+    /// (parent, adjacent parent) of each shard.
+    pub(super) parents: Vec<(Option<usize>, Option<usize>)>,
     created: i64,
 }
 
 fn new_stream(n: usize) -> KStream {
-    KStream { shards: (0..n.max(1)).map(|_| Vec::new()).collect(), closed: vec![false; n.max(1)], created: now_secs() }
+    KStream { shards: (0..n.max(1)).map(|_| Vec::new()).collect(), closed: vec![false; n.max(1)], parents: vec![(None, None); n.max(1)], created: now_secs() }
 }
 
 #[derive(Clone)]
@@ -55,28 +57,28 @@ struct Rule {
     targets: Vec<Value>,
 }
 
-struct Machine {
-    name: String,
-    definition: String,
-    role: String,
-    created: i64,
+pub(super) struct Machine {
+    pub(super) name: String,
+    pub(super) definition: String,
+    pub(super) role: String,
+    pub(super) created: i64,
 }
 
-struct Execution {
-    machine: String,
-    name: String,
-    status: String,
-    input: String,
-    output: Option<String>,
-    error: Option<(String, String)>,
-    start: i64,
-    stop: Option<i64>,
+pub(super) struct Execution {
+    pub(super) machine: String,
+    pub(super) name: String,
+    pub(super) status: String,
+    pub(super) input: String,
+    pub(super) output: Option<String>,
+    pub(super) error: Option<(String, String)>,
+    pub(super) start: i64,
+    pub(super) stop: Option<i64>,
 }
 
-struct IamUser {
-    id: String,
-    arn: String,
-    created: i64,
+pub(super) struct IamUser {
+    pub(super) id: String,
+    pub(super) arn: String,
+    pub(super) created: i64,
 }
 
 /// An email accepted by the emulated SES.
@@ -106,19 +108,27 @@ pub struct MetricDatum {
     pub dimensions: Vec<(String, String)>,
 }
 
-struct Ec2Instance {
-    image: String,
-    itype: String,
-    state: (i64, String),
-    launch: i64,
-    key: String,
-    ip: String,
+pub(super) struct Ec2Instance {
+    pub(super) image: String,
+    pub(super) itype: String,
+    pub(super) state: (i64, String),
+    pub(super) launch: i64,
+    pub(super) key: String,
+    pub(super) ip: String,
+    pub(super) monitoring: bool,
+    pub(super) tags: BTreeMap<String, String>,
+    pub(super) groups: Vec<String>,
+    pub(super) subnet: String,
+    pub(super) zone: String,
+    pub(super) ebs_optimized: bool,
+    pub(super) kernel: String,
+    pub(super) client_token: String,
 }
 
 /// State of the extra services.
 #[derive(Default)]
 pub(super) struct ExtState {
-    streams: BTreeMap<String, KStream>,
+    pub(super) streams: BTreeMap<String, KStream>,
     seq: u128,
     firehose: BTreeMap<String, Vec<Vec<u8>>>,
     rules: BTreeMap<(String, String), Rule>,
@@ -126,12 +136,12 @@ pub(super) struct ExtState {
     secrets: BTreeMap<String, Secret>,
     emails: Vec<SentEmail>,
     metrics: Vec<MetricDatum>,
-    machines: BTreeMap<String, Machine>,
-    executions: BTreeMap<String, Execution>,
-    users: BTreeMap<String, IamUser>,
-    groups: BTreeMap<String, (String, i64, Vec<String>)>,
-    access_keys: Vec<(String, String, String)>,
-    instances: BTreeMap<String, Ec2Instance>,
+    pub(super) machines: BTreeMap<String, Machine>,
+    pub(super) executions: BTreeMap<String, Execution>,
+    pub(super) users: BTreeMap<String, IamUser>,
+    pub(super) groups: BTreeMap<String, (String, i64, Vec<String>)>,
+    pub(super) access_keys: Vec<(String, String, String)>,
+    pub(super) instances: BTreeMap<String, Ec2Instance>,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,9 +166,16 @@ impl AwsMock {
     /// Reshard: closes all current shards and adds `n` new open shards.
     pub fn reshard_stream(&self, stream: &str, n: usize) {
         if let Some(k) = self.lock().ext.streams.get_mut(stream) {
+            let open: Vec<usize> = (0..k.shards.len()).filter(|i| !k.closed[*i]).collect();
+            let m = open.len();
             k.closed.iter_mut().for_each(|c| *c = true);
             k.shards.extend((0..n).map(|_| Vec::new()));
             k.closed.extend((0..n).map(|_| false));
+            for j in 0..n {
+                let p = (m > 0).then(|| open[j * m / n.max(1)]);
+                let adj = (m > n).then(|| open.get(j * m / n.max(1) + 1).copied()).flatten();
+                k.parents.push((p, adj));
+            }
         }
     }
 
@@ -241,7 +258,25 @@ fn new_secret(region: &str, name: &str, description: &str) -> Secret {
 fn new_instance(ext: &mut ExtState, image: &str, itype: &str, key: &str) -> String {
     let id = format!("i-{}", random_hex(8));
     let n = ext.instances.len() + 10;
-    ext.instances.insert(id.clone(), Ec2Instance { image: image.into(), itype: itype.into(), state: (16, "running".into()), launch: now_secs(), key: key.into(), ip: format!("10.0.0.{}", n) });
+    ext.instances.insert(
+        id.clone(),
+        Ec2Instance {
+            image: image.into(),
+            itype: itype.into(),
+            state: (16, "running".into()),
+            launch: now_secs(),
+            key: key.into(),
+            ip: format!("10.0.0.{}", n),
+            monitoring: false,
+            tags: BTreeMap::new(),
+            groups: vec!["default".into()],
+            subnet: "subnet-mock".into(),
+            zone: "us-east-1a".into(),
+            ebs_optimized: false,
+            kernel: String::new(),
+            client_token: String::new(),
+        },
+    );
     id
 }
 
@@ -278,11 +313,11 @@ fn s_(v: &Value, k: &str) -> String {
 // Kinesis
 // ---------------------------------------------------------------------------
 
-fn kerr(code: &str, msg: &str) -> Response {
+pub(super) fn kerr(code: &str, msg: &str) -> Response {
     json_error(400, "com.amazonaws.kinesis.v20131202", code, msg)
 }
 
-fn shard_id(i: usize) -> String {
+pub(super) fn shard_id(i: usize) -> String {
     format!("shardId-{:012}", i)
 }
 
@@ -307,15 +342,33 @@ fn open_shards(k: &KStream) -> Vec<usize> {
     (0..k.shards.len()).filter(|i| !k.closed[*i]).collect()
 }
 
-fn shard_desc(i: usize, n: usize) -> Value {
+fn shard_desc(i: usize, n: usize, parents: (Option<usize>, Option<usize>)) -> Value {
     let step = u128::MAX / n as u128;
     let start = step * i as u128;
     let end = if i + 1 == n { u128::MAX } else { step * (i as u128 + 1) - 1 };
-    obj([
-        ("ShardId", Value::from(shard_id(i))),
-        ("HashKeyRange", obj([("StartingHashKey", Value::from(start.to_string())), ("EndingHashKey", Value::from(end.to_string()))])),
-        ("SequenceNumberRange", obj([("StartingSequenceNumber", Value::from("49000000000000000000"))])),
-    ])
+    let mut m = ObjectMap::new();
+    m.insert("ShardId".into(), Value::from(shard_id(i)));
+    if let Some(p) = parents.0 {
+        m.insert("ParentShardId".into(), Value::from(shard_id(p)));
+    }
+    if let Some(p) = parents.1 {
+        m.insert("AdjacentParentShardId".into(), Value::from(shard_id(p)));
+    }
+    m.insert("HashKeyRange".into(), obj([("StartingHashKey", Value::from(start.to_string())), ("EndingHashKey", Value::from(end.to_string()))]));
+    m.insert("SequenceNumberRange".into(), obj([("StartingSequenceNumber", Value::from("49000000000000000000"))]));
+    Value::Object(m)
+}
+
+/// Position of the first record of a shard for a `StartingPosition` / iterator type.
+pub(super) fn start_position(recs: &[KRecord], kind: &str, seq: u128, timestamp: f64) -> Option<usize> {
+    Some(match kind {
+        "TRIM_HORIZON" => 0,
+        "LATEST" => recs.len(),
+        "AT_SEQUENCE_NUMBER" => recs.iter().position(|r| r.seq >= seq).unwrap_or(recs.len()),
+        "AFTER_SEQUENCE_NUMBER" => recs.iter().position(|r| r.seq > seq).unwrap_or(recs.len()),
+        "AT_TIMESTAMP" => recs.iter().position(|r| r.arrival_millis as f64 >= timestamp * 1000.0).unwrap_or(recs.len()),
+        _ => return None,
+    })
 }
 
 fn encode_iterator(stream: &str, shard: usize, pos: usize) -> String {
@@ -330,7 +383,7 @@ fn decode_iterator(it: &str) -> Option<(String, usize, usize)> {
     Some((p.next()?.to_string(), shard, pos))
 }
 
-fn kinesis(st: &Shared, req: &ServerRequest) -> Response {
+pub(super) fn kinesis(st: &Shared, req: &ServerRequest) -> Response {
     let body = parse_json(&req.body).unwrap_or_default();
     let mut s = st.0.lock().unwrap();
     let region = s.region.clone();
@@ -353,7 +406,7 @@ fn kinesis(st: &Shared, req: &ServerRequest) -> Response {
         "DescribeStream" | "ListShards" => {
             let Some(k) = ext.streams.get(&name) else { return kerr("ResourceNotFoundException", &format!("Stream {} under account {} not found.", name, ACCOUNT)) };
             let n = k.shards.len();
-            let shards: Vec<Value> = (0..n).map(|i| shard_desc(i, n)).collect();
+            let shards: Vec<Value> = (0..n).map(|i| shard_desc(i, n, k.parents.get(i).copied().unwrap_or_default())).collect();
             if target(req) == "ListShards" {
                 return json_ok(obj([("Shards", Value::Array(shards))]));
             }
@@ -399,17 +452,9 @@ fn kinesis(st: &Shared, req: &ServerRequest) -> Response {
             let Some(idx) = (0..k.shards.len()).find(|i| shard_id(*i) == shard_name) else { return kerr("ResourceNotFoundException", &format!("Shard {} in stream {} does not exist", shard_name, name)) };
             let recs = &k.shards[idx];
             let seq: u128 = s_(&body, "StartingSequenceNumber").parse().unwrap_or(0);
-            let pos = match s_(&body, "ShardIteratorType").as_str() {
-                "TRIM_HORIZON" => 0,
-                "LATEST" => recs.len(),
-                "AT_SEQUENCE_NUMBER" => recs.iter().position(|r| r.seq >= seq).unwrap_or(recs.len()),
-                "AFTER_SEQUENCE_NUMBER" => recs.iter().position(|r| r.seq > seq).unwrap_or(recs.len()),
-                "AT_TIMESTAMP" => {
-                    let ts = body.get("Timestamp").and_then(|t| t.as_f64()).unwrap_or(0.0);
-                    recs.iter().position(|r| r.arrival_millis as f64 >= ts * 1000.0).unwrap_or(recs.len())
-                }
-                other => return kerr("ValidationException", &format!("Invalid ShardIteratorType {}", other)),
-            };
+            let ts = body.get("Timestamp").and_then(|t| t.as_f64()).unwrap_or(0.0);
+            let kind = s_(&body, "ShardIteratorType");
+            let Some(pos) = start_position(recs, &kind, seq, ts) else { return kerr("ValidationException", &format!("Invalid ShardIteratorType {}", kind)) };
             json_ok(obj([("ShardIterator", Value::from(encode_iterator(&name, idx, pos)))]))
         }
         "GetRecords" => {
@@ -1232,7 +1277,8 @@ fn ec2(st: &Shared, req: &ServerRequest) -> Response {
     let err = |code: &str, msg: &str| Response::xml(400, format!("<Response><Errors><Error><Code>{}</Code><Message>{}</Message></Error></Errors><RequestID>{}</RequestID></Response>", code, xml_escape(msg), request_id()));
     let mut ids = Vec::new();
     let mut i = 1;
-    while let Some(v) = get(&p, &format!("InstanceId.{}", i)) {
+    let id_key = if action.ends_with("Tags") { "ResourceId" } else { "InstanceId" };
+    while let Some(v) = get(&p, &format!("{}.{}", id_key, i)) {
         ids.push(v);
         i += 1;
     }
@@ -1240,8 +1286,10 @@ fn ec2(st: &Shared, req: &ServerRequest) -> Response {
         return err("InvalidInstanceID.NotFound", &format!("The instance ID '{}' does not exist", missing));
     }
     let inst_xml = |id: &str, i: &Ec2Instance| {
+        let groups: String = i.groups.iter().map(|g| format!("<item><groupId>sg-{}</groupId><groupName>{}</groupName></item>", xml_escape(g), xml_escape(g))).collect();
+        let tags: String = i.tags.iter().map(|(k, v)| format!("<item><key>{}</key><value>{}</value></item>", xml_escape(k), xml_escape(v))).collect();
         format!(
-            "<item><instanceId>{}</instanceId><imageId>{}</imageId><instanceState><code>{}</code><name>{}</name></instanceState><privateIpAddress>{}</privateIpAddress><keyName>{}</keyName><instanceType>{}</instanceType><launchTime>{}</launchTime></item>",
+            "<item><instanceId>{}</instanceId><imageId>{}</imageId><instanceState><code>{}</code><name>{}</name></instanceState><privateIpAddress>{}</privateIpAddress><keyName>{}</keyName><instanceType>{}</instanceType><launchTime>{}</launchTime><placement><availabilityZone>{}</availabilityZone></placement><monitoring><state>{}</state></monitoring><subnetId>{}</subnetId><groupSet>{}</groupSet><tagSet>{}</tagSet><ebsOptimized>{}</ebsOptimized><kernelId>{}</kernelId><clientToken>{}</clientToken></item>",
             id,
             xml_escape(&i.image),
             i.state.0,
@@ -1249,7 +1297,15 @@ fn ec2(st: &Shared, req: &ServerRequest) -> Response {
             i.ip,
             xml_escape(&i.key),
             xml_escape(&i.itype),
-            iso8601_millis(i.launch * 1000)
+            iso8601_millis(i.launch * 1000),
+            xml_escape(&i.zone),
+            if i.monitoring { "enabled" } else { "disabled" },
+            xml_escape(&i.subnet),
+            groups,
+            tags,
+            i.ebs_optimized,
+            xml_escape(&i.kernel),
+            xml_escape(&i.client_token)
         )
     };
     let wrap = |action: &str, inner: String| Response::xml(200, format!("<{0}Response xmlns=\"{1}\"><requestId>{2}</requestId>{3}</{0}Response>", action, NS, request_id(), inner));
@@ -1276,7 +1332,48 @@ fn ec2(st: &Shared, req: &ServerRequest) -> Response {
             let itype = get(&p, "InstanceType").unwrap_or_else(|| "m1.small".into());
             let count: usize = get(&p, "MinCount").and_then(|c| c.parse().ok()).unwrap_or(1).max(1);
             let key = get(&p, "KeyName").unwrap_or_default();
+            let token = get(&p, "ClientToken").unwrap_or_default();
+            // idempotency: the same client token returns the instances of the first call
+            let previous: Vec<String> = if token.is_empty() { vec![] } else { ext.instances.iter().filter(|(_, i)| i.client_token == token).map(|(id, _)| id.clone()).collect() };
+            if !previous.is_empty() {
+                let items: String = previous.iter().map(|id| inst_xml(id, &ext.instances[id])).collect();
+                return wrap("RunInstances", format!("<reservationId>r-{}</reservationId><ownerId>{}</ownerId><instancesSet>{}</instancesSet>", random_hex(8), ACCOUNT, items));
+            }
+            let collect = |prefix: &str| -> Vec<String> {
+                let mut out = Vec::new();
+                let mut n = 1;
+                while let Some(v) = get(&p, &format!("{}.{}", prefix, n)) {
+                    out.push(v);
+                    n += 1;
+                }
+                out
+            };
+            let mut groups = collect("SecurityGroup");
+            groups.extend(collect("SecurityGroupId"));
+            let mut tags = BTreeMap::new();
+            let mut n = 1;
+            while let Some(k) = get(&p, &format!("TagSpecification.1.Tag.{}.Key", n)) {
+                tags.insert(k, get(&p, &format!("TagSpecification.1.Tag.{}.Value", n)).unwrap_or_default());
+                n += 1;
+            }
             let new_ids: Vec<String> = (0..count).map(|_| new_instance(ext, &image, &itype, &key)).collect();
+            for id in &new_ids {
+                let inst = ext.instances.get_mut(id).expect("just created");
+                inst.monitoring = get(&p, "Monitoring.Enabled").as_deref() == Some("true");
+                inst.tags = tags.clone();
+                if !groups.is_empty() {
+                    inst.groups = groups.clone();
+                }
+                if let Some(sn) = get(&p, "SubnetId") {
+                    inst.subnet = sn;
+                }
+                if let Some(z) = get(&p, "Placement.AvailabilityZone") {
+                    inst.zone = z;
+                }
+                inst.ebs_optimized = get(&p, "EbsOptimized").as_deref() == Some("true");
+                inst.kernel = get(&p, "KernelId").unwrap_or_default();
+                inst.client_token = token.clone();
+            }
             let items: String = new_ids.iter().map(|id| inst_xml(id, &ext.instances[id])).collect();
             wrap("RunInstances", format!("<reservationId>r-{}</reservationId><ownerId>{}</ownerId><instancesSet>{}</instancesSet>", random_hex(8), ACCOUNT, items))
         }
@@ -1301,6 +1398,35 @@ fn ec2(st: &Shared, req: &ServerRequest) -> Response {
                 return wrap("RebootInstances", "<return>true</return>".into());
             }
             wrap(&action, format!("<instancesSet>{}</instancesSet>", items))
+        }
+        "MonitorInstances" | "UnmonitorInstances" => {
+            let on = action == "MonitorInstances";
+            let mut items = String::new();
+            for id in &ids {
+                let inst = ext.instances.get_mut(id).expect("checked above");
+                inst.monitoring = on;
+                items.push_str(&format!("<item><instanceId>{}</instanceId><monitoring><state>{}</state></monitoring></item>", id, if on { "pending" } else { "disabling" }));
+            }
+            wrap(&action, format!("<instancesSet>{}</instancesSet>", items))
+        }
+        "CreateTags" | "DeleteTags" => {
+            let mut tags = Vec::new();
+            let mut n = 1;
+            while let Some(k) = get(&p, &format!("Tag.{}.Key", n)) {
+                tags.push((k, get(&p, &format!("Tag.{}.Value", n))));
+                n += 1;
+            }
+            for id in &ids {
+                let inst = ext.instances.get_mut(id).expect("checked above");
+                for (k, v) in &tags {
+                    if action == "CreateTags" {
+                        inst.tags.insert(k.clone(), v.clone().unwrap_or_default());
+                    } else if v.as_ref().is_none_or(|v| inst.tags.get(k) == Some(v)) {
+                        inst.tags.remove(k);
+                    }
+                }
+            }
+            wrap(&action, "<return>true</return>".into())
         }
         other => err("InvalidAction", &format!("The action {} is not valid for this web service.", other)),
     }

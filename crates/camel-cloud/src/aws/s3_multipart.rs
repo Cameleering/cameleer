@@ -20,6 +20,8 @@ pub const DEFAULT_PART_SIZE: i64 = 25 * 1024 * 1024;
 pub struct S3Client {
     pub aws: AwsConfig,
     pub force_path_style: bool,
+    /// Headers sent with every `UploadPart` / download (SSE-C customer key headers).
+    pub part_headers: Vec<(String, String)>,
 }
 
 impl S3Client {
@@ -62,7 +64,11 @@ impl S3Client {
     /// `UploadPart`; returns the part ETag.
     pub fn upload_part(&self, bucket: &str, key: &str, upload_id: &str, part: i32, data: Vec<u8>) -> Result<String> {
         let q = format!("partNumber={}&uploadId={}", part, uri_encode(upload_id, false));
-        let resp = self.send(Request::new("PUT", self.url(bucket, Some(key), Some(q))?).body(data))?;
+        let mut req = Request::new("PUT", self.url(bucket, Some(key), Some(q))?).body(data);
+        for (k, v) in &self.part_headers {
+            req.set_header(k, v.clone());
+        }
+        let resp = self.send(req)?;
         Ok(resp.header("ETag").unwrap_or("").to_string())
     }
 
@@ -148,7 +154,11 @@ impl S3Client {
         let tmp = format!("{}.part", path);
         let io = |e: std::io::Error| CamelError::io(format!("Cannot write {}: {}", path, e));
         let mut f = std::fs::File::create(&tmp).map_err(io)?;
-        let res = self.aws.send_to(Request::new("GET", self.url(bucket, Some(key), None)?), "s3", kinds::S3, &mut f);
+        let mut req = Request::new("GET", self.url(bucket, Some(key), None)?);
+        for (k, v) in &self.part_headers {
+            req.set_header(k, v.clone());
+        }
+        let res = self.aws.send_to(req, "s3", kinds::S3, &mut f);
         drop(f);
         match res {
             Ok(r) => {

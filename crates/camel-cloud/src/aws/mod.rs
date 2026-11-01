@@ -17,8 +17,9 @@
 //! Credentials: explicit `accessKey`/`secretKey` when given, otherwise the default chain:
 //! `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`, then the shared
 //! credentials file (`AWS_SHARED_CREDENTIALS_FILE` or `~/.aws/credentials`, profile
-//! `profileCredentialsName` / `AWS_PROFILE` / `default`), then the container credentials
-//! endpoint and the EC2 instance metadata service ([`credentials`]).
+//! `profileCredentialsName` / `AWS_PROFILE` / `default`), then web identity federation
+//! (`AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN`, STS `AssumeRoleWithWebIdentity`), the
+//! container credentials endpoint and the EC2 instance metadata service ([`credentials`]).
 
 pub mod athena;
 pub mod bedrock;
@@ -32,9 +33,11 @@ pub mod ddbstream;
 pub mod ec2;
 pub mod ecs;
 pub mod eventbridge;
+pub mod eventstream;
 pub mod firehose;
 pub mod iam;
 pub mod kinesis;
+pub mod kinesis_kcl;
 pub mod kms;
 pub mod lambda;
 pub mod mq;
@@ -44,6 +47,7 @@ pub mod redshiftdata;
 pub mod rekognition;
 pub mod s3;
 pub mod s3_multipart;
+pub mod s3_ops;
 pub mod secretsmanager;
 pub mod ses;
 pub mod sigv4;
@@ -196,6 +200,129 @@ impl AwsConfig {
         } else {
             Err(service_error(kind, service, &resp))
         }
+    }
+
+    /// REST call whose successful response is an AWS event stream: every decoded message
+    /// is passed to `on_message` as soon as it arrives; exception messages become errors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rest_event_stream(
+        &self,
+        method: &str,
+        service_host: &str,
+        path: &str,
+        body: Option<&Value>,
+        service: &str,
+        kind: &str,
+        on_message: &mut dyn FnMut(eventstream::Message) -> Result<()>,
+    ) -> Result<Response> {
+        let mut url = self.endpoint(service_host)?;
+        url.path = format!("{}{}", url.path.trim_end_matches('/'), path);
+        let mut req = Request::new(method, url).header("Accept", "application/vnd.amazon.eventstream");
+        if let Some(b) = body {
+            req = req.header("Content-Type", "application/json").body(b.to_json().into_bytes());
+        }
+        let k = kind.to_string();
+        let mut decoder = eventstream::Decoder::new(|m: eventstream::Message| match m.error(&k) {
+            Some(e) => Err(e),
+            None => on_message(m),
+        });
+        let res = self.send_to(req, service, kind, &mut decoder);
+        if let Some(e) = decoder.error.take() {
+            return Err(e);
+        }
+        let (resp, _) = res?;
+        decoder.finish()?;
+        Ok(resp)
+    }
+
+    /// AWS JSON call over **HTTP/2** whose response is an event stream (operations AWS only
+    /// serves over HTTP/2, e.g. Kinesis `SubscribeToShard`): TLS endpoints negotiate ALPN `h2`,
+    /// `http://` overrides use h2c with prior knowledge. Messages are decoded as they arrive
+    /// and handed to `on_message`; returning `Ok(false)` from it (or `stop()` becoming true)
+    /// cancels the stream. Exception messages become errors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn h2_event_stream(
+        &self,
+        service_host: &str,
+        service: &str,
+        target: &str,
+        body: &Value,
+        json_version: &str,
+        kind: &str,
+        stop: &dyn Fn() -> bool,
+        on_message: &mut dyn FnMut(eventstream::Message) -> Result<bool>,
+    ) -> Result<()> {
+        use camel_grpc::h2::{ErrorCode, H2Config, H2Connection};
+        let url = self.endpoint(service_host)?;
+        let mut req = Request::new("POST", url.clone())
+            .header("Content-Type", format!("application/x-amz-json-{}", json_version))
+            .header("X-Amz-Target", target)
+            .body(body.to_json().into_bytes());
+        let creds = self.credentials()?;
+        sigv4::sign_request(&mut req, &creds, &self.region, service, now_secs());
+        let h2err = |e: camel_grpc::h2::H2Error| cloud_error(kind, format!("HTTP/2 error talking to {}: {}", url.origin(), e));
+        let conn = if url.is_https() {
+            let tls = camel_tls::TlsClientConfig::builder().alpn_protocols(&["h2"]).build();
+            H2Connection::connect_tls(&url.authority(), &url.host, &tls, H2Config::default()).map_err(h2err)?
+        } else {
+            H2Connection::connect(&url.authority(), H2Config::default()).map_err(h2err)?
+        };
+        let mut headers = vec![
+            (":method".to_string(), "POST".to_string()),
+            (":scheme".to_string(), if url.is_https() { "https" } else { "http" }.to_string()),
+            (":authority".to_string(), req.get_header("Host").unwrap_or_default().to_string()),
+            (":path".to_string(), url.target()),
+        ];
+        for (k, v) in &req.headers {
+            let k = k.to_ascii_lowercase();
+            if !matches!(k.as_str(), "host" | "connection" | "content-length") {
+                headers.push((k, v.clone()));
+            }
+        }
+        let result = (|| -> Result<()> {
+            let stream = conn.open_stream(&headers, false).map_err(h2err)?;
+            stream.send_data(&req.body, true).map_err(h2err)?;
+            let head = stream.recv_headers(Some(std::time::Duration::from_secs(30))).map_err(h2err)?.unwrap_or_default();
+            let status: u16 = head.iter().find(|(k, _)| k == ":status").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
+            if status != 200 {
+                let body = stream.read_body(Some(std::time::Duration::from_secs(30))).unwrap_or_default();
+                let resp = Response { status, headers: head.into_iter().filter(|(k, _)| !k.starts_with(':')).collect(), body };
+                return Err(service_error(kind, service, &resp));
+            }
+            let k = kind.to_string();
+            let cancelled = std::cell::Cell::new(false);
+            let mut decoder = eventstream::Decoder::new(|m: eventstream::Message| {
+                if let Some(e) = m.error(&k) {
+                    return Err(e);
+                }
+                if !on_message(m)? {
+                    cancelled.set(true);
+                }
+                Ok(())
+            });
+            loop {
+                if stop() {
+                    stream.reset(ErrorCode::CANCEL);
+                    return Ok(());
+                }
+                match stream.recv_data(Some(std::time::Duration::from_millis(100))) {
+                    Ok(Some(chunk)) => decoder.push(&chunk)?,
+                    Ok(None) => break,
+                    Err(camel_grpc::h2::H2Error::Timeout) => continue,
+                    Err(e) => return Err(h2err(e)),
+                }
+                if cancelled.get() {
+                    break;
+                }
+            }
+            drop(decoder);
+            if cancelled.get() {
+                stream.reset(ErrorCode::CANCEL);
+            }
+            Ok(())
+        })();
+        conn.close();
+        result
     }
 
     /// AWS Query protocol call (`Action`/`Version` form POST); returns the XML response.
@@ -352,6 +479,10 @@ pub fn resolve_credentials(cfg: &AwsConfig, env: &dyn Fn(&str) -> Option<String>
         }
     }
     if !cfg.use_profile_credentials_provider {
+        let sts_override = cfg.is_overridden().then(|| cfg.uri_endpoint_override.clone()).flatten();
+        if let Some(c) = credentials::web_identity_credentials(&envv, &cfg.region, sts_override.as_deref()) {
+            return Ok(c);
+        }
         if let Some(c) = credentials::container_credentials(&envv).or_else(|| credentials::imds_credentials(&envv)) {
             return Ok(c);
         }

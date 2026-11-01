@@ -5,14 +5,21 @@
 //! Producer operations (`operation` option or `CamelAwsS3Operation` header; default
 //! `putObject`): `putObject`, `getObject`, `getObjectRange`, `headObject`, `listObjects`,
 //! `deleteObject`, `copyObject`, `listBuckets`, `createBucket`, `deleteBucket`,
-//! `headBucket`, `createDownloadLink` (presigned GET URL).
+//! `headBucket`, `createDownloadLink` (presigned GET URL), plus `deleteObjects`,
+//! `createUploadLink`, `restoreObject`, tagging, ACL, object lock and versioning operations
+//! and SSE-KMS / SSE-S3 / SSE-C encryption (see [`super::s3_ops`]). `putObject` honours
+//! `CamelAwsS3CannedAcl`, `...ServerSideEncryption`, `...ContentDisposition`,
+//! `...ContentEncoding`, `...ContentControl`, `...ObjectTags`, `...Headers` and the object lock
+//! headers; `conditionalWritesEnabled=true` sends `If-None-Match: *` (no overwrite).
 //!
 //! Consumer: polls the bucket (`ListObjectsV2`, `prefix`, `delimiter`, `maxMessagesPerPoll`
 //! default 10, or a single object with `fileName`), one exchange per object with the body
 //! (`includeBody`, default true) and the `CamelAwsS3*` headers; after successful processing
 //! the object is copied to `destinationBucket` (`moveAfterRead`, with
 //! `destinationBucketPrefix`/`destinationBucketSuffix`) and deleted (`deleteAfterRead`,
-//! default true). Scheduled-poll options apply (`delay` default 500 ms).
+//! default true). Scheduled-poll options apply (`delay` default 500 ms). `ignoreBody=true`
+//! does not download the objects at all (HEAD only, empty body); rust-camel `localDirectory`
+//! streams each object into `{localDirectory}/{key}` without buffering it (body = the path).
 //!
 //! Other options: `keyName`, `prefix`, `delimiter`, `autoCreateBucket` (default false),
 //! `forcePathStyle` (virtual-host style is used otherwise, except for overridden endpoints),
@@ -43,6 +50,7 @@ use camel_core::spi::Processor;
 use camel_core::value::Value;
 
 use super::s3_multipart::{S3Client, StreamingConfig, StreamingUploader, DEFAULT_PART_SIZE};
+use super::s3_ops::{exchange_upload_headers, Sse};
 use super::{error_code, AwsConfig};
 use crate::endpoint::{operation, process, set_batch, unsupported, CloudService};
 use crate::http::{Request, Response, Url};
@@ -152,6 +160,10 @@ pub struct S3Service {
     pub storage_class: Option<String>,
     pub multi_part_upload: bool,
     pub part_size: i64,
+    pub sse: Sse,
+    pub ignore_body: bool,
+    pub conditional_writes: bool,
+    pub local_directory: Option<String>,
     pub scheduler: ScheduledPollConfig,
     marker: Mutex<Option<String>>,
     streaming: Option<Arc<StreamingUploader>>,
@@ -189,6 +201,10 @@ impl S3Service {
             storage_class: o.get("storageClass"),
             multi_part_upload: o.bool("multiPartUpload", false)?,
             part_size: o.i64("partSize", DEFAULT_PART_SIZE)?,
+            sse: Sse::from_opts(o)?,
+            ignore_body: o.bool("ignoreBody", false)?,
+            conditional_writes: o.bool("conditionalWritesEnabled", false)?,
+            local_directory: o.get("localDirectory"),
             scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
             marker: Mutex::new(None),
             streaming: None,
@@ -215,7 +231,7 @@ impl S3Service {
         } else {
             o.ignore(&["batchMessageNumber", "batchSize", "streamingUploadTimeout", "namingStrategy", "restartingPolicy"]);
         }
-        o.ignore(&["pojoRequest", "autocloseBody", "useAwsKMS", "awsKMSKeyId"]);
+        o.ignore(&["pojoRequest", "autocloseBody", "doneFileName", "removePrefixOnMove"]);
         if s.move_after_read && s.destination_bucket.is_none() {
             return Err(CamelError::illegal_argument("moveAfterRead requires the destinationBucket option"));
         }
@@ -224,7 +240,7 @@ impl S3Service {
 
     /// The addressing / transport part of this endpoint.
     pub fn client(&self) -> S3Client {
-        S3Client { aws: self.aws.clone(), force_path_style: self.force_path_style }
+        S3Client { aws: self.aws.clone(), force_path_style: self.force_path_style, part_headers: self.sse.customer_headers() }
     }
 
     /// URL of a bucket or object; `query` is an already encoded query string.
@@ -248,15 +264,31 @@ impl S3Service {
 
     /// GET an object (optionally a byte range `start-end`).
     pub fn get_object(&self, bucket: &str, key: &str, range: Option<(i64, i64)>) -> Result<Response> {
-        let mut req = Request::new("GET", self.url(bucket, Some(key), None)?);
+        self.get_object_version(bucket, key, range, None)
+    }
+
+    /// GET an object version (SSE-C key headers added when configured).
+    pub fn get_object_version(&self, bucket: &str, key: &str, range: Option<(i64, i64)>, version: Option<&str>) -> Result<Response> {
+        let mut req = Request::new("GET", self.url(bucket, Some(key), version.map(|v| format!("versionId={}", uri_encode(v, false))))?);
         if let Some((a, b)) = range {
             req.set_header("Range", format!("bytes={}-{}", a, b));
+        }
+        for (k, v) in self.sse.customer_headers() {
+            req.set_header(&k, v);
         }
         self.send(req)
     }
 
     pub fn head_object(&self, bucket: &str, key: &str) -> Result<Response> {
-        self.send(Request::new("HEAD", self.url(bucket, Some(key), None)?))
+        self.head_object_version(bucket, key, None)
+    }
+
+    fn head_object_version(&self, bucket: &str, key: &str, version: Option<&str>) -> Result<Response> {
+        let mut req = Request::new("HEAD", self.url(bucket, Some(key), version.map(|v| format!("versionId={}", uri_encode(v, false))))?);
+        for (k, v) in self.sse.customer_headers() {
+            req.set_header(&k, v);
+        }
+        self.send(req)
     }
 
     pub fn delete_object(&self, bucket: &str, key: &str) -> Result<Response> {
@@ -368,7 +400,11 @@ impl S3Service {
             "putObject" => {
                 let key = self.key(ex)?;
                 let ct = header_str(ex, headers::CONTENT_TYPE);
-                let mut extra = Vec::new();
+                let mut extra = self.sse.upload_headers();
+                extra.extend(exchange_upload_headers(ex));
+                if self.conditional_writes {
+                    extra.push(("If-None-Match".into(), "*".into()));
+                }
                 if let Some(sc) = header_str(ex, headers::STORAGE_CLASS).or_else(|| self.storage_class.clone()) {
                     extra.push(("x-amz-storage-class".to_string(), sc));
                 }
@@ -415,17 +451,18 @@ impl S3Service {
                         return Ok(());
                     }
                 }
+                let version = header_str(ex, headers::VERSION_ID);
                 let resp = match op {
-                    "headObject" => self.head_object(&bucket, &key)?,
+                    "headObject" => self.head_object_version(&bucket, &key, version.as_deref())?,
                     "getObjectRange" => {
                         let start = ex.header(headers::RANGE_START).and_then(|v| v.as_i64()).unwrap_or(0);
                         let end = ex
                             .header(headers::RANGE_END)
                             .and_then(|v| v.as_i64())
                             .ok_or_else(|| CamelError::illegal_argument("getObjectRange requires the CamelAwsS3RangeEnd header"))?;
-                        self.get_object(&bucket, &key, Some((start, end)))?
+                        self.get_object_version(&bucket, &key, Some((start, end)), version.as_deref())?
                     }
-                    _ => self.get_object(&bucket, &key, None)?,
+                    _ => self.get_object_version(&bucket, &key, None, version.as_deref())?,
                 };
                 Self::set_object_headers(ex, &resp);
                 if op != "headObject" {
@@ -440,7 +477,15 @@ impl S3Service {
             }
             "deleteObject" => {
                 let key = self.key(ex)?;
-                self.delete_object(&bucket, &key)?;
+                let q = header_str(ex, headers::VERSION_ID).map(|v| format!("versionId={}", uri_encode(&v, false)));
+                let mut req = Request::new("DELETE", self.url(&bucket, Some(&key), q)?);
+                if header_str(ex, super::s3_ops::extra_headers::BYPASS_GOVERNANCE_RETENTION).is_some_and(|b| b == "true") {
+                    req.set_header("x-amz-bypass-governance-retention", "true");
+                }
+                let resp = self.send(req)?;
+                if let Some(v) = resp.header("x-amz-version-id") {
+                    ex.set_header(headers::VERSION_ID, v.to_string());
+                }
                 ex.set_body(true);
             }
             "copyObject" => {
@@ -475,7 +520,12 @@ impl S3Service {
                 let link = self.download_link(&bucket, &key, (millis / 1000).max(1) as u64)?;
                 ex.set_body(link);
             }
-            other => return Err(unsupported("aws2-s3", other)),
+            other => {
+                return match self.extra_op(ex, other, &bucket) {
+                    Some(r) => r,
+                    None => Err(unsupported("aws2-s3", other)),
+                }
+            }
         }
         Ok(())
     }
@@ -541,7 +591,17 @@ impl CloudService for S3Service {
         let mut processed = 0;
         let total = keys.len();
         for (i, key) in keys.iter().enumerate() {
-            let resp = if self.include_body { self.get_object(&self.bucket, key, None) } else { self.head_object(&self.bucket, key) };
+            let download = self.local_directory.as_ref().filter(|_| self.include_body && !self.ignore_body).map(|d| std::path::Path::new(d).join(key));
+            if let Some(path) = &download {
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+            let resp = match &download {
+                Some(path) => self.client().download_file(&self.bucket, key, &path.to_string_lossy()).map(|(r, _)| r),
+                None if self.include_body && !self.ignore_body => self.get_object(&self.bucket, key, None),
+                None => self.head_object(&self.bucket, key),
+            };
             let resp = match resp {
                 Ok(r) => r,
                 Err(e) if self.file_name.is_some() && error_code(&e).is_some_and(|c| c == "NoSuchKey" || c == "Http404") => return Ok(0),
@@ -554,8 +614,10 @@ impl CloudService for S3Service {
             Self::set_object_headers(&mut ex, &resp);
             ex.set_header(headers::KEY, key.clone());
             ex.set_header(headers::BUCKET_NAME, self.bucket.clone());
-            if self.include_body {
-                ex.set_body(Value::Bytes(resp.body));
+            match &download {
+                Some(path) => ex.set_body(path.to_string_lossy().into_owned()),
+                None if self.include_body && !self.ignore_body => ex.set_body(Value::Bytes(resp.body)),
+                None => {}
             }
             set_batch(&mut ex, i, total);
             processed += 1;

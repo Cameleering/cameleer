@@ -253,7 +253,7 @@ fn sqs(st: &Shared, req: &ServerRequest) -> Option<Response> {
         headers: vec![("X-Amz-Target".into(), format!("AmazonSQS.{}", action)), ("Content-Type".into(), "application/x-amz-json-1.0".into())],
         body: json.to_json().into_bytes(),
     };
-    let resp = super::sqs(st, &inner);
+    let resp = super::gaps::sqs_more(st, &inner).unwrap_or_else(|| super::sqs(st, &inner));
     let v = parse_json(&resp.body).unwrap_or_default();
     if resp.status >= 300 {
         let code = v.get("__type").map(|t| t.to_string()).unwrap_or_default();

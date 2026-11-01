@@ -8,7 +8,13 @@
 //! (`useConstant`, `useExchangeId`, `usePropertyValue` = property `CamelAwsSqsMessageGroupId`) and
 //! `MessageDeduplicationId` per `messageDeduplicationIdStrategy` (`useExchangeId` default,
 //! `useContentBasedDeduplication`)), `sendBatchMessage` (body = array), `deleteMessage`
-//! (`CamelAwsSqsReceiptHandle`), `listQueues` (`CamelAwsSqsPrefix`), `purgeQueue`, `deleteQueue`.
+//! (`CamelAwsSqsReceiptHandle`), `listQueues` (`CamelAwsSqsPrefix`), `purgeQueue`, `deleteQueue`,
+//! `receiveMessage` (body = list of `{messageId, receiptHandle, body, attributes,
+//! messageAttributes}`, `CamelAwsSqsMaxNumberOfMessages` / `maxMessagesPerPoll`), and the
+//! rust-camel operations `changeMessageVisibility` (`CamelAwsSqsReceiptHandle`,
+//! `CamelAwsSqsVisibilityTimeout`), `deleteMessageBatch` (list of receipt handles),
+//! `getQueueAttributes` (body = map) and `setQueueAttributes` (map body). String bodies of
+//! `sendBatchMessage` are split with `batchSeparator` (default `,`).
 //!
 //! Consumer: `ReceiveMessage` with `maxMessagesPerPoll` (default 1, at most 10),
 //! `waitTimeSeconds`, `visibilityTimeout`, `messageAttributeNames` (default `All`),
@@ -21,7 +27,18 @@
 //! (`ChangeMessageVisibility`), as Camel's timeout extender does.
 //!
 //! Other options: `queueUrl`, `autoCreateQueue` (default false), `queueOwnerAWSAccountId`,
-//! `defaultVisibilityTimeout`, `messageRetentionPeriod`, plus the [common AWS options](super).
+//! `defaultVisibilityTimeout`, `messageRetentionPeriod`, `maximumMessageSize`, `policy`,
+//! `redrivePolicy`, `receiveMessageWaitTimeSeconds`, `delayQueue` (the `delaySeconds` become the
+//! queue's `DelaySeconds` attribute instead of a per-message delay), `serverSideEncryptionEnabled`
+//! (`kmsMasterKeyId` / `kmsDataKeyReusePeriodSeconds`; SQS managed SSE without a key): queue
+//! attributes applied when the queue is created (`autoCreateQueue`) or, for an existing queue,
+//! with `SetQueueAttributes` when the endpoint starts; plus the [common AWS options](super).
+//!
+//! Consumer extras: `concurrentConsumers` (parallel receive + process threads per poll),
+//! `maxMessagesPerPoll` above 10 issues several `ReceiveMessage` calls (at most
+//! `concurrentRequestLimit` at once, default 50), `sortAttributeName` (sort a received batch by
+//! that message attribute or system attribute), `deleteIfFiltered=false` (keep messages whose
+//! exchange was filtered out, `CamelFilterMatched=false`), `sendEmptyMessageWhenIdle`.
 //!
 //! Protocol (rust-camel option `protocol`): `json` (AWS JSON 1.0, current SDKs), `query` (the
 //! legacy Query protocol: form-encoded `Action=...&Version=2012-11-05` requests, XML responses,
@@ -42,7 +59,7 @@ use camel_core::value::{ObjectMap, Value};
 
 use super::{error_code, AwsConfig};
 use crate::endpoint::{operation, process, set_batch, unsupported, CloudService};
-use crate::util::{header_str, kinds, obj, user_headers, Opts};
+use crate::util::{header_i64, header_str, kinds, obj, user_headers, Opts};
 
 /// Header names (Camel `Sqs2Constants`).
 pub mod headers {
@@ -54,6 +71,8 @@ pub mod headers {
     pub const DELAY_HEADER: &str = "CamelAwsSqsDelaySeconds";
     pub const OPERATION: &str = "CamelAwsSqsOperation";
     pub const SQS_QUEUE_PREFIX: &str = "CamelAwsSqsPrefix";
+    pub const MAX_NUMBER_OF_MESSAGES: &str = "CamelAwsSqsMaxNumberOfMessages";
+    pub const VISIBILITY_TIMEOUT: &str = "CamelAwsSqsVisibilityTimeout";
     /// Exchange property used by `messageGroupIdStrategy=usePropertyValue`.
     pub const MESSAGE_GROUP_ID_PROPERTY: &str = "CamelAwsSqsMessageGroupId";
 }
@@ -78,6 +97,20 @@ pub struct SqsService {
     pub message_group_id_strategy: Option<String>,
     pub message_deduplication_id_strategy: String,
     pub extend_message_visibility: bool,
+    pub maximum_message_size: Option<i64>,
+    pub policy: Option<String>,
+    pub redrive_policy: Option<String>,
+    pub receive_message_wait_time_seconds: Option<i64>,
+    pub delay_queue: bool,
+    pub server_side_encryption_enabled: bool,
+    pub kms_master_key_id: Option<String>,
+    pub kms_data_key_reuse_period_seconds: Option<i64>,
+    pub concurrent_consumers: usize,
+    pub concurrent_request_limit: usize,
+    pub sort_attribute_name: Option<String>,
+    pub delete_if_filtered: bool,
+    pub send_empty_message_when_idle: bool,
+    pub batch_separator: String,
     pub scheduler: ScheduledPollConfig,
     /// Wire protocol (shared with the visibility extender).
     pub protocol: Arc<Mutex<SqsProtocol>>,
@@ -257,6 +290,20 @@ impl SqsService {
             message_group_id_strategy: o.get("messageGroupIdStrategy"),
             message_deduplication_id_strategy: o.string("messageDeduplicationIdStrategy", "useExchangeId"),
             extend_message_visibility: o.bool("extendMessageVisibility", false)?,
+            maximum_message_size: opt_i(o, "maximumMessageSize")?,
+            policy: o.get("policy"),
+            redrive_policy: o.get("redrivePolicy"),
+            receive_message_wait_time_seconds: opt_i(o, "receiveMessageWaitTimeSeconds")?,
+            delay_queue: o.bool("delayQueue", false)?,
+            server_side_encryption_enabled: o.bool("serverSideEncryptionEnabled", false)?,
+            kms_master_key_id: o.get("kmsMasterKeyId"),
+            kms_data_key_reuse_period_seconds: opt_i(o, "kmsDataKeyReusePeriodSeconds")?,
+            concurrent_consumers: o.i64("concurrentConsumers", 1)?.max(1) as usize,
+            concurrent_request_limit: o.i64("concurrentRequestLimit", 50)?.max(1) as usize,
+            sort_attribute_name: o.get("sortAttributeName"),
+            delete_if_filtered: o.bool("deleteIfFiltered", true)?,
+            send_empty_message_when_idle: o.bool("sendEmptyMessageWhenIdle", false)?,
+            batch_separator: o.string("batchSeparator", ","),
             scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
             protocol: Arc::new(Mutex::new(match o.string("protocol", "auto").to_ascii_lowercase().as_str() {
                 "json" => SqsProtocol::Json,
@@ -271,7 +318,7 @@ impl SqsService {
         if s.extend_message_visibility && s.visibility_timeout.is_none_or(|v| v <= 0) {
             return Err(CamelError::illegal_argument("extendMessageVisibility=true requires a positive visibilityTimeout"));
         }
-        o.ignore(&["concurrentConsumers", "deleteIfFiltered", "delayQueue", "serverSideEncryptionEnabled", "kmsMasterKeyId", "kmsDataKeyReusePeriodSeconds", "batchSeparator", "sortAttributeName"]);
+        o.ignore(&["amazonSQSClient", "messageHeaderExceptionMode", "concurrentRequestLimit"]);
         Ok(s)
     }
 
@@ -289,15 +336,38 @@ impl SqsService {
         self.queue_name.ends_with(".fifo")
     }
 
+    /// The queue attributes configured on the endpoint.
+    pub fn configured_attributes(&self) -> ObjectMap {
+        let mut attrs = ObjectMap::new();
+        let mut put = |k: &str, v: Option<String>| {
+            if let Some(v) = v {
+                attrs.insert(k.to_string(), Value::from(v));
+            }
+        };
+        put("VisibilityTimeout", self.default_visibility_timeout.map(|v| v.to_string()));
+        put("MessageRetentionPeriod", self.message_retention_period.map(|v| v.to_string()));
+        put("MaximumMessageSize", self.maximum_message_size.map(|v| v.to_string()));
+        put("Policy", self.policy.clone());
+        put("RedrivePolicy", self.redrive_policy.clone());
+        put("ReceiveMessageWaitTimeSeconds", self.receive_message_wait_time_seconds.map(|v| v.to_string()));
+        if self.delay_queue {
+            put("DelaySeconds", self.delay_seconds.map(|v| v.to_string()));
+        }
+        if self.server_side_encryption_enabled {
+            match &self.kms_master_key_id {
+                Some(k) => {
+                    put("KmsMasterKeyId", Some(k.clone()));
+                    put("KmsDataKeyReusePeriodSeconds", self.kms_data_key_reuse_period_seconds.map(|v| v.to_string()));
+                }
+                None => put("SqsManagedSseEnabled", Some("true".into())),
+            }
+        }
+        attrs
+    }
+
     /// Create the queue (idempotent) and return its URL.
     pub fn create_queue(&self) -> Result<String> {
-        let mut attrs = ObjectMap::new();
-        if let Some(v) = self.default_visibility_timeout {
-            attrs.insert("VisibilityTimeout".to_string(), Value::from(v.to_string()));
-        }
-        if let Some(v) = self.message_retention_period {
-            attrs.insert("MessageRetentionPeriod".to_string(), Value::from(v.to_string()));
-        }
+        let mut attrs = self.configured_attributes();
         if self.is_fifo() {
             attrs.insert("FifoQueue".to_string(), Value::from("true"));
             if self.message_deduplication_id_strategy == "useContentBasedDeduplication" {
@@ -364,7 +434,7 @@ impl SqsService {
                 let mut m = ObjectMap::new();
                 m.insert("QueueUrl".to_string(), Value::from(self.queue_url()?));
                 m.insert("MessageBody".to_string(), Value::from(body.clone()));
-                let delay = ex.header(headers::DELAY_HEADER).and_then(|v| v.as_i64().or_else(|| v.to_string().parse().ok())).or(self.delay_seconds);
+                let delay = ex.header(headers::DELAY_HEADER).and_then(|v| v.as_i64().or_else(|| v.to_string().parse().ok())).or(self.delay_seconds.filter(|_| !self.delay_queue));
                 if let Some(d) = delay {
                     m.insert("DelaySeconds".into(), Value::Int(d));
                 }
@@ -380,14 +450,14 @@ impl SqsService {
             "sendBatchMessage" => {
                 let items: Vec<String> = match ex.body() {
                     Value::Array(a) => a.iter().map(|v| v.to_string()).collect(),
-                    other => other.to_string().split(',').map(|s| s.to_string()).collect(),
+                    other => other.to_string().split(self.batch_separator.as_str()).map(|s| s.to_string()).collect(),
                 };
                 let mut entries = Vec::new();
                 for (i, body) in items.iter().enumerate() {
                     let mut e = ObjectMap::new();
                     e.insert("Id".to_string(), Value::from(i.to_string()));
                     e.insert("MessageBody".to_string(), Value::from(body.clone()));
-                    if let Some(d) = self.delay_seconds {
+                    if let Some(d) = self.delay_seconds.filter(|_| !self.delay_queue) {
                         e.insert("DelaySeconds".into(), Value::Int(d));
                     }
                     self.fifo_fields(ex, &mut e, &format!("{}{}", i, body));
@@ -416,6 +486,50 @@ impl SqsService {
             "deleteQueue" => {
                 self.call("DeleteQueue", obj([("QueueUrl", Value::from(self.queue_url()?))]))?;
                 *self.resolved_url.lock().unwrap() = None;
+            }
+            "receiveMessage" => {
+                let max = header_i64(ex, headers::MAX_NUMBER_OF_MESSAGES).unwrap_or(self.max_messages_per_poll).clamp(1, 10);
+                let r = self.call("ReceiveMessage", self.receive_request(&self.queue_url()?, max))?;
+                let msgs: Vec<Value> = r
+                    .get("Messages")
+                    .and_then(|m| m.as_array())
+                    .cloned()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|m| {
+                        obj([
+                            ("messageId", m.get("MessageId").cloned().unwrap_or_default()),
+                            ("receiptHandle", m.get("ReceiptHandle").cloned().unwrap_or_default()),
+                            ("body", m.get("Body").cloned().unwrap_or_default()),
+                            ("attributes", m.get("Attributes").cloned().unwrap_or(Value::Object(ObjectMap::new()))),
+                            ("messageAttributes", m.get("MessageAttributes").cloned().unwrap_or(Value::Object(ObjectMap::new()))),
+                        ])
+                    })
+                    .collect();
+                ex.set_body(Value::Array(msgs));
+            }
+            "changeMessageVisibility" => {
+                let handle = header_str(ex, headers::RECEIPT_HANDLE).ok_or_else(|| CamelError::illegal_argument("changeMessageVisibility requires the CamelAwsSqsReceiptHandle header"))?;
+                let secs = header_i64(ex, headers::VISIBILITY_TIMEOUT).or(self.visibility_timeout).ok_or_else(|| CamelError::illegal_argument("changeMessageVisibility requires the CamelAwsSqsVisibilityTimeout header"))?;
+                self.call("ChangeMessageVisibility", obj([("QueueUrl", Value::from(self.queue_url()?)), ("ReceiptHandle", Value::from(handle)), ("VisibilityTimeout", Value::Int(secs))]))?;
+            }
+            "deleteMessageBatch" => {
+                let handles = crate::util::str_list(ex.body());
+                let entries: Vec<Value> = handles.iter().enumerate().map(|(i, h)| obj([("Id", Value::from(i.to_string())), ("ReceiptHandle", Value::from(h.clone()))])).collect();
+                let r = self.call("DeleteMessageBatch", obj([("QueueUrl", Value::from(self.queue_url()?)), ("Entries", Value::Array(entries))]))?;
+                let pick = |name: &str| r.get(name).cloned().unwrap_or(Value::Array(vec![]));
+                ex.set_body(obj([("successful", pick("Successful")), ("failed", pick("Failed"))]));
+            }
+            "getQueueAttributes" => {
+                let r = self.call("GetQueueAttributes", obj([("QueueUrl", Value::from(self.queue_url()?)), ("AttributeNames", Value::from(vec!["All".to_string()]))]))?;
+                ex.set_body(r.get("Attributes").cloned().unwrap_or(Value::Object(ObjectMap::new())));
+            }
+            "setQueueAttributes" => {
+                let attrs: ObjectMap = match ex.body() {
+                    Value::Object(m) => m.iter().map(|(k, v)| (k.clone(), Value::from(v.to_string()))).collect(),
+                    _ => return Err(CamelError::illegal_argument("setQueueAttributes requires a map body")),
+                };
+                self.call("SetQueueAttributes", obj([("QueueUrl", Value::from(self.queue_url()?)), ("Attributes", Value::Object(attrs))]))?;
             }
             other => return Err(unsupported("aws2-sqs", other)),
         }
@@ -459,15 +573,58 @@ impl CloudService for SqsService {
         if self.auto_create_queue && self.queue_url.is_none() {
             let url = self.create_queue()?;
             *self.resolved_url.lock().unwrap() = Some(url);
+        } else {
+            let attrs = self.configured_attributes();
+            if !attrs.is_empty() {
+                let url = self.queue_url()?;
+                self.call("SetQueueAttributes", obj([("QueueUrl", Value::from(url)), ("Attributes", Value::Object(attrs))]))?;
+            }
         }
         Ok(())
     }
 
     fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
         let url = self.queue_url()?;
+        let workers = self.concurrent_consumers;
+        if workers <= 1 && self.max_messages_per_poll <= 10 {
+            return self.poll_batch(&url, self.max_messages_per_poll.clamp(1, 10), &ctx, processor, logger);
+        }
+        // concurrent consumers: each worker receives (up to 10 per request) and processes
+        let total_wanted = self.max_messages_per_poll.max(1) as usize;
+        let requests = total_wanted.div_ceil(10).max(workers).min(self.concurrent_request_limit.max(workers));
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results: Vec<Result<usize>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..workers)
+                .map(|_| {
+                    let (next, url, ctx) = (&next, &url, &ctx);
+                    scope.spawn(move || -> Result<usize> {
+                        let mut n = 0;
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            if i >= requests {
+                                return Ok(n);
+                            }
+                            let max = (total_wanted.saturating_sub(i * 10)).clamp(1, 10) as i64;
+                            n += self.poll_batch(url, max, ctx, processor, logger)?;
+                        }
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(CamelError::io("SQS consumer thread panicked")))).collect()
+        });
+        let mut total = 0;
+        for r in results {
+            total += r?;
+        }
+        Ok(total)
+    }
+}
+
+impl SqsService {
+    fn receive_request(&self, url: &str, max: i64) -> Value {
         let mut req = ObjectMap::new();
-        req.insert("QueueUrl".to_string(), Value::from(url.clone()));
-        req.insert("MaxNumberOfMessages".to_string(), Value::Int(self.max_messages_per_poll.clamp(1, 10)));
+        req.insert("QueueUrl".to_string(), Value::from(url));
+        req.insert("MaxNumberOfMessages".to_string(), Value::Int(max));
         if let Some(w) = self.wait_time_seconds {
             req.insert("WaitTimeSeconds".into(), Value::Int(w));
         }
@@ -476,8 +633,32 @@ impl CloudService for SqsService {
         }
         req.insert("MessageAttributeNames".into(), Value::from(self.message_attribute_names.clone()));
         req.insert("AttributeNames".into(), Value::from(self.attribute_names.clone()));
-        let r = self.call("ReceiveMessage", Value::Object(req))?;
-        let messages = r.get("Messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+        Value::Object(req)
+    }
+
+    fn sort_key(&self, m: &Value) -> String {
+        let Some(name) = &self.sort_attribute_name else { return String::new() };
+        let v = m.get("Attributes").and_then(|a| a.get(name)).cloned().or_else(|| m.get("MessageAttributes").and_then(|a| a.get(name)).and_then(|a| a.get("StringValue")).cloned()).unwrap_or_default();
+        let s = v.to_string();
+        // numbers sort numerically (zero padded)
+        match s.parse::<f64>() {
+            Ok(n) => format!("{:030.6}", n),
+            Err(_) => s,
+        }
+    }
+
+    fn poll_batch(&self, url: &str, max: i64, ctx: &Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        let r = self.call("ReceiveMessage", self.receive_request(url, max))?;
+        let mut messages = r.get("Messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+        if self.sort_attribute_name.is_some() {
+            messages.sort_by_key(|m| self.sort_key(m));
+        }
+        if messages.is_empty() && self.send_empty_message_when_idle {
+            let mut ex = Exchange::new(ctx.clone());
+            process(logger, processor, &mut ex);
+            return Ok(0);
+        }
+        let url = url.to_string();
         let total = messages.len();
         for (i, m) in messages.iter().enumerate() {
             let mut ex = Exchange::new(ctx.clone());
@@ -510,7 +691,8 @@ impl CloudService for SqsService {
                 let _ = stop.send(());
                 let _ = join.join();
             }
-            if ok && self.delete_after_read {
+            let filtered_out = ex.property("CamelFilterMatched").and_then(|v| v.as_bool()) == Some(false);
+            if ok && self.delete_after_read && (self.delete_if_filtered || !filtered_out) {
                 if let Err(e) = self.call("DeleteMessage", obj([("QueueUrl", Value::from(url.clone())), ("ReceiptHandle", Value::from(handle))])) {
                     camel_core::camel_warn!(logger, "Error deleting SQS message: {}", e);
                 }

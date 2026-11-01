@@ -20,6 +20,8 @@ mod ext;
 mod more;
 #[path = "aws_tail.rs"]
 mod tail;
+#[path = "aws_gaps.rs"]
+mod gaps;
 pub use ext::{MetricDatum, SentEmail};
 
 use super::{Handler, MockServer};
@@ -105,6 +107,7 @@ struct State {
     ext: ext::ExtState,
     more: more::MoreState,
     tail: tail::TailState,
+    gaps: gaps::GapsState,
     buckets: BTreeMap<String, Bucket>,
     queues: BTreeMap<String, Queue>,
     topics: BTreeMap<String, Vec<PublishedMessage>>,
@@ -149,7 +152,9 @@ impl AwsMock {
         state.0.lock().unwrap().credentials.insert(access_key.to_string(), secret_key.to_string());
         let st = state.clone();
         let handler: Handler = Arc::new(move |req| handle(&st, req));
-        let server = if tls { MockServer::start_tls(handler)? } else { MockServer::start(handler)? };
+        let st2 = state.clone();
+        let h2: super::H2Handler = Arc::new(move |req, stream| handle_h2(&st2, req, stream));
+        let server = if tls { MockServer::start_tls(handler)? } else { MockServer::start_with_h2(handler, h2)? };
         Ok(AwsMock { server, state, access_key: access_key.into(), secret_key: secret_key.into() })
     }
 
@@ -368,7 +373,39 @@ fn auth_error(req: &ServerRequest, f: &AuthFailure) -> Response {
     }
 }
 
+/// HTTP/2 requests (h2c): event stream operations (`SubscribeToShard`) stream their events,
+/// every other request is answered like over HTTP/1.1.
+fn handle_h2(st: &Shared, h2req: camel_grpc::h2::ServerRequest, stream: camel_grpc::h2::H2Stream) {
+    let body = stream.read_body(Some(Duration::from_secs(30))).unwrap_or_default();
+    let (path, query) = match h2req.path.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (h2req.path.clone(), String::new()),
+    };
+    let mut headers: Vec<(String, String)> = h2req.headers.clone();
+    headers.push(("host".into(), h2req.authority.clone()));
+    let req = ServerRequest { method: h2req.method.clone(), path, query, headers, body };
+    let creds = st.0.lock().unwrap().credentials.clone();
+    let resp = match verify_request(&req, &|k| creds.get(k).cloned(), now_secs()) {
+        Err(f) => {
+            st.0.lock().unwrap().auth_failures += 1;
+            auth_error(&req, &f)
+        }
+        Ok(v) if v.service == "kinesis" && req.header("X-Amz-Target").is_some_and(|t| t.ends_with(".SubscribeToShard")) => {
+            gaps::subscribe_to_shard(st, &req, &stream);
+            return;
+        }
+        Ok(_) => handle(st, &req),
+    };
+    let hs: Vec<(&str, &str)> = resp.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let hs: Vec<(String, String)> = hs.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.to_string())).filter(|(k, _)| k != "content-length" && k != "connection").collect();
+    let hs: Vec<(&str, &str)> = hs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let _ = camel_grpc::h2::ServerRequest::respond(&stream, resp.status, &hs, &resp.body);
+}
+
 fn handle(st: &Shared, req: &ServerRequest) -> Response {
+    if req.header("Authorization").is_none() && req.method == "POST" && req.text().contains("Action=AssumeRoleWithWebIdentity") {
+        return gaps::assume_role_with_web_identity(st, req);
+    }
     let creds = st.0.lock().unwrap().credentials.clone();
     let verified = match verify_request(req, &|k| creds.get(k).cloned(), now_secs()) {
         Ok(v) => v,
@@ -384,6 +421,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
             let f = AuthFailure { code: "InvalidClientTokenId", message: "The security token included in the request is invalid.".into(), service: Some(verified.service.clone()) };
             return auth_error(req, &f);
         }
+    }
+    if let Some(resp) = gaps::handle(st, &verified.service, req) {
+        return resp;
     }
     if let Some(resp) = tail::handle(st, &verified.service, req) {
         return resp;

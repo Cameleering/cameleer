@@ -15,6 +15,17 @@
 //! * `describeExecution`, `stopExecution`, `getExecutionHistory` (`CamelAwsStepFunctionsExecutionArn`);
 //!   `listExecutions` (`CamelAwsStepFunctionsStateMachineArn`, optional
 //!   `CamelAwsStepFunctionsExecutionStatusFilter`).
+//! * `updateStateMachine`: `CamelAwsStepFunctionsStateMachineArn` plus a new definition
+//!   (`CamelAwsStepFunctionsStateMachineDefinition` or a non-empty body) and / or role ARN;
+//!   body = the update date.
+//! * Activities: `createActivity` (`CamelAwsStepFunctionsActivityName`; body = activity ARN,
+//!   also set as `CamelAwsStepFunctionsActivityArn`), `deleteActivity`, `describeActivity`
+//!   (`CamelAwsStepFunctionsActivityArn`), `listActivities`, `getActivityTask`
+//!   (`CamelAwsStepFunctionsActivityArn`, `CamelAwsStepFunctionsActivityWorkerName`; body = the
+//!   task input, `CamelAwsStepFunctionsTaskToken` header, empty body when no task is waiting),
+//!   and the worker callbacks (rust-camel operation names) `sendTaskSuccess` (body = output),
+//!   `sendTaskFailure` (`CamelAwsStepFunctionsTaskError` / `...TaskCause`), `sendTaskHeartbeat`
+//!   (`CamelAwsStepFunctionsTaskToken`).
 
 use std::sync::Arc;
 
@@ -37,6 +48,12 @@ pub mod headers {
     pub const EXECUTION_NAME: &str = "CamelAwsStepFunctionsExecutionName";
     pub const EXECUTION_INPUT: &str = "CamelAwsStepFunctionsExecutionInput";
     pub const EXECUTION_STATUS_FILTER: &str = "CamelAwsStepFunctionsExecutionStatusFilter";
+    pub const ACTIVITY_NAME: &str = "CamelAwsStepFunctionsActivityName";
+    pub const ACTIVITY_ARN: &str = "CamelAwsStepFunctionsActivityArn";
+    pub const ACTIVITY_WORKER_NAME: &str = "CamelAwsStepFunctionsActivityWorkerName";
+    pub const TASK_TOKEN: &str = "CamelAwsStepFunctionsTaskToken";
+    pub const TASK_ERROR: &str = "CamelAwsStepFunctionsTaskError";
+    pub const TASK_CAUSE: &str = "CamelAwsStepFunctionsTaskCause";
 }
 
 /// The Step Functions endpoint configuration and client.
@@ -153,6 +170,73 @@ impl CloudService for StepFunctionsService {
                 }
                 let v = self.paged("ListExecutions", m, "executions")?;
                 ex.set_body(v);
+            }
+            "updateStateMachine" => {
+                let mut m = ObjectMap::new();
+                m.insert("stateMachineArn".to_string(), Value::from(need(ex, headers::STATE_MACHINE_ARN)?));
+                let def = header_str(ex, headers::STATE_MACHINE_DEFINITION).or_else(|| (!ex.body().is_null() && !ex.body().to_string().is_empty()).then(|| json_text(ex.body())));
+                if let Some(d) = def {
+                    m.insert("definition".into(), Value::from(d));
+                }
+                if let Some(r) = header_str(ex, headers::STATE_MACHINE_ROLE_ARN) {
+                    m.insert("roleArn".into(), Value::from(r));
+                }
+                let r = self.call("UpdateStateMachine", Value::Object(m))?;
+                ex.set_body(r.get("updateDate").cloned().unwrap_or_default());
+            }
+            "createActivity" => {
+                let r = self.call("CreateActivity", obj([("name", Value::from(need(ex, headers::ACTIVITY_NAME)?))]))?;
+                let arn = r.get("activityArn").cloned().unwrap_or_default();
+                ex.set_header(headers::ACTIVITY_ARN, arn.clone());
+                ex.set_body(arn);
+            }
+            "deleteActivity" => {
+                self.call("DeleteActivity", obj([("activityArn", Value::from(need(ex, headers::ACTIVITY_ARN)?))]))?;
+            }
+            "describeActivity" => {
+                let r = self.call("DescribeActivity", obj([("activityArn", Value::from(need(ex, headers::ACTIVITY_ARN)?))]))?;
+                ex.set_body(r);
+            }
+            "listActivities" => {
+                let v = self.paged("ListActivities", ObjectMap::new(), "activities")?;
+                ex.set_body(v);
+            }
+            "getActivityTask" => {
+                let mut m = ObjectMap::new();
+                m.insert("activityArn".to_string(), Value::from(need(ex, headers::ACTIVITY_ARN)?));
+                if let Some(w) = header_str(ex, headers::ACTIVITY_WORKER_NAME) {
+                    m.insert("workerName".into(), Value::from(w));
+                }
+                let r = self.call("GetActivityTask", Value::Object(m))?;
+                match r.get("taskToken").map(|t| t.to_string()).filter(|t| !t.is_empty()) {
+                    Some(t) => {
+                        ex.set_header(headers::TASK_TOKEN, t);
+                        let input = r.get("input").map(|i| i.to_string()).unwrap_or_default();
+                        ex.set_body(camel_core::json::parse(&input).unwrap_or(Value::from(input)));
+                    }
+                    None => {
+                        ex.message.remove_header(headers::TASK_TOKEN);
+                        ex.set_body(Value::Null);
+                    }
+                }
+            }
+            "sendTaskSuccess" => {
+                let output = json_text(ex.body());
+                self.call("SendTaskSuccess", obj([("taskToken", Value::from(need(ex, headers::TASK_TOKEN)?)), ("output", Value::from(output))]))?;
+            }
+            "sendTaskFailure" => {
+                let mut m = ObjectMap::new();
+                m.insert("taskToken".to_string(), Value::from(need(ex, headers::TASK_TOKEN)?));
+                if let Some(e) = header_str(ex, headers::TASK_ERROR) {
+                    m.insert("error".into(), Value::from(e));
+                }
+                if let Some(c) = header_str(ex, headers::TASK_CAUSE) {
+                    m.insert("cause".into(), Value::from(c));
+                }
+                self.call("SendTaskFailure", Value::Object(m))?;
+            }
+            "sendTaskHeartbeat" => {
+                self.call("SendTaskHeartbeat", obj([("taskToken", Value::from(need(ex, headers::TASK_TOKEN)?))]))?;
             }
             "" => return Err(CamelError::illegal_argument("aws2-step-functions requires an operation (operation option or CamelAwsStepFunctionsOperation header)")),
             other => return Err(unsupported("aws2-step-functions", other)),
