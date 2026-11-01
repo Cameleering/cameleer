@@ -2883,6 +2883,11 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
         if name == "%groovy_use" {
             return it.groovy_use(&args, pos);
         }
+        if name.starts_with("%tpl") {
+            if let Some(v) = it.mvel_template_fn(name, &args, pos)? {
+                return Ok(v);
+            }
+        }
         if it.d == Dialect::Python {
             if let Some(v) = it.py_internal(recv, name, &args, pos)? {
                 return Ok(v);

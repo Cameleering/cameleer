@@ -52,6 +52,7 @@ mod jsonnet;
 mod lexer;
 mod overload;
 mod media;
+pub mod mvel;
 mod parser;
 mod promise;
 mod pyext;
@@ -414,6 +415,7 @@ pub fn register(ctx: &CamelContext) {
         ctx.add_language(ScriptLanguage::new(name, d));
     }
     ctx.add_language(CSimpleLanguage);
+    ctx.add_component("mvel", mvel::MvelComponent);
     let factory: ScriptProcessorFactory = Box::new(|language: &str, text: &str, options: &BTreeMap<String, String>| {
         let d = dialect_for(language)?;
         Some(Script::compile(d, text, options).map(|s| Arc::new(ScriptProcessor(Arc::new(s))) as Arc<dyn Processor>))

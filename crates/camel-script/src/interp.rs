@@ -683,6 +683,10 @@ impl Interp {
                 }
                 Ok(last)
             }
+            Stmt::Labeled(l, body) if l.starts_with("%intercept:") => {
+                let name = l["%intercept:".len()..].to_string();
+                self.mvel_intercept(&name, body, env)
+            }
             Stmt::Labeled(l, _) if l.starts_with("%importstar:") => {
                 let m = l["%importstar:".len()..].to_string();
                 self.py_import_star(&m, env, 0)?;

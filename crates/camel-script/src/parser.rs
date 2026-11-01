@@ -264,6 +264,13 @@ impl Parser {
             return Ok(Stmt::Empty);
         }
         let d = self.d;
+        if d == Dialect::Mvel && self.is_p("@") && matches!(self.peek_at(1), T::Ident(_)) {
+            // `@Interceptor statement`
+            self.next();
+            let name = self.ident()?;
+            let s = self.parse_statement()?;
+            return Ok(Stmt::Labeled(format!("%intercept:{}", name), Box::new(s)));
+        }
         if d == Dialect::Groovy && self.is_p("@") && !self.is_groovy_type_decl_start() {
             // statement annotations: `@Grab` cannot work without a JVM; others are ignored
             let names = self.parse_groovy_annotations()?;
