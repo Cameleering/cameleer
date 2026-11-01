@@ -1,0 +1,265 @@
+//! Aztec detection for camera-like images (after ZXing's Aztec `Detector`): the bull's-eye
+//! centre is found by runs of nine roughly equal alternating rings confirmed horizontally
+//! and vertically; rays cast in eight directions locate the ring boundaries, a least-squares
+//! perspective transform is fitted to those points (and refined by re-casting the rays at the
+//! predicted ring corners), and the mode message is read in all eight orientations before the
+//! whole symbol is sampled and decoded.
+
+use super::aztec;
+use super::detect::Bin;
+use super::vision::{bit_at, Homography};
+use super::Matrix;
+
+type P = (f64, f64);
+
+fn runs_of(get: &dyn Fn(usize) -> bool, len: usize) -> Vec<(bool, usize, usize)> {
+    let mut out: Vec<(bool, usize, usize)> = Vec::new();
+    for i in 0..len {
+        let v = get(i);
+        match out.last_mut() {
+            Some(r) if r.0 == v => r.2 += 1,
+            _ => out.push((v, i, 1)),
+        }
+    }
+    out
+}
+
+/// Nine runs through the bull's-eye: the inner seven about equal, the outer two (the dark
+/// ring 4, possibly merged with dark mode-message modules) at least half a module.
+fn equal_runs(r: &[(bool, usize, usize)]) -> Option<f64> {
+    let inner = &r[1..8];
+    let total: usize = inner.iter().map(|x| x.2).sum();
+    let m = total as f64 / inner.len() as f64;
+    if m < 1.0 {
+        return None;
+    }
+    (inner.iter().all(|x| (x.2 as f64 - m).abs() < 0.6 * m) && r[0].2 as f64 >= 0.5 * m && r[8].2 as f64 >= 0.5 * m).then_some(m)
+}
+
+/// The rotation of the bull's-eye squares: rays in 64 directions, the distances to the
+/// ring boundaries 2.5 and 3.5 should follow a square's polar profile.
+fn ring_angle(b: &Bin, c: P, module: f64) -> f64 {
+    let max = module * 12.0;
+    let mut rays: Vec<(f64, f64, f64)> = Vec::new();
+    for j in 0..64 {
+        let phi = j as f64 * std::f64::consts::PI / 32.0;
+        if let Some(ts) = transitions(b, c, (phi.cos(), phi.sin()), 4, max) {
+            rays.push((phi, ts[2], ts[3]));
+        }
+    }
+    if rays.len() < 16 {
+        return 0.0;
+    }
+    let mut best = (f64::MAX, 0.0);
+    for step in 0..180 {
+        let th = (step as f64 * 0.5).to_radians();
+        let mut err = 0.0;
+        for k in 0..2 {
+            let vals: Vec<f64> = rays
+                .iter()
+                .map(|r| {
+                    let (s, c) = (r.0 - th).sin_cos();
+                    (if k == 0 { r.1 } else { r.2 }) * s.abs().max(c.abs())
+                })
+                .collect();
+            let mean = vals.iter().sum::<f64>() / vals.len() as f64;
+            err += vals.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (mean * mean);
+        }
+        if err < best.0 {
+            best = (err, th);
+        }
+    }
+    best.1
+}
+
+/// Bull's-eye centre candidates (x, y, module), most confirmed first.
+fn centres(b: &Bin) -> Vec<(f64, f64, f64)> {
+    let mut cands: Vec<(f64, f64, f64, usize)> = Vec::new();
+    for y in 0..b.height {
+        let runs = runs_of(&|x| b.get(x, y), b.width);
+        if runs.len() < 9 {
+            continue;
+        }
+        for i in 0..runs.len() - 8 {
+            let win = &runs[i..i + 9];
+            if !win[0].0 {
+                continue;
+            }
+            let Some(m) = equal_runs(win) else { continue };
+            let cx = win[4].1 as f64 + win[4].2 as f64 / 2.0;
+            let x = cx as usize;
+            // vertical confirmation
+            let col = runs_of(&|yy| b.get(x, yy), b.height);
+            let Some(k) = col.iter().position(|r| r.1 <= y && y < r.1 + r.2) else { continue };
+            if k < 4 || k + 4 >= col.len() {
+                continue;
+            }
+            let Some(mv) = equal_runs(&col[k - 4..=k + 4]) else { continue };
+            if (mv / m).ln().abs() > 0.5 {
+                continue;
+            }
+            let cy = col[k].1 as f64 + col[k].2 as f64 / 2.0;
+            let mm = (m + mv) / 2.0;
+            if let Some(c) = cands.iter_mut().find(|c| (c.0 - cx).abs() < mm && (c.1 - cy).abs() < mm) {
+                let n = c.3 as f64;
+                *c = ((c.0 * n + cx) / (n + 1.0), (c.1 * n + cy) / (n + 1.0), (c.2 * n + mm) / (n + 1.0), c.3 + 1);
+            } else {
+                cands.push((cx, cy, mm, 1));
+            }
+        }
+    }
+    cands.sort_by(|a, b| b.3.cmp(&a.3));
+    cands.into_iter().take(4).map(|c| (c.0, c.1, c.2)).collect()
+}
+
+/// Distances of the first `k` colour changes along a ray from `c` in direction `d`.
+fn transitions(b: &Bin, c: P, d: P, k: usize, max: f64) -> Option<Vec<f64>> {
+    let mut out = Vec::with_capacity(k);
+    let start = bit_at(b, c);
+    let mut cur = start;
+    let mut t = 0.0;
+    while out.len() < k {
+        t += 0.25;
+        if t > max {
+            return None;
+        }
+        let p = (c.0 + d.0 * t, c.1 + d.1 * t);
+        if p.0 < 0.0 || p.1 < 0.0 || p.0 >= b.width as f64 || p.1 >= b.height as f64 {
+            return None;
+        }
+        let v = bit_at(b, p);
+        if v != cur {
+            out.push(t - 0.125);
+            cur = v;
+        }
+    }
+    Some(out)
+}
+
+const DIRS: [(f64, f64); 8] = [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0), (-1.0, 1.0), (-1.0, 0.0), (-1.0, -1.0), (0.0, -1.0), (1.0, -1.0)];
+
+/// Fit the bull's-eye transform (module coordinates centred on the middle module) using
+/// `rings` ring boundaries.
+fn fit(b: &Bin, c: P, module: f64, rings: usize) -> Option<Homography> {
+    let max = module * (rings as f64 + 2.0) * 2.5;
+    let (sn, cs) = ring_angle(b, c, module).sin_cos();
+    let mut src = Vec::new();
+    let mut dst = Vec::new();
+    for d in DIRS {
+        let n = (d.0 * d.0 + d.1 * d.1).sqrt();
+        let u = ((d.0 * cs - d.1 * sn) / n, (d.0 * sn + d.1 * cs) / n);
+        let Some(ts) = transitions(b, c, u, rings, max) else { continue };
+        for (k, t) in ts.iter().enumerate() {
+            let r = k as f64 + 0.5;
+            src.push((d.0 * r, d.1 * r));
+            dst.push((c.0 + u.0 * t, c.1 + u.1 * t));
+        }
+    }
+    if src.len() < 6 * rings {
+        return None;
+    }
+    let mut h = Homography::from_points(&src, &dst)?;
+    // refine: cast rays towards the predicted boundary points
+    for _ in 0..3 {
+        let centre = h.map(0.0, 0.0);
+        let mut s2 = Vec::new();
+        let mut d2 = Vec::new();
+        for d in DIRS {
+            for k in 0..rings {
+                let r = k as f64 + 0.5;
+                let target = h.map(d.0 * r, d.1 * r);
+                let (vx, vy) = (target.0 - centre.0, target.1 - centre.1);
+                let len = (vx * vx + vy * vy).sqrt();
+                if len < 0.5 {
+                    continue;
+                }
+                let u = (vx / len, vy / len);
+                let Some(ts) = transitions(b, centre, u, k + 1, max) else { continue };
+                let t = ts[k];
+                // only accept boundaries close to the prediction
+                if (t - len).abs() > module * 0.75 {
+                    continue;
+                }
+                s2.push((d.0 * r, d.1 * r));
+                d2.push((centre.0 + u.0 * t, centre.1 + u.1 * t));
+            }
+        }
+        if s2.len() < 6 * rings {
+            break;
+        }
+        match Homography::from_points(&s2, &d2) {
+            Some(n) => h = n,
+            None => break,
+        }
+    }
+    Some(h)
+}
+
+fn orient(o: usize, u: f64, v: f64) -> P {
+    let (u, v) = if o >= 4 { (v, u) } else { (u, v) };
+    match o % 4 {
+        0 => (u, v),
+        1 => (-v, u),
+        2 => (-u, -v),
+        _ => (v, -u),
+    }
+}
+
+fn sample(b: &Bin, h: &Homography, o: usize, n: usize) -> Matrix {
+    let c = (n / 2) as f64;
+    let mut m = Matrix::new(n, n);
+    for y in 0..n {
+        for x in 0..n {
+            let (u, v) = orient(o, x as f64 - c, y as f64 - c);
+            m.set(x, y, bit_at(b, h.map(u, v)));
+        }
+    }
+    m
+}
+
+/// Locate and decode an Aztec symbol.
+pub fn detect_and_decode(b: &Bin) -> Option<String> {
+    for (cx, cy, module) in centres(b) {
+        for compact in [true, false] {
+            let rings = if compact { 4 } else { 6 };
+            let Some(h) = fit(b, (cx, cy), module, rings) else { continue };
+            for o in 0..8 {
+                let core = sample(b, &h, o, if compact { 15 } else { 19 });
+                let Some((layers, _)) = aztec::read_mode(&core, compact) else { continue };
+                if (compact && layers > 4) || layers == 0 {
+                    continue;
+                }
+                let n = aztec::matrix_size(layers, compact);
+                let m = sample(b, &h, o, n);
+                if let Ok(t) = aztec::decode_matrix(&m) {
+                    return Some(t);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+pub fn debug(b: &Bin) {
+    let cs = centres(b);
+    eprintln!("centres {:?}", cs);
+    for (cx, cy, module) in cs {
+        for compact in [true, false] {
+            let rings = if compact { 4 } else { 6 };
+            let h = fit(b, (cx, cy), module, rings);
+            eprintln!("compact {} fit {:?}", compact, h.map(|h| (h.map(0.0, 0.0), h.map(1.0, 0.0), h.map(0.0, 1.0))));
+            if let Some(h) = h {
+                for o in 0..8 {
+                    let core = sample(b, &h, o, if compact { 15 } else { 19 });
+                    if o == 0 {
+                        for y in 0..core.height {
+                            eprintln!("{}", (0..core.width).map(|x| if core.get(x, y) { '#' } else { '.' }).collect::<String>());
+                        }
+                    }
+                    eprintln!("o {} mode {:?}", o, aztec::read_mode(&core, compact));
+                }
+            }
+        }
+    }
+}

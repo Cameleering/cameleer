@@ -28,8 +28,10 @@
 //! thresholding or damaged finder recovery).
 
 pub mod aztec;
+pub mod aztec_detect;
 pub mod datamatrix;
 pub mod detect;
+pub mod dm_detect;
 pub mod gif;
 pub mod jpeg;
 mod kanji_table;
@@ -38,7 +40,11 @@ pub mod pdf417;
 mod pdf417_tables;
 pub mod png;
 pub mod qr;
+pub mod qr_detect;
 pub mod rs;
+#[cfg(test)]
+mod synth;
+pub mod vision;
 
 use std::sync::Arc;
 
@@ -211,50 +217,166 @@ pub struct Decoded {
     pub ecc: Option<qr::Ecc>,
 }
 
-/// Decode an image; `only` restricts the symbology.
-pub fn decode(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
-    let bin = detect::binarize(img).ok_or_else(|| CamelError::new("NotFoundException", "No barcode found: the image has no contrast"))?;
-    let want = |f: Format| only.is_none_or(|o| o == f || (o == Format::Ean13 && f == Format::UpcA) || (o == Format::UpcA && f == Format::Ean13));
+fn upc_or_ean(t: String, only: Option<Format>) -> Decoded {
+    if t.starts_with('0') && only != Some(Format::Ean13) {
+        return Decoded { text: t[1..].to_string(), format: Format::UpcA, ecc: None };
+    }
+    Decoded { text: t, format: Format::Ean13, ecc: None }
+}
+
+fn decode_row(row: &[bool], want: &dyn Fn(Format) -> bool, only: Option<Format>) -> Option<Decoded> {
+    if want(Format::Code128) {
+        if let Some(t) = oned::decode_code128(row) {
+            return Some(Decoded { text: t, format: Format::Code128, ecc: None });
+        }
+    }
+    if want(Format::Ean13) {
+        if let Some(t) = oned::decode_ean13(row) {
+            return Some(upc_or_ean(t, only));
+        }
+    }
+    if want(Format::Code39) {
+        if let Some(t) = oned::decode_code39(row) {
+            return Some(Decoded { text: t, format: Format::Code39, ecc: None });
+        }
+    }
+    None
+}
+
+/// The fast path for clean, generated images (global threshold, axis-aligned detectors).
+fn decode_clean(bin: &detect::Bin, want: &dyn Fn(Format) -> bool, only: Option<Format>) -> Option<Decoded> {
     if want(Format::QrCode) {
-        if let Some(d) = detect::find_qr(&bin) {
-            return Ok(Decoded { text: d.text, format: Format::QrCode, ecc: Some(d.ecc) });
+        if let Some(d) = detect::find_qr(bin) {
+            return Some(Decoded { text: d.text, format: Format::QrCode, ecc: Some(d.ecc) });
         }
     }
     if want(Format::DataMatrix) {
-        if let Some(m) = detect::find_datamatrix(&bin, &datamatrix::symbol_dims()) {
+        if let Some(m) = detect::find_datamatrix(bin, &datamatrix::symbol_dims()) {
             if let Ok((b, _)) = datamatrix::decode_matrix(&m) {
-                return Ok(Decoded { text: dm_text(&b), format: Format::DataMatrix, ecc: None });
+                return Some(Decoded { text: dm_text(&b), format: Format::DataMatrix, ecc: None });
             }
         }
     }
     if want(Format::Aztec) {
         if let Some(t) = aztec::find_and_decode(&|x, y| bin.get(x, y), bin.width, bin.height) {
-            return Ok(Decoded { text: t, format: Format::Aztec, ecc: None });
+            return Some(Decoded { text: t, format: Format::Aztec, ecc: None });
         }
     }
     if want(Format::Pdf417) {
-        if let Some(t) = pdf417::find_and_decode(&bin) {
-            return Ok(Decoded { text: t, format: Format::Pdf417, ecc: None });
+        if let Some(t) = pdf417::find_and_decode(bin) {
+            return Some(Decoded { text: t, format: Format::Pdf417, ecc: None });
         }
     }
-    for row in detect::scan_rows(&bin) {
-        if want(Format::Code128) {
-            if let Some(t) = oned::decode_code128(&row) {
-                return Ok(Decoded { text: t, format: Format::Code128, ecc: None });
+    detect::scan_rows(bin).iter().find_map(|row| decode_row(row, want, only))
+}
+
+/// Linear symbologies on band-averaged, locally thresholded scan lines (rows of the image
+/// and of the image turned by 90°), ZXing `OneDReader` style: centre first, alternating
+/// above and below, each line also reversed.
+fn decode_linear(g: &png::Gray, want: &dyn Fn(Format) -> bool, only: Option<Format>) -> Option<Decoded> {
+    for quarter in [0, 1] {
+        let turned;
+        let v = if quarter == 0 {
+            g
+        } else {
+            turned = vision::rotate90(g, 1);
+            &turned
+        };
+        let h = v.height;
+        if h == 0 || v.width < 20 {
+            continue;
+        }
+        let step = (h / 32).max(1);
+        let half = (h / 120).clamp(1, 3);
+        for k in 0..32usize {
+            let off = (k + 1) / 2 * step;
+            let y = if k % 2 == 0 { h / 2 + off } else { (h / 2).wrapping_sub(off) };
+            if y >= h {
+                continue;
+            }
+            let mut row = vision::threshold_profile(&vision::row_profile(v, y, half));
+            if let Some(d) = decode_row(&row, want, only) {
+                return Some(d);
+            }
+            row.reverse();
+            if let Some(d) = decode_row(&row, want, only) {
+                return Some(d);
             }
         }
-        if want(Format::Ean13) {
-            if let Some(t) = oned::decode_ean13(&row) {
-                if t.starts_with('0') && only != Some(Format::Ean13) {
-                    return Ok(Decoded { text: t[1..].to_string(), format: Format::UpcA, ecc: None });
+    }
+    None
+}
+
+/// The camera path on one (preprocessed) image and its deskewed copy.
+fn decode_camera(g: &png::Gray, want: &dyn Fn(Format) -> bool, only: Option<Format>) -> Option<Decoded> {
+    let angle = vision::dominant_angle(g).unwrap_or(0.0);
+    let deskewed = (angle.abs() > 1.0).then(|| vision::rotate(g, -angle));
+    let views: Vec<&png::Gray> = std::iter::once(g).chain(deskewed.as_ref()).collect();
+    for v in &views {
+        let Some(bin) = vision::hybrid(v) else { continue };
+        if want(Format::QrCode) {
+            if let Some(d) = qr_detect::detect_and_decode(&bin) {
+                return Some(Decoded { text: d.text, format: Format::QrCode, ecc: Some(d.ecc) });
+            }
+        }
+        if want(Format::DataMatrix) {
+            for m in dm_detect::detect(&bin) {
+                if let Ok((b, _)) = datamatrix::decode_matrix(&m) {
+                    return Some(Decoded { text: dm_text(&b), format: Format::DataMatrix, ecc: None });
                 }
-                return Ok(Decoded { text: t, format: Format::Ean13, ecc: None });
             }
         }
-        if want(Format::Code39) {
-            if let Some(t) = oned::decode_code39(&row) {
-                return Ok(Decoded { text: t, format: Format::Code39, ecc: None });
+        if want(Format::Aztec) {
+            if let Some(t) = aztec_detect::detect_and_decode(&bin) {
+                return Some(Decoded { text: t, format: Format::Aztec, ecc: None });
             }
+        }
+        if want(Format::Pdf417) {
+            if let Some(t) = pdf417::find_and_decode(&bin) {
+                return Some(Decoded { text: t, format: Format::Pdf417, ecc: None });
+            }
+        }
+        if let Some(d) = decode_linear(v, want, only) {
+            return Some(d);
+        }
+    }
+    None
+}
+
+/// Decode an image; `only` restricts the symbology.
+///
+/// Clean generated images take a fast path (global threshold, axis-aligned sampling). Other
+/// images go through the camera path: noise-adaptive smoothing, ZXing's hybrid binarizer,
+/// rotation/scale/perspective tolerant detectors (QR finder + alignment patterns, Data Matrix
+/// L finder by white-rectangle detection and edge fitting, Aztec bull's-eye) and, for linear
+/// and stacked symbols, a copy deskewed by the dominant edge orientation.
+pub fn decode(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
+    let want = |f: Format| only.is_none_or(|o| o == f || (o == Format::Ean13 && f == Format::UpcA) || (o == Format::UpcA && f == Format::Ean13));
+    let clean = detect::binarize(img);
+    if let Some(bin) = &clean {
+        if let Some(d) = decode_clean(bin, &want, only) {
+            return Ok(d);
+        }
+    }
+    if clean.is_none() && vision::hybrid(img).is_none() {
+        return Err(CamelError::new("NotFoundException", "No barcode found: the image has no contrast"));
+    }
+    decode_camera_path(img, only)
+}
+
+/// The camera path alone (no clean-image fast path).
+pub fn decode_camera_path(img: &png::Gray, only: Option<Format>) -> Result<Decoded> {
+    let want = |f: Format| only.is_none_or(|o| o == f || (o == Format::Ean13 && f == Format::UpcA) || (o == Format::UpcA && f == Format::Ean13));
+    let sigma = vision::noise_sigma(img);
+    let mut bases = Vec::new();
+    if sigma >= 3.0 {
+        let s = vision::smooth(img);
+        bases.push(if sigma >= 8.0 { vision::smooth(&s) } else { s });
+    }
+    bases.push(img.clone());
+    for g in &bases {
+        if let Some(d) = decode_camera(g, &want, only) {
+            return Ok(d);
         }
     }
     Err(CamelError::new("NotFoundException", "No barcode found in the image"))

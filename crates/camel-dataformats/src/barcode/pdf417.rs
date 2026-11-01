@@ -785,11 +785,14 @@ fn is_stop(runs: &[(bool, usize)]) -> bool {
     quantize(&w, 18).as_deref() == Some(&[7, 1, 1, 3, 1, 1, 1, 2, 1][..])
 }
 
-/// Codewords of one scan line: (cluster, codeword or None per slot after the start pattern,
-/// whether the stop pattern was seen). Slots are located by position (start pattern origin
-/// plus multiples of 17 modules) so a damaged codeword becomes an erasure instead of
-/// desynchronising the rest of the row.
-fn scan_line(row: &[bool]) -> Option<(usize, Vec<Option<u32>>, bool)> {
+/// Codewords of one scan line: (cluster, codeword) or None per slot after the start
+/// pattern, and whether the stop pattern was seen. Slots are chained: each one is expected
+/// where the previous readable codeword ended (tracking the local module width, so that
+/// perspective foreshortening along the line is followed), searched within 1.5 modules,
+/// and a damaged codeword becomes an erasure instead of desynchronising the rest of the row.
+/// Clusters are kept per codeword because a slightly slanted line can cross into the
+/// neighbouring row.
+fn scan_line(row: &[bool]) -> Option<(Vec<Option<(usize, u32)>>, bool)> {
     let runs = runs_of(row);
     let mut pos = Vec::with_capacity(runs.len() + 1);
     let mut acc = 0usize;
@@ -802,40 +805,20 @@ fn scan_line(row: &[bool]) -> Option<(usize, Vec<Option<u32>>, bool)> {
         if !is_start(&runs[s..]) {
             continue;
         }
-        let x0 = pos[s] as f64;
-        let mw0 = (pos[s + 8] - pos[s]) as f64 / 17.0;
-        // the stop pattern (first one after the start), refines the module width
-        let stop = (s + 8..runs.len()).find(|t| is_stop(&runs[*t..]) && (t + 9 == runs.len() || runs[t + 9].1 as f64 >= 2.0 * mw0));
-        let (slots, mw, stopped) = match stop {
-            Some(t) => {
-                let span = (pos[t] - pos[s]) as f64;
-                let n = (span / (17.0 * mw0)).round() as usize;
-                if n < 3 {
-                    continue;
-                }
-                (n - 1, span / (17.0 * n as f64), true)
-            }
-            None => {
-                let n = ((acc as f64 - x0) / (17.0 * mw0)) as usize;
-                if n < 4 {
-                    continue;
-                }
-                (n - 1, mw0, false)
-            }
-        };
-        let mut words = Vec::with_capacity(slots);
-        let mut clusters = [0usize; 3];
+        let mut mw = (pos[s + 8] - pos[s]) as f64 / 17.0;
+        let stop = (s + 8..runs.len()).find(|t| is_stop(&runs[*t..]) && (t + 9 == runs.len() || runs[t + 9].1 as f64 >= 2.0 * mw));
+        let end_x = stop.map(|t| pos[t]).unwrap_or(acc) as f64;
+        let mut words: Vec<Option<(usize, u32)>> = Vec::new();
+        let mut expected = pos[s + 8] as f64;
         let mut r = s + 8;
-        for j in 0..slots {
-            let xj = x0 + 17.0 * mw * (j + 1) as f64;
-            while r < runs.len() && (pos[r] as f64) < xj - 1.5 * mw {
+        while expected + 8.5 * mw <= end_x && words.len() < 34 {
+            while r < runs.len() && (pos[r] as f64) < expected - 1.5 * mw {
                 r += 1;
             }
-            // the dark run starting closest to the expected position
             let mut best: Option<usize> = None;
             let mut k = r;
-            while k < runs.len() && (pos[k] as f64) <= xj + 1.5 * mw {
-                if runs[k].0 && best.is_none_or(|b| (pos[k] as f64 - xj).abs() < (pos[b] as f64 - xj).abs()) {
+            while k < runs.len() && (pos[k] as f64) <= expected + 1.5 * mw {
+                if runs[k].0 && best.is_none_or(|b| (pos[k] as f64 - expected).abs() < (pos[b] as f64 - expected).abs()) {
                     best = Some(k);
                 }
                 k += 1;
@@ -846,23 +829,74 @@ fn scan_line(row: &[bool]) -> Option<(usize, Vec<Option<u32>>, bool)> {
                 if (total as f64 - 17.0 * mw).abs() > 3.0 * mw {
                     return None;
                 }
-                runs_to_pattern(&w).and_then(|p| pattern_map().get(&p)).copied()
+                runs_to_pattern(&w).and_then(|p| pattern_map().get(&p)).map(|v| (b, total, *v))
             });
-            if let Some((cl, _)) = word {
-                clusters[cl] += 1;
+            match word {
+                Some((b, total, v)) => {
+                    mw = 0.7 * mw + 0.3 * total as f64 / 17.0;
+                    expected = pos[b + 8] as f64;
+                    r = b + 8;
+                    words.push(Some(v));
+                }
+                None => {
+                    expected += 17.0 * mw;
+                    words.push(None);
+                }
             }
-            words.push(word);
         }
-        let cluster = (0..3).max_by_key(|c| clusters[*c]).unwrap();
-        if clusters[cluster] == 0 {
+        if words.len() < 3 || words.iter().all(|w| w.is_none()) {
             continue;
         }
-        let vals = words.into_iter().map(|w| w.and_then(|(cl, cw)| (cl == cluster).then_some(cw))).collect();
-        return Some((cluster, vals, stopped));
+        return Some((words, stop.is_some()));
     }
     None
 }
 
+/// Row number of every slot of a scan line, from a row indicator and the cluster changes.
+fn assign_rows(words: &[Option<(usize, u32)>], stopped: bool) -> Option<Vec<Option<usize>>> {
+    let n = words.len();
+    let mut rows = vec![None; n];
+    let step = |row: usize, from: usize, to: usize| -> Option<usize> {
+        let d = (to + 3 - from) % 3;
+        let delta: i64 = match d {
+            0 => 0,
+            1 => 1,
+            _ => -1,
+        };
+        let r = row as i64 + delta;
+        (r >= 0).then_some(r as usize)
+    };
+    if let Some((cl, v)) = words[0] {
+        let mut row = 3 * (v as usize / 30) + cl;
+        let mut cur = cl;
+        rows[0] = Some(row);
+        for j in 1..n {
+            if let Some((c, _)) = words[j] {
+                row = step(row, cur, c)?;
+                cur = c;
+                rows[j] = Some(row);
+            }
+        }
+        return Some(rows);
+    }
+    if stopped {
+        if let Some((cl, v)) = words[n - 1] {
+            let mut row = 3 * (v as usize / 30) + cl;
+            let mut cur = cl;
+            rows[n - 1] = Some(row);
+            for j in (0..n - 1).rev() {
+                if let Some((c, _)) = words[j] {
+                    // the row difference follows the cluster difference in both directions
+                    row = step(row, cur, c)?;
+                    cur = c;
+                    rows[j] = Some(row);
+                }
+            }
+            return Some(rows);
+        }
+    }
+    None
+}
 
 /// Read the codeword grid from a binarised image view.
 fn read_grid(get: &dyn Fn(usize, usize) -> bool, w: usize, h: usize) -> Option<Symbol> {
@@ -877,30 +911,28 @@ fn read_grid(get: &dyn Fn(usize, usize) -> bool, w: usize, h: usize) -> Option<S
         for (x, r) in row.iter_mut().enumerate() {
             *r = get(x, y);
         }
-        if let Some((cluster, words, stopped)) = scan_line(&row) {
-            if stopped && words.len() >= 3 {
-                *votes_cols.entry(words.len() - 2).or_default() += 1;
-            }
-            let left = words[0];
-            let right = if stopped { *words.last().unwrap() } else { None };
-            let row_no = left.map(|l| 3 * (l as usize / 30) + cluster).or_else(|| right.map(|r| 3 * (r as usize / 30) + cluster));
-            let Some(row_no) = row_no else { continue };
-            let mut info = |v: Option<u32>, left_side: bool| {
-                let Some(v) = v else { return };
-                let v = v as usize % 30;
-                match (cluster, left_side) {
-                    (0, true) | (1, false) => *votes_rows.entry(v * 3).or_default() += 1, // (rows-1)/3
-                    (1, true) | (2, false) => {
-                        *votes_ecl.entry(v / 3).or_default() += 1;
-                        *votes_rows.entry(1000 + v % 3).or_default() += 1; // (rows-1)%3
-                    }
-                    _ => *votes_cols.entry(v + 1).or_default() += 1,
-                }
-            };
-            info(left, true);
-            info(right, false);
-            lines.push((row_no, stopped, words));
+        let Some((words, stopped)) = scan_line(&row) else { continue };
+        let Some(rows) = assign_rows(&words, stopped) else { continue };
+        if stopped && words.len() >= 3 {
+            *votes_cols.entry(words.len() - 2).or_default() += 1;
         }
+        let mut info = |v: Option<(usize, u32)>, left_side: bool| {
+            let Some((cluster, v)) = v else { return };
+            let v = v as usize % 30;
+            match (cluster, left_side) {
+                (0, true) | (1, false) => *votes_rows.entry(v * 3).or_default() += 1, // (rows-1)/3
+                (1, true) | (2, false) => {
+                    *votes_ecl.entry(v / 3).or_default() += 1;
+                    *votes_rows.entry(1000 + v % 3).or_default() += 1; // (rows-1)%3
+                }
+                _ => *votes_cols.entry(v + 1).or_default() += 1,
+            }
+        };
+        info(words[0], true);
+        if stopped {
+            info(*words.last().unwrap(), false);
+        }
+        lines.push((stopped, words, rows));
     }
     let best = |m: &HashMap<usize, usize>| m.iter().max_by_key(|(k, v)| (**v, usize::MAX - **k)).map(|(k, _)| *k);
     let cols = best(&votes_cols)?;
@@ -911,16 +943,15 @@ fn read_grid(get: &dyn Fn(usize, usize) -> bool, w: usize, h: usize) -> Option<S
     if !(3..=90).contains(&rows) || !(1..=30).contains(&cols) || ecl > 8 {
         return None;
     }
-    for (row_no, stopped, words) in lines {
-        if row_no >= rows {
-            continue;
-        }
-        let data: Vec<Option<u32>> = if stopped && words.len() == cols + 2 { words[1..cols + 1].to_vec() } else { words.iter().skip(1).take(cols).copied().collect() };
-        let entry = grid.entry(row_no).or_insert_with(|| vec![HashMap::new(); cols]);
-        for (x, v) in data.into_iter().enumerate() {
-            if let Some(v) = v {
-                *entry[x].entry(v).or_default() += 1;
+    for (stopped, words, wrows) in lines {
+        let range: Vec<usize> = if stopped && words.len() == cols + 2 { (1..=cols).collect() } else { (1..words.len().min(cols + 1)).collect() };
+        for (x, j) in range.into_iter().enumerate() {
+            let (Some((_, v)), Some(r)) = (words[j], wrows[j]) else { continue };
+            if r >= rows {
+                continue;
             }
+            let entry = grid.entry(r).or_insert_with(|| vec![HashMap::new(); cols]);
+            *entry[x].entry(v).or_default() += 1;
         }
     }
     let mut codewords = Vec::with_capacity(rows * cols);

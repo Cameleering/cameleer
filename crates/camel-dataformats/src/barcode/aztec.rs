@@ -203,7 +203,7 @@ fn base_size(layers: usize, compact: bool) -> usize {
     (if compact { 11 } else { 14 }) + layers * 4
 }
 
-fn matrix_size(layers: usize, compact: bool) -> usize {
+pub(crate) fn matrix_size(layers: usize, compact: bool) -> usize {
     let b = base_size(layers, compact);
     if compact {
         b
@@ -555,7 +555,7 @@ fn build(stuffed: &[bool], layers: usize, compact: bool, w: usize) -> Matrix {
 // ------------------------------------------------------------------------- decoding
 
 /// Reads the mode message around the centre of a symbol of `size` modules.
-fn read_mode(m: &Matrix, compact: bool) -> Option<(usize, usize)> {
+pub(crate) fn read_mode(m: &Matrix, compact: bool) -> Option<(usize, usize)> {
     let bits: Vec<bool> = mode_positions(compact, m.width).iter().map(|&(x, y)| m.get(x, y)).collect();
     let mut words = to_words(&bits, 4);
     let nd = if compact { 2 } else { 4 };
