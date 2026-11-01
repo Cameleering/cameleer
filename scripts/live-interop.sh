@@ -27,7 +27,7 @@
 #                   2991   explicit FTPS with require_ssl_reuse=YES
 #   Postfix         2525   SMTP (+STARTTLS, AUTH via Dovecot SASL)   4465 SMTPS (implicit TLS)
 #   Dovecot         11143  IMAP (+STARTTLS)  11993 IMAPS  11110 POP3 (+STLS)  11995 POP3S
-#   nginx           18080  HTTP/1.1 (gzip)   18443 HTTPS with HTTP/2 (ALPN h2, http/1.1)
+#   nginx           18080  HTTP/1.1 (gzip)   18443 HTTPS with HTTP/2 (ALPN h2, http/1.1)   18081 h2c (prior knowledge)
 #
 # Credentials: user `camel` / password `camelpw` everywhere (system users `camelftp` and
 # `camelmail` for FTP and mail, same password; mail address camelmail@localhost).
@@ -410,6 +410,7 @@ http {
   server {
     listen 127.0.0.1:18080;
     listen 127.0.0.1:18443 ssl http2;
+    listen 127.0.0.1:18081 http2;
     server_name localhost;
     ssl_certificate $CERTS/server.pem;
     ssl_certificate_key $CERTS/server.key;
@@ -575,7 +576,7 @@ cmd_status() {
     mosquitto-tls:18883 rabbitmq-amqp:15673 rabbitmq-amqps:15674 rabbitmq-stomp:16613 \
     rabbitmq-stomp-tls:16614 rabbitmq-mqtt:11885 vsftpd:2121 vsftpd-implicit:2990 vsftpd-reuse:2991 \
     postfix-smtp:2525 postfix-smtps:4465 dovecot-imap:11143 dovecot-imaps:11993 \
-    dovecot-pop3:11110 dovecot-pop3s:11995 nginx-http:18080 nginx-https:18443; do
+    dovecot-pop3:11110 dovecot-pop3s:11995 nginx-http:18080 nginx-https:18443 nginx-h2c:18081; do
     name=${entry%%:*}; port=${entry##*:}
     if port_open "$port"; then echo "  up    $name ($port)"; else echo "  DOWN  $name ($port)"; fi
   done
