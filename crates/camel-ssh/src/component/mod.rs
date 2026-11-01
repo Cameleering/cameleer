@@ -162,6 +162,9 @@ pub(crate) fn client_config(
     if let Some(v) = take_nonempty(params, "macs") {
         cfg.transport.algorithms.macs = parse_algorithm_list("MAC", &v, SUPPORTED_MACS).map_err(alg)?;
     }
+    if let Some(v) = take_nonempty(params, "compressionAlgorithms") {
+        cfg.transport.compression = parse_algorithm_list("compression", &v, crate::transport::SUPPORTED_COMPRESSION).map_err(alg)?;
+    }
     cfg.connect_timeout = params.take_duration("connectTimeout", Duration::from_secs(10))?;
     Ok(cfg)
 }

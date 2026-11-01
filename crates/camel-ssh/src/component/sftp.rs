@@ -246,8 +246,9 @@ impl SftpConfig {
         let mut client = client_config(ctx, &a.host, a.port, username, password, params, hk)?;
         client.timeout = Some(params.take_duration("soTimeout", Duration::from_secs(300))?).filter(|d| !d.is_zero());
         if let Some(c) = params.get("compression").and_then(|c| c.parse::<u32>().ok()) {
+            // Camel/JSch: a level > 0 enables zlib compression (zlib@openssh.com preferred)
             if c > 0 {
-                camel_core::camel_warn!("sftp", "compression is not supported by rust-camel sftp and is ignored");
+                client.transport.compression = vec!["zlib@openssh.com".into(), "zlib".into(), "none".into()];
             }
         }
         let include = take_nonempty(params, "include").map(|p| NamePattern::new(&p)).transpose()?;

@@ -355,3 +355,72 @@ fn openssh_clients_against_our_server() {
     server.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+fn compressible(n: usize) -> Vec<u8> {
+    (0..n).map(|i| b"the quick brown fox jumps over the lazy dog\n"[i % 44]).collect()
+}
+
+#[test]
+fn zlib_compression_ours_and_openssh() {
+    let comp = vec!["zlib@openssh.com".to_string(), "zlib".to_string(), "none".to_string()];
+    // our client <-> our server, delayed and immediate zlib
+    for algs in [vec!["zlib@openssh.com".to_string()], vec!["zlib".to_string()]] {
+        let mut cfg = SshServerConfig::default().user("test", "secret");
+        cfg.transport.compression = comp.clone();
+        let server = SshServer::start(cfg).unwrap();
+        let mut ccfg = ClientConfig::new("127.0.0.1", server.port(), "test").password("secret");
+        ccfg.transport.compression = algs.clone();
+        let mut c = SshClient::connect(&ccfg).unwrap();
+        assert_eq!(c.transport().negotiated().comp_c2s, algs[0]);
+        let data = compressible(300_000);
+        let r = c.execute("cat", Some(&data)).unwrap();
+        assert_eq!(r.stdout, data);
+        // rekeying keeps the compression stream going
+        c.transport_mut().rekey().unwrap();
+        assert_eq!(c.execute("echo after rekey", None).unwrap().stdout, b"after rekey\n");
+        c.disconnect();
+        server.stop();
+    }
+    // OpenSSH ssh -C against our server
+    if let (Some(ssh), Some(kg)) = (find("ssh"), find("ssh-keygen")) {
+        let dir = temp_dir("interop-comp");
+        let (_ed, ed_pub) = openssh_key(&kg, &dir, "ed25519", None);
+        let mut cfg = SshServerConfig::default().authorized_key("test", camel_ssh::SshPublicKey::from_openssh(&ed_pub).unwrap()).host_key(SshPrivateKey::generate_ed25519());
+        cfg.transport.compression = comp.clone();
+        let server = SshServer::start(cfg).unwrap();
+        fs::write(dir.join("known_hosts"), server.known_hosts_text("127.0.0.1")).unwrap();
+        let data = compressible(200_000);
+        let mut c = Command::new(&ssh);
+        c.args(ssh_args(&dir, &dir.join("user_ed25519"))).args(["-p", &server.port().to_string(), "-C", "test@127.0.0.1", "cat"]);
+        c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = c.spawn().unwrap();
+        let mut si = child.stdin.take().unwrap();
+        let d2 = data.clone();
+        std::thread::spawn(move || {
+            let _ = si.write_all(&d2);
+        });
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(out.stdout == data, "ssh -C cat: {} of {} bytes", out.stdout.len(), data.len());
+        server.stop();
+    }
+    // our client against OpenSSH sshd (Compression yes = delayed zlib@openssh.com)
+    if let Some(kg) = find("ssh-keygen") {
+        let kdir = temp_dir("interop-comp-keys");
+        let (ed, ed_pub) = openssh_key(&kg, &kdir, "ed25519", None);
+        let sshd = match start_sshd(&[ed_pub]) {
+            Some(s) => s,
+            None => return,
+        };
+        let mut cfg = ClientConfig::new("127.0.0.1", sshd.port, &current_user()).private_key(ed);
+        cfg.transport.compression = vec!["zlib@openssh.com".into()];
+        let mut c = SshClient::connect(&cfg).unwrap();
+        assert_eq!(c.transport().negotiated().comp_s2c, "zlib@openssh.com");
+        let data = compressible(250_000);
+        let r = c.execute("cat", Some(&data)).unwrap();
+        assert!(r.stdout == data, "sshd cat: {} of {} bytes", r.stdout.len(), data.len());
+        let r = c.execute("head -c 100000 /dev/zero | tr '\\0' x", None).unwrap();
+        assert_eq!(r.stdout, vec![b'x'; 100_000]);
+        c.disconnect();
+    }
+}

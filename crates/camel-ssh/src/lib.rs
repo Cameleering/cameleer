@@ -64,6 +64,7 @@ pub mod sftp;
 pub mod testing;
 pub mod transport;
 pub mod wire;
+pub mod zlib;
 
 use std::sync::Arc;
 

@@ -119,9 +119,14 @@ pub fn parse_algorithm_list(what: &str, list: &str, supported: &[&str]) -> SshRe
     Ok(out)
 }
 
+/// Supported compression algorithms (`zlib@openssh.com` starts after user authentication).
+pub const SUPPORTED_COMPRESSION: &[&str] = &["none", "zlib@openssh.com", "zlib"];
+
 /// The algorithms chosen by the last key exchange.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Negotiated {
+    pub comp_c2s: String,
+    pub comp_s2c: String,
     pub kex: String,
     pub host_key: String,
     pub cipher_c2s: String,
@@ -162,11 +167,13 @@ pub struct TransportConfig {
     pub rekey_limit: u64,
     /// Software version advertised in the identification string.
     pub software_version: String,
+    /// Compression preference (`none`, `zlib@openssh.com`, `zlib`), default `none` only.
+    pub compression: Vec<String>,
 }
 
 impl Default for TransportConfig {
     fn default() -> Self {
-        TransportConfig { algorithms: Algorithms::default(), rekey_limit: 1 << 30, software_version: "CamelSSH_1.0".into() }
+        TransportConfig { algorithms: Algorithms::default(), rekey_limit: 1 << 30, software_version: "CamelSSH_1.0".into(), compression: vec!["none".into()] }
     }
 }
 
@@ -187,11 +194,28 @@ struct Dir {
     cipher: Cipher,
     bytes: u64,
     packets: u64,
+    /// Negotiated compression of this direction ("none", "zlib", "zlib@openssh.com").
+    comp: String,
+    deflater: Option<crate::zlib::Deflater>,
+    inflater: Option<crate::zlib::Inflater>,
 }
 
 impl Dir {
     fn new() -> Dir {
-        Dir { seq: 0, cipher: Cipher::None, bytes: 0, packets: 0 }
+        Dir { seq: 0, cipher: Cipher::None, bytes: 0, packets: 0, comp: "none".into(), deflater: None, inflater: None }
+    }
+    fn compressing(&self) -> bool {
+        self.deflater.is_some() || self.inflater.is_some()
+    }
+    /// Switches compression on (outgoing: deflater, incoming: inflater).
+    fn start_compression(&mut self, outgoing: bool) {
+        if self.comp != "none" && !self.compressing() {
+            if outgoing {
+                self.deflater = Some(crate::zlib::Deflater::new());
+            } else {
+                self.inflater = Some(crate::zlib::Inflater::new());
+            }
+        }
     }
 }
 
@@ -290,6 +314,8 @@ pub struct Transport<S: Stream> {
     server_sig_algs: Option<Vec<String>>,
     kex_count: u32,
     last_recv_seq: u32,
+    /// User authentication succeeded (delayed `zlib@openssh.com` compression is active).
+    authenticated: bool,
 }
 
 impl<S: Stream> Transport<S> {
@@ -315,6 +341,7 @@ impl<S: Stream> Transport<S> {
             server_sig_algs: None,
             kex_count: 0,
             last_recv_seq: 0,
+            authenticated: false,
         }
     }
 
@@ -455,6 +482,29 @@ impl<S: Stream> Transport<S> {
     // ------------------------------------------------------------ packets
 
     fn write_packet(&mut self, payload: &[u8]) -> SshResult<()> {
+        let compressed;
+        let payload = match self.out.deflater.as_mut() {
+            Some(d) => {
+                compressed = d.compress(payload);
+                &compressed[..]
+            }
+            None => payload,
+        };
+        let r = self.write_packet_raw(payload);
+        // server: delayed compression starts after USERAUTH_SUCCESS was sent
+        if !self.is_client() && !self.authenticated && payload.first() == Some(&msg::USERAUTH_SUCCESS) && r.is_ok() {
+            self.authenticated = true;
+            if self.out.comp == "zlib@openssh.com" {
+                self.out.start_compression(true);
+            }
+            if self.inp.comp == "zlib@openssh.com" {
+                self.inp.start_compression(false);
+            }
+        }
+        r
+    }
+
+    fn write_packet_raw(&mut self, payload: &[u8]) -> SshResult<()> {
         let (bs, len_excluded) = match &self.out.cipher {
             Cipher::None => (8, false),
             Cipher::Ctr { mac, .. } => (16, mac.etm),
@@ -589,7 +639,23 @@ impl<S: Stream> Transport<S> {
         if pad < 4 || pad + 1 >= body.len() {
             return Err(SshError::protocol(format!("invalid padding length {}", pad)));
         }
-        let payload = body[1..body.len() - pad].to_vec();
+        let mut payload = body[1..body.len() - pad].to_vec();
+        if let Some(inf) = self.inp.inflater.as_mut() {
+            payload = inf.decompress(&payload).map_err(|e| SshError::protocol(format!("decompression failed: {}", e)))?;
+            if payload.is_empty() {
+                return Err(SshError::protocol("empty packet after decompression"));
+            }
+        }
+        // client: delayed compression starts after USERAUTH_SUCCESS was received
+        if self.is_client() && !self.authenticated && payload.first() == Some(&msg::USERAUTH_SUCCESS) {
+            self.authenticated = true;
+            if self.out.comp == "zlib@openssh.com" {
+                self.out.start_compression(true);
+            }
+            if self.inp.comp == "zlib@openssh.com" {
+                self.inp.start_compression(false);
+            }
+        }
         self.last_recv_seq = seq;
         self.inp.seq = seq.wrapping_add(1);
         self.inp.bytes += wire_len as u64;
@@ -703,7 +769,9 @@ impl<S: Stream> Transport<S> {
         w.name_list(&kex).name_list(&host_keys);
         w.name_list(&a.ciphers).name_list(&a.ciphers);
         w.name_list(&a.macs).name_list(&a.macs);
-        w.str("none").str("none").str("").str("");
+        let comp = if self.cfg.compression.is_empty() { vec!["none".to_string()] } else { self.cfg.compression.clone() };
+        w.name_list(&comp).name_list(&comp);
+        w.str("").str("");
         w.bool(false).u32(0);
         w.finish()
     }
@@ -773,9 +841,9 @@ impl<S: Stream> Transport<S> {
         let cipher_s2c = choose("cipher (server to client)", &pc.enc[1], &ps.enc[1])?;
         let mac_c2s = if cipher_params(&cipher_c2s).2 { String::new() } else { choose("MAC (client to server)", &pc.mac[0], &ps.mac[0])? };
         let mac_s2c = if cipher_params(&cipher_s2c).2 { String::new() } else { choose("MAC (server to client)", &pc.mac[1], &ps.mac[1])? };
-        choose("compression", &pc.comp[0], &ps.comp[0])?;
-        choose("compression", &pc.comp[1], &ps.comp[1])?;
-        let n = Negotiated { kex, host_key, cipher_c2s, cipher_s2c, mac_c2s, mac_s2c };
+        let comp_c2s = choose("compression", &pc.comp[0], &ps.comp[0])?;
+        let comp_s2c = choose("compression", &pc.comp[1], &ps.comp[1])?;
+        let n = Negotiated { kex, host_key, cipher_c2s, cipher_s2c, mac_c2s, mac_s2c, comp_c2s, comp_s2c };
         // a wrongly guessed first KEX packet from the peer must be ignored
         let peer = if client { &ps } else { &pc };
         let ignore_next = peer.first_follows && (peer.kex.first() != Some(&n.kex) || peer.host_key.first() != Some(&n.host_key));
@@ -810,8 +878,16 @@ impl<S: Stream> Transport<S> {
         let s2c = build(&n.cipher_s2c, &n.mac_s2c, b'B', b'D', b'F');
         let (new_out, new_in) = if client { (c2s, s2c) } else { (s2c, c2s) };
 
+        let (comp_out, comp_in) = if client { (n.comp_c2s.clone(), n.comp_s2c.clone()) } else { (n.comp_s2c.clone(), n.comp_c2s.clone()) };
         self.write_packet(&[msg::NEWKEYS])?;
         self.out.cipher = new_out;
+        if self.out.comp != comp_out {
+            self.out.comp = comp_out;
+            self.out.deflater = None;
+            if self.out.comp == "zlib" || (self.out.comp == "zlib@openssh.com" && self.authenticated) {
+                self.out.start_compression(true);
+            }
+        }
         self.out.bytes = 0;
         self.out.packets = 0;
         if self.strict {
@@ -822,6 +898,13 @@ impl<S: Stream> Transport<S> {
             return Err(SshError::protocol(format!("expected NEWKEYS, got message {}", p[0])));
         }
         self.inp.cipher = new_in;
+        if self.inp.comp != comp_in {
+            self.inp.comp = comp_in;
+            self.inp.inflater = None;
+            if self.inp.comp == "zlib" || (self.inp.comp == "zlib@openssh.com" && self.authenticated) {
+                self.inp.start_compression(false);
+            }
+        }
         self.inp.bytes = 0;
         self.inp.packets = 0;
         if self.strict {
