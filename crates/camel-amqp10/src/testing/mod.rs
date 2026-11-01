@@ -3,4 +3,4 @@
 
 mod broker;
 
-pub use broker::{Amqp10Broker, AzureConfig, BrokerBuilder, SELECTOR_FILTER};
+pub use broker::{Amqp10Broker, AzureConfig, BrokerBuilder, EPOCH_PROPERTY, SELECTOR_FILTER, SESSION_FILTER};

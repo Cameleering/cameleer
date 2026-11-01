@@ -8,6 +8,13 @@
 //!   (accepted / rejected / released / modified with redelivery and `delivery-count`),
 //!   JMS selectors (`apache.org:selector-filter:string` filters), message expiry,
 //!   multi-frame transfers (frames split by the peer's max-frame-size), heartbeats.
+//! * Local transactions: a coordinator link (`amqp:coordinator:list` target) declares and
+//!   discharges transactions; transactional transfers are buffered and transactional
+//!   dispositions held until the commit (a rollback drops the sends and returns the
+//!   acquired messages, redelivered; open transactions roll back with their connection).
+//! * `rcv-settle-mode = second` (both directions), JMS 2.0 shared subscriptions (`shared` /
+//!   `global` capabilities, `name|...` link names), AMQP over WebSockets (an HTTP upgrade
+//!   is detected on the same port, subprotocols `AMQPWSB10` / `amqp`).
 //! * Azure emulation ([`BrokerBuilder::azure`]): the `$cbs` node validates SAS tokens
 //!   (HMAC-SHA256) and links / management requests need a token covering the entity;
 //!   Service Bus queues, topics with `topic/subscriptions/name`, peek-lock (lock tokens as
@@ -19,9 +26,14 @@
 //!   partitions (`hub/Partitions/N`, partition keys), consumer groups
 //!   (`hub/ConsumerGroups/cg/Partitions/N`), offset / sequence-number / enqueued-time
 //!   filters and the `$management` `READ` operations (`com.microsoft:eventhub`,
-//!   `com.microsoft:partition`).
+//!   `com.microsoft:partition`); Azure AD bearer tokens ([`BrokerBuilder::azure_jwt`],
+//!   CBS `type=jwt`); Service Bus sessions (session filter, session locks with expiry and
+//!   `renew-session-lock`, session state, [`BrokerBuilder::session_entity`]), `renew-lock`,
+//!   deferral (`modified` with `undeliverable-here`, `receive-by-sequence-number`,
+//!   `update-disposition`); Event Hubs receiver epochs (`com.microsoft:epoch`: a higher or
+//!   equal epoch steals the partition with `amqp:link:stolen`).
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -39,10 +51,13 @@ use crate::message::{id_to_string, Body, Message};
 use crate::transport::Transport;
 use crate::types::*;
 use crate::util::{now_millis, parse_sas_token, verify_sas_token};
+use crate::ws::AmqpStream;
 
 pub use crate::types::SELECTOR_FILTER;
 const SELECTOR_FILTER_CODE: u64 = 0x0000_468C_0000_0004;
 const PRODUCER_CREDIT: u32 = 1000;
+pub use crate::azure::{EPOCH_PROPERTY, SESSION_FILTER};
+use crate::azure::SESSION_FILTER_CODE;
 
 // ---------------------------------------------------------------------------
 // configuration
@@ -55,6 +70,8 @@ pub struct AzureConfig {
     pub namespace: String,
     /// SAS key name -> key.
     pub keys: HashMap<String, String>,
+    /// Accepted Azure AD (`jwt`) bearer tokens.
+    pub jwt: HashSet<String>,
 }
 
 /// Builder for [`Amqp10Broker`].
@@ -71,6 +88,7 @@ pub struct BrokerBuilder {
     event_hubs: Vec<(String, u32)>,
     max_delivery_count: u32,
     lock_duration: Duration,
+    session_entities: Vec<String>,
 }
 
 impl BrokerBuilder {
@@ -114,7 +132,20 @@ impl BrokerBuilder {
     pub fn azure(mut self, key_name: &str, key: &str) -> Self {
         let mut keys = HashMap::new();
         keys.insert(key_name.to_string(), key.to_string());
-        self.azure = Some(AzureConfig { namespace: "localhost".into(), keys });
+        self.azure = Some(AzureConfig { namespace: "localhost".into(), keys, jwt: HashSet::new() });
+        self
+    }
+    /// Azure emulation: accept this Azure AD bearer token on `$cbs` (`type=jwt`) for any
+    /// audience (enables the Azure emulation when not yet enabled).
+    pub fn azure_jwt(mut self, token: &str) -> Self {
+        let a = self.azure.get_or_insert_with(|| AzureConfig { namespace: "localhost".into(), keys: HashMap::new(), jwt: HashSet::new() });
+        a.jwt.insert(token.to_string());
+        self
+    }
+    /// Service Bus: a session-enabled queue (or `topic/subscriptions/name`): receivers
+    /// must lock a session with the `com.microsoft:session-filter`.
+    pub fn session_entity(mut self, path: &str) -> Self {
+        self.session_entities.push(path.to_ascii_lowercase());
         self
     }
     pub fn azure_key(mut self, key_name: &str, key: &str) -> Self {
@@ -154,6 +185,7 @@ impl BrokerBuilder {
         for (t, s) in &self.subscriptions {
             st.queues.entry(sub_key(t, s)).or_insert_with(Queue::durable);
         }
+        st.session_entities = self.session_entities.iter().cloned().collect();
         for (hub, n) in &self.event_hubs {
             st.hubs.insert(hub.to_ascii_lowercase(), *n);
             for p in 0..*n {
@@ -234,8 +266,10 @@ enum LinkKind {
     Producer(String),
     /// Client receives from a queue key.
     Consumer(String),
-    /// Client receives from an Event Hubs partition log.
-    Log { key: String, cursor: usize },
+    /// Client receives from an Event Hubs partition log (`key` = hub/partition).
+    Log { key: String, cursor: usize, group: String },
+    /// Client declares and discharges transactions.
+    Coordinator,
 }
 
 struct BLink {
@@ -244,11 +278,18 @@ struct BLink {
     delivery_count: u32,
     presettle: bool,
     selector: Option<Selector>,
-    partial: Option<(u32, bool, Vec<u8>)>,
+    /// Delivery being received: id, settled, payload, transaction id.
+    partial: Option<(u32, bool, Vec<u8>, Option<Vec<u8>>)>,
     /// Receivers on management nodes: the target address (reply-to).
     reply_address: Option<String>,
     /// Peek-lock Service Bus receiver.
     peek_lock: bool,
+    /// `rcv-settle-mode = second`.
+    rcv_second: bool,
+    /// Service Bus session this receiver locked.
+    session: Option<String>,
+    /// Event Hubs receiver epoch.
+    epoch: Option<i64>,
 }
 
 struct BSession {
@@ -271,6 +312,16 @@ struct Inflight {
     handle: u32,
     stored: Stored,
     locked_until: Option<i64>,
+    /// Service Bus lock token (RFC 4122 byte order).
+    lock_token: Option<[u8; 16]>,
+}
+
+/// An open transaction: buffered sends and transactional settlements.
+#[derive(Default)]
+struct Txn {
+    conn: u64,
+    sends: Vec<(u16, String, Message)>,
+    settles: Vec<(Inflight, DeliveryState)>,
 }
 
 #[derive(Default)]
@@ -286,6 +337,18 @@ struct BrokerState {
     hub_rr: usize,
     scheduled: Vec<(i64, String, Stored)>,
     inflight: HashMap<(u64, u16, u32), Inflight>,
+    txns: HashMap<Vec<u8>, Txn>,
+    next_txn: u64,
+    committed_txns: u64,
+    rolled_back_txns: u64,
+    session_entities: HashSet<String>,
+    /// (entity, session id) -> (locking link, locked until).
+    session_locks: HashMap<(String, String), (LinkKey, i64)>,
+    session_states: HashMap<(String, String), Vec<u8>>,
+    /// Deferred messages per entity.
+    deferred: HashMap<String, Vec<Stored>>,
+    /// Deferred messages received in peek-lock mode: lock token -> (entity, message, locked until).
+    deferred_locked: HashMap<[u8; 16], (String, Stored, i64)>,
 }
 
 struct Inner {
@@ -335,6 +398,7 @@ impl Amqp10Broker {
             event_hubs: Vec::new(),
             max_delivery_count: 10,
             lock_duration: Duration::from_secs(30),
+            session_entities: Vec::new(),
         }
     }
     /// Start with defaults (anonymous access).
@@ -398,6 +462,50 @@ impl Amqp10Broker {
     pub fn connection_count(&self) -> usize {
         self.inner.lock().conns.len()
     }
+    /// Number of open (undischarged) transactions.
+    pub fn open_transactions(&self) -> usize {
+        self.inner.lock().txns.len()
+    }
+    /// Committed and rolled back transactions so far.
+    pub fn transaction_counts(&self) -> (u64, u64) {
+        let st = self.inner.lock();
+        (st.committed_txns, st.rolled_back_txns)
+    }
+    /// Number of deferred messages of a Service Bus entity.
+    pub fn deferred_count(&self, entity: &str) -> usize {
+        let st = self.inner.lock();
+        let key = entity.to_ascii_lowercase();
+        st.deferred.get(&key).map(|v| v.len()).unwrap_or(0) + st.deferred_locked.values().filter(|(e, _, _)| *e == key).count()
+    }
+    /// The state stored for a Service Bus session.
+    pub fn session_state(&self, entity: &str, session: &str) -> Option<Vec<u8>> {
+        self.inner.lock().session_states.get(&(entity.to_ascii_lowercase(), session.to_string())).cloned()
+    }
+    /// The Service Bus session ids currently locked on an entity.
+    pub fn locked_sessions(&self, entity: &str) -> Vec<String> {
+        let key = entity.to_ascii_lowercase();
+        let mut v: Vec<String> = self.inner.lock().session_locks.keys().filter(|(e, _)| *e == key).map(|(_, s)| s.clone()).collect();
+        v.sort();
+        v
+    }
+    /// The lock expiry (epoch millis) of the unsettled peek-lock deliveries of an entity.
+    pub fn lock_expirations(&self, entity: &str) -> Vec<i64> {
+        let key = entity.to_ascii_lowercase();
+        self.inner.lock().inflight.values().filter(|i| i.queue == key).filter_map(|i| i.locked_until).collect()
+    }
+    /// Event Hubs: the receivers attached to a partition of a consumer group, as their epochs.
+    pub fn partition_receivers(&self, hub: &str, group: &str, partition: u32) -> Vec<Option<i64>> {
+        let key = format!("{}/{}", hub.to_ascii_lowercase(), partition);
+        let group = group.to_ascii_lowercase();
+        let st = self.inner.lock();
+        st.conns
+            .values()
+            .flat_map(|c| c.sessions.values())
+            .flat_map(|s| s.links.values())
+            .filter(|l| matches!(&l.kind, LinkKind::Log { key: k, group: g, .. } if *k == key && *g == group))
+            .map(|l| l.epoch)
+            .collect()
+    }
     /// Wait until `f` holds (polls every 5 ms, up to `timeout`).
     pub fn wait_for(&self, timeout: Duration, f: impl Fn(&Amqp10Broker) -> bool) -> bool {
         let deadline = std::time::Instant::now() + timeout;
@@ -446,9 +554,16 @@ fn serve(inner: &Arc<Inner>, tcp: TcpStream, id: u64) {
     inner.cleanup_conn(id);
 }
 
-fn serve_conn(inner: &Arc<Inner>, mut stream: NetStream, id: u64) -> std::io::Result<()> {
+fn serve_conn(inner: &Arc<Inner>, net: NetStream, id: u64) -> std::io::Result<()> {
     use std::io::Write;
+    let mut stream = AmqpStream::from(net);
     let mut header = read_protocol_header(&mut stream)?;
+    if header.starts_with(b"GET ") {
+        // AMQP over WebSockets: answer the upgrade, then read the protocol header from it
+        let net = stream.net().try_clone()?;
+        stream = AmqpStream::websocket_server(net, &header)?;
+        header = read_protocol_header(&mut stream)?;
+    }
     let sasl_required = !inner.users.is_empty() || !inner.allow_anonymous;
     if header == SASL_HEADER {
         stream.write_all(&SASL_HEADER)?;
@@ -505,7 +620,7 @@ fn serve_conn(inner: &Arc<Inner>, mut stream: NetStream, id: u64) -> std::io::Re
     Ok(())
 }
 
-fn sasl_server(inner: &Inner, stream: &mut NetStream) -> std::io::Result<bool> {
+fn sasl_server(inner: &Inner, stream: &mut AmqpStream) -> std::io::Result<bool> {
     use std::io::Write;
     let mut mechs: Vec<String> = Vec::new();
     if !inner.users.is_empty() {
@@ -521,9 +636,9 @@ fn sasl_server(inner: &Inner, stream: &mut NetStream) -> std::io::Result<bool> {
             mechs.push("EXTERNAL".into());
         }
     }
-    let send = |s: &mut NetStream, f: SaslFrame| s.write_all(&Frame { channel: 0, body: FrameBody::Sasl(f) }.encode());
+    let send = |s: &mut AmqpStream, f: SaslFrame| s.write_all(&Frame { channel: 0, body: FrameBody::Sasl(f) }.encode());
     send(stream, SaslFrame::Mechanisms(mechs.clone()))?;
-    let next = |s: &mut NetStream| -> std::io::Result<Option<SaslFrame>> {
+    let next = |s: &mut AmqpStream| -> std::io::Result<Option<SaslFrame>> {
         Ok(match read_frame(s, 65536)? {
             Some(Frame { body: FrameBody::Sasl(f), .. }) => Some(f),
             _ => None,
@@ -756,12 +871,25 @@ impl Inner {
                     let mut id = d.first;
                     loop {
                         if let Some(inf) = st.inflight.remove(&(cid, ch, id)) {
-                            self.settle(st, inf, d.state.clone().unwrap_or(DeliveryState::Accepted));
+                            match d.state.clone().unwrap_or(DeliveryState::Accepted) {
+                                DeliveryState::Transactional { txn_id, outcome } => {
+                                    let outcome = outcome.map(|o| *o).unwrap_or(DeliveryState::Accepted);
+                                    match st.txns.get_mut(&txn_id) {
+                                        Some(tx) => tx.settles.push((inf, outcome)),
+                                        None => self.settle(st, inf, outcome),
+                                    }
+                                }
+                                state => self.settle(st, inf, state),
+                            }
                         }
                         if id == last {
                             break;
                         }
                         id = id.wrapping_add(1);
+                    }
+                    if !d.settled {
+                        // the receiver settles second: settle as the sender, then it settles
+                        Self::write(st, cid, Frame::amqp(ch, Performative::Disposition(Disposition { role: Role::Sender, first: d.first, last: d.last, settled: true, state: d.state.clone(), batchable: false })));
                     }
                     self.dispatch(st);
                 }
@@ -836,6 +964,9 @@ impl Inner {
         let mut peek_lock = false;
         let mut selector = None;
         let mut reply_address = None;
+        let mut session: Option<String> = None;
+        let mut epoch: Option<i64> = None;
+        let mut resp_properties: Vec<(AmqpValue, AmqpValue)> = Vec::new();
         let kind = match a.role {
             Role::Sender => {
                 // client sends: we receive from it
@@ -843,6 +974,9 @@ impl Inner {
                     self.refuse(st, cid, ch, &a, AmqpError::new(cond::INVALID_FIELD, "target required"));
                     return Ok(());
                 };
+                if t.coordinator {
+                    LinkKind::Coordinator
+                } else {
                 let addr = if t.dynamic {
                     st.temp_counter += 1;
                     let name = format!("temp-queue-{}-{}", cid, st.temp_counter);
@@ -867,6 +1001,7 @@ impl Inner {
                     st.topics.insert(addr.clone());
                 }
                 LinkKind::Producer(addr)
+                }
             }
             Role::Receiver => {
                 let Some(s) = &a.source else {
@@ -910,8 +1045,45 @@ impl Inner {
                                 return Ok(());
                             };
                             presettle = true;
-                            LinkKind::Log { cursor: event_position(s, log), key: log_key }
+                            let cursor = event_position(s, log);
+                            let group = parts[2].to_string();
+                            epoch = a.properties.iter().find(|(k, _)| k.as_str() == Some(EPOCH_PROPERTY)).and_then(|(_, v)| v.as_i64());
+                            if let Err(e) = self.claim_epoch(st, &log_key, &group, epoch) {
+                                self.refuse(st, cid, ch, &a, e);
+                                return Ok(());
+                            }
+                            LinkKind::Log { cursor, key: log_key, group }
                         } else if self.azure() {
+                            let entity = lower.trim_end_matches(&format!("/{}", DLQ)).to_string();
+                            let session_filter = s.filter.iter().map(|(_, v)| v).find(|v| v.descriptor_symbol() == Some(SESSION_FILTER) || v.descriptor_code() == Some(SESSION_FILTER_CODE));
+                            match session_filter {
+                                Some(f) => {
+                                    let requested = f.undescribed().as_str().map(String::from);
+                                    match self.lock_session(st, &entity, requested, key) {
+                                        Ok((sid, until)) => {
+                                            if let Some(src) = source.as_mut() {
+                                                for (k, v) in src.filter.iter_mut() {
+                                                    if v.descriptor_symbol() == Some(SESSION_FILTER) || v.descriptor_code() == Some(SESSION_FILTER_CODE) {
+                                                        *k = AmqpValue::sym(SESSION_FILTER);
+                                                        *v = AmqpValue::Described(Box::new(AmqpValue::sym(SESSION_FILTER)), Box::new(AmqpValue::str(sid.clone())));
+                                                    }
+                                                }
+                                            }
+                                            resp_properties.push((AmqpValue::sym("com.microsoft:locked-until-utc"), AmqpValue::Timestamp(until)));
+                                            session = Some(sid);
+                                        }
+                                        Err(e) => {
+                                            self.refuse(st, cid, ch, &a, e);
+                                            return Ok(());
+                                        }
+                                    }
+                                }
+                                None if st.session_entities.contains(&entity) && !lower.ends_with(DLQ) => {
+                                    self.refuse(st, cid, ch, &a, AmqpError::new(cond::NOT_ALLOWED, format!("It is not possible for an entity that requires sessions to create a non-sessionful message receiver: {}", entity)));
+                                    return Ok(());
+                                }
+                                None => {}
+                            }
                             if parts.len() >= 3 && parts[1] == "subscriptions" {
                                 st.queues.entry(lower.clone()).or_default();
                             } else if st.hubs.contains_key(parts[0]) {
@@ -925,16 +1097,27 @@ impl Inner {
                         } else if st.topics.contains(&addr) || s.capabilities.iter().any(|c| c == "topic") {
                             st.topics.insert(addr.clone());
                             let durable = s.durable > 0 || s.expiry_policy.as_deref() == Some("never");
-                            let name = if durable {
-                                let container = st.conns.get(&cid).map(|c| c.container_id.clone()).unwrap_or_default();
+                            let shared = s.capabilities.iter().any(|c| c == "shared");
+                            let container = st.conns.get(&cid).map(|c| c.container_id.clone()).unwrap_or_default();
+                            let name = if shared {
+                                // JMS 2.0 shared subscriptions: link names `name`, `name|global`, `name|volatileN`...
+                                let sub = a.name.split('|').next().unwrap_or(&a.name);
+                                let scope = if s.capabilities.iter().any(|c| c == "global") { String::new() } else { container };
+                                format!("#shared-{}-{}-{}", if durable { "d" } else { "v" }, scope, sub)
+                            } else if durable {
                                 format!("#durable-{}-{}", container, a.name)
                             } else {
                                 format!("#sub-{}-{}-{}", cid, ch, a.handle)
                             };
+                            let exists = st.queues.contains_key(&name);
                             let q = st.queues.entry(name.clone()).or_default();
                             q.topic = Some(addr.clone());
-                            q.selector = selector.take();
-                            q.owner = if durable { None } else { Some(key) };
+                            if !shared || !exists {
+                                q.selector = selector.take();
+                            } else {
+                                selector = None;
+                            }
+                            q.owner = if durable || shared { None } else { Some(key) };
                             LinkKind::Consumer(name)
                         } else {
                             st.queues.entry(addr.clone()).or_default();
@@ -944,8 +1127,9 @@ impl Inner {
                 }
             }
         };
-        let is_producer = matches!(kind, LinkKind::Producer(_));
-        let link = BLink { kind, credit: 0, delivery_count: 0, presettle, selector, partial: None, reply_address, peek_lock };
+        let is_producer = matches!(kind, LinkKind::Producer(_) | LinkKind::Coordinator);
+        let rcv_second = a.rcv_settle_mode == RcvSettleMode::Second;
+        let link = BLink { kind, credit: 0, delivery_count: 0, presettle, selector, partial: None, reply_address, peek_lock, rcv_second, session, epoch };
         let sess = st.conns.get_mut(&cid).unwrap().sessions.get_mut(&ch).unwrap();
         sess.links.insert(a.handle, link);
         let resp = Attach {
@@ -953,15 +1137,16 @@ impl Inner {
             handle: a.handle,
             role: if a.role == Role::Sender { Role::Receiver } else { Role::Sender },
             snd_settle_mode: a.snd_settle_mode,
-            rcv_settle_mode: RcvSettleMode::First,
+            rcv_settle_mode: a.rcv_settle_mode,
             source,
             target,
             initial_delivery_count: if a.role == Role::Receiver { Some(0) } else { None },
             max_message_size: None,
             offered_capabilities: vec![],
             desired_capabilities: vec![],
-            properties: vec![],
+            properties: resp_properties,
         };
+
         Self::write(st, cid, Frame::amqp(ch, Performative::Attach(resp)));
         if is_producer {
             if let Some(l) = st.conns.get_mut(&cid).and_then(|c| c.sessions.get_mut(&ch)).and_then(|s| s.links.get_mut(&a.handle)) {
@@ -990,8 +1175,19 @@ impl Inner {
 
     fn remove_link(&self, st: &mut BrokerState, key: LinkKey) {
         let (cid, ch, h) = key;
+        let mut removed_queue = None;
         if let Some(s) = st.conns.get_mut(&cid).and_then(|c| c.sessions.get_mut(&ch)) {
-            s.links.remove(&h);
+            if let Some(LinkKind::Consumer(q)) = s.links.remove(&h).map(|l| l.kind) {
+                removed_queue = Some(q);
+            }
+        }
+        st.session_locks.retain(|_, (k, _)| *k != key);
+        // a non-durable shared subscription ends with its last consumer
+        if let Some(q) = removed_queue.filter(|q| q.starts_with("#shared-v-")) {
+            let in_use = st.conns.values().flat_map(|c| c.sessions.values()).flat_map(|s| s.links.values()).any(|l| matches!(&l.kind, LinkKind::Consumer(k) if *k == q));
+            if !in_use {
+                st.queues.remove(&q);
+            }
         }
         // requeue the link's unsettled deliveries (redelivered)
         let ids: Vec<(u64, u16, u32)> = st.inflight.iter().filter(|((c, s, _), i)| *c == cid && *s == ch && i.handle == h).map(|(k, _)| *k).collect();
@@ -1008,6 +1204,14 @@ impl Inner {
 
     fn cleanup_conn(&self, cid: u64) {
         let mut st = self.lock();
+        // open transactions of the connection roll back
+        let open: Vec<Vec<u8>> = st.txns.iter().filter(|(_, t)| t.conn == cid).map(|(k, _)| k.clone()).collect();
+        for id in open {
+            if let Some(tx) = st.txns.remove(&id) {
+                self.discharge(&mut st, tx, true);
+            }
+        }
+
         let keys: Vec<LinkKey> = st.conns.get(&cid).map(|c| c.sessions.iter().flat_map(|(ch, s)| s.links.keys().map(move |h| (cid, *ch, *h))).collect()).unwrap_or_default();
         for k in keys {
             self.remove_link(&mut st, k);
@@ -1032,10 +1236,20 @@ impl Inner {
     fn transfer(&self, st: &mut BrokerState, cid: u64, ch: u16, t: Transfer, payload: Vec<u8>) -> std::result::Result<(), AmqpError> {
         let link = st.conns.get_mut(&cid).and_then(|c| c.sessions.get_mut(&ch)).and_then(|s| s.links.get_mut(&t.handle));
         let Some(l) = link else { return Err(AmqpError::new(cond::INVALID_FIELD, format!("transfer on unknown handle {}", t.handle))) };
-        let LinkKind::Producer(addr) = l.kind.clone() else { return Err(AmqpError::new(cond::INVALID_FIELD, "transfer on a sending link")) };
+        let coordinator = matches!(l.kind, LinkKind::Coordinator);
+        let addr = match &l.kind {
+            LinkKind::Producer(a) => a.clone(),
+            LinkKind::Coordinator => String::new(),
+            _ => return Err(AmqpError::new(cond::INVALID_FIELD, "transfer on a sending link")),
+        };
+        let rcv_second = l.rcv_second;
         if l.partial.is_none() {
             let id = t.delivery_id.ok_or_else(|| AmqpError::new(cond::INVALID_FIELD, "transfer without delivery-id"))?;
-            l.partial = Some((id, false, Vec::new()));
+            let txn = match &t.state {
+                Some(DeliveryState::Transactional { txn_id, .. }) => Some(txn_id.clone()),
+                _ => None,
+            };
+            l.partial = Some((id, false, Vec::new(), txn));
             l.delivery_count = l.delivery_count.wrapping_add(1);
             l.credit = l.credit.saturating_sub(1);
         }
@@ -1049,21 +1263,31 @@ impl Inner {
         if t.more {
             return Ok(());
         }
-        let (delivery_id, settled, bytes) = l.partial.take().unwrap();
+        let (delivery_id, settled, bytes, txn) = l.partial.take().unwrap();
         let topup = l.credit < PRODUCER_CREDIT / 2;
         if topup {
             l.credit = PRODUCER_CREDIT;
         }
-        let outcome = match Message::decode(&bytes) {
-            Ok(m) => self.route(st, cid, ch, &addr, m),
-            Err(e) => Err(AmqpError::new(cond::DECODE_ERROR, e.0)),
+        let state = match Message::decode(&bytes) {
+            Err(e) => DeliveryState::Rejected(Some(AmqpError::new(cond::DECODE_ERROR, e.0))),
+            Ok(m) if coordinator => self.coordinate(st, cid, &m),
+            Ok(m) => match txn {
+                Some(id) => match st.txns.get_mut(&id) {
+                    Some(tx) => {
+                        tx.sends.push((ch, addr.clone(), m));
+                        DeliveryState::Transactional { txn_id: id, outcome: Some(Box::new(DeliveryState::Accepted)) }
+                    }
+                    None => DeliveryState::Rejected(Some(AmqpError::new(cond::TRANSACTION_UNKNOWN_ID, "unknown transaction id"))),
+                },
+                None => match self.route(st, cid, ch, &addr, m) {
+                    Ok(()) => DeliveryState::Accepted,
+                    Err(e) => DeliveryState::Rejected(Some(e)),
+                },
+            },
         };
         if !settled {
-            let state = match outcome {
-                Ok(()) => DeliveryState::Accepted,
-                Err(e) => DeliveryState::Rejected(Some(e)),
-            };
-            Self::write(st, cid, Frame::amqp(ch, Performative::Disposition(Disposition { role: Role::Receiver, first: delivery_id, last: None, settled: true, state: Some(state), batchable: false })));
+            // rcv-settle-mode second: the sender settles first, we settle on its disposition
+            Self::write(st, cid, Frame::amqp(ch, Performative::Disposition(Disposition { role: Role::Receiver, first: delivery_id, last: None, settled: !rcv_second, state: Some(state), batchable: false })));
         }
         if topup {
             self.send_link_flow(st, cid, ch, t.handle);
@@ -1072,7 +1296,70 @@ impl Inner {
         Ok(())
     }
 
+    /// A message on the transaction coordinator: `declare` or `discharge`.
+    fn coordinate(&self, st: &mut BrokerState, cid: u64, m: &Message) -> DeliveryState {
+        let Body::Value(v) = &m.body else {
+            return DeliveryState::Rejected(Some(AmqpError::new(cond::DECODE_ERROR, "coordinator messages carry an amqp-value body")));
+        };
+        let fields = v.undescribed().as_list().unwrap_or(&[]);
+        match v.descriptor_code() {
+            Some(desc::DECLARE) => {
+                st.next_txn += 1;
+                let id = format!("txn-{}", st.next_txn).into_bytes();
+                st.txns.insert(id.clone(), Txn { conn: cid, ..Default::default() });
+                DeliveryState::Declared(id)
+            }
+            Some(desc::DISCHARGE) => {
+                let id = crate::codec::field(fields, 0).as_binary().unwrap_or(&[]).to_vec();
+                let fail = crate::codec::field(fields, 1).as_bool().unwrap_or(false);
+                match st.txns.remove(&id) {
+                    Some(tx) if tx.conn == cid => {
+                        self.discharge(st, tx, fail);
+                        DeliveryState::Accepted
+                    }
+                    Some(tx) => {
+                        st.txns.insert(id, tx);
+                        DeliveryState::Rejected(Some(AmqpError::new(cond::TRANSACTION_UNKNOWN_ID, "transaction of another connection")))
+                    }
+                    None => DeliveryState::Rejected(Some(AmqpError::new(cond::TRANSACTION_UNKNOWN_ID, "unknown transaction id"))),
+                }
+            }
+            _ => DeliveryState::Rejected(Some(AmqpError::new(cond::NOT_IMPLEMENTED, "unsupported coordinator message"))),
+        }
+    }
+
+    /// Commit (apply buffered sends and settlements) or roll back (drop the sends,
+    /// make the acquired messages available again, redelivered).
+    fn discharge(&self, st: &mut BrokerState, tx: Txn, fail: bool) {
+        if fail {
+            st.rolled_back_txns += 1;
+            for (mut inf, _) in tx.settles.into_iter().rev() {
+                inf.stored.delivery_count += 1;
+                self.requeue(st, inf);
+            }
+        } else {
+            st.committed_txns += 1;
+            for (ch, addr, m) in tx.sends {
+                let _ = self.route(st, tx.conn, ch, &addr, m);
+            }
+            for (inf, outcome) in tx.settles {
+                self.settle(st, inf, outcome);
+            }
+        }
+        self.dispatch(st);
+    }
+
+    /// Return an unsettled message to its queue (Azure: dead-letter after MaxDeliveryCount).
+    fn requeue(&self, st: &mut BrokerState, inf: Inflight) {
+        if self.azure() && inf.stored.delivery_count >= self.max_delivery_count && !inf.queue.starts_with('#') {
+            self.dead_letter(st, inf, "MaxDeliveryCountExceeded", "Message could not be consumed after the maximum delivery attempts.");
+        } else if let Some(q) = st.queues.get_mut(&inf.queue) {
+            q.messages.push_front(inf.stored);
+        }
+    }
+
     fn new_stored(st: &mut BrokerState, msg: Message) -> Stored {
+
         st.next_seq += 1;
         let delivery_count = msg.header.as_ref().map(|h| h.delivery_count).unwrap_or(0);
         Stored { msg, seq: st.next_seq, enqueued: now_millis(), delivery_count }
@@ -1191,6 +1478,15 @@ impl Inner {
             Body::Value(v) => v.as_str().unwrap_or("").to_string(),
             _ => String::new(),
         };
+        if req.app_property("type").and_then(|v| v.as_str()) == Some(crate::cbs::JWT_TOKEN_TYPE) {
+            if !az.jwt.contains(&token) {
+                return reply(401, "Unauthorized: invalid or expired Azure AD token", Body::Empty);
+            }
+            if let Some(c) = st.conns.get_mut(&cid) {
+                c.authorized.push(path_of(&name));
+            }
+            return reply(202, "Accepted", Body::Empty);
+        }
         let Some(t) = parse_sas_token(&token) else { return reply(401, "Unauthorized: malformed token", Body::Empty) };
         let Some(key) = az.keys.get(&t.key_name) else { return reply(401, "Unauthorized: unknown SharedAccessKeyName", Body::Empty) };
         if !verify_sas_token(&t, key) {
@@ -1287,8 +1583,177 @@ impl Inner {
                 }
                 reply(200, "OK", Body::Value(AmqpValue::Map(vec![(AmqpValue::str("messages"), AmqpValue::List(items))])))
             }
+            "com.microsoft:renew-lock" => {
+                let now = now_millis();
+                let until = now + self.lock_duration.as_millis() as i64;
+                let mut exp = Vec::new();
+                for t in uuids(body.map_get("lock-tokens")) {
+                    if let Some(inf) = st.inflight.values_mut().find(|i| i.lock_token == Some(t) && i.queue == key) {
+                        inf.locked_until = Some(until);
+                        exp.push(AmqpValue::Timestamp(until));
+                    } else if let Some(d) = st.deferred_locked.get_mut(&t) {
+                        d.2 = until;
+                        exp.push(AmqpValue::Timestamp(until));
+                    } else {
+                        return reply(410, "The lock supplied is invalid. Either the lock expired, or the message has already been removed from the queue.", Body::Empty);
+                    }
+                }
+                reply(200, "OK", Body::Value(AmqpValue::Map(vec![(AmqpValue::str("expirations"), AmqpValue::Array(exp))])))
+            }
+            "com.microsoft:receive-by-sequence-number" => {
+                let seqs: Vec<i64> = body.map_get("sequence-numbers").and_then(|v| v.as_list()).unwrap_or(&[]).iter().filter_map(|v| v.as_i64()).collect();
+                let peek_lock = body.map_get("receiver-settle-mode").and_then(|v| v.as_u64()).unwrap_or(1) != 0;
+                let deferred = st.deferred.entry(key.clone()).or_default();
+                let mut found = Vec::new();
+                for seq in &seqs {
+                    match deferred.iter().position(|s| s.seq == *seq) {
+                        Some(i) => found.push(deferred.remove(i)),
+                        None => {
+                            // put back what was taken: the operation fails as a whole
+                            deferred.extend(found);
+                            return reply(404, &format!("Failed to lookup deferred message with sequence number {}", seq), Body::Empty);
+                        }
+                    }
+                }
+                let until = now_millis() + self.lock_duration.as_millis() as i64;
+                let mut items = Vec::new();
+                for s in found {
+                    let mut entry = vec![(AmqpValue::str("message"), AmqpValue::Binary(self.decorate(&key, &s, if peek_lock { Some(until) } else { None }).encode()))];
+                    if peek_lock {
+                        let token = crate::message::random_uuid();
+                        entry.push((AmqpValue::str("lock-token"), AmqpValue::Uuid(token)));
+                        st.deferred_locked.insert(token, (key.clone(), s, until));
+                    }
+                    items.push(AmqpValue::Map(entry));
+                }
+                reply(200, "OK", Body::Value(AmqpValue::Map(vec![(AmqpValue::str("messages"), AmqpValue::List(items))])))
+            }
+            "com.microsoft:update-disposition" => {
+                let status = body.map_get("disposition-status").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
+                let reason = body.map_get("deadletter-reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let desc = body.map_get("deadletter-description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                for t in uuids(body.map_get("lock-tokens")) {
+                    if let Some((entity, stored, _)) = st.deferred_locked.remove(&t) {
+                        let inf = Inflight { queue: entity.clone(), handle: 0, stored, locked_until: None, lock_token: None };
+                        match status.as_str() {
+                            "completed" => {}
+                            "suspended" => self.dead_letter(st, inf, &reason, &desc),
+                            _ => st.deferred.entry(entity).or_default().push(inf.stored),
+                        }
+                        continue;
+                    }
+                    let k = st.inflight.iter().find(|(_, i)| i.lock_token == Some(t)).map(|(k, _)| *k);
+                    let Some(inf) = k.and_then(|k| st.inflight.remove(&k)) else {
+                        return reply(410, "The lock supplied is invalid.", Body::Empty);
+                    };
+                    let state = match status.as_str() {
+                        "completed" => DeliveryState::Accepted,
+                        "suspended" => {
+                            let mut e = AmqpError::new("com.microsoft:dead-letter", "dead-lettered");
+                            e.info = vec![(AmqpValue::sym("DeadLetterReason"), AmqpValue::str(reason.clone())), (AmqpValue::sym("DeadLetterErrorDescription"), AmqpValue::str(desc.clone()))];
+                            DeliveryState::Rejected(Some(e))
+                        }
+                        "defered" | "deferred" => DeliveryState::Modified { delivery_failed: false, undeliverable_here: true, message_annotations: vec![] },
+                        _ => DeliveryState::Modified { delivery_failed: true, undeliverable_here: false, message_annotations: vec![] },
+                    };
+                    self.settle(st, inf, state);
+                }
+                self.dispatch(st);
+                reply(200, "OK", Body::Empty)
+            }
+            "com.microsoft:renew-session-lock" | "com.microsoft:get-session-state" | "com.microsoft:set-session-state" => {
+                let Some(sid) = body.map_get("session-id").and_then(|v| v.as_str()).map(String::from) else { return reply(400, "session-id required", Body::Empty) };
+                let k = (key.clone(), sid.clone());
+                match op.as_str() {
+                    "com.microsoft:renew-session-lock" => {
+                        let until = now_millis() + self.lock_duration.as_millis() as i64;
+                        match st.session_locks.get_mut(&k) {
+                            Some(l) => {
+                                l.1 = until;
+                                reply(200, "OK", Body::Value(AmqpValue::Map(vec![(AmqpValue::str("expiration"), AmqpValue::Timestamp(until))])))
+                            }
+                            None => reply(410, &format!("The session lock has expired on the MessageSession. Session: {}", sid), Body::Empty),
+                        }
+                    }
+                    "com.microsoft:get-session-state" => {
+                        let v = st.session_states.get(&k).map(|b| AmqpValue::Binary(b.clone())).unwrap_or(AmqpValue::Null);
+                        reply(200, "OK", Body::Value(AmqpValue::Map(vec![(AmqpValue::str("session-state"), v)])))
+                    }
+                    _ => {
+                        match body.map_get("session-state").and_then(|v| v.as_binary()) {
+                            Some(b) => {
+                                st.session_states.insert(k, b.to_vec());
+                            }
+                            None => {
+                                st.session_states.remove(&k);
+                            }
+                        }
+                        reply(200, "OK", Body::Empty)
+                    }
+                }
+            }
             _ => reply(501, &format!("operation {} not supported", op), Body::Empty),
         }
+    }
+
+    /// Event Hubs epochs: a receiver with epoch `e` disconnects the receivers of the
+    /// partition (and consumer group) with a lower or equal epoch or none; it is refused
+    /// when a receiver with a higher epoch exists. A receiver without epoch is refused
+    /// while an epoch receiver exists.
+    fn claim_epoch(&self, st: &mut BrokerState, log_key: &str, group: &str, epoch: Option<i64>) -> std::result::Result<(), AmqpError> {
+        let mut existing: Vec<(LinkKey, Option<i64>)> = Vec::new();
+        for (cid, c) in &st.conns {
+            for (ch, s) in &c.sessions {
+                for (h, l) in &s.links {
+                    if matches!(&l.kind, LinkKind::Log { key, group: g, .. } if key == log_key && g == group) {
+                        existing.push(((*cid, *ch, *h), l.epoch));
+                    }
+                }
+            }
+        }
+        match epoch {
+            None => {
+                if let Some(e) = existing.iter().find_map(|(_, e)| *e) {
+                    return Err(AmqpError::new(cond::STOLEN, format!("Receiver could not be created: a receiver with epoch '{}' already exists on this partition", e)));
+                }
+            }
+            Some(e) => {
+                if let Some(higher) = existing.iter().find_map(|(_, x)| x.filter(|x| *x > e)) {
+                    return Err(AmqpError::new(cond::STOLEN, format!("Receiver with epoch '{}' cannot be created because a receiver with a higher epoch '{}' already exists", e, higher)));
+                }
+                for (k, _) in existing {
+                    let err = AmqpError::new(cond::STOLEN, format!("New receiver with higher epoch of '{}' is created hence current receiver is getting disconnected.", e));
+                    Self::write(st, k.0, Frame::amqp(k.1, Performative::Detach(Detach { handle: k.2, closed: true, error: Some(err) })));
+                    self.remove_link(st, k);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Service Bus sessions: lock `requested` (or the next session with messages that is
+    /// not locked) of `entity` for a receiver link. Returns the session id and lock expiry.
+    fn lock_session(&self, st: &mut BrokerState, entity: &str, requested: Option<String>, link: LinkKey) -> std::result::Result<(String, i64), AmqpError> {
+        let now = now_millis();
+        let until = now + self.lock_duration.as_millis() as i64;
+        let sid = match requested {
+            Some(sid) => {
+                if st.session_locks.get(&(entity.to_string(), sid.clone())).is_some_and(|(k, t)| *k != link && *t > now) {
+                    return Err(AmqpError::new("com.microsoft:session-cannot-be-locked", format!("The requested session '{}' cannot be accepted. It may be locked by another receiver.", sid)));
+                }
+                sid
+            }
+            None => {
+                let locked = |sid: &str| st.session_locks.get(&(entity.to_string(), sid.to_string())).is_some_and(|(_, t)| *t > now);
+                let candidate = st.queues.get(entity).and_then(|q| q.messages.iter().filter_map(|s| s.msg.properties.as_ref().and_then(|p| p.group_id.clone())).find(|g| !locked(g)));
+                match candidate {
+                    Some(sid) => sid,
+                    None => return Err(AmqpError::new("com.microsoft:timeout", "No unlocked session with messages is available")),
+                }
+            }
+        };
+        st.session_locks.insert((entity.to_string(), sid.clone()), (link, until));
+        Ok((sid, until))
     }
 
     /// The message as delivered: header delivery-count, Azure annotations.
@@ -1318,6 +1783,10 @@ impl Inner {
                     q.messages.push_front(inf.stored);
                 }
             }
+            DeliveryState::Modified { undeliverable_here: true, delivery_failed: false, .. } if self.azure() && !inf.queue.starts_with('#') => {
+                // Service Bus defer: kept aside, received by sequence number
+                st.deferred.entry(inf.queue.clone()).or_default().push(inf.stored);
+            }
             DeliveryState::Modified { delivery_failed, message_annotations, .. } => {
                 // Service Bus counts every abandon as a delivery attempt
                 if delivery_failed || self.azure() {
@@ -1343,7 +1812,8 @@ impl Inner {
                     self.dead_letter(st, inf, &reason, &desc);
                 }
             }
-            DeliveryState::Received { .. } | DeliveryState::Other(_) => {
+            DeliveryState::Received { .. } | DeliveryState::Other(_) | DeliveryState::Declared(_) | DeliveryState::Transactional { .. } => {
+
                 if let Some(q) = st.queues.get_mut(&inf.queue) {
                     q.messages.push_front(inf.stored);
                 }
@@ -1373,6 +1843,20 @@ impl Inner {
                 let _ = self.enqueue(st, &addr, s);
             }
             changed = true;
+        }
+        // expired session locks detach the receiver
+        let lost: Vec<((String, String), LinkKey)> = st.session_locks.iter().filter(|(_, (_, t))| *t <= now).map(|(k, (l, _))| (k.clone(), *l)).collect();
+        for ((_, sid), k) in lost {
+            let err = AmqpError::new("com.microsoft:session-lock-lost", format!("The session lock has expired on the MessageSession. Session: {}", sid));
+            Self::write(st, k.0, Frame::amqp(k.1, Performative::Detach(Detach { handle: k.2, closed: true, error: Some(err) })));
+            self.remove_link(st, k);
+            changed = true;
+        }
+        let expired_deferred: Vec<[u8; 16]> = st.deferred_locked.iter().filter(|(_, (_, _, t))| *t <= now).map(|(k, _)| *k).collect();
+        for t in expired_deferred {
+            if let Some((entity, s, _)) = st.deferred_locked.remove(&t) {
+                st.deferred.entry(entity).or_default().push(s);
+            }
         }
         let expired: Vec<(u64, u16, u32)> = st.inflight.iter().filter(|(_, i)| i.locked_until.is_some_and(|l| l <= now)).map(|(k, _)| *k).collect();
         for k in expired {
@@ -1432,9 +1916,10 @@ impl Inner {
         }
         let presettle = l.presettle;
         let peek_lock = l.peek_lock;
+        let session = l.session.clone();
         let (queue_name, msg, stored) = match l.kind.clone() {
-            LinkKind::Producer(_) => return false,
-            LinkKind::Log { key: lk, cursor } => {
+            LinkKind::Producer(_) | LinkKind::Coordinator => return false,
+            LinkKind::Log { key: lk, cursor, .. } => {
                 let Some(log) = st.logs.get(&lk) else { return false };
                 let Some((off, s)) = log.events.get(cursor).cloned() else { return false };
                 let mut m = s.msg.clone();
@@ -1457,9 +1942,13 @@ impl Inner {
                     let ttl = s.msg.header.as_ref().and_then(|h| h.ttl).map(|t| s.enqueued + t as i64);
                     abs.or(ttl).is_none_or(|t| t > now)
                 });
+                let in_session = |s: &Stored| match &session {
+                    None => true,
+                    Some(sid) => s.msg.properties.as_ref().and_then(|p| p.group_id.as_deref()) == Some(sid.as_str()),
+                };
                 let idx = match &selector {
-                    None => if queue.messages.is_empty() { None } else { Some(0) },
-                    Some(sel) => queue.messages.iter().position(|s| sel.matches(&selector_lookup(s))),
+                    None => queue.messages.iter().position(in_session),
+                    Some(sel) => queue.messages.iter().position(|s| in_session(s) && sel.matches(&selector_lookup(s))),
                 };
                 let Some(idx) = idx else { return false };
                 let s = queue.messages.remove(idx).unwrap();
@@ -1479,9 +1968,11 @@ impl Inner {
         let delivery_id = s.next_delivery_id;
         s.next_delivery_id = s.next_delivery_id.wrapping_add(1);
         let mut msg = msg;
+        let mut lock_token = None;
         let tag = if azure_tag {
             let u = crate::message::random_uuid();
             msg.set_annotation("x-opt-lock-token", AmqpValue::Uuid(u));
+            lock_token = Some(u);
             crate::client::dotnet_guid_bytes(&u).to_vec()
         } else {
             (delivery_id as u64).to_be_bytes().to_vec()
@@ -1503,10 +1994,23 @@ impl Inner {
         }
         if let Some((stored, locked)) = stored {
             if !presettle {
-                st.inflight.insert((cid, ch, delivery_id), Inflight { queue: queue_name, handle: h, stored, locked_until: locked });
+                st.inflight.insert((cid, ch, delivery_id), Inflight { queue: queue_name, handle: h, stored, locked_until: locked, lock_token });
+
             }
         }
         let _ = transport.write_bytes(&bytes);
         true
     }
+}
+
+/// Lock tokens of a management request (`uuid` array or list, or strings).
+fn uuids(v: Option<&AmqpValue>) -> Vec<[u8; 16]> {
+    v.and_then(|v| v.as_list())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|t| match t {
+            AmqpValue::Uuid(u) => Some(*u),
+            other => other.as_str().and_then(crate::message::parse_uuid),
+        })
+        .collect()
 }

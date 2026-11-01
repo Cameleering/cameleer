@@ -1,23 +1,37 @@
 //! An embedded STOMP 1.2 broker for tests (an ActiveMQ-flavoured stand-in).
 //!
 //! * destinations `/queue/<name>` (point-to-point, competing consumers, round-robin),
-//!   `/topic/<name>` (publish-subscribe, non-durable) and `/temp-queue/<name>` /
-//!   `/temp-topic/<name>` (deleted when the creating connection closes); a destination
-//!   without a prefix is a queue;
+//!   `/topic/<name>` (publish-subscribe) and `/temp-queue/<name>` / `/temp-topic/<name>`
+//!   (deleted when the creating connection closes); a destination without a prefix is a
+//!   queue;
 //! * subscriptions with `ack:auto`, `client` (cumulative) and `client-individual`,
 //!   `activemq.prefetchSize` (unacked window, default unlimited), server-side JMS
 //!   `selector`s ([`crate::selector`]);
+//! * durable topic subscriptions: `SUBSCRIBE` with `activemq.subscriptionName` (or
+//!   Artemis' `durable-subscription-name`) under the connection's `client-id` keep
+//!   messages while no subscriber is connected; an `UNSUBSCRIBE` carrying the same header
+//!   deletes the subscription (ActiveMQ semantics), a plain one only detaches;
+//! * shared subscriptions (JMS 2.0): `subscription-shared:true` with a subscription name:
+//!   the subscribers of one name compete for the subscription's messages (durable when
+//!   combined with the durable name header, else removed with its last subscriber);
 //! * message priority ordering (`priority`, 0-9, default 4), expiration (`expires`,
 //!   epoch millis), `persistent`, broker-assigned `message-id` and `timestamp`;
 //! * `NACK`, `ABORT` of a transaction containing `ACK`s, `UNSUBSCRIBE` and disconnects
 //!   redeliver unacknowledged messages with `redelivered:true`; after
 //!   `max_redeliveries` (6) redeliveries a message moves to `/queue/ActiveMQ.DLQ`;
 //! * transactions (`BEGIN`/`COMMIT`/`ABORT`) buffering `SEND`s and `ACK`/`NACK`s;
+//! * persistence ([`StompBrokerBuilder::persistence`]): persistent messages of queues and
+//!   durable subscriptions, and durable subscription definitions, are written to an
+//!   append-only journal (`journal.dat`) and recovered on start, so they survive broker
+//!   restarts; messages delivered but not acknowledged before a restart come back with
+//!   `redelivered:true`. The journal is compacted on start;
 //! * receipts, `ERROR` frames (then the connection is closed), login/passcode checks,
 //!   heart-beats.
 
 use std::collections::{HashMap, VecDeque};
-use std::io::{BufReader, Write};
+use std::fs::File;
+use std::io::{BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 
 use camel_tls::net::NetStream;
 use camel_tls::TlsServerConfig;
@@ -25,7 +39,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use camel_core::error::Result;
+use camel_core::error::{CamelError, Result};
 use camel_core::value::Value;
 
 use crate::common::{now_millis, TcpServer};
@@ -52,6 +66,8 @@ pub struct StompMessage {
     pub persistent: bool,
     pub redelivered: bool,
     pub redelivery_count: u32,
+    /// The durable / shared subscription queue holding a topic message (`None` for queues).
+    pub subscription_queue: Option<String>,
 }
 
 impl StompMessage {
@@ -63,6 +79,10 @@ impl StompMessage {
     }
     fn expired(&self, now: i64) -> bool {
         self.expires > 0 && self.expires <= now
+    }
+    /// The queue holding the message.
+    fn store_key(&self) -> &str {
+        self.subscription_queue.as_deref().unwrap_or(&self.destination)
     }
     /// Selector property lookup: JMS header names plus custom headers.
     fn property(&self, name: &str) -> Option<Value> {
@@ -88,10 +108,21 @@ struct Sub {
     conn: u64,
     id: String,
     dest: String,
+    /// Where the subscription takes messages from: the queue, a subscription queue
+    /// (`#durable:...` / `#shared:...`), or the topic itself for plain topic subscribers.
+    source: String,
     ack: AckMode,
     selector: Option<Selector>,
     prefetch: usize,
     pending: Vec<(String, StompMessage)>,
+}
+
+/// A durable or shared topic subscription: a queue fed by its topic.
+#[derive(Clone)]
+struct SubQueue {
+    topic: String,
+    selector: Option<String>,
+    durable: bool,
 }
 
 enum TxOp {
@@ -104,16 +135,19 @@ struct ConnSt {
     writer: Arc<Mutex<NetStream>>,
     txs: HashMap<String, Vec<TxOp>>,
     temps: Vec<String>,
+    client_id: Option<String>,
 }
 
 #[derive(Default)]
 struct State {
     queues: HashMap<String, VecDeque<StompMessage>>,
+    subqueues: HashMap<String, SubQueue>,
     subs: Vec<Sub>,
     rr: HashMap<String, usize>,
     conns: HashMap<u64, ConnSt>,
     ids: u64,
     acks: u64,
+    journal: Option<Journal>,
 }
 
 fn is_topic(dest: &str) -> bool {
@@ -134,7 +168,198 @@ fn write_frame(c: &ConnSt, f: &Frame) {
     let _ = w.write_all(&f.encode()).and_then(|_| w.flush());
 }
 
+// ---------------------------------------------------------------------------
+// journal
+// ---------------------------------------------------------------------------
+
+const REC_ADD: u8 = b'A';
+const REC_DEL: u8 = b'D';
+const REC_DELIVERED: u8 = b'X';
+const REC_SUBQUEUE: u8 = b'S';
+const REC_UNSUBQUEUE: u8 = b'U';
+
+/// The append-only journal of a persistent broker.
+struct Journal {
+    file: File,
+}
+
+fn put_bytes(out: &mut Vec<u8>, b: &[u8]) {
+    out.extend_from_slice(&(b.len() as u32).to_be_bytes());
+    out.extend_from_slice(b);
+}
+
+fn put_str(out: &mut Vec<u8>, s: &str) {
+    put_bytes(out, s.as_bytes());
+}
+
+struct Cursor<'a>(&'a [u8]);
+
+impl Cursor<'_> {
+    fn bytes(&mut self) -> Option<Vec<u8>> {
+        if self.0.len() < 4 {
+            return None;
+        }
+        let n = u32::from_be_bytes(self.0[..4].try_into().ok()?) as usize;
+        if self.0.len() < 4 + n {
+            return None;
+        }
+        let v = self.0[4..4 + n].to_vec();
+        self.0 = &self.0[4 + n..];
+        Some(v)
+    }
+    fn string(&mut self) -> Option<String> {
+        String::from_utf8(self.bytes()?).ok()
+    }
+    fn num(&mut self) -> Option<i64> {
+        self.string()?.parse().ok()
+    }
+}
+
+fn encode_message(m: &StompMessage) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_str(&mut out, &m.id);
+    put_str(&mut out, &m.destination);
+    put_str(&mut out, m.subscription_queue.as_deref().unwrap_or(""));
+    put_str(&mut out, &m.headers.len().to_string());
+    for (k, v) in &m.headers {
+        put_str(&mut out, k);
+        put_str(&mut out, v);
+    }
+    put_bytes(&mut out, &m.body);
+    for n in [m.priority as i64, m.expires, m.timestamp, m.persistent as i64, m.redelivered as i64, m.redelivery_count as i64] {
+        put_str(&mut out, &n.to_string());
+    }
+    out
+}
+
+fn decode_message(c: &mut Cursor) -> Option<StompMessage> {
+    let id = c.string()?;
+    let destination = c.string()?;
+    let sq = c.string()?;
+    let n = c.num()? as usize;
+    let mut headers = Vec::with_capacity(n);
+    for _ in 0..n {
+        headers.push((c.string()?, c.string()?));
+    }
+    let body = c.bytes()?;
+    let mut nums = [0i64; 6];
+    for x in nums.iter_mut() {
+        *x = c.num()?;
+    }
+    Some(StompMessage {
+        id,
+        destination,
+        headers,
+        body,
+        priority: nums[0] as u8,
+        expires: nums[1],
+        timestamp: nums[2],
+        persistent: nums[3] != 0,
+        redelivered: nums[4] != 0,
+        redelivery_count: nums[5] as u32,
+        subscription_queue: Some(sq).filter(|s| !s.is_empty()),
+    })
+}
+
+impl Journal {
+    fn record(&mut self, kind: u8, payload: &[u8]) {
+        let mut rec = Vec::with_capacity(payload.len() + 5);
+        rec.push(kind);
+        rec.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        rec.extend_from_slice(payload);
+        let _ = self.file.write_all(&rec).and_then(|_| self.file.flush());
+    }
+
+    /// Replay `dir/journal.dat`: (messages per queue key in order, durable subscription queues).
+    fn recover(path: &Path) -> std::io::Result<(Vec<StompMessage>, HashMap<String, SubQueue>)> {
+        let mut data = Vec::new();
+        if let Ok(mut f) = File::open(path) {
+            f.read_to_end(&mut data)?;
+        }
+        let mut order: Vec<(String, String)> = Vec::new();
+        let mut msgs: HashMap<(String, String), StompMessage> = HashMap::new();
+        let mut subqueues = HashMap::new();
+        let mut rest = &data[..];
+        while rest.len() >= 5 {
+            let kind = rest[0];
+            let n = u32::from_be_bytes(rest[1..5].try_into().unwrap()) as usize;
+            if rest.len() < 5 + n {
+                break; // torn tail write
+            }
+            let mut c = Cursor(&rest[5..5 + n]);
+            rest = &rest[5 + n..];
+            match kind {
+                REC_ADD => {
+                    if let Some(m) = decode_message(&mut c) {
+                        let key = (m.store_key().to_string(), m.id.clone());
+                        if !msgs.contains_key(&key) {
+                            order.push(key.clone());
+                        }
+                        msgs.insert(key, m);
+                    }
+                }
+                REC_DEL => {
+                    if let (Some(q), Some(id)) = (c.string(), c.string()) {
+                        msgs.remove(&(q, id));
+                    }
+                }
+                REC_DELIVERED => {
+                    if let (Some(q), Some(id)) = (c.string(), c.string()) {
+                        if let Some(m) = msgs.get_mut(&(q, id)) {
+                            m.redelivered = true;
+                            m.redelivery_count += 1;
+                        }
+                    }
+                }
+                REC_SUBQUEUE => {
+                    if let (Some(k), Some(t), Some(sel)) = (c.string(), c.string(), c.string()) {
+                        subqueues.insert(k, SubQueue { topic: t, selector: Some(sel).filter(|s| !s.is_empty()), durable: true });
+                    }
+                }
+                REC_UNSUBQUEUE => {
+                    if let Some(k) = c.string() {
+                        subqueues.remove(&k);
+                        msgs.retain(|(q, _), _| *q != k);
+                    }
+                }
+                _ => break,
+            }
+        }
+        let out = order.into_iter().filter_map(|k| msgs.remove(&k)).collect();
+        Ok((out, subqueues))
+    }
+}
+
 impl State {
+    /// Whether a message is journaled: persistent, in a queue or a durable subscription.
+    fn journaled(&self, m: &StompMessage) -> bool {
+        self.journal.is_some() && m.persistent && (m.subscription_queue.is_some() || !(is_topic(&m.destination) || m.destination.starts_with("/temp-")))
+    }
+
+    fn journal_add(&mut self, m: &StompMessage) {
+        let durable = match &m.subscription_queue {
+            Some(k) => self.subqueues.get(k).is_some_and(|q| q.durable),
+            None => !is_topic(&m.destination),
+        };
+        if durable && self.journaled(m) {
+            let payload = encode_message(m);
+            if let Some(j) = self.journal.as_mut() {
+                j.record(REC_ADD, &payload);
+            }
+        }
+    }
+
+    fn journal_key(&mut self, kind: u8, m: &StompMessage) {
+        if self.journaled(m) {
+            let mut p = Vec::new();
+            put_str(&mut p, m.store_key());
+            put_str(&mut p, &m.id);
+            if let Some(j) = self.journal.as_mut() {
+                j.record(kind, &p);
+            }
+        }
+    }
+
     fn deliver(&mut self, sub_idx: usize, msg: StompMessage) {
         self.acks += 1;
         let ack_id = format!("{}#{}", msg.id, self.acks);
@@ -161,7 +386,10 @@ impl State {
             write_frame(c, &f);
         }
         if sub.ack != AckMode::Auto {
+            self.journal_key(REC_DELIVERED, &msg);
             self.subs[sub_idx].pending.push((ack_id, msg));
+        } else {
+            self.journal_key(REC_DEL, &msg);
         }
     }
 
@@ -172,22 +400,42 @@ impl State {
         }
     }
 
-    /// Route a message: topics fan out, queues enqueue (by priority) and dispatch.
+    /// Put a message into the queue `key` by priority (`front`: ahead of its priority peers).
+    fn enqueue(&mut self, key: &str, msg: StompMessage, front: bool) {
+        let q = self.queues.entry(key.to_string()).or_default();
+        let pos = if front { q.iter().position(|m| m.priority <= msg.priority) } else { q.iter().position(|m| m.priority < msg.priority) }.unwrap_or(q.len());
+        q.insert(pos, msg);
+    }
+
+    /// Route a message: topics fan out to subscribers and subscription queues, queues
+    /// enqueue (by priority) and dispatch.
     fn route(&mut self, msg: StompMessage) {
         if msg.expired(now_millis()) {
             return;
         }
         if is_topic(&msg.destination) {
-            let targets: Vec<usize> = (0..self.subs.len()).filter(|i| self.subs[*i].dest == msg.destination && Self::selector_ok(&self.subs[*i], &msg)).collect();
+            let targets: Vec<usize> = (0..self.subs.len()).filter(|i| self.subs[*i].source == msg.destination && Self::selector_ok(&self.subs[*i], &msg)).collect();
             for i in targets {
                 self.deliver(i, msg.clone());
+            }
+            let queues: Vec<String> = self
+                .subqueues
+                .iter()
+                .filter(|(_, q)| q.topic == msg.destination && q.selector.as_ref().is_none_or(|s| Selector::parse(s).map(|sel| sel.matches(&|n| msg.property(n))).unwrap_or(false)))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for k in queues {
+                let mut m = msg.clone();
+                m.subscription_queue = Some(k.clone());
+                self.journal_add(&m);
+                self.enqueue(&k, m, false);
+                self.dispatch(&k);
             }
             return;
         }
         let dest = msg.destination.clone();
-        let q = self.queues.entry(dest.clone()).or_default();
-        let pos = q.iter().position(|m| m.priority < msg.priority).unwrap_or(q.len());
-        q.insert(pos, msg);
+        self.journal_add(&msg);
+        self.enqueue(&dest, msg, false);
         self.dispatch(&dest);
     }
 
@@ -195,11 +443,20 @@ impl State {
         msg.redelivered = true;
         msg.redelivery_count += 1;
         if msg.redelivery_count > max_redeliveries {
+            self.journal_key(REC_DEL, &msg);
             msg.headers.push(("dlqDeliveryFailureCause".into(), format!("Delivery failed {} times", msg.redelivery_count)));
             msg.headers.push(("originalDestination".into(), msg.destination.clone()));
             msg.destination = DLQ.to_string();
+            msg.subscription_queue = None;
             msg.redelivered = false;
             self.route(msg);
+            return;
+        }
+        if let Some(k) = msg.subscription_queue.clone() {
+            if self.subqueues.contains_key(&k) {
+                self.enqueue(&k, msg, true);
+                self.dispatch(&k);
+            }
             return;
         }
         if is_topic(&msg.destination) {
@@ -209,33 +466,31 @@ impl State {
             return;
         }
         let dest = msg.destination.clone();
-        let q = self.queues.entry(dest.clone()).or_default();
-        // in front of the other messages of the same priority
-        let pos = q.iter().position(|m| m.priority <= msg.priority).unwrap_or(q.len());
-        q.insert(pos, msg);
+        self.enqueue(&dest, msg, true);
         self.dispatch(&dest);
     }
 
-    fn dispatch(&mut self, dest: &str) {
-        if is_topic(dest) {
+    fn dispatch(&mut self, key: &str) {
+        if is_topic(key) {
             return;
         }
         let now = now_millis();
         let mut i = 0;
         loop {
-            let Some(q) = self.queues.get_mut(dest) else { return };
+            let Some(q) = self.queues.get_mut(key) else { return };
             if i >= q.len() {
                 return;
             }
             if q[i].expired(now) {
-                q.remove(i);
+                let m = q.remove(i).unwrap();
+                self.journal_key(REC_DEL, &m);
                 continue;
             }
-            let candidates: Vec<usize> = (0..self.subs.len()).filter(|s| self.subs[*s].dest == dest).collect();
+            let candidates: Vec<usize> = (0..self.subs.len()).filter(|s| self.subs[*s].source == key).collect();
             if candidates.is_empty() {
                 return;
             }
-            let start = *self.rr.get(dest).unwrap_or(&0);
+            let start = *self.rr.get(key).unwrap_or(&0);
             let n = candidates.len();
             let mut chosen = None;
             for k in 0..n {
@@ -250,7 +505,7 @@ impl State {
             match chosen {
                 Some((si, next)) => {
                     let msg = q.remove(i).unwrap();
-                    self.rr.insert(dest.to_string(), next);
+                    self.rr.insert(key.to_string(), next);
                     self.deliver(si, msg);
                 }
                 None => i += 1,
@@ -271,6 +526,47 @@ impl State {
         }
         None
     }
+
+    fn define_subqueue(&mut self, key: &str, topic: &str, selector: Option<&str>, durable: bool) {
+        let changed = self.subqueues.get(key).is_none_or(|q| q.topic != topic || q.selector.as_deref() != selector);
+        if changed {
+            if self.subqueues.contains_key(key) {
+                // JMS: a durable subscription with another topic or selector is recreated
+                self.remove_subqueue(key);
+            }
+            self.subqueues.insert(key.to_string(), SubQueue { topic: topic.to_string(), selector: selector.map(String::from), durable });
+            if durable {
+                let mut p = Vec::new();
+                put_str(&mut p, key);
+                put_str(&mut p, topic);
+                put_str(&mut p, selector.unwrap_or(""));
+                if let Some(j) = self.journal.as_mut() {
+                    j.record(REC_SUBQUEUE, &p);
+                }
+            }
+        }
+    }
+
+    fn remove_subqueue(&mut self, key: &str) {
+        if let Some(q) = self.subqueues.remove(key) {
+            self.queues.remove(key);
+            if q.durable {
+                let mut p = Vec::new();
+                put_str(&mut p, key);
+                if let Some(j) = self.journal.as_mut() {
+                    j.record(REC_UNSUBQUEUE, &p);
+                }
+            }
+        }
+    }
+
+    /// Non-durable shared subscriptions end with their last subscriber.
+    fn drop_unused_subqueues(&mut self) {
+        let unused: Vec<String> = self.subqueues.iter().filter(|(k, q)| !q.durable && !self.subs.iter().any(|s| s.source == **k)).map(|(k, _)| k.clone()).collect();
+        for k in unused {
+            self.remove_subqueue(&k);
+        }
+    }
 }
 
 /// Builder for [`StompBroker`].
@@ -281,6 +577,7 @@ pub struct StompBrokerBuilder {
     host: String,
     port: u16,
     tls: Option<Arc<TlsServerConfig>>,
+    persistence: Option<PathBuf>,
 }
 
 impl StompBrokerBuilder {
@@ -309,10 +606,48 @@ impl StompBrokerBuilder {
         self.port = port;
         self
     }
+    /// Keep persistent messages and durable subscriptions in a journal under `dir`
+    /// (recovered when a broker starts on the same directory).
+    pub fn persistence(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.persistence = Some(dir.into());
+        self
+    }
     pub fn start(self) -> Result<StompBroker> {
         let running = Arc::new(AtomicBool::new(true));
+        let mut state = State::default();
+        if let Some(dir) = &self.persistence {
+            let io = |e: std::io::Error| CamelError::io(format!("STOMP broker journal in {}: {}", dir.display(), e));
+            std::fs::create_dir_all(dir).map_err(io)?;
+            let path = dir.join("journal.dat");
+            let (msgs, subqueues) = Journal::recover(&path).map_err(io)?;
+            // compact: rewrite the journal with the recovered state
+            let tmp = dir.join("journal.dat.tmp");
+            let mut j = Journal { file: File::create(&tmp).map_err(io)? };
+            for (k, q) in &subqueues {
+                let mut p = Vec::new();
+                put_str(&mut p, k);
+                put_str(&mut p, &q.topic);
+                put_str(&mut p, q.selector.as_deref().unwrap_or(""));
+                j.record(REC_SUBQUEUE, &p);
+            }
+            for m in &msgs {
+                j.record(REC_ADD, &encode_message(m));
+            }
+            drop(j);
+            std::fs::rename(&tmp, &path).map_err(io)?;
+            let file = std::fs::OpenOptions::new().append(true).open(&path).map_err(io)?;
+            state.subqueues = subqueues;
+            for m in msgs {
+                if let Some(n) = m.id.rsplit('-').next().and_then(|n| n.parse::<u64>().ok()) {
+                    state.ids = state.ids.max(n);
+                }
+                let key = m.store_key().to_string();
+                state.enqueue(&key, m, false);
+            }
+            state.journal = Some(Journal { file });
+        }
         let shared = Arc::new(Shared {
-            state: Mutex::new(State::default()),
+            state: Mutex::new(state),
             users: self.users,
             heartbeat: self.heartbeat,
             max_redeliveries: self.max_redeliveries,
@@ -353,7 +688,7 @@ impl StompBroker {
         Self::builder().start()
     }
     pub fn builder() -> StompBrokerBuilder {
-        StompBrokerBuilder { users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0, tls: None }
+        StompBrokerBuilder { users: Vec::new(), heartbeat: (0, 0), max_redeliveries: 6, host: "127.0.0.1".into(), port: 0, tls: None, persistence: None }
     }
     pub fn port(&self) -> u16 {
         self.server.port()
@@ -395,10 +730,19 @@ impl StompBroker {
         let d = normalize_destination(name);
         self.shared.state.lock().unwrap().subs.iter().filter(|s| s.dest == d).count()
     }
+    /// Durable / shared subscriptions of a topic as `(key, waiting messages)`; keys are
+    /// `#durable:<client-id>:<name>`, `#shared-durable:<name>`, `#shared:<name>`.
+    pub fn topic_subscriptions(&self, topic: &str) -> Vec<(String, usize)> {
+        let t = normalize_destination(topic);
+        let st = self.shared.state.lock().unwrap();
+        let mut v: Vec<(String, usize)> = st.subqueues.iter().filter(|(_, q)| q.topic == t).map(|(k, _)| (k.clone(), st.queues.get(k).map(|q| q.len()).unwrap_or(0))).collect();
+        v.sort();
+        v
+    }
     /// Destinations that currently have queued messages or subscriptions.
     pub fn destinations(&self) -> Vec<String> {
         let st = self.shared.state.lock().unwrap();
-        let mut v: Vec<String> = st.queues.keys().cloned().chain(st.subs.iter().map(|s| s.dest.clone())).collect();
+        let mut v: Vec<String> = st.queues.keys().filter(|k| !k.starts_with('#')).cloned().chain(st.subs.iter().map(|s| s.dest.clone())).collect();
         v.sort();
         v.dedup();
         v
@@ -436,6 +780,7 @@ fn to_message(st: &mut State, f: &Frame) -> StompMessage {
         persistent: f.get("persistent").map(|p| p == "true").unwrap_or(false),
         redelivered: false,
         redelivery_count: 0,
+        subscription_queue: None,
     }
 }
 
@@ -446,6 +791,11 @@ fn error_frame(msg: &str, receipt: Option<&str>) -> Frame {
     }
     f.body = msg.as_bytes().to_vec();
     f
+}
+
+/// The durable subscription name of a SUBSCRIBE / UNSUBSCRIBE frame.
+fn durable_name(f: &Frame) -> Option<String> {
+    f.get("activemq.subscriptionName").or_else(|| f.get("durable-subscription-name")).or_else(|| f.get("durable-subscriber-name")).map(String::from).filter(|s| !s.is_empty())
 }
 
 /// Process one client frame. `Err(message)` sends an ERROR and closes the connection.
@@ -474,7 +824,8 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
                 None => AckMode::Auto,
                 Some(a) => AckMode::parse(a).ok_or_else(|| format!("Invalid ack mode: {}", a))?,
             };
-            let selector = match f.get("selector").filter(|s| !s.trim().is_empty()) {
+            let selector_text = f.get("selector").filter(|s| !s.trim().is_empty()).map(String::from);
+            let mut selector = match &selector_text {
                 Some(s) => Some(Selector::parse(s).map_err(|e| e.message)?),
                 None => None,
             };
@@ -489,8 +840,32 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
                     }
                 }
             }
-            st.subs.push(Sub { conn, id, dest: dest.clone(), ack, selector, prefetch, pending: Vec::new() });
-            st.dispatch(&dest);
+            let shared_sub = f.get("subscription-shared") == Some("true") || f.get("shared-subscription-name").is_some();
+            let durable = durable_name(f);
+            let mut source = dest.clone();
+            if is_topic(&dest) && (durable.is_some() || shared_sub) {
+                let client_id = st.conns.get(&conn).and_then(|c| c.client_id.clone());
+                let (key, is_durable) = match (durable, shared_sub) {
+                    (Some(name), false) => {
+                        let cid = client_id.ok_or("A durable subscription requires a client-id on CONNECT")?;
+                        if st.subs.iter().any(|s| s.source == format!("#durable:{}:{}", cid, name)) {
+                            return Err(format!("Durable subscription {} of client {} already has an active subscriber", name, cid));
+                        }
+                        (format!("#durable:{}:{}", cid, name), true)
+                    }
+                    (Some(name), true) => (format!("#shared-durable:{}", name), true),
+                    (None, _) => {
+                        let name = f.get("shared-subscription-name").or_else(|| f.get("subscription-name")).ok_or("A shared subscription needs a subscription name")?;
+                        (format!("#shared:{}", name), false)
+                    }
+                };
+                st.define_subqueue(&key, &dest, selector_text.as_deref(), is_durable);
+                // the subscription queue applies the selector when messages are published
+                selector = None;
+                source = key;
+            }
+            st.subs.push(Sub { conn, id, dest: dest.clone(), source: source.clone(), ack, selector, prefetch, pending: Vec::new() });
+            st.dispatch(&source);
         }
         "UNSUBSCRIBE" => {
             let id = f.get("id").ok_or("UNSUBSCRIBE frame without id header")?;
@@ -499,7 +874,15 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
                 for (_, m) in sub.pending {
                     st.requeue_front(m, max, None);
                 }
+                // ActiveMQ: the subscription name on UNSUBSCRIBE removes a durable subscription
+                if durable_name(f).is_some() && sub.source.starts_with('#') {
+                    st.remove_subqueue(&sub.source);
+                }
+            } else if let Some(name) = durable_name(f) {
+                let cid = st.conns.get(&conn).and_then(|c| c.client_id.clone()).unwrap_or_default();
+                st.remove_subqueue(&format!("#durable:{}:{}", cid, name));
             }
+            st.drop_unused_subqueues();
         }
         "ACK" | "NACK" => {
             let id = f.get("id").or_else(|| f.get("message-id")).ok_or("ACK/NACK frame without id header")?.to_string();
@@ -542,13 +925,17 @@ fn handle(shared: &Shared, conn: u64, f: &Frame) -> std::result::Result<bool, St
 /// Acknowledge (`ack=true`) or redeliver (`ack=false`) a pending delivery.
 fn apply_ack(st: &mut State, conn: u64, ack_id: &str, ack: bool, max: u32) {
     let Some((si, msgs)) = st.take_acked(conn, ack_id) else { return };
-    let dest = st.subs[si].dest.clone();
-    if !ack {
+    let source = st.subs[si].source.clone();
+    if ack {
+        for m in &msgs {
+            st.journal_key(REC_DEL, m);
+        }
+    } else {
         for m in msgs.into_iter().rev() {
             st.requeue_front(m, max, Some(si));
         }
     }
-    st.dispatch(&dest);
+    st.dispatch(&source);
 }
 
 fn cleanup(st: &mut State, conn: u64, max: u32) {
@@ -568,10 +955,11 @@ fn cleanup(st: &mut State, conn: u64, max: u32) {
         }
     }
     for m in pending.into_iter().rev() {
-        if !is_topic(&m.destination) {
+        if !is_topic(&m.destination) || m.subscription_queue.is_some() {
             st.requeue_front(m, max, None);
         }
     }
+    st.drop_unused_subqueues();
 }
 
 fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
@@ -623,7 +1011,8 @@ fn serve(shared: &Arc<Shared>, stream: NetStream, conn: u64) {
             .header("session", format!("session-{}", conn))
             .header("server", format!("rust-camel-stomp-broker/{}", env!("CARGO_PKG_VERSION"))),
     );
-    shared.state.lock().unwrap().conns.insert(conn, ConnSt { writer: writer.clone(), txs: HashMap::new(), temps: Vec::new() });
+    let client_id = connect.get("client-id").map(String::from).filter(|c| !c.is_empty());
+    shared.state.lock().unwrap().conns.insert(conn, ConnSt { writer: writer.clone(), txs: HashMap::new(), temps: Vec::new(), client_id });
     let alive = Arc::new(AtomicBool::new(true));
     let hb = if send_every > 0 {
         let (w, a, r) = (writer.clone(), alive.clone(), shared.running.clone());
