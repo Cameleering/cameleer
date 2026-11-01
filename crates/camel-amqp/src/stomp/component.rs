@@ -1077,6 +1077,14 @@ enum Attempt {
 
 fn setup(cfg: &JmsConfig) -> Result<(StompConnection, Vec<Subscription>)> {
     let conn = StompConnection::open(&cfg.conn)?;
+    if cfg.shared_subscription.is_some() && conn.is_activemq_classic() {
+        // ActiveMQ 5 ignores the shared subscription headers: every "member" would get every
+        // message. Its JMS client refuses JMS 2.0 shared consumers too.
+        return Err(CamelError::new(
+            kinds::UNSUPPORTED_OPERATION,
+            format!("{} has no JMS 2.0 shared subscriptions (subscriptionShared); use a virtual topic: publish to topic VirtualTopic.<name> and consume queue Consumer.<subscription>.VirtualTopic.<name>", conn.server()),
+        ));
+    }
     let mut subs = Vec::new();
     // a durable (non-shared) subscription has a single subscriber
     let n = if cfg.durable_subscription.is_some() && cfg.shared_subscription.is_none() { 1 } else { cfg.concurrent_consumers };
@@ -1133,6 +1141,14 @@ impl Service for JmsConsumer {
             while !stop.is_stopped() {
                 let (conn, subs) = match setup(&worker.cfg) {
                     Ok(x) => x,
+                    Err(e) if e.kind == kinds::UNSUPPORTED_OPERATION => {
+                        // a configuration the broker cannot honour: no point in retrying
+                        camel_core::camel_warn!(&uri, "Cannot start consumer on {}: {}", uri, e.message);
+                        if let Some(tx) = ready.take() {
+                            let _ = tx.send(Err(e));
+                        }
+                        break;
+                    }
                     Err(e) => {
                         camel_core::camel_warn!(&uri, "Cannot start consumer on {}: {} - retrying in {} ms", uri, e.message, worker.cfg.recovery_interval.as_millis());
                         if let Some(tx) = ready.take() {
@@ -1179,6 +1195,10 @@ impl Service for JmsConsumer {
             }
         })?;
         if let Ok(Err(e)) = ready_rx.recv_timeout(self.cfg.conn.connect_timeout + Duration::from_secs(5)) {
+            if e.kind == kinds::UNSUPPORTED_OPERATION {
+                self.threads.stop();
+                return Err(e);
+            }
             camel_core::camel_warn!(&self.uri, "Consumer {} not connected yet: {}", self.uri, e.message);
         }
         Ok(())

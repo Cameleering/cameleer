@@ -446,6 +446,19 @@ fn activemq_flavoured_broker_conventions() {
     assert_eq!(doomed.load(Ordering::SeqCst), 7);
     assert_eq!(broker.queue_messages("ActiveMQ.DLQ")[0].header("originalDestination"), Some("/queue/doomed"));
     ctx.stop().unwrap();
+    // ActiveMQ 5 has no JMS 2.0 shared subscriptions: refused rather than duplicating messages
+    let ctx2 = CamelContext::new();
+    camel_amqp::register(&ctx2);
+    for (k, v) in [("brokerUrl", broker.url()), ("username", "camel".into()), ("password", "pw".into())] {
+        ctx2.properties().set(format!("camel.component.jms.{}", k), v);
+    }
+    ctx2.add_routes(|b| {
+        b.from("jms:topic:feed?subscriptionShared=true&subscriptionName=workers&concurrentConsumers=2").to("mock:never");
+    })
+    .unwrap();
+    let err = ctx2.start().unwrap_err();
+    assert!(format!("{:?}", err).contains("UnsupportedOperationException"), "{:?}", err);
+    let _ = ctx2.stop();
 }
 
 #[test]

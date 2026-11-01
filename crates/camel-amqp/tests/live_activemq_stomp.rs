@@ -593,3 +593,47 @@ fn live_activemq_redelivery_policy() {
     drop(c);
     ctx.stop().unwrap();
 }
+
+/// ActiveMQ 5 has no JMS 2.0 shared subscriptions; its virtual topics give the same
+/// competing-consumers-per-subscription semantics.
+#[test]
+fn live_activemq_shared_subscriptions_and_virtual_topics() {
+    if !live::enabled() {
+        return;
+    }
+    let vt = format!("VirtualTopic.{}", n("orders"));
+    let ctx = context();
+    let count = Arc::new(AtomicUsize::new(0));
+    let c2 = count.clone();
+    let v = vt.clone();
+    ctx.add_routes(move |b| {
+        b.from(&format!("jms:queue:Consumer.billing.{}?concurrentConsumers=3", v)).to("mock:billing");
+        b.from(&format!("jms:queue:Consumer.audit.{}", v)).process(move |_ex: &mut Exchange| {
+            c2.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let billing = ctx.mock_endpoint("mock:billing").unwrap();
+    billing.expected_message_count(9);
+    let t = ctx.create_producer_template();
+    for i in 0..9 {
+        t.send_body(&format!("jms:topic:{}", vt), format!("o{}", i)).unwrap();
+    }
+    billing.assert_is_satisfied().unwrap();
+    wait_until("audit copy", || count.load(Ordering::SeqCst) == 9);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(billing.received_counter(), 9, "each message once per virtual subscription");
+    ctx.stop().unwrap();
+    // a JMS 2.0 shared subscription is refused instead of silently duplicating messages
+    let ctx = context();
+    let topic = n("shared");
+    ctx.add_routes(move |b| {
+        b.from(&format!("jms:topic:{}?subscriptionShared=true&subscriptionName=workers&concurrentConsumers=2", topic)).to("mock:never");
+    })
+    .unwrap();
+    let err = ctx.start().unwrap_err();
+    assert!(format!("{:?}", err).contains("shared subscriptions"), "{:?}", err);
+    let _ = ctx.stop();
+}
