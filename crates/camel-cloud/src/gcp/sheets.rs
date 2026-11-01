@@ -12,6 +12,14 @@
 //! * `data/clear`, `data/batchGet` (`ranges` list; body = list of value lists).
 //! * `spreadsheets/get` (body = spreadsheet resource), `spreadsheets/create` (`title`; body =
 //!   the new spreadsheet, `CamelGoogleSheets.spreadsheetId` set).
+//! * `spreadsheets/batchUpdate`: the requests (`addSheet`, `deleteSheet`, `duplicateSheet`,
+//!   `updateSpreadsheetProperties`, `updateSheetProperties`, `findReplace`, `insertDimension`,
+//!   `deleteDimension`, ... passed through) from the body (a list of requests or a
+//!   `BatchUpdateSpreadsheetRequest` map) or `CamelGoogleSheets.batchUpdateSpreadsheetRequest`;
+//!   body = the response (`replies`).
+//! * `data/batchUpdate` (body = list of `{range, values}` value ranges or a request map,
+//!   `valueInputOption`; body = the response with `totalUpdatedCells`...) and `data/batchClear`
+//!   (`ranges`; body = the cleared ranges).
 
 use std::sync::Arc;
 
@@ -45,7 +53,7 @@ pub struct SheetsService {
 /// Factory for the component.
 pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
     let (api, method) = remaining.split_once('/').ok_or_else(|| CamelError::illegal_argument("Expected google-sheets://apiName/methodName (data/get, data/update, data/append, data/clear, data/batchGet, spreadsheets/get, spreadsheets/create)"))?;
-    let ok = matches!((api, method), ("data", "get" | "update" | "append" | "clear" | "batchGet") | ("spreadsheets", "get" | "create"));
+    let ok = matches!((api, method), ("data", "get" | "update" | "append" | "clear" | "batchGet" | "batchUpdate" | "batchClear") | ("spreadsheets", "get" | "create" | "batchUpdate"));
     if !ok {
         return Err(CamelError::illegal_argument(format!("Unsupported google-sheets api/method: {}/{}", api, method)));
     }
@@ -115,6 +123,37 @@ impl CloudService for SheetsService {
         let sheet = format!("{}/{}", base, id);
         let r = match (self.api.as_str(), self.method.as_str()) {
             ("spreadsheets", "get") => self.call("GET", sheet, None)?,
+            ("spreadsheets", "batchUpdate") => {
+                let v = ex.header(&format!("{}batchUpdateSpreadsheetRequest", HEADER_PREFIX)).cloned().unwrap_or_else(|| ex.body().clone());
+                let v = match v {
+                    Value::String(_) | Value::Bytes(_) => parse_json(&v.to_bytes())?,
+                    other => other,
+                };
+                let req = match v {
+                    Value::Array(a) => obj([("requests", Value::Array(a))]),
+                    m @ Value::Object(_) if m.get("requests").is_some() => m,
+                    m @ Value::Object(_) => obj([("requests", Value::Array(vec![m]))]),
+                    _ => return Err(CamelError::illegal_argument("spreadsheets/batchUpdate needs a list of requests")),
+                };
+                self.call("POST", format!("{}:batchUpdate", sheet), Some(req))?
+            }
+            ("data", "batchUpdate") => {
+                let vio = self.opt(ex, "valueInputOption", &Some(self.value_input_option.clone())).unwrap_or_default();
+                let data = match ex.header(&format!("{}data", HEADER_PREFIX)).cloned().unwrap_or_else(|| ex.body().clone()) {
+                    Value::Array(a) => Value::Array(a),
+                    Value::Object(m) => m.get("data").cloned().unwrap_or(Value::Array(vec![Value::Object(m)])),
+                    other => parse_json(&other.to_bytes())?,
+                };
+                self.call("POST", format!("{}/values:batchUpdate", sheet), Some(obj([("valueInputOption", Value::from(vio)), ("data", data)])))?
+            }
+            ("data", "batchClear") => {
+                let ranges = match ex.header(&format!("{}ranges", HEADER_PREFIX)) {
+                    Some(v) => str_list(v),
+                    None => self.ranges.clone(),
+                };
+                let r = self.call("POST", format!("{}/values:batchClear", sheet), Some(obj([("ranges", Value::from(ranges))])))?;
+                r.get("clearedRanges").cloned().unwrap_or(r)
+            }
             ("data", "batchGet") => {
                 let ranges = match ex.header(&format!("{}ranges", HEADER_PREFIX)) {
                     Some(v) => str_list(v),

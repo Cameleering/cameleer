@@ -311,3 +311,45 @@ fn firestore_batched_writes_transactions_and_listener() {
     assert_eq!(m.received_exchanges()[3].body().get("balance").and_then(|b| b.as_i64()), Some(6));
     c2.stop().unwrap();
 }
+
+#[test]
+fn sheets_batch_updates() {
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let created = req(&t, &format!("google-sheets://spreadsheets/create?title=Plan&{}", env.opts()), "", &[]);
+    let id = s(created.header("CamelGoogleSheets.spreadsheetId").unwrap());
+    let uri = |api: &str| format!("google-sheets://{}?spreadsheetId={}&{}", api, id, env.opts());
+    // values:batchUpdate / batchClear
+    let data = Value::Array(vec![
+        Value::object([("range", Value::from("Sheet1!A1:B2")), ("values", Value::Array(vec![Value::Array(vec!["name".into(), "qty".into()]), Value::Array(vec!["apple".into(), "3".into()])]))]),
+        Value::object([("range", Value::from("Sheet1!D1")), ("values", Value::Array(vec![Value::Array(vec!["note: apple pie".into()])]))]),
+    ]);
+    let r = req(&t, &uri("data/batchUpdate"), data, &[]).body().clone();
+    assert_eq!(r.get("totalUpdatedCells").and_then(|v| v.as_i64()), Some(5));
+    // spreadsheet batchUpdate: rename, add / duplicate / rename sheets, find & replace, insert rows
+    let requests = Value::Array(vec![
+        Value::object([("updateSpreadsheetProperties", Value::object([("properties", Value::object([("title", "Plan 2027")])), ("fields", Value::from("title"))]))]),
+        Value::object([("addSheet", Value::object([("properties", Value::object([("title", "Archive")]))]))]),
+        Value::object([("findReplace", Value::object([("find", Value::from("apple")), ("replacement", Value::from("pear")), ("allSheets", Value::Bool(true))]))]),
+        Value::object([("duplicateSheet", Value::object([("sourceSheetId", Value::Int(0)), ("sheetId", Value::Int(0)), ("newSheetName", Value::from("Copy"))]))]),
+        Value::object([("insertDimension", Value::object([("range", Value::object([("sheetId", Value::Int(0)), ("dimension", Value::from("ROWS")), ("startIndex", Value::Int(1)), ("endIndex", Value::Int(2))]))]))]),
+    ]);
+    let r = req(&t, &uri("spreadsheets/batchUpdate"), requests, &[]).body().clone();
+    let replies = r.get("replies").unwrap().as_array().unwrap().clone();
+    assert_eq!(s(replies[1].get("addSheet").unwrap().get("properties").unwrap().get("title").unwrap()), "Archive");
+    assert_eq!(replies[2].get("findReplace").unwrap().get("occurrencesChanged").and_then(|v| v.as_i64()), Some(2));
+    let meta = req(&t, &uri("spreadsheets/get"), "", &[]).body().clone();
+    assert_eq!(s(meta.get("properties").unwrap().get("title").unwrap()), "Plan 2027");
+    let titles: Vec<String> = meta.get("sheets").unwrap().as_array().unwrap().iter().map(|x| s(x.get("properties").unwrap().get("title").unwrap())).collect();
+    assert_eq!(titles, vec!["Sheet1", "Archive", "Copy"]);
+    let rows = req(&t, &uri("data/get"), "", &[("CamelGoogleSheets.range", Value::from("Sheet1!A1:B3"))]).body().clone();
+    assert_eq!(rows, Value::Array(vec![Value::Array(vec!["name".into(), "qty".into()]), Value::Array(vec![]), Value::Array(vec!["pear".into(), "3".into()])]));
+    // an invalid request leaves everything unchanged
+    let bad = Value::Array(vec![Value::object([("deleteSheet", Value::object([("sheetId", Value::Int(1))]))]), Value::object([("deleteSheet", Value::object([("sheetId", Value::Int(42))]))])]);
+    assert!(call(&t, &uri("spreadsheets/batchUpdate"), bad, &[]).unwrap_err().message.contains("No grid with id"));
+    assert_eq!(req(&t, &uri("spreadsheets/get"), "", &[]).body().get("sheets").unwrap().as_array().unwrap().len(), 3);
+    let cleared = req(&t, &uri("data/batchClear"), "", &[("CamelGoogleSheets.ranges", Value::from(vec!["Sheet1!D1", "Copy!A1:B2"]))]).body().clone();
+    assert_eq!(cleared.as_array().unwrap().len(), 2);
+    assert!(req(&t, &uri("data/get"), "", &[("CamelGoogleSheets.range", Value::from("Copy!A1:B2"))]).body().as_array().unwrap().iter().all(|r| r.as_array().unwrap().is_empty()));
+}

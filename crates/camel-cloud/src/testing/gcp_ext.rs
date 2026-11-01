@@ -1384,12 +1384,70 @@ fn sheets(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
             ext.sheets.insert(id.clone(), Spreadsheet { title: title.clone(), sheets: vec![("Sheet1".into(), vec![])] });
             Response::json(200, obj([("spreadsheetId", Value::from(id)), ("properties", obj([("title", Value::from(title))]))]).to_json())
         }
+        ("POST", [target]) if target.ends_with(":batchUpdate") => {
+            let id = target.trim_end_matches(":batchUpdate");
+            let Some(sp) = ext.sheets.get_mut(id) else { return gerror(404, "NOT_FOUND", "Requested entity was not found.") };
+            sheets_batch_update(sp, id, &body)
+        }
         (m, [id, tail @ ..]) => {
             let Some(sp) = ext.sheets.get_mut(*id) else { return gerror(404, "NOT_FOUND", "Requested entity was not found.") };
             match (m, tail) {
                 ("GET", []) => {
                     let sheets: Vec<Value> = sp.sheets.iter().enumerate().map(|(i, (n, _))| obj([("properties", obj([("sheetId", Value::Int(i as i64)), ("title", Value::from(n.clone()))]))])).collect();
                     Response::json(200, obj([("spreadsheetId", Value::from(*id)), ("properties", obj([("title", Value::from(sp.title.clone()))])), ("sheets", Value::Array(sheets))]).to_json())
+                }
+                ("POST", ["values:batchUpdate"]) => {
+                    let raw = body.get("valueInputOption").map(|v| v.to_string()).as_deref() == Some("RAW");
+                    if body.get("valueInputOption").is_none() {
+                        return gerror(400, "INVALID_ARGUMENT", "'valueInputOption' is required but not specified");
+                    }
+                    let mut cells = 0;
+                    let mut responses = Vec::new();
+                    for vr in body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default() {
+                        let range = vr.get("range").map(|r| r.to_string()).unwrap_or_default();
+                        let rows: Vec<Vec<Value>> = vr.get("values").and_then(|v| v.as_array()).map(|rows| rows.iter().map(|r| r.as_array().cloned().unwrap_or_default()).collect()).unwrap_or_default();
+                        let (sheet_name, start, _) = parse_a1(&range);
+                        let sheet_name = sheet_name.unwrap_or_else(|| sp.sheets[0].0.clone());
+                        let Some(grid) = sp.sheets.iter_mut().find(|(n, _)| *n == sheet_name).map(|(_, g)| g) else { return gerror(400, "INVALID_ARGUMENT", &format!("Unable to parse range: {}", range)) };
+                        for (i, row) in rows.iter().enumerate() {
+                            let ri = start.1 + i;
+                            while grid.len() <= ri {
+                                grid.push(Vec::new());
+                            }
+                            for (j, v) in row.iter().enumerate() {
+                                let cj = start.0 + j;
+                                while grid[ri].len() <= cj {
+                                    grid[ri].push(Value::Null);
+                                }
+                                grid[ri][cj] = if raw { v.clone() } else { v.as_str().and_then(|x| x.parse::<i64>().ok().map(Value::Int)).unwrap_or_else(|| v.clone()) };
+                                cells += 1;
+                            }
+                        }
+                        responses.push(obj([("updatedRange", Value::from(range)), ("updatedRows", Value::Int(rows.len() as i64))]));
+                    }
+                    let n = responses.len();
+                    Response::json(200, obj([("spreadsheetId", Value::from(*id)), ("totalUpdatedCells", Value::Int(cells)), ("totalUpdatedSheets", Value::Int(n as i64)), ("responses", Value::Array(responses))]).to_json())
+                }
+                ("POST", ["values:batchClear"]) => {
+                    let ranges: Vec<String> = body.get("ranges").and_then(|r| r.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect()).unwrap_or_default();
+                    for range in &ranges {
+                        let (sheet_name, start, end) = parse_a1(range);
+                        let sheet_name = sheet_name.unwrap_or_else(|| sp.sheets[0].0.clone());
+                        if let Some(grid) = sp.sheets.iter_mut().find(|(n, _)| *n == sheet_name).map(|(_, g)| g) {
+                            let (c1, r1) = end.unwrap_or((usize::MAX, usize::MAX));
+                            for (ri, row) in grid.iter_mut().enumerate() {
+                                if ri < start.1 || ri > r1 {
+                                    continue;
+                                }
+                                for (cj, c) in row.iter_mut().enumerate() {
+                                    if cj >= start.0 && cj <= c1 {
+                                        *c = Value::Null;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Response::json(200, obj([("spreadsheetId", Value::from(*id)), ("clearedRanges", Value::from(ranges))]).to_json())
                 }
                 ("GET", ["values:batchGet"]) => {
                     let ranges: Vec<String> = req.query_params().into_iter().filter(|(k, _)| k == "ranges").map(|(_, v)| v).collect();
@@ -1463,6 +1521,128 @@ fn sheets(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
         }
         _ => gerror(400, "INVALID_ARGUMENT", "Unsupported Sheets request"),
     }
+}
+
+/// `spreadsheets:batchUpdate`: all requests are validated and applied in order (atomically:
+/// a failing request leaves the spreadsheet unchanged). Sheet ids are the sheet positions.
+fn sheets_batch_update(sp: &mut Spreadsheet, id: &str, body: &Value) -> Response {
+    let requests = body.get("requests").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+    if requests.is_empty() {
+        return gerror(400, "INVALID_ARGUMENT", "Must specify at least one request.");
+    }
+    let mut work = Spreadsheet { title: sp.title.clone(), sheets: sp.sheets.clone() };
+    let mut replies = Vec::new();
+    for r in &requests {
+        let Some((kind, a)) = r.as_object().and_then(|m| m.iter().next()) else { return gerror(400, "INVALID_ARGUMENT", "Invalid request") };
+        let sheet_idx = |a: &Value, work: &Spreadsheet| -> Result<usize, Response> {
+            let sid = a.get("sheetId").or_else(|| a.get("properties").and_then(|p| p.get("sheetId"))).or_else(|| a.get("range").and_then(|r| r.get("sheetId"))).and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+            if sid < work.sheets.len() {
+                Ok(sid)
+            } else {
+                Err(gerror(400, "INVALID_ARGUMENT", &format!("No grid with id: {}", sid)))
+            }
+        };
+        let reply = match kind.as_str() {
+            "addSheet" => {
+                let title = a.get("properties").and_then(|p| p.get("title")).map(|t| t.to_string()).unwrap_or_else(|| format!("Sheet{}", work.sheets.len() + 1));
+                if work.sheets.iter().any(|(n, _)| *n == title) {
+                    return gerror(400, "INVALID_ARGUMENT", &format!("A sheet with the name \"{}\" already exists. Please enter another name.", title));
+                }
+                work.sheets.push((title.clone(), vec![]));
+                obj([("addSheet", obj([("properties", obj([("sheetId", Value::Int(work.sheets.len() as i64 - 1)), ("title", Value::from(title))]))]))])
+            }
+            "deleteSheet" => {
+                let i = match sheet_idx(a, &work) {
+                    Ok(i) => i,
+                    Err(r) => return r,
+                };
+                if work.sheets.len() == 1 {
+                    return gerror(400, "INVALID_ARGUMENT", "You can't remove all the sheets in a document.");
+                }
+                work.sheets.remove(i);
+                obj([])
+            }
+            "duplicateSheet" => {
+                let i = match sheet_idx(a, &work) {
+                    Ok(i) => i,
+                    Err(r) => return r,
+                };
+                let title = a.get("newSheetName").map(|t| t.to_string()).unwrap_or_else(|| format!("Copy of {}", work.sheets[i].0));
+                let grid = work.sheets[i].1.clone();
+                work.sheets.push((title.clone(), grid));
+                obj([("duplicateSheet", obj([("properties", obj([("sheetId", Value::Int(work.sheets.len() as i64 - 1)), ("title", Value::from(title))]))]))])
+            }
+            "updateSpreadsheetProperties" => {
+                if let Some(t) = a.get("properties").and_then(|p| p.get("title")) {
+                    work.title = t.to_string();
+                }
+                obj([])
+            }
+            "updateSheetProperties" => {
+                let i = match sheet_idx(a, &work) {
+                    Ok(i) => i,
+                    Err(r) => return r,
+                };
+                if let Some(t) = a.get("properties").and_then(|p| p.get("title")) {
+                    work.sheets[i].0 = t.to_string();
+                }
+                obj([])
+            }
+            "findReplace" => {
+                let (find, repl) = (a.get("find").map(|f| f.to_string()).unwrap_or_default(), a.get("replacement").map(|f| f.to_string()).unwrap_or_default());
+                if find.is_empty() {
+                    return gerror(400, "INVALID_ARGUMENT", "find must not be empty");
+                }
+                let whole = a.get("matchEntireCell").is_some_and(|m| m.is_truthy());
+                let only = if a.get("allSheets").is_some_and(|x| x.is_truthy()) { None } else { a.get("sheetId").and_then(|v| v.as_i64()).map(|v| v as usize) };
+                let (mut occ, mut vals) = (0i64, 0i64);
+                for (i, (_, grid)) in work.sheets.iter_mut().enumerate() {
+                    if only.is_some_and(|o| o != i) {
+                        continue;
+                    }
+                    for c in grid.iter_mut().flatten() {
+                        let text = if c.is_null() { String::new() } else { c.to_string() };
+                        let n = if whole { usize::from(text == find) } else { text.matches(&find).count() };
+                        if n > 0 {
+                            occ += n as i64;
+                            vals += 1;
+                            *c = Value::from(if whole { repl.clone() } else { text.replace(&find, &repl) });
+                        }
+                    }
+                }
+                obj([("findReplace", obj([("occurrencesChanged", Value::Int(occ)), ("valuesChanged", Value::Int(vals))]))])
+            }
+            "insertDimension" | "deleteDimension" => {
+                let range = a.get("range").cloned().unwrap_or_default();
+                let i = match sheet_idx(a, &work) {
+                    Ok(i) => i,
+                    Err(r) => return r,
+                };
+                if range.get("dimension").map(|d| d.to_string()).as_deref() != Some("ROWS") {
+                    return gerror(400, "INVALID_ARGUMENT", "The emulator supports ROWS dimensions only");
+                }
+                let (s0, e0) = (range.get("startIndex").and_then(|v| v.as_i64()).unwrap_or(0) as usize, range.get("endIndex").and_then(|v| v.as_i64()).unwrap_or(0) as usize);
+                let grid = &mut work.sheets[i].1;
+                if kind == "insertDimension" {
+                    for _ in s0..e0 {
+                        if s0 <= grid.len() {
+                            grid.insert(s0, Vec::new());
+                        }
+                    }
+                } else {
+                    let end = e0.min(grid.len());
+                    if s0 < end {
+                        grid.drain(s0..end);
+                    }
+                }
+                obj([])
+            }
+            other => return gerror(400, "INVALID_ARGUMENT", &format!("The emulator does not support the {} request", other)),
+        };
+        replies.push(reply);
+    }
+    *sp = work;
+    Response::json(200, obj([("spreadsheetId", Value::from(id)), ("replies", Value::Array(replies))]).to_json())
 }
 
 fn read_range(sp: &Spreadsheet, range: &str) -> Value {
