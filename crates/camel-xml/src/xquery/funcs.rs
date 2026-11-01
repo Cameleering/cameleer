@@ -664,6 +664,15 @@ pub(crate) fn call_builtin(it: &mut Interp, name: &QN, args: &[Expr], f: &Focus)
             let Some(v) = it.atomize_opt(&a[0], "a date/time argument")? else { return Ok(Vec::new()) };
             Ok(super::datetime::timezone_of(&v).map(Item::Atomic).into_iter().collect())
         }
+        ("local-name-from-QName" | "namespace-uri-from-QName" | "prefix-from-QName", 1) => match it.atomize_opt(&a[0], "a QName argument")? {
+            None => Ok(Vec::new()),
+            Some(Atomic::QName(p, l, u)) => Ok(vec![Item::str(match local {
+                "local-name-from-QName" => l,
+                "namespace-uri-from-QName" => u,
+                _ => p,
+            })]),
+            Some(other) => Err(XqError::type_err(format!("{}() expects an xs:QName, found {}", local, other.type_of().name()))),
+        },
         ("implicit-timezone", 0) => Ok(vec![Item::Atomic(Atomic::Duration("PT0S".into()))]),
         ("lang", 1 | 2) => {
             let node = if na == 2 {

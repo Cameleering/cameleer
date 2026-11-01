@@ -182,6 +182,12 @@ impl Docs {
         XValue::Nodes(ids.into_iter().map(|i| XNode::new(di, i)).collect())
     }
 
+    /// Replace document `d` (XQuery updates); node ids of the old document stay valid when
+    /// the new one only appends nodes.
+    pub fn replace(&self, d: u32, doc: Document) {
+        self.list.borrow_mut()[d as usize] = Rc::new(doc);
+    }
+
     pub fn add_rc(&self, doc: Rc<Document>) -> u32 {
         let mut l = self.list.borrow_mut();
         l.push(doc);

@@ -2,6 +2,7 @@
 
 use std::cmp::Ordering;
 use std::fmt;
+use std::rc::Rc;
 
 use crate::xpath::XNode;
 
@@ -269,11 +270,77 @@ impl fmt::Display for Atomic {
     }
 }
 
-/// An item: a node or an atomic value.
+/// An item: a node, an atomic value, or (XQuery 3.1) a function, map or array.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
     Node(XNode),
     Atomic(Atomic),
+    Func(Rc<FuncItem>),
+    Map(Rc<XqMap>),
+    Array(Rc<Vec<Vec<Item>>>),
+}
+
+/// A function item.
+#[derive(Debug)]
+pub enum FuncItem {
+    /// A named function reference (`local:f#2`, `fn:upper-case#1`).
+    Named { name: super::ast::QN, arity: usize },
+    /// An inline function with its captured variables.
+    Inline { params: Vec<(super::ast::QN, Option<SeqType>)>, ret: Option<SeqType>, body: std::sync::Arc<super::ast::Expr>, closure: Vec<(super::ast::QN, Rc<Vec<Item>>)> },
+    /// A partial application (`f(?, 2)`): `None` arguments are the placeholders.
+    Partial { base: Item, args: Vec<Option<Vec<Item>>> },
+}
+
+impl FuncItem {
+    pub fn arity(&self) -> usize {
+        match self {
+            FuncItem::Named { arity, .. } => *arity,
+            FuncItem::Inline { params, .. } => params.len(),
+            FuncItem::Partial { args, .. } => args.iter().filter(|a| a.is_none()).count(),
+        }
+    }
+}
+
+impl PartialEq for FuncItem {
+    fn eq(&self, other: &FuncItem) -> bool {
+        std::ptr::eq(self, other)
+    }
+}
+
+/// An XQuery 3.1 map (insertion-ordered entries, keys compared with `op:same-key`).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct XqMap {
+    pub entries: Vec<(Atomic, Vec<Item>)>,
+}
+
+/// `op:same-key`: string-like keys compare as strings, numerics by value.
+pub fn same_key(a: &Atomic, b: &Atomic) -> bool {
+    if a.is_stringlike() && b.is_stringlike() {
+        return a.to_string() == b.to_string();
+    }
+    if a.is_numeric() && b.is_numeric() {
+        let (x, y) = (a.as_f64(), b.as_f64());
+        return x == y || (x.is_nan() && y.is_nan());
+    }
+    if a.type_of() != b.type_of() {
+        return false;
+    }
+    matches!(compare_atomic(a, b), Ok(Some(Ordering::Equal)))
+}
+
+impl XqMap {
+    pub fn get(&self, k: &Atomic) -> Option<&Vec<Item>> {
+        self.entries.iter().find(|(x, _)| same_key(x, k)).map(|(_, v)| v)
+    }
+    pub fn put(&mut self, k: Atomic, v: Vec<Item>) {
+        match self.entries.iter_mut().find(|(x, _)| same_key(x, &k)) {
+            Some(e) => e.1 = v,
+            None => self.entries.push((k, v)),
+        }
+    }
+    pub fn remove(&mut self, k: &Atomic) {
+        self.entries.retain(|(x, _)| !same_key(x, k));
+    }
 }
 
 impl Item {
@@ -306,6 +373,12 @@ pub enum ItemType {
     Atomic(AtomicType),
     /// `empty-sequence()`
     Empty,
+    /// `function(*)` / `function(T, ...) as R` (signatures are not checked).
+    Function,
+    /// `map(*)` / `map(K, V)`.
+    Map,
+    /// `array(*)` / `array(T)`.
+    Array,
 }
 
 /// Occurrence indicators.
@@ -339,6 +412,9 @@ impl SeqType {
             ItemType::Pi(_) => "processing-instruction()".into(),
             ItemType::Atomic(t) => t.name().into(),
             ItemType::Empty => return "empty-sequence()".into(),
+            ItemType::Function => "function(*)".into(),
+            ItemType::Map => "map(*)".into(),
+            ItemType::Array => "array(*)".into(),
         };
         let o = match self.occ {
             Occ::One => "",

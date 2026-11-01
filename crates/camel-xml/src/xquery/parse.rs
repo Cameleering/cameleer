@@ -6,7 +6,9 @@ use crate::xpath::ast::{Axis, NodeTest};
 
 use super::ast::*;
 use super::types::{Atomic, AtomicType, Decimal, ItemType, Occ, SeqType, XqError, XqResult};
-use super::{ERR_NS, FN_NS, LOCAL_NS, MATH_NS, XSI_NS, XS_NS};
+use super::{ARRAY_NS, ERR_NS, FN_NS, LOCAL_NS, MAP_NS, MATH_NS, XSI_NS, XS_NS};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 type R<T> = XqResult<T>;
 
@@ -22,6 +24,10 @@ pub(crate) struct Parser<'a> {
     default_fn_ns: String,
     boundary_preserve: bool,
     module: Module,
+    base: Option<PathBuf>,
+    depth: usize,
+    /// Nesting of `copy ... modify` clauses (updates inside them do not make the query updating).
+    in_modify: usize,
 }
 
 fn is_name_start(c: char) -> bool {
@@ -34,6 +40,11 @@ fn is_name_char(c: char) -> bool {
 
 /// Parse a main module with extra namespace bindings.
 pub(crate) fn parse_module(src: &str, bindings: &[(String, String)]) -> R<Module> {
+    parse_module_at(src, bindings, None, 0)
+}
+
+/// Parse a module; `base` resolves `import module ... at "file"` locations.
+pub(crate) fn parse_module_at(src: &str, bindings: &[(String, String)], base: Option<&Path>, depth: usize) -> R<Module> {
     let mut ns: Vec<(String, String)> = vec![
         ("xml".into(), crate::dom::XML_NS.into()),
         ("xs".into(), XS_NS.into()),
@@ -42,9 +53,23 @@ pub(crate) fn parse_module(src: &str, bindings: &[(String, String)]) -> R<Module
         ("local".into(), LOCAL_NS.into()),
         ("err".into(), ERR_NS.into()),
         ("math".into(), MATH_NS.into()),
+        ("map".into(), MAP_NS.into()),
+        ("array".into(), ARRAY_NS.into()),
     ];
     ns.extend(bindings.iter().cloned());
-    let mut p = Parser { s: src.chars().collect(), i: 0, src, ns, default_elem_ns: String::new(), default_fn_ns: FN_NS.into(), boundary_preserve: false, module: Module::default() };
+    let mut p = Parser {
+        s: src.chars().collect(),
+        i: 0,
+        src,
+        ns,
+        default_elem_ns: String::new(),
+        default_fn_ns: FN_NS.into(),
+        boundary_preserve: false,
+        module: Module::default(),
+        base: base.map(|b| b.to_path_buf()),
+        depth,
+        in_modify: 0,
+    };
     p.module_()?;
     Ok(p.module)
 }
@@ -310,7 +335,16 @@ impl Parser<'_> {
             self.expect(";")?;
         }
         if self.at_kw("module") && self.kw_after("module", "namespace") {
-            return Err(XqError::static_err("XQST0009", "Library modules are not supported (a main module is required)"));
+            self.eat_kws(&["module", "namespace"]);
+            let (_, p) = self.expect_qname()?;
+            self.expect("=")?;
+            let u = self.string_lit()?;
+            if u.is_empty() {
+                return Err(XqError::static_err("XQST0088", "The target namespace of a library module must not be empty"));
+            }
+            self.expect(";")?;
+            self.ns.push((p.clone(), u.clone()));
+            self.module.library_ns = Some((p, u));
         }
         loop {
             if self.eat_kws(&["declare", "namespace"]) {
@@ -365,14 +399,27 @@ impl Parser<'_> {
                 && ["ordering", "construction", "copy-namespaces", "base-uri", "default", "decimal-format", "context"].iter().any(|k| self.kw_after("declare", k))
             {
                 self.skip_to_semicolon()?;
-            } else if self.at_kw("import") && (self.kw_after("import", "schema") || self.kw_after("import", "module")) {
-                return Err(XqError::static_err("XQST0009", "import schema / import module are not supported"));
+            } else if self.at_kw("import") && self.kw_after("import", "module") {
+                self.import_module()?;
+            } else if self.at_kw("import") && self.kw_after("import", "schema") {
+                return Err(XqError::static_err("XQST0009", "import schema is not supported (no schema-aware processing)"));
             } else {
                 break;
             }
         }
         self.module.namespaces = self.ns.clone();
         self.ws();
+        if let Some((_, uri)) = &self.module.library_ns {
+            if self.i < self.s.len() {
+                return self.err("A library module must not have a query body");
+            }
+            for (name, _) in self.module.functions.keys() {
+                if name.uri != *uri {
+                    return Err(XqError::static_err("XQST0048", format!("Function {} is not in the target namespace {} of the library module", name.local, uri)));
+                }
+            }
+            return Ok(());
+        }
         if self.i < self.s.len() {
             let body = self.expr()?;
             self.module.body = Some(body);
@@ -383,6 +430,69 @@ impl Parser<'_> {
         }
         if self.module.body.is_none() {
             return Err(XqError::syntax("The query has no body"));
+        }
+        Ok(())
+    }
+
+    /// `import module namespace p = "uri" [at "loc", ...];`
+    fn import_module(&mut self) -> R<()> {
+        self.eat_kws(&["import", "module"]);
+        let prefix = if self.eat_kw("namespace") {
+            let (_, p) = self.expect_qname()?;
+            self.expect("=")?;
+            Some(p)
+        } else {
+            None
+        };
+        let uri = self.string_lit()?;
+        let mut locations = Vec::new();
+        if self.eat_kw("at") {
+            loop {
+                locations.push(self.string_lit()?);
+                if !self.eat(",") {
+                    break;
+                }
+            }
+        }
+        self.expect(";")?;
+        if let Some(p) = prefix {
+            self.ns.push((p, uri.clone()));
+        }
+        if self.depth > 32 {
+            return Err(XqError::static_err("XQST0093", format!("Module import cycle for {}", uri)));
+        }
+        let mut sources: Vec<(String, Option<PathBuf>)> = Vec::new();
+        for loc in &locations {
+            let l = loc.strip_prefix("file://").or_else(|| loc.strip_prefix("file:")).or_else(|| loc.strip_prefix("classpath:")).unwrap_or(loc);
+            let mut path = PathBuf::from(l);
+            if path.is_relative() {
+                if let Some(b) = &self.base {
+                    path = b.join(path);
+                }
+            }
+            let text = std::fs::read_to_string(&path).map_err(|e| XqError::static_err("XQST0059", format!("Cannot load module {} from {}: {}", uri, path.display(), e)))?;
+            sources.push((text, path.parent().map(|p| p.to_path_buf())));
+        }
+        if sources.is_empty() {
+            match super::registered_module(&uri) {
+                Some(text) => sources.push((text, self.base.clone())),
+                None => return Err(XqError::static_err("XQST0059", format!("No module found for namespace {} (give a location with 'at' or register it)", uri))),
+            }
+        }
+        for (text, base) in sources {
+            let lib = parse_module_at(&text, &[], base.as_deref(), self.depth + 1)?;
+            match &lib.library_ns {
+                Some((_, u)) if *u == uri => {}
+                _ => return Err(XqError::static_err("XQST0059", format!("The module at the given location is not a library module for namespace {}", uri))),
+            }
+            for (k, f) in lib.functions {
+                self.module.functions.entry(k).or_insert(f);
+            }
+            for v in lib.vars {
+                if !self.module.vars.iter().any(|x| x.name == v.name) {
+                    self.module.vars.push(v);
+                }
+            }
         }
         Ok(())
     }
@@ -495,8 +605,49 @@ impl Parser<'_> {
         Ok(SeqType { item, occ })
     }
 
+    /// Skip a balanced parenthesized group (at its opening parenthesis).
+    fn skip_parens(&mut self) -> R<()> {
+        self.expect("(")?;
+        let mut depth = 1;
+        while depth > 0 {
+            match self.peek() {
+                None => return self.err("Expected ')'"),
+                Some('(') => depth += 1,
+                Some(')') => depth -= 1,
+                _ => {}
+            }
+            self.i += 1;
+        }
+        Ok(())
+    }
+
     fn item_type(&mut self) -> R<ItemType> {
         self.ws();
+        for (kw, t) in [("function", ItemType::Function), ("map", ItemType::Map), ("array", ItemType::Array)] {
+            if self.kw_then(kw, '(') {
+                self.eat_kw(kw);
+                self.ws();
+                self.skip_parens()?;
+                if kw == "function" {
+                    let save = self.i;
+                    if self.eat_kw("as") {
+                        if self.at("(") || self.at(")") || self.at(",") {
+                            self.i = save;
+                        } else {
+                            self.seq_type()?;
+                        }
+                    }
+                }
+                return Ok(t);
+            }
+        }
+        if self.at("(") {
+            // parenthesized item type
+            self.i += 1;
+            let t = self.item_type()?;
+            self.expect(")")?;
+            return Ok(t);
+        }
         if self.kw_then("item", '(') {
             self.eat_kw("item");
             self.expect("(")?;
@@ -599,8 +750,100 @@ impl Parser<'_> {
         Ok(Expr::Seq(v))
     }
 
+    fn update_expr(&mut self) -> R<Option<Expr>> {
+        let updating = |p: &mut Self| {
+            if p.in_modify == 0 {
+                p.module.updating = true;
+            }
+        };
+        if self.kw_after("insert", "node") || self.kw_after("insert", "nodes") {
+            self.eat_kw("insert");
+            if !self.eat_kw("nodes") {
+                self.eat_kw("node");
+            }
+            let source = self.expr_single()?;
+            let pos = if self.eat_kws(&["as", "first", "into"]) {
+                InsertPos::First
+            } else if self.eat_kws(&["as", "last", "into"]) {
+                InsertPos::Last
+            } else if self.eat_kw("into") {
+                InsertPos::Into
+            } else if self.eat_kw("before") {
+                InsertPos::Before
+            } else if self.eat_kw("after") {
+                InsertPos::After
+            } else {
+                return self.err("Expected 'into', 'as first into', 'as last into', 'before' or 'after'");
+            };
+            let target = self.expr_single()?;
+            updating(self);
+            return Ok(Some(Expr::Insert { source: Box::new(source), pos, target: Box::new(target) }));
+        }
+        if self.kw_after("delete", "node") || self.kw_after("delete", "nodes") {
+            self.eat_kw("delete");
+            if !self.eat_kw("nodes") {
+                self.eat_kw("node");
+            }
+            let target = self.expr_single()?;
+            updating(self);
+            return Ok(Some(Expr::Delete(Box::new(target))));
+        }
+        if self.kw_after("replace", "node") || self.kw_after("replace", "value") {
+            self.eat_kw("replace");
+            let value_of = self.eat_kws(&["value", "of"]);
+            if !self.eat_kw("node") {
+                return self.err("Expected 'node'");
+            }
+            let target = self.expr_single()?;
+            if !self.eat_kw("with") {
+                return self.err("Expected 'with'");
+            }
+            let with = self.expr_single()?;
+            updating(self);
+            return Ok(Some(Expr::Replace { value_of, target: Box::new(target), with: Box::new(with) }));
+        }
+        if self.kw_after("rename", "node") {
+            self.eat_kws(&["rename", "node"]);
+            let target = self.expr_single()?;
+            if !self.eat_kw("as") {
+                return self.err("Expected 'as'");
+            }
+            let name = self.expr_single()?;
+            updating(self);
+            return Ok(Some(Expr::Rename { target: Box::new(target), name: Box::new(name) }));
+        }
+        if self.kw_then("copy", '$') {
+            self.eat_kw("copy");
+            let mut copies = Vec::new();
+            loop {
+                let v = self.var_name()?;
+                self.expect(":=")?;
+                copies.push((v, self.expr_single()?));
+                if !self.eat(",") {
+                    break;
+                }
+            }
+            if !self.eat_kw("modify") {
+                return self.err("Expected 'modify'");
+            }
+            self.in_modify += 1;
+            let modify = self.expr_single();
+            self.in_modify -= 1;
+            let modify = modify?;
+            if !self.eat_kw("return") {
+                return self.err("Expected 'return'");
+            }
+            let ret = self.expr_single()?;
+            return Ok(Some(Expr::Transform { copies, modify: Box::new(modify), ret: Box::new(ret) }));
+        }
+        Ok(None)
+    }
+
     fn expr_single(&mut self) -> R<Expr> {
         self.ws();
+        if let Some(u) = self.update_expr()? {
+            return Ok(u);
+        }
         if self.kw_then("for", '$') || self.kw_then("let", '$') {
             return self.flwor();
         }
@@ -965,8 +1208,127 @@ impl Parser<'_> {
         Ok(l)
     }
 
+    /// `E => f(args)` / `E => $f(args)` (XQuery 3.1 arrow operator).
+    fn arrow(&mut self) -> R<Expr> {
+        let mut l = self.unary()?;
+        while self.eat("=>") {
+            self.ws();
+            let spec = if self.peek() == Some('$') {
+                Some(Expr::Var(self.var_name()?))
+            } else if self.peek() == Some('(') {
+                self.i += 1;
+                let e = self.expr()?;
+                self.expect(")")?;
+                Some(e)
+            } else {
+                None
+            };
+            match spec {
+                Some(f) => {
+                    let mut args = vec![Some(l)];
+                    args.extend(self.arg_list()?);
+                    l = Expr::DynCall(Box::new(f), args);
+                }
+                None => {
+                    let (p, n) = self.expect_qname()?;
+                    let name = self.resolve_fn(&p, &n)?;
+                    let rest = self.arg_list()?;
+                    let mut args = vec![l];
+                    let mut partial = false;
+                    let mut pargs = vec![Some(args[0].clone())];
+                    for a in rest {
+                        match a {
+                            Some(e) => {
+                                args.push(e.clone());
+                                pargs.push(Some(e));
+                            }
+                            None => {
+                                partial = true;
+                                pargs.push(None);
+                            }
+                        }
+                    }
+                    l = if partial { Expr::PartialCall { name, args: pargs } } else { Expr::Call { name, args } };
+                }
+            }
+        }
+        Ok(l)
+    }
+
+    /// `( arg, ? , ... )` with `?` placeholders as `None`.
+    fn arg_list(&mut self) -> R<Vec<Option<Expr>>> {
+        self.expect("(")?;
+        let mut args = Vec::new();
+        if self.eat(")") {
+            return Ok(args);
+        }
+        loop {
+            self.ws();
+            if self.peek() == Some('?') && matches!(self.peek_at(1), Some(',' | ')' | ' ' | '\t' | '\n' | '\r')) {
+                let save = self.i;
+                self.i += 1;
+                if self.at(",") || self.at(")") {
+                    args.push(None);
+                } else {
+                    self.i = save;
+                    args.push(Some(self.expr_single()?));
+                }
+            } else {
+                args.push(Some(self.expr_single()?));
+            }
+            if self.eat(")") {
+                break;
+            }
+            self.expect(",")?;
+        }
+        Ok(args)
+    }
+
+    /// Lookup key after `?`.
+    fn lookup_key(&mut self) -> R<LookupKey> {
+        self.ws();
+        match self.peek() {
+            Some('*') => {
+                self.i += 1;
+                Ok(LookupKey::Wildcard)
+            }
+            Some('(') => {
+                self.i += 1;
+                let e = self.expr()?;
+                self.expect(")")?;
+                Ok(LookupKey::Expr(Box::new(e)))
+            }
+            Some(c) if c.is_ascii_digit() => {
+                let st = self.i;
+                while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                    self.i += 1;
+                }
+                let t: String = self.s[st..self.i].iter().collect();
+                Ok(LookupKey::Int(t.parse().map_err(|_| XqError::syntax("Invalid lookup index"))?))
+            }
+            Some(c) if is_name_start(c) => Ok(LookupKey::Name(self.ncname().unwrap_or_default())),
+            _ => self.err("Expected a lookup key"),
+        }
+    }
+
+    /// `map {`, `array {`, `function (`, or `name#arity` ahead?
+    fn special_primary(&mut self) -> bool {
+        let save = self.i;
+        self.ws();
+        let r = (|| {
+            let Some((p, l)) = self.qname_raw() else { return false };
+            if self.peek() == Some('#') && self.peek_at(1).is_some_and(|c| c.is_ascii_digit()) {
+                return true;
+            }
+            self.ws();
+            p.is_empty() && (((l == "map" || l == "array") && self.peek() == Some('{')) || (l == "function" && self.peek() == Some('(')))
+        })();
+        self.i = save;
+        r
+    }
+
     fn cast(&mut self) -> R<Expr> {
-        let l = self.unary()?;
+        let l = self.arrow()?;
         if self.eat_kws(&["cast", "as"]) {
             let (t, o) = self.single_type()?;
             return Ok(Expr::Cast(Box::new(l), t, o));
@@ -1101,7 +1463,7 @@ impl Parser<'_> {
             let preds = self.predicates()?;
             return Ok(Step::Axis { axis: Axis::Child, test, preds });
         }
-        if c.is_some_and(is_name_start) && !self.is_computed_ctor() {
+        if c.is_some_and(is_name_start) && !self.is_computed_ctor() && !self.special_primary() {
             let save = self.i;
             let name = self.ncname().unwrap_or_default();
             if self.at("::") {
@@ -1130,9 +1492,24 @@ impl Parser<'_> {
             }
             self.i = save;
         }
-        let prim = self.primary()?;
-        let preds = self.predicates()?;
-        Ok(Step::Filter(if preds.is_empty() { prim } else { Expr::Filter(Box::new(prim), preds) }))
+        let mut e = self.primary()?;
+        // postfix: predicates, dynamic calls, lookups
+        loop {
+            if self.at("[") {
+                let preds = self.predicates()?;
+                e = Expr::Filter(Box::new(e), preds);
+            } else if self.at("(") && !self.starts("(:") {
+                let args = self.arg_list()?;
+                e = Expr::DynCall(Box::new(e), args);
+            } else if self.at("?") && !self.starts("??") {
+                self.i += 1;
+                let k = self.lookup_key()?;
+                e = Expr::Lookup(Some(Box::new(e)), k);
+            } else {
+                break;
+            }
+        }
+        Ok(Step::Filter(e))
     }
 
     fn node_test(&mut self, axis: Axis) -> R<StepTest> {
@@ -1196,12 +1573,82 @@ impl Parser<'_> {
                 Ok(Expr::ContextItem)
             }
             '<' => self.direct_ctor(),
+            '[' => {
+                self.i += 1;
+                let mut members = Vec::new();
+                if !self.eat("]") {
+                    loop {
+                        members.push(self.expr_single()?);
+                        if self.eat("]") {
+                            break;
+                        }
+                        self.expect(",")?;
+                    }
+                }
+                Ok(Expr::ArrayCtor { square: true, members })
+            }
+            '?' => {
+                self.i += 1;
+                Ok(Expr::Lookup(None, self.lookup_key()?))
+            }
             c if c.is_ascii_digit() || c == '.' => self.number(),
             c if is_name_start(c) => {
                 if self.is_computed_ctor() {
                     return self.computed_ctor();
                 }
+                if self.kw_then("map", '{') {
+                    self.eat_kw("map");
+                    self.expect("{")?;
+                    let mut entries = Vec::new();
+                    if !self.eat("}") {
+                        loop {
+                            let k = self.expr_single()?;
+                            self.expect(":")?;
+                            let v = self.expr_single()?;
+                            entries.push((k, v));
+                            if self.eat("}") {
+                                break;
+                            }
+                            self.expect(",")?;
+                        }
+                    }
+                    return Ok(Expr::MapCtor(entries));
+                }
+                if self.kw_then("array", '{') {
+                    self.eat_kw("array");
+                    let e = self.enclosed()?;
+                    return Ok(Expr::ArrayCtor { square: false, members: vec![e] });
+                }
+                if self.kw_then("function", '(') {
+                    self.eat_kw("function");
+                    self.expect("(")?;
+                    let mut params = Vec::new();
+                    if !self.eat(")") {
+                        loop {
+                            let v = self.var_name()?;
+                            let ty = if self.eat_kw("as") { Some(self.seq_type()?) } else { None };
+                            params.push((v, ty));
+                            if self.eat(")") {
+                                break;
+                            }
+                            self.expect(",")?;
+                        }
+                    }
+                    let ret = if self.eat_kw("as") { Some(self.seq_type()?) } else { None };
+                    let body = self.enclosed()?;
+                    return Ok(Expr::InlineFunc { params, ret, body: Arc::new(body) });
+                }
                 let (p, l) = self.expect_qname()?;
+                if self.peek() == Some('#') {
+                    self.i += 1;
+                    let st = self.i;
+                    while self.peek().is_some_and(|c| c.is_ascii_digit()) {
+                        self.i += 1;
+                    }
+                    let arity: usize = self.s[st..self.i].iter().collect::<String>().parse().map_err(|_| XqError::syntax("Invalid function arity"))?;
+                    let name = if p.is_empty() && false { QN::new(XS_NS, l) } else { self.resolve_fn(&p, &l)? };
+                    return Ok(Expr::FuncRef(name, arity));
+                }
                 self.ws();
                 if self.peek() != Some('(') {
                     return self.err(format!("Unexpected name {}", l));
@@ -1209,19 +1656,12 @@ impl Parser<'_> {
                 if p.is_empty() && (RESERVED_FUNCTIONS.contains(&l.as_str()) || KIND_TESTS.contains(&l.as_str())) {
                     return self.err(format!("'{}' cannot be used as a function name", l));
                 }
-                self.i += 1;
-                let mut args = Vec::new();
-                if !self.eat(")") {
-                    loop {
-                        args.push(self.expr_single()?);
-                        if self.eat(")") {
-                            break;
-                        }
-                        self.expect(",")?;
-                    }
-                }
+                let raw = self.arg_list()?;
                 let name = self.resolve_fn(&p, &l)?;
-                Ok(Expr::Call { name, args })
+                if raw.iter().any(|a| a.is_none()) {
+                    return Ok(Expr::PartialCall { name, args: raw });
+                }
+                Ok(Expr::Call { name, args: raw.into_iter().map(|a| a.unwrap()).collect() })
             }
             _ => self.err("Unexpected character"),
         }
