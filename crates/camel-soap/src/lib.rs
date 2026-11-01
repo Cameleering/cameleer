@@ -64,7 +64,8 @@ pub fn register(ctx: &CamelContext) {
     ctx.add_component_factory("spring-ws", || Arc::new(springws::SpringWsComponent));
     ctx.add_component_factory("fhir", || Arc::new(fhir::component::FhirComponent));
     let reg = ctx.registry();
-    register_data_format_factory(reg, "jaxb", jaxb::factory);
+    let weak = ctx.downgrade();
+    register_data_format_factory(reg, "jaxb", move |o| Ok(Arc::new(jaxb::JaxbDataFormat::from_options_ctx(o, weak.upgrade().as_ref())?) as Arc<dyn camel_core::dataformat::DataFormat>));
     register_data_format_factory(reg, "fhirJson", fhir::dataformat::json_factory);
     register_data_format_factory(reg, "fhirXml", fhir::dataformat::xml_factory);
 }

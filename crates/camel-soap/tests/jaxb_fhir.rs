@@ -123,6 +123,31 @@ fn jaxb_options_and_structural_fallback() {
 }
 
 #[test]
+fn jaxb_schema_beans_and_typed_dates() {
+    let ctx = ctx();
+    // a String bean for typing and a compiled validator bean
+    ctx.registry().bind("orderXsd", ORDER_XSD.to_string());
+    ctx.registry().bind("orderValidator", camel_xml::xsd::Schema::parse(ORDER_XSD, None).unwrap());
+    let df = jaxb(&ctx, &[("contextPath", "#orderXsd".into()), ("schema", "#orderValidator".into()), ("typedDates", "true".into()), ("prettyPrint", "false".into())]);
+    let mut ex = Exchange::with_body(Some(ctx.clone()), ORDER_XML);
+    df.unmarshal(&mut ex).unwrap();
+    assert_eq!(ex.message.body.get("date").unwrap().to_json(), r#"{"year":2024,"month":5,"day":1}"#);
+    assert_eq!(ex.message.body.get("id"), Some(&Value::Int(1001)));
+    df.marshal(&mut ex).unwrap();
+    assert!(ex.message.body.to_string().contains("<ns1:date>2024-05-01</ns1:date>") || ex.message.body.to_string().contains(":date>2024-05-01<"), "{}", ex.message.body);
+    // a SchemaSet bean
+    ctx.registry().bind("orderModel", camel_soap::xsdmodel::SchemaSet::parse(ORDER_XSD, None).unwrap());
+    let df = jaxb(&ctx, &[("contextPath", "ref:orderModel".into())]);
+    let mut ex = Exchange::with_body(Some(ctx.clone()), ORDER_XML);
+    df.unmarshal(&mut ex).unwrap();
+    assert_eq!(ex.message.body.get("paid"), Some(&Value::Bool(true)));
+    // validation through the bean validator
+    let df = jaxb(&ctx, &[("schema", "#orderValidator".into())]);
+    let mut bad = Exchange::with_body(Some(ctx.clone()), ORDER_XML.replace("<s:qty>3</s:qty>", "<s:qty>0</s:qty>"));
+    assert_eq!(df.unmarshal(&mut bad).unwrap_err().kind, "UnmarshalException");
+}
+
+#[test]
 fn jaxb_in_a_route() {
     let ctx = ctx();
     let xsd = write_tmp("order3.xsd", ORDER_XSD).display().to_string();
