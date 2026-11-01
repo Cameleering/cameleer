@@ -120,9 +120,11 @@ impl ClientHello {
         r.finish()?;
         let mut ir = Reader::new(ids, "pre_shared_key");
         let mut identities = Vec::new();
+        let mut ages = Vec::new();
         while !ir.is_empty() {
             identities.push(ir.vec16()?.to_vec());
-            ir.take(4)?;
+            let a = ir.take(4)?;
+            ages.push(u32::from_be_bytes([a[0], a[1], a[2], a[3]]));
         }
         let mut br = Reader::new(binders, "pre_shared_key");
         let mut bl = Vec::new();
@@ -132,7 +134,7 @@ impl ClientHello {
         if identities.is_empty() || identities.len() != bl.len() {
             return Err(TlsError::proto(alert::ILLEGAL_PARAMETER, "pre_shared_key identities and binders do not match"));
         }
-        Ok(Some((identities, bl, 2 + binders.len())))
+        Ok(Some((identities, bl, 2 + binders.len(), ages)))
     }
 
     fn psk_dhe_allowed(&self) -> bool {
@@ -141,7 +143,7 @@ impl ClientHello {
 }
 
 /// (identities, binders, length of the binders block).
-type PskOffer = (Vec<Vec<u8>>, Vec<Vec<u8>>, usize);
+type PskOffer = (Vec<Vec<u8>>, Vec<Vec<u8>>, usize, Vec<u32>);
 
 fn select_alpn(cfg: &TlsServerConfig, ch: &ClientHello) -> TlsResult<Option<Vec<u8>>> {
     let offered = match find_ext(&ch.exts, ext::ALPN) {
@@ -227,6 +229,12 @@ impl<S: Read + Write> Conn<S> {
         let mut sent_ccs = false;
         let mut final_ch = ch1_msg;
         let mut prefix_len = 0;
+        let offered_early = find_ext(&ch.exts, ext::EARLY_DATA).is_some();
+        if offered_early {
+            // until accepted: skip early data records we cannot (or must not) decrypt
+            self.set_skip_early(cfg.max_early_data.max(1 << 14) as usize + (1 << 12));
+        }
+        let hrr = chosen.is_none();
         if chosen.is_none() {
             let group = cfg
                 .groups
@@ -273,8 +281,9 @@ impl<S: Read + Write> Conn<S> {
 
         // PSK resumption (psk_dhe_ke only)
         let mut resumed: Option<(ServerSession, u16)> = None;
+        let mut early_binder: Option<(Vec<u8>, u32)> = None;
         if let Some(sessions) = cfg.sessions.as_ref() {
-            if let Some((identities, binders, binders_len)) = ch.psk_offer()? {
+            if let Some((identities, binders, binders_len, ages)) = ch.psk_offer()? {
                 if ch.psk_dhe_allowed() {
                     for (i, id) in identities.iter().enumerate() {
                         let found = if sessions.tickets { sessions.open(id) } else { sessions.cache_get(id) };
@@ -291,8 +300,28 @@ impl<S: Read + Write> Conn<S> {
                         if !ct_eq(&binders[i], &expected) {
                             return Err(TlsError::proto(alert::DECRYPT_ERROR, "PSK binder verification failed"));
                         }
+                        early_binder = Some((binders[i].clone(), ages[i]));
                         resumed = Some((st, i as u16));
                         break;
+                    }
+                }
+            }
+        }
+        // 0-RTT acceptance (RFC 8446 4.2.10 / 8): opt-in, first identity, no HRR, same suite,
+        // ticket age within the window, binder not replayed within the window
+        let mut accept_early = false;
+        if offered_early && cfg.max_early_data > 0 && !hrr {
+            if let (Some((st, 0)), Some((binder, obf_age))) = (&resumed, &early_binder) {
+                let now = now_ms();
+                let client_age = obf_age.wrapping_sub(st.age_add) as i64;
+                let server_age = now as i64 - (st.created as i64 * 1000);
+                let window = cfg.early_data_window_ms as i64;
+                if st.suite == suite && (client_age - server_age).abs() <= window + 1000 {
+                    let mut seen = cfg.early_replay.lock().unwrap_or_else(|e| e.into_inner());
+                    seen.retain(|_, exp| *exp > now);
+                    if !seen.contains_key(binder) {
+                        seen.insert(binder.clone(), now + 2 * cfg.early_data_window_ms);
+                        accept_early = true;
                     }
                 }
             }
@@ -339,6 +368,9 @@ impl<S: Read + Write> Conn<S> {
         }
         if self.sni.is_some() {
             exts.push((ext::SERVER_NAME, Vec::new()));
+        }
+        if accept_early {
+            exts.push((ext::EARLY_DATA, Vec::new()));
         }
         self.send_hs(&handshake_msg(hs::ENCRYPTED_EXTENSIONS, &codec::extensions(&exts)))?;
 
@@ -387,6 +419,18 @@ impl<S: Read + Write> Conn<S> {
         self.set_write_cipher(cipher13(suite, &s_ap));
         self.flush()?;
 
+        let mut early_data = Vec::new();
+        if accept_early {
+            let psk = &resumed.as_ref().expect("resumed").0.secret;
+            let secret = crate::tls::keyschedule::client_early_secret(h, psk, &h.hash(&final_ch));
+            self.set_skip_early(0);
+            self.set_read_cipher(cipher13(suite, &secret))?;
+            let (data, eoed) = self.read_early_data(cfg.max_early_data as usize)?;
+            self.transcript.extend_from_slice(&eoed);
+            early_data = data;
+            self.early_sent = true;
+            self.early_accepted = true;
+        }
         self.set_read_cipher(cipher13(suite, &sched.client_hs))?;
         if request_cert {
             let cm = self.expect(hs::CERTIFICATE)?;
@@ -417,6 +461,7 @@ impl<S: Read + Write> Conn<S> {
             return Err(TlsError::proto(alert::DECRYPT_ERROR, "client Finished verification failed"));
         }
         self.transcript.extend_from_slice(&cfin);
+        self.push_app_data(std::mem::take(&mut early_data));
         match resumed {
             Some((st, _)) => {
                 self.resumed = true;
@@ -450,7 +495,7 @@ impl<S: Read + Write> Conn<S> {
                 id
             };
             self.pending_ticket =
-                Some(handshake_msg(hs::NEW_SESSION_TICKET, &new_session_ticket13(sessions.lifetime_secs, age_add, &nonce, &ticket)));
+                Some(handshake_msg(hs::NEW_SESSION_TICKET, &new_session_ticket13(sessions.lifetime_secs, age_add, &nonce, &ticket, cfg.max_early_data)));
         }
         self.set_read_cipher(cipher13(suite, &c_ap))?;
         self.read_secret = c_ap;

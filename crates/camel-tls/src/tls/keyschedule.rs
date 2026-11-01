@@ -72,6 +72,12 @@ impl KeySchedule13 {
 }
 
 /// PSK binder (RFC 8446 section 4.2.11.2) over the hash of the truncated ClientHello transcript.
+/// client_early_traffic_secret (RFC 8446 7.1) for 0-RTT data.
+pub(crate) fn client_early_secret(h: HashAlg, psk: &[u8], client_hello_hash: &[u8]) -> Vec<u8> {
+    let zeros = vec![0u8; h.output_len()];
+    derive_secret(h, &h.hkdf_extract(&zeros, psk), "c e traffic", client_hello_hash)
+}
+
 pub(crate) fn psk_binder(h: HashAlg, psk: &[u8], transcript_hash: &[u8]) -> Vec<u8> {
     let zeros = vec![0u8; h.output_len()];
     let early = h.hkdf_extract(&zeros, psk);

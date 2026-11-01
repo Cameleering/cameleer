@@ -460,3 +460,97 @@ fn ocsp_stapling_both_ways() {
     assert!(err.to_string().contains("revoked"), "{}", err);
     h.join().unwrap();
 }
+
+/// One echo exchange on our server: reads what the client sends first (0-RTT data arrives
+/// with the first read) and answers `ok:<data>`.
+fn echo_once(listener: &TcpListener, cfg: &TlsServerConfig) -> (String, bool) {
+    let (sock, _) = listener.accept().unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+    let mut tls = TlsStream::accept(sock, cfg).unwrap();
+    let mut buf = [0u8; 4096];
+    let n = tls.read(&mut buf).unwrap();
+    let got = String::from_utf8_lossy(&buf[..n]).into_owned();
+    tls.write_all(format!("ok:{}", got).as_bytes()).unwrap();
+    let accepted = tls.early_data_accepted();
+    let _ = tls.close();
+    (got, accepted)
+}
+
+#[test]
+fn tls13_zero_rtt_early_data() {
+    let id = ec_identity();
+    let server_cfg = TlsServerConfig::builder().cert_chain_pem(id.cert_pem.as_bytes()).private_key_pem(id.key_pem.as_bytes()).early_data(1024).build().unwrap();
+    let client_cfg = TlsClientConfig::builder().system_roots(false).add_root_pem(id.cert_pem.as_bytes()).unwrap().versions(TlsVersion::Tls13, TlsVersion::Tls13).build();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let sc = server_cfg.clone();
+    let server = thread::spawn(move || (0..3).map(|_| echo_once(&listener, &sc)).collect::<Vec<_>>());
+    let talk = |data: &[u8], early: bool| -> (String, bool) {
+        let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        sock.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
+        let mut tls = if early { TlsStream::connect_with_early_data(sock, "localhost", &client_cfg, data).unwrap() } else { TlsStream::connect(sock, "localhost", &client_cfg).unwrap() };
+        if !early {
+            tls.write_all(data).unwrap();
+        }
+        let mut out = String::new();
+        let _ = tls.read_to_string(&mut out);
+        (out, tls.early_data_accepted())
+    };
+    // full handshake: the ticket (allowing early data) is stored while reading
+    assert_eq!(talk(b"first", false), ("ok:first".to_string(), false));
+    // resumed with 0-RTT: accepted, delivered by the server's first read
+    assert_eq!(talk(b"GET /early", true), ("ok:GET /early".to_string(), true));
+    // too much early data for the ticket: sent after the handshake instead
+    let big = vec![b'x'; 1500];
+    let (out, accepted) = talk(&big, true);
+    assert!(out.starts_with("ok:x") && !accepted);
+    let results = server.join().unwrap();
+    assert_eq!(results[1], ("GET /early".to_string(), true));
+    assert!(!results[0].1 && !results[2].1);
+
+    // a server without 0-RTT (different ticket keys): resumption fails, data is resent
+    let plain = TlsServerConfig::builder().cert_chain_pem(id.cert_pem.as_bytes()).private_key_pem(id.key_pem.as_bytes()).build().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port2 = listener.local_addr().unwrap().port();
+    let h = thread::spawn(move || echo_once(&listener, &plain));
+    // reuse the session cache under the new port's name
+    let sock = TcpStream::connect(("127.0.0.1", port2)).unwrap();
+    let mut tls = TlsStream::connect_with_early_data(sock, "localhost", &client_cfg, b"late").unwrap();
+    let mut out = String::new();
+    let _ = tls.read_to_string(&mut out);
+    assert_eq!(out, "ok:late");
+    assert!(!tls.early_data_accepted());
+    assert_eq!(h.join().unwrap(), ("late".to_string(), false));
+
+    if !openssl_available() {
+        return;
+    }
+    // openssl s_client -early_data against our server (session from a first connection)
+    let files = Files::new();
+    let sess = files.dir.join("sess.pem").to_string_lossy().into_owned();
+    let early_file = files.write("early.txt", "EARLY-FROM-OPENSSL");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port3 = listener.local_addr().unwrap().port();
+    let sc = server_cfg.clone();
+    let srv = thread::spawn(move || (0..2).map(|_| echo_once(&listener, &sc)).collect::<Vec<_>>());
+    let ca = files.write("ca.pem", &id.cert_pem);
+    let run = |extra: &[&str], stdin_data: &str| {
+        let mut c = Command::new("openssl");
+        c.args(["s_client", "-connect", &format!("127.0.0.1:{port3}"), "-servername", "localhost", "-CAfile", &ca, "-tls1_3", "-quiet"]).args(extra);
+        c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = c.spawn().unwrap();
+        watchdog(&child, 30);
+        let mut si = child.stdin.take().unwrap();
+        si.write_all(stdin_data.as_bytes()).unwrap();
+        // keep stdin open until the server closed (s_client exits on close_notify)
+        let out = child.wait_with_output().unwrap();
+        drop(si);
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let out1 = run(&["-sess_out", &sess], "hello");
+    assert!(out1.contains("ok:hello"), "{}", out1);
+    let out2 = run(&["-sess_in", &sess, "-early_data", &early_file], "");
+    assert!(out2.contains("ok:EARLY-FROM-OPENSSL"), "{}", out2);
+    let r = srv.join().unwrap();
+    assert_eq!(r[1], ("EARLY-FROM-OPENSSL".to_string(), true), "openssl 0-RTT accepted by our server");
+}

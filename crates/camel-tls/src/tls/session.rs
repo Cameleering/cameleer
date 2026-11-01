@@ -32,6 +32,8 @@ pub(crate) struct ClientSession {
     pub lifetime_secs: u32,
     pub server_name: String,
     pub peer_certs: Vec<Vec<u8>>,
+    /// TLS 1.3 tickets: the server's max_early_data_size (0 = no 0-RTT).
+    pub max_early_data: u32,
 }
 
 impl ClientSession {
@@ -248,13 +250,21 @@ impl ServerSessions {
 }
 
 /// TLS 1.3 NewSessionTicket body.
-pub(crate) fn new_session_ticket13(lifetime: u32, age_add: u32, nonce: &[u8], ticket: &[u8]) -> Vec<u8> {
+pub(crate) fn new_session_ticket13(lifetime: u32, age_add: u32, nonce: &[u8], ticket: &[u8], max_early_data: u32) -> Vec<u8> {
     let mut body = Vec::new();
     body.extend_from_slice(&lifetime.to_be_bytes());
     body.extend_from_slice(&age_add.to_be_bytes());
     put_vec8(&mut body, nonce);
     put_vec16(&mut body, ticket);
-    put_u16(&mut body, 0);
+    if max_early_data > 0 {
+        // early_data extension with max_early_data_size
+        put_u16(&mut body, 8);
+        put_u16(&mut body, super::ext::EARLY_DATA);
+        put_u16(&mut body, 4);
+        body.extend_from_slice(&max_early_data.to_be_bytes());
+    } else {
+        put_u16(&mut body, 0);
+    }
     body
 }
 

@@ -49,6 +49,30 @@ impl<S: Read + Write> TlsStream<S> {
         Ok(TlsStream { conn })
     }
 
+    /// Client handshake sending `early_data` as TLS 1.3 0-RTT data when a resumable ticket
+    /// for `server_name` allows it (the data is replayable by an attacker: use it for
+    /// idempotent requests only). When the server rejects early data (or no suitable ticket
+    /// exists) the data is sent right after the handshake; [`TlsStream::early_data_accepted`]
+    /// tells which happened.
+    pub fn connect_with_early_data(stream: S, server_name: &str, config: &TlsClientConfig, early_data: &[u8]) -> Result<TlsStream<S>, TlsError> {
+        let mut conn = Conn::new(stream, true);
+        conn.early_out = Some(early_data.to_vec());
+        if let Err(e) = conn.client_handshake(config, server_name, None) {
+            return Err(conn.fail(e));
+        }
+        if !conn.early_accepted && !early_data.is_empty() {
+            if let Err(e) = conn.write_app(early_data) {
+                return Err(conn.fail(e));
+            }
+        }
+        Ok(TlsStream { conn })
+    }
+
+    /// Whether 0-RTT early data was accepted (client: sent and accepted; server: received).
+    pub fn early_data_accepted(&self) -> bool {
+        self.conn.early_accepted
+    }
+
     /// Performs a server handshake.
     pub fn accept(stream: S, config: &TlsServerConfig) -> Result<TlsStream<S>, TlsError> {
         let mut conn = Conn::new(stream, false);

@@ -294,6 +294,12 @@ pub struct TlsServerConfig {
     pub(crate) sessions: Option<Arc<ServerSessions>>,
     /// DER OCSP response stapled when the client sends `status_request`.
     pub(crate) ocsp_response: Option<Arc<Vec<u8>>>,
+    /// TLS 1.3 0-RTT: max_early_data_size advertised in tickets (0 = disabled).
+    pub(crate) max_early_data: u32,
+    /// 0-RTT anti-replay: accepted ticket age skew, and the window of the binder cache.
+    pub(crate) early_data_window_ms: u64,
+    /// 0-RTT anti-replay: PSK binders of accepted early data (until expiry, ms).
+    pub(crate) early_replay: Arc<std::sync::Mutex<std::collections::HashMap<Vec<u8>, u64>>>,
 }
 
 impl TlsServerConfig {
@@ -313,6 +319,8 @@ impl TlsServerConfig {
             tickets: true,
             lifetime: DEFAULT_SESSION_LIFETIME,
             ocsp_response: None,
+            max_early_data: 0,
+            early_data_window_ms: 10_000,
             error: None,
         }
     }
@@ -357,6 +365,8 @@ pub struct TlsServerConfigBuilder {
     tickets: bool,
     lifetime: u32,
     ocsp_response: Option<Vec<u8>>,
+    max_early_data: u32,
+    early_data_window_ms: u64,
     error: Option<String>,
 }
 
@@ -508,6 +518,22 @@ impl TlsServerConfigBuilder {
         self
     }
 
+    /// Opt-in TLS 1.3 0-RTT: tickets allow up to `max_bytes` of early data, which resumed
+    /// clients may send with their ClientHello (it is replayable: accept only idempotent
+    /// requests). Early data is accepted only for the first PSK identity, without
+    /// HelloRetryRequest, with a ticket age within the anti-replay window and a PSK binder
+    /// not seen before in that window; it is delivered by the first reads.
+    pub fn early_data(mut self, max_bytes: u32) -> Self {
+        self.max_early_data = max_bytes;
+        self
+    }
+
+    /// 0-RTT anti-replay window (ticket age tolerance and binder cache lifetime), default 10s.
+    pub fn early_data_window(mut self, window: std::time::Duration) -> Self {
+        self.early_data_window_ms = window.as_millis().max(1) as u64;
+        self
+    }
+
     /// Session / ticket lifetime in seconds (default 86400, at most 7 days).
     pub fn session_lifetime_secs(mut self, secs: u32) -> Self {
         self.lifetime = secs;
@@ -539,6 +565,9 @@ impl TlsServerConfigBuilder {
             crls: Arc::new(self.crls),
             sessions: if self.resumption { Some(Arc::new(ServerSessions::new(self.lifetime, self.tickets))) } else { None },
             ocsp_response: self.ocsp_response.map(Arc::new),
+            max_early_data: self.max_early_data,
+            early_data_window_ms: self.early_data_window_ms,
+            early_replay: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         })
     }
 }

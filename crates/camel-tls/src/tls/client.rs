@@ -61,6 +61,8 @@ struct HelloParams<'a> {
     psk: Option<&'a ClientSession>,
     /// TLS 1.2: `Some(ticket)` sends the session_ticket extension (empty = support only).
     ticket12: Option<&'a [u8]>,
+    /// TLS 1.3: announce 0-RTT data (early_data extension).
+    early_data: bool,
 }
 
 /// Builds a ClientHello. With a PSK the binder is left zeroed; see [`fill_binder`].
@@ -119,6 +121,9 @@ fn client_hello(cfg: &TlsClientConfig, p: &HelloParams) -> Vec<u8> {
         let mut d = Vec::new();
         put_vec16(&mut d, &entry);
         exts.push((ext::KEY_SHARE, d));
+        if p.early_data && p.psk.is_some() {
+            exts.push((ext::EARLY_DATA, Vec::new()));
+        }
         if let Some(s) = p.psk {
             exts.push((ext::PSK_KEY_EXCHANGE_MODES, vec![1, 1])); // psk_dhe_ke
             let age = (now_ms().saturating_sub(s.received_ms) as u32).wrapping_add(s.age_add);
@@ -210,6 +215,12 @@ impl<S: Read + Write> Conn<S> {
             None => Vec::new(),
         };
         let mut share = KeyShare::generate(cfg.groups[0]);
+        // 0-RTT: only with a ticket allowing enough early data
+        let early = self.early_out.take().filter(|d| !d.is_empty());
+        let send_early = match (&early, &psk13) {
+            (Some(d), Some(s)) => s.max_early_data as usize >= d.len(),
+            _ => false,
+        };
         let mut ch1 = client_hello(
             cfg,
             &HelloParams {
@@ -223,12 +234,21 @@ impl<S: Read + Write> Conn<S> {
                 offer12,
                 psk: psk13.as_ref(),
                 ticket12: ticket12.as_deref(),
+                early_data: send_early,
             },
         );
         if let Some(p) = &psk13 {
             fill_binder(&mut ch1, &[], p);
         }
         self.send_hs(&ch1)?;
+        if send_early {
+            let p = psk13.as_ref().expect("psk");
+            let h = p.suite.hash();
+            let secret = crate::tls::keyschedule::client_early_secret(h, &p.secret, &h.hash(&ch1));
+            self.set_write_cipher(cipher13(p.suite, &secret));
+            self.queue_app(early.as_deref().unwrap_or_default())?;
+            self.early_sent = true;
+        }
         self.flush()?;
 
         let mut msg = self.expect(hs::SERVER_HELLO)?;
@@ -262,6 +282,11 @@ impl<S: Read + Write> Conn<S> {
                 None => None,
             };
             let h = suite.hash();
+            if self.early_sent {
+                // early data is always rejected after HelloRetryRequest
+                self.clear_write_cipher();
+                self.early_sent = false;
+            }
             self.transcript = message_hash(h, &ch1);
             self.transcript.extend_from_slice(&msg);
             share = KeyShare::generate(group);
@@ -280,6 +305,7 @@ impl<S: Read + Write> Conn<S> {
                     offer12,
                     psk: offered_psk.as_ref(),
                     ticket12: ticket12.as_deref(),
+                    early_data: false,
                 },
             );
             if let Some(p) = &offered_psk {
@@ -404,7 +430,9 @@ impl<S: Read + Write> Conn<S> {
         self.suite = Some(suite);
         self.group = Some(p.share.group);
         self.set_read_cipher(cipher13(suite, &sched.server_hs))?;
-        self.set_write_cipher(cipher13(suite, &sched.client_hs));
+        if !self.early_sent {
+            self.set_write_cipher(cipher13(suite, &sched.client_hs));
+        }
 
         // EncryptedExtensions
         let ee = self.expect(hs::ENCRYPTED_EXTENSIONS)?;
@@ -412,6 +440,11 @@ impl<S: Read + Write> Conn<S> {
         let exts = parse_extensions(r.vec16()?)?;
         r.finish()?;
         self.alpn = check_alpn(cfg, &exts)?;
+        let early_accepted = find_ext(&exts, ext::EARLY_DATA).is_some();
+        if early_accepted && (!self.early_sent || resumed_psk.is_none()) {
+            return Err(illegal("early_data accepted although none was sent"));
+        }
+        self.early_accepted = early_accepted;
         self.transcript.extend_from_slice(&ee);
 
         let mut cert_request: Option<(Vec<u8>, Vec<u16>)> = None;
@@ -460,6 +493,13 @@ impl<S: Read + Write> Conn<S> {
 
         if !p.sent_ccs {
             self.send_ccs();
+        }
+        if self.early_sent {
+            if self.early_accepted {
+                // EndOfEarlyData under the early key, then the handshake key
+                self.send_hs(&handshake_msg(hs::END_OF_EARLY_DATA, &[]))?;
+            }
+            self.set_write_cipher(cipher13(suite, &sched.client_hs));
         }
         if let Some((ctx, algs)) = cert_request {
             let chosen = cfg.client_cert.as_ref().and_then(|ck| choose_scheme(&ck.key, &algs, true).map(|s| (ck.clone(), s)));
@@ -710,6 +750,7 @@ impl<S: Read + Write> Conn<S> {
                 cache.put(
                     cache_key,
                     ClientSession {
+                        max_early_data: 0,
                         version: TlsVersion::Tls12,
                         suite,
                         secret: master,

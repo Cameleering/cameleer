@@ -42,6 +42,13 @@ pub(crate) struct Conn<S> {
     pub peer_certs: Vec<Vec<u8>>,
     /// Client side: the stapled OCSP response (validated), if any.
     pub peer_ocsp: Option<Vec<u8>>,
+    /// Client side: 0-RTT data to send with the ClientHello (set before the handshake).
+    pub(crate) early_out: Option<Vec<u8>>,
+    /// Whether 0-RTT data was sent (client) / offered (server), and accepted.
+    pub early_sent: bool,
+    pub early_accepted: bool,
+    /// Server side: bytes of undecryptable (rejected 0-RTT) records still to skip.
+    skip_early: usize,
     pub sni: Option<String>,
     /// Whether the session was resumed (abbreviated handshake / PSK).
     pub resumed: bool,
@@ -108,6 +115,10 @@ impl<S: Read + Write> Conn<S> {
             alpn: None,
             peer_certs: Vec::new(),
             peer_ocsp: None,
+            early_out: None,
+            early_sent: false,
+            early_accepted: false,
+            skip_early: 0,
             sni: None,
             resumed: false,
             session_origin: Vec::new(),
@@ -215,11 +226,27 @@ impl<S: Read + Write> Conn<S> {
                     }
                     return Err(TlsError::proto(alert::UNEXPECTED_MESSAGE, "unprotected alert after key change"));
                 }
-                c.decrypt(&header, &body)
+                let r = c.decrypt(&header, &body);
+                match r {
+                    Ok(v) => {
+                        self.skip_early = 0;
+                        Ok(v)
+                    }
+                    // rejected 0-RTT data the server cannot decrypt is skipped (RFC 8446 4.2.10)
+                    Err(_) if self.skip_early >= len => {
+                        self.skip_early -= len;
+                        self.read_record()
+                    }
+                    Err(e) => Err(e),
+                }
             }
             None => {
                 if len > MAX_FRAGMENT {
                     return Err(TlsError::proto(alert::RECORD_OVERFLOW, "plaintext record too large"));
+                }
+                if typ == content::APPLICATION_DATA && self.skip_early >= len {
+                    self.skip_early -= len;
+                    return self.read_record();
                 }
                 if typ == content::APPLICATION_DATA {
                     return Err(TlsError::proto(alert::UNEXPECTED_MESSAGE, "application data before handshake completion"));
@@ -297,6 +324,62 @@ impl<S: Read + Write> Conn<S> {
                 }
                 _ => return Err(TlsError::proto(alert::UNEXPECTED_MESSAGE, "application data during handshake")),
             }
+        }
+    }
+
+    /// Server side: skip up to `budget` bytes of records that do not decrypt (rejected 0-RTT).
+    pub(crate) fn set_skip_early(&mut self, budget: usize) {
+        self.skip_early = budget;
+    }
+
+    /// Client side: queues application data under the current (early) write key.
+    pub(crate) fn queue_app(&mut self, data: &[u8]) -> TlsResult<()> {
+        self.queue_record(content::APPLICATION_DATA, data)
+    }
+
+    /// Client side: drops the write key (0-RTT abandoned after HelloRetryRequest).
+    pub(crate) fn clear_write_cipher(&mut self) {
+        self.write_cipher = None;
+    }
+
+    /// Server side: reads 0-RTT application data (under the early read key) up to and
+    /// including EndOfEarlyData; returns (data, EndOfEarlyData message).
+    pub(crate) fn read_early_data(&mut self, max: usize) -> TlsResult<(Vec<u8>, Vec<u8>)> {
+        let mut data = Vec::new();
+        loop {
+            if let Some(m) = self.take_hs_msg()? {
+                if m[0] != hs::END_OF_EARLY_DATA || m.len() != 4 {
+                    return Err(TlsError::proto(alert::UNEXPECTED_MESSAGE, "expected EndOfEarlyData"));
+                }
+                return Ok((data, m));
+            }
+            let (typ, d) = self.read_record()?;
+            match typ {
+                content::APPLICATION_DATA => {
+                    if data.len() + d.len() > max {
+                        return Err(TlsError::proto(alert::UNEXPECTED_MESSAGE, "too much early data"));
+                    }
+                    data.extend_from_slice(&d);
+                }
+                content::HANDSHAKE => self.hs_buf.extend_from_slice(&d),
+                content::ALERT => {
+                    if self.handle_alert(&d)? {
+                        return Err(TlsError::Io(io::Error::new(io::ErrorKind::UnexpectedEof, "peer closed the connection during 0-RTT")));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Server side: makes data (accepted 0-RTT) available to the first reads.
+    pub(crate) fn push_app_data(&mut self, data: Vec<u8>) {
+        if !data.is_empty() {
+            let mut rest = self.app_buf.split_off(self.app_pos.min(self.app_buf.len()));
+            let mut d = data;
+            d.append(&mut rest);
+            self.app_buf = d;
+            self.app_pos = 0;
         }
     }
 
@@ -491,8 +574,9 @@ impl<S: Read + Write> Conn<S> {
         let age_add = u32::from_be_bytes(r.take(4)?.try_into().unwrap());
         let nonce = r.vec8()?.to_vec();
         let ticket = r.vec16()?.to_vec();
-        let _exts = r.vec16()?;
+        let exts = codec::parse_extensions(r.vec16()?)?;
         r.finish()?;
+        let max_early_data = codec::find_ext(&exts, super::ext::EARLY_DATA).filter(|d| d.len() == 4).map(|d| u32::from_be_bytes([d[0], d[1], d[2], d[3]])).unwrap_or(0);
         if ticket.is_empty() {
             return Err(TlsError::decode("NewSessionTicket"));
         }
@@ -518,6 +602,7 @@ impl<S: Read + Write> Conn<S> {
                     lifetime_secs: lifetime,
                     server_name: sink.server_name.clone(),
                     peer_certs: sink.peer_certs.clone(),
+                    max_early_data,
                 },
             );
         }
