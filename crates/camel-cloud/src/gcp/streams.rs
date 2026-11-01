@@ -16,7 +16,12 @@
 //! limiting to events starting after the consumer started and `considerLastUpdate=true` asking
 //! only for events updated since the previous poll (`updatedMin`). An event is emitted again only
 //! when its `updated` time changes (so the stream carries new and changed events); header
-//! `CamelGoogleCalendarStreamEventId`.
+//! `CamelGoogleCalendarStreamEventId`. With `syncFlow=true` the consumer uses incremental sync
+//! tokens instead: a full sync (all pages, `nextSyncToken` kept; its events are emitted only with
+//! `consumeFromNow=false`), then every poll asks `events.list?syncToken=...` and emits the events
+//! changed since, deleted ones included (`status` = `cancelled`, header
+//! `CamelGoogleCalendarStreamEventStatus`); a `410 GONE` (expired token) restarts with a full sync
+//! that only emits events not delivered before.
 //!
 //! **`google-sheets-stream://spreadsheetId`** (`range` required, `majorDimension` default `ROWS`,
 //! `valueRenderOption`): every poll reads the range and emits the rows appended since the
@@ -181,7 +186,12 @@ pub struct CalendarStreamService {
     pub scheduler: ScheduledPollConfig,
     /// (consumer start, last poll time, event id -> updated)
     state: Mutex<(Option<i64>, Option<i64>, BTreeMap<String, String>)>,
+    pub sync_flow: bool,
+    sync_token: Mutex<Option<String>>,
 }
+
+/// Status header of `google-calendar-stream` with `syncFlow`.
+pub const CALENDAR_EVENT_STATUS: &str = "CamelGoogleCalendarStreamEventStatus";
 
 /// Header of `google-calendar-stream`.
 pub const CALENDAR_EVENT_ID: &str = "CamelGoogleCalendarStreamEventId";
@@ -189,8 +199,10 @@ pub const CALENDAR_EVENT_ID: &str = "CamelGoogleCalendarStreamEventId";
 /// Factory for `google-calendar-stream`.
 pub fn create_calendar_stream(_remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
     let gcp = GcpConfig::from_opts(o)?;
-    o.ignore(&["syncFlow"]);
+    let sync_flow = o.bool("syncFlow", false)?;
     Ok(Arc::new(CalendarStreamService {
+        sync_flow,
+        sync_token: Mutex::new(None),
         scope: scopes(o, CALENDAR_SCOPE),
         calendar_id: o.string("calendarId", "primary"),
         query: o.get("query"),
@@ -218,6 +230,9 @@ impl CloudService for CalendarStreamService {
         Ok(())
     }
     fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        if self.sync_flow {
+            return self.poll_sync(ctx, processor, logger);
+        }
         let (start, last, _) = self.state.lock().unwrap().clone();
         let poll_time = now_millis();
         let url = format!("{}/calendar/v3/calendars/{}/events", self.gcp.base("https://www.googleapis.com"), uri_encode(&self.calendar_id, false));
@@ -259,6 +274,87 @@ impl CloudService for CalendarStreamService {
             self.state.lock().unwrap().2.insert(id, upd);
         }
         self.state.lock().unwrap().1 = Some(poll_time);
+        Ok(total)
+    }
+}
+
+impl CalendarStreamService {
+    /// One page loop of `events.list` (`syncToken` or a full listing); returns (events, next sync token).
+    fn list_all(&self, sync: Option<&str>) -> Result<(Vec<Value>, Option<String>)> {
+        let url = format!("{}/calendar/v3/calendars/{}/events", self.gcp.base("https://www.googleapis.com"), uri_encode(&self.calendar_id, false));
+        let mut out = Vec::new();
+        let mut page: Option<String> = None;
+        loop {
+            let mut q = vec![("maxResults".to_string(), "250".to_string())];
+            if let Some(t) = sync {
+                q.push(("syncToken".into(), t.to_string()));
+            }
+            if let Some(p) = &page {
+                q.push(("pageToken".into(), p.clone()));
+            }
+            let v = get_json(&self.gcp, &self.scope, &url, &q)?;
+            out.extend(v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default());
+            page = v.get("nextPageToken").map(|t| t.to_string()).filter(|t| !t.is_empty());
+            if page.is_none() {
+                return Ok((out, v.get("nextSyncToken").map(|t| t.to_string())));
+            }
+        }
+    }
+
+    fn poll_sync(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        let token = self.sync_token.lock().unwrap().clone();
+        let (events, next, full) = match &token {
+            Some(t) => match self.list_all(Some(t)) {
+                Ok((e, n)) => (e, n, false),
+                Err(e) if super::error_status(&e) == Some(410) => {
+                    camel_core::camel_info!(logger, "Calendar sync token expired: full resynchronization");
+                    let (e, n) = self.list_all(None)?;
+                    (e, n, true)
+                }
+                Err(e) => return Err(e),
+            },
+            None => {
+                let (e, n) = self.list_all(None)?;
+                if self.consume_from_now {
+                    // the initial full sync only records what exists
+                    let mut s = self.state.lock().unwrap();
+                    for ev in &e {
+                        s.2.insert(ev.get("id").map(|i| i.to_string()).unwrap_or_default(), ev.get("updated").map(|u| u.to_string()).unwrap_or_default());
+                    }
+                    drop(s);
+                    *self.sync_token.lock().unwrap() = n;
+                    return Ok(0);
+                }
+                (e, n, true)
+            }
+        };
+        let fresh: Vec<Value> = {
+            let s = self.state.lock().unwrap();
+            events
+                .into_iter()
+                .filter(|e| {
+                    if !full {
+                        return true;
+                    }
+                    let id = e.get("id").map(|i| i.to_string()).unwrap_or_default();
+                    s.2.get(&id) != e.get("updated").map(|u| u.to_string()).as_ref()
+                })
+                .collect()
+        };
+        let total = fresh.len();
+        for (i, e) in fresh.into_iter().enumerate() {
+            let id = e.get("id").map(|i| i.to_string()).unwrap_or_default();
+            let mut ex = Exchange::new(ctx.clone());
+            ex.set_header(CALENDAR_EVENT_ID, id.clone());
+            ex.set_header(CALENDAR_EVENT_STATUS, e.get("status").cloned().unwrap_or_else(|| Value::from("confirmed")));
+            self.state.lock().unwrap().2.insert(id, e.get("updated").map(|u| u.to_string()).unwrap_or_default());
+            ex.set_body(e);
+            set_batch(&mut ex, i, total);
+            process(logger, processor, &mut ex);
+        }
+        if next.is_some() {
+            *self.sync_token.lock().unwrap() = next;
+        }
         Ok(total)
     }
 }

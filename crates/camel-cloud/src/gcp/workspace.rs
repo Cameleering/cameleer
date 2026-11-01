@@ -116,14 +116,19 @@ fn create_for(api: Api, remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudSe
         ),
     };
     let path = remaining.trim_matches('/');
-    if !supported.contains(&path) {
+    let extra_table = match api {
+        Api::Mail => super::workspace_ops::MAIL,
+        Api::Calendar => super::workspace_ops::CALENDAR,
+        Api::Drive => super::workspace_ops::DRIVE,
+    };
+    if !supported.contains(&path) && super::workspace_ops::entry(extra_table, path).is_none() {
         return Err(CamelError::illegal_argument(format!("Unsupported {} api/method: {} (supported: {})", scheme, path, supported.join(", "))));
     }
     let (api_name, method) = path.split_once('/').unwrap_or((path, ""));
     let gcp = GcpConfig::from_opts(o)?;
     let scope = o.get("scopes").map(|s| str_list(&Value::from(s)).join(" ")).unwrap_or_else(|| default_scope.to_string());
     let mut options = BTreeMap::new();
-    for n in names {
+    for n in names.iter().chain(super::workspace_ops::EXTRA_OPTIONS.iter()) {
         if let Some(v) = o.get(n) {
             options.insert(n.to_string(), v);
         }
@@ -209,6 +214,79 @@ pub fn message_text(msg: &Value) -> Option<String> {
 }
 
 impl WorkspaceService {
+    /// The table-driven methods of [`super::workspace_ops`]; false for the others.
+    fn extra(&self, ex: &mut Exchange) -> Result<bool> {
+        use super::workspace_ops::{channel_body, draft_body, entry, fill, BodyKind};
+        let path = format!("{}/{}", self.api_name, self.method);
+        let (table, base) = match self.api {
+            Api::Mail => (super::workspace_ops::MAIL, format!("{}/gmail/v1/users/{}", self.gcp.base("https://gmail.googleapis.com"), uri_encode(&self.opt(ex, "userId").unwrap_or_else(|| "me".into()), false))),
+            Api::Calendar => (super::workspace_ops::CALENDAR, format!("{}/calendar/v3", self.gcp.base("https://www.googleapis.com"))),
+            Api::Drive => (super::workspace_ops::DRIVE, format!("{}/drive/v3", self.gcp.base("https://www.googleapis.com"))),
+        };
+        let Some(&(_, method, template, body_kind, list_field, query_opts)) = entry(table, &path) else { return Ok(false) };
+        let get = |n: &str| self.opt(ex, n);
+        let url = format!("{}/{}", base, fill(template, &get)?);
+        let mut q: Vec<(String, String)> = Vec::new();
+        for o in query_opts {
+            match self.opt(ex, o) {
+                Some(v) => q.push((o.to_string(), v)),
+                None if *o == "fields" && self.api == Api::Drive => q.push(("fields".into(), "*".into())),
+                None if *o == "requestId" => q.push(("requestId".into(), crate::util::uuid())),
+                None => {}
+            }
+        }
+        let content = || -> Option<Value> {
+            let v = ex.header(&format!("{}content", self.prefix())).cloned().or_else(|| match ex.body() {
+                v @ Value::Object(_) => Some(v.clone()),
+                _ => None,
+            })?;
+            match v {
+                Value::String(_) | Value::Bytes(_) => parse_json(&v.to_bytes()).ok(),
+                other => Some(other),
+            }
+        };
+        let body = match body_kind {
+            BodyKind::NoBody => None,
+            BodyKind::Empty => Some(obj([])),
+            BodyKind::Content => Some(match (path.as_str(), content()) {
+                ("drafts/send", None) => obj([("id", Value::from(self.need(ex, "id")?))]),
+                ("users/watch", None) => {
+                    let mut m = ObjectMap::new();
+                    m.insert("topicName".into(), Value::from(self.need(ex, "topicName")?));
+                    if let Some(l) = self.opt_value(ex, "labelIds") {
+                        m.insert("labelIds".into(), Value::from(str_list(&l)));
+                    }
+                    Value::Object(m)
+                }
+                (_, Some(c)) => c,
+                (_, None) => return Err(CamelError::illegal_argument(format!("{} needs a content map (body or {}content header)", path, self.prefix()))),
+            }),
+            BodyKind::Draft => Some(draft_body(ex, content(), self.opt(ex, "id"))),
+            BodyKind::Channel => Some(channel_body(content(), &get)?),
+        };
+        if let Some(field) = list_field {
+            ex.set_body(Value::Array(self.paged(&url, q, field, false)?));
+            return Ok(true);
+        }
+        let full = if q.is_empty() { url } else { format!("{}?{}", url, crate::util::encode_form(&q)) };
+        let mut req = Request::new(method, Url::parse(&full)?);
+        if let Some(b) = &body {
+            req = req.header("Content-Type", "application/json").body(b.to_json().into_bytes());
+        }
+        let resp = self.send(req)?;
+        let v = if resp.body.is_empty() { Value::Null } else { parse_json(&resp.body)? };
+        if path == "attachments/get" {
+            ex.set_header(&format!("{}size", self.prefix()), v.get("size").cloned().unwrap_or_default());
+            ex.set_body(Value::Bytes(v.get("data").and_then(|d| base64_decode(&d.to_string().replace('-', "+").replace('_', "/"))).unwrap_or_default()));
+            return Ok(true);
+        }
+        if let Some(id) = v.get("resourceId").filter(|_| matches!(body_kind, BodyKind::Channel)) {
+            ex.set_header(&format!("{}resourceId", self.prefix()), id.clone());
+        }
+        ex.set_body(v);
+        Ok(true)
+    }
+
     fn prefix(&self) -> &'static str {
         match self.api {
             Api::Mail => "CamelGoogleMail.",
@@ -459,6 +537,9 @@ impl WorkspaceService {
 
 impl CloudService for WorkspaceService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
+        if self.extra(ex)? {
+            return Ok(());
+        }
         match self.api {
             Api::Mail => self.mail(ex),
             Api::Calendar => self.calendar(ex),

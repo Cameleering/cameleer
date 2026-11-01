@@ -470,3 +470,141 @@ fn pubsub_lite_publish_subscribe_and_cursors() {
     req(&t, &lite("orders", "&operation=deleteTopic"), "", &[]);
     assert!(call(&t, &lite("orders", "&operation=getTopicPartitions"), "", &[]).is_err());
 }
+
+fn webhook() -> (camel_cloud::testing::MockServer, std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>) {
+    let got: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>> = Default::default();
+    let g2 = got.clone();
+    let server = camel_cloud::testing::MockServer::start(std::sync::Arc::new(move |r: &camel_cloud::http::ServerRequest| {
+        g2.lock().unwrap().push((r.header("X-Goog-Channel-ID").unwrap_or("").to_string(), r.header("X-Goog-Resource-State").unwrap_or("").to_string(), r.header("X-Goog-Channel-Token").unwrap_or("").to_string()));
+        camel_cloud::http::Response::new(200)
+    }))
+    .unwrap();
+    (server, got)
+}
+
+#[test]
+fn workspace_api_names_watch_channels_and_sync_tokens() {
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let mail = |m: &str| format!("google-mail://{}?delegate=alice@acme.com&{}", m, env.opts());
+    let cal = |m: &str| format!("google-calendar://{}?{}", m, env.opts());
+    let drive = |m: &str| format!("google-drive://{}?{}", m, env.opts());
+    // Gmail: drafts, profile, labels, threads, attachments, users.watch -> Pub/Sub
+    let d = req(&t, &mail("drafts/create"), Value::object([("to", Value::from("bob@acme.com")), ("subject", Value::from("Draft")), ("text", Value::from("later"))]), &[]).body().clone();
+    let did = s(d.get("id").unwrap());
+    assert_eq!(req(&t, &mail("drafts/list"), "", &[]).body().as_array().unwrap().len(), 1);
+    let sent = req(&t, &mail("drafts/send"), "", &[("CamelGoogleMail.id", Value::from(did.as_str()))]).body().clone();
+    assert_eq!(sent.get("labelIds").unwrap().as_array().unwrap()[0], Value::from("SENT"));
+    assert!(req(&t, &mail("drafts/list"), "", &[]).body().as_array().unwrap().is_empty());
+    let label = req(&t, &mail("labels/create"), Value::object([("name", "Invoices")]), &[]).body().clone();
+    assert_eq!(s(req(&t, &mail("labels/get"), "", &[("CamelGoogleMail.id", label.get("id").unwrap().clone())]).body().get("name").unwrap()), "Invoices");
+    req(&t, &format!("google-pubsub://{}:gmail-events?operation=createTopic&synchronousPull=true&{}", PROJECT, env.opts()), "", &[]);
+    req(&t, &format!("google-pubsub://{}:gmail-sub?operation=createSubscription&topic=gmail-events&synchronousPull=true&{}", PROJECT, env.opts()), "", &[]);
+    let topic = format!("projects/{}/topics/gmail-events", PROJECT);
+    assert!(req(&t, &mail("users/watch"), "", &[("CamelGoogleMail.topicName", Value::from(topic.as_str()))]).body().get("historyId").is_some());
+    let mid = env.mock.gmail_deliver("alice@acme.com", "From: carol@acme.com\r\nSubject: Hi\r\n\r\nHello");
+    // a delivery through the API (drafts/send) or the test hook both count; the API one above was before the watch
+    req(&t, &mail("messages/send"), Value::object([("to", Value::from("alice@acme.com")), ("subject", Value::from("Self")), ("text", Value::from("note"))]), &[]);
+    let pull_ctx = context();
+    let from = format!("google-pubsub://{}:gmail-sub?synchronousPull=true&delay=20&initialDelay=0&{}", PROJECT, env.opts());
+    pull_ctx.add_routes(move |r| {
+        r.from(&from).convert_body_to("String").to("mock:gmail-push");
+    })
+    .unwrap();
+    let push = pull_ctx.mock_endpoint("mock:gmail-push").unwrap();
+    pull_ctx.start().unwrap();
+    assert!(wait(&|| push.received_exchanges().len() >= 2), "{}", push.received_exchanges().len());
+    let note = camel_cloud::util::parse_json(s(push.received_exchanges()[0].body()).as_bytes()).unwrap();
+    assert_eq!(s(note.get("emailAddress").unwrap()), "alice@acme.com");
+    assert!(note.get("historyId").is_some());
+    pull_ctx.stop().unwrap();
+    let profile = req(&t, &mail("users/getProfile"), "", &[]).body().clone();
+    assert_eq!(s(profile.get("emailAddress").unwrap()), "alice@acme.com");
+    let att = req(&t, &mail("attachments/get"), "", &[("CamelGoogleMail.messageId", Value::from(mid.as_str())), ("CamelGoogleMail.id", Value::from("att-1"))]);
+    assert!(String::from_utf8_lossy(&att.body().to_bytes()).contains("Subject: Hi"));
+    let threads = req(&t, &mail("threads/list"), "", &[]).body().clone();
+    let tid = s(threads.as_array().unwrap()[0].get("id").unwrap());
+    req(&t, &mail("threads/modify"), Value::object([("addLabelIds", Value::from(vec!["STARRED"]))]), &[("CamelGoogleMail.id", Value::from(tid.as_str()))]);
+    req(&t, &mail("threads/trash"), "", &[("CamelGoogleMail.id", Value::from(tid.as_str()))]);
+    let hist = req(&t, &mail("history/list"), "", &[("CamelGoogleMail.startHistoryId", Value::from("0"))]).body().clone();
+    assert!(!hist.as_array().unwrap().is_empty());
+    req(&t, &mail("users/stop"), "", &[]);
+    // Calendar: acl, colors, freebusy, calendars, watch channels
+    let (hook, got) = webhook();
+    let ch = req(&t, &cal("events/watch"), "", &[("CamelGoogleCalendar.channelId", Value::from("ch-1")), ("CamelGoogleCalendar.address", Value::from(format!("{}/notify", hook.url()))), ("CamelGoogleCalendar.token", Value::from("secret"))]);
+    let rid = s(ch.header("CamelGoogleCalendar.resourceId").unwrap());
+    assert!(wait(&|| got.lock().unwrap().iter().any(|n| n.1 == "sync")));
+    let ev = |summary: &str, start: &str| Value::object([("summary", Value::from(summary)), ("start", Value::object([("dateTime", start)])), ("end", Value::object([("dateTime", "2026-11-02T10:00:00Z")]))]);
+    let e = req(&t, &cal("events/insert"), ev("Standup", "2026-11-02T09:00:00Z"), &[]).body().clone();
+    assert!(wait(&|| got.lock().unwrap().iter().any(|n| n.0 == "ch-1" && n.1 == "exists" && n.2 == "secret")));
+    let fb = req(&t, &cal("freebusy/query"), Value::object([("timeMin", Value::from("2026-11-02T00:00:00Z")), ("timeMax", Value::from("2026-11-03T00:00:00Z")), ("items", Value::Array(vec![Value::object([("id", "primary")])]))]), &[]).body().clone();
+    assert_eq!(fb.get("calendars").unwrap().get("primary").unwrap().get("busy").unwrap().as_array().unwrap().len(), 1);
+    assert!(req(&t, &cal("colors/get"), "", &[]).body().get("event").is_some());
+    req(&t, &cal("acl/insert"), Value::object([("role", Value::from("reader")), ("scope", Value::object([("type", "user"), ("value", "bob@acme.com")]))]), &[]);
+    assert_eq!(s(req(&t, &cal("acl/list"), "", &[]).body().as_array().unwrap()[0].get("id").unwrap()), "user:bob@acme.com");
+    req(&t, &cal("channels/stop"), "", &[("CamelGoogleCalendar.channelId", Value::from("ch-1")), ("CamelGoogleCalendar.resourceId", Value::from(rid.as_str()))]);
+    let before = got.lock().unwrap().len();
+    req(&t, &cal("events/delete"), "", &[("CamelGoogleCalendar.eventId", e.get("id").unwrap().clone())]);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(got.lock().unwrap().len(), before, "stopped channels get nothing");
+    let c2 = req(&t, &cal("calendars/insert"), Value::object([("summary", "Team")]), &[]).body().clone();
+    req(&t, &cal("calendars/delete"), "", &[("CamelGoogleCalendar.calendarId", c2.get("id").unwrap().clone())]);
+    // Drive: about, permissions, comments, changes + watch
+    let f = req(&t, &format!("google-drive://drive-files/create?name=notes.txt&{}", env.opts()), "v1", &[]).body().clone();
+    let fid = s(f.get("id").unwrap());
+    assert!(req(&t, &drive("drive-about/get"), "", &[]).body().get("storageQuota").is_some());
+    let token = s(req(&t, &drive("drive-changes/getStartPageToken"), "", &[]).body().get("startPageToken").unwrap());
+    let fh = ("CamelGoogleDrive.fileId", Value::from(fid.as_str()));
+    req(&t, &drive("drive-changes/watch"), "", &[("CamelGoogleDrive.pageToken", Value::from(token.as_str())), ("CamelGoogleDrive.channelId", Value::from("drv-1")), ("CamelGoogleDrive.address", Value::from(format!("{}/drive", hook.url())))]);
+    req(&t, &drive("drive-permissions/create"), Value::object([("role", "writer"), ("type", "user"), ("emailAddress", "bob@acme.com")]), &[fh.clone()]);
+    assert_eq!(req(&t, &drive("drive-permissions/list"), "", &[fh.clone()]).body().as_array().unwrap().len(), 1);
+    let c = req(&t, &drive("drive-comments/create"), Value::object([("content", "LGTM")]), &[fh.clone()]).body().clone();
+    req(&t, &drive("drive-replies/create"), Value::object([("content", "thanks")]), &[fh.clone(), ("CamelGoogleDrive.commentId", c.get("id").unwrap().clone())]);
+    assert_eq!(req(&t, &drive("drive-replies/list"), "", &[fh.clone(), ("CamelGoogleDrive.commentId", c.get("id").unwrap().clone())]).body().as_array().unwrap().len(), 1);
+    req(&t, &format!("google-drive://drive-files/update?{}", env.opts()), "v2", &[fh.clone()]);
+    assert!(wait(&|| got.lock().unwrap().iter().any(|n| n.0 == "drv-1" && n.1 == "change")));
+    let changes = req(&t, &drive("drive-changes/list"), "", &[("CamelGoogleDrive.pageToken", Value::from(token.as_str()))]).body().clone();
+    assert_eq!(s(changes.as_array().unwrap()[0].get("fileId").unwrap()), fid);
+    assert_eq!(req(&t, &drive("drive-revisions/list"), "", &[fh.clone()]).body().as_array().unwrap().len(), 1);
+    let sd = req(&t, &drive("drive-drives/create"), Value::object([("name", "Shared")]), &[]).body().clone();
+    assert_eq!(req(&t, &drive("drive-drives/list"), "", &[]).body().as_array().unwrap().len(), 1);
+    req(&t, &drive("drive-drives/delete"), "", &[("CamelGoogleDrive.driveId", sd.get("id").unwrap().clone())]);
+    assert!(env.mock.workspace_notifications() >= 3);
+}
+
+#[test]
+fn calendar_stream_sync_flow() {
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let cal = |m: &str| format!("google-calendar://{}?calendarId=team&{}", m, env.opts());
+    let ev = |summary: &str| Value::object([("summary", Value::from(summary)), ("start", Value::object([("dateTime", "2026-12-01T09:00:00Z")])), ("end", Value::object([("dateTime", "2026-12-01T10:00:00Z")]))]);
+    req(&t, &cal("events/insert"), ev("Existing"), &[]);
+    let from = format!("google-calendar-stream://sync?calendarId=team&syncFlow=true&delay=40&initialDelay=0&{}", env.opts());
+    let c2 = context();
+    c2.add_routes(move |r| {
+        r.from(&from).to("mock:sync");
+    })
+    .unwrap();
+    let m = c2.mock_endpoint("mock:sync").unwrap();
+    c2.start().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert!(m.received_exchanges().is_empty(), "the initial sync only records existing events");
+    let created = req(&t, &cal("events/insert"), ev("New"), &[]).body().clone();
+    assert!(wait(&|| m.received_exchanges().len() == 1));
+    assert_eq!(s(m.received_exchanges()[0].body().get("summary").unwrap()), "New");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    req(&t, &cal("events/delete"), "", &[("CamelGoogleCalendar.eventId", created.get("id").unwrap().clone())]);
+    assert!(wait(&|| m.received_exchanges().len() == 2));
+    assert_eq!(s(m.received_exchanges()[1].header("CamelGoogleCalendarStreamEventStatus").unwrap()), "cancelled");
+    // an expired token triggers a full resync that only emits what was not delivered
+    env.mock.expire_calendar_sync_tokens();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    req(&t, &cal("events/insert"), ev("After expiry"), &[]);
+    assert!(wait(&|| m.received_exchanges().len() == 3), "{}", m.received_exchanges().len());
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert_eq!(m.received_exchanges().len(), 3);
+    assert_eq!(s(m.received_exchanges()[2].body().get("summary").unwrap()), "After expiry");
+    c2.stop().unwrap();
+}

@@ -51,6 +51,7 @@ pub mod storage;
 pub mod streams;
 
 pub mod workspace;
+pub mod workspace_ops;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};

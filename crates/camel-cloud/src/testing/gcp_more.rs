@@ -79,6 +79,34 @@ pub(super) struct MoreState {
     next: u64,
     /// (client id, refresh token) -> (client secret, user email, scopes)
     users: BTreeMap<(String, String), (String, String, String)>,
+    ws: WsState,
+}
+
+/// Push channel of a watch: (id, resource id, address, token, resource kind, message number).
+#[derive(Clone)]
+struct Channel {
+    id: String,
+    resource_id: String,
+    address: String,
+    token: String,
+    kind: String,
+    number: i64,
+}
+
+/// Generic Workspace resources, watch channels, change logs and sync tokens.
+#[derive(Default)]
+struct WsState {
+    /// collection path -> id -> resource
+    store: BTreeMap<String, BTreeMap<String, Value>>,
+    channels: Vec<Channel>,
+    /// user -> Pub/Sub topic of `users.watch`
+    gmail_watch: BTreeMap<String, String>,
+    history_id: i64,
+    /// Drive change log: (change id, file id, removed)
+    drive_changes: Vec<(i64, String, bool)>,
+    /// calendar -> deleted event ids with the deletion time (sync tokens)
+    tombstones: BTreeMap<String, Vec<(String, i64)>>,
+    notifications: usize,
 }
 
 impl GcpMock {
@@ -87,6 +115,12 @@ impl GcpMock {
         let mut s = self.state.lock().unwrap();
         let id = next_id(&mut s.more, "m");
         s.more.mailboxes.entry(user.to_string()).or_default().push(GmailMsg { id: id.clone(), thread: format!("t{}", id), labels: vec!["INBOX".into(), "UNREAD".into()], raw: raw.as_bytes().to_vec() });
+        s.more.ws.history_id += 1;
+        if let Some(topic) = s.more.ws.gmail_watch.get(user).cloned() {
+            let data = obj([("emailAddress", Value::from(user)), ("historyId", Value::from(s.more.ws.history_id.to_string()))]).to_json();
+            super::publish_one(&mut s, &topic, crate::util::base64_encode(data.as_bytes()), Value::Object(ObjectMap::new()), String::new());
+            s.more.ws.notifications += 1;
+        }
         id
     }
     /// Make the next `n` streaming acknowledgements on exactly-once subscriptions fail
@@ -193,9 +227,18 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, s: &[&str]) -> Option<Res
             }
             let (_, subject) = token_info(st, req);
             let user = if *user == "me" { subject.clone() } else { Some(user.to_string()) };
+            let mail = |u: &str| {
+                if let Some(r) = gmail_extra(st, req, u, rest) {
+                    return r;
+                }
+                let before = st.lock().unwrap().more.mailboxes.iter().map(|(k, v)| (k.clone(), v.len())).collect::<BTreeMap<_, _>>();
+                let r = gmail(st, req, u, rest);
+                gmail_changed(st, before);
+                r
+            };
             match (subject, user) {
-                (Some(_), Some(u)) => gmail(st, req, &u, rest),
-                _ if !require => gmail(st, req, &user_or(s), rest),
+                (Some(_), Some(u)) => mail(&u),
+                _ if !require => mail(&user_or(s)),
                 _ => gerror(400, "FAILED_PRECONDITION", "Precondition check failed. (service accounts need domain-wide delegation: set a subject)"),
             }
         }
@@ -203,19 +246,39 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, s: &[&str]) -> Option<Res
             if let Some(r) = scope_check(&["/auth/calendar", "/auth/calendar.events"]) {
                 return Some(r);
             }
-            calendar(st, req, rest)
+            if let Some(r) = calendar_extra(st, req, rest) {
+                return Some(r);
+            }
+            let before = calendar_fingerprint(st);
+            let r = calendar(st, req, rest);
+            if req.method != "GET" && r.status < 300 {
+                calendar_changed(st, req, rest, before);
+            }
+            r
+        }
+        ["drive", "v3", rest @ ..] if drive_extra_path(rest) => {
+            if let Some(r) = scope_check(&["/auth/drive", "/auth/drive.file"]) {
+                return Some(r);
+            }
+            drive_extra(st, req, rest)
         }
         ["drive", "v3", "files", rest @ ..] => {
             if let Some(r) = scope_check(&["/auth/drive", "/auth/drive.file"]) {
                 return Some(r);
             }
-            drive(st, req, rest, false)
+            let before = drive_fingerprint(st);
+            let r = drive(st, req, rest, false);
+            drive_changed(st, before);
+            r
         }
         ["upload", "drive", "v3", "files", rest @ ..] => {
             if let Some(r) = scope_check(&["/auth/drive", "/auth/drive.file"]) {
                 return Some(r);
             }
-            drive(st, req, rest, true)
+            let before = drive_fingerprint(st);
+            let r = drive(st, req, rest, true);
+            drive_changed(st, before);
+            r
         }
         ["v1", "projects", _, "locations", _, "publishers", _, "models", mv] => vertex(st, req, mv),
         ["v1", "speech:recognize"] | ["v1", "speech:longrunningrecognize"] => speech(st, req, s[1].ends_with("longrunningrecognize")),
@@ -481,6 +544,23 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
             s.more.calendars.entry(cal.to_string()).or_default().insert(id, Value::Object(e.clone()));
             ok(Value::Object(e))
         }
+        ("GET", ["calendars", cal, "events"]) if req.query_param("syncToken").is_some() => {
+            // incremental sync: events updated (and deleted) after the token's time
+            let token = req.query_param("syncToken").unwrap_or_default();
+            let epoch = s.more.ws.store.get("calendar:sync-epoch").and_then(|m| m.get("epoch")).and_then(|e| e.as_i64()).unwrap_or(0);
+            let Some(since) = token.strip_prefix("sync-").and_then(|t| t.parse::<i64>().ok()).filter(|t| *t >= epoch) else { return gerror(410, "GONE", "Sync token is no longer valid, a full sync is required.") };
+            if req.query_param("q").is_some() || req.query_param("timeMin").is_some() || req.query_param("orderBy").is_some() {
+                return gerror(400, "INVALID_ARGUMENT", "syncToken cannot be combined with q, timeMin, timeMax, orderBy or updatedMin");
+            }
+            let since_iso = iso8601_millis(since);
+            let mut items: Vec<Value> = s.more.calendars.get(*cal).map(|c| c.values().filter(|e| e.get("updated").map(|x| x.to_string()).unwrap_or_default() > since_iso).cloned().collect()).unwrap_or_default();
+            for (id, t) in s.more.ws.tombstones.get(*cal).cloned().unwrap_or_default() {
+                if t > since {
+                    items.push(obj([("id", Value::from(id)), ("status", Value::from("cancelled"))]));
+                }
+            }
+            ok(obj([("kind", Value::from("calendar#events")), ("items", Value::Array(items)), ("nextSyncToken", Value::from(format!("sync-{}", now_millis())))]))
+        }
         ("GET", ["calendars", cal, "events"]) => {
             let q = req.query_param("q").unwrap_or_default().to_ascii_lowercase();
             let (tmin, tmax) = (req.query_param("timeMin"), req.query_param("timeMax"));
@@ -503,6 +583,8 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
             out.insert("items".into(), Value::Array(items.get(start..end).map(|x| x.to_vec()).unwrap_or_default()));
             if end < items.len() {
                 out.insert("nextPageToken".into(), Value::from(end.to_string()));
+            } else {
+                out.insert("nextSyncToken".into(), Value::from(format!("sync-{}", now_millis())));
             }
             ok(Value::Object(out))
         }
@@ -511,7 +593,10 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
             match m {
                 "GET" => c.get(*id).cloned().map(ok).unwrap_or_else(not_found),
                 "DELETE" => match c.remove(*id) {
-                    Some(_) => Response::new(204),
+                    Some(_) => {
+                        s.more.ws.tombstones.entry(cal.to_string()).or_default().push((id.to_string(), now_millis()));
+                        Response::new(204)
+                    }
                     None => not_found(),
                 },
                 "PUT" | "PATCH" => {
@@ -1090,4 +1175,478 @@ fn streaming_pull(st: &Shared, call: &ServerCall) -> Status {
     }
     let _ = reader.join();
     Status::ok()
+}
+
+// ---------------------------------------------------------------------------
+// Workspace: remaining API names, watch channels, change logs
+// ---------------------------------------------------------------------------
+
+impl GcpMock {
+    /// Push notifications sent to watch channels.
+    pub fn workspace_notifications(&self) -> usize {
+        self.state.lock().unwrap().more.ws.notifications
+    }
+    /// Invalidate the calendar sync tokens (the next incremental sync gets `410 GONE`).
+    pub fn expire_calendar_sync_tokens(&self) {
+        // tokens issued before now are rejected
+        let mut s = self.state.lock().unwrap();
+        s.more.ws.store.entry("calendar:sync-epoch".into()).or_default().insert("epoch".into(), Value::Int(now_millis()));
+    }
+}
+
+fn store_key(prefix: &str, segs: &[&str]) -> String {
+    format!("{}:{}", prefix, segs.join("/"))
+}
+
+/// Generic collection CRUD on the store: POST collection, GET collection (list field), GET /
+/// PUT / PATCH / DELETE item.
+fn crud(s: &mut MoreState, req: &ServerRequest, prefix: &str, coll: &[&str], id: Option<&str>, list_field: &str, body: &Value, id_field: &str) -> Response {
+    let key = store_key(prefix, coll);
+    let not_found = || gerror(404, "NOT_FOUND", "Not Found");
+    match (req.method.as_str(), id) {
+        ("POST", None) => {
+            let new_id = body.get(id_field).map(|i| i.to_string()).filter(|i| !i.is_empty()).unwrap_or_else(|| next_id(s, "r"));
+            let mut m = body.as_object().cloned().unwrap_or_default();
+            m.insert(id_field.into(), Value::from(new_id.clone()));
+            let now = Value::from(iso8601_millis(now_millis()));
+            m.entry("createdTime".to_string()).or_insert(now);
+            let v = Value::Object(m);
+            s.ws.store.entry(key).or_default().insert(new_id, v.clone());
+            ok(v)
+        }
+        ("GET", None) => ok(obj([(list_field, Value::Array(s.ws.store.get(&key).map(|c| c.values().cloned().collect()).unwrap_or_default()))])),
+        ("GET", Some(i)) => s.ws.store.get(&key).and_then(|c| c.get(i)).cloned().map(ok).unwrap_or_else(not_found),
+        ("PUT" | "PATCH", Some(i)) => {
+            let Some(cur) = s.ws.store.get_mut(&key).and_then(|c| c.get_mut(i)) else { return not_found() };
+            let mut m = if req.method == "PUT" { ObjectMap::new() } else { cur.as_object().cloned().unwrap_or_default() };
+            for (k, v) in body.as_object().cloned().unwrap_or_default() {
+                m.insert(k, v);
+            }
+            m.insert(id_field.into(), Value::from(i));
+            *cur = Value::Object(m);
+            ok(cur.clone())
+        }
+        ("DELETE", Some(i)) => match s.ws.store.get_mut(&key).and_then(|c| c.remove(i)) {
+            Some(_) => Response::new(204),
+            None => not_found(),
+        },
+        _ => gerror(400, "INVALID_ARGUMENT", "Unsupported request"),
+    }
+}
+
+/// Register a watch channel.
+fn watch(s: &mut MoreState, body: &Value, kind: String) -> Response {
+    let id = body.get("id").map(|i| i.to_string()).unwrap_or_default();
+    let address = body.get("address").map(|a| a.to_string()).unwrap_or_default();
+    if id.is_empty() || !address.starts_with("http") || body.get("type").map(|t| t.to_string()).is_some_and(|t| t != "web_hook" && t != "webhook") {
+        return gerror(400, "INVALID_ARGUMENT", "A channel needs an id and an https web_hook address");
+    }
+    let rid = format!("res-{}", random_hex(8));
+    let c = Channel { id: id.clone(), resource_id: rid.clone(), address, token: body.get("token").map(|t| t.to_string()).unwrap_or_default(), kind: kind.clone(), number: 0 };
+    s.ws.channels.push(c.clone());
+    // the initial sync message
+    send_notifications(vec![(c, "sync".to_string())]);
+    ok(obj([("kind", Value::from("api#channel")), ("id", Value::from(id)), ("resourceId", Value::from(rid)), ("resourceUri", Value::from(kind)), ("expiration", Value::from((now_millis() + 3_600_000).to_string()))]))
+}
+
+fn stop_channel(s: &mut MoreState, body: &Value) -> Response {
+    let (id, rid) = (body.get("id").map(|i| i.to_string()).unwrap_or_default(), body.get("resourceId").map(|i| i.to_string()).unwrap_or_default());
+    let before = s.ws.channels.len();
+    s.ws.channels.retain(|c| !(c.id == id && c.resource_id == rid));
+    if s.ws.channels.len() == before {
+        return gerror(404, "NOT_FOUND", &format!("Channel '{}' not found for project", id));
+    }
+    Response::new(204)
+}
+
+/// POST the notifications (in the background).
+fn send_notifications(list: Vec<(Channel, String)>) {
+    if list.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        for (c, state) in list {
+            let Ok(url) = crate::http::Url::parse(&c.address) else { continue };
+            let req = crate::http::Request::new("POST", url)
+                .header("X-Goog-Channel-ID", c.id.clone())
+                .header("X-Goog-Resource-ID", c.resource_id.clone())
+                .header("X-Goog-Resource-URI", c.kind.clone())
+                .header("X-Goog-Resource-State", state)
+                .header("X-Goog-Message-Number", c.number.to_string())
+                .header("X-Goog-Channel-Token", c.token.clone())
+                .body(Vec::new());
+            let _ = crate::http::HttpClient::new().with_timeout(std::time::Duration::from_secs(5)).send(&req);
+        }
+    });
+}
+
+fn notify(st: &Shared, kinds: &[String], state: &str) {
+    let list: Vec<(Channel, String)> = {
+        let mut s = st.lock().unwrap();
+        let ws = &mut s.more.ws;
+        let mut out = Vec::new();
+        for c in ws.channels.iter_mut().filter(|c| kinds.contains(&c.kind)) {
+            c.number += 1;
+            out.push((c.clone(), state.to_string()));
+        }
+        ws.notifications += out.len();
+        out
+    };
+    send_notifications(list);
+}
+
+fn calendar_fingerprint(st: &Shared) -> String {
+    let s = st.lock().unwrap();
+    s.more.calendars.iter().map(|(k, v)| format!("{}:{}", k, v.values().map(|e| e.to_json()).collect::<Vec<_>>().join(","))).collect::<Vec<_>>().join(";")
+}
+
+fn calendar_changed(st: &Shared, req: &ServerRequest, rest: &[&str], before: String) {
+    if calendar_fingerprint(st) == before {
+        return;
+    }
+    let cal = rest.get(1).map(|c| c.to_string()).unwrap_or_else(|| "primary".into());
+    let _ = req;
+    notify(st, &[format!("calendar:{}", cal)], "exists");
+}
+
+fn calendar_extra(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Option<Response> {
+    let body = parse_json(&req.body).unwrap_or_default();
+    let m = req.method.as_str();
+    let r = {
+        let mut g = st.lock().unwrap();
+        let s = &mut g.more;
+        match (m, rest) {
+            ("POST", ["channels", "stop"]) => stop_channel(s, &body),
+            ("POST", ["calendars", cal, "events", "watch"]) => watch(s, &body, format!("calendar:{}", cal)),
+            ("POST", ["calendars", cal, "acl", "watch"]) => watch(s, &body, format!("acl:{}", cal)),
+            ("POST", ["users", "me", "calendarList", "watch"]) => watch(s, &body, "calendarList".into()),
+            ("POST", ["users", "me", "settings", "watch"]) => watch(s, &body, "settings".into()),
+            (_, ["calendars", cal, "acl"]) => {
+                if m == "POST" && (body.get("role").is_none() || body.get("scope").is_none()) {
+                    return Some(gerror(400, "INVALID_ARGUMENT", "role and scope are required"));
+                }
+                let mut b = body.clone();
+                if let (Value::Object(o), Some(sc)) = (&mut b, body.get("scope")) {
+                    o.insert("id".into(), Value::from(format!("{}:{}", sc.get("type").map(|t| t.to_string()).unwrap_or_default(), sc.get("value").map(|t| t.to_string()).unwrap_or_default())));
+                }
+                crud(s, req, "calendar", &["acl", cal], None, "items", &b, "id")
+            }
+            (_, ["calendars", cal, "acl", rule]) => crud(s, req, "calendar", &["acl", cal], Some(rule), "items", &body, "id"),
+            ("GET", ["colors"]) => ok(obj([("kind", Value::from("calendar#colors")), ("calendar", obj([("1", obj([("background", Value::from("#ac725e")), ("foreground", Value::from("#1d1d1d"))]))])), ("event", obj([("1", obj([("background", Value::from("#a4bdfc")), ("foreground", Value::from("#1d1d1d"))]))]))])),
+            ("GET", ["users", "me", "settings"]) => ok(obj([("items", Value::Array(vec![obj([("id", Value::from("timezone")), ("value", Value::from("UTC"))]), obj([("id", Value::from("weekStart")), ("value", Value::from("1"))])]))])),
+            ("GET", ["users", "me", "settings", id]) => match *id {
+                "timezone" => ok(obj([("id", Value::from("timezone")), ("value", Value::from("UTC"))])),
+                "weekStart" => ok(obj([("id", Value::from("weekStart")), ("value", Value::from("1"))])),
+                _ => gerror(404, "NOT_FOUND", "Not Found"),
+            },
+            ("POST", ["freeBusy"]) => {
+                let (tmin, tmax) = (body.get("timeMin").map(|t| t.to_string()).unwrap_or_default(), body.get("timeMax").map(|t| t.to_string()).unwrap_or_default());
+                let mut cals = ObjectMap::new();
+                for it in body.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default() {
+                    let id = it.get("id").map(|i| i.to_string()).unwrap_or_default();
+                    let busy: Vec<Value> = s
+                        .calendars
+                        .get(&id)
+                        .map(|c| {
+                            c.values()
+                                .filter_map(|e| {
+                                    let st_ = e.get("start").and_then(|x| x.get("dateTime")).map(|d| d.to_string())?;
+                                    let en = e.get("end").and_then(|x| x.get("dateTime")).map(|d| d.to_string())?;
+                                    (en > tmin && st_ < tmax).then(|| obj([("start", Value::from(st_)), ("end", Value::from(en))]))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    cals.insert(id, obj([("busy", Value::Array(busy))]));
+                }
+                ok(obj([("kind", Value::from("calendar#freeBusy")), ("timeMin", Value::from(tmin)), ("timeMax", Value::from(tmax)), ("calendars", Value::Object(cals))]))
+            }
+            ("POST", ["calendars"]) => {
+                let id = format!("{}@group.calendar.google.com", next_id(s, "c"));
+                s.calendars.insert(id.clone(), BTreeMap::new());
+                let mut c = body.as_object().cloned().unwrap_or_default();
+                c.insert("id".into(), Value::from(id));
+                ok(Value::Object(c))
+            }
+            ("PUT", ["calendars", cal]) => {
+                let mut c = body.as_object().cloned().unwrap_or_default();
+                c.insert("id".into(), Value::from(*cal));
+                ok(Value::Object(c))
+            }
+            ("DELETE", ["calendars", cal]) | ("DELETE", ["users", "me", "calendarList", cal]) => match s.calendars.remove(*cal) {
+                Some(_) => Response::new(204),
+                None => gerror(404, "NOT_FOUND", "Not Found"),
+            },
+            ("POST", ["calendars", cal, "clear"]) => {
+                if let Some(c) = s.calendars.get_mut(*cal) {
+                    c.clear();
+                }
+                Response::new(204)
+            }
+            ("GET", ["users", "me", "calendarList", cal]) => match s.calendars.contains_key(*cal) || *cal == "primary" {
+                true => ok(obj([("id", Value::from(*cal)), ("summary", Value::from(*cal)), ("accessRole", Value::from("owner"))])),
+                false => gerror(404, "NOT_FOUND", "Not Found"),
+            },
+            ("POST", ["users", "me", "calendarList"]) => {
+                let id = body.get("id").map(|i| i.to_string()).unwrap_or_default();
+                s.calendars.entry(id.clone()).or_default();
+                ok(obj([("id", Value::from(id)), ("accessRole", Value::from("reader"))]))
+            }
+            ("GET", ["calendars", cal, "events", id, "instances"]) => match s.calendars.get(*cal).and_then(|c| c.get(*id)) {
+                Some(e) => ok(obj([("items", Value::Array(vec![e.clone()]))])),
+                None => gerror(404, "NOT_FOUND", "Not Found"),
+            },
+            ("POST", ["calendars", cal, "events", id, "move"]) => {
+                let dest = req.query_param("destination").unwrap_or_default();
+                let Some(e) = s.calendars.get_mut(*cal).and_then(|c| c.remove(*id)) else { return Some(gerror(404, "NOT_FOUND", "Not Found")) };
+                s.calendars.entry(dest).or_default().insert(id.to_string(), e.clone());
+                ok(e)
+            }
+            ("POST", ["calendars", cal, "events", "import"]) => {
+                if body.get("iCalUID").is_none() {
+                    return Some(gerror(400, "INVALID_ARGUMENT", "iCalUID is required"));
+                }
+                let id = next_id(s, "e");
+                let mut e = body.as_object().cloned().unwrap_or_default();
+                e.insert("id".into(), Value::from(id.clone()));
+                e.insert("updated".into(), Value::from(iso8601_millis(now_millis())));
+                s.calendars.entry(cal.to_string()).or_default().insert(id, Value::Object(e.clone()));
+                ok(Value::Object(e))
+            }
+            _ => return None,
+        }
+    };
+    Some(r)
+}
+
+fn drive_extra_path(rest: &[&str]) -> bool {
+    matches!(rest.first(), Some(&"about") | Some(&"changes") | Some(&"channels") | Some(&"drives"))
+        || matches!(rest, ["files", _, "watch"] | ["files", "trash"] | ["files", "generateIds"] | ["files", _, "permissions", ..] | ["files", _, "comments", ..] | ["files", _, "revisions", ..])
+}
+
+fn drive_fingerprint(st: &Shared) -> BTreeMap<String, i64> {
+    st.lock().unwrap().more.drive.iter().map(|(k, f)| (k.clone(), f.modified)).collect()
+}
+
+fn drive_changed(st: &Shared, before: BTreeMap<String, i64>) {
+    let after = drive_fingerprint(st);
+    let mut changed: Vec<(String, bool)> = Vec::new();
+    for (k, m) in &after {
+        if before.get(k) != Some(m) {
+            changed.push((k.clone(), false));
+        }
+    }
+    for k in before.keys().filter(|k| !after.contains_key(*k)) {
+        changed.push((k.clone(), true));
+    }
+    if changed.is_empty() {
+        return;
+    }
+    let mut kinds = vec!["drive".to_string()];
+    {
+        let mut s = st.lock().unwrap();
+        for (id, removed) in &changed {
+            let n = s.more.ws.drive_changes.len() as i64 + 1;
+            s.more.ws.drive_changes.push((n, id.clone(), *removed));
+            kinds.push(format!("drive-file:{}", id));
+        }
+    }
+    notify(st, &kinds, "change");
+}
+
+fn drive_extra(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
+    let body = parse_json(&req.body).unwrap_or_default();
+    let m = req.method.as_str();
+    let mut g = st.lock().unwrap();
+    let s = &mut g.more;
+    match (m, rest) {
+        ("GET", ["about"]) => ok(obj([("kind", Value::from("drive#about")), ("user", obj([("displayName", Value::from("Camel")), ("emailAddress", Value::from(super::CLIENT_EMAIL))])), ("storageQuota", obj([("limit", Value::from("16106127360")), ("usage", Value::from(s.drive.values().map(|f| f.data.len()).sum::<usize>().to_string()))]))])),
+        ("GET", ["changes", "startPageToken"]) => ok(obj([("startPageToken", Value::from((s.ws.drive_changes.len() as i64 + 1).to_string()))])),
+        ("GET", ["changes"]) => {
+            let Some(from) = req.query_param("pageToken").and_then(|t| t.parse::<i64>().ok()) else { return gerror(400, "INVALID_ARGUMENT", "pageToken is required") };
+            let changes: Vec<Value> = s
+                .ws
+                .drive_changes
+                .iter()
+                .filter(|(n, _, _)| *n >= from)
+                .map(|(_, id, removed)| {
+                    let mut c = ObjectMap::new();
+                    c.insert("kind".into(), Value::from("drive#change"));
+                    c.insert("changeType".into(), Value::from("file"));
+                    c.insert("fileId".into(), Value::from(id.clone()));
+                    c.insert("removed".into(), Value::Bool(*removed));
+                    if let Some(f) = s.drive.get(id) {
+                        c.insert("file".into(), drive_resource(id, f));
+                    }
+                    Value::Object(c)
+                })
+                .collect();
+            ok(obj([("changes", Value::Array(changes)), ("newStartPageToken", Value::from((s.ws.drive_changes.len() as i64 + 1).to_string()))]))
+        }
+        ("POST", ["changes", "watch"]) => watch(s, &body, "drive".into()),
+        ("POST", ["files", id, "watch"]) => {
+            if !s.drive.contains_key(*id) {
+                return gerror(404, "NOT_FOUND", &format!("File not found: {}.", id));
+            }
+            watch(s, &body, format!("drive-file:{}", id))
+        }
+        ("POST", ["channels", "stop"]) => stop_channel(s, &body),
+        ("DELETE", ["files", "trash"]) => Response::new(204),
+        ("GET", ["files", "generateIds"]) => {
+            let n = req.query_param("count").and_then(|c| c.parse::<usize>().ok()).unwrap_or(10).min(1000);
+            ok(obj([("kind", Value::from("drive#generatedIds")), ("ids", Value::Array((0..n).map(|_| Value::from(random_hex(14))).collect()))]))
+        }
+        (_, ["files", fid, "permissions", tail @ ..]) => {
+            if !s.drive.contains_key(*fid) {
+                return gerror(404, "NOT_FOUND", &format!("File not found: {}.", fid));
+            }
+            if m == "POST" && (body.get("role").is_none() || body.get("type").is_none()) {
+                return gerror(400, "INVALID_ARGUMENT", "The permission role and type are required.");
+            }
+            crud(s, req, "drive", &["permissions", fid], tail.first().copied(), "permissions", &body, "id")
+        }
+        (_, ["files", fid, "comments", cid, "replies", tail @ ..]) => crud(s, req, "drive", &["replies", fid, cid], tail.first().copied(), "replies", &body, "id"),
+        (_, ["files", fid, "comments", tail @ ..]) => {
+            if !s.drive.contains_key(*fid) {
+                return gerror(404, "NOT_FOUND", &format!("File not found: {}.", fid));
+            }
+            crud(s, req, "drive", &["comments", fid], tail.first().copied(), "comments", &body, "id")
+        }
+        ("GET", ["files", fid, "revisions"]) => match s.drive.get(*fid) {
+            Some(f) => ok(obj([("revisions", Value::Array(vec![obj([("id", Value::from("1")), ("mimeType", Value::from(f.mime.clone())), ("modifiedTime", Value::from(iso8601_millis(f.modified))), ("size", Value::from(f.data.len().to_string()))])]))])),
+            None => gerror(404, "NOT_FOUND", &format!("File not found: {}.", fid)),
+        },
+        (_, ["files", _fid, "revisions", _rid]) => gerror(400, "INVALID_ARGUMENT", "Revision operations are limited to listing in the emulator"),
+        (_, ["drives", tail @ ..]) => {
+            if m == "POST" && req.query_param("requestId").is_none() {
+                return gerror(400, "INVALID_ARGUMENT", "requestId is required");
+            }
+            crud(s, req, "drive", &["drives"], tail.first().copied(), "drives", &body, "id")
+        }
+        _ => gerror(400, "INVALID_ARGUMENT", "Unsupported Drive request"),
+    }
+}
+
+fn gmail_changed(st: &Shared, before: BTreeMap<String, usize>) {
+    let mut s = st.lock().unwrap();
+    let after: Vec<(String, usize)> = s.more.mailboxes.iter().map(|(k, v)| (k.clone(), v.len())).collect();
+    for (user, n) in after {
+        if n > before.get(&user).copied().unwrap_or(0) {
+            s.more.ws.history_id += 1;
+            if let Some(topic) = s.more.ws.gmail_watch.get(&user).cloned() {
+                let data = obj([("emailAddress", Value::from(user.clone())), ("historyId", Value::from(s.more.ws.history_id.to_string()))]).to_json();
+                super::publish_one(&mut s, &topic, crate::util::base64_encode(data.as_bytes()), Value::Object(ObjectMap::new()), String::new());
+                s.more.ws.notifications += 1;
+            }
+        }
+    }
+}
+
+fn gmail_extra(st: &Shared, req: &ServerRequest, user: &str, rest: &[&str]) -> Option<Response> {
+    let body = parse_json(&req.body).unwrap_or_default();
+    let m = req.method.as_str();
+    let mut g = st.lock().unwrap();
+    let topics_exist = |g: &super::State, t: &str| g.topics.contains_key(t);
+    let r = match (m, rest) {
+        ("GET", ["profile"]) => {
+            let n = g.more.mailboxes.get(user).map(|b| b.len()).unwrap_or(0);
+            ok(obj([("emailAddress", Value::from(user)), ("messagesTotal", Value::Int(n as i64)), ("threadsTotal", Value::Int(n as i64)), ("historyId", Value::from(g.more.ws.history_id.to_string()))]))
+        }
+        ("POST", ["watch"]) => {
+            let topic = body.get("topicName").map(|t| t.to_string()).unwrap_or_default();
+            if !topics_exist(&g, &topic) {
+                return Some(gerror(400, "INVALID_ARGUMENT", &format!("Invalid topicName does not match projects/*/topics/*: {}", topic)));
+            }
+            g.more.ws.gmail_watch.insert(user.to_string(), topic);
+            ok(obj([("historyId", Value::from(g.more.ws.history_id.to_string())), ("expiration", Value::from((now_millis() + 7 * 86_400_000).to_string()))]))
+        }
+        ("POST", ["stop"]) => {
+            g.more.ws.gmail_watch.remove(user);
+            Response::new(204)
+        }
+        ("GET", ["history"]) => {
+            let Some(start) = req.query_param("startHistoryId").and_then(|h| h.parse::<i64>().ok()) else { return Some(gerror(400, "INVALID_ARGUMENT", "startHistoryId is required")) };
+            let msgs = g.more.mailboxes.get(user).cloned().unwrap_or_default();
+            // messages added after the start history id (one history record per message here)
+            let skip = start.max(0) as usize;
+            let history: Vec<Value> = msgs.iter().enumerate().skip(skip).map(|(i, mm)| obj([("id", Value::from((i + 1).to_string())), ("messagesAdded", Value::Array(vec![obj([("message", obj([("id", Value::from(mm.id.clone())), ("threadId", Value::from(mm.thread.clone()))]))])]))])).collect();
+            ok(obj([("history", Value::Array(history)), ("historyId", Value::from(g.more.ws.history_id.to_string()))]))
+        }
+        ("GET", ["messages", mid, "attachments", aid]) => {
+            let Some(mm) = g.more.mailboxes.get(user).and_then(|b| b.iter().find(|x| x.id == *mid)).cloned() else { return Some(gerror(404, "NOT_FOUND", "Requested entity was not found.")) };
+            // the emulator serves the raw message as the attachment `att-1`
+            if *aid != "att-1" {
+                return Some(gerror(404, "NOT_FOUND", "Invalid attachment id"));
+            }
+            ok(obj([("size", Value::Int(mm.raw.len() as i64)), ("data", Value::from(crate::util::base64url_encode(&mm.raw)))]))
+        }
+        (_, ["drafts", "send"]) => {
+            let id = body.get("id").map(|i| i.to_string()).unwrap_or_default();
+            let key = store_key("gmail", &["drafts", user]);
+            let Some(d) = g.more.ws.store.get_mut(&key).and_then(|c| c.remove(&id)) else { return Some(gerror(404, "NOT_FOUND", "Requested entity was not found.")) };
+            let raw = d.get("message").and_then(|mm| mm.get("raw")).map(|r| r.to_string()).unwrap_or_default();
+            let bytes = crate::util::base64_decode(&raw.replace('-', "+").replace('_', "/")).or_else(|| crate::util::base64_decode(&format!("{}{}", raw.replace('-', "+").replace('_', "/"), "=".repeat((4 - raw.len() % 4) % 4)))).unwrap_or_default();
+            let mid = next_id(&mut g.more, "m");
+            g.more.mailboxes.entry(user.to_string()).or_default().push(GmailMsg { id: mid.clone(), thread: format!("t{}", mid), labels: vec!["SENT".into()], raw: bytes });
+            ok(obj([("id", Value::from(mid.clone())), ("threadId", Value::from(format!("t{}", mid))), ("labelIds", Value::from(vec!["SENT"]))]))
+        }
+        (_, ["drafts"]) | (_, ["drafts", _]) => {
+            if m != "GET" && m != "DELETE" && body.get("message").and_then(|mm| mm.get("raw")).is_none() {
+                return Some(gerror(400, "INVALID_ARGUMENT", "Missing draft message"));
+            }
+            let id = rest.get(1).copied();
+            let mut b = body.clone();
+            if let Value::Object(o) = &mut b {
+                o.remove("id");
+            }
+            crud(&mut g.more, req, "gmail", &["drafts", user], id, "drafts", &b, "id")
+        }
+        ("POST", ["labels"]) => {
+            if body.get("name").is_none() {
+                return Some(gerror(400, "INVALID_ARGUMENT", "Invalid label name"));
+            }
+            let mut b = body.clone();
+            if let Value::Object(o) = &mut b {
+                o.insert("type".into(), Value::from("user"));
+            }
+            crud(&mut g.more, req, "gmail", &["labels", user], None, "labels", &b, "id")
+        }
+        (_, ["labels", id]) => crud(&mut g.more, req, "gmail", &["labels", user], Some(id), "labels", &body, "id"),
+        ("GET", ["threads"]) => {
+            let mut threads: Vec<String> = g.more.mailboxes.get(user).map(|b| b.iter().filter(|x| !x.labels.contains(&"TRASH".to_string())).map(|x| x.thread.clone()).collect()).unwrap_or_default();
+            threads.dedup();
+            ok(obj([("threads", Value::Array(threads.into_iter().map(|t| obj([("id", Value::from(t))])).collect()))]))
+        }
+        ("POST", ["threads", tid, verb]) => {
+            let Some(b) = g.more.mailboxes.get_mut(user) else { return Some(gerror(404, "NOT_FOUND", "Requested entity was not found.")) };
+            let msgs: Vec<&mut GmailMsg> = b.iter_mut().filter(|x| x.thread == *tid).collect();
+            if msgs.is_empty() {
+                return Some(gerror(404, "NOT_FOUND", "Requested entity was not found."));
+            }
+            let add: Vec<String> = body.get("addLabelIds").and_then(|a| a.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect()).unwrap_or_default();
+            let remove: Vec<String> = body.get("removeLabelIds").and_then(|a| a.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect()).unwrap_or_default();
+            for mm in msgs {
+                match *verb {
+                    "trash" => mm.labels.push("TRASH".into()),
+                    "untrash" => mm.labels.retain(|l| l != "TRASH"),
+                    _ => {
+                        mm.labels.retain(|l| !remove.contains(l));
+                        for a in &add {
+                            if !mm.labels.contains(a) {
+                                mm.labels.push(a.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            ok(obj([("id", Value::from(*tid))]))
+        }
+        ("DELETE", ["threads", tid]) => {
+            let Some(b) = g.more.mailboxes.get_mut(user) else { return Some(gerror(404, "NOT_FOUND", "Requested entity was not found.")) };
+            b.retain(|x| x.thread != *tid);
+            Response::new(204)
+        }
+        _ => return None,
+    };
+    Some(r)
 }
