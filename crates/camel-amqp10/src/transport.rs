@@ -11,6 +11,30 @@ use crate::ws::AmqpStream;
 
 use crate::types::{Frame, FrameBody};
 
+/// Whether frames are traced to stderr: `CAMEL_AMQP10_TRACE=1` (protocol debugging, e.g.
+/// against a real broker). Read once.
+pub fn trace_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("CAMEL_AMQP10_TRACE").map(|v| !v.is_empty() && v != "0").unwrap_or(false))
+}
+
+/// Trace one frame (`dir` is `->` for outgoing, `<-` for incoming) when tracing is on.
+pub fn trace_frame(dir: &str, f: &Frame) {
+    if trace_enabled() && !matches!(f.body, FrameBody::Empty) {
+        eprintln!("[amqp10 {:?}] {} ch{} {:?}", std::thread::current().name().unwrap_or("?"), dir, f.channel, f.body);
+    }
+}
+
+fn trace_bytes(bytes: &[u8]) {
+    let mut cur = std::io::Cursor::new(bytes);
+    while (cur.position() as usize) < bytes.len() {
+        match crate::types::read_frame(&mut cur, u32::MAX) {
+            Ok(Some(f)) => trace_frame("->", &f),
+            _ => break,
+        }
+    }
+}
+
 /// A connected socket (plain, TLS or WebSocket) carrying AMQP frames.
 pub struct Transport {
     stream: AmqpStream,
@@ -64,6 +88,9 @@ impl Transport {
     pub fn write_locked(&self, w: &mut MutexGuard<'_, AmqpStream>, bytes: &[u8]) -> std::io::Result<()> {
         if self.is_closed() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "connection closed"));
+        }
+        if trace_enabled() {
+            trace_bytes(bytes);
         }
         w.write_all(bytes)?;
         w.flush()?;

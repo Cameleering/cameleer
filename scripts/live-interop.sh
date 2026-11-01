@@ -463,8 +463,13 @@ EOF
 # directly with the package's activemq.jar (the Debian init script and instances are not used).
 AMQ_HOME=/usr/share/activemq
 amq_has_amqp() {
-  ls "$AMQ_HOME"/lib/activemq-amqp*.jar "$AMQ_HOME"/lib/optional/activemq-amqp*.jar \
-    "$DIR"/activemq/lib/activemq-amqp*.jar >/dev/null 2>&1
+  # true if the module is in any of the locations (ls fails if any one glob is unmatched)
+  local f
+  for f in "$AMQ_HOME"/lib/activemq-amqp*.jar "$AMQ_HOME"/lib/optional/activemq-amqp*.jar \
+    "$DIR"/activemq/lib/activemq-amqp*.jar; do
+    [ -f "$f" ] && return 0
+  done
+  return 1
 }
 
 setup_activemq() {

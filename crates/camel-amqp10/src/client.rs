@@ -823,6 +823,7 @@ impl Connection {
                 match read_frame(&mut reader, max_in) {
                     Ok(Some(f)) => {
                         s2.transport.touch_read();
+                        crate::transport::trace_frame("<-", &f);
                         if let Err(e) = s2.handle_frame(f) {
                             let _ = s2.transport.write_frame(&Frame::amqp(0, Performative::Close(Some(e.clone()))));
                             s2.fail(Some(e), "protocol error");

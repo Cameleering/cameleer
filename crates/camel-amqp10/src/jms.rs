@@ -148,6 +148,68 @@ pub fn parse_destination(s: &str) -> (DestKind, String) {
     (DestKind::Queue, s.to_string())
 }
 
+/// Node address prefixes a broker announces in its open frame (`queue-prefix` /
+/// `topic-prefix` connection properties), applied as Qpid JMS does. ActiveMQ 5 announces
+/// `queue://` / `topic://`: it ignores the `queue` / `topic` terminus capabilities and takes a
+/// bare address for a queue, so without the prefix every topic consumer would be a competing
+/// consumer of one queue.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AddressPrefixes {
+    pub queue: Option<String>,
+    pub topic: Option<String>,
+}
+
+impl AddressPrefixes {
+    /// The prefixes announced by the peer of a connection.
+    pub fn of(conn: &Connection) -> AddressPrefixes {
+        let prop = |k: &str| remote_property(conn, k).filter(|v| !v.is_empty());
+        AddressPrefixes { queue: prop("queue-prefix"), topic: prop("topic-prefix") }
+    }
+
+    fn prefix(&self, kind: DestKind) -> Option<&str> {
+        match kind {
+            DestKind::Queue => self.queue.as_deref(),
+            DestKind::Topic => self.topic.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The node address of a queue or topic name (temporary destinations, and addresses
+    /// that already carry a prefix, are left alone).
+    pub fn apply(&self, name: &str, kind: DestKind) -> String {
+        match self.prefix(kind) {
+            Some(p) if !name.is_empty() && !self.is_prefixed(name) => format!("{}{}", p, name),
+            _ => name.to_string(),
+        }
+    }
+
+    fn is_prefixed(&self, address: &str) -> bool {
+        [&self.queue, &self.topic].into_iter().flatten().any(|p| address.starts_with(p.as_str()))
+    }
+
+    /// The `JMSDestination` / `JMSReplyTo` header of a node address: a queue's name, or
+    /// `topic:name` for an address with the topic prefix (so it can be sent to again).
+    pub fn strip(&self, address: &str) -> String {
+        if let Some(rest) = self.queue.as_deref().and_then(|p| address.strip_prefix(p)) {
+            return rest.to_string();
+        }
+        if let Some(rest) = self.topic.as_deref().and_then(|p| address.strip_prefix(p)) {
+            return format!("topic:{}", rest);
+        }
+        address.to_string()
+    }
+}
+
+/// A string property of the peer's open frame.
+fn remote_property(conn: &Connection, key: &str) -> Option<String> {
+    conn.remote_open()?.properties.iter().find(|(k, _)| k.as_str() == Some(key)).and_then(|(_, v)| v.as_str().map(String::from))
+}
+
+/// Whether the peer is ActiveMQ 5 ("classic"; Artemis announces another product name).
+fn is_activemq_classic(conn: &Connection) -> bool {
+    remote_property(conn, "product").as_deref() == Some("ActiveMQ") && remote_property(conn, "version").is_some_and(|v| v.starts_with("5."))
+}
+
 /// JMS acknowledgement mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JmsAck {
@@ -484,7 +546,7 @@ fn header_str(ex: &Exchange, k: &str) -> Option<String> {
 }
 
 /// Map an AMQP message to the exchange (AMQP JMS mapping).
-pub fn message_to_exchange(cfg: &AmqpConfig, m: &Message, ex: &mut Exchange) {
+pub fn message_to_exchange(cfg: &AmqpConfig, prefixes: &AddressPrefixes, m: &Message, ex: &mut Exchange) {
     use headers::*;
     let p = m.props();
     let text_ct = p.content_type.as_deref().is_some_and(|c| c.starts_with("text/") || c.contains("json") || c.contains("xml"));
@@ -514,9 +576,9 @@ pub fn message_to_exchange(cfg: &AmqpConfig, m: &Message, ex: &mut Exchange) {
     if let Some(v) = &p.correlation_id {
         ex.set_header(JMS_CORRELATION_ID, id_to_string(v));
     }
-    ex.set_header(JMS_DESTINATION, p.to.clone().unwrap_or_else(|| cfg.destination.clone()));
+    ex.set_header(JMS_DESTINATION, p.to.as_deref().map(|t| prefixes.strip(t)).unwrap_or_else(|| cfg.destination.clone()));
     if let Some(r) = &p.reply_to {
-        ex.set_header(JMS_REPLY_TO, r.clone());
+        ex.set_header(JMS_REPLY_TO, prefixes.strip(r));
     }
     let h = m.header.clone().unwrap_or_default();
     ex.set_header(JMS_DELIVERY_MODE, if h.durable { 2i64 } else { 1i64 });
@@ -553,7 +615,7 @@ pub fn message_to_exchange(cfg: &AmqpConfig, m: &Message, ex: &mut Exchange) {
 }
 
 /// Build the AMQP message of an exchange (AMQP JMS mapping).
-pub fn exchange_to_message(cfg: &AmqpConfig, ex: &Exchange, to: &str, kind: DestKind, include_reply_to: bool) -> Message {
+pub fn exchange_to_message(cfg: &AmqpConfig, prefixes: &AddressPrefixes, ex: &Exchange, to: &str, kind: DestKind, include_reply_to: bool) -> Message {
     use headers::*;
     let mut m = Message::default();
     let (body, ty) = match (cfg.message_type, ex.body()) {
@@ -598,7 +660,7 @@ pub fn exchange_to_message(cfg: &AmqpConfig, ex: &Exchange, to: &str, kind: Dest
     }
     let p = m.props_mut();
     p.message_id = Some(AmqpValue::String(format!("ID:{}", unique_id())));
-    p.to = Some(to.to_string());
+    p.to = Some(prefixes.apply(to, kind));
     p.creation_time = Some(now_millis());
     if expires > 0 {
         p.absolute_expiry_time = Some(expires);
@@ -609,7 +671,7 @@ pub fn exchange_to_message(cfg: &AmqpConfig, ex: &Exchange, to: &str, kind: Dest
     if include_reply_to {
         if let Some(r) = header_str(ex, JMS_REPLY_TO) {
             let (k, name) = parse_destination(&r);
-            p.reply_to = Some(name);
+            p.reply_to = Some(prefixes.apply(&name, k));
             m.set_annotation("x-opt-jms-reply-to", AmqpValue::Byte(k.code()));
         }
     }
@@ -648,6 +710,7 @@ struct ReplyRouter {
 struct ProducerState {
     conn: Connection,
     session: Session,
+    prefixes: AddressPrefixes,
     senders: HashMap<String, Arc<Sender>>,
     reply: Option<ReplyRouter>,
     coordinator: Option<Arc<Coordinator>>,
@@ -685,7 +748,8 @@ impl AmqpProducer {
         if g.is_none() {
             let conn = Connection::open(&self.cfg.conn)?;
             let session = conn.session()?;
-            *g = Some(ProducerState { conn, session, senders: HashMap::new(), reply: None, coordinator: None });
+            let prefixes = AddressPrefixes::of(&conn);
+            *g = Some(ProducerState { conn, session, prefixes, senders: HashMap::new(), reply: None, coordinator: None });
         }
         Ok(g.as_mut().unwrap())
     }
@@ -694,7 +758,7 @@ impl AmqpProducer {
         if let Some(x) = s.senders.get(address) {
             return Ok(x.clone());
         }
-        let snd = Arc::new(s.session.sender(capability_opts(address, kind))?);
+        let snd = Arc::new(s.session.sender(capability_opts(&s.prefixes.apply(address, kind), kind))?);
         s.senders.insert(address.to_string(), snd.clone());
         Ok(snd)
     }
@@ -702,10 +766,10 @@ impl AmqpProducer {
     fn reply_router(&self, s: &mut ProducerState) -> Result<(String, Pending)> {
         if s.reply.is_none() {
             let receiver: Receiver = match &self.cfg.reply_to {
-                Some(q) => s.session.receiver(capability_opts(q, DestKind::Queue).credit(self.cfg.prefetch))?,
+                Some(q) => s.session.receiver(capability_opts(&s.prefixes.apply(q, DestKind::Queue), DestKind::Queue).credit(self.cfg.prefetch))?,
                 None => s.session.receiver(LinkOptions::dynamic().capability("temporary-queue").credit(self.cfg.prefetch))?,
             };
-            let address = receiver.address().map(String::from).or_else(|| self.cfg.reply_to.clone()).unwrap_or_default();
+            let address = receiver.address().map(String::from).or_else(|| self.cfg.reply_to.as_deref().map(|q| s.prefixes.apply(q, DestKind::Queue))).unwrap_or_default();
             let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
             let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let (p2, s2) = (pending.clone(), stop.clone());
@@ -742,10 +806,11 @@ impl AmqpProducer {
             None => (cfg.kind, cfg.destination.clone()),
         };
         let in_out = exchange.is_out_capable() && !cfg.disable_reply_to;
-        let mut msg = exchange_to_message(cfg, exchange, &address, kind, !in_out);
         let mut g = self.state.lock().unwrap();
+        let mut prefixes = AddressPrefixes::default();
         let result = (|| {
             let s = self.state(&mut g)?;
+            prefixes = s.prefixes.clone();
             let snd = Self::sender(s, &address, kind)?;
             if cfg.transacted && s.coordinator.is_none() {
                 s.coordinator = Some(Arc::new(s.session.coordinator()?));
@@ -767,6 +832,7 @@ impl AmqpProducer {
             }
         };
         drop(g);
+        let mut msg = exchange_to_message(cfg, &prefixes, exchange, &address, kind, !in_out);
         let send = |m: &Message| -> Result<()> {
             if let Some(c) = &coord {
                 // a local AMQP transaction around the send
@@ -824,7 +890,7 @@ impl AmqpProducer {
             return Err(CamelError::new(kind, reply.app_property(EXCEPTION_MESSAGE).and_then(|v| v.as_str()).unwrap_or("")));
         }
         exchange.message.headers.clear();
-        message_to_exchange(cfg, &reply, exchange);
+        message_to_exchange(cfg, &prefixes, &reply, exchange);
         Ok(())
     }
 }
@@ -868,6 +934,7 @@ struct Worker {
 /// (RabbitMQ 3.x refuses attaches without a target address).
 struct ReplySenders {
     session: Session,
+    prefixes: AddressPrefixes,
     anonymous: Option<Sender>,
     by_address: Mutex<HashMap<String, Sender>>,
 }
@@ -882,7 +949,7 @@ impl ReplySenders {
         } else {
             None
         };
-        Ok(ReplySenders { session: session.clone(), anonymous, by_address: Mutex::new(HashMap::new()) })
+        Ok(ReplySenders { session: session.clone(), prefixes: AddressPrefixes::of(conn), anonymous, by_address: Mutex::new(HashMap::new()) })
     }
 
     fn send(&self, m: &Message, address: &str, kind: DestKind, txn: Option<&Vec<u8>>, timeout: Duration) -> Result<()> {
@@ -895,7 +962,7 @@ impl ReplySenders {
         }
         let mut map = self.by_address.lock().unwrap();
         if !map.contains_key(address) {
-            let s = self.session.sender(capability_opts(address, kind))?;
+            let s = self.session.sender(capability_opts(&self.prefixes.apply(address, kind), kind))?;
             map.insert(address.to_string(), s);
         }
         let r = go(&map[address]);
@@ -921,7 +988,7 @@ impl Worker {
             None => None,
         };
         let mut ex = Exchange::new(self.ctx.upgrade());
-        message_to_exchange(cfg, &d.message, &mut ex);
+        message_to_exchange(cfg, &replies.prefixes, &d.message, &mut ex);
         let reply_to = if cfg.disable_reply_to { None } else { d.message.properties.as_ref().and_then(|p| p.reply_to.clone()) };
         if reply_to.is_some() {
             ex.pattern = ExchangePattern::InOut;
@@ -943,7 +1010,7 @@ impl Worker {
                 Some(3) => DestKind::TempTopic,
                 _ => DestKind::Queue,
             };
-            let mut m = exchange_to_message(&reply_cfg, &out, &rt, kind, false);
+            let mut m = exchange_to_message(&reply_cfg, &replies.prefixes, &out, &rt, kind, false);
             let p = d.message.props();
             m.props_mut().correlation_id = p.correlation_id.clone().or(p.message_id.clone());
             if let Some(e) = &ex.exception {
@@ -971,8 +1038,8 @@ impl Worker {
     }
 }
 
-fn consumer_link(cfg: &AmqpConfig, index: usize) -> LinkOptions {
-    let mut o = capability_opts(&cfg.destination, cfg.kind).credit(cfg.prefetch);
+fn consumer_link(cfg: &AmqpConfig, prefixes: &AddressPrefixes, index: usize) -> LinkOptions {
+    let mut o = capability_opts(&prefixes.apply(&cfg.destination, cfg.kind), cfg.kind).credit(cfg.prefetch);
     if let Some(s) = &cfg.selector {
         o = o.filter("jms-selector", SELECTOR_FILTER, AmqpValue::str(s.clone()));
     }
@@ -1018,10 +1085,20 @@ impl Service for AmqpConsumer {
             while !stop.is_stopped() {
                 let setup = (|| -> Result<(Connection, Session, Vec<Receiver>, ReplySenders, Option<Coordinator>)> {
                     let conn = Connection::open(&worker.cfg.conn)?;
+                    if worker.cfg.shared_subscription.is_some() && is_activemq_classic(&conn) {
+                        // ActiveMQ 5 has no JMS 2.0 shared subscriptions (its JMS client refuses
+                        // shared consumers too); the `shared` capability would be ignored
+                        let version = remote_property(&conn, "version").unwrap_or_default();
+                        return Err(CamelError::new(
+                            core_kinds::UNSUPPORTED_OPERATION,
+                            format!("ActiveMQ {} has no JMS 2.0 shared subscriptions (subscriptionShared); use a virtual topic: publish to topic VirtualTopic.<name> and consume queue Consumer.<subscription>.VirtualTopic.<name>", version),
+                        ));
+                    }
                     let session = conn.session()?;
+                    let prefixes = AddressPrefixes::of(&conn);
                     let mut rxs = Vec::new();
                     for i in 0..worker.cfg.concurrent_consumers {
-                        rxs.push(session.receiver(consumer_link(&worker.cfg, i))?);
+                        rxs.push(session.receiver(consumer_link(&worker.cfg, &prefixes, i))?);
                     }
                     let replies = ReplySenders::open(&conn, &session)?;
                     let coord = if worker.cfg.transacted { Some(session.coordinator()?) } else { None };
@@ -1029,6 +1106,14 @@ impl Service for AmqpConsumer {
                 })();
                 let (conn, _session, rxs, replies, coord) = match setup {
                     Ok(x) => x,
+                    Err(e) if e.kind == core_kinds::UNSUPPORTED_OPERATION => {
+                        // a configuration the broker cannot honour: no point in retrying
+                        camel_core::camel_warn!(&uri, "Cannot start consumer on {}: {}", uri, e.message);
+                        if let Some(tx) = ready.take() {
+                            let _ = tx.send(Err(e));
+                        }
+                        break;
+                    }
                     Err(e) => {
                         camel_core::camel_warn!(&uri, "Cannot start consumer on {}: {} - retrying in {} ms", uri, e.message, worker.cfg.recovery_interval.as_millis());
                         if let Some(tx) = ready.take() {
@@ -1082,6 +1167,10 @@ impl Service for AmqpConsumer {
             }
         })?;
         if let Ok(Err(e)) = ready_rx.recv_timeout(self.cfg.conn.connect_timeout + Duration::from_secs(5)) {
+            if e.kind == core_kinds::UNSUPPORTED_OPERATION {
+                self.threads.stop();
+                return Err(e);
+            }
             camel_core::camel_warn!(&self.uri, "Consumer {} not connected yet: {}", self.uri, e.message);
         }
         Ok(())
