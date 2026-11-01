@@ -127,7 +127,7 @@ fn rough_corners(b: &Bin, r: (isize, isize, isize, isize)) -> Option<[P; 4]> {
 
 /// A line as (point, unit direction).
 #[derive(Clone, Copy, Debug)]
-struct Line {
+pub(crate) struct Line {
     p: P,
     d: P,
 }
@@ -149,7 +149,7 @@ fn fit_line(pts: &[P]) -> Option<Line> {
     Some(Line { p: (mx, my), d: (theta.cos(), theta.sin()) })
 }
 
-fn intersect(a: &Line, b: &Line) -> Option<P> {
+pub(crate) fn intersect(a: &Line, b: &Line) -> Option<P> {
     let den = a.d.0 * b.d.1 - a.d.1 * b.d.0;
     if den.abs() < 1e-9 {
         return None;
@@ -159,7 +159,7 @@ fn intersect(a: &Line, b: &Line) -> Option<P> {
 }
 
 /// Fit one side between rough corners `a` and `b` (outward normal away from `centre`).
-fn fit_side(bin: &Bin, a: P, b: P, centre: P) -> Option<Line> {
+pub(crate) fn fit_side(bin: &Bin, a: P, b: P, centre: P) -> Option<Line> {
     let (ex, ey) = (b.0 - a.0, b.1 - a.1);
     let len = (ex * ex + ey * ey).sqrt();
     if len < 6.0 {

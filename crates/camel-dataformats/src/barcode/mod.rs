@@ -556,12 +556,15 @@ mod tests {
     /// Real photographs from ZXing's blackbox test suite (see testdata/zxing/ATTRIBUTION.txt).
     #[test]
     fn zxing_blackbox_photographs() {
-        let cases: [(&[u8], Format, &str); 12] = [
+        let cases: [(&[u8], Format, &str); 14] = [
             (include_bytes!("testdata/zxing/qrcode-1_1.png"), Format::QrCode, "MEBKM:URL:http\\://en.wikipedia.org/wiki/Main_Page;;"),
             (include_bytes!("testdata/zxing/qrcode-3_01.png"), Format::QrCode, "http://arnaud.sahuguet.com/graffiti/test.php?ll=-74.00309961503218,40.74102573163046,0"),
             (include_bytes!("testdata/zxing/qrcode-3_10.png"), Format::QrCode, "MECARD:N:Google 411,;TEL:18665881077;;"),
             // byte mode without ECI holding Shift_JIS (ZXing guesses the encoding)
             (include_bytes!("testdata/zxing/qrcode-2_10.png"), Format::QrCode, "Google \u{30e2}\u{30d0}\u{30a4}\u{30eb}\r\nhttp://google.jp"),
+            // half-width katakana in Shift_JIS
+            (include_bytes!("testdata/zxing/qrcode-2_20.png"), Format::QrCode, "*\u{ff83}\u{ff9e}\u{ff7b}\u{ff9e}\u{ff72}\u{ff9d}QR*\r\nhttp://d-qr.net/ex/    "),
+            (include_bytes!("testdata/zxing/aztec-2_10.png"), Format::Aztec, "mailto:zxing@googlegroups.com"),
             (include_bytes!("testdata/zxing/datamatrix-2_01.png"), Format::DataMatrix, "http://google.com/m"),
             (include_bytes!("testdata/zxing/datamatrix-2_10.png"), Format::DataMatrix, "This is a test of our DataMatrix support using a longer piece of text, and therefore a more dense barcode."),
             (include_bytes!("testdata/zxing/aztec-2_02.png"), Format::Aztec, "This is a real world Aztec barcode test."),

@@ -7,6 +7,7 @@
 
 use super::aztec;
 use super::detect::Bin;
+use super::dm_detect;
 use super::vision::{bit_at, Homography};
 use super::Matrix;
 
@@ -109,7 +110,50 @@ fn centres(b: &Bin) -> Vec<(f64, f64, f64)> {
         }
     }
     cands.sort_by(|a, b| b.3.cmp(&a.3));
-    cands.into_iter().take(4).map(|c| (c.0, c.1, c.2)).collect()
+    // the centre module is a small isolated dark blob: its centroid is the bull's-eye
+    // centre (row hits off the centre line confirm nearby points instead)
+    let mut out: Vec<(f64, f64, f64, usize)> = Vec::new();
+    for c in cands.into_iter().take(12) {
+        let Some((x, y)) = blob_centroid(b, c.0 as usize, c.1 as usize, c.2) else { continue };
+        if let Some(o) = out.iter_mut().find(|o| (o.0 - x).abs() < c.2 / 2.0 && (o.1 - y).abs() < c.2 / 2.0) {
+            o.3 += c.3;
+        } else {
+            out.push((x, y, c.2, c.3));
+        }
+    }
+    out.sort_by(|a, b| b.3.cmp(&a.3));
+    out.into_iter().take(4).map(|c| (c.0, c.1, c.2)).collect()
+}
+
+/// Centroid of the dark blob at (x, y) if it is no larger than about one module.
+fn blob_centroid(b: &Bin, x: usize, y: usize, module: f64) -> Option<(f64, f64)> {
+    if !b.get(x, y) {
+        return None;
+    }
+    let limit = (2.5 * module * module).max(4.0) as usize;
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![(x, y)];
+    seen.insert((x, y));
+    let (mut sx, mut sy) = (0.0, 0.0);
+    while let Some((px, py)) = stack.pop() {
+        sx += px as f64;
+        sy += py as f64;
+        if seen.len() > limit {
+            return None;
+        }
+        for (dx, dy) in [(-1i64, 0i64), (1, 0), (0, -1), (0, 1)] {
+            let (nx, ny) = (px as i64 + dx, py as i64 + dy);
+            if nx < 0 || ny < 0 || nx as usize >= b.width || ny as usize >= b.height {
+                continue;
+            }
+            let q = (nx as usize, ny as usize);
+            if b.get(q.0, q.1) && seen.insert(q) {
+                stack.push(q);
+            }
+        }
+    }
+    let n = seen.len() as f64;
+    Some((sx / n + 0.5, sy / n + 0.5))
 }
 
 /// Distances of the first `k` colour changes along a ray from `c` in direction `d`.
@@ -200,6 +244,36 @@ fn fit(b: &Bin, c: P, module: f64, rings: usize) -> Option<(Homography, Vec<P>, 
     Some((h, best_src, best_dst))
 }
 
+/// Fit the four outer sides of the symbol (outermost dark module edges, like the Data
+/// Matrix detector) around the corners predicted by `h` and add the side intersections as
+/// far correspondences: the bull's-eye alone extrapolates poorly to the edge of larger
+/// symbols under perspective.
+fn refine_edges(b: &Bin, h: &Homography, src: &[P], dst: &[P], n: usize) -> Option<(Homography, Vec<P>, Vec<P>)> {
+    let e = (n / 2) as f64 + 0.5;
+    let canon = [(-e, -e), (e, -e), (e, e), (-e, e)];
+    let rc: Vec<P> = canon.iter().map(|c| h.map(c.0, c.1)).collect();
+    let centre = h.map(0.0, 0.0);
+    let mut lines = Vec::with_capacity(4);
+    for i in 0..4 {
+        lines.push(dm_detect::fit_side(b, rc[i], rc[(i + 1) % 4], centre)?);
+    }
+    let (mut s2, mut d2) = (src.to_vec(), dst.to_vec());
+    let module = ((rc[0].0 - rc[2].0).powi(2) + (rc[0].1 - rc[2].1).powi(2)).sqrt() / (2.0 * e * std::f64::consts::SQRT_2);
+    for i in 0..4 {
+        let q = dm_detect::intersect(&lines[(i + 3) % 4], &lines[i])?;
+        if ((q.0 - rc[i].0).powi(2) + (q.1 - rc[i].1).powi(2)).sqrt() > 2.5 * module {
+            return None;
+        }
+        // weight the far points like several near ones
+        for _ in 0..4 {
+            s2.push(canon[i]);
+            d2.push(q);
+        }
+    }
+    let h2 = Homography::from_points(&s2, &d2)?;
+    Some((h2, s2, d2))
+}
+
 /// Full-range symbols: the central row and column belong to the reference grid, so they
 /// alternate module by module from the centre to the edge. Rays along their images (straight
 /// lines through the centre under a perspective transform) give transitions out to the
@@ -277,9 +351,16 @@ pub fn detect_and_decode(b: &Bin) -> Option<String> {
                 if let Ok(t) = aztec::decode_matrix(&m) {
                     return Some(t);
                 }
+                let edges = refine_edges(b, &h, &src, &dst, n);
+                if let Some((h2, _, _)) = &edges {
+                    if let Ok(t) = aztec::decode_matrix(&sample(b, h2, o, n)) {
+                        return Some(t);
+                    }
+                }
                 if !compact {
-                    let h2 = refine_axes(b, &h, &src, &dst, n, module);
-                    if let Ok(t) = aztec::decode_matrix(&sample(b, &h2, o, n)) {
+                    let (hs, ss, ds) = edges.unwrap_or((h, src.clone(), dst.clone()));
+                    let h3 = refine_axes(b, &hs, &ss, &ds, n, module);
+                    if let Ok(t) = aztec::decode_matrix(&sample(b, &h3, o, n)) {
                         return Some(t);
                     }
                 }

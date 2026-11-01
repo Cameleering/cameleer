@@ -253,7 +253,8 @@ fn decode_code128_from(r: &[usize]) -> Option<String> {
         vals.push(v);
         p += 6;
     }
-    if vals.len() < 2 {
+    // start, at least one symbol character, check character
+    if vals.len() < 3 {
         return None;
     }
     let check = vals.pop()?;
@@ -319,7 +320,8 @@ pub fn decode_code39(row: &[bool]) -> Option<String> {
             while p + 9 <= r.len() {
                 let c = code_of(&r[p..p + 9])?;
                 if c == CODE39_STAR {
-                    return Some(out);
+                    // like ZXing, an empty symbol (two adjacent start/stop characters) is noise
+                    return (!out.is_empty()).then_some(out);
                 }
                 let i = CODE39.iter().position(|x| *x == c)?;
                 out.push(CODE39_ALPHABET[i] as char);

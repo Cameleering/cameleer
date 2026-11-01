@@ -40,6 +40,8 @@ pub struct Camera {
     pub keystone_side: bool,
     /// Gaussian blur sigma in output pixels.
     pub blur: f64,
+    /// Box blur radius in pixels (a (2r+1)^2 mean filter, like a defocused lens).
+    pub box_blur: usize,
     /// Lighting gradient: brightness falls to this factor across the image (1 = even).
     pub light: f64,
     /// Additive noise sigma.
@@ -50,8 +52,30 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Camera {
-        Camera { width: 400, height: 400, rotate: 0.0, scale: 0.7, keystone: 0.0, keystone_side: false, blur: 0.0, light: 1.0, noise: 0.0, jpeg: None }
+        Camera { width: 400, height: 400, rotate: 0.0, scale: 0.7, keystone: 0.0, keystone_side: false, blur: 0.0, box_blur: 0, light: 1.0, noise: 0.0, jpeg: None }
     }
+}
+
+fn box_blur(g: &Gray, r: usize) -> Gray {
+    if r == 0 {
+        return g.clone();
+    }
+    let (w, h) = (g.width as i64, g.height as i64);
+    let r = r as i64;
+    let mut out = vec![0u8; g.pixels.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let mut s = 0u32;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let (xx, yy) = ((x + dx).clamp(0, w - 1), (y + dy).clamp(0, h - 1));
+                    s += g.pixels[(yy * w + xx) as usize] as u32;
+                }
+            }
+            out[(y * w + x) as usize] = (s / ((2 * r + 1) * (2 * r + 1)) as u32) as u8;
+        }
+    }
+    Gray { width: g.width, height: g.height, pixels: out }
 }
 
 fn gaussian_blur(g: &Gray, sigma: f64) -> Gray {
@@ -131,7 +155,7 @@ pub fn photograph(sym: &Gray, cam: &Camera, seed: u64) -> Gray {
             out[y * cam.width + x] = (acc / 4.0).round() as u8;
         }
     }
-    let mut g = gaussian_blur(&Gray { width: cam.width, height: cam.height, pixels: out }, cam.blur);
+    let mut g = box_blur(&gaussian_blur(&Gray { width: cam.width, height: cam.height, pixels: out }, cam.blur), cam.box_blur);
     let mut rng = Rng::new(seed);
     for y in 0..cam.height {
         for x in 0..cam.width {
@@ -161,6 +185,9 @@ pub fn distortions() -> Vec<(&'static str, Camera)> {
         ("uneven light", Camera { light: 0.45, rotate: -11.0, ..base.clone() }),
         ("noise 12", Camera { noise: 12.0, rotate: 21.0, ..base.clone() }),
         ("jpeg 60", Camera { jpeg: Some(60), rotate: 13.0, keystone: 0.1, ..base.clone() }),
+        ("box blur 1 + rotate 61", Camera { box_blur: 1, rotate: 61.0, ..base.clone() }),
+        ("scaled down 0.4 + rotate -24", Camera { scale: 0.4, rotate: -24.0, noise: 4.0, ..base.clone() }),
+        ("noise 18 + light", Camera { noise: 18.0, light: 0.7, rotate: 8.0, ..base.clone() }),
         ("everything", Camera { rotate: 17.0, keystone: 0.15, blur: 0.9, light: 0.6, noise: 7.0, jpeg: Some(60), ..base.clone() }),
     ]
 }
@@ -217,6 +244,28 @@ mod tests {
     #[test]
     fn camera_qr() {
         let f = failures("https://camel.apache.org/components/latest/dataformats/barcode-dataformat.html", Format::QrCode, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_qr_large_version() {
+        // version 10 (alignment patterns, version information) with ECC Q
+        let text: String = (0..150).map(|i| (b'A' + (i % 26) as u8) as char).collect::<String>() + " camel";
+        let f = failures(&text, Format::QrCode, Some(Format::QrCode));
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_data_matrix_multi_region() {
+        let f = failures("Data Matrix with four data regions: 0123456789 ABCDEFGHIJ", Format::DataMatrix, None);
+        assert!(f.is_empty(), "{:#?}", f);
+    }
+
+    #[test]
+    fn camera_aztec_full_range() {
+        let text = "Full-range Aztec symbol with more layers: 0123456789 abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ 0123456789 the quick brown fox";
+        assert!(crate::barcode::aztec::encode(text, 33).unwrap().width > 27, "full range expected");
+        let f = failures(text, Format::Aztec, None);
         assert!(f.is_empty(), "{:#?}", f);
     }
 
@@ -278,6 +327,19 @@ mod debug {
         eprintln!("sigma {}", vision::noise_sigma(&g));
         let bin = vision::hybrid(&g).unwrap();
         aztec_detect::debug(&bin);
+    }
+
+    #[test]
+    #[ignore]
+    fn debug_dump() {
+        let out = std::env::var("BARCODE_OUT").unwrap();
+        let text = std::env::var("BARCODE_TEXT").unwrap();
+        let f = Format::parse(&std::env::var("BARCODE_FORMAT").unwrap()).unwrap();
+        let src = printed(&text, f);
+        for (i, (name, cam)) in distortions().into_iter().enumerate() {
+            let img = photograph(&src, &cam, 1000 + i as u64);
+            std::fs::write(format!("{}/{:02}-{}.png", out, i, name.replace(' ', "_")), crate::barcode::png::encode(&img)).unwrap();
+        }
     }
 
     #[test]
