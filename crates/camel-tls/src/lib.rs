@@ -104,6 +104,7 @@ pub mod params;
 pub mod pbe;
 pub mod pem;
 pub mod sasl;
+pub mod stream_body;
 pub mod testing;
 pub mod tls;
 pub mod util;

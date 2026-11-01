@@ -274,3 +274,77 @@ fn read_lock_strategies() {
     server.stop();
     let _ = fs::remove_dir_all(&root);
 }
+
+#[test]
+fn resume_download_local_work_directory_and_stream_download() {
+    let root = temp_dir("resume");
+    let work = temp_dir("resume-work");
+    fs::create_dir_all(root.join("big")).unwrap();
+    let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+    fs::write(root.join("big/data.bin"), &data).unwrap();
+    // a previous, interrupted transfer left the first 100000 bytes
+    fs::write(work.join("data.bin.inprogress"), &data[..100_000]).unwrap();
+    let server = FtpServer::start_with_users(&root, &[("admin", "secret")]).unwrap();
+
+    // client level: REST + streamed RETR
+    let mut c = FtpClient::connect("127.0.0.1", server.port(), Duration::from_secs(5), Duration::from_secs(5)).unwrap();
+    c.login("admin", "secret").unwrap();
+    c.set_passive(true);
+    c.set_binary(true).unwrap();
+    let mut out = Vec::new();
+    assert_eq!(c.retr_to("big/data.bin", &mut out, 299_990).unwrap(), 10);
+    assert_eq!(out, &data[299_990..]);
+    c.quit();
+
+    let ctx = context();
+    let uri = format!(
+        "ftp://admin@127.0.0.1:{}/big?password=secret&passiveMode=true&binary=true&noop=true&localWorkDirectory={}&resumeDownload=true&initialDelay=0&delay=50",
+        server.port(),
+        work.display()
+    );
+    let sdir = temp_dir("stream-src");
+    fs::write(sdir.join("s.txt"), "streamed body").unwrap();
+    let server2 = FtpServer::start_with_users(&sdir, &[("admin", "secret")]).unwrap();
+    let suri = format!("ftp://admin@127.0.0.1:{}/?password=secret&passiveMode=true&binary=true&noop=true&streamDownload=true&initialDelay=0&delay=50", server2.port());
+    ctx.add_routes(|b| {
+        b.from(&uri).to("mock:resumed");
+        b.from(&suri)
+            .process(|ex: &mut Exchange| {
+                assert!(camel_tls::stream_body::is_available(&ex.message.body));
+                let bytes = camel_tls::stream_body::body_bytes(&ex.message.body).unwrap();
+                ex.set_body(Value::Bytes(bytes));
+                Ok(())
+            })
+            .convert_body_to("String")
+            .to("mock:streamed");
+    })
+    .unwrap();
+    let mock = ctx.mock_endpoint("mock:resumed").unwrap();
+    mock.expected_message_count(1);
+    let smock = ctx.mock_endpoint("mock:streamed").unwrap();
+    smock.expected_bodies_received(vec!["streamed body"]);
+    ctx.start().unwrap();
+    mock.assert_is_satisfied().unwrap();
+    smock.assert_is_satisfied().unwrap();
+    let ex = mock.exchange(0).unwrap();
+    assert_eq!(ex.body().to_bytes(), data);
+    assert_eq!(ex.header("CamelFtpResumedFrom").unwrap().as_i64(), Some(100_000));
+    assert!(server.commands().iter().any(|c| c == "REST 100000"), "{:?}", server.commands());
+    let local = ex.header("CamelFileLocalWorkPath").unwrap().to_string();
+    assert!(local.ends_with("data.bin"));
+    // local work files are removed after the exchange
+    assert!(wait_until(|| !std::path::Path::new(&local).exists() && !work.join("data.bin.inprogress").exists()));
+    // the stream's temp file is gone too
+    let sex = smock.exchange(0).unwrap();
+    let tmp = sex.header("CamelFileLocalWorkPath").unwrap().to_string();
+    assert!(wait_until(|| !std::path::Path::new(&tmp).exists()));
+    ctx.stop().unwrap();
+    server.stop();
+    server2.stop();
+    // resumeDownload requires localWorkDirectory
+    let ctx = context();
+    assert!(ctx.get_endpoint("ftp://admin@127.0.0.1:21/big?resumeDownload=true").is_err());
+    for d in [root, work, sdir] {
+        let _ = fs::remove_dir_all(d);
+    }
+}

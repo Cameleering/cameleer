@@ -28,7 +28,14 @@
 //! `fileName`, `recursive`, `minDepth`/`maxDepth`, `maxMessagesPerPoll`, `sortBy`
 //! (`file:name`/`file:modified`/`file:size`, `reverse:`/`ignoreCase:` prefixes),
 //! `idempotent` (+ `idempotentKey`, `idempotentRepository=#ref`), `download` (false = no
-//! body), `ignoreFileNotFoundOrPermissionError`, `readLock` (`none`, `changed` with
+//! body), `localWorkDirectory` (downloads are streamed into a local file instead of memory;
+//! the body is read from it and the file removed after the exchange; header
+//! `CamelFileLocalWorkPath`), `resumeDownload` (with `localWorkDirectory`: a partial
+//! `<name>.inprogress` file left by an interrupted transfer is continued with `REST <size>`,
+//! header `CamelFtpResumedFrom`), `streamDownload` (the body is a stream handle, see
+//! `camel_tls::stream_body`, backed by the local work file or a temp file: the download never
+//! sits in memory and an `http` producer sends it chunked; unconsumed streams are released
+//! after the exchange), `ignoreFileNotFoundOrPermissionError`, `readLock` (`none`, `changed` with
 //! `readLockCheckInterval` (5s) / `readLockTimeout` (20s) / `readLockMinLength` / `readLockMinAge`,
 //! `rename`, `idempotent`, `idempotent-changed`, `idempotent-rename`; a file whose lock cannot
 //! be acquired is skipped until the next poll). As in Camel, consumed files are left
@@ -77,6 +84,10 @@ use crate::common::{take_ignored, Authority, COMMON_IGNORED};
 
 /// Header: host of the remote file.
 pub const FILE_HOST: &str = "CamelFileHost";
+/// Local work file of a download (`localWorkDirectory` / `streamDownload`).
+pub const FILE_LOCAL_WORK_PATH: &str = "CamelFileLocalWorkPath";
+/// Byte offset a resumed download continued from (`resumeDownload`).
+pub const FTP_RESUMED_FROM: &str = "CamelFtpResumedFrom";
 /// Header: last FTP reply code.
 pub const FTP_REPLY_CODE: &str = "CamelFtpReplyCode";
 /// Header: last FTP reply text.
@@ -168,6 +179,12 @@ pub struct FtpConfig {
     pub idempotent: bool,
     pub idempotent_key: Option<String>,
     pub download: bool,
+    /// `localWorkDirectory`: download into local files.
+    pub local_work_directory: Option<PathBuf>,
+    /// `resumeDownload`: continue partial local work files with `REST`.
+    pub resume_download: bool,
+    /// `streamDownload`: the body is a stream handle instead of bytes.
+    pub stream_download: bool,
     pub ignore_not_found: bool,
     pub scheduler: ScheduledPollConfig,
     // producer
@@ -298,6 +315,9 @@ impl FtpConfig {
             idempotent,
             idempotent_key: take_nonempty(params, "idempotentKey"),
             download: params.take_bool("download", true)?,
+            local_work_directory: take_nonempty(params, "localWorkDirectory").map(PathBuf::from),
+            resume_download: params.take_bool("resumeDownload", false)?,
+            stream_download: params.take_bool("streamDownload", false)?,
             ignore_not_found: params.take_bool("ignoreFileNotFoundOrPermissionError", false)?,
             scheduler,
             file_exist: FileExist::parse(&params.take_string("fileExist", "Override"))?,
@@ -309,6 +329,9 @@ impl FtpConfig {
             flatten: params.take_bool("flatten", false)?,
             done_file_name: take_nonempty(params, "doneFileName"),
         };
+        if cfg.resume_download && cfg.local_work_directory.is_none() {
+            return Err(CamelError::illegal_argument("The option localWorkDirectory must be configured when resumeDownload=true"));
+        }
         if cfg.file_exist == FileExist::Move && cfg.move_existing.is_none() {
             return Err(CamelError::illegal_argument("You must configure moveExisting option when fileExist=Move"));
         }
@@ -320,15 +343,12 @@ impl FtpConfig {
                 "useList",
                 "fastExistsCheck",
                 "existDirCheckUsingLs",
-                "streamDownload",
-                "localWorkDirectory",
                 "transferLoggingLevel",
                 "transferLoggingIntervalSeconds",
                 "transferLoggingVerbose",
                 "handleDirectoryParserAbsoluteResult",
                 "separator",
                 "chmod",
-                "resumeDownload",
                 "activePortRange",
                 "bufferSize",
                 "readLockLoggingLevel",
@@ -921,6 +941,14 @@ impl ConsumerCore {
         }
     }
 
+    fn decode_body(&self, data: Vec<u8>) -> Value {
+        match self.cfg.charset.as_deref().map(|x| x.to_ascii_lowercase()) {
+            Some(cs) if cs == "iso-8859-1" || cs == "latin1" => Value::String(data.iter().map(|&b| b as char).collect()),
+            Some(_) => Value::String(String::from_utf8_lossy(&data).into_owned()),
+            None => Value::Bytes(data),
+        }
+    }
+
     fn process_file(&self, s: &mut Session, processor: &dyn Processor, info: &mut FileInfo) -> Result<bool> {
         let c = &self.cfg;
         let stepwise = c.stepwise;
@@ -936,15 +964,52 @@ impl ConsumerCore {
         }
         let full = info.absolute.display().to_string();
         let mut ex = Exchange::new(self.ctx.upgrade());
-        if c.download {
+        let mut local_work: Option<PathBuf> = None;
+        if c.download && (c.local_work_directory.is_some() || c.stream_download) {
+            let arg = s.target(stepwise, &full)?;
+            let dir = match &c.local_work_directory {
+                Some(d) => d.join(info.relative.trim_start_matches('/')).parent().map(|p| p.to_path_buf()).unwrap_or_else(|| d.clone()),
+                None => std::env::temp_dir(),
+            };
+            std::fs::create_dir_all(&dir).map_err(|e| ftp_error(format!("Cannot create local work directory {}: {}", dir.display(), e)))?;
+            let file_name = if c.local_work_directory.is_some() { info.only_name() } else { format!("camel-ftp-{}-{}", std::process::id(), ex.exchange_id) };
+            let target = dir.join(&file_name);
+            let inprogress = dir.join(format!("{}.inprogress", file_name));
+            let offset = if c.resume_download { std::fs::metadata(&inprogress).map(|m| m.len()).unwrap_or(0) } else { 0 };
+            let offset = if offset > info.length && info.length > 0 { 0 } else { offset };
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(offset > 0)
+                .truncate(offset == 0)
+                .open(&inprogress)
+                .map_err(|e| ftp_error(format!("Cannot write local work file {}: {}", inprogress.display(), e)))?;
+            let res = s.client.retr_to(&arg, &mut f, offset);
+            drop(f);
+            if let Err(e) = res {
+                if !c.resume_download {
+                    let _ = std::fs::remove_file(&inprogress);
+                }
+                return Err(e);
+            }
+            std::fs::rename(&inprogress, &target).map_err(|e| ftp_error(format!("Cannot rename local work file {}: {}", inprogress.display(), e)))?;
+            ex.set_header(FILE_LOCAL_WORK_PATH, target.display().to_string());
+            if offset > 0 {
+                ex.set_header(FTP_RESUMED_FROM, Value::Int(offset as i64));
+            }
+            if c.stream_download {
+                // temp-file backed stream: deleted once consumed or released
+                let v = camel_tls::stream_body::register_file(target.clone(), true, &format!("ftp://{}{}", c.host, full)).map_err(|e| ftp_error(format!("Cannot open local work file {}: {}", target.display(), e)))?;
+                ex.set_body(v);
+            } else {
+                let data = std::fs::read(&target).map_err(|e| ftp_error(format!("Cannot read local work file {}: {}", target.display(), e)))?;
+                ex.set_body(self.decode_body(data));
+                local_work = Some(target);
+            }
+        } else if c.download {
             let arg = s.target(stepwise, &full)?;
             let data = s.client.retr(&arg)?;
-            let body = match c.charset.as_deref().map(|x| x.to_ascii_lowercase()) {
-                Some(cs) if cs == "iso-8859-1" || cs == "latin1" => Value::String(data.iter().map(|&b| b as char).collect()),
-                Some(_) => Value::String(String::from_utf8_lossy(&data).into_owned()),
-                None => Value::Bytes(data),
-            };
-            ex.set_body(body);
+            ex.set_body(self.decode_body(data));
         }
         set_file_headers(&mut ex, info, &c.host);
         ex.set_header(headers::FILE_NAME_CONSUMED, info.relative.clone());
@@ -952,6 +1017,13 @@ impl ConsumerCore {
         ex.set_header(FTP_REPLY_CODE, Value::Int(last.code as i64));
         ex.set_header(FTP_REPLY_STRING, last.text);
         process_consumer_exchange(&self.logger, processor, &mut ex);
+        // the local work copy / an unconsumed stream body are done with
+        if let Some(p) = local_work {
+            let _ = std::fs::remove_file(p);
+        }
+        if c.stream_download {
+            camel_tls::stream_body::release(&ex.message.body);
+        }
         // commit / rollback
         if ex.is_failed() || ex.rollback_only {
             if let Some(mf) = &c.move_failed {

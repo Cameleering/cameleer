@@ -509,6 +509,60 @@ impl FtpClient {
         Ok(if self.binary == Some(false) { from_net_ascii(&data) } else { data })
     }
 
+    /// `RETR path` streamed into `out` (constant memory), starting at byte `offset`
+    /// (sent as `REST offset` first, for resumed downloads). Returns the bytes written.
+    pub fn retr_to(&mut self, path: &str, out: &mut dyn Write, offset: u64) -> Result<u64> {
+        if offset > 0 {
+            self.expect(&format!("REST {}", offset), |c| c == 350)?;
+        }
+        let ch = self.open_data()?;
+        let cmd = format!("RETR {}", path);
+        let r = self.send_command(&cmd)?;
+        if !(100..200).contains(&r.code) {
+            return Err(ftp_error(format!("FTP command {} failed: {} {}", cmd, r.code, r.text)));
+        }
+        let mut s = self.accept_data(ch)?;
+        let ascii = self.binary == Some(false);
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut total = 0u64;
+        let mut pending_cr = false;
+        let io: std::io::Result<()> = (|| loop {
+            let n = s.read(&mut buf)?;
+            if n == 0 {
+                if pending_cr {
+                    out.write_all(b"\r")?;
+                    total += 1;
+                }
+                return out.flush();
+            }
+            if ascii {
+                let mut chunk = Vec::with_capacity(n + 1);
+                if pending_cr {
+                    chunk.push(b'\r');
+                }
+                chunk.extend_from_slice(&buf[..n]);
+                pending_cr = chunk.last() == Some(&b'\r');
+                if pending_cr {
+                    chunk.pop();
+                }
+                let conv = from_net_ascii(&chunk);
+                out.write_all(&conv)?;
+                total += conv.len() as u64;
+            } else {
+                out.write_all(&buf[..n])?;
+                total += n as u64;
+            }
+        })();
+        let _ = s.shutdown(std::net::Shutdown::Both);
+        drop(s);
+        io.map_err(|e| ftp_error(format!("Data transfer for {} failed: {}", cmd, e)))?;
+        let done = self.read_reply()?;
+        if !(200..300).contains(&done.code) {
+            return Err(ftp_error(format!("FTP command {} failed: {} {}", cmd, done.code, done.text)));
+        }
+        Ok(total)
+    }
+
     /// `STOR path` (or `APPE` when `append`): upload a file.
     pub fn stor(&mut self, path: &str, data: &[u8], append: bool) -> Result<()> {
         let cmd = format!("{} {}", if append { "APPE" } else { "STOR" }, path);

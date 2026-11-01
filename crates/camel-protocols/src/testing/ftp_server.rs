@@ -2,7 +2,7 @@
 //!
 //! Supports `USER`/`PASS`, `SYST`, `FEAT`, `OPTS`, `PWD`, `CWD`, `CDUP`, `TYPE` (A/I),
 //! `MODE`, `STRU`, `PASV`, `EPSV`, `PORT`, `EPRT`, `LIST` (Unix format), `NLST`, `MLSD`,
-//! `RETR`, `STOR`, `APPE`, `DELE`, `MKD`, `RMD`, `RNFR`/`RNTO`, `SIZE`, `MDTM`, `SITE`,
+//! `RETR` (with `REST` restart offsets), `STOR`, `APPE`, `DELE`, `MKD`, `RMD`, `RNFR`/`RNTO`, `SIZE`, `MDTM`, `SITE`,
 //! `NOOP` and `QUIT`. Paths cannot escape the served root directory.
 //!
 //! FTPS: [`FtpServer::start_tls`] serves explicit (`AUTH TLS`, `PBSZ`, `PROT`) or implicit
@@ -124,6 +124,7 @@ struct Session {
     logged_in: bool,
     cwd: String,
     binary: bool,
+    rest: u64,
     pasv: Option<TcpListener>,
     port: Option<SocketAddr>,
     rnfr: Option<PathBuf>,
@@ -137,7 +138,7 @@ impl Session {
             _ => NetStream::plain(s),
         };
         let out = s.try_clone().ok()?;
-        Some(Session { st, reader: BufReader::new(s), out, prot_private: false, user: None, logged_in: false, cwd: "/".into(), binary: false, pasv: None, port: None, rnfr: None })
+        Some(Session { st, reader: BufReader::new(s), out, prot_private: false, user: None, logged_in: false, cwd: "/".into(), binary: false, rest: 0, pasv: None, port: None, rnfr: None })
     }
 
     /// Wraps an accepted data connection in TLS after `PROT P` (call after the 150 reply).
@@ -418,11 +419,20 @@ impl Session {
                     }
                 }
                 "LIST" | "NLST" | "MLSD" => self.listing(&arg, &cmd)?,
+                "REST" => match arg.trim().parse::<u64>() {
+                    Ok(n) => {
+                        self.rest = n;
+                        self.reply(&format!("350 Restarting at {}. Send STORE or RETRIEVE to initiate transfer", n))?;
+                    }
+                    Err(_) => self.reply("501 Syntax error in REST")?,
+                },
                 "RETR" => {
                     let (_, real) = self.resolve(&arg);
+                    let rest = std::mem::take(&mut self.rest) as usize;
                     match fs::read(&real) {
                         Ok(data) if real.is_file() => {
                             let data = if self.binary { data } else { to_net_ascii(&data) };
+                            let data = data[rest.min(data.len())..].to_vec();
                             self.send_data(&data)?;
                         }
                         _ => self.reply("550 File not found")?,
