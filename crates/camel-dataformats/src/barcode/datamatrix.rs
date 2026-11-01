@@ -270,8 +270,13 @@ pub fn encode(data: &[u8], size: Option<usize>) -> Result<Matrix> {
 
 /// Encode with a shape preference (the smallest fitting symbol).
 pub fn encode_shape(data: &[u8], shape: Shape) -> Result<Matrix> {
-    let n = encode_ascii(data).len();
-    let e = entries()
+    let e = lookup(encode_ascii(data).len(), shape).ok_or_else(|| df_err("Data too big for a Data Matrix symbol of that shape"))?;
+    encode_entry(data, e)
+}
+
+/// The smallest symbol of a shape holding `n` data codewords (ZXing `SymbolInfo.lookup`).
+pub fn lookup(n: usize, shape: Shape) -> Option<Entry> {
+    entries()
         .into_iter()
         .filter(|e| match shape {
             Shape::Any => true,
@@ -279,8 +284,6 @@ pub fn encode_shape(data: &[u8], shape: Shape) -> Result<Matrix> {
             Shape::Rectangle => e.rows != e.cols,
         })
         .find(|e| e.ndata >= n)
-        .ok_or_else(|| df_err("Data too big for a Data Matrix symbol of that shape"))?;
-    encode_entry(data, e)
 }
 
 /// Encode into a given symbol size.
@@ -301,7 +304,12 @@ pub fn encode_entry(data: &[u8], entry: Entry) -> Result<Matrix> {
             cw.push(pad as u8);
         }
     }
-    let all = with_ecc(&cw, entry);
+    Ok(encode_codewords(&cw, entry))
+}
+
+/// Build the symbol for complete data codewords (EC added here).
+pub fn encode_codewords(cw: &[u8], entry: Entry) -> Matrix {
+    let all = with_ecc(cw, entry);
     let (regions_y, regions_x) = entry.regions();
     let (nr, nc) = entry.mapping();
     let (cells, dark) = placement(nr, nc);
@@ -331,11 +339,19 @@ pub fn encode_entry(data: &[u8], entry: Entry) -> Result<Matrix> {
             m.set(x, y, v);
         }
     }
-    Ok(m)
+    m
 }
 
 /// Decode a Data Matrix module matrix; returns (bytes, corrected codewords).
 pub fn decode_matrix(m: &Matrix) -> Result<(Vec<u8>, usize)> {
+    let (cw, corrected) = corrected_codewords(m)?;
+    let entry = entry_for(m.height, m.width).ok_or_else(|| df_err("Invalid Data Matrix size"))?;
+    Ok((decode_codewords(&cw[..entry.ndata])?, corrected))
+}
+
+/// The error-corrected codewords (data then EC) of a module matrix and the number of
+/// corrected codewords.
+pub fn corrected_codewords(m: &Matrix) -> Result<(Vec<u8>, usize)> {
     let entry = entry_for(m.height, m.width).ok_or_else(|| df_err(format!("Invalid Data Matrix size {}x{}", m.height, m.width)))?;
     let (ndata, necc, nblocks) = (entry.ndata, entry.necc, entry.nblocks);
     let (nr, nc) = entry.mapping();
@@ -362,7 +378,7 @@ pub fn decode_matrix(m: &Matrix) -> Result<(Vec<u8>, usize)> {
             cw[*i] = block[k];
         }
     }
-    Ok((decode_codewords(&cw[..ndata])?, corrected))
+    Ok((cw, corrected))
 }
 
 const C40_SHIFT2: &[u8] = b"!\"#$%&'()*+,-./:;<=>?@[\\]^_";
@@ -531,6 +547,20 @@ mod tests {
         // ISO/IEC 16022 example: "123456" in a 10x10 symbol -> data 142 164 186, EC 114 25 5 88 102
         let entry = size_entry(10).unwrap();
         assert_eq!(with_ecc(&[142, 164, 186], entry), vec![142, 164, 186, 114, 25, 5, 88, 102]);
+    }
+
+    /// ZXing `SymbolInfoTestCase` (symbol choice by data codeword count and shape).
+    #[test]
+    fn zxing_symbol_info_vectors() {
+        let info = |n: usize, s: Shape| lookup(n, s).map(|e| (e.necc, e.mapping().1, e.mapping().0, e.cols, e.rows));
+        // (error codewords, matrix width, matrix height, symbol width, symbol height)
+        assert_eq!(info(3, Shape::Any), Some((5, 8, 8, 10, 10)));
+        assert_eq!(info(3, Shape::Rectangle), Some((7, 16, 6, 18, 8)));
+        assert_eq!(info(9, Shape::Any), Some((11, 28, 6, 32, 8)));
+        assert_eq!(info(9, Shape::Square), Some((12, 14, 14, 16, 16)));
+        assert_eq!(info(1559, Shape::Any), None);
+        assert_eq!(info(50, Shape::Rectangle), None);
+        assert_eq!(info(35, Shape::Any).map(|i| (i.3, i.4)), Some((24, 24)));
     }
 
     #[test]

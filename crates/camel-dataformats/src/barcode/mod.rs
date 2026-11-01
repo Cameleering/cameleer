@@ -578,6 +578,44 @@ mod tests {
         }
     }
 
+    /// ZXing's rectangular Data Matrix blackbox symbols (all six ECC 200 rectangle sizes):
+    /// decoded, and re-encoded module-exactly with the same symbol size.
+    #[test]
+    fn zxing_rectangular_data_matrix() {
+        let cases: [(&[u8], usize, usize, &str); 6] = [
+            (include_bytes!("testdata/zxing/datamatrix-1_abcd-18x8.png"), 8, 18, "abcde"),
+            (include_bytes!("testdata/zxing/datamatrix-1_abcd-32x8.png"), 8, 32, "abcdef"),
+            (include_bytes!("testdata/zxing/datamatrix-1_abcd-26x12.png"), 12, 26, "abcdefghijklm"),
+            (include_bytes!("testdata/zxing/datamatrix-1_abcd-36x12.png"), 12, 36, "abcdefghijklmnopq"),
+            (include_bytes!("testdata/zxing/datamatrix-1_abcd-36x16.png"), 16, 36, "abcdefghijklmnopqrstuvwxyz"),
+            (include_bytes!("testdata/zxing/datamatrix-1_abcd-48x16.png"), 16, 48, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVW"),
+        ];
+        for (bytes, rows, cols, text) in cases {
+            let img = read_image(bytes).unwrap();
+            let d = decode(&img, None).unwrap();
+            assert_eq!((d.format, d.text.as_str()), (Format::DataMatrix, text));
+            let sampled = detect::find_datamatrix(&detect::binarize(&img).unwrap(), &datamatrix::symbol_dims()).unwrap();
+            assert_eq!((sampled.height, sampled.width), (rows, cols));
+            let entry = datamatrix::entries().into_iter().find(|e| e.rows == rows && e.cols == cols).unwrap();
+            let ours = datamatrix::encode_entry(text.as_bytes(), entry).unwrap();
+            let (theirs_cw, corrected) = datamatrix::corrected_codewords(&sampled).unwrap();
+            assert_eq!(corrected, 0);
+            if (rows, cols) == (16, 36) {
+                // the generator of this image wrote pad codeword 0 at position 28 where the
+                // ISO/IEC 16022 253-state randomisation (and ZXing) gives 254; everything
+                // else, including the EC codewords for its data, agrees
+                let mut cw = datamatrix::corrected_codewords(&ours).unwrap().0;
+                assert_eq!(cw[27], 254);
+                cw[27] = 0;
+                assert_eq!(cw[..entry.ndata], theirs_cw[..entry.ndata]);
+                let fixed = datamatrix::encode_codewords(&cw[..entry.ndata], entry);
+                assert_eq!(fixed, sampled);
+            } else {
+                assert_eq!(ours, sampled, "{}x{}", rows, cols);
+            }
+        }
+    }
+
     #[test]
     fn zxing_rendering_geometry() {
         // version 1 (21 modules) + 2*4 quiet = 29; 100/29 = 3 -> 63 px symbol, padding 18
