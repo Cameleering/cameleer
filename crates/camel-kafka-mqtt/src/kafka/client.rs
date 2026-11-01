@@ -91,6 +91,8 @@ pub struct ClientConfig {
     pub tls: Option<EndpointTls>,
     /// SASL authentication (`SASL_PLAINTEXT` / `SASL_SSL`).
     pub sasl: Option<SaslConfig>,
+    /// Compression of produced record batches.
+    pub compression: Compression,
 }
 
 impl ClientConfig {
@@ -111,6 +113,7 @@ impl ClientConfig {
             request_timeout: Duration::from_secs(30),
             tls: None,
             sasl: None,
+            compression: Compression::None,
         })
     }
 }
@@ -403,7 +406,7 @@ impl KafkaClient {
     /// Produce records to one partition. Returns `(base offset, log append time)`;
     /// with `acks == 0` the broker does not answer and `(-1, -1)` is returned.
     pub fn produce(&mut self, topic: &str, partition: i32, records: &[Record], acks: i16, timeout_ms: i32) -> Result<(i64, i64)> {
-        let batch = encode_record_batch(0, records);
+        let batch = encode_record_batch_with(0, records, self.cfg.compression)?;
         let req = ProduceRequest { transactional_id: None, acks, timeout_ms, topics: vec![(topic.to_string(), vec![(partition, batch)])] };
         let body = req.encode();
         let mut last = None;

@@ -213,11 +213,20 @@ pub struct ScramServer<F: Fn(&str) -> Option<ScramCredentials>> {
     client_first_bare: String,
     server_first: String,
     nonce: String,
+    suffix_nonce: bool,
 }
 
 impl<F: Fn(&str) -> Option<ScramCredentials>> ScramServer<F> {
     pub fn new(mech: ScramMechanism, lookup: F) -> Self {
-        ScramServer { mech, lookup, user: None, creds: None, client_first_bare: String::new(), server_first: String::new(), nonce: String::new() }
+        ScramServer { mech, lookup, user: None, creds: None, client_first_bare: String::new(), server_first: String::new(), nonce: String::new(), suffix_nonce: false }
+    }
+
+    /// Accept a client-final nonce that merely ends with the server nonce, as Apache Kafka's
+    /// `ScramSaslServer` does (`nonce().endsWith(...)`): librdkafka sends the client nonce
+    /// followed by the complete server nonce. The proof still covers the message as sent.
+    pub fn accept_nonce_suffix(mut self, on: bool) -> Self {
+        self.suffix_nonce = on;
+        self
     }
 
     /// The authenticated user after a successful exchange.
@@ -241,7 +250,9 @@ impl<F: Fn(&str) -> Option<ScramCredentials>> ScramServer<F> {
     pub fn handle_client_final(&mut self, client_final: &str) -> Result<String, ScramError> {
         let creds = self.creds.clone().ok_or_else(|| ScramError("unexpected client-final".into()))?;
         let (without_proof, proof) = client_final.rsplit_once(",p=").ok_or_else(|| ScramError("missing proof".into()))?;
-        if attr(without_proof, 'r') != Some(self.nonce.as_str()) {
+        let r = attr(without_proof, 'r');
+        let nonce_ok = if self.suffix_nonce { r.is_some_and(|r| r.ends_with(self.nonce.as_str())) } else { r == Some(self.nonce.as_str()) };
+        if !nonce_ok {
             return err("nonce mismatch");
         }
         let proof = base64_decode(proof).ok_or_else(|| ScramError("invalid proof".into()))?;
@@ -294,5 +305,23 @@ mod tests {
         run("s3cret").unwrap();
         assert!(run("wrong").is_err());
         assert_eq!(parse_plain(&plain_initial_response("", "u", "p")), Some(("".into(), "u".into(), "p".into())));
+    }
+
+    #[test]
+    fn kafka_style_nonce_suffix() {
+        let lookup = |_: &str| Some(ScramCredentials::derive(ScramMechanism::Sha256, "pw", b"salt", 4096));
+        // librdkafka: client-final nonce = client nonce + full server nonce
+        let run = |lenient: bool| {
+            let mut server = ScramServer::new(ScramMechanism::Sha256, lookup).accept_nonce_suffix(lenient);
+            let mut c = ScramClient::new(ScramMechanism::Sha256, "u", "pw");
+            let first = c.client_first();
+            let sf = server.handle_client_first(&first).unwrap();
+            let r = attr(&sf, 'r').unwrap().to_string();
+            let doubled = sf.replacen(&format!("r={}", r), &format!("r={}{}", c.nonce, r), 1);
+            let fin = c.handle_server_first(&doubled).unwrap();
+            server.handle_client_final(&fin)
+        };
+        assert!(run(true).is_ok());
+        assert!(run(false).is_err());
     }
 }

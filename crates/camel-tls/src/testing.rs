@@ -189,3 +189,6 @@ pub mod live {
         ctx.registry().bind("liveUntrusted", super::client_params());
     }
 }
+
+#[path = "testing_official.rs"]
+pub mod official;

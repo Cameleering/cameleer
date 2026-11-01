@@ -1,7 +1,11 @@
 //! Std-only LZ4 (block format) and Snappy (raw format) codecs, as used by the CQL native
 //! protocol frame compression (`COMPRESSION` = `lz4` / `snappy`).
 
-use camel_core::error::{CamelError, Result};
+use crate::error::{CamelError, Result};
+
+#[path = "codecs_frames.rs"]
+mod frames;
+pub use frames::{lz4_frame_compress, lz4_frame_decompress, snappy_java_compress, snappy_java_decompress, xxhash32};
 
 fn corrupt(what: &str) -> CamelError {
     CamelError::io(format!("corrupt {} data", what))

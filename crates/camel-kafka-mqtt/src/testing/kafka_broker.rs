@@ -166,6 +166,16 @@ struct Data {
     groups: HashMap<String, Group>,
     fetch_requests: HashMap<String, usize>,
     client_fetches: HashMap<String, usize>,
+    /// Produced record batches kept verbatim (like a real Kafka log): fetches return them
+    /// unchanged, compressed or not, so consumers decode the producer's own bytes.
+    raw: HashMap<(String, i32), Vec<RawBatch>>,
+}
+
+/// A produced record batch stored as sent (base offset rewritten to its log position).
+struct RawBatch {
+    base: i64,
+    last: i64,
+    bytes: Vec<u8>,
 }
 
 /// Verifies the single message of a custom SASL mechanism; returns the principal or an error.
@@ -283,6 +293,14 @@ impl KafkaBroker {
     /// Number of partitions of a topic (None if unknown).
     pub fn partition_count(&self, topic: &str) -> Option<usize> {
         self.state.data.lock().unwrap().topics.get(topic).map(|p| p.len())
+    }
+
+    /// The compression codec names (`none`, `gzip`, `snappy`, `lz4`) of the record batches
+    /// produced to a partition, in log order (batches are stored verbatim).
+    pub fn batch_compression(&self, topic: &str, partition: i32) -> Vec<&'static str> {
+        let d = self.state.data.lock().unwrap();
+        let names = ["none", "gzip", "snappy", "lz4", "zstd", "unknown", "unknown", "unknown"];
+        d.raw.get(&(topic.to_string(), partition)).map(|v| v.iter().map(|b| names[(b.bytes[22] & 7) as usize]).collect()).unwrap_or_default()
     }
 
     /// Records stored in a partition.
@@ -410,7 +428,7 @@ fn sasl_step(state: &State, auth: &mut Auth, key: i16, body: &[u8]) -> Option<Ve
                     let lookup: Box<dyn Fn(&str) -> Option<ScramCredentials> + Send> = Box::new(move |u: &str| {
                         users.iter().find(|(n, _)| n == u).map(|(_, p)| ScramCredentials::derive(mech, p, format!("salt-{u}").as_bytes(), 4096))
                     });
-                    Auth::Scram(Box::new(ScramServer::new(mech, lookup)), false)
+                    Auth::Scram(Box::new(ScramServer::new(mech, lookup).accept_nonce_suffix(true)), false)
                 }),
             };
             let error_code = match (&auth, next) {
@@ -488,6 +506,7 @@ fn serve(state: &Arc<State>, tcp: TcpStream) {
         None => NetStream::plain(tcp),
     };
     let mut auth = if state.sasl_users.is_empty() && state.sasl_custom.is_empty() { Auth::Done } else { Auth::Handshake };
+    let mut raw_sasl = false;
     loop {
         let frame = match read_frame(&mut stream, 64 * 1024 * 1024) {
             Ok(Some(f)) => f,
@@ -496,16 +515,45 @@ fn serve(state: &Arc<State>, tcp: TcpStream) {
         if !state.running.load(Ordering::SeqCst) {
             break;
         }
+        if raw_sasl && !matches!(auth, Auth::Done) {
+            // after SaslHandshake v0 the SASL tokens are sent as bare frames (KIP-43)
+            let mut e = Encoder::new();
+            e.bytes(&frame);
+            let Some(resp) = sasl_step(state, &mut auth, api::SASL_AUTHENTICATE, &e.buf) else { break };
+            match SaslAuthenticateResponse::decode(&resp) {
+                Ok(r) if r.error_code == errors::NONE => {
+                    let mut out = (r.auth_bytes.len() as i32).to_be_bytes().to_vec();
+                    out.extend_from_slice(&r.auth_bytes);
+                    if write_frame(&mut stream, &out).is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                _ => break, // failed authentication: Kafka closes the connection
+            }
+        }
         let Ok((header, body)) = decode_request_header(&frame) else { break };
         let expected = api::VERSIONS.iter().find(|(k, _)| *k == header.api_key).map(|(_, v)| *v);
+        let min = min_version(header.api_key);
+        let legacy = expected.is_some_and(|max| header.api_version >= min && header.api_version < max);
+        let upgraded;
+        let body = if legacy {
+            upgraded = upgrade_request(header.api_key, header.api_version, body);
+            &upgraded[..]
+        } else {
+            body
+        };
         let response = if header.api_key == api::API_VERSIONS {
             let error_code = if header.api_version == 0 { errors::NONE } else { errors::UNSUPPORTED_VERSION };
-            Some(ApiVersionsResponse { error_code, apis: api::VERSIONS.iter().map(|(k, v)| (*k, *v, *v)).collect() }.encode())
-        } else if expected != Some(header.api_version) {
+            Some(ApiVersionsResponse { error_code, apis: api::VERSIONS.iter().map(|(k, v)| (*k, min_version(*k), *v)).collect() }.encode())
+        } else if expected != Some(header.api_version) && !legacy {
             break; // unsupported API or version: Kafka closes the connection
         } else if header.api_key == api::SASL_HANDSHAKE || header.api_key == api::SASL_AUTHENTICATE {
             match sasl_step(state, &mut auth, header.api_key, body) {
-                Some(r) => Some(r),
+                Some(r) => {
+                    raw_sasl = header.api_key == api::SASL_HANDSHAKE && header.api_version == 0;
+                    Some(r)
+                }
                 None => break,
             }
         } else if !matches!(auth, Auth::Done) {
@@ -516,6 +564,7 @@ fn serve(state: &Arc<State>, tcp: TcpStream) {
                 Err(_) => break,
             }
         };
+        let response = if legacy { response.map(|r| downgrade_response(header.api_key, header.api_version, r)) } else { response };
         if let Some(resp) = response {
             if write_frame(&mut stream, &encode_response(header.correlation_id, &resp)).is_err() {
                 break;
@@ -523,6 +572,148 @@ fn serve(state: &Arc<State>, tcp: TcpStream) {
         }
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
+}
+
+/// The lowest version the broker accepts for an API. Requests use the client's version
+/// ([`api::VERSIONS`]); the group-coordination APIs are also served at v0 (and JoinGroup at
+/// v1), which librdkafka requires to see in ApiVersions before it enables its
+/// `BrokerGroupCoordinator` / `BrokerBalancedConsumer` features (KIP-35 feature probing).
+fn min_version(key: i16) -> i16 {
+    match key {
+        api::FIND_COORDINATOR | api::JOIN_GROUP | api::SYNC_GROUP | api::HEARTBEAT | api::LEAVE_GROUP => 0,
+        // Produce / Fetch v0-v2 carry legacy message sets (magic 0 / 1). librdkafka (< 2.10)
+        // only compresses (gzip, snappy, lz4) when the broker lists Produce v0, and enables
+        // its `MsgVer1` feature when it lists Produce v2 / Fetch v2 (as Kafka 3.x does)
+        api::PRODUCE | api::FETCH => 0,
+        // SaslHandshake v0 (bare SASL tokens follow) is what librdkafka probes for to enable
+        // its `SaslHandshake` feature; the request and response layouts equal v1
+        api::SASL_HANDSHAKE => 0,
+        k => api::version(k),
+    }
+}
+
+/// Rewrites an older request body into the layout of the version the broker decodes.
+fn upgrade_request(key: i16, version: i16, body: &[u8]) -> Vec<u8> {
+    let mut out = body.to_vec();
+    match (key, version) {
+        // v1 added key_type (0 = group)
+        (api::FIND_COORDINATOR, 0) => out.push(0),
+        // v3 added transactional_id first
+        (api::PRODUCE, 0..=2) => {
+            out.splice(0..0, [0xFF, 0xFF]);
+        }
+        // v3 added max_bytes after min_bytes, v4 isolation_level after max_bytes
+        (api::FETCH, 0..=2) if body.len() >= 12 => {
+            out.splice(12..12, [0x7F, 0xFF, 0xFF, 0xFF, 0]);
+        }
+        (api::FETCH, 3) if body.len() >= 16 => {
+            out.splice(16..16, [0]);
+        }
+        // v1 added rebalance_timeout_ms after session_timeout_ms (v0: equal to it)
+        (api::JOIN_GROUP, 0) if body.len() >= 2 => {
+            let n = i16::from_be_bytes([body[0], body[1]]).max(0) as usize;
+            let at = 2 + n + 4;
+            if body.len() >= at {
+                let session = body[at - 4..at].to_vec();
+                out.splice(at..at, session);
+            }
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Rewrites a response body encoded for the broker's version into an older version's layout.
+fn downgrade_response(key: i16, version: i16, resp: Vec<u8>) -> Vec<u8> {
+    match (key, version) {
+        // v1 added throttle_time_ms and error_message
+        (api::FIND_COORDINATOR, 0) if resp.len() >= 8 => {
+            let n = i16::from_be_bytes([resp[6], resp[7]]);
+            let rest = 8 + n.max(0) as usize;
+            let mut out = resp[4..6].to_vec();
+            out.extend_from_slice(&resp[rest.min(resp.len())..]);
+            out
+        }
+        // v4 added last_stable_offset and aborted_transactions; v2 / v3 carry message sets
+        // v1 added throttle_time_ms, v2 log_append_time
+        (api::PRODUCE, 0 | 1) => match ProduceResponse::decode(&resp) {
+            Ok(r) => {
+                let mut e = Encoder::new();
+                e.len(r.topics.len());
+                for (t, parts) in &r.topics {
+                    e.string(t).len(parts.len());
+                    for p in parts {
+                        e.i32(p.partition).i16(p.error_code).i64(p.base_offset);
+                    }
+                }
+                if version == 1 {
+                    e.i32(r.throttle_time_ms);
+                }
+                e.buf
+            }
+            Err(_) => resp,
+        },
+        // v1 added throttle_time_ms
+        (api::FETCH, 0..=3) => match FetchResponse::decode(&resp) {
+            Ok(f) => {
+                let mut e = Encoder::new();
+                if version >= 1 {
+                    e.i32(f.throttle_time_ms);
+                }
+                e.len(f.topics.len());
+                for (t, parts) in &f.topics {
+                    e.string(t).len(parts.len());
+                    for p in parts {
+                        let records = decode_record_batches(&p.records).unwrap_or_default();
+                        e.i32(p.partition).i16(p.error_code).i64(p.high_watermark).bytes(&encode_message_set_v1(&records));
+                    }
+                }
+                e.buf
+            }
+            Err(_) => resp,
+        },
+        // throttle_time_ms first appeared in JoinGroup v2 and in the others' v1
+        (api::JOIN_GROUP, 0 | 1) | (api::SYNC_GROUP | api::HEARTBEAT | api::LEAVE_GROUP, 0) if resp.len() >= 4 => resp[4..].to_vec(),
+        _ => resp,
+    }
+}
+
+/// The records of a partition from `offset` on, up to about `limit` bytes (at least one
+/// batch). Produced batches are returned verbatim (a batch may start before `offset`, as with
+/// real brokers); records appended locally are encoded as uncompressed batches.
+fn fetch_records(log: &[Record], raw: &[RawBatch], offset: i64, limit: usize) -> Vec<u8> {
+    let hw = log.len() as i64;
+    let mut out = Vec::new();
+    let mut pos = offset;
+    while pos < hw && (out.is_empty() || out.len() < limit) {
+        let i = raw.partition_point(|b| b.last < pos);
+        if let Some(b) = raw.get(i).filter(|b| b.base <= pos) {
+            if !out.is_empty() && out.len() + b.bytes.len() > limit {
+                break;
+            }
+            out.extend_from_slice(&b.bytes);
+            pos = b.last + 1;
+            continue;
+        }
+        // locally appended records up to the next stored batch
+        let end = raw.get(i).map(|b| b.base).unwrap_or(hw).min(hw);
+        let mut size = 0usize;
+        let mut recs = Vec::new();
+        for rec in &log[pos as usize..end as usize] {
+            let s = 32 + rec.value.as_ref().map_or(0, |v| v.len()) + rec.key.as_ref().map_or(0, |k| k.len());
+            if (!recs.is_empty() || !out.is_empty()) && out.len() + size + s > limit {
+                break;
+            }
+            size += s;
+            recs.push(rec.clone());
+        }
+        if recs.is_empty() {
+            break;
+        }
+        out.extend(encode_record_batch(pos, &recs));
+        pos += recs.len() as i64;
+    }
+    out
 }
 
 fn valid_topic_name(t: &str) -> bool {
@@ -576,26 +767,47 @@ fn handle(state: &Arc<State>, key: i16, body: &[u8], client_id: &str) -> Result<
             let req = ProduceRequest::decode(body)?;
             let mut d = state.data.lock().unwrap();
             let mut out = Vec::new();
+            let mut pending_raw = Vec::new();
             for (topic, parts) in &req.topics {
                 let mut presp = Vec::new();
                 for (p, batch) in parts {
                     let mut r = ProducePartitionResponse { partition: *p, error_code: 0, base_offset: -1, log_append_time_ms: -1 };
                     match d.topics.get_mut(topic).and_then(|ps| ps.get_mut(*p as usize)) {
                         None => r.error_code = errors::UNKNOWN_TOPIC_OR_PARTITION,
-                        Some(log) => match decode_record_batches(batch) {
-                            Err(_) => r.error_code = errors::CORRUPT_MESSAGE,
-                            Ok(records) => {
-                                r.base_offset = log.len() as i64;
-                                for mut rec in records {
-                                    rec.offset = log.len() as i64;
-                                    log.push(rec);
+                        Some(log) => {
+                            // validate every batch before appending any of them
+                            let batches = split_record_batches(batch);
+                            let decoded: Result<Vec<Vec<Record>>> = batches.iter().map(|b| decode_record_batches(b)).collect();
+                            match decoded {
+                                Err(_) => r.error_code = errors::CORRUPT_MESSAGE,
+                                Ok(decoded) => {
+                                    r.base_offset = log.len() as i64;
+                                    let mut stored = Vec::new();
+                                    for (bytes, records) in batches.iter().zip(decoded) {
+                                        let base = log.len() as i64;
+                                        let n = records.len() as i64;
+                                        for mut rec in records {
+                                            rec.offset = log.len() as i64;
+                                            log.push(rec);
+                                        }
+                                        // magic 2 batches are kept verbatim (legacy messages are re-encoded)
+                                        if n > 0 && bytes.len() > 16 && bytes[16] == 2 {
+                                            let mut b = bytes.to_vec();
+                                            b[..8].copy_from_slice(&base.to_be_bytes());
+                                            stored.push(RawBatch { base, last: base + n - 1, bytes: b });
+                                        }
+                                    }
+                                    pending_raw.push(((topic.clone(), *p), stored));
                                 }
                             }
-                        },
+                        }
                     }
                     presp.push(r);
                 }
                 out.push((topic.clone(), presp));
+            }
+            for (tp, batches) in pending_raw {
+                d.raw.entry(tp).or_default().extend(batches);
             }
             state.cond.notify_all();
             if req.acks == 0 {
@@ -636,21 +848,10 @@ fn handle(state: &Arc<State>, key: i16, body: &[u8], client_id: &str) -> Result<
                             if *off < 0 || *off > hw {
                                 r.error_code = errors::OFFSET_OUT_OF_RANGE;
                             } else {
-                                let limit = (*max).max(1) as usize;
-                                let mut size = 0usize;
-                                let mut recs = Vec::new();
-                                for rec in &log[*off as usize..] {
-                                    let s = 32 + rec.value.as_ref().map_or(0, |v| v.len()) + rec.key.as_ref().map_or(0, |k| k.len());
-                                    if !recs.is_empty() && (size + s > limit || size + s > budget) {
-                                        break;
-                                    }
-                                    size += s;
-                                    recs.push(rec.clone());
-                                }
-                                budget = budget.saturating_sub(size);
-                                if !recs.is_empty() {
-                                    r.records = encode_record_batch(*off, &recs);
-                                }
+                                let limit = ((*max).max(1) as usize).min(budget.max(1));
+                                let raw = d.raw.get(&(t.clone(), *p)).map(|v| &v[..]).unwrap_or(&[]);
+                                r.records = fetch_records(log, raw, *off, limit);
+                                budget = budget.saturating_sub(r.records.len());
                             }
                         }
                     }

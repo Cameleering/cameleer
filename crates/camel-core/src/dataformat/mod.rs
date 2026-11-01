@@ -30,6 +30,7 @@ use crate::message::Exchange;
 pub mod base64;
 pub mod jacksonxml;
 pub mod compress;
+pub mod codecs;
 pub mod csv;
 pub mod formats;
 

@@ -547,40 +547,147 @@ pub struct Record {
     pub headers: Vec<(String, Option<Vec<u8>>)>,
 }
 
+/// Record batch compression (attribute bits 0-2, Kafka's `compression.type`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Compression {
+    #[default]
+    None,
+    Gzip,
+    Snappy,
+    Lz4,
+    Zstd,
+}
+
+/// Upper bound for a decompressed record batch.
+const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
+
+impl Compression {
+    /// Parses `none` / `gzip` / `snappy` / `lz4` / `zstd` (case-insensitive).
+    pub fn from_name(name: &str) -> Result<Compression> {
+        Ok(match name.trim().to_ascii_lowercase().as_str() {
+            "" | "none" => Compression::None,
+            "gzip" => Compression::Gzip,
+            "snappy" => Compression::Snappy,
+            "lz4" => Compression::Lz4,
+            "zstd" => Compression::Zstd,
+            other => return Err(CamelError::illegal_argument(format!("Unknown Kafka compression codec: {} (none, gzip, snappy, lz4, zstd)", other))),
+        })
+    }
+
+    /// The codec id in record batch / message attributes.
+    pub fn id(self) -> i16 {
+        match self {
+            Compression::None => 0,
+            Compression::Gzip => 1,
+            Compression::Snappy => 2,
+            Compression::Lz4 => 3,
+            Compression::Zstd => 4,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Compression::None => "none",
+            Compression::Gzip => "gzip",
+            Compression::Snappy => "snappy",
+            Compression::Lz4 => "lz4",
+            Compression::Zstd => "zstd",
+        }
+    }
+
+    /// Compresses record data the way the Kafka Java client does (gzip stream, xerial
+    /// snappy-java framing, LZ4 frame). zstd needs Produce v7 and is not supported.
+    pub fn compress(self, data: &[u8]) -> Result<Vec<u8>> {
+        use camel_core::dataformat::{codecs, compress};
+        Ok(match self {
+            Compression::None => data.to_vec(),
+            Compression::Gzip => compress::gzip_compress(data, 6),
+            Compression::Snappy => codecs::snappy_java_compress(data),
+            Compression::Lz4 => codecs::lz4_frame_compress(data),
+            Compression::Zstd => {
+                return Err(CamelError::new(
+                    "UnsupportedCompressionTypeException",
+                    "Kafka zstd compression requires Produce v7, which rust-camel does not use (none, gzip, snappy, lz4)",
+                ))
+            }
+        })
+    }
+
+    /// Decompresses record data written with codec `id`.
+    pub fn decompress(id: i16, data: &[u8]) -> Result<Vec<u8>> {
+        use camel_core::dataformat::{codecs, compress};
+        let fail = |name: &str, e: CamelError| CamelError::new(KAFKA_EXCEPTION, format!("Cannot decompress {} record batch: {}", name, e.message));
+        match id {
+            1 => compress::gzip_decompress(data).map_err(|e| fail("gzip", e)),
+            2 => codecs::snappy_java_decompress(data, MAX_DECOMPRESSED).map_err(|e| fail("snappy", e)),
+            3 => codecs::lz4_frame_decompress(data, MAX_DECOMPRESSED).map_err(|e| fail("lz4", e)),
+            4 => Err(CamelError::new(KAFKA_EXCEPTION, "Unsupported record batch compression codec: zstd")),
+            c => Err(CamelError::new(KAFKA_EXCEPTION, format!("Unknown record batch compression codec {}", c))),
+        }
+    }
+}
+
 /// Encode records as one uncompressed record batch (magic 2). Offsets are relative to
 /// `base_offset` (records' own offsets are ignored, they are numbered consecutively).
 pub fn encode_record_batch(base_offset: i64, records: &[Record]) -> Vec<u8> {
+    encode_record_batch_with(base_offset, records, Compression::None).expect("uncompressed batches always encode")
+}
+
+/// Encode records as one record batch (magic 2) compressed with `codec`.
+pub fn encode_record_batch_with(base_offset: i64, records: &[Record], codec: Compression) -> Result<Vec<u8>> {
     let first_ts = records.first().map(|r| r.timestamp).unwrap_or(0);
     let max_ts = records.iter().map(|r| r.timestamp).max().unwrap_or(first_ts);
-    // everything covered by the CRC: attributes .. records
-    let mut body = Encoder::new();
-    body.i16(0) // attributes: no compression, create time
-        .i32(records.len().saturating_sub(1) as i32)
-        .i64(first_ts)
-        .i64(max_ts)
-        .i64(-1) // producer id
-        .i16(-1) // producer epoch
-        .i32(-1) // base sequence
-        .len(records.len());
+    let mut recs = Encoder::new();
     for (i, r) in records.iter().enumerate() {
         let mut rec = Encoder::new();
         rec.i8(0).varlong(r.timestamp - first_ts).varint(i as i32).varbytes(r.key.as_deref()).varbytes(r.value.as_deref()).varint(r.headers.len() as i32);
         for (k, v) in &r.headers {
             rec.varbytes(Some(k.as_bytes())).varbytes(v.as_deref());
         }
-        body.varint(rec.buf.len() as i32).raw(&rec.buf);
+        recs.varint(rec.buf.len() as i32).raw(&rec.buf);
     }
+    let payload = codec.compress(&recs.buf)?;
+    // everything covered by the CRC: attributes .. records
+    let mut body = Encoder::new();
+    body.i16(codec.id()) // attributes: codec, create time
+        .i32(records.len().saturating_sub(1) as i32)
+        .i64(first_ts)
+        .i64(max_ts)
+        .i64(-1) // producer id
+        .i16(-1) // producer epoch
+        .i32(-1) // base sequence
+        .len(records.len())
+        .raw(&payload);
     let crc = crc32c(&body.buf);
     let mut e = Encoder::new();
     // batchLength counts from partitionLeaderEpoch to the end
     let batch_len = 4 + 1 + 4 + body.buf.len();
     e.i64(base_offset).i32(batch_len as i32).i32(-1).i8(2).u32(crc).raw(&body.buf);
-    e.buf
+    Ok(e.buf)
+}
+
+/// Splits `data` into its complete record batches / legacy message set entries (each with
+/// its 12-byte offset + length prefix). A truncated trailing entry is dropped.
+pub fn split_record_batches(data: &[u8]) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while data.len() - i >= 12 {
+        let len = i32::from_be_bytes([data[i + 8], data[i + 9], data[i + 10], data[i + 11]]);
+        if len < 0 || len as usize > data.len() - i - 12 {
+            break;
+        }
+        let end = i + 12 + len as usize;
+        out.push(&data[i..end]);
+        i = end;
+    }
+    out
 }
 
 /// Decode all complete record batches in `data` (a fetch response's records or a produce
 /// request's payload). A truncated trailing batch is ignored; control batches are
-/// skipped; gzip compression is supported, other codecs fail.
+/// skipped; gzip, snappy (raw or snappy-java framed) and lz4 (frame format) compression
+/// are supported. Legacy message sets (magic 0 and 1, message format before Kafka 0.11)
+/// are decoded too, including compressed wrapper messages.
 pub fn decode_record_batches(data: &[u8]) -> Result<Vec<Record>> {
     let mut out = Vec::new();
     let mut d = Decoder::new(data);
@@ -591,11 +698,19 @@ pub fn decode_record_batches(data: &[u8]) -> Result<Vec<Record>> {
             break; // partial batch at the end of a fetch response
         }
         let batch = d.raw(batch_len as usize)?;
+        if batch.len() < 5 {
+            return Err(CamelError::new(KAFKA_EXCEPTION, "Record batch too short (corrupt message)"));
+        }
+        let magic = batch[4] as i8;
+        if magic == 0 || magic == 1 {
+            decode_legacy_message(base_offset, batch, &mut out, 0)?;
+            continue;
+        }
         let mut b = Decoder::new(batch);
         let _leader_epoch = b.i32()?;
         let magic = b.i8()?;
         if magic != 2 {
-            return Err(CamelError::new(KAFKA_EXCEPTION, format!("Unsupported record batch magic {} (only v2 record batches are supported)", magic)));
+            return Err(CamelError::new(KAFKA_EXCEPTION, format!("Unsupported record batch magic {} (only v0, v1 and v2 are supported)", magic)));
         }
         let crc = b.u32()?;
         let rest = &batch[b.position()..];
@@ -618,19 +733,9 @@ pub fn decode_record_batches(data: &[u8]) -> Result<Vec<Record>> {
         let decompressed;
         let recs: &[u8] = match attributes & 0x07 {
             0 => records_data,
-            1 => {
-                decompressed = camel_core::dataformat::compress::gzip_decompress(records_data)
-                    .map_err(|e| CamelError::new(KAFKA_EXCEPTION, format!("Cannot decompress gzip record batch: {}", e.message)))?;
-                &decompressed
-            }
             c => {
-                let name = match c {
-                    2 => "snappy",
-                    3 => "lz4",
-                    4 => "zstd",
-                    _ => "unknown",
-                };
-                return Err(CamelError::new(KAFKA_EXCEPTION, format!("Unsupported record batch compression codec: {}", name)));
+                decompressed = Compression::decompress(c, records_data)?;
+                &decompressed
             }
         };
         let mut r = Decoder::new(recs);
@@ -660,6 +765,63 @@ pub fn decode_record_batches(data: &[u8]) -> Result<Vec<Record>> {
         }
     }
     Ok(out)
+}
+
+/// Decodes one legacy message (magic 0 / 1: `crc attributes [timestamp] key value`) stored
+/// at `offset`. A compressed message wraps an inner message set: with magic 1 the inner
+/// offsets are relative and the wrapper carries the offset of the last inner message.
+fn decode_legacy_message(offset: i64, msg: &[u8], out: &mut Vec<Record>, depth: usize) -> Result<()> {
+    let mut m = Decoder::new(msg);
+    let crc = m.u32()?;
+    if camel_core::dataformat::compress::crc32(&msg[4..]) != crc {
+        return Err(CamelError::new(KAFKA_EXCEPTION, "Message CRC32 mismatch (corrupt message)"));
+    }
+    let magic = m.i8()?;
+    let attributes = m.i8()?;
+    let timestamp = if magic >= 1 { m.i64()? } else { -1 };
+    let key = m.nullable_bytes()?;
+    let value = m.nullable_bytes()?;
+    let codec = (attributes & 0x07) as i16;
+    if codec == 0 {
+        out.push(Record { offset, timestamp, key, value, headers: Vec::new() });
+        return Ok(());
+    }
+    if depth > 0 {
+        return Err(CamelError::new(KAFKA_EXCEPTION, "Nested compressed messages (corrupt message)"));
+    }
+    let inner = Compression::decompress(codec, value.as_deref().unwrap_or_default())?;
+    let entries = split_record_batches(&inner);
+    let mut inner_records = Vec::new();
+    for e in &entries {
+        let rel = i64::from_be_bytes(e[..8].try_into().unwrap());
+        decode_legacy_message(rel, &e[12..], &mut inner_records, depth + 1)?;
+    }
+    let last_rel = inner_records.last().map(|r| r.offset).unwrap_or(0);
+    let log_append_time = attributes & 0x08 != 0;
+    for mut r in inner_records {
+        if magic >= 1 {
+            r.offset = offset - last_rel + r.offset;
+            if log_append_time {
+                r.timestamp = timestamp;
+            }
+        }
+        out.push(r);
+    }
+    Ok(())
+}
+
+/// Encode records as an uncompressed legacy message set (magic 1, the format of Produce /
+/// Fetch v2 and older). Each record keeps its own absolute offset; headers are dropped
+/// (message format v1 has none).
+pub fn encode_message_set_v1(records: &[Record]) -> Vec<u8> {
+    let mut e = Encoder::new();
+    for r in records {
+        let mut m = Encoder::new();
+        m.i8(1).i8(0).i64(r.timestamp).nullable_bytes(r.key.as_deref()).nullable_bytes(r.value.as_deref());
+        let crc = camel_core::dataformat::compress::crc32(&m.buf);
+        e.i64(r.offset).i32(4 + m.buf.len() as i32).u32(crc).raw(&m.buf);
+    }
+    e.buf
 }
 
 // ---------------------------------------------------------------------------

@@ -136,6 +136,8 @@ pub struct KafkaConfig {
     pub tls: Option<EndpointTls>,
     /// SASL for `SASL_PLAINTEXT` / `SASL_SSL`.
     pub sasl: Option<SaslConfig>,
+    /// Producer record batch compression (`compressionCodec`).
+    pub compression: protocol::Compression,
 }
 
 impl KafkaConfig {
@@ -144,6 +146,7 @@ impl KafkaConfig {
         c.request_timeout = self.request_timeout;
         c.tls = self.tls.clone();
         c.sasl = self.sasl.clone();
+        c.compression = self.compression;
         Ok(c)
     }
 }
@@ -241,7 +244,6 @@ const IGNORED: &[&str] = &[
     "retryBackoffMs",
     "retryBackoffMaxMs",
     "bufferMemorySize",
-    "compressionCodec",
     "producerBatchSize",
     "batchSize",
     "maxRequestSize",
@@ -291,6 +293,10 @@ impl Component for KafkaComponent {
     fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
         let topic = crate::net::percent_decode(remaining.trim_matches('/'));
         let (tls, sasl) = take_security(ctx, params)?;
+        let compression = protocol::Compression::from_name(&params.take_string("compressionCodec", "none"))?;
+        if compression == protocol::Compression::Zstd {
+            return Err(CamelError::new(kinds::UNSUPPORTED_OPERATION, "Kafka compressionCodec=zstd is not supported by rust-camel (none, gzip, snappy, lz4)"));
+        }
         let auto_offset_reset = match params.take_string("autoOffsetReset", "latest").to_ascii_lowercase().as_str() {
             "earliest" => OffsetReset::Earliest,
             "latest" => OffsetReset::Latest,
@@ -352,6 +358,7 @@ impl Component for KafkaComponent {
             value_as_bytes: bytes_deser(params.take("valueDeserializer")),
             tls,
             sasl,
+            compression,
             topic,
         };
         for k in IGNORED {

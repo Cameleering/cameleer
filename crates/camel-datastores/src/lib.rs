@@ -15,7 +15,8 @@
 //! Couchbase is not implemented (its binary memcached/KV protocol and cluster map are out of scope).
 
 pub mod cassandra;
-pub mod compress;
+/// LZ4 / Snappy codecs (moved to `camel_core::dataformat::codecs`, shared with Kafka).
+pub use camel_core::dataformat::codecs as compress;
 pub mod couchdb;
 pub mod dns;
 pub mod elasticsearch;
