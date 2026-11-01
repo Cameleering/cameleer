@@ -327,3 +327,90 @@ fn key_vault_secret_refresh_through_event_hubs() {
     ctx.stop().unwrap();
     assert!(!task.is_enabled());
 }
+
+#[test]
+fn cosmosdb_throughput_identity_options_and_lease_container() {
+    let az = AzureMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let c = |op: &str, extra: &str| format!("azure-cosmosdb://shop/orders?operation={}{}&{}", op, extra, az.cosmos_options());
+    // throughput at creation, then replaced (manual and autoscale)
+    req(&t, &c("createDatabase", ""), "", &[("CamelAzureCosmosDbThroughputProperties", Value::Int(1000))]);
+    assert_eq!(req(&t, &c("readDatabaseThroughput", ""), "", &[]).body().get("content").unwrap().get("offerThroughput").and_then(|v| v.as_i64()), Some(1000));
+    let offer = req(&t, &c("replaceDatabaseThroughput", ""), "", &[("CamelAzureCosmosDbThroughputProperties", Value::Int(1500))]).body().clone();
+    assert_eq!(offer.get("content").unwrap().get("offerThroughput").and_then(|v| v.as_i64()), Some(1500));
+    req(&t, &c("createContainer", "&containerPartitionKeyPath=/customer&throughputProperties=400"), "", &[]);
+    let offer = req(&t, &c("replaceContainerThroughput", ""), "", &[("CamelAzureCosmosDbThroughputProperties", Value::object([("autoscaleMaxThroughput", 4000)]))]).body().clone();
+    assert_eq!(offer.get("content").unwrap().get("offerAutopilotSettings").unwrap().get("maxThroughput").and_then(|v| v.as_i64()), Some(4000));
+    assert!(call(&t, &c("replaceContainerThroughput", ""), "", &[("CamelAzureCosmosDbThroughputProperties", Value::Int(450))]).unwrap_err().message.contains("BadRequest"));
+    assert!(call(&t, &c("createContainer", "&throughputProperties=50"), "", &[("CamelAzureCosmosDbContainerName", Value::from("tiny"))]).is_err());
+    // request options
+    let opts = "&consistencyLevel=eventual&contentResponseOnWriteEnabled=false";
+    let ex = req(&t, &c("createItem", opts), Value::object([("id", "o1"), ("customer", "acme")]), &[]);
+    assert!(ex.body().is_null(), "minimal response");
+    assert_eq!(s(ex.header("CamelAzureCosmosDbStatusCode").unwrap()), "201");
+    assert!(az.cosmos_minimal_writes() >= 1);
+    assert!(az.cosmos_consistency_levels().iter().any(|c| c == "EVENTUAL"));
+    // Entra ID (managed identity) instead of the account key
+    let mi = format!("azure-cosmosdb://shop/orders?operation=readAllItems&databaseEndpoint={}&credentialType=AZURE_IDENTITY&managedIdentityEndpoint={}", az.url(), az.imds_endpoint());
+    assert_eq!(req(&t, &mi, "", &[]).body().as_array().unwrap().len(), 1);
+    assert!(az.cosmos_aad_requests() >= 1);
+    assert!(az.identity_requests().iter().any(|r| r.1 == "https://cosmos.azure.com"));
+    // change feed processor: two hosts share four partition key ranges through the lease container
+    az.set_cosmos_partition_ranges("shop", "orders", 4);
+    let seen: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> = Default::default();
+    let mk = |host: &str| {
+        let ctx = context();
+        let from = format!("azure-cosmosdb://shop/orders?leaseContainerName=leases&createLeaseContainerIfNotExists=true&hostName={}&delay=50&initialDelay=0&leaseExpirationInterval=1500&{}", host, az.cosmos_options());
+        let (seen, host) = (seen.clone(), host.to_string());
+        ctx.add_routes(move |r| {
+            r.from(&from).process(move |ex: &mut Exchange| {
+                for d in ex.body().as_array().cloned().unwrap_or_default() {
+                    seen.lock().unwrap().push((host.clone(), s(d.get("id").unwrap())));
+                }
+                Ok(())
+            });
+        })
+        .unwrap();
+        ctx
+    };
+    let owners = || -> Vec<String> { az.cosmos_items("shop", "leases").iter().map(|l| s(l.get("Owner").unwrap())).collect() };
+    let wait = |f: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !f() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        f()
+    };
+    let h1 = mk("host-a");
+    h1.start().unwrap();
+    assert!(wait(&|| owners().iter().filter(|o| *o == "host-a").count() == 4), "{:?}", owners());
+    let h2 = mk("host-b");
+    h2.start().unwrap();
+    // host-a gives back what exceeds its fair share, host-b takes it: 2 + 2
+    assert!(wait(&|| { let o = owners(); o.iter().filter(|x| *x == "host-a").count() == 2 && o.iter().filter(|x| *x == "host-b").count() == 2 }), "{:?}", owners());
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    for i in 0..12 {
+        req(&t, &c("createItem", ""), Value::object([("id", Value::from(format!("n{}", i))), ("customer", Value::from(format!("c{}", i)))]), &[]);
+    }
+    assert!(wait(&|| seen.lock().unwrap().len() >= 12), "{:?}", seen.lock().unwrap());
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    {
+        let s = seen.lock().unwrap();
+        let mut ids: Vec<String> = s.iter().map(|x| x.1.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 12);
+        assert_eq!(s.len(), 12, "each change once: {:?}", s);
+        assert!(s.iter().any(|x| x.0 == "host-a") && s.iter().any(|x| x.0 == "host-b"));
+    }
+    // continuations are checkpointed in the leases
+    assert!(az.cosmos_items("shop", "leases").iter().all(|l| !l.get("ContinuationToken").unwrap().is_null()));
+    // a stopped host releases its leases, the other takes over and continues from the checkpoints
+    h2.stop().unwrap();
+    assert!(wait(&|| owners().iter().filter(|o| *o == "host-a").count() == 4), "{:?}", owners());
+    req(&t, &c("createItem", ""), Value::object([("id", "late"), ("customer", "zz")]), &[]);
+    assert!(wait(&|| seen.lock().unwrap().iter().any(|x| x.1 == "late" && x.0 == "host-a")));
+    assert_eq!(seen.lock().unwrap().len(), 13, "nothing re-delivered");
+    h1.stop().unwrap();
+}

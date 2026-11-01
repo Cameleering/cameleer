@@ -52,12 +52,24 @@ struct Coll {
     pk_path: String,
     lsn: u64,
     docs: BTreeMap<(String, String), (Value, u64)>,
+    /// number of partition key ranges (documents spread by partition key hash)
+    ranges: usize,
 }
 
 #[derive(Default)]
 struct Db {
     rid: String,
     colls: BTreeMap<String, Coll>,
+}
+
+/// A Cosmos offer (throughput) of a database or container.
+#[derive(Clone)]
+struct Offer {
+    id: String,
+    resource_rid: String,
+    resource_link: String,
+    throughput: Option<i64>,
+    autoscale_max: Option<i64>,
 }
 
 #[derive(Default)]
@@ -77,6 +89,10 @@ struct State {
     secrets: BTreeMap<String, Vec<KvVersion>>,
     deleted: BTreeMap<String, Vec<KvVersion>>,
     dbs: BTreeMap<String, Db>,
+    offers: Vec<Offer>,
+    cosmos_consistency: Vec<String>,
+    cosmos_minimal_writes: usize,
+    cosmos_aad_requests: usize,
     more: more::MoreState,
     keys: keys::KeysState,
 }
@@ -182,6 +198,28 @@ impl AzureMock {
         s.dbs.get(db).and_then(|d| d.colls.get(coll)).map(|c| c.docs.values().map(|(d, _)| d.clone()).collect()).unwrap_or_default()
     }
 
+    /// Split a container into `n` partition key ranges (documents spread by partition key hash).
+    pub fn set_cosmos_partition_ranges(&self, db: &str, coll: &str, n: usize) {
+        if let Some(c) = self.state.lock().unwrap().dbs.get_mut(db).and_then(|d| d.colls.get_mut(coll)) {
+            c.ranges = n.max(1);
+        }
+    }
+
+    /// `x-ms-consistency-level` values received.
+    pub fn cosmos_consistency_levels(&self) -> Vec<String> {
+        self.state.lock().unwrap().cosmos_consistency.clone()
+    }
+
+    /// Number of requests with `Prefer: return=minimal`.
+    pub fn cosmos_minimal_writes(&self) -> usize {
+        self.state.lock().unwrap().cosmos_minimal_writes
+    }
+
+    /// Number of Cosmos requests authorized with an Entra ID token.
+    pub fn cosmos_aad_requests(&self) -> usize {
+        self.state.lock().unwrap().cosmos_aad_requests
+    }
+
     /// Database names.
     pub fn cosmos_databases(&self) -> Vec<String> {
         self.state.lock().unwrap().dbs.keys().cloned().collect()
@@ -204,7 +242,7 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     }
     match segs.first().map(|s| s.as_str()) {
         Some("secrets") | Some("deletedsecrets") => key_vault(st, req, &segs),
-        Some("dbs") => cosmos(st, req, &segs),
+        Some("dbs") | Some("offers") => cosmos(st, req, &segs),
         _ => Response::json(404, "{\"error\":{\"code\":\"NotFound\",\"message\":\"Unknown resource\"}}"),
     }
 }
@@ -388,6 +426,14 @@ fn verify_master_key(req: &ServerRequest) -> Result<(), Response> {
     let unauthorized = |m: &str| cerr(401, "Unauthorized", m);
     let auth = percent_decode(req.header("authorization").unwrap_or(""), false);
     let parts: HashMap<&str, &str> = auth.split('&').filter_map(|p| p.split_once('=')).collect();
+    if parts.get("type") == Some(&"aad") {
+        // Entra ID token (any account scope or the generic Cosmos scope)
+        let tok = parts.get("sig").copied().unwrap_or("");
+        return match super::verify_entra_token(tok, "https://cosmos.azure.com/.default") {
+            Some(_) => Ok(()),
+            None => Err(unauthorized("The AAD token is invalid or expired.")),
+        };
+    }
     if parts.get("type") != Some(&"master") || parts.get("ver") != Some(&"1.0") {
         return Err(unauthorized("Required Header authorization is missing or not a master key token."));
     }
@@ -476,7 +522,118 @@ fn cosmos(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
         Query::parse(&text, params).map_err(|e| cerr(400, "BadRequest", &format!("Syntax error: {}", e)))
     };
     let created = |v: Value| Response::json(201, v.to_json());
-    match (req.method.as_str(), p.as_slice()) {
+    if parse_aad(req) {
+        s.cosmos_aad_requests += 1;
+    }
+    if let Some(c) = req.header("x-ms-consistency-level") {
+        s.cosmos_consistency.push(c.to_string());
+    }
+    let minimal = req.header("Prefer").is_some_and(|p| p.contains("return=minimal"));
+    if minimal {
+        s.cosmos_minimal_writes += 1;
+    }
+    if let Some(r) = offers_op(s, req, &p, &body) {
+        return r;
+    }
+    let mut pending_offer: Option<(String, String)> = None;
+    let r = cosmos_inner(s, req, &p, &body, created, minimal, &mut pending_offer, query);
+    if let Some((rid, link)) = pending_offer {
+        if r.status == 201 {
+            let _ = add_offer(s, req, &rid, &link);
+        }
+    }
+    r
+}
+
+fn parse_aad(req: &ServerRequest) -> bool {
+    percent_decode(req.header("authorization").unwrap_or(""), false).starts_with("type=aad")
+}
+
+/// Validate the offer headers of a create request.
+fn offer_check(req: &ServerRequest) -> Option<Response> {
+    if let Some(t) = req.header("x-ms-offer-throughput") {
+        match t.trim().parse::<i64>() {
+            Ok(n) if n >= 400 && n % 100 == 0 => {}
+            _ => return Some(cerr(400, "BadRequest", "The offer throughput must be at least 400 RU/s and a multiple of 100.")),
+        }
+    }
+    None
+}
+
+fn add_offer(s: &mut State, req: &ServerRequest, rid: &str, link: &str) -> Result<(), Response> {
+    if let Some(r) = offer_check(req) {
+        return Err(r);
+    }
+    let throughput = req.header("x-ms-offer-throughput").and_then(|t| t.trim().parse().ok());
+    let autoscale_max = req.header("x-ms-cosmos-offer-autopilot-settings").and_then(|a| parse_json(a.as_bytes()).ok()).and_then(|v| v.get("maxThroughput").and_then(|m| m.as_i64()));
+    if throughput.is_some() || autoscale_max.is_some() {
+        s.offers.push(Offer { id: random_hex(4), resource_rid: rid.to_string(), resource_link: link.to_string(), throughput, autoscale_max });
+    }
+    Ok(())
+}
+
+fn offer_doc(o: &Offer) -> Value {
+    let mut content = camel_core::value::ObjectMap::new();
+    if let Some(t) = o.throughput {
+        content.insert("offerThroughput".into(), Value::Int(t));
+    }
+    if let Some(m) = o.autoscale_max {
+        content.insert("offerAutopilotSettings".into(), obj([("maxThroughput", Value::Int(m))]));
+        content.insert("offerThroughput".into(), Value::Int(m / 10));
+    }
+    sys(
+        obj([("id", Value::from(o.id.clone())), ("offerVersion", Value::from("V2")), ("offerType", Value::from("Invalid")), ("resource", Value::from(o.resource_link.clone())), ("offerResourceId", Value::from(o.resource_rid.clone())), ("content", Value::Object(content))]),
+        &o.id,
+        &format!("offers/{}/", o.id),
+        0,
+    )
+}
+
+/// The Offers API (`/offers`): list, query by `offerResourceId`, replace.
+fn offers_op(s: &mut State, req: &ServerRequest, p: &[&str], body: &Value) -> Option<Response> {
+    if p.first() != Some(&"offers") {
+        return None;
+    }
+    Some(match (req.method.as_str(), p) {
+        ("GET", ["offers"]) => feed("Offers", s.offers.iter().map(offer_doc).collect()),
+        ("POST", ["offers"]) => {
+            let rid = body.get("parameters").and_then(|a| a.as_array()).and_then(|a| a.iter().find(|x| x.get("name").map(|n| n.to_string()).as_deref() == Some("@rid"))).and_then(|x| x.get("value")).map(|v| v.to_string()).unwrap_or_default();
+            feed("Offers", s.offers.iter().filter(|o| o.resource_rid == rid).map(offer_doc).collect())
+        }
+        ("GET", ["offers", id]) => match s.offers.iter().find(|o| o.id.eq_ignore_ascii_case(id)) {
+            Some(o) => Response::json(200, offer_doc(o).to_json()),
+            None => cerr(404, "NotFound", "Resource Not Found"),
+        },
+        ("PUT", ["offers", id]) => {
+            let Some(o) = s.offers.iter_mut().find(|o| o.id.eq_ignore_ascii_case(id)) else { return Some(cerr(404, "NotFound", "Resource Not Found")) };
+            let content = body.get("content").cloned().unwrap_or_default();
+            let auto = content.get("offerAutopilotSettings").and_then(|a| a.get("maxThroughput")).and_then(|m| m.as_i64());
+            let manual = content.get("offerThroughput").and_then(|t| t.as_i64());
+            match (auto, manual) {
+                (Some(m), _) if m >= 1000 && m % 1000 == 0 => {
+                    o.autoscale_max = Some(m);
+                    o.throughput = None;
+                }
+                (None, Some(t)) if t >= 400 && t % 100 == 0 => {
+                    o.throughput = Some(t);
+                    o.autoscale_max = None;
+                }
+                _ => return Some(cerr(400, "BadRequest", "Invalid offer content: throughput must be >= 400 and a multiple of 100 (autoscale: >= 1000, multiple of 1000).")),
+            }
+            Response::json(200, offer_doc(o).to_json())
+        }
+        _ => cerr(405, "MethodNotAllowed", "Method not allowed"),
+    })
+}
+
+/// The partition key range of a document key.
+fn range_of(pk_json: &str, ranges: usize) -> usize {
+    (crate::util::md5(pk_json.as_bytes())[0] as usize) % ranges.max(1)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cosmos_inner(s: &mut State, req: &ServerRequest, p: &[&str], body: &Value, created: impl Fn(Value) -> Response, minimal: bool, pending_offer: &mut Option<(String, String)>, query: impl Fn() -> Result<Query, Response>) -> Response {
+    match (req.method.as_str(), p) {
         ("GET", ["dbs"]) => feed("Databases", s.dbs.iter().map(|(n, d)| db_doc(n, d)).collect()),
         ("POST", ["dbs"]) if is_query(req) => {
             let q = match query() {
@@ -494,6 +651,9 @@ fn cosmos(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
                 return cerr(409, "Conflict", "Entity with the specified id already exists in the system.");
             }
             let d = Db { rid: random_hex(4), colls: BTreeMap::new() };
+            if let Err(r) = add_offer(s, req, &d.rid, &format!("dbs/{}/", d.rid)) {
+                return r;
+            }
             let doc = db_doc(&id, &d);
             s.dbs.insert(id, d);
             created(doc)
@@ -525,7 +685,12 @@ fn cosmos(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
                     if d.colls.contains_key(&id) {
                         return cerr(409, "Conflict", "Entity with the specified id already exists in the system.");
                     }
-                    let c = Coll { rid: format!("{}{}", d.rid, random_hex(4)), pk_path: pk, lsn: 0, docs: BTreeMap::new() };
+                    let c = Coll { rid: format!("{}{}", d.rid, random_hex(4)), pk_path: pk, lsn: 0, docs: BTreeMap::new(), ranges: 1 };
+                    let (crid, link) = (c.rid.clone(), format!("dbs/{}/colls/{}/", d.rid, c.rid));
+                    if let Some(r) = offer_check(req) {
+                        return r;
+                    }
+                    *pending_offer = Some((crid, link));
                     let doc = coll_doc(&id, &c, &d.rid);
                     d.colls.insert(id, c);
                     created(doc)
@@ -545,7 +710,7 @@ fn cosmos(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
             let Some(c) = d.colls.get_mut(*coll) else { return cerr(404, "NotFound", "Resource Not Found") };
             match (m, rest) {
                 ("GET", []) => Response::json(200, coll_doc(coll, c, &db_rid).to_json()),
-                ("GET", ["pkranges"]) => feed("PartitionKeyRanges", vec![obj([("id", Value::from("0")), ("minInclusive", Value::from("")), ("maxExclusive", Value::from("FF"))])]),
+                ("GET", ["pkranges"]) => feed("PartitionKeyRanges", (0..c.ranges).map(|i| obj([("id", Value::from(i.to_string())), ("minInclusive", Value::from(if i == 0 { String::new() } else { format!("{:02X}", i * 256 / c.ranges) })), ("maxExclusive", Value::from(if i + 1 == c.ranges { "FF".to_string() } else { format!("{:02X}", (i + 1) * 256 / c.ranges) }))])).collect()),
                 ("GET", ["docs"]) if req.header("A-IM").is_some_and(|a| a.eq_ignore_ascii_case("Incremental feed")) => {
                     let since: Option<u64> = match req.header("If-None-Match") {
                         Some("*") => Some(c.lsn),
@@ -553,7 +718,9 @@ fn cosmos(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
                         None => Some(0),
                     };
                     let since = since.unwrap_or(0);
-                    let mut changed: Vec<(u64, Value)> = c.docs.values().filter(|(_, l)| *l > since).map(|(d, l)| (*l, d.clone())).collect();
+                    let range: Option<usize> = req.header("x-ms-documentdb-partitionkeyrangeid").and_then(|r| r.parse().ok());
+                    let n = c.ranges;
+                    let mut changed: Vec<(u64, Value)> = c.docs.iter().filter(|((pk, _), (_, l))| *l > since && range.is_none_or(|r| range_of(pk, n) == r)).map(|(_, (d, l))| (*l, d.clone())).collect();
                     changed.sort_by_key(|(l, _)| *l);
                     let etag = format!("\"{}\"", changed.last().map(|(l, _)| *l).unwrap_or(since));
                     if changed.is_empty() {
@@ -597,11 +764,21 @@ fn cosmos(st: &Shared, req: &ServerRequest, segs: &[String]) -> Response {
                             return cerr(400, "BadRequest", "The id in the URL does not match the id of the document.");
                         }
                     }
+                    if let Some(want) = req.header("If-Match") {
+                        let current = c.docs.get(&key).map(|(_, l)| format!("\"{:016x}\"", l));
+                        if current.as_deref() != Some(want) {
+                            return cerr(412, "PreconditionFailed", "Operation cannot be performed because one of the specified precondition is not met.");
+                        }
+                    }
                     c.lsn += 1;
                     let rid = format!("{}{}", c.rid, random_hex(4));
                     let doc = sys(body.clone(), &rid, &format!("dbs/{}/colls/{}/docs/{}/", db_rid, c.rid, rid), c.lsn);
                     c.docs.insert(key, (doc.clone(), c.lsn));
-                    Response::json(status, doc.to_json()).with_header("etag", format!("\"{:016x}\"", c.lsn)).with_header("x-ms-request-charge", "6.29")
+                    let etag = format!("\"{:016x}\"", c.lsn);
+                    if minimal {
+                        return Response::new(status).with_header("etag", etag).with_header("x-ms-request-charge", "6.29");
+                    }
+                    Response::json(status, doc.to_json()).with_header("etag", etag).with_header("x-ms-request-charge", "6.29")
                 }
                 ("GET" | "DELETE", ["docs", id]) => {
                     let Some(pk) = header_pk(req) else { return cerr(400, "BadRequest", "PartitionKey value must be supplied for this operation.") };

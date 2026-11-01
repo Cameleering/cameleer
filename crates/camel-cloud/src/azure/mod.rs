@@ -22,6 +22,7 @@ pub mod blob_ops;
 pub mod blob_checkpoint;
 pub mod changefeed;
 pub mod cosmosdb;
+pub mod cosmosdb_ops;
 pub mod datalake;
 pub mod datalake_ops;
 pub mod eventgrid;

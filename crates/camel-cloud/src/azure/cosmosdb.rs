@@ -22,10 +22,13 @@
 //! `CamelAzureCosmosDbResponseHeaders`.
 //!
 //! Consumer: the change feed of the container (`A-IM: Incremental feed`) read per partition key
-//! range, continuation kept in memory; one exchange per non-empty batch with the list of
-//! changed items as the body. Starts from now, or from the beginning with
-//! `changeFeedStartFromBeginning=true` (rust-camel; Camel stores continuations in a lease
-//! container, which is not implemented).
+//! range; one exchange per non-empty batch with the list of changed items as the body. Starts
+//! from now, or from the beginning with `changeFeedStartFromBeginning=true` (rust-camel).
+//! Without `leaseContainerName` the continuations are kept in memory; with it the consumer is a
+//! change feed processor storing one lease per partition key range in the lease container (see
+//! [`super::cosmosdb_ops`]), balancing ranges between hosts.
+//!
+//! Throughput, Entra ID credentials and request options: see [`super::cosmosdb_ops`].
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -105,6 +108,16 @@ pub struct CosmosService {
     pub trust_all_certificates: bool,
     pub scheduler: ScheduledPollConfig,
     continuations: Mutex<HashMap<String, String>>,
+    /// Entra ID credential (`credentialType=AZURE_IDENTITY`), instead of the account key.
+    pub aad: Option<super::aad::AadCredential>,
+    /// `consistencyLevel` sent as `x-ms-consistency-level`.
+    pub consistency_level: Option<String>,
+    /// `contentResponseOnWriteEnabled` (false: `Prefer: return=minimal`).
+    pub content_response_on_write: bool,
+    /// `throughputProperties` of created databases / containers.
+    pub throughput: Option<String>,
+    pub lease: Option<super::cosmosdb_ops::LeaseConfig>,
+    pub(crate) leases: Mutex<HashMap<String, super::cosmosdb_ops::Lease>>,
 }
 
 /// Factory for the component.
@@ -119,13 +132,17 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         .ok_or_else(|| CamelError::illegal_argument("databaseEndpoint must be specified (https://<account>.documents.azure.com:443/)"))?;
     o.ignore(&["overrideEndpoint"]);
     let ct = o.string("credentialType", "SHARED_ACCOUNT_KEY").to_ascii_uppercase();
-    if ct != "SHARED_ACCOUNT_KEY" {
-        return Err(CamelError::new(camel_core::error::kinds::UNSUPPORTED_OPERATION, format!("credentialType {} is not supported (use SHARED_ACCOUNT_KEY with accountKey)", ct)));
-    }
-    let key = o.get("accountKey").ok_or_else(|| CamelError::illegal_argument("accountKey must be specified"))?;
-    if base64_decode(&key).is_none() {
-        return Err(CamelError::illegal_argument("accountKey must be the base64 encoded Cosmos DB key"));
-    }
+    let (key, aad) = match ct.as_str() {
+        "SHARED_ACCOUNT_KEY" => {
+            let key = o.get("accountKey").ok_or_else(|| CamelError::illegal_argument("accountKey must be specified"))?;
+            if base64_decode(&key).is_none() {
+                return Err(CamelError::illegal_argument("accountKey must be the base64 encoded Cosmos DB key"));
+            }
+            (key, None)
+        }
+        "AZURE_IDENTITY" => (String::new(), Some(super::aad_from_opts(o, true)?)),
+        other => return Err(CamelError::new(camel_core::error::kinds::UNSUPPORTED_OPERATION, format!("credentialType {} is not supported (use SHARED_ACCOUNT_KEY or AZURE_IDENTITY)", other))),
+    };
     let proxy = match o.get("proxyHost") {
         Some(h) => Proxy::Explicit(format!("http://{}:{}", h, o.string("proxyPort", "3128"))),
         None => {
@@ -136,7 +153,7 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
     let s = CosmosService {
         endpoint: endpoint.trim_end_matches('/').to_string(),
         key,
-        database: db,
+        database: db.clone(),
         container,
         operation: o.get("operation"),
         query: o.get("query"),
@@ -149,24 +166,22 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         trust_all_certificates: o.bool("trustAllCertificates", false)?,
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
         continuations: Mutex::new(HashMap::new()),
+        aad,
+        consistency_level: o.get("consistencyLevel").map(|c| c.to_ascii_uppercase()),
+        content_response_on_write: o.bool("contentResponseOnWriteEnabled", true)?,
+        throughput: o.get("throughputProperties"),
+        lease: super::cosmosdb_ops::LeaseConfig::from_opts(o, db.as_deref())?,
+        leases: Mutex::new(HashMap::new()),
         proxy,
     };
     o.ignore(&[
-        "consistencyLevel",
-        "contentResponseOnWriteEnabled",
         "multipleWriteRegionsEnabled",
         "preferredRegions",
         "readRequestsFallbackEnabled",
         "connectionSharingAcrossClientsEnabled",
         "clientTelemetryEnabled",
-        "throughputProperties",
         "queryRequestOptions",
-        "leaseContainerName",
-        "leaseDatabaseName",
-        "createLeaseContainerIfNotExists",
-        "createLeaseDatabaseIfNotExists",
         "changeFeedProcessorOptions",
-        "hostName",
         "cosmosAsyncClient",
         "indexingPolicy",
     ]);
@@ -184,8 +199,17 @@ impl CosmosService {
         let url = Url::parse(&format!("{}/{}", self.endpoint, encoded.join("/")))?;
         let date = http_date(now_secs());
         let (rtype, rlink) = resource_of(path);
-        let sig = master_key_signature(&self.key, method, &rtype, &rlink, &date)?;
-        let mut req = Request::new(method, url).header("x-ms-date", date).header("x-ms-version", API_VERSION).header("authorization", auth_header(&sig)).header("Accept", "application/json");
+        let authorization = match &self.aad {
+            Some(c) => uri_encode(&format!("type=aad&ver=1.0&sig={}", c.token(&self.aad_scope(), &self.http())?), false),
+            None => auth_header(&master_key_signature(&self.key, method, &rtype, &rlink, &date)?),
+        };
+        let mut req = Request::new(method, url).header("x-ms-date", date).header("x-ms-version", API_VERSION).header("authorization", authorization).header("Accept", "application/json");
+        if let Some(c) = &self.consistency_level {
+            req.set_header("x-ms-consistency-level", c.clone());
+        }
+        if !self.content_response_on_write && matches!(method, "POST" | "PUT") && rtype == "docs" && !extra.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-ms-documentdb-isquery")) {
+            req.set_header("Prefer", "return=minimal");
+        }
         if let Some(b) = body {
             req = req.header("Content-Type", "application/json").body(b.to_json().into_bytes());
         }
@@ -196,15 +220,18 @@ impl CosmosService {
         if resp.is_success() || resp.status == 304 {
             Ok(resp)
         } else {
+            if let (Some(c), 401) = (&self.aad, resp.status) {
+                c.invalidate(&self.aad_scope());
+            }
             Err(cosmos_error(&resp))
         }
     }
 
-    fn db(&self, ex: &Exchange) -> Result<String> {
+    pub(crate) fn db(&self, ex: &Exchange) -> Result<String> {
         header_str(ex, headers::DATABASE_NAME).or_else(|| self.database.clone()).ok_or_else(|| CamelError::illegal_argument("Database name must be specified (path or CamelAzureCosmosDbDatabaseName)"))
     }
 
-    fn coll(&self, ex: &Exchange) -> Result<String> {
+    pub(crate) fn coll(&self, ex: &Exchange) -> Result<String> {
         header_str(ex, headers::CONTAINER_NAME).or_else(|| self.container.clone()).ok_or_else(|| CamelError::illegal_argument("Container name must be specified (path or CamelAzureCosmosDbContainerName)"))
     }
 
@@ -229,7 +256,7 @@ impl CosmosService {
         Ok(None)
     }
 
-    fn query_all(&self, path: &str, query: &str, params: Option<&Value>, extra: &[(&str, String)]) -> Result<Vec<Value>> {
+    pub(crate) fn query_all(&self, path: &str, query: &str, params: Option<&Value>, extra: &[(&str, String)]) -> Result<Vec<Value>> {
         let parameters: Vec<Value> = match params {
             Some(Value::Object(m)) => m.iter().map(|(k, v)| obj([("name", Value::from(if k.starts_with('@') { k.clone() } else { format!("@{}", k) })), ("value", v.clone())])).collect(),
             _ => Vec::new(),
@@ -238,6 +265,7 @@ impl CosmosService {
         let field = match resource_of(path).0.as_str() {
             "dbs" => "Databases",
             "colls" => "DocumentCollections",
+            "offers" => "Offers",
             _ => "Documents",
         };
         let mut out = Vec::new();
@@ -262,7 +290,7 @@ impl CosmosService {
         }
     }
 
-    fn list_feed(&self, path: &str, field: &str, extra: &[(&str, String)]) -> Result<Vec<Value>> {
+    pub(crate) fn list_feed(&self, path: &str, field: &str, extra: &[(&str, String)]) -> Result<Vec<Value>> {
         let mut out = Vec::new();
         let mut continuation: Option<String> = None;
         loop {
@@ -280,26 +308,38 @@ impl CosmosService {
         }
     }
 
-    fn create_database(&self, db: &str, if_not_exists: bool) -> Result<Option<Response>> {
-        match self.request("POST", "dbs", Some(obj([("id", Value::from(db))])), &[]) {
+    pub(crate) fn create_database(&self, db: &str, if_not_exists: bool) -> Result<Option<Response>> {
+        self.create_database_with(db, if_not_exists, None)
+    }
+
+    pub(crate) fn create_database_with(&self, db: &str, if_not_exists: bool, throughput: Option<&Value>) -> Result<Option<Response>> {
+        let h = self.throughput_headers(throughput)?;
+        let h: Vec<(&str, String)> = h.iter().map(|(k, v)| (*k, v.clone())).collect();
+        match self.request("POST", "dbs", Some(obj([("id", Value::from(db))])), &h) {
             Ok(r) => Ok(Some(r)),
             Err(e) if if_not_exists && super::error_code(&e).as_deref() == Some("Conflict") => Ok(None),
             Err(e) => Err(e),
         }
     }
 
-    fn create_container(&self, db: &str, coll: &str, pk_path: Option<String>, if_not_exists: bool) -> Result<Option<Response>> {
+    pub(crate) fn create_container(&self, db: &str, coll: &str, pk_path: Option<String>, if_not_exists: bool) -> Result<Option<Response>> {
+        self.create_container_with(db, coll, pk_path, if_not_exists, None)
+    }
+
+    pub(crate) fn create_container_with(&self, db: &str, coll: &str, pk_path: Option<String>, if_not_exists: bool, throughput: Option<&Value>) -> Result<Option<Response>> {
         let pk = pk_path.or_else(|| self.container_partition_key_path.clone()).unwrap_or_else(|| "/id".into());
         let pk = if pk.starts_with('/') { pk } else { format!("/{}", pk) };
         let body = obj([("id", Value::from(coll)), ("partitionKey", obj([("paths", Value::from(vec![pk])), ("kind", Value::from("Hash"))]))]);
-        match self.request("POST", &format!("dbs/{}/colls", db), Some(body), &[]) {
+        let h = self.throughput_headers(throughput)?;
+        let h: Vec<(&str, String)> = h.iter().map(|(k, v)| (*k, v.clone())).collect();
+        match self.request("POST", &format!("dbs/{}/colls", db), Some(body), &h) {
             Ok(r) => Ok(Some(r)),
             Err(e) if if_not_exists && super::error_code(&e).as_deref() == Some("Conflict") => Ok(None),
             Err(e) => Err(e),
         }
     }
 
-    fn set_response(ex: &mut Exchange, resp: &Response) {
+    pub(crate) fn set_response(ex: &mut Exchange, resp: &Response) {
         let v = parse_json(&resp.body).unwrap_or_default();
         if let Some(r) = v.get("_rid") {
             ex.set_header(headers::RESOURCE_ID, r.clone());
@@ -342,7 +382,8 @@ impl CloudService for CosmosService {
                 ex.set_body(Value::Array(v));
             }
             "createDatabase" => {
-                if let Some(r) = self.create_database(&self.db(ex)?, self.create_database_if_not_exists)? {
+                let tp = ex.header(super::cosmosdb_ops::headers::THROUGHPUT_PROPERTIES).cloned();
+                if let Some(r) = self.create_database_with(&self.db(ex)?, self.create_database_if_not_exists, tp.as_ref())? {
                     Self::set_response(ex, &r);
                 }
             }
@@ -360,7 +401,8 @@ impl CloudService for CosmosService {
                 if self.create_database_if_not_exists {
                     self.create_database(&db, true)?;
                 }
-                if let Some(r) = self.create_container(&db, &coll, header_str(ex, headers::CONTAINER_PARTITION_KEY_PATH), self.create_container_if_not_exists)? {
+                let tp = ex.header(super::cosmosdb_ops::headers::THROUGHPUT_PROPERTIES).cloned();
+                if let Some(r) = self.create_container_with(&db, &coll, header_str(ex, headers::CONTAINER_PARTITION_KEY_PATH), self.create_container_if_not_exists, tp.as_ref())? {
                     Self::set_response(ex, &r);
                 }
             }
@@ -394,7 +436,7 @@ impl CloudService for CosmosService {
                     self.request("POST", &format!("dbs/{}/colls/{}/docs", db, coll), Some(item), &h)?
                 };
                 Self::set_response(ex, &r);
-                ex.set_body(parse_json(&r.body)?);
+                ex.set_body(if r.body.is_empty() { Value::Null } else { parse_json(&r.body)? });
             }
             "readItem" | "deleteItem" => {
                 let (db, coll) = (self.db(ex)?, self.coll(ex)?);
@@ -429,12 +471,22 @@ impl CloudService for CosmosService {
                 let v = self.query_all(&format!("dbs/{}/colls/{}/docs", db, coll), &q, ex.header(headers::QUERY_PARAMETERS), &h)?;
                 ex.set_body(Value::Array(v));
             }
-            other => return Err(unsupported("azure-cosmosdb", other)),
+            other => {
+                if !self.more_ops(ex, other)? {
+                    return Err(unsupported("azure-cosmosdb", other));
+                }
+            }
         }
         Ok(())
     }
 
+    fn on_stop(&self) -> Result<()> {
+        self.release_leases();
+        Ok(())
+    }
+
     fn on_start(&self) -> Result<()> {
+        self.start_leases()?;
         if let Some(db) = &self.database {
             if self.create_database_if_not_exists {
                 self.create_database(db, true)?;
@@ -451,6 +503,9 @@ impl CloudService for CosmosService {
     }
 
     fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        if self.lease.is_some() {
+            return self.poll_with_leases(ctx, processor, logger);
+        }
         let db = self.database.clone().ok_or_else(|| CamelError::illegal_argument("The change feed consumer requires a database name"))?;
         let coll = self.container.clone().ok_or_else(|| CamelError::illegal_argument("The change feed consumer requires a container name"))?;
         let ranges = self.list_feed(&format!("dbs/{}/colls/{}/pkranges", db, coll), "PartitionKeyRanges", &[])?;
