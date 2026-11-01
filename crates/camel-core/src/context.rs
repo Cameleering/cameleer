@@ -44,6 +44,10 @@ pub enum CamelEvent {
     RouteStarted(String),
     RouteStopped(String),
     RouteRemoved(String),
+    RouteSuspended(String),
+    RouteResumed(String),
+    ContextSuspended,
+    ContextResumed,
     ExchangeCreated { exchange_id: String, route_id: Option<String> },
     ExchangeCompleted { exchange_id: String, route_id: Option<String>, elapsed_ms: u64 },
     ExchangeFailed { exchange_id: String, route_id: Option<String>, error: CamelError },
@@ -989,6 +993,9 @@ impl CamelContext {
         if self.is_started() {
             return Ok(());
         }
+        if self.status() == ServiceStatus::Suspended {
+            return self.resume();
+        }
         *self.inner.status.write().unwrap() = ServiceStatus::Starting;
         self.notify(&CamelEvent::ContextStarting);
         let result = (|| -> Result<()> {
@@ -1101,6 +1108,9 @@ impl CamelContext {
 
     pub fn start_route(&self, id: &str) -> Result<()> {
         let r = self.route(id).ok_or_else(|| CamelError::illegal_argument(format!("No route with id {}", id)))?;
+        if r.status() == ServiceStatus::Suspended {
+            return self.resume_route(id);
+        }
         self.start_route_internal(&r)
     }
 
@@ -1110,22 +1120,101 @@ impl CamelContext {
         self.stop_route_internal(&r, timeout)
     }
 
-    /// Suspend = stop the consumer while keeping the route (rust-camel treats it as stop).
+    /// Suspend a route (Camel `suspendRoute`). When the route's consumer is a
+    /// [`SuspendableService`](crate::spi::SuspendableService) it is suspended in place (its
+    /// threads/sockets/queues stay, no new exchanges are created) and in-flight exchanges are
+    /// allowed to complete; otherwise the route is stopped, as Camel does for consumers that
+    /// do not support suspension. The route status becomes `Suspended` either way.
     pub fn suspend_route(&self, id: &str) -> Result<()> {
-        self.stop_route(id)?;
-        if let Some(r) = self.route(id) {
-            *r.status.write().unwrap() = ServiceStatus::Suspended;
+        let r = self.route(id).ok_or_else(|| CamelError::illegal_argument(format!("No route with id {}", id)))?;
+        match r.status() {
+            ServiceStatus::Suspended => return Ok(()),
+            ServiceStatus::Started => {}
+            _ => return Ok(()),
         }
+        let consumer = r.consumer.lock().unwrap().clone();
+        let in_place = match consumer.as_ref().and_then(|c| c.as_suspendable()) {
+            Some(s) => {
+                s.suspend()?;
+                true
+            }
+            None => false,
+        };
+        if in_place {
+            let timeout = *self.inner.shutdown_timeout.read().unwrap();
+            let deadline = Instant::now() + timeout;
+            while self.inner.inflight.route_size(id) > 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        } else {
+            self.stop_route(id)?;
+        }
+        *r.status.write().unwrap() = ServiceStatus::Suspended;
+        crate::camel_info!("CamelContext", "Route: {} is suspended", id);
+        self.notify(&CamelEvent::RouteSuspended(id.to_string()));
         Ok(())
     }
 
+    /// Resume a suspended route (Camel `resumeRoute`): a suspended-in-place consumer is
+    /// resumed, a stopped one is started again. A route that is not suspended is started.
     pub fn resume_route(&self, id: &str) -> Result<()> {
-        if let Some(r) = self.route(id) {
-            if r.status() == ServiceStatus::Suspended {
+        let r = self.route(id).ok_or_else(|| CamelError::illegal_argument(format!("No route with id {}", id)))?;
+        if r.status() != ServiceStatus::Suspended {
+            return self.start_route(id);
+        }
+        let consumer = r.consumer.lock().unwrap().clone();
+        match consumer.as_ref().and_then(|c| c.as_suspendable()) {
+            Some(s) if s.is_suspended() => {
+                s.resume()?;
+                *r.status.write().unwrap() = ServiceStatus::Started;
+            }
+            _ => {
                 *r.status.write().unwrap() = ServiceStatus::Stopped;
+                self.start_route(id)?;
             }
         }
-        self.start_route(id)
+        crate::camel_info!("CamelContext", "Route: {} resumed", id);
+        self.notify(&CamelEvent::RouteResumed(id.to_string()));
+        Ok(())
+    }
+
+    /// Whether the route's consumer is currently suspended in place (rather than stopped).
+    pub fn is_route_suspended_in_place(&self, id: &str) -> bool {
+        self.route(id)
+            .and_then(|r| r.consumer.lock().unwrap().clone())
+            .and_then(|c| c.as_suspendable().map(|s| s.is_suspended()))
+            .unwrap_or(false)
+    }
+
+    /// Suspend the context (Camel `CamelContext.suspend()`): all started routes are
+    /// suspended (in reverse startup order) and the context status becomes `Suspended`.
+    pub fn suspend(&self) -> Result<()> {
+        if self.status() != ServiceStatus::Started {
+            return Ok(());
+        }
+        let mut routes = self.routes();
+        routes.sort_by_key(|r| std::cmp::Reverse(r.startup_order));
+        for r in routes.iter().filter(|r| r.status() == ServiceStatus::Started) {
+            self.suspend_route(&r.id)?;
+        }
+        *self.inner.status.write().unwrap() = ServiceStatus::Suspended;
+        self.notify(&CamelEvent::ContextSuspended);
+        Ok(())
+    }
+
+    /// Resume a suspended context: the suspended routes are resumed in startup order.
+    pub fn resume(&self) -> Result<()> {
+        if self.status() != ServiceStatus::Suspended {
+            return Ok(());
+        }
+        *self.inner.status.write().unwrap() = ServiceStatus::Started;
+        let mut routes = self.routes();
+        routes.sort_by_key(|r| r.startup_order);
+        for r in routes.iter().filter(|r| r.status() == ServiceStatus::Suspended) {
+            self.resume_route(&r.id)?;
+        }
+        self.notify(&CamelEvent::ContextResumed);
+        Ok(())
     }
 
     /// Remove a stopped route. Returns false if the route is not stopped.
@@ -1136,6 +1225,9 @@ impl CamelContext {
         };
         if !matches!(r.status(), ServiceStatus::Stopped | ServiceStatus::Initialized | ServiceStatus::Suspended) {
             return Ok(false);
+        }
+        if r.status() == ServiceStatus::Suspended && r.consumer.lock().unwrap().is_some() {
+            self.stop_route(id)?;
         }
         self.inner.routes.write().unwrap().retain(|x| x.id != id);
         self.notify(&CamelEvent::RouteRemoved(id.to_string()));

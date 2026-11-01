@@ -1294,6 +1294,9 @@ impl Service for FileConsumer {
         self.core.stop.stop();
         self.poll.stop()
     }
+    fn as_suspendable(&self) -> Option<&dyn crate::spi::SuspendableService> {
+        self.poll.as_suspendable()
+    }
 }
 
 /// Polling consumer: each `receive` returns the next eligible file (the completion

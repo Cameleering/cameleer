@@ -14,11 +14,11 @@ use std::time::{Duration, Instant};
 use crate::context::{CamelContext, WeakContext};
 use crate::error::{CamelError, Result};
 use crate::message::{props, ExchangePattern};
-use crate::spi::{Component, Consumer, Endpoint, Processor, Service};
+use crate::spi::{Component, Consumer, Endpoint, Processor, Service, SuspendableService};
 use crate::util::Parameters;
 use crate::value::Value;
 
-use super::support::{new_exchange, parse_duration_with_unit, process_consumer_exchange, BackgroundThreads, StopFlag, ThreadSpawner};
+use super::support::{new_exchange, parse_duration_with_unit, process_consumer_exchange, BackgroundThreads, StopFlag, SuspendState, ThreadSpawner};
 
 /// The timer component.
 #[derive(Default)]
@@ -127,7 +127,7 @@ impl Endpoint for TimerEndpoint {
         &self.uri
     }
     fn create_consumer(&self, processor: Arc<dyn Processor>) -> Result<Arc<dyn Consumer>> {
-        Ok(Arc::new(TimerConsumer { config: self.config.clone(), ctx: self.ctx.clone(), processor, threads: BackgroundThreads::new() }))
+        Ok(Arc::new(TimerConsumer { config: self.config.clone(), ctx: self.ctx.clone(), processor, threads: BackgroundThreads::new(), suspend: SuspendState::new() }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -139,6 +139,7 @@ struct TimerConsumer {
     ctx: WeakContext,
     processor: Arc<dyn Processor>,
     threads: BackgroundThreads,
+    suspend: Arc<SuspendState>,
 }
 
 /// Shared state of the timer threads of one consumer.
@@ -148,6 +149,7 @@ struct TimerRun {
     processor: Arc<dyn Processor>,
     spawner: ThreadSpawner,
     name: String,
+    suspend: Arc<SuspendState>,
 }
 
 fn run_timer(run: Arc<TimerRun>, flag: Arc<StopFlag>) {
@@ -194,6 +196,18 @@ fn timer_loop(run: Arc<TimerRun>, flag: Arc<StopFlag>, mut counter: u64, mut sch
         if config.repeat_count > 0 && counter >= config.repeat_count {
             break;
         }
+        if run.suspend.get() {
+            // suspended: the timer keeps its schedule but does not fire (as Camel's TimerConsumer)
+            let now = Instant::now();
+            if config.period.is_zero() {
+                if run.suspend.wait_while_suspended(&flag) {
+                    break;
+                }
+                continue;
+            }
+            last_fired = Some(now);
+            continue;
+        }
         counter += 1;
         let fired = Instant::now();
         let mut ex = new_exchange(&run.ctx);
@@ -232,11 +246,16 @@ impl Service for TimerConsumer {
             processor: self.processor.clone(),
             spawner: self.threads.spawner(),
             name: name.clone(),
+            suspend: self.suspend.clone(),
         });
         self.threads.spawn(&name, move |flag| run_timer(run, flag))
     }
     fn stop(&self) -> Result<()> {
         self.threads.stop();
+        self.suspend.set(false);
         Ok(())
+    }
+    fn as_suspendable(&self) -> Option<&dyn SuspendableService> {
+        Some(&*self.suspend)
     }
 }

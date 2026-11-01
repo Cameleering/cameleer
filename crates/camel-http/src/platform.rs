@@ -247,6 +247,7 @@ impl Endpoint for HttpConsumerEndpoint {
             bound_port: self.bound_port.clone(),
             processor,
             registration: Mutex::new(None),
+            suspend: camel_core::component::support::SuspendState::new(),
         }))
     }
     fn as_any(&self) -> &dyn Any {
@@ -265,6 +266,8 @@ struct HttpConsumer {
     bound_port: Arc<Mutex<Option<u16>>>,
     processor: Arc<dyn Processor>,
     registration: Mutex<Option<Registration>>,
+    /// Suspended consumers answer 503 Service Unavailable (as Camel's HTTP consumers).
+    suspend: Arc<camel_core::component::support::SuspendState>,
 }
 
 /// Process a request through a route processor and build the response.
@@ -296,7 +299,11 @@ impl Service for HttpConsumer {
         let ctx = self.ctx.clone();
         let processor = self.processor.clone();
         let binding = self.binding.clone();
+        let suspend = self.suspend.clone();
         let handler: RouteHandler = Arc::new(move |req: &mut HttpRequest, params: Vec<(String, String)>| {
+            if suspend.get() {
+                return HttpResponse::text(503, "Service Unavailable");
+            }
             process_request(&ctx, &processor, &binding, req, &params)
         });
         let registration = match &self.shared_port {
@@ -323,7 +330,11 @@ impl Service for HttpConsumer {
             registry().unregister(&r);
         }
         *self.bound_port.lock().unwrap() = None;
+        self.suspend.set(false);
         Ok(())
+    }
+    fn as_suspendable(&self) -> Option<&dyn camel_core::spi::SuspendableService> {
+        Some(&*self.suspend)
     }
 }
 
