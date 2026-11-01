@@ -38,6 +38,23 @@ bq, grpcio, Go's crypto/tls and net/http) in the opt-in `CAMEL_OFFICIAL_CLIENTS=
 | `stomp`, `jms`, `activemq` | Apache ActiveMQ 5.17.6 STOMP (JMS selectors, temp-queue request/reply, durable subscriptions, transactions with redelivery and DLQ, priority / TTL, persistent / non-persistent, map / object messages, virtual topics, authentication, STOMP+SSL) |
 | `paho` | Apache ActiveMQ 5.17.6 MQTT (QoS 0/1/2, retained, wildcards, persistent sessions, authentication, TLS, MQTT ↔ STOMP bridging) |
 
+### Third-party simulators
+
+Cloud services, Kafka and MongoDB are additionally verified against independent simulators run
+locally by the opt-in `CAMEL_SIMULATORS=1` suite (`scripts/simulators.sh`); see "Third-party
+simulators" in [INTEROP.md](INTEROP.md) for what passed, the bugs it found and what could not run
+(Elasticsearch / OpenSearch, Cassandra, real Kafka, LocalStack, Cosmos DB / Service Bus and the
+gcloud emulators).
+
+| Components | Verified against |
+|---|---|
+| AWS: `aws2-s3`, `aws2-sqs`, `aws2-sns`, `aws2-ddb`, `aws2-ddbstream`, `aws2-kinesis`, `aws2-kinesis-firehose`, `aws2-eventbridge`, `aws-secrets-manager`, `aws2-kms`, `aws2-sts`, `aws2-iam`, `aws2-ec2`, `aws2-cw`, `aws2-ses`, `aws2-step-functions`, `aws2-lambda` (management), `aws2-athena` | moto 5.2.5 (incl. IAM-enforced SigV4, HTTPS) |
+| `azure-storage-blob`, `azure-storage-queue` | Azurite 3.37.0 (Shared Key, account / service SAS, HTTPS) |
+| `google-storage` | fake-gcs-server 1.53.1 (HTTP, HTTPS) |
+| `google-pubsub` streaming-pull consumer | pstest (cloud.google.com/go/pubsub 1.50.1) |
+| `mongodb`, `mongodb-gridfs` | FerretDB 1.24.2 on PostgreSQL 16 (SCRAM, TLS) |
+| `kafka` | franz-go kfake, 3 brokers (groups, SASL PLAIN / SCRAM, TLS) |
+
 ## Core concepts
 
 | Feature | Status | Notes |

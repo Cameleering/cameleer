@@ -258,3 +258,91 @@ Notes:
   (Go and OpenSSL servers behave the same); the suite checks this explicitly.
 * pyamqp (azure-servicebus 7.11) mis-encodes two-character session ids; the script uses longer
   ones.
+
+## Third-party simulators
+
+Real AWS / Azure / Google Cloud accounts, Kafka, MongoDB, Cassandra and Elasticsearch are not
+reachable from the test environment. The live suite above covers real servers from the Ubuntu
+archive and the official-client suite drives rust-camel's own emulators with official clients;
+the **simulator suite** closes the remaining gap from the other side: rust-camel's *components*
+run against independent, widely used simulators and wire-compatible servers, installed and run
+locally.
+
+```sh
+scripts/simulators.sh install     # pip (moto), npm (Azurite), Go builds (fake-gcs-server, pstest, FerretDB, kfake)
+scripts/live-interop.sh start     # FerretDB needs the live PostgreSQL 16; TLS listeners use its PKI
+scripts/simulators.sh start       # idempotent; `status`, `versions`, `stop`
+scripts/simulators.sh test        # CAMEL_SIMULATORS=1 cargo test --workspace --test 'sim_*'
+```
+
+The suites are `crates/<crate>/tests/sim_*.rs` and do nothing unless `CAMEL_SIMULATORS=1` is
+set (helpers: `camel_tls::testing::sim`). Every test uses unique bucket / queue / topic /
+database names, because the simulators keep their state between runs. Tools live under
+`$CAMEL_SIM_HOME` (default `/opt/camel-sim`), state and logs in `$CAMEL_SIM_HOME/state`; the
+port table is at the top of the script. TLS listeners serve the live-interop `localhost`
+certificate.
+
+Installing offline. pypi.org, registry.npmjs.org and proxy.golang.org are reachable, but
+sum.golang.org is not, and proxy.golang.org redirects large module zips to
+storage.googleapis.com, which is blocked. The script therefore builds each Go program inside its
+own module (`-mod=readonly`, so every dependency is checked against the upstream `go.sum`),
+fetches GitHub-hosted modules straight from git (`GONOPROXY=github.com`; hashes still checked),
+and packs `google.golang.org/api` from its git tag with `scripts/simulators/modzip` into a file
+`GOPROXY`, which the go command accepts only if the zip's hash equals the one in `go.sum`. Only
+the top-level modules (fake-gcs-server, FerretDB, kfake, the pubsub module and
+`golang.org/x/mod`) cannot be checked against the checksum database: they come from
+proxy.golang.org / GitHub over TLS at pinned versions / commits.
+
+### Results
+
+Run on 2026-11-01. All 31 simulator tests pass
+(`CAMEL_SIMULATORS=1 cargo test --workspace --test 'sim_*'`), together with the 4 hermetic
+regression tests in `sim_regressions.rs`.
+
+| Simulator (version) | Components | What was verified | Result |
+|---|---|---|---|
+| moto 5.2.5 (server mode, pip `moto[server]`) | `aws2-s3`, `aws2-sqs`, `aws2-sns`, `aws2-ddb`, `aws2-ddbstream`, `aws2-kinesis`, `aws2-kinesis-firehose`, `aws2-eventbridge`, `aws-secrets-manager` (+ `{{aws:...}}`), `aws2-kms`, `aws2-sts`, `aws2-iam`, `aws2-ec2`, `aws2-cw`, `aws2-ses`, `aws2-step-functions`, `aws2-lambda`, `aws2-athena` | S3: buckets, objects with UTF-8 / `+` / space keys, metadata, ranges, prefix listings, copy, delete, `NoSuchKey` / `BucketNotEmpty` / `NoSuchBucket`, presigned download links, multipart uploads with 5 MiB parts (3 parts, `-3` ETag) and moto's `EntityTooSmall` (upload aborted), streamed multipart upload from a file and streamed download into a file, streaming upload mode, consumer with `moveAfterRead`; SQS: send with message attributes and MD5, batches, prefix listing, consumer with attributes, redelivery after the visibility timeout, FIFO with content-based deduplication, purge / delete, errors; SNS: auto-created topic subscribed to SQS (`subscribeSNStoSQS`), subject and attributes in the SNS envelope, `MessageStructure=json`; DynamoDB: table created on first use, typed items (lists, sets), Update / Condition / Filter / Projection expressions with attribute names and values (moto enforces DynamoDB's reserved words), `ConditionalCheckFailedException`, Query, Scan (also legacy `ScanFilter`), BatchGetItems, UpdateTable enabling a stream, the `aws2-ddbstream` consumer reading INSERT / MODIFY / REMOVE with old and new images, DeleteTable; Kinesis: two-shard stream, PutRecord / PutRecords, a consumer per shard; Firehose: delivery stream with an extended S3 destination, single and batch records landing in S3; EventBridge: rule with an event pattern and an SQS target, only matching events delivered, describe / list / disable / remove / delete; Secrets Manager: create / get by name and ARN / update / describe / list / binary secrets / delete / restore, `{{aws:secret/field}}` placeholders; KMS: create / list / describe / disable / enable keys, encrypt and decrypt, schedule deletion; STS: AssumeRole, GetSessionToken, GetFederationToken; IAM: users, groups, access keys, `EntityAlreadyExists`, `NoSuchEntity`; EC2: run / describe / stop / start / tag / terminate instances, `InvalidInstanceID.NotFound`; CloudWatch: PutMetricData (single, dimensions, timestamps, lists) read back with ListMetrics; SES: moto's verified-sender rule (`MessageRejected` until verified), plain, HTML with Cc / Reply-To, raw messages; Step Functions: state machines, executions, `ExecutionAlreadyExists`; Lambda management API (create from a zip, versions, aliases, tags, get / list / delete); Athena: start / get / list query executions. A second moto server enforces IAM authentication and SigV4 verification: header-signed S3 (keys with spaces and `+`), SQS, DynamoDB and IAM requests from rust-camel are accepted; a wrong secret gets `SignatureDoesNotMatch`, an unknown key `InvalidAccessKeyId` / `UnrecognizedClientException`. HTTPS server verified by host name and IP SAN (untrusted certificate refused unless `trustAllCertificates=true`) | pass |
+| Azurite 3.37.0 (npm `azurite`) | `azure-storage-blob`, `azure-storage-queue` | containers, block blobs with content type and metadata, names with spaces / `+` / UTF-8 content, paged listings, `BlobNotFound` / `ContainerAlreadyExists` / `ContainerNotFound`, wrong account key refused (403); block lists (stage, uncommitted / committed lists, recommit, `InvalidBlockList`), append blobs, page blobs (ranges, resize, clear), leases (acquire, `LeaseIdMissing` 412, renew, release, `leaseBlob=true`, break), server-side copy, download links (service SAS) checked by Azurite incl. tampering (403); consumer with prefix and `deleteAfterRead`; account SAS made by rust-camel (full, read-only → `AuthorizationPermissionMismatch`, forged, expired); queues: send (XML-special and UTF-8 text), peek, receive with visibility timeout, update (new pop receipt, `PopReceiptMismatch` for the old one), delete, clear, consumer deleting processed messages and redelivering a failing one with a growing dequeue count, SAS, `QueueNotFound`; Blob and Queue over HTTPS | pass |
+| fake-gcs-server 1.53.1 | `google-storage` | `authenticate=false` against the emulator; bucket auto-creation, objects with UTF-8 / `+` names and content type, get, list, copy to a created bucket, list / delete buckets, a resumable upload session in 256 KiB chunks, delete, 404; consumer with `moveAfterRead`; HTTPS | pass |
+| pstest (cloud.google.com/go/pubsub 1.50.1) | `google-pubsub` streaming-pull consumer | gRPC StreamingPull without authentication: message id, ack id, publish time and attributes, every message acknowledged once (as pstest counts acks), a failing message nacked and redelivered (3 deliveries). pstest has no REST API, so topics, subscriptions and messages are created through a small HTTP control API around pstest's Go methods (`scripts/simulators/pstest`) | pass |
+| FerretDB 1.24.2 on PostgreSQL 16.15 | `mongodb`, `mongodb-gridfs` | insert (single / many), `E11000` duplicate key, findById / findOneByQuery / findAll with criteria, sort, limit, skip, projection, `$or` / `$regex`, getMore batches, count, distinct, multi / upsert / `$unset` updates, invalid update operators, save, aggregation (`$match`, `$unwind`, `$group`, `$sort`, `$count`), remove, db / collection stats, commands (`NotImplemented` / unknown command errors), Extended JSON dates, longs and binaries, bulkWrite (ordered / unordered, upserts), dynamicity, `createCollection=false`; SCRAM-SHA-256 and SCRAM-SHA-1 (FerretDB's new authentication), wrong password → `MongoSecurityException`; TLS verified against the interop CA (untrusted CA refused); tailable consumer on a capped collection; GridFS create / findOne / count / listAll / remove of a 600 KB file and the GridFS consumer | pass |
+| kfake (franz-go, commit of v1.20.6) | `kafka` | a three-broker cluster: topic creation, murmur2 partitioning, keys, string / long headers, offsets per partition, commits on stop as reported by kfake's OffsetFetch; auto-created topics, explicit / header partitions, `kafka.OVERRIDE_TOPIC`, acks 0 / 1 / all, array bodies, round robin; gzip, snappy and lz4 batches decoded by franz-go; a consumer group of two routes splitting four partitions and rebalancing when one leaves; committed offsets surviving a restart; manual commits; SASL PLAIN, SCRAM-SHA-256 and SCRAM-SHA-512, over plaintext and TLS; TLS by `sslContextParameters` and by `sslTruststoreLocation`; wrong passwords and an untrusted certificate refused | pass |
+
+### Bugs found and fixed
+
+| # | Component | Bug (found against) | Fix | Regression test |
+|---|---|---|---|---|
+| 1 | `kafka` client | `create_topics` sent CreateTopics to any broker; kfake (like ZooKeeper-mode Kafka) answers `NOT_CONTROLLER` (41, shown as `UNKNOWN_ERROR_CODE`) from the others | sent to the controller named by Metadata (`crates/camel-kafka-mqtt/src/kafka/client.rs`); error names for 29, 30, 38, 41, 79 (`protocol.rs`) | `camel-kafka-mqtt` `sim_regressions.rs` `create_topics_is_sent_to_the_controller` (fake two-node cluster) |
+| 2 | `kafka` consumer groups | consumers joined with JoinGroup v2 and never received records from kfake, which (for v0-v3 joins) answers a first join with an empty member id; modern clients join with v4 and KIP-394's `MEMBER_ID_REQUIRED` | JoinGroup v4: on `MEMBER_ID_REQUIRED` the member rejoins with the assigned id (`kafka/consumer.rs`); the embedded broker answers v4 joins the same way, like Kafka 2.2+ (`testing/kafka_broker.rs`) | `join_group_v4_member_id_required`; `official_kafka.rs` (librdkafka now joins with v4) still passes |
+| 3 | `azure-storage-blob` | `listBlobs` with `maxResultsPerPage` returned only the first page (Azurite) | the option is the page size and every page is read, as Camel collects the SDK's PagedIterable (`crates/camel-cloud/src/azure/blob.rs`) | `camel-cloud` `sim_regressions.rs` `list_blobs_reads_every_page` |
+| 4 | `google-storage` (and other Google components) | with `authenticate=false` (emulators) there is no key, so bucket operations failed with "A project id ... is required" (fake-gcs-server) | the default project comes from `GOOGLE_CLOUD_PROJECT` / `GCLOUD_PROJECT`, as in the Google client libraries (`crates/camel-cloud/src/gcp/mod.rs` `project_id`) | `storage_bucket_operations_use_the_default_project_without_a_key` |
+
+### Simulator limitations (asserted around, not rust-camel bugs)
+
+* moto: presigned URLs are not checked (any signature is accepted) unless IAM authentication is
+  on, and with IAM authentication on a presigned GET fails with a 500 (`KeyError:
+  HTTP_AUTHORIZATION`), so presigned links are only checked for content; Lambda invocations need
+  Docker; separate moto servers do not share state. moto enforces DynamoDB's reserved words
+  (`total`, `status`, ...) where rust-camel's own emulator accepted them.
+* Azurite: no Data Lake (DFS), Files, change feed or Entra ID tokens without a real tenant
+  (`--oauth basic` validates issuers); its Table endpoint runs but no rust-camel component uses
+  it.
+* fake-gcs-server does not verify OAuth tokens or V4 signed URLs, so the authenticated paths stay
+  covered by the official-client suite (gcloud / gsutil against `GcpMock`).
+* pstest speaks gRPC only, so the REST producer and the synchronous-pull consumer are not
+  verified against it.
+* FerretDB 1.24: no change streams (`$changeStream` is `NotImplemented`), no `$max` group
+  accumulator, and `$sum` of a field path after `$unwind` returns 0 (pymongo sees the same);
+  the tests avoid these.
+* kfake answers JoinGroup v0-v3 first joins with an empty member id (see bug 2).
+
+### Could not run
+
+| Simulator / server | Why |
+|---|---|
+| Apache Kafka (KRaft), Redpanda | archive.apache.org is reachable only through the WebFetch tool, which refuses downloads over 10 MB (the Kafka 4.3.2 tarball is far larger); dlcdn / downloads.apache.org and Redpanda's hosts are blocked. franz-go's kfake stands in. |
+| Elasticsearch, OpenSearch | the official tarballs (also OpenSearch's minimal distribution) are hundreds of MB, far over the 10 MB limit, artifacts.opensearch.org / elastic.co are blocked, nothing is packaged in Ubuntu. ZincSearch (Go) serves its partial ES-compatible API under `/es/`, a path prefix `hostAddresses` cannot express. |
+| Apache Cassandra, ScyllaDB | the Cassandra 5.0 tarball exceeds the 10 MB limit (and the Apache CDN is blocked); ScyllaDB is not available offline. |
+| LocalStack | needs Docker (host mode was removed in LocalStack 2). |
+| Azure Cosmos DB emulator, Service Bus emulator | Windows-only / Docker-only. |
+| gcloud Pub/Sub, Firestore and Datastore emulators | `gcloud components install` needs dl.google.com (blocked), the Firebase emulator jars come from storage.googleapis.com (blocked, > 10 MB). pstest replaces the Pub/Sub emulator for the gRPC consumer; Firestore has no offline alternative. |
