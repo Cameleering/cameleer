@@ -261,6 +261,204 @@ impl Processor for TemplateProducer {
     }
 }
 
+/// Java `toString()` rendering used by the JVM template engines: strings raw, lists as
+/// `[a, b]`, maps as `{k=v, k2=v2}`, null as `null`.
+pub fn java_string(v: &Value) -> String {
+    match v {
+        Value::Null => "null".into(),
+        Value::Array(a) => format!("[{}]", a.iter().map(java_string).collect::<Vec<_>>().join(", ")),
+        Value::Object(o) => format!("{{{}}}", o.iter().map(|(k, x)| format!("{}={}", k, java_string(x))).collect::<Vec<_>>().join(", ")),
+        other => other.to_string(),
+    }
+}
+
+fn java_index(len: usize, v: &Value) -> Option<usize> {
+    v.as_i64().filter(|i| *i >= 0 && (*i as usize) < len).map(|i| i as usize)
+}
+
+/// Invoke a common Java method on a template value (`String`, `List`, `Map`, numbers,
+/// Camel message/exchange maps). Returns None when the method is not available, so
+/// engines can report the reference as unresolved.
+pub fn java_method(target: &Value, name: &str, args: &[Value]) -> Option<Value> {
+    let s = |i: usize| args.get(i).map(|a| a.to_string()).unwrap_or_default();
+    let n = |i: usize| args.get(i).and_then(|a| a.as_i64()).unwrap_or(0);
+    match (name, args.len()) {
+        ("toString", 0) => return Some(Value::String(java_string(target))),
+        ("equals", 1) => return Some(Value::Bool(crate::value::values_equal(target, &args[0]))),
+        ("getClass", 0) => {
+            let full = target.java_type_name().unwrap_or("java.lang.Object");
+            return Some(Value::object([("name", Value::from(full)), ("simpleName", Value::from(full.rsplit('.').next().unwrap_or(full)))]));
+        }
+        _ => {}
+    }
+    match target {
+        Value::String(_) | Value::Bytes(_) => {
+            let t = target.to_string();
+            let chars: Vec<char> = t.chars().collect();
+            Some(match (name, args.len()) {
+                ("toUpperCase", _) => Value::String(t.to_uppercase()),
+                ("toLowerCase", _) => Value::String(t.to_lowercase()),
+                ("length", 0) => Value::Int(chars.len() as i64),
+                ("trim" | "strip", 0) => Value::String(t.trim().to_string()),
+                ("isEmpty", 0) => Value::Bool(t.is_empty()),
+                ("isBlank", 0) => Value::Bool(t.trim().is_empty()),
+                ("charAt", 1) => Value::String(chars.get(n(0) as usize)?.to_string()),
+                ("substring", 1) => Value::String(chars.get(n(0) as usize..)?.iter().collect()),
+                ("substring", 2) => Value::String(chars.get(n(0) as usize..n(1) as usize)?.iter().collect()),
+                ("indexOf", 1) => Value::Int(t.find(&s(0)).map(|b| t[..b].chars().count() as i64).unwrap_or(-1)),
+                ("lastIndexOf", 1) => Value::Int(t.rfind(&s(0)).map(|b| t[..b].chars().count() as i64).unwrap_or(-1)),
+                ("contains", 1) => Value::Bool(t.contains(&s(0))),
+                ("startsWith", 1) => Value::Bool(t.starts_with(&s(0))),
+                ("endsWith", 1) => Value::Bool(t.ends_with(&s(0))),
+                ("replace", 2) => Value::String(t.replace(&s(0), &s(1))),
+                ("replaceAll", 2) => Value::String(crate::regex::Regex::new(&s(0)).ok()?.replace_all(&t, &s(1))),
+                ("replaceFirst", 2) => Value::String(crate::regex::Regex::new(&s(0)).ok()?.replace_first(&t, &s(1))),
+                ("matches", 1) => Value::Bool(crate::regex::Regex::new(&s(0)).ok()?.is_full_match(&t)),
+                ("split", 1) => Value::from(crate::regex::Regex::new(&s(0)).ok()?.split(&t)),
+                ("equalsIgnoreCase", 1) => Value::Bool(t.eq_ignore_ascii_case(&s(0))),
+                ("concat", 1) => Value::String(format!("{}{}", t, s(0))),
+                ("compareTo", 1) => Value::Int(t.cmp(&s(0)) as i64),
+                ("getBytes", 0) => Value::Bytes(t.into_bytes()),
+                ("repeat", 1) => Value::String(t.repeat(n(0).max(0) as usize)),
+                _ => return None,
+            })
+        }
+        Value::Array(a) => Some(match (name, args.len()) {
+            ("size", 0) => Value::Int(a.len() as i64),
+            ("isEmpty", 0) => Value::Bool(a.is_empty()),
+            ("get", 1) => a.get(java_index(a.len(), &args[0])?)?.clone(),
+            ("contains", 1) => Value::Bool(a.iter().any(|x| crate::value::values_equal(x, &args[0]))),
+            ("indexOf", 1) => Value::Int(a.iter().position(|x| crate::value::values_equal(x, &args[0])).map(|i| i as i64).unwrap_or(-1)),
+            ("subList", 2) => Value::Array(a.get(n(0) as usize..n(1) as usize)?.to_vec()),
+            _ => return None,
+        }),
+        Value::Object(o) => {
+            let get = |k: &str| lookup_key(target, k).cloned();
+            Some(match (name, args.len()) {
+                ("get", 1) => get(&s(0)).unwrap_or(Value::Null),
+                ("getOrDefault", 2) => get(&s(0)).unwrap_or_else(|| args[1].clone()),
+                ("containsKey", 1) => Value::Bool(get(&s(0)).is_some()),
+                ("containsValue", 1) => Value::Bool(o.values().any(|x| crate::value::values_equal(x, &args[0]))),
+                ("size", 0) => Value::Int(o.len() as i64),
+                ("isEmpty", 0) => Value::Bool(o.is_empty()),
+                ("keySet", 0) => Value::Array(o.keys().map(|k| Value::String(k.clone())).collect()),
+                ("values", 0) => Value::Array(o.values().cloned().collect()),
+                ("entrySet", 0) => Value::Array(o.iter().map(|(k, v)| Value::object([("key", Value::String(k.clone())), ("value", v.clone())])).collect()),
+                // Camel Message / Exchange accessors on the data model maps.
+                ("getHeader", 1 | 2) => get("headers").and_then(|h| lookup_key(&h, &s(0)).cloned()).or_else(|| args.get(1).cloned()).unwrap_or(Value::Null),
+                ("getProperty", 1 | 2) => get("properties").and_then(|h| lookup_key(&h, &s(0)).cloned()).or_else(|| args.get(1).cloned()).unwrap_or(Value::Null),
+                ("getVariable", 1) => get("variables").and_then(|h| lookup_key(&h, &s(0)).cloned()).unwrap_or(Value::Null),
+                ("getIn" | "getMessage", 0) => get("in").or_else(|| get("message"))?,
+                (m, 0) if (m.len() > 3 && m.starts_with("get")) || (m.len() > 2 && m.starts_with("is")) => {
+                    let prop = m.strip_prefix("get").or_else(|| m.strip_prefix("is")).unwrap_or(m);
+                    let mut cs = prop.chars();
+                    let first = cs.next()?;
+                    let lower = format!("{}{}", first.to_ascii_lowercase(), cs.as_str());
+                    get(&lower).or_else(|| get(prop))?
+                }
+                _ => return None,
+            })
+        }
+        Value::Int(_) | Value::Float(_) => {
+            let f = target.as_f64()?;
+            Some(match (name, args.len()) {
+                ("intValue" | "longValue" | "shortValue" | "byteValue", 0) => Value::Int(f as i64),
+                ("doubleValue" | "floatValue", 0) => Value::Float(f),
+                ("compareTo", 1) => Value::Int(f.partial_cmp(&args[0].as_f64()?).map(|o| o as i64).unwrap_or(0)),
+                _ => return None,
+            })
+        }
+        Value::Bool(b) => match (name, args.len()) {
+            ("booleanValue", 0) => Some(Value::Bool(*b)),
+            _ => None,
+        },
+        Value::Null => None,
+    }
+}
+
+/// JavaBean-style property access (`$x.foo`): map key, list index, then `getFoo()`/`isFoo()`.
+pub fn java_property(target: &Value, prop: &str) -> Option<Value> {
+    match target {
+        Value::Object(_) => return lookup_key(target, prop).cloned(),
+        Value::Array(a) => {
+            if let Ok(i) = prop.parse::<usize>() {
+                return a.get(i).cloned();
+            }
+        }
+        _ => {}
+    }
+    let mut cs = prop.chars();
+    let first = cs.next()?;
+    let cap = format!("{}{}", first.to_ascii_uppercase(), cs.as_str());
+    java_method(target, &format!("get{}", cap), &[]).or_else(|| java_method(target, &format!("is{}", cap), &[]))
+}
+
+/// A token of a template lexer, for [`gobble_lines`].
+pub trait GobbleToken {
+    /// The text of a text token.
+    fn text_mut(&mut self) -> Option<&mut String>;
+    /// Whether this (directive) token swallows its line when alone on it.
+    fn gobbles(&self) -> bool;
+}
+
+/// Remove the indentation before and the line break after directives (or runs of
+/// directives) that are alone on their line (Velocity's default `lines` space gobbling,
+/// FreeMarker's white-space stripping).
+pub fn gobble_lines<T: GobbleToken>(toks: &mut [T]) {
+    let mut i = 0;
+    while i < toks.len() {
+        if !toks[i].gobbles() {
+            i += 1;
+            continue;
+        }
+        // a run of directives [i, j)
+        let mut j = i + 1;
+        while j < toks.len() && toks[j].gobbles() {
+            j += 1;
+        }
+        let before_ok = if i == 0 {
+            true
+        } else {
+            match toks[i - 1].text_mut() {
+                Some(t) => {
+                    let ls = t.rfind('\n').map(|p| p + 1);
+                    let tail_blank = t[ls.unwrap_or(0)..].chars().all(|c| c == ' ' || c == '\t');
+                    tail_blank && (ls.is_some() || i == 1)
+                }
+                None => false,
+            }
+        };
+        let after_ok = before_ok
+            && (j == toks.len() || {
+                let last = j + 1 == toks.len();
+                match toks[j].text_mut() {
+                    Some(t) => match t.find('\n') {
+                        Some(p) => t[..p].chars().all(|c| c == ' ' || c == '\t' || c == '\r'),
+                        None => last && t.chars().all(|c| c == ' ' || c == '\t'),
+                    },
+                    None => false,
+                }
+            });
+        if after_ok {
+            if i > 0 {
+                if let Some(t) = toks[i - 1].text_mut() {
+                    let ls = t.rfind('\n').map(|p| p + 1).unwrap_or(0);
+                    t.truncate(ls);
+                }
+            }
+            if j < toks.len() {
+                if let Some(t) = toks[j].text_mut() {
+                    *t = match t.find('\n') {
+                        Some(p) => t[p + 1..].to_string(),
+                        None => String::new(),
+                    };
+                }
+            }
+        }
+        i = j;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -40,6 +40,7 @@ pub mod dataset;
 pub mod direct;
 pub mod exec;
 pub mod file;
+pub mod freemarker;
 pub mod json_validator;
 pub mod language;
 pub mod log;
@@ -55,6 +56,7 @@ pub mod support;
 pub mod template_support;
 pub mod templating;
 pub mod timer;
+pub mod velocity;
 pub mod xml_validator;
 
 /// Register built-in components on a new context. Components are created lazily.
