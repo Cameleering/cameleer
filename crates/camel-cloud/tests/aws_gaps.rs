@@ -861,3 +861,80 @@ fn rekognition_collections_face_search_and_video() {
     let e = req_err(&t, &uri("describeCollection"), "", &[]);
     assert!(e.message.contains("ResourceNotFound"), "{}", e);
 }
+
+#[test]
+fn transcribe_medical_call_analytics_vocabularies_models_and_tags() {
+    let mock = AwsMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let tr = |op: &str| format!("aws2-transcribe://t?operation={}&{}", op, mock.endpoint_options());
+    let status = |ex: &Exchange| s(ex.header("CamelAwsTranscribeTranscriptionJobStatus").unwrap());
+    // medical
+    let mj = ("CamelAwsTranscribeMedicalTranscriptionJobName", Value::from("visit-1"));
+    let e = req_err(&t, &tr("startMedicalTranscriptionJob"), "s3://audio/visit.wav", &[mj.clone()]);
+    assert!(e.message.contains("OutputBucketName"), "{}", e);
+    let ex = req(&t, &tr("startMedicalTranscriptionJob"), "s3://audio/visit.wav", &[mj.clone(), ("CamelAwsTranscribeOutputBucketName", Value::from("out")), ("CamelAwsTranscribeType", Value::from("DICTATION"))]);
+    assert_eq!(status(&ex), "IN_PROGRESS");
+    assert_eq!(s(ex.body().get("Specialty").unwrap()), "PRIMARYCARE");
+    req(&t, &tr("getMedicalTranscriptionJob"), "", &[mj.clone()]);
+    let ex = req(&t, &tr("getMedicalTranscriptionJob"), "", &[mj.clone()]);
+    assert_eq!(status(&ex), "COMPLETED");
+    assert!(s(ex.body().get("Transcript").unwrap().get("TranscriptFileUri").unwrap()).contains("/out/medical/visit-1"));
+    assert_eq!(req(&t, &tr("listMedicalTranscriptionJobs"), "", &[("CamelAwsTranscribeStatus", Value::from("COMPLETED"))]).body().as_array().unwrap().len(), 1);
+    // call analytics: category + job
+    let rules = Value::Array(vec![Value::object([("NonTalkTimeFilter", Value::object([("Threshold", Value::Int(10000))]))])]);
+    let cat = req(&t, &tr("createCallAnalyticsCategory"), rules.clone(), &[("CamelAwsTranscribeCategoryName", Value::from("silence"))]).body().clone();
+    assert_eq!(s(cat.get("CategoryName").unwrap()), "silence");
+    let e = req_err(&t, &tr("createCallAnalyticsCategory"), rules.clone(), &[("CamelAwsTranscribeCategoryName", Value::from("silence"))]);
+    assert!(e.message.contains("ConflictException"), "{}", e);
+    req(&t, &tr("updateCallAnalyticsCategory"), "", &[("CamelAwsTranscribeCategoryName", Value::from("silence")), ("CamelAwsTranscribeRules", rules)]);
+    assert_eq!(req(&t, &tr("listCallAnalyticsCategories"), "", &[]).body().as_array().unwrap().len(), 1);
+    assert!(req(&t, &tr("getCallAnalyticsCategory"), "", &[("CamelAwsTranscribeCategoryName", Value::from("silence"))]).body().get("Rules").is_some());
+    req(&t, &tr("deleteCallAnalyticsCategory"), "", &[("CamelAwsTranscribeCategoryName", Value::from("silence"))]);
+    let cj = ("CamelAwsTranscribeCallAnalyticsJobName", Value::from("call-1"));
+    let channels = Value::Array(vec![Value::object([("ChannelId", Value::Int(0)), ("ParticipantRole", Value::from("AGENT"))])]);
+    let ex = req(&t, &tr("startCallAnalyticsJob"), "", &[cj.clone(), ("CamelAwsTranscribeMediaUri", Value::from("s3://audio/call.wav")), ("CamelAwsTranscribeDataAccessRoleArn", Value::from("arn:aws:iam::000000000000:role/tr")), ("CamelAwsTranscribeChannelDefinitions", channels)]);
+    assert_eq!(status(&ex), "IN_PROGRESS");
+    req(&t, &tr("getCallAnalyticsJob"), "", &[cj.clone()]);
+    assert_eq!(status(&req(&t, &tr("getCallAnalyticsJob"), "", &[cj.clone()])), "COMPLETED");
+    assert_eq!(req(&t, &tr("listCallAnalyticsJobs"), "", &[]).body().as_array().unwrap().len(), 1);
+    req(&t, &tr("deleteCallAnalyticsJob"), "", &[cj.clone()]);
+    assert!(req_err(&t, &tr("getCallAnalyticsJob"), "", &[cj]).message.contains("NotFoundException"));
+    // vocabularies (three, read over two pages)
+    for n in ["camel", "kafka", "pulsar"] {
+        let ex = req(&t, &tr("createVocabulary"), Value::from(vec!["Apache-Camel", "EIP"]), &[("CamelAwsTranscribeVocabularyName", Value::from(n))]);
+        assert_eq!(status(&ex), "PENDING");
+    }
+    let e = req_err(&t, &tr("createVocabulary"), "", &[("CamelAwsTranscribeVocabularyName", Value::from("bad")), ("CamelAwsTranscribePhrases", Value::from(vec!["two words"]))]);
+    assert!(e.message.contains("spaces"), "{}", e);
+    let v = ("CamelAwsTranscribeVocabularyName", Value::from("camel"));
+    req(&t, &tr("getVocabulary"), "", &[v.clone()]);
+    assert_eq!(status(&req(&t, &tr("getVocabulary"), "", &[v.clone()])), "READY");
+    assert_eq!(req(&t, &tr("listVocabularies"), "", &[]).body().as_array().unwrap().len(), 3, "all pages");
+    assert_eq!(req(&t, &tr("listVocabularies"), "", &[("CamelAwsTranscribeStateEquals", Value::from("READY"))]).body().as_array().unwrap().len(), 1);
+    req(&t, &tr("updateVocabulary"), "", &[v.clone(), ("CamelAwsTranscribeVocabularyFileUri", Value::from("s3://vocab/camel.txt"))]);
+    req(&t, &tr("deleteVocabulary"), "", &[v]);
+    assert_eq!(mock.transcribe_resources("vocabulary"), vec!["kafka", "pulsar"]);
+    let mv = ("CamelAwsTranscribeVocabularyName", Value::from("drugs"));
+    assert!(req_err(&t, &tr("createMedicalVocabulary"), Value::from(vec!["Aspirin"]), &[mv.clone()]).message.contains("VocabularyFileUri"));
+    req(&t, &tr("createMedicalVocabulary"), "", &[mv.clone(), ("CamelAwsTranscribeVocabularyFileUri", Value::from("s3://vocab/drugs.txt"))]);
+    req(&t, &tr("updateMedicalVocabulary"), "", &[mv.clone(), ("CamelAwsTranscribeVocabularyFileUri", Value::from("s3://vocab/drugs2.txt"))]);
+    assert_eq!(s(req(&t, &tr("getMedicalVocabulary"), "", &[mv.clone()]).body().get("VocabularyFileUri").unwrap()), "s3://vocab/drugs2.txt");
+    assert_eq!(req(&t, &tr("listMedicalVocabularies"), "", &[]).body().as_array().unwrap().len(), 1);
+    // language model + tags
+    let lm = ("CamelAwsTranscribeLanguageModelName", Value::from("support"));
+    let ex = req(&t, &tr("createLanguageModel"), "", &[lm.clone(), ("CamelAwsTranscribeBaseModelName", Value::from("NarrowBand")), ("CamelAwsTranscribeInputDataS3Uri", Value::from("s3://train/")), ("CamelAwsTranscribeDataAccessRoleArn", Value::from("arn:aws:iam::000000000000:role/tr"))]);
+    assert_eq!(status(&ex), "IN_PROGRESS");
+    req(&t, &tr("describeLanguageModel"), "", &[lm.clone()]);
+    assert_eq!(status(&req(&t, &tr("describeLanguageModel"), "", &[lm.clone()])), "COMPLETED");
+    assert_eq!(req(&t, &tr("listLanguageModels"), "", &[]).body().as_array().unwrap().len(), 1);
+    let arn = ("CamelAwsTranscribeResourceArn", Value::from("arn:aws:transcribe:us-east-1:000000000000:language-model/support"));
+    req(&t, &tr("tagResource"), "", &[arn.clone(), ("CamelAwsTranscribeTags", Value::object([("team", "cx"), ("env", "dev")]))]);
+    req(&t, &tr("untagResource"), "", &[arn.clone(), ("CamelAwsTranscribeTagKeys", Value::from(vec!["env"]))]);
+    let tags = req(&t, &tr("listTagsForResource"), "", &[arn]).body().clone();
+    assert_eq!(tags.as_object().unwrap().len(), 1);
+    assert_eq!(s(tags.get("team").unwrap()), "cx");
+    req(&t, &tr("deleteLanguageModel"), "", &[lm]);
+    let e = req_err(&t, &tr("listTagsForResource"), "", &[("CamelAwsTranscribeResourceArn", Value::from("arn:aws:transcribe:us-east-1:000000000000:language-model/support"))]);
+    assert!(e.message.contains("NotFoundException"), "{}", e);
+}

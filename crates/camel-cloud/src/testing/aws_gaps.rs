@@ -44,6 +44,7 @@ pub(super) struct GapsState {
     iam: IamExtra,
     sfn: SfnExtra,
     rek: RekExtra,
+    tr: TranscribeExtra,
 }
 
 impl AwsMock {
@@ -75,6 +76,7 @@ pub(super) fn handle(st: &Shared, service: &str, req: &ServerRequest) -> Option<
         "iam" => iam_more(st, req),
         "states" => states_more(st, req),
         "rekognition" => rekognition_more(st, req),
+        "transcribe" => transcribe_more(st, req),
         _ => None,
     }
 }
@@ -1956,6 +1958,209 @@ fn rekognition_more(st: &Shared, req: &ServerRequest) -> Option<Response> {
                 }
             }
             Some(ok(Value::Object(m)))
+        }
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Transcribe: medical / call analytics jobs, categories, vocabularies, language models, tags
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+pub(super) struct TranscribeExtra {
+    /// (kind, name) -> (resource, number of reads)
+    items: BTreeMap<(String, String), (Value, usize)>,
+    tags: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl AwsMock {
+    /// Names of the emulated Transcribe resources of a kind (`medical`, `call`, `category`,
+    /// `vocabulary`, `medical-vocabulary`, `model`).
+    pub fn transcribe_resources(&self, kind: &str) -> Vec<String> {
+        self.lock().gaps.tr.items.keys().filter(|(k, _)| k == kind).map(|(_, n)| n.clone()).collect()
+    }
+}
+
+fn tr_err(code: &str, msg: &str) -> Response {
+    super::json_error(400, "com.amazonaws.transcribe", code, msg)
+}
+
+fn transcribe_more(st: &Shared, req: &ServerRequest) -> Option<Response> {
+    let b = body(req);
+    let action = target(req);
+    // (kind, name field, response wrapper, list field, status field, done status)
+    let spec: (&str, &str, Option<&str>, &str, &str, &str) = match action.as_str() {
+        a if a.contains("MedicalTranscriptionJob") => ("medical", "MedicalTranscriptionJobName", Some("MedicalTranscriptionJob"), "MedicalTranscriptionJobSummaries", "TranscriptionJobStatus", "COMPLETED"),
+        a if a.contains("CallAnalyticsJob") => ("call", "CallAnalyticsJobName", Some("CallAnalyticsJob"), "CallAnalyticsJobSummaries", "CallAnalyticsJobStatus", "COMPLETED"),
+        a if a.contains("CallAnalyticsCategor") => ("category", "CategoryName", Some("CategoryProperties"), "Categories", "", ""),
+        a if a.contains("MedicalVocabular") => ("medical-vocabulary", "VocabularyName", None, "Vocabularies", "VocabularyState", "READY"),
+        a if a.contains("Vocabular") => ("vocabulary", "VocabularyName", None, "Vocabularies", "VocabularyState", "READY"),
+        a if a.contains("LanguageModel") => ("model", "ModelName", Some("LanguageModel"), "Models", "ModelStatus", "COMPLETED"),
+        "TagResource" | "UntagResource" | "ListTagsForResource" => ("tags", "", None, "", "", ""),
+        _ => return None,
+    };
+    let (kind, name_field, wrapper, list_field, status_field, done) = spec;
+    let mut s = st.0.lock().unwrap();
+    let region = s.region.clone();
+    let tr = &mut s.gaps.tr;
+    let now = Value::Float(now_secs() as f64);
+    if kind == "tags" {
+        let arn = s_(&b, "ResourceArn");
+        let Some(rest) = arn.strip_prefix(&format!("arn:aws:transcribe:{}:{}:", region, ACCOUNT)) else { return Some(tr_err("BadRequestException", "Invalid ResourceArn")) };
+        let (rtype, rname) = rest.split_once('/').unwrap_or((rest, ""));
+        let rkind = match rtype {
+            "medical-transcription-job" => "medical",
+            "call-analytics-job" => "call",
+            "vocabulary" => "vocabulary",
+            "medical-vocabulary" => "medical-vocabulary",
+            "language-model" => "model",
+            "transcription-job" => "",
+            _ => return Some(tr_err("BadRequestException", "Invalid ResourceArn")),
+        };
+        if !rkind.is_empty() && !tr.items.contains_key(&(rkind.to_string(), rname.to_string())) {
+            return Some(tr_err("NotFoundException", "The resource couldn't be found."));
+        }
+        let tags = tr.tags.entry(arn.clone()).or_default();
+        return Some(match action.as_str() {
+            "TagResource" => {
+                for t in b.get("Tags").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
+                    tags.insert(s_(&t, "Key"), s_(&t, "Value"));
+                }
+                ok(obj([]))
+            }
+            "UntagResource" => {
+                for k in b.get("TagKeys").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
+                    tags.remove(&k.to_string());
+                }
+                ok(obj([]))
+            }
+            _ => ok(obj([("ResourceArn", Value::from(arn.clone())), ("Tags", Value::Array(tags.iter().map(|(k, v)| obj([("Key", Value::from(k.clone())), ("Value", Value::from(v.clone()))])).collect()))])),
+        });
+    }
+    let name = s_(&b, name_field);
+    let key = (kind.to_string(), name.clone());
+    let wrap = |v: Value| match wrapper {
+        Some(w) if !action.starts_with("Create") || kind == "category" => obj([(w, v)]),
+        _ => v,
+    };
+    let missing = || tr_err("NotFoundException", "The requested resource couldn't be found. Check the name and try your request again.");
+    let verb = ["Start", "Create", "Update", "Get", "Describe", "Delete", "List"].into_iter().find(|v| action.starts_with(v)).unwrap_or("");
+    match verb {
+        "Start" | "Create" | "Update" => {
+            if name.is_empty() {
+                return Some(tr_err("BadRequestException", &format!("{} is required", name_field)));
+            }
+            let exists = tr.items.contains_key(&key);
+            if verb == "Update" && !exists {
+                return Some(missing());
+            }
+            if verb != "Update" && exists {
+                return Some(tr_err("ConflictException", "The requested name already exists. Use a different name."));
+            }
+            let mut m = match b.clone() {
+                Value::Object(m) => m,
+                _ => ObjectMap::new(),
+            };
+            match kind {
+                "medical" => {
+                    if s_(&b, "OutputBucketName").is_empty() {
+                        return Some(tr_err("BadRequestException", "OutputBucketName is required"));
+                    }
+                    if !matches!(s_(&b, "Specialty").as_str(), "PRIMARYCARE") || !matches!(s_(&b, "Type").as_str(), "CONVERSATION" | "DICTATION") {
+                        return Some(tr_err("BadRequestException", "Invalid Specialty or Type"));
+                    }
+                }
+                "call" => {
+                    if s_(&b, "DataAccessRoleArn").is_empty() && !s_(&b, "OutputLocation").is_empty() {
+                        return Some(tr_err("BadRequestException", "DataAccessRoleArn is required with an OutputLocation"));
+                    }
+                }
+                "category" => {
+                    if b.get("Rules").and_then(|r| r.as_array()).is_none_or(|r| r.is_empty()) {
+                        return Some(tr_err("BadRequestException", "Rules must contain at least one rule"));
+                    }
+                    m.insert("LastUpdateTime".into(), now.clone());
+                    if let Some((old, _)) = tr.items.get(&key) {
+                        m.insert("CreateTime".into(), old.get("CreateTime").cloned().unwrap_or(now.clone()));
+                    } else {
+                        m.insert("CreateTime".into(), now.clone());
+                    }
+                }
+                "vocabulary" | "medical-vocabulary" => {
+                    let phrases = b.get("Phrases").and_then(|p| p.as_array()).cloned();
+                    if phrases.is_none() && s_(&b, "VocabularyFileUri").is_empty() {
+                        return Some(tr_err("BadRequestException", "Either Phrases or VocabularyFileUri is required"));
+                    }
+                    if phrases.unwrap_or_default().iter().any(|p| p.to_string().contains(char::is_whitespace)) {
+                        return Some(tr_err("BadRequestException", "Phrases can't contain spaces; use hyphens"));
+                    }
+                    m.remove("Phrases");
+                    m.insert("LastModifiedTime".into(), now.clone());
+                    m.insert("DownloadUri".into(), Value::from(format!("https://s3.amazonaws.com/vocabularies/{}.txt", name)));
+                }
+                "model" => {
+                    if !matches!(s_(&b, "BaseModelName").as_str(), "NarrowBand" | "WideBand") {
+                        return Some(tr_err("BadRequestException", "BaseModelName must be NarrowBand or WideBand"));
+                    }
+                    if b.get("InputDataConfig").is_none_or(|c| s_(c, "S3Uri").is_empty() || s_(c, "DataAccessRoleArn").is_empty()) {
+                        return Some(tr_err("BadRequestException", "InputDataConfig.S3Uri and DataAccessRoleArn are required"));
+                    }
+                    m.insert("CreateTime".into(), now.clone());
+                }
+                _ => {}
+            }
+            if !status_field.is_empty() {
+                m.insert(status_field.into(), Value::from(if kind.contains("vocabulary") { "PENDING" } else { "IN_PROGRESS" }));
+            }
+            if verb == "Start" {
+                m.insert("CreationTime".into(), now);
+            }
+            let v = Value::Object(m);
+            tr.items.insert(key, (v.clone(), 0));
+            Some(ok(wrap(v)))
+        }
+        "Get" | "Describe" => {
+            let Some((v, reads)) = tr.items.get_mut(&key) else { return Some(missing()) };
+            *reads += 1;
+            if !status_field.is_empty() && *reads > 1 {
+                if let Value::Object(m) = v {
+                    m.insert(status_field.into(), Value::from(done));
+                    match kind {
+                        "medical" => {
+                            let bucket = m.get("OutputBucketName").map(|b| b.to_string()).unwrap_or_default();
+                            m.insert("Transcript".into(), obj([("TranscriptFileUri", Value::from(format!("https://s3.amazonaws.com/{}/medical/{}.json", bucket, name)))]));
+                        }
+                        "call" => {
+                            m.insert("Transcript".into(), obj([("TranscriptFileUri", Value::from(format!("https://s3.amazonaws.com/call-analytics/{}.json", name)))]));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some(ok(wrap(v.clone())))
+        }
+        "Delete" => match tr.items.remove(&key) {
+            Some(_) => Some(ok(obj([]))),
+            None => Some(missing()),
+        },
+        "List" => {
+            let contains = Some(s_(&b, "JobNameContains")).filter(|c| !c.is_empty()).unwrap_or_else(|| s_(&b, "NameContains"));
+            let state = [s_(&b, "Status"), s_(&b, "StateEquals"), s_(&b, "StatusEquals")].into_iter().find(|x| !x.is_empty());
+            let items: Vec<Value> = tr
+                .items
+                .iter()
+                .filter(|((k, n), (v, _))| k == kind && n.contains(&contains) && state.as_ref().is_none_or(|st| s_(v, status_field) == *st))
+                .map(|(_, (v, _))| v.clone())
+                .collect();
+            let start: usize = s_(&b, "NextToken").parse().unwrap_or(0);
+            let end = (start + 2).min(items.len());
+            let mut out = ObjectMap::new();
+            out.insert(list_field.into(), Value::Array(items.get(start..end).map(|x| x.to_vec()).unwrap_or_default()));
+            if end < items.len() {
+                out.insert("NextToken".into(), Value::from(end.to_string()));
+            }
+            Some(ok(Value::Object(out)))
         }
         _ => None,
     }
