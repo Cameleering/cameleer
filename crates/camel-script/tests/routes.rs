@@ -263,3 +263,89 @@ fn csimple_and_joor() {
         assert!(names.contains(&n.to_string()), "missing language {}", n);
     }
 }
+
+#[test]
+fn routes_with_new_language_features() {
+    let ctx = common::ctx();
+    ctx.registry().bind("prefix", Value::String("order-".into()));
+    ctx.add_routes(|rb| {
+        rb.from("direct:joor").filter(camel_script::joor("return headerAs(\"amount\", Integer.class) > 100;")).set_body(camel_script::joor("var parts = new ArrayList<String>(); for (String p : ((String) body).split(\",\")) parts.add(p.trim().toUpperCase()); return String.join(\"|\", parts);")).to("mock:joor").end();
+        rb.from("direct:jsasync").set_body(js("async function f(b) { await null; return b + '!'; } f(body)")).set_header("gen", js("function* g() { yield 1; yield 2; } [...g()].length")).to("mock:jsasync");
+        rb.from("direct:groovycls").set_body(groovy("class Order { String id; int qty\n String label() { \"$id x$qty\" } }\nnew Order(id: body, qty: request.headers.qty).label()")).to("mock:groovycls");
+        rb.from("direct:pycls")
+            .set_body(python("class Totals:\n    def __init__(self, items):\n        self.items = items\n    @property\n    def total(self):\n        return sum(self.items)\nTotals([int(x) for x in body.split(',')]).total"))
+            .to("mock:pycls");
+        rb.from("direct:dsself").set_body(datasonnet("local base = {n: payload.n, double: self.n * 2}; base + {n: 10}")).to("mock:dsself");
+        rb.from("direct:spelbean").set_body(spel("#{@prefix + body}")).to("mock:spelbean");
+        rb.from("direct:javascript").process(camel_script::script("java", "message.setHeader(\"upper\", ((String) body).toUpperCase()); message.setBody(body.toString().length());").unwrap()).to("mock:javascript");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+
+    let m = ctx.mock_endpoint("mock:joor").unwrap();
+    m.expected_bodies_received(vec!["A|B"]);
+    send_h(&ctx, "direct:joor", "x", "amount", 5);
+    send_h(&ctx, "direct:joor", "a, b", "amount", 500);
+    m.assert_is_satisfied().unwrap();
+
+    let m = ctx.mock_endpoint("mock:jsasync").unwrap();
+    m.expected_bodies_received(vec!["hey!"]);
+    m.expected_header_received("gen", 2);
+    send(&ctx, "direct:jsasync", "hey");
+    m.assert_is_satisfied().unwrap();
+
+    let m = ctx.mock_endpoint("mock:groovycls").unwrap();
+    m.expected_bodies_received(vec!["A7 x3"]);
+    send_h(&ctx, "direct:groovycls", "A7", "qty", 3);
+    m.assert_is_satisfied().unwrap();
+
+    let m = ctx.mock_endpoint("mock:pycls").unwrap();
+    m.expected_bodies_received(vec![6]);
+    send(&ctx, "direct:pycls", "1,2,3");
+    m.assert_is_satisfied().unwrap();
+
+    let m = ctx.mock_endpoint("mock:dsself").unwrap();
+    m.expected_bodies_received(vec!["{\"double\":20,\"n\":10}"]);
+    send(&ctx, "direct:dsself", r#"{"n": 1}"#);
+    m.assert_is_satisfied().unwrap();
+
+    let m = ctx.mock_endpoint("mock:spelbean").unwrap();
+    m.expected_bodies_received(vec!["order-42"]);
+    send(&ctx, "direct:spelbean", "42");
+    m.assert_is_satisfied().unwrap();
+
+    let m = ctx.mock_endpoint("mock:javascript").unwrap();
+    m.expected_bodies_received(vec![3]);
+    m.expected_header_received("upper", "ABC");
+    send(&ctx, "direct:javascript", "abc");
+    m.assert_is_satisfied().unwrap();
+}
+
+#[test]
+fn yaml_routes_with_java_language() {
+    let ctx = common::ctx();
+    camel_yaml::add_routes_from_yaml(
+        &ctx,
+        r##"
+- from:
+    uri: direct:yjava
+    steps:
+      - filter:
+          joor: "return ((String) body).startsWith(\"ok\");"
+          steps:
+            - setBody:
+                java: "return body.toString().replace(\"ok\", \"OK\");"
+            - script:
+                java: "message.setHeader(\"len\", body.toString().length());"
+            - to: mock:yjava
+"##,
+    )
+    .unwrap();
+    ctx.start().unwrap();
+    let m = ctx.mock_endpoint("mock:yjava").unwrap();
+    m.expected_bodies_received(vec!["OK go"]);
+    m.expected_header_received("len", 5);
+    send(&ctx, "direct:yjava", "skip");
+    send(&ctx, "direct:yjava", "ok go");
+    m.assert_is_satisfied().unwrap();
+}

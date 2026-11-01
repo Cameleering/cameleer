@@ -8,7 +8,6 @@
 
 use std::rc::Rc;
 
-use crate::ast::Dialect;
 use crate::interp::{Ctrl, Interp, R};
 use crate::value::*;
 
@@ -1035,7 +1034,3 @@ pub fn java_static(it: &mut Interp, ns: &str, name: &str, args: Vec<V>, pos: u32
     }))
 }
 
-/// Whether Java semantics apply.
-pub fn is_java(it: &Interp) -> bool {
-    it.d == Dialect::Java
-}

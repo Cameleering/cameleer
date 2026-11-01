@@ -111,13 +111,14 @@ pub enum Status {
 /// The state of a generator / async function activation.
 #[derive(Default)]
 pub struct GenState {
+    /// Keeps the generator function (and the AST its frames point into) alive.
+    #[allow(dead_code)]
     pub func: Option<Rc<Closure>>,
     body: Option<std::sync::Arc<FuncDef>>,
     expr_env: Option<Env>,
     frames: Vec<Frame>,
     pub ctx: YieldCtx,
     pub status: Status,
-    pub is_async: bool,
     /// Async functions: the promise of the result.
     pub promise: Option<V>,
     last: V,
@@ -224,7 +225,7 @@ impl Interp {
     /// Create the generator object for a call of a generator (or async) function whose
     /// parameters are already bound in `scope`.
     pub fn make_generator(&mut self, c: &Rc<Closure>, scope: Env, is_async: bool) -> Internal<GenState> {
-        let mut st = GenState { func: Some(c.clone()), is_async, implicit_return: c.def.implicit_return, ..Default::default() };
+        let mut st = GenState { func: Some(c.clone()), implicit_return: c.def.implicit_return, ..Default::default() };
         st.ctx.is_async = is_async;
         st.ctx.sync_await = c.def.is_async && c.def.generator;
         if let FuncBody::Block(b) = &c.def.body {

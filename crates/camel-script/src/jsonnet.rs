@@ -973,10 +973,18 @@ pub fn std_call(it: &mut Interp, ns: &str, name: &str, args: Vec<V>, pos: u32) -
                 Err(m) => return it.throw("RUNTIME ERROR", m, Some(pos)),
             }
         }
-        "objectFields" | "objectFieldsAll" => V::arr(fields(&a0).into_iter().map(V::string).collect()),
+        "objectFields" => V::arr(fields(&a0).into_iter().map(V::string).collect()),
+        "objectFieldsAll" => match &a0 {
+            V::Obj(o) => V::arr(it.jfields_all(o).into_iter().map(V::string).collect()),
+            _ => V::arr(vec![]),
+        },
         "objectValues" | "objectValuesAll" => {
             let mut out = Vec::new();
-            for k in fields(&a0) {
+            let keys = match (&a0, name.ends_with("All")) {
+                (V::Obj(o), true) => it.jfields_all(o),
+                _ => fields(&a0),
+            };
+            for k in keys {
                 out.push(it.get_member(&a0, &k, pos)?);
             }
             V::arr(out)
@@ -992,7 +1000,10 @@ pub fn std_call(it: &mut Interp, ns: &str, name: &str, args: Vec<V>, pos: u32) -
             }
             V::arr(out)
         }
-        "objectHas" | "objectHasAll" => V::Bool(matches!(&a0, V::Obj(o) if o.borrow().props.contains(&str_arg(it, &args, 1)))),
+        "objectHas" | "objectHasAll" => {
+            let k = str_arg(it, &args, 1);
+            V::Bool(matches!(&a0, V::Obj(o) if it.jhas(o, &k, name == "objectHasAll")))
+        }
         "get" => {
             let k = str_arg(it, &args, 1);
             match &a0 {

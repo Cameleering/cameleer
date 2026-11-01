@@ -144,3 +144,21 @@ fn js_deep_recursion_and_cycles() {
     );
     check_err("js", &ex, &[("function f() { return f(); } f()", "")]);
 }
+
+#[test]
+fn self_referencing_structures_are_freed() {
+    let ctx = ctx();
+    let ex = exchange(&ctx);
+    for (lang, src) in [
+        ("js", "var o = {}; o.self = o; var a = [o]; a.push(a); function F() { this.f = () => this; } var x = new F(); x.me = x; function* g() { yield g; } var it = g(); it.next(); 1"),
+        ("js", "class N { constructor() { this.next = this; } } var m = new Map(); var n = new N(); m.set(n, m); Promise.resolve(n).then(v => v); 1"),
+        ("groovy", "class P { def self }\ndef p = new P()\np.self = p\ndef c\nc = { -> c }\n1"),
+        ("python", "class P:\n    pass\np = P()\np.me = p\nl = []\nl.append(l)\ndef g():\n    yield g\nnext(g())\n1"),
+        ("datasonnet", "local o = {a: self.b, b: 1}; o.a"),
+        ("java", "List<Object> l = new ArrayList<>(); l.add(l); Map<String, Object> m = new HashMap<>(); m.put(\"m\", m); return 1;"),
+    ] {
+        let v = camel_script::eval(lang, src, &ex).unwrap();
+        assert!(v.to_json() == "1" || v.to_json() == "\"1\"", "{} {}", lang, v.to_json());
+        assert_eq!(camel_script::last_evaluation_survivors(), 0, "{}: leaked containers", lang);
+    }
+}

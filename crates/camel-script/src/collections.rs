@@ -5,7 +5,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 
-use crate::interp::{Ctrl, Interp, R};
+use crate::interp::{Interp, R};
 use crate::value::*;
 
 /// A key held weakly (`WeakMap` / `WeakSet`).
@@ -379,7 +379,3 @@ pub fn symbol_key(id: u64, desc: &str) -> String {
     format!("{}{}:{}", SYM_PREFIX, id, desc)
 }
 
-/// The error thrown for an invalid collection use.
-pub fn not_iterable(it: &Interp, what: &str, pos: u32) -> Ctrl {
-    Ctrl::Throw(it.make_error("TypeError", format!("{} is not iterable", what), Some(pos)))
-}

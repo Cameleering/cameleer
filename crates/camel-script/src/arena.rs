@@ -23,6 +23,13 @@ pub struct Arena {
 
 thread_local! {
     static ARENA: RefCell<Option<Arena>> = const { RefCell::new(None) };
+    static SURVIVORS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Containers of the last evaluation on this thread still alive after its teardown (0 unless
+/// something leaked; diagnostics / tests).
+pub fn last_survivors() -> usize {
+    SURVIVORS.with(|s| s.get())
 }
 
 fn with_arena(f: impl FnOnce(&mut Arena)) {
@@ -78,13 +85,6 @@ pub fn put(arena: Option<Arena>) {
     ARENA.with(|a| *a.borrow_mut() = arena);
 }
 
-/// Number of live tracked containers (diagnostics / tests).
-pub fn live() -> usize {
-    let mut n = 0;
-    with_arena(|a| n = a.objs.iter().filter(|w| w.strong_count() > 0).count() + a.arrs.iter().filter(|w| w.strong_count() > 0).count());
-    n
-}
-
 /// Empty every container of the current arena (breaking cycles) and restore `prev`.
 pub fn exit(prev: Option<Arena>) {
     let cur = ARENA.with(|a| std::mem::replace(&mut *a.borrow_mut(), prev));
@@ -129,4 +129,6 @@ pub fn exit(prev: Option<Arena>) {
     drop(protos);
     drop(items);
     drop(homes);
+    let alive = cur.objs.iter().filter(|w| w.strong_count() > 0).count() + cur.arrs.iter().filter(|w| w.strong_count() > 0).count() + cur.funcs.iter().filter(|w| w.strong_count() > 0).count();
+    SURVIVORS.with(|s| s.set(alive));
 }

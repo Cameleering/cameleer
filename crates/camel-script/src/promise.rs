@@ -311,6 +311,11 @@ impl Interp {
         }
     }
 
+    /// Queue a plain callback as a microtask (`queueMicrotask`).
+    pub fn queue_microtask(&mut self, f: V, args: Vec<V>) {
+        self.queues.micro.push_back(Job::Call(f, args));
+    }
+
     /// Run all queued microtasks and timers.
     pub fn drain_jobs(&mut self) -> R<()> {
         loop {

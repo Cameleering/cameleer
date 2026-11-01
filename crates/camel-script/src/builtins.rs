@@ -1521,8 +1521,7 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
             V::Undef
         }
         "queueMicrotask" => {
-            let p = it.promise_resolve(V::Undef)?;
-            it.promise_then(&p, a0, V::Undef, false);
+            it.queue_microtask(a0, vec![]);
             V::Undef
         }
         "next" => {

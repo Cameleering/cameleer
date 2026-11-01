@@ -1175,6 +1175,13 @@ impl Interp {
                         return Ok(v);
                     }
                 }
+                if matches!(o.borrow().kind, ObjKind::Jsonnet(_)) {
+                    // hidden / late-bound DataSonnet method fields
+                    let o = o.clone();
+                    if let Some(f) = self.jfield(&o, name)? {
+                        return self.call(&f, V::Undef, args, pos);
+                    }
+                }
             }
             V::Func(c) if c.flavor == Flavor::Class => {
                 let f = c.props.borrow().get(name).cloned();

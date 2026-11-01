@@ -451,6 +451,14 @@ pub fn datasonnet(text: impl Into<String>) -> ValueBuilder {
     lang("datasonnet", text)
 }
 
+/// Number of script objects of the last evaluation on this thread that survived its teardown
+/// (self-referencing structures are broken up when an evaluation ends; this stays 0 unless
+/// something leaks).
+#[doc(hidden)]
+pub fn last_evaluation_survivors() -> usize {
+    arena::last_survivors()
+}
+
 /// Evaluate a script against an exchange (convenience for tests and tools).
 pub fn eval(language: &str, text: &str, ex: &Exchange) -> Result<Value> {
     Script::compile_named(language, text)?.evaluate_copy(ex)

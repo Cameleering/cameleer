@@ -295,6 +295,7 @@ impl Parser {
                 "if" => return self.parse_if(),
                 "for" => return self.parse_for(),
                 "foreach" if d == Dialect::Mvel => return self.parse_for(),
+                "with" if d == Dialect::Mvel && self.is_p_at(1, "(") => return self.parse_mvel_with(),
                 "while" => {
                     self.next();
                     self.expect_p("(")?;
@@ -724,7 +725,8 @@ impl Parser {
             _ => return false,
         };
         let primitive = matches!(w.as_str(), "int" | "long" | "double" | "float" | "boolean" | "char" | "byte" | "short" | "void");
-        if !primitive && !w.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+        let qualified = matches!(w.as_str(), "java" | "javax") && self.is_p_at(1, ".");
+        if !primitive && !qualified && !w.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
             return false;
         }
         // skip qualified name, generics and array brackets
@@ -1099,6 +1101,44 @@ impl Parser {
             cases.push((test, body));
         }
         Ok(Stmt::Switch(disc, cases))
+    }
+
+    /// MVEL `with (obj) { prop = value, other = value }`: assigns properties of `obj`; the
+    /// statement's value is the object.
+    fn parse_mvel_with(&mut self) -> R<Stmt> {
+        let pos = self.pos();
+        self.next();
+        self.expect_p("(")?;
+        let target = self.parse_expr()?;
+        self.expect_p(")")?;
+        self.expect_p("{")?;
+        let tmp = format!("%with{}", pos);
+        let id = || Expr::Ident(tmp.clone(), pos);
+        let mut stmts = vec![Stmt::Var(VarKind::Let, vec![(Pat::Id(tmp.clone()), Some(target))])];
+        while !self.eat_p("}") {
+            if self.at_eof() {
+                return self.err("unterminated with block");
+            }
+            if self.eat_p(",") || self.eat_p(";") {
+                continue;
+            }
+            let mpos = self.pos();
+            let name = self.ident()?;
+            let op = if self.eat_p("=") {
+                None
+            } else if self.eat_p("+=") {
+                Some(AssignOp::Bin(BinOp::Add))
+            } else if self.eat_p("-=") {
+                Some(AssignOp::Bin(BinOp::Sub))
+            } else {
+                return self.err(format!("expected '=' in with block but found {}", describe(self.peek())));
+            };
+            let value = self.parse_assign()?;
+            let target = Pat::Target(Expr::Member { obj: Box::new(id()), name, optional: false, pos: mpos });
+            stmts.push(Stmt::Expr(Expr::Assign { op, target: Box::new(target), value: Box::new(value), pos: mpos }));
+        }
+        stmts.push(Stmt::Expr(id()));
+        Ok(Stmt::Block(stmts))
     }
 
     // ------------------------------------------------------------------ Java
@@ -2250,6 +2290,21 @@ impl Parser {
                 }
                 self.expect_p("}")?;
                 Ok(Expr::Object(props))
+            }
+            T::P("@") if d == Dialect::Ognl && matches!(self.peek_at(1), T::Ident(_)) => {
+                // static member access `@java.lang.Math@max(1, 2)`, `@Integer@MAX_VALUE`
+                self.next();
+                let cls = self.qualified_name()?;
+                self.expect_p("@")?;
+                let mpos = self.pos();
+                let name = self.ident()?;
+                let simple = cls.rsplit('.').next().unwrap_or(&cls).to_string();
+                let member = Expr::Member { obj: Box::new(Expr::Type(simple)), name, optional: false, pos: mpos };
+                if self.is_p("(") {
+                    let args = self.parse_args()?;
+                    return Ok(Expr::Call { callee: Box::new(member), args, optional: false, pos });
+                }
+                Ok(member)
             }
             T::P("@") if d == Dialect::Spel => {
                 self.next();
