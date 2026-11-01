@@ -16,7 +16,12 @@ provided by the from-scratch `camel-tls` crate and is wired into every network c
 Besides the embedded test servers, these components are verified end-to-end against real,
 independent server software by the opt-in live suite (`CAMEL_LIVE_INTEROP=1`, servers set up by
 `scripts/live-interop.sh`); details, broker limitations and the bugs it found are in
-[INTEROP.md](INTEROP.md).
+[INTEROP.md](INTEROP.md). The emulator-only areas (embedded Kafka broker and datastores, the
+AWS / Azure / GCP mocks, the Azure flavour of the AMQP 1.0 broker) and the TLS, HTTP/2 and gRPC
+stacks are additionally driven by officially published clients (librdkafka, pymongo, the
+DataStax driver, elasticsearch-py, redis-py, boto3, the Azure SDK for Python, gcloud / gsutil /
+bq, grpcio, Go's crypto/tls and net/http) in the opt-in `CAMEL_OFFICIAL_CLIENTS=1` suite
+(`scripts/official-clients.sh`); see "Official clients" in [INTEROP.md](INTEROP.md).
 
 | Components | Interop verified against |
 |---|---|
