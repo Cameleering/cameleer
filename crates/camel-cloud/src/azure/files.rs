@@ -20,10 +20,15 @@
 //! * `getFileProperties`: headers as for download, body unchanged.
 //! * `deleteFile`.
 //!
-//! Consumer: polls the files of `directoryName` (share root by default; directories are not
-//! descended), downloading each into an exchange (body = bytes, `CamelAzureStorageFilesFileName`,
-//! `CamelFileName`); `delete=true` removes processed files, otherwise files already delivered
-//! (same name and ETag) are skipped. `maxMessagesPerPoll` limits the batch.
+//! Consumer: polls the files of `directoryName` (share root by default), downloading each into
+//! an exchange (body = bytes, `CamelAzureStorageFilesFileName`, `CamelFileName`); `delete=true`
+//! removes processed files, otherwise files already delivered (same name and ETag) are skipped.
+//! `maxMessagesPerPoll` limits the batch.
+//!
+//! Camel `azure-files` (FTP-like remote file) semantics — recursion, include / exclude,
+//! `noop` + idempotent repositories, `move` / `moveFailed` / `preMove` renames, `fileExist`,
+//! `tempPrefix`, `autoCreate`, `flatten` and the `renameFile` operation: see
+//! [`super::files_ftp`].
 
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -69,6 +74,7 @@ pub struct FilesService {
     pub max_messages_per_poll: i64,
     pub scheduler: ScheduledPollConfig,
     seen: Mutex<HashSet<(String, String)>>,
+    pub ftp: super::files_ftp::FtpOptions,
 }
 
 /// Factory for the component.
@@ -88,12 +94,13 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         prefix: o.get("prefix"),
         delete: o.bool("delete", false)?,
         max_messages_per_poll: o.i64("maxMessagesPerPoll", 10)?,
+        ftp: super::files_ftp::FtpOptions::from_opts(o)?,
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
         seen: Mutex::new(HashSet::new()),
     }))
 }
 
-fn join(dir: Option<&str>, name: &str) -> String {
+pub(crate) fn join(dir: Option<&str>, name: &str) -> String {
     match dir.map(|d| d.trim_matches('/')).filter(|d| !d.is_empty()) {
         Some(d) => format!("{}/{}", d, name.trim_start_matches('/')),
         None => name.trim_start_matches('/').to_string(),
@@ -101,13 +108,13 @@ fn join(dir: Option<&str>, name: &str) -> String {
 }
 
 impl FilesService {
-    fn share_of(&self, ex: Option<&Exchange>) -> Result<String> {
+    pub(crate) fn share_of(&self, ex: Option<&Exchange>) -> Result<String> {
         ex.and_then(|e| header_str(e, headers::SHARE_NAME))
             .or_else(|| Some(self.share.clone()).filter(|s| !s.is_empty()))
             .ok_or_else(|| CamelError::illegal_argument("A share is required: azure-storage-files://account/share or CamelAzureStorageFilesShareName"))
     }
 
-    fn send(&self, method: &str, path: &str, query: &str, headers: &[(&str, String)], body: Vec<u8>) -> Result<Response> {
+    pub(crate) fn send(&self, method: &str, path: &str, query: &str, headers: &[(&str, String)], body: Vec<u8>) -> Result<Response> {
         let mut req = Request::new(method, self.azure.url("file", &uri_encode(path, true), query)?);
         for (k, v) in headers {
             req.set_header(k, v.clone());
@@ -164,7 +171,7 @@ impl FilesService {
         Ok(etag)
     }
 
-    fn file_headers(ex: &mut Exchange, r: &Response) {
+    pub(crate) fn file_headers(ex: &mut Exchange, r: &Response) {
         if let Some(l) = r.header("Content-Length").and_then(|l| l.parse::<i64>().ok()) {
             ex.set_header(headers::CONTENT_LENGTH, l);
         }
@@ -175,7 +182,7 @@ impl FilesService {
         }
     }
 
-    fn file_path(&self, ex: &Exchange) -> Result<String> {
+    pub(crate) fn file_path(&self, ex: &Exchange) -> Result<String> {
         let name = header_str(ex, headers::FILE_NAME)
             .or_else(|| self.file_name.clone())
             .or_else(|| header_str(ex, "CamelFileName"))
@@ -223,10 +230,10 @@ impl CloudService for FilesService {
                 self.send("DELETE", &p, "restype=directory", &[], Vec::new())?;
             }
             "uploadFile" => {
-                let share = self.share_of(Some(ex))?;
-                let path = self.file_path(ex)?;
-                let etag = self.upload(&share, &path, &ex.body().to_bytes(), header_str(ex, headers::CONTENT_TYPE))?;
-                ex.set_header(headers::ETAG, etag);
+                self.upload_ftp(ex)?;
+            }
+            "renameFile" => {
+                self.rename_op(ex)?;
             }
             "downloadFile" => {
                 let p = join(Some(&self.share_of(Some(ex))?), &self.file_path(ex)?);
@@ -253,6 +260,9 @@ impl CloudService for FilesService {
     }
 
     fn poll(&self, ctx: Option<CamelContext>, processor: &dyn Processor, logger: &str) -> Result<usize> {
+        if self.ftp.enabled() {
+            return self.poll_ftp(ctx, processor, logger);
+        }
         let share = self.share_of(None)?;
         let dir = self.directory.clone();
         let files: Vec<String> = self

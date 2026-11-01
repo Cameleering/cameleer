@@ -27,6 +27,7 @@ pub mod datalake;
 pub mod datalake_ops;
 pub mod eventgrid;
 pub mod files;
+pub mod files_ftp;
 pub mod functions;
 pub mod keyvault;
 pub mod keyvault_refresh;

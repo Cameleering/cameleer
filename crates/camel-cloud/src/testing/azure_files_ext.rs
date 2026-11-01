@@ -140,6 +140,40 @@ pub(super) fn file_op(st: &Shared, req: &ServerRequest, rest: &str) -> Response 
         };
     }
     match (req.method.as_str(), comp.as_deref()) {
+        ("PUT", Some("rename")) => {
+            // Rename File: x-ms-file-rename-source is the source URL in the same share
+            let Some(src) = req.header("x-ms-file-rename-source") else { return error(400, "MissingRequiredHeader", "x-ms-file-rename-source is required") };
+            let Ok(url) = crate::http::Url::parse(src) else { return error(400, "InvalidHeaderValue", "Invalid x-ms-file-rename-source") };
+            let src_path = crate::util::percent_decode(&url.path, false);
+            let mut parts = src_path.trim_matches('/').splitn(3, '/');
+            let (_account, src_share, src_file) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""), parts.next().unwrap_or("").to_string());
+            if src_share != share {
+                return error(400, "InvalidHeaderValue", "The rename source must be in the same share.");
+            }
+            if !sh.files.contains_key(&src_file) {
+                return error(404, "ResourceNotFound", "The specified resource does not exist.");
+            }
+            if !parent_exists(sh, &path) {
+                return error(404, "ParentNotFound", "The specified parent path does not exist.");
+            }
+            if sh.files.contains_key(&path) && req.header("x-ms-file-rename-replace-if-exists") != Some("true") {
+                return error(409, "ResourceAlreadyExists", "The specified resource already exists.");
+            }
+            let mut f = sh.files.remove(&src_file).expect("checked");
+            f.etag = etag();
+            let e = f.etag.clone();
+            sh.files.insert(path, f);
+            Response::new(200).with_header("ETag", e)
+        }
+        ("PUT", Some("properties")) => {
+            let Some(f) = sh.files.get_mut(&path) else { return error(404, "ResourceNotFound", "The specified resource does not exist.") };
+            if let Some(len) = req.header("x-ms-content-length").and_then(|l| l.parse::<usize>().ok()) {
+                f.data.resize(len, 0);
+            }
+            f.etag = etag();
+            f.last_modified = now_secs();
+            Response::new(200).with_header("ETag", f.etag.clone())
+        }
         ("PUT", Some("range")) => {
             let Some(f) = sh.files.get_mut(&path) else { return error(404, "ResourceNotFound", "The specified resource does not exist.") };
             let range = req.header("x-ms-range").or_else(|| req.header("Range")).unwrap_or("");

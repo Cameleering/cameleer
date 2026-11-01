@@ -414,3 +414,81 @@ fn cosmosdb_throughput_identity_options_and_lease_container() {
     assert_eq!(seen.lock().unwrap().len(), 13, "nothing re-delivered");
     h1.stop().unwrap();
 }
+
+#[test]
+fn azure_files_ftp_like_semantics() {
+    let az = AzuriteMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let f = |op: &str, extra: &str| format!("azure-storage-files://{}/share?operation={}{}&{}", ACCOUNT, op, extra, az.files_options());
+    req(&t, &f("createShare", ""), "", &[]);
+    // producer: sub-directories auto-created from CamelFileName, fileExist modes, tempPrefix
+    req(&t, &f("uploadFile", "&directoryName=in"), "one", &[("CamelFileName", Value::from("a/b/one.txt"))]);
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in/a/b&fileName=one.txt"), "", &[]).body()), "one");
+    req(&t, &f("uploadFile", "&directoryName=in&fileExist=Append"), "+more", &[("CamelFileName", Value::from("a/b/one.txt"))]);
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in/a/b&fileName=one.txt"), "", &[]).body()), "one+more");
+    let e = call(&t, &f("uploadFile", "&directoryName=in&fileExist=Fail"), "x", &[("CamelFileName", Value::from("a/b/one.txt"))]).unwrap_err();
+    assert!(e.message.contains("already exist"), "{}", e);
+    req(&t, &f("uploadFile", "&directoryName=in&fileExist=Ignore"), "x", &[("CamelFileName", Value::from("a/b/one.txt"))]);
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in/a/b&fileName=one.txt"), "", &[]).body()), "one+more");
+    req(&t, &f("uploadFile", "&directoryName=in&fileExist=Move&moveExisting=old"), "new", &[("CamelFileName", Value::from("a/b/one.txt"))]);
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in/a/b/old&fileName=one.txt"), "", &[]).body()), "one+more");
+    req(&t, &f("uploadFile", "&directoryName=in&tempPrefix=.inprogress-"), "two", &[("CamelFileName", Value::from("two.txt"))]);
+    let names: Vec<String> = req(&t, &f("listDirectoriesAndFiles", "&directoryName=in"), "", &[]).body().as_array().unwrap().iter().map(|e| s(e.get("name").unwrap())).collect();
+    assert!(names.contains(&"two.txt".to_string()) && !names.iter().any(|n| n.starts_with(".inprogress")), "{:?}", names);
+    req(&t, &f("uploadFile", "&directoryName=in&flatten=true"), "flat", &[("CamelFileName", Value::from("x/y/flat.csv"))]);
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in&fileName=flat.csv"), "", &[]).body()), "flat");
+    req(&t, &f("renameFile", "&directoryName=in&fileName=flat.csv"), "", &[("CamelAzureStorageFilesRenameTo", Value::from("archive/flat-renamed.csv"))]);
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=archive&fileName=flat-renamed.csv"), "", &[]).body()), "flat");
+    // consumer: recursive + include/exclude + move / moveFailed
+    let from = format!("azure-storage-files://{}/share?directoryName=in&recursive=true&include=RAW(.*\\.txt)&exclude=RAW(bad.*)&move=.done&moveFailed=/failed&delay=50&initialDelay=0&{}", ACCOUNT, az.files_options());
+    req(&t, &f("uploadFile", "&directoryName=in"), "boom", &[("CamelFileName", Value::from("a/fail.txt"))]);
+    req(&t, &f("uploadFile", "&directoryName=in"), "skip", &[("CamelFileName", Value::from("a/bad.txt"))]);
+    ctx.add_routes(move |r| {
+        r.from(&from).process(|ex: &mut Exchange| {
+            if s(ex.body()) == "boom" {
+                return Err(CamelError::illegal_state("boom"));
+            }
+            Ok(())
+        })
+        .to("mock:files");
+    })
+    .unwrap();
+    let m = ctx.mock_endpoint("mock:files").unwrap();
+    ctx.start().unwrap();
+    let wait = |f: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !f() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        f()
+    };
+    assert!(wait(&|| m.received_exchanges().len() >= 3));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let mut got: Vec<String> = m.received_exchanges().iter().map(|e| s(e.header("CamelFileName").unwrap())).collect();
+    got.sort();
+    // one.txt (new), old/one.txt and two.txt; flat.csv excluded by include, bad.txt excluded, fail.txt failed
+    assert_eq!(got, vec!["a/b/old/one.txt", "a/b/one.txt", "two.txt"]);
+    ctx.stop().unwrap();
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in/a/b/.done&fileName=one.txt"), "", &[]).body()), "new");
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in/.done&fileName=two.txt"), "", &[]).body()), "two");
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=failed&fileName=fail.txt"), "", &[]).body()), "boom");
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=in/a&fileName=bad.txt"), "", &[]).body()), "skip");
+    // noop + idempotent repository: files stay, consumed once (a shared repository bean)
+    let ctx2 = context();
+    let repo: std::sync::Arc<dyn camel_core::component::file::IdempotentRepository> = std::sync::Arc::new(camel_core::component::file::MemoryIdempotentRepository::default());
+    ctx2.registry().bind("repo", repo.clone());
+    let from = format!("azure-storage-files://{}/share?directoryName=archive&noop=true&idempotentRepository=#repo&delay=30&initialDelay=0&{}", ACCOUNT, az.files_options());
+    ctx2.add_routes(move |r| {
+        r.from(&from).to("mock:noop");
+    })
+    .unwrap();
+    let m2 = ctx2.mock_endpoint("mock:noop").unwrap();
+    ctx2.start().unwrap();
+    assert!(wait(&|| m2.received_exchanges().len() == 1));
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert_eq!(m2.received_exchanges().len(), 1, "consumed once");
+    assert!(repo.contains("flat-renamed.csv"));
+    ctx2.stop().unwrap();
+    assert_eq!(s(req(&t, &f("downloadFile", "&directoryName=archive&fileName=flat-renamed.csv"), "", &[]).body()), "flat", "noop leaves the file");
+}
