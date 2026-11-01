@@ -355,32 +355,11 @@ impl ProcessorDefinition for LogDefinition {
 // convertBodyTo / convertHeaderTo
 // ---------------------------------------------------------------------------
 
-/// Convert a value to a named target type.
-/// Supported: String, string, int/Integer/Long/i64, double/Double/float/f64, boolean/Boolean,
-/// bytes/byte[], json (parse string to structured value), Map/List (parse json).
+/// Convert a value to a named target type with the built-in converters (mandatory: an
+/// unknown target type is a `NoTypeConversionAvailableException`). See
+/// [`crate::typeconverter`]; routes use their context's registry.
 pub fn convert_to_type(v: &Value, type_name: &str) -> Result<Value> {
-    let t = type_name.rsplit('.').next().unwrap_or(type_name);
-    Ok(match t {
-        "String" | "string" | "str" => Value::String(v.to_string()),
-        "Integer" | "int" | "Long" | "long" | "i64" | "i32" | "Short" | "short" | "integer" => {
-            Value::Int(v.convert::<i64>()?)
-        }
-        "Double" | "double" | "Float" | "float" | "f64" | "f32" | "BigDecimal" | "Number" => Value::Float(v.convert::<f64>()?),
-        "Boolean" | "boolean" | "bool" => Value::Bool(v.convert::<bool>()?),
-        "byte[]" | "bytes" | "Bytes" | "InputStream" | "Vec<u8>" => Value::Bytes(v.to_bytes()),
-        "Map" | "HashMap" | "LinkedHashMap" | "List" | "ArrayList" | "json" | "Json" | "JsonNode" | "Object" | "object"
-        | "array" => match v {
-            Value::Object(_) | Value::Array(_) => v.clone(),
-            other if t == "Object" => other.clone(),
-            other => crate::json::parse(&other.to_string())?,
-        },
-        other => {
-            return Err(CamelError::new(
-                crate::error::kinds::NO_TYPE_CONVERSION_AVAILABLE,
-                format!("No type converter available to convert from type: {} to the required type: {}", v.type_name(), other),
-            ))
-        }
-    })
+    crate::typeconverter::default_registry().convert(type_name, v, None)
 }
 
 pub struct ConvertDefinition {
@@ -412,11 +391,12 @@ impl ProcessorDefinition for ConvertDefinition {
                     if ex.message.body.is_null() && !mandatory {
                         return Ok(());
                     }
-                    ex.message.body = convert_to_type(&ex.message.body, &t)?;
+                    ex.message.body = crate::typeconverter::registry_for(Some(ex)).convert(&t, &ex.message.body, Some(ex))?;
                 }
                 Some(h) => {
                     if let Some(v) = ex.message.headers.get(h).cloned() {
-                        ex.message.headers.set(h.clone(), convert_to_type(&v, &t)?);
+                        let c = crate::typeconverter::registry_for(Some(ex)).convert(&t, &v, Some(ex))?;
+                        ex.message.headers.set(h.clone(), c);
                     } else if mandatory {
                         return Err(CamelError::new(crate::error::kinds::NO_SUCH_HEADER, format!("No '{}' header available", h)));
                     }

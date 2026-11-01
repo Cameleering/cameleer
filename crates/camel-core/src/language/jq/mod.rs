@@ -168,7 +168,7 @@ impl Expression for JqExpression {
         let input = super::jsonpath::source_value(ex, &self.options);
         let v = self.jq.evaluate_with(&input, Some(ex))?;
         match self.options.get("resultType").filter(|t| !t.is_empty()) {
-            Some(t) => super::support::convert_to_type(&v, t),
+            Some(t) => super::support::convert_to_type_ex(Some(ex), &v, t),
             None => Ok(v),
         }
     }

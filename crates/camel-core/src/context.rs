@@ -477,6 +477,7 @@ pub(crate) struct ContextInner {
     services: RwLock<Vec<Arc<dyn Service>>>,
     global_options: RwLock<BTreeMap<String, String>>,
     startup_failure_handler: RwLock<Option<Arc<dyn RouteStartupFailureHandler>>>,
+    type_converter: Arc<crate::typeconverter::TypeConverterRegistry>,
 }
 
 /// The Camel context. Cheap to clone (shared handle).
@@ -540,6 +541,7 @@ impl CamelContext {
                 services: RwLock::new(Vec::new()),
                 global_options: RwLock::new(BTreeMap::new()),
                 startup_failure_handler: RwLock::new(None),
+                type_converter: Arc::new(crate::typeconverter::TypeConverterRegistry::new()),
             }),
         };
         crate::component::register_builtin_components(&ctx);
@@ -558,6 +560,11 @@ impl CamelContext {
 
     pub fn status(&self) -> ServiceStatus {
         *self.inner.status.read().unwrap()
+    }
+
+    /// The type converter registry (Camel `getTypeConverterRegistry()`).
+    pub fn type_converter(&self) -> Arc<crate::typeconverter::TypeConverterRegistry> {
+        self.inner.type_converter.clone()
     }
 
     pub fn is_started(&self) -> bool {
