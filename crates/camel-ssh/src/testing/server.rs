@@ -42,6 +42,9 @@ pub struct SshServerConfig {
     pub keyboard_interactive: bool,
     /// Replaces the built-in commands.
     pub command_handler: Option<CommandHandler>,
+    /// CA keys whose user certificates are accepted (`TrustedUserCAKeys`); the user name must
+    /// be a principal of the certificate.
+    pub trusted_user_ca_keys: Vec<SshPublicKey>,
 }
 
 impl Default for SshServerConfig {
@@ -55,6 +58,7 @@ impl Default for SshServerConfig {
             banner: None,
             keyboard_interactive: true,
             command_handler: None,
+            trusted_user_ca_keys: Vec::new(),
         }
     }
 }
@@ -353,11 +357,26 @@ fn authenticate(t: &mut Transport<TcpStream>, sh: &Shared) -> SshResult<()> {
                 let has_sig = r.bool()?;
                 let alg = r.str()?;
                 let blob = r.string()?.to_vec();
-                let key = SshPublicKey::from_blob(&blob).ok();
-                let allowed = key
-                    .as_ref()
-                    .map(|k| k.supports_algorithm(&alg) && sh.cfg.authorized_keys.get(&user).map(|l| l.contains(k)).unwrap_or(false))
-                    .unwrap_or(false);
+                // user certificate: trusted CA, user principal, validity; signed by the key
+                let (key, sig_alg, allowed) = match crate::cert::plain_algorithm(&alg) {
+                    Some(plain) => match crate::cert::SshCertificate::from_blob(&blob) {
+                        Ok(c) => {
+                            let ok = c.key.supports_algorithm(plain)
+                                && sh.cfg.trusted_user_ca_keys.contains(&c.signature_key)
+                                && c.validate(crate::cert::USER_CERT, &user, crate::cert::now_secs()).is_ok();
+                            (Some(c.key.clone()), plain.to_string(), ok)
+                        }
+                        Err(_) => (None, plain.to_string(), false),
+                    },
+                    None => {
+                        let key = SshPublicKey::from_blob(&blob).ok();
+                        let allowed = key
+                            .as_ref()
+                            .map(|k| k.supports_algorithm(&alg) && sh.cfg.authorized_keys.get(&user).map(|l| l.contains(k)).unwrap_or(false))
+                            .unwrap_or(false);
+                        (key, alg.clone(), allowed)
+                    }
+                };
                 if !has_sig {
                     if allowed {
                         t.send(&Writer::msg(msg::USERAUTH_60).str(&alg).string(&blob).finish())?;
@@ -369,7 +388,7 @@ fn authenticate(t: &mut Transport<TcpStream>, sh: &Shared) -> SshResult<()> {
                     let mut data = Writer::new();
                     data.string(t.session_id());
                     data.u8(msg::USERAUTH_REQUEST).str(&user).str("ssh-connection").str("publickey").bool(true).str(&alg).string(&blob);
-                    allowed && key.map(|k| k.verify(&alg, &data.buf, &sig)).unwrap_or(false)
+                    allowed && key.map(|k| k.verify(&sig_alg, &data.buf, &sig)).unwrap_or(false)
                 }
             }
             "keyboard-interactive" if sh.cfg.keyboard_interactive => {

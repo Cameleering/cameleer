@@ -35,6 +35,8 @@ pub struct ClientConfig {
     pub username: String,
     pub password: Option<String>,
     pub private_keys: Vec<SshPrivateKey>,
+    /// OpenSSH user certificates for keys in `private_keys` (tried before the plain key).
+    pub certificates: Vec<crate::cert::SshCertificate>,
     /// SSH agent socket whose identities are tried after `private_keys`.
     pub agent: Option<std::path::PathBuf>,
     pub host_key_check: HostKeyCheck,
@@ -59,6 +61,7 @@ impl ClientConfig {
             username: username.to_string(),
             password: None,
             private_keys: Vec::new(),
+            certificates: Vec::new(),
             agent: None,
             host_key_check: HostKeyCheck::AcceptAny,
             transport: TransportConfig::default(),
@@ -137,7 +140,13 @@ fn connect_tcp(host: &str, port: u16, timeout: Duration) -> SshResult<TcpStream>
 }
 
 fn verifier(check: HostKeyCheck, host: String, port: u16) -> HostKeyVerifier {
-    Box::new(move |key: &SshPublicKey| match &check {
+    Box::new(move |key: &SshPublicKey, cert: Option<&crate::cert::SshCertificate>| match &check {
+        HostKeyCheck::KnownHosts { known, strict } if cert.is_some() => match known.check_certificate(&host, port, cert.unwrap()) {
+            HostKeyStatus::Trusted => Ok(()),
+            HostKeyStatus::Revoked => Err(SshError::HostKey(format!("the host certificate of {} is revoked", host))),
+            _ if !strict && !known.has_cert_authority(&host, port) => Ok(()),
+            _ => Err(SshError::HostKey(format!("the host certificate of {} is not signed by a trusted @cert-authority (or invalid for this host / time)", host))),
+        },
         HostKeyCheck::AcceptAny => Ok(()),
         HostKeyCheck::Fingerprints(list) => {
             let fp = key.fingerprint();
@@ -174,8 +183,21 @@ impl SshClient {
         tcp.set_read_timeout(cfg.timeout)?;
         tcp.set_write_timeout(cfg.timeout)?;
         let _ = tcp.set_nodelay(true);
-        let t = Transport::client(tcp, cfg.transport.clone(), verifier(cfg.host_key_check.clone(), cfg.host.clone(), cfg.port))?;
-        let host_key = SshPublicKey::from_blob(t.host_key_blob().unwrap_or_default())?;
+        let mut tcfg = cfg.transport.clone();
+        // with @cert-authority entries for the host, prefer host certificates (like OpenSSH)
+        if let HostKeyCheck::KnownHosts { known, .. } = &cfg.host_key_check {
+            if known.has_cert_authority(&cfg.host, cfg.port) && !tcfg.algorithms.host_key.iter().any(|a| crate::cert::is_cert_algorithm(a)) {
+                let mut algs: Vec<String> = crate::cert::CERT_ALGORITHMS.iter().map(|s| s.to_string()).collect();
+                algs.extend(tcfg.algorithms.host_key.iter().cloned());
+                tcfg.algorithms.host_key = algs;
+            }
+        }
+        let t = Transport::client(tcp, tcfg, verifier(cfg.host_key_check.clone(), cfg.host.clone(), cfg.port))?;
+        let blob = t.host_key_blob().unwrap_or_default();
+        let host_key = match crate::cert::SshCertificate::from_blob(blob) {
+            Ok(c) => c.key,
+            Err(_) => SshPublicKey::from_blob(blob)?,
+        };
         let mut c = SshClient {
             t,
             channels: HashMap::new(),
@@ -280,6 +302,13 @@ impl SshClient {
                     tried.push("publickey");
                     let mut ok = false;
                     for key in &cfg.private_keys {
+                        let pk = key.public_key();
+                        if let Some(c) = cfg.certificates.iter().find(|c| c.key == pk) {
+                            if self.auth_publickey_with(&user, key, Some(c), &mut allowed)? {
+                                ok = true;
+                                break;
+                            }
+                        }
                         if self.auth_publickey(&user, key, &mut allowed)? {
                             ok = true;
                             break;
@@ -335,7 +364,32 @@ impl SshClient {
     }
 
     fn auth_publickey(&mut self, user: &str, key: &SshPrivateKey, allowed: &mut Vec<String>) -> SshResult<bool> {
+        self.auth_publickey_with(user, key, None, allowed)
+    }
+
+    /// Public key authentication with the plain key or, given `cert`, with the certificate
+    /// (algorithm `*-cert-v01@openssh.com`, signed by the certified key).
+    fn auth_publickey_with(&mut self, user: &str, key: &SshPrivateKey, cert: Option<&crate::cert::SshCertificate>, allowed: &mut Vec<String>) -> SshResult<bool> {
         let public = key.public_key();
+        if let Some(c) = cert {
+            let plain = match &public {
+                SshPublicKey::Rsa { .. } => match self.t.server_sig_algs() {
+                    Some(algs) if algs.iter().any(|a| a == "rsa-sha2-512") => "rsa-sha2-512",
+                    _ => "rsa-sha2-256",
+                },
+                other => other.signature_algorithms()[0],
+            };
+            let alg = format!("{}-cert-v01@openssh.com", plain);
+            let mut data = Writer::new();
+            data.string(self.t.session_id());
+            data.u8(msg::USERAUTH_REQUEST).str(user).str("ssh-connection").str("publickey").bool(true).str(&alg).string(&c.blob);
+            let sig = key.sign(plain, &data.buf)?;
+            let mut w = self.auth_request(user, "publickey");
+            w.bool(true).str(&alg).string(&c.blob).string(&sig);
+            self.t.send(&w.finish())?;
+            let p = self.recv_auth()?;
+            return Self::auth_outcome(&p, allowed);
+        }
         let alg = match &public {
             SshPublicKey::Rsa { .. } => match self.t.server_sig_algs() {
                 Some(algs) if algs.iter().any(|a| a == "rsa-sha2-512") => "rsa-sha2-512",

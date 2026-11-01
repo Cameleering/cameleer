@@ -54,6 +54,7 @@
 //! compression and GSSAPI are not supported.
 
 pub mod agent;
+pub mod cert;
 pub mod client;
 pub mod component;
 pub mod crypto;

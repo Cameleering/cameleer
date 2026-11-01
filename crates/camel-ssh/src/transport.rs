@@ -156,8 +156,10 @@ impl Stream for TcpStream {
     }
 }
 
-/// Callback deciding whether a server host key is acceptable (client role).
-pub type HostKeyVerifier = Box<dyn FnMut(&SshPublicKey) -> SshResult<()> + Send>;
+/// Callback deciding whether a server host key is acceptable (client role); the second
+/// argument is the host certificate when the server presented one (its CA signature is not
+/// checked yet: that is the verifier's job, e.g. against `@cert-authority` entries).
+pub type HostKeyVerifier = Box<dyn FnMut(&SshPublicKey, Option<&crate::cert::SshCertificate>) -> SshResult<()> + Send>;
 
 /// Transport configuration.
 #[derive(Clone, Debug)]
@@ -169,11 +171,14 @@ pub struct TransportConfig {
     pub software_version: String,
     /// Compression preference (`none`, `zlib@openssh.com`, `zlib`), default `none` only.
     pub compression: Vec<String>,
+    /// Server role: host certificates (offered as `*-cert-v01@openssh.com` host key
+    /// algorithms for the host keys they certify).
+    pub host_certificates: Vec<crate::cert::SshCertificate>,
 }
 
 impl Default for TransportConfig {
     fn default() -> Self {
-        TransportConfig { algorithms: Algorithms::default(), rekey_limit: 1 << 30, software_version: "CamelSSH_1.0".into(), compression: vec!["none".into()] }
+        TransportConfig { algorithms: Algorithms::default(), rekey_limit: 1 << 30, software_version: "CamelSSH_1.0".into(), compression: vec!["none".into()], host_certificates: Vec::new() }
     }
 }
 
@@ -763,7 +768,18 @@ impl<S: Stream> Transport<S> {
                 if first {
                     kex.push(STRICT_S.into());
                 }
-                a.host_key.iter().filter(|alg| keys.iter().any(|k| k.public_key().supports_algorithm(alg))).cloned().collect()
+                let mut algs: Vec<String> = Vec::new();
+                for c in &self.cfg.host_certificates {
+                    if keys.iter().any(|k| k.public_key() == c.key) {
+                        for alg in c.algorithms() {
+                            if !algs.contains(&alg) {
+                                algs.push(alg);
+                            }
+                        }
+                    }
+                }
+                algs.extend(a.host_key.iter().filter(|alg| keys.iter().any(|k| k.public_key().supports_algorithm(alg))).cloned());
+                algs
             }
         };
         w.name_list(&kex).name_list(&host_keys);
@@ -937,16 +953,22 @@ impl<S: Stream> Transport<S> {
         let shared = shared_secret(&n.kex, &secret, &q_s)?;
         let k_mp = mpint_bytes(&shared);
         let h = Self::exchange_hash(&self.v_local, &self.v_remote, i_c, i_s, &k_s, &q_c, &q_s, &k_mp);
-        let key = SshPublicKey::from_blob(&k_s).map_err(|e| SshError::HostKey(e.to_string()))?;
-        if !key.supports_algorithm(&n.host_key) {
+        let (key, cert, alg) = match crate::cert::plain_algorithm(&n.host_key) {
+            Some(plain) => {
+                let c = crate::cert::SshCertificate::from_blob(&k_s).map_err(|e| SshError::HostKey(e.to_string()))?;
+                (c.key.clone(), Some(c), plain.to_string())
+            }
+            None => (SshPublicKey::from_blob(&k_s).map_err(|e| SshError::HostKey(e.to_string()))?, None, n.host_key.clone()),
+        };
+        if !key.supports_algorithm(&alg) {
             return Err(SshError::HostKey(format!("server sent a {} key for algorithm {}", key.key_type(), n.host_key)));
         }
-        if !key.verify(&n.host_key, &h, &sig) {
+        if !key.verify(&alg, &h, &sig) {
             return Err(SshError::HostKey("invalid host key signature over the exchange hash".into()));
         }
         if first {
             if let Role::Client(verifier) = &mut self.role {
-                verifier(&key)?;
+                verifier(&key, cert.as_ref())?;
             }
             self.host_key_blob = Some(k_s);
         } else if self.host_key_blob.as_deref() != Some(&k_s[..]) {
@@ -967,14 +989,20 @@ impl<S: Stream> Transport<S> {
         let (secret, q_s) = ephemeral(&n.kex);
         let shared = shared_secret(&n.kex, &secret, &q_c)?;
         let k_mp = mpint_bytes(&shared);
+        let plain = crate::cert::plain_algorithm(&n.host_key).unwrap_or(&n.host_key).to_string();
         let host_key = match &self.role {
-            Role::Server(keys) => keys.iter().find(|k| k.public_key().supports_algorithm(&n.host_key)).cloned(),
+            Role::Server(keys) => keys.iter().find(|k| k.public_key().supports_algorithm(&plain)).cloned(),
             Role::Client(_) => None,
         }
         .ok_or_else(|| SshError::Negotiation("no host key for the negotiated algorithm".into()))?;
-        let k_s = host_key.public_key().to_blob();
+        let k_s = if plain != n.host_key {
+            let pk = host_key.public_key();
+            self.cfg.host_certificates.iter().find(|c| c.key == pk).map(|c| c.blob.clone()).ok_or_else(|| SshError::Negotiation("no host certificate for the negotiated algorithm".into()))?
+        } else {
+            host_key.public_key().to_blob()
+        };
         let h = Self::exchange_hash(&self.v_remote, &self.v_local, i_c, i_s, &k_s, &q_c, &q_s, &k_mp);
-        let sig = host_key.sign(&n.host_key, &h)?;
+        let sig = host_key.sign(&plain, &h)?;
         self.write_packet(&Writer::msg(msg::KEX_ECDH_REPLY).string(&k_s).string(&q_s).string(&sig).finish())?;
         Ok((k_mp, h))
     }
@@ -1061,7 +1089,7 @@ mod tests {
         });
         let cs = TcpStream::connect(addr).unwrap();
         cs.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
-        let c = Transport::client(cs, cfg_c, Box::new(|_| Ok(()))).unwrap();
+        let c = Transport::client(cs, cfg_c, Box::new(|_, _| Ok(()))).unwrap();
         (c, srv.join().unwrap())
     }
 

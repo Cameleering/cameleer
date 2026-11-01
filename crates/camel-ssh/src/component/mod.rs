@@ -162,6 +162,13 @@ pub(crate) fn client_config(
     if let Some(v) = take_nonempty(params, "macs") {
         cfg.transport.algorithms.macs = parse_algorithm_list("MAC", &v, SUPPORTED_MACS).map_err(alg)?;
     }
+    // OpenSSH user certificate for the private key (`ssh-keygen -s` output, `*-cert.pub`)
+    for k in ["certificateFile", "certFile"] {
+        if let Some(path) = take_nonempty(params, k) {
+            let text = std::fs::read_to_string(file_path(&path)).map_err(|e| CamelError::illegal_argument(format!("Cannot read {} {}: {}", k, path, e)))?;
+            cfg.certificates.push(crate::cert::SshCertificate::from_openssh(text.trim()).map_err(|e| CamelError::illegal_argument(format!("Invalid certificate {}: {}", path, e)))?);
+        }
+    }
     if let Some(v) = take_nonempty(params, "compressionAlgorithms") {
         cfg.transport.compression = parse_algorithm_list("compression", &v, crate::transport::SUPPORTED_COMPRESSION).map_err(alg)?;
     }

@@ -60,6 +60,12 @@ impl Drop for Sshd {
 
 /// Starts sshd with public key authentication for the current user, or None when not possible.
 fn start_sshd(user_keys: &[String]) -> Option<Sshd> {
+    start_sshd_with(user_keys, &|_| String::new())
+}
+
+/// `prep` runs after the host keys exist (in the sshd directory) and returns extra
+/// `sshd_config` lines.
+fn start_sshd_with(user_keys: &[String], prep: &dyn Fn(&Path) -> String) -> Option<Sshd> {
     let sshd = find("sshd")?;
     let kg = find("ssh-keygen")?;
     let is_root = current_user() == "root";
@@ -72,15 +78,17 @@ fn start_sshd(user_keys: &[String]) -> Option<Sshd> {
         keygen(&kg, kind, bits, &dir.join(format!("host_{}", kind)));
     }
     fs::write(dir.join("authorized_keys"), user_keys.join("\n") + "\n").unwrap();
+    let extra = prep(&dir);
     for _attempt in 0..3 {
         let port = free_port();
         let cfg = format!(
             "Port {port}\nListenAddress 127.0.0.1\nHostKey {d}/host_ed25519\nHostKey {d}/host_ecdsa\nHostKey {d}/host_rsa\n\
              PidFile {d}/sshd.pid\nAuthorizedKeysFile {d}/authorized_keys\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n\
              UsePAM no\nStrictModes no\nPermitRootLogin prohibit-password\nSubsystem sftp internal-sftp\nLogLevel ERROR\n\
-             PubkeyAcceptedAlgorithms +rsa-sha2-256,rsa-sha2-512\n",
+             PubkeyAcceptedAlgorithms +rsa-sha2-256,rsa-sha2-512\n{extra}",
             port = port,
-            d = dir.display()
+            d = dir.display(),
+            extra = extra
         );
         fs::write(dir.join("sshd_config"), cfg).unwrap();
         let mut child = Command::new(&sshd)
@@ -423,4 +431,97 @@ fn zlib_compression_ours_and_openssh() {
         assert_eq!(r.stdout, vec![b'x'; 100_000]);
         c.disconnect();
     }
+}
+
+#[test]
+fn openssh_certificates_user_and_host() {
+    use camel_ssh::cert::{SshCertificate, HOST_CERT, USER_CERT};
+    let now = camel_ssh::cert::now_secs();
+    // our client <-> our server: user certificate + host certificate trusted via @cert-authority
+    let user_ca = SshPrivateKey::generate_ed25519();
+    let host_ca = SshPrivateKey::generate_ecdsa(camel_tls::crypto::ec::EcCurve::P256);
+    let user_key = SshPrivateKey::generate_ed25519();
+    let host_key = SshPrivateKey::generate_ed25519();
+    let user_cert = SshCertificate::sign(&user_key.public_key(), &user_ca, USER_CERT, "alice@test", &["alice"], now - 60, now + 3600, 1).unwrap();
+    let host_cert = SshCertificate::sign(&host_key.public_key(), &host_ca, HOST_CERT, "host", &["127.0.0.1"], now - 60, now + 3600, 2).unwrap();
+    let mut cfg = SshServerConfig::default().host_key(host_key.clone());
+    cfg.trusted_user_ca_keys = vec![user_ca.public_key()];
+    cfg.transport.host_certificates = vec![host_cert.clone()];
+    let server = SshServer::start(cfg).unwrap();
+    let known = format!("@cert-authority 127.0.0.1,[127.0.0.1]:* {}\n", host_ca.public_key().to_openssh(""));
+    let check = HostKeyCheck::KnownHosts { known: KnownHosts::parse(&known), strict: true };
+    let mut ccfg = ClientConfig::new("127.0.0.1", server.port(), "alice").private_key(user_key.clone()).host_key_check(check.clone());
+    ccfg.certificates = vec![user_cert.clone()];
+    let mut c = SshClient::connect(&ccfg).unwrap();
+    assert!(c.transport().negotiated().host_key.ends_with("-cert-v01@openssh.com"));
+    assert_eq!(c.execute("echo cert", None).unwrap().stdout, b"cert\n");
+    c.disconnect();
+    // wrong principal / plain key without authorized_keys entry: refused
+    let mut wrong = ccfg.clone();
+    wrong.username = "bob".into();
+    assert!(SshClient::connect(&wrong).is_err());
+    // an untrusted host CA is refused under strict checking
+    let other = format!("@cert-authority * {}\n", SshPrivateKey::generate_ed25519().public_key().to_openssh(""));
+    let mut bad = ccfg.clone();
+    bad.host_key_check = HostKeyCheck::KnownHosts { known: KnownHosts::parse(&other), strict: true };
+    assert!(SshClient::connect(&bad).is_err());
+    server.stop();
+
+    let (ssh, kg) = match (find("ssh"), find("ssh-keygen")) {
+        (Some(a), Some(b)) => (a, b),
+        _ => return eprintln!("skipping: OpenSSH not installed"),
+    };
+    let dir = temp_dir("interop-certs");
+    // CA keys and certificates made by ssh-keygen
+    keygen(&kg, "ed25519", None, &dir.join("user_ca"));
+    keygen(&kg, "ed25519", None, &dir.join("host_ca"));
+    let (ukey, _upub) = openssh_key(&kg, &dir, "ed25519", None);
+    let user = current_user();
+    let st = Command::new(&kg).args(["-q", "-s"]).arg(dir.join("user_ca")).args(["-I", "camel-user", "-n", &format!("{},test", user), "-V", "-5m:+1h"]).arg(dir.join("user_ed25519.pub")).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    assert!(st.success());
+    let ucert = SshCertificate::from_openssh(&fs::read_to_string(dir.join("user_ed25519-cert.pub")).unwrap()).unwrap();
+    assert!(ucert.signature_valid());
+    assert_eq!(ucert.cert_type, USER_CERT);
+    let user_ca_pub = camel_ssh::SshPublicKey::from_openssh(&fs::read_to_string(dir.join("user_ca.pub")).unwrap()).unwrap();
+    let host_ca_pub_line = fs::read_to_string(dir.join("host_ca.pub")).unwrap();
+
+    // OpenSSH ssh (user certificate, @cert-authority known_hosts) against our server
+    let our_host = SshPrivateKey::generate_ed25519();
+    fs::write(dir.join("our_host.pub"), our_host.public_key().to_openssh("host") + "\n").unwrap();
+    let st = Command::new(&kg).args(["-q", "-s"]).arg(dir.join("host_ca")).args(["-I", "our-host", "-h", "-n", "127.0.0.1", "-V", "-5m:+1h"]).arg(dir.join("our_host.pub")).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+    assert!(st.success());
+    let our_host_cert = SshCertificate::from_openssh(&fs::read_to_string(dir.join("our_host-cert.pub")).unwrap()).unwrap();
+    let mut cfg = SshServerConfig::default().host_key(our_host);
+    cfg.trusted_user_ca_keys = vec![user_ca_pub.clone()];
+    cfg.transport.host_certificates = vec![our_host_cert];
+    let server = SshServer::start(cfg).unwrap();
+    fs::write(dir.join("known_hosts"), format!("@cert-authority [127.0.0.1]:{} {}", server.port(), host_ca_pub_line)).unwrap();
+    let out = Command::new(&ssh)
+        .args(ssh_args(&dir, &dir.join("user_ed25519")))
+        .args(["-o", &format!("CertificateFile={}", dir.join("user_ed25519-cert.pub").display()), "-p", &server.port().to_string(), "test@127.0.0.1", "echo via certificate"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!((out.status.code(), String::from_utf8_lossy(&out.stdout).to_string()), (Some(0), "via certificate\n".into()), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(server.auth_log().iter().any(|l| l == "test:publickey:ok"), "{:?}", server.auth_log());
+    server.stop();
+
+    // our client (user certificate, host CA) against sshd with TrustedUserCAKeys + HostCertificate
+    let kgc = kg.clone();
+    let sshd = match start_sshd_with(&[], &move |d: &Path| {
+        fs::copy(dir.join("user_ca.pub"), d.join("user_ca.pub")).unwrap();
+        let st = Command::new(&kgc).args(["-q", "-s"]).arg(dir.join("host_ca")).args(["-I", "sshd-host", "-h", "-n", "127.0.0.1", "-V", "-5m:+1h"]).arg(d.join("host_ed25519.pub")).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap();
+        assert!(st.success());
+        format!("TrustedUserCAKeys {}/user_ca.pub\nHostCertificate {}/host_ed25519-cert.pub\n", d.display(), d.display())
+    }) {
+        Some(s) => s,
+        None => return,
+    };
+    let known = format!("@cert-authority [127.0.0.1]:{} {}", sshd.port, host_ca_pub_line);
+    let mut cfg = ClientConfig::new("127.0.0.1", sshd.port, &user).private_key(ukey).host_key_check(HostKeyCheck::KnownHosts { known: KnownHosts::parse(&known), strict: true });
+    cfg.certificates = vec![ucert];
+    let mut c = SshClient::connect(&cfg).unwrap();
+    assert_eq!(c.transport().negotiated().host_key, "ssh-ed25519-cert-v01@openssh.com");
+    assert_eq!(c.execute("echo sshd cert", None).unwrap().stdout, b"sshd cert\n");
+    c.disconnect();
 }

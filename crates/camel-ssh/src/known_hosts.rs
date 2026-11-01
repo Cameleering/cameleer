@@ -1,6 +1,7 @@
 //! OpenSSH `known_hosts` files: plain and hashed (`|1|salt|hash`) host
 //! patterns, `*`/`?` wildcards, `!` negation, `[host]:port` entries and the
-//! `@revoked` marker (`@cert-authority` lines are ignored).
+//! `@revoked` marker and `@cert-authority` lines (host certificates signed by a listed CA
+//! are trusted for the matching hosts).
 
 use std::path::Path;
 
@@ -39,6 +40,7 @@ struct Entry {
 #[derive(Clone, Debug, Default)]
 pub struct KnownHosts {
     entries: Vec<Entry>,
+    authorities: Vec<Entry>,
 }
 
 /// The name under which a host is recorded: `host` for port 22, `[host]:port` otherwise.
@@ -94,6 +96,7 @@ impl KnownHosts {
     /// Parses the text of a `known_hosts` file; unparsable lines are skipped.
     pub fn parse(text: &str) -> KnownHosts {
         let mut entries = Vec::new();
+        let mut authorities = Vec::new();
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -101,10 +104,12 @@ impl KnownHosts {
             }
             let mut words: Vec<&str> = line.split_whitespace().collect();
             let mut revoked = false;
+            let mut ca = false;
             if let Some(m) = words.first().filter(|w| w.starts_with('@')) {
                 match *m {
                     "@revoked" => revoked = true,
-                    _ => continue, // @cert-authority: certificates are not supported
+                    "@cert-authority" => ca = true,
+                    _ => continue,
                 }
                 words.remove(0);
             }
@@ -121,10 +126,14 @@ impl KnownHosts {
                 Hosts::Patterns(words[0].split(',').map(|s| s.to_string()).collect())
             };
             if let Ok(key) = SshPublicKey::from_openssh(&format!("{} {}", words[1], words[2])) {
-                entries.push(Entry { revoked, hosts, key });
+                if ca {
+                    authorities.push(Entry { revoked, hosts, key });
+                } else {
+                    entries.push(Entry { revoked, hosts, key });
+                }
             }
         }
-        KnownHosts { entries }
+        KnownHosts { entries, authorities }
     }
 
     /// Loads a file; a missing file gives an empty list.
@@ -162,6 +171,26 @@ impl KnownHosts {
         }
         if matching.iter().any(|e| !e.revoked && e.key.key_type() == key.key_type()) {
             return HostKeyStatus::Changed;
+        }
+        HostKeyStatus::Unknown
+    }
+
+    /// Whether some `@cert-authority` line covers `host:port`.
+    pub fn has_cert_authority(&self, host: &str, port: u16) -> bool {
+        let name = host_name(host, port);
+        self.authorities.iter().any(|e| e.hosts.matches(&name))
+    }
+
+    /// Checks a host certificate: issued by a CA listed for the host, a host certificate,
+    /// valid now, with the host name among its principals; revoked CAs / keys are refused.
+    pub fn check_certificate(&self, host: &str, port: u16, cert: &crate::cert::SshCertificate) -> HostKeyStatus {
+        let name = host_name(host, port);
+        if self.entries.iter().any(|e| e.revoked && (e.key == cert.key || e.key == cert.signature_key)) {
+            return HostKeyStatus::Revoked;
+        }
+        let trusted_ca = self.authorities.iter().any(|e| !e.revoked && e.key == cert.signature_key && e.hosts.matches(&name));
+        if trusted_ca && cert.validate(crate::cert::HOST_CERT, host, crate::cert::now_secs()).is_ok() {
+            return HostKeyStatus::Trusted;
         }
         HostKeyStatus::Unknown
     }
