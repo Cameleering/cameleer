@@ -139,11 +139,14 @@ impl Inner {
 fn error_frame_to_error(f: &Frame) -> CamelError {
     let msg = f.get("message").unwrap_or("").to_string();
     let body = f.body_string();
-    let text = if body.trim().is_empty() { msg.clone() } else { format!("{}: {}", msg, body.trim()) };
-    // ActiveMQ / Artemis put the reason in `message`; RabbitMQ sends `message:Bad CONNECT`
-    // with "Access refused for user 'x'" in the body
+    // ActiveMQ repeats the message in the body
+    let text = if body.trim().is_empty() || body.trim() == msg.trim() { msg.clone() } else { format!("{}: {}", msg, body.trim()) };
+    // Artemis puts the reason in `message`; ActiveMQ 5 says "User name [x] or password is
+    // invalid."; RabbitMQ sends `message:Bad CONNECT` with "Access refused for user 'x'" in
+    // the body
     let lower = text.to_ascii_lowercase();
-    let kind = if lower.contains("auth") || lower.contains("login") || lower.contains("access refused") { AUTHENTICATION_FAILURE } else { STOMP_ERROR };
+    let auth = ["auth", "login", "access refused", "password is invalid", "user name ["].iter().any(|k| lower.contains(k));
+    let kind = if auth { AUTHENTICATION_FAILURE } else { STOMP_ERROR };
     CamelError::new(kind, text)
 }
 
@@ -345,6 +348,13 @@ impl StompConnection {
     /// durable subscription conventions).
     pub fn is_rabbitmq(&self) -> bool {
         self.server.starts_with("RabbitMQ")
+    }
+
+    /// Whether the broker is Apache ActiveMQ 5 ("Classic", `server:ActiveMQ/5.x`): an aborted
+    /// transactional `ACK` only restores the pending acknowledgement and a `NACK` is a poison
+    /// ack (dead letter queue), so redelivery is up to the client, as with its JMS client.
+    pub fn is_activemq_classic(&self) -> bool {
+        self.server.starts_with("ActiveMQ/")
     }
 
     /// Receive the replies sent to a `/temp-queue/...` reply destination. RabbitMQ refuses
