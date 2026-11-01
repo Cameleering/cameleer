@@ -718,10 +718,10 @@ pub fn java_method(it: &mut Interp, recv: &V, name: &str, args: &[V], pos: u32) 
                 "sorted" => {
                     let mut v = V::arr(items);
                     let a = if args.is_empty() { vec![] } else { vec![a0] };
-                    v = crate::builtins::call_method(it, &v, "sort", a, pos)?;
+                    v = crate::builtins::list_method(it, &v, "sort", a, pos)?;
                     v
                 }
-                "distinct" => crate::builtins::call_method(it, &V::arr(items), "unique", vec![], pos)?,
+                "distinct" => crate::builtins::list_method(it, &V::arr(items), "unique", vec![], pos)?,
                 "flatMap" => {
                     let mut out = Vec::new();
                     for x in items {
@@ -739,7 +739,7 @@ pub fn java_method(it: &mut Interp, recv: &V, name: &str, args: &[V], pos: u32) 
                 "sort" => {
                     // List.sort(comparator) sorts in place (null: natural order)
                     let cmp = if a0.is_nullish() { vec![] } else { vec![a0] };
-                    let sorted = crate::builtins::call_method(it, &V::arr(items), "sort", cmp, pos)?;
+                    let sorted = crate::builtins::list_method(it, &V::arr(items), "sort", cmp, pos)?;
                     if let V::Arr(s) = sorted {
                         let v = s.borrow().clone();
                         *a.borrow_mut() = v;

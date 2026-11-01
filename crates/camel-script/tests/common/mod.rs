@@ -35,6 +35,9 @@ pub fn order_exchange(ctx: &CamelContext) -> Exchange {
 pub fn check(lang: &str, ex: &Exchange, cases: &[(&str, &str)]) {
     let mut failures = Vec::new();
     for (src, expected) in cases {
+        if std::env::var("SCRIPT_TRACE").is_ok() {
+            eprintln!("CASE {}", src);
+        }
         match camel_script::eval(lang, src, ex) {
             Ok(v) => {
                 let got = v.to_json();

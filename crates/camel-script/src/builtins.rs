@@ -732,7 +732,7 @@ fn sort_with(it: &mut Interp, items: Vec<V>, f: Option<&V>, js_default: bool, po
     match f {
         Some(f) if f.is_callable() => {
             let f = f.clone();
-            if arity(&f) == 1 && it.d != Dialect::Js {
+            if arity(&f) == 1 && it.d != Dialect::Js && it.d != Dialect::Java {
                 // key extractor
                 let mut keyed = Vec::new();
                 for x in items {
@@ -2406,6 +2406,10 @@ pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: 
         ("Collections", "unmodifiableList" | "unmodifiableMap" | "unmodifiableSet" | "synchronizedList" | "synchronizedMap") => a0,
         ("Arrays", "toString") => V::string(display(it, &a0, 0)),
         ("Arrays", "sort") => return call_ns_fn(it, "Collections", "sort", args, pos),
+        ("Arrays", "stream") => match a0 {
+            V::Arr(a) => V::arr(a.borrow().clone()),
+            other => V::arr(it.iterate(&other, Some(pos))?),
+        },
         ("Pattern", "compile") => {
             let p = sarg(it, &args, 0);
             make_regex(it, &p, "", pos)?
@@ -3936,6 +3940,16 @@ fn flatten_into(v: &V, depth: i64, out: &mut Vec<V>) {
         }
         other => out.push(other.clone()),
     }
+}
+
+/// A generic list method on an array value (bypassing the Java method layer).
+pub fn list_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32) -> R<V> {
+    if let V::Arr(a) = recv {
+        if let Some(v) = array_method(it, a.clone(), recv, name, args, pos)? {
+            return Ok(v);
+        }
+    }
+    it.type_error(format!("{} is not a function", name), Some(pos))
 }
 
 fn array_method(it: &mut Interp, a: ArrRef, recv: &V, name: &str, mut args: Vec<V>, pos: u32) -> R<Option<V>> {

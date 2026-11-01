@@ -204,6 +204,10 @@ impl Parser {
     fn groovy_like(&self) -> bool {
         matches!(self.d, Dialect::Groovy | Dialect::Mvel)
     }
+    /// Groovy, MVEL or Java: typed declarations and `Type x : list` loops.
+    fn typed_like(&self) -> bool {
+        matches!(self.d, Dialect::Groovy | Dialect::Mvel | Dialect::Java)
+    }
 
     // ------------------------------------------------------------------ statements
     fn parse_block_body(&mut self) -> R<Vec<Stmt>> {
@@ -258,7 +262,7 @@ impl Parser {
         }
         if let T::Ident(w) = self.peek().clone() {
             // labels
-            if self.is_p_at(1, ":") && matches!(d, Dialect::Js | Dialect::Groovy) && !JS_KEYWORDS.contains(&w.as_str()) && w != "default" {
+            if self.is_p_at(1, ":") && matches!(d, Dialect::Js | Dialect::Groovy | Dialect::Java) && !JS_KEYWORDS.contains(&w.as_str()) && w != "default" {
                 let after = self.peek_at(2).clone();
                 if matches!(after, T::Ident(ref k) if k == "for" || k == "while" || k == "do") || self.tok_at(2).nl {
                     self.next();
@@ -359,7 +363,14 @@ impl Parser {
                     self.eat_p(";");
                     return Ok(Stmt::Empty);
                 }
-                "def" | "var" | "final" | "static" | "private" | "public" | "protected" if self.groovy_like() => {
+                "yield" if d == Dialect::Java && !matches!(self.peek_at(1), T::P("=") | T::P("(") | T::P(".") | T::P(";")) => {
+                    // value of a switch expression arm
+                    self.next();
+                    let e = self.parse_expr()?;
+                    self.consume_semi()?;
+                    return Ok(Stmt::SwitchYield(e));
+                }
+                "def" | "var" | "final" | "static" | "private" | "public" | "protected" if self.typed_like() && !(d == Dialect::Java && w == "def") => {
                     while matches!(self.peek(), T::Ident(m) if matches!(m.as_str(), "final" | "static" | "private" | "public" | "protected" | "synchronized")) {
                         self.next();
                     }
@@ -394,7 +405,7 @@ impl Parser {
                 }
                 _ => {}
             }
-            if self.groovy_like() && self.is_groovy_typed_decl() {
+            if self.typed_like() && self.is_groovy_typed_decl() {
                 self.skip_groovy_type();
                 if matches!(self.peek(), T::Ident(_)) && self.is_p_at(1, "(") {
                     return self.parse_groovy_method();
@@ -830,7 +841,10 @@ impl Parser {
             self.no_in = save;
             return self.to_pat(e);
         }
-        if self.groovy_like() {
+        if self.typed_like() {
+            if self.is_kw("final") {
+                self.next();
+            }
             self.skip_groovy_type();
         }
         Ok(Pat::Id(self.ident()?))
@@ -878,11 +892,14 @@ impl Parser {
 
     fn parse_for_rest(&mut self, foreach: bool) -> R<Stmt> {
         self.expect_p("(")?;
-        // for-each forms of Groovy / MVEL: `x in list`, `Type x : list`, `def x in list`
-        if self.groovy_like() {
+        // for-each forms of Groovy / MVEL / Java: `x in list`, `Type x : list`, `def x in list`
+        if self.typed_like() {
             let mut n = 0;
             if self.is_kw("def") || self.is_kw("var") || self.is_kw("final") {
                 n = 1;
+            }
+            if self.is_kw("final") && self.is_kw_at(1, "var") {
+                n = 2;
             }
             let typed = self.groovy_type_len(n);
             let nm = n + typed;
@@ -907,8 +924,8 @@ impl Parser {
             self.no_in = true;
             let s = if self.d == Dialect::Js && (self.is_kw("var") || self.is_kw("let") || self.is_kw("const")) {
                 self.parse_var_decl()
-            } else if self.groovy_like() && (self.is_kw("def") || self.is_groovy_typed_decl()) {
-                if self.is_kw("def") {
+            } else if self.typed_like() && (self.is_kw("def") || self.is_kw("var") || self.is_groovy_typed_decl()) {
+                if self.is_kw("def") || self.is_kw("var") {
                     self.next();
                 }
                 self.skip_groovy_type();
@@ -962,6 +979,25 @@ impl Parser {
         }
         let mut m = n + 1;
         while self.is_p_at(m, ".") && matches!(self.peek_at(m + 1), T::Ident(_)) {
+            m += 2;
+        }
+        if self.is_p_at(m, "<") {
+            let mut depth = 0;
+            loop {
+                match self.peek_at(m) {
+                    T::P("<") => depth += 1,
+                    T::P(">") => depth -= 1,
+                    T::P(">>") => depth -= 2,
+                    T::Ident(_) | T::P(",") | T::P(".") | T::P("?") => {}
+                    _ => return 0,
+                }
+                m += 1;
+                if depth <= 0 {
+                    break;
+                }
+            }
+        }
+        while self.is_p_at(m, "[") && self.is_p_at(m + 1, "]") {
             m += 2;
         }
         if !matches!(self.peek_at(m), T::Ident(_)) {
@@ -1019,6 +1055,11 @@ impl Parser {
     }
 
     fn parse_switch(&mut self) -> R<Stmt> {
+        if self.d == Dialect::Java && self.switch_has_arrows() {
+            let e = self.parse_java_switch(true)?;
+            self.eat_p(";");
+            return Ok(Stmt::Expr(e));
+        }
         self.next();
         self.expect_p("(")?;
         let disc = self.parse_expr()?;
@@ -1027,7 +1068,15 @@ impl Parser {
         let mut cases: Vec<(Option<Expr>, Vec<Stmt>)> = Vec::new();
         while !self.eat_p("}") {
             let test = if self.eat_kw("case") {
-                let e = self.parse_cond()?;
+                let mut e = self.parse_cond()?;
+                if self.d == Dialect::Java && self.is_p(",") {
+                    // `case 1, 2:`
+                    let mut items = vec![Elem::Item(e)];
+                    while self.eat_p(",") {
+                        items.push(Elem::Item(self.parse_cond()?));
+                    }
+                    e = Expr::Array(items);
+                }
                 Some(e)
             } else if self.eat_kw("default") {
                 None
@@ -1050,6 +1099,225 @@ impl Parser {
             cases.push((test, body));
         }
         Ok(Stmt::Switch(disc, cases))
+    }
+
+    // ------------------------------------------------------------------ Java
+    /// At `switch (...) {`: whether the first case uses `->`.
+    fn switch_has_arrows(&self) -> bool {
+        let mut n = 0;
+        let mut depth = 0;
+        loop {
+            match self.peek_at(n) {
+                T::P("(") | T::P("[") => depth += 1,
+                T::P(")") | T::P("]") => depth -= 1,
+                T::P("{") => {
+                    depth += 1;
+                }
+                T::P("}") => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return false;
+                    }
+                }
+                T::P("->") if depth == 1 => return true,
+                T::P(":") if depth == 1 => return false,
+                T::Eof => return false,
+                _ => {}
+            }
+            n += 1;
+        }
+    }
+
+    /// A Java switch expression (or an arrow-form switch statement): `switch (x) { case A, B -> e;
+    /// case C -> { ...; yield v; } case String s -> ...; default -> e; }` or the colon form with
+    /// `yield`.
+    fn parse_java_switch(&mut self, statement: bool) -> R<Expr> {
+        let pos = self.pos();
+        self.next();
+        self.expect_p("(")?;
+        let disc = self.parse_expr()?;
+        self.expect_p(")")?;
+        self.expect_p("{")?;
+        let mut arms: Vec<(Vec<Expr>, Vec<Stmt>)> = Vec::new();
+        let mut has_default = false;
+        while !self.eat_p("}") {
+            if self.at_eof() {
+                return self.err("unterminated switch");
+            }
+            let mut labels = Vec::new();
+            if self.eat_kw("default") {
+                has_default = true;
+            } else if self.eat_kw("case") {
+                loop {
+                    if self.is_kw("default") {
+                        self.next();
+                        has_default = true;
+                        labels.clear();
+                        break;
+                    }
+                    // type pattern `case String s`
+                    let tl = self.groovy_type_len(0);
+                    if tl > 0 && matches!(self.peek_at(tl), T::Ident(_)) && matches!(self.peek_at(tl + 1), T::P("->") | T::P(":") | T::P(",")) {
+                        let lpos = self.pos();
+                        let ty = self.type_name()?;
+                        let name = self.ident()?;
+                        labels.push(Expr::InstanceBind { expr: Box::new(Expr::Undef), ty, name, pos: lpos });
+                    } else {
+                        labels.push(self.parse_cond()?);
+                    }
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else {
+                return self.err(format!("expected 'case' or 'default' but found {}", describe(self.peek())));
+            }
+            let body = if self.eat_p("->") {
+                if self.is_p("{") {
+                    self.parse_block_body()?
+                } else if self.is_kw("throw") {
+                    vec![self.parse_statement()?]
+                } else {
+                    let e = self.parse_expr()?;
+                    self.expect_p(";")?;
+                    vec![Stmt::Expr(e)]
+                }
+            } else {
+                self.expect_p(":")?;
+                let mut body = Vec::new();
+                while !self.is_kw("case") && !self.is_kw("default") && !self.is_p("}") {
+                    if self.at_eof() {
+                        return self.err("unterminated switch");
+                    }
+                    if self.eat_p(";") {
+                        continue;
+                    }
+                    body.push(self.parse_statement()?);
+                }
+                body
+            };
+            if labels.is_empty() {
+                // default: keep it last
+                arms.push((vec![], body));
+            } else {
+                arms.push((labels, body));
+            }
+        }
+        // default arm evaluated last
+        if let Some(i) = arms.iter().position(|(l, _)| l.is_empty()) {
+            let d = arms.remove(i);
+            arms.push(d);
+        }
+        if statement && !has_default {
+            arms.push((vec![], vec![]));
+        }
+        Ok(Expr::SwitchExpr(Box::new(disc), arms, pos))
+    }
+
+    /// At `(`: whether this is a cast `(Type) operand`.
+    fn is_java_cast(&self) -> bool {
+        let w = match self.peek_at(1) {
+            T::Ident(w) => w.clone(),
+            _ => return false,
+        };
+        let primitive = matches!(w.as_str(), "int" | "long" | "double" | "float" | "boolean" | "char" | "byte" | "short");
+        let tl = self.groovy_type_len_any(1);
+        if tl == 0 || !self.is_p_at(1 + tl, ")") {
+            return false;
+        }
+        if primitive {
+            return true;
+        }
+        if !w.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            return false;
+        }
+        match self.peek_at(2 + tl) {
+            T::Ident(x) => !matches!(x.as_str(), "instanceof"),
+            T::Int(_) | T::Num(_) | T::Str(_) | T::Tpl(_) => true,
+            T::P("(") | T::P("!") | T::P("~") => true,
+            _ => false,
+        }
+    }
+
+    /// Length in tokens of a type at offset `n` (qualified name, generics, array dims); 0 if none.
+    fn groovy_type_len_any(&self, n: usize) -> usize {
+        if !matches!(self.peek_at(n), T::Ident(_)) {
+            return 0;
+        }
+        let mut m = n + 1;
+        while self.is_p_at(m, ".") && matches!(self.peek_at(m + 1), T::Ident(_)) {
+            m += 2;
+        }
+        if self.is_p_at(m, "<") {
+            let mut depth = 0;
+            loop {
+                match self.peek_at(m) {
+                    T::P("<") => depth += 1,
+                    T::P(">") => depth -= 1,
+                    T::P(">>") => depth -= 2,
+                    T::Ident(_) | T::P(",") | T::P(".") | T::P("?") => {}
+                    _ => return 0,
+                }
+                m += 1;
+                if depth <= 0 {
+                    break;
+                }
+            }
+        }
+        while self.is_p_at(m, "[") && self.is_p_at(m + 1, "]") {
+            m += 2;
+        }
+        m - n
+    }
+
+    /// At `(`: whether a Java lambda `(a, b) -> ...` / `(Type a) -> ...` / `() -> ...` starts here.
+    fn is_java_lambda_paren(&self) -> bool {
+        let mut depth = 0;
+        let mut n = 0;
+        loop {
+            match self.peek_at(n) {
+                T::P("(") => depth += 1,
+                T::P(")") => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.is_p_at(n + 1, "->");
+                    }
+                }
+                T::Ident(_) | T::P(",") | T::P("<") | T::P(">") | T::P(".") | T::P("[") | T::P("]") | T::P("?") => {}
+                _ => return false,
+            }
+            n += 1;
+        }
+    }
+
+    fn parse_java_lambda(&mut self) -> R<Expr> {
+        let mut params = Vec::new();
+        if self.eat_p("(") {
+            while !self.is_p(")") {
+                if self.is_kw("final") {
+                    self.next();
+                }
+                if self.is_kw("var") {
+                    self.next();
+                }
+                let tl = self.groovy_type_len_any(0);
+                if tl > 0 && matches!(self.peek_at(tl), T::Ident(_)) {
+                    for _ in 0..tl {
+                        self.next();
+                    }
+                }
+                params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+                if !self.eat_p(",") {
+                    break;
+                }
+            }
+            self.expect_p(")")?;
+        } else {
+            params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+        }
+        self.expect_p("->")?;
+        let body = if self.is_p("{") { FuncBody::Block(self.parse_block_body()?) } else { FuncBody::Expr(Box::new(self.parse_assign()?)) };
+        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body, arrow: true, implicit_it: false, implicit_return: false, generator: false, is_async: false })))
     }
 
     fn parse_class(&mut self) -> R<ClassDef> {
@@ -1332,6 +1600,9 @@ impl Parser {
     }
 
     fn parse_assign(&mut self) -> R<Expr> {
+        if self.d == Dialect::Java && ((matches!(self.peek(), T::Ident(_)) && self.is_p_at(1, "->")) || (self.is_p("(") && self.is_java_lambda_paren())) {
+            return self.parse_java_lambda();
+        }
         if self.d == Dialect::Js && self.in_gen && self.is_kw("yield") {
             let pos = self.pos();
             self.next();
@@ -1542,7 +1813,19 @@ impl Parser {
                     Expr::As(Box::new(left), t, pos)
                 }
                 BinKind::TypeTest(neg) => {
+                    if self.is_kw("final") {
+                        self.next();
+                    }
                     let t = self.type_name()?;
+                    if self.d == Dialect::Java && !neg {
+                        if let T::Ident(n) = self.peek().clone() {
+                            if !matches!(n.as_str(), "instanceof") {
+                                self.next();
+                                left = Expr::InstanceBind { expr: Box::new(left), ty: t, name: n, pos };
+                                continue;
+                            }
+                        }
+                    }
                     let e = Expr::Bin(BinOp::InstanceOf, Box::new(left), Box::new(Expr::Type(t)), pos);
                     if neg {
                         Expr::Unary(UnOp::Not, Box::new(e), pos)
@@ -1657,6 +1940,16 @@ impl Parser {
             }
             return Ok(Expr::Unary(op, Box::new(e), pos));
         }
+        if self.d == Dialect::Java && self.is_p("(") && self.is_java_cast() {
+            self.next();
+            let t = self.type_name()?;
+            self.expect_p(")")?;
+            let e = self.parse_unary()?;
+            return Ok(match t.as_str() {
+                "Object" | "Comparable" | "CharSequence" | "Number" | "Iterable" | "Collection" => e,
+                _ => Expr::As(Box::new(e), t, pos),
+            });
+        }
         if self.d == Dialect::Groovy && self.is_p("~") {
             // pattern operator ~"regex" / ~/regex/
             self.next();
@@ -1716,6 +2009,13 @@ impl Parser {
             let pos = self.pos();
             let nl = self.nl();
             match self.peek().clone() {
+                T::P("::") => {
+                    // method reference `Type::method`, `obj::method`, `Type::new`
+                    self.next();
+                    let name = self.ident()?;
+                    e = Expr::MethodRef(Box::new(e), name, pos);
+                    continue;
+                }
                 T::P(".") | T::P("?.") | T::P(".?") => {
                     let optional = !self.is_p(".");
                     self.next();
@@ -1892,7 +2192,7 @@ impl Parser {
                     self.parse_object_literal()
                 }
                 Dialect::Groovy => self.parse_closure(),
-                Dialect::Ognl | Dialect::Mvel => {
+                Dialect::Ognl | Dialect::Mvel | Dialect::Java => {
                     self.next();
                     let mut items = Vec::new();
                     while !self.is_p("}") {
@@ -1980,7 +2280,40 @@ impl Parser {
                         let c = self.parse_class()?;
                         return Ok(Expr::Class(Arc::new(c)));
                     }
-                    "new" if matches!(d, Dialect::Js | Dialect::Groovy | Dialect::Mvel | Dialect::Spel) => {
+                    "switch" if d == Dialect::Java => {
+                        self.i -= 1;
+                        return self.parse_java_switch(false);
+                    }
+                    "new" if d == Dialect::Java && self.java_array_new() => {
+                        // `new int[3]`, `new String[]{"a"}`, `new int[2][3]`
+                        let ty = self.qualified_name()?;
+                        let mut dims = Vec::new();
+                        while self.eat_p("[") {
+                            if self.eat_p("]") {
+                                dims.push(None);
+                            } else {
+                                dims.push(Some(self.parse_expr()?));
+                                self.expect_p("]")?;
+                            }
+                        }
+                        if self.is_p("{") {
+                            return self.parse_primary();
+                        }
+                        let fill = if dims.len() > 1 {
+                            Expr::Null
+                        } else {
+                            match ty.as_str() {
+                                "int" | "long" | "short" | "byte" => Expr::Int(0),
+                                "double" | "float" => Expr::Num(0.0),
+                                "boolean" => Expr::Bool(false),
+                                "char" => Expr::Str("\0".into()),
+                                _ => Expr::Null,
+                            }
+                        };
+                        let size = dims.into_iter().next().flatten().unwrap_or(Expr::Int(0));
+                        return Ok(Expr::Call { callee: Box::new(Expr::Ident("__newarray".into(), pos)), args: vec![Elem::Item(size), Elem::Item(fill)], optional: false, pos });
+                    }
+                    "new" if matches!(d, Dialect::Js | Dialect::Groovy | Dialect::Mvel | Dialect::Spel | Dialect::Java) => {
                         let callee = if d == Dialect::Js {
                             let mut c = self.parse_primary()?;
                             while self.is_p(".") {
@@ -2039,6 +2372,20 @@ impl Parser {
             }
             _ => self.unexpected(),
         }
+    }
+
+    /// After `new` (Java): whether an array creation follows.
+    fn java_array_new(&self) -> bool {
+        let mut n = 0;
+        while matches!(self.peek_at(n), T::Ident(_)) {
+            n += 1;
+            if self.is_p_at(n, ".") {
+                n += 1;
+            } else {
+                break;
+            }
+        }
+        self.is_p_at(n, "[")
     }
 
     fn continue_postfix(&mut self, e: Expr) -> R<Expr> {

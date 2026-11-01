@@ -981,6 +981,9 @@ impl Interp {
             }
             V::Method(m) => {
                 let (recv, name) = (&m.0, &m.1);
+                if let Some(r) = name.strip_prefix("%mref:") {
+                    return crate::java::method_ref_call(self, recv, r, args, pos);
+                }
                 self.call_method(recv, name, args, pos)
             }
             V::Host(h) => match &**h {
@@ -1206,7 +1209,7 @@ impl Interp {
                         return self.call_closure(c, this, a, pos);
                     }
                     "call" | "doCall" => return self.call_closure(c, V::Undef, args, pos),
-                    "apply" => {
+                    "apply" if self.d != Dialect::Java => {
                         let this = args.first().cloned().unwrap_or(V::Undef);
                         let a = match args.get(1) {
                             Some(v) => self.iterate(v, None)?,
@@ -2861,7 +2864,7 @@ impl Interp {
                         };
                         return self.throw(name, msg.into(), Some(pos));
                     }
-                    (Dialect::Ognl | Dialect::Mvel | Dialect::Spel, V::Int(a), V::Int(b)) => V::Int(a.wrapping_div(*b)),
+                    (Dialect::Ognl | Dialect::Mvel | Dialect::Spel | Dialect::Java, V::Int(a), V::Int(b)) => V::Int(a.wrapping_div(*b)),
                     (Dialect::Groovy, V::Int(a), V::Int(b)) if a % b == 0 => V::Int(a / b),
                     _ => self.mk_num(x.as_f64().unwrap_or(f64::NAN) / y.as_f64().unwrap_or(f64::NAN)),
                 }
