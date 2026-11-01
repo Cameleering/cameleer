@@ -342,6 +342,32 @@ impl Main {
         Ok(())
     }
 
+    /// Load the Kamelets of `camel.main.kamelet-locations` (alias
+    /// `camel.component.kamelet.location`; comma separated directories, `file:` and
+    /// `classpath:` prefixes accepted — the latter relative to the working directory; default
+    /// `classpath:kamelets`). Remote (`github:`) locations are skipped with a warning.
+    fn load_kamelet_locations(&self) -> Result<()> {
+        let explicit = config::relaxed_get(&self.properties, "camel.main.kamelet-locations")
+            .or_else(|| config::relaxed_get(&self.properties, "camel.component.kamelet.location"))
+            .cloned();
+        let locations = explicit.clone().unwrap_or_else(|| "classpath:kamelets".into());
+        for loc in locations.split(',').map(str::trim).filter(|l| !l.is_empty()) {
+            if loc.starts_with("github:") || loc.starts_with("http:") || loc.starts_with("https:") {
+                camel_core::camel_warn!("Main", "Remote Kamelet location {} is not supported (no network access); skipped", loc);
+                continue;
+            }
+            let dir = loc.strip_prefix("file:").or_else(|| loc.strip_prefix("classpath:")).unwrap_or(loc);
+            let dir = Path::new(dir);
+            if dir.is_dir() {
+                let names = camel_yaml::load_kamelets_from_dir(&self.ctx, dir)?;
+                camel_core::camel_info!("Main", "Loaded {} Kamelets from {}: {}", names.len(), dir.display(), names.join(", "));
+            } else if explicit.is_some() {
+                camel_core::camel_warn!("Main", "Kamelet location {} does not exist", dir.display());
+            }
+        }
+        Ok(())
+    }
+
     /// Camel K Integration files among the explicit route files contribute properties
     /// before the configuration is applied.
     fn prescan_integrations(&mut self) -> Result<()> {
@@ -404,6 +430,7 @@ impl Main {
         for c in std::mem::take(&mut self.configurers) {
             c(&self.ctx)?;
         }
+        self.load_kamelet_locations()?;
         self.loaded_files.clear();
         let before: Vec<String> = self.ctx.assign_pending_route_ids();
         for f in self.discover_route_files()? {

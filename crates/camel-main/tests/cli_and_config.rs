@@ -206,3 +206,27 @@ fn checks(home: &std::path::Path, routes: &std::path::Path, ctx: &CamelContext) 
     let out = cli_out(&["stop"]).unwrap();
     assert!(out.contains("Stopping status-app"));
 }
+
+#[test]
+fn kamelets_auto_loaded_from_kamelet_locations() {
+    let dir = temp_dir("kamelets");
+    std::fs::create_dir_all(dir.join("k")).unwrap();
+    std::fs::write(
+        dir.join("k/greet-action.kamelet.yaml"),
+        "apiVersion: camel.apache.org/v1\nkind: Kamelet\nmetadata:\n  name: greet-action\nspec:\n  definition:\n    properties:\n      who: {type: string, default: World}\n  template:\n    from:\n      uri: kamelet:source\n      steps:\n        - setBody:\n            simple: \"Hello {{who}}\"\n",
+    )
+    .unwrap();
+    let routes = dir.join("pipe.yaml");
+    std::fs::write(
+        &routes,
+        "apiVersion: camel.apache.org/v1\nkind: Pipe\nmetadata:\n  name: greet\nspec:\n  source:\n    uri: direct:greet\n  steps:\n    - ref: {kind: Kamelet, name: greet-action}\n      properties:\n        who: Camel\n  sink:\n    uri: mock:greet\n",
+    )
+    .unwrap();
+    let mut main = camel_main::new_main();
+    main.set_property("camel.main.kamelet-locations", format!("file:{},github:apache:camel-kamelets/kamelets", dir.join("k").display()));
+    main.add_route_file(&routes);
+    main.start().unwrap();
+    main.context().create_producer_template().send_body("direct:greet", "x").unwrap();
+    assert_eq!(main.context().mock_endpoint("mock:greet").unwrap().exchange(0).unwrap().body(), &Value::from("Hello Camel"));
+    main.stop().unwrap();
+}

@@ -38,8 +38,8 @@ pub use dsl::{
     StepContext, StepHandler, StepRegistry, TemplateParameter, TopLevelContext, TopLevelHandler, YamlLoader, YamlState, YAML_DSL_ERROR,
 };
 pub use kamelet::{
-    add_kamelet, add_kamelet_definition, kamelet_registry, load_kamelets_from_dir, pipe_to_route, register_kamelet_component, KameletComponent,
-    KameletDefinition, KameletProperty, KameletRegistry, BUILTIN_KAMELETS,
+    add_kamelet, add_kamelet_definition, kamelet_registry, load_kamelets_from_dir, pipe_to_route, pipe_to_route_with, register_kamelet_component,
+    register_pipe_ref_resolver, KameletComponent, KameletDataTypes, KameletDefinition, KameletProperty, KameletRegistry, BUILTIN_KAMELETS,
 };
 pub use xml::{add_routes_from_xml, load_routes_from_xml};
 pub use yaml::{parse as parse_yaml, parse_all as parse_yaml_all, to_yaml, YamlError};

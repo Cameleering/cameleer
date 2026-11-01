@@ -328,3 +328,110 @@ fn kamelet_template_local_beans() {
     assert_eq!(local.len(), 2, "{:?}", local);
     ctx.stop().unwrap();
 }
+
+#[test]
+fn pipe_data_types_error_handler_and_non_kamelet_refs() {
+    let ctx = CamelContext::new();
+    add_routes_from_yaml(
+        &ctx,
+        r#"
+apiVersion: camel.apache.org/v1
+kind: Kamelet
+metadata:
+  name: json-source
+  labels:
+    camel.apache.org/kamelet.type: source
+spec:
+  definition:
+    properties: {}
+  dataTypes:
+    out:
+      default: binary
+      types:
+        binary:
+          format: application-octet-stream
+          mediaType: application/octet-stream
+        json:
+          format: application-json
+          mediaType: application/json
+  template:
+    from:
+      uri: "timer:json?repeatCount=1&delay=0"
+      steps:
+        - setBody:
+            constant: '{"a":1}'
+        - to: kamelet:sink
+---
+apiVersion: camel.apache.org/v1
+kind: Pipe
+metadata:
+  name: typed
+spec:
+  source:
+    ref: {kind: Kamelet, apiVersion: camel.apache.org/v1, name: json-source}
+    dataTypes:
+      out:
+        format: json
+  sink:
+    uri: mock:typed
+---
+apiVersion: camel.apache.org/v1
+kind: Pipe
+metadata:
+  name: failing
+spec:
+  errorHandler:
+    sink:
+      endpoint:
+        uri: mock:dlq
+      parameters:
+        maximumRedeliveries: 2
+        redeliveryDelay: 0
+  source:
+    uri: direct:failing
+  steps:
+    - uri: "language:simple:${bodyAs(int)}"
+  sink:
+    ref: {kind: Channel, apiVersion: messaging.knative.dev/v1, name: events}
+---
+apiVersion: camel.apache.org/v1
+kind: Pipe
+metadata:
+  name: from-channel
+spec:
+  source:
+    ref: {kind: InMemoryChannel, apiVersion: messaging.knative.dev/v1, name: events}
+  sink:
+    uri: mock:channel
+"#,
+    )
+    .unwrap();
+    ctx.start().unwrap();
+    let typed = ctx.mock_endpoint("mock:typed").unwrap();
+    assert!(typed.wait_for_messages(1, Duration::from_secs(5)));
+    let ex = typed.exchange(0).unwrap();
+    assert_eq!(ex.header("Content-Type"), Some(&Value::from("application/json")));
+    assert_eq!(ex.property("CamelMessageDataType").map(|v| v.to_string()).as_deref(), Some("application-json"));
+    let t = ctx.create_producer_template();
+    // conversion failure: redelivered twice then sent to the dead letter sink
+    t.send_body("direct:failing", "not a number").unwrap();
+    assert_eq!(ctx.mock_endpoint("mock:dlq").unwrap().received_counter(), 1);
+    assert_eq!(ctx.mock_endpoint("mock:dlq").unwrap().exchange(0).unwrap().header("CamelRedeliveryCounter"), Some(&Value::Int(2)));
+    // Knative channel refs become an in-process vm: channel
+    t.send_body("direct:failing", "7").unwrap();
+    assert!(ctx.mock_endpoint("mock:channel").unwrap().wait_for_messages(1, Duration::from_secs(5)));
+    ctx.stop().unwrap();
+
+    // unsupported data type and ref kind
+    let ctx2 = CamelContext::new();
+    add_routes_from_yaml(&ctx2, "apiVersion: camel.apache.org/v1\nkind: Kamelet\nmetadata: {name: k}\nspec:\n  dataTypes:\n    out:\n      types:\n        text: {format: text-plain}\n  template:\n    from: {uri: 'timer:k', steps: [{to: 'kamelet:sink'}]}\n").unwrap();
+    let e = add_routes_from_yaml(&ctx2, "apiVersion: camel.apache.org/v1\nkind: Pipe\nmetadata: {name: p}\nspec:\n  source: {ref: {kind: Kamelet, name: k}, dataTypes: {out: {format: avro}}}\n  sink: {uri: 'mock:x'}\n").unwrap_err();
+    assert!(e.to_string().contains("does not support"), "{}", e);
+    let e = add_routes_from_yaml(&ctx2, "apiVersion: camel.apache.org/v1\nkind: Pipe\nmetadata: {name: q}\nspec:\n  source: {ref: {kind: Weird, name: w}}\n  sink: {uri: 'mock:x'}\n").unwrap_err();
+    assert!(e.to_string().contains("Weird"), "{}", e);
+    camel_yaml::register_pipe_ref_resolver(|kind, _api, name, _ns| (kind == "Weird").then(|| format!("direct:{}", name)));
+    add_routes_from_yaml(&ctx2, "apiVersion: camel.apache.org/v1\nkind: Pipe\nmetadata: {name: q}\nspec:\n  source: {ref: {kind: Weird, name: w}}\n  sink: {uri: 'mock:x'}\n").unwrap();
+    let r = camel_yaml::pipe_to_route(&camel_yaml::parse_yaml("apiVersion: camel.apache.org/v1\nkind: Pipe\nmetadata: {name: z}\nspec:\n  source: {ref: {kind: KafkaTopic, apiVersion: kafka.strimzi.io/v1beta2, name: orders}}\n  sink: {uri: 'log:x'}\n  errorHandler: {log: {parameters: {maximumRedeliveries: 1}}}\n").unwrap()).unwrap();
+    assert_eq!(r.get("from").and_then(|f| f.get("uri")).map(|u| u.to_string()).as_deref(), Some("kafka:orders"));
+    assert!(r.get("errorHandler").and_then(|e| e.get("defaultErrorHandler")).is_some());
+}
