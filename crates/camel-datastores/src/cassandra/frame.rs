@@ -91,6 +91,308 @@ impl Frame {
     }
 }
 
+/// Frame flag: the body is compressed.
+pub const FLAG_COMPRESSION: u8 = 0x01;
+
+/// Frame body compression negotiated with `STARTUP {COMPRESSION}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compression {
+    Lz4,
+    Snappy,
+}
+
+impl Compression {
+    pub fn parse(s: &str) -> Option<Compression> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "lz4" => Some(Compression::Lz4),
+            "snappy" => Some(Compression::Snappy),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Compression::Lz4 => "lz4",
+            Compression::Snappy => "snappy",
+        }
+    }
+
+    /// Compresses a frame body (LZ4: 4-byte big-endian uncompressed length + block).
+    pub fn compress(self, body: &[u8]) -> Vec<u8> {
+        match self {
+            Compression::Lz4 => {
+                let mut out = (body.len() as u32).to_be_bytes().to_vec();
+                out.extend(crate::compress::lz4_compress(body));
+                out
+            }
+            Compression::Snappy => crate::compress::snappy_compress(body),
+        }
+    }
+
+    /// Decompresses a frame body.
+    pub fn decompress(self, body: &[u8]) -> Result<Vec<u8>> {
+        match self {
+            Compression::Lz4 => {
+                if body.len() < 4 {
+                    return Err(proto_err("invalid lz4 frame body"));
+                }
+                let n = u32::from_be_bytes([body[0], body[1], body[2], body[3]]) as usize;
+                if n > MAX_BODY {
+                    return Err(proto_err("lz4 frame body too large"));
+                }
+                let out = crate::compress::lz4_decompress(&body[4..], n)?;
+                if out.len() != n {
+                    return Err(proto_err("lz4 frame body length mismatch"));
+                }
+                Ok(out)
+            }
+            Compression::Snappy => crate::compress::snappy_decompress(body, MAX_BODY),
+        }
+    }
+}
+
+impl Frame {
+    /// Compresses the body (sets the compression flag).
+    pub fn compressed(mut self, c: Option<Compression>) -> Frame {
+        if let Some(c) = c {
+            self.body = c.compress(&self.body);
+            self.flags |= FLAG_COMPRESSION;
+        }
+        self
+    }
+
+    /// Decompresses a flagged body.
+    pub fn decompressed(mut self, c: Option<Compression>) -> Result<Frame> {
+        if self.flags & FLAG_COMPRESSION != 0 {
+            let c = c.ok_or_else(|| proto_err("compressed frame without negotiated compression"))?;
+            self.body = c.decompress(&self.body)?;
+            self.flags &= !FLAG_COMPRESSION;
+        }
+        Ok(self)
+    }
+}
+
+/// Writes a signed vint (zig-zag + Cassandra's unsigned vint: leading one bits of the first
+/// byte count the extra bytes).
+pub fn write_vint(out: &mut Vec<u8>, v: i64) {
+    let u = ((v << 1) ^ (v >> 63)) as u64;
+    for n in 0..9usize {
+        if n == 8 || u < 1u64 << (7 * (n + 1)) {
+            if n == 8 {
+                out.push(0xFF);
+                out.extend_from_slice(&u.to_be_bytes());
+            } else {
+                let first = ((0xFFu16 << (8 - n)) as u8) | (u >> (8 * n)) as u8;
+                out.push(first);
+                for k in (0..n).rev() {
+                    out.push((u >> (8 * k)) as u8);
+                }
+            }
+            return;
+        }
+    }
+}
+
+/// Reads a signed vint.
+pub fn read_vint(b: &[u8], p: &mut usize) -> Option<i64> {
+    let first = *b.get(*p)?;
+    *p += 1;
+    let n = first.leading_ones() as usize;
+    let mut u: u64 = if n >= 8 { 0 } else { (first & (0xFF >> n)) as u64 };
+    for _ in 0..n {
+        u = (u << 8) | *b.get(*p)? as u64;
+        *p += 1;
+    }
+    Some(((u >> 1) as i64) ^ -((u & 1) as i64))
+}
+
+const NANOS_PER: [(i64, &str); 6] = [(3_600_000_000_000, "h"), (60_000_000_000, "m"), (1_000_000_000, "s"), (1_000_000, "ms"), (1_000, "us"), (1, "ns")];
+
+/// Cassandra's duration text (`1y2mo3d4h5m6s7ms8us9ns`).
+pub fn format_duration(months: i32, days: i32, nanos: i64) -> String {
+    if months == 0 && days == 0 && nanos == 0 {
+        return "0s".into();
+    }
+    let neg = months < 0 || days < 0 || nanos < 0;
+    let (mut m, d, mut n) = (months.unsigned_abs() as i64, days.unsigned_abs() as i64, nanos.unsigned_abs() as i64);
+    let mut s = String::from(if neg { "-" } else { "" });
+    if m >= 12 {
+        s.push_str(&format!("{}y", m / 12));
+        m %= 12;
+    }
+    if m > 0 {
+        s.push_str(&format!("{}mo", m));
+    }
+    if d > 0 {
+        s.push_str(&format!("{}d", d));
+    }
+    for (per, unit) in NANOS_PER {
+        if n >= per {
+            s.push_str(&format!("{}{}", n / per, unit));
+            n %= per;
+        }
+    }
+    s
+}
+
+/// Parses a duration: Cassandra text (`1y2mo3w4d5h6m7s8ms9us10ns`), ISO 8601 (`P1Y2M3DT4H`,
+/// `P2W`) or an object `{months, days, nanoseconds}`.
+pub fn parse_duration_value(v: &Value) -> Option<(i32, i32, i64)> {
+    if let Value::Object(o) = v {
+        let g = |k: &str| o.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+        return Some((g("months") as i32, g("days") as i32, g("nanoseconds").max(g("nanos"))));
+    }
+    let text = v.to_string();
+    let t = text.trim();
+    let (neg, t) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t),
+    };
+    let (mut months, mut days, mut nanos) = (0i64, 0i64, 0i64);
+    let upper = t.to_ascii_uppercase();
+    if let Some(iso) = upper.strip_prefix('P') {
+        let (date, time) = iso.split_once('T').unwrap_or((iso, ""));
+        let mut num = String::new();
+        for c in date.chars() {
+            if c.is_ascii_digit() {
+                num.push(c);
+                continue;
+            }
+            let n: i64 = num.parse().ok()?;
+            num.clear();
+            match c {
+                'Y' => months += n * 12,
+                'M' => months += n,
+                'W' => days += n * 7,
+                'D' => days += n,
+                _ => return None,
+            }
+        }
+        for c in time.chars() {
+            if c.is_ascii_digit() {
+                num.push(c);
+                continue;
+            }
+            let n: i64 = num.parse().ok()?;
+            num.clear();
+            match c {
+                'H' => nanos += n * 3_600_000_000_000,
+                'M' => nanos += n * 60_000_000_000,
+                'S' => nanos += n * 1_000_000_000,
+                _ => return None,
+            }
+        }
+        if !num.is_empty() {
+            return None;
+        }
+    } else {
+        let lower = t.to_ascii_lowercase();
+        let b = lower.as_bytes();
+        let mut i = 0;
+        if b.is_empty() {
+            return None;
+        }
+        while i < b.len() {
+            let start = i;
+            while i < b.len() && b[i].is_ascii_digit() {
+                i += 1;
+            }
+            let n: i64 = lower[start..i].parse().ok()?;
+            let ustart = i;
+            while i < b.len() && b[i].is_ascii_alphabetic() || (i < b.len() && b[i] == 0xC2) {
+                i += 1;
+            }
+            match &lower[ustart..i] {
+                "y" => months += n * 12,
+                "mo" => months += n,
+                "w" => days += n * 7,
+                "d" => days += n,
+                "h" => nanos += n * 3_600_000_000_000,
+                "m" => nanos += n * 60_000_000_000,
+                "s" => nanos += n * 1_000_000_000,
+                "ms" => nanos += n * 1_000_000,
+                "us" | "µs" => nanos += n * 1_000,
+                "ns" => nanos += n,
+                _ => return None,
+            }
+        }
+    }
+    let sign = if neg { -1 } else { 1 };
+    Some(((months * sign) as i32, (days * sign) as i32, nanos * sign))
+}
+
+/// Cassandra's Murmur3Partitioner token of a serialized partition key
+/// (`MurmurHash.hash3_x64_128` with signed tail bytes, first half; `Long.MIN_VALUE` → `MAX`).
+pub fn murmur3_token(key: &[u8]) -> i64 {
+    fn fmix(mut k: u64) -> u64 {
+        k ^= k >> 33;
+        k = k.wrapping_mul(0xff51afd7ed558ccd);
+        k ^= k >> 33;
+        k = k.wrapping_mul(0xc4ceb9fe1a85ec53);
+        k ^ (k >> 33)
+    }
+    let (c1, c2) = (0x87c37b91114253d5u64, 0x4cf5ad432745937fu64);
+    let (mut h1, mut h2) = (0u64, 0u64);
+    let nblocks = key.len() / 16;
+    for i in 0..nblocks {
+        let b = &key[i * 16..i * 16 + 16];
+        let mut k1 = u64::from_le_bytes(b[..8].try_into().unwrap());
+        let mut k2 = u64::from_le_bytes(b[8..].try_into().unwrap());
+        k1 = k1.wrapping_mul(c1).rotate_left(31).wrapping_mul(c2);
+        h1 ^= k1;
+        h1 = h1.rotate_left(27).wrapping_add(h2).wrapping_mul(5).wrapping_add(0x52dce729);
+        k2 = k2.wrapping_mul(c2).rotate_left(33).wrapping_mul(c1);
+        h2 ^= k2;
+        h2 = h2.rotate_left(31).wrapping_add(h1).wrapping_mul(5).wrapping_add(0x38495ab5);
+    }
+    let tail = &key[nblocks * 16..];
+    let (mut k1, mut k2) = (0u64, 0u64);
+    // Cassandra sign-extends the tail bytes (`(long) key.get(i)`)
+    let sb = |i: usize| tail[i] as i8 as i64 as u64;
+    for i in (8..tail.len()).rev() {
+        k2 ^= sb(i) << ((i - 8) * 8);
+    }
+    if tail.len() > 8 {
+        k2 = k2.wrapping_mul(c2).rotate_left(33).wrapping_mul(c1);
+        h2 ^= k2;
+    }
+    for i in (0..tail.len().min(8)).rev() {
+        k1 ^= sb(i) << (i * 8);
+    }
+    if !tail.is_empty() {
+        k1 = k1.wrapping_mul(c1).rotate_left(31).wrapping_mul(c2);
+        h1 ^= k1;
+    }
+    h1 ^= key.len() as u64;
+    h2 ^= key.len() as u64;
+    h1 = h1.wrapping_add(h2);
+    h2 = h2.wrapping_add(h1);
+    h1 = fmix(h1);
+    h2 = fmix(h2);
+    h1 = h1.wrapping_add(h2);
+    let t = h1 as i64;
+    if t == i64::MIN {
+        i64::MAX
+    } else {
+        t
+    }
+}
+
+/// The routing key of encoded partition key components (composite keys:
+/// `[short len][bytes][0]` per component).
+pub fn routing_key(components: &[&[u8]]) -> Vec<u8> {
+    if components.len() == 1 {
+        return components[0].to_vec();
+    }
+    let mut out = Vec::new();
+    for c in components {
+        out.extend_from_slice(&(c.len() as u16).to_be_bytes());
+        out.extend_from_slice(c);
+        out.push(0);
+    }
+    out
+}
+
 /// Reads a frame.
 pub fn read_frame<R: Read>(r: &mut R) -> io::Result<Frame> {
     let mut h = [0u8; 9];
@@ -700,7 +1002,14 @@ pub fn encode_value(t: &CqlType, v: &Value) -> Result<Option<Vec<u8>>> {
             ((days + DATE_CENTER) as u32).to_be_bytes().to_vec()
         }
         CqlType::Time => int_of(v).ok_or_else(e)?.to_be_bytes().to_vec(),
-        CqlType::Duration => return Err(CamelError::new(camel_core::error::kinds::UNSUPPORTED_OPERATION, "duration values are not supported")),
+        CqlType::Duration => {
+            let (months, days, nanos) = parse_duration_value(v).ok_or_else(e)?;
+            let mut out = Vec::new();
+            write_vint(&mut out, months as i64);
+            write_vint(&mut out, days as i64);
+            write_vint(&mut out, nanos);
+            out
+        }
         CqlType::List(et) | CqlType::Set(et) => {
             let items = match v {
                 Value::Array(a) => a.clone(),
@@ -813,7 +1122,13 @@ pub fn decode_value(t: &CqlType, b: Option<&[u8]>) -> Result<Value> {
             }
             Value::String(days_to_date(u32::from_be_bytes(b.try_into().unwrap()) as i64 - DATE_CENTER))
         }
-        CqlType::Duration => Value::Bytes(b.to_vec()),
+        CqlType::Duration => {
+            let mut p = 0;
+            let months = read_vint(b, &mut p).ok_or_else(|| proto_err("invalid duration"))?;
+            let days = read_vint(b, &mut p).ok_or_else(|| proto_err("invalid duration"))?;
+            let nanos = read_vint(b, &mut p).ok_or_else(|| proto_err("invalid duration"))?;
+            Value::String(format_duration(months as i32, days as i32, nanos))
+        }
         CqlType::List(et) | CqlType::Set(et) => {
             let mut r = Reader::new(b);
             let n = r.int()?;

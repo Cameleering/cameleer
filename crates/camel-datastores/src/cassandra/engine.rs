@@ -2,8 +2,10 @@
 //! (`CREATE/DROP KEYSPACE`, `CREATE/DROP TABLE`, `TRUNCATE`, `USE`, `INSERT ... [IF NOT
 //! EXISTS] [USING TTL]`, `UPDATE ... SET` (incl. counters and collection `+`/`-`),
 //! `DELETE`, `SELECT [DISTINCT] cols|*|COUNT(*) ... WHERE ... [ORDER BY] [LIMIT] [ALLOW
-//! FILTERING]`), bind markers with type inference for `PREPARE`, and execution with
-//! Cassandra's primary key restrictions.
+//! FILTERING]`), user-defined types (`CREATE TYPE`, `frozen<udt>` columns, `{field: value}`
+//! literals), secondary indexes (`CREATE INDEX ... ON t (col)`: equality restrictions on
+//! indexed columns need no `ALLOW FILTERING`), bind markers with type inference for
+//! `PREPARE`, and execution with Cassandra's primary key restrictions.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -42,6 +44,53 @@ enum Tok {
     Blob(Vec<u8>),
     Sym(String),
     Bind,
+}
+
+/// Parses a type; unknown simple names become UDT placeholders (resolved at CREATE TABLE).
+fn parse_type(text: &str) -> Option<CqlType> {
+    if let Some(t) = CqlType::parse(text) {
+        return Some(t);
+    }
+    let t = text.trim();
+    if let Some(inner) = t.strip_suffix('>') {
+        let (outer, args) = inner.split_once('<')?;
+        let parts = split_args(args);
+        return Some(match outer.trim() {
+            "frozen" => parse_type(parts.first()?)?,
+            "list" => CqlType::List(Box::new(parse_type(parts.first()?)?)),
+            "set" => CqlType::Set(Box::new(parse_type(parts.first()?)?)),
+            "map" => CqlType::Map(Box::new(parse_type(parts.first()?)?), Box::new(parse_type(parts.get(1)?)?)),
+            "tuple" => CqlType::Tuple(parts.iter().map(|p| parse_type(p)).collect::<Option<_>>()?),
+            _ => return None,
+        });
+    }
+    if t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') && !t.is_empty() {
+        return Some(CqlType::Udt { keyspace: String::new(), name: t.to_string(), fields: Vec::new() });
+    }
+    None
+}
+
+fn split_args(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut depth, mut cur) = (0, String::new());
+    for c in s.chars() {
+        match c {
+            '<' => {
+                depth += 1;
+                cur.push(c)
+            }
+            '>' => {
+                depth -= 1;
+                cur.push(c)
+            }
+            ',' if depth == 0 => out.push(std::mem::take(&mut cur).trim().to_string()),
+            _ => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
 }
 
 fn is_uuid_at(s: &[u8], i: usize) -> bool {
@@ -249,6 +298,8 @@ pub enum Stmt {
     DropKeyspace { name: String, if_exists: bool },
     Use(String),
     CreateTable { table: TableRef, cols: Vec<(String, CqlType)>, partition: Vec<String>, clustering: Vec<String>, if_not_exists: bool },
+    CreateType { name: TableRef, fields: Vec<(String, CqlType)>, if_not_exists: bool },
+    CreateIndex { table: TableRef, column: String, if_not_exists: bool },
     DropTable { table: TableRef, if_exists: bool },
     Truncate(TableRef),
     Insert { table: TableRef, cols: Vec<String>, values: Vec<Term>, if_not_exists: bool, ttl: Option<Term> },
@@ -362,7 +413,7 @@ impl Parser {
                 }
             }
         }
-        CqlType::parse(&text).ok_or_else(|| invalid(format!("Unknown type {}", text)))
+        parse_type(&text).ok_or_else(|| invalid(format!("Unknown type {}", text)))
     }
     fn term(&mut self) -> R<Term> {
         match self.next() {
@@ -411,6 +462,20 @@ impl Parser {
             Some(Tok::Sym(s)) if s == "{" => {
                 if self.eat_sym("}") {
                     return Ok(Term::Map(Vec::new()));
+                }
+                // UDT literal {field: value, ...}
+                if matches!(self.peek(), Some(Tok::Ident(..))) && matches!(self.toks.get(self.pos + 1), Some(Tok::Sym(c)) if c == ":") {
+                    let mut pairs = Vec::new();
+                    loop {
+                        let f = self.ident()?;
+                        self.expect_sym(":")?;
+                        pairs.push((Term::Lit(Value::String(f)), self.term()?));
+                        if self.eat_sym("}") {
+                            break;
+                        }
+                        self.expect_sym(",")?;
+                    }
+                    return Ok(Term::Map(pairs));
                 }
                 let first = self.term()?;
                 if self.eat_sym(":") {
@@ -578,8 +643,42 @@ pub fn parse(q: &str) -> R<(Stmt, usize)> {
                     p.skip_rest();
                 }
                 Stmt::CreateTable { table, cols, partition, clustering, if_not_exists: ine }
-            } else if p.eat_kw("index") || p.eat_kw("type") || p.eat_kw("custom") {
-                return Err(invalid("CREATE INDEX/TYPE is not supported by the embedded server"));
+            } else if p.eat_kw("type") {
+                let ine = p.if_not_exists()?;
+                let name = p.table_ref()?;
+                p.expect_sym("(")?;
+                let mut fields = Vec::new();
+                loop {
+                    let f = p.ident()?;
+                    let t = p.cql_type()?;
+                    fields.push((f, t));
+                    if p.eat_sym(")") {
+                        break;
+                    }
+                    p.expect_sym(",")?;
+                }
+                Stmt::CreateType { name, fields, if_not_exists: ine }
+            } else if p.eat_kw("index") {
+                let ine = p.if_not_exists()?;
+                if !p.is_kw("on") {
+                    p.ident()?; // index name
+                }
+                p.expect_kw("on")?;
+                let table = p.table_ref()?;
+                p.expect_sym("(")?;
+                // values(col) / keys(col) / entries(col) / full(col) or plain col
+                let mut column = p.ident()?;
+                if p.eat_sym("(") {
+                    column = p.ident()?;
+                    p.expect_sym(")")?;
+                }
+                p.expect_sym(")")?;
+                if p.eat_kw("using") || p.eat_kw("with") {
+                    p.skip_rest();
+                }
+                Stmt::CreateIndex { table, column, if_not_exists: ine }
+            } else if p.eat_kw("custom") {
+                return Err(invalid("CREATE CUSTOM INDEX is not supported by the embedded server"));
             } else {
                 return Err(syntax("expected KEYSPACE or TABLE after CREATE"));
             }
@@ -762,6 +861,8 @@ pub struct Table {
     pub cols: Vec<(String, CqlType)>,
     pub partition: Vec<String>,
     pub clustering: Vec<String>,
+    /// Columns with a secondary index.
+    pub indexes: Vec<String>,
     rows: Vec<(Row, Option<Instant>)>,
 }
 
@@ -840,6 +941,19 @@ pub fn normalize(t: &CqlType, v: &Value) -> R<Value> {
             Value::Array(items)
         }
         CqlType::Map(_, vt) => Value::Object(v.as_object().ok_or_else(bad)?.iter().map(|(k, x)| Ok((k.clone(), normalize(vt, x)?))).collect::<R<_>>()?),
+        CqlType::Udt { name, fields, .. } => {
+            let o = v.as_object().ok_or_else(bad)?;
+            for k in o.keys() {
+                if !fields.iter().any(|(f, _)| f == k) {
+                    return Err(invalid(format!("Unknown field '{}' in value of user defined type {}", k, name)));
+                }
+            }
+            Value::Object(fields.iter().map(|(f, ft)| Ok((f.clone(), normalize(ft, o.get(f).unwrap_or(&Value::Null))?))).collect::<R<_>>()?)
+        }
+        CqlType::Duration => match super::frame::parse_duration_value(v) {
+            Some((m, d, n)) => Value::String(super::frame::format_duration(m, d, n)),
+            None => return Err(bad()),
+        },
         _ => v.clone(),
     })
 }
@@ -852,6 +966,31 @@ fn cmp(a: &Value, b: &Value) -> Ordering {
 #[derive(Default)]
 pub struct Schema {
     pub keyspaces: BTreeMap<String, BTreeMap<String, Table>>,
+    /// keyspace → user-defined type name → fields
+    pub types: BTreeMap<String, BTreeMap<String, Vec<(String, CqlType)>>>,
+}
+
+/// Replaces UDT placeholders by the keyspace's type definitions.
+fn resolve_udts(t: &CqlType, ks: &str, types: &BTreeMap<String, Vec<(String, CqlType)>>) -> R<CqlType> {
+    Ok(match t {
+        CqlType::Udt { name, fields, .. } if fields.is_empty() => {
+            let simple = name.rsplit('.').next().unwrap_or(name);
+            let f = types.get(simple).ok_or_else(|| invalid(format!("Unknown type {}.{}", ks, simple)))?;
+            CqlType::Udt { keyspace: ks.to_string(), name: simple.to_string(), fields: f.clone() }
+        }
+        CqlType::List(e) => CqlType::List(Box::new(resolve_udts(e, ks, types)?)),
+        CqlType::Set(e) => CqlType::Set(Box::new(resolve_udts(e, ks, types)?)),
+        CqlType::Map(k, v) => CqlType::Map(Box::new(resolve_udts(k, ks, types)?), Box::new(resolve_udts(v, ks, types)?)),
+        CqlType::Tuple(ts) => CqlType::Tuple(ts.iter().map(|x| resolve_udts(x, ks, types)).collect::<R<_>>()?),
+        other => other.clone(),
+    })
+}
+
+impl Schema {
+    /// Partition key columns of a table.
+    pub fn partition_key(&self, ks: &str, table: &str) -> Vec<String> {
+        self.keyspaces.get(ks).and_then(|k| k.get(table)).map(|t| t.partition.clone()).unwrap_or_default()
+    }
 }
 
 /// Result of executing a statement.
@@ -1017,8 +1156,43 @@ impl Schema {
                 if counters > 0 && counters != regular.len() {
                     return Err(invalid("Cannot mix counter and non counter columns in the same table"));
                 }
-                k.insert(table.name.clone(), Table { cols: cols.clone(), partition: partition.clone(), clustering: clustering.clone(), rows: Vec::new() });
+                let types = self.types.get(&ks).cloned().unwrap_or_default();
+                let cols: Vec<(String, CqlType)> = cols.iter().map(|(n, t)| Ok((n.clone(), resolve_udts(t, &ks, &types)?))).collect::<R<_>>()?;
+                let k = self.keyspaces.get_mut(&ks).ok_or_else(|| invalid(format!("Keyspace {} doesn't exist", ks)))?;
+                k.insert(table.name.clone(), Table { cols, partition: partition.clone(), clustering: clustering.clone(), indexes: Vec::new(), rows: Vec::new() });
                 Ok(Outcome::SchemaChange { change: "CREATED", target: "TABLE", keyspace: ks, name: table.name.clone() })
+            }
+            Stmt::CreateType { name, fields, if_not_exists } => {
+                let ks = name.keyspace.clone().or_else(|| cur.map(String::from)).ok_or_else(|| invalid("No keyspace has been specified. USE a keyspace, or explicitly specify keyspace.typename"))?;
+                if !self.keyspaces.contains_key(&ks) {
+                    return Err(invalid(format!("Keyspace {} doesn't exist", ks)));
+                }
+                let types = self.types.entry(ks.clone()).or_default();
+                if types.contains_key(&name.name) {
+                    if *if_not_exists {
+                        return Ok(Outcome::Void);
+                    }
+                    return Err(CqlError(error_code::ALREADY_EXISTS, format!("A user type with name '{}' already exists", name.name)));
+                }
+                let known = types.clone();
+                let fields: Vec<(String, CqlType)> = fields.iter().map(|(n, t)| Ok((n.clone(), resolve_udts(t, &ks, &known)?))).collect::<R<_>>()?;
+                types.insert(name.name.clone(), fields);
+                Ok(Outcome::SchemaChange { change: "CREATED", target: "TYPE", keyspace: ks, name: name.name.clone() })
+            }
+            Stmt::CreateIndex { table, column, if_not_exists } => {
+                let (ks, t) = self.table_mut(table, cur)?;
+                t.col_type(column)?;
+                if t.indexes.contains(column) {
+                    if *if_not_exists {
+                        return Ok(Outcome::Void);
+                    }
+                    return Err(CqlError(error_code::ALREADY_EXISTS, format!("Index on column {} already exists", column)));
+                }
+                if t.partition.len() == 1 && t.partition[0] == *column {
+                    return Err(invalid(format!("Cannot create secondary index on the only partition key column {}", column)));
+                }
+                t.indexes.push(column.clone());
+                Ok(Outcome::SchemaChange { change: "UPDATED", target: "TABLE", keyspace: ks, name: table.name.clone() })
             }
             Stmt::DropTable { table, if_exists } => {
                 let ks = table.keyspace.clone().or_else(|| cur.map(String::from)).unwrap_or_default();
@@ -1163,7 +1337,8 @@ impl Schema {
                 let pk_restricted = t.partition.iter().all(|k| conds.iter().any(|c| &c.col == k && matches!(c.op, Op::Eq | Op::In)));
                 let only_keys = conds.iter().all(|c| t.is_pk(&c.col) && !matches!(c.op, Op::Ne | Op::Contains | Op::ContainsKey));
                 let partition_only_eq = conds.iter().filter(|c| t.partition.contains(&c.col)).all(|c| matches!(c.op, Op::Eq | Op::In));
-                if !conds.is_empty() && !*allow_filtering && !(pk_restricted && only_keys && partition_only_eq) {
+                let indexed = conds.iter().any(|c| t.indexes.contains(&c.col) && matches!(c.op, Op::Eq | Op::Contains | Op::ContainsKey)) && conds.iter().all(|c| (t.indexes.contains(&c.col) && matches!(c.op, Op::Eq | Op::Contains | Op::ContainsKey)) || (t.is_pk(&c.col) && !matches!(c.op, Op::Ne)));
+                if !conds.is_empty() && !*allow_filtering && !indexed && !(pk_restricted && only_keys && partition_only_eq) {
                     return Err(invalid("Cannot execute this query as it might involve data filtering and thus may have unpredictable performance. If you want to execute this query despite the performance unpredictability, use ALLOW FILTERING"));
                 }
                 if let Some((oc, _)) = order {

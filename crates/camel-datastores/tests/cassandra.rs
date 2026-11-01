@@ -176,7 +176,7 @@ fn client_paging_with_prepared_statements() {
     let rows = session.execute("SELECT seq FROM events WHERE day = ?", &[Value::from("d")], &o).unwrap();
     assert_eq!(rows.rows.len(), 10);
     assert_eq!(rows.columns[0].name, "seq");
-    let pages = server.queries().iter().filter(|q| q.starts_with("SELECT")).count();
+    let pages = server.queries().iter().filter(|q| q.starts_with("SELECT seq")).count();
     assert_eq!(pages, 1, "prepared once, paged with EXECUTE");
     let rows = session.execute("SELECT COUNT(*) FROM events WHERE day = 'd'", &[], &o).unwrap();
     assert_eq!(rows.rows, vec![vec![Value::Int(10)]]);

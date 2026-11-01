@@ -15,6 +15,7 @@
 //! Couchbase is not implemented (its binary memcached/KV protocol and cluster map are out of scope).
 
 pub mod cassandra;
+pub mod compress;
 pub mod couchdb;
 pub mod dns;
 pub mod elasticsearch;
