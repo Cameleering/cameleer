@@ -102,6 +102,8 @@ pub enum ObjKind {
     Buffer(Internal<Vec<u8>>),
     /// A JavaScript typed array or `DataView`.
     Typed(crate::jsext::Typed),
+    /// A Java `java.time` value.
+    JTime(crate::javaext::JTime),
 }
 
 /// An object / map with insertion-ordered keys and an optional prototype.
@@ -371,6 +373,7 @@ fn to_value_depth(v: &V, depth: usize) -> Value {
                 return v;
             }
             match &o.kind {
+                ObjKind::JTime(t) => Value::String(crate::javaext::display(t)),
                 ObjKind::Date(ms) => Value::String(crate::builtins::iso_date(*ms)),
                 ObjKind::Set => Value::Array(o.props.values().map(|x| to_value_depth(x, depth + 1)).collect()),
                 ObjKind::Coll(c) => crate::collections::coll_to_value(&c.0.borrow(), &|x| to_value_depth(x, depth + 1), &|k| match k {

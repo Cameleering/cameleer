@@ -128,6 +128,8 @@ pub struct Interp {
     pub pending_class: Vec<V>,
     /// The script's options (DataSonnet `extVar.*` / `tla.*`).
     pub script_options: std::collections::BTreeMap<String, String>,
+    /// Java / Groovy `TreeMap` / `TreeSet` instances with their comparator, by address.
+    pub jsorted: HashMap<usize, (std::rc::Weak<RefCell<Obj>>, Option<V>)>,
 }
 
 /// JavaScript number to string.
@@ -240,6 +242,7 @@ impl Interp {
             py_dicts: HashMap::new(),
             pending_class: Vec::new(),
             script_options: std::collections::BTreeMap::new(),
+            jsorted: HashMap::new(),
         };
         crate::builtins::install_globals(&mut it);
         it
@@ -1258,6 +1261,13 @@ impl Interp {
                             return self.call_user_method(recv, &f, args, pos);
                         }
                         return self.call(&f, recv.clone(), args, pos);
+                    }
+                    if own {
+                        // a field shadowing a method of the same name (Java records: `p.x()`)
+                        let pf = o.borrow().proto.as_ref().and_then(|p| p.borrow().lookup(name));
+                        if let Some(pf) = pf.filter(|pf| pf.is_callable()) {
+                            return self.call_user_method(recv, &pf, args, pos);
+                        }
                     }
                 }
                 if self.d == Dialect::Groovy {
@@ -3238,6 +3248,7 @@ impl Interp {
             }
             (V::Obj(x), V::Obj(y)) => match (&x.borrow().kind, &y.borrow().kind) {
                 (ObjKind::Date(p), ObjKind::Date(q)) => p.partial_cmp(q),
+                (ObjKind::JTime(p), ObjKind::JTime(q)) => crate::javaext::compare(p, q),
                 _ => None,
             },
             (V::Str(s), n) | (n, V::Str(s)) if n.is_number() && matches!(self.d, Dialect::Js | Dialect::Ognl | Dialect::Mvel) => {
@@ -3513,6 +3524,9 @@ pub fn deep_eq(a: &V, b: &V) -> bool {
             }
             let (x, y) = (x.borrow(), y.borrow());
             if let (ObjKind::Date(p), ObjKind::Date(q)) = (&x.kind, &y.kind) {
+                return p == q;
+            }
+            if let (ObjKind::JTime(p), ObjKind::JTime(q)) = (&x.kind, &y.kind) {
                 return p == q;
             }
             if x.kind == ObjKind::Set && y.kind == ObjKind::Set {

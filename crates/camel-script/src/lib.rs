@@ -46,6 +46,7 @@ mod groovyext;
 mod host;
 mod interp;
 mod java;
+mod javaext;
 mod jobj;
 mod jsext;
 mod json;

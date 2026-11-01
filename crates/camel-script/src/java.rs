@@ -40,6 +40,7 @@ pub fn install(it: &mut Interp) {
         }
     }
     it.globals.define("Comparator", V::host(Host::Ns("Comparator")));
+    crate::javaext::install(it);
     for f in JOOR_FNS {
         it.globals.define(f, V::host(Host::NsFn("jOOR", f.to_string())));
     }

@@ -289,6 +289,9 @@ pub fn display(it: &Interp, v: &V, depth: usize) -> String {
             if let Some(s) = crate::jsext::display(it, &ob) {
                 return s;
             }
+            if let ObjKind::JTime(t) = &ob.kind {
+                return crate::javaext::display(t);
+            }
             match &ob.kind {
                 ObjKind::Error => {
                     let name = ob.props.get("name").map(|n| display(it, n, depth + 1)).unwrap_or_else(|| "Error".into());
@@ -1282,6 +1285,11 @@ pub fn as_type(it: &mut Interp, v: V, t: &str, pos: u32) -> R<V> {
 
 /// Members of namespaces: constants or functions.
 pub fn ns_member(it: &mut Interp, ns: &'static str, name: &str, _pos: u32) -> R<V> {
+    if it.d.groovy_like() && crate::javaext::NS.contains(&ns) {
+        if let Some(v) = it.jtime_member(ns, name) {
+            return Ok(v);
+        }
+    }
     if it.d == Dialect::Python {
         if let Some(v) = it.py_ns_member(ns, name) {
             return Ok(v);
@@ -1957,6 +1965,24 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
 /// `new X(...)` for built-in classes.
 pub fn construct_ns(it: &mut Interp, n: &'static str, args: Vec<V>, pos: u32) -> R<V> {
     let a0 = arg(&args, 0);
+    if matches!(n, "TreeMap" | "TreeSet") && it.d.groovy_like() {
+        // sorted collections: kept ordered on every change (natural order or a Comparator)
+        let cmp = if a0.is_callable() { Some(a0.clone()) } else { None };
+        let v = if n == "TreeMap" {
+            let mut p = PropMap::default();
+            if let V::Obj(o) = &a0 {
+                if cmp.is_none() {
+                    p = o.borrow().props.clone();
+                }
+            }
+            V::obj(p)
+        } else {
+            let items = if a0.is_nullish() || a0.is_number() || cmp.is_some() { vec![] } else { it.iterate(&a0, Some(pos))? };
+            make_set(it, items)
+        };
+        it.register_sorted(&v, cmp);
+        return Ok(v);
+    }
     if it.d == Dialect::Js {
         if let Some(v) = crate::jsext::construct_ns(it, n, &args, pos)? {
             return Ok(v);
@@ -2077,6 +2103,11 @@ fn json_dumps(it: &Interp, v: &V, kwa: &Option<ObjRef>) -> String {
 
 /// Call a namespace member function (`Math.max`, `JSON.parse`, `json.loads`, `std.length`...).
 pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: u32) -> R<V> {
+    if it.d.groovy_like() && crate::javaext::NS.contains(&ns) {
+        if let Some(v) = it.jtime_static(ns, name, &args, pos)? {
+            return Ok(v);
+        }
+    }
     if it.d == Dialect::Python {
         if let Some(v) = it.py_call_ns_fn(ns, name, args.clone(), pos)? {
             return Ok(v);
@@ -2881,6 +2912,11 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
         if let Some(v) = crate::jsext::internal_method(it, recv, name, &args, pos)? {
             return Ok(v);
         }
+        if it.d == Dialect::Java {
+            if let Some(v) = it.java_internal(recv, name, &args, pos)? {
+                return Ok(v);
+            }
+        }
         if name == "%groovy_use" {
             return it.groovy_use(&args, pos);
         }
@@ -2917,11 +2953,27 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
                 _ => None,
             },
             ObjKind::Optional => crate::java::optional_method(it, o, recv, name, &args, pos)?,
+            ObjKind::JTime(t) => it.jtime_method(t, name, &args, pos)?,
             ObjKind::Jsonnet(_) => None,
             _ => None,
         };
         if let Some(v) = r {
             return Ok(v);
+        }
+        if !it.jsorted.is_empty() && it.sorted_info(o).is_some() {
+            // TreeMap / TreeSet: navigation methods, other methods keep the order
+            let o = o.clone();
+            if let Some(v) = it.sorted_method(&o, recv, name, &args, pos)? {
+                return Ok(v);
+            }
+            let key = Rc::as_ptr(&o) as *const u8 as usize;
+            let entry = it.jsorted.remove(&key);
+            let r = call_method(it, recv, name, args, pos);
+            if let Some(e) = entry {
+                it.jsorted.insert(key, e);
+            }
+            it.resort(&o, pos)?;
+            return r;
         }
     }
     if it.d == Dialect::Java {

@@ -20,6 +20,8 @@ pub enum T {
     Num(f64),
     /// JavaScript BigInt literal (decimal digits).
     BigInt(String),
+    /// Java char literal.
+    Char(String),
     Str(String),
     /// Template literal / GString with interpolations.
     Tpl(Vec<RawPart>),
@@ -150,6 +152,14 @@ pub fn tokenize(src: &str, base: usize, d: Dialect) -> Result<Vec<Tok>, SyntaxEr
             if triple && d == Dialect::Java {
                 if let T::Str(text) = &tok {
                     tok = T::Str(java_text_block(text));
+                }
+            }
+            // Java char literals are typed (`'a' + 1` is an int)
+            if d == Dialect::Java && c == b'\'' {
+                if let T::Str(text) = &tok {
+                    if text.chars().count() == 1 {
+                        tok = T::Char(text.clone());
+                    }
                 }
             }
             t = tok;
