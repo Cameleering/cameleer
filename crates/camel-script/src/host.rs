@@ -330,9 +330,11 @@ pub fn get_member(it: &mut Interp, h: &Rc<Host>, recv: &V, name: &str, pos: u32)
             }
             return it.get_member(&bean, name, pos);
         }
+        // `Type.metaClass.static.m = {..}` shares the type's metaclass methods
+        Host::Meta(_) if name == "static" => V::Host(h.clone()),
         Host::Meta(_) => method(),
         Host::NsFn(..) | Host::Type(_) => {
-            if name == "name" || name == "simpleName" {
+            if name == "name" || name == "simpleName" || name == "__name__" {
                 return Ok(V::string(match &**h {
                     Host::Type(n) => n.clone(),
                     Host::NsFn(_, n) => n.clone(),
@@ -357,6 +359,10 @@ fn is_map_method(name: &str) -> bool {
 /// Property write on a host object.
 pub fn set_member(it: &mut Interp, h: &Rc<Host>, name: &str, v: V, pos: u32) -> R<()> {
     match &**h {
+        Host::Ns("globalThis") => {
+            it.globals.define(name, v);
+            Ok(())
+        }
         Host::Message | Host::Root if name == "body" => {
             it.host.set_body(v);
             Ok(())
@@ -558,7 +564,14 @@ pub fn call_method(it: &mut Interp, h: &Rc<Host>, recv: &V, name: &str, args: Ve
             }
             _ => {}
         },
-        Host::Ns(n) => return crate::builtins::call_ns_fn(it, n, name, args, pos),
+        Host::Ns(n) => {
+            if it.d == crate::ast::Dialect::Groovy {
+                if let Some(f) = it.meta_methods.get(*n).and_then(|m| m.get(name)).cloned() {
+                    return it.call(&f, V::Undef, args, pos);
+                }
+            }
+            return crate::builtins::call_ns_fn(it, n, name, args, pos);
+        }
         Host::NsFn(..) | Host::Type(_) => {}
     }
     // JavaBean getter: getFoo() / isFoo() -> foo

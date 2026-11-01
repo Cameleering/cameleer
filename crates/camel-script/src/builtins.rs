@@ -61,14 +61,18 @@ pub fn install_globals(it: &mut Interp) {
             );
             it.globals.define("NaN", V::Num(f64::NAN));
             it.globals.define("Infinity", V::Num(f64::INFINITY));
+            crate::jsext::install(it);
         }
-        Dialect::Groovy => def_ns(
-            it,
-            &[
-                "Math", "Integer", "Long", "Double", "Float", "Boolean", "String", "BigDecimal", "BigInteger", "List", "Map", "Set", "Date", "Object", "Number", "System", "UUID",
-                "JsonSlurper", "JsonOutput", "Collections", "Arrays", "Pattern", "println", "print", "sprintf",
-            ],
-        ),
+        Dialect::Groovy => {
+            def_ns(
+                it,
+                &[
+                    "Math", "Integer", "Long", "Double", "Float", "Boolean", "String", "BigDecimal", "BigInteger", "List", "Map", "Set", "Date", "Object", "Number", "System", "UUID",
+                    "JsonSlurper", "JsonOutput", "Collections", "Arrays", "Pattern", "println", "print", "sprintf",
+                ],
+            );
+            crate::groovyext::install(it);
+        }
         Dialect::Python => {
             def_ns(
                 it,
@@ -78,6 +82,7 @@ pub fn install_globals(it: &mut Interp) {
                     "next", "iter", "issubclass", "setattr", "callable", "id", "vars",
                 ],
             );
+            crate::pyext::install(it);
             for e in ["Exception", "ValueError", "TypeError", "KeyError", "IndexError", "ZeroDivisionError", "RuntimeError", "AttributeError", "NameError", "AssertionError", "StopIteration", "NotImplementedError"] {
                 it.globals.define(e, V::host(Host::Type(e.to_string())));
             }
@@ -154,6 +159,12 @@ pub fn js_typeof(v: &V) -> &'static str {
         if matches!(o.borrow().kind, ObjKind::Symbol(..)) {
             return "symbol";
         }
+        if let Some(t) = crate::jsext::typeof_of(v) {
+            return t;
+        }
+    }
+    if matches!(v, V::Host(h) if matches!(**h, Host::Ns("globalThis") | Host::Ns("Intl"))) {
+        return "object";
     }
     match v {
         V::Undef => "undefined",
@@ -261,6 +272,11 @@ pub fn display(it: &Interp, v: &V, depth: usize) -> String {
             }
         }
         V::Arr(a) => {
+            if d == Dialect::Python {
+                if let Some(s) = it.namedtuple_display(a) {
+                    return s;
+                }
+            }
             let items = a.borrow().clone();
             match d {
                 Dialect::Js => items.iter().map(|x| if x.is_nullish() { String::new() } else { display(it, x, depth + 1) }).collect::<Vec<_>>().join(","),
@@ -270,6 +286,12 @@ pub fn display(it: &Interp, v: &V, depth: usize) -> String {
         }
         V::Obj(o) => {
             let ob = o.borrow();
+            if let Some(s) = crate::jsext::display(it, &ob) {
+                return s;
+            }
+            if let ObjKind::JTime(t) = &ob.kind {
+                return crate::javaext::display(t);
+            }
             match &ob.kind {
                 ObjKind::Error => {
                     let name = ob.props.get("name").map(|n| display(it, n, depth + 1)).unwrap_or_else(|| "Error".into());
@@ -324,7 +346,10 @@ pub fn display(it: &Interp, v: &V, depth: usize) -> String {
                     match d {
                         Dialect::Js => "[object Object]".into(),
                         Dialect::Jsonnet => jsonnet_manifest(v),
-                        Dialect::Python => format!("{{{}}}", items.iter().map(|(k, x)| format!("{}: {}", py_repr(it, &V::Str(k.clone())), display_nested(it, x, depth))).collect::<Vec<_>>().join(", ")),
+                        Dialect::Python => {
+                            let inner = format!("{{{}}}", items.iter().map(|(k, x)| format!("{}: {}", py_repr(it, &V::Str(k.clone())), display_nested(it, x, depth))).collect::<Vec<_>>().join(", "));
+                            it.py_dict_display(o, inner.clone()).unwrap_or(inner)
+                        }
                         Dialect::Groovy => {
                             if items.is_empty() {
                                 return "[:]".into();
@@ -468,6 +493,7 @@ fn date_method(it: &mut Interp, ms: f64, recv: &V, name: &str, args: &[V]) -> R<
         "getSeconds" | "getUTCSeconds" => V::Int(s as i64),
         "getMilliseconds" | "getUTCMilliseconds" => V::Int(mil),
         "getTimezoneOffset" => V::Int(0),
+        "toLocaleString" | "toLocaleDateString" | "toLocaleTimeString" if it.d == Dialect::Js => crate::jsext::date_to_locale(it, ms, name, args)?,
         "toString" | "toUTCString" | "toDateString" | "toLocaleString" => V::string(iso_date(ms)),
         "setTime" => set(args.first().and_then(|v| v.as_f64()).unwrap_or(f64::NAN)),
         "format" => {
@@ -762,7 +788,7 @@ fn sort_with(it: &mut Interp, items: Vec<V>, f: Option<&V>, js_default: bool, po
                     })
                 })
             } else {
-                sort_vals(it, items, &mut |it, a, b| Ok(natural(it, a, b)))
+                sort_vals(it, items, &mut |it, a, b| it.py_order(a, b, pos))
             }
         }
     }
@@ -838,7 +864,41 @@ fn match_list(re: &RegexVal, s: &str) -> Vec<V> {
 }
 
 fn js_replacement(r: &str) -> String {
-    r.replace("$&", "$0")
+    // `$&` whole match, `$<name>` named group, `$$` a dollar sign, `\` is literal
+    let mut out = String::new();
+    let cs: Vec<char> = r.chars().collect();
+    let mut i = 0;
+    while i < cs.len() {
+        let c = cs[i];
+        if c == '\\' {
+            out.push_str("\\\\");
+        } else if c == '$' && i + 1 < cs.len() {
+            match cs[i + 1] {
+                '&' => {
+                    out.push_str("$0");
+                    i += 1;
+                }
+                '$' => {
+                    out.push_str("\\$");
+                    i += 1;
+                }
+                '<' => {
+                    if let Some(end) = cs[i + 2..].iter().position(|x| *x == '>') {
+                        let name: String = cs[i + 2..i + 2 + end].iter().collect();
+                        out.push_str(&format!("${{{}}}", name));
+                        i += end + 2;
+                    } else {
+                        out.push('$');
+                    }
+                }
+                _ => out.push('$'),
+            }
+        } else {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
 }
 
 fn regex_replace_fn(it: &mut Interp, re: &RegexVal, s: &str, f: &V, global: bool, pos: u32) -> R<String> {
@@ -851,6 +911,10 @@ fn regex_replace_fn(it: &mut Interp, re: &RegexVal, s: &str, f: &V, global: bool
         if it.d == Dialect::Js {
             args.push(V::Int(byte_to_char(s, st) as i64));
             args.push(V::str(s));
+            let groups = crate::jsext::named_groups(&re.re, &c);
+            if !matches!(groups, V::Undef) {
+                args.push(groups);
+            }
         } else if it.d == Dialect::Python {
             args = vec![match_obj(&c, s)];
         }
@@ -878,7 +942,30 @@ fn regex_method(it: &mut Interp, r: &Rc<RegexVal>, name: &str, args: &[V], pos: 
     let s = sarg(it, args, 0);
     Ok(Some(match name {
         "test" => V::Bool(r.re.is_match(&s)),
+        "exec" if it.d == Dialect::Js && r.flags.contains('g') => {
+            // global regexes advance `lastIndex` (kept per regex object)
+            let key = format!("%lastIndex:{:p}", Rc::as_ptr(r));
+            let start = it.globals.lookup(&key).and_then(|v| v.as_f64()).unwrap_or(0.0) as usize;
+            let bstart = char_to_byte(&s, start);
+            let found = if bstart <= s.len() { r.re.captures_iter(&s[bstart..]).into_iter().next() } else { None };
+            match found {
+                Some(_) => {
+                    let all = r.re.captures_iter(&s);
+                    let c = all.into_iter().find(|c| c.span(0).is_some_and(|(st, _)| st >= bstart)).unwrap();
+                    let (_, en) = c.span(0).unwrap_or((0, 0));
+                    let en_c = byte_to_char(&s, en) as i64;
+                    let next = if c.span(0).is_some_and(|(a, b)| a == b) { en_c + 1 } else { en_c };
+                    it.globals.define(&key, V::Int(next));
+                    crate::jsext::js_match(it, &r.re, &c, &s)
+                }
+                None => {
+                    it.globals.define(&key, V::Int(0));
+                    V::Null
+                }
+            }
+        }
         "exec" => match r.re.captures_match(&s) {
+            Some(c) if it.d == Dialect::Js => crate::jsext::js_match(it, &r.re, &c, &s),
             Some(c) => V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect()),
             None => V::Null,
         },
@@ -1198,6 +1285,21 @@ pub fn as_type(it: &mut Interp, v: V, t: &str, pos: u32) -> R<V> {
 
 /// Members of namespaces: constants or functions.
 pub fn ns_member(it: &mut Interp, ns: &'static str, name: &str, _pos: u32) -> R<V> {
+    if it.d.groovy_like() && crate::javaext::NS.contains(&ns) {
+        if let Some(v) = it.jtime_member(ns, name) {
+            return Ok(v);
+        }
+    }
+    if it.d == Dialect::Python {
+        if let Some(v) = it.py_ns_member(ns, name) {
+            return Ok(v);
+        }
+    }
+    if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::ns_member(it, ns, name)? {
+            return Ok(v);
+        }
+    }
     let c = match (ns, name) {
         (_, "class") => return Ok(V::host(Host::Ns(ns))),
         ("Math" | "math", "PI" | "pi") => V::Num(std::f64::consts::PI),
@@ -1444,6 +1546,19 @@ fn log_line(it: &Interp, args: &[V]) {
 /// Call a namespace / global function value (`String(x)`, `len(x)`, `parseInt(s)`).
 pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> R<V> {
     let a0 = arg(&args, 0);
+    if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::call_ns(it, n, &args, pos)? {
+            return Ok(v);
+        }
+        if let Some(b) = crate::jsext::bigint_of(&a0) {
+            match n {
+                "Number" => return Ok(norm_num(b.to_f64())),
+                "String" => return Ok(V::string(b.to_string())),
+                "parseInt" | "parseFloat" => return Ok(norm_num(b.to_f64())),
+                _ => {}
+            }
+        }
+    }
     Ok(match n {
         "String" => {
             if args.is_empty() {
@@ -1621,10 +1736,11 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
             }
         }
         "int" => {
+            let kwa = kwargs(&mut args);
             if args.is_empty() {
                 V::Int(0)
             } else {
-                let base = if args.len() > 1 { Some(iarg(it, &args, 1, 10)) } else { None };
+                let base = if args.len() > 1 { Some(iarg(it, &args, 1, 10)) } else { kw(&kwa, "base").map(|b| b.as_f64().unwrap_or(10.0) as i64) };
                 py_int(it, &a0, base, pos)?
             }
         }
@@ -1705,7 +1821,7 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
                         let kv = it.call(&k, V::Undef, vec![x.clone()], pos)?;
                         keyed.push(V::arr(vec![kv, x]));
                     }
-                    let sorted = sort_vals(it, keyed, &mut |it, a, b| Ok(natural(it, &first(a), &first(b))))?;
+                    let sorted = sort_vals(it, keyed, &mut |it, a, b| it.py_order(&first(a), &first(b), pos))?;
                     sorted.iter().map(|p| if let V::Arr(a) = p { a.borrow()[1].clone() } else { V::Null }).collect()
                 }
                 None => sort_with(it, items, None, false, pos)?,
@@ -1813,8 +1929,10 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
             let i = iarg(it, &args, 0, 0);
             V::string(if i < 0 { format!("-0x{:x}", -i) } else { format!("0x{:x}", i) })
         }
+        "type" if args.len() == 3 => it.py_type3(&a0, &arg(&args, 1), &arg(&args, 2), pos)?,
         "type" => match crate::classes::class_of(&a0) {
             Some(c) => V::Func(c),
+            None if matches!(&a0, V::Obj(o) if o.borrow().kind == ObjKind::Error) => V::host(Host::Type(error_name(&a0))),
             None => V::host(Host::Type(py_type_name(&a0).to_string())),
         },
         "divmod" => {
@@ -1847,7 +1965,28 @@ pub fn call_ns(it: &mut Interp, n: &'static str, mut args: Vec<V>, pos: u32) -> 
 /// `new X(...)` for built-in classes.
 pub fn construct_ns(it: &mut Interp, n: &'static str, args: Vec<V>, pos: u32) -> R<V> {
     let a0 = arg(&args, 0);
+    if matches!(n, "TreeMap" | "TreeSet") && it.d.groovy_like() {
+        // sorted collections: kept ordered on every change (natural order or a Comparator)
+        let cmp = if a0.is_callable() { Some(a0.clone()) } else { None };
+        let v = if n == "TreeMap" {
+            let mut p = PropMap::default();
+            if let V::Obj(o) = &a0 {
+                if cmp.is_none() {
+                    p = o.borrow().props.clone();
+                }
+            }
+            V::obj(p)
+        } else {
+            let items = if a0.is_nullish() || a0.is_number() || cmp.is_some() { vec![] } else { it.iterate(&a0, Some(pos))? };
+            make_set(it, items)
+        };
+        it.register_sorted(&v, cmp);
+        return Ok(v);
+    }
     if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::construct_ns(it, n, &args, pos)? {
+            return Ok(v);
+        }
         match n {
             "Map" | "Set" | "WeakMap" | "WeakSet" => return it.construct_coll(n, &args, pos),
             "Promise" => return it.construct_promise(&args, pos),
@@ -1927,6 +2066,16 @@ pub fn construct_type(it: &mut Interp, n: &str, args: Vec<V>, pos: u32) -> R<V> 
     if n == "Object" {
         return Ok(V::new_obj());
     }
+    if n == "Expando" && it.d == Dialect::Groovy {
+        // a dynamic bean: properties and closures (called as methods) can be added freely
+        let props = match args.first() {
+            Some(V::Obj(o)) => o.borrow().props.clone(),
+            _ => PropMap::default(),
+        };
+        let mut marker = Obj::new();
+        marker.props.set("%expando", V::Bool(true));
+        return Ok(V::Obj(new_obj_ref(Obj { props, proto: Some(new_obj_ref(marker)), kind: ObjKind::Plain })));
+    }
     let msg = match it.d {
         Dialect::Groovy => format!("unable to resolve class {}", n),
         _ => format!("{} is not a constructor", n),
@@ -1954,12 +2103,28 @@ fn json_dumps(it: &Interp, v: &V, kwa: &Option<ObjRef>) -> String {
 
 /// Call a namespace member function (`Math.max`, `JSON.parse`, `json.loads`, `std.length`...).
 pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: u32) -> R<V> {
+    if it.d.groovy_like() && crate::javaext::NS.contains(&ns) {
+        if let Some(v) = it.jtime_static(ns, name, &args, pos)? {
+            return Ok(v);
+        }
+    }
+    if it.d == Dialect::Python {
+        if let Some(v) = it.py_call_ns_fn(ns, name, args.clone(), pos)? {
+            return Ok(v);
+        }
+    }
+    if it.d == Dialect::Js {
+        if let Some(v) = crate::jsext::call_ns_fn(it, ns, name, &args, pos)? {
+            return Ok(v);
+        }
+    }
     let a0 = arg(&args, 0);
     let java = it.d != Dialect::Js;
     let r = match (ns, name) {
         ("std" | "cml" | "ds", _) => return crate::jsonnet::std_call(it, ns, name, args, pos),
         ("jOOR", _) => return crate::java::call_fn(it, name, args, pos),
         ("ds.datetime", _) => return crate::dstime::call(it, name, args, pos),
+        (n, _) if n.starts_with("ds.") => return crate::dslib::call(it, n, name, args, pos),
         ("Comparator" | "Function" | "Collectors" | "Optional" | "Objects" | "Character" | "Stream" | "IntStream" | "LongStream" | "DoubleStream" | "SystemOut" | "List" | "Set" | "Map" | "JavaString" | "JavaSystem", _)
             if matches!(ns, "Comparator" | "Function" | "Collectors" | "Optional" | "Objects" | "Character" | "Stream" | "IntStream" | "LongStream" | "DoubleStream" | "SystemOut" | "JavaString" | "JavaSystem") || matches!((ns, name), ("List" | "Set", "of" | "copyOf") | ("Map", "of" | "entry" | "ofEntries" | "copyOf")) =>
         {
@@ -2222,7 +2387,8 @@ pub fn call_ns_fn(it: &mut Interp, ns: &str, name: &str, mut args: Vec<V>, pos: 
         }
         ("String", "join") => {
             let sep = sarg(it, &args, 0);
-            let items = if args.len() == 2 && matches!(args[1], V::Arr(_)) { it.iterate(&args[1], Some(pos))? } else { args.iter().skip(1).cloned().collect() };
+            let iterable = args.len() == 2 && (matches!(args[1], V::Arr(_)) || matches!(&args[1], V::Obj(o) if o.borrow().kind == ObjKind::Set));
+            let items = if iterable { it.iterate(&args[1], Some(pos))? } else { args.iter().skip(1).cloned().collect() };
             V::string(items.iter().map(|x| it.display(x)).collect::<Vec<_>>().join(&sep))
         }
         ("Date", "now") => V::Int(now_millis()),
@@ -2545,6 +2711,16 @@ pub fn value_property(it: &mut Interp, o: &V, name: &str, pos: u32) -> R<V> {
     if it.d == Dialect::Js && matches!(o, V::Str(_) | V::Arr(_)) && name.starts_with(SYM_PREFIX) && name == it.well_known_key("iterator") {
         return Ok(V::Method(Rc::new((o.clone(), "%iter".to_string()))));
     }
+    if let (V::Arr(a), Dialect::Js) = (o, it.d) {
+        if let Some(r) = crate::jsext::arr_prop(it, a, name) {
+            return Ok(r);
+        }
+    }
+    if let (V::Arr(a), Dialect::Python) = (o, it.d) {
+        if let Some(r) = it.namedtuple_member(a, name, pos)? {
+            return Ok(r);
+        }
+    }
     match o {
         V::Str(s) => {
             if let Ok(i) = name.parse::<i64>() {
@@ -2630,9 +2806,15 @@ pub fn object_property(it: &mut Interp, o: &V, name: &str, _pos: u32) -> R<V> {
             }
         }
         ObjKind::Generator(_) => {
-            if name.starts_with(SYM_PREFIX) && name == it.well_known_key("iterator") {
+            if name.starts_with(SYM_PREFIX) && (name == it.well_known_key("iterator") || name == it.well_known_key("asyncIterator")) {
                 return Ok(V::Method(Rc::new((o.clone(), "%self".to_string()))));
             }
+            if it.d == Dialect::Js && matches!(name, "next" | "return" | "throw") {
+                return Ok(V::Method(Rc::new((o.clone(), name.to_string()))));
+            }
+        }
+        ObjKind::Promise(_) if it.d == Dialect::Js && matches!(name, "then" | "catch" | "finally") => {
+            return Ok(V::Method(Rc::new((o.clone(), name.to_string()))));
         }
         ObjKind::Symbol(_, desc) => {
             if name == "description" {
@@ -2728,8 +2910,39 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
             let items = it.iterate(recv, Some(pos))?;
             return Ok(crate::collections::list_iterator(items));
         }
+        if let Some(v) = crate::jsext::internal_method(it, recv, name, &args, pos)? {
+            return Ok(v);
+        }
+        if it.d == Dialect::Java {
+            if let Some(v) = it.java_internal(recv, name, &args, pos)? {
+                return Ok(v);
+            }
+        }
+        if name == "%groovy_use" {
+            return it.groovy_use(&args, pos);
+        }
+        if name.starts_with("%tpl") {
+            if let Some(v) = it.mvel_template_fn(name, &args, pos)? {
+                return Ok(v);
+            }
+        }
+        if it.d == Dialect::Python {
+            if let Some(v) = it.py_internal(recv, name, &args, pos)? {
+                return Ok(v);
+            }
+            if let (V::Arr(a), Some(m)) = (recv, name.strip_prefix("%nt")) {
+                if let Some(v) = it.namedtuple_method(a, m, &args, pos)? {
+                    return Ok(v);
+                }
+            }
+        }
     }
     if let V::Obj(o) = recv {
+        if crate::jsext::is_ext(o) {
+            if let Some(v) = crate::jsext::call_method(it, recv, name, &args, pos)? {
+                return Ok(v);
+            }
+        }
         let kind = o.borrow().kind.clone();
         let r = match &kind {
             ObjKind::Coll(c) => it.coll_method(c, recv, name, &args, pos)?,
@@ -2741,11 +2954,27 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
                 _ => None,
             },
             ObjKind::Optional => crate::java::optional_method(it, o, recv, name, &args, pos)?,
+            ObjKind::JTime(t) => it.jtime_method(t, name, &args, pos)?,
             ObjKind::Jsonnet(_) => None,
             _ => None,
         };
         if let Some(v) = r {
             return Ok(v);
+        }
+        if !it.jsorted.is_empty() && it.sorted_info(o).is_some() {
+            // TreeMap / TreeSet: navigation methods, other methods keep the order
+            let o = o.clone();
+            if let Some(v) = it.sorted_method(&o, recv, name, &args, pos)? {
+                return Ok(v);
+            }
+            let key = Rc::as_ptr(&o) as *const u8 as usize;
+            let entry = it.jsorted.remove(&key);
+            let r = call_method(it, recv, name, args, pos);
+            if let Some(e) = entry {
+                it.jsorted.insert(key, e);
+            }
+            it.resort(&o, pos)?;
+            return r;
         }
     }
     if it.d == Dialect::Java {
@@ -2777,6 +3006,7 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
                 string_method(it, s, name, &args, pos)?
             }
         },
+        V::Arr(a) if it.d == Dialect::Python && name.starts_with('_') && it.namedtuple_method(a, name, &args, pos)?.is_some() => it.namedtuple_method(a, name, &args, pos)?,
         V::Arr(a) => array_method(it, a.clone(), recv, name, args.clone(), pos)?,
         V::Obj(o) => {
             let kind = o.borrow().kind.clone();
@@ -2788,6 +3018,10 @@ pub fn call_method(it: &mut Interp, recv: &V, name: &str, args: Vec<V>, pos: u32
                     "getCause" => Some(V::Null),
                     "printStackTrace" => Some(V::Null),
                     _ => None,
+                },
+                ObjKind::Plain if it.d == Dialect::Python && !it.py_dicts.is_empty() => match it.py_dict_method(o, recv, name, &args, pos)? {
+                    Some(v) => Some(v),
+                    None => object_method(it, o.clone(), recv, name, args.clone(), pos)?,
                 },
                 _ => object_method(it, o.clone(), recv, name, args.clone(), pos)?,
             }
@@ -3167,14 +3401,23 @@ fn string_method(it: &mut Interp, s: Rc<str>, name: &str, args: &[V], pos: u32) 
                 }
             } else {
                 match re.re.captures_match(&s) {
-                    Some(c) => V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect()),
+                    Some(c) => crate::jsext::js_match(it, &re.re, &c, &s),
                     None => V::Null,
                 }
             }
         }
         "matchAll" => {
             let re = to_regex(it, &a(0), pos)?;
-            V::arr(re.re.captures_iter(&s).iter().map(|c| V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect())).collect())
+            let caps = re.re.captures_iter(&s);
+            let mut out = vec![];
+            for c in &caps {
+                out.push(if js { crate::jsext::js_match(it, &re.re, c, &s) } else { V::arr(c.to_vec().into_iter().map(|g| g.map(V::string).unwrap_or(V::Undef)).collect()) });
+            }
+            if js {
+                crate::collections::list_iterator(out)
+            } else {
+                V::arr(out)
+            }
         }
         "search" => {
             let re = to_regex(it, &a(0), pos)?;
@@ -3339,6 +3582,9 @@ fn string_method(it: &mut Interp, s: Rc<str>, name: &str, args: &[V], pos: u32) 
 fn number_method(it: &mut Interp, recv: &V, name: &str, args: &[V], pos: u32) -> R<Option<V>> {
     let f = recv.as_f64().unwrap_or(f64::NAN);
     let d = it.d;
+    if name == "toLocaleString" && d == Dialect::Js {
+        return crate::jsext::number_to_locale(it, recv, args, pos).map(Some);
+    }
     Ok(Some(match name {
         "toFixed" => {
             let n = iarg(it, args, 0, 0).clamp(0, 100) as usize;
@@ -3480,6 +3726,32 @@ fn set_method(it: &mut Interp, o: ObjRef, recv: &V, name: &str, args: Vec<V>, po
         "contains" | "has" | "__contains__" => {
             let k = set_key(it, &x);
             return Ok(Some(V::Bool(o.borrow().props.contains(&k))));
+        }
+        "addAll" if it.d != Dialect::Python => {
+            let mut changed = false;
+            for v in it.clone_iter(&x)? {
+                let k = set_key(it, &v);
+                changed |= !o.borrow().props.contains(&k);
+                o.borrow_mut().props.set(&k, v);
+            }
+            return Ok(Some(V::Bool(changed)));
+        }
+        "removeAll" | "retainAll" if it.d != Dialect::Python => {
+            let other: Vec<String> = it.clone_iter(&x)?.iter().map(|v| set_key(it, v)).collect();
+            let keys: Vec<Rc<str>> = o.borrow().props.keys().cloned().collect();
+            let mut changed = false;
+            for k in keys {
+                let present = other.iter().any(|x| **x == *k);
+                if (name == "removeAll") == present {
+                    o.borrow_mut().props.remove(&k);
+                    changed = true;
+                }
+            }
+            return Ok(Some(V::Bool(changed)));
+        }
+        "containsAll" if it.d != Dialect::Python => {
+            let all = it.clone_iter(&x)?.iter().all(|v| o.borrow().props.contains(&set_key(it, v)));
+            return Ok(Some(V::Bool(all)));
         }
         "size" | "__len__" => return Ok(Some(V::Int(o.borrow().props.len() as i64))),
         "isEmpty" => return Ok(Some(V::Bool(o.borrow().props.is_empty()))),
@@ -4261,7 +4533,7 @@ fn array_method(it: &mut Interp, a: ArrRef, recv: &V, name: &str, mut args: Vec<
                     let kv = it.call(&k, V::Undef, vec![x.clone()], pos)?;
                     keyed.push(V::arr(vec![kv, x]));
                 }
-                let s = sort_vals(it, keyed, &mut |it, a, b| Ok(natural(it, &first(a), &first(b))))?;
+                let s = sort_vals(it, keyed, &mut |it, a, b| it.py_order(&first(a), &first(b), pos))?;
                 s.iter().map(|p| if let V::Arr(a) = p { a.borrow()[1].clone() } else { V::Null }).collect()
             } else {
                 sort_with(it, items(), if f.is_nullish() { None } else { Some(&f) }, js, pos)?

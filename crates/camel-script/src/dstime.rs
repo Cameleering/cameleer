@@ -112,6 +112,11 @@ fn iso(dt: Dt) -> String {
 
 /// Parse text with a Java-style pattern (`yyyy MM dd HH mm ss SSS`, `Z`/`X` offsets, quoted
 /// literals); missing fields default to the epoch start, a missing offset to UTC.
+/// Parse with a Java pattern: local epoch milliseconds (the wall clock time of the text).
+pub(crate) fn parse_local_millis(text: &str, pattern: &str) -> Option<i64> {
+    parse_pattern(text, pattern).map(|dt| dt.millis + dt.offset as i64 * 1000)
+}
+
 fn parse_pattern(text: &str, pattern: &str) -> Option<Dt> {
     let t: Vec<char> = text.chars().collect();
     let p: Vec<char> = pattern.chars().collect();

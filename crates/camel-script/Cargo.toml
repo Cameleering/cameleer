@@ -7,6 +7,7 @@ description = "rust-camel scripting languages: JavaScript, Groovy, Python, OGNL,
 
 [dependencies]
 camel-core = { path = "../camel-core" }
+camel-tls = { path = "../camel-tls" }
 
 [dev-dependencies]
 camel-yaml = { path = "../camel-yaml" }

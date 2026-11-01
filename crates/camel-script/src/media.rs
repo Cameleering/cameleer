@@ -90,8 +90,11 @@ pub fn read_payload(body: &Value, media: &str, opts: &BTreeMap<String, String>) 
         }
         let doc = Document::parse(&text)?;
         let root = doc.root_element().ok_or_else(|| CamelError::new(kinds::PARSE, "XML payload has no root element"))?;
+        let xo = XmlOpts::new(&mt, opts);
         let mut p = PropMap::default();
-        p.set(doc.name(root), badgerfish(&doc, root));
+        let v = badgerfish(&doc, root, &xo);
+        let name = xo.element_name(doc.name(root), &scopes_for(&doc, root));
+        p.set(&name, v);
         return Ok(V::obj(p));
     }
     if is_csv(e) {
@@ -125,10 +128,97 @@ pub fn read_payload(body: &Value, media: &str, opts: &BTreeMap<String, String>) 
     Err(CamelError::new(kinds::UNSUPPORTED_OPERATION, format!("DataSonnet: unsupported body media type '{}' (supported: application/json, text/plain, application/xml, application/csv, application/x-www-form-urlencoded, application/x-java-object)", media)))
 }
 
-fn badgerfish(doc: &Document, i: usize) -> V {
+/// Options of the DataSonnet XML plugin (media type parameters, case-insensitive):
+/// `TextValueKey` (`$`), `AttributeCharacterKey` (`@`), `CDataValueKey` (`#`, output only),
+/// `NamespaceSeparator` (`:`), `NamespaceDeclarations.<prefix>=<uri>` (reading: elements and
+/// attributes of that namespace use the prefix; writing: declared on the root element), and
+/// for output `RootElement`, `OmitXmlDeclaration`, `XmlVersion`, `Encoding`,
+/// `AutoEmptyElements`, `NullAsEmptyElement`.
+struct XmlOpts {
+    text: String,
+    attr: String,
+    cdata: String,
+    sep: String,
+    /// uri -> preferred prefix
+    decls: Vec<(String, String)>,
+}
+
+impl XmlOpts {
+    fn new(mt: &MediaType, opts: &BTreeMap<String, String>) -> XmlOpts {
+        let get = |n: &str, d: &str| param(mt, opts, n).map(|s| s.to_string()).unwrap_or_else(|| d.to_string());
+        let mut decls = Vec::new();
+        for (k, v) in mt.params.iter() {
+            if let Some(pfx) = k.strip_prefix("namespacedeclarations.") {
+                decls.push((v.clone(), pfx.to_string()));
+            }
+        }
+        for (k, v) in opts.iter() {
+            if let Some(pfx) = k.strip_prefix("NamespaceDeclarations.").or_else(|| k.strip_prefix("namespaceDeclarations.")) {
+                decls.push((v.clone(), pfx.to_string()));
+            }
+        }
+        XmlOpts { text: get("TextValueKey", "$"), attr: get("AttributeCharacterKey", "@"), cdata: get("CDataValueKey", "#"), sep: get("NamespaceSeparator", ":"), decls }
+    }
+
+    /// The output name of a (possibly prefixed) element / attribute name.
+    fn element_name(&self, name: &str, scopes: &[(String, String)]) -> String {
+        let (pfx, local) = match name.split_once(':') {
+            Some((p, l)) => (p, l),
+            None => ("", name),
+        };
+        let uri = scopes.iter().rev().find(|(p, _)| p == pfx).map(|(_, u)| u.clone());
+        if let Some(uri) = uri {
+            if let Some((_, np)) = self.decls.iter().find(|(u, _)| *u == uri) {
+                return if np.is_empty() || np == "$" { local.to_string() } else { format!("{}{}{}", np, self.sep, local) };
+            }
+        }
+        if pfx.is_empty() {
+            local.to_string()
+        } else {
+            format!("{}{}{}", pfx, self.sep, local)
+        }
+    }
+}
+
+/// The namespace declarations in scope at element `i` (prefix "" for the default namespace).
+fn scopes_for(doc: &Document, i: usize) -> Vec<(String, String)> {
+    let mut chain = vec![];
+    let mut cur = Some(i);
+    while let Some(n) = cur {
+        if matches!(doc.nodes[n].kind, NodeKind::Element { .. }) {
+            chain.push(n);
+        }
+        cur = doc.nodes[n].parent;
+    }
+    let mut out = vec![];
+    for n in chain.into_iter().rev() {
+        for (k, v) in doc.attrs(n) {
+            if k == "xmlns" {
+                out.push((String::new(), v.clone()));
+            } else if let Some(p) = k.strip_prefix("xmlns:") {
+                out.push((p.to_string(), v.clone()));
+            }
+        }
+    }
+    out
+}
+
+fn badgerfish(doc: &Document, i: usize, xo: &XmlOpts) -> V {
     let mut p = PropMap::default();
+    let in_scope = scopes_for(doc, i);
+    let mut ns = PropMap::default();
     for (k, v) in doc.attrs(i) {
-        p.set(&format!("@{}", k), V::str(v));
+        if k == "xmlns" {
+            ns.set("$", V::str(v));
+        } else if let Some(pfx) = k.strip_prefix("xmlns:") {
+            ns.set(pfx, V::str(v));
+        } else {
+            let name = if k.contains(':') { xo.element_name(k, &in_scope) } else { k.clone() };
+            p.set(&format!("{}{}", xo.attr, name), V::str(v));
+        }
+    }
+    if !ns.is_empty() {
+        p.set(&format!("{}xmlns", xo.attr), V::obj(ns));
     }
     let mut text = String::new();
     let mut groups: Vec<(String, Vec<V>)> = Vec::new();
@@ -136,10 +226,11 @@ fn badgerfish(doc: &Document, i: usize) -> V {
         match &doc.nodes[c].kind {
             NodeKind::Text(t) => text.push_str(t),
             NodeKind::Element { name, .. } => {
-                let v = badgerfish(doc, c);
-                match groups.iter_mut().find(|(n, _)| n == name) {
+                let v = badgerfish(doc, c, xo);
+                let name = xo.element_name(name, &scopes_for(doc, c));
+                match groups.iter_mut().find(|(n, _)| *n == name) {
                     Some((_, l)) => l.push(v),
-                    None => groups.push((name.clone(), vec![v])),
+                    None => groups.push((name, vec![v])),
                 }
             }
             _ => {}
@@ -150,7 +241,7 @@ fn badgerfish(doc: &Document, i: usize) -> V {
         p.set(&n, v);
     }
     if !text.trim().is_empty() {
-        p.set("$", V::string(text.trim().to_string()));
+        p.set(&xo.text, V::string(text.trim().to_string()));
     }
     V::obj(p)
 }
@@ -265,7 +356,20 @@ pub fn write_output(it: &mut Interp, v: &V, out: Value, media: &str, opts: &BTre
     }
     if is_xml(e) {
         let indent = param(&mt, opts, "indent").is_some_and(|x| x == "true");
-        let decl = param(&mt, opts, "xmlDeclaration").is_some_and(|x| x == "true");
+        let decl = param(&mt, opts, "xmlDeclaration").is_some_and(|x| x == "true") || param(&mt, opts, "OmitXmlDeclaration").is_some_and(|x| x == "false");
+        let xo = XmlOpts::new(&mt, opts);
+        let wo = WriteOpts {
+            auto_empty: param(&mt, opts, "AutoEmptyElements").map(|x| x != "false").unwrap_or(true),
+            null_as_empty: param(&mt, opts, "NullAsEmptyElement").map(|x| x != "false").unwrap_or(true),
+        };
+        let out = match param(&mt, opts, "RootElement") {
+            Some(root) if !root.is_empty() => {
+                let mut m = camel_core::value::ObjectMap::new();
+                m.insert(root.to_string(), out);
+                Value::Object(m)
+            }
+            _ => out,
+        };
         let Value::Object(o) = &out else {
             return Err(CamelError::new(kinds::EXPRESSION_EVALUATION, "DataSonnet: XML output requires an object with a single root element key"));
         };
@@ -275,12 +379,36 @@ pub fn write_output(it: &mut Interp, v: &V, out: Value, media: &str, opts: &BTre
         let (name, val) = o.iter().next().unwrap();
         let mut s = String::new();
         if decl {
-            s.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
+            let version = param(&mt, opts, "XmlVersion").unwrap_or("1.0");
+            let enc = param(&mt, opts, "Encoding").unwrap_or("UTF-8");
+            s.push_str(&format!("<?xml version=\"{}\" encoding=\"{}\"?>", version, enc));
             if indent {
                 s.push('\n');
             }
         }
-        write_xml(name, val, &mut s, if indent { Some(0) } else { None });
+        // namespace declarations of the options go on the root element
+        let val = if xo.decls.is_empty() {
+            val.clone()
+        } else {
+            let mut v = match val {
+                Value::Object(m) => m.clone(),
+                other => {
+                    let mut m = camel_core::value::ObjectMap::new();
+                    m.insert(xo.text.clone(), other.clone());
+                    m
+                }
+            };
+            let mut ns = match v.get(&format!("{}xmlns", xo.attr)) {
+                Some(Value::Object(m)) => m.clone(),
+                _ => camel_core::value::ObjectMap::new(),
+            };
+            for (uri, pfx) in &xo.decls {
+                ns.insert(if pfx.is_empty() { "$".to_string() } else { pfx.clone() }, Value::String(uri.clone()));
+            }
+            v.insert(format!("{}xmlns", xo.attr), Value::Object(ns));
+            Value::Object(v)
+        };
+        write_xml(&xml_name(name, &xo), &val, &mut s, if indent { Some(0) } else { None }, &xo, &wo);
         return Ok(Value::String(s));
     }
     if is_csv(e) {
@@ -340,7 +468,22 @@ pub fn write_output(it: &mut Interp, v: &V, out: Value, media: &str, opts: &BTre
     Err(CamelError::new(kinds::UNSUPPORTED_OPERATION, format!("DataSonnet: unsupported output media type '{}'", media)))
 }
 
-fn write_xml(name: &str, v: &Value, out: &mut String, indent: Option<usize>) {
+struct WriteOpts {
+    auto_empty: bool,
+    null_as_empty: bool,
+}
+
+/// An XML name from a key using the namespace separator.
+fn xml_name(k: &str, xo: &XmlOpts) -> String {
+    if xo.sep != ":" {
+        if let Some((p, l)) = k.split_once(xo.sep.as_str()) {
+            return format!("{}:{}", p, l);
+        }
+    }
+    k.to_string()
+}
+
+fn write_xml(name: &str, v: &Value, out: &mut String, indent: Option<usize>, xo: &XmlOpts, wo: &WriteOpts) {
     let pad = |out: &mut String, lvl: usize| {
         if indent.is_some() {
             out.push('\n');
@@ -354,39 +497,69 @@ fn write_xml(name: &str, v: &Value, out: &mut String, indent: Option<usize>) {
                 if k > 0 {
                     pad(out, lvl);
                 }
-                write_xml(name, it, out, indent);
+                write_xml(name, it, out, indent, xo, wo);
             }
         }
         Value::Object(o) => {
             out.push('<');
             out.push_str(name);
-            for (k, a) in o.iter() {
-                if let Some(an) = k.strip_prefix('@') {
+            let xmlns_key = format!("{}xmlns", xo.attr);
+            // namespace declarations first, then the attributes
+            let mut attrs: Vec<(&String, &Value)> = o.iter().collect();
+            attrs.sort_by_key(|(k, _)| **k != xmlns_key);
+            for (k, a) in attrs {
+                if *k == xmlns_key {
+                    if let Value::Object(ns) = a {
+                        for (p, u) in ns.iter() {
+                            let uri = match u {
+                                Value::String(x) => x.clone(),
+                                other => other.to_string(),
+                            };
+                            if p == "$" || p.is_empty() {
+                                out.push_str(&format!(" xmlns=\"{}\"", escape_attr(&uri)));
+                            } else {
+                                out.push_str(&format!(" xmlns:{}=\"{}\"", p, escape_attr(&uri)));
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if let Some(an) = k.strip_prefix(xo.attr.as_str()) {
                     let s = match a {
                         Value::String(x) => x.clone(),
                         other => other.to_string(),
                     };
-                    out.push_str(&format!(" {}=\"{}\"", an, escape_attr(&s)));
+                    out.push_str(&format!(" {}=\"{}\"", xml_name(an, xo), escape_attr(&s)));
                 }
             }
-            let children: Vec<(&String, &Value)> = o.iter().filter(|(k, _)| !k.starts_with('@')).collect();
+            let children: Vec<(&String, &Value)> = o.iter().filter(|(k, v)| !k.starts_with(xo.attr.as_str()) && !(matches!(v, Value::Null) && !wo.null_as_empty)).collect();
             if children.is_empty() {
-                out.push_str("/>");
+                if wo.auto_empty {
+                    out.push_str("/>");
+                } else {
+                    out.push_str(&format!("></{}>", name));
+                }
                 return;
             }
             out.push('>');
             let mut nested = false;
             for (k, c) in &children {
-                if k.as_str() == "$" {
+                if **k == xo.text {
                     let s = match c {
                         Value::String(x) => x.clone(),
                         other => other.to_string(),
                     };
                     out.push_str(&escape_text(&s));
+                } else if **k == xo.cdata {
+                    let s = match c {
+                        Value::String(x) => x.clone(),
+                        other => other.to_string(),
+                    };
+                    out.push_str(&format!("<![CDATA[{}]]>", s.replace("]]>", "]]]]><![CDATA[>")));
                 } else {
                     nested = true;
                     pad(out, lvl + 1);
-                    write_xml(k, c, out, indent.map(|l| l + 1));
+                    write_xml(&xml_name(k, xo), c, out, indent.map(|l| l + 1), xo, wo);
                 }
             }
             if nested {
@@ -397,9 +570,11 @@ fn write_xml(name: &str, v: &Value, out: &mut String, indent: Option<usize>) {
             out.push('>');
         }
         Value::Null => {
-            out.push('<');
-            out.push_str(name);
-            out.push_str("/>");
+            if wo.auto_empty {
+                out.push_str(&format!("<{}/>", name));
+            } else {
+                out.push_str(&format!("<{}></{}>", name, name));
+            }
         }
         other => {
             let s = match other {

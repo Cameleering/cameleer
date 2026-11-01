@@ -94,6 +94,16 @@ pub enum ObjKind {
     Optional,
     /// A DataSonnet object with late-bound `self` / `super` and hidden fields.
     Jsonnet(Internal<crate::jobj::JMeta>),
+    /// A JavaScript `BigInt`.
+    BigInt(Rc<crate::bigint::BigInt>),
+    /// A JavaScript `Proxy` (target, handler).
+    Proxy(Internal<(V, V)>),
+    /// A JavaScript `ArrayBuffer`.
+    Buffer(Internal<Vec<u8>>),
+    /// A JavaScript typed array or `DataView`.
+    Typed(crate::jsext::Typed),
+    /// A Java `java.time` value.
+    JTime(crate::javaext::JTime),
 }
 
 /// An object / map with insertion-ordered keys and an optional prototype.
@@ -288,7 +298,7 @@ impl V {
         matches!(self, V::Int(_) | V::Num(_))
     }
     pub fn is_callable(&self) -> bool {
-        matches!(self, V::Func(_) | V::Method(_)) || matches!(self, V::Host(h) if matches!(**h, Host::Ns(_) | Host::NsFn(..) | Host::Type(_)))
+        matches!(self, V::Func(_) | V::Method(_)) || matches!(self, V::Host(h) if matches!(**h, Host::Ns(_) | Host::NsFn(..) | Host::Type(_))) || (matches!(self, V::Obj(_)) && crate::jsext::proxy_callable(self))
     }
     pub fn as_f64(&self) -> Option<f64> {
         match self {
@@ -359,7 +369,11 @@ fn to_value_depth(v: &V, depth: usize) -> Value {
         V::Arr(a) => Value::Array(a.borrow().iter().map(|x| to_value_depth(x, depth + 1)).collect()),
         V::Obj(o) => {
             let o = o.borrow();
+            if let Some(v) = crate::jsext::to_value(&o, &|x| to_value_depth(x, depth + 1)) {
+                return v;
+            }
             match &o.kind {
+                ObjKind::JTime(t) => Value::String(crate::javaext::display(t)),
                 ObjKind::Date(ms) => Value::String(crate::builtins::iso_date(*ms)),
                 ObjKind::Set => Value::Array(o.props.values().map(|x| to_value_depth(x, depth + 1)).collect()),
                 ObjKind::Coll(c) => crate::collections::coll_to_value(&c.0.borrow(), &|x| to_value_depth(x, depth + 1), &|k| match k {

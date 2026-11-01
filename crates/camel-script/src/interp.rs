@@ -112,6 +112,24 @@ pub struct Interp {
     pub meta_methods: HashMap<String, HashMap<String, V>>,
     /// Bean registry lookups (SpEL `@name`).
     pub beans: HashMap<String, V>,
+    /// Directories of the ES modules / Python modules being loaded (relative imports).
+    pub module_dirs: Vec<std::path::PathBuf>,
+    /// Directory of the script itself (option `scriptDir`), for relative imports.
+    pub script_dir: Option<std::path::PathBuf>,
+    /// Extra properties of arrays (tagged template `raw`, regex match `index` / `groups`), by array address.
+    pub arr_extra: HashMap<usize, (V, PropMap)>,
+    /// Groovy `@Immutable` instances (read-only after construction), by address.
+    pub frozen: HashMap<usize, std::rc::Weak<RefCell<Obj>>>,
+    /// Groovy categories of the enclosing `use(...) {}` blocks.
+    pub categories: Vec<V>,
+    /// Python `collections` dict kinds (`defaultdict`, `Counter`, `OrderedDict`), by address.
+    pub py_dicts: HashMap<usize, (std::rc::Weak<RefCell<Obj>>, crate::pyext::PyDict)>,
+    /// Python classes being created by a metaclass `__new__` (for `type.__new__`).
+    pub pending_class: Vec<V>,
+    /// The script's options (DataSonnet `extVar.*` / `tla.*`).
+    pub script_options: std::collections::BTreeMap<String, String>,
+    /// Java / Groovy `TreeMap` / `TreeSet` instances with their comparator, by address.
+    pub jsorted: HashMap<usize, (std::rc::Weak<RefCell<Obj>>, Option<V>)>,
 }
 
 /// JavaScript number to string.
@@ -216,6 +234,15 @@ impl Interp {
             classes: HashMap::new(),
             meta_methods: HashMap::new(),
             beans: HashMap::new(),
+            module_dirs: Vec::new(),
+            script_dir: None,
+            arr_extra: HashMap::new(),
+            frozen: HashMap::new(),
+            categories: Vec::new(),
+            py_dicts: HashMap::new(),
+            pending_class: Vec::new(),
+            script_options: std::collections::BTreeMap::new(),
+            jsorted: HashMap::new(),
         };
         crate::builtins::install_globals(&mut it);
         it
@@ -337,10 +364,21 @@ impl Interp {
     }
 
     fn hoist(&mut self, stmts: &[Stmt], env: &Env) {
+        let mut seen: Vec<&str> = Vec::new();
         for s in stmts {
             if let Stmt::Func(f) = s {
                 if let Some(n) = &f.name {
                     let c = self.make_closure(f.clone(), env);
+                    // Groovy / Java: same-named methods of one scope are overloads
+                    if self.d.groovy_like() && seen.contains(&n.as_str()) {
+                        let prev = env.vars.borrow().get(n.as_str()).cloned();
+                        if let Some(prev) = prev {
+                            let d = self.add_overload(&prev, c);
+                            env.define(n, d);
+                            continue;
+                        }
+                    }
+                    seen.push(n);
                     env.define(n, c);
                 }
             }
@@ -503,7 +541,7 @@ impl Interp {
                         return Ok(last);
                     }
                 }
-                let items = if *values { self.iterate(&o, None)? } else { self.keys_of(&o) };
+                let items = if *values { self.iterate(&o, None)? } else if let Some(k) = crate::jsext::keys(self, &o)? { k } else { self.keys_of(&o) };
                 let mut last = V::Undef;
                 let mut broke = false;
                 for item in items {
@@ -627,6 +665,13 @@ impl Interp {
                 let mut matched = None;
                 for (i, (test, _)) in cases.iter().enumerate() {
                     if let Some(t) = test {
+                        if let Some(hit) = self.enum_label(t, &dv, &scope) {
+                            if hit {
+                                matched = Some(i);
+                                break;
+                            }
+                            continue;
+                        }
                         let tv = self.eval(t, &scope)?;
                         if self.case_matches(&dv, &tv)? {
                             matched = Some(i);
@@ -650,6 +695,15 @@ impl Interp {
                     }
                 }
                 Ok(last)
+            }
+            Stmt::Labeled(l, body) if l.starts_with("%intercept:") => {
+                let name = l["%intercept:".len()..].to_string();
+                self.mvel_intercept(&name, body, env)
+            }
+            Stmt::Labeled(l, _) if l.starts_with("%importstar:") => {
+                let m = l["%importstar:".len()..].to_string();
+                self.py_import_star(&m, env, 0)?;
+                Ok(V::Undef)
             }
             Stmt::Labeled(l, body) => match self.exec_labeled(body, env, Some(l)) {
                 Err(Ctrl::Break(Some(x))) if x == *l => Ok(V::Undef),
@@ -802,6 +856,16 @@ impl Interp {
             while let Some(sc) = s {
                 if sc.globals.borrow().iter().any(|g| g == name) {
                     self.globals.define(name, v);
+                    return;
+                }
+                if sc.globals.borrow().iter().any(|g| g.strip_prefix("%nonlocal:") == Some(name)) {
+                    // `nonlocal`: the binding of an enclosing function
+                    if let Some(p) = &sc.parent {
+                        if p.assign(name, v.clone()) {
+                            return;
+                        }
+                    }
+                    sc.define(name, v);
                     return;
                 }
                 if sc.func {
@@ -971,9 +1035,22 @@ impl Interp {
                     let n = c.def.name.clone().unwrap_or_default();
                     return self.type_error(format!("Class constructor {} cannot be invoked without 'new'", n), Some(pos));
                 }
+                if self.d == Dialect::Python && c.props.borrow().contains("%meta") {
+                    if let Some(v) = self.py_meta_call(c, &args, pos)? {
+                        return Ok(v);
+                    }
+                }
                 self.construct_class(c, args, pos)
             }
+            V::Func(c) if c.props.borrow().contains("%overloads") => {
+                let cands = crate::overload::candidates(c).unwrap_or_default();
+                match self.select_overload(&cands, &args) {
+                    Some(k) => self.call_closure(&k, this, args, pos),
+                    None => self.no_overload(c, &args, pos),
+                }
+            }
             V::Func(c) => self.call_closure(c, this, args, pos),
+            V::Obj(_) if crate::jsext::is_proxy(f) => crate::jsext::proxy_call(self, f, this, args, pos),
             V::Obj(_) if self.user_method(f, if self.d == Dialect::Python { "__call__" } else { "call" }).is_some() => {
                 let name = if self.d == Dialect::Python { "__call__" } else { "call" };
                 let m = self.user_method(f, name).unwrap();
@@ -1084,8 +1161,28 @@ impl Interp {
         if self.d == Dialect::Js && !def.arrow {
             scope.define("arguments", V::arr(args.clone()));
         }
-        for (i, p) in def.params.iter().enumerate() {
-            let mut v = args.get(i).cloned().unwrap_or(V::Undef);
+        // Python: keyword-only parameters (after `*`) and `**kwargs` are not filled by position
+        let mut npos = 0;
+        for p in def.params.iter() {
+            let kind = p.ty.as_deref();
+            let mut v = if matches!(kind, Some("kwonly") | Some("**")) {
+                V::Undef
+            } else {
+                npos += 1;
+                args.get(npos - 1).cloned().unwrap_or(V::Undef)
+            };
+            if kind == Some("**") {
+                let mut extra = PropMap::default();
+                if let Some(kw) = &kwargs {
+                    for (k, x) in kw.borrow().props.iter() {
+                        if !def.params.iter().any(|q| matches!(&q.pat, Pat::Id(n) if **n == **k) && q.ty.as_deref() != Some("**")) {
+                            extra.set(k, x.clone());
+                        }
+                    }
+                }
+                self.assign_pat(&p.pat, V::obj(extra), &Mode::Declare(VarKind::Let), &scope)?;
+                continue;
+            }
             if let (Some(kw), Pat::Id(n)) = (&kwargs, &p.pat) {
                 if let Some(x) = kw.borrow().props.get(n) {
                     v = x.clone();
@@ -1100,13 +1197,18 @@ impl Interp {
             self.assign_pat(&p.pat, v, &Mode::Declare(VarKind::Let), &scope)?;
         }
         if let Some(r) = &def.rest {
-            let tail: Vec<V> = args.iter().skip(def.params.len()).cloned().collect();
+            let tail: Vec<V> = args.iter().skip(npos).cloned().collect();
             self.assign_pat(r, V::arr(tail), &Mode::Declare(VarKind::Let), &scope)?;
         }
         if def.generator || def.is_async {
             // `async function*` runs as a generator whose elements `for await` awaits
-            let g = self.make_generator(c, scope, def.is_async && !def.generator);
+            let g = self.make_generator(c, scope, def.is_async);
             if def.is_async && !def.generator {
+                if self.d == Dialect::Python {
+                    // a coroutine object: runs when awaited / scheduled
+                    g.0.borrow_mut().coroutine = true;
+                    return Ok(self.generator_value(g));
+                }
                 return self.start_async(g);
             }
             return Ok(self.generator_value(g));
@@ -1135,6 +1237,7 @@ impl Interp {
     /// Construct with `new`.
     fn construct(&mut self, f: &V, args: Vec<V>, pos: u32) -> R<V> {
         match f {
+            V::Obj(_) if crate::jsext::is_proxy(f) => crate::jsext::proxy_construct(self, f, args, pos),
             V::Func(c) => self.construct_class(c, args, pos),
             V::Host(h) => match &**h {
                 Host::Ns(n) => crate::builtins::construct_ns(self, n, args, pos),
@@ -1147,6 +1250,13 @@ impl Interp {
 
     /// Call a method on a value: own/prototype functions first, then built-in methods.
     pub fn call_method(&mut self, recv: &V, name: &str, args: Vec<V>, pos: u32) -> R<V> {
+        if crate::jsext::is_proxy(recv) && !name.starts_with('%') {
+            let f = crate::jsext::proxy_get(self, recv, &V::str(name), pos)?;
+            if !f.is_callable() {
+                return self.type_error(format!("{} is not a function", name), Some(pos));
+            }
+            return self.call(&f, recv.clone(), args, pos);
+        }
         match recv {
             V::Obj(o) => {
                 let (f, own) = {
@@ -1168,6 +1278,24 @@ impl Interp {
                             return self.call_user_method(recv, &f, args, pos);
                         }
                         return self.call(&f, recv.clone(), args, pos);
+                    }
+                    if own {
+                        // a field shadowing a method of the same name (Java records: `p.x()`)
+                        let pf = o.borrow().proto.as_ref().and_then(|p| p.borrow().lookup(name));
+                        if let Some(pf) = pf.filter(|pf| pf.is_callable()) {
+                            return self.call_user_method(recv, &pf, args, pos);
+                        }
+                    }
+                }
+                if self.d == Dialect::Groovy {
+                    if o.borrow().props.contains("%builder") {
+                        let o = o.clone();
+                        if let Some(v) = self.groovy_builder_method(&o, recv, name, &args, pos)? {
+                            return Ok(v);
+                        }
+                    }
+                    if let Some(v) = self.groovy_transform_method(recv, name, &args, pos)? {
+                        return Ok(v);
                     }
                 }
                 if self.d.groovy_like() {
@@ -1206,6 +1334,16 @@ impl Interp {
                 }
                 if name == "new" {
                     return self.construct_class(c, args, pos);
+                }
+                if self.d == Dialect::Python {
+                    if let Some(f) = self.py_meta_attr(c, name) {
+                        return self.call(&f, V::Undef, args, pos);
+                    }
+                }
+                if self.d == Dialect::Groovy {
+                    if let Some(v) = self.groovy_class_call(c, name, &args, pos)? {
+                        return Ok(v);
+                    }
                 }
             }
             V::Func(c) => {
@@ -1252,6 +1390,11 @@ impl Interp {
                 return self.call(&m, recv.clone(), args, pos);
             }
         }
+        if !self.categories.is_empty() {
+            if let Some(v) = self.category_call(recv, name, &args, pos)? {
+                return Ok(v);
+            }
+        }
         crate::builtins::call_method(self, recv, name, args, pos)
     }
 
@@ -1266,6 +1409,15 @@ impl Interp {
                 self.null_error("read", name, o, pos)
             }
             V::Obj(ob) => {
+                if crate::jsext::is_ext(ob) {
+                    if let Some(v) = crate::jsext::get_member(self, o, name, pos)? {
+                        return Ok(v);
+                    }
+                }
+                if self.d == Dialect::Groovy && name == "metaClass" && ob.borrow().proto.is_some() {
+                    // per-instance metaclass: closures assigned to it become methods of the instance
+                    return Ok(o.clone());
+                }
                 if let (Some(field), Dialect::Groovy) = (name.strip_prefix('@'), self.d) {
                     return Ok(ob.borrow().props.get(field).cloned().unwrap_or(V::Null));
                 }
@@ -1326,7 +1478,11 @@ impl Interp {
                     let proto = self.func_prototype(c);
                     if let Some(V::Obj(p)) = proto {
                         if self.d == Dialect::Python {
-                            if let Some(v) = p.borrow().lookup(name) {
+                            let found = p.borrow().lookup(name);
+                            if let Some(v) = found {
+                                return Ok(v);
+                            }
+                            if let Some(v) = self.py_meta_attr(c, name) {
                                 return Ok(v);
                             }
                         }
@@ -1336,8 +1492,14 @@ impl Interp {
                         return self.get_member(&pv, name, pos);
                     }
                 }
+                if c.flavor == Flavor::Class && self.d == Dialect::Groovy {
+                    if let Some(v) = self.groovy_class_property(c, name, pos)? {
+                        return Ok(v);
+                    }
+                }
                 match name {
                     "name" => Ok(V::str(c.def.name.as_deref().unwrap_or(""))),
+                    "__name__" | "__qualname__" if self.d == Dialect::Python => Ok(V::str(c.def.name.as_deref().unwrap_or("<lambda>"))),
                     "length" => Ok(V::Int(c.def.params.len() as i64)),
                     _ => Ok(self.undef()),
                 }
@@ -1355,6 +1517,17 @@ impl Interp {
         if let (Some(field), V::Obj(ob), Dialect::Groovy) = (name.strip_prefix('@'), o, self.d) {
             ob.borrow_mut().props.set(field, v);
             return Ok(());
+        }
+        if let V::Obj(ob) = o {
+            if crate::jsext::is_ext(ob) && crate::jsext::set_index(self, o, &V::str(name), v.clone(), pos)? {
+                return Ok(());
+            }
+            if self.d == Dialect::Groovy && self.is_frozen(ob) {
+                return self.frozen_error(o, name, pos);
+            }
+            if self.d == Dialect::Python && self.is_frozen(ob) {
+                return self.throw("FrozenInstanceError", format!("cannot assign to field '{}'", name), Some(pos));
+            }
         }
         match o {
             V::Obj(ob) => {
@@ -1440,6 +1613,13 @@ impl Interp {
 
     /// Index read (`a[i]`, `m['k']`).
     pub fn get_index(&mut self, o: &V, k: &V, pos: u32) -> R<V> {
+        if let V::Obj(ob) = o {
+            if crate::jsext::is_ext(ob) {
+                if let Some(v) = crate::jsext::get_index(self, o, k, pos)? {
+                    return Ok(v);
+                }
+            }
+        }
         if self.d == Dialect::Python {
             if let V::Obj(ob) = o {
                 if ob.borrow().proto.is_some() {
@@ -1514,6 +1694,10 @@ impl Interp {
                     let ob = ob.clone();
                     r = self.jfield(&ob, &key)?;
                 }
+                if r.is_none() && self.d == Dialect::Python && !self.py_dicts.is_empty() {
+                    let ob = ob.clone();
+                    r = self.py_dict_missing(&ob, k, pos)?;
+                }
                 match r {
                     Some(v) => Ok(v),
                     None => match self.d {
@@ -1537,6 +1721,11 @@ impl Interp {
 
     /// Index write.
     pub fn set_index(&mut self, o: &V, k: &V, v: V, pos: u32) -> R<()> {
+        if let V::Obj(ob) = o {
+            if crate::jsext::is_ext(ob) && crate::jsext::set_index(self, o, k, v.clone(), pos)? {
+                return Ok(());
+            }
+        }
         if self.d == Dialect::Python {
             if let V::Obj(ob) = o {
                 if ob.borrow().proto.is_some() && self.user_method(o, "__setitem__").is_some() {
@@ -1594,6 +1783,13 @@ impl Interp {
     // ------------------------------------------------------------------ iteration
     /// Values produced by iterating `v` (for-of, Groovy for-in, Python for, spread).
     pub fn iterate(&mut self, v: &V, pos: Option<u32>) -> R<Vec<V>> {
+        if let V::Obj(ob) = v {
+            if crate::jsext::is_ext(ob) {
+                if let Some(items) = crate::jsext::iterate(self, v, pos)? {
+                    return Ok(items);
+                }
+            }
+        }
         Ok(match v {
             V::Arr(a) => a.borrow().clone(),
             V::Str(s) => s.chars().map(|c| V::string(c.to_string())).collect(),
@@ -1890,7 +2086,8 @@ impl Interp {
                     return Ok(None);
                 }
                 let a = self.eval_args(args, env)?;
-                if !f.is_callable() && !matches!(f, V::Host(_)) {
+                let callable_obj = matches!(f, V::Obj(_)) && self.user_method(&f, if self.d == Dialect::Python { "__call__" } else { "call" }).is_some();
+                if !f.is_callable() && !matches!(f, V::Host(_)) && !callable_obj {
                     // Groovy: calling a non-callable variable
                     let msg = match self.d {
                         Dialect::Js => format!("{} is not a function", name),
@@ -2087,8 +2284,9 @@ impl Interp {
             }
             Expr::Update { inc, prefix, target, pos } => {
                 let old = self.eval(target, env)?;
-                let oldn = if self.d == Dialect::Js { self.to_number(&old) } else { old.clone() };
-                let one = V::Int(1);
+                let big = crate::jsext::is_bigint(&old);
+                let oldn = if self.d == Dialect::Js && !big { self.to_number(&old) } else { old.clone() };
+                let one = if big { crate::jsext::make_bigint(crate::bigint::BigInt::from_i64(1)) } else { V::Int(1) };
                 let new = self.binary(if *inc { BinOp::Add } else { BinOp::Sub }, oldn.clone(), one, *pos)?;
                 let pat = match &**target {
                     Expr::Ident(n, _) => Pat::Id(n.clone()),
@@ -2357,9 +2555,8 @@ impl Interp {
             },
             Expr::Yield { arg, delegate, pos } => self.eval_yield(arg.as_deref(), *delegate, env, *pos),
             Expr::Await(x, pos) => {
-                if self.ystack.last().is_some_and(|c| c.sync_await) {
-                    let v = self.eval(x, env)?;
-                    return self.await_sync(v, *pos);
+                if self.ystack.last().is_some_and(|c| c.async_gen) {
+                    return self.eval_yield_marked(Some(x), false, env, *pos, true);
                 }
                 if !self.ystack.last().is_some_and(|c| c.is_async) {
                     return self.throw("SyntaxError", "await is only valid in async functions and the top level bodies of modules".into(), Some(*pos));
@@ -2389,6 +2586,13 @@ impl Interp {
                                 let scope = new_scope(Some(env.clone()), false);
                                 scope.define(name, dv.clone());
                                 return self.switch_arm(body, &scope);
+                            }
+                            continue;
+                        }
+                        if let Some(h) = self.enum_label(l, &dv, env) {
+                            if h {
+                                hit = true;
+                                break;
                             }
                             continue;
                         }
@@ -2468,6 +2672,10 @@ impl Interp {
     }
 
     fn delete_key(&mut self, o: &V, k: &str) {
+        if crate::jsext::is_proxy(o) {
+            let _ = crate::jsext::proxy_delete(self, o, k, 0);
+            return;
+        }
         match o {
             V::Obj(ob) => {
                 ob.borrow_mut().props.remove(k);
@@ -2486,6 +2694,20 @@ impl Interp {
         }
     }
 
+    /// Java / Groovy `case CONSTANT:` of an enum switch (an unqualified constant name):
+    /// Some(matches) when the label is such a name, None otherwise.
+    fn enum_label(&self, label: &Expr, dv: &V, env: &Env) -> Option<bool> {
+        let Expr::Ident(n, _) = label else { return None };
+        if !self.d.groovy_like() || env.lookup(n).is_some() {
+            return None;
+        }
+        let name = match dv {
+            V::Obj(o) => o.borrow().props.get("$enumName").cloned(),
+            _ => None,
+        }?;
+        Some(matches!(name, V::Str(s) if *s == **n))
+    }
+
     fn returns_operand(&self) -> bool {
         matches!(self.d, Dialect::Js | Dialect::Python)
     }
@@ -2493,6 +2715,9 @@ impl Interp {
     // ------------------------------------------------------------------ semantics
     /// Truthiness according to the dialect.
     pub fn truthy(&self, v: &V) -> bool {
+        if let Some(b) = crate::jsext::bigint_of(v) {
+            return !b.is_zero();
+        }
         match v {
             V::Undef | V::Null => false,
             V::Bool(b) => *b,
@@ -2618,6 +2843,11 @@ impl Interp {
     }
 
     fn unary(&mut self, op: UnOp, v: V, pos: u32) -> R<V> {
+        if let Some(b) = crate::jsext::bigint_of(&v) {
+            if let Some(r) = crate::jsext::bigint_unary(self, op, &b, pos)? {
+                return Ok(r);
+            }
+        }
         match op {
             UnOp::Not => Ok(V::Bool(!self.truthy(&v))),
             UnOp::Neg => {
@@ -2643,6 +2873,16 @@ impl Interp {
     pub fn binary(&mut self, op: BinOp, a: V, b: V, pos: u32) -> R<V> {
         use BinOp::*;
         let d = self.d;
+        if d == Dialect::Js && (crate::jsext::is_bigint(&a) || crate::jsext::is_bigint(&b)) {
+            if let Some(r) = crate::jsext::bigint_binary(self, op, &a, &b, pos)? {
+                return Ok(r);
+            }
+        }
+        if d == Dialect::Python && !self.py_dicts.is_empty() && matches!(op, Add | Sub | BitAnd | BitOr) {
+            if let Some(r) = self.py_counter_binary(op, &a, &b) {
+                return Ok(r);
+            }
+        }
         if matches!(d, Dialect::Python | Dialect::Groovy | Dialect::Java) && (matches!(a, V::Obj(_)) || matches!(b, V::Obj(_))) {
             match op {
                 Eq | Ne => {
@@ -2996,7 +3236,7 @@ impl Interp {
                     Ok(V::arr(v))
                 }
                 (V::Obj(x), V::Obj(y)) if d == Dialect::Groovy => Ok(merge_objects(x, y)),
-                (_, V::Str(y)) if !matches!(a, V::Arr(_)) => Ok(V::string(format!("{}{}", self.display(&a), y))),
+                (_, V::Str(y)) if !matches!(a, V::Arr(_)) || d == Dialect::Java => Ok(V::string(format!("{}{}", self.display(&a), y))),
                 _ => {
                     let x = self.arith_operand(&a, "+", &b, pos)?;
                     let y = self.arith_operand(&b, "+", &a, pos)?;
@@ -3046,6 +3286,7 @@ impl Interp {
             }
             (V::Obj(x), V::Obj(y)) => match (&x.borrow().kind, &y.borrow().kind) {
                 (ObjKind::Date(p), ObjKind::Date(q)) => p.partial_cmp(q),
+                (ObjKind::JTime(p), ObjKind::JTime(q)) => crate::javaext::compare(p, q),
                 _ => None,
             },
             (V::Str(s), n) | (n, V::Str(s)) if n.is_number() && matches!(self.d, Dialect::Js | Dialect::Ognl | Dialect::Mvel) => {
@@ -3064,6 +3305,9 @@ impl Interp {
 
     /// `needle in haystack`.
     pub fn contains(&mut self, haystack: &V, needle: &V, pos: u32) -> R<bool> {
+        if crate::jsext::is_proxy(haystack) {
+            return crate::jsext::proxy_has(self, haystack, needle, pos);
+        }
         if let V::Obj(o) = haystack {
             if self.d == Dialect::Python && o.borrow().proto.is_some() {
                 if let Some(r) = self.py_special(haystack, "__contains__", vec![needle.clone()], pos)? {
@@ -3318,6 +3562,9 @@ pub fn deep_eq(a: &V, b: &V) -> bool {
             }
             let (x, y) = (x.borrow(), y.borrow());
             if let (ObjKind::Date(p), ObjKind::Date(q)) = (&x.kind, &y.kind) {
+                return p == q;
+            }
+            if let (ObjKind::JTime(p), ObjKind::JTime(q)) = (&x.kind, &y.kind) {
                 return p == q;
             }
             if x.kind == ObjKind::Set && y.kind == ObjKind::Set {

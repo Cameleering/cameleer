@@ -12,8 +12,8 @@ type R<T> = Result<T, SyntaxError>;
 /// Parse a whole program.
 pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
     let toks = tokenize(src, 0, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: d == Dialect::Js };
-    let body = match d {
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: d == Dialect::Js, exports: Vec::new(), jtypes: Vec::new() };
+    let mut body = match d {
         Dialect::Ognl | Dialect::Spel => {
             let e = p.parse_sequence()?;
             p.expect_eof()?;
@@ -30,6 +30,12 @@ pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
             body
         }
     };
+    // ES module exports are recorded after the module body ran (as a declaration, which does
+    // not change the completion value of the script)
+    if !p.exports.is_empty() {
+        let exprs: Vec<Expr> = p.exports.drain(..).filter_map(|s| if let Stmt::Expr(e) = s { Some(e) } else { None }).collect();
+        body.push(Stmt::Var(VarKind::Var, vec![(Pat::Id("%exported".into()), Some(Expr::Seq(exprs)))]));
+    }
     // JavaScript top-level await: run the script body as an async function
     if d == Dialect::Js && crate::gen::stmts_have_yield(&body) {
         let mut f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
@@ -45,7 +51,7 @@ pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
 /// Parse an embedded expression (template interpolation) at absolute offset `base`.
 pub fn parse_embedded(src: &str, base: usize, d: Dialect) -> R<Expr> {
     let toks = tokenize(src, base, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: false };
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: false, exports: Vec::new(), jtypes: Vec::new() };
     if p.at_eof() {
         return Err(SyntaxError { pos: base, msg: "empty expression".into() });
     }
@@ -63,6 +69,16 @@ struct Parser {
     in_gen: bool,
     /// Inside an async function or at the JavaScript top level (`await` is an operator).
     in_async: bool,
+    /// ES module `export`s: assignments to `%exports` run after the module body.
+    exports: Vec<Stmt>,
+    /// Java: declared types of locals / parameters (`char` arithmetic, overloads by static type).
+    jtypes: Vec<(String, String)>,
+}
+
+const JAVA_NUMERIC: &[&str] = &["int", "long", "short", "byte", "double", "float", "char", "Integer", "Long", "Short", "Byte", "Double", "Float"];
+
+fn jcall(name: &str, args: Vec<Expr>, pos: u32) -> Expr {
+    Expr::Call { callee: Box::new(Expr::Ident(name.to_string(), pos)), args: args.into_iter().map(Elem::Item).collect(), optional: false, pos }
 }
 
 const JS_KEYWORDS: &[&str] = &[
@@ -75,6 +91,8 @@ fn describe(t: &T) -> String {
         T::Eof => "end of input".into(),
         T::Int(i) => format!("number {}", i),
         T::Num(f) => format!("number {}", f),
+        T::BigInt(s) => format!("bigint {}n", s),
+        T::Char(s) => format!("char '{}'", s),
         T::Str(s) => format!("string '{}'", s),
         T::Tpl(_) => "template string".into(),
         T::Regex(s, _) => format!("regex /{}/", s),
@@ -255,7 +273,22 @@ impl Parser {
             return Ok(Stmt::Empty);
         }
         let d = self.d;
-        if d == Dialect::Groovy && self.is_groovy_type_decl_start() {
+        if d == Dialect::Mvel && self.is_p("@") && matches!(self.peek_at(1), T::Ident(_)) {
+            // `@Interceptor statement`
+            self.next();
+            let name = self.ident()?;
+            let s = self.parse_statement()?;
+            return Ok(Stmt::Labeled(format!("%intercept:{}", name), Box::new(s)));
+        }
+        if d == Dialect::Groovy && self.is_p("@") && !self.is_groovy_type_decl_start() {
+            // statement annotations: `@Grab` cannot work without a JVM; others are ignored
+            let names = self.parse_groovy_annotations()?;
+            if let Some(g) = names.iter().find(|n| matches!(n.as_str(), "Grab" | "Grapes" | "GrabResolver" | "GrabConfig" | "GrabExclude")) {
+                return self.err(format!("@{} is not supported: rust-camel Groovy scripts are interpreted without a JVM, so dependencies cannot be downloaded or loaded (use the built-in GDK / Camel bindings instead)", g));
+            }
+            return self.parse_statement();
+        }
+        if matches!(d, Dialect::Groovy | Dialect::Java) && self.is_groovy_type_decl_start() {
             let annotations = self.parse_groovy_annotations()?;
             let c = self.parse_groovy_class(annotations)?;
             return Ok(Stmt::Class(Arc::new(c)));
@@ -292,6 +325,8 @@ impl Parser {
                     let c = self.parse_class()?;
                     return Ok(Stmt::Class(Arc::new(c)));
                 }
+                "import" if d == Dialect::Js && !self.is_p_at(1, "(") && !self.is_p_at(1, ".") => return self.parse_import(),
+                "export" if d == Dialect::Js => return self.parse_export(),
                 "if" => return self.parse_if(),
                 "for" => return self.parse_for(),
                 "foreach" if d == Dialect::Mvel => return self.parse_for(),
@@ -364,7 +399,7 @@ impl Parser {
                     self.eat_p(";");
                     return Ok(Stmt::Empty);
                 }
-                "yield" if d == Dialect::Java && !matches!(self.peek_at(1), T::P("=") | T::P("(") | T::P(".") | T::P(";")) => {
+                "yield" if matches!(d, Dialect::Java | Dialect::Groovy) && !matches!(self.peek_at(1), T::P("=") | T::P("(") | T::P(".") | T::P(";")) => {
                     // value of a switch expression arm
                     self.next();
                     let e = self.parse_expr()?;
@@ -374,6 +409,10 @@ impl Parser {
                 "def" | "var" | "final" | "static" | "private" | "public" | "protected" if self.typed_like() && !(d == Dialect::Java && w == "def") => {
                     while matches!(self.peek(), T::Ident(m) if matches!(m.as_str(), "final" | "static" | "private" | "public" | "protected" | "synchronized")) {
                         self.next();
+                    }
+                    // generic method type parameters `static <T extends X> T f(...)`
+                    if self.is_p("<") {
+                        self.skip_balanced()?;
                     }
                     if self.is_kw("def") || self.is_kw("var") {
                         self.next();
@@ -396,22 +435,20 @@ impl Parser {
                         return Ok(Stmt::Var(VarKind::Let, vec![(Pat::Arr(items, None), Some(init))]));
                     }
                     // typed after modifiers: `final String x = ...`
-                    if self.is_groovy_typed_decl() {
-                        self.skip_groovy_type();
-                    }
+                    let ty = if self.is_groovy_typed_decl() { Some(self.capture_type()) } else { None };
                     if matches!(self.peek(), T::Ident(_)) && self.is_p_at(1, "(") {
                         return self.parse_groovy_method();
                     }
-                    return self.parse_groovy_decl_rest();
+                    return self.parse_groovy_decl_rest(ty);
                 }
                 _ => {}
             }
             if self.typed_like() && self.is_groovy_typed_decl() {
-                self.skip_groovy_type();
+                let ty = self.capture_type();
                 if matches!(self.peek(), T::Ident(_)) && self.is_p_at(1, "(") {
                     return self.parse_groovy_method();
                 }
-                return self.parse_groovy_decl_rest();
+                return self.parse_groovy_decl_rest(Some(ty));
             }
             if d == Dialect::Groovy && self.is_command_expression() {
                 let pos = self.pos();
@@ -464,6 +501,7 @@ impl Parser {
                 }
                 T::Ident(w) if matches!(w.as_str(), "public" | "private" | "protected" | "abstract" | "final" | "static" | "sealed") => n += 1,
                 T::Ident(w) if matches!(w.as_str(), "class" | "interface" | "trait" | "enum") => return matches!(self.peek_at(n + 1), T::Ident(_)),
+                T::Ident(w) if w == "record" && self.d == Dialect::Java => return matches!(self.peek_at(n + 1), T::Ident(_)) && self.is_p_at(n + 2, "(") || (matches!(self.peek_at(n + 1), T::Ident(_)) && self.is_p_at(n + 2, "<")),
                 _ => return false,
             }
         }
@@ -525,6 +563,8 @@ impl Parser {
         if self.is_p("<") {
             self.skip_balanced()?;
         }
+        // record components `record P(int x, String y)`
+        let components = if kind == "record" { Some(self.parse_params()?.0) } else { None };
         let mut extends = None;
         let mut mixins = Vec::new();
         loop {
@@ -624,6 +664,12 @@ impl Parser {
             }
             let mpos = self.pos();
             let mname = self.ident()?;
+            if kind == "record" && !typed && mname == name && self.is_p("{") {
+                // compact canonical constructor: runs before the components are assigned
+                let body = self.parse_block_body()?;
+                ctors.push(Arc::new(FuncDef::new(Some("%compact".into()), vec![], None, FuncBody::Block(body))));
+                continue;
+            }
             if self.is_p("(") {
                 let (params, rest) = self.parse_params()?;
                 if self.eat_kw("throws") {
@@ -658,6 +704,10 @@ impl Parser {
                 fname = self.ident()?;
             }
             self.consume_semi()?;
+        }
+        if let Some(comps) = components {
+            self.record_members(&name, comps, &mut ctors, &mut methods, &mut fields)?;
+            annotations.push("%record".into());
         }
         if kind == "enum" {
             let list = constants.iter().map(|(c, _, _)| format!("{}.{}", name, c)).collect::<Vec<_>>().join(", ");
@@ -695,6 +745,52 @@ impl Parser {
         Ok(ClassDef { name: Some(name), extends, ctors, methods, fields, mixins, style: ClassStyle::Groovy, annotations })
     }
 
+    /// Java records: component fields, the canonical constructor (running a compact
+    /// constructor body first), accessors, `toString`, `equals` and `hashCode`.
+    fn record_members(&mut self, name: &str, comps: Vec<Param>, ctors: &mut Vec<Arc<FuncDef>>, methods: &mut Vec<ClassMember>, fields: &mut Vec<ClassField>) -> R<()> {
+        let names: Vec<String> = comps.iter().filter_map(|p| if let Pat::Id(n) = &p.pat { Some(n.clone()) } else { None }).collect();
+        for n in &names {
+            fields.push(ClassField { name: n.clone(), init: None, is_static: false });
+        }
+        let compact = ctors.iter().position(|c| c.name.as_deref() == Some("%compact")).map(|i| ctors.remove(i));
+        if !ctors.iter().any(|c| c.params.len() == names.len()) {
+            let mut body = match &compact {
+                Some(c) => match &c.body {
+                    FuncBody::Block(b) => b.clone(),
+                    _ => vec![],
+                },
+                None => vec![],
+            };
+            for n in &names {
+                let target = Expr::Member { obj: Box::new(Expr::This), name: n.clone(), optional: false, pos: 0 };
+                body.push(Stmt::Expr(Expr::Assign { op: None, target: Box::new(Pat::Target(target)), value: Box::new(Expr::Ident(n.clone(), 0)), pos: 0 }));
+            }
+            ctors.push(Arc::new(FuncDef { name: Some(name.to_string()), params: comps, rest: None, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: false, generator: false, is_async: false }));
+        }
+        let to_string = names.iter().map(|n| format!("\"{0}=\" + this.{0}", n)).collect::<Vec<_>>().join(" + \", \" + ");
+        let eq = names.iter().map(|n| format!("Objects.equals(this.{0}, other.{0})", n)).collect::<Vec<_>>().join(" && ");
+        let mut src = format!(
+            "class {n} {{\n public String toString() {{ return \"{n}[\" + {ts} + \"]\"; }}\n public boolean equals(Object other) {{ return other instanceof {n} && {eq}; }}\n public int hashCode() {{ return Objects.hash({args}); }}\n",
+            n = name,
+            ts = if to_string.is_empty() { "\"\"".to_string() } else { to_string },
+            eq = if eq.is_empty() { "true".to_string() } else { eq },
+            args = names.iter().map(|n| format!("this.{}", n)).collect::<Vec<_>>().join(", ")
+        );
+        for n in &names {
+            src.push_str(&format!(" public Object {0}() {{ return this.{0}; }}\n", n));
+        }
+        src.push('}');
+        let prog = parse_program(&src, Dialect::Java)?;
+        if let Some(Stmt::Class(g)) = prog.body.into_iter().next() {
+            for m in &g.methods {
+                if !methods.iter().any(|x| x.name == m.name) {
+                    methods.push(m.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// `println "x"` / `log.info msg` (Groovy command expressions).
     fn is_command_expression(&self) -> bool {
         let mut n = 0;
@@ -713,7 +809,7 @@ impl Parser {
             return false;
         }
         match &t.t {
-            T::Str(_) | T::Tpl(_) | T::Int(_) | T::Num(_) => true,
+            T::Str(_) | T::Char(_) | T::Tpl(_) | T::Int(_) | T::Num(_) => true,
             T::Ident(w) => !matches!(w.as_str(), "in" | "instanceof" | "as"),
             _ => false,
         }
@@ -760,6 +856,41 @@ impl Parser {
         after.nl || matches!(after.t, T::P("=") | T::P(";") | T::P("(") | T::P(",") | T::Eof | T::P("}") | T::P(":") | T::P(")")) || matches!(&after.t, T::Ident(x) if x == "in")
     }
 
+    /// Consume a (qualified, generic, array) type name; returns its simple name with `[]`s.
+    fn capture_type(&mut self) -> String {
+        let mut name = match self.next() {
+            T::Ident(w) => w,
+            _ => return String::new(),
+        };
+        while self.is_p(".") && matches!(self.peek_at(1), T::Ident(_)) {
+            self.next();
+            if let T::Ident(w) = self.next() {
+                name = w;
+            }
+        }
+        if self.is_p("<") {
+            let mut depth = 0;
+            loop {
+                match self.next() {
+                    T::P("<") => depth += 1,
+                    T::P(">") => depth -= 1,
+                    T::P(">>") => depth -= 2,
+                    T::Eof => break,
+                    _ => {}
+                }
+                if depth <= 0 {
+                    break;
+                }
+            }
+        }
+        while self.is_p("[") && self.is_p_at(1, "]") {
+            self.next();
+            self.next();
+            name.push_str("[]");
+        }
+        name
+    }
+
     fn skip_groovy_type(&mut self) {
         if !self.is_groovy_typed_decl() {
             return;
@@ -790,11 +921,22 @@ impl Parser {
         }
     }
 
-    fn parse_groovy_decl_rest(&mut self) -> R<Stmt> {
+    fn parse_groovy_decl_rest(&mut self, ty: Option<String>) -> R<Stmt> {
         let mut decls = Vec::new();
         loop {
             let name = self.ident()?;
-            let init = if self.eat_p("=") { Some(self.parse_expr()?) } else { None };
+            let mut init = if self.eat_p("=") { Some(self.parse_expr()?) } else { None };
+            if self.d == Dialect::Java {
+                let declared = ty.clone().or_else(|| init.as_ref().and_then(|e| self.jtype(e)));
+                if let Some(t) = &declared {
+                    if let Some(e) = init.take() {
+                        init = Some(self.java_convert(e, t));
+                    }
+                }
+                if let Some(t) = declared {
+                    self.jtypes.push((name.clone(), t));
+                }
+            }
             decls.push((Pat::Id(name), init));
             if !self.eat_p(",") {
                 break;
@@ -803,6 +945,105 @@ impl Parser {
         }
         self.consume_semi()?;
         Ok(Stmt::Var(VarKind::Let, decls))
+    }
+
+    /// Java static type of an expression, as far as the snippet tells (None when unknown).
+    fn jtype(&self, e: &Expr) -> Option<String> {
+        let t = |s: &str| Some(s.to_string());
+        match e {
+            Expr::Int(_) => t("int"),
+            Expr::Num(_) => t("double"),
+            Expr::Str(_) | Expr::Template(_) => t("String"),
+            Expr::Bool(_) => t("boolean"),
+            Expr::As(_, ty, _) => Some(ty.clone()),
+            Expr::Ident(n, _) => self.jtypes.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v.clone()),
+            Expr::Call { callee, args, .. } => match &**callee {
+                Expr::Ident(n, _) if n == "%char" || n == "%chr" => t("char"),
+                Expr::Ident(n, _) if n == "%ord" => t("int"),
+                Expr::Ident(n, _) if n == "%jcast" => match args.get(1) {
+                    Some(Elem::Item(Expr::Str(s))) => Some(s.clone()),
+                    _ => None,
+                },
+                Expr::Member { obj, name, .. } => {
+                    let cls = match &**obj {
+                        Expr::Ident(c, _) | Expr::Type(c) => Some(c.as_str()),
+                        _ => None,
+                    };
+                    match (cls, name.as_str()) {
+                        (Some("Integer"), "valueOf") => t("Integer"),
+                        (Some("Long"), "valueOf") => t("Long"),
+                        (Some("Character"), "valueOf" | "toUpperCase" | "toLowerCase" | "forDigit") => t("char"),
+                        (Some("Integer"), "parseInt") | (_, "length" | "size" | "indexOf" | "lastIndexOf" | "compareTo" | "intValue" | "hashCode") => t("int"),
+                        (_, "charAt") => t("char"),
+                        (_, "toString" | "substring" | "trim" | "toUpperCase" | "toLowerCase" | "repeat" | "strip") => t("String"),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            Expr::Index { obj, .. } => match self.jtype(obj).as_deref() {
+                Some(a) if a.ends_with("[]") => Some(a[..a.len() - 2].to_string()),
+                _ => None,
+            },
+            Expr::Bin(op, a, b, _) => {
+                let (x, y) = (self.jtype(a), self.jtype(b));
+                match op {
+                    BinOp::Add if x.as_deref() == Some("String") || y.as_deref() == Some("String") => t("String"),
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                        let num = |v: &Option<String>| v.as_deref().is_some_and(|s| JAVA_NUMERIC.contains(&s));
+                        if num(&x) && num(&y) {
+                            if [x.as_deref(), y.as_deref()].iter().any(|s| matches!(s, Some("double") | Some("float") | Some("Double") | Some("Float"))) {
+                                t("double")
+                            } else if [x.as_deref(), y.as_deref()].iter().any(|s| matches!(s, Some("long") | Some("Long"))) {
+                                t("long")
+                            } else {
+                                t("int")
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Java assignment conversion of `e` to the declared type `ty` (`char` <-> int).
+    fn java_convert(&self, e: Expr, ty: &str) -> Expr {
+        let et = self.jtype(&e);
+        match (ty, et.as_deref()) {
+            ("char" | "Character", Some(t)) if t != "char" && JAVA_NUMERIC.contains(&t) => jcall("%chr", vec![e], 0),
+            (t, Some("char")) if t != "char" && t != "Character" && JAVA_NUMERIC.contains(&t) => jcall("%ord", vec![e], 0),
+            _ => e,
+        }
+    }
+
+    /// Java binary operators on `char` operands: chars promote to their code point.
+    fn java_bin(&self, op: BinOp, l: Expr, r: Expr, pos: u32) -> Expr {
+        let (lt, rt) = (self.jtype(&l), self.jtype(&r));
+        let lc = lt.as_deref() == Some("char");
+        let rc = rt.as_deref() == Some("char");
+        if !lc && !rc {
+            return Expr::Bin(op, Box::new(l), Box::new(r), pos);
+        }
+        let arith = matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr);
+        let cmp = matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne);
+        if !(arith || cmp) {
+            return Expr::Bin(op, Box::new(l), Box::new(r), pos);
+        }
+        let is_str = |t: &Option<String>| t.as_deref() == Some("String");
+        if op == BinOp::Add && (is_str(&lt) || is_str(&rt)) {
+            return Expr::Bin(op, Box::new(l), Box::new(r), pos);
+        }
+        if cmp && lc && rc {
+            // char vs char compares like their code points (one-character strings do)
+            return Expr::Bin(op, Box::new(l), Box::new(r), pos);
+        }
+        let l = if lc { jcall("%ord", vec![l], pos) } else { l };
+        let r = if rc { jcall("%ord", vec![r], pos) } else { r };
+        Expr::Bin(op, Box::new(l), Box::new(r), pos)
     }
 
     fn parse_groovy_method(&mut self) -> R<Stmt> {
@@ -852,6 +1093,198 @@ impl Parser {
         Ok(Pat::Id(self.ident()?))
     }
 
+    /// `import d, {a, b as c} from 'm'` / `import * as ns from 'm'` / `import 'm'`.
+    fn parse_import(&mut self) -> R<Stmt> {
+        let pos = self.pos();
+        self.next();
+        let load = |path: String| Expr::Call { callee: Box::new(Expr::Ident("%import".into(), pos)), args: vec![Elem::Item(Expr::Str(path))], optional: false, pos };
+        if let T::Str(path) = self.peek().clone() {
+            self.next();
+            self.consume_semi()?;
+            return Ok(Stmt::Expr(load(path)));
+        }
+        let mut props: Vec<(PropKey, Pat, Option<Expr>)> = Vec::new();
+        let mut ns: Option<String> = None;
+        if let T::Ident(name) = self.peek().clone() {
+            if name != "from" || self.is_p_at(1, ",") || self.is_kw_at(1, "from") {
+                self.next();
+                props.push((PropKey::Name("default".into()), Pat::Id(name), None));
+                self.eat_p(",");
+            }
+        }
+        if self.eat_p("*") {
+            if !self.eat_kw("as") {
+                return self.err("expected 'as' after 'import *'");
+            }
+            ns = Some(self.ident()?);
+        } else if self.eat_p("{") {
+            while !self.eat_p("}") {
+                let name = match self.next() {
+                    T::Ident(n) => n,
+                    T::Str(n) => n,
+                    t => return self.err(format!("unexpected {} in import list", describe(&t))),
+                };
+                let local = if self.eat_kw("as") { self.ident()? } else { name.clone() };
+                props.push((PropKey::Name(name), Pat::Id(local), None));
+                if !self.eat_p(",") {
+                    self.expect_p("}")?;
+                    break;
+                }
+            }
+        }
+        if !self.eat_kw("from") {
+            return self.err("expected 'from' in import declaration");
+        }
+        let path = match self.next() {
+            T::Str(p) => p,
+            _ => return self.err("expected a module path string"),
+        };
+        self.consume_semi()?;
+        let mut decls = vec![];
+        if let Some(n) = ns {
+            decls.push((Pat::Id(n), Some(load(path.clone()))));
+        }
+        if !props.is_empty() {
+            decls.push((Pat::Obj(props, None), Some(load(path))));
+        }
+        Ok(Stmt::Var(VarKind::Const, decls))
+    }
+
+    fn export_assign(&mut self, name: &str, local: Expr, pos: u32) {
+        let target = Expr::Member { obj: Box::new(Expr::Ident("%exports".into(), pos)), name: name.to_string(), optional: false, pos };
+        self.exports.push(Stmt::Expr(Expr::Assign { op: None, target: Box::new(Pat::Target(target)), value: Box::new(local), pos }));
+    }
+
+    fn pat_names(p: &Pat, out: &mut Vec<String>) {
+        match p {
+            Pat::Id(n) => out.push(n.clone()),
+            Pat::Arr(items, rest) => {
+                for (p, _) in items.iter().flatten() {
+                    Self::pat_names(p, out);
+                }
+                if let Some(r) = rest {
+                    Self::pat_names(r, out);
+                }
+            }
+            Pat::Obj(items, rest) => {
+                for (_, p, _) in items {
+                    Self::pat_names(p, out);
+                }
+                if let Some(r) = rest {
+                    Self::pat_names(r, out);
+                }
+            }
+            Pat::Target(_) => {}
+        }
+    }
+
+    fn module_path(&mut self) -> R<String> {
+        match self.next() {
+            T::Str(p) => Ok(p),
+            _ => self.err("expected a module path string"),
+        }
+    }
+
+    /// `export` declarations (recorded as assignments to `%exports` after the module body).
+    fn parse_export(&mut self) -> R<Stmt> {
+        let pos = self.pos();
+        self.next();
+        let load = |path: String| Expr::Call { callee: Box::new(Expr::Ident("%import".into(), pos)), args: vec![Elem::Item(Expr::Str(path))], optional: false, pos };
+        if self.eat_kw("default") {
+            if self.is_kw("function") || (self.is_kw("async") && self.is_kw_at(1, "function")) || self.is_kw("class") {
+                let k = if self.is_kw("async") { 2 } else { 1 };
+                let named = matches!(self.peek_at(k), T::Ident(_)) || (self.is_p_at(k, "*") && matches!(self.peek_at(k + 1), T::Ident(_)));
+                if named {
+                    let st = self.parse_statement()?;
+                    let name = match &st {
+                        Stmt::Func(f) => f.name.clone(),
+                        Stmt::Class(c) => c.name.clone(),
+                        _ => None,
+                    };
+                    if let Some(n) = name {
+                        self.export_assign("default", Expr::Ident(n, pos), pos);
+                    }
+                    return Ok(st);
+                }
+            }
+            let e = self.parse_assign()?;
+            self.consume_semi()?;
+            let tmp = "%default".to_string();
+            self.export_assign("default", Expr::Ident(tmp.clone(), pos), pos);
+            return Ok(Stmt::Var(VarKind::Const, vec![(Pat::Id(tmp), Some(e))]));
+        }
+        if self.eat_p("*") {
+            // export * from 'm' / export * as ns from 'm'
+            let alias = if self.eat_kw("as") { Some(self.ident()?) } else { None };
+            if !self.eat_kw("from") {
+                return self.err("expected 'from' after 'export *'");
+            }
+            let path = self.module_path()?;
+            self.consume_semi()?;
+            match alias {
+                Some(a) => self.export_assign(&a, load(path), pos),
+                None => {
+                    let assign = Expr::Call {
+                        callee: Box::new(Expr::Member { obj: Box::new(Expr::Ident("Object".into(), pos)), name: "assign".into(), optional: false, pos }),
+                        args: vec![Elem::Item(Expr::Ident("%exports".into(), pos)), Elem::Item(load(path))],
+                        optional: false,
+                        pos,
+                    };
+                    self.exports.push(Stmt::Expr(assign));
+                }
+            }
+            return Ok(Stmt::Empty);
+        }
+        if self.eat_p("{") {
+            let mut names = vec![];
+            while !self.eat_p("}") {
+                let local = match self.next() {
+                    T::Ident(n) => n,
+                    t => return self.err(format!("unexpected {} in export list", describe(&t))),
+                };
+                let exported = if self.eat_kw("as") {
+                    match self.next() {
+                        T::Ident(n) | T::Str(n) => n,
+                        t => return self.err(format!("unexpected {} in export list", describe(&t))),
+                    }
+                } else {
+                    local.clone()
+                };
+                names.push((local, exported));
+                if !self.eat_p(",") {
+                    self.expect_p("}")?;
+                    break;
+                }
+            }
+            let from = if self.eat_kw("from") { Some(self.module_path()?) } else { None };
+            self.consume_semi()?;
+            for (local, exported) in names {
+                let v = match &from {
+                    Some(p) => Expr::Member { obj: Box::new(load(p.clone())), name: local, optional: false, pos },
+                    None => Expr::Ident(local, pos),
+                };
+                self.export_assign(&exported, v, pos);
+            }
+            return Ok(Stmt::Empty);
+        }
+        let st = self.parse_statement()?;
+        let mut names = vec![];
+        match &st {
+            Stmt::Func(f) => names.extend(f.name.clone()),
+            Stmt::Class(c) => names.extend(c.name.clone()),
+            Stmt::Var(_, decls) => {
+                for (p, _) in decls {
+                    Self::pat_names(p, &mut names);
+                }
+            }
+            _ => return self.err("unexpected export"),
+        }
+        for n in names {
+            self.export_assign(&n, Expr::Ident(n.clone(), pos), pos);
+        }
+        Ok(st)
+    }
+
     fn parse_if(&mut self) -> R<Stmt> {
         self.next();
         self.expect_p("(")?;
@@ -877,14 +1310,28 @@ impl Parser {
             let pos = self.pos();
             self.next();
             let st = self.parse_for_rest(foreach)?;
+            // desugared to: for (let %ai = %asyncIter(obj);;) { let %ar = await %ai.next();
+            //   if (%ar.done) break; <pat> = %ar.value; body }
             return match st {
-                Stmt::ForIn { decl, pat, obj, body, values: true, else_body } => {
-                    let tmp = "%forawait".to_string();
+                Stmt::ForIn { decl, pat, obj, body, values: true, .. } => {
+                    let ai = "%ai".to_string();
+                    let ar = "%ar".to_string();
+                    let id = |n: &str| Expr::Ident(n.to_string(), pos);
+                    let member = |o: Expr, n: &str| Expr::Member { obj: Box::new(o), name: n.to_string(), optional: false, pos };
+                    let init = Stmt::Var(VarKind::Let, vec![(Pat::Id(ai.clone()), Some(Expr::Call { callee: Box::new(id("%asyncIter")), args: vec![Elem::Item(obj)], optional: false, pos }))]);
+                    let next = Expr::Await(Box::new(Expr::Call { callee: Box::new(member(id(&ai), "next")), args: vec![], optional: false, pos }), pos);
+                    let value = member(id(&ar), "value");
                     let bind = match decl {
-                        Some(k) => Stmt::Var(k, vec![(pat, Some(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)))]),
-                        None => Stmt::Expr(Expr::Assign { op: None, target: Box::new(pat), value: Box::new(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)), pos }),
+                        Some(k) => Stmt::Var(k, vec![(pat, Some(value))]),
+                        None => Stmt::Expr(Expr::Assign { op: None, target: Box::new(pat), value: Box::new(value), pos }),
                     };
-                    Ok(Stmt::ForIn { decl: Some(VarKind::Let), pat: Pat::Id(tmp), obj, body: Box::new(Stmt::Block(vec![bind, *body])), values: true, else_body })
+                    let body = Stmt::Block(vec![
+                        Stmt::Var(VarKind::Let, vec![(Pat::Id(ar.clone()), Some(next))]),
+                        Stmt::If(member(id(&ar), "done"), Box::new(Stmt::Break(None)), None),
+                        bind,
+                        *body,
+                    ]);
+                    Ok(Stmt::For { init: Some(Box::new(init)), test: None, update: None, body: Box::new(body) })
                 }
                 _ => self.err("expected 'for await (x of iterable)'"),
             };
@@ -906,10 +1353,14 @@ impl Parser {
             let typed = self.groovy_type_len(n);
             let nm = n + typed;
             if matches!(self.peek_at(nm), T::Ident(_)) && (self.is_kw_at(nm + 1, "in") || self.is_p_at(nm + 1, ":")) {
-                for _ in 0..nm {
+                for _ in 0..n {
                     self.next();
                 }
+                let ty = if typed > 0 { Some(self.capture_type()) } else { None };
                 let name = self.ident()?;
+                if let (Some(t), Dialect::Java) = (ty, self.d) {
+                    self.jtypes.push((name.clone(), t));
+                }
                 self.next();
                 let obj = self.parse_expr()?;
                 self.expect_p(")")?;
@@ -930,11 +1381,20 @@ impl Parser {
                 if self.is_kw("def") || self.is_kw("var") {
                     self.next();
                 }
-                self.skip_groovy_type();
+                let ty = if self.is_groovy_typed_decl() { Some(self.capture_type()) } else { None };
                 let mut decls = Vec::new();
                 loop {
                     let name = self.ident()?;
-                    let init = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
+                    let mut init = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
+                    if self.d == Dialect::Java {
+                        let declared = ty.clone().or_else(|| init.as_ref().and_then(|e| self.jtype(e)));
+                        if let Some(t) = declared {
+                            if let Some(e) = init.take() {
+                                init = Some(self.java_convert(e, &t));
+                            }
+                            self.jtypes.push((name.clone(), t));
+                        }
+                    }
                     decls.push((Pat::Id(name), init));
                     if !self.eat_p(",") {
                         break;
@@ -1057,7 +1517,7 @@ impl Parser {
     }
 
     fn parse_switch(&mut self) -> R<Stmt> {
-        if self.d == Dialect::Java && self.switch_has_arrows() {
+        if matches!(self.d, Dialect::Java | Dialect::Groovy) && self.switch_has_arrows() {
             let e = self.parse_java_switch(true)?;
             self.eat_p(";");
             return Ok(Stmt::Expr(e));
@@ -1184,6 +1644,9 @@ impl Parser {
             if self.at_eof() {
                 return self.err("unterminated switch");
             }
+            if self.eat_p(";") {
+                continue;
+            }
             let mut labels = Vec::new();
             if self.eat_kw("default") {
                 has_default = true;
@@ -1219,7 +1682,11 @@ impl Parser {
                     vec![self.parse_statement()?]
                 } else {
                     let e = self.parse_expr()?;
-                    self.expect_p(";")?;
+                    if self.d == Dialect::Groovy {
+                        self.consume_semi()?;
+                    } else {
+                        self.expect_p(";")?;
+                    }
                     vec![Stmt::Expr(e)]
                 }
             } else {
@@ -1273,7 +1740,7 @@ impl Parser {
         }
         match self.peek_at(2 + tl) {
             T::Ident(x) => !matches!(x.as_str(), "instanceof"),
-            T::Int(_) | T::Num(_) | T::Str(_) | T::Tpl(_) => true,
+            T::Int(_) | T::Num(_) | T::Str(_) | T::Char(_) | T::Tpl(_) => true,
             T::P("(") | T::P("!") | T::P("~") => true,
             _ => false,
         }
@@ -1346,14 +1813,14 @@ impl Parser {
                         self.next();
                     }
                 }
-                params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+                params.push(Param { pat: Pat::Id(self.ident()?), default: None, ty: None });
                 if !self.eat_p(",") {
                     break;
                 }
             }
             self.expect_p(")")?;
         } else {
-            params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+            params.push(Param { pat: Pat::Id(self.ident()?), default: None, ty: None });
         }
         self.expect_p("->")?;
         let body = if self.is_p("{") { FuncBody::Block(self.parse_block_body()?) } else { FuncBody::Expr(Box::new(self.parse_assign()?)) };
@@ -1492,9 +1959,43 @@ impl Parser {
                 rest = Some(self.parse_binding_pattern()?);
                 break;
             }
+            // Groovy / Java declared parameter types (overload resolution) and varargs `T... xs`
+            let mut ty: Option<String> = None;
+            if self.typed_like() {
+                while self.is_p("@") {
+                    self.next();
+                    self.qualified_name()?;
+                    if self.is_p("(") {
+                        self.skip_balanced()?;
+                    }
+                }
+                if self.is_kw("final") {
+                    self.next();
+                }
+                let varargs = matches!(self.peek(), T::Ident(_)) && {
+                    let mut n = 1;
+                    while self.is_p_at(n, ".") && matches!(self.peek_at(n + 1), T::Ident(_)) {
+                        n += 2;
+                    }
+                    self.is_p_at(n, "...")
+                };
+                if varargs {
+                    let t = self.capture_type();
+                    self.expect_p("...")?;
+                    let _ = t;
+                    rest = Some(Pat::Id(self.ident()?));
+                    break;
+                }
+                if self.is_groovy_typed_decl() {
+                    ty = Some(self.capture_type());
+                }
+            }
             let pat = self.parse_binding_pattern()?;
             let default = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
-            params.push(Param { pat, default });
+            if let (Some(t), Pat::Id(n), Dialect::Java) = (&ty, &pat, self.d) {
+                self.jtypes.push((n.clone(), t.clone()));
+            }
+            params.push(Param { pat, default, ty });
             if !self.eat_p(",") {
                 break;
             }
@@ -1573,7 +2074,7 @@ impl Parser {
                 self.skip_groovy_type();
                 let name = self.ident()?;
                 let default = if self.eat_p("=") { Some(self.parse_cond()?) } else { None };
-                params.push(Param { pat: Pat::Id(name), default });
+                params.push(Param { pat: Pat::Id(name), default, ty: None });
                 if !self.eat_p(",") {
                     break;
                 }
@@ -1657,7 +2158,7 @@ impl Parser {
                 self.next();
                 let name = self.ident()?;
                 self.next();
-                return self.parse_arrow_body_async(vec![Param { pat: Pat::Id(name), default: None }], None, true);
+                return self.parse_arrow_body_async(vec![Param { pat: Pat::Id(name), default: None, ty: None }], None, true);
             }
             if self.is_p_at(1, "(") {
                 let save = self.i;
@@ -1674,7 +2175,7 @@ impl Parser {
             if matches!(self.peek(), T::Ident(w) if !JS_KEYWORDS.contains(&w.as_str())) && self.is_p_at(1, "=>") {
                 let name = self.ident()?;
                 self.next();
-                return self.parse_arrow_body(vec![Param { pat: Pat::Id(name), default: None }], None);
+                return self.parse_arrow_body(vec![Param { pat: Pat::Id(name), default: None, ty: None }], None);
             }
             if self.is_p("(") && self.is_arrow_ahead() {
                 let (params, rest) = self.parse_params()?;
@@ -1705,11 +2206,37 @@ impl Parser {
                 // SpEL supports assignment too
             }
             self.next();
-            let target = self.to_pat(lhs)?;
+            let lt = if self.d == Dialect::Java { self.jtype(&lhs) } else { None };
+            let target = self.to_pat(lhs.clone())?;
             let value = self.parse_assign()?;
+            if let Some(t) = lt {
+                // Java: `c += 1` on a char, `int x; x = c` conversions
+                match op {
+                    Some(AssignOp::Bin(bop)) if t == "char" => {
+                        let sum = self.java_bin(bop, lhs, value, pos);
+                        return Ok(Expr::Assign { op: None, target: Box::new(target), value: Box::new(jcall("%chr", vec![sum], pos)), pos });
+                    }
+                    None => {
+                        let value = self.java_convert(value, &t);
+                        return Ok(Expr::Assign { op, target: Box::new(target), value: Box::new(value), pos });
+                    }
+                    _ => {}
+                }
+            }
             return Ok(Expr::Assign { op, target: Box::new(target), value: Box::new(value), pos });
         }
         Ok(lhs)
+    }
+
+    /// `c++` / `--c` on a Java `char` variable.
+    fn char_step(&self, target: Expr, inc: bool, pos: u32) -> Expr {
+        let code = jcall("%ord", vec![target.clone()], pos);
+        let next = Expr::Bin(if inc { BinOp::Add } else { BinOp::Sub }, Box::new(code), Box::new(Expr::Int(1)), pos);
+        let pat = match &target {
+            Expr::Ident(n, _) => Pat::Id(n.clone()),
+            other => Pat::Target(other.clone()),
+        };
+        Expr::Assign { op: None, target: Box::new(pat), value: Box::new(jcall("%chr", vec![next], pos)), pos }
     }
 
     fn to_pat(&self, e: Expr) -> R<Pat> {
@@ -1892,7 +2419,11 @@ impl Parser {
                                     return Ok(if op == BinOp::Ne { Expr::Unary(UnOp::Not, Box::new(call), pos) } else { call }).and_then(|e| self.continue_binary(e, min));
                                 }
                             }
-                            Expr::Bin(op, Box::new(left), Box::new(right), pos)
+                            if self.d == Dialect::Java {
+                                self.java_bin(op, left, right, pos)
+                            } else {
+                                Expr::Bin(op, Box::new(left), Box::new(right), pos)
+                            }
                         }
                         BinKind::As | BinKind::TypeTest(_) => unreachable!(),
                     }
@@ -1985,8 +2516,19 @@ impl Parser {
             let t = self.type_name()?;
             self.expect_p(")")?;
             let e = self.parse_unary()?;
+            let et = self.jtype(&e);
             return Ok(match t.as_str() {
-                "Object" | "Comparable" | "CharSequence" | "Number" | "Iterable" | "Collection" => e,
+                "Object" | "Comparable" | "CharSequence" | "Number" | "Iterable" | "Collection" => jcall("%jcast", vec![e, Expr::Str(t)], pos),
+                "char" if et.as_deref() == Some("char") => e,
+                "char" => jcall("%chr", vec![e], pos),
+                "int" | "long" | "short" | "byte" | "double" | "float" if et.as_deref() == Some("char") => {
+                    let code = jcall("%ord", vec![e], pos);
+                    if matches!(t.as_str(), "double" | "float") {
+                        Expr::As(Box::new(code), t, pos)
+                    } else {
+                        code
+                    }
+                }
                 _ => Expr::As(Box::new(e), t, pos),
             });
         }
@@ -2000,12 +2542,18 @@ impl Parser {
             let inc = self.is_p("++");
             self.next();
             let target = self.parse_unary()?;
+            if self.d == Dialect::Java && self.jtype(&target).as_deref() == Some("char") {
+                return Ok(self.char_step(target, inc, pos));
+            }
             return Ok(Expr::Update { inc, prefix: true, target: Box::new(target), pos });
         }
         let e = self.parse_postfix()?;
         if (self.is_p("++") || self.is_p("--")) && !self.nl() {
             let inc = self.is_p("++");
             self.next();
+            if self.d == Dialect::Java && self.jtype(&e).as_deref() == Some("char") {
+                return Ok(self.char_step(e, inc, pos));
+            }
             return Ok(Expr::Update { inc, prefix: false, target: Box::new(e), pos });
         }
         Ok(e)
@@ -2018,7 +2566,11 @@ impl Parser {
         let save = self.no_in;
         self.no_in = false;
         while !self.is_p(")") {
-            if self.eat_p("...") || (self.d == Dialect::Groovy && self.is_p("*") && self.eat_p("*")) {
+            if self.d == Dialect::Groovy && self.is_p("*") && self.is_p_at(1, ":") {
+                self.next();
+                self.next();
+                named.push(Prop::Spread(self.parse_assign()?));
+            } else if self.eat_p("...") || (self.d == Dialect::Groovy && self.is_p("*") && self.eat_p("*")) {
                 args.push(Elem::Spread(self.parse_assign()?));
             } else if self.d == Dialect::Groovy && matches!(self.peek(), T::Ident(_) | T::Str(_)) && self.is_p_at(1, ":") {
                 let k = match self.next() {
@@ -2094,6 +2646,14 @@ impl Parser {
                     self.expect_p("]")?;
                     e = Expr::Index { obj: Box::new(e), index: Box::new(idx), optional: true, pos };
                 }
+                T::P("?") if self.d == Dialect::Groovy && self.is_p_at(1, "[") && self.tok_at(1).pos == self.tok_at(0).pos + 1 && !self.ternary_after_bracket() => {
+                    // Groovy safe index `list?[i]`
+                    self.next();
+                    self.next();
+                    let idx = self.parse_expr()?;
+                    self.expect_p("]")?;
+                    e = Expr::Index { obj: Box::new(e), index: Box::new(idx), optional: true, pos };
+                }
                 T::P("*.") => {
                     self.next();
                     let name = self.prop_name()?;
@@ -2152,6 +2712,18 @@ impl Parser {
                 }
                 T::P("(") if !(nl && self.d == Dialect::Groovy) => {
                     let args = self.parse_args()?;
+                    // Java overloads by static type: `list.remove(Integer)` removes the element
+                    if self.d == Dialect::Java {
+                        if let (Expr::Member { name, .. }, [Elem::Item(a)]) = (&mut e, args.as_slice()) {
+                            if name == "remove" {
+                                if let Some(t) = self.jtype(a) {
+                                    if !matches!(t.as_str(), "int" | "short" | "byte" | "char" | "long") {
+                                        *name = "%remove_object".into();
+                                    }
+                                }
+                            }
+                        }
+                    }
                     e = Expr::Call { callee: Box::new(e), args, optional: false, pos };
                 }
                 T::P("{") if self.d == Dialect::Groovy && !nl && self.closure_can_follow(&e) => {
@@ -2164,9 +2736,10 @@ impl Parser {
                         other => Expr::Call { callee: Box::new(other), args: vec![Elem::Item(c)], optional: false, pos },
                     };
                 }
-                T::Tpl(_) if self.d == Dialect::Js && !nl => {
-                    // tagged templates are not supported
-                    return self.err("tagged template literals are not supported");
+                T::Tpl(parts) if self.d == Dialect::Js => {
+                    let pos = self.pos();
+                    self.next();
+                    e = self.tagged_template(e, parts, pos)?;
                 }
                 _ => break,
             }
@@ -2184,9 +2757,34 @@ impl Parser {
             match p {
                 RawPart::Lit(s) => out.push(TplPart::Lit(s)),
                 RawPart::Code(code, off) => out.push(TplPart::Expr(parse_embedded(&code, off, self.d)?, None, None)),
+                RawPart::Raw(_) => {}
             }
         }
         Ok(Expr::Template(out))
+    }
+
+    /// A tagged template call: `tag(strings, ...values)` where `strings` (cooked) carries `raw`.
+    fn tagged_template(&mut self, tag: Expr, parts: Vec<RawPart>, pos: u32) -> R<Expr> {
+        let mut raws = Vec::new();
+        let mut args = vec![];
+        for p in parts {
+            match p {
+                RawPart::Raw(r) => raws.push(r),
+                RawPart::Code(code, off) => args.push(Elem::Item(parse_embedded(&code, off, self.d)?)),
+                RawPart::Lit(_) => {}
+            }
+        }
+        let cooked: Vec<Elem> = raws
+            .iter()
+            .map(|r| match crate::lexer::unescape_template(r) {
+                Some(c) => Elem::Item(Expr::Str(c)),
+                None => Elem::Item(Expr::Undef),
+            })
+            .collect();
+        let raw: Vec<Elem> = raws.into_iter().map(|r| Elem::Item(Expr::Str(r.replace("\r\n", "\n")))).collect();
+        let strings = Expr::Call { callee: Box::new(Expr::Ident("%tpl".into(), pos)), args: vec![Elem::Item(Expr::Array(cooked)), Elem::Item(Expr::Array(raw))], optional: false, pos };
+        args.insert(0, Elem::Item(strings));
+        Ok(Expr::Call { callee: Box::new(tag), args, optional: false, pos })
     }
 
     fn parse_primary(&mut self) -> R<Expr> {
@@ -2200,6 +2798,14 @@ impl Parser {
             T::Num(f) => {
                 self.next();
                 Ok(Expr::Num(f))
+            }
+            T::BigInt(s) => {
+                self.next();
+                Ok(Expr::Call { callee: Box::new(Expr::Ident("%BigInt".into(), pos)), args: vec![Elem::Item(Expr::Str(s))], optional: false, pos })
+            }
+            T::Char(s) => {
+                self.next();
+                Ok(jcall("%char", vec![Expr::Str(s)], pos))
             }
             T::Str(s) => {
                 self.next();
@@ -2335,7 +2941,12 @@ impl Parser {
                         let c = self.parse_class()?;
                         return Ok(Expr::Class(Arc::new(c)));
                     }
-                    "switch" if d == Dialect::Java => {
+                    "import" if d == Dialect::Js && self.is_p("(") => {
+                        // dynamic `import(path)`: a promise of the module namespace
+                        let args = self.parse_args()?;
+                        return Ok(Expr::Call { callee: Box::new(Expr::Ident("%dynimport".into(), pos)), args, optional: false, pos });
+                    }
+                    "switch" if d == Dialect::Java || (d == Dialect::Groovy && self.is_p("(")) => {
                         self.i -= 1;
                         return self.parse_java_switch(false);
                     }
@@ -2476,10 +3087,20 @@ impl Parser {
             self.next();
             return Ok(Expr::Object(vec![]));
         }
-        let is_map_entry = |p: &Parser| groovy && matches!(p.peek(), T::Ident(_) | T::Str(_) | T::Int(_) | T::Num(_)) && p.is_p_at(1, ":");
+        let is_map_entry = |p: &Parser| groovy && (matches!(p.peek(), T::Ident(_) | T::Str(_) | T::Int(_) | T::Num(_)) && p.is_p_at(1, ":") || p.is_p("*") && p.is_p_at(1, ":"));
         if is_map_entry(self) || (groovy && self.is_p("(") && self.paren_then_colon()) {
             let mut props = Vec::new();
             while !self.is_p("]") {
+                if self.is_p("*") && self.is_p_at(1, ":") {
+                    // spread map entry `*: otherMap`
+                    self.next();
+                    self.next();
+                    props.push(Prop::Spread(self.parse_assign()?));
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                    continue;
+                }
                 let key = if self.is_p("(") {
                     self.next();
                     let k = self.parse_expr()?;
@@ -2521,6 +3142,26 @@ impl Parser {
         }
         self.expect_p("]")?;
         Ok(Expr::Array(items))
+    }
+
+    /// At `?` `[`: whether the bracket group is followed by `:` (a ternary with a list literal).
+    fn ternary_after_bracket(&self) -> bool {
+        let mut depth = 0;
+        let mut n = 1;
+        loop {
+            match self.peek_at(n) {
+                T::P("(") | T::P("[") | T::P("{") => depth += 1,
+                T::P(")") | T::P("]") | T::P("}") => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.is_p_at(n + 1, ":");
+                    }
+                }
+                T::Eof => return false,
+                _ => {}
+            }
+            n += 1;
+        }
     }
 
     fn paren_then_colon(&self) -> bool {

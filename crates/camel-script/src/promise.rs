@@ -105,6 +105,17 @@ impl Interp {
         if is_promise(&v) {
             return Ok(v);
         }
+        if let Some(g) = crate::pyext::coroutine_of(&v) {
+            // a Python coroutine becomes a task when awaited / scheduled
+            let p = g.0.borrow().promise.clone();
+            if let Some(p) = p {
+                return Ok(p);
+            }
+            g.0.borrow_mut().coroutine = false;
+            let p = self.start_async(g.clone())?;
+            g.0.borrow_mut().coroutine = true;
+            return Ok(p);
+        }
         let p = self.new_promise();
         self.resolve_promise(&p, v)?;
         Ok(p)
@@ -192,6 +203,9 @@ impl Interp {
             Job::React { r, ok, value } => {
                 if let Some(g) = r.resume {
                     let resume = if ok { Resume::Next(value) } else { Resume::Throw(value) };
+                    if g.0.borrow().async_gen {
+                        return self.agen_drive(&g, Some(resume));
+                    }
                     return self.async_step(&g, resume);
                 }
                 let handler = if r.finally {
@@ -274,41 +288,49 @@ impl Interp {
         Ok(p)
     }
 
-    /// `await` inside an async generator: run the job queues until the promise settles.
-    pub fn await_sync(&mut self, v: V, pos: u32) -> R<V> {
-        if !is_promise(&v) {
-            return Ok(v);
-        }
-        loop {
-            match settled(&v) {
-                Some(PState::Fulfilled(x)) => return Ok(x),
-                Some(PState::Rejected(e)) => return Err(Ctrl::Throw(e)),
-                _ => {}
-            }
-            if self.queues.micro.is_empty() && self.queues.timers.is_empty() {
-                return self.throw("Error", "await: the promise never settles".into(), Some(pos));
-            }
-            if let Some(job) = self.queues.micro.pop_front() {
-                self.step_pub()?;
-                self.run_job(job)?;
-                continue;
-            }
-            let mut best = 0;
-            for (i, t) in self.queues.timers.iter().enumerate() {
-                let b = &self.queues.timers[best];
-                if t.due < b.due || (t.due == b.due && t.seq < b.seq) {
-                    best = i;
+    /// `for await`: the async iterator of a value (`[Symbol.asyncIterator]()`, an async
+    /// generator, or a sync iterable whose elements are awaited).
+    pub fn async_iterator(&mut self, v: &V, pos: u32) -> R<V> {
+        if let V::Obj(o) = v {
+            if let ObjKind::Generator(g) = &o.borrow().kind {
+                if g.0.borrow().async_gen {
+                    return Ok(v.clone());
                 }
             }
-            let t = self.queues.timers.remove(best);
-            self.queues.now = self.queues.now.max(t.due);
-            if let Some(iv) = t.interval {
-                self.queues.seq += 1;
-                self.queues.timers.push(Timer { due: self.queues.now + iv.max(1.0), seq: self.queues.seq, id: t.id, f: t.f.clone(), args: t.args.clone(), interval: t.interval });
+            let key = self.well_known_key("asyncIterator");
+            let f = o.borrow().lookup(&key);
+            if let Some(f) = f.filter(|f| f.is_callable()) {
+                return self.call(&f, v.clone(), vec![], pos);
             }
-            self.step_pub()?;
-            self.call(&t.f, V::Undef, t.args, 0)?;
         }
+        let sync = match self.lazy_iterator(v)? {
+            Some(i) => i,
+            None => {
+                let items = self.iterate(v, Some(pos))?;
+                crate::collections::list_iterator(items)
+            }
+        };
+        let mut p = PropMap::default();
+        p.set("next", V::Method(Rc::new((sync, "%async_from_sync".into()))));
+        Ok(V::obj(p))
+    }
+
+    fn async_from_sync_next(&mut self, sync: &V) -> R<V> {
+        let (val, done) = match self.iter_resume(sync, Resume::Next(V::Undef)) {
+            Ok(x) => x,
+            Err(Ctrl::Throw(e)) => {
+                let p = self.new_promise();
+                self.reject_promise(&p, e);
+                return Ok(p);
+            }
+            Err(e) => return Err(e),
+        };
+        if done {
+            let r = self.iter_result(val, true);
+            return self.promise_resolve(r);
+        }
+        let pv = self.promise_resolve(val)?;
+        Ok(self.promise_then(&pv, V::Method(Rc::new((V::Null, "%iter_result_open".into()))), V::Undef, false))
     }
 
     /// Queue a plain callback as a microtask (`queueMicrotask`).
@@ -374,6 +396,15 @@ impl Interp {
 
     /// Internal function values (`%resolve`, `%reject`, combinator callbacks).
     pub fn promise_internal(&mut self, recv: &V, name: &str, args: &[V]) -> R<Option<V>> {
+        match name {
+            "%async_from_sync" => return self.async_from_sync_next(recv).map(Some),
+            "%iter_result_open" => return Ok(Some(self.iter_result(args.first().cloned().unwrap_or(V::Undef), false))),
+            "%async_iter" => {
+                let v = args.first().cloned().unwrap_or(V::Undef);
+                return self.async_iterator(&v, 0).map(Some);
+            }
+            _ => {}
+        }
         let a0 = args.first().cloned().unwrap_or(V::Undef);
         match name {
             "%adopt_ok" => {

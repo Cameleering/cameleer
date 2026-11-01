@@ -1,0 +1,1 @@
+Dear @{headers.name}, your order @{body.id} has @{body.items.size()} items:@foreach{i : body.items} @{i.sku}x@{i.qty}@end{","}.@include{"footer.mvel"}

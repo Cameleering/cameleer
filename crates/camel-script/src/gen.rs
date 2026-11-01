@@ -34,8 +34,21 @@ pub struct YieldCtx {
     /// Resume value for the active delegate.
     pub pending: Option<Resume>,
     pub is_async: bool,
-    /// Async generators: `await` settles the promise synchronously (draining the job queues).
-    pub sync_await: bool,
+    /// Async generators: `await` suspends with an await marker (see [`await_marker`]).
+    pub async_gen: bool,
+}
+
+/// The value an async generator suspends with at an `await` (distinguished from `yield`).
+pub fn await_marker(v: V) -> V {
+    V::Method(Rc::new((v, "%await".to_string())))
+}
+
+/// The awaited value of an await marker.
+pub fn awaited(v: &V) -> Option<V> {
+    match v {
+        V::Method(m) if m.1 == "%await" => Some(m.0.clone()),
+        _ => None,
+    }
 }
 
 /// A statement pointer into the generator function's AST (kept alive by [`GenState::func`] /
@@ -123,6 +136,13 @@ pub struct GenState {
     pub promise: Option<V>,
     last: V,
     implicit_return: bool,
+    /// Async generator: pending `next` / `return` / `throw` requests with their promises.
+    pub async_gen: bool,
+    pub requests: std::collections::VecDeque<(Resume, V)>,
+    /// Async generator: suspended at an `await` (requests wait).
+    pub awaiting: bool,
+    /// Python coroutine object (an `async def` call not yet awaited / scheduled).
+    pub coroutine: bool,
 }
 
 impl Default for V {
@@ -227,7 +247,8 @@ impl Interp {
     pub fn make_generator(&mut self, c: &Rc<Closure>, scope: Env, is_async: bool) -> Internal<GenState> {
         let mut st = GenState { func: Some(c.clone()), implicit_return: c.def.implicit_return, ..Default::default() };
         st.ctx.is_async = is_async;
-        st.ctx.sync_await = c.def.is_async && c.def.generator;
+        st.ctx.async_gen = c.def.is_async && c.def.generator;
+        st.async_gen = st.ctx.async_gen;
         if let FuncBody::Block(b) = &c.def.body {
             let lp = LP(b.as_slice() as *const [Stmt]);
             let env = self.block_env(b, &scope);
@@ -854,6 +875,11 @@ impl Interp {
 
     /// Evaluate `yield` / `yield*` / `await` (inside a generator or async function).
     pub fn eval_yield(&mut self, arg: Option<&Expr>, delegate: bool, env: &Env, pos: u32) -> R<V> {
+        self.eval_yield_marked(arg, delegate, env, pos, false)
+    }
+
+    /// `yield` / `await` inside a generator; `mark` suspends with an await marker.
+    pub fn eval_yield_marked(&mut self, arg: Option<&Expr>, delegate: bool, env: &Env, pos: u32, mark: bool) -> R<V> {
         if self.ystack.is_empty() {
             let what = if delegate { "yield*" } else { "yield" };
             return self.throw("SyntaxError", format!("'{}' is only valid in generator functions", what), Some(pos));
@@ -881,7 +907,7 @@ impl Interp {
                     None => self.undef(),
                 },
             };
-            return Err(Ctrl::Yield(v));
+            return Err(Ctrl::Yield(if mark { await_marker(v) } else { v }));
         }
         let (idx, replay) = {
             let ctx = self.ystack.last_mut().unwrap();
@@ -1044,10 +1070,67 @@ impl Interp {
         V::obj(p)
     }
 
+    /// Async generator: queue a `next` / `return` / `throw` request; returns its promise.
+    fn agen_request(&mut self, g: &Internal<GenState>, r: Resume) -> R<V> {
+        let p = self.new_promise();
+        g.0.borrow_mut().requests.push_back((r, p.clone()));
+        self.agen_drive(g, None)?;
+        Ok(p)
+    }
+
+    /// Run an async generator for its queued requests until it awaits or none are left.
+    /// `cont` resumes it after an `await` settled.
+    pub fn agen_drive(&mut self, g: &Internal<GenState>, mut cont: Option<Resume>) -> R<()> {
+        loop {
+            let (resume, promise) = {
+                let mut b = g.0.borrow_mut();
+                if cont.is_none() && (b.awaiting || b.status == Status::Running) {
+                    return Ok(());
+                }
+                let Some((r, p)) = b.requests.front().cloned() else { return Ok(()) };
+                b.awaiting = false;
+                (cont.take().unwrap_or(r), p)
+            };
+            match self.gen_resume(g, resume) {
+                Ok((v, false)) => {
+                    if let Some(x) = awaited(&v) {
+                        g.0.borrow_mut().awaiting = true;
+                        let p = self.promise_resolve(x)?;
+                        self.add_reaction(&p, crate::promise::Reaction { on_ful: V::Undef, on_rej: V::Undef, target: None, resume: Some(g.clone()), finally: false });
+                        return Ok(());
+                    }
+                    g.0.borrow_mut().requests.pop_front();
+                    let r = self.iter_result(v, false);
+                    self.resolve_promise(&promise, r)?;
+                }
+                Ok((v, true)) => {
+                    g.0.borrow_mut().requests.pop_front();
+                    let r = self.iter_result(v, true);
+                    self.resolve_promise(&promise, r)?;
+                }
+                Err(Ctrl::Throw(e)) => {
+                    g.0.borrow_mut().requests.pop_front();
+                    self.reject_promise(&promise, e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     /// Methods of generator objects.
     pub fn generator_method(&mut self, g: &Internal<GenState>, recv: &V, name: &str, args: &[V], pos: u32) -> R<Option<V>> {
         let a0 = args.first().cloned().unwrap_or(V::Undef);
         let py = self.d == Dialect::Python;
+        if g.0.borrow().async_gen {
+            return Ok(Some(match name {
+                "next" => self.agen_request(g, Resume::Next(a0))?,
+                "return" => self.agen_request(g, Resume::Return(a0))?,
+                "throw" => self.agen_request(g, Resume::Throw(a0))?,
+                "%self" => recv.clone(),
+                "toString" => V::str("[object AsyncGenerator]"),
+                _ => return Ok(None),
+            }));
+        }
         Ok(Some(match (name, py) {
             ("next", false) => {
                 let (v, done) = self.gen_resume(g, Resume::Next(a0))?;
