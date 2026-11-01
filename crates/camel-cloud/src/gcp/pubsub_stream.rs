@@ -12,6 +12,14 @@
 //! streams are reopened with exponential backoff (100 ms … 5 s); an `UNAUTHENTICATED` status
 //! refreshes the token.
 //!
+//! Exactly-once delivery: when the server announces `subscription_properties.exactly_once_delivery_enabled`,
+//! acknowledgements are tracked until the stream's `acknowledge_confirmation` arrives —
+//! `temporary_failed_ack_ids` are acknowledged again (at most 5 times), `invalid_ack_ids`
+//! (expired leases) are logged (the message is redelivered); the counters are available from
+//! [`exactly_once_stats`] per subscription. Dead-letter policies apply to streaming pull like to
+//! synchronous pull: nacked messages are forwarded after `maxDeliveryAttempts` deliveries (the
+//! `CamelGooglePubsubDeliveryAttempt` header counts them).
+//!
 //! Target: `pubsubEndpoint` (`host:port`; `https://` = TLS, `http://` or a bare address of an
 //! emulator = plaintext), otherwise the `endpoint` / `uriEndpointOverride` host, otherwise
 //! `pubsub.googleapis.com:443` over TLS (ALPN `h2`).
@@ -71,8 +79,29 @@ message StreamingPullRequest {
   int64 max_outstanding_bytes = 8;
 }
 
+message AcknowledgeConfirmation {
+  repeated string ack_ids = 1;
+  repeated string invalid_ack_ids = 2;
+  repeated string unordered_ack_ids = 3;
+  repeated string temporary_failed_ack_ids = 4;
+}
+
+message ModifyAckDeadlineConfirmation {
+  repeated string ack_ids = 1;
+  repeated string invalid_ack_ids = 2;
+  repeated string temporary_failed_ack_ids = 3;
+}
+
+message SubscriptionProperties {
+  bool exactly_once_delivery_enabled = 1;
+  bool message_ordering_enabled = 2;
+}
+
 message StreamingPullResponse {
   repeated ReceivedMessage received_messages = 1;
+  ModifyAckDeadlineConfirmation modify_ack_deadline_confirmation = 3;
+  SubscriptionProperties subscription_properties = 4;
+  AcknowledgeConfirmation acknowledge_confirmation = 5;
 }
 
 service Subscriber {
@@ -89,6 +118,24 @@ pub fn pool() -> &'static DescriptorPool {
 /// Encode a `StreamingPullRequest` map.
 pub fn encode_request(v: &Value) -> Result<Vec<u8>> {
     pool().encode("google.pubsub.v1.StreamingPullRequest", v)
+}
+
+/// Exactly-once acknowledgement counters of a subscription (confirmed, invalid, retried).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExactlyOnceStats {
+    pub confirmed: usize,
+    pub invalid: usize,
+    pub retried: usize,
+}
+
+fn eo_stats() -> &'static Mutex<HashMap<String, ExactlyOnceStats>> {
+    static S: OnceLock<Mutex<HashMap<String, ExactlyOnceStats>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The exactly-once acknowledgement counters of `projects/{p}/subscriptions/{s}` (process wide).
+pub fn exactly_once_stats(subscription: &str) -> ExactlyOnceStats {
+    eo_stats().lock().unwrap().get(subscription).copied().unwrap_or_default()
 }
 
 /// Settings of the streaming consumer.
@@ -287,6 +334,9 @@ fn stream_once(inner: &Arc<Inner>, client: &GrpcClient, client_id: &str) -> std:
             }
         })
     };
+    let mut exactly_once = false;
+    // exactly-once: ack id -> attempts, awaiting confirmation
+    let mut pending: HashMap<String, usize> = HashMap::new();
     let result = loop {
         let msg = match call.recv() {
             Ok(Some(m)) => m,
@@ -297,6 +347,34 @@ fn stream_once(inner: &Arc<Inner>, client: &GrpcClient, client_id: &str) -> std:
             Ok(v) => v,
             Err(e) => break Err((Code::Internal, e.to_string())),
         };
+        if let Some(p) = resp.get("subscription_properties") {
+            exactly_once = p.get("exactly_once_delivery_enabled").is_some_and(|b| b.is_truthy());
+        }
+        if let Some(c) = resp.get("acknowledge_confirmation") {
+            let list = |k: &str| c.get(k).and_then(|a| a.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect::<Vec<_>>()).unwrap_or_default();
+            let mut stats = eo_stats().lock().unwrap();
+            let st = stats.entry(s.subscription.clone()).or_default();
+            for id in list("ack_ids") {
+                pending.remove(&id);
+                st.confirmed += 1;
+            }
+            for id in list("invalid_ack_ids") {
+                pending.remove(&id);
+                st.invalid += 1;
+                camel_core::camel_warn!(&inner.uri, "Pub/Sub exactly-once acknowledgement of {} failed permanently (lease expired): the message will be redelivered", id);
+            }
+            let retry: Vec<String> = list("temporary_failed_ack_ids").into_iter().filter(|id| pending.get(id).is_some_and(|n| *n < 5)).collect();
+            st.retried += retry.len();
+            drop(stats);
+            if !retry.is_empty() {
+                for id in &retry {
+                    *pending.get_mut(id).expect("pending") += 1;
+                }
+                if let Err(st) = encode_request(&Value::object([("ack_ids", Value::from(retry))])).map_err(|e| camel_grpc::Status::new(Code::Internal, e.to_string())).and_then(|b| sender.send(&b)) {
+                    camel_core::camel_warn!(&inner.uri, "Error re-acknowledging Pub/Sub messages: {}", st);
+                }
+            }
+        }
         let received = resp.get("received_messages").and_then(|r| r.as_array()).cloned().unwrap_or_default();
         let total = received.len();
         for (i, rm) in received.iter().enumerate() {
@@ -307,6 +385,9 @@ fn stream_once(inner: &Arc<Inner>, client: &GrpcClient, client_id: &str) -> std:
             let ok = process(&inner.uri, inner.processor.as_ref(), &mut ex);
             inflight.lock().unwrap().remove(&ack_id);
             if s.ack_auto {
+                if ok && exactly_once {
+                    pending.insert(ack_id.clone(), 1);
+                }
                 let req = if ok {
                     Value::object([("ack_ids", Value::from(vec![ack_id]))])
                 } else {

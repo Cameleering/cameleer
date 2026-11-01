@@ -119,3 +119,74 @@ fn storage_credentials_and_resumable_uploads() {
     }
     let _ = env.opts();
 }
+
+#[test]
+fn pubsub_streaming_exactly_once_confirmations_and_dead_letters() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+    let env = Env::new();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let admin = |dest: &str, extra: &str| format!("google-pubsub://{}:{}?synchronousPull=true&{}{}", PROJECT, dest, env.opts(), extra);
+    let stream = |dest: &str, extra: &str| format!("google-pubsub://{}:{}?{}{}", PROJECT, dest, env.opts(), extra);
+    req(&t, &admin("jobs", "&operation=createTopic"), "", &[]);
+    req(&t, &admin("jobs-dlq", "&operation=createTopic"), "", &[]);
+    req(&t, &admin("dlq-sub", "&operation=createSubscription&topic=jobs-dlq"), "", &[]);
+    for sub in ["eo-retry", "eo-expired"] {
+        req(&t, &admin(sub, "&operation=createSubscription&topic=jobs&enableExactlyOnceDelivery=true&ackDeadlineSeconds=1"), "", &[]);
+    }
+    req(&t, &admin("poison-sub", "&operation=createSubscription&topic=jobs&deadLetterTopic=jobs-dlq&maxDeliveryAttempts=5"), "", &[]);
+    env.mock.fail_next_streaming_acks(1);
+    let retry_seen = Arc::new(AtomicUsize::new(0));
+    let expired_seen = Arc::new(AtomicUsize::new(0));
+    let poison_seen = Arc::new(AtomicUsize::new(0));
+    let (r2, e2, p2) = (retry_seen.clone(), expired_seen.clone(), poison_seen.clone());
+    let (u1, u2, u3, u4) = (
+        stream("eo-retry", "&ackDeadlineSeconds=10"),
+        // no lease extension: the first delivery's ack arrives after the 1 s lease expired
+        stream("eo-expired", "&ackDeadlineSeconds=1&maxAckExtensionPeriod=0"),
+        stream("poison-sub", "&ackDeadlineSeconds=10"),
+        stream("dlq-sub", ""),
+    );
+    ctx.add_routes(move |b| {
+        b.from(&u1).process(move |_ex: &mut Exchange| -> Result<()> {
+            r2.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+        b.from(&u2).process(move |ex: &mut Exchange| -> Result<()> {
+            e2.fetch_add(1, Ordering::SeqCst);
+            if ex.header("CamelGooglePubsubDeliveryAttempt").and_then(|a| a.as_i64()) == Some(1) {
+                std::thread::sleep(Duration::from_millis(1400));
+            }
+            Ok(())
+        });
+        b.from(&u3).process(move |ex: &mut Exchange| -> Result<()> {
+            p2.fetch_add(1, Ordering::SeqCst);
+            assert!(ex.header("CamelGooglePubsubDeliveryAttempt").is_some());
+            Err(CamelError::illegal_state("cannot process"))
+        });
+        b.from(&u4).convert_body_to("String").to("mock:dlq");
+    })
+    .unwrap();
+    let dlq = ctx.mock_endpoint("mock:dlq").unwrap();
+    ctx.start().unwrap();
+    t.send_body(&admin("jobs", ""), "job-1").unwrap();
+    let sub = |n: &str| format!("projects/{}/subscriptions/{}", PROJECT, n);
+    // a temporarily failed acknowledgement is retried and then confirmed
+    assert!(wait(&|| camel_cloud::gcp::pubsub_stream::exactly_once_stats(&sub("eo-retry")).confirmed == 1), "{:?}", camel_cloud::gcp::pubsub_stream::exactly_once_stats(&sub("eo-retry")));
+    assert_eq!(camel_cloud::gcp::pubsub_stream::exactly_once_stats(&sub("eo-retry")).retried, 1);
+    // an acknowledgement of an expired lease is invalid: the message is redelivered and confirmed
+    assert!(wait(&|| camel_cloud::gcp::pubsub_stream::exactly_once_stats(&sub("eo-expired")).confirmed == 1));
+    assert_eq!(camel_cloud::gcp::pubsub_stream::exactly_once_stats(&sub("eo-expired")).invalid, 1);
+    assert_eq!(expired_seen.load(Ordering::SeqCst), 2);
+    let stats = env.mock.streaming_stats();
+    assert_eq!((stats.invalid_acks, stats.temporary_failed_acks), (1, 1));
+    // nacked messages go to the dead-letter topic after maxDeliveryAttempts streaming deliveries
+    assert!(wait(&|| dlq.received_exchanges().len() == 1));
+    assert_eq!(poison_seen.load(Ordering::SeqCst), 5);
+    assert_eq!(s(dlq.received_exchanges()[0].body()), "job-1");
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(retry_seen.load(Ordering::SeqCst), 1, "confirmed: not redelivered");
+    ctx.stop().unwrap();
+}

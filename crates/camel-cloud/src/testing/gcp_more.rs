@@ -58,12 +58,18 @@ pub struct StreamingStats {
     pub delivered: usize,
     /// Streams rejected for authentication.
     pub rejected: usize,
+    /// Exactly-once acknowledgement confirmations: confirmed, invalid (expired), temporarily failed.
+    pub confirmed_acks: usize,
+    pub invalid_acks: usize,
+    pub temporary_failed_acks: usize,
 }
 
 /// State of these services.
 #[derive(Default)]
 pub(super) struct MoreState {
     pub(super) token_subjects: BTreeMap<String, String>,
+    /// streaming acks of exactly-once subscriptions to fail temporarily
+    fail_next_streaming_acks: usize,
     mailboxes: BTreeMap<String, Vec<GmailMsg>>,
     calendars: BTreeMap<String, BTreeMap<String, Value>>,
     drive: BTreeMap<String, DriveFile>,
@@ -82,6 +88,11 @@ impl GcpMock {
         let id = next_id(&mut s.more, "m");
         s.more.mailboxes.entry(user.to_string()).or_default().push(GmailMsg { id: id.clone(), thread: format!("t{}", id), labels: vec!["INBOX".into(), "UNREAD".into()], raw: raw.as_bytes().to_vec() });
         id
+    }
+    /// Make the next `n` streaming acknowledgements on exactly-once subscriptions fail
+    /// temporarily (`temporary_failed_ack_ids`).
+    pub fn fail_next_streaming_acks(&self, n: usize) {
+        self.state.lock().unwrap().more.fail_next_streaming_acks = n;
     }
     /// Register OAuth2 user credentials: refresh-token grants for them issue tokens acting as
     /// `email` with `scopes`.
@@ -794,9 +805,46 @@ fn ids(v: &Value, k: &str) -> Vec<String> {
     v.get(k).and_then(|a| a.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect()).unwrap_or_default()
 }
 
-/// Apply acks / deadline modifications of a request to a subscription.
-fn apply(st: &Shared, sub: &str, req: &Value) {
-    let acks = ids(req, "ack_ids");
+/// Apply acks / deadline modifications of a request to a subscription; for exactly-once
+/// subscriptions returns the acknowledge confirmation to send on the stream.
+fn apply(st: &Shared, sub: &str, req: &Value) -> Option<Value> {
+    let mut acks = ids(req, "ack_ids");
+    let mut confirmation = None;
+    {
+        let mut s = st.lock().unwrap();
+        let now = now_millis();
+        let fail_temp = std::mem::take(&mut s.more.fail_next_streaming_acks);
+        if let Some(subscription) = s.subscriptions.get(sub).filter(|x| x.exactly_once) {
+            if !acks.is_empty() {
+                let (mut ok, mut invalid, mut temp) = (Vec::new(), Vec::new(), Vec::new());
+                for a in &acks {
+                    let live = subscription.messages.iter().any(|m| m.ack_id.as_deref() == Some(a.as_str()) && m.visible_at > now);
+                    if fail_temp > 0 && temp.len() < fail_temp {
+                        temp.push(a.clone());
+                    } else if live {
+                        ok.push(a.clone());
+                    } else {
+                        invalid.push(a.clone());
+                    }
+                }
+                s.more.fail_next_streaming_acks = fail_temp.saturating_sub(temp.len());
+                s.more.stats.confirmed_acks += ok.len();
+                s.more.stats.invalid_acks += invalid.len();
+                s.more.stats.temporary_failed_acks += temp.len();
+                confirmation = Some(obj([("ack_ids", Value::from(ok.clone())), ("invalid_ack_ids", Value::from(invalid)), ("temporary_failed_ack_ids", Value::from(temp))]));
+                acks = ok;
+            } else {
+                s.more.fail_next_streaming_acks = fail_temp;
+            }
+        } else {
+            s.more.fail_next_streaming_acks = fail_temp;
+        }
+    }
+    apply_acks(st, sub, req, &acks);
+    confirmation
+}
+
+fn apply_acks(st: &Shared, sub: &str, req: &Value, acks: &[String]) {
     let mod_ids = ids(req, "modify_deadline_ack_ids");
     let secs: Vec<i64> = req.get("modify_deadline_seconds").and_then(|a| a.as_array()).map(|a| a.iter().map(|x| x.as_i64().unwrap_or(0)).collect()).unwrap_or_default();
     let mut s = st.lock().unwrap();
@@ -849,16 +897,31 @@ fn streaming_pull(st: &Shared, call: &ServerCall) -> Status {
     let deadline = first.get("stream_ack_deadline_seconds").and_then(|d| d.as_i64()).filter(|d| *d > 0).unwrap_or(10);
     let max_out = first.get("max_outstanding_messages").and_then(|d| d.as_i64()).filter(|d| *d > 0).unwrap_or(1000) as usize;
     st.lock().unwrap().more.stats.streams += 1;
-    apply(st, &sub, &first);
+    let confirmations: Arc<std::sync::Mutex<Vec<Value>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    if let Some(c) = apply(st, &sub, &first) {
+        confirmations.lock().unwrap().push(c);
+    }
+    let exactly_once = st.lock().unwrap().subscriptions.get(&sub).is_some_and(|x| x.exactly_once);
+    let props = obj([("received_messages", Value::Array(vec![])), ("subscription_properties", obj([("exactly_once_delivery_enabled", Value::Bool(exactly_once)), ("message_ordering_enabled", Value::Bool(false))]))]);
+    match pool().encode("google.pubsub.v1.StreamingPullResponse", &props) {
+        Ok(b) => {
+            if call.send(&b).is_err() {
+                return Status::ok();
+            }
+        }
+        Err(e) => return Status::new(Code::Internal, e.to_string()),
+    }
     let closed = Arc::new(AtomicBool::new(false));
     let reader = {
-        let (call, st, sub, closed) = (call.clone(), st.clone(), sub.clone(), closed.clone());
+        let (call, st, sub, closed, confirmations) = (call.clone(), st.clone(), sub.clone(), closed.clone(), confirmations.clone());
         std::thread::spawn(move || {
             loop {
                 match call.recv() {
                     Ok(Some(b)) => {
                         if let Ok(v) = decode(&b) {
-                            apply(&st, &sub, &v);
+                            if let Some(c) = apply(&st, &sub, &v) {
+                                confirmations.lock().unwrap().push(c);
+                            }
                         }
                     }
                     _ => break,
@@ -869,8 +932,20 @@ fn streaming_pull(st: &Shared, call: &ServerCall) -> Status {
     };
     let mut leased: Vec<String> = Vec::new();
     while !closed.load(Ordering::SeqCst) && !call.is_cancelled() {
+        let pending: Vec<Value> = std::mem::take(&mut *confirmations.lock().unwrap());
+        for c in pending {
+            match pool().encode("google.pubsub.v1.StreamingPullResponse", &obj([("received_messages", Value::Array(vec![])), ("acknowledge_confirmation", c)])) {
+                Ok(b) => {
+                    if call.send(&b).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => return Status::new(Code::Internal, e.to_string()),
+            }
+        }
         let batch: Vec<Value> = {
             let mut s = st.lock().unwrap();
+            super::forward_dead_letters(&mut s, &sub);
             let now = now_millis();
             let Some(subscription) = s.subscriptions.get_mut(&sub) else { break };
             // outstanding = messages leased by this stream and not acked / expired / nacked
