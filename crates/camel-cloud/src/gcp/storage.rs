@@ -19,6 +19,17 @@
 //! `destinationBucket` and `deleteAfterRead` (default true) deletes the object.
 //! `autoCreateBucket` (default true) creates the bucket on start in the key's project
 //! (`storageClass` default `STANDARD`, `storageLocation` default `US-EAST1`).
+//!
+//! Resumable uploads (rust-camel options): bodies larger than `resumableUploadThreshold`
+//! (bytes, default 16 MiB; `0` = always) are uploaded with a resumable session
+//! (`uploadType=resumable`: the session URI from `Location`, then `PUT` chunks of
+//! `resumableChunkSize` bytes (default 8 MiB, rounded to a multiple of 256 KiB) with
+//! `Content-Range`, `308` = more data expected). A chunk that fails (I/O error or 5xx) is
+//! resumed: the committed size is queried (`Content-Range: bytes */total`, the `Range` of the
+//! `308` answer) and the upload continues from there (at most 5 times).
+//!
+//! Credentials: see [`super`] (service account keys, authorized-user refresh tokens, workload
+//! identity federation `external_account` files, the metadata server).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -99,6 +110,8 @@ pub struct StorageService {
     pub storage_location: String,
     pub max_messages_per_poll: i64,
     pub scheduler: ScheduledPollConfig,
+    pub resumable_threshold: usize,
+    pub resumable_chunk_size: usize,
 }
 
 /// Factory for the component.
@@ -122,6 +135,11 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         storage_location: o.string("storageLocation", "US-EAST1"),
         max_messages_per_poll: o.i64("maxMessagesPerPoll", 10)?,
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
+        resumable_threshold: o.i64("resumableUploadThreshold", 16 * 1024 * 1024)?.max(0) as usize,
+        resumable_chunk_size: {
+            let c = o.i64("resumableChunkSize", 8 * 1024 * 1024)?.max(1) as usize;
+            c.div_ceil(256 * 1024) * 256 * 1024
+        },
         gcp,
     };
     o.ignore(&["filter", "downloadFileName"]);
@@ -129,6 +147,14 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         return Err(CamelError::illegal_argument("moveAfterRead requires the destinationBucket option"));
     }
     Ok(Arc::new(s))
+}
+
+/// Bytes committed by a resumable session (`Range: bytes=0-N` of a 308 answer).
+fn committed(r: &Response) -> Option<usize> {
+    match r.header("Range") {
+        Some(range) => range.trim().strip_prefix("bytes=").and_then(|x| x.split('-').nth(1)).and_then(|n| n.trim().parse::<usize>().ok()).map(|n| n + 1),
+        None => Some(0),
+    }
 }
 
 fn meta_value(v: &Value, key: &str) -> Value {
@@ -156,9 +182,55 @@ impl StorageService {
 
     /// Upload (simple media upload); returns the object metadata.
     pub fn upload(&self, bucket: &str, object: &str, data: Vec<u8>, content_type: Option<&str>) -> Result<Value> {
+        if data.len() > self.resumable_threshold || (self.resumable_threshold == 0 && !data.is_empty()) {
+            return self.upload_resumable(bucket, object, &data, content_type);
+        }
         let url = self.url(&format!("/upload/storage/v1/b/{}/o", uri_encode(bucket, false)), &format!("uploadType=media&name={}", uri_encode(object, false)))?;
         let req = Request::new("POST", url).header("Content-Type", content_type.unwrap_or("application/octet-stream")).body(data);
         parse_json(&self.send(req)?.body)
+    }
+
+    /// Resumable upload (see the module docs).
+    pub fn upload_resumable(&self, bucket: &str, object: &str, data: &[u8], content_type: Option<&str>) -> Result<Value> {
+        let ct = content_type.unwrap_or("application/octet-stream");
+        let url = self.url(&format!("/upload/storage/v1/b/{}/o", uri_encode(bucket, false)), "uploadType=resumable")?;
+        let meta = obj([("name", Value::from(object)), ("contentType", Value::from(ct))]);
+        let init = Request::new("POST", url).header("Content-Type", "application/json; charset=UTF-8").header("X-Upload-Content-Type", ct).header("X-Upload-Content-Length", data.len().to_string()).body(meta.to_json().into_bytes());
+        let resp = self.send(init)?;
+        let session = resp.header("Location").ok_or_else(|| crate::util::cloud_error(kinds::GOOGLE_STORAGE, "Resumable upload: no session URI (Location) in the response"))?.to_string();
+        let total = data.len();
+        let mut offset = 0usize;
+        let mut retries = 0;
+        loop {
+            let end = (offset + self.resumable_chunk_size).min(total);
+            let range = if total == 0 { "bytes */0".to_string() } else { format!("bytes {}-{}/{}", offset, end - 1, total) };
+            let req = Request::new("PUT", Url::parse(&session)?).header("Content-Range", range).body(data[offset..end].to_vec());
+            let failed = match self.gcp.send_raw(req, super::CLOUD_PLATFORM_SCOPE) {
+                Ok(r) if r.status == 200 || r.status == 201 => return parse_json(&r.body),
+                Ok(r) if r.status == 308 => {
+                    offset = committed(&r).unwrap_or(end);
+                    retries = 0;
+                    None
+                }
+                Ok(r) if r.status >= 500 || r.status == 429 => Some(super::google_error(kinds::GOOGLE_STORAGE, &r)),
+                Ok(r) => return Err(super::google_error(kinds::GOOGLE_STORAGE, &r)),
+                Err(e) => Some(e),
+            };
+            if let Some(e) = failed {
+                retries += 1;
+                if retries > 5 {
+                    return Err(e);
+                }
+                camel_core::camel_debug!("google-storage", "Resumable chunk failed ({}), querying the upload status", e);
+                let status = Request::new("PUT", Url::parse(&session)?).header("Content-Range", format!("bytes */{}", total)).body(Vec::new());
+                let r = self.gcp.send_raw(status, super::CLOUD_PLATFORM_SCOPE)?;
+                match r.status {
+                    200 | 201 => return parse_json(&r.body),
+                    308 => offset = committed(&r).unwrap_or(0),
+                    _ => return Err(super::google_error(kinds::GOOGLE_STORAGE, &r)),
+                }
+            }
+        }
     }
 
     /// Object metadata.

@@ -22,6 +22,19 @@
 //! the same way, and `accessToken` uses a fixed token. User credentials take precedence over a
 //! service account key.
 //!
+//! Workload identity federation: an `external_account` credentials file (`serviceAccountKey` /
+//! `GOOGLE_APPLICATION_CREDENTIALS`, as written by `gcloud iam workload-identity-pools
+//! create-cred-config`) reads the subject token from its `credential_source` (`file`, text or
+//! JSON with `subject_token_field_name`, or `url` with `headers`), exchanges it at the STS
+//! `token_url` (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `audience`,
+//! `subject_token_type`, `scope`) for a federated token, and, with a
+//! `service_account_impersonation_url`, impersonates the service account (IAM Credentials
+//! `generateAccessToken`). Metadata server (GCE / GKE workload identity): with
+//! `useMetadataServer=true` (or `GCE_METADATA_HOST` set and no other credentials), tokens come
+//! from `http://{GCE_METADATA_HOST or metadata.google.internal}/computeMetadata/v1/instance/service-accounts/default/token`
+//! (`Metadata-Flavor: Google`; rust-camel `metadataServerUrl` overrides the base URL). Tokens
+//! are cached until shortly before they expire.
+//!
 //! Endpoint override: `uriEndpointOverride` + `overrideEndpoint=true`, or `endpoint`
 //! (`host:port` of an emulator, or a URL).
 
@@ -299,6 +312,145 @@ pub struct GcpConfig {
     pub user: Option<Arc<UserCredentials>>,
     /// A fixed access token (`accessToken`).
     pub static_token: Option<String>,
+    /// Workload identity federation credentials (`external_account`).
+    pub external: Option<Arc<ExternalAccount>>,
+    /// Metadata server base URL (GCE / GKE workload identity).
+    pub metadata: Option<String>,
+}
+
+/// Workload identity federation credentials (an `external_account` file).
+#[derive(Clone, Debug)]
+pub struct ExternalAccount {
+    pub audience: String,
+    pub subject_token_type: String,
+    pub token_url: String,
+    pub impersonation_url: Option<String>,
+    pub source_file: Option<String>,
+    pub source_url: Option<String>,
+    pub source_headers: Vec<(String, String)>,
+    /// `json` format: the field holding the token
+    pub json_field: Option<String>,
+}
+
+impl ExternalAccount {
+    /// Parse an `external_account` credentials JSON.
+    pub fn parse(json: &str) -> Result<ExternalAccount> {
+        let v = camel_core::json::parse(json)?;
+        let s = |k: &str| v.get(k).map(|x| x.to_string()).filter(|x| !x.is_empty());
+        let src = v.get("credential_source").cloned().unwrap_or_default();
+        let fmt = src.get("format").cloned().unwrap_or_default();
+        let ea = ExternalAccount {
+            audience: s("audience").ok_or_else(|| CamelError::illegal_argument("external_account credentials need an audience"))?,
+            subject_token_type: s("subject_token_type").unwrap_or_else(|| "urn:ietf:params:oauth:token-type:jwt".into()),
+            token_url: s("token_url").unwrap_or_else(|| "https://sts.googleapis.com/v1/token".into()),
+            impersonation_url: s("service_account_impersonation_url"),
+            source_file: src.get("file").map(|f| f.to_string()),
+            source_url: src.get("url").map(|f| f.to_string()),
+            source_headers: src.get("headers").and_then(|h| h.as_object().cloned()).map(|m| m.into_iter().map(|(k, v)| (k, v.to_string())).collect()).unwrap_or_default(),
+            json_field: (fmt.get("type").map(|t| t.to_string()).as_deref() == Some("json")).then(|| fmt.get("subject_token_field_name").map(|f| f.to_string()).unwrap_or_else(|| "access_token".into())),
+        };
+        if ea.source_file.is_none() && ea.source_url.is_none() {
+            return Err(CamelError::illegal_argument("external_account credentials need a file or url credential_source (executable / AWS sources are not supported)"));
+        }
+        Ok(ea)
+    }
+
+    fn subject_token(&self, http: &HttpClient) -> Result<String> {
+        let raw = match (&self.source_file, &self.source_url) {
+            (Some(f), _) => std::fs::read_to_string(f).map_err(|e| cloud_error(kinds::GOOGLE_AUTH, format!("Cannot read the subject token file {}: {}", f, e)))?,
+            (None, Some(u)) => {
+                let mut req = Request::new("GET", Url::parse(u)?);
+                for (k, v) in &self.source_headers {
+                    req.set_header(k, v.clone());
+                }
+                let r = http.send(&req)?;
+                if !r.is_success() {
+                    return Err(cloud_error(kinds::GOOGLE_AUTH, format!("Cannot fetch the subject token from {} (status {})", u, r.status)));
+                }
+                r.text()
+            }
+            _ => unreachable!("checked at parse"),
+        };
+        match &self.json_field {
+            Some(f) => parse_json(raw.as_bytes())?.get(f).map(|t| t.to_string()).ok_or_else(|| cloud_error(kinds::GOOGLE_AUTH, format!("The subject token JSON has no {} field", f))),
+            None => Ok(raw.trim().to_string()),
+        }
+    }
+
+    fn cache_key(&self, scope: &str) -> TokenKey {
+        (format!("external:{}", self.audience), self.token_url.clone(), self.impersonation_url.clone().unwrap_or_default(), scope.to_string())
+    }
+
+    /// An access token for `scope` (cached).
+    pub fn access_token(&self, scope: &str, http: &HttpClient) -> Result<String> {
+        let ck = self.cache_key(scope);
+        let now = now_secs();
+        if let Some((tok, exp)) = token_cache().lock().unwrap().get(&ck) {
+            if *exp > now + 60 {
+                return Ok(tok.clone());
+            }
+        }
+        let subject = self.subject_token(http)?;
+        let sts_scope = if self.impersonation_url.is_some() { CLOUD_PLATFORM_SCOPE } else { scope };
+        let body = encode_form(&[
+            ("grant_type".into(), "urn:ietf:params:oauth:grant-type:token-exchange".into()),
+            ("audience".into(), self.audience.clone()),
+            ("scope".into(), sts_scope.into()),
+            ("requested_token_type".into(), "urn:ietf:params:oauth:token-type:access_token".into()),
+            ("subject_token".into(), subject),
+            ("subject_token_type".into(), self.subject_token_type.clone()),
+        ]);
+        let resp = http.send(&Request::new("POST", Url::parse(&self.token_url)?).header("Content-Type", "application/x-www-form-urlencoded").body(body.into_bytes()))?;
+        let v = parse_json(&resp.body).unwrap_or_default();
+        if !resp.is_success() {
+            let msg = v.get("error_description").or_else(|| v.get("error")).map(|e| e.to_string()).unwrap_or_else(|| resp.text());
+            return Err(cloud_error(kinds::GOOGLE_AUTH, format!("Workload identity token exchange failed: {} (status {})", msg, resp.status)));
+        }
+        let mut tok = v.get("access_token").map(|t| t.to_string()).filter(|t| !t.is_empty()).ok_or_else(|| cloud_error(kinds::GOOGLE_AUTH, "STS response without access_token"))?;
+        let mut exp = now + v.get("expires_in").and_then(|e| e.as_i64()).unwrap_or(3600);
+        if let Some(url) = &self.impersonation_url {
+            let body = Value::object([("scope", Value::from(vec![scope.to_string()])), ("lifetime", Value::from("3600s"))]);
+            let req = Request::new("POST", Url::parse(url)?).header("Authorization", format!("Bearer {}", tok)).header("Content-Type", "application/json").body(body.to_json().into_bytes());
+            let r = http.send(&req)?;
+            let v = parse_json(&r.body).unwrap_or_default();
+            if !r.is_success() {
+                return Err(google_error(kinds::GOOGLE_AUTH, &r));
+            }
+            tok = v.get("accessToken").map(|t| t.to_string()).filter(|t| !t.is_empty()).ok_or_else(|| cloud_error(kinds::GOOGLE_AUTH, "generateAccessToken response without accessToken"))?;
+            exp = v.get("expireTime").and_then(|t| crate::util::parse_iso8601(&t.to_string())).unwrap_or(now + 3600);
+        }
+        token_cache().lock().unwrap().insert(ck, (tok.clone(), exp));
+        Ok(tok)
+    }
+
+    pub fn invalidate(&self, scope: &str) {
+        token_cache().lock().unwrap().remove(&self.cache_key(scope));
+    }
+}
+
+/// A metadata server token for `scope` (cached).
+pub fn metadata_token(base: &str, scope: &str, http: &HttpClient) -> Result<String> {
+    let ck: TokenKey = ("metadata".into(), base.to_string(), String::new(), scope.to_string());
+    let now = now_secs();
+    if let Some((tok, exp)) = token_cache().lock().unwrap().get(&ck) {
+        if *exp > now + 60 {
+            return Ok(tok.clone());
+        }
+    }
+    let url = format!("{}/computeMetadata/v1/instance/service-accounts/default/token?scopes={}", base.trim_end_matches('/'), crate::util::uri_encode(scope, false));
+    let r = http.send(&Request::new("GET", Url::parse(&url)?).header("Metadata-Flavor", "Google"))?;
+    if !r.is_success() {
+        return Err(cloud_error(kinds::GOOGLE_AUTH, format!("Metadata server token request failed (status {}): {}", r.status, r.text())));
+    }
+    let v = parse_json(&r.body)?;
+    let tok = v.get("access_token").map(|t| t.to_string()).filter(|t| !t.is_empty()).ok_or_else(|| cloud_error(kinds::GOOGLE_AUTH, "Metadata server response without access_token"))?;
+    let exp = now + v.get("expires_in").and_then(|e| e.as_i64()).unwrap_or(3600);
+    token_cache().lock().unwrap().insert(ck, (tok.clone(), exp));
+    Ok(tok)
+}
+
+fn invalidate_metadata(base: &str, scope: &str) {
+    token_cache().lock().unwrap().remove(&("metadata".to_string(), base.to_string(), String::new(), scope.to_string()));
 }
 
 impl GcpConfig {
@@ -313,6 +465,7 @@ impl GcpConfig {
         };
         let static_token = o.get("accessToken").filter(|t| !t.is_empty());
         let explicit_key = o.get("serviceAccountKey");
+        let mut external: Option<Arc<ExternalAccount>> = None;
         let key = match explicit_key.clone().or_else(|| if user.is_some() { None } else { std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok().filter(|s| !s.is_empty()) }) {
             Some(loc) if authenticate => {
                 let text = if loc.trim().starts_with('{') {
@@ -322,7 +475,10 @@ impl GcpConfig {
                     std::fs::read_to_string(&path).map_err(|e| CamelError::io(format!("Cannot read Google credentials {}: {}", path, e)))?
                 };
                 let ty = camel_core::json::parse(&text).ok().and_then(|v| v.get("type").map(|t| t.to_string())).unwrap_or_default();
-                if ty == "authorized_user" {
+                if ty == "external_account" {
+                    external = Some(Arc::new(ExternalAccount::parse(&text)?));
+                    None
+                } else if ty == "authorized_user" {
                     if user.is_none() {
                         let mut u = UserCredentials::parse(&text)?;
                         if let Some(t) = &token_server {
@@ -354,7 +510,15 @@ impl GcpConfig {
         o.ignore(&["storageClient", "pubsubEndpoint", "serializer", "loggerId"]);
         let subject = o.get("delegate").or_else(|| o.get("subject"));
         o.ignore(&["applicationName"]);
-        Ok(GcpConfig { key, authenticate, endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)?, subject, user, static_token })
+        let use_metadata = o.bool("useMetadataServer", false)?;
+        let metadata_url = o.get("metadataServerUrl");
+        let env_host = std::env::var("GCE_METADATA_HOST").ok().filter(|h| !h.is_empty());
+        let metadata = if authenticate && key.is_none() && user.is_none() && external.is_none() && static_token.is_none() && (use_metadata || metadata_url.is_some() || env_host.is_some()) {
+            Some(metadata_url.unwrap_or_else(|| format!("http://{}", env_host.unwrap_or_else(|| "metadata.google.internal".into()))))
+        } else {
+            None
+        };
+        Ok(GcpConfig { key, authenticate, endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)?, subject, user, static_token, external, metadata })
     }
 
     pub fn http(&self) -> HttpClient {
@@ -397,6 +561,12 @@ impl GcpConfig {
         if let Some(u) = &self.user {
             return u.access_token(http).map(Some);
         }
+        if let Some(x) = &self.external {
+            return x.access_token(scope, http).map(Some);
+        }
+        if let Some(m) = &self.metadata {
+            return metadata_token(m, scope, http).map(Some);
+        }
         let key = self.key.as_ref().ok_or_else(|| {
             cloud_error(kinds::GOOGLE_AUTH, "No Google credentials: set serviceAccountKey or GOOGLE_APPLICATION_CREDENTIALS, clientId/clientSecret/refreshToken (or authenticate=false for emulators)")
         })?;
@@ -407,6 +577,10 @@ impl GcpConfig {
     pub fn invalidate(&self, scope: &str) {
         if let Some(u) = &self.user {
             u.invalidate();
+        } else if let Some(x) = &self.external {
+            x.invalidate(scope);
+        } else if let Some(m) = &self.metadata {
+            invalidate_metadata(m, scope);
         } else if let Some(k) = &self.key {
             invalidate_token_as(k, scope, self.subject.as_deref());
         }
