@@ -237,7 +237,7 @@ fn live_activemq_amqp_jms_mapping_round_trip() {
     let mock = ctx.mock_endpoint("mock:mapping").unwrap();
     mock.expected_message_count(5);
     let t = ctx.create_producer_template();
-    let before = live_now_millis();
+    let before = wall_clock_millis();
     t.send_body_and_headers(
         &format!("amqp:queue:{}?priority=6&timeToLive=60000", q),
         "text body ü",
@@ -270,7 +270,7 @@ fn live_activemq_amqp_jms_mapping_round_trip() {
     assert_eq!(ex.header("JMSDeliveryMode").and_then(|v| v.as_i64()), Some(2));
     assert_eq!(ex.header("JMSRedelivered").and_then(|v| v.as_bool()), Some(false));
     let ts = ex.header("JMSTimestamp").and_then(|v| v.as_i64()).unwrap();
-    assert!(ts >= before - 5_000 && ts <= live_now_millis() + 5_000, "JMSTimestamp {}", ts);
+    assert!(ts >= before - 5_000 && ts <= wall_clock_millis() + 5_000, "JMSTimestamp {}", ts);
     let exp = ex.header("JMSExpiration").and_then(|v| v.as_i64()).unwrap();
     assert!((exp - ts - 60_000).abs() < 5_000, "JMSExpiration - JMSTimestamp ~ timeToLive: {} {}", exp, ts);
     assert!(s("JMSMessageID").starts_with("ID:"), "{}", s("JMSMessageID"));
@@ -307,7 +307,7 @@ fn live_activemq_amqp_jms_mapping_round_trip() {
     ctx.stop().unwrap();
 }
 
-fn live_now_millis() -> i64 {
+fn wall_clock_millis() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
 

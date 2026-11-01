@@ -27,7 +27,9 @@
 //! `x-opt-jms-msg-type` annotation (text = amqp-value string, bytes = data section,
 //! map = amqp-value map, stream = amqp-sequence) and the destination types in
 //! `x-opt-jms-dest` / `x-opt-jms-reply-to`. Nodes are addressed with the `queue` /
-//! `topic` terminus capabilities; selectors use the `apache.org:selector-filter:string`
+//! `topic` terminus capabilities, and with the `queue-prefix` / `topic-prefix` a broker
+//! announces in its open frame (ActiveMQ 5: `queue://` / `topic://`, see
+//! [`AddressPrefixes`]); selectors use the `apache.org:selector-filter:string`
 //! filter. With `includeAmqpAnnotations=true` message annotations become
 //! `JMS_AMQP_MA_<key>` headers.
 //!
