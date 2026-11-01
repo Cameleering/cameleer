@@ -68,11 +68,22 @@ $ cargo run -p camel-main --bin camel -- run hello.camel.yaml --max-seconds 5
 | `camel-main` | `Main` runner (application.properties, route discovery) and the `camel` CLI |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the internals, and [docs/FEATURES.md](docs/FEATURES.md) for
-the list of what's implemented compared with Apache Camel.
+the list of what's implemented compared with Apache Camel. [docs/INTEROP.md](docs/INTEROP.md) lists the
+real servers the components are verified against (PostgreSQL, Redis, Mosquitto, RabbitMQ with
+AMQP 0-9-1 / STOMP / AMQP 1.0 / MQTT, vsftpd, Postfix + Dovecot, nginx, JDK JSSE) and the bugs
+that live testing found.
 
 ## Building and testing
 
 ```text
 cargo build
 cargo test
+```
+
+`cargo test` is hermetic: every network component is tested against embedded servers. The live
+interop suite (`crates/*/tests/live_*.rs`) runs against real servers and is opt-in:
+
+```text
+sudo scripts/live-interop.sh all          # install, configure and start the servers
+CAMEL_LIVE_INTEROP=1 cargo test --workspace live_
 ```
