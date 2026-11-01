@@ -3,8 +3,13 @@
 //!
 //! The minimal IDL parser understands `struct`, `union`, `exception` (fields `1: required
 //! i32 id = 0,` with base types `bool byte i8 i16 i32 i64 double string binary uuid`,
-//! `list<T>`, `set<T>`, `map<K,V>`, struct/enum references), `enum`, `typedef`, and ignores
-//! `namespace`, `include`, `const`, `service`, annotations and comments.
+//! `list<T>`, `set<T>`, `map<K,V>`, struct/enum references, default values), `enum`,
+//! `typedef`, `const` (evaluated: numbers, strings, booleans, lists, sets, maps, struct
+//! literals, references to other constants and `Enum.VALUE`; see [`Idl::consts`]),
+//! `service` (methods with arguments, return types, `throws`, `oneway`, `extends`; see
+//! [`Idl::services`], used by the `thrift` component in [`crate::thrift_rpc`]), and ignores
+//! `namespace`, `include`, annotations and comments. Missing fields with a default value get
+//! it on marshal and unmarshal.
 //!
 //! Options: `instanceClass` (the struct name, optionally qualified), `schema` (inline IDL)
 //! or `idlFile`, `contentTypeFormat`: `binary` (TBinaryProtocol, default), `compact`
@@ -53,6 +58,27 @@ pub struct TField {
     pub name: String,
     pub ty: TType,
     pub required: bool,
+    /// Default value from the IDL (`= ...`).
+    pub default: Option<Value>,
+}
+
+/// A service method.
+#[derive(Clone, Debug)]
+pub struct TMethod {
+    pub name: String,
+    /// `None` for `void`.
+    pub ret: Option<TType>,
+    pub args: Vec<TField>,
+    pub throws: Vec<TField>,
+    pub oneway: bool,
+}
+
+/// A service.
+#[derive(Clone, Debug, Default)]
+pub struct TService {
+    pub name: String,
+    pub extends: Option<String>,
+    pub methods: Vec<TMethod>,
 }
 
 /// A parsed IDL.
@@ -60,6 +86,9 @@ pub struct TField {
 pub struct Idl {
     pub structs: HashMap<String, Vec<TField>>,
     pub enums: HashMap<String, Vec<(String, i32)>>,
+    /// Evaluated constants.
+    pub consts: HashMap<String, Value>,
+    pub services: HashMap<String, TService>,
 }
 
 fn tokenize(src: &str) -> Vec<String> {
@@ -141,23 +170,84 @@ impl P {
             }
         }
     }
-    fn skip_block(&mut self) {
-        // skip until matching '}' (for services) or to ';'/newline-ish token for consts
-        let mut depth = 0;
-        while let Some(t) = self.t.get(self.i).cloned() {
-            self.i += 1;
-            match t.as_str() {
-                "{" | "[" | "(" => depth += 1,
-                "}" | "]" | ")" => {
-                    depth -= 1;
-                    if depth <= 0 {
-                        return;
+    /// Parses a constant value for type `t` (struct literals need `structs`).
+    fn const_value(&mut self, t: &TType, idl: &Idl) -> Result<Value> {
+        let tok = self.next()?;
+        let bad = |tok: &str| terr(format!("Invalid constant {} for type {:?}", tok, t));
+        Ok(match tok.as_str() {
+            "[" | "{" => {
+                let close = if tok == "[" { "]" } else { "}" };
+                let mut items: Vec<(Value, Value)> = Vec::new();
+                let (kt, vt) = match t {
+                    TType::List(e) | TType::Set(e) => (TType::String, (**e).clone()),
+                    TType::Map(k, v) => ((**k).clone(), (**v).clone()),
+                    other => (TType::String, other.clone()),
+                };
+                while self.peek() != Some(close) {
+                    if matches!(t, TType::Map(..) | TType::Struct(_)) {
+                        let k = self.const_value(&kt, idl)?;
+                        self.expect(":")?;
+                        let vt = match t {
+                            TType::Struct(sn) => idl.structs.get(sn).and_then(|fs| fs.iter().find(|f| f.name == k.to_string())).map(|f| f.ty.clone()).unwrap_or(TType::String),
+                            _ => vt.clone(),
+                        };
+                        items.push((k, self.const_value(&vt, idl)?));
+                    } else {
+                        items.push((Value::Null, self.const_value(&vt, idl)?));
+                    }
+                    if matches!(self.peek(), Some(",") | Some(";")) {
+                        self.i += 1;
                     }
                 }
-                _ => {}
+                self.i += 1;
+                match t {
+                    TType::Map(..) | TType::Struct(_) => Value::Object(items.into_iter().map(|(k, v)| (k.to_string(), v)).collect()),
+                    _ => Value::Array(items.into_iter().map(|(_, v)| v).collect()),
+                }
             }
-        }
+            s if s.starts_with('"') || s.starts_with('\'') => Value::String(s[1..s.len().saturating_sub(1)].to_string()),
+            "true" => Value::Bool(true),
+            "false" => Value::Bool(false),
+            num if num.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '+') => {
+                let n = num.trim_start_matches('+');
+                let (neg, digits) = match n.strip_prefix('-') {
+                    Some(d) => (true, d),
+                    None => (false, n),
+                };
+                let int = if let Some(h) = digits.strip_prefix("0x").or_else(|| digits.strip_prefix("0X")) { i64::from_str_radix(h, 16).ok() } else { digits.parse::<i64>().ok() };
+                match (int, t) {
+                    (Some(i), TType::Double) => Value::Float(if neg { -(i as f64) } else { i as f64 }),
+                    (Some(i), TType::Bool) => Value::Bool(i != 0),
+                    (Some(i), TType::Enum(e)) | (Some(i), TType::Struct(e)) if idl.enums.contains_key(e) => {
+                        let i = if neg { -i } else { i };
+                        idl.enums[e].iter().find(|(_, v)| *v as i64 == i).map(|(n, _)| Value::String(n.clone())).unwrap_or(Value::Int(i))
+                    }
+                    (Some(i), _) => Value::Int(if neg { -i } else { i }),
+                    (None, _) => Value::Float(n.parse::<f64>().map_err(|_| bad(num))?),
+                }
+            }
+            ident => {
+                // Enum.VALUE, an enum value of the expected type, or another constant
+                let short = ident.rsplit('.').next().unwrap_or(ident);
+                let qual = ident.rsplit_once('.').map(|(q, _)| q.rsplit('.').next().unwrap_or(q));
+                if let Some(v) = idl.consts.get(ident).or_else(|| idl.consts.get(short)) {
+                    return Ok(v.clone());
+                }
+                let enum_name = qual.filter(|q| idl.enums.contains_key(*q)).map(String::from).or_else(|| match t {
+                    TType::Enum(e) | TType::Struct(e) if idl.enums.contains_key(e) => Some(e.clone()),
+                    _ => None,
+                });
+                match enum_name.and_then(|e| idl.enums.get(&e).and_then(|vs| vs.iter().find(|(n, _)| n == short)).cloned()) {
+                    Some((n, v)) => match t {
+                        TType::Byte | TType::I16 | TType::I32 | TType::I64 => Value::Int(v as i64),
+                        _ => Value::String(n),
+                    },
+                    None => return Err(terr(format!("Unknown constant {}", ident))),
+                }
+            }
+        })
     }
+
     fn ty(&mut self) -> Result<TType> {
         let n = self.next()?;
         let t = match n.as_str() {
@@ -201,6 +291,47 @@ impl P {
     }
 }
 
+/// Parses `{ 1: required T name = default, ... }` (or `( ... )` argument lists).
+fn parse_field_list(p: &mut P, open: &str, close: &str, idl: &Idl) -> Result<Vec<TField>> {
+    p.expect(open)?;
+    let mut fields = Vec::new();
+    let mut auto_id = -1i16;
+    while p.peek() != Some(close) {
+        let mut id = None;
+        if p.t.get(p.i + 1).map(|s| s == ":").unwrap_or(false) {
+            id = Some(p.next()?.parse::<i16>().map_err(|_| terr("Invalid field id"))?);
+            p.i += 1;
+        }
+        let mut required = false;
+        if matches!(p.peek(), Some("required") | Some("optional")) {
+            required = p.next()? == "required";
+        }
+        let mut ty = p.ty()?;
+        if let TType::Struct(n) = &ty {
+            if idl.enums.contains_key(n) {
+                ty = TType::Enum(n.clone());
+            }
+        }
+        let fname = p.next()?;
+        let mut default = None;
+        if p.peek() == Some("=") {
+            p.i += 1;
+            default = Some(p.const_value(&ty, idl)?);
+        }
+        p.skip_annotations();
+        if matches!(p.peek(), Some(",") | Some(";")) {
+            p.i += 1;
+        }
+        let id = id.unwrap_or_else(|| {
+            auto_id -= 1;
+            auto_id + 1
+        });
+        fields.push(TField { id, name: fname, ty, required, default });
+    }
+    p.i += 1;
+    Ok(fields)
+}
+
 impl Idl {
     /// Parse IDL text.
     pub fn parse(src: &str) -> Result<Idl> {
@@ -225,23 +356,60 @@ impl Idl {
                 }
                 "const" => {
                     p.i += 1;
-                    p.ty()?;
-                    p.next()?;
-                    p.expect("=")?;
-                    if matches!(p.peek(), Some("{") | Some("[")) {
-                        p.skip_block();
-                    } else {
-                        p.next()?;
+                    let mut t = p.ty()?;
+                    if let TType::Struct(n) = &t {
+                        if idl.enums.contains_key(n) {
+                            t = TType::Enum(n.clone());
+                        }
                     }
+                    let name = p.next()?;
+                    p.expect("=")?;
+                    let v = p.const_value(&t, &idl)?;
+                    idl.consts.insert(name, v);
                     if matches!(p.peek(), Some(";") | Some(",")) {
                         p.i += 1;
                     }
                 }
                 "service" => {
-                    while p.peek().is_some() && p.peek() != Some("{") {
+                    p.i += 1;
+                    let name = p.next()?;
+                    let mut svc = TService { name: name.clone(), ..Default::default() };
+                    if p.peek() == Some("extends") {
                         p.i += 1;
+                        let base = p.next()?;
+                        svc.extends = Some(base.rsplit('.').next().unwrap_or(&base).to_string());
                     }
-                    p.skip_block();
+                    p.skip_annotations();
+                    p.expect("{")?;
+                    while p.peek() != Some("}") {
+                        let mut oneway = false;
+                        if p.peek() == Some("oneway") {
+                            p.i += 1;
+                            oneway = true;
+                        }
+                        let ret = if p.peek() == Some("void") {
+                            p.i += 1;
+                            None
+                        } else {
+                            Some(p.ty()?)
+                        };
+                        let mname = p.next()?;
+                        let args = parse_field_list(&mut p, "(", ")", &idl)?;
+                        let throws = if p.peek() == Some("throws") {
+                            p.i += 1;
+                            parse_field_list(&mut p, "(", ")", &idl)?
+                        } else {
+                            Vec::new()
+                        };
+                        p.skip_annotations();
+                        if matches!(p.peek(), Some(",") | Some(";")) {
+                            p.i += 1;
+                        }
+                        svc.methods.push(TMethod { name: mname, ret, args, throws, oneway });
+                    }
+                    p.i += 1;
+                    p.skip_annotations();
+                    idl.services.insert(name, svc);
                 }
                 "enum" => {
                     p.i += 1;
@@ -271,40 +439,7 @@ impl Idl {
                     p.i += 1;
                     let name = p.next()?;
                     p.skip_annotations();
-                    p.expect("{")?;
-                    let mut fields = Vec::new();
-                    let mut auto_id = -1i16;
-                    while p.peek() != Some("}") {
-                        let mut id = None;
-                        if p.t.get(p.i + 1).map(|s| s == ":").unwrap_or(false) {
-                            id = Some(p.next()?.parse::<i16>().map_err(|_| terr("Invalid field id"))?);
-                            p.i += 1;
-                        }
-                        let mut required = false;
-                        if matches!(p.peek(), Some("required") | Some("optional")) {
-                            required = p.next()? == "required";
-                        }
-                        let ty = p.ty()?;
-                        let fname = p.next()?;
-                        if p.peek() == Some("=") {
-                            p.i += 1;
-                            if matches!(p.peek(), Some("{") | Some("[")) {
-                                p.skip_block();
-                            } else {
-                                p.next()?;
-                            }
-                        }
-                        p.skip_annotations();
-                        if matches!(p.peek(), Some(",") | Some(";")) {
-                            p.i += 1;
-                        }
-                        let id = id.unwrap_or_else(|| {
-                            auto_id -= 1;
-                            auto_id + 1
-                        });
-                        fields.push(TField { id, name: fname, ty, required });
-                    }
-                    p.i += 1;
+                    let fields = parse_field_list(&mut p, "{", "}", &idl)?;
                     p.skip_annotations();
                     idl.structs.insert(name, fields);
                 }
@@ -329,7 +464,54 @@ impl Idl {
                 fix(&mut f.ty, &enums);
             }
         }
+        for svc in idl.services.values_mut() {
+            for m in svc.methods.iter_mut() {
+                if let Some(r) = m.ret.as_mut() {
+                    fix(r, &enums);
+                }
+                for f in m.args.iter_mut().chain(m.throws.iter_mut()) {
+                    fix(&mut f.ty, &enums);
+                }
+            }
+        }
+        // synthesized RPC structs: `<Service>.<method>_args` / `_result`, TApplicationException
+        let mut extra = Vec::new();
+        for svc in idl.services.values() {
+            for m in &svc.methods {
+                extra.push((format!("{}.{}_args", svc.name, m.name), m.args.clone()));
+                let mut res = Vec::new();
+                if let Some(r) = &m.ret {
+                    res.push(TField { id: 0, name: "success".into(), ty: r.clone(), required: false, default: None });
+                }
+                res.extend(m.throws.iter().cloned());
+                extra.push((format!("{}.{}_result", svc.name, m.name), res));
+            }
+        }
+        extra.push((
+            "TApplicationException".to_string(),
+            vec![TField { id: 1, name: "message".into(), ty: TType::String, required: false, default: None }, TField { id: 2, name: "type".into(), ty: TType::I32, required: false, default: None }],
+        ));
+        for (n, f) in extra {
+            idl.structs.entry(n).or_insert(f);
+        }
         Ok(idl)
+    }
+
+    /// A service and its inherited methods (`extends`).
+    pub fn service_method(&self, service: &str, method: &str) -> Option<(&TService, &TMethod)> {
+        let mut cur = self.services.get(service.rsplit('.').next().unwrap_or(service));
+        let mut guard = 0;
+        while let Some(s) = cur {
+            if let Some(m) = s.methods.iter().find(|m| m.name == method) {
+                return Some((s, m));
+            }
+            cur = s.extends.as_ref().and_then(|b| self.services.get(b));
+            guard += 1;
+            if guard > 32 {
+                break;
+            }
+        }
+        None
     }
 
     fn fields(&self, name: &str) -> Result<&Vec<TField>> {
@@ -550,8 +732,8 @@ impl W<'_> {
         let fields = self.idl.fields(name)?.clone();
         self.last_id.push(0);
         for f in &fields {
-            let fv = match o.get(&f.name) {
-                Some(Value::Null) | None => {
+            let fv = match o.get(&f.name).filter(|v| !v.is_null()).or(f.default.as_ref()) {
+                None => {
                     if f.required {
                         return Err(terr(format!("Required field '{}' was not present! Struct: {}", f.name, name)));
                     }
@@ -811,6 +993,9 @@ impl R<'_> {
         }
         if let Some(fs) = &fields {
             for f in fs {
+                if let (Some(d), false) = (&f.default, m.contains_key(&f.name)) {
+                    m.insert(f.name.clone(), d.clone());
+                }
                 if f.required && !m.contains_key(&f.name) {
                     return Err(terr(format!("Required field '{}' was not found in serialized data! Struct: {}", f.name, name.unwrap_or(""))));
                 }
