@@ -241,17 +241,20 @@ impl RabbitConfig {
             let host = o("host").or_else(|| props.get("spring.rabbitmq.host"));
             let port = o("port").or_else(|| props.get("spring.rabbitmq.port"));
             let addresses = o("addresses").or_else(|| props.get("spring.rabbitmq.addresses"));
+            // `addresses` takes precedence over host and port (Spring Boot semantics), so a
+            // component-wide host/port does not redirect an endpoint's `addresses=amqps://...`
             if let Some(a) = addresses {
                 let first = a.split(',').next().unwrap_or("").trim().to_string();
                 tls_wanted |= broker_url_is_tls(&first);
                 let (h, p) = parse_broker_url(&first, if broker_url_is_tls(&first) { 5671 } else { 5672 })?;
                 conn.host = h;
                 conn.port = p;
+            } else {
+                if let Some(h) = host {
+                    conn.host = h;
+                }
+                conn.port = parse_num("port", port, conn.port)?;
             }
-            if let Some(h) = host {
-                conn.host = h;
-            }
-            conn.port = parse_num("port", port, conn.port)?;
             if let Some(u) = o("username").or_else(|| props.get("spring.rabbitmq.username")) {
                 conn.username = u;
             }
@@ -262,16 +265,20 @@ impl RabbitConfig {
                 conn.vhost = v;
             }
         } else {
+            // with `addresses`, hostname and portNumber are ignored (Camel RabbitMQ semantics)
+            let hostname = o("hostname");
+            let port_number = o("portNumber");
             if let Some(a) = o("addresses") {
                 let first = a.split(',').next().unwrap_or("").trim().to_string();
                 let (h, p) = split_host_port(&first, 5672)?;
                 conn.host = h;
                 conn.port = p;
+            } else {
+                if let Some(h) = hostname {
+                    conn.host = h;
+                }
+                conn.port = parse_num("portNumber", port_number, conn.port)?;
             }
-            if let Some(h) = o("hostname") {
-                conn.host = h;
-            }
-            conn.port = parse_num("portNumber", o("portNumber"), conn.port)?;
             if let Some(u) = o("username") {
                 conn.username = u;
             }

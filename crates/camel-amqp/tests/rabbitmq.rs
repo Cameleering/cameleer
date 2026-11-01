@@ -307,3 +307,25 @@ fn consumer_reconnects_after_connection_loss() {
     mock.assert_is_satisfied().unwrap();
     ctx.stop().unwrap();
 }
+
+/// Regression (found against a real RabbitMQ): an endpoint's `addresses` must win over the
+/// component-wide host/port instead of being overridden by them.
+#[test]
+fn endpoint_addresses_take_precedence_over_component_host_and_port() {
+    let broker = AmqpBroker::start().unwrap();
+    let ctx = CamelContext::new();
+    camel_amqp::register(&ctx);
+    // component defaults point at a port nobody listens on
+    let dead = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    ctx.properties().set("camel.component.spring-rabbitmq.host", "localhost");
+    ctx.properties().set("camel.component.spring-rabbitmq.port", dead.to_string());
+    ctx.properties().set("camel.component.rabbitmq.hostname", "localhost");
+    ctx.properties().set("camel.component.rabbitmq.portNumber", dead.to_string());
+    broker.declare_queue("addr", Default::default());
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    t.send_body(&format!("spring-rabbitmq:default?routingKey=addr&addresses=amqp://127.0.0.1:{}", broker.port()), "spring").unwrap();
+    t.send_body(&format!("rabbitmq:?routingKey=addr&declare=false&addresses=127.0.0.1:{}", broker.port()), "legacy").unwrap();
+    assert_eq!(broker.queue_depth("addr"), 2);
+    ctx.stop().unwrap();
+}
