@@ -328,7 +328,9 @@ fn encode_text(msg: &[char], start: usize, count: usize, out: &mut Vec<u32>, ini
                     tmp.push(27);
                     continue;
                 } else {
-                    if start + idx + 1 < msg.len() && is_punct(msg[start + idx + 1]) {
+                    // ZXing compares the absolute index with the run length here (`startpos +
+                    // idx + 1 < count`); kept for module-exact output
+                    if start + idx + 1 < count && is_punct(msg[start + idx + 1]) {
                         sub = Sub::Punct;
                         tmp.push(25);
                         continue;

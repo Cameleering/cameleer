@@ -268,10 +268,11 @@ pub fn encode(data: &[u8], size: Option<usize>) -> Result<Matrix> {
     }
 }
 
-/// Encode with a shape preference (the smallest fitting symbol).
+/// Encode with a shape preference: ZXing's high-level encoder (all encodations with its
+/// look-ahead) into the smallest fitting symbol.
 pub fn encode_shape(data: &[u8], shape: Shape) -> Result<Matrix> {
-    let e = lookup(encode_ascii(data).len(), shape).ok_or_else(|| df_err("Data too big for a Data Matrix symbol of that shape"))?;
-    encode_entry(data, e)
+    let (cw, e) = super::dm_encoder::encode_high_level(data, shape).map_err(df_err)?;
+    Ok(encode_codewords(&cw, e))
 }
 
 /// The smallest symbol of a shape holding `n` data codewords (ZXing `SymbolInfo.lookup`).
@@ -388,6 +389,7 @@ fn decode_codewords(cw: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     let mut i = 0;
     let mut upper = false;
+    let mut trailer = false;
     while i < cw.len() {
         let c = cw[i];
         i += 1;
@@ -480,20 +482,23 @@ fn decode_codewords(cw: &[u8]) -> Result<Vec<u8>> {
             }
             240 => {
                 // EDIFACT: 4 x 6 bits in 3 bytes until the unlatch value 31
-                'edi: while i < cw.len() {
+                // (like ZXing: with 2 or fewer codewords left the symbol returns to ASCII
+                // without an unlatch; after an unlatch ASCII resumes at the next codeword)
+                'edi: while cw.len() - i > 2 {
                     let n = (cw.len() - i).min(3);
                     let mut bits = 0u32;
                     for k in 0..3 {
                         bits = (bits << 8) | if k < n { cw[i + k] as u32 } else { 0 };
                     }
-                    i += n;
                     for k in 0..4 {
                         let v = ((bits >> (18 - 6 * k)) & 0x3f) as u8;
                         if v == 31 {
+                            i += (6 * (k + 1usize)).div_ceil(8);
                             break 'edi;
                         }
                         out.push(if v & 0x20 == 0 { v | 0x40 } else { v });
                     }
+                    i += n;
                 }
             }
             231 => {
@@ -519,7 +524,7 @@ fn decode_codewords(cw: &[u8]) -> Result<Vec<u8>> {
                     i += 1;
                 }
             }
-            232 | 233 | 234 | 236 | 237 | 241 => {
+            232 | 233 | 234 | 241 => {
                 // FNC1, structured append, reader programming, macros, ECI: not mapped
                 if c == 241 {
                     i += 1;
@@ -529,8 +534,16 @@ fn decode_codewords(cw: &[u8]) -> Result<Vec<u8>> {
                 }
             }
             235 => upper = true,
+            // macro 05 / 06: header now, trailer at the end (ZXing)
+            236 | 237 => {
+                out.extend_from_slice(if c == 236 { b"[)>\x1e05\x1d" } else { b"[)>\x1e06\x1d" });
+                trailer = true;
+            }
             _ => return Err(df_err(format!("Invalid Data Matrix codeword {}", c))),
         }
+    }
+    if trailer {
+        out.extend_from_slice(b"\x1e\x04");
     }
     Ok(out)
 }
@@ -592,8 +605,9 @@ mod tests {
         assert_eq!(decode_matrix(&m).unwrap().0, b"ABCD");
         let m = encode_shape(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklm", Shape::Rectangle).unwrap();
         assert_eq!((m.height, m.width), (16, 48));
-        assert!(encode_shape(&[b'x'; 50], Shape::Rectangle).is_err());
-        assert_eq!(encode_shape(b"ABCDEF", Shape::Any).unwrap().height, 14);
+        assert!(encode_shape(&[b'x'; 80], Shape::Rectangle).is_err());
+        // C40: latch + two triplets fit the 12x12 symbol (five codewords)
+        assert_eq!(encode_shape(b"ABCDEF", Shape::Any).unwrap().height, 12);
         let m = encode("Hello Data Matrix 2026 é".as_bytes(), None).unwrap();
         let mut damaged = m.clone();
         for x in 3..7 {

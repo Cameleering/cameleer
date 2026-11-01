@@ -367,6 +367,21 @@ mod tests {
     }
 
     #[test]
+    fn camera_maxicode() {
+        use crate::barcode::maxicode::encode;
+        let text = "MaxiCode camera test 0123456789";
+        let m = encode::matrix(&encode::codewords(&encode::datawords(text, 4)));
+        let src = encode::render(&m, 8, 24);
+        let f = failures_of(&src, false, text, Format::MaxiCode, None);
+        // ZXing reads MaxiCode only from pure images; our photograph detector handles
+        // rotation, scale, blur, noise, lighting, JPEG and mild perspective (keystone 0.1),
+        // not the strong keystone cases (0.15 and more)
+        let strong_keystone = ["keystone top", "keystone side + rotate 17", "everything"];
+        let unexpected: Vec<&String> = f.iter().filter(|e| !strong_keystone.iter().any(|k| e.starts_with(&format!("{}:", k)))).collect();
+        assert!(unexpected.is_empty(), "{:#?}", unexpected);
+    }
+
+    #[test]
     fn camera_rss14() {
         let src = printed_modules(&crate::barcode::rss::encode::rss14("2001234567890"));
         let f = failures_of(&src, true, "20012345678909", Format::Rss14, None);

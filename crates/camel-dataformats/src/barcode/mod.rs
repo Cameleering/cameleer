@@ -1,23 +1,33 @@
 //! `barcode` data format (Camel `camel-barcode`, ZXing based in Java): marshal text into a
 //! barcode image, unmarshal an image back to text.
 //!
-//! Symbologies (`barcodeFormat`, default `QR_CODE`):
+//! Symbologies (`barcodeFormat`, default `QR_CODE`; every value ZXing's `BarcodeFormat` has):
 //!
 //! | format | encode | decode |
 //! |---|---|---|
 //! | `QR_CODE` | versions 1-40, ECC L/M/Q/H (`errorCorrectionLevel`, default L like ZXing), numeric / alphanumeric / Kanji (JIS X 0208 text) / byte (UTF-8 with ECI 26 for non-ASCII), RS, mask by penalty rules | ZXing-style finder/alignment pattern detection with perspective sampling, format/version info, unmasking, RS correction, Kanji, Shift_JIS guessing |
-//! | `DATA_MATRIX` | ECC 200 square 10x10 .. 144x144 and rectangular 8x18 .. 16x48 (`dataMatrixShape` NONE (ZXing order) / SQUARE / RECTANGLE), ASCII encodation | white-rectangle + edge-fitted L finder, perspective sampling, any orientation; ASCII, C40, Text, X12, EDIFACT, Base 256 |
+//! | `DATA_MATRIX` | ECC 200 square 10x10 .. 144x144 and rectangular 8x18 .. 16x48 (`dataMatrixShape` NONE (ZXing order) / SQUARE / RECTANGLE), ZXing's high-level encoder ([`dm_encoder`]: ASCII, C40, Text, X12, EDIFACT, Base 256 with its look-ahead) | white-rectangle + edge-fitted L finder, perspective sampling, any orientation; every encodation, macro 05/06 |
 //! | `PDF_417` | text / byte / numeric compaction (`pdf417Compaction`, AUTO like ZXing), UTF-8 via ECI 26, error correction level 0-8 (`errorCorrectionLevel`, default 2), ZXing dimensions and rendering | deskewed row scanning in all four orientations (rows tracked per codeword cluster), per-row voting, RS correction with erasures, Macro PDF417 blocks skipped |
-//! | `AZTEC` | compact 1-4 and full-range 4-32 layers, ZXing's 33% error correction, Upper/Lower/Digit/Punct/Mixed + Binary Shift, ECI 26 for non-Latin-1 | bull's-eye detection with a least-squares perspective fit (rings, outer edges, reference grid), any orientation; every mode, FLG(n) ECIs, RS correction |
+//! | `AZTEC` | compact 1-4 and full-range 4-32 layers, ZXing's 33% error correction, ZXing's optimal high-level encoder ([`aztec_hl`]), ECI 26 for non-Latin-1 | bull's-eye detection with a least-squares perspective fit (rings, outer edges, reference grid), any orientation; every mode, FLG(n) ECIs, RS correction |
+//! | `MAXICODE` | - (ZXing has no writer) | ZXing's pure-image reader (bit table, GF(64) RS, modes 2-5, code sets A-E); photographs via a bull's-eye and orientation-module search ([`maxicode`]) |
 //! | `CODE_128` | code sets A/B/C, automatic switching | yes |
 //! | `CODE_39` | yes | yes |
+//! | `CODE_93` | full ASCII, two check characters (ZXing `Code93Writer`) | yes ([`linear`]) |
+//! | `CODABAR` | start/stop A-D or T/N/*/E (ZXing `CodaBarWriter`) | yes, start/stop removed like ZXing |
+//! | `ITF` | even digit count (ZXing `ITFWriter`) | yes, ZXing's quiet zones and allowed lengths (6-14 or longer) |
 //! | `EAN_13`, `UPC_A` | 12/13 (11/12) digits, check digit computed or verified | yes (an EAN-13 starting with 0 is reported as `UPC_A` unless `barcodeFormat=EAN_13`) |
+//! | `EAN_8`, `UPC_E` | 7/8 digits (ZXing writers) | yes |
+//! | `UPC_EAN_EXTENSION` | - (ZXing has no writer) | 2- and 5-digit add-ons after EAN/UPC symbols: headers `UPC_EAN_EXTENSION`, `ISSUE_NUMBER` / `SUGGESTED_PRICE` (`barcodeFormat=UPC_EAN_EXTENSION` accepts only symbols with an add-on) |
+//! | `RSS_14` | - (ZXing has no writer) | GS1 DataBar omnidirectional and stacked (pairs collected over rows) ([`rss`]) |
+//! | `RSS_EXPANDED` | - (ZXing has no writer) | GS1 DataBar Expanded with ZXing's AI decoders and `FieldParser` |
 //!
 //! Options: `width` / `height` (default 100, ZXing rendering: the symbol is scaled by the
 //! largest integer factor that fits, with a 4-module quiet zone for QR and 10 modules of side
 //! margin for linear codes, centred), `imageType` (`PNG`, `GIF` (gray palette, LZW) or `JPG`
 //! (baseline grayscale, quality 95)),
-//! `barcodeFormat`, `errorCorrectionLevel` (`L`, `M`, `Q`, `H`).
+//! `barcodeFormat`, `errorCorrectionLevel` (`L`, `M`, `Q`, `H`), `multiple` (unmarshal every
+//! symbol of the image: the body becomes a list of `{text, BarcodeFormat, ...}` maps, see
+//! [`decode_multiple`]).
 //!
 //! Unmarshal accepts any PNG (grayscale, RGB(A), palette, all bit depths, interlaced), GIF or
 //! baseline JPEG (detected by signature), finds the
@@ -30,12 +40,15 @@
 
 pub mod aztec;
 pub mod aztec_detect;
+pub mod aztec_hl;
 pub mod datamatrix;
 pub mod detect;
 pub mod dm_detect;
+pub mod dm_encoder;
 pub mod gif;
 pub mod jpeg;
 pub mod linear;
+pub mod maxicode;
 mod kanji_table;
 pub mod oned;
 pub mod pdf417;
@@ -363,6 +376,11 @@ fn decode_clean(bin: &detect::Bin, want: &dyn Fn(Format) -> bool, only: Option<F
             return Some(Decoded::new(t, Format::Pdf417));
         }
     }
+    if want(Format::MaxiCode) {
+        if let Some(t) = maxicode::find_and_decode(bin) {
+            return Some(Decoded::new(t, Format::MaxiCode));
+        }
+    }
     let mut rss14 = rss::Rss14Collector::default();
     detect::scan_rows(bin).iter().find_map(|row| decode_row(row, want, only, &mut rss14))
 }
@@ -434,8 +452,19 @@ fn decode_camera(g: &png::Gray, want: &dyn Fn(Format) -> bool, only: Option<Form
                 return Some(Decoded::new(t, Format::Pdf417));
             }
         }
+        if want(Format::MaxiCode) {
+            if let Some(t) = maxicode::find_and_decode(&bin) {
+                return Some(Decoded::new(t, Format::MaxiCode));
+            }
+        }
         if let Some(d) = decode_linear(v, want, only) {
             return Some(d);
+        }
+        // the bull's-eye search is the most expensive detector: last
+        if want(Format::MaxiCode) {
+            if let Some(t) = maxicode::detect::detect_and_decode(&bin) {
+                return Some(Decoded::new(t, Format::MaxiCode));
+            }
         }
     }
     None
@@ -484,6 +513,47 @@ pub fn decode_camera_path(img: &png::Gray, only: Option<Format>) -> Result<Decod
     Err(CamelError::new("NotFoundException", "No barcode found in the image"))
 }
 
+/// Crop a raster.
+fn crop(g: &png::Gray, x0: usize, y0: usize, x1: usize, y1: usize) -> png::Gray {
+    let (w, h) = (x1 - x0, y1 - y0);
+    let mut pixels = Vec::with_capacity(w * h);
+    for y in y0..y1 {
+        pixels.extend_from_slice(&g.pixels[y * g.width + x0..y * g.width + x1]);
+    }
+    png::Gray { width: w, height: h, pixels }
+}
+
+fn multi_rec(img: &png::Gray, only: Option<Format>, depth: usize, out: &mut Vec<Decoded>) {
+    let Ok(d) = decode(img, only) else { return };
+    if !out.iter().any(|o| o.format == d.format && o.text == d.text) {
+        out.push(d);
+    }
+    if depth >= 2 {
+        return;
+    }
+    let (w, h) = (img.width, img.height);
+    // overlapping halves left/right/top/bottom of the tile, like ZXing's
+    // GenericMultipleBarcodeReader searches the regions beside a found symbol
+    let (a, b) = (w * 3 / 5, w * 2 / 5);
+    let (c, e) = (h * 3 / 5, h * 2 / 5);
+    for (x0, y0, x1, y1) in [(0, 0, a, h), (b, 0, w, h), (0, 0, w, c), (0, e, w, h)] {
+        if x1 - x0 >= 24 && y1 - y0 >= 24 {
+            multi_rec(&crop(img, x0, y0, x1, y1), only, depth + 1, out);
+        }
+    }
+}
+
+/// Decode every symbol in an image (ZXing `GenericMultipleBarcodeReader` style): the image
+/// is decoded, then the overlapping halves of it, recursively, collecting distinct results.
+pub fn decode_multiple(img: &png::Gray, only: Option<Format>) -> Result<Vec<Decoded>> {
+    let mut out = Vec::new();
+    multi_rec(img, only, 0, &mut out);
+    if out.is_empty() {
+        return Err(CamelError::new("NotFoundException", "No barcode found in the image"));
+    }
+    Ok(out)
+}
+
 /// The `barcode` data format.
 pub struct BarcodeDataFormat {
     pub width: usize,
@@ -496,6 +566,8 @@ pub struct BarcodeDataFormat {
     pub shape: datamatrix::Shape,
     /// PDF417 options (`errorCorrectionLevel` 0-8 for `PDF_417`, `pdf417Compaction`).
     pub pdf417: pdf417::Pdf417Options,
+    /// Unmarshal every symbol in the image (`multiple=true`).
+    pub multiple: bool,
 }
 
 /// Output image type (`imageType`).
@@ -540,6 +612,25 @@ impl DataFormat for BarcodeDataFormat {
         let b = body_bytes(&ex.message.body);
         let img = read_image(&b)?;
         let only = if self.format_explicit && self.format != Format::QrCode { Some(self.format) } else { None };
+        if self.multiple {
+            // a list of results, each with its text, format and metadata
+            let all = decode_multiple(&img, only)?;
+            let items: Vec<Value> = all
+                .iter()
+                .map(|d| {
+                    let mut kv: Vec<(String, Value)> = vec![("text".into(), Value::String(d.text.clone())), ("BarcodeFormat".into(), Value::String(d.format.name().into()))];
+                    if let Some(e) = d.ecc {
+                        kv.push(("ERROR_CORRECTION_LEVEL".into(), Value::String(format!("{:?}", e))));
+                    }
+                    kv.extend(d.meta.iter().map(|(k, v)| (k.to_string(), Value::String(v.clone()))));
+                    Value::object(kv)
+                })
+                .collect();
+            ex.message.set_header("BarcodeFormat", Value::Array(all.iter().map(|d| Value::String(d.format.name().into())).collect()));
+            ex.message.set_header("BarcodeCount", all.len() as i64);
+            ex.message.body = Value::Array(items);
+            return Ok(());
+        }
         let d = decode(&img, only)?;
         ex.message.set_header("BarcodeFormat", d.format.name());
         if let Some(e) = d.ecc {
@@ -598,6 +689,7 @@ pub(crate) fn create(o: &Opts) -> Result<Arc<dyn DataFormat>> {
         image_type,
         shape,
         pdf417: pdf,
+        multiple: o.bool(&["multiple"], false)?,
     }))
 }
 
@@ -722,6 +814,46 @@ mod tests {
         assert!(failed.is_empty(), "{:#?}", failed);
     }
 
+    fn paste(canvas: &mut png::Gray, img: &png::Gray, x0: usize, y0: usize) {
+        for y in 0..img.height {
+            for x in 0..img.width {
+                canvas.pixels[(y0 + y) * canvas.width + x0 + x] = img.pixels[y * img.width + x];
+            }
+        }
+    }
+
+    /// Several symbols in one image (2x2 grid and a row of three), clean and photographed.
+    #[test]
+    fn multiple_symbols() {
+        let mut canvas = png::Gray { width: 640, height: 480, pixels: vec![255; 640 * 480] };
+        paste(&mut canvas, &encode("multi QR", Format::QrCode, qr::Ecc::M, 200, 200).unwrap(), 20, 20);
+        paste(&mut canvas, &encode("multi DM", Format::DataMatrix, qr::Ecc::M, 160, 160).unwrap(), 400, 40);
+        paste(&mut canvas, &encode("CODE128-MULTI", Format::Code128, qr::Ecc::M, 280, 100).unwrap(), 20, 330);
+        paste(&mut canvas, &encode("5901234123457", Format::Ean13, qr::Ecc::M, 220, 100).unwrap(), 380, 330);
+        let found = decode_multiple(&canvas, None).unwrap();
+        let mut got: Vec<(Format, String)> = found.iter().map(|d| (d.format, d.text.clone())).collect();
+        got.sort_by_key(|g| g.1.clone());
+        assert_eq!(
+            got,
+            vec![
+                (Format::Ean13, "5901234123457".to_string()),
+                (Format::Code128, "CODE128-MULTI".to_string()),
+                (Format::DataMatrix, "multi DM".to_string()),
+                (Format::QrCode, "multi QR".to_string()),
+            ]
+        );
+        // three in a row, photographed
+        let mut row = png::Gray { width: 720, height: 240, pixels: vec![255; 720 * 240] };
+        paste(&mut row, &encode("row one", Format::QrCode, qr::Ecc::M, 200, 200).unwrap(), 10, 20);
+        paste(&mut row, &encode("row two", Format::Aztec, qr::Ecc::M, 170, 170).unwrap(), 270, 35);
+        paste(&mut row, &encode("row three", Format::QrCode, qr::Ecc::M, 200, 200).unwrap(), 500, 20);
+        let photo = synth::photograph(&row, &synth::Camera { width: 800, height: 400, scale: 0.9, rotate: 3.0, noise: 3.0, blur: 0.6, ..synth::Camera::default() }, 7);
+        let mut texts: Vec<String> = decode_multiple(&photo, None).unwrap().into_iter().map(|d| d.text).collect();
+        texts.sort();
+        assert_eq!(texts, vec!["row one", "row three", "row two"]);
+        assert!(decode_multiple(&png::Gray { width: 50, height: 50, pixels: vec![255; 2500] }, None).is_err());
+    }
+
     /// ZXing blackbox images of GS1 DataBar (rss14-1 incl. a stacked symbol, rssexpanded-1).
     #[test]
     fn zxing_blackbox_rss() {
@@ -739,6 +871,35 @@ mod tests {
             let img = read_image(bytes).unwrap();
             match decode(&img, None) {
                 Ok(d) if (d.format, d.text.as_str()) == (*format, *text) => {}
+                Ok(d) => failed.push(format!("case {}: {:?} {:?}", i, d.format, d.text)),
+                Err(e) => failed.push(format!("case {}: {}", i, e)),
+            }
+        }
+        assert!(failed.is_empty(), "{:#?}", failed);
+    }
+
+    /// ZXing blackbox MaxiCode images (maxicode-1: modes 2, 3 and 4, mixed code sets).
+    #[test]
+    fn zxing_blackbox_maxicode() {
+        let gs = '\u{1d}';
+        let rs = '\u{1e}';
+        let cases: [(&[u8], String); 4] = [
+            // all of code set A (the .txt shows its printable characters; LF, FS, GS, RS are control characters)
+            (include_bytes!("testdata/zxing/maxicode-1_1.png"), "\nABCDEFGHIJKLMNOPQRSTUVWXYZ\u{1c}\u{1d}\u{1e} \"#$%&'()*+,-./01234:56789".to_string()),
+            (include_bytes!("testdata/zxing/maxicode-1_MODE2.png"), format!("[)>{rs}01{gs}96123450000{gs}222{gs}111{gs}MODE2")),
+            (include_bytes!("testdata/zxing/maxicode-1_MODE3.png"), format!("[)>{rs}01{gs}96123450000{gs}222{gs}111{gs}MODE3")),
+            (
+                include_bytes!("testdata/zxing/maxicode-1_mode4-mixed-sets.png"),
+                "ABCDE12abcde1\u{c0}\u{c1}\u{c2}\u{c3}\u{a2}\u{a3}\u{a4}\u{a5}1\u{e0}\u{e1}\u{e2}\u{e3}abcde123A123456789\u{e0}\u{e1}\u{e2}\u{e3}\u{a2}\u{a3}\u{a4}\u{a5}abcd\u{da}\u{db}\u{dc}\u{dd}123456789\u{be}".to_string(),
+            ),
+        ];
+        let mut failed = Vec::new();
+        for (i, (bytes, text)) in cases.iter().enumerate() {
+            let img = read_image(bytes).unwrap();
+            match decode(&img, None) {
+                // the ZXing .txt files may hold trailing control characters (RS EOT) the
+                // structured carrier message ends with; compare the visible prefix exactly
+                Ok(d) if d.format == Format::MaxiCode && (d.text == *text || d.text.starts_with(text.as_str()) && d.text[text.len()..].chars().all(|c| c.is_control())) => {}
                 Ok(d) => failed.push(format!("case {}: {:?} {:?}", i, d.format, d.text)),
                 Err(e) => failed.push(format!("case {}: {}", i, e)),
             }

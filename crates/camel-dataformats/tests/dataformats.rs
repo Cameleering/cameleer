@@ -809,6 +809,34 @@ fn barcode_routes_and_third_party_pngs() {
     ex.message.body = Value::String("x".into());
     assert!(maxi.marshal(&mut ex).is_err());
     assert!(DataFormatDefinition::new("barcode").option("barcodeFormat", "BOGUS").resolve(&c).is_err());
+    // multiple=true: every symbol of the image as a list of maps
+    {
+        use camel_dataformats::barcode::{encode, png, qr::Ecc, write_image, Format, ImageType};
+        let a = encode("first", Format::QrCode, Ecc::M, 200, 200).unwrap();
+        let b = encode("SECOND-39", Format::Code39, Ecc::M, 320, 100).unwrap();
+        let mut canvas = png::Gray { width: 600, height: 240, pixels: vec![255; 600 * 240] };
+        for (img, x0, y0) in [(&a, 10usize, 20usize), (&b, 260, 70)] {
+            for y in 0..img.height {
+                for x in 0..img.width {
+                    canvas.pixels[(y0 + y) * 600 + x0 + x] = img.pixels[y * img.width + x];
+                }
+            }
+        }
+        let multi = DataFormatDefinition::new("barcode").option("multiple", "true").resolve(&c).unwrap();
+        let mut ex = Exchange::new(None);
+        ex.message.body = Value::Bytes(write_image(&canvas, ImageType::Png));
+        multi.unmarshal(&mut ex).unwrap();
+        let mut got: Vec<(String, String)> = ex
+            .body()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| (v.get("text").unwrap().as_str().unwrap().to_string(), v.get("BarcodeFormat").unwrap().as_str().unwrap().to_string()))
+            .collect();
+        got.sort();
+        assert_eq!(got, vec![("SECOND-39".to_string(), "CODE_39".to_string()), ("first".to_string(), "QR_CODE".to_string())]);
+        assert_eq!(ex.header("BarcodeCount").unwrap().as_i64(), Some(2));
+    }
     // the further linear symbologies through a route, with format headers
     for (fmt, text, want) in [("CODABAR", "A40156B", "40156"), ("CODE_93", "Code 93!", "Code 93!"), ("EAN_8", "9638507", "96385074"), ("ITF", "30712345000010", "30712345000010"), ("UPC_E", "0123456", "01234565")] {
         let m = DataFormatDefinition::new("barcode").option("barcodeFormat", fmt).option("width", 400).option("height", 100).resolve(&c).unwrap();
