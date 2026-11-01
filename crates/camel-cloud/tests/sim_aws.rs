@@ -845,3 +845,18 @@ fn sim_aws_iam_authentication_and_sigv4() {
     let e = req_err(&t, &format!("aws2-ddb://{}?operation=DescribeTable&{}", table, with("AKIAUNKNOWNKEY000000", "x")), "", &[]);
     assert!(e.message.contains("UnrecognizedClientException") || e.message.contains("InvalidClientTokenId"), "{}", e);
 }
+
+#[test]
+fn sim_aws_https_untrusted_certificate_refused_unless_trust_all() {
+    if !sim::enabled() {
+        return;
+    }
+    // this binary keeps the system trust store, which does not hold the interop CA
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let https = "accessKey=testing&secretKey=testing&region=us-east-1&uriEndpointOverride=https://localhost:15001&overrideEndpoint=true";
+    let e = t.request_body(&format!("aws2-s3://x?operation=listBuckets&{}", https), "").unwrap_err();
+    let text = format!("{} / {}", e, e.root_cause());
+    assert!(text.to_ascii_lowercase().contains("certificate") || text.contains("TLS"), "{}", text);
+    assert!(t.request_body(&format!("aws2-s3://x?operation=listBuckets&trustAllCertificates=true&{}", https), "").is_ok());
+}
