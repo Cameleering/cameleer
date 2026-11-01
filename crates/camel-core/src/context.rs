@@ -936,6 +936,23 @@ impl CamelContext {
         Ok(())
     }
 
+    /// Give the pending (not yet created) routes without an id their generated id now
+    /// (`route1`, ... in the order they would get it at startup) and return the ids of all
+    /// pending routes.
+    pub fn assign_pending_route_ids(&self) -> Vec<String> {
+        let n = self.inner.pending_routes.lock().unwrap().len();
+        for i in 0..n {
+            let missing = self.inner.pending_routes.lock().unwrap().get(i).map(|d| d.id.is_none()).unwrap_or(false);
+            if missing {
+                let id = self.next_route_id();
+                if let Some(d) = self.inner.pending_routes.lock().unwrap().get_mut(i) {
+                    d.id = Some(id);
+                }
+            }
+        }
+        self.inner.pending_routes.lock().unwrap().iter().filter_map(|d| d.id.clone()).collect()
+    }
+
     fn next_route_id(&self) -> String {
         loop {
             let n = self.inner.route_counter.fetch_add(1, Ordering::Relaxed) + 1;
