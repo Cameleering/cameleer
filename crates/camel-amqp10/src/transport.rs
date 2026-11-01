@@ -7,14 +7,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use camel_tls::net::NetStream;
+use crate::ws::AmqpStream;
 
 use crate::types::{Frame, FrameBody};
 
-/// A connected socket (plain or TLS) carrying AMQP frames.
+/// A connected socket (plain, TLS or WebSocket) carrying AMQP frames.
 pub struct Transport {
-    stream: NetStream,
-    writer: Mutex<NetStream>,
+    stream: AmqpStream,
+    writer: Mutex<AmqpStream>,
     start: Instant,
     last_read: AtomicU64,
     last_write: AtomicU64,
@@ -26,7 +26,7 @@ pub struct Transport {
 }
 
 impl Transport {
-    pub fn new(stream: NetStream) -> std::io::Result<Arc<Transport>> {
+    pub fn new(stream: AmqpStream) -> std::io::Result<Arc<Transport>> {
         let writer = stream.try_clone()?;
         let _ = stream.set_write_timeout(Some(Duration::from_secs(30)));
         Ok(Arc::new(Transport {
@@ -46,22 +46,22 @@ impl Transport {
     }
 
     /// A clone for a reader thread.
-    pub fn reader(&self) -> std::io::Result<NetStream> {
+    pub fn reader(&self) -> std::io::Result<AmqpStream> {
         self.stream.try_clone()
     }
 
     /// The underlying stream.
-    pub fn stream(&self) -> &NetStream {
+    pub fn stream(&self) -> &AmqpStream {
         &self.stream
     }
 
     /// Lock the writer (frames written under one lock are contiguous on the wire).
-    pub fn lock_writer(&self) -> MutexGuard<'_, NetStream> {
+    pub fn lock_writer(&self) -> MutexGuard<'_, AmqpStream> {
         self.writer.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// Write bytes with an already held writer lock.
-    pub fn write_locked(&self, w: &mut MutexGuard<'_, NetStream>, bytes: &[u8]) -> std::io::Result<()> {
+    pub fn write_locked(&self, w: &mut MutexGuard<'_, AmqpStream>, bytes: &[u8]) -> std::io::Result<()> {
         if self.is_closed() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "connection closed"));
         }

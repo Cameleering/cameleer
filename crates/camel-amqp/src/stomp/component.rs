@@ -46,6 +46,31 @@
 //! (`JMSPriority`, `JMSDeliveryMode`, `JMSExpiration` headers), `JMSCorrelationID`,
 //! `JMSType`, `JMSReplyTo` and the destination override header `CamelJmsDestinationName`.
 //! Persistent sends wait for a broker receipt; `transacted` producers send in a transaction.
+//!
+//! **Subscriptions**: `durableSubscriptionName` (or `subscriptionName` with
+//! `subscriptionDurable=true`, plus `clientId`) subscribes with ActiveMQ's
+//! `activemq.subscriptionName` and Artemis' `durable-subscription-name` headers, so the
+//! broker keeps messages while the route is stopped (stopping only detaches; a durable
+//! subscription has a single subscriber). `subscriptionShared=true` with
+//! `subscriptionName` makes the concurrent consumers (and other applications using the
+//! name) share one subscription (`subscription-shared:true`, `shared-subscription-name`).
+//!
+//! **Message types**: map bodies are MapMessages and `jmsMessageType=Object` gives
+//! ObjectMessages, both as JSON with ActiveMQ's `transformation` header (`jms-map-json` /
+//! `jms-object-json`); received transformed messages become maps / values again.
+//!
+//! **Replies**: `replyToType=Temporary` (default without `replyTo`) uses a temporary queue
+//! per producer, `Shared` (default with `replyTo`) reads each reply from the shared queue
+//! with a `JMSCorrelationID` selector, `Exclusive` routes the fixed queue's replies by
+//! correlation id. `useMessageIDAsCorrelationID=true`: consumers answer with the request's
+//! `JMSMessageID` as correlation id; producers wait on a private temporary queue (STOMP
+//! brokers assign the message id, so the producer cannot know it in advance).
+//!
+//! **XA**: STOMP has no two-phase commit, so XA / JTA transaction managers
+//! (`transactionManager`) cannot be honoured; the option is accepted and ignored and
+//! `transacted` gives local (STOMP `BEGIN`/`COMMIT`) transactions, the usual emulation
+//! with idempotent consumers for exactly-once processing.
+
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -107,7 +132,27 @@ pub enum JmsAck {
 pub enum MessageType {
     Text,
     Bytes,
+    /// MapMessage: JSON with the ActiveMQ `transformation:jms-map-json` header.
+    Map,
+    /// ObjectMessage: the body serialized as JSON with `transformation:jms-object-json`.
+    Object,
 }
+
+/// Where InOut replies come back (Camel `replyToType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplyToType {
+    /// A temporary queue per producer (default without `replyTo`).
+    Temporary,
+    /// The fixed `replyTo` queue is shared with other clients: each request reads its reply
+    /// with a `JMSCorrelationID` selector (default with `replyTo`).
+    Shared,
+    /// The fixed `replyTo` queue is ours alone: one reader routes replies by correlation id.
+    Exclusive,
+}
+
+/// STOMP `transformation` header values of ActiveMQ for map / object messages.
+pub const TRANSFORMATION_MAP: &str = "jms-map-json";
+pub const TRANSFORMATION_OBJECT: &str = "jms-object-json";
 
 /// Resolved endpoint configuration.
 #[derive(Clone, Debug)]
@@ -130,6 +175,14 @@ pub struct JmsConfig {
     pub message_type: Option<MessageType>,
     pub prefetch: usize,
     pub recovery_interval: Duration,
+    /// Durable topic subscription name (`durableSubscriptionName`, `subscriptionName` with
+    /// `subscriptionDurable=true`); needs `clientId` unless shared.
+    pub durable_subscription: Option<String>,
+    /// JMS 2.0 shared subscription name (`subscriptionShared=true`).
+    pub shared_subscription: Option<String>,
+    /// `useMessageIDAsCorrelationID`.
+    pub use_message_id_as_correlation_id: bool,
+    pub reply_to_type: ReplyToType,
 }
 
 /// Camel's default `JmsKeyFormatStrategy`: `.` → `_DOT_`, `-` → `_HYPHEN_`.
@@ -255,17 +308,41 @@ impl JmsConfig {
             None => None,
             Some("Text") => Some(MessageType::Text),
             Some("Bytes") => Some(MessageType::Bytes),
-            Some(other) => return Err(CamelError::illegal_argument(format!("Unsupported jmsMessageType (Text or Bytes): {}", other))),
+            Some("Map") => Some(MessageType::Map),
+            Some("Object") => Some(MessageType::Object),
+            Some(other) => return Err(CamelError::illegal_argument(format!("Unsupported jmsMessageType (Text, Bytes, Map or Object): {}", other))),
         };
         let prefetch = num_opt("prefetchSize", o("prefetchSize"), 1usize)?;
         let recovery_interval = ms_opt("recoveryInterval", o("recoveryInterval"), Duration::from_millis(5000))?;
+        let durable_name = o("durableSubscriptionName").filter(|s| !s.is_empty());
+        let sub_name = o("subscriptionName").filter(|s| !s.is_empty());
+        let shared = bool_opt("subscriptionShared", o("subscriptionShared"), false)?;
+        let durable = bool_opt("subscriptionDurable", o("subscriptionDurable"), false)? || durable_name.is_some();
+        let is_topic = destination.starts_with("/topic/");
+        let name = durable_name.or(sub_name);
+        let durable_subscription = if durable && is_topic { Some(name.clone().unwrap_or_else(|| destination.trim_start_matches("/topic/").to_string())) } else { None };
+        let shared_subscription = if shared && is_topic { Some(name.unwrap_or_else(|| destination.trim_start_matches("/topic/").to_string())) } else { None };
+        if durable_subscription.is_some() && shared_subscription.is_none() && conn.client_id.is_none() && flavor == Flavor::Jms {
+            return Err(CamelError::illegal_argument("A durable (non-shared) subscription requires the clientId option"));
+        }
+        let use_message_id_as_correlation_id = bool_opt("useMessageIDAsCorrelationID", o("useMessageIDAsCorrelationID"), false)?;
+        let reply_to_type = match o("replyToType").as_deref().map(str::trim) {
+            None if reply_to.is_some() => ReplyToType::Shared,
+            None => ReplyToType::Temporary,
+            Some("Temporary") => ReplyToType::Temporary,
+            Some("Shared") => ReplyToType::Shared,
+            Some("Exclusive") => ReplyToType::Exclusive,
+            Some(other) => return Err(CamelError::illegal_argument(format!("Invalid replyToType (Temporary, Shared or Exclusive): {}", other))),
+        };
+        if reply_to_type != ReplyToType::Temporary && reply_to.is_none() {
+            return Err(CamelError::illegal_argument(format!("replyToType={:?} requires replyTo", reply_to_type)));
+        }
         take_ignored(params, COMMON_IGNORED);
         take_ignored(
             params,
             &[
                 "maxConcurrentConsumers",
                 "connectionFactory",
-                "replyToType",
                 "receiveTimeout",
                 "testConnectionOnStartup",
                 "includeSentJMSMessageID",
@@ -275,10 +352,6 @@ impl JmsConfig {
                 "asyncStartListener",
                 "asyncStopListener",
                 "cacheLevelName",
-                "durableSubscriptionName",
-                "subscriptionDurable",
-                "subscriptionShared",
-                "subscriptionName",
                 "pubSubNoLocal",
                 "headerFilterStrategy",
                 "messageConverter",
@@ -286,7 +359,6 @@ impl JmsConfig {
                 "transferExchange",
                 "lazyCreateTransactionManager",
                 "transactionManager",
-                "useMessageIDAsCorrelationID",
                 "replyToDeliveryPersistent",
                 "includeAllJMSXProperties",
                 "version",
@@ -312,6 +384,10 @@ impl JmsConfig {
             message_type,
             prefetch,
             recovery_interval,
+            durable_subscription,
+            shared_subscription,
+            use_message_id_as_correlation_id,
+            reply_to_type,
         })
     }
 }
@@ -393,6 +469,7 @@ const STOMP_RESERVED: &[&str] = &[
     "type",
     "transaction",
     "receipt",
+    "transformation",
 ];
 
 fn frame_to_exchange(cfg: &JmsConfig, f: &Frame, ex: &mut Exchange) {
@@ -400,10 +477,15 @@ fn frame_to_exchange(cfg: &JmsConfig, f: &Frame, ex: &mut Exchange) {
     let ct = f.get("content-type").unwrap_or("").to_ascii_lowercase();
     let as_bytes = match cfg.message_type {
         Some(MessageType::Bytes) => true,
-        Some(MessageType::Text) => false,
+        Some(_) => false,
         None => ct.starts_with("application/octet-stream"),
     };
-    let body = if as_bytes {
+    let transformed = cfg.flavor == Flavor::Jms && matches!(f.get("transformation"), Some(TRANSFORMATION_MAP) | Some(TRANSFORMATION_OBJECT) | Some("jms-json"));
+    let body = if transformed {
+        // MapMessage / ObjectMessage: back to a structured body
+        let text = String::from_utf8_lossy(&f.body).to_string();
+        camel_core::json::parse(&text).unwrap_or(Value::String(text))
+    } else if as_bytes {
         Value::Bytes(f.body.clone())
     } else {
         match String::from_utf8(f.body.clone()) {
@@ -457,17 +539,27 @@ fn header_str(ex: &Exchange, k: &str) -> Option<String> {
 fn exchange_to_frame(cfg: &JmsConfig, ex: &Exchange, include_reply_to: bool) -> (Vec<(String, String)>, Vec<u8>) {
     use headers::*;
     let mut h: Vec<(String, String)> = Vec::new();
-    let (body, ct) = match ex.body() {
+    let (mut body, ct) = match ex.body() {
         Value::Null => (Vec::new(), "text/plain;charset=UTF-8"),
         Value::Bytes(b) => (b.clone(), "application/octet-stream"),
         Value::String(s) => (s.as_bytes().to_vec(), "text/plain;charset=UTF-8"),
         v @ (Value::Object(_) | Value::Array(_)) => (v.to_json().into_bytes(), "application/json"),
         other => (other.to_string().into_bytes(), "text/plain;charset=UTF-8"),
     };
-    let ct = match cfg.message_type {
-        Some(MessageType::Bytes) => "application/octet-stream",
-        Some(MessageType::Text) => "text/plain;charset=UTF-8",
-        None => ct,
+    // JMS: maps are MapMessages (Camel's default mapping), Object forces an ObjectMessage
+    let transformation = match (cfg.flavor, cfg.message_type, ex.body()) {
+        (Flavor::Jms, Some(MessageType::Object), _) => Some(TRANSFORMATION_OBJECT),
+        (Flavor::Jms, Some(MessageType::Map), _) | (Flavor::Jms, None, Value::Object(_)) => Some(TRANSFORMATION_MAP),
+        _ => None,
+    };
+    if transformation.is_some() && !matches!(ex.body(), Value::Object(_) | Value::Array(_)) {
+        body = ex.body().to_json().into_bytes();
+    }
+    let ct = match (cfg.message_type, transformation) {
+        (_, Some(_)) => "application/json",
+        (Some(MessageType::Bytes), _) => "application/octet-stream",
+        (Some(_), _) => "text/plain;charset=UTF-8",
+        (None, None) => ct,
     };
     if cfg.flavor == Flavor::Stomp {
         for (k, v) in ex.message.headers.iter() {
@@ -482,6 +574,9 @@ fn exchange_to_frame(cfg: &JmsConfig, ex: &Exchange, include_reply_to: bool) -> 
         return (h, body);
     }
     h.push(("content-type".into(), ct.into()));
+    if let Some(t) = transformation {
+        h.push(("transformation".into(), t.into()));
+    }
     let mut persistent = cfg.delivery_persistent;
     let mut priority = cfg.priority;
     let mut expires = if cfg.time_to_live > 0 { now_millis() + cfg.time_to_live } else { 0 };
@@ -577,7 +672,10 @@ impl JmsProducer {
 
     fn reply_router(&self, s: &mut ProducerState) -> Result<(String, Pending)> {
         if s.reply.is_none() {
-            let destination = self.cfg.reply_to.clone().unwrap_or_else(|| format!("/temp-queue/camel-reply-{}", unique_id()));
+            let destination = match self.cfg.reply_to_type {
+                ReplyToType::Exclusive => self.cfg.reply_to.clone().unwrap_or_default(),
+                _ => format!("/temp-queue/camel-reply-{}", unique_id()),
+            };
             let sub: Subscription = s.conn.subscribe(&destination, AckMode::Auto, &[])?;
             let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
             let stop = StopFlag::new();
@@ -632,20 +730,45 @@ impl JmsProducer {
         let timeout = exchange.header(JMS_REQUEST_TIMEOUT).and_then(|v| v.as_i64()).map(|ms| Duration::from_millis(ms.max(1) as u64)).unwrap_or(cfg.request_timeout);
         let correlation = header_str(exchange, JMS_CORRELATION_ID).unwrap_or_else(unique_id);
         hdrs.retain(|(k, _)| k != "correlation-id" && k != "reply-to");
-        hdrs.push(("correlation-id".into(), correlation.clone()));
-        let (reply_dest, pending) = self.reply_router(g.as_mut().unwrap())?;
-        hdrs.push(("reply-to".into(), reply_dest));
-        let (tx, rx) = mpsc::channel();
-        pending.lock().unwrap().insert(correlation.clone(), tx);
-        drop(g);
-        if let Err(e) = self.send_frame(&conn, &destination, &hdrs, &body, receipt) {
-            pending.lock().unwrap().remove(&correlation);
-            return Err(e);
-        }
-        let reply = match rx.recv_timeout(timeout) {
-            Ok(r) => r,
-            Err(_) => {
+        let per_request = cfg.use_message_id_as_correlation_id || cfg.reply_to_type == ReplyToType::Shared;
+        let reply = if per_request {
+            drop(g);
+            // a subscription per request: a private temporary queue when the broker assigns
+            // the correlating JMSMessageID, else the shared replyTo queue with a selector
+            let (reply_dest, selector) = if cfg.use_message_id_as_correlation_id {
+                (format!("/temp-queue/camel-reply-{}", unique_id()), None)
+            } else {
+                hdrs.push(("correlation-id".into(), correlation.clone()));
+                (cfg.reply_to.clone().unwrap_or_default(), Some(format!("JMSCorrelationID = '{}'", correlation.replace('\'', "''"))))
+            };
+            let extra: Vec<(String, String)> = selector.into_iter().map(|s| ("selector".to_string(), s)).collect();
+            let sub = conn.subscribe(&reply_dest, AckMode::Auto, &extra)?;
+            hdrs.push(("reply-to".into(), reply_dest));
+            let r = self.send_frame(&conn, &destination, &hdrs, &body, receipt).and_then(|_| sub.messages.recv_timeout(timeout).map_err(|_| CamelError::new(kinds::EXCHANGE_TIMED_OUT, "")));
+            let _ = conn.unsubscribe(&sub.id);
+            match r {
+                Ok(f) => Ok(f),
+                Err(e) if e.kind == kinds::EXCHANGE_TIMED_OUT => Err(()),
+                Err(e) => return Err(e),
+            }
+        } else {
+            hdrs.push(("correlation-id".into(), correlation.clone()));
+            let (reply_dest, pending) = self.reply_router(g.as_mut().unwrap())?;
+            hdrs.push(("reply-to".into(), reply_dest));
+            let (tx, rx) = mpsc::channel();
+            pending.lock().unwrap().insert(correlation.clone(), tx);
+            drop(g);
+            if let Err(e) = self.send_frame(&conn, &destination, &hdrs, &body, receipt) {
                 pending.lock().unwrap().remove(&correlation);
+                return Err(e);
+            }
+            rx.recv_timeout(timeout).map_err(|_| {
+                pending.lock().unwrap().remove(&correlation);
+            })
+        };
+        let reply = match reply {
+            Ok(r) => r,
+            Err(()) => {
                 return Err(CamelError::new(
                     kinds::EXCHANGE_TIMED_OUT,
                     format!(
@@ -749,7 +872,7 @@ impl Worker {
             let reply_cfg = JmsConfig { message_type: None, priority: None, time_to_live: -1, preserve_message_qos: false, ..(**cfg).clone() };
             let (mut hdrs, body) = exchange_to_frame(&reply_cfg, &out, false);
             hdrs.retain(|(k, _)| k != "correlation-id");
-            let correlation = f.get("correlation-id").or_else(|| f.get("message-id")).unwrap_or("").to_string();
+            let correlation = if cfg.use_message_id_as_correlation_id { f.get("message-id") } else { f.get("correlation-id").or_else(|| f.get("message-id")) }.unwrap_or("").to_string();
             hdrs.push(("correlation-id".into(), correlation));
             if let Some(e) = &ex.exception {
                 hdrs.push((headers::EXCEPTION_KIND.into(), e.kind.clone()));
@@ -774,7 +897,9 @@ impl Worker {
 fn setup(cfg: &JmsConfig) -> Result<(StompConnection, Vec<Subscription>)> {
     let conn = StompConnection::open(&cfg.conn)?;
     let mut subs = Vec::new();
-    for _ in 0..cfg.concurrent_consumers {
+    // a durable (non-shared) subscription has a single subscriber
+    let n = if cfg.durable_subscription.is_some() && cfg.shared_subscription.is_none() { 1 } else { cfg.concurrent_consumers };
+    for _ in 0..n {
         let sub = if cfg.flavor == Flavor::Stomp {
             conn.subscribe(&cfg.destination, AckMode::Auto, &[])?
         } else {
@@ -785,7 +910,17 @@ fn setup(cfg: &JmsConfig) -> Result<(StompConnection, Vec<Subscription>)> {
             if let Some(s) = &cfg.selector {
                 extra.push(("selector".to_string(), s.clone()));
             }
+            if let Some(name) = &cfg.shared_subscription {
+                extra.push(("subscription-shared".to_string(), "true".to_string()));
+                extra.push(("shared-subscription-name".to_string(), name.clone()));
+            }
+            if let Some(name) = &cfg.durable_subscription {
+                // ActiveMQ (with the CONNECT client-id) and Artemis header names
+                extra.push(("activemq.subscriptionName".to_string(), name.clone()));
+                extra.push(("durable-subscription-name".to_string(), name.clone()));
+            }
             conn.subscribe(&cfg.destination, AckMode::ClientIndividual, &extra)?
+
         };
         subs.push(sub);
     }
