@@ -3,7 +3,9 @@
 //! created with camel-tls, `sign` / `verify` (ES256 / ES384 over the given digest, raw `r||s`
 //! signatures), and certificates issued by the emulator (self-signed P-256 via camel-tls
 //! `certgen`, created as a pending operation completed on the first poll) or imported from PEM.
-//! RSA key generation is not emulated (`NotSupported`).
+//! RSA and symmetric (`oct` / `oct-HSM`) keys, `encrypt` / `decrypt` / `wrapkey` /
+//! `unwrapkey`, RSA signatures and key import: see [`super::crypto`] (generated RSA keys share
+//! one fixed key pair).
 
 use std::collections::BTreeMap;
 
@@ -17,6 +19,10 @@ use crate::util::{base64_encode, base64url_encode, now_secs, obj, parse_json, ra
 
 struct KeyVersion {
     version: String,
+    /// `EC`, `RSA` or `oct` (the `-HSM` suffix kept in `kty_name`)
+    kty_name: String,
+    rsa: Option<super::crypto::Rsa>,
+    oct: Option<Vec<u8>>,
     curve: EcCurve,
     private: Vec<u8>,
     public: Vec<u8>,
@@ -66,18 +72,20 @@ fn crv_name(c: EcCurve) -> &'static str {
 
 fn key_bundle(base: &str, name: &str, k: &KeyVersion) -> Value {
     let n = k.curve.byte_len();
+    let mut key = ObjectMap::new();
+    key.insert("kid".into(), Value::from(format!("{}/keys/{}/{}", base, name, k.version)));
+    key.insert("kty".into(), Value::from(k.kty_name.clone()));
+    if let Some(r) = &k.rsa {
+        key.insert("n".into(), Value::from(base64url_encode(&r.n)));
+        key.insert("e".into(), Value::from(base64url_encode(&r.e)));
+    } else if k.oct.is_none() {
+        key.insert("crv".into(), Value::from(crv_name(k.curve)));
+        key.insert("x".into(), Value::from(base64url_encode(&k.public[1..1 + n])));
+        key.insert("y".into(), Value::from(base64url_encode(&k.public[1 + n..])));
+    }
+    key.insert("key_ops".into(), Value::from(k.ops.clone()));
     obj([
-        (
-            "key",
-            obj([
-                ("kid", Value::from(format!("{}/keys/{}/{}", base, name, k.version))),
-                ("kty", Value::from("EC")),
-                ("crv", Value::from(crv_name(k.curve))),
-                ("x", Value::from(base64url_encode(&k.public[1..1 + n]))),
-                ("y", Value::from(base64url_encode(&k.public[1 + n..]))),
-                ("key_ops", Value::from(k.ops.clone())),
-            ]),
-        ),
+        ("key", Value::Object(key)),
         ("attributes", obj([("enabled", Value::Bool(true)), ("created", Value::Int(k.created)), ("updated", Value::Int(k.created)), ("recoveryLevel", Value::from("Recoverable+Purgeable"))])),
     ])
 }
@@ -124,11 +132,104 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, segs: &[String]) -> Optio
     let cert_nf = |n: &str| kv_error(404, "CertificateNotFound", &format!("A certificate with (name/id) {} was not found in this key vault.", n));
     let r = match (req.method.as_str(), segs.as_slice()) {
         ("GET", ["keys"]) => ok(obj([("value", Value::Array(ks.keys.keys().map(|n| obj([("kid", Value::from(format!("{}/keys/{}", base, n)))])).collect()))])),
+        ("POST", ["keys", name, "create"]) if !st_("kty").starts_with("EC") => {
+            let kty = st_("kty");
+            let user_ops = body.get("key_ops").and_then(|o| o.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+            let k = if kty.starts_with("RSA") {
+                let size = body.get("key_size").and_then(|v| v.as_i64()).unwrap_or(2048);
+                if size != 2048 {
+                    return Some(kv_error(400, "BadParameter", "The emulator creates 2048-bit RSA keys only"));
+                }
+                KeyVersion { version: random_hex(16), kty_name: kty.clone(), rsa: Some(super::crypto::Rsa::fixed()), oct: None, curve: EcCurve::P256, private: vec![], public: vec![], ops: user_ops.unwrap_or_else(|| ["encrypt", "decrypt", "wrapKey", "unwrapKey", "sign", "verify"].map(String::from).to_vec()), created: now_secs() }
+            } else if kty.starts_with("oct") {
+                let bits = body.get("key_size").and_then(|v| v.as_i64()).unwrap_or(256);
+                if ![128, 192, 256].contains(&bits) {
+                    return Some(kv_error(400, "BadParameter", "Key size must be 128, 192 or 256 bits"));
+                }
+                KeyVersion { version: random_hex(16), kty_name: kty.clone(), rsa: None, oct: Some(camel_tls::crypto::rng::random_bytes(bits as usize / 8)), curve: EcCurve::P256, private: vec![], public: vec![], ops: user_ops.unwrap_or_else(|| ["encrypt", "decrypt", "wrapKey", "unwrapKey"].map(String::from).to_vec()), created: now_secs() }
+            } else {
+                return Some(kv_error(400, "BadParameter", &format!("Unknown key type {}", kty)));
+            };
+            let b = key_bundle(&base, name, &k);
+            ks.keys.entry(name.to_string()).or_default().push(k);
+            ok(b)
+        }
+        ("PUT", ["keys", name]) => {
+            // import a JWK (RSA with n / e / d, or oct with k)
+            let jwk = body.get("key").cloned().unwrap_or_default();
+            let g = |k: &str| jwk.get(k).map(|v| v.to_string()).and_then(|v| b64url_decode(&v));
+            let kty = jwk.get("kty").map(|v| v.to_string()).unwrap_or_default();
+            let ops = jwk.get("key_ops").and_then(|o| o.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+            let k = if kty.starts_with("RSA") {
+                let (Some(n), Some(e), Some(d)) = (g("n"), g("e"), g("d")) else { return Some(kv_error(400, "BadParameter", "An RSA key import needs n, e and d")) };
+                KeyVersion { version: random_hex(16), kty_name: kty, rsa: Some(super::crypto::Rsa { n, e, d }), oct: None, curve: EcCurve::P256, private: vec![], public: vec![], ops: ops.unwrap_or_else(|| ["encrypt", "decrypt", "wrapKey", "unwrapKey", "sign", "verify"].map(String::from).to_vec()), created: now_secs() }
+            } else if kty.starts_with("oct") {
+                let Some(key) = g("k").filter(|k| [16, 24, 32].contains(&k.len())) else { return Some(kv_error(400, "BadParameter", "An oct key import needs a 128/192/256-bit k")) };
+                KeyVersion { version: random_hex(16), kty_name: kty, rsa: None, oct: Some(key), curve: EcCurve::P256, private: vec![], public: vec![], ops: ops.unwrap_or_else(|| ["encrypt", "decrypt", "wrapKey", "unwrapKey"].map(String::from).to_vec()), created: now_secs() }
+            } else {
+                return Some(kv_error(400, "BadParameter", &format!("The emulator imports RSA and oct keys only, not {}", kty)));
+            };
+            let b = key_bundle(&base, name, &k);
+            ks.keys.entry(name.to_string()).or_default().push(k);
+            ok(b)
+        }
+        ("POST", ["keys", name, rest @ ..]) if matches!(rest.last(), Some(&"encrypt") | Some(&"decrypt") | Some(&"wrapkey") | Some(&"unwrapkey")) => {
+            let action = *rest.last().unwrap();
+            let Some(versions) = ks.keys.get(*name) else { return Some(key_nf(name)) };
+            let k = if rest.len() == 1 { versions.last() } else { versions.iter().find(|k| k.version == rest[0]) };
+            let Some(k) = k else { return Some(key_nf(name)) };
+            let op_name = match action {
+                "wrapkey" => "wrapKey",
+                "unwrapkey" => "unwrapKey",
+                a => a,
+            };
+            if !k.ops.iter().any(|o| o == op_name) {
+                return Some(kv_error(403, "Forbidden", &format!("Operation {} is not permitted on this key.", op_name)));
+            }
+            let alg = st_("alg");
+            let Some(value) = b64url_decode(&st_("value")) else { return Some(kv_error(400, "BadParameter", "Invalid value")) };
+            let kid = format!("{}/keys/{}/{}", base, name, k.version);
+            let bad = |m: &str| kv_error(400, "BadParameter", m);
+            if let Some(r) = &k.rsa {
+                let res = if matches!(action, "encrypt" | "wrapkey") { r.encrypt(&alg, &value) } else { r.decrypt(&alg, &value) };
+                match res {
+                    Ok(out) => ok(obj([("kid", Value::from(kid)), ("value", Value::from(base64url_encode(&out)))])),
+                    Err(e) => bad(&e),
+                }
+            } else if let Some(key) = &k.oct {
+                if super::crypto::oct_key_len(&alg) != Some(key.len()) {
+                    return Some(bad(&format!("Algorithm {} is not valid for this key.", alg)));
+                }
+                let aad = body.get("aad").map(|v| v.to_string()).and_then(|v| b64url_decode(&v)).unwrap_or_default();
+                match (action, alg.ends_with("GCM")) {
+                    ("encrypt", true) => {
+                        let (c, iv, tag) = super::crypto::gcm_encrypt(key, &aad, &value);
+                        ok(obj([("kid", Value::from(kid)), ("value", Value::from(base64url_encode(&c))), ("iv", Value::from(base64url_encode(&iv))), ("tag", Value::from(base64url_encode(&tag)))]))
+                    }
+                    ("decrypt", true) => {
+                        let iv = body.get("iv").map(|v| v.to_string()).and_then(|v| b64url_decode(&v)).unwrap_or_default();
+                        let tag = body.get("tag").map(|v| v.to_string()).and_then(|v| b64url_decode(&v)).unwrap_or_default();
+                        match super::crypto::gcm_decrypt(key, &iv, &aad, &value, &tag) {
+                            Some(p) => ok(obj([("kid", Value::from(kid)), ("value", Value::from(base64url_encode(&p)))])),
+                            None => bad("Decryption failed: the authentication tag does not match."),
+                        }
+                    }
+                    ("wrapkey", false) => match super::crypto::aes_kw_wrap(key, &value) {
+                        Some(w) => ok(obj([("kid", Value::from(kid)), ("value", Value::from(base64url_encode(&w)))])),
+                        None => bad("The key to wrap must be a multiple of 8 bytes (at least 16)."),
+                    },
+                    ("unwrapkey", false) => match super::crypto::aes_kw_unwrap(key, &value) {
+                        Some(u) => ok(obj([("kid", Value::from(kid)), ("value", Value::from(base64url_encode(&u)))])),
+                        None => bad("Unwrap failed: integrity check failed."),
+                    },
+                    _ => bad(&format!("Algorithm {} is not valid for {}.", alg, op_name)),
+                }
+            } else {
+                bad("EC keys cannot encrypt or wrap keys.")
+            }
+        }
         ("POST", ["keys", name, "create"]) => {
             let kty = st_("kty");
-            if !kty.starts_with("EC") {
-                return Some(kv_error(400, "NotSupported", &format!("Key type {} is not supported by the emulator (EC only)", kty)));
-            }
             let curve = match body.get("crv").map(|c| c.to_string()).as_deref().unwrap_or("P-256") {
                 "P-256" => EcCurve::P256,
                 "P-384" => EcCurve::P384,
@@ -137,7 +238,7 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, segs: &[String]) -> Optio
             let private = curve.generate_private();
             let public = curve.public_key(&private).unwrap_or_default();
             let ops = body.get("key_ops").and_then(|o| o.as_array()).map(|a| a.iter().map(|x| x.to_string()).collect()).unwrap_or_else(|| vec!["sign".to_string(), "verify".to_string()]);
-            let k = KeyVersion { version: random_hex(16), curve, private, public, ops, created: now_secs() };
+            let k = KeyVersion { version: random_hex(16), kty_name: kty.clone(), rsa: None, oct: None, curve, private, public, ops, created: now_secs() };
             let b = key_bundle(&base, name, &k);
             ks.keys.entry(name.to_string()).or_default().push(k);
             ok(b)
@@ -173,6 +274,33 @@ pub(super) fn handle(st: &Shared, req: &ServerRequest, segs: &[String]) -> Optio
                 return Some(kv_error(403, "Forbidden", &format!("Operation {} is not permitted on this key.", action)));
             }
             let alg = st_("alg");
+            if let Some(r) = &k.rsa {
+                let hash = match alg.get(2..).unwrap_or("") {
+                    "256" => HashAlg::Sha256,
+                    "384" => HashAlg::Sha384,
+                    "512" => HashAlg::Sha512,
+                    _ => return Some(kv_error(400, "BadParameter", &format!("Algorithm {} is not valid for this key.", alg))),
+                };
+                let pss = alg.starts_with("PS");
+                if !alg.starts_with("RS") && !pss {
+                    return Some(kv_error(400, "BadParameter", &format!("Algorithm {} is not valid for this key.", alg)));
+                }
+                let field = if action == "sign" { "value" } else { "digest" };
+                let Some(digest) = b64url_decode(&st_(field)).filter(|d| d.len() == hash.output_len()) else {
+                    return Some(kv_error(400, "BadParameter", "Invalid digest length for the algorithm."));
+                };
+                let kid = format!("{}/keys/{}/{}", base, name, k.version);
+                return Some(if action == "sign" {
+                    let p = r.private().expect("RSA key");
+                    let sig = if pss { p.sign_pss(hash, &digest) } else { p.sign_pkcs1(hash, &digest) }.unwrap_or_default();
+                    ok(obj([("kid", Value::from(kid)), ("value", Value::from(base64url_encode(&sig)))]))
+                } else {
+                    let sig = b64url_decode(&st_("value")).unwrap_or_default();
+                    let pk = r.public().expect("RSA key");
+                    let valid = if pss { pk.verify_pss(hash, &digest, &sig, None) } else { pk.verify_pkcs1(hash, &digest, &sig) };
+                    ok(obj([("value", Value::Bool(valid))]))
+                });
+            }
             let (want_curve, hash) = match alg.as_str() {
                 "ES256" => (EcCurve::P256, HashAlg::Sha256),
                 "ES384" => (EcCurve::P384, HashAlg::Sha384),

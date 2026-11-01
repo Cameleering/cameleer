@@ -15,6 +15,8 @@
 mod more;
 #[path = "azure_keys.rs"]
 mod keys;
+#[path = "azure_keycrypto.rs"]
+mod crypto;
 pub use more::{AzureFn, FUNCTIONS_MASTER_KEY, OPENAI_KEY};
 
 use std::collections::{BTreeMap, HashMap};

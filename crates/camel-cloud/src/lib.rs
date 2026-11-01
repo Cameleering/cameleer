@@ -183,6 +183,7 @@ pub fn register(ctx: &CamelContext) {
         props.add_function("azure", azure::keyvault::properties_function(ctx));
     }
     aws::secretsmanager::SecretsRefreshTask::install(ctx);
+    azure::keyvault_refresh::AzureSecretsRefreshTask::install(ctx);
     azure::blob_checkpoint::register_factory(ctx);
     if !props.has_function("gcp") {
         props.add_function("gcp", gcp::secretmanager::properties_function(ctx));

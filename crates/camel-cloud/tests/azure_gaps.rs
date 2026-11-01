@@ -213,3 +213,117 @@ fn datalake_consumer_acls_links_query_and_files() {
     let left: Vec<String> = req(&t, &dl("listPaths", "&directoryName=data"), "", &[]).body().as_array().unwrap().iter().map(|p| s(p.get("name").unwrap())).collect();
     assert_eq!(left, vec!["data/extra.txt"]);
 }
+
+#[test]
+fn key_vault_key_cryptography() {
+    let az = AzureMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let kv = |op: &str| format!("azure-key-vault://v?operation={}&{}", op, az.key_vault_options());
+    let key = |n: &str| ("CamelAzureKeyVaultKeyName", Value::from(n));
+    // RSA: encrypt / decrypt with each algorithm, wrap / unwrap, RS256 signatures
+    let created = req(&t, &kv("createKey"), "", &[key("rsa"), ("CamelAzureKeyVaultKeyType", Value::from("RSA")), ("CamelAzureKeyVaultKeySize", Value::Int(2048))]).body().clone();
+    assert_eq!(s(created.get("key").unwrap().get("kty").unwrap()), "RSA");
+    assert!(created.get("key").unwrap().get("n").is_some());
+    for alg in ["RSA-OAEP", "RSA-OAEP-256", "RSA1_5"] {
+        let alg_h = ("CamelAzureKeyVaultEncryptionAlgorithm", Value::from(alg));
+        let c = req(&t, &kv("encrypt"), "attack at dawn", &[key("rsa"), alg_h.clone()]).body().to_bytes();
+        assert_eq!(c.len(), 256);
+        assert_ne!(c, b"attack at dawn");
+        let p = req(&t, &kv("decrypt"), Value::Bytes(c.clone()), &[key("rsa"), alg_h]).body().to_bytes();
+        assert_eq!(p, b"attack at dawn", "{}", alg);
+    }
+    let c = req(&t, &kv("encrypt"), "x", &[key("rsa")]).body().to_bytes();
+    assert!(call(&t, &kv("decrypt"), Value::Bytes(c), &[key("rsa"), ("CamelAzureKeyVaultEncryptionAlgorithm", Value::from("RSA-OAEP-256"))]).is_err(), "wrong padding");
+    let dek: Vec<u8> = (0u8..32).collect();
+    let wrapped = req(&t, &kv("wrapKey"), Value::Bytes(dek.clone()), &[key("rsa")]).body().to_bytes();
+    assert_eq!(req(&t, &kv("unwrapKey"), Value::Bytes(wrapped), &[key("rsa")]).body().to_bytes(), dek);
+    let sig = req(&t, &kv("signData"), "doc", &[key("rsa"), ("CamelAzureKeyVaultSignatureAlgorithm", Value::from("RS256"))]).body().to_bytes();
+    assert_eq!(sig.len(), 256);
+    let ok = req(&t, &kv("verifyData"), "doc", &[key("rsa"), ("CamelAzureKeyVaultSignatureAlgorithm", Value::from("RS256")), ("CamelAzureKeyVaultSignature", Value::Bytes(sig))]);
+    assert_eq!(ok.body(), &Value::Bool(true));
+    // symmetric (Managed HSM) keys: AES-GCM with AAD, AES key wrap
+    req(&t, &kv("createKey"), "", &[key("aes"), ("CamelAzureKeyVaultKeyType", Value::from("oct-HSM")), ("CamelAzureKeyVaultKeySize", Value::Int(256))]);
+    let gcm = ("CamelAzureKeyVaultEncryptionAlgorithm", Value::from("A256GCM"));
+    let aad = ("CamelAzureKeyVaultAdditionalAuthenticatedData", Value::Bytes(b"header".to_vec()));
+    let enc = req(&t, &kv("encrypt"), "top secret", &[key("aes"), gcm.clone(), aad.clone()]);
+    let (iv, tag) = (enc.header("CamelAzureKeyVaultIv").unwrap().clone(), enc.header("CamelAzureKeyVaultAuthenticationTag").unwrap().clone());
+    assert_eq!(iv.to_bytes().len(), 12);
+    let cipher = enc.body().to_bytes();
+    let dec = req(&t, &kv("decrypt"), Value::Bytes(cipher.clone()), &[key("aes"), gcm.clone(), aad.clone(), ("CamelAzureKeyVaultIv", iv.clone()), ("CamelAzureKeyVaultAuthenticationTag", tag.clone())]);
+    assert_eq!(dec.body().to_bytes(), b"top secret");
+    let e = call(&t, &kv("decrypt"), Value::Bytes(cipher), &[key("aes"), gcm, ("CamelAzureKeyVaultAdditionalAuthenticatedData", Value::Bytes(b"other".to_vec())), ("CamelAzureKeyVaultIv", iv), ("CamelAzureKeyVaultAuthenticationTag", tag)]).unwrap_err();
+    assert!(e.message.contains("authentication tag"), "{}", e);
+    let kw = ("CamelAzureKeyVaultEncryptionAlgorithm", Value::from("A256KW"));
+    let w = req(&t, &kv("wrapKey"), Value::Bytes(dek.clone()), &[key("aes"), kw.clone()]).body().to_bytes();
+    assert_eq!(w.len(), 40);
+    assert_eq!(req(&t, &kv("unwrapKey"), Value::Bytes(w), &[key("aes"), kw]).body().to_bytes(), dek);
+    // importKey: an oct JWK with a known key, then RFC 3394 interop
+    let kek: Vec<u8> = (0u8..16).collect();
+    let jwk = Value::object([("kty", Value::from("oct-HSM")), ("k", Value::from(camel_cloud::util::base64url_encode(&kek)))]);
+    req(&t, &kv("importKey"), jwk, &[key("imported")]);
+    let w = req(&t, &kv("wrapKey"), Value::Bytes(vec![0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]), &[key("imported"), ("CamelAzureKeyVaultEncryptionAlgorithm", Value::from("A128KW"))]).body().to_bytes();
+    assert_eq!(camel_cloud::util::hex(&w), "1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5");
+    // EC keys cannot encrypt
+    req(&t, &kv("createKey"), "", &[key("ec")]);
+    assert!(call(&t, &kv("encrypt"), "x", &[key("ec")]).is_err());
+}
+
+#[test]
+fn key_vault_secret_refresh_through_event_hubs() {
+    use camel_amqp10::testing::Amqp10Broker;
+    const KEY_NAME: &str = "RootManageSharedAccessKey";
+    const KEY: &str = "c2VjcmV0K2tleS8xMjM=";
+    let az = AzureMock::start().unwrap();
+    let b = Amqp10Broker::builder().azure(KEY_NAME, KEY).event_hub("kv-events", 2).start().unwrap();
+    let cs = format!("{};EntityPath=kv-events", b.connection_string(KEY_NAME, KEY));
+    az.put_secret("db-password", "v1");
+    let ctx = context();
+    camel_amqp10::register(&ctx);
+    let p = ctx.properties();
+    p.set("camel.vault.azure.vaultName", "v");
+    p.set("camel.vault.azure.tenantId", TENANT_ID);
+    p.set("camel.vault.azure.clientId", CLIENT_ID);
+    p.set("camel.vault.azure.clientSecret", camel_cloud::testing::azure_services::CLIENT_SECRET);
+    p.set("camel.vault.azure.authorityHost", &az.url());
+    p.set("camel.vault.azure.uriEndpointOverride", &az.url());
+    p.set("camel.vault.azure.refreshEnabled", "true");
+    p.set("camel.vault.azure.refreshPeriod", "100");
+    p.set("camel.vault.azure.eventhubConnectionString", &cs);
+    p.set("camel.vault.azure.secrets", "db-*");
+    ctx.add_routes(|r| {
+        r.from("timer:t?period=20&repeatCount=1").route_id("uses-secret").set_body(simple("{{azure:db-password}}")).to("mock:secret");
+    })
+    .unwrap();
+    let task = camel_cloud::azure::keyvault_refresh::refresh_task(&ctx).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let s2 = seen.clone();
+    task.add_reload_listener(move |names| s2.lock().unwrap().extend(names.iter().cloned()));
+    ctx.start().unwrap();
+    assert!(task.is_enabled());
+    let m = ctx.mock_endpoint("mock:secret").unwrap();
+    let wait = |f: &dyn Fn() -> bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !f() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        f()
+    };
+    assert!(wait(&|| m.received_exchanges().len() == 1));
+    assert_eq!(s(m.received_exchanges()[0].body()), "v1");
+    // the consumer starts at the latest position: give it a moment to attach
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    az.put_secret("db-password", "v2");
+    let t = ctx.create_producer_template();
+    let eh = format!("azure-eventhubs:?connectionString=RAW({})", cs);
+    // an unrelated event type and a secret outside the pattern are ignored
+    t.send_body(&eh, r#"[{"eventType":"Microsoft.KeyVault.SecretNearExpiry","subject":"db-password","data":{"ObjectName":"db-password"}},{"eventType":"Microsoft.KeyVault.SecretNewVersionCreated","subject":"api-key","data":{"ObjectName":"api-key"}}]"#).unwrap();
+    t.send_body(&eh, r#"{"id":"1","eventType":"Microsoft.KeyVault.SecretNewVersionCreated","subject":"db-password","data":{"Id":"https://v.vault.azure.net/secrets/db-password/2","VaultName":"v","ObjectType":"Secret","ObjectName":"db-password","Version":"2"}}"#).unwrap();
+    assert!(wait(&|| task.reload_count() == 1), "reloads: {}", task.reload_count());
+    assert_eq!(*seen.lock().unwrap(), vec!["db-password".to_string()]);
+    // the route was restarted (its timer fired again); placeholders resolve the new version
+    assert!(wait(&|| m.received_exchanges().len() == 2));
+    assert_eq!(ctx.properties().resolve("{{azure:db-password}}").unwrap(), "v2");
+    ctx.stop().unwrap();
+    assert!(!task.is_enabled());
+}

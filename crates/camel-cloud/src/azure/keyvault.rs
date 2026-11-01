@@ -29,7 +29,18 @@
 //!   PKCS#12, optional `CamelAzureKeyVaultCertificatePassword`), `listCertificates` (names),
 //!   `deleteCertificate`: body = the certificate bundle (`cer` = base64 DER, `x5t`, `policy`).
 //!
-//! Options: `credentialType` (`CLIENT_SECRET` default, or `AZURE_IDENTITY` = `AZURE_CLIENT_ID` /
+//! * `importKey` (body or `CamelAzureKeyVaultKeyJwk` = a JWK map: RSA with `n`/`e`/`d`..., `oct`
+//!   with `k`), and the cryptography operations (Azure SDK `CryptographyClient`) `encrypt` /
+//!   `decrypt` (`CamelAzureKeyVaultEncryptionAlgorithm`: `RSA-OAEP` default, `RSA-OAEP-256`,
+//!   `RSA1_5`, or `A128GCM` / `A192GCM` / `A256GCM` for `oct-HSM` keys with
+//!   `CamelAzureKeyVaultIv` / `CamelAzureKeyVaultAuthenticationTag` /
+//!   `CamelAzureKeyVaultAdditionalAuthenticatedData`) and `wrapKey` / `unwrapKey` (`RSA-OAEP-256`
+//!   default, `RSA-OAEP`, `RSA1_5`, `A128KW` / `A192KW` / `A256KW`): body = the bytes (plain /
+//!   cipher text, key / wrapped key); encrypt sets the IV / tag headers returned by the vault.
+//!   `createKey` also creates `RSA` / `RSA-HSM` and `oct` / `oct-HSM` keys (`CamelAzureKeyVaultKeySize`).
+//!
+//! Options: `credentialType` (`CLIENT_SECRET` default, or `AZURE_IDENTITY` = environment client secret,
+//! workload identity federation or managed identity, see [`super::aad`]; `AZURE_CLIENT_ID` /
 //! `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID`), `authorityHost` (Azure AD host), and the
 //! rust-camel extension `uriEndpointOverride` + `overrideEndpoint` for the vault URL.
 //!
@@ -37,6 +48,9 @@
 //! `{{azure:name@version}}`, `{{azure:name:default}}`, configured with `camel.vault.azure.vaultName`,
 //! `clientId`, `clientSecret`, `tenantId`, `azureIdentityEnabled`, and (rust-camel)
 //! `authorityHost`, `uriEndpointOverride`.
+//!
+//! Secret refresh (`camel.vault.azure.refreshEnabled`, Event Hubs fed by Event Grid): see
+//! [`super::keyvault_refresh`].
 
 use std::sync::Arc;
 
@@ -75,6 +89,11 @@ pub mod headers {
     pub const CERTIFICATE_SUBJECT: &str = "CamelAzureKeyVaultCertificateSubject";
     pub const CERTIFICATE_VALIDITY_MONTHS: &str = "CamelAzureKeyVaultCertificateValidityMonths";
     pub const CERTIFICATE_PASSWORD: &str = "CamelAzureKeyVaultCertificatePassword";
+    pub const ENCRYPTION_ALGORITHM: &str = "CamelAzureKeyVaultEncryptionAlgorithm";
+    pub const IV: &str = "CamelAzureKeyVaultIv";
+    pub const AUTHENTICATION_TAG: &str = "CamelAzureKeyVaultAuthenticationTag";
+    pub const ADDITIONAL_AUTHENTICATED_DATA: &str = "CamelAzureKeyVaultAdditionalAuthenticatedData";
+    pub const KEY_JWK: &str = "CamelAzureKeyVaultKeyJwk";
 }
 
 /// Digest of `data` for a Key Vault signature algorithm.
@@ -215,7 +234,7 @@ impl CloudService for KeyVaultService {
                 let resp = self.send(Request::new("POST", self.url(&format!("/deletedsecrets/{}/recover", uri_encode(&name()?, false)))?))?;
                 ex.set_body(parse_json(&resp.body)?.get("id").cloned().unwrap_or_default());
             }
-            "createKey" | "getKey" | "listKeys" | "deleteKey" | "signData" | "verifyData" => self.key_op(ex, &op)?,
+            "createKey" | "getKey" | "listKeys" | "deleteKey" | "signData" | "verifyData" | "importKey" | "encrypt" | "decrypt" | "wrapKey" | "unwrapKey" => self.key_op(ex, &op)?,
             "createCertificate" | "getCertificate" | "importCertificate" | "listCertificates" | "deleteCertificate" => self.certificate_op(ex, &op)?,
             "listSecrets" => {
                 let resp = self.send(Request::new("GET", self.url("/secrets")?))?;
@@ -269,7 +288,8 @@ impl KeyVaultService {
         };
         match op {
             "createKey" => {
-                let kty = header_str(ex, headers::KEY_TYPE).unwrap_or_else(|| "EC".into()).to_ascii_uppercase();
+                let kty = header_str(ex, headers::KEY_TYPE).unwrap_or_else(|| "EC".into());
+                let kty = if kty.to_ascii_lowercase().starts_with("oct") { if kty.to_ascii_uppercase().ends_with("HSM") { "oct-HSM".to_string() } else { "oct".to_string() } } else { kty.to_ascii_uppercase() };
                 let mut m = camel_core::value::ObjectMap::new();
                 m.insert("kty".into(), Value::from(kty.clone()));
                 if kty.starts_with("EC") {
@@ -294,6 +314,53 @@ impl KeyVaultService {
             "deleteKey" => {
                 let v = self.json("DELETE", &format!("/keys/{}", n), None)?;
                 ex.set_body(v.get("recoveryId").cloned().unwrap_or_default());
+            }
+            "importKey" => {
+                let jwk = match ex.header(headers::KEY_JWK).cloned().or_else(|| crate::aws::body_json(ex)) {
+                    Some(Value::Object(m)) => Value::Object(m),
+                    Some(Value::String(t)) => parse_json(t.as_bytes())?,
+                    _ => return Err(CamelError::illegal_argument("importKey requires a JWK map (body or CamelAzureKeyVaultKeyJwk)")),
+                };
+                let v = self.json("PUT", &format!("/keys/{}", n), Some(crate::util::obj([("key", jwk)])))?;
+                Self::key_headers(ex, &v);
+                ex.set_body(v);
+            }
+            "encrypt" | "decrypt" | "wrapKey" | "unwrapKey" => {
+                let alg = header_str(ex, headers::ENCRYPTION_ALGORITHM).unwrap_or_else(|| if op.contains("rap") { "RSA-OAEP-256".into() } else { "RSA-OAEP".into() });
+                let vp = vpath.trim_end_matches('/').to_string();
+                let mut m = camel_core::value::ObjectMap::new();
+                m.insert("alg".into(), Value::from(alg));
+                m.insert("value".into(), Value::from(crate::util::base64url_encode(&ex.body().to_bytes())));
+                let bytes_header = |h: &str| -> Result<Option<Vec<u8>>> {
+                    Ok(match ex.header(h) {
+                        Some(Value::Bytes(b)) => Some(b.clone()),
+                        Some(Value::Null) | None => None,
+                        Some(v) => Some(b64url_decode(&v.to_string())?),
+                    })
+                };
+                if let Some(aad) = bytes_header(headers::ADDITIONAL_AUTHENTICATED_DATA)? {
+                    m.insert("aad".into(), Value::from(crate::util::base64url_encode(&aad)));
+                }
+                if op == "decrypt" {
+                    if let Some(iv) = bytes_header(headers::IV)? {
+                        m.insert("iv".into(), Value::from(crate::util::base64url_encode(&iv)));
+                    }
+                    if let Some(tag) = bytes_header(headers::AUTHENTICATION_TAG)? {
+                        m.insert("tag".into(), Value::from(crate::util::base64url_encode(&tag)));
+                    }
+                }
+                let action = op.to_ascii_lowercase();
+                let v = self.json("POST", &format!("{}/{}", vp, action), Some(Value::Object(m)))?;
+                if let Some(kid) = v.get("kid") {
+                    ex.set_header(headers::KEY_VERSION, version_of(&kid.to_string()));
+                }
+                for (field, h) in [("iv", headers::IV), ("tag", headers::AUTHENTICATION_TAG)] {
+                    if let Some(x) = v.get(field) {
+                        ex.set_header(h, Value::Bytes(b64url_decode(&x.to_string())?));
+                    }
+                }
+                let out = v.get("value").map(|s| b64url_decode(&s.to_string())).transpose()?.unwrap_or_default();
+                ex.set_body(Value::Bytes(out));
             }
             _ => {
                 let alg = header_str(ex, headers::SIGNATURE_ALGORITHM).unwrap_or_else(|| "ES256".into()).to_ascii_uppercase();
@@ -409,7 +476,10 @@ pub fn properties_function(ctx: &CamelContext) -> PropertiesFunction {
         let svc = KeyVaultService { vault, credential, operation: None, endpoint: get("uriEndpointOverride"), proxy: Proxy::Environment, trust_all_certificates: false };
         let (name, field, version) = crate::aws::secretsmanager::parse_secret_ref(r);
         match svc.get_secret(&name, version.as_deref()) {
-            Ok(v) => Ok(crate::aws::secretsmanager::secret_field(&v.get("value").map(|x| x.to_string()).unwrap_or_default(), field.as_deref())),
+            Ok(v) => Ok({
+                super::keyvault_refresh::used_secrets(&ctx).lock().unwrap().insert(name.clone());
+                crate::aws::secretsmanager::secret_field(&v.get("value").map(|x| x.to_string()).unwrap_or_default(), field.as_deref())
+            }),
             Err(e) if super::error_code(&e).as_deref() == Some("SecretNotFound") => Ok(None),
             Err(e) => Err(e),
         }

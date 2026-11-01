@@ -28,6 +28,7 @@ pub mod eventgrid;
 pub mod files;
 pub mod functions;
 pub mod keyvault;
+pub mod keyvault_refresh;
 pub mod openai;
 pub mod queue;
 pub mod rest;
