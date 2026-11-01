@@ -158,7 +158,11 @@ impl Response {
     pub fn new(status: u16) -> Response {
         Response { status, headers: Vec::new(), body: Vec::new() }
     }
+    /// Adds a header; `Content-Type` replaces an earlier one (a response has one type).
     pub fn with_header(mut self, name: &str, value: impl Into<String>) -> Response {
+        if name.eq_ignore_ascii_case("Content-Type") {
+            self.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("Content-Type"));
+        }
         self.headers.push((name.to_string(), value.into()));
         self
     }

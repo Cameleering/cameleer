@@ -192,7 +192,8 @@ fn wrong_secret_is_rejected_with_403() {
     // unknown access key
     let uri = format!("aws2-sqs://q?accessKey=NOPE&secretKey=x&uriEndpointOverride={}&overrideEndpoint=true", mock.url());
     let e = ctx.create_producer_template().request_body(&uri, "x").unwrap_err().root_cause().clone();
-    assert!(e.is_a("SqsException") && e.message.contains("InvalidAccessKeyId"), "{}", e);
+    // like AWS: SQS (JSON protocol) reports an unknown key as UnrecognizedClientException
+    assert!(e.is_a("SqsException") && e.message.contains("UnrecognizedClientException"), "{}", e);
 }
 
 #[test]

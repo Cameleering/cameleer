@@ -955,7 +955,7 @@ impl AwsMock {
 }
 
 fn sqs_json_err(code: &str, msg: &str) -> Response {
-    super::json_error(400, "com.amazonaws.sqs", code, msg)
+    super::sqs_err(code, msg)
 }
 
 pub(super) fn sqs_more(st: &Shared, req: &ServerRequest) -> Option<Response> {
@@ -1093,6 +1093,17 @@ fn sns_wrap(name: &str, inner: String) -> Response {
 }
 
 /// Deliver a published message to the topic's SQS subscriptions.
+/// With `MessageStructure=json` each protocol gets its own entry (`sqs`, else `default`).
+fn sqs_message(message: String, structure: Option<&str>) -> String {
+    if structure != Some("json") {
+        return message;
+    }
+    match parse_json(message.as_bytes()) {
+        Ok(v) => v.get("sqs").or_else(|| v.get("default")).map(|x| x.to_string()).unwrap_or(message),
+        Err(_) => message,
+    }
+}
+
 fn sns_fanout(s: &mut super::State, topic: &str, message_id: &str, message: &str, subject: Option<&str>, attributes: &[(String, String)]) {
     let subs: Vec<SnsSubscription> = s.gaps.sns.subscriptions.iter().filter(|x| x.topic == topic && x.protocol == "sqs").cloned().collect();
     for sub in subs {
@@ -1225,7 +1236,8 @@ fn sns_more(st: &Shared, req: &ServerRequest) -> Option<Response> {
                     n += 1;
                 }
                 let mut s = st.0.lock().unwrap();
-                sns_fanout(&mut s, &topic, &id, &get("Message").unwrap_or_default(), get("Subject").as_deref(), &attrs);
+                let message = sqs_message(get("Message").unwrap_or_default(), get("MessageStructure").as_deref());
+                sns_fanout(&mut s, &topic, &id, &message, get("Subject").as_deref(), &attrs);
                 st.1.notify_all();
             }
             Some(resp)
@@ -1240,6 +1252,7 @@ fn sns_more(st: &Shared, req: &ServerRequest) -> Option<Response> {
             while let Some(id) = get(&format!("PublishBatchRequestEntries.member.{}.Id", n)) {
                 let pre = format!("PublishBatchRequestEntries.member.{}.", n);
                 let msg = get(&format!("{}Message", pre)).unwrap_or_default();
+                let structure = get(&format!("{}MessageStructure", pre));
                 if fifo && get(&format!("{}MessageGroupId", pre)).is_none() {
                     failed.push_str(&format!("<member><Id>{}</Id><Code>InvalidParameter</Code><Message>The MessageGroupId parameter is required for FIFO topics</Message><SenderFault>true</SenderFault></member>", xml_escape(&id)));
                 } else {
@@ -1249,11 +1262,11 @@ fn sns_more(st: &Shared, req: &ServerRequest) -> Option<Response> {
                         message_id: mid.clone(),
                         message: msg.clone(),
                         subject: subject.clone(),
-                        message_structure: None,
+                        message_structure: structure.clone(),
                         attributes: BTreeMap::new(),
                         group_id: get(&format!("{}MessageGroupId", pre)),
                     });
-                    sns_fanout(&mut s, &topic, &mid, &msg, subject.as_deref(), &[]);
+                    sns_fanout(&mut s, &topic, &mid, &sqs_message(msg.clone(), structure.as_deref()), subject.as_deref(), &[]);
                     okx.push_str(&format!("<member><Id>{}</Id><MessageId>{}</MessageId></member>", xml_escape(&id), mid));
                 }
                 n += 1;

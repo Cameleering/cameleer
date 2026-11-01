@@ -74,6 +74,8 @@ pub(super) struct MoreState {
     ecs: BTreeMap<String, Value>,
     eks: BTreeMap<String, Value>,
     kms: BTreeMap<String, KmsKey>,
+    /// KMS aliases (`alias/name` -> key id).
+    kms_aliases: BTreeMap<String, String>,
     ts_dbs: BTreeMap<String, i64>,
     ts_tables: BTreeMap<(String, String), Vec<Value>>,
     ts_page_size: usize,
@@ -1028,17 +1030,104 @@ fn kms_meta(id: &str, k: &KmsKey) -> Value {
     ])
 }
 
-fn xor(data: &[u8], key: &[u8]) -> Vec<u8> {
-    data.iter().enumerate().map(|(i, b)| b ^ key[i % key.len()]).collect()
+/// The encryption context as authenticated data (keys sorted, like KMS canonicalizes it).
+fn kms_aad(b: &Value) -> Vec<u8> {
+    let mut pairs: Vec<(String, String)> = b.get("EncryptionContext").and_then(|c| c.as_object()).map(|o| o.iter().map(|(k, v)| (k.clone(), v.to_string())).collect()).unwrap_or_default();
+    pairs.sort();
+    let mut out = Vec::new();
+    for (k, v) in pairs {
+        out.extend_from_slice(&(k.len() as u32).to_be_bytes());
+        out.extend_from_slice(k.as_bytes());
+        out.extend_from_slice(&(v.len() as u32).to_be_bytes());
+        out.extend_from_slice(v.as_bytes());
+    }
+    out
+}
+
+/// Ciphertext blob: `KMS2` + key id (36) + nonce (12) + AES-256-GCM(plaintext, aad = context).
+fn kms_seal(id: &str, k: &KmsKey, plain: &[u8], aad: &[u8]) -> Vec<u8> {
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(&camel_tls::crypto::rng::random_bytes(12));
+    let mut blob = format!("KMS2{}", id).into_bytes();
+    blob.extend_from_slice(&nonce);
+    blob.extend(camel_tls::crypto::aes::AesGcm::new(&k.material).seal(&nonce, aad, plain));
+    blob
 }
 
 fn kms(st: &Shared, req: &ServerRequest) -> Response {
     let b = body(req);
     let mut g = st.0.lock().unwrap();
     let m = &mut g.more;
-    let key_id = s_(&b, "KeyId").rsplit('/').next().unwrap_or("").to_string();
-    let not_found = || jerr(KMS, "NotFoundException", &format!("Key 'arn:aws:kms:us-east-1:{}:key/{}' does not exist", ACCOUNT, key_id));
+    // key id, key ARN, alias name or alias ARN
+    let raw_id = s_(&b, "KeyId");
+    let alias = raw_id.find("alias/").map(|i| raw_id[i..].to_string());
+    let key_id = match &alias {
+        Some(a) => m.kms_aliases.get(a).cloned().unwrap_or_default(),
+        None => raw_id.rsplit('/').next().unwrap_or("").to_string(),
+    };
+    let shown = raw_id.clone();
+    let not_found = || match &alias {
+        Some(a) => jerr(KMS, "NotFoundException", &format!("Alias arn:aws:kms:us-east-1:{}:{} is not found.", ACCOUNT, a)),
+        None => jerr(KMS, "NotFoundException", &format!("Key 'arn:aws:kms:us-east-1:{}:key/{}' does not exist", ACCOUNT, shown.rsplit('/').next().unwrap_or(""))),
+    };
     match target(req).as_str() {
+        "CreateAlias" | "UpdateAlias" => {
+            let name = s_(&b, "AliasName");
+            if !name.starts_with("alias/") || name.starts_with("alias/aws/") {
+                return jerr(KMS, "ValidationException", "Alias must start with the prefix \"alias/\" and must not begin with \"alias/aws/\"");
+            }
+            let target_id = s_(&b, "TargetKeyId").rsplit('/').next().unwrap_or("").to_string();
+            if !m.kms.contains_key(&target_id) {
+                return jerr(KMS, "NotFoundException", &format!("Key 'arn:aws:kms:us-east-1:{}:key/{}' does not exist", ACCOUNT, target_id));
+            }
+            let exists = m.kms_aliases.contains_key(&name);
+            if target(req) == "CreateAlias" && exists {
+                return jerr(KMS, "AlreadyExistsException", &format!("An alias with the name arn:aws:kms:us-east-1:{}:{} already exists", ACCOUNT, name));
+            }
+            if target(req) == "UpdateAlias" && !exists {
+                return jerr(KMS, "NotFoundException", &format!("Alias arn:aws:kms:us-east-1:{}:{} is not found.", ACCOUNT, name));
+            }
+            m.kms_aliases.insert(name, target_id);
+            ok(obj([]))
+        }
+        "DeleteAlias" => match m.kms_aliases.remove(&s_(&b, "AliasName")) {
+            Some(_) => ok(obj([])),
+            None => jerr(KMS, "NotFoundException", "Alias is not found."),
+        },
+        "ListAliases" => {
+            let filter = Some(s_(&b, "KeyId")).filter(|k| !k.is_empty()).map(|k| k.rsplit('/').next().unwrap_or("").to_string());
+            let list: Vec<Value> = m
+                .kms_aliases
+                .iter()
+                .filter(|(_, id)| filter.as_ref().is_none_or(|f| f == *id))
+                .map(|(a, id)| obj([("AliasName", Value::from(a.clone())), ("AliasArn", Value::from(format!("arn:aws:kms:us-east-1:{}:{}", ACCOUNT, a))), ("TargetKeyId", Value::from(id.clone()))]))
+                .collect();
+            ok(obj([("Aliases", Value::Array(list)), ("Truncated", Value::Bool(false))]))
+        }
+        "GenerateDataKey" | "GenerateDataKeyWithoutPlaintext" => match m.kms.get(&key_id) {
+            Some(k) if k.state != "Enabled" => jerr(KMS, "DisabledException", &format!("{} is disabled.", k.arn)),
+            Some(k) => {
+                let n = match (b.get("NumberOfBytes").and_then(|n| n.as_i64()), s_(&b, "KeySpec").as_str()) {
+                    (Some(n), _) if (1..=1024).contains(&n) => n as usize,
+                    (Some(_), _) => return jerr(KMS, "ValidationException", "NumberOfBytes must be between 1 and 1024"),
+                    (None, "AES_128") => 16,
+                    (None, "AES_256") => 32,
+                    _ => return jerr(KMS, "ValidationException", "Please specify either number of bytes or key spec."),
+                };
+                let plain = camel_tls::crypto::rng::random_bytes(n);
+                let blob = kms_seal(&key_id, k, &plain, &kms_aad(&b));
+                let mut out = vec![("CiphertextBlob", Value::from(base64_encode(&blob))), ("KeyId", Value::from(k.arn.clone()))];
+                if target(req) == "GenerateDataKey" {
+                    out.push(("Plaintext", Value::from(base64_encode(&plain))));
+                }
+                ok(Value::Object(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+            }
+            None => not_found(),
+        },
+        "GenerateRandom" => {
+            let n = b.get("NumberOfBytes").and_then(|n| n.as_i64()).unwrap_or(32).clamp(1, 1024) as usize;
+            ok(obj([("Plaintext", Value::from(base64_encode(&camel_tls::crypto::rng::random_bytes(n))))]))
+        }
         "CreateKey" => {
             let id = uuid();
             let k = KmsKey { arn: format!("arn:aws:kms:us-east-1:{}:key/{}", ACCOUNT, id), description: s_(&b, "Description"), state: "Enabled".into(), material: camel_tls::crypto::rng::random_bytes(32), created: now_secs() };
@@ -1086,22 +1175,30 @@ fn kms(st: &Shared, req: &ServerRequest) -> Response {
             Some(k) if k.state != "Enabled" => jerr(KMS, "DisabledException", &format!("{} is disabled.", k.arn)),
             Some(k) => {
                 let plain = base64_decode(&s_(&b, "Plaintext")).unwrap_or_default();
-                let mut blob = format!("KMS1{}", key_id).into_bytes();
-                blob.extend(xor(&plain, &k.material));
+                if plain.is_empty() || plain.len() > 4096 {
+                    return jerr(KMS, "ValidationException", "Plaintext must be between 1 and 4096 bytes");
+                }
+                let blob = kms_seal(&key_id, k, &plain, &kms_aad(&b));
                 ok(obj([("CiphertextBlob", Value::from(base64_encode(&blob))), ("KeyId", Value::from(k.arn.clone())), ("EncryptionAlgorithm", Value::from("SYMMETRIC_DEFAULT"))]))
             }
             None => not_found(),
         },
         "Decrypt" => {
             let blob = base64_decode(&s_(&b, "CiphertextBlob")).unwrap_or_default();
-            if blob.len() < 40 || &blob[..4] != b"KMS1" {
-                return jerr(KMS, "InvalidCiphertextException", "The ciphertext is invalid");
+            if blob.len() < 68 || &blob[..4] != b"KMS2" {
+                return jerr(KMS, "InvalidCiphertextException", "");
             }
             let id = String::from_utf8_lossy(&blob[4..40]).into_owned();
+            let mut nonce = [0u8; 12];
+            nonce.copy_from_slice(&blob[40..52]);
             match m.kms.get(&id) {
                 Some(k) if k.state != "Enabled" => jerr(KMS, "DisabledException", &format!("{} is disabled.", k.arn)),
-                Some(k) => ok(obj([("Plaintext", Value::from(base64_encode(&xor(&blob[40..], &k.material)))), ("KeyId", Value::from(k.arn.clone()))])),
-                None => jerr(KMS, "InvalidCiphertextException", "The ciphertext refers to an unknown key"),
+                // a different encryption context fails authentication, like KMS
+                Some(k) => match camel_tls::crypto::aes::AesGcm::new(&k.material).open(&nonce, &kms_aad(&b), &blob[52..]) {
+                    Some(plain) => ok(obj([("Plaintext", Value::from(base64_encode(&plain))), ("KeyId", Value::from(k.arn.clone())), ("EncryptionAlgorithm", Value::from("SYMMETRIC_DEFAULT"))])),
+                    None => jerr(KMS, "InvalidCiphertextException", ""),
+                },
+                None => jerr(KMS, "InvalidCiphertextException", ""),
             }
         }
         other => jerr(KMS, "UnsupportedOperationException", &format!("Unsupported action {}", other)),

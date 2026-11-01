@@ -795,6 +795,22 @@ fn secrets(st: &Shared, req: &ServerRequest) -> Response {
             }
             json_ok(obj([("ARN", Value::from(arn)), ("Name", Value::from(name)), ("DeletionDate", Value::Int(when))]))
         }
+        "UpdateSecret" => {
+            let Some(sec) = ext.secrets.get_mut(&name) else { return not_found() };
+            if sec.deleted.is_some() {
+                return err("InvalidRequestException", "You can't perform this operation on the secret because it was marked for deletion.");
+            }
+            if let Some(d) = body.get("Description") {
+                sec.description = d.to_string();
+            }
+            let mut out = vec![("ARN", Value::from(sec.arn.clone())), ("Name", Value::from(name.clone()))];
+            if body.get("SecretString").is_some_and(|v| !v.is_null()) || body.get("SecretBinary").is_some_and(|v| !v.is_null()) {
+                let v = new_version(&body);
+                out.push(("VersionId", Value::from(v.id.clone())));
+                sec.versions.push(v);
+            }
+            json_ok(Value::Object(out.into_iter().map(|(k, v)| (k.to_string(), v)).collect()))
+        }
         "RestoreSecret" => {
             let Some(sec) = ext.secrets.get_mut(&name) else { return not_found() };
             sec.deleted = None;

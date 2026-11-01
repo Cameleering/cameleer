@@ -67,6 +67,40 @@ struct SqsMsg {
 struct Queue {
     attributes: BTreeMap<String, String>,
     messages: Vec<SqsMsg>,
+    /// FIFO deduplication ids seen in the last 5 minutes: id -> (time, message id).
+    dedup: HashMap<String, (i64, String)>,
+}
+
+/// `MD5OfMessageAttributes` as SQS computes it: attributes sorted by name, each encoded as
+/// length-prefixed name, data type, a transport byte (1 string / number, 2 binary) and the
+/// length-prefixed value.
+fn message_attributes_md5(attrs: &Value) -> Option<String> {
+    let a = attrs.as_object().filter(|a| !a.is_empty())?;
+    let mut names: Vec<&String> = a.keys().collect();
+    names.sort();
+    let mut buf = Vec::new();
+    let put = |b: &[u8], buf: &mut Vec<u8>| {
+        buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
+        buf.extend_from_slice(b);
+    };
+    for n in names {
+        let v = &a[n];
+        let dt = v.get("DataType").map(|d| d.to_string()).unwrap_or_else(|| "String".into());
+        put(n.as_bytes(), &mut buf);
+        put(dt.as_bytes(), &mut buf);
+        if dt.starts_with("Binary") {
+            buf.push(2);
+            let raw = v.get("BinaryValue").map(|b| match b {
+                Value::Bytes(x) => x.clone(),
+                other => crate::util::base64_decode(&other.to_string()).unwrap_or_default(),
+            });
+            put(&raw.unwrap_or_default(), &mut buf);
+        } else {
+            buf.push(1);
+            put(v.get("StringValue").map(|s| s.to_string()).unwrap_or_default().as_bytes(), &mut buf);
+        }
+    }
+    Some(md5_hex(&buf))
 }
 
 /// A message published to an emulated SNS topic.
@@ -365,10 +399,21 @@ fn auth_error(req: &ServerRequest, f: &AuthFailure) -> Response {
             "s3".into()
         }
     });
+    // an unknown access key is InvalidAccessKeyId only for S3; Query services report
+    // InvalidClientTokenId and JSON services UnrecognizedClientException
+    let unknown_key = f.code == "InvalidAccessKeyId";
+    let query_code = if unknown_key { "InvalidClientTokenId" } else { f.code };
+    let query_msg = if unknown_key { "The security token included in the request is invalid." } else { f.message.as_str() };
     match service.as_str() {
         "s3" => s3_error(403, f.code, &f.message),
-        "sns" | "ses" | "monitoring" | "sts" | "iam" | "ec2" => query_error(403, f.code, &f.message),
+        "sns" | "ses" | "monitoring" | "sts" | "iam" | "ec2" => query_error(403, query_code, query_msg),
+        // SQS speaks both the Query (XML) and the JSON protocol: answer in the request's
+        "sqs" if req.header("X-Amz-Target").is_none() => query_error(403, query_code, query_msg),
+        "sqs" if unknown_key => json_error(403, "com.amazon.coral.service", "UnrecognizedClientException", query_msg).with_header("x-amzn-query-error", "InvalidClientTokenId;Sender"),
+        "sqs" => json_error(403, "com.amazon.coral.service", f.code, &f.message).with_header("x-amzn-query-error", format!("{};Sender", f.code)),
         "lambda" | "polly" | "mq" | "eks" | "kafka" | "bedrock" => Response::json(403, obj([("message", Value::from(f.message.clone()))]).to_json()).with_header("x-amzn-ErrorType", format!("{}:", f.code)),
+        // an unknown access key is UnrecognizedClientException for the JSON services
+        _ if f.code == "InvalidAccessKeyId" => json_error(403, "com.amazon.coral.service", "UnrecognizedClientException", "The security token included in the request is invalid."),
         _ => json_error(403, "com.amazon.coral.service", f.code, &f.message),
     }
 }
@@ -422,6 +467,19 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
             return auth_error(req, &f);
         }
     }
+    dispatch(st, &verified.service, req)
+}
+
+/// Routes a verified request to the service emulators.
+fn dispatch(st: &Shared, service: &str, req: &ServerRequest) -> Response {
+    if service == "dynamodb" {
+        match req.header("X-Amz-Target").and_then(|t| t.strip_prefix("DynamoDB_20120810.")) {
+            Some("BatchWriteItem") => return ddb_batch_write(st, req),
+            Some("TransactWriteItems") => return ddb_transact_write(st, req),
+            _ => {}
+        }
+    }
+    let verified = Verified { service: service.to_string() };
     if let Some(resp) = gaps::handle(st, &verified.service, req) {
         return resp;
     }
@@ -442,6 +500,117 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
         "lambda" => lambda(st, req),
         other => s3_error(400, "InvalidRequest", &format!("Service {} is not emulated", other)),
     }
+}
+
+struct Verified {
+    service: String,
+}
+
+/// Runs one DynamoDB operation (with the full expression support of the emulator).
+fn ddb_call(st: &Shared, req: &ServerRequest, op: &str, body: Value) -> Response {
+    let mut r = req.clone();
+    r.headers.retain(|(k, _)| !k.eq_ignore_ascii_case("X-Amz-Target"));
+    r.headers.push(("X-Amz-Target".into(), format!("DynamoDB_20120810.{}", op)));
+    r.body = body.to_json().into_bytes();
+    dispatch(st, "dynamodb", &r)
+}
+
+/// BatchWriteItem: `PutRequest` / `DeleteRequest` entries for several tables (no
+/// `UnprocessedItems`: the emulator always has capacity).
+fn ddb_batch_write(st: &Shared, req: &ServerRequest) -> Response {
+    let body = match parse_json(&req.body) {
+        Ok(b) => b,
+        Err(e) => return ddb_err("SerializationException", &e.to_string()),
+    };
+    let items = body.get("RequestItems").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let total: usize = items.values().map(|v| v.as_array().map(|a| a.len()).unwrap_or(0)).sum();
+    if total == 0 || total > 25 {
+        return ddb_err("ValidationException", "Too many items requested for the BatchWriteItem call");
+    }
+    for (table, reqs) in &items {
+        if !st.0.lock().unwrap().tables.contains_key(table) {
+            return ddb_err("ResourceNotFoundException", "Requested resource not found");
+        }
+        for r in reqs.as_array().cloned().unwrap_or_default() {
+            let resp = if let Some(p) = r.get("PutRequest") {
+                ddb_call(st, req, "PutItem", obj([("TableName", Value::from(table.as_str())), ("Item", p.get("Item").cloned().unwrap_or_default())]))
+            } else if let Some(d) = r.get("DeleteRequest") {
+                ddb_call(st, req, "DeleteItem", obj([("TableName", Value::from(table.as_str())), ("Key", d.get("Key").cloned().unwrap_or_default())]))
+            } else {
+                return ddb_err("ValidationException", "Supplied AttributeValue has neither PutRequest nor DeleteRequest");
+            };
+            if resp.status != 200 {
+                return resp;
+            }
+        }
+    }
+    Response::json(200, obj([("UnprocessedItems", Value::Object(ObjectMap::new()))]).to_json()).with_header("Content-Type", "application/x-amz-json-1.0")
+}
+
+/// TransactWriteItems: `Put` / `Update` / `Delete` / `ConditionCheck`, all or nothing. A
+/// failed condition cancels the transaction with per-item `CancellationReasons`.
+fn ddb_transact_write(st: &Shared, req: &ServerRequest) -> Response {
+    let body = match parse_json(&req.body) {
+        Ok(b) => b,
+        Err(e) => return ddb_err("SerializationException", &e.to_string()),
+    };
+    let ops = body.get("TransactItems").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    if ops.is_empty() || ops.len() > 100 {
+        return ddb_err("ValidationException", "1 validation error detected: Value at 'transactItems' failed to satisfy constraint: Member must have length between 1 and 100");
+    }
+    let snapshot: Vec<(String, Vec<ObjectMap>)> = st.0.lock().unwrap().tables.iter().map(|(k, t)| (k.clone(), t.items.clone())).collect();
+    let mut reasons = Vec::new();
+    let mut failed = false;
+    for op in &ops {
+        let Some((kind, spec)) = op.as_object().and_then(|o| o.iter().next()).map(|(k, v)| (k.clone(), v.clone())) else { continue };
+        let resp = match kind.as_str() {
+            "Put" => Some(ddb_call(st, req, "PutItem", spec)),
+            "Delete" => Some(ddb_call(st, req, "DeleteItem", spec)),
+            "Update" => Some(ddb_call(st, req, "UpdateItem", spec)),
+            "ConditionCheck" => {
+                // a condition check is an update that changes nothing
+                let mut probe = spec.clone();
+                if let Value::Object(o) = &mut probe {
+                    o.insert("UpdateExpression".into(), Value::from("SET #camelcc = #camelcc"));
+                    let names = o.entry("ExpressionAttributeNames".to_string()).or_insert_with(|| Value::Object(ObjectMap::new()));
+                    if let Value::Object(n) = names {
+                        n.insert("#camelcc".into(), Value::from(spec.get("Key").and_then(|k| k.as_object()).and_then(|k| k.keys().next().cloned()).unwrap_or_default()));
+                    }
+                }
+                Some(ddb_call(st, req, "UpdateItem", probe))
+            }
+            other => return ddb_err("ValidationException", &format!("Unknown TransactItem {}", other)),
+        };
+        match resp {
+            Some(r) if r.status == 200 => reasons.push(obj([("Code", Value::from("None"))])),
+            Some(r) => {
+                failed = true;
+                let v = parse_json(&r.body).unwrap_or_default();
+                let code = v.get("__type").map(|t| t.to_string()).unwrap_or_default();
+                let code = code.rsplit('#').next().unwrap_or("").trim_end_matches("Exception").to_string();
+                reasons.push(obj([("Code", Value::from(code)), ("Message", v.get("message").or_else(|| v.get("Message")).cloned().unwrap_or_default())]));
+            }
+            None => {}
+        }
+    }
+    if failed {
+        let mut s = st.0.lock().unwrap();
+        for (name, items) in snapshot {
+            if let Some(t) = s.tables.get_mut(&name) {
+                t.items = items;
+            }
+        }
+        let codes: Vec<String> = reasons.iter().map(|r| r.get("Code").map(|c| c.to_string()).unwrap_or_default()).collect();
+        let mut v = obj([
+            ("__type", Value::from("com.amazonaws.dynamodb.v20120810#TransactionCanceledException")),
+            ("message", Value::from(format!("Transaction cancelled, please refer cancellation reasons for specific reasons [{}]", codes.join(", ")))),
+        ]);
+        if let Value::Object(o) = &mut v {
+            o.insert("CancellationReasons".into(), Value::Array(reasons));
+        }
+        return Response::json(400, v.to_json()).with_header("Content-Type", "application/x-amz-json-1.0");
+    }
+    Response::json(200, "{}".to_string()).with_header("Content-Type", "application/x-amz-json-1.0")
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +644,9 @@ fn s3(st: &Shared, req: &ServerRequest) -> Response {
         }
         xml.push_str("</Buckets></ListAllMyBucketsResult>");
         return Response::xml(200, xml);
+    }
+    if key.is_none() && req.method == "GET" && req.query.split('&').any(|p| p == "uploads" || p.starts_with("uploads=")) {
+        return s3_multipart(&mut s, req, &bucket, "");
     }
     let Some(key) = key else {
         return match req.method.as_str() {
@@ -645,6 +817,53 @@ fn s3_multipart(s: &mut State, req: &ServerRequest, bucket: &str, key: &str) -> 
             Some(_) => Response::new(204),
             None => no_upload(),
         },
+        // ListMultipartUploads (GET /bucket?uploads)
+        "GET" if upload_id.is_empty() => {
+            let prefix = req.query_param("prefix").unwrap_or_default();
+            let mut list: Vec<(&String, &Upload)> = s.uploads.iter().filter(|(_, u)| u.bucket == bucket && u.key.starts_with(&prefix)).collect();
+            list.sort_by(|a, b| a.1.key.cmp(&b.1.key).then_with(|| a.0.cmp(b.0)));
+            let items: String = list
+                .iter()
+                .map(|(id, u)| format!("<Upload><Key>{}</Key><UploadId>{}</UploadId><StorageClass>STANDARD</StorageClass><Initiated>{}</Initiated></Upload>", xml_escape(&u.key), id, iso8601_millis(now_millis())))
+                .collect();
+            Response::xml(
+                200,
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListMultipartUploadsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{}</Bucket><KeyMarker></KeyMarker><UploadIdMarker></UploadIdMarker><Prefix>{}</Prefix><MaxUploads>1000</MaxUploads><IsTruncated>false</IsTruncated>{}</ListMultipartUploadsResult>",
+                    xml_escape(bucket),
+                    xml_escape(&prefix),
+                    items
+                ),
+            )
+        }
+        // ListParts (GET /bucket/key?uploadId=..)
+        "GET" => {
+            let Some(u) = s.uploads.get(&upload_id).filter(|u| u.bucket == bucket && u.key == key) else { return no_upload() };
+            let marker: i32 = req.query_param("part-number-marker").and_then(|m| m.parse().ok()).unwrap_or(0);
+            let max: usize = req.query_param("max-parts").and_then(|m| m.parse().ok()).unwrap_or(1000);
+            let all: Vec<(&i32, &Vec<u8>)> = u.parts.iter().filter(|(n, _)| **n > marker).collect();
+            let truncated = all.len() > max;
+            let page = &all[..all.len().min(max)];
+            let parts: String = page
+                .iter()
+                .map(|(n, d)| format!("<Part><PartNumber>{}</PartNumber><LastModified>{}</LastModified><ETag>\"{}\"</ETag><Size>{}</Size></Part>", n, iso8601_millis(now_millis()), md5_hex(d), d.len()))
+                .collect();
+            let next = page.last().map(|(n, _)| **n).unwrap_or(marker);
+            Response::xml(
+                200,
+                format!(
+                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListPartsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{}</Bucket><Key>{}</Key><UploadId>{}</UploadId><StorageClass>STANDARD</StorageClass><PartNumberMarker>{}</PartNumberMarker><NextPartNumberMarker>{}</NextPartNumberMarker><MaxParts>{}</MaxParts><IsTruncated>{}</IsTruncated>{}</ListPartsResult>",
+                    xml_escape(bucket),
+                    xml_escape(key),
+                    upload_id,
+                    marker,
+                    next,
+                    max,
+                    truncated,
+                    parts
+                ),
+            )
+        }
         _ => s3_error(405, "MethodNotAllowed", "Method not allowed"),
     }
 }
@@ -709,8 +928,20 @@ fn s3_list(bucket: &str, b: &Bucket, req: &ServerRequest) -> Response {
 // SQS (JSON protocol)
 // ---------------------------------------------------------------------------
 
-fn sqs_err(code: &str, msg: &str) -> Response {
-    json_error(400, "com.amazonaws.sqs", code, msg).with_header("x-amzn-query-error", format!("AWS.SimpleQueueService.{};Sender", code))
+pub(super) fn sqs_err(code: &str, msg: &str) -> Response {
+    json_error(400, "com.amazonaws.sqs", code, msg).with_header("x-amzn-query-error", format!("{};Sender", sqs_query_code(code)))
+}
+
+/// The legacy Query error code SQS reports in `x-amzn-query-error` for a JSON error type
+/// (what AWS SDKs with the `awsQueryCompatible` trait expose as the error code).
+pub(super) fn sqs_query_code(code: &str) -> String {
+    match code {
+        "QueueDoesNotExist" => "AWS.SimpleQueueService.NonExistentQueue".into(),
+        "QueueNameExists" => "QueueAlreadyExists".into(),
+        "QueueDeletedRecently" | "PurgeQueueInProgress" | "MessageNotInflight" | "BatchEntryIdsNotDistinct" | "EmptyBatchRequest" | "TooManyEntriesInBatchRequest" | "BatchRequestTooLong"
+        | "InvalidBatchEntryId" | "UnsupportedOperation" => format!("AWS.SimpleQueueService.{}", code),
+        other => other.to_string(),
+    }
 }
 
 fn queue_name_of(url: &str) -> String {
@@ -757,29 +988,75 @@ fn sqs(st: &Shared, req: &ServerRequest) -> Response {
             let name = queue_name_of(&s_("QueueUrl"));
             let Some(q) = s.queues.get_mut(&name) else { return sqs_err("QueueDoesNotExist", "The specified queue does not exist.") };
             match action.as_str() {
-                "SendMessage" => {
-                    let text = s_("MessageBody");
-                    let delay = body.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0);
-                    let m = new_msg(text.clone(), body.get("MessageAttributes").cloned().unwrap_or(Value::Object(ObjectMap::new())), delay);
-                    let id = m.id.clone();
-                    q.messages.push(m);
-                    cv.notify_all();
-                    ok(obj([("MessageId", Value::from(id)), ("MD5OfMessageBody", Value::from(md5_hex(text.as_bytes())))]))
-                }
-                "SendMessageBatch" => {
+                "SendMessage" | "SendMessageBatch" => {
+                    let fifo = name.ends_with(".fifo") || q.attributes.get("FifoQueue").is_some_and(|v| v == "true");
+                    let content_dedup = q.attributes.get("ContentBasedDeduplication").is_some_and(|v| v == "true");
+                    let entries: Vec<Value> = if action == "SendMessage" { vec![body.clone()] } else { body.get("Entries").and_then(|e| e.as_array()).cloned().unwrap_or_default() };
                     let mut out = Vec::new();
-                    for e in body.get("Entries").and_then(|e| e.as_array()).cloned().unwrap_or_default() {
+                    let mut failed = Vec::new();
+                    let now = now_millis();
+                    q.dedup.retain(|_, (t, _)| now - *t < 5 * 60 * 1000);
+                    for e in &entries {
                         let text = e.get("MessageBody").map(|b| b.to_string()).unwrap_or_default();
-                        let m = new_msg(text.clone(), Value::Object(ObjectMap::new()), e.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0));
-                        out.push(obj([
-                            ("Id", e.get("Id").cloned().unwrap_or_default()),
-                            ("MessageId", Value::from(m.id.clone())),
-                            ("MD5OfMessageBody", Value::from(md5_hex(text.as_bytes()))),
-                        ]));
-                        q.messages.push(m);
+                        let attrs = e.get("MessageAttributes").cloned().unwrap_or(Value::Object(ObjectMap::new()));
+                        let entry_id = e.get("Id").cloned().unwrap_or_default();
+                        let fail = |code: &str, msg: &str| obj([("Id", entry_id.clone()), ("Code", Value::from(code)), ("Message", Value::from(msg)), ("SenderFault", Value::Bool(true))]);
+                        let mut msg_id;
+                        if fifo {
+                            if e.get("MessageGroupId").is_none() {
+                                if action == "SendMessage" {
+                                    return sqs_err("MissingParameter", "The request must contain the parameter MessageGroupId.");
+                                }
+                                failed.push(fail("MissingParameter", "The request must contain the parameter MessageGroupId."));
+                                continue;
+                            }
+                            let dedup_id = match e.get("MessageDeduplicationId") {
+                                Some(d) => d.to_string(),
+                                None if content_dedup => crate::util::sha256_hex(text.as_bytes()),
+                                None => {
+                                    let m = "The queue should either have ContentBasedDeduplication enabled or MessageDeduplicationId provided explicitly";
+                                    if action == "SendMessage" {
+                                        return sqs_err("InvalidParameterValue", m);
+                                    }
+                                    failed.push(fail("InvalidParameterValue", m));
+                                    continue;
+                                }
+                            };
+                            // a duplicate within the 5 minute deduplication interval is accepted but not enqueued
+                            msg_id = q.dedup.get(&dedup_id).map(|(_, id)| id.clone());
+                            if msg_id.is_none() {
+                                let m = new_msg(text.clone(), attrs.clone(), 0);
+                                q.dedup.insert(dedup_id, (now, m.id.clone()));
+                                msg_id = Some(m.id.clone());
+                                q.messages.push(m);
+                            }
+                        } else {
+                            let m = new_msg(text.clone(), attrs.clone(), e.get("DelaySeconds").and_then(|d| d.as_i64()).unwrap_or(0));
+                            msg_id = Some(m.id.clone());
+                            q.messages.push(m);
+                        }
+                        let mut r = obj([("MessageId", Value::from(msg_id.unwrap_or_default())), ("MD5OfMessageBody", Value::from(md5_hex(text.as_bytes())))]);
+                        if let (Some(md5), Value::Object(o)) = (message_attributes_md5(&attrs), &mut r) {
+                            o.insert("MD5OfMessageAttributes".into(), Value::from(md5));
+                        }
+                        if fifo {
+                            if let Value::Object(o) = &mut r {
+                                o.insert("SequenceNumber".into(), Value::from(format!("{:020}", now)));
+                            }
+                        }
+                        if action == "SendMessageBatch" {
+                            if let Value::Object(o) = &mut r {
+                                o.insert("Id".into(), entry_id.clone());
+                            }
+                        }
+                        out.push(r);
                     }
                     cv.notify_all();
-                    ok(obj([("Successful", Value::Array(out)), ("Failed", Value::Array(vec![]))]))
+                    if action == "SendMessage" {
+                        ok(out.pop().unwrap_or_default())
+                    } else {
+                        ok(obj([("Successful", Value::Array(out)), ("Failed", Value::Array(failed))]))
+                    }
                 }
                 "ReceiveMessage" => {
                     let max = body.get("MaxNumberOfMessages").and_then(|m| m.as_i64()).unwrap_or(1).clamp(1, 10) as usize;
@@ -995,6 +1272,19 @@ fn ddb(st: &Shared, req: &ServerRequest) -> Response {
             ("ItemCount", Value::Int(t.items.len() as i64)),
         ])
     };
+    if action == "ListTables" {
+        let start = body.get("ExclusiveStartTableName").map(|t| t.to_string());
+        let limit = body.get("Limit").and_then(|l| l.as_i64()).unwrap_or(100).clamp(1, 100) as usize;
+        let mut names: Vec<&String> = s.tables.keys().filter(|n| start.as_ref().is_none_or(|st| *n > st)).collect();
+        names.sort();
+        let more = names.len() > limit;
+        names.truncate(limit);
+        let mut v = obj([("TableNames", Value::Array(names.iter().map(|n| Value::from(n.as_str())).collect()))]);
+        if let (true, Some(last), Value::Object(o)) = (more, names.last(), &mut v) {
+            o.insert("LastEvaluatedTableName".into(), Value::from(last.as_str()));
+        }
+        return ok(v);
+    }
     if action == "CreateTable" {
         if s.tables.contains_key(&table_name) {
             return ddb_err("ResourceInUseException", "Table already exists");

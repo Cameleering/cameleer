@@ -173,7 +173,8 @@ impl CloudService for SecretsManagerService {
                 m.insert("SecretId".to_string(), Value::from(Self::secret_id(ex)?));
                 m.insert("ClientRequestToken".to_string(), Value::from(crate::util::uuid()));
                 self.payload(ex, &mut m);
-                let r = self.call("PutSecretValue", Value::Object(m))?;
+                // Camel's SecretsManagerProducer calls the UpdateSecret API (not PutSecretValue)
+                let r = self.call("UpdateSecret", Value::Object(m))?;
                 ex.set_header(headers::SECRET_VERSION_ID, r.get("VersionId").cloned().unwrap_or_default());
                 ex.set_body(r.get("ARN").cloned().unwrap_or_default());
             }
