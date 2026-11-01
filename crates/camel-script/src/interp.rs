@@ -858,6 +858,16 @@ impl Interp {
                     self.globals.define(name, v);
                     return;
                 }
+                if sc.globals.borrow().iter().any(|g| g.strip_prefix("%nonlocal:") == Some(name)) {
+                    // `nonlocal`: the binding of an enclosing function
+                    if let Some(p) = &sc.parent {
+                        if p.assign(name, v.clone()) {
+                            return;
+                        }
+                    }
+                    sc.define(name, v);
+                    return;
+                }
                 if sc.func {
                     break;
                 }

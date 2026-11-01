@@ -1376,7 +1376,7 @@ impl P {
                     while self.eat_op(",") {
                         names.push(self.name()?);
                     }
-                    return Ok(if k == "global" { Stmt::Global(names) } else { Stmt::Empty });
+                    return Ok(Stmt::Global(if k == "global" { names } else { names.into_iter().map(|n| format!("%nonlocal:{}", n)).collect() }));
                 }
                 "import" | "from" => return self.import_stmt(),
                 "assert" => {

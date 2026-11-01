@@ -149,3 +149,19 @@ fn python_functools_itertools_collections() {
         ],
     );
 }
+
+#[test]
+fn python_scoping_and_params() {
+    let ctx = ctx();
+    let ex = exchange(&ctx);
+    check(
+        "python",
+        &ex,
+        &[
+            ("def outer():\n    n = 0\n    def inc():\n        nonlocal n\n        n += 1\n    inc()\n    inc()\n    return n\nouter()", "2"),
+            ("def f(a, /, b, *, c=3):\n    return a + b + c\nf(1, 2, c=4)", "7"),
+            ("def f(*args, sep='-', **kw):\n    return sep.join(args) + str(sorted(kw.keys()))\nf('a', 'b', sep='+', x=1, y=2)", "\"a+b['x', 'y']\""),
+            ("registry = []\ndef register(cls):\n    registry.append(cls.__name__)\n    return cls\n@register\nclass A:\n    pass\nregistry", "[\"A\"]"),
+        ],
+    );
+}
