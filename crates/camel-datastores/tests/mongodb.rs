@@ -214,7 +214,7 @@ fn create_collection_false() {
 fn scram_authentication() {
     let mut users = BTreeMap::new();
     users.insert("admin".to_string(), "s3cret".to_string());
-    let server = MongoServer::start_with(MongoServerConfig { users, tls: None }).unwrap();
+    let server = MongoServer::start_with(MongoServerConfig { users, ..Default::default() }).unwrap();
     let ctx = CamelContext::new();
     camel_datastores::register(&ctx);
     ctx.start().unwrap();

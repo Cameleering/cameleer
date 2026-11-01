@@ -58,6 +58,8 @@ pub fn parse_plain(data: &[u8]) -> Option<(String, String, String)> {
 /// SCRAM hash variant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScramMechanism {
+    /// `SCRAM-SHA-1` (RFC 5802; MongoDB's legacy mechanism).
+    Sha1,
     Sha256,
     Sha512,
 }
@@ -66,6 +68,7 @@ impl ScramMechanism {
     /// `SCRAM-SHA-256` / `SCRAM-SHA-512` (case-insensitive).
     pub fn from_name(name: &str) -> Option<ScramMechanism> {
         match name.trim().to_ascii_uppercase().as_str() {
+            "SCRAM-SHA-1" => Some(ScramMechanism::Sha1),
             "SCRAM-SHA-256" => Some(ScramMechanism::Sha256),
             "SCRAM-SHA-512" => Some(ScramMechanism::Sha512),
             _ => None,
@@ -74,6 +77,7 @@ impl ScramMechanism {
 
     pub fn name(self) -> &'static str {
         match self {
+            ScramMechanism::Sha1 => "SCRAM-SHA-1",
             ScramMechanism::Sha256 => "SCRAM-SHA-256",
             ScramMechanism::Sha512 => "SCRAM-SHA-512",
         }
@@ -81,6 +85,7 @@ impl ScramMechanism {
 
     fn alg(self) -> HashAlg {
         match self {
+            ScramMechanism::Sha1 => HashAlg::Sha1,
             ScramMechanism::Sha256 => HashAlg::Sha256,
             ScramMechanism::Sha512 => HashAlg::Sha512,
         }

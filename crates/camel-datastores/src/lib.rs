@@ -6,7 +6,7 @@
 //! | scheme | module | protocol |
 //! |---|---|---|
 //! | `spring-redis` | [`redis`] | RESP2 / RESP3, AUTH, SELECT, pipelining, pub/sub, TLS |
-//! | `mongodb` | [`mongodb`] | OP_MSG + BSON, SCRAM-SHA-256, TLS, tailable cursors, change streams |
+//! | `mongodb`, `mongodb-gridfs` | [`mongodb`] | OP_MSG + BSON, SCRAM-SHA-1/256, X.509, `mongodb+srv` ([`dns`]), replica sets, TLS, tailable cursors, change streams, bulk writes, GridFS |
 //! | `elasticsearch`, `opensearch` | [`elasticsearch`] | REST/JSON over HTTP(S), basic auth / API key |
 //! | `cql` | [`cassandra`] | CQL native protocol v4, PasswordAuthenticator, prepared statements, paging |
 //! | `couchdb` | [`couchdb`] | CouchDB REST API, `_changes` feed consumer |
@@ -16,6 +16,7 @@
 
 pub mod cassandra;
 pub mod couchdb;
+pub mod dns;
 pub mod elasticsearch;
 pub mod mongodb;
 pub mod redis;
@@ -38,6 +39,8 @@ pub mod kinds {
     pub const MONGO_COMMAND: &str = "MongoCommandException";
     pub const MONGO_WRITE: &str = "MongoWriteException";
     pub const MONGO_SECURITY: &str = "MongoSecurityException";
+    pub const MONGO_CONFIGURATION: &str = "MongoConfigurationException";
+    pub const MONGO_BULK_WRITE: &str = "MongoBulkWriteException";
     pub const CAMEL_MONGODB: &str = "CamelMongoDbException";
     pub const ELASTICSEARCH: &str = "ElasticsearchException";
     pub const CASSANDRA_DRIVER: &str = "DriverException";
@@ -61,6 +64,8 @@ pub fn register_kinds() {
     register_kind_parent(MONGO_COMMAND, MONGO);
     register_kind_parent(MONGO_WRITE, MONGO);
     register_kind_parent(MONGO_SECURITY, MONGO);
+    register_kind_parent(MONGO_CONFIGURATION, MONGO);
+    register_kind_parent(MONGO_BULK_WRITE, MONGO);
     register_kind_parent(CAMEL_MONGODB, core::CAMEL_EXCHANGE);
     register_kind_parent(ELASTICSEARCH, core::RUNTIME);
     register_kind_parent(CASSANDRA_DRIVER, core::RUNTIME);
@@ -84,6 +89,7 @@ pub fn register(ctx: &CamelContext) {
     register_kinds();
     add(ctx, "spring-redis", || Arc::new(redis::RedisComponent));
     add(ctx, "mongodb", || Arc::new(mongodb::MongoDbComponent));
+    add(ctx, "mongodb-gridfs", || Arc::new(mongodb::GridFsComponent));
     add(ctx, "elasticsearch", || Arc::new(elasticsearch::ElasticsearchComponent::new("elasticsearch")));
     add(ctx, "opensearch", || Arc::new(elasticsearch::ElasticsearchComponent::new("opensearch")));
     add(ctx, "cql", || Arc::new(cassandra::CqlComponent));
