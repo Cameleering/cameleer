@@ -601,6 +601,25 @@ impl GcpConfig {
         }
     }
 
+    /// Send with a bearer token and stream a successful response body into `sink` (errors
+    /// become exceptions of `kind`).
+    pub fn send_to(&self, req: Request, kind: &str, sink: &mut dyn std::io::Write) -> Result<Response> {
+        let http = self.http();
+        let mut r = req.clone();
+        if let Some(tok) = self.token_with(CLOUD_PLATFORM_SCOPE, &http)? {
+            r.set_header("Authorization", format!("Bearer {}", tok));
+        }
+        let (resp, _) = http.send_to(&r, sink)?;
+        if resp.is_success() {
+            Ok(resp)
+        } else {
+            if resp.status == 401 {
+                self.invalidate(CLOUD_PLATFORM_SCOPE);
+            }
+            Err(google_error(kind, &resp))
+        }
+    }
+
     /// Send with a bearer token for `scope` (retrying once after a 401) and return the
     /// response whatever its status.
     pub fn send_raw(&self, req: Request, scope: &str) -> Result<Response> {

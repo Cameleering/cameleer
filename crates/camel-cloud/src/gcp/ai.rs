@@ -13,6 +13,22 @@
 //!   default `image/png`) or a `gs://` URI in `CamelGoogleVertexAIMediaGcsUri`, with the text
 //!   prompt `CamelGoogleVertexAIPrompt`.
 //! * `countTokens`: body = total token count.
+//! * Streaming: `generateTextStreaming` / `generateChatStreaming` / `generateCodeStreaming`
+//!   (`streamGenerateContent?alt=sse`, SSE decoded incrementally): body = the concatenated text
+//!   (`streamOutputMode=complete`, default) or the list of chunks (`chunks`), headers
+//!   `CamelGoogleVertexAIStreamingChunkCount`, finish reason, token counts; a
+//!   `streamingChunkProcessor=#bean` processor gets each chunk.
+//! * `generateEmbeddings` (text embedding models, `:predict` with `instances[].content`, optional
+//!   `taskType` / `outputDimensionality`): a text body → one vector, a list body → vectors.
+//! * `generateImage` (Imagen, `:predict` with the prompt, `sampleCount` (default 1),
+//!   `aspectRatio`): body = list of image bytes.
+//! * Partner models (`publisher=anthropic`, `meta`, `mistralai`...): `rawPredict` (the body map
+//!   sent as is, e.g. an Anthropic Messages request with `anthropic_version`; body = the parsed
+//!   response, the text of Anthropic `content` blocks in `CamelGoogleVertexAIResponseText`) and
+//!   `streamRawPredict` (SSE: Anthropic `content_block_delta` text deltas or OpenAI-style
+//!   `choices[].delta.content` chunks concatenated; `message_delta` stop reason / usage as
+//!   headers). A text body is wrapped into an Anthropic Messages request (`anthropic_version`
+//!   `vertex-2023-10-16`, `maxOutputTokens` → `max_tokens`, default 1024).
 //!
 //! Results: body = the text of the first candidate; headers `CamelGoogleVertexAIFinishReason`,
 //! `...PromptTokenCount`, `...CandidatesTokenCount`, `...TotalTokenCount`,
@@ -55,6 +71,9 @@ pub mod vertex_headers {
     pub const TOTAL_TOKEN_COUNT: &str = "CamelGoogleVertexAITotalTokenCount";
     pub const SAFETY_RATINGS: &str = "CamelGoogleVertexAISafetyRatings";
     pub const RESPONSE: &str = "CamelGoogleVertexAIResponse";
+    pub const RESPONSE_TEXT: &str = "CamelGoogleVertexAIResponseText";
+    pub const STREAMING_CHUNK_COUNT: &str = "CamelGoogleVertexAIStreamingChunkCount";
+    pub const STREAMING_CHUNK_INDEX: &str = "CamelGoogleVertexAIStreamingChunkIndex";
 }
 
 /// Speech header names.
@@ -91,6 +110,9 @@ pub struct VertexAiService {
     pub operation: Option<String>,
     pub system_instruction: Option<String>,
     generation: ObjectMap,
+    pub stream_output_mode: String,
+    pub chunk_processor: Option<Arc<dyn camel_core::spi::Processor>>,
+    pub predict_options: ObjectMap,
 }
 
 /// Factory for `google-vertexai`.
@@ -115,6 +137,24 @@ pub fn create_vertexai(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudSer
         operation: o.get("operation"),
         system_instruction: o.get("systemInstruction"),
         generation,
+        stream_output_mode: o.string("streamOutputMode", "complete"),
+        chunk_processor: match o.get("streamingChunkProcessor") {
+            Some(r) => {
+                let name = r.trim_start_matches('#').trim_start_matches("bean:").to_string();
+                let p = o.context().registry().lookup::<Arc<dyn camel_core::spi::Processor>>(&name).ok_or_else(|| CamelError::no_such_bean(&name))?;
+                Some((*p).clone())
+            }
+            None => None,
+        },
+        predict_options: {
+            let mut m = ObjectMap::new();
+            for k in ["taskType", "outputDimensionality", "sampleCount", "aspectRatio"] {
+                if let Some(v) = o.get(k) {
+                    m.insert(k.into(), v.parse::<i64>().map(Value::Int).unwrap_or(Value::from(v)));
+                }
+            }
+            m
+        },
     }))
 }
 
@@ -195,6 +235,143 @@ impl VertexAiService {
     }
 }
 
+impl VertexAiService {
+    /// A partner model request: the body map as is, or a text wrapped into an Anthropic
+    /// Messages request.
+    fn raw_request(&self, ex: &Exchange) -> Value {
+        match ex.body() {
+            Value::Object(m) => Value::Object(m.clone()),
+            other => {
+                let mut m = ObjectMap::new();
+                m.insert("anthropic_version".into(), Value::from("vertex-2023-10-16"));
+                m.insert("max_tokens".into(), self.generation.get("maxOutputTokens").cloned().unwrap_or(Value::Int(1024)));
+                if let Some(si) = header_str(ex, vertex_headers::SYSTEM_INSTRUCTION).or_else(|| self.system_instruction.clone()) {
+                    m.insert("system".into(), Value::from(si));
+                }
+                m.insert("messages".into(), Value::Array(vec![obj([("role", Value::from("user")), ("content", Value::from(other.to_string()))])]));
+                Value::Object(m)
+            }
+        }
+    }
+
+    fn chunk(&self, ctx: &Option<camel_core::context::CamelContext>, chunks: &mut Vec<String>, text: String, err: &mut Option<CamelError>) {
+        if let Some(p) = &self.chunk_processor {
+            let mut cex = Exchange::new(ctx.clone());
+            cex.set_header(vertex_headers::STREAMING_CHUNK_INDEX, chunks.len() as i64);
+            cex.set_body(text.clone());
+            if let Err(e) = p.process(&mut cex) {
+                err.get_or_insert(e);
+            }
+        }
+        chunks.push(text);
+    }
+
+    fn finish_stream(&self, ex: &mut Exchange, chunks: Vec<String>) {
+        ex.set_header(vertex_headers::STREAMING_CHUNK_COUNT, chunks.len() as i64);
+        ex.set_body(if self.stream_output_mode.eq_ignore_ascii_case("chunks") { Value::from(chunks) } else { Value::from(chunks.concat()) });
+    }
+
+    fn stream_generate(&self, ex: &mut Exchange, req: &Value) -> Result<()> {
+        let url = format!("{}?alt=sse", self.url("streamGenerateContent"));
+        let request = crate::http::Request::new("POST", crate::http::Url::parse(&url)?).header("Content-Type", "application/json").header("Accept", "text/event-stream").body(req.to_json().into_bytes());
+        let ctx = ex.context().ok().cloned();
+        let mut chunks = Vec::new();
+        let (mut finish, mut usage, mut perr) = (Value::Null, Value::Null, None);
+        {
+            let mut dec = crate::sse::SseDecoder::new(|e: crate::sse::SseEvent| {
+                let v = crate::util::parse_json(e.data.as_bytes())?;
+                if let Some(u) = v.get("usageMetadata") {
+                    usage = u.clone();
+                }
+                let cand = v.get("candidates").and_then(|c| c.as_array()).and_then(|c| c.first().cloned()).unwrap_or_default();
+                if let Some(f) = cand.get("finishReason") {
+                    finish = f.clone();
+                }
+                let text: String = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()).map(|ps| ps.iter().filter_map(|p| p.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join("")).unwrap_or_default();
+                if !text.is_empty() {
+                    self.chunk(&ctx, &mut chunks, text, &mut perr);
+                }
+                Ok(())
+            });
+            let r = self.gcp.send_to(request, kinds::GOOGLE_API, &mut dec);
+            if let Some(e) = dec.take_error() {
+                return Err(e);
+            }
+            r?;
+            dec.finish()?;
+        }
+        if let Some(e) = perr {
+            return Err(e);
+        }
+        ex.set_header(vertex_headers::FINISH_REASON, finish);
+        for (k, h) in [("promptTokenCount", vertex_headers::PROMPT_TOKEN_COUNT), ("candidatesTokenCount", vertex_headers::CANDIDATES_TOKEN_COUNT), ("totalTokenCount", vertex_headers::TOTAL_TOKEN_COUNT)] {
+            if let Some(v) = usage.get(k) {
+                ex.set_header(h, v.clone());
+            }
+        }
+        self.finish_stream(ex, chunks);
+        Ok(())
+    }
+
+    fn stream_raw(&self, ex: &mut Exchange, req: &Value) -> Result<()> {
+        let mut body = req.as_object().cloned().unwrap_or_default();
+        body.insert("stream".into(), Value::Bool(true));
+        let request = crate::http::Request::new("POST", crate::http::Url::parse(&self.url("streamRawPredict"))?).header("Content-Type", "application/json").header("Accept", "text/event-stream").body(Value::Object(body).to_json().into_bytes());
+        let ctx = ex.context().ok().cloned();
+        let mut chunks = Vec::new();
+        let (mut stop, mut usage, mut perr) = (Value::Null, Value::Null, None);
+        {
+            let mut dec = crate::sse::SseDecoder::new(|e: crate::sse::SseEvent| {
+                if e.data.trim() == "[DONE]" {
+                    return Ok(());
+                }
+                let v = crate::util::parse_json(e.data.as_bytes())?;
+                let kind = v.get("type").map(|t| t.to_string()).or(e.event.clone()).unwrap_or_default();
+                match kind.as_str() {
+                    "content_block_delta" => {
+                        if let Some(t) = v.get("delta").and_then(|d| d.get("text")) {
+                            self.chunk(&ctx, &mut chunks, t.to_string(), &mut perr);
+                        }
+                    }
+                    "message_delta" => {
+                        if let Some(sr) = v.get("delta").and_then(|d| d.get("stop_reason")) {
+                            stop = sr.clone();
+                        }
+                        if let Some(u) = v.get("usage") {
+                            usage = u.clone();
+                        }
+                    }
+                    "error" => return Err(crate::util::cloud_error(kinds::GOOGLE_API, format!("Streaming error: {}", v.get("error").map(|x| x.to_json()).unwrap_or_default()))),
+                    _ => {
+                        for c in v.get("choices").and_then(|c| c.as_array()).cloned().unwrap_or_default() {
+                            if let Some(t) = c.get("delta").and_then(|d| d.get("content")).filter(|t| !t.is_null()) {
+                                self.chunk(&ctx, &mut chunks, t.to_string(), &mut perr);
+                            }
+                            if let Some(f) = c.get("finish_reason").filter(|f| !f.is_null()) {
+                                stop = f.clone();
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            });
+            let r = self.gcp.send_to(request, kinds::GOOGLE_API, &mut dec);
+            if let Some(e) = dec.take_error() {
+                return Err(e);
+            }
+            r?;
+            dec.finish()?;
+        }
+        if let Some(e) = perr {
+            return Err(e);
+        }
+        ex.set_header(vertex_headers::FINISH_REASON, stop);
+        ex.set_header(vertex_headers::RESPONSE, usage);
+        self.finish_stream(ex, chunks);
+        Ok(())
+    }
+}
+
 impl CloudService for VertexAiService {
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = operation(ex, vertex_headers::OPERATION, &self.operation, "generateText");
@@ -224,6 +401,58 @@ impl CloudService for VertexAiService {
                 let req = self.request(ex, &op)?;
                 let r = self.gcp.json("POST", &self.url("countTokens"), Some(&req), kinds::GOOGLE_API)?;
                 ex.set_body(r.get("totalTokens").cloned().unwrap_or_default());
+            }
+            "generateTextStreaming" | "generateChatStreaming" | "generateCodeStreaming" => {
+                let req = self.request(ex, op.trim_end_matches("Streaming"))?;
+                self.stream_generate(ex, &req)?;
+            }
+            "generateEmbeddings" => {
+                let (items, single) = match ex.body() {
+                    Value::Array(a) => (a.iter().map(|x| x.to_string()).collect::<Vec<_>>(), false),
+                    other => (vec![other.to_string()], true),
+                };
+                let instances: Vec<Value> = items
+                    .iter()
+                    .map(|t| {
+                        let mut m = ObjectMap::new();
+                        m.insert("content".into(), Value::from(t.clone()));
+                        if let Some(tt) = self.predict_options.get("taskType") {
+                            m.insert("task_type".into(), tt.clone());
+                        }
+                        Value::Object(m)
+                    })
+                    .collect();
+                let mut params = ObjectMap::new();
+                if let Some(d) = self.predict_options.get("outputDimensionality") {
+                    params.insert("outputDimensionality".into(), d.clone());
+                }
+                let r = self.gcp.json("POST", &self.url("predict"), Some(&obj([("instances", Value::Array(instances)), ("parameters", Value::Object(params))])), kinds::GOOGLE_API)?;
+                let vectors: Vec<Value> = r.get("predictions").and_then(|p| p.as_array()).cloned().unwrap_or_default().iter().map(|p| p.get("embeddings").and_then(|e| e.get("values")).cloned().unwrap_or_default()).collect();
+                ex.set_body(if single { vectors.into_iter().next().unwrap_or_default() } else { Value::Array(vectors) });
+            }
+            "generateImage" => {
+                let mut params = ObjectMap::new();
+                params.insert("sampleCount".into(), self.predict_options.get("sampleCount").cloned().unwrap_or(Value::Int(1)));
+                if let Some(a) = self.predict_options.get("aspectRatio") {
+                    params.insert("aspectRatio".into(), a.clone());
+                }
+                let r = self.gcp.json("POST", &self.url("predict"), Some(&obj([("instances", Value::Array(vec![obj([("prompt", Value::from(ex.body().to_string()))])])), ("parameters", Value::Object(params))])), kinds::GOOGLE_API)?;
+                let images: Vec<Value> = r.get("predictions").and_then(|p| p.as_array()).cloned().unwrap_or_default().iter().map(|p| Value::Bytes(p.get("bytesBase64Encoded").and_then(|b| base64_decode(&b.to_string())).unwrap_or_default())).collect();
+                ex.set_body(Value::Array(images));
+            }
+            "rawPredict" => {
+                let req = self.raw_request(ex);
+                let r = self.gcp.json("POST", &self.url("rawPredict"), Some(&req), kinds::GOOGLE_API)?;
+                let text: String = r.get("content").and_then(|c| c.as_array()).map(|blocks| blocks.iter().filter_map(|b| b.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join("")).unwrap_or_default();
+                ex.set_header(vertex_headers::RESPONSE_TEXT, text);
+                if let Some(sr) = r.get("stop_reason") {
+                    ex.set_header(vertex_headers::FINISH_REASON, sr.clone());
+                }
+                ex.set_body(r);
+            }
+            "streamRawPredict" => {
+                let req = self.raw_request(ex);
+                self.stream_raw(ex, &req)?;
             }
             other => return Err(unsupported("google-vertexai", other)),
         }

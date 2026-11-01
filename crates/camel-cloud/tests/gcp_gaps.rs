@@ -353,3 +353,48 @@ fn sheets_batch_updates() {
     assert_eq!(cleared.as_array().unwrap().len(), 2);
     assert!(req(&t, &uri("data/get"), "", &[("CamelGoogleSheets.range", Value::from("Copy!A1:B2"))]).body().as_array().unwrap().iter().all(|r| r.as_array().unwrap().is_empty()));
 }
+
+#[test]
+fn vertexai_streaming_embeddings_images_and_partner_models() {
+    let env = Env::new();
+    let ctx = context();
+    let chunks: std::sync::Arc<std::sync::Mutex<Vec<String>>> = Default::default();
+    let c2 = chunks.clone();
+    let p: std::sync::Arc<dyn camel_core::spi::Processor> = std::sync::Arc::new(move |ex: &mut Exchange| -> Result<()> {
+        c2.lock().unwrap().push(s(ex.body()));
+        Ok(())
+    });
+    ctx.registry().bind("onChunk", p);
+    let t = ctx.create_producer_template();
+    let v = |model: &str, extra: &str| format!("google-vertexai:{}:us-central1:{}?{}{}", PROJECT, model, env.opts(), extra);
+    let ex = req(&t, &v("gemini-1.5-pro", "&operation=generateChatStreaming&streamingChunkProcessor=#onChunk"), "stream this answer", &[]);
+    assert_eq!(s(ex.body()), "Echo: stream this answer");
+    assert_eq!(ex.header("CamelGoogleVertexAIStreamingChunkCount").and_then(|c| c.as_i64()), Some(4));
+    assert_eq!(s(ex.header("CamelGoogleVertexAIFinishReason").unwrap()), "STOP");
+    assert!(ex.header("CamelGoogleVertexAITotalTokenCount").is_some());
+    assert_eq!(chunks.lock().unwrap().len(), 4);
+    let ex = req(&t, &v("gemini-1.5-pro", "&operation=generateTextStreaming&streamOutputMode=chunks"), "hi", &[]);
+    assert_eq!(ex.body().as_array().unwrap().len(), 2);
+    // embeddings
+    let one = req(&t, &v("text-embedding-004", "&operation=generateEmbeddings&outputDimensionality=4&taskType=RETRIEVAL_DOCUMENT"), "hello world", &[]).body().clone();
+    assert_eq!(one.as_array().unwrap().len(), 4);
+    let many = req(&t, &v("text-embedding-004", "&operation=generateEmbeddings"), Value::from(vec!["a", "bb", "ccc"]), &[]).body().clone();
+    assert_eq!(many.as_array().unwrap().len(), 3);
+    assert_eq!(many.as_array().unwrap()[0].as_array().unwrap().len(), 8);
+    assert_eq!(env.mock.vertex_requests().last().unwrap().get("instances").unwrap().as_array().unwrap().len(), 3);
+    // Imagen
+    let imgs = req(&t, &v("imagen-3.0-generate-001", "&operation=generateImage&sampleCount=2"), "a lighthouse", &[]).body().clone();
+    assert_eq!(imgs.as_array().unwrap().iter().map(|b| b.to_bytes()).collect::<Vec<_>>(), vec![b"PNG#0:a lighthouse".to_vec(), b"PNG#1:a lighthouse".to_vec()]);
+    // partner model (Anthropic Claude on Vertex)
+    let claude = |op: &str| v("claude-3-5-sonnet@20240620", &format!("&publisher=anthropic&operation={}&maxOutputTokens=256&systemInstruction=RAW(be brief)", op));
+    let r = req(&t, &claude("rawPredict"), "what is camel?", &[]);
+    assert_eq!(s(r.header("CamelGoogleVertexAIResponseText").unwrap()), "[be brief] Claude says: what is camel?");
+    assert_eq!(s(r.header("CamelGoogleVertexAIFinishReason").unwrap()), "end_turn");
+    let sent = env.mock.vertex_requests().pop().unwrap();
+    assert_eq!(sent.get("max_tokens").and_then(|m| m.as_i64()), Some(256));
+    let r = req(&t, &claude("streamRawPredict"), "stream it", &[]);
+    assert_eq!(s(r.body()), "[be brief] Claude says: stream it");
+    assert_eq!(s(r.header("CamelGoogleVertexAIFinishReason").unwrap()), "end_turn");
+    let raw = Value::object([("anthropic_version", Value::from("bad")), ("max_tokens", Value::Int(5)), ("messages", Value::Array(vec![]))]);
+    assert!(call(&t, &claude("rawPredict"), raw, &[]).unwrap_err().message.contains("anthropic_version"));
+}

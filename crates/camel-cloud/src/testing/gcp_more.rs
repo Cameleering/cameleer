@@ -676,6 +676,9 @@ fn vertex(st: &Shared, req: &ServerRequest, model_verb: &str) -> Response {
     }
     let body = parse_json(&req.body).unwrap_or_default();
     st.lock().unwrap().more.vertex_requests.push(body.clone());
+    if let Some(r) = vertex_more(model, verb, req, &body) {
+        return r;
+    }
     let contents = body.get("contents").and_then(|c| c.as_array()).cloned().unwrap_or_default();
     if contents.is_empty() {
         return gerror(400, "INVALID_ARGUMENT", "Unable to submit request because it has an empty contents field.");
@@ -685,7 +688,7 @@ fn vertex(st: &Shared, req: &ServerRequest, model_verb: &str) -> Response {
     let all_words: usize = contents.iter().map(|c| parts_text(c.get("parts")).0.split_whitespace().count()).sum();
     match verb {
         "countTokens" => ok(obj([("totalTokens", Value::Int(all_words as i64)), ("totalBillableCharacters", Value::Int(text.len() as i64))])),
-        "generateContent" => {
+        "generateContent" | "streamGenerateContent" => {
             let mut reply = format!("Echo: {}", text);
             if !media.is_empty() {
                 reply.push_str(&format!(" (+{})", media.join("; ")));
@@ -699,6 +702,31 @@ fn vertex(st: &Shared, req: &ServerRequest, model_verb: &str) -> Response {
                 _ => (reply, "STOP"),
             };
             let out = reply.split_whitespace().count() as i64;
+            if verb == "streamGenerateContent" {
+                if req.query_param("alt").as_deref() != Some("sse") {
+                    return gerror(400, "INVALID_ARGUMENT", "The emulator streams with alt=sse only");
+                }
+                // one chunk per word; the last carries the finish reason and the usage
+                let words: Vec<String> = reply.split_inclusive(' ').map(|w| w.to_string()).collect();
+                let n = words.len();
+                let events: Vec<(Option<&str>, String)> = words
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, w)| {
+                        let mut cand = ObjectMap::new();
+                        cand.insert("content".into(), obj([("role", Value::from("model")), ("parts", Value::Array(vec![obj([("text", Value::from(w))])]))]));
+                        let mut chunk = ObjectMap::new();
+                        if i + 1 == n {
+                            cand.insert("finishReason".into(), Value::from(finish));
+                            chunk.insert("usageMetadata".into(), obj([("promptTokenCount", Value::Int(all_words as i64)), ("candidatesTokenCount", Value::Int(out)), ("totalTokenCount", Value::Int(all_words as i64 + out))]));
+                        }
+                        chunk.insert("candidates".into(), Value::Array(vec![Value::Object(cand)]));
+                        chunk.insert("modelVersion".into(), Value::from(model));
+                        (None, Value::Object(chunk).to_json())
+                    })
+                    .collect();
+                return Response::new(200).with_header("Content-Type", "text/event-stream").with_body(crate::sse::encode(&events));
+            }
             ok(obj([
                 ("candidates", Value::Array(vec![obj([("content", obj([("role", Value::from("model")), ("parts", Value::Array(vec![obj([("text", Value::from(reply))])]))])), ("finishReason", Value::from(finish)), ("safetyRatings", Value::Array(vec![]))])])),
                 ("usageMetadata", obj([("promptTokenCount", Value::Int(all_words as i64)), ("candidatesTokenCount", Value::Int(out)), ("totalTokenCount", Value::Int(all_words as i64 + out))])),
@@ -706,6 +734,70 @@ fn vertex(st: &Shared, req: &ServerRequest, model_verb: &str) -> Response {
             ]))
         }
         _ => gerror(400, "INVALID_ARGUMENT", "Unsupported Vertex AI method"),
+    }
+}
+
+/// Embedding / Imagen `predict` and partner (Anthropic) `rawPredict` / `streamRawPredict`.
+fn vertex_more(model: &str, verb: &str, req: &ServerRequest, body: &Value) -> Option<Response> {
+    match verb {
+        "predict" if model.starts_with("text-embedding") || model.starts_with("text-multilingual-embedding") => {
+            let instances = body.get("instances").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+            if instances.is_empty() {
+                return Some(gerror(400, "INVALID_ARGUMENT", "instances must not be empty"));
+            }
+            let dim = body.get("parameters").and_then(|p| p.get("outputDimensionality")).and_then(|d| d.as_i64()).unwrap_or(8) as usize;
+            let preds: Vec<Value> = instances
+                .iter()
+                .map(|i| {
+                    let text = i.get("content").map(|c| c.to_string()).unwrap_or_default();
+                    let vals: Vec<Value> = (0..dim).map(|k| Value::Float(((text.len() * (k + 3)) % 17) as f64 / 17.0)).collect();
+                    obj([("embeddings", obj([("values", Value::Array(vals)), ("statistics", obj([("token_count", Value::Int(text.split_whitespace().count() as i64)), ("truncated", Value::Bool(false))]))]))])
+                })
+                .collect();
+            Some(ok(obj([("predictions", Value::Array(preds))])))
+        }
+        "predict" if model.starts_with("imagen") => {
+            let prompt = body.get("instances").and_then(|i| i.as_array()).and_then(|a| a.first()).and_then(|i| i.get("prompt")).map(|p| p.to_string()).unwrap_or_default();
+            if prompt.is_empty() {
+                return Some(gerror(400, "INVALID_ARGUMENT", "The prompt is required"));
+            }
+            let n = body.get("parameters").and_then(|p| p.get("sampleCount")).and_then(|c| c.as_i64()).unwrap_or(1).clamp(1, 4);
+            let preds: Vec<Value> = (0..n).map(|i| obj([("mimeType", Value::from("image/png")), ("bytesBase64Encoded", Value::from(base64_encode(format!("PNG#{}:{}", i, prompt).as_bytes())))])).collect();
+            Some(ok(obj([("predictions", Value::Array(preds))])))
+        }
+        "rawPredict" | "streamRawPredict" if model.starts_with("claude") => {
+            if body.get("anthropic_version").map(|v| v.to_string()).as_deref() != Some("vertex-2023-10-16") {
+                return Some(gerror(400, "INVALID_ARGUMENT", "anthropic_version must be vertex-2023-10-16"));
+            }
+            if body.get("max_tokens").is_none() {
+                return Some(gerror(400, "INVALID_ARGUMENT", "max_tokens: Field required"));
+            }
+            let msgs = body.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+            let last = msgs.iter().rev().find(|m| m.get("role").map(|r| r.to_string()).as_deref() == Some("user")).and_then(|m| m.get("content")).map(|c| match c {
+                Value::Array(blocks) => blocks.iter().filter_map(|b| b.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join(""),
+                other => other.to_string(),
+            }).unwrap_or_default();
+            let mut reply = format!("Claude says: {}", last);
+            if let Some(sys) = body.get("system") {
+                reply = format!("[{}] {}", sys, reply);
+            }
+            let (inp, outp) = (last.split_whitespace().count() as i64, reply.split_whitespace().count() as i64);
+            if verb == "rawPredict" {
+                return Some(ok(obj([("id", Value::from(format!("msg_vrtx_{}", random_hex(8)))), ("type", Value::from("message")), ("role", Value::from("assistant")), ("model", Value::from(model)), ("content", Value::Array(vec![obj([("type", Value::from("text")), ("text", Value::from(reply))])])), ("stop_reason", Value::from("end_turn")), ("usage", obj([("input_tokens", Value::Int(inp)), ("output_tokens", Value::Int(outp))]))])));
+            }
+            let mut events: Vec<(Option<&str>, String)> = vec![(Some("message_start"), obj([("type", Value::from("message_start")), ("message", obj([("id", Value::from(format!("msg_vrtx_{}", random_hex(8)))), ("role", Value::from("assistant")), ("model", Value::from(model))]))]).to_json())];
+            events.push((Some("content_block_start"), obj([("type", Value::from("content_block_start")), ("index", Value::Int(0)), ("content_block", obj([("type", Value::from("text")), ("text", Value::from(""))]))]).to_json()));
+            for w in reply.split_inclusive(' ') {
+                events.push((Some("content_block_delta"), obj([("type", Value::from("content_block_delta")), ("index", Value::Int(0)), ("delta", obj([("type", Value::from("text_delta")), ("text", Value::from(w))]))]).to_json()));
+            }
+            events.push((Some("content_block_stop"), obj([("type", Value::from("content_block_stop")), ("index", Value::Int(0))]).to_json()));
+            events.push((Some("message_delta"), obj([("type", Value::from("message_delta")), ("delta", obj([("stop_reason", Value::from("end_turn"))])), ("usage", obj([("output_tokens", Value::Int(outp))]))]).to_json()));
+            events.push((Some("message_stop"), obj([("type", Value::from("message_stop"))]).to_json()));
+            let _ = req;
+            Some(Response::new(200).with_header("Content-Type", "text/event-stream").with_body(crate::sse::encode(&events)))
+        }
+        "rawPredict" | "streamRawPredict" | "predict" => Some(gerror(404, "NOT_FOUND", &format!("Publisher Model `{}` does not support {}", model, verb))),
+        _ => None,
     }
 }
 
