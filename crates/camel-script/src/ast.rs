@@ -17,6 +17,8 @@ pub enum Dialect {
     Mvel,
     Spel,
     Jsonnet,
+    /// Java source snippets (Camel's `joor` / `java` language).
+    Java,
 }
 
 impl Dialect {
@@ -30,11 +32,16 @@ impl Dialect {
             Dialect::Mvel => "MVEL",
             Dialect::Spel => "SpEL",
             Dialect::Jsonnet => "DataSonnet",
+            Dialect::Java => "Java",
         }
     }
     /// Java-like expression languages (integer division, Java `toString`).
     pub fn is_java(self) -> bool {
-        matches!(self, Dialect::Ognl | Dialect::Mvel | Dialect::Spel)
+        matches!(self, Dialect::Ognl | Dialect::Mvel | Dialect::Spel | Dialect::Java)
+    }
+    /// Groovy or Java: Java/GDK collection and string methods, typed declarations.
+    pub fn groovy_like(self) -> bool {
+        matches!(self, Dialect::Groovy | Dialect::Java)
     }
 }
 
@@ -121,6 +128,10 @@ pub enum PropKey {
 pub enum Prop {
     KV(PropKey, Expr),
     Spread(Expr),
+    /// `get name() {...}`
+    Get(PropKey, Arc<FuncDef>),
+    /// `set name(v) {...}`
+    Set(PropKey, Arc<FuncDef>),
 }
 
 /// Selection mode of OGNL / SpEL collection selection.
@@ -194,6 +205,48 @@ pub enum Expr {
     Error(Box<Expr>, u32),
     /// A type literal (`String`, `java.lang.Integer`, SpEL `T(Math)`).
     Type(String),
+    /// `yield expr` / `yield* expr` (generators).
+    Yield { arg: Option<Box<Expr>>, delegate: bool, pos: u32 },
+    /// `await expr` (async functions).
+    Await(Box<Expr>, u32),
+    /// DataSonnet object literal with `self` / `super` / hidden fields.
+    JObject(Arc<JObjDef>),
+    /// DataSonnet `self` / `super` / `$`.
+    JSelf(u8, u32),
+    /// DataSonnet `import` / `importstr` / `importbin` of a local file.
+    Import(u8, String, u32),
+    /// Java switch expression: (labels (empty = default), arm body).
+    SwitchExpr(Box<Expr>, Vec<(Vec<Expr>, Vec<Stmt>)>, u32),
+    /// Java `x instanceof Type name` (binds `name` when it matches).
+    InstanceBind { expr: Box<Expr>, ty: String, name: String, pos: u32 },
+    /// Java method reference `Type::method` / `obj::method`.
+    MethodRef(Box<Expr>, String, u32),
+}
+
+/// Visibility of a DataSonnet field (`:`, `::`, `:::`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Vis {
+    Default,
+    Hidden,
+    Visible,
+}
+
+/// A DataSonnet object field definition.
+#[derive(Clone, Debug)]
+pub struct JFieldDef {
+    pub key: PropKey,
+    pub vis: Vis,
+    /// `+:` (merge with the inherited value).
+    pub plus: bool,
+    pub value: Expr,
+}
+
+/// A DataSonnet object literal.
+#[derive(Clone, Debug)]
+pub struct JObjDef {
+    pub locals: Vec<(String, Expr)>,
+    pub fields: Vec<JFieldDef>,
+    pub asserts: Vec<(Expr, Expr, u32)>,
 }
 
 /// Compound assignment operators.
@@ -245,15 +298,70 @@ pub struct FuncDef {
     pub implicit_it: bool,
     /// The value of the last expression statement is returned (Groovy).
     pub implicit_return: bool,
+    /// `function*` / Python function containing `yield`.
+    pub generator: bool,
+    /// `async function`.
+    pub is_async: bool,
 }
 
-/// A JavaScript class.
+impl FuncDef {
+    /// A plain function definition.
+    pub fn new(name: Option<String>, params: Vec<Param>, rest: Option<Pat>, body: FuncBody) -> FuncDef {
+        FuncDef { name, params, rest, body, arrow: false, implicit_it: false, implicit_return: false, generator: false, is_async: false }
+    }
+}
+
+/// Kind of a class member function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemberKind {
+    Method,
+    Getter,
+    Setter,
+    /// Python `@classmethod`.
+    ClassMethod,
+}
+
+/// A class member function.
+#[derive(Clone, Debug)]
+pub struct ClassMember {
+    pub name: String,
+    /// Computed member name (`[Symbol.iterator]() {...}`).
+    pub key: Option<Expr>,
+    pub func: Arc<FuncDef>,
+    pub kind: MemberKind,
+    pub is_static: bool,
+}
+
+/// A class field (JavaScript class field, Groovy property, Python class attribute).
+#[derive(Clone, Debug)]
+pub struct ClassField {
+    pub name: String,
+    pub init: Option<Expr>,
+    pub is_static: bool,
+}
+
+/// Language flavor of a class.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClassStyle {
+    Js,
+    Groovy,
+    Python,
+}
+
+/// A class (JavaScript, Groovy, Python).
 #[derive(Clone, Debug)]
 pub struct ClassDef {
     pub name: Option<String>,
     pub extends: Option<Expr>,
-    pub ctor: Option<Arc<FuncDef>>,
-    pub methods: Vec<(String, Arc<FuncDef>, bool)>,
+    /// Constructors (JS: at most one; Groovy: overloads chosen by arity; Python: `__init__`).
+    pub ctors: Vec<Arc<FuncDef>>,
+    pub methods: Vec<ClassMember>,
+    pub fields: Vec<ClassField>,
+    /// Groovy traits / interfaces with default methods mixed in (`implements`).
+    pub mixins: Vec<Expr>,
+    pub style: ClassStyle,
+    /// Groovy AST transform annotations (`ToString`, `EqualsAndHashCode`, `TupleConstructor`, `Canonical`...).
+    pub annotations: Vec<String>,
 }
 
 /// Declaration kind.
@@ -297,6 +405,8 @@ pub enum Stmt {
     Empty,
     Global(Vec<String>),
     Assert(Expr, Option<Expr>, u32),
+    /// Java `yield value;` inside a switch expression arm.
+    SwitchYield(Expr),
 }
 
 /// A parsed program.

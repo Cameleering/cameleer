@@ -312,7 +312,7 @@ fn consumer_reconnects_and_options_are_validated() {
         t.send_body("jms:queue:resilient", "after").unwrap();
     }
     mock.assert_is_satisfied().unwrap();
-    for bad in ["jms:queue:x?bogus=1", "jms:queue:x?priority=12", "jms:queue:x?acknowledgementModeName=NOPE", "jms:queue:", "jms:queue:x?jmsMessageType=Object"] {
+    for bad in ["jms:queue:x?bogus=1", "jms:queue:x?priority=12", "jms:queue:x?acknowledgementModeName=NOPE", "jms:queue:", "jms:queue:x?jmsMessageType=Stream", "jms:topic:t?durableSubscriptionName=d", "jms:queue:x?replyToType=Exclusive"] {
         assert!(ctx.get_endpoint(bad).is_err(), "{}", bad);
     }
     ctx.stop().unwrap();

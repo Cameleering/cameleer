@@ -69,6 +69,10 @@ pub enum Ctrl {
     Return(V),
     Break(Option<String>),
     Continue(Option<String>),
+    /// A generator / async function suspends at `yield` / `await` with this value.
+    Yield(V),
+    /// Java `yield value;` in a switch expression arm.
+    Value(V),
 }
 
 /// Interpreter result.
@@ -89,6 +93,25 @@ pub struct Interp {
     steps: u64,
     /// Scopes captured by closures (cleared at teardown to break reference cycles).
     closure_envs: RefCell<Vec<std::rc::Weak<Scope>>>,
+    /// Replay contexts of the running generators.
+    pub ystack: Vec<crate::gen::YieldCtx>,
+    pub yield_cache: HashMap<usize, bool>,
+    /// Exceptions being handled (Python bare `raise`).
+    pub exc_stack: Vec<V>,
+    /// Microtask / timer queues.
+    pub queues: crate::promise::Queues,
+    /// Registered and well-known symbols.
+    pub symbols: HashMap<String, V>,
+    pub next_symbol: u64,
+    /// DataSonnet import cache.
+    pub imports: HashMap<String, V>,
+    pub import_asts: Vec<Rc<Program>>,
+    /// Class definitions by constructor address.
+    pub classes: HashMap<usize, crate::classes::ClassInfo>,
+    /// Groovy metaclass methods by type name.
+    pub meta_methods: HashMap<String, HashMap<String, V>>,
+    /// Bean registry lookups (SpEL `@name`).
+    pub beans: HashMap<String, V>,
 }
 
 /// JavaScript number to string.
@@ -160,12 +183,12 @@ pub fn norm_num(f: f64) -> V {
     }
 }
 
-enum Mode {
+pub(crate) enum Mode {
     Declare(VarKind),
     Assign,
 }
 
-fn decl_has_scope(stmts: &[Stmt]) -> bool {
+pub(crate) fn decl_has_scope(stmts: &[Stmt]) -> bool {
     stmts.iter().any(|s| matches!(s, Stmt::Var(VarKind::Let | VarKind::Const, _) | Stmt::Func(_) | Stmt::Class(_)))
 }
 
@@ -173,9 +196,58 @@ impl Interp {
     /// Create an interpreter with the given host state.
     pub fn new(d: Dialect, src: Arc<str>, host: Rc<HostState>) -> Interp {
         let globals = new_scope(None, true);
-        let mut it = Interp { d, src, host, globals, depth: 0, max_depth: 60, steps: 0, closure_envs: RefCell::new(Vec::new()) };
+        let mut it = Interp {
+            d,
+            src,
+            host,
+            globals,
+            depth: 0,
+            max_depth: MAX_DEPTH,
+            steps: 0,
+            closure_envs: RefCell::new(Vec::new()),
+            ystack: Vec::new(),
+            yield_cache: HashMap::new(),
+            exc_stack: Vec::new(),
+            queues: Default::default(),
+            symbols: HashMap::new(),
+            next_symbol: 0,
+            imports: HashMap::new(),
+            import_asts: Vec::new(),
+            classes: HashMap::new(),
+            meta_methods: HashMap::new(),
+            beans: HashMap::new(),
+        };
         crate::builtins::install_globals(&mut it);
         it
+    }
+
+    pub(crate) fn step_pub(&mut self) -> R<()> {
+        self.step()
+    }
+    pub(crate) fn hoist_pub(&mut self, stmts: &[Stmt], env: &Env) {
+        self.hoist(stmts, env)
+    }
+    pub(crate) fn exec_labeled_pub(&mut self, s: &Stmt, env: &Env, label: Option<&str>) -> R<V> {
+        self.exec_labeled(s, env, label)
+    }
+    pub(crate) fn case_matches_pub(&mut self, dv: &V, tv: &V) -> R<bool> {
+        self.case_matches(dv, tv)
+    }
+    pub(crate) fn catch_matches_pub(&self, types: &[String], exc: &V) -> bool {
+        self.catch_matches(types, exc)
+    }
+    pub(crate) fn assign_pat_pub(&mut self, pat: &Pat, v: V, mode: &Mode, env: &Env) -> R<()> {
+        self.assign_pat(pat, v, mode, env)
+    }
+    pub(crate) fn keys_of_pub(&self, v: &V) -> Vec<V> {
+        self.keys_of(v)
+    }
+    pub(crate) fn track_env_pub(&self, env: &Env) {
+        self.track_env(env)
+    }
+    /// Call a constructor closure with an explicit `this`.
+    pub(crate) fn call_closure_as_ctor(&mut self, c: &Rc<Closure>, this: V, args: Vec<V>, pos: u32) -> R<V> {
+        self.call_closure(c, this, args, pos)
     }
 
     fn step(&mut self) -> R<()> {
@@ -210,7 +282,7 @@ impl Interp {
         let name = match self.d {
             Dialect::Js => "TypeError",
             Dialect::Python => "TypeError",
-            Dialect::Groovy | Dialect::Mvel | Dialect::Ognl | Dialect::Spel => "IllegalArgumentException",
+            Dialect::Groovy | Dialect::Mvel | Dialect::Ognl | Dialect::Spel | Dialect::Java => "IllegalArgumentException",
             Dialect::Jsonnet => "RUNTIME ERROR",
         };
         self.throw(name, msg, pos)
@@ -225,6 +297,7 @@ impl Interp {
             Dialect::Ognl => ("OgnlException", format!("source is null for getProperty(null, \"{}\")", name)),
             Dialect::Mvel => ("NullPointerException", format!("null pointer: cannot access property '{}' of null", name)),
             Dialect::Jsonnet => ("RUNTIME ERROR", format!("field does not exist: {} (indexing null)", name)),
+            Dialect::Java => ("NullPointerException", format!("Cannot {} field \"{}\" because value is null", if what == "read" { "read" } else { "assign" }, name)),
         };
         self.throw(ename, msg, Some(pos))
     }
@@ -242,9 +315,22 @@ impl Interp {
                         last = v;
                     }
                 }
-                Err(Ctrl::Return(v)) => return Ok(v),
+                Err(Ctrl::Return(v)) => {
+                    last = v;
+                    break;
+                }
                 Err(Ctrl::Break(_)) | Err(Ctrl::Continue(_)) => {}
+                Err(Ctrl::Yield(_)) => return self.throw("SyntaxError", "'yield' / 'await' outside of a generator or async function".into(), None),
                 Err(e) => return Err(e),
+            }
+        }
+        if self.d == Dialect::Js {
+            self.drain_jobs()?;
+            // the settled value of a promise result
+            match crate::promise::settled(&last) {
+                Some(crate::promise::PState::Fulfilled(v)) => return Ok(v),
+                Some(crate::promise::PState::Rejected(e)) => return Err(Ctrl::Throw(e)),
+                _ => {}
             }
         }
         Ok(last)
@@ -385,6 +471,38 @@ impl Interp {
             }
             Stmt::ForIn { decl, pat, obj, body, values, else_body } => {
                 let o = self.eval(obj, env)?;
+                if *values {
+                    if let Some(iter) = self.lazy_iterator(&o)? {
+                        let mut last = V::Undef;
+                        let mut broke = false;
+                        while let Some(item) = self.iter_next(&iter)? {
+                            self.step()?;
+                            let scope = if self.d == Dialect::Python { env.clone() } else { new_scope(Some(env.clone()), false) };
+                            let mode = match decl {
+                                Some(k) => Mode::Declare(*k),
+                                None => Mode::Assign,
+                            };
+                            self.assign_pat(pat, item, &mode, &scope)?;
+                            match self.exec_body(body, &scope) {
+                                Ok(v) => last = v,
+                                Err(Ctrl::Break(l)) if Self::label_matches(&l, label) => {
+                                    broke = true;
+                                    // close the iterator
+                                    let _ = self.iter_resume(&iter, crate::gen::Resume::Return(V::Undef));
+                                    break;
+                                }
+                                Err(Ctrl::Continue(l)) if Self::label_matches(&l, label) => {}
+                                Err(e) => return Err(e),
+                            }
+                        }
+                        if !broke {
+                            if let Some(eb) = else_body {
+                                self.exec_body(eb, env)?;
+                            }
+                        }
+                        return Ok(last);
+                    }
+                }
                 let items = if *values { self.iterate(&o, None)? } else { self.keys_of(&o) };
                 let mut last = V::Undef;
                 let mut broke = false;
@@ -459,6 +577,14 @@ impl Interp {
             }
             Stmt::Break(l) => Err(Ctrl::Break(l.clone())),
             Stmt::Continue(l) => Err(Ctrl::Continue(l.clone())),
+            Stmt::Throw(Expr::Ident(n, _), pos) if n == "__reraise" => match self.exc_stack.last() {
+                Some(e) => Err(Ctrl::Throw(e.clone())),
+                None => self.throw("RuntimeError", "No active exception to reraise".into(), Some(*pos)),
+            },
+            Stmt::SwitchYield(e) => {
+                let v = self.eval(e, env)?;
+                Err(Ctrl::Value(v))
+            }
             Stmt::Throw(e, pos) => {
                 let v = self.eval(e, env)?;
                 let v = match (&v, self.d) {
@@ -480,7 +606,9 @@ impl Interp {
                                     let mode = if self.d == Dialect::Python { Mode::Assign } else { Mode::Declare(VarKind::Let) };
                                     self.assign_pat(p, exc.clone(), &mode, &scope)?;
                                 }
+                                self.exc_stack.push(exc.clone());
                                 handled = Some(self.exec_block(&c.body, &scope));
+                                self.exc_stack.pop();
                                 break;
                             }
                         }
@@ -608,7 +736,11 @@ impl Interp {
     }
 
     fn lookup_ident(&mut self, name: &str, env: &Env, pos: u32) -> R<V> {
-        if let Some(v) = env.lookup(name) {
+        if self.d.groovy_like() {
+            if let Some(v) = self.lookup_with_fields(name, env) {
+                return Ok(v);
+            }
+        } else if let Some(v) = env.lookup(name) {
             return Ok(v);
         }
         self.unresolved(name, env, pos)
@@ -654,6 +786,12 @@ impl Interp {
             }
             Dialect::Python => self.throw("NameError", format!("name '{}' is not defined", name), Some(pos)),
             Dialect::Jsonnet => self.throw("STATIC ERROR", format!("Unknown variable: {}", name), Some(pos)),
+            Dialect::Java => {
+                if name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                    return Ok(crate::builtins::type_ns(name).unwrap_or_else(|| V::host(Host::Type(name.to_string()))));
+                }
+                self.throw("CompilationException", format!("cannot find symbol: variable {}", name), Some(pos))
+            }
         }
     }
 
@@ -672,6 +810,12 @@ impl Interp {
                 s = sc.parent.clone();
             }
             env.define(name, v);
+            return;
+        }
+        if self.d.groovy_like() {
+            if !self.assign_with_fields(name, &v, env) {
+                self.globals.define(name, v);
+            }
             return;
         }
         if !env.assign(name, v.clone()) {
@@ -776,7 +920,7 @@ impl Interp {
     // ------------------------------------------------------------------ functions
     pub fn make_closure(&self, def: Arc<FuncDef>, env: &Env) -> V {
         self.track_env(env);
-        V::Func(Rc::new(Closure { def, env: env.clone(), props: RefCell::new(PropMap::default()), parent: None, home: RefCell::new(None) }))
+        V::Func(new_closure(Closure { def, env: env.clone(), props: RefCell::new(PropMap::default()), parent: None, home: RefCell::new(None), flavor: Flavor::Plain }))
     }
 
     fn track_env(&self, env: &Env) {
@@ -799,39 +943,14 @@ impl Interp {
         }
         let g = std::mem::take(&mut *self.globals.vars.borrow_mut());
         drop(g);
-    }
-
-    fn make_class(&mut self, c: &ClassDef, env: &Env) -> R<V> {
-        self.track_env(env);
-        let parent = match &c.extends {
-            Some(e) => Some(self.eval(e, env)?),
-            None => None,
-        };
-        let ctor_def = c.ctor.clone().unwrap_or_else(|| {
-            Arc::new(FuncDef { name: c.name.clone(), params: vec![], rest: None, body: FuncBody::Block(vec![]), arrow: false, implicit_it: false, implicit_return: false })
-        });
-        let proto = Rc::new(RefCell::new(Obj::new()));
-        if let Some(V::Func(pc)) = &parent {
-            if let Some(V::Obj(pp)) = self.func_prototype(pc) {
-                proto.borrow_mut().proto = Some(pp);
-            }
-        }
-        let closure = Rc::new(Closure { def: ctor_def, env: env.clone(), props: RefCell::new(PropMap::default()), parent: parent.clone(), home: RefCell::new(Some(proto.clone())) });
-        let class_v = V::Func(closure.clone());
-        proto.borrow_mut().props.set("constructor", class_v.clone());
-        closure.props.borrow_mut().set("prototype", V::Obj(proto.clone()));
-        if let Some(n) = &c.name {
-            closure.props.borrow_mut().set("name", V::str(n));
-        }
-        for (name, def, is_static) in &c.methods {
-            let m = Rc::new(Closure { def: def.clone(), env: env.clone(), props: RefCell::new(PropMap::default()), parent: parent.clone(), home: RefCell::new(Some(proto.clone())) });
-            if *is_static {
-                closure.props.borrow_mut().set(name, V::Func(m));
-            } else {
-                proto.borrow_mut().props.set(name, V::Func(m));
-            }
-        }
-        Ok(class_v)
+        self.ystack.clear();
+        self.queues = Default::default();
+        self.classes.clear();
+        self.symbols.clear();
+        self.imports.clear();
+        self.meta_methods.clear();
+        self.beans.clear();
+        self.exc_stack.clear();
     }
 
     /// The `prototype` object of a function (created on demand).
@@ -847,9 +966,24 @@ impl Interp {
     /// Call a function value.
     pub fn call(&mut self, f: &V, this: V, args: Vec<V>, pos: u32) -> R<V> {
         match f {
+            V::Func(c) if c.flavor == Flavor::Class => {
+                if self.d == Dialect::Js {
+                    let n = c.def.name.clone().unwrap_or_default();
+                    return self.type_error(format!("Class constructor {} cannot be invoked without 'new'", n), Some(pos));
+                }
+                self.construct_class(c, args, pos)
+            }
             V::Func(c) => self.call_closure(c, this, args, pos),
+            V::Obj(_) if self.user_method(f, if self.d == Dialect::Python { "__call__" } else { "call" }).is_some() => {
+                let name = if self.d == Dialect::Python { "__call__" } else { "call" };
+                let m = self.user_method(f, name).unwrap();
+                self.call_user_method(f, &m, args, pos)
+            }
             V::Method(m) => {
                 let (recv, name) = (&m.0, &m.1);
+                if let Some(r) = name.strip_prefix("%mref:") {
+                    return crate::java::method_ref_call(self, recv, r, args, pos);
+                }
                 self.call_method(recv, name, args, pos)
             }
             V::Host(h) => match &**h {
@@ -869,7 +1003,34 @@ impl Interp {
         }
     }
 
-    fn call_closure(&mut self, c: &Rc<Closure>, this: V, mut args: Vec<V>, pos: u32) -> R<V> {
+    fn call_closure(&mut self, c: &Rc<Closure>, this: V, args: Vec<V>, pos: u32) -> R<V> {
+        if crate::stack::low_on_stack() && self.depth < self.max_depth {
+            // continue a deep recursion on a fresh stack segment
+            let mut out = None;
+            let done = crate::stack::on_new_segment(|| {
+                out = Some(self.call_closure_inner(c, this.clone(), args.clone(), pos));
+            });
+            if done.is_some() {
+                if let Some(r) = out {
+                    return r;
+                }
+            }
+            return self.stack_overflow(pos);
+        }
+        self.call_closure_inner(c, this, args, pos)
+    }
+
+    fn stack_overflow<X>(&self, pos: u32) -> R<X> {
+        let (name, msg) = match self.d {
+            Dialect::Js => ("RangeError", "Maximum call stack size exceeded"),
+            Dialect::Python => ("RecursionError", "maximum recursion depth exceeded"),
+            Dialect::Groovy | Dialect::Java => ("StackOverflowError", "maximum call depth exceeded"),
+            _ => ("Error", "maximum call depth exceeded"),
+        };
+        self.throw(name, msg.into(), Some(pos))
+    }
+
+    fn call_closure_inner(&mut self, c: &Rc<Closure>, this: V, mut args: Vec<V>, pos: u32) -> R<V> {
         if self.depth >= self.max_depth {
             let (name, msg) = match self.d {
                 Dialect::Js => ("RangeError", "Maximum call stack size exceeded"),
@@ -883,13 +1044,22 @@ impl Interp {
         let def = c.def.clone();
         let scope = new_scope(Some(c.env.clone()), true);
         if !def.arrow {
-            scope.define("this", this);
+            scope.define("this", this.clone());
         }
         if let Some(home) = c.home.borrow().clone() {
             scope.define("%home", V::Obj(home));
         }
         if let Some(p) = &c.parent {
             scope.define("%parent", p.clone());
+        }
+        if c.flavor == Flavor::PyMethod {
+            if let Some(s) = args.first() {
+                scope.define("%self", s.clone());
+            }
+        }
+        if self.d == Dialect::Groovy && def.implicit_return && !matches!(this, V::Undef) && c.home.borrow().is_none() {
+            // Groovy closures: `delegate` (metaclass methods, `with`)
+            scope.define("delegate", this.clone());
         }
         // kwargs (Python)
         let mut kwargs: Option<ObjRef> = None;
@@ -933,6 +1103,14 @@ impl Interp {
             let tail: Vec<V> = args.iter().skip(def.params.len()).cloned().collect();
             self.assign_pat(r, V::arr(tail), &Mode::Declare(VarKind::Let), &scope)?;
         }
+        if def.generator || def.is_async {
+            // `async function*` runs as a generator whose elements `for await` awaits
+            let g = self.make_generator(c, scope, def.is_async && !def.generator);
+            if def.is_async && !def.generator {
+                return self.start_async(g);
+            }
+            return Ok(self.generator_value(g));
+        }
         self.depth += 1;
         let r = match &def.body {
             FuncBody::Expr(e) => self.eval(e, &scope),
@@ -949,27 +1127,15 @@ impl Interp {
         }
     }
 
+    /// `new f(args)`.
+    pub(crate) fn construct_pub(&mut self, f: &V, args: Vec<V>, pos: u32) -> R<V> {
+        self.construct(f, args, pos)
+    }
+
     /// Construct with `new`.
     fn construct(&mut self, f: &V, args: Vec<V>, pos: u32) -> R<V> {
         match f {
-            V::Func(c) => {
-                let obj = Rc::new(RefCell::new(Obj::new()));
-                if let Some(V::Obj(p)) = self.func_prototype(c) {
-                    obj.borrow_mut().proto = Some(p);
-                }
-                let this = V::Obj(obj);
-                let r = self.call_closure(c, this.clone(), args, pos)?;
-                // a class without own constructor calls the parent constructor
-                if c.def.params.is_empty() && matches!(&c.def.body, FuncBody::Block(b) if b.is_empty()) {
-                    if let Some(p @ V::Func(_)) = &c.parent {
-                        let p = p.clone();
-                        if let V::Func(pc) = &p {
-                            self.call_closure(pc, this.clone(), vec![], pos)?;
-                        }
-                    }
-                }
-                Ok(if matches!(r, V::Obj(_) | V::Arr(_)) { r } else { this })
-            }
+            V::Func(c) => self.construct_class(c, args, pos),
             V::Host(h) => match &**h {
                 Host::Ns(n) => crate::builtins::construct_ns(self, n, args, pos),
                 Host::Type(n) => crate::builtins::construct_type(self, n, args, pos),
@@ -983,11 +1149,63 @@ impl Interp {
     pub fn call_method(&mut self, recv: &V, name: &str, args: Vec<V>, pos: u32) -> R<V> {
         match recv {
             V::Obj(o) => {
-                let f = o.borrow().lookup(name);
+                let (f, own) = {
+                    let b = o.borrow();
+                    match b.props.get(name) {
+                        Some(f) => (Some(f.clone()), true),
+                        None => (b.lookup(name), false),
+                    }
+                };
                 if let Some(f) = f {
+                    if let V::Obj(acc) = &f {
+                        if acc.borrow().kind == ObjKind::Accessor {
+                            let g = self.call_getter(acc, recv, pos)?;
+                            return self.call(&g, recv.clone(), args, pos);
+                        }
+                    }
+                    if f.is_callable() {
+                        if !own {
+                            return self.call_user_method(recv, &f, args, pos);
+                        }
+                        return self.call(&f, recv.clone(), args, pos);
+                    }
+                }
+                if self.d.groovy_like() {
+                    if let Some(v) = self.groovy_method_fallback(recv, name, &args, pos)? {
+                        return Ok(v);
+                    }
+                }
+                if matches!(o.borrow().kind, ObjKind::Jsonnet(_)) {
+                    // hidden / late-bound DataSonnet method fields
+                    let o = o.clone();
+                    if let Some(f) = self.jfield(&o, name)? {
+                        return self.call(&f, V::Undef, args, pos);
+                    }
+                }
+            }
+            V::Func(c) if c.flavor == Flavor::Class => {
+                let f = c.props.borrow().get(name).cloned();
+                let f = match f {
+                    Some(f) => Some(f),
+                    None => match self.func_prototype(c) {
+                        Some(V::Obj(p)) => p.borrow().lookup(name),
+                        _ => None,
+                    },
+                };
+                if let Some(f) = f {
+                    if let V::Func(m) = &f {
+                        if m.flavor == Flavor::PyClassMethod {
+                            let mut a = vec![recv.clone()];
+                            a.extend(args);
+                            return self.call(&f, V::Undef, a, pos);
+                        }
+                    }
                     if f.is_callable() {
                         return self.call(&f, recv.clone(), args, pos);
                     }
+                }
+                if name == "new" {
+                    return self.construct_class(c, args, pos);
                 }
             }
             V::Func(c) => {
@@ -998,7 +1216,7 @@ impl Interp {
                         return self.call_closure(c, this, a, pos);
                     }
                     "call" | "doCall" => return self.call_closure(c, V::Undef, args, pos),
-                    "apply" => {
+                    "apply" if self.d != Dialect::Java => {
                         let this = args.first().cloned().unwrap_or(V::Undef);
                         let a = match args.get(1) {
                             Some(v) => self.iterate(v, None)?,
@@ -1029,6 +1247,11 @@ impl Interp {
             }
             _ => {}
         }
+        if self.d.groovy_like() && !self.meta_methods.is_empty() {
+            if let Some(m) = self.meta_method(recv, name) {
+                return self.call(&m, recv.clone(), args, pos);
+            }
+        }
         crate::builtins::call_method(self, recv, name, args, pos)
     }
 
@@ -1043,10 +1266,40 @@ impl Interp {
                 self.null_error("read", name, o, pos)
             }
             V::Obj(ob) => {
-                let r = ob.borrow().lookup(name);
+                if let (Some(field), Dialect::Groovy) = (name.strip_prefix('@'), self.d) {
+                    return Ok(ob.borrow().props.get(field).cloned().unwrap_or(V::Null));
+                }
+                if self.d.groovy_like() && ob.borrow().proto.is_some() {
+                    if let Some(v) = self.groovy_get_property(o, ob, name, pos)? {
+                        return Ok(v);
+                    }
+                }
+                let (r, own) = {
+                    let b = ob.borrow();
+                    match b.props.get(name) {
+                        Some(v) => (Some(v.clone()), true),
+                        None => (b.lookup(name), false),
+                    }
+                };
                 match r {
+                    Some(V::Obj(acc)) if acc.borrow().kind == ObjKind::Accessor => self.call_getter(&acc, o, pos),
+                    Some(V::Func(f)) if !own && matches!(f.flavor, Flavor::PyMethod | Flavor::PyClassMethod) => Ok(V::Method(Rc::new((o.clone(), name.to_string())))),
                     Some(v) => Ok(v),
-                    None => crate::builtins::object_property(self, o, name, pos),
+                    None => {
+                        if matches!(ob.borrow().kind, ObjKind::Jsonnet(_)) {
+                            if let Some(v) = self.jfield(ob, name)? {
+                                return Ok(v);
+                            }
+                        }
+                        let v = crate::builtins::object_property(self, o, name, pos)?;
+                        if self.d == Dialect::Python && matches!(v, V::Undef | V::Null) && !name.starts_with("__") {
+                            if let Some(c) = crate::classes::class_of(o) {
+                                let cname = c.def.name.clone().unwrap_or_else(|| "object".into());
+                                return self.throw("AttributeError", format!("'{}' object has no attribute '{}'", cname, name), Some(pos));
+                            }
+                        }
+                        Ok(v)
+                    }
                 }
             }
             V::Func(c) => {
@@ -1054,7 +1307,34 @@ impl Interp {
                     return Ok(self.func_prototype(c).unwrap_or(V::Undef));
                 }
                 if let Some(v) = c.props.borrow().get(name) {
+                    if let V::Obj(acc) = v {
+                        if acc.borrow().kind == ObjKind::Accessor {
+                            let acc = acc.clone();
+                            return self.call_getter(&acc, o, pos);
+                        }
+                    }
                     return Ok(v.clone());
+                }
+                if c.flavor == Flavor::Class {
+                    if name == "metaClass" && self.d == Dialect::Groovy {
+                        return Ok(V::host(Host::Meta(c.def.name.clone().unwrap_or_default())));
+                    }
+                    if name == "__name__" || name == "simpleName" {
+                        return Ok(V::str(c.def.name.as_deref().unwrap_or("")));
+                    }
+                    // Python class attributes / methods, Groovy statics of parents
+                    let proto = self.func_prototype(c);
+                    if let Some(V::Obj(p)) = proto {
+                        if self.d == Dialect::Python {
+                            if let Some(v) = p.borrow().lookup(name) {
+                                return Ok(v);
+                            }
+                        }
+                    }
+                    if let Some(V::Func(pc)) = &c.parent {
+                        let pv = V::Func(pc.clone());
+                        return self.get_member(&pv, name, pos);
+                    }
                 }
                 match name {
                     "name" => Ok(V::str(c.def.name.as_deref().unwrap_or(""))),
@@ -1072,13 +1352,56 @@ impl Interp {
 
     /// Property write.
     pub fn set_member(&mut self, o: &V, name: &str, v: V, pos: u32) -> R<()> {
+        if let (Some(field), V::Obj(ob), Dialect::Groovy) = (name.strip_prefix('@'), o, self.d) {
+            ob.borrow_mut().props.set(field, v);
+            return Ok(());
+        }
         match o {
             V::Obj(ob) => {
+                let has_proto = ob.borrow().proto.is_some();
+                if has_proto || matches!(ob.borrow().props.get(name), Some(V::Obj(_))) {
+                    if let Some(acc) = Self::find_accessor(ob, name) {
+                        return self.call_setter(&acc, o, name, v, pos);
+                    }
+                    if has_proto && self.d.groovy_like() && crate::classes::class_of(o).is_some() {
+                        if let Some(f) = self.user_method(o, &format!("set{}", crate::classes::cap(name))) {
+                            return self.call(&f, o.clone(), vec![v], pos).map(|_| ());
+                        }
+                    }
+                }
                 ob.borrow_mut().props.set(name, v);
                 Ok(())
             }
             V::Func(c) => {
+                if let Some(V::Obj(acc)) = c.props.borrow().get(name).cloned() {
+                    if acc.borrow().kind == ObjKind::Accessor {
+                        return self.call_setter(&acc, o, name, v, pos);
+                    }
+                }
+                if c.flavor == Flavor::Class && self.d == Dialect::Python {
+                    if let Some(V::Obj(p)) = self.func_prototype(c) {
+                        p.borrow_mut().props.set(name, v);
+                        return Ok(());
+                    }
+                }
+                if c.flavor == Flavor::Class && self.d == Dialect::Groovy && !c.props.borrow().contains(name) {
+                    // static of a parent class
+                    let mut cur = c.parent.clone();
+                    while let Some(V::Func(p)) = cur {
+                        if p.props.borrow().contains(name) {
+                            p.props.borrow_mut().set(name, v);
+                            return Ok(());
+                        }
+                        cur = p.parent.clone();
+                    }
+                }
                 c.props.borrow_mut().set(name, v);
+                Ok(())
+            }
+            V::Host(h) if matches!(&**h, Host::Meta(_)) => {
+                if let Host::Meta(t) = &**h {
+                    self.meta_methods.entry(t.clone()).or_default().insert(name.to_string(), v);
+                }
                 Ok(())
             }
             V::Arr(a) => {
@@ -1117,6 +1440,15 @@ impl Interp {
 
     /// Index read (`a[i]`, `m['k']`).
     pub fn get_index(&mut self, o: &V, k: &V, pos: u32) -> R<V> {
+        if self.d == Dialect::Python {
+            if let V::Obj(ob) = o {
+                if ob.borrow().proto.is_some() {
+                    if let Some(v) = self.py_special(o, "__getitem__", vec![k.clone()], pos)? {
+                        return Ok(v);
+                    }
+                }
+            }
+        }
         match (o, k) {
             (V::Arr(a), _) if k.is_number() => {
                 let i = k.as_f64().unwrap_or(0.0);
@@ -1177,7 +1509,11 @@ impl Interp {
             }
             (V::Obj(ob), _) => {
                 let key = self.key_string(k);
-                let r = ob.borrow().lookup(&key);
+                let mut r = ob.borrow().lookup(&key);
+                if r.is_none() && matches!(ob.borrow().kind, ObjKind::Jsonnet(_)) {
+                    let ob = ob.clone();
+                    r = self.jfield(&ob, &key)?;
+                }
                 match r {
                     Some(v) => Ok(v),
                     None => match self.d {
@@ -1201,6 +1537,14 @@ impl Interp {
 
     /// Index write.
     pub fn set_index(&mut self, o: &V, k: &V, v: V, pos: u32) -> R<()> {
+        if self.d == Dialect::Python {
+            if let V::Obj(ob) = o {
+                if ob.borrow().proto.is_some() && self.user_method(o, "__setitem__").is_some() {
+                    self.py_special(o, "__setitem__", vec![k.clone(), v], pos)?;
+                    return Ok(());
+                }
+            }
+        }
         match (o, k) {
             (V::Arr(a), _) if k.is_number() => {
                 let mut i = k.as_f64().unwrap_or(0.0) as i64;
@@ -1239,6 +1583,10 @@ impl Interp {
             V::Num(f) => js_num_str(*f),
             V::Bool(b) => if self.d == Dialect::Python { if *b { "True" } else { "False" } } else if *b { "true" } else { "false" }.to_string(),
             V::Null => if self.d == Dialect::Python { "None" } else { "null" }.to_string(),
+            V::Obj(o) if matches!(o.borrow().kind, ObjKind::Symbol(..)) => match &o.borrow().kind {
+                ObjKind::Symbol(id, d) => crate::collections::symbol_key(*id, d),
+                _ => unreachable!(),
+            },
             other => self.display(other),
         }
     }
@@ -1250,6 +1598,36 @@ impl Interp {
             V::Arr(a) => a.borrow().clone(),
             V::Str(s) => s.chars().map(|c| V::string(c.to_string())).collect(),
             V::Bytes(b) => b.iter().map(|x| V::Int(*x as i64)).collect(),
+            V::Obj(ob) if !matches!(ob.borrow().kind, ObjKind::Plain | ObjKind::Set | ObjKind::Kwargs | ObjKind::Jsonnet(_)) || (ob.borrow().proto.is_some() && self.d != Dialect::Groovy) || (self.d == Dialect::Js && ob.borrow().kind == ObjKind::Plain) => {
+                let kind = ob.borrow().kind.clone();
+                if let ObjKind::Coll(c) = &kind {
+                    let items = crate::collections::iterate_coll(&c.0.borrow());
+                    if let Some(items) = items {
+                        if matches!(&*c.0.borrow(), crate::collections::Coll::Iter(..)) {
+                            if let crate::collections::Coll::Iter(_, i) = &mut *c.0.borrow_mut() {
+                                *i = usize::MAX / 2;
+                            }
+                        }
+                        return Ok(items);
+                    }
+                }
+                if let Some(it) = self.lazy_iterator(v)? {
+                    let mut out = Vec::new();
+                    while let Some(x) = self.iter_next(&it)? {
+                        self.step()?;
+                        out.push(x);
+                    }
+                    return Ok(out);
+                }
+                if self.d == Dialect::Js {
+                    return self.type_error(format!("{} is not iterable", self.display_short(v)), pos);
+                }
+                let o = ob.borrow();
+                match (&o.kind, self.d) {
+                    (_, Dialect::Python) | (_, Dialect::Jsonnet) => o.props.keys().map(|k| V::Str(k.clone())).collect(),
+                    _ => o.props.iter().map(|(k, x)| crate::builtins::entry(k, x.clone())).collect(),
+                }
+            }
             V::Obj(o) => {
                 let o = o.borrow();
                 match (&o.kind, self.d) {
@@ -1378,6 +1756,19 @@ impl Interp {
     }
 
     fn eval_call(&mut self, callee: &Expr, args: &[Elem], optional: bool, pos: u32, env: &Env) -> R<Option<V>> {
+        if let Expr::Member { obj, name, pos: mpos, .. } = callee {
+            if let Expr::Super(_) = &**obj {
+                let (f, this) = self.super_method(env, name, *mpos)?;
+                let a = self.eval_args(args, env)?;
+                if let V::Method(m) = &f {
+                    if let Some(n) = m.1.strip_prefix("%super:") {
+                        let n = n.to_string();
+                        return Ok(Some(self.super_builtin(&this, &n, &a, *mpos)?));
+                    }
+                }
+                return Ok(Some(self.call_user_method(&this, &f, a, *mpos)?));
+            }
+        }
         match callee {
             Expr::Member { obj, name, optional: mopt, pos: mpos } => {
                 let o = match self.eval_chain(obj, env)? {
@@ -1425,15 +1816,59 @@ impl Interp {
                 let this = env.lookup("this").unwrap_or(V::Undef);
                 let a = self.eval_args(args, env)?;
                 match parent {
-                    Some(p @ V::Func(_)) => {
-                        self.call(&p, this, a, *spos)?;
+                    Some(V::Func(p)) => {
+                        if p.flavor == Flavor::Class {
+                            self.invoke_ctor_on(&p, &this, a, *spos)?;
+                        } else {
+                            self.call_closure(&p, this, a, *spos)?;
+                        }
+                        Ok(Some(V::Undef))
+                    }
+                    Some(V::Host(_)) => {
+                        // a builtin exception base: super(message)
+                        self.super_builtin(&this, "<init>", &a, *spos)?;
                         Ok(Some(V::Undef))
                     }
                     _ => self.throw("SyntaxError", "'super' keyword unexpected here".into(), Some(*spos)),
                 }
             }
             Expr::Ident(name, ipos) => {
-                let f = match env.lookup(name) {
+                let found = if self.d.groovy_like() { self.lookup_with_fields(name, env) } else { env.lookup(name) };
+                if found.is_none() && self.d.groovy_like() {
+                    // a method of `this` called by its bare name inside a class
+                    if let Some(this @ V::Func(_)) = env.lookup("this") {
+                        if let V::Func(c) = &this {
+                            if c.flavor == Flavor::Class {
+                                let mut cur = Some(this.clone());
+                                let mut has = false;
+                                while let Some(V::Func(k)) = cur {
+                                    if k.flavor != Flavor::Class {
+                                        break;
+                                    }
+                                    if k.props.borrow().get(name).is_some_and(|f| f.is_callable()) {
+                                        has = true;
+                                        break;
+                                    }
+                                    cur = k.parent.clone();
+                                }
+                                if has {
+                                    let a = self.eval_args(args, env)?;
+                                    return Ok(Some(self.call_method(&this, name, a, *ipos)?));
+                                }
+                            }
+                        }
+                    }
+                    if let Some(this @ V::Obj(_)) = env.lookup("this") {
+                        if crate::classes::class_of(&this).is_some() {
+                            let has = self.user_method(&this, name).is_some() || crate::classes::class_of(&this).is_some_and(|c| c.props.borrow().get(name).is_some_and(|f| f.is_callable()));
+                            if has {
+                                let a = self.eval_args(args, env)?;
+                                return Ok(Some(self.call_method(&this, name, a, *ipos)?));
+                            }
+                        }
+                    }
+                }
+                let f = match found {
                     Some(f) => f,
                     None => match crate::builtins::script_function(self, name) {
                         Some(f) => f,
@@ -1509,7 +1944,10 @@ impl Interp {
                                         Err(m) => return self.throw("ValueError", m, None),
                                     }
                                 }
-                                None => out.push_str(&self.display(&v)),
+                                None => {
+                                    let t = if matches!(v, V::Obj(_)) { self.to_str(&v)? } else { self.display(&v) };
+                                    out.push_str(&t);
+                                }
                             }
                         }
                     }
@@ -1532,7 +1970,7 @@ impl Interp {
             }
             Expr::Object(props) => {
                 let mut pm = PropMap::default();
-                let obj = Rc::new(RefCell::new(Obj::new()));
+                let obj = new_obj_ref(Obj::new());
                 for p in props {
                     match p {
                         Prop::KV(k, ve) => {
@@ -1545,6 +1983,19 @@ impl Interp {
                             };
                             let v = self.eval(ve, env)?;
                             pm.set(&key, v);
+                        }
+                        Prop::Get(k, f) | Prop::Set(k, f) => {
+                            let key = match k {
+                                PropKey::Name(n) => n.clone(),
+                                PropKey::Computed(e) => {
+                                    let kv = self.eval(e, env)?;
+                                    self.key_string(&kv)
+                                }
+                            };
+                            let fv = self.make_closure(f.clone(), env);
+                            let existing = pm.get(&key).cloned();
+                            let acc = if matches!(p, Prop::Get(..)) { self.make_accessor(Some(fv), None, existing) } else { self.make_accessor(None, Some(fv), existing) };
+                            pm.set(&key, acc);
                         }
                         Prop::Spread(se) => {
                             let v = self.eval(se, env)?;
@@ -1595,7 +2046,10 @@ impl Interp {
             }
             Expr::New { callee, args, pos } => {
                 let f = match &**callee {
-                    Expr::Type(n) => crate::builtins::type_ns(n).unwrap_or_else(|| V::host(Host::Type(n.clone()))),
+                    Expr::Type(n) => match env.lookup(n) {
+                        Some(c @ V::Func(_)) => c,
+                        _ => crate::builtins::type_ns(n).unwrap_or_else(|| V::host(Host::Type(n.clone()))),
+                    },
                     other => self.eval(other, env)?,
                 };
                 let a = self.eval_args(args, env)?;
@@ -1897,7 +2351,91 @@ impl Interp {
                 let msg = self.display(&v);
                 self.throw("RUNTIME ERROR", msg, Some(*pos))
             }
-            Expr::Type(n) => Ok(crate::builtins::type_ns(n).unwrap_or_else(|| V::host(Host::Type(n.clone())))),
+            Expr::Type(n) => match env.lookup(n) {
+                Some(c @ V::Func(_)) => Ok(c),
+                _ => Ok(crate::builtins::type_ns(n).unwrap_or_else(|| V::host(Host::Type(n.clone())))),
+            },
+            Expr::Yield { arg, delegate, pos } => self.eval_yield(arg.as_deref(), *delegate, env, *pos),
+            Expr::Await(x, pos) => {
+                if self.ystack.last().is_some_and(|c| c.sync_await) {
+                    let v = self.eval(x, env)?;
+                    return self.await_sync(v, *pos);
+                }
+                if !self.ystack.last().is_some_and(|c| c.is_async) {
+                    return self.throw("SyntaxError", "await is only valid in async functions and the top level bodies of modules".into(), Some(*pos));
+                }
+                self.eval_yield(Some(x), false, env, *pos)
+            }
+            Expr::JObject(def) => self.eval_jobject(def, env),
+            Expr::JSelf(k, pos) => {
+                let name = match k {
+                    0 => "self",
+                    1 => "super",
+                    _ => "$",
+                };
+                match env.lookup(name) {
+                    Some(v) => Ok(v),
+                    None => self.throw("STATIC ERROR", format!("can't use {} outside of an object", name), Some(*pos)),
+                }
+            }
+            Expr::Import(kind, path, pos) => self.eval_import(*kind, path, *pos),
+            Expr::SwitchExpr(disc, arms, pos) => {
+                let dv = self.eval(disc, env)?;
+                for (labels, body) in arms {
+                    let mut hit = labels.is_empty();
+                    for l in labels {
+                        if let Expr::InstanceBind { ty, name, .. } = l {
+                            if crate::builtins::is_type(&dv, ty) || matches!(env.lookup(ty), Some(V::Func(_)) if crate::builtins::instance_of(self, &dv, &env.lookup(ty).unwrap())) {
+                                let scope = new_scope(Some(env.clone()), false);
+                                scope.define(name, dv.clone());
+                                return self.switch_arm(body, &scope);
+                            }
+                            continue;
+                        }
+                        let lv = self.eval(l, env)?;
+                        if self.case_matches(&dv, &lv)? {
+                            hit = true;
+                            break;
+                        }
+                    }
+                    if hit {
+                        let scope = new_scope(Some(env.clone()), false);
+                        return self.switch_arm(body, &scope);
+                    }
+                }
+                self.throw("MatchException", format!("no switch case matches {}", self.display(&dv)), Some(*pos))
+            }
+            Expr::InstanceBind { expr, ty, name, pos } => {
+                let v = self.eval(expr, env)?;
+                let t = self.eval(&Expr::Type(ty.clone()), env)?;
+                let ok = crate::builtins::instance_of(self, &v, &t);
+                let _ = pos;
+                if ok {
+                    self.set_var(name, v, env);
+                }
+                Ok(V::Bool(ok))
+            }
+            Expr::MethodRef(target, name, _) => {
+                let t = match &**target {
+                    Expr::Ident(n, _) if env.lookup(n).is_none() && n.chars().next().is_some_and(|c| c.is_ascii_uppercase()) => {
+                        crate::builtins::type_ns(n).unwrap_or_else(|| V::host(Host::Type(n.clone())))
+                    }
+                    other => self.eval(other, env)?,
+                };
+                Ok(V::Method(Rc::new((t, format!("%mref:{}", name)))))
+            }
+        }
+    }
+
+    /// Run a Java switch expression arm: an expression arm or a block ending with `yield`.
+    fn switch_arm(&mut self, body: &[Stmt], env: &Env) -> R<V> {
+        if let [Stmt::Expr(e)] = body {
+            return self.eval(e, env);
+        }
+        match self.exec_block(body, env) {
+            Ok(v) => Ok(v),
+            Err(Ctrl::Value(v)) => Ok(v),
+            Err(e) => Err(e),
         }
     }
 
@@ -2105,6 +2643,20 @@ impl Interp {
     pub fn binary(&mut self, op: BinOp, a: V, b: V, pos: u32) -> R<V> {
         use BinOp::*;
         let d = self.d;
+        if matches!(d, Dialect::Python | Dialect::Groovy | Dialect::Java) && (matches!(a, V::Obj(_)) || matches!(b, V::Obj(_))) {
+            match op {
+                Eq | Ne => {
+                    if let Some(r) = self.user_equals(&a, &b, pos)? {
+                        return Ok(V::Bool(if op == Eq { r } else { !r }));
+                    }
+                }
+                _ => {
+                    if let Some(r) = self.user_binary(op, &a, &b, pos)? {
+                        return Ok(r);
+                    }
+                }
+            }
+        }
         match op {
             Add => self.add(a, b, pos),
             Sub | Mul | Div | Mod | Pow | FloorDiv => {
@@ -2323,7 +2875,7 @@ impl Interp {
                         };
                         return self.throw(name, msg.into(), Some(pos));
                     }
-                    (Dialect::Ognl | Dialect::Mvel | Dialect::Spel, V::Int(a), V::Int(b)) => V::Int(a.wrapping_div(*b)),
+                    (Dialect::Ognl | Dialect::Mvel | Dialect::Spel | Dialect::Java, V::Int(a), V::Int(b)) => V::Int(a.wrapping_div(*b)),
                     (Dialect::Groovy, V::Int(a), V::Int(b)) if a % b == 0 => V::Int(a / b),
                     _ => self.mk_num(x.as_f64().unwrap_or(f64::NAN) / y.as_f64().unwrap_or(f64::NAN)),
                 }
@@ -2381,6 +2933,18 @@ impl Interp {
 
     fn add(&mut self, a: V, b: V, pos: u32) -> R<V> {
         let d = self.d;
+        // string concatenation with an instance: user-defined toString()
+        if d != Dialect::Jsonnet && d != Dialect::Python {
+            let inst = |v: &V| matches!(v, V::Obj(o) if o.borrow().proto.is_some() && !matches!(o.borrow().kind, ObjKind::Error | ObjKind::Date(_)));
+            if matches!(a, V::Str(_)) && inst(&b) {
+                let t = self.to_str(&b)?;
+                return Ok(V::string(format!("{}{}", self.display(&a), t)));
+            }
+            if matches!(b, V::Str(_)) && inst(&a) {
+                let t = self.to_str(&a)?;
+                return Ok(V::string(format!("{}{}", t, self.display(&b))));
+            }
+        }
         match d {
             Dialect::Js => {
                 let prim = |v: &V| matches!(v, V::Str(_) | V::Arr(_) | V::Obj(_) | V::Func(_) | V::Regex(_) | V::Host(_) | V::Bytes(_));
@@ -2415,7 +2979,7 @@ impl Interp {
                     v.extend(y.borrow().iter().cloned());
                     Ok(V::arr(v))
                 }
-                (V::Obj(x), V::Obj(y)) => Ok(merge_objects(x, y)),
+                (V::Obj(x), V::Obj(y)) => self.jobject_merge(x, y),
                 _ if a.is_number() && b.is_number() => Ok(self.int_or_float(&a, &b, i64::checked_add, |p, q| p + q)),
                 _ => self.throw("RUNTIME ERROR", format!("binary operator + does not operate on {} and {}", crate::builtins::jsonnet_type(&a), crate::builtins::jsonnet_type(&b)), Some(pos)),
             },
@@ -2500,6 +3064,24 @@ impl Interp {
 
     /// `needle in haystack`.
     pub fn contains(&mut self, haystack: &V, needle: &V, pos: u32) -> R<bool> {
+        if let V::Obj(o) = haystack {
+            if self.d == Dialect::Python && o.borrow().proto.is_some() {
+                if let Some(r) = self.py_special(haystack, "__contains__", vec![needle.clone()], pos)? {
+                    return Ok(self.truthy(&r));
+                }
+            }
+            if matches!(o.borrow().kind, ObjKind::Jsonnet(_)) {
+                let k = self.key_string(needle);
+                return Ok(self.jhas(o, &k, true));
+            }
+            if let ObjKind::Coll(c) = o.borrow().kind.clone() {
+                if let crate::collections::Coll::Set(m) | crate::collections::Coll::Map(m) = &mut *c.0.borrow_mut() {
+                    if self.d != Dialect::Js {
+                        return Ok(m.has(needle));
+                    }
+                }
+            }
+        }
         Ok(match haystack {
             V::Arr(a) => {
                 if self.d == Dialect::Js {
@@ -2540,6 +3122,69 @@ impl Interp {
                 return self.type_error(msg, Some(pos));
             }
         })
+    }
+
+    /// A copy of `v` with own accessor properties (getters) evaluated, for conversion to Camel
+    /// values and JSON (only copies when there is an accessor).
+    pub fn materialize(&mut self, v: &V) -> R<V> {
+        self.materialize_depth(v, 0)
+    }
+
+    fn materialize_depth(&mut self, v: &V, depth: usize) -> R<V> {
+        if depth > 64 {
+            return Ok(v.clone());
+        }
+        match v {
+            V::Obj(o) => {
+                if matches!(o.borrow().kind, ObjKind::Jsonnet(_)) {
+                    self.jcomplete(o)?;
+                    let items: Vec<V> = o.borrow().props.values().cloned().collect();
+                    for x in items {
+                        self.materialize_depth(&x, depth + 1)?;
+                    }
+                    return Ok(v.clone());
+                }
+                if o.borrow().kind != ObjKind::Plain {
+                    return Ok(v.clone());
+                }
+                let items: Vec<(Rc<str>, V)> = o.borrow().props.iter().map(|(k, x)| (k.clone(), x.clone())).collect();
+                let mut changed = false;
+                let mut out = PropMap::default();
+                for (k, x) in items {
+                    let nx = match &x {
+                        V::Obj(a) if a.borrow().kind == ObjKind::Accessor => {
+                            let a = a.clone();
+                            changed = true;
+                            if a.borrow().props.get("get").is_none() {
+                                continue;
+                            }
+                            self.call_getter(&a, v, 0)?
+                        }
+                        _ => x.clone(),
+                    };
+                    let nx = self.materialize_depth(&nx, depth + 1)?;
+                    if !nx.same(&x) {
+                        changed = true;
+                    }
+                    out.set(&k, nx);
+                }
+                Ok(if changed { V::obj(out) } else { v.clone() })
+            }
+            V::Arr(a) => {
+                let items = a.borrow().clone();
+                let mut changed = false;
+                let mut out = Vec::with_capacity(items.len());
+                for x in &items {
+                    let nx = self.materialize_depth(x, depth + 1)?;
+                    if !nx.same(x) {
+                        changed = true;
+                    }
+                    out.push(nx);
+                }
+                Ok(if changed { V::arr(out) } else { v.clone() })
+            }
+            _ => Ok(v.clone()),
+        }
     }
 
     // ------------------------------------------------------------------ display

@@ -12,7 +12,7 @@ type R<T> = Result<T, SyntaxError>;
 /// Parse a whole program.
 pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
     let toks = tokenize(src, 0, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false };
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: d == Dialect::Js };
     let body = match d {
         Dialect::Ognl | Dialect::Spel => {
             let e = p.parse_sequence()?;
@@ -30,13 +30,22 @@ pub fn parse_program(src: &str, d: Dialect) -> R<Program> {
             body
         }
     };
+    // JavaScript top-level await: run the script body as an async function
+    if d == Dialect::Js && crate::gen::stmts_have_yield(&body) {
+        let mut f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
+        f.arrow = true;
+        f.is_async = true;
+        f.implicit_return = true;
+        let call = Expr::Call { callee: Box::new(Expr::Func(Arc::new(f))), args: vec![], optional: false, pos: 0 };
+        return Ok(Program { dialect: d, body: vec![Stmt::Expr(call)] });
+    }
     Ok(Program { dialect: d, body })
 }
 
 /// Parse an embedded expression (template interpolation) at absolute offset `base`.
 pub fn parse_embedded(src: &str, base: usize, d: Dialect) -> R<Expr> {
     let toks = tokenize(src, base, d)?;
-    let mut p = Parser { toks, i: 0, d, no_in: false };
+    let mut p = Parser { toks, i: 0, d, no_in: false, in_gen: false, in_async: false };
     if p.at_eof() {
         return Err(SyntaxError { pos: base, msg: "empty expression".into() });
     }
@@ -50,6 +59,10 @@ struct Parser {
     i: usize,
     d: Dialect,
     no_in: bool,
+    /// Inside a generator function (`yield` is an operator).
+    in_gen: bool,
+    /// Inside an async function or at the JavaScript top level (`await` is an operator).
+    in_async: bool,
 }
 
 const JS_KEYWORDS: &[&str] = &[
@@ -158,6 +171,10 @@ impl Parser {
     }
     /// Property name after `.`: any identifier or keyword (or a string in Groovy).
     fn prop_name(&mut self) -> R<String> {
+        if self.d == Dialect::Js && self.is_p("#") {
+            self.next();
+            return Ok(format!("#{}", self.ident()?));
+        }
         match self.peek().clone() {
             T::Ident(s) => {
                 self.next();
@@ -166,6 +183,11 @@ impl Parser {
             T::Str(s) if self.d == Dialect::Groovy => {
                 self.next();
                 Ok(s)
+            }
+            T::P("@") if self.d == Dialect::Groovy && matches!(self.peek_at(1), T::Ident(_)) => {
+                // direct field access `obj.@field`
+                self.next();
+                Ok(format!("@{}", self.ident()?))
             }
             _ => self.err(format!("expected property name but found {}", describe(self.peek()))),
         }
@@ -181,6 +203,10 @@ impl Parser {
     }
     fn groovy_like(&self) -> bool {
         matches!(self.d, Dialect::Groovy | Dialect::Mvel)
+    }
+    /// Groovy, MVEL or Java: typed declarations and `Type x : list` loops.
+    fn typed_like(&self) -> bool {
+        matches!(self.d, Dialect::Groovy | Dialect::Mvel | Dialect::Java)
     }
 
     // ------------------------------------------------------------------ statements
@@ -229,9 +255,14 @@ impl Parser {
             return Ok(Stmt::Empty);
         }
         let d = self.d;
+        if d == Dialect::Groovy && self.is_groovy_type_decl_start() {
+            let annotations = self.parse_groovy_annotations()?;
+            let c = self.parse_groovy_class(annotations)?;
+            return Ok(Stmt::Class(Arc::new(c)));
+        }
         if let T::Ident(w) = self.peek().clone() {
             // labels
-            if self.is_p_at(1, ":") && matches!(d, Dialect::Js | Dialect::Groovy) && !JS_KEYWORDS.contains(&w.as_str()) && w != "default" {
+            if self.is_p_at(1, ":") && matches!(d, Dialect::Js | Dialect::Groovy | Dialect::Java) && !JS_KEYWORDS.contains(&w.as_str()) && w != "default" {
                 let after = self.peek_at(2).clone();
                 if matches!(after, T::Ident(ref k) if k == "for" || k == "while" || k == "do") || self.tok_at(2).nl {
                     self.next();
@@ -246,9 +277,15 @@ impl Parser {
                     self.consume_semi()?;
                     return Ok(s);
                 }
-                "function" if d == Dialect::Js && matches!(self.peek_at(1), T::Ident(_)) => {
+                "function" if d == Dialect::Js && (matches!(self.peek_at(1), T::Ident(_)) || self.is_p_at(1, "*")) => {
                     self.next();
-                    let f = self.parse_function_rest(false)?;
+                    let f = self.parse_function_rest(false, false)?;
+                    return Ok(Stmt::Func(Arc::new(f)));
+                }
+                "async" if d == Dialect::Js && self.is_kw_at(1, "function") && !self.tok_at(1).nl => {
+                    self.next();
+                    self.next();
+                    let f = self.parse_function_rest(false, true)?;
                     return Ok(Stmt::Func(Arc::new(f)));
                 }
                 "class" if d == Dialect::Js => {
@@ -258,6 +295,7 @@ impl Parser {
                 "if" => return self.parse_if(),
                 "for" => return self.parse_for(),
                 "foreach" if d == Dialect::Mvel => return self.parse_for(),
+                "with" if d == Dialect::Mvel && self.is_p_at(1, "(") => return self.parse_mvel_with(),
                 "while" => {
                     self.next();
                     self.expect_p("(")?;
@@ -326,7 +364,14 @@ impl Parser {
                     self.eat_p(";");
                     return Ok(Stmt::Empty);
                 }
-                "def" | "var" | "final" | "static" | "private" | "public" | "protected" if self.groovy_like() => {
+                "yield" if d == Dialect::Java && !matches!(self.peek_at(1), T::P("=") | T::P("(") | T::P(".") | T::P(";")) => {
+                    // value of a switch expression arm
+                    self.next();
+                    let e = self.parse_expr()?;
+                    self.consume_semi()?;
+                    return Ok(Stmt::SwitchYield(e));
+                }
+                "def" | "var" | "final" | "static" | "private" | "public" | "protected" if self.typed_like() && !(d == Dialect::Java && w == "def") => {
                     while matches!(self.peek(), T::Ident(m) if matches!(m.as_str(), "final" | "static" | "private" | "public" | "protected" | "synchronized")) {
                         self.next();
                     }
@@ -361,7 +406,7 @@ impl Parser {
                 }
                 _ => {}
             }
-            if self.groovy_like() && self.is_groovy_typed_decl() {
+            if self.typed_like() && self.is_groovy_typed_decl() {
                 self.skip_groovy_type();
                 if matches!(self.peek(), T::Ident(_)) && self.is_p_at(1, "(") {
                     return self.parse_groovy_method();
@@ -388,6 +433,266 @@ impl Parser {
         let e = self.parse_expr()?;
         self.consume_semi()?;
         Ok(Stmt::Expr(e))
+    }
+
+    // ------------------------------------------------------------------ Groovy classes
+    /// At `@Annotation`, modifiers and `class` / `interface` / `trait` / `enum` + name.
+    fn is_groovy_type_decl_start(&self) -> bool {
+        let mut n = 0;
+        loop {
+            match self.peek_at(n) {
+                T::P("@") if matches!(self.peek_at(n + 1), T::Ident(_)) => {
+                    n += 2;
+                    while self.is_p_at(n, ".") && matches!(self.peek_at(n + 1), T::Ident(_)) {
+                        n += 2;
+                    }
+                    if self.is_p_at(n, "(") {
+                        let mut depth = 0;
+                        loop {
+                            match self.peek_at(n) {
+                                T::P("(") => depth += 1,
+                                T::P(")") => depth -= 1,
+                                T::Eof => return false,
+                                _ => {}
+                            }
+                            n += 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                    }
+                }
+                T::Ident(w) if matches!(w.as_str(), "public" | "private" | "protected" | "abstract" | "final" | "static" | "sealed") => n += 1,
+                T::Ident(w) if matches!(w.as_str(), "class" | "interface" | "trait" | "enum") => return matches!(self.peek_at(n + 1), T::Ident(_)),
+                _ => return false,
+            }
+        }
+    }
+
+    /// `@Name`, `@a.b.Name(...)`: the simple names.
+    fn parse_groovy_annotations(&mut self) -> R<Vec<String>> {
+        let mut out = Vec::new();
+        while self.is_p("@") && matches!(self.peek_at(1), T::Ident(_)) {
+            self.next();
+            let mut name = self.ident()?;
+            while self.is_p(".") && matches!(self.peek_at(1), T::Ident(_)) {
+                self.next();
+                name = self.ident()?;
+            }
+            if self.is_p("(") {
+                self.skip_balanced()?;
+            }
+            out.push(name);
+        }
+        Ok(out)
+    }
+
+    /// Skip a balanced `( ... )`, `< ... >` or `{ ... }` group starting at the current token.
+    fn skip_balanced(&mut self) -> R<()> {
+        let mut depth = 0i32;
+        loop {
+            match self.next() {
+                T::P("(") | T::P("{") | T::P("[") | T::P("<") => depth += 1,
+                T::P(")") | T::P("}") | T::P("]") | T::P(">") => depth -= 1,
+                T::P(">>") => depth -= 2,
+                T::Eof => return self.err("unbalanced brackets"),
+                _ => {}
+            }
+            if depth <= 0 {
+                return Ok(());
+            }
+        }
+    }
+
+    fn groovy_type_name(&mut self) -> R<String> {
+        let mut name = self.ident()?;
+        while self.is_p(".") && matches!(self.peek_at(1), T::Ident(_)) {
+            self.next();
+            name = self.ident()?;
+        }
+        if self.is_p("<") {
+            self.skip_balanced()?;
+        }
+        Ok(name)
+    }
+
+    fn parse_groovy_class(&mut self, mut annotations: Vec<String>) -> R<ClassDef> {
+        while matches!(self.peek(), T::Ident(w) if matches!(w.as_str(), "public" | "private" | "protected" | "abstract" | "final" | "static" | "sealed")) {
+            self.next();
+        }
+        let kind = self.ident()?;
+        let name = self.ident()?;
+        if self.is_p("<") {
+            self.skip_balanced()?;
+        }
+        let mut extends = None;
+        let mut mixins = Vec::new();
+        loop {
+            if self.eat_kw("extends") {
+                loop {
+                    let pos = self.pos();
+                    let t = self.groovy_type_name()?;
+                    if kind == "interface" || kind == "trait" || extends.is_some() {
+                        mixins.push(Expr::Ident(t, pos));
+                    } else {
+                        extends = Some(Expr::Ident(t, pos));
+                    }
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else if self.eat_kw("implements") {
+                loop {
+                    let pos = self.pos();
+                    mixins.push(Expr::Ident(self.groovy_type_name()?, pos));
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else if self.eat_kw("permits") {
+                while !self.is_p("{") && !self.at_eof() {
+                    self.next();
+                }
+            } else {
+                break;
+            }
+        }
+        self.expect_p("{")?;
+        let mut ctors = Vec::new();
+        let mut methods: Vec<ClassMember> = Vec::new();
+        let mut fields = Vec::new();
+        let mut constants: Vec<(String, Vec<Elem>, u32)> = Vec::new();
+        if kind == "enum" {
+            while let T::Ident(c) = self.peek().clone() {
+                let pos = self.pos();
+                self.next();
+                let args = if self.is_p("(") { self.parse_args()? } else { vec![] };
+                if self.is_p("{") {
+                    self.skip_balanced()?;
+                }
+                constants.push((c, args, pos));
+                if !self.eat_p(",") {
+                    break;
+                }
+            }
+            self.eat_p(";");
+        }
+        while !self.eat_p("}") {
+            if self.at_eof() {
+                return self.err("expected '}' but found end of input");
+            }
+            if self.eat_p(";") {
+                continue;
+            }
+            self.parse_groovy_annotations()?;
+            if self.is_groovy_type_decl_start() {
+                let a = self.parse_groovy_annotations()?;
+                let inner = self.parse_groovy_class(a)?;
+                let n = inner.name.clone().unwrap_or_default();
+                fields.push(ClassField { name: n, init: Some(Expr::Class(Arc::new(inner))), is_static: true });
+                continue;
+            }
+            let mut is_static = false;
+            let mut is_abstract = kind == "interface";
+            while let T::Ident(m) = self.peek().clone() {
+                match m.as_str() {
+                    "static" => is_static = true,
+                    "abstract" => is_abstract = true,
+                    "default" => is_abstract = false,
+                    "public" | "private" | "protected" | "final" | "synchronized" | "transient" | "volatile" | "native" | "strictfp" => {}
+                    _ => break,
+                }
+                self.next();
+            }
+            if is_static && self.is_p("{") {
+                let body = self.parse_block_body()?;
+                let f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
+                let call = Expr::Call { callee: Box::new(Expr::Member { obj: Box::new(Expr::Func(Arc::new(f))), name: "call".into(), optional: false, pos: 0 }), args: vec![Elem::Item(Expr::This)], optional: false, pos: 0 };
+                fields.push(ClassField { name: format!("%static{}", fields.len()), init: Some(call), is_static: true });
+                continue;
+            }
+            if self.is_p("<") {
+                self.skip_balanced()?;
+            }
+            let mut typed = false;
+            if self.is_kw("def") || self.is_kw("var") {
+                self.next();
+                typed = true;
+            } else if self.is_groovy_typed_decl() {
+                self.skip_groovy_type();
+                typed = true;
+            }
+            let mpos = self.pos();
+            let mname = self.ident()?;
+            if self.is_p("(") {
+                let (params, rest) = self.parse_params()?;
+                if self.eat_kw("throws") {
+                    while !self.is_p("{") && !self.is_p(";") && !self.is_p("}") && !self.nl() && !self.at_eof() {
+                        self.next();
+                    }
+                }
+                if !self.is_p("{") {
+                    // abstract / interface method declaration
+                    self.consume_semi()?;
+                    continue;
+                }
+                let _ = is_abstract;
+                let body = self.parse_block_body()?;
+                let f = FuncDef { name: Some(mname.clone()), params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: true, generator: false, is_async: false };
+                if !typed && mname == name {
+                    ctors.push(Arc::new(f));
+                } else {
+                    methods.push(ClassMember { name: mname, key: None, func: Arc::new(f), kind: MemberKind::Method, is_static });
+                }
+                continue;
+            }
+            let _ = mpos;
+            let mut fname = mname;
+            loop {
+                let init = if self.eat_p("=") { Some(self.parse_expr()?) } else { None };
+                fields.push(ClassField { name: fname, init, is_static: is_static || kind == "interface" });
+                if !self.eat_p(",") {
+                    break;
+                }
+                self.skip_groovy_type();
+                fname = self.ident()?;
+            }
+            self.consume_semi()?;
+        }
+        if kind == "enum" {
+            let list = constants.iter().map(|(c, _, _)| format!("{}.{}", name, c)).collect::<Vec<_>>().join(", ");
+            let src = format!(
+                "class {n} {{\n def $enumName\n def $enumOrdinal\n static $mk(n, o, e) {{ e.$enumName = n; e.$enumOrdinal = o; e }}\n String name() {{ this.$enumName }}\n int ordinal() {{ this.$enumOrdinal }}\n String toString() {{ this.$enumName }}\n int compareTo(o) {{ this.$enumOrdinal <=> o.$enumOrdinal }}\n static values() {{ [{l}] }}\n static valueOf(String s) {{ def r = values().find {{ it.name() == s }}; if (r == null) throw new IllegalArgumentException(\"No enum constant {n}.\" + s); r }}\n}}",
+                n = name,
+                l = list
+            );
+            let prog = parse_program(&src, Dialect::Groovy)?;
+            if let Some(Stmt::Class(g)) = prog.body.into_iter().next() {
+                for m in &g.methods {
+                    if !methods.iter().any(|x| x.name == m.name) {
+                        methods.push(m.clone());
+                    }
+                }
+                let mut consts = Vec::new();
+                for (i, (c, args, pos)) in constants.into_iter().enumerate() {
+                    let make = Expr::New { callee: Box::new(Expr::Ident(name.clone(), pos)), args, pos };
+                    let init = Expr::Call {
+                        callee: Box::new(Expr::Member { obj: Box::new(Expr::Ident(name.clone(), pos)), name: "$mk".into(), optional: false, pos }),
+                        args: vec![Elem::Item(Expr::Str(c.clone())), Elem::Item(Expr::Int(i as i64)), Elem::Item(make)],
+                        optional: false,
+                        pos,
+                    };
+                    consts.push(ClassField { name: c, init: Some(init), is_static: true });
+                }
+                let mut all: Vec<ClassField> = g.fields.clone();
+                all.extend(fields.iter().filter(|f| !f.is_static).cloned());
+                consts.extend(fields.into_iter().filter(|f| f.is_static));
+                all.extend(consts);
+                fields = all;
+            }
+            annotations.push("%enum".into());
+        }
+        Ok(ClassDef { name: Some(name), extends, ctors, methods, fields, mixins, style: ClassStyle::Groovy, annotations })
     }
 
     /// `println "x"` / `log.info msg` (Groovy command expressions).
@@ -420,7 +725,8 @@ impl Parser {
             _ => return false,
         };
         let primitive = matches!(w.as_str(), "int" | "long" | "double" | "float" | "boolean" | "char" | "byte" | "short" | "void");
-        if !primitive && !w.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+        let qualified = matches!(w.as_str(), "java" | "javax") && self.is_p_at(1, ".");
+        if !primitive && !qualified && !w.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
             return false;
         }
         // skip qualified name, generics and array brackets
@@ -508,7 +814,7 @@ impl Parser {
             }
         }
         let body = self.parse_block_body()?;
-        Ok(Stmt::Func(Arc::new(FuncDef { name: Some(name), params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: true })))
+        Ok(Stmt::Func(Arc::new(FuncDef { name: Some(name), params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: true, generator: false, is_async: false })))
     }
 
     fn parse_var_decl(&mut self) -> R<Stmt> {
@@ -537,7 +843,10 @@ impl Parser {
             self.no_in = save;
             return self.to_pat(e);
         }
-        if self.groovy_like() {
+        if self.typed_like() {
+            if self.is_kw("final") {
+                self.next();
+            }
             self.skip_groovy_type();
         }
         Ok(Pat::Id(self.ident()?))
@@ -563,12 +872,36 @@ impl Parser {
     fn parse_for(&mut self) -> R<Stmt> {
         let foreach = self.is_kw("foreach");
         self.next();
+        if self.d == Dialect::Js && matches!(self.peek(), T::Ident(w) if w == "await") {
+            // `for await (x of xs)`: each element is awaited
+            let pos = self.pos();
+            self.next();
+            let st = self.parse_for_rest(foreach)?;
+            return match st {
+                Stmt::ForIn { decl, pat, obj, body, values: true, else_body } => {
+                    let tmp = "%forawait".to_string();
+                    let bind = match decl {
+                        Some(k) => Stmt::Var(k, vec![(pat, Some(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)))]),
+                        None => Stmt::Expr(Expr::Assign { op: None, target: Box::new(pat), value: Box::new(Expr::Await(Box::new(Expr::Ident(tmp.clone(), pos)), pos)), pos }),
+                    };
+                    Ok(Stmt::ForIn { decl: Some(VarKind::Let), pat: Pat::Id(tmp), obj, body: Box::new(Stmt::Block(vec![bind, *body])), values: true, else_body })
+                }
+                _ => self.err("expected 'for await (x of iterable)'"),
+            };
+        }
+        self.parse_for_rest(foreach)
+    }
+
+    fn parse_for_rest(&mut self, foreach: bool) -> R<Stmt> {
         self.expect_p("(")?;
-        // for-each forms of Groovy / MVEL: `x in list`, `Type x : list`, `def x in list`
-        if self.groovy_like() {
+        // for-each forms of Groovy / MVEL / Java: `x in list`, `Type x : list`, `def x in list`
+        if self.typed_like() {
             let mut n = 0;
             if self.is_kw("def") || self.is_kw("var") || self.is_kw("final") {
                 n = 1;
+            }
+            if self.is_kw("final") && self.is_kw_at(1, "var") {
+                n = 2;
             }
             let typed = self.groovy_type_len(n);
             let nm = n + typed;
@@ -593,8 +926,8 @@ impl Parser {
             self.no_in = true;
             let s = if self.d == Dialect::Js && (self.is_kw("var") || self.is_kw("let") || self.is_kw("const")) {
                 self.parse_var_decl()
-            } else if self.groovy_like() && (self.is_kw("def") || self.is_groovy_typed_decl()) {
-                if self.is_kw("def") {
+            } else if self.typed_like() && (self.is_kw("def") || self.is_kw("var") || self.is_groovy_typed_decl()) {
+                if self.is_kw("def") || self.is_kw("var") {
                     self.next();
                 }
                 self.skip_groovy_type();
@@ -648,6 +981,25 @@ impl Parser {
         }
         let mut m = n + 1;
         while self.is_p_at(m, ".") && matches!(self.peek_at(m + 1), T::Ident(_)) {
+            m += 2;
+        }
+        if self.is_p_at(m, "<") {
+            let mut depth = 0;
+            loop {
+                match self.peek_at(m) {
+                    T::P("<") => depth += 1,
+                    T::P(">") => depth -= 1,
+                    T::P(">>") => depth -= 2,
+                    T::Ident(_) | T::P(",") | T::P(".") | T::P("?") => {}
+                    _ => return 0,
+                }
+                m += 1;
+                if depth <= 0 {
+                    break;
+                }
+            }
+        }
+        while self.is_p_at(m, "[") && self.is_p_at(m + 1, "]") {
             m += 2;
         }
         if !matches!(self.peek_at(m), T::Ident(_)) {
@@ -705,6 +1057,11 @@ impl Parser {
     }
 
     fn parse_switch(&mut self) -> R<Stmt> {
+        if self.d == Dialect::Java && self.switch_has_arrows() {
+            let e = self.parse_java_switch(true)?;
+            self.eat_p(";");
+            return Ok(Stmt::Expr(e));
+        }
         self.next();
         self.expect_p("(")?;
         let disc = self.parse_expr()?;
@@ -713,7 +1070,15 @@ impl Parser {
         let mut cases: Vec<(Option<Expr>, Vec<Stmt>)> = Vec::new();
         while !self.eat_p("}") {
             let test = if self.eat_kw("case") {
-                let e = self.parse_cond()?;
+                let mut e = self.parse_cond()?;
+                if self.d == Dialect::Java && self.is_p(",") {
+                    // `case 1, 2:`
+                    let mut items = vec![Elem::Item(e)];
+                    while self.eat_p(",") {
+                        items.push(Elem::Item(self.parse_cond()?));
+                    }
+                    e = Expr::Array(items);
+                }
                 Some(e)
             } else if self.eat_kw("default") {
                 None
@@ -738,6 +1103,263 @@ impl Parser {
         Ok(Stmt::Switch(disc, cases))
     }
 
+    /// MVEL `with (obj) { prop = value, other = value }`: assigns properties of `obj`; the
+    /// statement's value is the object.
+    fn parse_mvel_with(&mut self) -> R<Stmt> {
+        let pos = self.pos();
+        self.next();
+        self.expect_p("(")?;
+        let target = self.parse_expr()?;
+        self.expect_p(")")?;
+        self.expect_p("{")?;
+        let tmp = format!("%with{}", pos);
+        let id = || Expr::Ident(tmp.clone(), pos);
+        let mut stmts = vec![Stmt::Var(VarKind::Let, vec![(Pat::Id(tmp.clone()), Some(target))])];
+        while !self.eat_p("}") {
+            if self.at_eof() {
+                return self.err("unterminated with block");
+            }
+            if self.eat_p(",") || self.eat_p(";") {
+                continue;
+            }
+            let mpos = self.pos();
+            let name = self.ident()?;
+            let op = if self.eat_p("=") {
+                None
+            } else if self.eat_p("+=") {
+                Some(AssignOp::Bin(BinOp::Add))
+            } else if self.eat_p("-=") {
+                Some(AssignOp::Bin(BinOp::Sub))
+            } else {
+                return self.err(format!("expected '=' in with block but found {}", describe(self.peek())));
+            };
+            let value = self.parse_assign()?;
+            let target = Pat::Target(Expr::Member { obj: Box::new(id()), name, optional: false, pos: mpos });
+            stmts.push(Stmt::Expr(Expr::Assign { op, target: Box::new(target), value: Box::new(value), pos: mpos }));
+        }
+        stmts.push(Stmt::Expr(id()));
+        Ok(Stmt::Block(stmts))
+    }
+
+    // ------------------------------------------------------------------ Java
+    /// At `switch (...) {`: whether the first case uses `->`.
+    fn switch_has_arrows(&self) -> bool {
+        let mut n = 0;
+        let mut depth = 0;
+        loop {
+            match self.peek_at(n) {
+                T::P("(") | T::P("[") => depth += 1,
+                T::P(")") | T::P("]") => depth -= 1,
+                T::P("{") => {
+                    depth += 1;
+                }
+                T::P("}") => {
+                    depth -= 1;
+                    if depth <= 0 {
+                        return false;
+                    }
+                }
+                T::P("->") if depth == 1 => return true,
+                T::P(":") if depth == 1 => return false,
+                T::Eof => return false,
+                _ => {}
+            }
+            n += 1;
+        }
+    }
+
+    /// A Java switch expression (or an arrow-form switch statement): `switch (x) { case A, B -> e;
+    /// case C -> { ...; yield v; } case String s -> ...; default -> e; }` or the colon form with
+    /// `yield`.
+    fn parse_java_switch(&mut self, statement: bool) -> R<Expr> {
+        let pos = self.pos();
+        self.next();
+        self.expect_p("(")?;
+        let disc = self.parse_expr()?;
+        self.expect_p(")")?;
+        self.expect_p("{")?;
+        let mut arms: Vec<(Vec<Expr>, Vec<Stmt>)> = Vec::new();
+        let mut has_default = false;
+        while !self.eat_p("}") {
+            if self.at_eof() {
+                return self.err("unterminated switch");
+            }
+            let mut labels = Vec::new();
+            if self.eat_kw("default") {
+                has_default = true;
+            } else if self.eat_kw("case") {
+                loop {
+                    if self.is_kw("default") {
+                        self.next();
+                        has_default = true;
+                        labels.clear();
+                        break;
+                    }
+                    // type pattern `case String s`
+                    let tl = self.groovy_type_len(0);
+                    if tl > 0 && matches!(self.peek_at(tl), T::Ident(_)) && matches!(self.peek_at(tl + 1), T::P("->") | T::P(":") | T::P(",")) {
+                        let lpos = self.pos();
+                        let ty = self.type_name()?;
+                        let name = self.ident()?;
+                        labels.push(Expr::InstanceBind { expr: Box::new(Expr::Undef), ty, name, pos: lpos });
+                    } else {
+                        labels.push(self.parse_cond()?);
+                    }
+                    if !self.eat_p(",") {
+                        break;
+                    }
+                }
+            } else {
+                return self.err(format!("expected 'case' or 'default' but found {}", describe(self.peek())));
+            }
+            let body = if self.eat_p("->") {
+                if self.is_p("{") {
+                    self.parse_block_body()?
+                } else if self.is_kw("throw") {
+                    vec![self.parse_statement()?]
+                } else {
+                    let e = self.parse_expr()?;
+                    self.expect_p(";")?;
+                    vec![Stmt::Expr(e)]
+                }
+            } else {
+                self.expect_p(":")?;
+                let mut body = Vec::new();
+                while !self.is_kw("case") && !self.is_kw("default") && !self.is_p("}") {
+                    if self.at_eof() {
+                        return self.err("unterminated switch");
+                    }
+                    if self.eat_p(";") {
+                        continue;
+                    }
+                    body.push(self.parse_statement()?);
+                }
+                body
+            };
+            if labels.is_empty() {
+                // default: keep it last
+                arms.push((vec![], body));
+            } else {
+                arms.push((labels, body));
+            }
+        }
+        // default arm evaluated last
+        if let Some(i) = arms.iter().position(|(l, _)| l.is_empty()) {
+            let d = arms.remove(i);
+            arms.push(d);
+        }
+        if statement && !has_default {
+            arms.push((vec![], vec![]));
+        }
+        Ok(Expr::SwitchExpr(Box::new(disc), arms, pos))
+    }
+
+    /// At `(`: whether this is a cast `(Type) operand`.
+    fn is_java_cast(&self) -> bool {
+        let w = match self.peek_at(1) {
+            T::Ident(w) => w.clone(),
+            _ => return false,
+        };
+        let primitive = matches!(w.as_str(), "int" | "long" | "double" | "float" | "boolean" | "char" | "byte" | "short");
+        let tl = self.groovy_type_len_any(1);
+        if tl == 0 || !self.is_p_at(1 + tl, ")") {
+            return false;
+        }
+        if primitive {
+            return true;
+        }
+        if !w.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            return false;
+        }
+        match self.peek_at(2 + tl) {
+            T::Ident(x) => !matches!(x.as_str(), "instanceof"),
+            T::Int(_) | T::Num(_) | T::Str(_) | T::Tpl(_) => true,
+            T::P("(") | T::P("!") | T::P("~") => true,
+            _ => false,
+        }
+    }
+
+    /// Length in tokens of a type at offset `n` (qualified name, generics, array dims); 0 if none.
+    fn groovy_type_len_any(&self, n: usize) -> usize {
+        if !matches!(self.peek_at(n), T::Ident(_)) {
+            return 0;
+        }
+        let mut m = n + 1;
+        while self.is_p_at(m, ".") && matches!(self.peek_at(m + 1), T::Ident(_)) {
+            m += 2;
+        }
+        if self.is_p_at(m, "<") {
+            let mut depth = 0;
+            loop {
+                match self.peek_at(m) {
+                    T::P("<") => depth += 1,
+                    T::P(">") => depth -= 1,
+                    T::P(">>") => depth -= 2,
+                    T::Ident(_) | T::P(",") | T::P(".") | T::P("?") => {}
+                    _ => return 0,
+                }
+                m += 1;
+                if depth <= 0 {
+                    break;
+                }
+            }
+        }
+        while self.is_p_at(m, "[") && self.is_p_at(m + 1, "]") {
+            m += 2;
+        }
+        m - n
+    }
+
+    /// At `(`: whether a Java lambda `(a, b) -> ...` / `(Type a) -> ...` / `() -> ...` starts here.
+    fn is_java_lambda_paren(&self) -> bool {
+        let mut depth = 0;
+        let mut n = 0;
+        loop {
+            match self.peek_at(n) {
+                T::P("(") => depth += 1,
+                T::P(")") => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.is_p_at(n + 1, "->");
+                    }
+                }
+                T::Ident(_) | T::P(",") | T::P("<") | T::P(">") | T::P(".") | T::P("[") | T::P("]") | T::P("?") => {}
+                _ => return false,
+            }
+            n += 1;
+        }
+    }
+
+    fn parse_java_lambda(&mut self) -> R<Expr> {
+        let mut params = Vec::new();
+        if self.eat_p("(") {
+            while !self.is_p(")") {
+                if self.is_kw("final") {
+                    self.next();
+                }
+                if self.is_kw("var") {
+                    self.next();
+                }
+                let tl = self.groovy_type_len_any(0);
+                if tl > 0 && matches!(self.peek_at(tl), T::Ident(_)) {
+                    for _ in 0..tl {
+                        self.next();
+                    }
+                }
+                params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+                if !self.eat_p(",") {
+                    break;
+                }
+            }
+            self.expect_p(")")?;
+        } else {
+            params.push(Param { pat: Pat::Id(self.ident()?), default: None });
+        }
+        self.expect_p("->")?;
+        let body = if self.is_p("{") { FuncBody::Block(self.parse_block_body()?) } else { FuncBody::Expr(Box::new(self.parse_assign()?)) };
+        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body, arrow: true, implicit_it: false, implicit_return: false, generator: false, is_async: false })))
+    }
+
     fn parse_class(&mut self) -> R<ClassDef> {
         self.next();
         let name = if let T::Ident(n) = self.peek().clone() {
@@ -752,26 +1374,112 @@ impl Parser {
         };
         let extends = if self.eat_kw("extends") { Some(self.parse_postfix()?) } else { None };
         self.expect_p("{")?;
-        let mut ctor = None;
+        let mut ctors = Vec::new();
         let mut methods = Vec::new();
+        let mut fields = Vec::new();
         while !self.eat_p("}") {
             if self.eat_p(";") {
                 continue;
             }
-            let is_static = self.is_kw("static") && !self.is_p_at(1, "(");
+            let is_static = self.is_kw("static") && !self.is_p_at(1, "(") && !self.is_p_at(1, "=");
             if is_static {
                 self.next();
+                if self.is_p("{") {
+                    // static initialization block
+                    let body = self.parse_block_body()?;
+                    let f = FuncDef::new(None, vec![], None, FuncBody::Block(body));
+                    let call = Expr::Call { callee: Box::new(Expr::Member { obj: Box::new(Expr::Func(Arc::new(f))), name: "call".into(), optional: false, pos: 0 }), args: vec![Elem::Item(Expr::This)], optional: false, pos: 0 };
+                    fields.push(ClassField { name: format!("%static{}", fields.len()), init: Some(call), is_static: true });
+                    continue;
+                }
             }
-            let mname = self.prop_name()?;
-            let mut f = self.parse_function_params_body()?;
+            let (m, key) = self.parse_method_head()?;
+            if m.accessor.is_none() && !m.generator && !m.is_async && (self.is_p("=") || self.is_p(";") || self.is_p("}") || self.nl()) && !self.is_p("(") {
+                // class field
+                let init = if self.eat_p("=") { Some(self.parse_assign()?) } else { None };
+                self.consume_semi()?;
+                let PropKey::Name(n) = key else { return self.err("computed class field names are not supported") };
+                fields.push(ClassField { name: n, init, is_static });
+                continue;
+            }
+            let mut f = self.parse_method_body(m.generator, m.is_async)?;
+            let (mname, mkey) = match key {
+                PropKey::Name(n) => (n, None),
+                PropKey::Computed(e) => (String::new(), Some(e)),
+            };
             f.name = Some(mname.clone());
-            if mname == "constructor" && !is_static {
-                ctor = Some(Arc::new(f));
+            if mname == "constructor" && !is_static && m.accessor.is_none() {
+                ctors.push(Arc::new(f));
             } else {
-                methods.push((mname, Arc::new(f), is_static));
+                let kind = match m.accessor {
+                    Some(true) => MemberKind::Getter,
+                    Some(false) => MemberKind::Setter,
+                    None => MemberKind::Method,
+                };
+                methods.push(ClassMember { name: mname, key: mkey, func: Arc::new(f), kind, is_static });
             }
         }
-        Ok(ClassDef { name, extends, ctor, methods })
+        Ok(ClassDef { name, extends, ctors, methods, fields, mixins: vec![], style: ClassStyle::Js, annotations: vec![] })
+    }
+
+    /// Method head in classes / object literals: modifiers (`get`, `set`, `async`, `*`) and the
+    /// member name.
+    fn parse_method_head(&mut self) -> R<(MethodHead, PropKey)> {
+        let mut h = MethodHead { accessor: None, generator: false, is_async: false };
+        let is_name_next = |p: &Parser, n: usize| matches!(p.peek_at(n), T::Ident(_) | T::Str(_) | T::Int(_) | T::Num(_) | T::P("[") | T::P("#") | T::P("*"));
+        if (self.is_kw("get") || self.is_kw("set")) && is_name_next(self, 1) && !self.is_p_at(1, "*") {
+            h.accessor = Some(self.is_kw("get"));
+            self.next();
+        } else if self.is_kw("async") && is_name_next(self, 1) && !self.tok_at(1).nl {
+            h.is_async = true;
+            self.next();
+        }
+        if self.eat_p("*") {
+            h.generator = true;
+        }
+        let key = match self.peek().clone() {
+            T::Ident(s) => {
+                self.next();
+                PropKey::Name(s)
+            }
+            T::Str(s) => {
+                self.next();
+                PropKey::Name(s)
+            }
+            T::Int(i) => {
+                self.next();
+                PropKey::Name(i.to_string())
+            }
+            T::Num(f) => {
+                self.next();
+                PropKey::Name(crate::interp::js_num_str(f))
+            }
+            T::P("#") => {
+                self.next();
+                PropKey::Name(format!("#{}", self.ident()?))
+            }
+            T::P("[") => {
+                self.next();
+                let k = self.parse_assign()?;
+                self.expect_p("]")?;
+                PropKey::Computed(k)
+            }
+            _ => return self.err(format!("unexpected {} in class body", describe(self.peek()))),
+        };
+        Ok((h, key))
+    }
+
+    fn parse_method_body(&mut self, generator: bool, is_async: bool) -> R<FuncDef> {
+        let (sg, sa) = (self.in_gen, self.in_async);
+        self.in_gen = generator;
+        self.in_async = is_async;
+        let r = self.parse_function_params_body();
+        self.in_gen = sg;
+        self.in_async = sa;
+        let mut f = r?;
+        f.generator = generator;
+        f.is_async = is_async;
+        Ok(f)
     }
 
     // ------------------------------------------------------------------ functions
@@ -798,11 +1506,12 @@ impl Parser {
     fn parse_function_params_body(&mut self) -> R<FuncDef> {
         let (params, rest) = self.parse_params()?;
         let body = self.parse_block_body()?;
-        Ok(FuncDef { name: None, params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: false })
+        Ok(FuncDef { name: None, params, rest, body: FuncBody::Block(body), arrow: false, implicit_it: false, implicit_return: false, generator: false, is_async: false })
     }
 
-    /// After `function`: optional name, params, body.
-    fn parse_function_rest(&mut self, expr: bool) -> R<FuncDef> {
+    /// After `function`: optional `*`, optional name, params, body.
+    fn parse_function_rest(&mut self, expr: bool, is_async: bool) -> R<FuncDef> {
+        let generator = self.eat_p("*");
         let name = match self.peek().clone() {
             T::Ident(n) => {
                 self.next();
@@ -811,22 +1520,32 @@ impl Parser {
             _ if expr => None,
             _ => return self.err("expected function name"),
         };
-        let mut f = self.parse_function_params_body()?;
+        let mut f = self.parse_method_body(generator, is_async)?;
         f.name = name;
         Ok(f)
     }
 
     fn parse_arrow_body(&mut self, params: Vec<Param>, rest: Option<Pat>) -> R<Expr> {
+        self.parse_arrow_body_async(params, rest, false)
+    }
+
+    fn parse_arrow_body_async(&mut self, params: Vec<Param>, rest: Option<Pat>, is_async: bool) -> R<Expr> {
+        let (sg, sa) = (self.in_gen, self.in_async);
+        self.in_gen = false;
+        self.in_async = is_async;
         let body = if self.is_p("{") {
-            FuncBody::Block(self.parse_block_body()?)
+            self.parse_block_body().map(FuncBody::Block)
         } else {
             let save = self.no_in;
             self.no_in = false;
-            let e = self.parse_assign()?;
+            let e = self.parse_assign();
             self.no_in = save;
-            FuncBody::Expr(Box::new(e))
+            e.map(|e| FuncBody::Expr(Box::new(e)))
         };
-        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body, arrow: true, implicit_it: false, implicit_return: false })))
+        self.in_gen = sg;
+        self.in_async = sa;
+        let body = body?;
+        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest, body, arrow: true, implicit_it: false, implicit_return: false, generator: false, is_async })))
     }
 
     /// Groovy closure `{ a, b -> ... }` (current token is `{`).
@@ -872,7 +1591,7 @@ impl Parser {
             body.push(self.parse_statement()?);
         }
         self.next();
-        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body: FuncBody::Block(body), arrow: false, implicit_it, implicit_return: true })))
+        Ok(Expr::Func(Arc::new(FuncDef { name: None, params, rest: None, body: FuncBody::Block(body), arrow: false, implicit_it, implicit_return: true, generator: false, is_async: false })))
     }
 
     // ------------------------------------------------------------------ expressions
@@ -921,6 +1640,36 @@ impl Parser {
     }
 
     fn parse_assign(&mut self) -> R<Expr> {
+        if self.d == Dialect::Java && ((matches!(self.peek(), T::Ident(_)) && self.is_p_at(1, "->")) || (self.is_p("(") && self.is_java_lambda_paren())) {
+            return self.parse_java_lambda();
+        }
+        if self.d == Dialect::Js && self.in_gen && self.is_kw("yield") {
+            let pos = self.pos();
+            self.next();
+            let delegate = !self.nl() && self.eat_p("*");
+            let ends = self.nl() && !delegate || matches!(self.peek(), T::P(")") | T::P("]") | T::P("}") | T::P(",") | T::P(";") | T::P(":") | T::Eof);
+            let arg = if ends { None } else { Some(Box::new(self.parse_assign()?)) };
+            return Ok(Expr::Yield { arg, delegate, pos });
+        }
+        if self.d == Dialect::Js && self.is_kw("async") && !self.tok_at(1).nl {
+            // async arrow functions
+            if matches!(self.peek_at(1), T::Ident(w) if !JS_KEYWORDS.contains(&w.as_str())) && self.is_p_at(2, "=>") {
+                self.next();
+                let name = self.ident()?;
+                self.next();
+                return self.parse_arrow_body_async(vec![Param { pat: Pat::Id(name), default: None }], None, true);
+            }
+            if self.is_p_at(1, "(") {
+                let save = self.i;
+                self.next();
+                if self.is_arrow_ahead() {
+                    let (params, rest) = self.parse_params()?;
+                    self.expect_p("=>")?;
+                    return self.parse_arrow_body_async(params, rest, true);
+                }
+                self.i = save;
+            }
+        }
         if self.d == Dialect::Js {
             if matches!(self.peek(), T::Ident(w) if !JS_KEYWORDS.contains(&w.as_str())) && self.is_p_at(1, "=>") {
                 let name = self.ident()?;
@@ -988,6 +1737,7 @@ impl Parser {
                         Prop::Spread(e) => rest = Some(Box::new(self.to_pat(e)?)),
                         Prop::KV(k, Expr::Assign { op: None, target, value, .. }) => v.push((k, *target, Some(*value))),
                         Prop::KV(k, e) => v.push((k, self.to_pat(e)?, None)),
+                        Prop::Get(..) | Prop::Set(..) => return self.err("invalid destructuring target"),
                     }
                 }
                 Pat::Obj(v, rest)
@@ -1103,7 +1853,19 @@ impl Parser {
                     Expr::As(Box::new(left), t, pos)
                 }
                 BinKind::TypeTest(neg) => {
+                    if self.is_kw("final") {
+                        self.next();
+                    }
                     let t = self.type_name()?;
+                    if self.d == Dialect::Java && !neg {
+                        if let T::Ident(n) = self.peek().clone() {
+                            if !matches!(n.as_str(), "instanceof") {
+                                self.next();
+                                left = Expr::InstanceBind { expr: Box::new(left), ty: t, name: n, pos };
+                                continue;
+                            }
+                        }
+                    }
                     let e = Expr::Bin(BinOp::InstanceOf, Box::new(left), Box::new(Expr::Type(t)), pos);
                     if neg {
                         Expr::Unary(UnOp::Not, Box::new(e), pos)
@@ -1198,6 +1960,11 @@ impl Parser {
             T::Ident(w) if w == "void" && self.d == Dialect::Js => Some(UnOp::Void),
             T::Ident(w) if w == "delete" && self.d == Dialect::Js => Some(UnOp::Delete),
             T::Ident(w) if w == "not" && matches!(self.d, Dialect::Ognl | Dialect::Spel) => Some(UnOp::Not),
+            T::Ident(w) if w == "await" && self.d == Dialect::Js && self.in_async && !matches!(self.peek_at(1), T::P(")") | T::P(";") | T::P(",") | T::P("=") | T::Eof) => {
+                self.next();
+                let e = self.parse_unary()?;
+                return Ok(Expr::Await(Box::new(e), pos));
+            }
             _ => None,
         };
         if let Some(op) = op {
@@ -1212,6 +1979,16 @@ impl Parser {
                 }
             }
             return Ok(Expr::Unary(op, Box::new(e), pos));
+        }
+        if self.d == Dialect::Java && self.is_p("(") && self.is_java_cast() {
+            self.next();
+            let t = self.type_name()?;
+            self.expect_p(")")?;
+            let e = self.parse_unary()?;
+            return Ok(match t.as_str() {
+                "Object" | "Comparable" | "CharSequence" | "Number" | "Iterable" | "Collection" => e,
+                _ => Expr::As(Box::new(e), t, pos),
+            });
         }
         if self.d == Dialect::Groovy && self.is_p("~") {
             // pattern operator ~"regex" / ~/regex/
@@ -1272,6 +2049,13 @@ impl Parser {
             let pos = self.pos();
             let nl = self.nl();
             match self.peek().clone() {
+                T::P("::") => {
+                    // method reference `Type::method`, `obj::method`, `Type::new`
+                    self.next();
+                    let name = self.ident()?;
+                    e = Expr::MethodRef(Box::new(e), name, pos);
+                    continue;
+                }
                 T::P(".") | T::P("?.") | T::P(".?") => {
                     let optional = !self.is_p(".");
                     self.next();
@@ -1325,6 +2109,8 @@ impl Parser {
                             arrow: false,
                             implicit_it: true,
                             implicit_return: true,
+                            generator: false,
+                            is_async: false,
                         }));
                         e = Expr::Call { callee: Box::new(Expr::Member { obj: Box::new(e), name: "collect".into(), optional: true, pos }), args: vec![Elem::Item(f)], optional: false, pos };
                     } else {
@@ -1446,7 +2232,7 @@ impl Parser {
                     self.parse_object_literal()
                 }
                 Dialect::Groovy => self.parse_closure(),
-                Dialect::Ognl | Dialect::Mvel => {
+                Dialect::Ognl | Dialect::Mvel | Dialect::Java => {
                     self.next();
                     let mut items = Vec::new();
                     while !self.is_p("}") {
@@ -1505,6 +2291,21 @@ impl Parser {
                 self.expect_p("}")?;
                 Ok(Expr::Object(props))
             }
+            T::P("@") if d == Dialect::Ognl && matches!(self.peek_at(1), T::Ident(_)) => {
+                // static member access `@java.lang.Math@max(1, 2)`, `@Integer@MAX_VALUE`
+                self.next();
+                let cls = self.qualified_name()?;
+                self.expect_p("@")?;
+                let mpos = self.pos();
+                let name = self.ident()?;
+                let simple = cls.rsplit('.').next().unwrap_or(&cls).to_string();
+                let member = Expr::Member { obj: Box::new(Expr::Type(simple)), name, optional: false, pos: mpos };
+                if self.is_p("(") {
+                    let args = self.parse_args()?;
+                    return Ok(Expr::Call { callee: Box::new(member), args, optional: false, pos });
+                }
+                Ok(member)
+            }
             T::P("@") if d == Dialect::Spel => {
                 self.next();
                 let name = self.ident()?;
@@ -1521,7 +2322,12 @@ impl Parser {
                     "this" => return Ok(Expr::This),
                     "super" => return Ok(Expr::Super(pos)),
                     "function" if d == Dialect::Js => {
-                        let f = self.parse_function_rest(true)?;
+                        let f = self.parse_function_rest(true, false)?;
+                        return Ok(Expr::Func(Arc::new(f)));
+                    }
+                    "async" if d == Dialect::Js && self.is_kw("function") && !self.nl() => {
+                        self.next();
+                        let f = self.parse_function_rest(true, true)?;
                         return Ok(Expr::Func(Arc::new(f)));
                     }
                     "class" if d == Dialect::Js => {
@@ -1529,7 +2335,40 @@ impl Parser {
                         let c = self.parse_class()?;
                         return Ok(Expr::Class(Arc::new(c)));
                     }
-                    "new" if matches!(d, Dialect::Js | Dialect::Groovy | Dialect::Mvel | Dialect::Spel) => {
+                    "switch" if d == Dialect::Java => {
+                        self.i -= 1;
+                        return self.parse_java_switch(false);
+                    }
+                    "new" if d == Dialect::Java && self.java_array_new() => {
+                        // `new int[3]`, `new String[]{"a"}`, `new int[2][3]`
+                        let ty = self.qualified_name()?;
+                        let mut dims = Vec::new();
+                        while self.eat_p("[") {
+                            if self.eat_p("]") {
+                                dims.push(None);
+                            } else {
+                                dims.push(Some(self.parse_expr()?));
+                                self.expect_p("]")?;
+                            }
+                        }
+                        if self.is_p("{") {
+                            return self.parse_primary();
+                        }
+                        let fill = if dims.len() > 1 {
+                            Expr::Null
+                        } else {
+                            match ty.as_str() {
+                                "int" | "long" | "short" | "byte" => Expr::Int(0),
+                                "double" | "float" => Expr::Num(0.0),
+                                "boolean" => Expr::Bool(false),
+                                "char" => Expr::Str("\0".into()),
+                                _ => Expr::Null,
+                            }
+                        };
+                        let size = dims.into_iter().next().flatten().unwrap_or(Expr::Int(0));
+                        return Ok(Expr::Call { callee: Box::new(Expr::Ident("__newarray".into(), pos)), args: vec![Elem::Item(size), Elem::Item(fill)], optional: false, pos });
+                    }
+                    "new" if matches!(d, Dialect::Js | Dialect::Groovy | Dialect::Mvel | Dialect::Spel | Dialect::Java) => {
                         let callee = if d == Dialect::Js {
                             let mut c = self.parse_primary()?;
                             while self.is_p(".") {
@@ -1588,6 +2427,20 @@ impl Parser {
             }
             _ => self.unexpected(),
         }
+    }
+
+    /// After `new` (Java): whether an array creation follows.
+    fn java_array_new(&self) -> bool {
+        let mut n = 0;
+        while matches!(self.peek_at(n), T::Ident(_)) {
+            n += 1;
+            if self.is_p_at(n, ".") {
+                n += 1;
+            } else {
+                break;
+            }
+        }
+        self.is_p_at(n, "[")
     }
 
     fn continue_postfix(&mut self, e: Expr) -> R<Expr> {
@@ -1694,8 +2547,21 @@ impl Parser {
         self.no_in = false;
         let mut props = Vec::new();
         while !self.is_p("}") {
+            let accessor_or_method = (self.is_kw("get") || self.is_kw("set") || self.is_kw("async")) && matches!(self.peek_at(1), T::Ident(_) | T::Str(_) | T::Int(_) | T::P("[") | T::P("*"));
             if self.eat_p("...") {
                 props.push(Prop::Spread(self.parse_assign()?));
+            } else if accessor_or_method || self.is_p("*") {
+                let (m, key) = self.parse_method_head()?;
+                let mut f = self.parse_method_body(m.generator, m.is_async)?;
+                if let PropKey::Name(n) = &key {
+                    f.name = Some(n.clone());
+                }
+                let f = Arc::new(f);
+                props.push(match m.accessor {
+                    Some(true) => Prop::Get(key, f),
+                    Some(false) => Prop::Set(key, f),
+                    None => Prop::KV(key, Expr::Func(f)),
+                });
             } else {
                 let key = match self.peek().clone() {
                     T::Ident(s) => {
@@ -1759,6 +2625,13 @@ fn spel_key(e: Expr) -> PropKey {
         Expr::Int(i) => PropKey::Name(i.to_string()),
         other => PropKey::Computed(other),
     }
+}
+
+struct MethodHead {
+    /// Some(true) getter, Some(false) setter.
+    accessor: Option<bool>,
+    generator: bool,
+    is_async: bool,
 }
 
 #[derive(Clone, Copy)]
