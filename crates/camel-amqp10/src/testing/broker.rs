@@ -32,6 +32,8 @@
 //!   deferral (`modified` with `undeliverable-here`, `receive-by-sequence-number`,
 //!   `update-disposition`); Event Hubs receiver epochs (`com.microsoft:epoch`: a higher or
 //!   equal epoch steals the partition with `amqp:link:stolen`).
+//! * ActiveMQ 5 flavour ([`BrokerBuilder::activemq`]): `queue://` / `topic://` address
+//!   prefixes announced in the open frame and required for topics (capabilities ignored).
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::net::TcpStream;
@@ -56,6 +58,8 @@ use crate::ws::AmqpStream;
 pub use crate::types::SELECTOR_FILTER;
 const SELECTOR_FILTER_CODE: u64 = 0x0000_468C_0000_0004;
 const PRODUCER_CREDIT: u32 = 1000;
+const ACTIVEMQ_QUEUE_PREFIX: &str = "queue://";
+const ACTIVEMQ_TOPIC_PREFIX: &str = "topic://";
 pub use crate::azure::{EPOCH_PROPERTY, SESSION_FILTER};
 use crate::azure::SESSION_FILTER_CODE;
 
@@ -90,9 +94,19 @@ pub struct BrokerBuilder {
     lock_duration: Duration,
     session_entities: Vec<String>,
     anonymous_relay: bool,
+    activemq: bool,
 }
 
 impl BrokerBuilder {
+    /// ActiveMQ 5 flavour: the open frame announces `product=ActiveMQ`, `version=5.17.6`,
+    /// `queue-prefix=queue://` and `topic-prefix=topic://`; node addresses are typed by those
+    /// prefixes only (the `topic` terminus capability is ignored and a bare address is a
+    /// queue), and the `shared` capability is ignored (no JMS 2.0 shared subscriptions).
+    pub fn activemq(mut self) -> Self {
+        self.activemq = true;
+        self
+    }
+
     /// Whether to offer `ANONYMOUS-RELAY` (default true). Without it, sending links must name
     /// a target address, like RabbitMQ 3.x refusing them with `address_not_utf8_string`.
     pub fn anonymous_relay(mut self, yes: bool) -> Self {
@@ -204,6 +218,7 @@ impl BrokerBuilder {
             cond: Condvar::new(),
             allow_anonymous: self.allow_anonymous.unwrap_or(self.users.is_empty()),
             anonymous_relay: self.anonymous_relay,
+            activemq: self.activemq,
             users: self.users,
             tls: self.tls,
             azure: self.azure,
@@ -378,6 +393,7 @@ struct Inner {
     max_delivery_count: u32,
     lock_duration: Duration,
     anonymous_relay: bool,
+    activemq: bool,
     running: AtomicBool,
 }
 
@@ -415,6 +431,7 @@ impl Amqp10Broker {
             lock_duration: Duration::from_secs(30),
             anonymous_relay: true,
             session_entities: Vec::new(),
+            activemq: false,
         }
     }
     /// Start with defaults (anonymous access).
@@ -824,6 +841,14 @@ impl Inner {
                     channel_max: 255,
                     idle_time_out: self.idle_timeout.as_millis() as u32,
                     offered_capabilities: if self.anonymous_relay { vec!["ANONYMOUS-RELAY".into()] } else { vec![] },
+                    properties: if self.activemq {
+                        [("product", "ActiveMQ"), ("topic-prefix", ACTIVEMQ_TOPIC_PREFIX), ("queue-prefix", ACTIVEMQ_QUEUE_PREFIX), ("version", "5.17.6")]
+                            .iter()
+                            .map(|(k, v)| (AmqpValue::sym(*k), AmqpValue::str(*v)))
+                            .collect()
+                    } else {
+                        vec![]
+                    },
                     ..Default::default()
                 };
                 Self::write(st, cid, Frame::amqp(0, Performative::Open(open)));
@@ -983,6 +1008,21 @@ impl Inner {
             for addr in [a.source.as_mut().and_then(|s| s.address.as_mut()), a.target.as_mut().and_then(|t| t.address.as_mut())].into_iter().flatten() {
                 if let Some((_, rest)) = addr.split_once("://") {
                     *addr = rest.split_once('/').map(|(_, p)| p.to_string()).unwrap_or_default();
+                }
+            }
+        }
+        if self.activemq {
+            // ActiveMQ 5 types nodes by address prefix only
+            if let Some(src) = a.source.as_mut() {
+                src.capabilities.retain(|c| c != "topic" && c != "shared" && c != "global");
+                if let Some(addr) = src.address.as_mut() {
+                    *addr = Self::activemq_node(st, addr);
+                }
+            }
+            if let Some(t) = a.target.as_mut() {
+                t.capabilities.retain(|c| c != "topic");
+                if let Some(addr) = t.address.as_mut() {
+                    *addr = Self::activemq_node(st, addr);
                 }
             }
         }
@@ -1429,8 +1469,23 @@ impl Inner {
     }
 
     /// Route a message sent to `addr` (anonymous relay: the `to` property).
+    /// The node of an ActiveMQ address: `queue://x` and a bare `x` are queue `x`, `topic://x`
+    /// is a topic (kept under its prefixed name, so a bare `x` never reaches it).
+    fn activemq_node(st: &mut BrokerState, addr: &str) -> String {
+        if let Some(q) = addr.strip_prefix(ACTIVEMQ_QUEUE_PREFIX) {
+            return q.to_string();
+        }
+        if addr.starts_with(ACTIVEMQ_TOPIC_PREFIX) {
+            st.topics.insert(addr.to_string());
+        }
+        addr.to_string()
+    }
+
     fn route(&self, st: &mut BrokerState, cid: u64, ch: u16, addr: &str, msg: Message) -> std::result::Result<(), AmqpError> {
-        let addr = if addr.is_empty() { msg.properties.as_ref().and_then(|p| p.to.clone()).unwrap_or_default() } else { addr.to_string() };
+        let mut addr = if addr.is_empty() { msg.properties.as_ref().and_then(|p| p.to.clone()).unwrap_or_default() } else { addr.to_string() };
+        if self.activemq {
+            addr = Self::activemq_node(st, &addr);
+        }
         if addr.is_empty() {
             return Err(AmqpError::new(cond::NOT_FOUND, "no address"));
         }

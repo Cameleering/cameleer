@@ -4,7 +4,7 @@
 # Installs, configures, starts and stops real, independent server software on localhost so the
 # `live_*` test suites (run with CAMEL_LIVE_INTEROP=1) can exercise rust-camel against them.
 #
-#   scripts/live-interop.sh install   # apt-get install the packages (root, idempotent)
+#   scripts/live-interop.sh install   # apt-get install the packages + the ActiveMQ AMQP module (root, idempotent)
 #   scripts/live-interop.sh setup     # certificates, users, configuration files (idempotent)
 #   scripts/live-interop.sh start     # start every server (already running ones are left alone)
 #   scripts/live-interop.sh stop      # stop every server started by this script
@@ -30,8 +30,10 @@
 #   nginx           18080  HTTP/1.1 (gzip)   18443 HTTPS with HTTP/2 (ALPN h2, http/1.1)   18081 h2c (prior knowledge)
 #   ActiveMQ 5.17   16615  STOMP       16616 STOMP+SSL   11886 MQTT   18886 MQTT+SSL   16617 OpenWire
 #                   15675  AMQP 1.0    15676 AMQPS  (only when the activemq-amqp module is on the
-#                          broker's class path: Ubuntu's package does not ship it; put
-#                          activemq-amqp-5.17.x.jar into $CAMEL_INTEROP_DIR/activemq/lib to enable)
+#                          broker's class path: Ubuntu's package does not ship it; `install`
+#                          fetches activemq-amqp-5.17.6.jar from Maven Central into
+#                          $CAMEL_INTEROP_DIR/activemq/lib if its SHA-1 matches the pinned value,
+#                          or copy it there by hand, then `setup` + `restart`)
 #                   simple authentication plugin: camel/camelpw, anonymous access refused
 #
 # Credentials: user `camel` / password `camelpw` everywhere (system users `camelftp` and
@@ -73,15 +75,63 @@ cmd_install() {
   for p in "${PACKAGES[@]}"; do
     dpkg -s "$p" >/dev/null 2>&1 || missing+=("$p")
   done
-  if [ ${#missing[@]} -eq 0 ]; then log "all packages installed"; return; fi
-  export DEBIAN_FRONTEND=noninteractive
-  printf '%s\n' "postfix postfix/main_mailer_type select Local only" "postfix postfix/mailname string localhost" \
-    | debconf-set-selections
-  apt-get update -q
-  # Packages that cannot be installed are reported and skipped.
-  for p in "${missing[@]}"; do
-    apt-get install -y -q "$p" || log "WARNING: could not install $p"
-  done
+  if [ ${#missing[@]} -eq 0 ]; then
+    log "all packages installed"
+  else
+    export DEBIAN_FRONTEND=noninteractive
+    printf '%s\n' "postfix postfix/main_mailer_type select Local only" "postfix postfix/mailname string localhost" \
+      | debconf-set-selections
+    apt-get update -q
+    # Packages that cannot be installed are reported and skipped.
+    for p in "${missing[@]}"; do
+      apt-get install -y -q "$p" || log "WARNING: could not install $p"
+    done
+  fi
+  install_activemq_amqp
+}
+
+# ActiveMQ's AMQP 1.0 transport (the activemq-amqp module), which Ubuntu's activemq package
+# leaves out: fetched from Maven Central and installed only if its SHA-1 matches the pinned
+# value. proton-j, its only dependency missing from the broker's class path, comes from the
+# apt package libapache-qpid-proton-j-java.
+AMQ_AMQP_JAR=activemq-amqp-5.17.6.jar
+AMQ_AMQP_SHA1=cdb7bb9009d36a2d00de970a515976a20cc8ad8e
+AMQ_AMQP_URL=https://repo1.maven.org/maven2/org/apache/activemq/activemq-amqp/5.17.6/$AMQ_AMQP_JAR
+
+install_activemq_amqp() {
+  local lib="$DIR/activemq/lib" dest tmp sum
+  dest="$lib/$AMQ_AMQP_JAR"
+  [ -f /usr/share/activemq/bin/activemq.jar ] || { log "activemq not installed, skipping the AMQP module"; return 0; }
+  mkdir -p "$lib"
+  if [ -f /usr/share/java/proton-j.jar ] && [ ! -e "$lib/proton-j.jar" ]; then
+    ln -s /usr/share/java/proton-j.jar "$lib/proton-j.jar"
+  fi
+  if [ -f "$dest" ]; then
+    sum=$(sha1sum "$dest" | cut -d' ' -f1)
+    if [ "$sum" = "$AMQ_AMQP_SHA1" ]; then
+      log "$AMQ_AMQP_JAR present (SHA-1 verified)"
+    else
+      log "WARNING: $dest has SHA-1 $sum, expected $AMQ_AMQP_SHA1 - moved aside to $dest.rejected"
+      mv -f "$dest" "$dest.rejected"
+    fi
+  fi
+  if [ ! -f "$dest" ]; then
+    tmp=$(mktemp)
+    if curl -fsSL --max-time 120 -o "$tmp" "$AMQ_AMQP_URL"; then
+      sum=$(sha1sum "$tmp" | cut -d' ' -f1)
+      if [ "$sum" = "$AMQ_AMQP_SHA1" ]; then
+        install -m 644 "$tmp" "$dest"
+        log "installed $AMQ_AMQP_JAR from Maven Central (SHA-1 verified)"
+      else
+        log "WARNING: downloaded $AMQ_AMQP_JAR has SHA-1 $sum, expected $AMQ_AMQP_SHA1 - discarded"
+      fi
+    else
+      log "WARNING: cannot download $AMQ_AMQP_URL (Maven Central not reachable?)."
+      log "  Manual step: copy $AMQ_AMQP_JAR (SHA-1 $AMQ_AMQP_SHA1) into $lib, then run setup and restart."
+    fi
+    rm -f "$tmp"
+  fi
+  if id activemq >/dev/null 2>&1; then chown -R activemq:activemq "$DIR/activemq"; fi
 }
 
 ensure_user() {
@@ -463,8 +513,13 @@ EOF
 # directly with the package's activemq.jar (the Debian init script and instances are not used).
 AMQ_HOME=/usr/share/activemq
 amq_has_amqp() {
-  ls "$AMQ_HOME"/lib/activemq-amqp*.jar "$AMQ_HOME"/lib/optional/activemq-amqp*.jar \
-    "$DIR"/activemq/lib/activemq-amqp*.jar >/dev/null 2>&1
+  # true if the module is in any of the locations (ls fails if any one glob is unmatched)
+  local f
+  for f in "$AMQ_HOME"/lib/activemq-amqp*.jar "$AMQ_HOME"/lib/optional/activemq-amqp*.jar \
+    "$DIR"/activemq/lib/activemq-amqp*.jar; do
+    [ -f "$f" ] && return 0
+  done
+  return 1
 }
 
 setup_activemq() {
@@ -732,6 +787,9 @@ cmd_versions() {
   echo "dovecot $(dovecot --version 2>/dev/null)"
   nginx -v 2>&1 || true
   dpkg -s activemq 2>/dev/null | grep '^Version' | sed 's/^/activemq /' || true
+  for f in "$DIR"/activemq/lib/activemq-amqp*.jar; do
+    if [ -f "$f" ]; then echo "activemq-amqp module $(basename "$f") (SHA-1 $(sha1sum "$f" | cut -d" " -f1))"; fi
+  done
   openssl version
 }
 
