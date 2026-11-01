@@ -144,3 +144,72 @@ fn blob_block_lists_download_links_files_and_copies() {
     assert!(!s(ex.body()).is_empty());
     assert_eq!(az.blob("backup", "copy.txt").unwrap(), b"hello !");
 }
+
+#[test]
+fn datalake_consumer_acls_links_query_and_files() {
+    let az = AzuriteMock::start().unwrap();
+    let ctx = context();
+    let t = ctx.create_producer_template();
+    let dl = |op: &str, extra: &str| format!("azure-storage-datalake://{}/lake?operation={}{}&{}", ACCOUNT, op, extra, az.datalake_options());
+    req(&t, &dl("createFileSystem", ""), "", &[]);
+    let csv = "name,age,city\nalice,34,Paris\nbob,19,Oslo\ncarol,52,Paris\n";
+    req(&t, &dl("upload", "&fileName=people.csv&directoryName=data"), csv, &[]);
+    // query acceleration
+    let q = |expr: &str, headers: bool| s(req(&t, &dl("openQueryInputStream", "&fileName=people.csv&directoryName=data"), "", &[("CamelAzureStorageDataLakeExpression", Value::from(expr)), ("CamelAzureStorageDataLakeQueryHasHeaders", Value::Bool(headers))]).body());
+    assert_eq!(q("SELECT name FROM BlobStorage WHERE city = 'Paris'", true), "alice\ncarol\n");
+    assert_eq!(q("SELECT _1, _2 FROM BlobStorage WHERE _2 > 30", true), "alice,34\ncarol,52\n");
+    assert_eq!(q("SELECT COUNT(*) FROM BlobStorage WHERE age >= 19 AND city != 'Paris'", true), "1\n");
+    let e = call(&t, &dl("openQueryInputStream", "&fileName=people.csv&directoryName=data"), "", &[("CamelAzureStorageDataLakeExpression", Value::from("SELECT nope FROM BlobStorage"))]).unwrap_err();
+    assert!(e.message.contains("Query failed") && e.message.contains("Unknown column"), "{}", e);
+    req(&t, &dl("upload", "&fileName=events.json"), "{\"type\":\"a\",\"n\":1}\n{\"type\":\"b\",\"n\":2}\n", &[]);
+    let out = s(req(&t, &dl("openQueryInputStream", "&fileName=events.json&expression=RAW(SELECT n FROM BlobStorage WHERE type = 'b')"), "", &[("CamelAzureStorageDataLakeQueryInputFormat", Value::from("json"))]).body());
+    assert_eq!(out.trim(), "{\"n\":2}");
+    // ACLs: permission + umask at creation, get / set
+    req(&t, &dl("createFile", "&fileName=secret.txt&permission=0770&umask=0007"), "", &[]);
+    let acl = req(&t, &dl("getAccessControl", "&fileName=secret.txt"), "", &[]).body().clone();
+    assert_eq!(s(acl.get("permissions").unwrap()), "rwxrwx---");
+    assert_eq!(s(acl.get("acl").unwrap()), "user::rwx,group::rwx,other::---");
+    req(&t, &dl("setAccessControl", "&fileName=secret.txt"), "", &[("CamelAzureStorageDataLakeAcl", Value::from("user::rw-,group::r--,other::---,user:4a9028cf-f779-4032-b09d-970ebe3db258:r--")), ("CamelAzureStorageDataLakeOwner", Value::from("alice-oid"))]);
+    let acl = req(&t, &dl("getAccessControl", "&fileName=secret.txt"), "", &[]).body().clone();
+    assert_eq!(s(acl.get("permissions").unwrap()), "rw-r-----");
+    assert!(s(acl.get("acl").unwrap()).ends_with("user:4a9028cf-f779-4032-b09d-970ebe3db258:r--"));
+    assert_eq!(s(acl.get("owner").unwrap()), "alice-oid");
+    req(&t, &dl("setAccessControl", "&directoryName=data"), "", &[("CamelAzureStorageDataLakePermission", Value::from("rwxr-x--x"))]);
+    assert_eq!(s(req(&t, &dl("getAccessControl", "&directoryName=data"), "", &[]).body().get("permissions").unwrap()), "rwxr-x--x");
+    assert!(call(&t, &dl("setAccessControl", "&fileName=secret.txt"), "", &[("CamelAzureStorageDataLakeAcl", Value::from("bogus"))]).unwrap_err().message.contains("InvalidAccessControlList"));
+    // download link, downloadToFile, uploadFromFile
+    let link = s(req(&t, &dl("downloadLink", "&fileName=people.csv&directoryName=data"), "", &[]).body());
+    assert_eq!(http_get(&link), (200, csv.as_bytes().to_vec()));
+    let dir = std::env::temp_dir().join(format!("camel-dl-{}", camel_cloud::util::random_hex(6)));
+    let local = s(req(&t, &dl("downloadToFile", &format!("&fileName=people.csv&directoryName=data&fileDir={}", dir.display())), "", &[]).body());
+    assert_eq!(std::fs::read_to_string(&local).unwrap(), csv);
+    req(&t, &dl("uploadFromFile", "&fileName=copy.csv"), local.clone(), &[]);
+    assert_eq!(req(&t, &dl("getFile", "&fileName=copy.csv"), "", &[]).body().to_bytes(), csv.as_bytes());
+    let _ = std::fs::remove_dir_all(&dir);
+    // Entra ID client secret credentials on the dfs endpoint
+    let azm = AzureMock::start().unwrap();
+    let aad = format!("azure-storage-datalake://{}/lake?operation=listPaths&clientId={}&clientSecret=RAW({})&tenantId={}&authorityHost={}&uriEndpointOverride={}&overrideEndpoint=true", ACCOUNT, CLIENT_ID, camel_cloud::testing::azure_services::CLIENT_SECRET, TENANT_ID, azm.url(), az.dfs_url());
+    assert!(req(&t, &aad, "", &[]).body().as_array().unwrap().len() >= 4);
+    assert!(az.bearer_requests() >= 1);
+    // consumer: files under data/ matching the regex, deleted after read
+    req(&t, &dl("upload", "&fileName=extra.txt&directoryName=data"), "x", &[]);
+    let from = format!("azure-storage-datalake://{}/lake?directoryName=data&regex=RAW(.*\\.csv)&deleteAfterRead=true&delay=50&initialDelay=0&{}", ACCOUNT, az.datalake_options());
+    ctx.add_routes(move |r| {
+        r.from(&from).to("mock:lake");
+    })
+    .unwrap();
+    let m = ctx.mock_endpoint("mock:lake").unwrap();
+    ctx.start().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while m.received_exchanges().is_empty() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let rx = m.received_exchanges();
+    assert_eq!(rx.len(), 1, "one csv file, delivered once (deleted after read)");
+    assert_eq!(s(rx[0].header("CamelAzureStorageDataLakeFileName").unwrap()), "data/people.csv");
+    assert_eq!(rx[0].body().to_bytes(), csv.as_bytes());
+    ctx.stop().unwrap();
+    let left: Vec<String> = req(&t, &dl("listPaths", "&directoryName=data"), "", &[]).body().as_array().unwrap().iter().map(|p| s(p.get("name").unwrap())).collect();
+    assert_eq!(left, vec!["data/extra.txt"]);
+}

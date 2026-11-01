@@ -15,8 +15,12 @@
 //! (recursive). The file comes from `CamelAzureStorageDataLakeFileName` / `fileName`, the
 //! directory from `CamelAzureStorageDataLakeDirectoryName` / `directoryName` (prefixed to the
 //! file name), the file system from `CamelAzureStorageDataLakeFileSystemName` or the path.
-//! Credentials: `accountKey` (or `accessKey`) Shared Key, or `sasToken`; Azurite-style
+//! Credentials: `accountKey` (or `accessKey`) Shared Key, `sasToken`, Entra ID client secret
+//! (`clientId` / `clientSecret` / `tenantId`, `credentialType=CLIENT_SECRET`) or
+//! `credentialType=AZURE_IDENTITY` (workload / managed identity); Azurite-style
 //! `uriEndpointOverride` + `overrideEndpoint`.
+//!
+//! More operations, ACLs, query acceleration and the consumer: see [`super::datalake_ops`].
 
 use std::sync::Arc;
 
@@ -53,6 +57,15 @@ pub struct DataLakeService {
     pub directory_name: Option<String>,
     pub path: Option<String>,
     pub recursive: bool,
+    pub permission: Option<String>,
+    pub umask: Option<String>,
+    pub file_dir: Option<String>,
+    pub download_link_expiration: Option<i64>,
+    pub expression: Option<String>,
+    pub regex: Option<String>,
+    pub delete_after_read: bool,
+    pub user_principal_name_returned: bool,
+    pub scheduler: camel_core::component::scheduled::ScheduledPollConfig,
 }
 
 /// Factory for the component.
@@ -69,24 +82,33 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         directory_name: o.get("directoryName"),
         path: o.get("path"),
         recursive: o.bool("recursive", false)?,
+        permission: o.get("permission"),
+        umask: o.get("umask"),
+        file_dir: o.get("fileDir"),
+        download_link_expiration: o.get("downloadLinkExpiration").map(|v| v.parse::<i64>().map_err(|_| CamelError::illegal_argument(format!("Invalid downloadLinkExpiration: {}", v)))).transpose()?,
+        expression: o.get("expression"),
+        regex: o.get("regex"),
+        delete_after_read: o.bool("deleteAfterRead", false)?,
+        user_principal_name_returned: o.bool("userPrincipalNameReturned", false)?,
+        scheduler: camel_core::component::scheduled::ScheduledPollConfig::from_params(o.params, std::time::Duration::from_millis(1000), std::time::Duration::from_millis(500))?,
         azure,
     };
-    o.ignore(&["dataLakeServiceClient", "clientId", "clientSecret", "tenantId", "close", "closeStreamAfterRead", "retainUncommitedData", "umask", "permission", "userPrincipalNameReturned", "maxResults", "regex", "fileDir", "downloadLinkExpiration", "dataCount", "maxRetryRequests", "openOptions", "expression", "timeout"]);
+    o.ignore(&["dataLakeServiceClient", "close", "closeStreamAfterRead", "retainUncommitedData", "maxResults", "dataCount", "maxRetryRequests", "openOptions", "timeout"]);
     Ok(Arc::new(s))
 }
 
 impl DataLakeService {
-    fn send(&self, req: Request) -> Result<Response> {
+    pub(crate) fn send(&self, req: Request) -> Result<Response> {
         self.azure.send(req, kinds::DATALAKE_STORAGE)
     }
 
-    fn fs(&self, ex: &Exchange) -> Result<String> {
+    pub(crate) fn fs(&self, ex: &Exchange) -> Result<String> {
         header_str(ex, headers::FILESYSTEM_NAME)
             .or_else(|| self.file_system.clone())
             .ok_or_else(|| CamelError::illegal_argument("File system name must be specified (path or CamelAzureStorageDataLakeFileSystemName)"))
     }
 
-    fn file(&self, ex: &Exchange) -> Result<String> {
+    pub(crate) fn file(&self, ex: &Exchange) -> Result<String> {
         let name = header_str(ex, headers::FILE_NAME).or_else(|| self.file_name.clone()).ok_or_else(|| CamelError::illegal_argument("File name must be specified (fileName / CamelAzureStorageDataLakeFileName)"))?;
         Ok(match header_str(ex, headers::DIRECTORY_NAME).or_else(|| self.directory_name.clone()) {
             Some(d) => format!("{}/{}", d.trim_end_matches('/'), name.trim_start_matches('/')),
@@ -94,13 +116,20 @@ impl DataLakeService {
         })
     }
 
-    fn path_url(&self, fs: &str, path: &str, query: &str) -> Result<crate::http::Url> {
+    pub(crate) fn path_url(&self, fs: &str, path: &str, query: &str) -> Result<crate::http::Url> {
         self.azure.url("dfs", &format!("{}/{}", uri_encode(fs, false), uri_encode(path.trim_start_matches('/'), true)), query)
     }
 
     /// Create (or overwrite) an empty file.
     pub fn create_file(&self, fs: &str, path: &str) -> Result<Response> {
-        self.send(Request::new("PUT", self.path_url(fs, path, "resource=file")?))
+        let mut req = Request::new("PUT", self.path_url(fs, path, "resource=file")?);
+        if let Some(p) = &self.permission {
+            req.set_header("x-ms-permissions", p.clone());
+        }
+        if let Some(u) = &self.umask {
+            req.set_header("x-ms-umask", u.clone());
+        }
+        self.send(req)
     }
 
     /// Append data at `position` (uncommitted until flushed).
@@ -238,8 +267,20 @@ impl CloudService for DataLakeService {
                 let dir = header_str(ex, headers::DIRECTORY_NAME).or_else(|| self.directory_name.clone()).ok_or_else(|| CamelError::illegal_argument("deleteDirectory requires a directory name"))?;
                 self.send(Request::new("DELETE", self.path_url(&self.fs(ex)?, &dir, "recursive=true")?))?;
             }
-            other => return Err(unsupported("azure-storage-datalake", other)),
+            other => {
+                if !self.more_ops(ex, other)? {
+                    return Err(unsupported("azure-storage-datalake", other));
+                }
+            }
         }
         Ok(())
+    }
+
+    fn scheduler(&self) -> Option<&camel_core::component::scheduled::ScheduledPollConfig> {
+        Some(&self.scheduler)
+    }
+
+    fn poll(&self, ctx: Option<camel_core::context::CamelContext>, processor: &dyn camel_core::spi::Processor, logger: &str) -> Result<usize> {
+        self.poll_files(ctx, processor, logger)
     }
 }

@@ -23,6 +23,7 @@ pub mod blob_checkpoint;
 pub mod changefeed;
 pub mod cosmosdb;
 pub mod datalake;
+pub mod datalake_ops;
 pub mod eventgrid;
 pub mod files;
 pub mod functions;
@@ -82,6 +83,8 @@ impl AzureConfig {
         let sas = o.get("sasToken");
         let credential = match (ct.as_deref(), key, sas) {
             (Some("AZURE_IDENTITY") | Some("TOKEN_CREDENTIAL"), _, _) => Credential::Bearer(aad_from_opts(o, true)?),
+            (Some("CLIENT_SECRET"), _, _) => Credential::Bearer(aad_from_opts(o, false)?),
+            (None, None, None) if o.params.get("clientSecret").is_some() => Credential::Bearer(aad_from_opts(o, false)?),
             (Some("AZURE_SAS"), _, Some(s)) | (None, None, Some(s)) => Credential::Sas(s.trim_start_matches('?').to_string()),
             (Some("AZURE_SAS"), _, None) => return Err(CamelError::illegal_argument("credentialType=AZURE_SAS requires the sasToken option")),
             (Some("SHARED_ACCOUNT_KEY") | Some("SHARED_KEY_CREDENTIAL") | None, Some(k), _) => {

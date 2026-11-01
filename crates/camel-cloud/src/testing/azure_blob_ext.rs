@@ -157,6 +157,10 @@ pub(super) fn blob_item_op(c: &mut Container, req: &ServerRequest, blob: String)
         }
     }
     match (req.method.as_str(), comp.as_str()) {
+        ("POST", "query") => {
+            let Some(b) = c.blobs.get(&blob) else { return not_found() };
+            super::query::query_blob(&b.data, &req.text())
+        }
         ("PUT", "lease") => {
             let Some(b) = c.blobs.get_mut(&blob) else { return not_found() };
             let action = req.header("x-ms-lease-action").unwrap_or("").to_ascii_lowercase();
@@ -354,6 +358,32 @@ fn dfs_error(status: u16, code: &str, message: &str) -> Response {
         .with_header("x-ms-request-id", uuid())
 }
 
+/// Permission bits of `rwxr-x---` or octal `0750` text.
+fn parse_perms(p: &str) -> Option<u32> {
+    let p = p.trim().trim_end_matches('+');
+    if p.len() == 9 && p.chars().all(|c| "rwx-tT".contains(c)) {
+        let mut bits = 0;
+        for (i, c) in p.chars().enumerate() {
+            if c != '-' && c != 'T' {
+                bits |= 1 << (8 - i);
+            }
+        }
+        return Some(bits);
+    }
+    u32::from_str_radix(p, 8).ok().filter(|b| *b <= 0o7777).map(|b| b & 0o777)
+}
+
+fn perms_text(bits: u32) -> String {
+    (0..9).map(|i| if bits & (1 << (8 - i)) != 0 { ['r', 'w', 'x'][i % 3] } else { '-' }).collect()
+}
+
+fn acl_text(entry: &(String, String, u32, Vec<String>)) -> String {
+    let p = perms_text(entry.2);
+    let mut v = vec![format!("user::{}", &p[0..3]), format!("group::{}", &p[3..6]), format!("other::{}", &p[6..9])];
+    v.extend(entry.3.iter().cloned());
+    v.join(",")
+}
+
 fn is_dir(b: &Blob) -> bool {
     b.metadata.iter().any(|(k, v)| k == "hdi_isfolder" && v == "true")
 }
@@ -434,6 +464,22 @@ pub(super) fn dfs_op(st: &Shared, req: &ServerRequest, fs: Option<String>, path:
     let action = req.query_param("action").unwrap_or_default();
     match (req.method.as_str(), resource.as_str(), action.as_str()) {
         ("PUT", "file", _) | ("PUT", "directory", _) => {
+            let umask = match req.header("x-ms-umask") {
+                Some(u) => match u32::from_str_radix(u.trim(), 8) {
+                    Ok(u) => u,
+                    Err(_) => return dfs_error(400, "InvalidHeaderValue", "Invalid x-ms-umask"),
+                },
+                None => 0o027,
+            };
+            let base = match req.header("x-ms-permissions") {
+                Some(p) => match parse_perms(p) {
+                    Some(b) => b,
+                    None => return dfs_error(400, "InvalidPermission", "The permission value is invalid."),
+                },
+                None if resource == "directory" => 0o777,
+                None => 0o666,
+            };
+            c.acls.insert(path.clone(), ("$superuser".into(), "$superuser".into(), base & !umask, Vec::new()));
             ensure_parents(c, &path);
             let b = if resource == "directory" {
                 folder()
@@ -468,6 +514,71 @@ pub(super) fn dfs_op(st: &Shared, req: &ServerRequest, fs: Option<String>, path:
             b.data.extend_from_slice(&pending);
             touch(b);
             Response::new(200).with_header("ETag", b.etag.clone()).with_header("Last-Modified", http_date(b.last_modified))
+        }
+        ("POST", _, _) if req.query_param("comp").as_deref() == Some("query") => match c.blobs.get(&path) {
+            // the same account behind one override URL: blob-endpoint query acceleration
+            Some(b) => super::query::query_blob(&b.data, &req.text()),
+            None => dfs_error(404, "PathNotFound", "The specified path does not exist."),
+        },
+        ("HEAD", _, "getAccessControl") => {
+            let Some(b) = c.blobs.get(&path) else { return dfs_error(404, "PathNotFound", "The specified path does not exist.") };
+            let default = ("$superuser".to_string(), "$superuser".to_string(), if is_dir(b) { 0o750 } else { 0o640 }, Vec::new());
+            let e = c.acls.get(&path).cloned().unwrap_or(default);
+            Response::new(200).with_header("x-ms-owner", e.0.clone()).with_header("x-ms-group", e.1.clone()).with_header("x-ms-permissions", perms_text(e.2)).with_header("x-ms-acl", acl_text(&e)).with_header("ETag", b.etag.clone())
+        }
+        ("PATCH", _, "setAccessControl") => {
+            let Some(b) = c.blobs.get_mut(&path) else { return dfs_error(404, "PathNotFound", "The specified path does not exist.") };
+            let default = ("$superuser".to_string(), "$superuser".to_string(), if is_dir(b) { 0o750 } else { 0o640 }, Vec::new());
+            let mut e = c.acls.get(&path).cloned().unwrap_or(default);
+            if req.header("x-ms-acl").is_some() && req.header("x-ms-permissions").is_some() {
+                return dfs_error(400, "InvalidHeaderValue", "x-ms-acl and x-ms-permissions are mutually exclusive.");
+            }
+            if let Some(p) = req.header("x-ms-permissions") {
+                match parse_perms(p) {
+                    Some(bits) => e.2 = bits,
+                    None => return dfs_error(400, "InvalidPermission", "The permission value is invalid."),
+                }
+            }
+            if let Some(acl) = req.header("x-ms-acl") {
+                let mut extra = Vec::new();
+                let mut bits = e.2;
+                for entry in acl.split(',').map(|x| x.trim()).filter(|x| !x.is_empty()) {
+                    let parts: Vec<&str> = entry.split(':').collect();
+                    let (kind, id, perm) = match parts.as_slice() {
+                        [k, i, p] => (*k, *i, *p),
+                        [d, k, i, p] if *d == "default" => (*k, *i, *p),
+                        _ => return dfs_error(400, "InvalidAccessControlList", "The access control list value is invalid."),
+                    };
+                    if perm.len() != 3 || !perm.chars().all(|c| "rwx-".contains(c)) || !matches!(kind, "user" | "group" | "other" | "mask") {
+                        return dfs_error(400, "InvalidAccessControlList", "The access control list value is invalid.");
+                    }
+                    let shift = match (kind, id.is_empty(), parts.len()) {
+                        ("user", true, 3) => Some(6),
+                        ("group", true, 3) => Some(3),
+                        ("other", _, 3) => Some(0),
+                        _ => None,
+                    };
+                    match shift {
+                        Some(sh) => {
+                            let p = parse_perms(&format!("{}------", perm)).unwrap_or(0) >> 6;
+                            bits = (bits & !(0o7 << sh)) | (p << sh);
+                        }
+                        None => extra.push(entry.to_string()),
+                    }
+                }
+                e.2 = bits;
+                e.3 = extra;
+            }
+            if let Some(o) = req.header("x-ms-owner") {
+                e.0 = o.to_string();
+            }
+            if let Some(g) = req.header("x-ms-group") {
+                e.1 = g.to_string();
+            }
+            touch(b);
+            let r = Response::new(200).with_header("ETag", b.etag.clone());
+            c.acls.insert(path, e);
+            r
         }
         ("GET" | "HEAD", _, _) => match c.blobs.get(&path) {
             None => dfs_error(404, "PathNotFound", "The specified path does not exist."),

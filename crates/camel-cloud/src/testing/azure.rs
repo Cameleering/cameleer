@@ -12,6 +12,8 @@ mod blob_ext;
 mod files_ext;
 #[path = "azure_changefeed.rs"]
 mod changefeed;
+#[path = "azure_query.rs"]
+mod query;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -48,6 +50,8 @@ struct Container {
     blobs: BTreeMap<String, Blob>,
     /// blob -> staged (uncommitted) blocks (id, data)
     staged: BTreeMap<String, Vec<(String, Vec<u8>)>>,
+    /// ADLS path -> (owner, group, permission bits, extra ACL entries)
+    acls: BTreeMap<String, (String, String, u32, Vec<String>)>,
 }
 
 #[derive(Clone)]
