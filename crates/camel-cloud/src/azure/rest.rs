@@ -35,11 +35,11 @@ pub struct AzureRest {
 /// `clientSecret`, `authorityHost`; `credentialType=AZURE_IDENTITY` reads `AZURE_*` env vars),
 /// None when no client id is configured and the identity is not requested.
 pub fn aad_credential(o: &mut Opts, identity: bool) -> Result<Option<ClientSecretCredential>> {
-    let (tenant, client, secret, authority) = (o.get("tenantId"), o.get("clientId"), o.get("clientSecret"), o.get("authorityHost"));
-    if client.is_none() && tenant.is_none() && !identity {
+    let opts: std::collections::HashMap<&str, Option<String>> = ["tenantId", "clientId", "clientSecret", "authorityHost", "federatedTokenFile", "managedIdentityClientId", "managedIdentityEndpoint", "managedIdentityHeader"].into_iter().map(|k| (k, o.get(k))).collect();
+    if opts["clientId"].is_none() && opts["tenantId"].is_none() && !identity {
         return Ok(None);
     }
-    ClientSecretCredential::new(tenant, client, secret, authority, identity).map(Some)
+    ClientSecretCredential::resolve(&|k: &str| opts.get(k).cloned().flatten(), identity).map(Some)
 }
 
 impl AzureRest {

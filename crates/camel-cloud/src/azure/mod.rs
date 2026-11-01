@@ -6,8 +6,11 @@
 //! key, SAS or Entra ID), `azure-schema-registry` and `azure-openai` (API key or Entra ID).
 //!
 //! Common options: `accessKey` (base64 account key), `credentialType`
-//! (`SHARED_ACCOUNT_KEY` - default when `accessKey` is set, `AZURE_SAS` - with `sasToken`;
-//! `AZURE_IDENTITY` / `SHARED_KEY_CREDENTIAL` beans are not supported), `sasToken`,
+//! (`SHARED_ACCOUNT_KEY` - default when `accessKey` is set, `AZURE_SAS` - with `sasToken`,
+//! `AZURE_IDENTITY` - Microsoft Entra ID bearer tokens for `https://storage.azure.com/.default`
+//! from a client secret, workload identity federation or managed identity, see [`aad`]; options
+//! `tenantId`, `clientId`, `clientSecret`, `authorityHost`, `federatedTokenFile`,
+//! `managedIdentityClientId`, `managedIdentityEndpoint`), `sasToken`,
 //! `uriEndpointOverride` + `overrideEndpoint=true` (Azurite-style path addressing
 //! `http://host:port/{account}/...`), `proxyHost`/`proxyPort`, `trustAllCertificates`.
 //!
@@ -43,6 +46,17 @@ pub enum Credential {
     SharedKey(String),
     /// A SAS token appended to every request.
     Sas(String),
+    /// Microsoft Entra ID bearer tokens (`credentialType=AZURE_IDENTITY`).
+    Bearer(aad::AadCredential),
+}
+
+/// Token scope of Azure Storage.
+pub const STORAGE_SCOPE: &str = "https://storage.azure.com/.default";
+
+/// The Entra ID options of an endpoint (see [`aad::AadCredential::resolve`]).
+pub fn aad_from_opts(o: &mut Opts, identity: bool) -> Result<aad::AadCredential> {
+    let opts: std::collections::HashMap<&str, Option<String>> = ["tenantId", "clientId", "clientSecret", "authorityHost", "federatedTokenFile", "managedIdentityClientId", "managedIdentityEndpoint", "managedIdentityHeader"].into_iter().map(|k| (k, o.get(k))).collect();
+    aad::AadCredential::resolve(&|k: &str| opts.get(k).cloned().flatten(), identity)
 }
 
 /// Client configuration shared by the Azure Storage endpoints.
@@ -66,6 +80,7 @@ impl AzureConfig {
         let key = o.get("accessKey").or_else(|| o.get("accountKey"));
         let sas = o.get("sasToken");
         let credential = match (ct.as_deref(), key, sas) {
+            (Some("AZURE_IDENTITY") | Some("TOKEN_CREDENTIAL"), _, _) => Credential::Bearer(aad_from_opts(o, true)?),
             (Some("AZURE_SAS"), _, Some(s)) | (None, None, Some(s)) => Credential::Sas(s.trim_start_matches('?').to_string()),
             (Some("AZURE_SAS"), _, None) => return Err(CamelError::illegal_argument("credentialType=AZURE_SAS requires the sasToken option")),
             (Some("SHARED_ACCOUNT_KEY") | Some("SHARED_KEY_CREDENTIAL") | None, Some(k), _) => {
@@ -80,7 +95,7 @@ impl AzureConfig {
             (Some(other), _, _) => {
                 return Err(CamelError::new(
                     camel_core::error::kinds::UNSUPPORTED_OPERATION,
-                    format!("credentialType {} is not supported by rust-camel (use SHARED_ACCOUNT_KEY or AZURE_SAS)", other),
+                    format!("credentialType {} is not supported by rust-camel (use SHARED_ACCOUNT_KEY, AZURE_SAS or AZURE_IDENTITY)", other),
                 ))
             }
         };
@@ -123,26 +138,35 @@ impl AzureConfig {
         Ok(u)
     }
 
-    /// Authorize (Shared Key or SAS) and send; non-2xx responses become errors of `kind`.
-    pub fn send(&self, mut req: Request, kind: &str) -> Result<Response> {
-        req.set_header("x-ms-date", http_date(now_secs()));
-        req.set_header("x-ms-version", API_VERSION);
-        match &self.credential {
-            Credential::SharedKey(key) => sign_shared_key(&mut req, &self.account, key)?,
-            Credential::Sas(token) => {
-                req.url.query = Some(match req.url.query.take() {
-                    Some(q) if !q.is_empty() => format!("{}&{}", q, token),
-                    _ => token.clone(),
-                });
-            }
-        }
+    /// Authorize (Shared Key, SAS or bearer token) and send; non-2xx responses become errors
+    /// of `kind`. Bearer requests are retried once with a fresh token after a 401.
+    pub fn send(&self, req: Request, kind: &str) -> Result<Response> {
         let client = HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates);
-        let resp = client.send(&req)?;
-        if resp.is_success() {
-            Ok(resp)
-        } else {
-            Err(storage_error(kind, &resp))
+        for attempt in 0..2 {
+            let mut r = req.clone();
+            r.set_header("x-ms-date", http_date(now_secs()));
+            r.set_header("x-ms-version", API_VERSION);
+            match &self.credential {
+                Credential::SharedKey(key) => sign_shared_key(&mut r, &self.account, key)?,
+                Credential::Sas(token) => {
+                    r.url.query = Some(match r.url.query.take() {
+                        Some(q) if !q.is_empty() => format!("{}&{}", q, token),
+                        _ => token.clone(),
+                    });
+                }
+                Credential::Bearer(c) => r.set_header("Authorization", format!("Bearer {}", c.token(STORAGE_SCOPE, &client)?)),
+            }
+            let resp = client.send(&r)?;
+            if resp.is_success() {
+                return Ok(resp);
+            }
+            if let (Credential::Bearer(c), 401, 0) = (&self.credential, resp.status, attempt) {
+                c.invalidate(STORAGE_SCOPE);
+                continue;
+            }
+            return Err(storage_error(kind, &resp));
         }
+        unreachable!("the loop returns")
     }
 }
 

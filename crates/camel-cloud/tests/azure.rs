@@ -141,8 +141,8 @@ fn wrong_account_key_is_rejected() {
     let e = e.root_cause();
     assert!(e.is_a("BlobStorageException") && e.message.contains("403") && e.message.contains("AuthenticationFailed"), "{}", e);
     assert_eq!(az.auth_failures(), 1);
-    // AZURE_IDENTITY is not supported
-    let e = ctx.create_producer_template().request_body(&format!("azure-storage-blob://{}/c?credentialType=AZURE_IDENTITY", ACCOUNT), "").unwrap_err();
+    // unknown credential types are rejected
+    let e = ctx.create_producer_template().request_body(&format!("azure-storage-blob://{}/c?credentialType=CERTIFICATE", ACCOUNT), "").unwrap_err();
     assert!(e.root_cause().message.contains("not supported") || e.message.contains("not supported"), "{}", e);
 }
 

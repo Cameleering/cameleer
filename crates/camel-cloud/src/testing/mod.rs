@@ -35,6 +35,34 @@ use camel_tls::{TlsServerConfig, TlsStream};
 
 use crate::http::{read_request, write_response, Response, ServerRequest};
 
+/// Signing key of the emulated Microsoft Entra ID access tokens (shared by the emulators so
+/// that Azurite accepts the tokens issued by [`AzureMock`]).
+const ENTRA_TOKEN_KEY: &[u8] = b"camel-cloud-testing-entra-token-key";
+
+/// Issue an emulated Entra ID access token `header.payload.signature` (HMAC) for `scope`.
+pub fn issue_entra_token(scope: &str, subject: &str, ttl_secs: i64) -> String {
+    let payload = format!("{}|{}|{}|{}", scope, subject, crate::util::now_secs() + ttl_secs, crate::util::random_hex(8));
+    let body = format!("eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.{}", crate::util::base64url_encode(payload.as_bytes()));
+    let sig = crate::util::base64url_encode(&crate::util::hmac_sha256(ENTRA_TOKEN_KEY, body.as_bytes()));
+    format!("{}.{}", body, sig)
+}
+
+/// Verify an emulated Entra ID token for `scope`: the subject (client / identity id) when the
+/// signature is valid and the token is not expired.
+pub fn verify_entra_token(token: &str, scope: &str) -> Option<String> {
+    let (body, sig) = token.rsplit_once('.')?;
+    let expected = crate::util::base64url_encode(&crate::util::hmac_sha256(ENTRA_TOKEN_KEY, body.as_bytes()));
+    if !crate::util::ct_eq(expected.as_bytes(), sig.as_bytes()) {
+        return None;
+    }
+    let payload = body.split_once('.')?.1;
+    let raw = crate::util::base64_decode(&payload.replace('-', "+").replace('_', "/")).or_else(|| crate::util::base64_decode(&format!("{}{}", payload.replace('-', "+").replace('_', "/"), "=".repeat((4 - payload.len() % 4) % 4))))?;
+    let text = String::from_utf8(raw).ok()?;
+    let mut parts = text.split('|');
+    let (sc, sub, exp) = (parts.next()?, parts.next()?, parts.next()?.parse::<i64>().ok()?);
+    (sc == scope && exp > crate::util::now_secs()).then(|| sub.to_string())
+}
+
 /// Request handler of a [`MockServer`].
 pub type Handler = Arc<dyn Fn(&ServerRequest) -> Response + Send + Sync>;
 

@@ -107,7 +107,8 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
     if ct != "CLIENT_SECRET" && ct != "AZURE_IDENTITY" {
         return Err(CamelError::illegal_argument(format!("Unsupported credentialType {} (CLIENT_SECRET or AZURE_IDENTITY)", ct)));
     }
-    let credential = ClientSecretCredential::new(o.get("tenantId"), o.get("clientId"), o.get("clientSecret"), o.get("authorityHost"), ct == "AZURE_IDENTITY")?;
+    let opts: std::collections::HashMap<&str, Option<String>> = ["tenantId", "clientId", "clientSecret", "authorityHost", "federatedTokenFile", "managedIdentityClientId", "managedIdentityEndpoint", "managedIdentityHeader"].into_iter().map(|k| (k, o.get(k))).collect();
+    let credential = ClientSecretCredential::resolve(&|k: &str| opts.get(k).cloned().flatten(), ct == "AZURE_IDENTITY")?;
     let over = o.get("uriEndpointOverride");
     let endpoint = if o.bool("overrideEndpoint", over.is_some())? { over } else { None };
     let proxy = match o.get("proxyHost") {
@@ -404,7 +405,7 @@ pub fn properties_function(ctx: &CamelContext) -> PropertiesFunction {
         let get = |k: &str| p.get(&format!("camel.vault.azure.{}", k)).filter(|v| !v.is_empty());
         let vault = get("vaultName").ok_or_else(|| CamelError::illegal_argument("camel.vault.azure.vaultName must be set to use {{azure:...}} placeholders"))?;
         let identity = get("azureIdentityEnabled").is_some_and(|v| v.eq_ignore_ascii_case("true"));
-        let credential = ClientSecretCredential::new(get("tenantId"), get("clientId"), get("clientSecret"), get("authorityHost"), identity)?;
+        let credential = ClientSecretCredential::resolve(&get, identity)?;
         let svc = KeyVaultService { vault, credential, operation: None, endpoint: get("uriEndpointOverride"), proxy: Proxy::Environment, trust_all_certificates: false };
         let (name, field, version) = crate::aws::secretsmanager::parse_secret_ref(r);
         match svc.get_secret(&name, version.as_deref()) {

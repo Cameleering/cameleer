@@ -61,6 +61,14 @@ struct Db {
 #[derive(Default)]
 struct State {
     clients: HashMap<(String, String), String>,
+    /// (tenant, client id) -> accepted federated tokens (workload identity)
+    federated: HashMap<(String, String), Vec<String>>,
+    /// user-assigned managed identities (client ids); the system identity is always present
+    identities: Vec<String>,
+    /// App Service `X-IDENTITY-HEADER` secret
+    identity_header: String,
+    /// (endpoint kind, resource, client id) of managed identity token requests
+    identity_requests: Vec<(String, String, String)>,
     tokens: HashMap<String, (String, i64)>,
     token_requests: usize,
     auth_failures: usize,
@@ -83,7 +91,11 @@ impl AzureMock {
     /// Start with the default client ([`TENANT_ID`], [`CLIENT_ID`], [`CLIENT_SECRET`]) registered.
     pub fn start() -> io::Result<AzureMock> {
         let state: Shared = Arc::new(Mutex::new(State::default()));
-        state.lock().unwrap().clients.insert((TENANT_ID.into(), CLIENT_ID.into()), CLIENT_SECRET.into());
+        {
+            let mut s = state.lock().unwrap();
+            s.clients.insert((TENANT_ID.into(), CLIENT_ID.into()), CLIENT_SECRET.into());
+            s.identity_header = format!("identity-{}", random_hex(8));
+        }
         let st = state.clone();
         let handler: Handler = Arc::new(move |r| handle(&st, r));
         Ok(AzureMock { server: MockServer::start(handler)?, state })
@@ -106,6 +118,31 @@ impl AzureMock {
     /// Register another client.
     pub fn add_client(&self, tenant: &str, client_id: &str, secret: &str) {
         self.state.lock().unwrap().clients.insert((tenant.into(), client_id.into()), secret.into());
+    }
+
+    /// Accept `token` as federated credential of the client (workload identity federation).
+    pub fn add_federated_credential(&self, tenant: &str, client_id: &str, token: &str) {
+        self.state.lock().unwrap().federated.entry((tenant.into(), client_id.into())).or_default().push(token.into());
+    }
+
+    /// Register a user-assigned managed identity (its client id).
+    pub fn add_managed_identity(&self, client_id: &str) {
+        self.state.lock().unwrap().identities.push(client_id.into());
+    }
+
+    /// The managed identity endpoint of the Instance Metadata Service (`Metadata: true`).
+    pub fn imds_endpoint(&self) -> String {
+        format!("{}/metadata/identity/oauth2/token", self.url())
+    }
+
+    /// The App Service managed identity endpoint and its `X-IDENTITY-HEADER` secret.
+    pub fn app_service_identity(&self) -> (String, String) {
+        (format!("{}/msi/token", self.url()), self.state.lock().unwrap().identity_header.clone())
+    }
+
+    /// Managed identity token requests: (`imds` / `appservice`, resource, client id).
+    pub fn identity_requests(&self) -> Vec<(String, String, String)> {
+        self.state.lock().unwrap().identity_requests.clone()
     }
 
     pub fn token_requests(&self) -> usize {
@@ -154,6 +191,9 @@ fn handle(st: &Shared, req: &ServerRequest) -> Response {
     if segs.len() == 4 && segs[1] == "oauth2" && segs[3] == "token" && req.method == "POST" {
         return token(st, &segs[0], req);
     }
+    if req.method == "GET" && (segs == ["metadata", "identity", "oauth2", "token"] || segs == ["msi", "token"]) {
+        return managed_identity_token(st, req, segs[0] == "msi");
+    }
     if let Some(r) = more::handle(st, req, &segs) {
         return r;
     }
@@ -186,15 +226,65 @@ fn token(st: &Shared, tenant: &str, req: &ServerRequest) -> Response {
     if !scope.ends_with("/.default") {
         return fail(&mut s, "invalid_scope", "AADSTS1002012: The provided value for scope is not valid. Client credential flows must have a scope value with /.default suffixed.");
     }
-    match s.clients.get(&(tenant.to_string(), get("client_id"))) {
-        None => return fail(&mut s, "unauthorized_client", "AADSTS700016: Application not found in the directory."),
-        Some(secret) if !ct_eq(secret.as_bytes(), get("client_secret").as_bytes()) => return fail(&mut s, "invalid_client", "AADSTS7000215: Invalid client secret provided."),
-        _ => {}
+    let key = (tenant.to_string(), get("client_id"));
+    if !get("client_assertion_type").is_empty() {
+        if get("client_assertion_type") != crate::azure::aad::JWT_BEARER {
+            return fail(&mut s, "invalid_request", "AADSTS50027: Invalid client_assertion_type.");
+        }
+        let assertion = get("client_assertion");
+        if !s.federated.get(&key).is_some_and(|t| t.iter().any(|x| ct_eq(x.as_bytes(), assertion.as_bytes()))) {
+            return fail(&mut s, "invalid_client", "AADSTS70021: No matching federated identity record found for presented assertion.");
+        }
+    } else {
+        match s.clients.get(&key) {
+            None => return fail(&mut s, "unauthorized_client", "AADSTS700016: Application not found in the directory."),
+            Some(secret) if !ct_eq(secret.as_bytes(), get("client_secret").as_bytes()) => return fail(&mut s, "invalid_client", "AADSTS7000215: Invalid client secret provided."),
+            _ => {}
+        }
     }
-    let tok = format!("eyJ0eXAiOiJKV1QifQ.mock-{}", random_hex(16));
+    let tok = super::issue_entra_token(&scope, &key.1, 3600);
     s.tokens.insert(tok.clone(), (scope, now_secs() + 3600));
     s.token_requests += 1;
     Response::json(200, obj([("token_type", Value::from("Bearer")), ("expires_in", Value::Int(3599)), ("access_token", Value::from(tok))]).to_json())
+}
+
+/// Managed identity tokens (IMDS with `Metadata: true`, or App Service with
+/// `X-IDENTITY-HEADER`); `client_id` selects a registered user-assigned identity.
+fn managed_identity_token(st: &Shared, req: &ServerRequest, app_service: bool) -> Response {
+    let mut s = st.lock().unwrap();
+    let bad = |status: u16, code: &str, msg: &str| Response::json(status, obj([("error", Value::from(code)), ("error_description", Value::from(msg))]).to_json());
+    let api = req.query_param("api-version").unwrap_or_default();
+    if app_service {
+        if !req.header("X-IDENTITY-HEADER").is_some_and(|h| ct_eq(h.as_bytes(), s.identity_header.as_bytes())) {
+            return bad(401, "unauthorized", "Missing or invalid X-IDENTITY-HEADER");
+        }
+        if api != "2019-08-01" {
+            return bad(400, "invalid_request", "api-version 2019-08-01 is required");
+        }
+    } else {
+        if req.header("Metadata") != Some("true") {
+            return bad(400, "invalid_request", "Required metadata header not specified");
+        }
+        if api.is_empty() {
+            return bad(400, "invalid_request", "Required query variable 'api-version' is missing");
+        }
+    }
+    let resource = req.query_param("resource").unwrap_or_default();
+    if resource.is_empty() {
+        return bad(400, "invalid_request", "Required query variable 'resource' is missing");
+    }
+    let client = req.query_param("client_id").unwrap_or_default();
+    if !client.is_empty() && !s.identities.contains(&client) {
+        return bad(400, "invalid_request", "Identity not found");
+    }
+    s.identity_requests.push((if app_service { "appservice" } else { "imds" }.to_string(), resource.clone(), client.clone()));
+    let scope = format!("{}/.default", resource.trim_end_matches('/'));
+    let subject = if client.is_empty() { "system-assigned".to_string() } else { client.clone() };
+    let tok = super::issue_entra_token(&scope, &subject, 3600);
+    s.tokens.insert(tok.clone(), (scope, now_secs() + 3600));
+    s.token_requests += 1;
+    let exp = now_secs() + 3600;
+    Response::json(200, obj([("access_token", Value::from(tok)), ("expires_in", Value::from("3599")), ("expires_on", Value::from(exp.to_string())), ("resource", Value::from(resource)), ("token_type", Value::from("Bearer")), ("client_id", Value::from(client))]).to_json())
 }
 
 fn bearer_ok(s: &State, req: &ServerRequest, scope: &str) -> bool {

@@ -65,6 +65,7 @@ struct State {
     shares: BTreeMap<String, files_ext::Share>,
     auth_failures: usize,
     sas_requests: usize,
+    bearer_requests: usize,
     change_feed: bool,
     feed_events: Vec<(i64, camel_core::value::Value)>,
 }
@@ -160,6 +161,11 @@ impl AzuriteMock {
     /// A full-access account SAS token valid for an hour.
     pub fn sas_token(&self) -> String {
         AccountSas::full_access(3600).token(ACCOUNT, ACCOUNT_KEY).expect("valid key")
+    }
+
+    /// Number of requests authorized with an Entra ID bearer token.
+    pub fn bearer_requests(&self) -> usize {
+        self.state.lock().unwrap().bearer_requests
     }
 
     pub fn auth_failures(&self) -> usize {
@@ -284,6 +290,19 @@ fn authorize(st: &Shared, req: &ServerRequest, service: char, segs: &[String]) -
     let Some(auth) = req.header("Authorization") else {
         return Err(error(403, "NoAuthenticationInformation", "Server failed to authenticate the request. Please refer to the information in the www-authenticate header."));
     };
+    if let Some(tok) = auth.strip_prefix("Bearer ") {
+        // Microsoft Entra ID tokens issued by the AzureMock token / managed identity endpoints
+        if service == 'f' && req.header("x-ms-file-request-intent").is_none() {
+            return Err(error(400, "MissingRequiredHeader", "x-ms-file-request-intent is required with OAuth authentication."));
+        }
+        return match super::verify_entra_token(tok, crate::azure::STORAGE_SCOPE) {
+            Some(_) => {
+                st.lock().unwrap().bearer_requests += 1;
+                Ok(())
+            }
+            None => Err(error(401, "InvalidAuthenticationInfo", "Server failed to authenticate the request. Please refer to the information in the www-authenticate header.")),
+        };
+    }
     let Some((account, sig)) = auth.strip_prefix("SharedKey ").and_then(|r| r.split_once(':')) else {
         return Err(error(403, "AuthenticationFailed", "Unsupported authorization scheme"));
     };
