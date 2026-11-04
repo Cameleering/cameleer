@@ -130,6 +130,9 @@ export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
   - `shutdown` doesn't wake a blocked read: use `camel_tls::net::shutdown_socket`.
   - Bind through `camel_tls::net::bind_listener`, because `localhost` resolves to `::1`
     first.
+- Time zones come from the system zoneinfo first, then from the bundled
+  `camel-core/tzdata/zones.bin`. Refresh it with `python3 scripts/update-tzdata.py`, which
+  takes a pinned version and SHA-256. Never hand-edit `zones.bin`.
 - Windows tests: build fixture paths with `/`, since backslashes break YAML and Jsonnet
   string literals. The system `tar` is bsdtar, which has no gnu format.
 - ActiveMQ AMQP needs `activemq-amqp-5.17.6.jar`, SHA-1

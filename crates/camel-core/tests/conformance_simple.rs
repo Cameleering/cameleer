@@ -466,10 +466,6 @@ fn doc_date_from_header_with_offset() {
 
 #[test]
 fn doc_date_with_named_timezone() {
-    if !camel_core::tz::zoneinfo_available() {
-        eprintln!("zoneinfo database not available: skipping");
-        return;
-    }
     let mut ex = exchange();
     // just before / after the Europe/Paris spring-forward transition (2024-03-31 01:00 UTC)
     ex.set_header("a", camel_core::language::support::parse_date("2024-03-31T00:59:00Z").unwrap());

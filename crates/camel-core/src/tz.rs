@@ -5,8 +5,11 @@
 //! - fixed offsets (`UTC`, `GMT`, `Z`, `GMT+02:00`, `UTC-5`, `+0530`),
 //! - named (region) zones such as `Europe/Paris`, read from the TZif database
 //!   (RFC 8536 versions 1, 2 and 3) in `$TZDIR`, `/usr/share/zoneinfo`, `/usr/lib/zoneinfo`
-//!   or `/usr/share/lib/zoneinfo`. Instants after the last stored transition use the POSIX
-//!   TZ footer rule of the file (v2+), so future dates follow the current DST rules,
+//!   or `/usr/share/lib/zoneinfo`, falling back to the IANA database bundled in this crate
+//!   (`tzdata/zones.bin`, refreshed by `scripts/update-tzdata.py`; see
+//!   [`bundled_tzdata_version`]), so named zones also work on Windows and in minimal
+//!   containers. Instants after the last stored transition use the POSIX TZ footer rule of
+//!   the file (v2+), so future dates follow the current DST rules,
 //! - POSIX TZ strings such as `CET-1CEST,M3.5.0,M10.5.0/3`.
 //!
 //! [`TimeZone::local`] is the process default zone (the equivalent of the JVM default time
@@ -156,12 +159,16 @@ impl TimeZone {
                 .map_err(|e| CamelError::illegal_argument(format!("Cannot read time zone file {}: {}", path.display(), e)))?;
             return Self::from_tzif(id, &data);
         }
+        if let Some(data) = bundled_zone(named) {
+            return Self::from_tzif(id, data);
+        }
         if let Some(p) = parse_posix_tz(id) {
             return Ok(TimeZone { id: id.to_string(), kind: Kind::Posix(p) });
         }
         Err(CamelError::illegal_argument(format!(
-            "Unknown time zone: {} (no zoneinfo file found in {})",
+            "Unknown time zone: {} (not in the bundled IANA {} database, no zoneinfo file found in {})",
             id,
+            bundled_tzdata_version(),
             zoneinfo_dirs().iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
         )))
     }
@@ -496,17 +503,68 @@ pub fn zoneinfo_dirs() -> Vec<PathBuf> {
     v
 }
 
-/// Whether a zoneinfo database is available (tests skip when it is not).
+/// Whether a zoneinfo database is available: a system one or the bundled one.
 pub fn zoneinfo_available() -> bool {
-    find_zone_file("Europe/Paris").is_some()
+    find_zone_file("Europe/Paris").is_some() || bundled_zone("Europe/Paris").is_some()
+}
+
+fn valid_zone_id(id: &str) -> bool {
+    !id.is_empty()
+        && !id.starts_with('/')
+        && id.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'))
+}
+
+/// The bundled IANA database: `CTZ1`, a big-endian u32 zone count, then per zone a u16
+/// name length, the name, a u32 data length and the TZif data (see `scripts/update-tzdata.py`).
+static BUNDLED_ZONES: &[u8] = include_bytes!("../tzdata/zones.bin");
+static BUNDLED_VERSION: &str = include_str!("../tzdata/VERSION");
+
+/// The IANA release of the bundled time-zone database, e.g. `2026f`.
+pub fn bundled_tzdata_version() -> &'static str {
+    BUNDLED_VERSION.lines().next().unwrap_or("").trim()
+}
+
+fn bundled_index() -> &'static HashMap<&'static str, &'static [u8]> {
+    static INDEX: OnceLock<HashMap<&'static str, &'static [u8]>> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        let mut m = HashMap::new();
+        let d = BUNDLED_ZONES;
+        if d.len() < 8 || &d[..4] != b"CTZ1" {
+            return m;
+        }
+        let count = u32::from_be_bytes([d[4], d[5], d[6], d[7]]) as usize;
+        let mut p = 8;
+        for _ in 0..count {
+            let Some(n) = d.get(p..p + 2).map(|b| u16::from_be_bytes([b[0], b[1]]) as usize) else { break };
+            let Some(name) = d.get(p + 2..p + 2 + n).and_then(|b| std::str::from_utf8(b).ok()) else { break };
+            p += 2 + n;
+            let Some(len) = d.get(p..p + 4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]) as usize) else { break };
+            let Some(data) = d.get(p + 4..p + 4 + len) else { break };
+            p += 4 + len;
+            m.insert(name, data);
+        }
+        m
+    })
+}
+
+fn bundled_zone(id: &str) -> Option<&'static [u8]> {
+    if !valid_zone_id(id) {
+        return None;
+    }
+    bundled_index().get(id).copied()
+}
+
+/// The region zone ids of the bundled database, sorted (like Java's
+/// `ZoneId.getAvailableZoneIds`).
+pub fn bundled_zone_ids() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = bundled_index().keys().copied().collect();
+    v.sort_unstable();
+    v
 }
 
 fn find_zone_file(id: &str) -> Option<PathBuf> {
-    let valid = !id.is_empty()
-        && !id.starts_with('/')
-        && id.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '+'));
-    if !valid {
+    if !valid_zone_id(id) {
         return None;
     }
     for dir in zoneinfo_dirs() {
@@ -796,10 +854,7 @@ mod tests {
 
     #[test]
     fn tzif_paris_and_new_york() {
-        if !zoneinfo_available() {
-            eprintln!("zoneinfo database not available: skipping");
-            return;
-        }
+        assert!(zoneinfo_available());
         let paris = TimeZone::parse("Europe/Paris").unwrap();
         // spring forward 2024-03-31 02:00 CET -> 03:00 CEST (01:00 UTC)
         assert_eq!(paris.offset_at(at(2024, 3, 31, 0, 59)), 3600);
@@ -846,10 +901,31 @@ mod tests {
         assert_eq!(z.offset_at(at(2024, 7, 1, 0, 0)), 7200);
         let z = TimeZone::from_tz_env(Some("GMT+3"));
         assert_eq!(z.offset_at(0), 3 * 3600);
-        if zoneinfo_available() {
-            let z = TimeZone::from_tz_env(Some(":America/New_York"));
-            assert_eq!(z.offset_at(at(2024, 1, 1, 0, 0)), -5 * 3600);
+        let z = TimeZone::from_tz_env(Some(":America/New_York"));
+        assert_eq!(z.offset_at(at(2024, 1, 1, 0, 0)), -5 * 3600);
+    }
+
+    #[test]
+    fn bundled_database_without_system_files() {
+        let v = bundled_tzdata_version();
+        assert!(v.len() == 5 && v[..4].chars().all(|c| c.is_ascii_digit()) && v.as_bytes()[4].is_ascii_lowercase(), "{v}");
+        let ids = bundled_zone_ids();
+        assert!(ids.len() > 500, "{}", ids.len());
+        assert!(ids.contains(&"Europe/Paris") && ids.contains(&"America/Ciudad_Juarez") && ids.contains(&"Etc/GMT-14"));
+        // parsed straight from the bundle, whatever the host has in /usr/share/zoneinfo
+        let paris = TimeZone::from_tzif("Europe/Paris", bundled_zone("Europe/Paris").unwrap()).unwrap();
+        assert_eq!(paris.offset_at(at(2024, 7, 1, 0, 0)), 7200);
+        assert_eq!(paris.offset_at(at(2024, 1, 1, 0, 0)), 3600);
+        assert_eq!(paris.offset_at(at(2090, 7, 1, 0, 0)), 7200);
+        let kolkata = TimeZone::from_tzif("Asia/Kolkata", bundled_zone("Asia/Kolkata").unwrap()).unwrap();
+        assert_eq!(kolkata.offset_at(at(2026, 1, 1, 0, 0)), 19800);
+        let sydney = TimeZone::from_tzif("Australia/Sydney", bundled_zone("Australia/Sydney").unwrap()).unwrap();
+        assert_eq!(sydney.abbreviation_at(at(2026, 1, 1, 0, 0)), "AEDT");
+        for id in &ids {
+            assert!(TimeZone::from_tzif(id, bundled_zone(id).unwrap()).is_ok(), "{id}");
         }
+        assert!(bundled_zone("../Europe/Paris").is_none());
+        assert!(bundled_zone("Nowhere/City").is_none());
     }
 
     #[test]

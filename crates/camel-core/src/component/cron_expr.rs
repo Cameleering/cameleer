@@ -784,10 +784,6 @@ mod tests {
 
     #[test]
     fn region_time_zones_and_dst() {
-        if !crate::tz::zoneinfo_available() {
-            eprintln!("zoneinfo database not available: skipping");
-            return;
-        }
         // daily 12:00 Paris: 11:00 UTC in winter, 10:00 UTC in summer
         let c = CronExpression::parse_with_time_zone("0 0 12 * * ?", Some("Europe/Paris")).unwrap();
         assert_eq!(c.time_zone().id(), "Europe/Paris");

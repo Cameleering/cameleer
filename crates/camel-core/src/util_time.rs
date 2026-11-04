@@ -183,9 +183,6 @@ mod tests {
 
     #[test]
     fn format_named_zones() {
-        if !crate::tz::zoneinfo_available() {
-            return;
-        }
         let paris = TimeZone::parse("Europe/Paris").unwrap();
         let before = epoch_from_civil(2024, 3, 31, 0, 59, 0) * 1000;
         let after = epoch_from_civil(2024, 3, 31, 1, 0, 0) * 1000;

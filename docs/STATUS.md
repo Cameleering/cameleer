@@ -76,10 +76,21 @@ Docker, or the lack of real accounts.
    - Unix-only tests are `cfg(unix)`: SSH agent sockets, `exec` with `echo`/`sh`, file
      modes. Windows variants were added where they make sense.
 
+   - **Bundled IANA time-zone database (2026-11-04).** `camel-core/tzdata/zones.bin` has
+     IANA 2026f, 598 zones in about 350 KB, compiled into `camel-core`. `tz.rs` uses it after
+     `$TZDIR` and the system zoneinfo directories, so named zones work on Windows and in
+     minimal containers. Zone tests no longer skip. To refresh it, bump the pinned
+     version and SHA-256 in `scripts/update-tzdata.py` (source: PyPI `tzdata`, which is
+     IANA compiled by `zic`) and rerun it; the script checks the digest. IANA publishes
+     several releases a year, so check at every release.
+
+   - The test IMAP server resolved a bare login (`ann`) to a random mailbox starting with
+     `ann@`, sometimes a `moveTo` folder. That made `imap_consumer_with_attachments_and_move`
+     fail about half the time. Folders are now excluded and the choice is deterministic.
+
    Still open on Windows:
-   - **Named time zones.** There is no zoneinfo database, so `Europe/Paris` and similar
-     fail in cron, Simple, DataSonnet and JS `Intl` unless `TZDIR` points at a TZif tree.
-     Tests skip those cases through `tz::zoneinfo_available()`.
+   - The process default zone (`TimeZone::local`) is UTC unless `TZ` is set. Java uses the
+     Windows zone; matching that needs the Windows-to-IANA name map (CLDR `windowsZones`).
    - About 50 other direct `TcpStream::shutdown` calls, mostly client readers and test
      brokers, should move to `net::shutdown_socket` so `stop()` doesn't hang on idle peers.
    - The live, official-client and simulator scripts are bash and Ubuntu-only. Run them

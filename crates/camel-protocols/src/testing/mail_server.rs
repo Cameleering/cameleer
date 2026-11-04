@@ -111,7 +111,9 @@ impl Mailbox {
         let key = if s.boxes.contains_key(&u) || s.passwords.contains_key(&u) || u.contains('@') {
             u.clone()
         } else {
-            s.boxes.keys().find(|k| k.split('@').next() == Some(u.as_str())).cloned().unwrap_or(u.clone())
+            // a bare user name maps to its address; folders (`ann@localhost/Archive`) are not
+            // mailboxes, and min() keeps the choice independent of HashMap order
+            s.boxes.keys().filter(|k| !k.contains('/') && k.split('@').next() == Some(u.as_str())).min().cloned().unwrap_or(u.clone())
         };
         if let Some(p) = s.passwords.get(&key).or_else(|| s.passwords.get(&u)) {
             if p != password {
@@ -723,6 +725,25 @@ fn imap_session(mb: &Mailbox, s: NetStream, starttls: Option<Arc<TlsServerConfig
                 return Ok(());
             }
             _ => reply(&mut out, &format!("{} BAD unknown command", tag))?,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_user_login_never_resolves_to_a_folder() {
+        // each Mailbox has a freshly seeded HashMap, so 50 of them cover the iteration orders
+        for _ in 0..50 {
+            let mb = Mailbox::new();
+            mb.deliver("ann@localhost", "Subject: a\r\n\r\nx\r\n");
+            // moveTo / copyTo folders of the same user
+            mb.deliver("ann@localhost/Archive", "Subject: b\r\n\r\ny\r\n");
+            mb.deliver("ann@localhost/archive/archive", "Subject: c\r\n\r\nz\r\n");
+            assert_eq!(mb.login("ann", "pw").as_deref(), Some("ann@localhost"));
+            assert_eq!(mb.login("ann@localhost", "pw").as_deref(), Some("ann@localhost"));
         }
     }
 }
