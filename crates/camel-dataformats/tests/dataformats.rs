@@ -410,11 +410,13 @@ fn tar_round_trip_and_iterator() {
 
 #[test]
 fn tar_interop_with_system_tar() {
-    let have_tar = std::process::Command::new("tar").arg("--version").output().map(|o| o.status.success()).unwrap_or(false);
-    if !have_tar {
+    let version = std::process::Command::new("tar").arg("--version").output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    let Some(version) = version else {
         eprintln!("tar not installed: skipping");
         return;
-    }
+    };
+    // bsdtar (macOS, Windows) writes pax and ustar but not the gnu format
+    let bsdtar = version.contains("bsdtar");
     let d = tmpdir("tar");
     let src = d.join("src");
     let long_dir = "l".repeat(120);
@@ -427,7 +429,7 @@ fn tar_interop_with_system_tar() {
         let out = d.join(format!("{}.tar", fmt));
         let st = std::process::Command::new("tar").args(["-c", &format!("--format={}", fmt), "-f"]).arg(&out).arg("-C").arg(&src).args(["a.txt", "sub", "empty"]).output().unwrap();
         if !st.status.success() {
-            assert_eq!(fmt, "ustar", "{}", String::from_utf8_lossy(&st.stderr)); // ustar cannot store >100+155 names on some tars
+            assert!(fmt == "ustar" || (fmt == "gnu" && bsdtar), "{}", String::from_utf8_lossy(&st.stderr)); // ustar cannot store >100+155 names on some tars
             continue;
         }
         let entries = tar::tar_read(&std::fs::read(&out).unwrap()).unwrap();

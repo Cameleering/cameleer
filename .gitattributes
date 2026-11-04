@@ -1,0 +1,3 @@
+# Keep LF everywhere: tests and fixtures compare exact bytes, and Git for Windows
+# defaults to core.autocrlf=true.
+* text=auto eol=lf

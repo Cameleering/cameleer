@@ -70,7 +70,7 @@ fn datasonnet_objects() {
 fn datasonnet_imports() {
     let ctx = ctx();
     let ex = exchange(&ctx);
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures").replace('\\', "/");
     ds(
         &ex,
         &[
@@ -89,9 +89,9 @@ fn datasonnet_imports() {
 fn datasonnet_datetime() {
     let ctx = ctx();
     let ex = exchange(&ctx);
-    ds(
-        &ex,
-        &[
+    // region zones need a zoneinfo database (none on Windows unless TZDIR is set)
+    let tz = camel_core::tz::zoneinfo_available();
+    let cases: Vec<(&str, &str)> = [
             ("ds.datetime.format('2024-01-01T10:00:00Z', 'yyyy-MM-dd')", "\"2024-01-01\""),
             ("ds.datetime.changeTimeZone('2024-07-01T10:00:00Z', 'Europe/Paris')", "\"2024-07-01T12:00:00+02:00\""),
             ("ds.datetime.changeTimeZone('2024-01-01T10:00:00Z', 'Europe/Paris')", "\"2024-01-01T11:00:00+01:00\""),
@@ -109,8 +109,11 @@ fn datasonnet_datetime() {
             ("ds.datetime.atBeginningOfMonth('2024-05-17T13:45:10+01:00')", "\"2024-05-01T00:00:00+01:00\""),
             ("ds.datetime.daysBetween('2024-01-01T00:00:00Z', '2024-03-01T00:00:00Z')", "60"),
             ("ds.datetime.format(ds.datetime.changeTimeZone('2024-07-01T10:00:00.250Z', 'Europe/Paris'), 'HH:mm:ss.SSS XXX')", "\"12:00:00.250 +02:00\""),
-        ],
-    );
+        ]
+        .into_iter()
+        .filter(|(e, _)| tz || !(e.contains("Europe/") || e.contains("America/")))
+        .collect();
+    ds(&ex, &cases);
 }
 
 #[test]

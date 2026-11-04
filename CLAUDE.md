@@ -124,5 +124,13 @@ export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
   `camel-core/src/processor/script.rs`. YAML `script` depends on this to keep exchange changes.
 - ActiveMQ AMQP 1.0 addresses: use the `queue://` and `topic://` prefixes announced in the open
   frame (`AddressPrefixes` in `camel-amqp10/src/jms.rs`).
+- Windows sockets:
+  - Timeouts are per handle: share one handle (`Arc<TcpStream>`) rather than `try_clone`
+    when another thread sets the timeout.
+  - `shutdown` doesn't wake a blocked read: use `camel_tls::net::shutdown_socket`.
+  - Bind through `camel_tls::net::bind_listener`, because `localhost` resolves to `::1`
+    first.
+- Windows tests: build fixture paths with `/`, since backslashes break YAML and Jsonnet
+  string literals. The system `tar` is bsdtar, which has no gnu format.
 - ActiveMQ AMQP needs `activemq-amqp-5.17.6.jar`, SHA-1
   `cdb7bb9009d36a2d00de970a515976a20cc8ad8e`, plus apt `libapache-qpid-proton-j-java`.

@@ -24,6 +24,7 @@ pub mod model;
 pub mod processor;
 pub mod regex;
 pub mod spi;
+pub mod stack;
 pub mod supervising;
 pub mod template;
 pub mod template_routes;

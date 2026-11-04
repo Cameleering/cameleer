@@ -5,7 +5,7 @@ use camel_core::prelude::*;
 
 #[test]
 fn yaml_protobuf_marshal_unmarshal_with_options() {
-    let proto = concat!(env!("CARGO_MANIFEST_DIR"), "/../camel-grpc/tests/resources/greeter.proto");
+    let proto = concat!(env!("CARGO_MANIFEST_DIR"), "/../camel-grpc/tests/resources/greeter.proto").replace('\\', "/");
     let main = camel_main::new_main();
     let ctx = main.context().clone();
     let yaml = format!(

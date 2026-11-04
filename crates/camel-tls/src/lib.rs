@@ -91,7 +91,7 @@
 //! * Key stores: legacy 3DES / RC2 / MD5 / SHA-1 are implemented only to read old PKCS#12 and
 //!   JCEKS files; RC2/DES use table lookups and are not constant time.
 //! * Secrets are not zeroised on drop.
-//! * The randomness source is `/dev/urandom` feeding a ChaCha20 fast-key-erasure DRBG.
+//! * The randomness source is `/dev/urandom` (Unix) or `BCryptGenRandom` (Windows) feeding a ChaCha20 fast-key-erasure DRBG.
 
 pub mod asn1;
 pub mod camel_support;

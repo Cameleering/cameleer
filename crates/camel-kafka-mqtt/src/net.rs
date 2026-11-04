@@ -5,7 +5,7 @@ use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hasher};
 use std::io::ErrorKind;
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -129,7 +129,7 @@ impl TcpServer {
     /// Bind `host:port` (port 0 = ephemeral) and serve each connection with `handler`.
     pub fn bind(host: &str, port: u16, name: &str, handler: impl Fn(TcpStream) + Send + Sync + 'static) -> Result<TcpServer> {
         let addr = host_port(host, port);
-        let listener = TcpListener::bind(&addr).map_err(|e| CamelError::io(format!("Failed to bind {} on {}: {}", name, addr, e)))?;
+        let listener = camel_tls::net::bind_listener(&addr).map_err(|e| CamelError::io(format!("Failed to bind {} on {}: {}", name, addr, e)))?;
         let local = listener.local_addr().map_err(|e| CamelError::io(e.to_string()))?;
         listener.set_nonblocking(true).map_err(|e| CamelError::io(e.to_string()))?;
         let running = Arc::new(AtomicBool::new(true));
@@ -191,7 +191,7 @@ impl TcpServer {
             let _ = a.join();
         }
         for s in self.conns.lock().unwrap().values() {
-            let _ = s.shutdown(std::net::Shutdown::Both);
+            let _ = camel_tls::net::shutdown_socket(s, std::net::Shutdown::Both);
         }
         let me = std::thread::current().id();
         let workers: Vec<JoinHandle<()>> = std::mem::take(&mut *self.workers.lock().unwrap());

@@ -1,13 +1,13 @@
 //! Cryptographically secure random number generator: a ChaCha20-based DRBG
-//! with fast key erasure, seeded (and periodically reseeded) from `/dev/urandom`.
+//! with fast key erasure, seeded (and periodically reseeded) from the OS:
+//! `/dev/urandom` on Unix, `BCryptGenRandom` (system-preferred RNG) on Windows.
 //!
 //! Each request generates keystream blocks under the current key; the first 32
 //! bytes of fresh keystream replace the key afterwards, so a later state
-//! compromise does not reveal earlier outputs. If `/dev/urandom` cannot be
-//! read the generator panics rather than producing weak output.
+//! compromise does not reveal earlier outputs. If the OS source fails the
+//! generator panics rather than producing weak output.
 
 use super::chacha::chacha20_block;
-use std::io::Read;
 use std::sync::Mutex;
 
 struct Drbg {
@@ -56,9 +56,26 @@ impl Drbg {
     }
 }
 
+#[cfg(not(windows))]
 fn os_random(out: &mut [u8]) {
+    use std::io::Read;
     let mut f = std::fs::File::open("/dev/urandom").expect("camel-tls: cannot open /dev/urandom");
     f.read_exact(out).expect("camel-tls: cannot read /dev/urandom");
+}
+
+#[cfg(windows)]
+#[link(name = "bcrypt")]
+extern "system" {
+    fn BCryptGenRandom(algorithm: *mut core::ffi::c_void, buffer: *mut u8, len: u32, flags: u32) -> i32;
+}
+
+#[cfg(windows)]
+fn os_random(out: &mut [u8]) {
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 2;
+    for chunk in out.chunks_mut(u32::MAX as usize) {
+        let status = unsafe { BCryptGenRandom(std::ptr::null_mut(), chunk.as_mut_ptr(), chunk.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG) };
+        assert!(status >= 0, "camel-tls: BCryptGenRandom failed with NTSTATUS {status:#x}");
+    }
 }
 
 static RNG: Mutex<Option<Drbg>> = Mutex::new(None);

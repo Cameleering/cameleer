@@ -228,7 +228,10 @@ fn sftp_operations() {
     assert_eq!(a.size, Some(3));
     assert!(a.is_file() && a.mtime.unwrap() > 0);
     s.setstat("in/a.txt", &FileAttrs { permissions: Some(0o600), ..Default::default() }).unwrap();
-    assert_eq!(s.lstat("in/a.txt").unwrap().permissions.unwrap() & 0o777, 0o600);
+    if cfg!(unix) {
+        // Windows file systems only keep a read-only bit
+        assert_eq!(s.lstat("in/a.txt").unwrap().permissions.unwrap() & 0o777, 0o600);
+    }
     let mut names: Vec<String> = s.read_dir("in").unwrap().into_iter().map(|e| e.name).collect();
     names.sort();
     assert_eq!(names, vec!["a.txt", "big.bin", "sub"]);
@@ -288,6 +291,14 @@ fn errors_are_reported_cleanly() {
 }
 
 #[test]
+#[cfg(not(unix))]
+fn agent_unsupported_without_unix_sockets() {
+    let err = camel_ssh::agent::AgentClient::connect(std::path::Path::new("agent.sock")).err().unwrap();
+    assert!(err.to_string().contains("not supported"));
+}
+
+#[test]
+#[cfg(unix)]
 fn agent_authentication() {
     let ed = SshPrivateKey::generate_ed25519();
     let rsa_key = rsa();

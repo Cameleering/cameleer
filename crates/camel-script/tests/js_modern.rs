@@ -111,7 +111,6 @@ fn js_intl() {
             ("var d = new Date(Date.UTC(2024, 0, 5)); new Intl.DateTimeFormat('de-DE', { dateStyle: 'full' }).format(d)", "\"Freitag, 5. Januar 2024\""),
             ("var d = new Date(Date.UTC(2024, 0, 5, 15, 4, 5)); [d.toLocaleTimeString('en-US'), d.toLocaleTimeString('de-DE')]", "[\"3:04:05\u{202f}PM\",\"15:04:05\"]"),
             ("var d = new Date(Date.UTC(2024, 0, 5, 15, 4, 5)); d.toLocaleString('en-GB')", "\"05/01/2024, 15:04:05\""),
-            ("var d = new Date(Date.UTC(2024, 6, 1, 12, 0)); new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(d)", "\"8:00\u{202f}AM\""),
             ("var d = new Date(Date.UTC(2024, 2, 9)); d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })", "\"Saturday, March 9, 2024\""),
             ("var d = new Date(Date.UTC(2024, 2, 9)); d.toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' })", "\"mars 2024\""),
             ("[new Intl.PluralRules('en-US').select(1), new Intl.PluralRules('en-US').select(2), new Intl.PluralRules('en-US', { type: 'ordinal' }).select(22)]", "[\"one\",\"other\",\"two\"]"),
@@ -122,6 +121,14 @@ fn js_intl() {
             ("new Intl.NumberFormat('de-DE').resolvedOptions().locale", "\"de-DE\""),
         ],
     );
+    // region zones need a zoneinfo database (none on Windows unless TZDIR is set)
+    if camel_core::tz::zoneinfo_available() {
+        check(
+            "js",
+            &ex,
+            &[("var d = new Date(Date.UTC(2024, 6, 1, 12, 0)); new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }).format(d)", "\"8:00\u{202f}AM\"")],
+        );
+    }
 }
 
 #[test]

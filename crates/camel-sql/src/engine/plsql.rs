@@ -22,6 +22,9 @@ use crate::datasource::{ColumnType, ExecuteOptions, QueryResult};
 
 /// Maximum nesting of routine calls.
 pub const MAX_DEPTH: u32 = 48;
+/// Stack a routine call must have left, like PostgreSQL's `max_stack_depth` check: nested
+/// calls can exhaust a small thread stack (debug builds, Windows) before `MAX_DEPTH`.
+const MIN_STACK: usize = 256 * 1024;
 /// Maximum iterations of one loop (guards against runaway procedures).
 const MAX_ITERATIONS: u64 = 50_000_000;
 
@@ -216,6 +219,9 @@ pub fn call_routine(ctx: &mut DbCtx, r: &Routine, args: Vec<Value>, as_call: boo
     let depth = DEPTH.with(|d| d.get());
     if depth >= MAX_DEPTH {
         return Err(SqlErr::new("54001", format!("stack depth limit exceeded: routine calls nested more than {} levels ({}())", MAX_DEPTH, r.name)));
+    }
+    if camel_core::stack::remaining() < MIN_STACK {
+        return Err(SqlErr::new("54001", format!("stack depth limit exceeded: routine calls nested {} levels deep ran out of stack ({}())", depth, r.name)));
     }
     DEPTH.with(|d| d.set(depth + 1));
     let res = run_routine(ctx, r, values, now);

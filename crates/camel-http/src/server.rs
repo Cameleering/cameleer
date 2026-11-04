@@ -114,7 +114,7 @@ impl HttpServer {
 
     /// Like [`HttpServer::bind`] with a shared handler.
     pub fn bind_arc(addr: impl ToSocketAddrs, config: ServerConfig, handler: Arc<dyn HttpHandler>) -> io::Result<HttpServer> {
-        let listener = TcpListener::bind(addr)?;
+        let listener = camel_tls::net::bind_listener(addr)?;
         let local_addr = listener.local_addr()?;
         let pool = ThreadPool::new(&format!("{}-{}", config.name, local_addr.port()), config.pool_size);
         let inner = Arc::new(ServerInner {
@@ -178,7 +178,7 @@ impl HttpServer {
         }
         // close remaining (idle or stuck) connections
         for s in self.inner.connections.lock().unwrap().values() {
-            let _ = s.shutdown(std::net::Shutdown::Both);
+            let _ = camel_tls::net::shutdown_socket(s, std::net::Shutdown::Both);
         }
         self.inner.pool.shutdown();
         camel_core::camel_debug!("camel-http", "HTTP server on {} stopped", self.local_addr);

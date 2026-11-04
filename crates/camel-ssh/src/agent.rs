@@ -2,6 +2,7 @@
 //! the agent (`SSH_AUTH_SOCK`, a Unix socket) to sign, used for `publickey`
 //! authentication, plus a minimal agent server for tests.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -9,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::error::{SshError, SshResult};
-use crate::keys::{SshPrivateKey, SshPublicKey};
+#[cfg(unix)]
+use crate::keys::SshPrivateKey;
+use crate::keys::SshPublicKey;
 use crate::wire::{Reader, Writer};
 
 pub const FAILURE: u8 = 5;
@@ -45,6 +48,7 @@ pub struct AgentClient {
     stream: UnixStream,
 }
 
+#[cfg(unix)]
 fn read_msg<R: Read>(r: &mut R) -> std::io::Result<Vec<u8>> {
     let mut len = [0u8; 4];
     r.read_exact(&mut len)?;
@@ -57,6 +61,7 @@ fn read_msg<R: Read>(r: &mut R) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+#[cfg(unix)]
 fn write_msg<W: Write>(w: &mut W, body: &[u8]) -> std::io::Result<()> {
     let mut out = (body.len() as u32).to_be_bytes().to_vec();
     out.extend_from_slice(body);

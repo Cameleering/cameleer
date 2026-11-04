@@ -58,17 +58,32 @@ Docker, or the lack of real accounts.
    tests.
 3. **Emulators that need Docker or Windows:** LocalStack, the Azure Cosmos DB emulator, the
    Azure Service Bus emulator, and the gcloud Pub/Sub, Firestore and Datastore emulators.
-4. **Windows build and tests**, on the owner's machine at `E:\Work\DataHQ\Code`:
-   ```
-   cd E:\Work\DataHQ\Code
-   git clone https://github.com/pmsudhi/Rust-camel.git
-   cd Rust-camel
-   git checkout claude/rust-camel-impl
-   cargo build --workspace
-   cargo test --workspace
-   ```
-   Expect some Unix-specific paths, signals and file-permission tests to need `cfg(unix)`
-   guards. The scripts are bash and Ubuntu-only, so run them under WSL2.
+4. **Windows: hermetic tier done (2026-11-03).** On Windows 11 with Rust 1.99.1 MSVC,
+   `cargo build --workspace` gives 0 warnings and `cargo test --workspace` gives
+   **2252 passed, 0 failed**. Fixes made along the way:
+   - `camel-tls` RNG: seeds from `BCryptGenRandom` on Windows (it only had `/dev/urandom`).
+   - `NetStream`: clones and TLS halves share one `Arc<TcpStream>`. On Windows read
+     timeouts belong to the handle, so `try_clone`d handles ignored `set_read_timeout`.
+   - `net::shutdown_socket`: Windows `shutdown` doesn't wake a blocked `recv`, so it also
+     calls `CancelIoEx`. Used by `NetStream::shutdown`, `HttpServer::stop` and the three
+     `TcpServer::stop`s. Before this, stopping MLLP took minutes.
+   - `net::bind_listener`: binds IPv4 first, like Java. On Windows `localhost` resolves to
+     `::1` first. Used by the protocols, amqp and kafka-mqtt `TcpServer`s and `HttpServer`.
+   - `camel_core::stack` (Linux and Windows stack bounds), shared by `camel-script` and a
+     new PL/pgSQL `54001` stack check.
+   - `.gitattributes` `eol=lf`, because Git for Windows defaults to `core.autocrlf=true`
+     and that broke the byte-exact fixtures.
+   - Unix-only tests are `cfg(unix)`: SSH agent sockets, `exec` with `echo`/`sh`, file
+     modes. Windows variants were added where they make sense.
+
+   Still open on Windows:
+   - **Named time zones.** There is no zoneinfo database, so `Europe/Paris` and similar
+     fail in cron, Simple, DataSonnet and JS `Intl` unless `TZDIR` points at a TZif tree.
+     Tests skip those cases through `tz::zoneinfo_available()`.
+   - About 50 other direct `TcpStream::shutdown` calls, mostly client readers and test
+     brokers, should move to `net::shutdown_socket` so `stop()` doesn't hang on idle peers.
+   - The live, official-client and simulator scripts are bash and Ubuntu-only. Run them
+     under WSL2.
 5. **Independent security audit** of the from-scratch crypto and protocol code in
    `camel-tls` (TLS state machine, X.509 path validation, constant-time code), `camel-ssh`,
    `camel-xml` xmlsecurity, and the PGP and crypto data formats. Fuzz the parsers (HTTP/1,
@@ -80,7 +95,8 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout claude/rust-camel-impl && cargo test --workspace`. Expect 2249 passing.
+1. `git checkout claude/rust-camel-impl && cargo test --workspace`. Expect 2252 passing
+   on Windows. Linux runs the Unix-only variants instead.
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
 4. Update this file, and `docs/INTEROP.md` or `docs/FEATURES.md` where relevant, as part of

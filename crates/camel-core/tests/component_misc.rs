@@ -136,6 +136,21 @@ fn browse_component_stores_exchanges() {
 }
 
 #[test]
+#[cfg(windows)]
+fn exec_runs_cmd_and_reports_exit_value() {
+    let ctx = CamelContext::new();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    let ex = t.request("exec:cmd?args=RAW(/C echo hello)", |_| {}).unwrap();
+    assert_eq!(ex.body_as::<String>().unwrap(), "hello\r\n");
+    assert_eq!(ex.header("CamelExecExitValue").unwrap().as_i64(), Some(0));
+    let ex = t.request("exec:cmd?args=RAW(/C exit 3)", |_| {}).unwrap();
+    assert_eq!(ex.header("CamelExecExitValue").unwrap().as_i64(), Some(3));
+    ctx.stop().unwrap();
+}
+
+#[test]
+#[cfg(unix)]
 fn exec_runs_echo_and_reports_exit_value() {
     let ctx = CamelContext::new();
     ctx.start().unwrap();

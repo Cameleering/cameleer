@@ -23,14 +23,36 @@ use crate::tls::stream::{TlsReadHalf, TlsStream, TlsWriteHalf};
 use crate::tls::{CipherSuite, TlsError, TlsVersion};
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// The TCP socket shared by every clone of a `NetStream` and by both TLS halves.
+/// On Windows socket options such as the read timeout belong to the handle, so a
+/// `try_clone`d handle would not see a timeout set on another one; sharing one
+/// handle gives every platform the Unix (`dup`) behaviour.
+#[derive(Clone)]
+struct SharedTcp(Arc<TcpStream>);
+
+impl Read for SharedTcp {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (&*self.0).read(buf)
+    }
+}
+
+impl Write for SharedTcp {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        (&*self.0).write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        (&*self.0).flush()
+    }
+}
+
 struct TlsShared {
-    reader: Mutex<TlsReadHalf<TcpStream>>,
-    writer: TlsWriteHalf<TcpStream>,
+    reader: Mutex<TlsReadHalf<SharedTcp>>,
+    writer: TlsWriteHalf<SharedTcp>,
     peer_certificates: Vec<Vec<u8>>,
     resumed: bool,
     origin: Vec<u8>,
@@ -41,7 +63,7 @@ struct TlsShared {
 /// A plain or TLS TCP stream with `TcpStream`-like methods. Cheap to clone with
 /// [`NetStream::try_clone`]; all clones refer to the same connection.
 pub struct NetStream {
-    tcp: TcpStream,
+    tcp: Arc<TcpStream>,
     tls: Option<Arc<TlsShared>>,
 }
 
@@ -70,6 +92,41 @@ pub fn connect_tcp(host: &str, port: u16, timeout: Duration) -> io::Result<TcpSt
     Err(last.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("Unknown host: {host}"))))
 }
 
+/// Binds a listener, trying IPv4 addresses first like Java's default
+/// (`java.net.preferIPv6Addresses=false`). Without this `localhost` binds to `::1`
+/// only on Windows, where it resolves IPv6-first, and IPv4 clients are refused.
+pub fn bind_listener(addr: impl ToSocketAddrs) -> io::Result<TcpListener> {
+    let mut addrs: Vec<SocketAddr> = addr.to_socket_addrs()?.collect();
+    addrs.sort_by_key(|a| a.is_ipv6());
+    TcpListener::bind(&addrs[..])
+}
+
+/// Shuts `tcp` down and wakes threads blocked reading it, as `shutdown` does on
+/// Unix. On Windows `shutdown` does not interrupt a blocked `recv`, so the socket's
+/// pending I/O is cancelled too (the reader then gets an error).
+pub fn shutdown_socket(tcp: &TcpStream, how: Shutdown) -> io::Result<()> {
+    let r = tcp.shutdown(how);
+    #[cfg(windows)]
+    if matches!(how, Shutdown::Read | Shutdown::Both) {
+        cancel_pending_io(tcp);
+    }
+    r
+}
+
+#[cfg(windows)]
+fn cancel_pending_io(tcp: &TcpStream) {
+    use std::os::windows::io::AsRawSocket;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CancelIoEx(handle: *mut core::ffi::c_void, overlapped: *mut core::ffi::c_void) -> i32;
+    }
+    // SAFETY: the handle is a live socket owned by `tcp`; a null OVERLAPPED cancels
+    // all of its pending I/O, whichever thread issued it.
+    unsafe {
+        CancelIoEx(tcp.as_raw_socket() as *mut core::ffi::c_void, std::ptr::null_mut());
+    }
+}
+
 /// Converts a TLS error into an `io::Error` (certificate problems keep their text).
 pub fn tls_io_error(e: TlsError) -> io::Error {
     match e {
@@ -81,12 +138,12 @@ pub fn tls_io_error(e: TlsError) -> io::Error {
 impl NetStream {
     /// Wraps a plain TCP connection.
     pub fn plain(tcp: TcpStream) -> NetStream {
-        NetStream { tcp, tls: None }
+        NetStream { tcp: Arc::new(tcp), tls: None }
     }
 
-    fn from_tls(tls: TlsStream<TcpStream>, session_key: Option<String>) -> io::Result<NetStream> {
-        let tcp = tls.get_ref().try_clone()?;
-        let wio = tls.get_ref().try_clone()?;
+    fn from_tls(tls: TlsStream<SharedTcp>, session_key: Option<String>) -> io::Result<NetStream> {
+        let tcp = tls.get_ref().0.clone();
+        let wio = tls.get_ref().clone();
         let peer_certificates = tls.peer_certificates().to_vec();
         let resumed = tls.session_resumed();
         let origin = tls.session_origin_id().to_vec();
@@ -109,23 +166,35 @@ impl NetStream {
     /// hostname verification. If `tcp` has no read timeout, a 30 s timeout is applied
     /// during the handshake only. Sessions are resumed per `server_name:port`.
     pub fn client(tcp: TcpStream, server_name: &str, config: &TlsClientConfig) -> io::Result<NetStream> {
+        NetStream::client_shared(Arc::new(tcp), server_name, config)
+    }
+
+    fn client_shared(tcp: Arc<TcpStream>, server_name: &str, config: &TlsClientConfig) -> io::Result<NetStream> {
         let key = match tcp.peer_addr() {
             Ok(a) => format!("{}:{}", server_name, a.port()),
             Err(_) => server_name.to_string(),
         };
-        NetStream::client_with_session_key(tcp, server_name, config, &key)
+        NetStream::client_shared_with_session_key(tcp, server_name, config, &key)
     }
 
     /// Client handshake resuming / storing the TLS session under `session_key`
     /// (e.g. the FTPS control connection's key for its data connections).
     pub fn client_with_session_key(tcp: TcpStream, server_name: &str, config: &TlsClientConfig, session_key: &str) -> io::Result<NetStream> {
-        let tls = with_handshake_timeout(&tcp, |t| TlsStream::connect_with_session_key(t, server_name, config, Some(session_key)))?;
+        NetStream::client_shared_with_session_key(Arc::new(tcp), server_name, config, session_key)
+    }
+
+    fn client_shared_with_session_key(tcp: Arc<TcpStream>, server_name: &str, config: &TlsClientConfig, session_key: &str) -> io::Result<NetStream> {
+        let tls = with_handshake_timeout(SharedTcp(tcp), |t| TlsStream::connect_with_session_key(t, server_name, config, Some(session_key)))?;
         NetStream::from_tls(tls, Some(session_key.to_string()))
     }
 
     /// Performs a TLS server handshake over an accepted `tcp` connection.
     pub fn server(tcp: TcpStream, config: &TlsServerConfig) -> io::Result<NetStream> {
-        let tls = with_handshake_timeout(&tcp, |t| TlsStream::accept(t, config))?;
+        NetStream::server_shared(Arc::new(tcp), config)
+    }
+
+    fn server_shared(tcp: Arc<TcpStream>, config: &TlsServerConfig) -> io::Result<NetStream> {
+        let tls = with_handshake_timeout(SharedTcp(tcp), |t| TlsStream::accept(t, config))?;
         NetStream::from_tls(tls, None)
     }
 
@@ -149,7 +218,7 @@ impl NetStream {
         if self.tls.is_some() {
             return Err(io::Error::other("connection already uses TLS"));
         }
-        NetStream::client(self.tcp, server_name, config)
+        NetStream::client_shared(self.tcp, server_name, config)
     }
 
     /// Upgrades a plain connection to TLS as a server (STARTTLS on the server side).
@@ -157,7 +226,7 @@ impl NetStream {
         if self.tls.is_some() {
             return Err(io::Error::other("connection already uses TLS"));
         }
-        NetStream::server(self.tcp, config)
+        NetStream::server_shared(self.tcp, config)
     }
 
     /// Whether the connection is TLS-protected.
@@ -209,7 +278,7 @@ impl NetStream {
 
     /// Another handle to the same connection.
     pub fn try_clone(&self) -> io::Result<NetStream> {
-        Ok(NetStream { tcp: self.tcp.try_clone()?, tls: self.tls.clone() })
+        Ok(NetStream { tcp: self.tcp.clone(), tls: self.tls.clone() })
     }
 
     /// The underlying TCP socket (do not read or write it directly on TLS streams).
@@ -247,7 +316,7 @@ impl NetStream {
         if let (Some(t), Shutdown::Write | Shutdown::Both) = (&self.tls, how) {
             let _ = t.writer.close();
         }
-        self.tcp.shutdown(how)
+        shutdown_socket(&self.tcp, how)
     }
 
     /// Sends TLS `close_notify` (no-op for plain streams) without closing the socket.
@@ -260,7 +329,7 @@ impl NetStream {
 
     fn do_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         match &self.tls {
-            None => (&self.tcp).read(buf),
+            None => (&*self.tcp).read(buf),
             Some(t) => {
                 if t.eof.load(Ordering::Acquire) {
                     return Ok(0);
@@ -285,7 +354,7 @@ impl NetStream {
 
     fn do_write(&self, buf: &[u8]) -> io::Result<usize> {
         match &self.tls {
-            None => (&self.tcp).write(buf),
+            None => (&*self.tcp).write(buf),
             Some(t) => {
                 t.writer.write_all_data(buf)?;
                 Ok(buf.len())
@@ -295,20 +364,20 @@ impl NetStream {
 
     fn do_flush(&self) -> io::Result<()> {
         match &self.tls {
-            None => (&self.tcp).flush(),
+            None => (&*self.tcp).flush(),
             Some(t) => t.writer.clone().flush(),
         }
     }
 }
 
-fn with_handshake_timeout<T>(tcp: &TcpStream, f: impl FnOnce(TcpStream) -> Result<T, TlsError>) -> io::Result<T> {
-    let had = tcp.read_timeout().ok().flatten();
+fn with_handshake_timeout<T>(tcp: SharedTcp, f: impl FnOnce(SharedTcp) -> Result<T, TlsError>) -> io::Result<T> {
+    let had = tcp.0.read_timeout().ok().flatten();
     if had.is_none() {
-        let _ = tcp.set_read_timeout(Some(Duration::from_secs(30)));
+        let _ = tcp.0.set_read_timeout(Some(Duration::from_secs(30)));
     }
-    let r = f(tcp.try_clone()?).map_err(tls_io_error);
+    let r = f(tcp.clone()).map_err(tls_io_error);
     if had.is_none() {
-        let _ = tcp.set_read_timeout(None);
+        let _ = tcp.0.set_read_timeout(None);
     }
     r
 }
@@ -348,7 +417,6 @@ mod tests {
     use super::*;
     use crate::certgen::self_signed;
     use std::io::{BufRead, BufReader};
-    use std::net::TcpListener;
     use std::thread;
 
     #[test]
@@ -413,5 +481,33 @@ mod tests {
         assert_eq!(&buf[..n], b"late\n");
         (&s).write_all(b"x").unwrap();
         server.join().unwrap();
+    }
+
+    #[test]
+    fn shutdown_wakes_a_blocked_reader() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (tcp, _) = listener.accept().unwrap();
+        let s = NetStream::plain(tcp);
+        let r = s.try_clone().unwrap();
+        let reader = thread::spawn(move || {
+            let mut b = [0u8; 4];
+            (&r).read(&mut b)
+        });
+        thread::sleep(Duration::from_millis(100));
+        s.shutdown(Shutdown::Both).unwrap();
+        let start = std::time::Instant::now();
+        while !reader.is_finished() && start.elapsed() < Duration::from_secs(5) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(reader.is_finished(), "a read blocked on a shut-down socket must return");
+        assert!(!matches!(reader.join().unwrap(), Ok(n) if n > 0));
+    }
+
+    #[test]
+    fn bind_listener_prefers_ipv4_for_localhost() {
+        let l = bind_listener("localhost:0").unwrap();
+        assert!(l.local_addr().unwrap().is_ipv4());
+        TcpStream::connect(("127.0.0.1", l.local_addr().unwrap().port())).unwrap();
     }
 }
