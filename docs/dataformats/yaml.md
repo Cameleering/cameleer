@@ -74,7 +74,7 @@ Write JSON as YAML in block style:
 ```
 
 <!-- output: yaml-json-to-yaml -->
-```yaml
+```text
 service: orders
 replicas: 3
 ports:

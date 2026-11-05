@@ -141,7 +141,7 @@ fn parse_page(path: &Path) -> Vec<Marked> {
                 out.push(Marked { page: page.clone(), kind: "rust".into(), args: String::new(), lang: lang.clone(), content, rows: vec![] });
             }
             if lang == "yaml" {
-                let marked = i > 0 && lines[i - 1].trim().starts_with("<!-- example:");
+                let marked = i > 0 && (lines[i - 1].trim().starts_with("<!-- example:") || lines[i - 1].trim() == "<!-- not-camel -->");
                 assert!(marked, "{}: ```yaml block at line {} has no <!-- example: id --> marker", page, i + 1);
             }
             i = j + 1;
@@ -443,8 +443,40 @@ fn custom(case: &str) -> Option<Check> {
 fn configure_languages(id: &str) -> Option<fn(&CamelContext)> {
     match id {
         "__none__" => Some(|_| {}),
+        // ref.md
+        "ref-expression-and-predicate" => Some(bind_ref_examples),
+        // bean.md
+        "bean-method-call" => Some(bind_bean_examples),
         _ => None,
     }
+}
+
+/// ref.md registry entries (snippet copied verbatim from the page).
+fn bind_ref_examples(ctx: &CamelContext) {
+    use std::sync::Arc;
+    let reg = ctx.registry();
+    let shipping: Arc<dyn Expression> = Arc::new(|ex: &Exchange| -> Result<Value> {
+        let vip = ex.header("customerTier").map(|t| t.to_string() == "gold").unwrap_or(false);
+        let kg = ex.header("weightKg").and_then(|w| w.as_i64()).unwrap_or(0);
+        Ok(Value::Int(if vip { 0 } else { 5 * kg }))
+    });
+    reg.bind("shippingCost", shipping);
+    let vip: Arc<dyn Predicate> = Arc::new(cameleer_core::spi::FnPredicate(|ex: &Exchange| {
+        Ok(ex.header("customerTier").map(|t| t.to_string() == "gold").unwrap_or(false))
+    }));
+    reg.bind("isVip", vip);
+}
+
+/// bean.md registry entries (snippet copied verbatim from the page).
+fn bind_bean_examples(ctx: &CamelContext) {
+    let reg = ctx.registry();
+    cameleer_core::language::bind_bean_method(reg, "pricing.discount", |ex: &Exchange| -> Result<Value> {
+        let amount = ex.body().to_string().parse::<i64>().unwrap_or(0);
+        Ok(Value::Int(if amount >= 100 { 10 } else { 0 }))
+    });
+    cameleer_core::language::bind_bean_method(reg, "risk.isHigh", |ex: &Exchange| -> Result<Value> {
+        Ok(Value::Bool(ex.body().to_string().parse::<i64>().unwrap_or(0) > 1000))
+    });
 }
 
 fn custom_languages(case: &str) -> Option<Check> {
@@ -616,6 +648,12 @@ fn rust_routes_languages(b: &mut RouteBuilder) {
     b.from("direct:constant-rust")
         .set_header("Content-Type", constant("application/json"))
         .set_body(constant("fixed body"));
+    // simple.md
+    b.from("direct:simple-rust")
+        .set_header("greeting", simple("Hello ${body}"))
+        .filter(simple("${header.greeting} contains 'World'"))
+        .set_body(simple("${header.greeting.toUpperCase()}!"))
+        .end();
 }
 
 #[test]
@@ -624,6 +662,176 @@ fn rust_dsl_languages() {
     let r = rust_req(&main, "direct:constant-rust", "x");
     assert_eq!(r.body().to_string(), "fixed body");
     assert_eq!(r.header("Content-Type").unwrap().to_string(), "application/json");
+    assert_eq!(rust_req(&main, "direct:simple-rust", "World").body().to_string(), "HELLO WORLD!");
+    assert_eq!(rust_req(&main, "direct:simple-rust", "Moon").body().to_string(), "Moon");
+    main.stop().unwrap();
+}
+
+/// Script language pages (js, groovy, python, java, mvel, ognl, spel, datasonnet).
+fn rust_routes_languages_scripts(b: &mut RouteBuilder) {
+    // js.md
+    b.from("direct:js-rust")
+        .set_header("len", cameleer_script::js("body.length"))
+        .set_body(cameleer_script::js("body.toUpperCase()"));
+    // groovy.md
+    b.from("direct:groovy-rust")
+        .filter(cameleer_script::groovy("request.headers.amount > 100"))
+        .set_body(cameleer_script::groovy("'big order: ' + headers.amount"));
+    // python.md
+    b.from("direct:python-rust")
+        .set_body(cameleer_script::python("body[::-1]"));
+    // java.md
+    b.from("direct:java-rust")
+        .set_body(cameleer_script::joor("((String) body).length() * 2"));
+    // mvel.md
+    b.from("direct:mvel-rust")
+        .set_header("next", cameleer_script::mvel("request.headers.n + 1"));
+    // ognl.md
+    b.from("direct:ognl-rust")
+        .set_header("twice", cameleer_script::ognl("request.body.length() * 2"));
+    // spel.md
+    b.from("direct:spel-rust")
+        .set_body(cameleer_script::spel("Hello #{request.body}"));
+    // datasonnet.md
+    b.from("direct:datasonnet-rust")
+        .set_body(cameleer_script::datasonnet("{total: std.foldl(function(t, i) t + i, payload.values, 0)}"));
+}
+
+#[test]
+fn rust_dsl_languages_scripts() {
+    let main = rust_main(rust_routes_languages_scripts);
+    // js.md
+    let r = rust_req(&main, "direct:js-rust", "hello");
+    assert_eq!(r.body().to_string(), "HELLO");
+    assert_eq!(r.header("len").unwrap().to_string(), "5");
+    // groovy.md
+    let t = main.context().create_producer_template();
+    let r = t.request("direct:groovy-rust", |e: &mut Exchange| {
+        e.set_body("order");
+        e.set_header("amount", 500);
+    });
+    assert_eq!(r.unwrap().body().to_string(), "big order: 500");
+    // python.md
+    assert_eq!(rust_req(&main, "direct:python-rust", "abc").body().to_string(), "cba");
+    // java.md
+    assert_eq!(rust_req(&main, "direct:java-rust", "abc").body().to_string(), "6");
+    // mvel.md
+    let r = t.request("direct:mvel-rust", |e: &mut Exchange| e.set_header("n", 41)).unwrap();
+    assert_eq!(r.header("next").unwrap().to_string(), "42");
+    // ognl.md
+    assert_eq!(rust_req(&main, "direct:ognl-rust", "abcd").header("twice").unwrap().to_string(), "8");
+    // spel.md
+    assert_eq!(rust_req(&main, "direct:spel-rust", "Ada").body().to_string(), "Hello Ada");
+    // datasonnet.md
+    assert_eq!(rust_req(&main, "direct:datasonnet-rust", r#"{"values":[1,2,3]}"#).body().to_string(), r#"{"total":6}"#);
+    main.stop().unwrap();
+}
+
+/// Core language pages (header, exchangeProperty, variable, jsonpath, jq, xpath, xquery,
+/// tokenize, ref, bean, csimple, hl7terser).
+fn rust_routes_languages_core(b: &mut RouteBuilder) {
+    // header.md
+    b.from("direct:header-rust")
+        .filter(header("urgent"))
+        .set_body(header("assignee"));
+    // exchangeProperty.md
+    b.from("direct:property-rust")
+        .set_property("original", body())
+        .set_body(constant("replaced"))
+        .set_body(exchange_property("original"));
+    // variable.md
+    b.from("direct:variable-rust")
+        .set_body(language("variable", "question"));
+    // jsonpath.md
+    b.from("direct:jsonpath-rust")
+        .set_header("finishReason", jsonpath("$.choices[0].finish_reason"))
+        .set_body(jsonpath_as("$.choices[0].message.content", "String"));
+    // jq.md
+    b.from("direct:jq-rust")
+        .filter(jq(".total > 100"))
+        .set_body(jq("{id, total}"));
+    // xpath.md
+    b.from("direct:xpath-rust")
+        .filter(xpath("/order/@status = 'new'"))
+        .set_body(xpath_as("/order/@id", "String"));
+    // xquery.md
+    b.from("direct:xquery-rust")
+        .set_body(cameleer_xml::xquery_component::xquery_expr("string-join(//item/@sku, ',')"));
+    // tokenize.md
+    b.from("direct:tokenize-rust")
+        .split(tokenize("\n"))
+        .to("mock:tokenize-line")
+        .end()
+        .set_body(tokenize_pair("[", "]", false));
+    // ref.md
+    b.from("direct:ref-rust")
+        .filter(ref_expression("isVip"))
+        .set_body(ref_expression("shippingCost"));
+    // bean.md
+    b.from("direct:bean-rust")
+        .set_header("discount", bean_method("pricing", "discount"))
+        .set_body(method("risk.isHigh"));
+    // csimple.md
+    b.from("direct:csimple-rust")
+        .set_body(language("csimple", "Hello ${body}"));
+    // hl7terser.md
+    b.from("direct:hl7terser-rust")
+        .set_header("patient", language("hl7terser", "PID-5-1"))
+        .set_body(language("hl7terser", "MSH-9-2"));
+}
+
+#[test]
+fn rust_dsl_languages_core() {
+    setup();
+    let mut main = cameleer_main::new_main();
+    main.configure(|ctx| {
+        bind_ref_examples(ctx);
+        bind_bean_examples(ctx);
+        ctx.add_routes(|b| rust_routes_languages_core(b))
+    });
+    main.start().unwrap();
+    let t = main.context().create_producer_template();
+    // header.md
+    let r = t.request("direct:header-rust", |e: &mut Exchange| {
+        e.set_body("x");
+        e.set_header("urgent", true);
+        e.set_header("assignee", "on-call");
+    });
+    assert_eq!(r.unwrap().body().to_string(), "on-call");
+    // exchangeProperty.md
+    assert_eq!(rust_req(&main, "direct:property-rust", "first").body().to_string(), "first");
+    // variable.md
+    let r = t.request("direct:variable-rust", |e: &mut Exchange| e.set_property("CamelVariable.question", "When?"));
+    assert_eq!(r.unwrap().body().to_string(), "When?");
+    // jsonpath.md
+    let r = rust_req(&main, "direct:jsonpath-rust", r#"{"choices":[{"finish_reason":"stop","message":{"content":"Hi"}}]}"#);
+    assert_eq!(r.body().to_string(), "Hi");
+    assert_eq!(r.header("finishReason").unwrap().to_string(), "stop");
+    // jq.md
+    assert_eq!(rust_req(&main, "direct:jq-rust", r#"{"id":1,"total":150,"x":0}"#).body().to_string(), r#"{"id":1,"total":150}"#);
+    // xpath.md
+    assert_eq!(rust_req(&main, "direct:xpath-rust", r#"<order id="7" status="new"/>"#).body().to_string(), "7");
+    // xquery.md
+    assert_eq!(rust_req(&main, "direct:xquery-rust", r#"<o><item sku="a"/><item sku="b"/></o>"#).body().to_string(), "a,b");
+    // tokenize.md
+    assert_eq!(rust_req(&main, "direct:tokenize-rust", "[x]\n[y]").body().to_string(), r#"["x","y"]"#);
+    assert_eq!(main.context().mock_endpoint("mock:tokenize-line").unwrap().received_exchanges().len(), 2);
+    // ref.md
+    let r = t.request("direct:ref-rust", |e: &mut Exchange| {
+        e.set_header("customerTier", "gold");
+        e.set_header("weightKg", 4);
+    });
+    assert_eq!(r.unwrap().body().to_string(), "0");
+    // bean.md
+    let r = rust_req(&main, "direct:bean-rust", "5000");
+    assert_eq!(r.body().to_string(), "true");
+    assert_eq!(r.header("discount").unwrap().to_string(), "10");
+    // csimple.md
+    assert_eq!(rust_req(&main, "direct:csimple-rust", "Ada").body().to_string(), "Hello Ada");
+    // hl7terser.md
+    let r = rust_req(&main, "direct:hl7terser-rust", "MSH|^~\\&|A|B|C|D|20240102||ADT^A01|1|P|2.5\rPID|1||9||Doe^John\r");
+    assert_eq!(r.body().to_string(), "A01");
+    assert_eq!(r.header("patient").unwrap().to_string(), "Doe");
     main.stop().unwrap();
 }
 
