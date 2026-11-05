@@ -106,7 +106,26 @@ struct WsState {
     drive_changes: Vec<(i64, String, bool)>,
     /// calendar -> deleted event ids with the deletion time (sync tokens)
     tombstones: BTreeMap<String, Vec<(String, i64)>>,
+    /// Time of the last calendar sync token issued, and of the last calendar change.
+    cal_token: i64,
+    cal_change: i64,
     notifications: usize,
+}
+
+impl WsState {
+    /// Time stamp for a calendar change: strictly after every sync token already issued, so an
+    /// incremental sync never misses a change made in the same millisecond as its token.
+    fn cal_stamp(&mut self) -> i64 {
+        let t = now_millis().max(self.cal_token + 1).max(self.cal_change);
+        self.cal_change = t;
+        t
+    }
+    /// A new sync token: at or after every change so far, so none is delivered twice.
+    fn cal_sync_token(&mut self) -> String {
+        let t = now_millis().max(self.cal_change);
+        self.cal_token = t;
+        format!("sync-{}", t)
+    }
 }
 
 impl GcpMock {
@@ -527,7 +546,7 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
         ("POST", ["calendars", cal, "events", "quickAdd"]) => {
             let text = req.query_param("text").unwrap_or_default();
             let id = next_id(&mut s.more, "e");
-            let e = obj([("id", Value::from(id.clone())), ("summary", Value::from(text)), ("status", Value::from("confirmed")), ("start", obj([("dateTime", Value::from(iso8601_millis(now_millis())))])), ("end", obj([("dateTime", Value::from(iso8601_millis(now_millis() + 3_600_000)))])), ("updated", Value::from(iso8601_millis(now_millis())))]);
+            let e = obj([("id", Value::from(id.clone())), ("summary", Value::from(text)), ("status", Value::from("confirmed")), ("start", obj([("dateTime", Value::from(iso8601_millis(now_millis())))])), ("end", obj([("dateTime", Value::from(iso8601_millis(now_millis() + 3_600_000)))])), ("updated", Value::from(iso8601_millis(s.more.ws.cal_stamp())))]);
             s.more.calendars.entry(cal.to_string()).or_default().insert(id, e.clone());
             ok(e)
         }
@@ -540,7 +559,7 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
             e.insert("id".into(), Value::from(id.clone()));
             e.insert("status".into(), Value::from("confirmed"));
             e.insert("htmlLink".into(), Value::from(format!("https://calendar.google.com/event?eid={}", id)));
-            e.insert("updated".into(), Value::from(iso8601_millis(now_millis())));
+            e.insert("updated".into(), Value::from(iso8601_millis(s.more.ws.cal_stamp())));
             s.more.calendars.entry(cal.to_string()).or_default().insert(id, Value::Object(e.clone()));
             ok(Value::Object(e))
         }
@@ -559,7 +578,7 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
                     items.push(obj([("id", Value::from(id)), ("status", Value::from("cancelled"))]));
                 }
             }
-            ok(obj([("kind", Value::from("calendar#events")), ("items", Value::Array(items)), ("nextSyncToken", Value::from(format!("sync-{}", now_millis())))]))
+            ok(obj([("kind", Value::from("calendar#events")), ("items", Value::Array(items)), ("nextSyncToken", Value::from(s.more.ws.cal_sync_token()))]))
         }
         ("GET", ["calendars", cal, "events"]) => {
             let q = req.query_param("q").unwrap_or_default().to_ascii_lowercase();
@@ -584,17 +603,19 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
             if end < items.len() {
                 out.insert("nextPageToken".into(), Value::from(end.to_string()));
             } else {
-                out.insert("nextSyncToken".into(), Value::from(format!("sync-{}", now_millis())));
+                out.insert("nextSyncToken".into(), Value::from(s.more.ws.cal_sync_token()));
             }
             ok(Value::Object(out))
         }
         (m, ["calendars", cal, "events", id]) => {
+            // taken before `c` borrows the calendar; only changes need a stamp
+            let stamp = if m == "GET" { 0 } else { s.more.ws.cal_stamp() };
             let Some(c) = s.more.calendars.get_mut(*cal) else { return not_found() };
             match m {
                 "GET" => c.get(*id).cloned().map(ok).unwrap_or_else(not_found),
                 "DELETE" => match c.remove(*id) {
                     Some(_) => {
-                        s.more.ws.tombstones.entry(cal.to_string()).or_default().push((id.to_string(), now_millis()));
+                        s.more.ws.tombstones.entry(cal.to_string()).or_default().push((id.to_string(), stamp));
                         Response::new(204)
                     }
                     None => not_found(),
@@ -607,7 +628,7 @@ fn calendar(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Response {
                     }
                     e.insert("id".into(), Value::from(id.to_string()));
                     e.insert("status".into(), Value::from("confirmed"));
-                    e.insert("updated".into(), Value::from(iso8601_millis(now_millis())));
+                    e.insert("updated".into(), Value::from(iso8601_millis(stamp)));
                     *existing = Value::Object(e);
                     ok(existing.clone())
                 }
@@ -1190,7 +1211,8 @@ impl GcpMock {
     pub fn expire_calendar_sync_tokens(&self) {
         // tokens issued before now are rejected
         let mut s = self.state.lock().unwrap();
-        s.more.ws.store.entry("calendar:sync-epoch".into()).or_default().insert("epoch".into(), Value::Int(now_millis()));
+        let epoch = now_millis().max(s.more.ws.cal_token + 1);
+        s.more.ws.store.entry("calendar:sync-epoch".into()).or_default().insert("epoch".into(), Value::Int(epoch));
     }
 }
 
@@ -1409,7 +1431,7 @@ fn calendar_extra(st: &Shared, req: &ServerRequest, rest: &[&str]) -> Option<Res
                 let id = next_id(s, "e");
                 let mut e = body.as_object().cloned().unwrap_or_default();
                 e.insert("id".into(), Value::from(id.clone()));
-                e.insert("updated".into(), Value::from(iso8601_millis(now_millis())));
+                e.insert("updated".into(), Value::from(iso8601_millis(s.ws.cal_stamp())));
                 s.calendars.entry(cal.to_string()).or_default().insert(id, Value::Object(e.clone()));
                 ok(Value::Object(e))
             }

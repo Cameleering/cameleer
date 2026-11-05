@@ -7,14 +7,19 @@ use camel_dataformats::pgp::{self, Signer, WriteOptions};
 
 struct Gpg {
     home: PathBuf,
+    /// `home` as the installed gpg expects it in `GNUPGHOME`.
+    home_env: String,
 }
 
 impl Gpg {
     fn new(tag: &str) -> Option<Gpg> {
-        if Command::new("gpg").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| !s.success()).unwrap_or(true) {
-            eprintln!("gpg not installed: skipping interop test");
-            return None;
-        }
+        let version = match Command::new("gpg").arg("--version").stderr(Stdio::null()).output() {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => {
+                eprintln!("gpg not installed: skipping interop test");
+                return None;
+            }
+        };
         let home = std::env::temp_dir().join(format!("cdf-gpg-{}-{}", tag, std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).ok()?;
@@ -24,14 +29,18 @@ impl Gpg {
             std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).ok()?;
         }
         std::fs::write(home.join("gpg-agent.conf"), "allow-loopback-pinentry\ns2k-count 65536\n").ok()?;
-        Some(Gpg { home })
+        // Git for Windows ships an MSYS gpg (its `Home:` is a POSIX path) that reads
+        // `GNUPGHOME=C:\...` as a relative path; give it `/c/...` instead.
+        let msys = version.lines().any(|l| l.starts_with("Home: /"));
+        let home_env = if msys { msys_path(&home) } else { home.to_string_lossy().to_string() };
+        Some(Gpg { home, home_env })
     }
 
     /// Run gpg with stdin; returns (success, stdout, stderr).
     fn run(&self, args: &[&str], stdin: &[u8]) -> (bool, Vec<u8>, String) {
         use std::io::Write;
         let mut child = Command::new("gpg")
-            .env("GNUPGHOME", &self.home)
+            .env("GNUPGHOME", &self.home_env)
             .args(["--batch", "--yes", "--no-tty", "--pinentry-mode", "loopback", "--trust-model", "always"])
             .args(args)
             .stdin(Stdio::piped())
@@ -63,15 +72,26 @@ impl Gpg {
 
 impl Drop for Gpg {
     fn drop(&mut self) {
-        let _ = Command::new("gpgconf").env("GNUPGHOME", &self.home).args(["--kill", "all"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        let _ = Command::new("gpgconf").env("GNUPGHOME", &self.home_env).args(["--kill", "all"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
         let _ = std::fs::remove_dir_all(&self.home);
+    }
+}
+
+/// `C:\a\b` -> `/c/a/b`, the form MSYS programs take; other paths only get `/` separators.
+fn msys_path(p: &Path) -> String {
+    let s = p.to_string_lossy().replace('\\', "/");
+    let b = s.as_bytes();
+    if b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
+        format!("/{}{}", (b[0] as char).to_ascii_lowercase(), &s[2..])
+    } else {
+        s
     }
 }
 
 fn write(dir: &Path, name: &str, data: &[u8]) -> String {
     let p = dir.join(name);
     std::fs::write(&p, data).unwrap();
-    p.to_string_lossy().to_string()
+    p.to_string_lossy().replace('\\', "/")
 }
 
 /// Our Ed25519/Cv25519 keys imported into gpg: we encrypt+sign, gpg decrypts+verifies, and

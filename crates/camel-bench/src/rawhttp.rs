@@ -73,17 +73,23 @@ mod sys {
         pub revents: i16,
     }
     pub const POLLIN: i16 = 0x1;
-    extern "C" {
-        fn poll(fds: *mut PollFd, n: u64, timeout: i32) -> i32;
+    // `nfds_t` is `unsigned long` on Linux and `unsigned int` on macOS and the BSDs.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    type Nfds = std::ffi::c_ulong;
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    type Nfds = std::ffi::c_uint;
+    mod ffi {
+        extern "C" {
+            pub fn poll(fds: *mut super::PollFd, n: super::Nfds, timeout: i32) -> i32;
+        }
     }
     pub fn raw(s: &std::net::TcpStream) -> i32 {
         use std::os::unix::io::AsRawFd;
         s.as_raw_fd()
     }
-    pub unsafe fn poll_fds(fds: *mut PollFd, n: u32, timeout: i32) -> i32 {
-        poll(fds, n as u64, timeout)
+    pub unsafe fn poll(fds: *mut PollFd, n: u32, timeout: i32) -> i32 {
+        ffi::poll(fds, n as Nfds, timeout)
     }
-    pub use poll_fds as poll;
 }
 
 /// One thread, non-blocking sockets and `poll`: no thread wakes up per request while
