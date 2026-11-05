@@ -664,6 +664,10 @@ fn docs_pages_invite_fixes() {
     let root = repo_root();
     let mut missing = Vec::new();
     for f in markdown_files(&root.join("docs")) {
+        // the Read the Docs entry page includes docs/README.md, which has the section
+        if f.file_name().and_then(|n| n.to_str()) == Some("index.md") && f.parent() == Some(&root.join("docs")) {
+            continue;
+        }
         let text = std::fs::read_to_string(&f).unwrap();
         let ok = text.contains("## Found a problem?") && text.contains("https://github.com/pmsudhi/cameleer/issues/new") && text.contains("pull request");
         if !ok {

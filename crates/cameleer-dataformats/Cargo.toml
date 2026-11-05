@@ -10,6 +10,6 @@ readme.workspace = true
 description = "Cameleer data formats: Avro, Bindy, YAML, Tar, Zip, Crypto, PGP, CBOR, Thrift, ASN.1, iCal, MIME multipart, Fory (xlang), Barcode (QR, Data Matrix, Code 128/39, EAN-13, UPC-A)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.0" }
-cameleer-yaml = { path = "../cameleer-yaml", version = "0.2.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.2.1" }

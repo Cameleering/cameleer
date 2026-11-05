@@ -32,6 +32,9 @@ import subprocess
 import sys
 import time
 
+# Files that exist only for the Read the Docs build (docs/conf.py), skipped here.
+SPHINX_ONLY = {"index.md", "conf.py", "requirements.txt"}
+
 SITE_URL = "https://pmsudhi.github.io/cameleer/"
 REPO_URL = "https://github.com/pmsudhi/cameleer"
 SITE_NAME = "Cameleer"
@@ -786,10 +789,13 @@ class Site:
 
     def load(self):
         for root, dirs, files in os.walk(self.docs):
-            dirs.sort()
+            # the Read the Docs (Sphinx) build output is not part of the website
+            dirs[:] = sorted(d for d in dirs if d != "_build")
             for f in sorted(files):
                 full = os.path.join(root, f)
                 rel = os.path.relpath(full, self.docs).replace("\\", "/")
+                if rel in SPHINX_ONLY:
+                    continue
                 if f.lower().endswith(".md"):
                     with open(full, encoding="utf-8") as fh:
                         self.pages[rel] = Page(rel, fh.read().replace("\r\n", "\n"))

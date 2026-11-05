@@ -10,5 +10,5 @@ readme.workspace = true
 description = "Cameleer messaging components (std only): AMQP 0-9-1 (rabbitmq, spring-rabbitmq), STOMP 1.2 (stomp) and JMS-style jms/activemq/amqp over STOMP"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }

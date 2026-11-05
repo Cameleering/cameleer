@@ -10,5 +10,5 @@ readme.workspace = true
 description = "Cameleer std-only SSH-2 client/server, SFTP v3 and the sftp / ssh components"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }

@@ -10,6 +10,6 @@ readme.workspace = true
 description = "Cameleer SaaS / API connectors over REST (std only): slack, telegram, github, twilio, jira, openai, webhook, graphql, rss/atom, with embedded mock servers"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
-cameleer-http = { path = "../cameleer-http", version = "0.2.0" }
-cameleer-xml = { path = "../cameleer-xml", version = "0.2.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-http = { path = "../cameleer-http", version = "0.2.1" }
+cameleer-xml = { path = "../cameleer-xml", version = "0.2.1" }

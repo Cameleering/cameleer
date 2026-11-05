@@ -10,5 +10,5 @@ readme.workspace = true
 description = "Cameleer messaging components (std only): kafka (wire protocol client) and paho / paho-mqtt5 (MQTT 3.1.1 / 5.0), with embedded test brokers"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }

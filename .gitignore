@@ -2,3 +2,6 @@ target/
 *.swp
 .claude/
 __pycache__/
+
+# Read the Docs / Sphinx build output
+/docs/_build/

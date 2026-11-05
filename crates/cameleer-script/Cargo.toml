@@ -10,8 +10,8 @@ readme.workspace = true
 description = "Cameleer scripting languages: JavaScript, Groovy, Python, OGNL, MVEL, SpEL, DataSonnet (tree-walking interpreters)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }
 
 [dev-dependencies]
 cameleer-yaml = { path = "../cameleer-yaml" }
