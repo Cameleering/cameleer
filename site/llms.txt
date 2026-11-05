@@ -40,7 +40,7 @@ Each example runs end to end in the test suite (https://github.com/pmsudhi/camel
 The full documentation as one plain-markdown file: https://pmsudhi.github.io/cameleer/llms-full.txt. Every page is also served as markdown next to its HTML (same path, `.md`).
 
 - [Docs home](https://pmsudhi.github.io/cameleer/docs/): what is where
-- [Guides](https://pmsudhi.github.io/cameleer/docs/guides/): Step-by-step guides for building, running and operating Cameleer routes. (15 pages)
+- [Guides](https://pmsudhi.github.io/cameleer/docs/guides/): Step-by-step guides for building, running and operating Cameleer routes. (18 pages)
 - [Components](https://pmsudhi.github.io/cameleer/docs/components/): Every Cameleer component: the endpoint schemes you use in from and to, grouped by category. (157 pages)
 - [Languages](https://pmsudhi.github.io/cameleer/docs/languages/): The expression and predicate languages you can use in Cameleer routes, such as Simple, JSONPath and XPath. (22 pages)
 - [Data formats](https://pmsudhi.github.io/cameleer/docs/dataformats/): The data formats that marshal and unmarshal message bodies in Cameleer routes, such as JSON, CSV and Avro. (29 pages)
@@ -49,6 +49,7 @@ Guides:
 
 - [Getting started with Cameleer](https://pmsudhi.github.io/cameleer/docs/guides/getting-started.html): Install Cameleer (Docker image, cargo install or Rust crates), run a first route and a first REST API, and configure them with properties and environment variables, in about ten minutes.
 - [Cameleer concepts](https://pmsudhi.github.io/cameleer/docs/guides/concepts.html): Cameleer uses Apache Camel's model: a CamelContext runs routes; each route takes exchanges from an endpoint, passes their messages (body and headers) through processors and EIPs, and sends them to other endpoints created by components.
+- [YAML DSL reference](https://pmsudhi.github.io/cameleer/docs/guides/yaml-dsl.html): The YAML DSL describes Cameleer routes in *.camel.yaml files: one input (from), a list of steps (EIPs), endpoints written as URIs, and expressions in Simple or another language, with the same names as the Apache Camel YAML DSL.
 - [Enterprise Integration Patterns in Cameleer](https://pmsudhi.github.io/cameleer/docs/guides/eips.html): Cameleer implements Apache Camel's Enterprise Integration Patterns (EIPs) with the same names, options and semantics; this page lists every one and links to a tested YAML example and its Rust DSL equivalent.
 - [Error handling](https://pmsudhi.github.io/cameleer/docs/guides/error-handling.html): Cameleer handles failures the way Apache Camel does: an error handler retries failed steps with a redelivery policy and then gives up or moves the message to a dead letter channel, onException reacts to specific exception types, and doTry/doCatch/doFinally handle errors inline.
 - [AI components](https://pmsudhi.github.io/cameleer/docs/guides/ai-components.html): Cameleer calls large language models from routes with four components: openai (OpenAI and any OpenAI-compatible server such as Ollama or vLLM), azure-openai, aws-bedrock and google-vertexai; they cover chat, embeddings and, depending on the provider, streaming, tool calls and images.
@@ -62,6 +63,8 @@ Guides:
 - [Migrating from Apache Camel](https://pmsudhi.github.io/cameleer/docs/guides/migrating-from-apache-camel.html): Camel YAML and XML routes, endpoint URIs, EIPs, the Simple language, headers and error handling carry over to Cameleer unchanged; Java code (processors, beans, custom components) must be rewritten in Rust, and a few behaviours differ, listed on this page.
 - [Routing patterns](https://pmsudhi.github.io/cameleer/docs/guides/eips/routing.html): Routing patterns decide where a message goes next: to one endpoint, to several, to a list computed at run time, or around a loop, using the same EIP names and options as Apache Camel.
 - [Splitting and aggregating messages](https://pmsudhi.github.io/cameleer/docs/guides/eips/split-aggregate.html): The splitter breaks one message into many, the aggregator combines many messages into one, and the resequencer and sort EIPs put messages and lists back in order.
+- [Validate routes with cameleer validate](https://pmsudhi.github.io/cameleer/docs/guides/validate.html): cameleer validate checks YAML and XML route files for syntax, structure, endpoint options, expressions, placeholders and route ids without starting any route or connecting to anything, and reports each problem with its line, column and a hint.
+- [YAML routes for coding agents](https://pmsudhi.github.io/cameleer/docs/guides/yaml-for-coding-agents.html): How an AI coding assistant should write Cameleer YAML routes: start from a tested skeleton, follow a short list of rules, look up component options instead of guessing, and run cameleer validate until the file is clean before running it.
 
 ## Docs
 
