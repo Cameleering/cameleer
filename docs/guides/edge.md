@@ -275,8 +275,9 @@ docker run -d --name edge-routes --restart unless-stopped \
   no published 32-bit ARM image.
 - **No container runtime:** `cargo install cameleer-main` builds the `cameleer` binary on the
   device (or cross-compile it: Cameleer has no dependencies outside the Rust standard library),
-  then run it under systemd with `cameleer run /etc/cameleer/routes/`.
-- **Several route files:** pass several files or a directory to `run`; they share one process.
+  then run it under systemd, for example `cameleer run /etc/cameleer/rollup.camel.yaml`.
+- **Several route files:** pass several files to `run` (or none, to load every route file in
+  the working directory); they share one process.
 - **Health:** add `--prop camel.server.enabled=true --prop camel.server.healthCheckEnabled=true`
   for `/q/health/live` and `/q/health/ready` on port 8080. See the
   [deployment guide](../DEPLOYMENT.md).

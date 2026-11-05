@@ -1872,3 +1872,234 @@ fn edge_gateway_heartbeat() {
     assert!(mqtt.connected_clients().iter().any(|c| c == "gw-test-status"), "{:?}", mqtt.connected_clients());
     main.stop().unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// getting-started.md
+// ---------------------------------------------------------------------------
+
+const START: &str = "getting-started.md";
+
+/// The first fenced block of a language on a page.
+fn first_block(page_name: &str, lang: &str) -> String {
+    blocks(&page(page_name)).into_iter().find(|(l, _, _)| l == lang).map(|(_, _, t)| t).unwrap_or_else(|| panic!("no {} block in {}", lang, page_name))
+}
+
+fn route_total(ctx: &CamelContext, id: &str) -> u64 {
+    ctx.route(id).map(|r| r.stats.exchanges_total()).unwrap_or(0)
+}
+
+#[test]
+fn gs_hello_timer() {
+    let yaml = example(START, "gs-hello-timer");
+    let main = start_yaml("gs-hello-timer", &yaml, |_| {});
+    let ctx = main.context().clone();
+    wait_for("three timer messages", || route_total(&ctx, "hello") == 3);
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(route_total(&ctx, "hello"), 3, "repeatCount stops the timer");
+    main.stop().unwrap();
+}
+
+#[test]
+fn gs_hello_api() {
+    let port = free_port();
+    let yaml = example(START, "gs-hello-api");
+    let main = start_yaml("gs-hello-api", &yaml, |m| m.set_property("camel.server.port", port.to_string()));
+    let (status, head, body) = http_full(port, "GET", "/hello/Ada", &[], "");
+    assert_eq!(status, 200, "{}", body);
+    assert_eq!(body, r#"{"greeting": "Hello, Ada!"}"#);
+    assert!(head.to_ascii_lowercase().contains("content-type: application/json"), "{}", head);
+    main.stop().unwrap();
+}
+
+#[test]
+fn gs_config() {
+    let yaml = example(START, "gs-config");
+    let props = first_block(START, "properties");
+    let port = free_port();
+    let main = start_yaml("gs-config", &yaml, |m| {
+        m.load_properties_text(&props, false).unwrap();
+        // the page's application.properties sets port 9090; keep the test off fixed ports
+        m.set_property("camel.server.port", port.to_string());
+    });
+    let ctx = main.context().clone();
+    assert_eq!(ctx.resolve_placeholders("{{greeting}} from {{env:CAMELEER_DOCS_UNSET_VAR:the lab}}").unwrap(), "Good morning from the lab");
+    wait_for("the configured timer", || route_total(&ctx, "configured") == 1);
+    main.stop().unwrap();
+
+    // --prop wins over the properties file
+    let main = start_yaml("gs-config-prop", &yaml, |m| {
+        m.load_properties_text(&props, false).unwrap();
+        m.set_property("camel.server.port", port.to_string());
+        m.set_property("greeting", "Hi");
+    });
+    assert_eq!(main.context().resolve_placeholders("{{greeting}}").unwrap(), "Hi");
+    main.stop().unwrap();
+}
+
+/// The embedding program of the getting started page (compiled, not run: it serves forever).
+#[allow(dead_code)]
+mod getting_started_program {
+    use cameleer_core::prelude::*;
+    use cameleer_http::rest::RestDslExt;
+
+    fn main() -> Result<()> {
+        let ctx = CamelContext::new();
+        cameleer_http::register(&ctx);
+        ctx.properties().set("camel.server.port", "8080");
+        ctx.add_routes(|b| {
+            b.rest("/api/greet").get("/{name}").to("direct:greet");
+            b.from("direct:greet")
+                .set_header("Content-Type", constant("application/json"))
+                .set_body(simple(r#"{"greeting": "Hello, ${header.name}!"}"#));
+        })?;
+        ctx.start()?;
+        loop { std::thread::park(); }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// concepts.md
+// ---------------------------------------------------------------------------
+
+const CONCEPTS: &str = "concepts.md";
+
+fn check_order_intake(ctx: &CamelContext) {
+    let t = template(ctx);
+    t.send_body("direct:orders", Value::object([("total", Value::Int(1500))])).unwrap();
+    t.send_body("direct:orders", Value::object([("total", Value::Int(20))])).unwrap();
+    let high = mock(ctx, "mock:priority-orders").received_exchanges();
+    assert_eq!(high.len(), 1);
+    assert_eq!(header_of(&high[0], "priority"), "high");
+    assert!(high[0].property("receivedAt").is_some());
+    assert_eq!(header_of(&mock(ctx, "mock:orders").received_exchanges()[0], "priority"), "normal");
+}
+
+#[test]
+fn concepts_route() {
+    run_both(
+        CONCEPTS,
+        "concepts-route",
+        |b| {
+            b.from("direct:orders")
+                .route_id("order-intake")
+                .set_header("priority", simple("${body[total] > 1000 ? 'high' : 'normal'}"))
+                .set_property("receivedAt", simple("${date:now:yyyy-MM-dd}"))
+                .choice()
+                    .when(simple("${header.priority} == 'high'"))
+                        .to("mock:priority-orders")
+                    .otherwise()
+                        .to("mock:orders")
+                .end();
+        },
+        check_order_intake,
+    );
+}
+
+#[test]
+fn concepts_xml_dsl() {
+    let xml = first_block(CONCEPTS, "xml");
+    let mut main = cameleer_main::new_main();
+    main.add_route_source("order-intake.xml", xml);
+    main.start().unwrap();
+    let ctx = main.context().clone();
+    let t = template(&ctx);
+    t.send_body("direct:orders", Value::object([("total", Value::Int(1500))])).unwrap();
+    t.send_body("direct:orders", Value::object([("total", Value::Int(20))])).unwrap();
+    assert_eq!(header_of(&mock(&ctx, "mock:priority-orders").received_exchanges()[0], "priority"), "high");
+    assert_eq!(bodies(&ctx, "mock:orders").len(), 1);
+    main.stop().unwrap();
+}
+
+#[test]
+fn concepts_processor() {
+    let ctx = CamelContext::new();
+    ctx.add_routes(|b| {
+        b.from("direct:score")
+            .process(|ex: &mut Exchange| {
+                let text = ex.body().to_string();
+                let score = text.split_whitespace().filter(|w| w.eq_ignore_ascii_case("urgent")).count() as i64;
+                ex.set_header("urgency", score);
+                Ok(())
+            })
+            .to("mock:scored");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    template(&ctx).send_body("direct:score", "URGENT server down, urgent fix needed").unwrap();
+    assert_eq!(header_of(&mock(&ctx, "mock:scored").received_exchanges()[0], "urgency"), "2");
+    ctx.stop().unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// migrating-from-apache-camel.md
+// ---------------------------------------------------------------------------
+
+#[test]
+fn migrate_camel_yaml() {
+    run_yaml("migrating-from-apache-camel.md", "migrate-camel-yaml", &[], |ctx| {
+        let t = template(ctx);
+        t.send_body("direct:orders", r#"{"id": 7, "lines": [{"sku": "A1", "qty": 2}, {"sku": "B2", "qty": 1}]}"#).unwrap();
+        let got = mock(ctx, "mock:order-summary").received_exchanges()[0].body().clone();
+        assert_eq!(got, Value::Array(vec!["A1 x 2".into(), "B2 x 1".into()]));
+        t.send_body("direct:orders", r#"{"id": 8}"#).unwrap();
+        assert_eq!(bodies(ctx, "mock:rejected"), vec!["rejected: order 8 has no lines"]);
+    });
+}
+
+// ---------------------------------------------------------------------------
+// links between the guides
+// ---------------------------------------------------------------------------
+
+/// GitHub-style heading anchor (the site builder uses the same rule).
+fn slugify(heading: &str) -> String {
+    heading.trim().to_lowercase().chars().filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-' || *c == ' ').collect::<String>().replace(' ', "-")
+}
+
+fn anchors(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_fence = false;
+    for l in text.lines() {
+        if l.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence && l.starts_with('#') {
+            out.push(slugify(l.trim_start_matches('#')));
+        }
+    }
+    out
+}
+
+/// Relative links of the guides point at existing files and headings. Pages written by the
+/// other documentation writers (components, languages, the AI components and cloud
+/// credentials guides) are checked by their own suites.
+#[test]
+fn guide_links_resolve() {
+    let guides = root().join("docs/guides");
+    for p in PAGES {
+        let text = page(p);
+        let dir = guides.join(p).parent().unwrap().to_path_buf();
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find("](") {
+            rest = &rest[i + 2..];
+            let end = rest.find(')').unwrap();
+            let href = &rest[..end];
+            rest = &rest[end..];
+            if href.contains("://") || href.starts_with("mailto:") {
+                continue;
+            }
+            let (path, frag) = href.split_once('#').unwrap_or((href, ""));
+            let target = if path.is_empty() { guides.join(p) } else { dir.join(path) };
+            let norm = target.to_string_lossy().replace('\\', "/");
+            let foreign = ["components/", "languages/", "dataformats/", "ai-components.md", "cloud-credentials.md"].iter().any(|f| path.contains(f));
+            if foreign {
+                continue;
+            }
+            assert!(target.exists(), "{}: broken link {}", p, href);
+            if !frag.is_empty() && norm.ends_with(".md") {
+                let t = std::fs::read_to_string(&target).unwrap().replace("\r\n", "\n");
+                assert!(anchors(&t).iter().any(|a| a == frag), "{}: link {} has no heading #{}", p, href, frag);
+            }
+        }
+    }
+}
