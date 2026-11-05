@@ -13,6 +13,12 @@ use std::time::Duration;
 use cameleer_core::component::support::{BackgroundThreads, StopFlag};
 use cameleer_core::prelude::*;
 
+/// Whether `camel run` writes status and log files: off when `CAMEL_LOCAL_STATUS` is
+/// `false`, `0`, `off` or `no`.
+pub fn local_status_enabled() -> bool {
+    !matches!(std::env::var("CAMEL_LOCAL_STATUS").map(|v| v.trim().to_ascii_lowercase()).as_deref(), Ok("false" | "0" | "off" | "no"))
+}
+
 /// The directory holding the status files.
 pub fn camel_home() -> PathBuf {
     if let Ok(h) = std::env::var("CAMEL_HOME") {

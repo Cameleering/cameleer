@@ -1,0 +1,5 @@
+# The toolchain CI, the container image (rust:1.99.1) and local builds use. Bump it together
+# with the digest-pinned builder image in the Dockerfile.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"

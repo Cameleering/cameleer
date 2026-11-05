@@ -280,9 +280,13 @@ fn run_cmd(args: &[String]) -> CliResult {
             main.set_property("camel.main.name", base_name(f));
         }
     }
-    let home = local::camel_home();
-    main.enable_local_status(&home);
-    let _ = local::log_to_file(&local::log_file(&home, std::process::id()));
+    // status and log files for `camel ps/stop/log/get/cmd`; CAMEL_LOCAL_STATUS=false turns
+    // them off (the container image does: one process per container, logs go to stdout)
+    if local::local_status_enabled() {
+        let home = local::camel_home();
+        main.enable_local_status(&home);
+        let _ = local::log_to_file(&local::log_file(&home, std::process::id()));
+    }
     main.run().map_err(|e| e.to_string())
 }
 
@@ -541,6 +545,13 @@ fn get(args: &[String], out: &mut dyn Write) -> CliResult {
     };
     match what {
         "routes" | "route" => write!(out, "{}", crate::console::format_routes_table(&v)).map_err(|e| e.to_string()),
+        "health" => {
+            w(out, &v.to_json_pretty())?;
+            match v.get("status").map(|s| s.to_string()) {
+                Some(s) if s.eq_ignore_ascii_case("DOWN") => Err("health check is DOWN".to_string()),
+                _ => Ok(()),
+            }
+        }
         _ => w(out, &v.to_json_pretty()),
     }
 }

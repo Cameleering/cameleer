@@ -6,9 +6,11 @@
 #   export KAFKA_BROKERS=localhost:9092 OPENAI_API_KEY=sk-...
 #   # optional: OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.1 for a local model
 #
-# Run with Docker:
+# Run with Docker (Linux; with Docker Desktop on macOS or Windows, set
+# KAFKA_BROKERS=host.docker.internal:9092 instead of --network host, and make the broker
+# advertise that address):
 #   docker run --rm --network host -e KAFKA_BROKERS -e OPENAI_API_KEY \
-#     -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
 # Run from source:
 #   cargo run --release -p cameleer-main --bin cameleer -- run examples/ai-ticket-triage.camel.yaml
 - route:

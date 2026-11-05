@@ -297,6 +297,7 @@ impl Main {
         if let Some(p) = profile {
             props.entry("camel.main.profile".into()).or_insert(p);
         }
+        resolve_runtime_placeholders(&mut props);
         self.properties = props;
         Ok(())
     }
@@ -449,7 +450,12 @@ impl Main {
         self.ctx.start()?;
         if let Some(dir) = &self.local_dir {
             let name = self.config.name.clone().unwrap_or_else(|| self.ctx.name().to_string());
-            self.local = Some(local::LocalStatus::start(&self.ctx, &name, dir)?);
+            // best-effort: a read-only filesystem or a home without write access must not
+            // stop the integration, only `camel ps/stop/log` lose sight of it
+            match local::LocalStatus::start(&self.ctx, &name, dir) {
+                Ok(l) => self.local = Some(l),
+                Err(e) => cameleer_core::camel_warn!("Main", "Local status files disabled: {}", e),
+            }
         }
         for line in console::startup_summary(&self.ctx) {
             cameleer_core::camel_info!("Main", "{}", line);
@@ -583,6 +589,21 @@ impl Main {
             l.stop();
         }
         self.ctx.stop()
+    }
+}
+
+/// Resolve `{{...}}` placeholders in the values of the `camel.main.*` and `camel.server.*`
+/// settings, as Camel does: `camel.server.port={{env:PORT:8080}}` (Cloud Run, Knative and
+/// others pass the port in `PORT`). A value that cannot be resolved is kept as it is.
+fn resolve_runtime_placeholders(props: &mut BTreeMap<String, String>) {
+    let resolver = cameleer_core::context::PropertiesComponent::default();
+    resolver.set_all(props.clone());
+    for (k, v) in props.iter_mut() {
+        if v.contains("{{") && (k.starts_with("camel.main.") || k.starts_with("camel.server.")) {
+            if let Ok(r) = resolver.resolve(v) {
+                *v = r;
+            }
+        }
     }
 }
 

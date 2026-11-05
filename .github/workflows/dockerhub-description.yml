@@ -1,0 +1,33 @@
+name: Docker Hub description
+
+# Keeps the Docker Hub repository's short description and overview in sync with
+# docker/README.dockerhub.md. Needs the DOCKERHUB_TOKEN secret (a Docker Hub access token
+# with Read, Write, Delete scope: updating a description requires it).
+on:
+  push:
+    branches: [main]
+    paths: ["docker/README.dockerhub.md", ".github/workflows/dockerhub-description.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  description:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - if: env.HAS_DOCKERHUB != 'true'
+        run: echo "::warning::DOCKERHUB_TOKEN is not set; the Docker Hub description was not updated"
+      - if: env.HAS_DOCKERHUB == 'true'
+        uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77 # v4
+        with:
+          username: pmsudhi
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: pmsudhi/cameleer
+          short-description: "Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, ~10 MB RAM, amd64/arm64"
+          readme-filepath: docker/README.dockerhub.md
+          enable-url-completion: true

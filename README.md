@@ -276,12 +276,15 @@ Save this as `hello-api.camel.yaml` (or take [examples/hello-api.camel.yaml](exa
 Run it and call it:
 
 ```sh
-docker run --rm -p 8080:8080 -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/hello-api.camel.yaml
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml
 curl localhost:8080/orders/42      # {"id": "42", "status": "shipped"}
 ```
 
-The image is a single static binary on distroless, for linux/amd64 and linux/arm64. Any route
-written for Apache Camel's YAML DSL runs the same way.
+The image is a single native binary on distroless, for linux/amd64 and linux/arm64, on
+[Docker Hub](https://hub.docker.com/r/pmsudhi/cameleer) and as `ghcr.io/pmsudhi/cameleer`. It runs
+as non-root and works with `--read-only`. Any route written for Apache Camel's YAML DSL runs the
+same way. Kubernetes, Docker Compose and Cloud Run setups are in the
+[deployment guide](docs/DEPLOYMENT.md).
 
 ### As a Rust crate: embed it in your program
 
@@ -377,9 +380,12 @@ The AI triage route, for example:
                 - to: "kafka:tickets-routine?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
 ```
 
+On Linux (with Docker Desktop, use `KAFKA_BROKERS=host.docker.internal:9092` instead of
+`--network host`):
+
 ```sh
 docker run --rm --network host -e KAFKA_BROKERS=localhost:9092 -e OPENAI_API_KEY \
-  -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
+  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
 ```
 
 ---

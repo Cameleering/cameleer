@@ -1,0 +1,15 @@
+# Keeps the SHA-pinned GitHub Actions and the digest-pinned Dockerfile base images current.
+# (The Rust workspace has no third-party crates, so there is no cargo entry.)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

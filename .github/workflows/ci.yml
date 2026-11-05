@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: build and test (${{ matrix.os }})
@@ -16,14 +20,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
     env:
       CARGO_INCREMENTAL: 0
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
     steps:
-      - uses: actions/checkout@v4
-      - name: Rust toolchain
-        run: rustup update stable && rustup default stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
       - name: Build with zero warnings
         run: cargo build --workspace --all-targets
         env:
@@ -32,3 +37,28 @@ jobs:
         run: cargo test --workspace --no-fail-fast
         env:
           RUSTFLAGS: -D warnings
+
+  image:
+    name: container image (build and smoke test, no push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build (linux/amd64)
+        run: docker buildx build --platform linux/amd64 --cache-from type=gha --cache-to type=gha,mode=max --load -t cameleer:ci .
+      - name: Smoke test (read-only root filesystem, arbitrary user)
+        run: |
+          docker run --rm cameleer:ci version
+          docker run -d --name smoke --read-only --user 1000:1000 -p 18080:8080 \
+            -v "$PWD/examples:/routes:ro" cameleer:ci run /routes/hello-api.camel.yaml
+          ok=
+          for i in $(seq 1 60); do
+            if curl -fsS localhost:18080/orders/42 | grep -q shipped; then ok=1; break; fi
+            sleep 1
+          done
+          docker logs smoke
+          docker rm -f smoke
+          [ -n "$ok" ]
+      - name: Image size
+        run: docker image ls cameleer:ci

@@ -1,0 +1,89 @@
+# Cameleer
+
+**Apache Camel routes, rebuilt in Rust.** If you know [Apache Camel](https://camel.apache.org/), you already know Cameleer: the same YAML DSL, endpoint URIs, Enterprise Integration Patterns and Simple expressions, in a single native binary.
+
+- **10 ms** startup, about **10 MB** of memory, **2.5–8x** Apache Camel's throughput on Java 21 ([benchmarks](https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md))
+- About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
+- Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
+- Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, under 20 MB to download
+
+Website: https://pmsudhi.github.io/cameleer/ · Source: https://github.com/pmsudhi/cameleer
+
+## Quick start
+
+Save a route as `hello-api.camel.yaml`:
+
+```yaml
+- rest:
+    path: /orders
+    get:
+      - path: /{id}
+        to: direct:getOrder
+- route:
+    from:
+      uri: direct:getOrder
+      steps:
+        - setBody:
+            simple: '{"id": "${header.id}", "status": "shipped"}'
+```
+
+Run it and call it:
+
+```sh
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml
+curl localhost:8080/orders/42        # {"id": "42", "status": "shipped"}
+```
+
+Any route written for Apache Camel's YAML DSL runs the same way.
+
+## Real use cases
+
+Each of these runs end to end in the project's test suite. Each file's header lists the environment variables it needs.
+
+| route | what it does |
+|---|---|
+| [ai-ticket-triage.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml) | Kafka in. An LLM (OpenAI, Ollama, vLLM, Azure OpenAI) classifies each ticket, and urgent ones go to their own topic. |
+| [alerts-to-slack.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/alerts-to-slack.camel.yaml) | An HTTP webhook takes monitoring alerts and posts the critical ones to Slack. |
+| [files-to-s3.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml) | Watches a folder and uploads each new CSV file to S3. |
+| [rest-api.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/rest-api.camel.yaml) | JSON REST API with validation, a content-based router and error handling. |
+
+```sh
+docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
+  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
+```
+
+## Tags
+
+| tag | meaning |
+|---|---|
+| `latest` | the latest release |
+| `0.2.0`, `0.2` | a release, and the latest patch of a minor version |
+| `edge` | a manual build from `main` |
+| `sha-<commit>` | the image of one commit |
+
+The same image is published to `ghcr.io/pmsudhi/cameleer`. Every push carries an SBOM, build provenance and a GitHub attestation: `gh attestation verify oci://ghcr.io/pmsudhi/cameleer:latest --owner pmsudhi`.
+
+## Configuration
+
+| | |
+|---|---|
+| Entrypoint | `cameleer` (the CLI; `run`, `version`, `get`, `--help`) |
+| Working directory | `/routes`: mount your route files here, read-only is fine |
+| Port | `8080` (REST DSL and `platform-http`; `camel.server.port`) |
+| User | `65532` (nonroot); any `--user` works |
+| Environment | `{{env:NAME:default}}` in routes; `CAMEL_*` and `application.properties` for configuration; `--prop key=value` on the command line |
+| Filesystem | Works with `--read-only`; no status or log files are written (`CAMEL_LOCAL_STATUS=false`), logs go to stdout |
+| Stop | `SIGTERM` stops the routes gracefully |
+| Health | with `--prop camel.server.healthCheckEnabled=true`: `/q/health/live` and `/q/health/ready` on port 8080 |
+
+Kubernetes, Docker Compose and Cloud Run setups are in the [deployment guide](https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md).
+
+## Rust crates and CLI
+
+The same engine is on crates.io: `cargo install cameleer-main` gives you the CLI, and `cameleer-core` and the component crates let you embed it in your own Rust program.
+
+## License
+
+Apache License 2.0. The license and NOTICE are in the image under `/usr/share/doc/cameleer/`.
+
+Cameleer is an independent project. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.

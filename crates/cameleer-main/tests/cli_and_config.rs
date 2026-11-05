@@ -230,3 +230,39 @@ fn kamelets_auto_loaded_from_kamelet_locations() {
     assert_eq!(main.context().mock_endpoint("mock:greet").unwrap().exchange(0).unwrap().body(), &Value::from("Hello Camel"));
     main.stop().unwrap();
 }
+
+/// Status files are best-effort: when the status directory cannot be created (read-only
+/// root filesystem, no writable home), the integration still starts.
+#[test]
+fn unwritable_status_directory_does_not_stop_the_integration() {
+    let blocker = std::env::temp_dir().join(format!("cameleer-status-blocker-{}", std::process::id()));
+    std::fs::write(&blocker, "a file, so no directory can be created below it").unwrap();
+    let mut main = cameleer_main::new_main();
+    main.enable_local_status(blocker.join("status"));
+    main.configure(|ctx| {
+        ctx.add_routes(|b| {
+            b.from("direct:in").route_id("in").to("mock:out");
+        })
+    });
+    main.start().expect("starts without status files");
+    assert_eq!(main.context().create_producer_template().request_body("direct:in", "x").unwrap().to_string(), "x");
+    main.stop().unwrap();
+    let _ = std::fs::remove_file(&blocker);
+}
+
+/// `camel.server.port={{env:PORT:8080}}` resolves, as in Camel (Cloud Run passes PORT).
+#[test]
+fn server_port_placeholder_resolves() {
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut env = std::collections::BTreeMap::new();
+    env.insert("CAMELEER_TEST_PORT".to_string(), port.to_string());
+    let mut main = cameleer_main::new_main();
+    main.set_environment(env);
+    main.set_property("camel.server.port", "{{env:CAMELEER_TEST_PORT:8080}}");
+    main.add_route_source("p.camel.yaml", "- rest:\n    path: /ping\n    get:\n      - to: direct:ping\n- route:\n    from:\n      uri: direct:ping\n      steps:\n        - setBody:\n            constant: pong\n");
+    std::env::set_var("CAMELEER_TEST_PORT", port.to_string());
+    main.start().unwrap();
+    let r = cameleer_http::HttpClient::default().get(&format!("http://127.0.0.1:{}/ping", port)).unwrap();
+    assert_eq!(r.body_text(), "pong");
+    main.stop().unwrap();
+}

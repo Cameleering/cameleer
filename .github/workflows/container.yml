@@ -1,7 +1,11 @@
 name: Container
 
-# Publishes ghcr.io/pmsudhi/cameleer (linux/amd64 and linux/arm64).
-# Release tags (v1.2.3) publish 1.2.3, 1.2 and latest; a manual run publishes edge.
+# Publishes the Cameleer image for linux/amd64 and linux/arm64 to
+#   docker.io/pmsudhi/cameleer   (when the DOCKERHUB_TOKEN secret is set)
+#   ghcr.io/pmsudhi/cameleer
+# Release tags (v1.2.3) publish 1.2.3, 1.2 and latest (pre-releases skip latest); a manual
+# run publishes edge. Each platform is built and tested before anything is pushed. The push
+# carries an SBOM, max-mode provenance and a GitHub build attestation.
 on:
   push:
     tags: ["v*"]
@@ -10,41 +14,109 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOCKERHUB_USERNAME: pmsudhi
+  HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
 
 jobs:
   image:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reproducible timestamps from the commit
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
+      - if: env.HAS_DOCKERHUB == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          images: ghcr.io/${{ github.repository_owner }}/cameleer
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - id: images
+        name: Target registries
+        run: |
+          {
+            echo "list<<EOF"
+            if [ "$HAS_DOCKERHUB" = "true" ]; then echo "docker.io/${DOCKERHUB_USERNAME}/cameleer"; fi
+            echo "ghcr.io/${{ github.repository_owner }}/cameleer"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ${{ steps.images.outputs.list }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
             type=sha
           labels: |
             org.opencontainers.image.title=Cameleer
-            org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one static binary, 10 ms startup, about 10 MB of memory.
+            org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, about 10 MB of memory.
+            org.opencontainers.image.url=https://pmsudhi.github.io/cameleer/
+            org.opencontainers.image.documentation=https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md
             org.opencontainers.image.licenses=Apache-2.0
-      - uses: docker/build-push-action@v6
+          annotations: |
+            org.opencontainers.image.title=Cameleer
+            org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, about 10 MB of memory.
+            org.opencontainers.image.licenses=Apache-2.0
+      - name: Build and test each platform before pushing
+        run: |
+          for p in linux/amd64 linux/arm64; do
+            echo "::group::$p"
+            docker buildx build --platform "$p" --build-arg SOURCE_DATE_EPOCH --cache-from type=gha --load -t cameleer:test .
+            docker run --rm --platform "$p" cameleer:test version
+            # read-only root filesystem, an arbitrary non-root user, a read-only route mount
+            docker run -d --name smoke --platform "$p" --read-only --user 1000:1000 -p 18080:8080 \
+              -v "$PWD/examples:/routes:ro" cameleer:test run /routes/hello-api.camel.yaml
+            ok=
+            for i in $(seq 1 60); do
+              if curl -fsS localhost:18080/orders/42 | grep -q shipped; then ok=1; break; fi
+              sleep 1
+            done
+            docker logs smoke
+            docker rm -f smoke
+            [ -n "$ok" ] || { echo "smoke test failed on $p"; exit 1; }
+            echo "::endgroup::"
+          done
+      - id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          build-args: SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: mode=max
+          sbom: true
+          outputs: type=image,rewrite-timestamp=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Smoke test
-        run: |
-          docker run --rm ghcr.io/${{ github.repository_owner }}/cameleer:sha-${GITHUB_SHA::7} version
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/cameleer
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - if: env.HAS_DOCKERHUB == 'true'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: index.docker.io/${{ env.DOCKERHUB_USERNAME }}/cameleer
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

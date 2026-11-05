@@ -1,31 +1,64 @@
 # syntax=docker/dockerfile:1
 #
-# Cameleer as a container: one static binary (no dependencies, all ~230 components, about 26 MB)
-# on distroless. It starts in about 10 ms and routes in about 10 MB of memory.
+# Cameleer: Apache Camel routes, rebuilt in Rust, as one native binary on distroless.
 #
-#   docker run --rm -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/my-route.camel.yaml
+#   docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/my-route.camel.yaml
 #
-# The build cross-compiles on the build machine's own architecture to a static musl binary
-# for each target platform (linux/amd64, linux/arm64), linked by Rust's bundled rust-lld, so
-# no emulation is needed. Base images are pinned by digest.
+# Build: the builder runs on the build machine's own architecture and cross-compiles for each
+# target platform (linux/amd64, linux/arm64) with Debian's cross toolchain, so no emulation is
+# needed. The binary links glibc rather than static musl: musl measured 3-17% slower
+# (allocation-heavy routes most). Builder and runtime are both Debian 12 (glibc 2.36). Base
+# images are pinned by digest (Dependabot keeps them current).
+# Runtime: non-root (65532), no shell, works with a read-only root filesystem; logs go to
+# stdout; SIGTERM stops routes gracefully.
 
 FROM --platform=$BUILDPLATFORM rust:1.99.1-slim-bookworm@sha256:ed2c95ca377d6571b124b05e75e01207973ded639dce7d5542eb7bcd797e32aa AS build
 ARG TARGETARCH
+ARG BUILDARCH
+# the target's standard library and, when cross-compiling, its linker and glibc (signed Debian
+# packages); in their own layer so source changes don't fetch them again
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) target=x86_64-unknown-linux-gnu; gnu=x86-64-linux-gnu; dev=amd64 ;; \
+      arm64) target=aarch64-unknown-linux-gnu; gnu=aarch64-linux-gnu; dev=arm64 ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    rustup target add "$target"; \
+    linker=cc; \
+    if [ "$TARGETARCH" != "$BUILDARCH" ]; then \
+      apt-get update; \
+      apt-get install -y --no-install-recommends "gcc-$gnu" "libc6-dev-$dev-cross"; \
+      rm -rf /var/lib/apt/lists/*; \
+      linker="$gnu-gcc"; \
+    fi; \
+    echo "$target" > /target; echo "$linker" > /linker
 WORKDIR /src
 COPY . .
-RUN case "$TARGETARCH" in \
-      amd64) target=x86_64-unknown-linux-musl ;; \
-      arm64) target=aarch64-unknown-linux-musl ;; \
-      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
-    esac \
- && rustup target add "$target" \
- && RUSTFLAGS="-C linker=rust-lld -C target-feature=+crt-static -C strip=symbols" \
-    cargo build --release --locked -p cameleer-main --bin cameleer --target "$target" \
- && mkdir /out && cp "target/$target/release/cameleer" /out/cameleer
+# reproducible: no build paths in the binary (panic messages), timestamps from the commit
+ARG SOURCE_DATE_EPOCH
+RUN --mount=type=cache,target=/src/target,id=cameleer-target-$TARGETARCH \
+    target=$(cat /target) \
+ && export CARGO_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_LINKER=$(cat /linker) \
+ && RUSTFLAGS="-C strip=symbols --remap-path-prefix=/src=. --remap-path-prefix=/usr/local/cargo=cargo" \
+    cargo build --profile dist --locked -p cameleer-main --bin cameleer --target "$target" \
+ && install -D "target/$target/dist/cameleer" /out/cameleer
 
-# distroless/static: CA certificates (/etc/ssl/certs), tzdata and a non-root user, no shell
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+# distroless/cc: glibc, libgcc, CA certificates (/etc/ssl/certs), tzdata, /tmp and a non-root
+# user; no shell
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:9dac0a79194e45a7da0158a9c6da57b217585af0786db3845d1f0ec1a0dd182f
 COPY --from=build /out/cameleer /usr/local/bin/cameleer
+COPY LICENSE NOTICE /usr/share/doc/cameleer/
+# one integration per container: no status/log files for `camel ps` (logs go to stdout)
+ENV CAMEL_LOCAL_STATUS=false \
+    CAMEL_HOME=/tmp/cameleer
+LABEL org.opencontainers.image.title="Cameleer" \
+      org.opencontainers.image.description="Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, about 10 MB of memory." \
+      org.opencontainers.image.source="https://github.com/pmsudhi/cameleer" \
+      org.opencontainers.image.url="https://pmsudhi.github.io/cameleer/" \
+      org.opencontainers.image.documentation="https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md" \
+      org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /routes
+EXPOSE 8080
+USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/cameleer"]
 CMD ["--help"]

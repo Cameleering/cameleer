@@ -13,7 +13,7 @@ Key facts:
 
 ## Quick start
 
-- Docker (linux/amd64, linux/arm64): `docker run --rm -p 8080:8080 -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/hello-api.camel.yaml`
+- Docker (linux/amd64, linux/arm64; Docker Hub `pmsudhi/cameleer`, also `ghcr.io/pmsudhi/cameleer`; deployment guide: https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md): `docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml`
 - CLI from crates.io: `cargo install cameleer-main`, then `cameleer run my-route.camel.yaml`
 - Rust crates: `cameleer-core` (engine, EIPs, Rust DSL) plus one crate per area, for example `cameleer-http` (HTTP and REST DSL), `cameleer-kafka-mqtt`, `cameleer-cloud` (AWS, Azure, GCP), `cameleer-saas` (OpenAI, Slack, ...); `cameleer-main` bundles all of them and runs YAML routes via `cameleer_main::new_main()`.
 - Routes written for Apache Camel's YAML DSL run unchanged; environment values use `{{env:NAME:default}}` placeholders.

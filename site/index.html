@@ -467,7 +467,7 @@ footer .credit { max-width: 32em; }
         <ol class="steps">
           <li><div>Save a Camel YAML route as <code class="in">hello-api.camel.yaml</code></div></li>
           <li><div>Run it in the container<pre class="cmd"><code>docker run --rm -p 8080:8080 \
-  -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer \
+  -v "$PWD:/routes:ro" pmsudhi/cameleer \
   run /routes/hello-api.camel.yaml</code></pre></div></li>
           <li><div>Call it<pre class="cmd"><code>curl localhost:8080/orders/42
 {"id": "42", "status": "shipped"}</code></pre></div></li>
@@ -487,7 +487,7 @@ footer .credit { max-width: 32em; }
             <span class="tk-k">simple:</span> <span class="tk-s">'{"id": "${header.id}", "status": "shipped"}'</span></code></pre>
         </div>
       </div>
-      <p class="note">One static binary on distroless, for linux/amd64 and linux/arm64. Routes written for Apache Camel's YAML DSL run unchanged.</p>
+      <p class="note">One native binary on distroless, for linux/amd64 and linux/arm64, non-root and fine with <code class="in">--read-only</code>. On <a href="https://hub.docker.com/r/pmsudhi/cameleer">Docker Hub</a> and as <code class="in">ghcr.io/pmsudhi/cameleer</code>. Routes written for Apache Camel's YAML DSL run unchanged. Kubernetes and Cloud Run: <a href="https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md">deployment guide</a>.</p>
     </div>
 
     <div class="panel" role="tabpanel" id="panel-rust" aria-labelledby="tab-rust" hidden>
@@ -576,7 +576,7 @@ $ cameleer --help
                 - <span class="tk-k">to:</span> <span class="tk-s">"kafka:tickets-routine?brokers={{env:KAFKA_BROKERS:localhost:9092}}"</span>
 
 <span class="tk-c"># docker run --rm --network host -e KAFKA_BROKERS=localhost:9092 -e OPENAI_API_KEY \</span>
-<span class="tk-c">#   -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml</span></code></pre>
+<span class="tk-c">#   -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml</span></code></pre>
     </details>
   </div>
 </section>

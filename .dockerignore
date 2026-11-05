@@ -1,6 +1,10 @@
-target
-.git
-.claude
-site
-benchmarks/java-camel/target
+# Only what `cargo build -p cameleer-main` needs goes into the build context.
+*
+!Cargo.toml
+!Cargo.lock
+!rust-toolchain.toml
+!crates/
+!LICENSE
+!NOTICE
+crates/*/target
 **/*.log

@@ -15,3 +15,12 @@ readme = "README.md"
 # slow unoptimized; optimize it even in dev/test builds.
 [profile.dev.package.cameleer-tls]
 opt-level = 2
+
+# Release binaries (CLI, container image): cross-crate inlining and one codegen unit make
+# a smaller, faster binary at the cost of a longer build; `cargo build --release` and the
+# tests keep the default profile. `panic = "abort"` is not possible: the executor and the
+# HTTP server catch panics in routes.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1

@@ -10,12 +10,17 @@ was added is `7de6166`._
   the CAMEL-AI agent framework. Crates are now `cameleer-*` (module paths `cameleer_*`), the repo
   is `pmsudhi/cameleer` (GitHub redirects the old URL), the site is
   https://pmsudhi.github.io/cameleer/. The CLI installs as `cameleer` and as `camel`.
-- **Container image:** `ghcr.io/pmsudhi/cameleer` (linux/amd64, linux/arm64), static musl binary
-  on distroless, built by `.github/workflows/container.yml` on `v*` tags (manual runs publish
+- **Container image:** `pmsudhi/cameleer` on Docker Hub and `ghcr.io/pmsudhi/cameleer`
+  (linux/amd64, linux/arm64), a glibc binary on distroless/cc (static musl measured 3-17% slower:
+  direct -3%, seda InOut -10%, cbr -8%, splitagg -17%, same container, 2 rounds), built by `.github/workflows/container.yml` on `v*` tags (manual runs publish
   `edge`).
-- **crates.io:** not published yet. Needs the owner's crates.io account and token; `cameleer-*`
-  names were free on 2026-11-05. Publishing order: `cameleer-tls`, `cameleer-core`, ..., `cameleer-main`;
-  path dependencies need `version = "0.1.0"` first, and `cameleer-bench` should be `publish = false`.
+- **crates.io:** 19 `cameleer-*` crates, published with `scripts/publish-crates.sh` (dependency
+  order, skips versions already there, waits out crates.io's new-crate rate limit of about one
+  per 10 minutes). `cameleer-bench` is `publish = false`. The account needs a verified email.
+- **Docker Hub:** `pmsudhi/cameleer`. CI pushes there when the `DOCKERHUB_TOKEN` secret is set;
+  `.github/workflows/dockerhub-description.yml` syncs `docker/README.dockerhub.md` as the overview.
+- **Deployment guide:** `docs/DEPLOYMENT.md` (Docker, Compose, Kubernetes, Cloud Run). Images run
+  with `CAMEL_LOCAL_STATUS=false` (no status or log files) and work with a read-only root filesystem.
 
 ## Where things stand
 
