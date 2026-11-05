@@ -1,0 +1,79 @@
+# Cameleer documentation
+
+> Cameleer is Apache Camel rewritten in Rust; these pages explain how to write, run and deploy its routes, and document every component, language and data format with tested examples.
+
+If you already know Apache Camel, the routes, endpoint URIs, EIP names and the YAML DSL are the
+same. Start with a guide, then look up the components your route uses.
+
+## Where to find what
+
+| you want to | go to |
+|---|---|
+| write and run your first route | [Guides](guides/) |
+| send or receive messages with Kafka, HTTP, S3, Slack, SQL, ... | [Components](components/), one page per endpoint scheme, grouped by category |
+| write expressions and predicates (`${header.x}`, JSONPath, XPath) | [Languages](languages/) |
+| convert message bodies (JSON, CSV, XML, Avro, ...) | [Data formats](dataformats/) |
+| run Cameleer in Docker, Kubernetes or Cloud Run | [Deployment](DEPLOYMENT.md) |
+| check which Camel features are implemented, with their options | [Feature matrix](FEATURES.md) |
+| compare performance with Apache Camel on the JVM | [Benchmarks](BENCHMARKS.md) |
+| see what was verified against real servers and clients | [Interop](INTEROP.md) |
+| see what is planned | [Roadmap](ROADMAP.md) |
+
+The project overview, the quick start and the examples are in the
+[README](../README.md); the ready-to-run route files are in [examples/](../examples/).
+
+## How the pages are organized
+
+Every page starts with a one-sentence answer under its title, then shows a complete route you can
+copy. Component pages follow the same layout: when to use it, the URI format, an example in YAML
+and in the Rust DSL, the options, the message headers, how to run it with Docker, and common
+questions.
+
+Every YAML example is a complete Camel YAML DSL file. Save it as `route.camel.yaml` and run it
+with the Docker image:
+
+```sh
+docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/route.camel.yaml
+```
+
+Hosts and credentials in examples are written as `{{env:NAME:default}}` placeholders: set the
+environment variable (`-e NAME=value` with Docker) or the default is used.
+
+## Common questions
+
+### Are the examples tested?
+
+Yes. The test suite parses every YAML example with the real loader and resolves every endpoint URI,
+which rejects unknown options the same way Apache Camel does. Many examples also run end to end
+against embedded brokers and mock services.
+
+### Is there a version of these docs for LLMs and coding assistants?
+
+Yes. The site publishes `llms.txt` (a summary with links) and `llms-full.txt` (every page as plain
+markdown), and every HTML page has its markdown source next to it under the same name with `.md`.
+
+### Where do I report a mistake in the docs?
+
+Open an issue or a pull request on [GitHub](https://github.com/pmsudhi/cameleer). Each page links
+to its source file at the bottom.
+
+## Writing documentation
+
+- One page per component at `components/<scheme>.md`; alias schemes (`https` for `http`) go on
+  the page's `**Also:**` line instead of getting their own page. Languages go in
+  `languages/<name>.md`, data formats in `dataformats/<name>.md`, guides in `guides/`.
+- The first line under the H1 is a blockquote with one plain sentence that answers what the
+  page is about; it becomes the page's search description.
+- Every ` ```yaml ` block is either a complete Camel route preceded by
+  `<!-- example: <unique-id> -->` on the line directly above, or something else (a Compose or
+  Kubernetes file) preceded by `<!-- not-camel -->`.
+- A "Common questions" section with `###` question headings becomes FAQ data for search engines.
+- Links between pages are relative markdown links (`../components/kafka.md`).
+
+Check your changes, then build the site:
+
+```sh
+cargo test -p cameleer-main --test docs_harness
+python3 scripts/build-docs.py        # writes site/docs/, site/sitemap.xml, site/llms*.txt
+python3 -m http.server -d site 8000  # then open http://localhost:8000/docs/
+```

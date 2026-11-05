@@ -30,6 +30,16 @@ Each example runs end to end in the test suite (https://github.com/pmsudhi/camel
 - [rest_service.rs](https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/rest_service.rs): a REST service in the Rust DSL using `cameleer-core` and `cameleer-http`.
 - [embed_yaml.rs](https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/embed_yaml.rs): a Rust program that runs Camel YAML routes with every component.
 
+## Documentation
+
+The full documentation as one plain-markdown file: https://pmsudhi.github.io/cameleer/llms-full.txt. Every page is also served as markdown next to its HTML (same path, `.md`).
+
+- [Docs home](https://pmsudhi.github.io/cameleer/docs/): what is where
+- [Guides](https://pmsudhi.github.io/cameleer/docs/guides/): Step-by-step guides for building, running and operating Cameleer routes. (0 pages)
+- [Components](https://pmsudhi.github.io/cameleer/docs/components/): Every Cameleer component: the endpoint schemes you use in from and to, grouped by category. (0 pages)
+- [Languages](https://pmsudhi.github.io/cameleer/docs/languages/): The expression and predicate languages you can use in Cameleer routes, such as Simple, JSONPath and XPath. (0 pages)
+- [Data formats](https://pmsudhi.github.io/cameleer/docs/dataformats/): The data formats that marshal and unmarshal message bodies in Cameleer routes, such as JSON, CSV and Avro. (0 pages)
+
 ## Docs
 
 - [Website](https://pmsudhi.github.io/cameleer/): overview, benchmarks and quick start
