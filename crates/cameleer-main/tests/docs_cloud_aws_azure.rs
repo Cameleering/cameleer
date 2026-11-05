@@ -301,6 +301,111 @@ fn aws2_ddbstream_new_orders() {
     main.stop().unwrap();
 }
 
+#[test]
+fn aws_bedrock_summarize_tickets() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("support-tickets");
+    aws.send_sqs("support-tickets", "The checkout page times out for all EU customers");
+    let main = run_aws(&aws, &page("aws-bedrock"), "aws-bedrock-summarize-tickets", &[], &[]);
+    wait_for("the summary", || aws.published("ticket-summaries").len() == 1);
+    // the emulator echoes the user message, prefixed with the system prompt
+    assert_eq!(aws.published("ticket-summaries")[0].message, "[Summarize the support ticket in one sentence.] Echo: The checkout page times out for all EU customers");
+    assert_eq!(aws.bedrock_requests()[0].0, "anthropic.claude-3-haiku-20240307-v1:0");
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws_bedrock_agent_runtime_rag_answers() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("questions");
+    aws.add_knowledge_base("KB12345678", &["Returns are accepted within 30 days of delivery.", "Shipping to Norway takes 5 days."]);
+    aws.send_sqs("questions", "How many days do I have for returns?");
+    let main = run_aws(&aws, &page("aws-bedrock-agent-runtime"), "aws-bedrock-agent-runtime-rag-answers", &[], &[("log:answers", "mock:answers")]);
+    let bodies = mock_bodies(&main, "answers", 1);
+    assert!(bodies[0].contains("Returns are accepted within 30 days"), "{:?}", bodies);
+    assert!(mock(&main, "answers").exchange(0).unwrap().header("CamelAwsBedrockAgentRuntimeSessionId").is_some());
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_comprehend_sentiment_routing() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("reviews");
+    aws.send_sqs("reviews", "Great saddle, I love it");
+    aws.send_sqs("reviews", "Terrible quality, I hate it");
+    let main = run_aws(&aws, &page("aws2-comprehend"), "aws2-comprehend-sentiment-routing", &[], &[]);
+    wait_for("the reviews to be processed", || aws.queue_messages("reviews").is_empty() && aws.queue_exists("escalations"));
+    wait_for("the escalation", || aws.queue_messages("escalations").len() == 1);
+    assert_eq!(aws.queue_messages("escalations"), vec!["Terrible quality, I hate it".to_string()]);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_textract_invoices() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_bucket("scanned-invoices");
+    aws.put_object("scanned-invoices", "inv-1.txt", b"Vendor: ACME Corp\nTotal: 42.00");
+    let main = run_aws(&aws, &page("aws2-textract"), "aws2-textract-invoices", &[], &[]);
+    wait_for("the extracted fields", || aws.queue_messages("extracted-invoices").len() == 1);
+    let json = &aws.queue_messages("extracted-invoices")[0];
+    assert!(json.contains("ExpenseDocuments") && json.contains("ACME Corp") && json.contains("42.00"), "{}", json);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_translate_replies() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("replies-en");
+    aws.add_translation("Your order has shipped", "de", "Ihre Bestellung wurde versandt");
+    aws.send_sqs("replies-en", "Your order has shipped");
+    let main = run_aws(&aws, &page("aws2-translate"), "aws2-translate-replies", &[], &[]);
+    wait_for("the translation", || aws.queue_messages("replies-de").len() == 1);
+    assert_eq!(aws.queue_messages("replies-de")[0], "Ihre Bestellung wurde versandt");
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_polly_announcements() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("announcements");
+    aws.send_sqs("announcements", "The train to Bergen leaves from platform 3");
+    let main = run_aws(&aws, &page("aws2-polly"), "aws2-polly-announcements", &[], &[]);
+    wait_for("the audio file", || aws.object_keys("announcement-audio").len() == 1);
+    let key = aws.object_keys("announcement-audio")[0].clone();
+    assert!(key.starts_with("audio/") && key.ends_with(".mp3"), "{}", key);
+    let audio = aws.object("announcement-audio", &key).unwrap();
+    assert_eq!(String::from_utf8_lossy(&audio), "MOCKAUDIO:Joanna:mp3:The train to Bergen leaves from platform 3");
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_rekognition_label_photos() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_bucket("uploaded-photos");
+    // the emulator derives labels from the words in the image bytes
+    aws.put_object("uploaded-photos", "cat.jpg", b"a cat sitting on a sofa");
+    let main = run_aws(&aws, &page("aws2-rekognition"), "aws2-rekognition-label-photos", &[], &[]);
+    wait_for("the labels", || aws.queue_messages("photo-labels").len() == 1);
+    let json = &aws.queue_messages("photo-labels")[0];
+    assert!(json.contains("\"Cat\"") && json.contains("\"Sitting\"") && !json.contains("\"Sofa\""), "minConfidence=80 drops the third label: {}", json);
+    assert_eq!(aws.queue_message_attributes("photo-labels")[0].get("photo").map(|s| s.as_str()), Some("cat.jpg"));
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_transcribe_start_jobs() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("recordings");
+    aws.send_sqs("recordings", "s3://recordings/call-17.wav");
+    let main = run_aws(&aws, &page("aws2-transcribe"), "aws2-transcribe-start-jobs", &[], &[("log:jobs", "mock:jobs")]);
+    mock_bodies(&main, "jobs", 1);
+    let ex = mock(&main, "jobs").exchange(0).unwrap();
+    assert_eq!(ex.header("CamelAwsTranscribeTranscriptionJobStatus").map(|v| v.to_string()).as_deref(), Some("IN_PROGRESS"));
+    let job = ex.body().to_json();
+    assert!(job.contains("call-") && job.contains("s3://recordings/call-17.wav"), "{}", job);
+    main.stop().unwrap();
+}
+
 //@@AWS_TESTS@@
 
 // ---------------------------------------------------------------------------
@@ -394,6 +499,96 @@ fn rust_dsl_aws2_ddbstream(ctx: &CamelContext) -> Result<()> {
     Ok(())
 }
 
+fn rust_dsl_aws_bedrock(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://support-tickets?region={{env:AWS_REGION:us-east-1}}")
+            .set_header("CamelAwsBedrockConverseSystem", constant("Summarize the support ticket in one sentence."))
+            .to("aws-bedrock://summarizer?region={{env:AWS_REGION:us-east-1}}&modelId={{env:BEDROCK_MODEL_ID:anthropic.claude-3-haiku-20240307-v1:0}}&operation=converse")
+            .log("summary (${header.CamelAwsBedrockConverseStopReason}): ${body}")
+            .to("aws2-sns://ticket-summaries?region={{env:AWS_REGION:us-east-1}}&autoCreateTopic=true");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws_bedrock_agent_runtime(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://questions?region={{env:AWS_REGION:us-east-1}}")
+            .to("aws-bedrock-agent-runtime://kb?region={{env:AWS_REGION:us-east-1}}&knowledgeBaseId={{env:KNOWLEDGE_BASE_ID:KB12345678}}&modelId=anthropic.claude-3-haiku-20240307-v1:0&operation=retrieveAndGenerate")
+            .log("answer (session ${header.CamelAwsBedrockAgentRuntimeSessionId}): ${body}")
+            .to("log:answers");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_comprehend(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://reviews?region={{env:AWS_REGION:us-east-1}}")
+            .set_property("review", simple("${body}"))
+            .to("aws2-comprehend://reviews?region={{env:AWS_REGION:us-east-1}}&operation=detectSentiment&languageCode=en")
+            .choice()
+                .when(simple("${body} == 'NEGATIVE'"))
+                    .set_body(simple("${exchangeProperty.review}"))
+                    .to("aws2-sqs://escalations?region={{env:AWS_REGION:us-east-1}}&autoCreateQueue=true")
+                .otherwise()
+                    .log("review sentiment: ${body}")
+            .end();
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_textract(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-s3://scanned-invoices?region={{env:AWS_REGION:us-east-1}}")
+            .to("aws2-textract://invoices?region={{env:AWS_REGION:us-east-1}}&operation=analyzeExpense")
+            .marshal("json")
+            .to("aws2-sqs://extracted-invoices?region={{env:AWS_REGION:us-east-1}}&autoCreateQueue=true");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_translate(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://replies-en?region={{env:AWS_REGION:us-east-1}}")
+            .to("aws2-translate://replies?region={{env:AWS_REGION:us-east-1}}&sourceLanguage=en&targetLanguage=de")
+            .to("aws2-sqs://replies-de?region={{env:AWS_REGION:us-east-1}}&autoCreateQueue=true");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_polly(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://announcements?region={{env:AWS_REGION:us-east-1}}")
+            .set_header("CamelAwsS3Key", simple("audio/${header.CamelAwsSqsMessageId}.mp3"))
+            .to("aws2-polly://speech?region={{env:AWS_REGION:us-east-1}}&operation=synthesizeSpeech&voiceId=Joanna&outputFormat=mp3")
+            .to("aws2-s3://{{env:AUDIO_BUCKET:announcement-audio}}?region={{env:AWS_REGION:us-east-1}}&autoCreateBucket=true");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_rekognition(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-s3://uploaded-photos?region={{env:AWS_REGION:us-east-1}}")
+            .set_property("photo", simple("${header.CamelAwsS3Key}"))
+            .to("aws2-rekognition://photos?region={{env:AWS_REGION:us-east-1}}&operation=detectLabels&minConfidence=80")
+            .marshal("json")
+            .set_header("photo", simple("${exchangeProperty.photo}"))
+            .to("aws2-sqs://photo-labels?region={{env:AWS_REGION:us-east-1}}&autoCreateQueue=true");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_transcribe(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://recordings?region={{env:AWS_REGION:us-east-1}}")
+            .set_header("CamelAwsTranscribeTranscriptionJobName", simple("call-${header.CamelAwsSqsMessageId}"))
+            .set_header("CamelAwsTranscribeOutputBucketName", constant("{{env:TRANSCRIPT_BUCKET:call-transcripts}}"))
+            .to("aws2-transcribe://calls?region={{env:AWS_REGION:us-east-1}}&operation=startTranscriptionJob&languageCode=en-US")
+            .log("job ${header.CamelAwsTranscribeTranscriptionJobName}: ${header.CamelAwsTranscribeTranscriptionJobStatus}")
+            .to("log:jobs");
+    })?;
+    Ok(())
+}
+
 //@@RUST_DSL@@
 
 type DslFn = fn(&CamelContext) -> Result<()>;
@@ -411,6 +606,14 @@ fn rust_dsl_snippets_build() {
         ("aws2-kinesis-firehose", rust_dsl_aws2_kinesis_firehose),
         ("aws2-ddb", rust_dsl_aws2_ddb),
         ("aws2-ddbstream", rust_dsl_aws2_ddbstream),
+        ("aws-bedrock", rust_dsl_aws_bedrock),
+        ("aws-bedrock-agent-runtime", rust_dsl_aws_bedrock_agent_runtime),
+        ("aws2-comprehend", rust_dsl_aws2_comprehend),
+        ("aws2-textract", rust_dsl_aws2_textract),
+        ("aws2-translate", rust_dsl_aws2_translate),
+        ("aws2-polly", rust_dsl_aws2_polly),
+        ("aws2-rekognition", rust_dsl_aws2_rekognition),
+        ("aws2-transcribe", rust_dsl_aws2_transcribe),
         //@@RUST_DSL_LIST@@
     ];
     let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/docs_cloud_aws_azure.rs")).unwrap().replace("\r\n", "\n");
