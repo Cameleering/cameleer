@@ -660,6 +660,8 @@ impl Main {
     /// invocations.
     fn run_lambda(&mut self, api: &str) -> Result<()> {
         let started = Instant::now();
+        // HTTP events arrive through the Runtime API: platform-http routes open no sockets
+        cameleer_http::registry::registry().set_in_process_only(true);
         if let Err(e) = self.start() {
             let runtime = lambda::LambdaRuntime::new(api, lambda::DEFAULT_HANDLER);
             if let Err(re) = runtime.init_error(&e) {

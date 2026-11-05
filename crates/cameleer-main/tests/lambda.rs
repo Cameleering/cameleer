@@ -105,6 +105,9 @@ fn http_events_are_served_by_platform_http_routes() {
         "requestContext":{"http":{"method":"GET","path":"/greet/Ada"}},"isBase64Encoded":false}"#;
     let (api, server) = start_api(&[("http-1", event)]);
     let mut main = main_for(&server, 1);
+    // on Lambda the routes must not bind: the port is taken, so binding would fail startup
+    let taken = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    main.set_property("camel.server.port", taken.local_addr().unwrap().port().to_string());
     main.configure(|ctx| {
         ctx.add_routes(|b| {
             b.from("platform-http:/greet/{name}")
