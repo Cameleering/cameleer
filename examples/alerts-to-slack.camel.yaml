@@ -1,0 +1,32 @@
+# Alerts to Slack: an HTTP webhook takes JSON alerts from your monitoring system, keeps the
+# critical ones and posts them to a Slack channel. Every alert gets `202 Accepted`.
+#
+# Needs: a Slack incoming-webhook URL.
+#   export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T000/B000/XXXX
+#
+# Run with Docker:
+#   docker run --rm -p 8080:8080 -e SLACK_WEBHOOK_URL \
+#     -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/alerts-to-slack.camel.yaml
+# Run from source:
+#   cargo run --release -p cameleer-main --bin cameleer -- run examples/alerts-to-slack.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/alerts -H 'Content-Type: application/json' \
+#     -d '{"service":"checkout","severity":"critical","message":"error rate 12%"}'
+- route:
+    id: alerts-to-slack
+    from:
+      uri: "platform-http:/alerts?httpMethodRestrict=POST"
+      steps:
+        - unmarshal:
+            json: {}
+        - filter:
+            simple: "${body[severity]} == 'critical'"
+            steps:
+              - setBody:
+                  simple: ":rotating_light: *${body[service]}*: ${body[message]}"
+              - to: "slack:#ops?webhookUrl={{env:SLACK_WEBHOOK_URL}}"
+        - setHeader:
+            name: CamelHttpResponseCode
+            constant: 202
+        - setBody:
+            constant: ""

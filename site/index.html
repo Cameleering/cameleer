@@ -52,7 +52,7 @@
   --wrap: 1120px;
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+html { scroll-behavior: smooth; scroll-padding-top: 80px; }
 body {
   margin: 0;
   background: var(--paper);
@@ -188,11 +188,34 @@ h2 { font-size: clamp(32px, 4vw, 48px); line-height: 1.05; letter-spacing: -.035
 .count span { color: var(--muted); font-size: 14px; }
 
 /* start */
-.start { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+.tabs { display: inline-flex; gap: 4px; background: var(--grid); border-radius: 10px; padding: 4px; margin: 0 0 28px; }
+.tabs button { border: 0; background: none; font: 600 15px var(--sans); padding: 9px 18px; border-radius: 8px; cursor: pointer; color: var(--muted); transition: background .2s, color .2s; }
+.tabs button[aria-selected="true"] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(24,32,58,.12), 0 0 0 1px var(--line); }
+.panel[hidden] { display: none; }
+.panel:not([hidden]) { animation: panel-in .25s ease-out; }
+@keyframes panel-in { from { opacity: 0; transform: translateY(4px); } }
+.qs { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 40px; align-items: start; }
+.qs > * { min-width: 0; }
 .steps { list-style: none; margin: 0; padding: 0; counter-reset: s; display: grid; gap: 20px; }
-.steps li { counter-increment: s; display: grid; grid-template-columns: 36px 1fr; gap: 12px; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; }
+.steps li > div { min-width: 0; }
 .steps li::before { content: counter(s); width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--ink); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
-.steps code { display: block; margin-top: 6px; font-size: 14px; background: var(--grid); padding: 8px 12px; border-radius: 8px; overflow-x: auto; white-space: nowrap; }
+.cmd { margin: 8px 0 0; font-size: 13.5px; line-height: 1.55; background: var(--grid); padding: 10px 14px; border-radius: 8px; overflow-x: auto; }
+code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-radius: 5px; white-space: nowrap; }
+.qs .code pre { font-size: 13px; }
+.code header a { color: var(--ink); text-decoration: none; font-family: var(--mono); font-size: 13px; }
+.code header a:hover { text-decoration: underline; }
+.note { color: var(--muted); font-size: 15px; margin: 24px 0 0; max-width: 48em; }
+.uc-h { font-size: 24px; letter-spacing: -.02em; margin: 72px 0 20px; }
+.cases { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
+.cases a { display: grid; gap: 4px; padding: 18px 0; border-top: 1px solid var(--line); text-decoration: none; }
+.cases a b { font-size: 17px; }
+.cases a b::after { content: " \2197"; color: var(--signal); font-weight: 400; opacity: 0; transition: opacity .15s; }
+.cases a:hover b::after, .cases a:focus-visible b::after { opacity: 1; }
+.cases a span { color: var(--muted); font-size: 15px; }
+.example { margin-top: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
+.example summary { cursor: pointer; padding: 14px 18px; font-weight: 600; }
+.example pre { margin: 0; padding: 0 18px 18px; font-size: 13px; line-height: 1.6; overflow-x: auto; }
 .copy { border: 1px solid var(--line); background: #fff; border-radius: 7px; font: 500 13px var(--sans); padding: 4px 10px; cursor: pointer; color: var(--muted); }
 .copy:hover { color: var(--ink); border-color: var(--ink); }
 
@@ -206,7 +229,8 @@ footer a:hover { color: var(--ink); text-decoration: underline; }
 footer .credit { max-width: 32em; }
 
 @media (max-width: 900px) {
-  .hero .wrap, .same, .inside, .start, footer .wrap { grid-template-columns: 1fr; }
+  .hero .wrap, .same, .inside, .qs, footer .wrap { grid-template-columns: 1fr; }
+  .cases { grid-template-columns: 1fr; }
   .uses { grid-template-columns: 1fr; gap: 40px; }
   .bench .item { grid-template-columns: 1fr 60px; }
   .bench .label { grid-column: 1 / -1; }
@@ -428,33 +452,132 @@ footer .credit { max-width: 32em; }
 </section>
 
 <section id="start" aria-labelledby="start-h">
-  <div class="wrap start">
-    <div>
-      <h2 id="start-h">Run your first route in a minute.</h2>
-      <p class="sub">With Docker, it's one command. From source, you need Rust stable and nothing else.</p>
-      <ol class="steps">
-        <li><div>Run any Camel YAML route with Docker<code>docker run --rm -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/triage.camel.yaml</code></div></li>
-        <li><div>Or build from source<code>git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer</code><code>cargo build --release -p cameleer-main</code></div></li>
-        <li><div>Run it, as <code style="display:inline;padding:2px 6px">cameleer</code> or <code style="display:inline;padding:2px 6px">camel</code><code>target/release/cameleer run triage.camel.yaml</code></div></li>
-      </ol>
+  <div class="wrap">
+    <h2 id="start-h">Run your first route in a minute.</h2>
+    <p class="sub">Use the container, the Rust crates or the CLI. Every example here is a file in the repository, run end to end by the test suite.</p>
+
+    <div class="tabs" role="tablist" aria-label="How to run Cameleer">
+      <button role="tab" id="tab-docker" aria-controls="panel-docker" aria-selected="true">Docker</button>
+      <button role="tab" id="tab-rust" aria-controls="panel-rust" aria-selected="false" tabindex="-1">Rust crate</button>
+      <button role="tab" id="tab-cli" aria-controls="panel-cli" aria-selected="false" tabindex="-1">CLI</button>
     </div>
-    <div class="code">
-      <header><span>Or embed it in Rust</span><button class="copy" data-copy="rs">Copy</button></header>
-<pre id="rs"><code><span class="tk-k">use</span> cameleer_core::prelude::*;
-<span class="tk-k">use</span> std::{thread, time::Duration};
+
+    <div class="panel" role="tabpanel" id="panel-docker" aria-labelledby="tab-docker">
+      <div class="qs">
+        <ol class="steps">
+          <li><div>Save a Camel YAML route as <code class="in">hello-api.camel.yaml</code></div></li>
+          <li><div>Run it in the container<pre class="cmd"><code>docker run --rm -p 8080:8080 \
+  -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer \
+  run /routes/hello-api.camel.yaml</code></pre></div></li>
+          <li><div>Call it<pre class="cmd"><code>curl localhost:8080/orders/42
+{"id": "42", "status": "shipped"}</code></pre></div></li>
+        </ol>
+        <div class="code">
+          <header><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/hello-api.camel.yaml">hello-api.camel.yaml</a><button class="copy" data-copy="qs-yaml">Copy</button></header>
+<pre id="qs-yaml"><code><span class="tk-k">- rest:</span>
+    <span class="tk-k">path:</span> /orders
+    <span class="tk-k">get:</span>
+      - <span class="tk-k">path:</span> /{id}
+        <span class="tk-k">to:</span> direct:getOrder
+<span class="tk-k">- route:</span>
+    <span class="tk-k">from:</span>
+      <span class="tk-k">uri:</span> direct:getOrder
+      <span class="tk-k">steps:</span>
+        - <span class="tk-k">setBody:</span>
+            <span class="tk-k">simple:</span> <span class="tk-s">'{"id": "${header.id}", "status": "shipped"}'</span></code></pre>
+        </div>
+      </div>
+      <p class="note">One static binary on distroless, for linux/amd64 and linux/arm64. Routes written for Apache Camel's YAML DSL run unchanged.</p>
+    </div>
+
+    <div class="panel" role="tabpanel" id="panel-rust" aria-labelledby="tab-rust" hidden>
+      <div class="qs">
+        <ol class="steps">
+          <li><div>Add the crates to <code class="in">Cargo.toml</code><pre class="cmd"><code>[dependencies]
+cameleer-core = "0.2"
+cameleer-http = "0.2"</code></pre></div></li>
+          <li><div>Write routes in the Rust DSL (right)</div></li>
+          <li><div>Run and call it<pre class="cmd"><code>cargo run --release
+curl localhost:8080/api/greet/Ada</code></pre></div></li>
+        </ol>
+        <div class="code">
+          <header><a href="https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/rest_service.rs">src/main.rs</a><button class="copy" data-copy="qs-rs">Copy</button></header>
+<pre id="qs-rs"><code><span class="tk-k">use</span> cameleer_core::prelude::*;
+<span class="tk-k">use</span> cameleer_http::rest::RestDslExt;
 
 <span class="tk-k">fn</span> main() -&gt; Result&lt;()&gt; {
     <span class="tk-k">let</span> ctx = CamelContext::new();
+    cameleer_http::register(&amp;ctx);
+    ctx.properties().set(<span class="tk-s">"camel.server.port"</span>, <span class="tk-s">"8080"</span>);
     ctx.add_routes(|b| {
-        b.from(<span class="tk-s">"timer:hello?period=200"</span>)
-            .set_body(simple(<span class="tk-s">"Hello from Cameleer"</span>))
-            .to(<span class="tk-s">"log:greetings"</span>);
+        b.rest(<span class="tk-s">"/api/greet"</span>).get(<span class="tk-s">"/{name}"</span>).to(<span class="tk-s">"direct:greet"</span>);
+        b.from(<span class="tk-s">"direct:greet"</span>)
+            .set_body(simple(<span class="tk-s">r#"{"greeting": "Hello, ${header.name}!"}"#</span>));
     })?;
     ctx.start()?;
-    thread::sleep(Duration::from_secs(2));
-    ctx.stop()
+    <span class="tk-k">loop</span> { std::thread::park(); }
 }</code></pre>
+        </div>
+      </div>
+      <p class="note">To run YAML routes with every component from your own binary, depend on <code class="in">cameleer-main</code> and call <code class="in">cameleer_main::new_main()</code> (<a href="https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/embed_yaml.rs">embed_yaml.rs</a>).</p>
     </div>
+
+    <div class="panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
+      <div class="qs">
+        <ol class="steps">
+          <li><div>Install the CLI from crates.io<pre class="cmd"><code>cargo install cameleer-main</code></pre></div></li>
+          <li><div>Run any Camel YAML route<pre class="cmd"><code>cameleer run hello-api.camel.yaml</code></pre></div></li>
+          <li><div>Manage running integrations, Camel JBang style<pre class="cmd"><code>camel ps
+camel stop hello-api</code></pre></div></li>
+        </ol>
+        <div class="code">
+          <header><span>Also installed as <code class="in">camel</code></span></header>
+<pre><code>$ cameleer run hello-api.camel.yaml
+<span class="tk-c">INFO  HTTP server started on 0.0.0.0:8080</span>
+<span class="tk-c">INFO  Cameleer 0.2.0 (camel-1) started (3 routes, 3 started)</span>
+
+$ cameleer --help
+<span class="tk-c">init, run, export, bind, ps, stop, get, cmd, log, trace, catalog, version</span></code></pre>
+        </div>
+      </div>
+    </div>
+
+    <h3 class="uc-h">Real use cases, ready to run</h3>
+    <ul class="cases">
+      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml"><b>AI ticket triage</b><span>Kafka in. An LLM classifies each ticket P1 or P3, and urgent tickets go to their own topic. OpenAI or any compatible server: Ollama, vLLM, Azure OpenAI.</span></a></li>
+      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/alerts-to-slack.camel.yaml"><b>Alerts to Slack</b><span>An HTTP webhook takes monitoring alerts, keeps the critical ones and posts them to a Slack channel.</span></a></li>
+      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml"><b>Files to S3</b><span>Watches a folder, uploads each new CSV file to an S3 bucket, then moves it to <code class="in">.done</code>.</span></a></li>
+      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/rest-api.camel.yaml"><b>REST API</b><span>JSON endpoints with validation, a content-based router and error handling. Needs nothing else.</span></a></li>
+    </ul>
+
+    <details class="example">
+      <summary>The AI ticket triage route</summary>
+<pre><code><span class="tk-k">- route:</span>
+    <span class="tk-k">id:</span> ticket-triage
+    <span class="tk-k">from:</span>
+      <span class="tk-k">uri:</span> <span class="tk-s">"kafka:support-tickets?brokers={{env:KAFKA_BROKERS:localhost:9092}}&amp;groupId=triage&amp;autoOffsetReset=earliest"</span>
+      <span class="tk-k">steps:</span>
+        - <span class="tk-k">setProperty:</span>
+            <span class="tk-k">name:</span> ticket
+            <span class="tk-k">simple:</span> <span class="tk-s">"${body}"</span>
+        - <span class="tk-k">to:</span> <span class="tk-s">"openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&amp;baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&amp;temperature=0&amp;systemMessage=Classify the support ticket. Reply P1 for outages, data loss or security issues, otherwise P3. Reply with P1 or P3 only."</span>
+        - <span class="tk-k">setHeader:</span>
+            <span class="tk-k">name:</span> priority
+            <span class="tk-k">simple:</span> <span class="tk-s">"${body}"</span>
+        - <span class="tk-k">setBody:</span>
+            <span class="tk-k">simple:</span> <span class="tk-s">"${exchangeProperty.ticket}"</span>
+        - <span class="tk-k">choice:</span>
+            <span class="tk-k">when:</span>
+              - <span class="tk-k">simple:</span> <span class="tk-s">"${header.priority} contains 'P1'"</span>
+                <span class="tk-k">steps:</span>
+                  - <span class="tk-k">to:</span> <span class="tk-s">"kafka:tickets-urgent?brokers={{env:KAFKA_BROKERS:localhost:9092}}"</span>
+            <span class="tk-k">otherwise:</span>
+              <span class="tk-k">steps:</span>
+                - <span class="tk-k">to:</span> <span class="tk-s">"kafka:tickets-routine?brokers={{env:KAFKA_BROKERS:localhost:9092}}"</span>
+
+<span class="tk-c"># docker run --rm --network host -e KAFKA_BROKERS=localhost:9092 -e OPENAI_API_KEY \</span>
+<span class="tk-c">#   -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml</span></code></pre>
+    </details>
   </div>
 </section>
 </main>
@@ -497,7 +620,7 @@ footer .credit { max-width: 32em; }
 
   // runtime toggle
   var data = {
-    rust: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Cameleer 0.1.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
+    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.2.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
     java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (JBang, Java 21)</span>', '<span class="ok">Started route triage in 751 ms</span>'], start: ['751 ms', 100], mem: ['366 MB', 100], size: ['JDK + jars', 100] }
   };
   var term = document.getElementById('term'), runner = document.getElementById('runner'), tog = runner.querySelector('.toggle'), timer;
@@ -520,6 +643,23 @@ footer .credit { max-width: 32em; }
     var io = new IntersectionObserver(function (es) { if (es[0].isIntersecting) { grow(); io.disconnect(); } }, { threshold: .3 });
     io.observe(bench);
   } else grow();
+
+  // quick start tabs (arrow keys move between tabs)
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tabs [role=tab]'));
+  function select(t) {
+    tabs.forEach(function (x) {
+      var on = x === t;
+      x.setAttribute('aria-selected', on); x.tabIndex = on ? 0 : -1;
+      document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
+    });
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { select(t); });
+    t.addEventListener('keydown', function (e) {
+      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (d) { var n = tabs[(i + d + tabs.length) % tabs.length]; select(n); n.focus(); e.preventDefault(); }
+    });
+  });
 
   // copy buttons
   document.querySelectorAll('.copy').forEach(function (btn) {

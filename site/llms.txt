@@ -5,10 +5,30 @@
 Key facts:
 
 - Language: Rust, standard library only (TLS, HTTP/2, gRPC, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch).
-- About 230 components, languages and data formats; all Camel EIPs; Rust, YAML and XML DSLs; REST DSL; Kamelets; a Camel-JBang-style `camel` CLI.
+- About 230 components, languages and data formats; all Camel EIPs; Rust, YAML and XML DSLs; REST DSL; Kamelets; a Camel-JBang-style CLI installed as `cameleer` and `camel`.
+- Formerly named rust-camel (up to v0.1.0).
 - AI integrations: OpenAI-compatible chat and embeddings, AWS Bedrock (Converse, streaming, guardrails, Agent Runtime), Azure OpenAI (tool calls, Assistants), Google Vertex AI (Gemini, partner models).
 - Not yet packaged: MCP server, native AWS Lambda runtime, vector store components (build-it-yourself patterns are documented).
 - License: Apache-2.0.
+
+## Quick start
+
+- Docker (linux/amd64, linux/arm64): `docker run --rm -p 8080:8080 -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/hello-api.camel.yaml`
+- CLI from crates.io: `cargo install cameleer-main`, then `cameleer run my-route.camel.yaml`
+- Rust crates: `cameleer-core` (engine, EIPs, Rust DSL) plus one crate per area, for example `cameleer-http` (HTTP and REST DSL), `cameleer-kafka-mqtt`, `cameleer-cloud` (AWS, Azure, GCP), `cameleer-saas` (OpenAI, Slack, ...); `cameleer-main` bundles all of them and runs YAML routes via `cameleer_main::new_main()`.
+- Routes written for Apache Camel's YAML DSL run unchanged; environment values use `{{env:NAME:default}}` placeholders.
+
+## Examples
+
+Each example runs end to end in the test suite (https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/tests/examples.rs) against an embedded Kafka broker and mock S3, Slack and OpenAI servers. Each file's header lists the environment variables it needs and the docker command.
+
+- [hello-api.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/hello-api.camel.yaml): the smallest REST API, `GET /orders/{id}` returns JSON.
+- [rest-api.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/rest-api.camel.yaml): REST API with JSON binding, validation, a content-based router and error handling.
+- [ai-ticket-triage.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml): Kafka support tickets classified by an LLM (OpenAI or any OpenAI-compatible server such as Ollama or vLLM) and routed to an urgent or routine topic.
+- [alerts-to-slack.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/alerts-to-slack.camel.yaml): HTTP webhook for monitoring alerts; critical alerts are posted to Slack.
+- [files-to-s3.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml): watch a folder and upload each new CSV file to S3, then move it to `.done`.
+- [rest_service.rs](https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/rest_service.rs): a REST service in the Rust DSL using `cameleer-core` and `cameleer-http`.
+- [embed_yaml.rs](https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/embed_yaml.rs): a Rust program that runs Camel YAML routes with every component.
 
 ## Docs
 

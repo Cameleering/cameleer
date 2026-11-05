@@ -1,0 +1,36 @@
+# AI ticket triage: an LLM classifies each support ticket from Kafka, and a content-based
+# router sends it to an urgent or a routine topic. The ticket itself is forwarded unchanged,
+# with the model's answer in the `priority` header.
+#
+# Needs: a Kafka broker and an OpenAI-compatible API (OpenAI, Azure OpenAI, Ollama, vLLM, ...).
+#   export KAFKA_BROKERS=localhost:9092 OPENAI_API_KEY=sk-...
+#   # optional: OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.1 for a local model
+#
+# Run with Docker:
+#   docker run --rm --network host -e KAFKA_BROKERS -e OPENAI_API_KEY \
+#     -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
+# Run from source:
+#   cargo run --release -p cameleer-main --bin cameleer -- run examples/ai-ticket-triage.camel.yaml
+- route:
+    id: ticket-triage
+    from:
+      uri: "kafka:support-tickets?brokers={{env:KAFKA_BROKERS:localhost:9092}}&groupId=triage&autoOffsetReset=earliest"
+      steps:
+        - setProperty:
+            name: ticket
+            simple: "${body}"
+        - to: "openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&temperature=0&systemMessage=Classify the support ticket. Reply P1 for outages, data loss or security issues, otherwise P3. Reply with P1 or P3 only."
+        - setHeader:
+            name: priority
+            simple: "${body}"
+        - setBody:
+            simple: "${exchangeProperty.ticket}"
+        - choice:
+            when:
+              - simple: "${header.priority} contains 'P1'"
+                steps:
+                  - to: "kafka:tickets-urgent?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
+            otherwise:
+              steps:
+                - to: "kafka:tickets-routine?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
+        - log: "ticket routed as ${header.priority}"

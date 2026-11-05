@@ -1,0 +1,21 @@
+# Files to S3: watch a folder, upload each new CSV file to an S3 bucket under its own name,
+# then move it to `.done` (or `.failed` if the upload fails).
+#
+# Needs: an S3 bucket and AWS credentials (environment, ~/.aws or an instance role).
+#   export S3_BUCKET=my-bucket AWS_REGION=eu-west-1 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+#
+# Run with Docker:
+#   docker run --rm -e S3_BUCKET -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+#     -e INBOX_DIR=/routes/inbox -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/files-to-s3.camel.yaml
+# Run from source:
+#   cargo run --release -p cameleer-main --bin cameleer -- run examples/files-to-s3.camel.yaml
+- route:
+    id: files-to-s3
+    from:
+      uri: "file:{{env:INBOX_DIR:inbox}}?include=.*\\.csv&move=.done&moveFailed=.failed"
+      steps:
+        - setHeader:
+            name: CamelAwsS3Key
+            simple: "${file:name}"
+        - to: "aws2-s3://{{env:S3_BUCKET:my-bucket}}?region={{env:AWS_REGION:us-east-1}}&useDefaultCredentialsProvider=true"
+        - log: "uploaded ${file:name} to s3://{{env:S3_BUCKET:my-bucket}}"

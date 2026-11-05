@@ -255,54 +255,131 @@ verification, are in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 ## Quick start
 
+### With Docker: run a Camel YAML route
+
+Save this as `hello-api.camel.yaml` (or take [examples/hello-api.camel.yaml](examples/hello-api.camel.yaml)):
+
+```yaml
+- rest:
+    path: /orders
+    get:
+      - path: /{id}
+        to: direct:getOrder
+- route:
+    from:
+      uri: direct:getOrder
+      steps:
+        - setBody:
+            simple: '{"id": "${header.id}", "status": "shipped"}'
+```
+
+Run it and call it:
+
+```sh
+docker run --rm -p 8080:8080 -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/hello-api.camel.yaml
+curl localhost:8080/orders/42      # {"id": "42", "status": "shipped"}
+```
+
+The image is a single static binary on distroless, for linux/amd64 and linux/arm64. Any route
+written for Apache Camel's YAML DSL runs the same way.
+
+### As a Rust crate: embed it in your program
+
+```toml
+[dependencies]
+cameleer-core = "0.2"
+cameleer-http = "0.2"
+```
+
 ```rust
 use cameleer_core::prelude::*;
+use cameleer_http::rest::RestDslExt;
 
 fn main() -> Result<()> {
     let ctx = CamelContext::new();
+    cameleer_http::register(&ctx);
+    ctx.properties().set("camel.server.port", "8080");
     ctx.add_routes(|b| {
-        b.from("timer:hello?period=200")
-            .route_id("hello")
-            .set_body(simple("Hello from Cameleer #${exchangeProperty.CamelTimerCounter}"))
-            .filter(simple("${exchangeProperty.CamelTimerCounter} > 2"))
-                .to("log:greetings")
-            .end();
+        b.rest("/api/greet").get("/{name}").to("direct:greet");
+        b.from("direct:greet")
+            .set_header("Content-Type", constant("application/json"))
+            .set_body(simple(r#"{"greeting": "Hello, ${header.name}!"}"#));
     })?;
     ctx.start()?;
-    std::thread::sleep(std::time::Duration::from_millis(2000));
-    ctx.stop()
+    loop { std::thread::park(); }
 }
 ```
 
-An agent-style route in YAML, which classifies tickets with a model and routes on the answer:
+To run YAML routes with every component from your own program, depend on `cameleer-main` and
+call `cameleer_main::new_main()`, then `add_route_file(...)` and `run()`
+([examples/embed_yaml.rs](crates/cameleer-main/examples/embed_yaml.rs)).
+
+### The `cameleer` CLI
+
+From crates.io:
+
+```sh
+cargo install cameleer-main
+cameleer run hello-api.camel.yaml
+```
+
+Or from source:
+
+```sh
+git clone https://github.com/pmsudhi/cameleer && cd cameleer
+cargo build --release -p cameleer-main
+target/release/cameleer run examples/rest-api.camel.yaml
+```
+
+The CLI also installs as `camel`, so Camel JBang habits work: `camel run`, `camel ps`, `camel stop`.
+
+### Real use cases, ready to run
+
+Every file below runs end to end in the test suite
+([crates/cameleer-main/tests/examples.rs](crates/cameleer-main/tests/examples.rs)) against an
+embedded Kafka broker and mock S3, Slack and OpenAI servers. Each file's header lists the
+environment variables it needs and the exact `docker run` command.
+
+| use case | route | what it does |
+|---|---|---|
+| Smallest REST API | [hello-api.camel.yaml](examples/hello-api.camel.yaml) | `GET /orders/{id}` returns JSON: the Quick start above. |
+| REST API | [rest-api.camel.yaml](examples/rest-api.camel.yaml) | JSON REST endpoints with validation, a content-based router and error handling. Needs nothing else. |
+| AI ticket triage | [ai-ticket-triage.camel.yaml](examples/ai-ticket-triage.camel.yaml) | Kafka in, an LLM classifies each ticket P1 or P3, urgent tickets go to their own topic. Works with OpenAI or any OpenAI-compatible server (Ollama, vLLM, Azure OpenAI). |
+| Alerts to Slack | [alerts-to-slack.camel.yaml](examples/alerts-to-slack.camel.yaml) | An HTTP webhook takes monitoring alerts, keeps the critical ones and posts them to Slack. |
+| Files to S3 | [files-to-s3.camel.yaml](examples/files-to-s3.camel.yaml) | Watches a folder and uploads each new CSV file to S3, then moves it to `.done`. |
+| Rust REST service | [rest_service.rs](crates/cameleer-main/examples/rest_service.rs) | The Rust DSL with two crates: REST endpoints, JSON, an echo service. |
+| Embed YAML in Rust | [embed_yaml.rs](crates/cameleer-main/examples/embed_yaml.rs) | Your own binary that runs Camel YAML routes with every component. |
+
+The AI triage route, for example:
 
 ```yaml
 - route:
-    id: triage
+    id: ticket-triage
     from:
-      uri: kafka:support-tickets
+      uri: "kafka:support-tickets?brokers={{env:KAFKA_BROKERS:localhost:9092}}&groupId=triage&autoOffsetReset=earliest"
       steps:
-        - to: "openai:chat-completion?model=gpt-4o-mini&systemMessage=Answer URGENT or ROUTINE only"
+        - setProperty:
+            name: ticket
+            simple: "${body}"
+        - to: "openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&temperature=0&systemMessage=Classify the support ticket. Reply P1 for outages, data loss or security issues, otherwise P3. Reply with P1 or P3 only."
+        - setHeader:
+            name: priority
+            simple: "${body}"
+        - setBody:
+            simple: "${exchangeProperty.ticket}"
         - choice:
             when:
-              - simple: "${body} contains 'URGENT'"
+              - simple: "${header.priority} contains 'P1'"
                 steps:
-                  - to: kafka:tickets-urgent
+                  - to: "kafka:tickets-urgent?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
             otherwise:
               steps:
-                - to: kafka:tickets-routine
+                - to: "kafka:tickets-routine?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
 ```
 
-Run it with Docker (linux/amd64 and linux/arm64; one static binary on distroless):
-
-```text
-$ docker run --rm -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/triage.camel.yaml
-```
-
-Or build the CLI from source. It installs as `cameleer`, and as `camel` for Camel JBang habits:
-
-```text
-$ cargo run --release -p cameleer-main --bin cameleer -- run triage.camel.yaml
+```sh
+docker run --rm --network host -e KAFKA_BROKERS=localhost:9092 -e OPENAI_API_KEY \
+  -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
 ```
 
 ---

@@ -1,0 +1,19 @@
+# The smallest REST API: GET /orders/{id} returns JSON. Needs nothing else.
+#
+# Run with Docker:
+#   docker run --rm -p 8080:8080 -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/hello-api.camel.yaml
+# Run from source:
+#   cargo run --release -p cameleer-main --bin cameleer -- run examples/hello-api.camel.yaml
+# Try:
+#   curl localhost:8080/orders/42
+- rest:
+    path: /orders
+    get:
+      - path: /{id}
+        to: direct:getOrder
+- route:
+    from:
+      uri: direct:getOrder
+      steps:
+        - setBody:
+            simple: '{"id": "${header.id}", "status": "shipped"}'

@@ -233,3 +233,43 @@ fn gridfs_producer_and_consumer() {
     assert_eq!(ma.received_counter(), 1);
     ctx.stop().unwrap();
 }
+
+/// Regression: the TimeStamp consumer asked for `uploadDate > last seen`, so a file stored
+/// in the same millisecond as the last one it routed was skipped forever.
+#[test]
+fn gridfs_consumer_gets_files_stored_in_the_same_millisecond() {
+    use cameleer_datastores::mongodb::bson::{Bson, ObjectId};
+    let server = MongoServer::start().unwrap();
+    let ctx = context(&server);
+    ctx.add_routes(|r| {
+        r.from("mongodb-gridfs:myDb?database=files&bucket=burst&delay=20&initialDelay=0").to("mock:burst");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let client = MongoClient::parse(&server.connection_string()).unwrap();
+    // one upload date for both files, after the consumer's start time
+    let when = cameleer_core::util_time::now_millis() + 60_000;
+    let store = |name: &str| {
+        let id = Bson::ObjectId(ObjectId::new());
+        let file = Document::new()
+            .with("_id", id.clone())
+            .with("filename", name)
+            .with("length", Bson::Int64(1))
+            .with("chunkSize", Bson::Int32(255))
+            .with("uploadDate", Bson::DateTime(when));
+        let chunk = Document::new().with("files_id", id).with("n", Bson::Int32(0)).with("data", Bson::Binary(0, b"x".to_vec()));
+        client.insert_many("files", "burst.chunks", vec![chunk], true).unwrap();
+        client.insert_many("files", "burst.files", vec![file], true).unwrap();
+    };
+    let m = ctx.mock_endpoint("mock:burst").unwrap();
+    store("first.txt");
+    m.expected_message_count(1);
+    m.assert_is_satisfied_within(Duration::from_secs(10)).unwrap();
+    store("second.txt");
+    m.expected_message_count(2);
+    m.assert_is_satisfied_within(Duration::from_secs(10)).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    let names: Vec<String> = m.received_exchanges().iter().map(|e| e.message.headers.get("CamelFileName").unwrap().to_string()).collect();
+    assert_eq!(names, vec!["first.txt".to_string(), "second.txt".to_string()], "each file exactly once");
+    ctx.stop().unwrap();
+}

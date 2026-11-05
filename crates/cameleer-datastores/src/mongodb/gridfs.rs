@@ -268,20 +268,30 @@ impl Endpoint for GridFsEndpoint {
     fn create_consumer(&self, processor: Arc<dyn Processor>) -> Result<Arc<dyn Consumer>> {
         let cfg = self.cfg.clone();
         let ctx = self.ctx.clone();
-        let since: Arc<Mutex<i64>> = Arc::new(Mutex::new(now_millis()));
+        // (watermark, ids of the files at exactly the watermark millisecond already routed):
+        // upload dates have millisecond precision, so several files can share one, and a
+        // strict `$gt` would skip a file stored in the same millisecond as the last one seen
+        let since: Arc<Mutex<(i64, Vec<Bson>)>> = Arc::new(Mutex::new((now_millis(), Vec::new())));
         let logger = self.uri.clone();
         Ok(Arc::new(ScheduledPollConsumer::new("mongodb-gridfs", self.poll.clone(), move || {
             let b = &cfg.bucket;
             let mut filter = cfg.query.clone().unwrap_or_default();
             if cfg.strategy != Strategy::FileAttribute {
-                filter.insert("uploadDate", Document::new().with("$gt", Bson::DateTime(*since.lock().unwrap())));
+                filter.insert("uploadDate", Document::new().with("$gte", Bson::DateTime(since.lock().unwrap().0)));
             }
             if cfg.strategy != Strategy::TimeStamp {
                 filter.insert(format!("metadata.{}", cfg.file_attribute), Document::new().with("$exists", false));
             }
-            let files = b.find(filter)?;
+            let mut files = b.find(filter)?;
+            files.sort_by_key(|f| f.upload_date);
             let mut n = 0;
             for f in files {
+                if cfg.strategy != Strategy::FileAttribute {
+                    let s = since.lock().unwrap();
+                    if f.upload_date < s.0 || (f.upload_date == s.0 && s.1.contains(&f.id)) {
+                        continue;
+                    }
+                }
                 if cfg.strategy != Strategy::TimeStamp {
                     b.set_marker(&f.id, &cfg.file_attribute, "processing")?;
                 }
@@ -294,7 +304,12 @@ impl Endpoint for GridFsEndpoint {
                     b.set_marker(&f.id, &cfg.file_attribute, "done")?;
                 }
                 let mut s = since.lock().unwrap();
-                *s = (*s).max(f.upload_date);
+                if f.upload_date > s.0 {
+                    *s = (f.upload_date, Vec::new());
+                }
+                if f.upload_date == s.0 {
+                    s.1.push(f.id.clone());
+                }
                 n += 1;
             }
             Ok(n)
