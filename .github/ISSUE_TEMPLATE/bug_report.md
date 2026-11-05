@@ -20,6 +20,6 @@ labels: bug
 
 **Environment**
 
-- rust-camel version or commit:
+- Cameleer version or commit:
 - OS:
 - Rust version (`rustc --version`):

@@ -1,6 +1,6 @@
-### Where rust-camel stands against the 4x target
+### Where Cameleer stands against the 4x target
 
-rust-camel reaches **4x in `direct` (4.27x), `seda` (4.18x) and `seda-inout` (8.37x)** and is
+Cameleer reaches **4x in `direct` (4.27x), `seda` (4.18x) and `seda-inout` (8.37x)** and is
 **below 4x in `cbr` (3.48x), `splitagg` (3.18x) and `http` (2.45x)**. Memory stays 25–46x lower and
 startup 77x faster. The final run was on an idle machine (the WSL/Docker VM was paused and no
 `vmmemWSL` process was running; 98% idle before the run). Throughput, rust ÷ java, on the same
@@ -22,7 +22,7 @@ freed small blocks for reuse.
 
 ### First round (3x target): profiling method
 
-In the first round there was no sampling profiler on the Windows machine, so `camel-bench breakdown` times individual
+In the first round there was no sampling profiler on the Windows machine, so `cameleer-bench breakdown` times individual
 stages in a loop (ns/op, release build). Temporary timing probes inside the route wrappers then split
 the cost of one `direct:` exchange. Times are from that tool, run before and after the fixes on the
 same machine:
@@ -40,7 +40,7 @@ same machine:
 ### First round: fixes made (each has a regression test)
 
 1. **HTTP server closed keep-alive connections under load.** This was a bug.
-   `camel-http/src/server.rs` stopped keeping a connection alive whenever *any* job was pending in
+   `cameleer-http/src/server.rs` stopped keeping a connection alive whenever *any* job was pending in
    the worker pool. Every newly accepted connection is pending for the few microseconds before an idle
    worker picks it up, so with idle workers available, connections were closed anyway. That caused a
    self-sustaining reconnect storm: 15,000+ sockets in TIME_WAIT, ephemeral-port exhaustion on
@@ -79,15 +79,15 @@ same machine:
 ### Second round: the 4x target
 
 The owner raised the target to **4x**. The first round left the in-process scenarios slower than
-Java. In the second round a std-only sampling profiler was added (`camel-bench profile <scenario>
+Java. In the second round a std-only sampling profiler was added (`cameleer-bench profile <scenario>
 <secs>`: it suspends each thread, unwinds its stack with `RtlVirtualUnwind` and resolves symbols with
 `dbghelp`; build with `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`). Every change below came from a
-profile, keeps Camel's semantics, and has tests (`crates/camel-core/tests/perf_semantics.rs` plus unit
+profile, keeps Camel's semantics, and has tests (`crates/cameleer-core/tests/perf_semantics.rs` plus unit
 tests in the changed modules).
 
 Allocation and copying:
 
-1. **A std-only thread-caching allocator** (`camel_core::alloc::CamelAllocator`), installed by the
+1. **A std-only thread-caching allocator** (`cameleer_core::alloc::CamelAllocator`), installed by the
    `camel` CLI and the benchmark binary (applications opt in with `#[global_allocator]`). Blocks up to
    4 KiB come from per-thread size-class free lists; threads that allocate on one side and free on the
    other (seda) exchange whole batches through a lock-free stack. An allocate+free pair went from about
@@ -108,12 +108,12 @@ Allocation and copying:
 
 Bookkeeping and clocks:
 
-7. **Statistics use a cheap tick clock** (`camel_core::clock`: the invariant TSC, about 8 ns, instead
+7. **Statistics use a cheap tick clock** (`cameleer_core::clock`: the invariant TSC, about 8 ns, instead
    of `QueryPerformanceCounter` plus `SystemTime::now`, about 50 ns) and keep raw ticks, converted
    when read. A route is timed once (the route processor feeds management's route counters), and the
    steps of a pipeline chain their readings (one clock read per step instead of two). Blocks (choice,
    filter) pass out the last reading of their children.
-8. **Striped counters** (`camel_core::stripe`): per-node and per-route statistics, inflight counts and
+8. **Striped counters** (`cameleer_core::stripe`): per-node and per-route statistics, inflight counts and
    the context counters each have one cache line per stripe; a thread owns a stripe and updates it
    with plain stores. Before, four seda consumers wrote the same cache lines for every exchange.
 9. Management no longer registers an event notifier to count exchanges (that made every exchange
@@ -147,10 +147,10 @@ HTTP:
 
 - **Statistics levels (Camel's `ManagementStatisticsLevel`).** `Extended`, `Default`, `RoutesOnly`
   and `Off`, set with `CamelContext::set_statistics_level` or
-  `camel.main.jmxManagementStatisticsLevel`. **rust-camel's default is `RoutesOnly`**: route and
+  `camel.main.jmxManagementStatisticsLevel`. **Cameleer's default is `RoutesOnly`**: route and
   context statistics are kept, per-step (processor) timing is opt-in. This differs from Camel, where
   the default level is `Default` but statistics exist only when `camel-management` is loaded; without
-  it (as in the Java benchmark, and in a plain `DefaultCamelContext`) there are none. rust-camel always
+  it (as in the Java benchmark, and in a plain `DefaultCamelContext`) there are none. Cameleer always
   has management, so its default keeps the cheap route-level numbers and leaves per-step timing to
   those who ask for it. Tracing and message history still see every step at any level. In the same
   process, the `cbr` route costs about 400 ns per message at `RoutesOnly` and 430–470 ns at
@@ -161,7 +161,7 @@ HTTP:
 - **Shared header names.** `setHeader` keeps its header name as one `Arc<str>`; headers store owned
   or shared names, so copies of an exchange (split parts, seda, multicast) share the name instead of
   copying it.
-- The camel-cloud secrets refresh tasks count a reload once it is done (listeners called, routes
+- The cameleer-cloud secrets refresh tasks count a reload once it is done (listeners called, routes
   restarted); a test that waited for the count could see the reload half done.
 
 Not done, and why: **JSON key interning** only saves anything if the parsed objects share their key
@@ -173,10 +173,10 @@ an API change first. **A smaller `Exchange`** needs public field types to change
 
 - **http (2.45x): above what this machine can show.** With the shared load generator (16 keep-alive
   connections, same machine), a do-nothing responder with no Camel at all reaches about 390–400k req/s
-  whether it is thread-per-connection (`camel-bench raw-http <port> threads`) or an I/O completion port
+  whether it is thread-per-connection (`cameleer-bench raw-http <port> threads`) or an I/O completion port
   server with 8 workers (`raw-http <port> iocp8`); a single-thread `WSAPoll` loop reaches 108k. That
   ceiling is 3.5–3.6x Java's 112k, below the 446k that 4x needs, so no server design can prove 4x here.
-  rust-camel's server reaches 273k, about 70% of the ceiling. An event-driven server in camel-http
+  Cameleer's server reaches 273k, about 70% of the ceiling. An event-driven server in cameleer-http
   (IOCP/epoll) was not built: on this machine it measured no faster than threads. Proving 4x needs the
   load generator on another machine.
 - **splitagg (3.18x).** Per order about 2 µs of JSON parsing (a `String` per key and value), then for

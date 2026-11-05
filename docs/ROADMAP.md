@@ -1,6 +1,6 @@
 # Roadmap: what you can build today, and what comes next
 
-rust-camel ships an integration engine: routes, about 230 connectors, the Enterprise Integration
+Cameleer ships an integration engine: routes, about 230 connectors, the Enterprise Integration
 Patterns and the languages. Some things agent and serverless teams want don't exist as packaged
 components yet. This page covers two things:
 

@@ -1,4 +1,4 @@
-"""The official elasticsearch-py client against rust-camel's embedded Elasticsearch server.
+"""The official elasticsearch-py client against Cameleer's embedded Elasticsearch server.
 
 usage: es_client.py <url> <command> [user password ca]
 
@@ -6,8 +6,8 @@ commands:
   api        info, index create/exists/delete, index/get/update/delete documents, refresh,
              search (match, term, bool, range, sort, from/size, aggregations), count, bulk
              (helpers.bulk), mget, scroll (helpers.scan), delete_by_query, error mapping
-  seed       indexes documents for rust-camel to read (index from-python)
-  check      reads documents rust-camel indexed (index from-camel)
+  seed       indexes documents for Cameleer to read (index from-python)
+  check      reads documents Cameleer indexed (index from-camel)
   auth-fail  expects a 401
 Prints `key: value` lines.
 """

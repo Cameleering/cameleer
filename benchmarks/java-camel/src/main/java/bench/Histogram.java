@@ -2,7 +2,7 @@ package bench;
 
 /**
  * Latency histogram with the same log-linear bucket layout as
- * crates/camel-bench/src/hist.rs (64 sub-buckets per power of two). Values are nanoseconds.
+ * crates/cameleer-bench/src/hist.rs (64 sub-buckets per power of two). Values are nanoseconds.
  */
 final class Histogram {
     private static final long SUB = 64;

@@ -2,7 +2,7 @@
 // ships with Google's Go client library) as a standalone server for scripts/simulators.sh.
 //
 // Besides the gRPC port it serves a small HTTP control API (pstest's own Go methods) for the
-// tests, since rust-camel publishes over REST, which pstest does not speak:
+// tests, since Cameleer publishes over REST, which pstest does not speak:
 //
 //	POST /topic?name=projects/p/topics/t
 //	POST /subscription?name=projects/p/subscriptions/s&topic=projects/p/topics/t&ackDeadline=10

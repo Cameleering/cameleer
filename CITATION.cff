@@ -1,12 +1,12 @@
 cff-version: 1.2.0
-message: "If you use rust-camel in your work, please cite it as below."
-title: "rust-camel: Apache Camel's integration model in Rust"
+message: "If you use Cameleer in your work, please cite it as below."
+title: "Cameleer: Apache Camel's integration model in Rust"
 type: software
 authors:
   - given-names: Sudheesh
     family-names: PM
-repository-code: "https://github.com/pmsudhi/Rust-camel"
-url: "https://pmsudhi.github.io/Rust-camel/"
+repository-code: "https://github.com/pmsudhi/cameleer"
+url: "https://pmsudhi.github.io/cameleer/"
 license: Apache-2.0
 version: 0.1.0
 date-released: "2026-11-05"
@@ -18,7 +18,7 @@ keywords:
   - ai-agents
   - serverless
 abstract: >-
-  rust-camel is an independent reimplementation of Apache Camel in Rust: routes,
+  Cameleer is an independent reimplementation of Apache Camel in Rust: routes,
   Enterprise Integration Patterns, about 230 components, languages and data formats, and
   the Rust, YAML and XML DSLs, built on the Rust standard library only. It starts in about
   10 ms, uses about 10 MB of memory and outperforms Apache Camel on the JVM in published

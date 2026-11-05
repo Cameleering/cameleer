@@ -1,0 +1,19 @@
+[package]
+name = "cameleer-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+description = "Benchmark harness comparing Cameleer with Apache Camel (std-only, no criterion)"
+publish = false
+
+[dependencies]
+cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
+cameleer-http = { path = "../cameleer-http", version = "0.2.0" }
+
+[[bin]]
+name = "cameleer-bench"
+path = "src/main.rs"

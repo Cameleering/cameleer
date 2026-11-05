@@ -1,4 +1,4 @@
-"""azure-identity + azure-keyvault-secrets / -keys and azure-cosmos against rust-camel's
+"""azure-identity + azure-keyvault-secrets / -keys and azure-cosmos against Cameleer's
 AzureMock (HTTPS, Entra ID client-credentials tokens, Key Vault challenge auth, Cosmos DB
 master-key signatures).
 

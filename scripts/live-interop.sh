@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Live interop servers for rust-camel.
+# Live interop servers for Cameleer.
 #
 # Installs, configures, starts and stops real, independent server software on localhost so the
-# `live_*` test suites (run with CAMEL_LIVE_INTEROP=1) can exercise rust-camel against them.
+# `live_*` test suites (run with CAMEL_LIVE_INTEROP=1) can exercise Cameleer against them.
 #
 #   scripts/live-interop.sh install   # apt-get install the packages + the ActiveMQ AMQP module (root, idempotent)
 #   scripts/live-interop.sh setup     # certificates, users, configuration files (idempotent)
@@ -147,7 +147,7 @@ gen_certs() {
   if [ -f "$CERTS/server.pem" ] && [ -f "$CERTS/client.pem" ]; then return; fi
   log "generating test PKI in $CERTS"
   cd "$CERTS"
-  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=rust-camel interop CA" \
+  openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=Cameleer interop CA" \
     -keyout ca.key -out ca.pem -addext "basicConstraints=critical,CA:TRUE" \
     -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
   openssl req -newkey rsa:2048 -nodes -subj "/CN=localhost" -keyout server.key -out server.csr 2>/dev/null

@@ -1,4 +1,4 @@
-// Go's crypto/tls and net/http (HTTP/2) against rust-camel's TLS and HTTP/2 stacks.
+// Go's crypto/tls and net/http (HTTP/2) against Cameleer's TLS and HTTP/2 stacks.
 //
 //	go-tls probe -addr host:port [-servername n] -ca ca.pem [-min 1.2] [-max 1.3] [-suite NAME]
 //	             [-curve X25519|P256|P384|X25519MLKEM768] [-cert c.pem -key c.key] [-alpn h2,http/1.1]

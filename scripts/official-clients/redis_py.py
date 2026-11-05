@@ -1,12 +1,12 @@
-"""redis-py against rust-camel's embedded Redis server.
+"""redis-py against Cameleer's embedded Redis server.
 
 usage: redis_py.py <host> <port> <command> [password ca]
 
 commands:
   api        strings/expiry/hashes/lists/sets/sorted sets/keys/scan, pipelines (MULTI/EXEC),
              WATCH, pub/sub, binary values, error replies, RESP3-less client handshake
-  seed       writes keys for rust-camel to read
-  check      reads keys rust-camel wrote
+  seed       writes keys for Cameleer to read
+  check      reads keys Cameleer wrote
   auth-fail  expects an authentication error
 Prints `key: value` lines.
 """

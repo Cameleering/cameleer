@@ -1,4 +1,4 @@
-# CLAUDE.md — project memory for rust-camel
+# CLAUDE.md — project memory for Cameleer
 
 Claude Code loads this file automatically. It's the hand-off memory: read it first, then read
 [docs/STATUS.md](docs/STATUS.md) for the current state and the open todos.
@@ -40,7 +40,7 @@ are ✅.
    - Never create cloud accounts, accept terms or spend money on the owner's behalf. Ask
      for credentials instead.
 5. Git:
-   - The working branch is `main` (the old `claude/rust-camel-impl` branch was merged into it
+   - The working branch is `main` (the old `claude/cameleer-impl` branch was merged into it
      and deleted on 2026-11-05).
    - Commit or push only when asked or when the workflow requires it.
    - **Never open a PR unless asked.**
@@ -57,14 +57,14 @@ are ✅.
 
 - `Cargo.toml`: workspace, `members = ["crates/*"]`.
 - `crates/`:
-  - `camel-core`: context, exchange, DSL, EIPs, languages, data formats, core components.
-  - `camel-http`, `camel-yaml`, `camel-protocols`, `camel-tls`, `camel-kafka-mqtt`.
-  - `camel-amqp` (0-9-1, STOMP, JMS), `camel-amqp10` (AMQP 1.0, Azure Service Bus and Event
+  - `cameleer-core`: context, exchange, DSL, EIPs, languages, data formats, core components.
+  - `cameleer-http`, `cameleer-yaml`, `cameleer-protocols`, `cameleer-tls`, `cameleer-kafka-mqtt`.
+  - `cameleer-amqp` (0-9-1, STOMP, JMS), `cameleer-amqp10` (AMQP 1.0, Azure Service Bus and Event
     Hubs).
-  - `camel-sql`, `camel-cloud` (AWS, Azure, GCP), `camel-ssh`, `camel-grpc`.
-  - `camel-datastores` (Redis, MongoDB, Elasticsearch, Cassandra, CouchDB).
-  - `camel-xml`, `camel-saas`, `camel-script`, `camel-dataformats`, `camel-soap`.
-  - `camel-main` (`Main` runner and `camel` CLI).
+  - `cameleer-sql`, `cameleer-cloud` (AWS, Azure, GCP), `cameleer-ssh`, `cameleer-grpc`.
+  - `cameleer-datastores` (Redis, MongoDB, Elasticsearch, Cassandra, CouchDB).
+  - `cameleer-xml`, `cameleer-saas`, `cameleer-script`, `cameleer-dataformats`, `cameleer-soap`.
+  - `cameleer-main` (`Main` runner and `camel` CLI).
 - Docs:
   - `ARCHITECTURE.md`: internals and conventions.
   - `docs/FEATURES.md`: parity table.
@@ -104,7 +104,7 @@ export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
   where possible.
 - **Merge conflicts:**
   - For a `Cargo.lock` conflict, delete the file and run `cargo generate-lockfile --offline`.
-  - For additive conflicts in docs or registration lists such as `camel-main` `new_main`,
+  - For additive conflicts in docs or registration lists such as `cameleer-main` `new_main`,
     keep both sides (union).
 - **After every merge**, build with zero warnings, run the full hermetic suite, then run the
   live, official and simulator tiers that the change touches. Only then push.
@@ -122,17 +122,17 @@ export CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
 - Seda pub/sub: each queue has a `pubsub` mutex, taken with `try_lock` while checking the
   stop flag. A plain lock starves.
 - Script processors are created through a hook in core: `SCRIPT_PROCESSOR_FACTORY` in
-  `camel-core/src/processor/script.rs`. YAML `script` depends on this to keep exchange changes.
+  `cameleer-core/src/processor/script.rs`. YAML `script` depends on this to keep exchange changes.
 - ActiveMQ AMQP 1.0 addresses: use the `queue://` and `topic://` prefixes announced in the open
-  frame (`AddressPrefixes` in `camel-amqp10/src/jms.rs`).
+  frame (`AddressPrefixes` in `cameleer-amqp10/src/jms.rs`).
 - Windows sockets:
   - Timeouts are per handle: share one handle (`Arc<TcpStream>`) rather than `try_clone`
     when another thread sets the timeout.
-  - `shutdown` doesn't wake a blocked read: use `camel_tls::net::shutdown_socket`.
-  - Bind through `camel_tls::net::bind_listener`, because `localhost` resolves to `::1`
+  - `shutdown` doesn't wake a blocked read: use `cameleer_tls::net::shutdown_socket`.
+  - Bind through `cameleer_tls::net::bind_listener`, because `localhost` resolves to `::1`
     first.
 - Time zones come from the system zoneinfo first, then from the bundled
-  `camel-core/tzdata/zones.bin`. Refresh it with `python3 scripts/update-tzdata.py`, which
+  `cameleer-core/tzdata/zones.bin`. Refresh it with `python3 scripts/update-tzdata.py`, which
   takes a pinned version and SHA-256. Never hand-edit `zones.bin`.
 - Windows tests: build fixture paths with `/`, since backslashes break YAML and Jsonnet
   string literals. The system `tar` is bsdtar, which has no gnu format.

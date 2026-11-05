@@ -1,4 +1,4 @@
-"""confluent-kafka (librdkafka) against rust-camel's embedded Kafka broker.
+"""confluent-kafka (librdkafka) against Cameleer's embedded Kafka broker.
 
 usage: kafka_confluent.py <bootstrap> <command> [args...]
 
@@ -122,7 +122,7 @@ def auth_error(bootstrap):
 
 
 def group(bootstrap, topic, group_id, produce_count, idle):
-    """Joins a consumer group shared with a rust-camel consumer, produces `produce_count`
+    """Joins a consumer group shared with a Cameleer consumer, produces `produce_count`
     records round-robin over all partitions once it has an assignment, then consumes until
     `idle` seconds pass without records."""
     conf = base_conf(bootstrap)

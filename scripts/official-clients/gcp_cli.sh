@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gcloud / gsutil / bq (the Google Cloud SDK CLIs) against rust-camel's GcpMock.
+# gcloud / gsutil / bq (the Google Cloud SDK CLIs) against Cameleer's GcpMock.
 #
 # usage: gcp_cli.sh <mock-url> <service-account.json> <ca.pem> <workdir> <check> [check...]
 # checks: storage, gsutil, pubsub, bigquery

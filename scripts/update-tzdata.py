@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh the bundled IANA time-zone database in crates/camel-core/tzdata/.
+"""Refresh the bundled IANA time-zone database in crates/cameleer-core/tzdata/.
 
 The zones come from the `tzdata` package on PyPI, maintained by the Python core
 team: the IANA tz database compiled to TZif files with the reference `zic`. That
@@ -8,11 +8,11 @@ checked against the digest PyPI publishes. A mismatch aborts without writing.
 
 To update, set TZDATA_VERSION to the new release from https://pypi.org/project/tzdata/,
 run `python3 scripts/update-tzdata.py --print-digest`, check the digest against the PyPI
-page, put it in TZDATA_SHA256, run the script again, then run `cargo test -p camel-core tz`.
+page, put it in TZDATA_SHA256, run the script again, then run `cargo test -p cameleer-core tz`.
 
 Output (both committed):
-  crates/camel-core/tzdata/zones.bin  - all zones packed (format: see camel-core/src/tz.rs)
-  crates/camel-core/tzdata/VERSION    - IANA release (e.g. 2026f) and the source wheel
+  crates/cameleer-core/tzdata/zones.bin  - all zones packed (format: see cameleer-core/src/tz.rs)
+  crates/cameleer-core/tzdata/VERSION    - IANA release (e.g. 2026f) and the source wheel
 Standard library only.
 """
 
@@ -29,7 +29,7 @@ TZDATA_VERSION = "2026.6"
 TZDATA_SHA256 = "0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "crates", "camel-core", "tzdata")
+OUT = os.path.join(ROOT, "crates", "cameleer-core", "tzdata")
 MAGIC = b"CTZ1"
 
 

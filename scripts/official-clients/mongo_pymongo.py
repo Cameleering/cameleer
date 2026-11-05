@@ -1,4 +1,4 @@
-"""pymongo against rust-camel's embedded MongoDB server.
+"""pymongo against Cameleer's embedded MongoDB server.
 
 usage: mongo_pymongo.py <uri> <command>
 
@@ -7,8 +7,8 @@ commands:
               (batching + getMore), bulk writes, distinct, count, findAndModify, binary/date types
   aggregate   $match/$group/$sort/$project/$unwind/$limit/$count pipelines
   watch       a change stream (insert / update / delete events)
-  seed        inserts documents for rust-camel to read (db camel, collection fromPymongo)
-  check       reads the documents rust-camel wrote (db camel, collection fromCamel)
+  seed        inserts documents for Cameleer to read (db camel, collection fromPymongo)
+  check       reads the documents Cameleer wrote (db camel, collection fromCamel)
   auth-fail   expects an authentication failure
 Prints `key: value` lines.
 """

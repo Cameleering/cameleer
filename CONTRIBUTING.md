@@ -1,6 +1,6 @@
-# Contributing to rust-camel
+# Contributing to Cameleer
 
-Thanks for helping. rust-camel is Apache Camel's integration model in Rust, and contributions
+Thanks for helping. Cameleer is Apache Camel's integration model in Rust, and contributions
 of every size are welcome: bug reports, missing component options, new components,
 performance work, docs and examples.
 
@@ -18,13 +18,13 @@ performance work, docs and examples.
    behaviour. Tests are hermetic: network components are tested against embedded servers,
    never the internet.
 5. **Keep it fast.** Hot-path changes should not regress the benchmarks
-   (`scripts/bench.sh`, or `cargo run --release -p camel-bench -- breakdown` for a quick check).
+   (`scripts/bench.sh`, or `cargo run --release -p cameleer-bench -- breakdown` for a quick check).
 
 ## Getting started
 
 ```text
-git clone https://github.com/pmsudhi/Rust-camel.git
-cd Rust-camel
+git clone https://github.com/pmsudhi/cameleer.git
+cd Cameleer
 cargo build
 cargo test --workspace
 ```

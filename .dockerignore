@@ -1,0 +1,6 @@
+target
+.git
+.claude
+site
+benchmarks/java-camel/target
+**/*.log

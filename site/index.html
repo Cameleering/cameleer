@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>rust-camel: Apache Camel, rewritten in Rust</title>
-<meta name="description" content="rust-camel is Apache Camel rewritten in Rust: the same routes, EIPs, endpoint URIs and YAML DSL, about 230 components, no dependencies. Starts in 10 ms, runs in 10 MB, 2.5-8x faster than Camel on the JVM. Built for AI agents, serverless and the edge.">
+<title>Cameleer: Apache Camel, rewritten in Rust</title>
+<meta name="description" content="Cameleer is Apache Camel rewritten in Rust: the same routes, EIPs, endpoint URIs and YAML DSL, about 230 components, no dependencies. Starts in 10 ms, runs in 10 MB, 2.5-8x faster than Camel on the JVM. Built for AI agents, serverless and the edge.">
 <meta name="keywords" content="Apache Camel, Rust, integration, enterprise integration patterns, EIP, AI agents, serverless, edge, Kafka, messaging, YAML DSL">
-<link rel="canonical" href="https://pmsudhi.github.io/Rust-camel/">
+<link rel="canonical" href="https://pmsudhi.github.io/cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
-<meta property="og:title" content="rust-camel: Apache Camel, rewritten in Rust">
+<meta property="og:title" content="Cameleer: Apache Camel, rewritten in Rust">
 <meta property="og:description" content="Same routes. Same patterns. 10 ms startup, 10 MB of memory, 2.5-8x the throughput.">
-<meta property="og:url" content="https://pmsudhi.github.io/Rust-camel/">
-<meta property="og:image" content="https://pmsudhi.github.io/Rust-camel/og.png">
+<meta property="og:url" content="https://pmsudhi.github.io/cameleer/">
+<meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="alternate" type="text/plain" href="llms.txt" title="LLM-readable summary">
@@ -23,10 +23,11 @@
 {
   "@context": "https://schema.org",
   "@type": "SoftwareSourceCode",
-  "name": "rust-camel",
+  "name": "Cameleer",
+  "alternateName": "rust-camel",
   "description": "Apache Camel rewritten in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only.",
-  "codeRepository": "https://github.com/pmsudhi/Rust-camel",
-  "url": "https://pmsudhi.github.io/Rust-camel/",
+  "codeRepository": "https://github.com/pmsudhi/cameleer",
+  "url": "https://pmsudhi.github.io/cameleer/",
   "programmingLanguage": "Rust",
   "license": "https://www.apache.org/licenses/LICENSE-2.0",
   "version": "0.1.0",
@@ -228,16 +229,16 @@ footer .credit { max-width: 32em; }
 
 <header class="top" id="top">
   <div class="wrap">
-    <a class="brand" href="#" aria-label="rust-camel home">
+    <a class="brand" href="#" aria-label="Cameleer home">
       <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect x="1" y="1" width="26" height="26" rx="7" fill="#18203a"/><path d="M6 18c2.5 0 3-6 5.5-6s2.5 4 4.5 4 2-6 4.5-6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/><circle cx="20.5" cy="10" r="2" fill="#e9a21f"/></svg>
-      rust-camel
+      Cameleer
     </a>
     <nav aria-label="Main">
       <a href="#same">How it works</a>
       <a href="#numbers">Benchmarks</a>
       <a href="#uses">Use cases</a>
       <a href="#start">Quick start</a>
-      <a class="gh" href="https://github.com/pmsudhi/Rust-camel">
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
       </a>
@@ -254,9 +255,9 @@ footer .credit { max-width: 32em; }
         <span class="line"><span class="strike">On the JVM.</span></span>
         <span class="line">In Rust.</span>
       </h1>
-      <p class="lede">Same routes, same patterns, same endpoint URIs. If you know Camel, you already know rust-camel. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
+      <p class="lede">Same routes, same patterns, same endpoint URIs. If you know Camel, you already know Cameleer. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
       <div class="ctas">
-        <a class="btn primary" href="https://github.com/pmsudhi/Rust-camel">View on GitHub</a>
+        <a class="btn primary" href="https://github.com/pmsudhi/cameleer">View on GitHub</a>
         <a class="btn ghost" href="#start">Run your first route</a>
       </div>
       <dl class="facts">
@@ -268,7 +269,7 @@ footer .credit { max-width: 32em; }
 
     <figure style="margin:0">
       <svg class="diagram" viewBox="0 0 560 440" role="img" aria-labelledby="dt dd">
-        <title id="dt">A rust-camel route running</title>
+        <title id="dt">A Cameleer route running</title>
         <desc id="dd">Messages arrive from a Kafka topic, an AI model classifies each one, and a content-based router sends urgent tickets and routine tickets to different Kafka topics.</desc>
         <defs>
           <path id="pu" d="M114 92 V310 H262 Q282 310 282 290 V276 Q282 258 302 258 H340"/>
@@ -312,7 +313,7 @@ footer .credit { max-width: 32em; }
 <section id="same" aria-labelledby="same-h">
   <div class="wrap">
     <h2 id="same-h">Keep your routes. Change the runtime.</h2>
-    <p class="sub">The same YAML runs on Apache Camel and on rust-camel. Switch the runtime and watch what changes.</p>
+    <p class="sub">The same YAML runs on Apache Camel and on Cameleer. Switch the runtime and watch what changes.</p>
     <div class="same">
       <div class="code">
         <header><span>triage.camel.yaml</span><button class="copy" data-copy="yaml">Copy</button></header>
@@ -334,7 +335,7 @@ footer .credit { max-width: 32em; }
       <div class="runner" id="runner" data-side="rust">
         <div class="toggle" role="group" aria-label="Runtime" data-side="rust">
           <span class="knob" aria-hidden="true"></span>
-          <button type="button" aria-pressed="true" data-side="rust">rust-camel</button>
+          <button type="button" aria-pressed="true" data-side="rust">Cameleer</button>
           <button type="button" aria-pressed="false" data-side="java">Apache Camel</button>
         </div>
         <pre class="term" id="term" aria-live="polite"></pre>
@@ -351,7 +352,7 @@ footer .credit { max-width: 32em; }
   <div class="wrap">
     <h2 id="num-h">Faster in every scenario we measured.</h2>
     <p class="sub">Six workloads, same routes, fresh process each, default settings on both sides. All six are shown, including the ones under 4x.</p>
-    <div class="legend"><span><i style="background:var(--signal)"></i>rust-camel</span><span><i style="background:var(--java)"></i>Apache Camel 4.23, Java 21</span></div>
+    <div class="legend"><span><i style="background:var(--signal)"></i>Cameleer</span><span><i style="background:var(--java)"></i>Apache Camel 4.23, Java 21</span></div>
     <div class="bench" id="bench">
       <div class="item"><div class="label">Request-reply<small>seda InOut</small></div><div class="bars"><div class="b r" data-w="100"><span>2.09M msgs/s</span></div><div class="b j" data-w="12"><span>250k</span></div></div><div class="x">8.4x</div></div>
       <div class="item"><div class="label">Direct route<small>set header, count</small></div><div class="bars"><div class="b r" data-w="100"><span>4.96M msgs/s</span></div><div class="b j" data-w="23.4"><span>1.16M</span></div></div><div class="x">4.3x</div></div>
@@ -360,7 +361,7 @@ footer .credit { max-width: 32em; }
       <div class="item"><div class="label">Split and aggregate<small>JSON orders, 10 items each</small></div><div class="bars"><div class="b r" data-w="100"><span>113k orders/s</span></div><div class="b j" data-w="31.5"><span>35.6k</span></div></div><div class="x">3.2x</div></div>
       <div class="item"><div class="label">HTTP consumer<small>16 keep-alive connections</small></div><div class="bars"><div class="b r" data-w="100"><span>273k req/s</span></div><div class="b j" data-w="41"><span>112k</span></div></div><div class="x">2.5x</div></div>
     </div>
-    <p class="fine">AMD Ryzen 5 5600X, Windows 11, idle machine. HTTP is capped by the test machine, where a server that does nothing peaks near 400k req/s. Reproduce it with <code>scripts/bench.sh</code>. <a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/BENCHMARKS.md">Full method and results</a>.</p>
+    <p class="fine">AMD Ryzen 5 5600X, Windows 11, idle machine. HTTP is capped by the test machine, where a server that does nothing peaks near 400k req/s. Reproduce it with <code>scripts/bench.sh</code>. <a href="https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md">Full method and results</a>.</p>
   </div>
 </section>
 
@@ -430,23 +431,23 @@ footer .credit { max-width: 32em; }
   <div class="wrap start">
     <div>
       <h2 id="start-h">Run your first route in a minute.</h2>
-      <p class="sub">You need Rust stable. Nothing else gets downloaded.</p>
+      <p class="sub">With Docker, it's one command. From source, you need Rust stable and nothing else.</p>
       <ol class="steps">
-        <li><div>Clone the repository<code>git clone https://github.com/pmsudhi/Rust-camel</code></div></li>
-        <li><div>Build the <code style="display:inline;padding:2px 6px">camel</code> CLI<code>cargo build --release -p camel-main</code></div></li>
-        <li><div>Run any Camel YAML route<code>target/release/camel run triage.camel.yaml</code></div></li>
+        <li><div>Run any Camel YAML route with Docker<code>docker run --rm -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/triage.camel.yaml</code></div></li>
+        <li><div>Or build from source<code>git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer</code><code>cargo build --release -p cameleer-main</code></div></li>
+        <li><div>Run it, as <code style="display:inline;padding:2px 6px">cameleer</code> or <code style="display:inline;padding:2px 6px">camel</code><code>target/release/cameleer run triage.camel.yaml</code></div></li>
       </ol>
     </div>
     <div class="code">
       <header><span>Or embed it in Rust</span><button class="copy" data-copy="rs">Copy</button></header>
-<pre id="rs"><code><span class="tk-k">use</span> camel_core::prelude::*;
+<pre id="rs"><code><span class="tk-k">use</span> cameleer_core::prelude::*;
 <span class="tk-k">use</span> std::{thread, time::Duration};
 
 <span class="tk-k">fn</span> main() -&gt; Result&lt;()&gt; {
     <span class="tk-k">let</span> ctx = CamelContext::new();
     ctx.add_routes(|b| {
         b.from(<span class="tk-s">"timer:hello?period=200"</span>)
-            .set_body(simple(<span class="tk-s">"Hello from rust-camel"</span>))
+            .set_body(simple(<span class="tk-s">"Hello from Cameleer"</span>))
             .to(<span class="tk-s">"log:greetings"</span>);
     })?;
     ctx.start()?;
@@ -461,25 +462,25 @@ footer .credit { max-width: 32em; }
 <footer>
   <div class="wrap">
     <div class="credit">
-      <h4>rust-camel</h4>
+      <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a> (<a href="https://github.com/apache/camel">source</a>), following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
       <p>Apache License 2.0.</p>
     </div>
     <div>
       <h4>Project</h4>
       <ul>
-        <li><a href="https://github.com/pmsudhi/Rust-camel">Source on GitHub</a></li>
-        <li><a href="https://github.com/pmsudhi/Rust-camel/releases">Releases</a></li>
-        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/CONTRIBUTING.md">Contributing</a></li>
-        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/SECURITY.md">Security</a></li>
+        <li><a href="https://github.com/pmsudhi/cameleer">Source on GitHub</a></li>
+        <li><a href="https://github.com/pmsudhi/cameleer/releases">Releases</a></li>
+        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/SECURITY.md">Security</a></li>
       </ul>
     </div>
     <div>
       <h4>Docs</h4>
       <ul>
-        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/FEATURES.md">All components</a></li>
-        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/BENCHMARKS.md">Benchmarks</a></li>
-        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/ROADMAP.md">Roadmap</a></li>
+        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/docs/FEATURES.md">All components</a></li>
+        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md">Benchmarks</a></li>
+        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/docs/ROADMAP.md">Roadmap</a></li>
         <li><a href="llms.txt">llms.txt</a></li>
       </ul>
     </div>
@@ -496,7 +497,7 @@ footer .credit { max-width: 32em; }
 
   // runtime toggle
   var data = {
-    rust: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">rust-camel 0.1.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
+    rust: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Cameleer 0.1.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
     java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (JBang, Java 21)</span>', '<span class="ok">Started route triage in 751 ms</span>'], start: ['751 ms', 100], mem: ['366 MB', 100], size: ['JDK + jars', 100] }
   };
   var term = document.getElementById('term'), runner = document.getElementById('runner'), tog = runner.querySelector('.toggle'), timer;

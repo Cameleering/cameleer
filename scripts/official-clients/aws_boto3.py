@@ -1,4 +1,4 @@
-"""boto3 / botocore (the official AWS SDK for Python) against rust-camel's AwsMock.
+"""boto3 / botocore (the official AWS SDK for Python) against Cameleer's AwsMock.
 
 usage: aws_boto3.py <endpoint> <service> [service...]
 
@@ -427,7 +427,7 @@ def badsig():
 
 
 def interop_seed():
-    """Data written with boto3 for rust-camel's components to read."""
+    """Data written with boto3 for Cameleer's components to read."""
     s3c = client("s3")
     s3c.create_bucket(Bucket="interop")
     s3c.put_object(Bucket="interop", Key="from boto3/ä+b.txt", Body=b"written by boto3", ContentType="text/plain; charset=utf-8", Metadata={"origin": "boto3"})
@@ -447,7 +447,7 @@ def interop_seed():
 
 
 def interop_check():
-    """Reads what rust-camel's components wrote."""
+    """Reads what Cameleer's components wrote."""
     s3c = client("s3")
     o = s3c.get_object(Bucket="interop", Key="from camel/ü b.txt")
     print("check-s3:", o["Body"].read().decode(), o["ContentType"], o["Metadata"].get("origin"))

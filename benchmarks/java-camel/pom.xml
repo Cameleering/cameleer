@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Apache Camel side of the rust-camel benchmark suite. Built and run by scripts/bench.sh with
+  Apache Camel side of the Cameleer benchmark suite. Built and run by scripts/bench.sh with
   Maven's strict checksum policy (mvn -C): every downloaded artifact is verified against the
   repository's checksum. All versions are pinned.
 -->

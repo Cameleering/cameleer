@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Third-party simulators for rust-camel.
+# Third-party simulators for Cameleer.
 #
 # Installs, starts and stops independent, widely used simulators of cloud services and data
 # stores on localhost, so the `sim_*` suites (run with CAMEL_SIMULATORS=1) can exercise
-# rust-camel's components against implementations that were not written in this workspace.
+# Cameleer's components against implementations that were not written in this workspace.
 #
 #   scripts/simulators.sh install    # pip / npm / Go installs (idempotent, needs network)
 #   scripts/simulators.sh start      # start every simulator (running ones are left alone)

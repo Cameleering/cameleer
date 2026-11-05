@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Official-client cross-verification for rust-camel.
+# Official-client cross-verification for Cameleer.
 #
-# Drives rust-camel's embedded brokers, datastores, cloud emulators and protocol stacks with
+# Drives Cameleer's embedded brokers, datastores, cloud emulators and protocol stacks with
 # independently written, officially published clients (librdkafka/kcat, pymongo, the DataStax
 # Cassandra driver, elasticsearch-py, redis-py, boto3, the Azure SDK for Python, gcloud /
 # gsutil / bq, grpcio, Go's crypto/tls and net/http). The suites live in

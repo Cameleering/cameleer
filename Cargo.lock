@@ -3,182 +3,182 @@
 version = 4
 
 [[package]]
-name = "camel-amqp"
-version = "0.1.0"
+name = "cameleer-amqp"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-amqp10"
-version = "0.1.0"
+name = "cameleer-amqp10"
+version = "0.2.0"
 dependencies = [
- "camel-amqp",
- "camel-core",
- "camel-tls",
+ "cameleer-amqp",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-bench"
-version = "0.1.0"
+name = "cameleer-bench"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-http",
+ "cameleer-core",
+ "cameleer-http",
 ]
 
 [[package]]
-name = "camel-cloud"
-version = "0.1.0"
+name = "cameleer-cloud"
+version = "0.2.0"
 dependencies = [
- "camel-amqp10",
- "camel-core",
- "camel-dataformats",
- "camel-grpc",
- "camel-kafka-mqtt",
- "camel-tls",
+ "cameleer-amqp10",
+ "cameleer-core",
+ "cameleer-dataformats",
+ "cameleer-grpc",
+ "cameleer-kafka-mqtt",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-core"
-version = "0.1.0"
+name = "cameleer-core"
+version = "0.2.0"
 
 [[package]]
-name = "camel-dataformats"
-version = "0.1.0"
+name = "cameleer-dataformats"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
- "camel-yaml",
+ "cameleer-core",
+ "cameleer-tls",
+ "cameleer-yaml",
 ]
 
 [[package]]
-name = "camel-datastores"
-version = "0.1.0"
+name = "cameleer-datastores"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-http",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-http",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-grpc"
-version = "0.1.0"
+name = "cameleer-grpc"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-http"
-version = "0.1.0"
+name = "cameleer-http"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-grpc",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-grpc",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-kafka-mqtt"
-version = "0.1.0"
+name = "cameleer-kafka-mqtt"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-main"
-version = "0.1.0"
+name = "cameleer-main"
+version = "0.2.0"
 dependencies = [
- "camel-amqp",
- "camel-amqp10",
- "camel-cloud",
- "camel-core",
- "camel-dataformats",
- "camel-datastores",
- "camel-grpc",
- "camel-http",
- "camel-kafka-mqtt",
- "camel-protocols",
- "camel-saas",
- "camel-script",
- "camel-soap",
- "camel-sql",
- "camel-ssh",
- "camel-xml",
- "camel-yaml",
+ "cameleer-amqp",
+ "cameleer-amqp10",
+ "cameleer-cloud",
+ "cameleer-core",
+ "cameleer-dataformats",
+ "cameleer-datastores",
+ "cameleer-grpc",
+ "cameleer-http",
+ "cameleer-kafka-mqtt",
+ "cameleer-protocols",
+ "cameleer-saas",
+ "cameleer-script",
+ "cameleer-soap",
+ "cameleer-sql",
+ "cameleer-ssh",
+ "cameleer-xml",
+ "cameleer-yaml",
 ]
 
 [[package]]
-name = "camel-protocols"
-version = "0.1.0"
+name = "cameleer-protocols"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-saas"
-version = "0.1.0"
+name = "cameleer-saas"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-http",
- "camel-xml",
+ "cameleer-core",
+ "cameleer-http",
+ "cameleer-xml",
 ]
 
 [[package]]
-name = "camel-script"
-version = "0.1.0"
+name = "cameleer-script"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
- "camel-yaml",
+ "cameleer-core",
+ "cameleer-tls",
+ "cameleer-yaml",
 ]
 
 [[package]]
-name = "camel-soap"
-version = "0.1.0"
+name = "cameleer-soap"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-http",
- "camel-tls",
- "camel-xml",
+ "cameleer-core",
+ "cameleer-http",
+ "cameleer-tls",
+ "cameleer-xml",
 ]
 
 [[package]]
-name = "camel-sql"
-version = "0.1.0"
+name = "cameleer-sql"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-ssh"
-version = "0.1.0"
+name = "cameleer-ssh"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-tls"
-version = "0.1.0"
+name = "cameleer-tls"
+version = "0.2.0"
 dependencies = [
- "camel-core",
+ "cameleer-core",
 ]
 
 [[package]]
-name = "camel-xml"
-version = "0.1.0"
+name = "cameleer-xml"
+version = "0.2.0"
 dependencies = [
- "camel-core",
- "camel-tls",
+ "cameleer-core",
+ "cameleer-tls",
 ]
 
 [[package]]
-name = "camel-yaml"
-version = "0.1.0"
+name = "cameleer-yaml"
+version = "0.2.0"
 dependencies = [
- "camel-core",
+ "cameleer-core",
 ]

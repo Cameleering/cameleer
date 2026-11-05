@@ -1,0 +1,40 @@
+[package]
+name = "cameleer-main"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords = ["camel", "integration", "cli", "yaml", "serverless"]
+categories = ["command-line-utilities", "network-programming"]
+description = "Cameleer main runner and `camel` CLI (like Camel Main / Camel JBang)"
+
+[dependencies]
+cameleer-amqp = { path = "../cameleer-amqp", version = "0.2.0" }
+cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.2.0" }
+cameleer-cloud = { path = "../cameleer-cloud", version = "0.2.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.2.0" }
+cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.2.0" }
+cameleer-datastores = { path = "../cameleer-datastores", version = "0.2.0" }
+cameleer-grpc = { path = "../cameleer-grpc", version = "0.2.0" }
+cameleer-http = { path = "../cameleer-http", version = "0.2.0" }
+cameleer-protocols = { path = "../cameleer-protocols", version = "0.2.0" }
+cameleer-script = { path = "../cameleer-script", version = "0.2.0" }
+cameleer-soap = { path = "../cameleer-soap", version = "0.2.0" }
+cameleer-saas = { path = "../cameleer-saas", version = "0.2.0" }
+cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.2.0" }
+cameleer-sql = { path = "../cameleer-sql", version = "0.2.0" }
+cameleer-ssh = { path = "../cameleer-ssh", version = "0.2.0" }
+cameleer-xml = { path = "../cameleer-xml", version = "0.2.0" }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.2.0" }
+
+[[bin]]
+name = "cameleer"
+path = "src/bin/cameleer.rs"
+
+# `camel`, as in Camel JBang: the same CLI under the name Camel users type
+[[bin]]
+name = "camel"
+path = "src/bin/camel.rs"

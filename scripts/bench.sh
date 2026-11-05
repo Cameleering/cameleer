@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rust-camel vs Apache Camel (Java) benchmark suite.
+# Cameleer vs Apache Camel (Java) benchmark suite.
 #
 #   scripts/bench.sh            # everything: tools, build, run both sides, write docs/BENCHMARKS.md
 #   scripts/bench.sh tools      # download + checksum-verify the pinned JDK and Maven only
@@ -10,7 +10,7 @@
 # Runs on Linux and on Windows under Git Bash (scripts/bench.ps1 wraps it). Environment:
 #   BENCH_QUICK=1          short warmup/measurement (smoke test, numbers not meaningful)
 #   BENCH_SCENARIOS="..."  subset of: direct seda cbr splitagg http startup
-#   BENCH_TOOLS=dir        where the JDK and Maven are cached (default ~/.cache/camel-bench)
+#   BENCH_TOOLS=dir        where the JDK and Maven are cached (default ~/.cache/cameleer-bench)
 #   BENCH_JAVA_HOME=dir    use this JDK instead of the pinned Temurin download
 #   BENCH_OUT=file         report path (default docs/BENCHMARKS.md)
 set -euo pipefail
@@ -30,7 +30,7 @@ MAVEN_ZIP_SHA512="ed41650d42485cfc243fad22158caf9cbb5dc408ce7a09ddb94dd42a019de9
 MAVEN_TGZ_SHA512="831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6"
 # The Camel version itself is pinned in benchmarks/java-camel/pom.xml.
 
-TOOLS="${BENCH_TOOLS:-$HOME/.cache/camel-bench}"
+TOOLS="${BENCH_TOOLS:-$HOME/.cache/cameleer-bench}"
 OUTDIR="$ROOT/target/bench"
 REPORT="${BENCH_OUT:-$ROOT/docs/BENCHMARKS.md}"
 SCENARIOS="${BENCH_SCENARIOS:-direct seda cbr splitagg http startup}"
@@ -102,13 +102,13 @@ else
   WARMUP=10; ITER=5; ITERS=5; JAVA_WARMUP=10
 fi
 HTTP_CONNS=16
-BENCH_BIN="$ROOT/target/release/camel-bench$EXE"
+BENCH_BIN="$ROOT/target/release/cameleer-bench$EXE"
 JAVA_DIR="$ROOT/benchmarks/java-camel"
 
 build() {
   tools
-  log "building camel-bench (release)"
-  cargo build --release -p camel-bench
+  log "building cameleer-bench (release)"
+  cargo build --release -p cameleer-bench
   log "building the Java side (Maven, strict checksums)"
   "$MVN" -C -B -q -f "$JAVA_DIR/pom.xml" package
 }
@@ -133,7 +133,7 @@ machine() {
     echo "Load average before the run: $(cut -d' ' -f1-3 /proc/loadavg)"
   fi
   echo "Rust: $(rustc -V)"
-  echo "rust-camel commit: $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- crates || echo ' (+ local changes)')"
+  echo "Cameleer commit: $(git rev-parse --short HEAD)$(git diff --quiet HEAD -- crates || echo ' (+ local changes)')"
   echo "JDK: $("$JAVA" -version 2>&1 | head -1)"
   echo "Maven: $MAVEN_VERSION"
   echo "Apache Camel: $(sed -n 's:.*<camel.version>\(.*\)</camel.version>.*:\1:p' "$JAVA_DIR/pom.xml")"

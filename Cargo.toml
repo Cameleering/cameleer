@@ -3,14 +3,15 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/pmsudhi/Rust-camel"
-homepage = "https://pmsudhi.github.io/Rust-camel/"
+repository = "https://github.com/pmsudhi/cameleer"
+homepage = "https://pmsudhi.github.io/cameleer/"
 authors = ["Sudheesh PM <pmsudhi@gmail.com>"]
+readme = "README.md"
 
 # The from-scratch cryptography (constant-time bitsliced AES, bignum RSA/ECC) is far too
 # slow unoptimized; optimize it even in dev/test builds.
-[profile.dev.package.camel-tls]
+[profile.dev.package.cameleer-tls]
 opt-level = 2

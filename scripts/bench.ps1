@@ -1,4 +1,4 @@
-# rust-camel vs Apache Camel benchmark suite, Windows PowerShell entry point.
+# Cameleer vs Apache Camel benchmark suite, Windows PowerShell entry point.
 #
 #   .\scripts\bench.ps1               # tools, build, run both sides, write docs\BENCHMARKS.md
 #   .\scripts\bench.ps1 run           # any scripts/bench.sh command: tools | build | run | report | all

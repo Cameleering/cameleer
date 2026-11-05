@@ -1,5 +1,5 @@
 """The Azure SDK for Python (azure-storage-blob / -queue / -file-datalake / -file-share) against
-rust-camel's AzuriteMock, authorized with Shared Key and with SAS tokens the SDK generates.
+Cameleer's AzuriteMock, authorized with Shared Key and with SAS tokens the SDK generates.
 
 usage: azure_storage.py <blob-url> <queue-url> <dfs-url> <file-url> <check> [check...]
 

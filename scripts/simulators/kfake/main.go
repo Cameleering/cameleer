@@ -1,5 +1,5 @@
 // kfake-server runs franz-go's kfake (a fake Kafka cluster written by the author of the franz-go
-// client) as a standalone server for rust-camel's simulator suite (scripts/simulators.sh).
+// client) as a standalone server for Cameleer's simulator suite (scripts/simulators.sh).
 package main
 
 import (

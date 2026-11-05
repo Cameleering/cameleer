@@ -23,7 +23,7 @@ import org.apache.camel.processor.aggregate.GroupedBodyAggregationStrategy;
 
 /**
  * Apache Camel side of the benchmark suite. Same commands, routes, driver and output records
- * as crates/camel-bench (see its src/main.rs, scenarios.rs and driver.rs):
+ * as crates/cameleer-bench (see its src/main.rs, scenarios.rs and driver.rs):
  *
  * <pre>
  * run &lt;scenario&gt; &lt;warmup_s&gt; &lt;iter_s&gt; &lt;iters&gt;
@@ -238,7 +238,7 @@ public final class Bench {
         }
     }
 
-    /** The same epoch-based closed-loop driver as crates/camel-bench/src/driver.rs. */
+    /** The same epoch-based closed-loop driver as crates/cameleer-bench/src/driver.rs. */
     static final class Driver {
         static final int STOP = Integer.MAX_VALUE;
 

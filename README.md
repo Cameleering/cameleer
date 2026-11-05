@@ -1,12 +1,12 @@
-# rust-camel
+# Cameleer
 
-[![CI](https://github.com/pmsudhi/Rust-camel/actions/workflows/ci.yml/badge.svg)](https://github.com/pmsudhi/Rust-camel/actions/workflows/ci.yml)
+[![CI](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml/badge.svg)](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)
 [![Apache Camel compatible](https://img.shields.io/badge/follows-Apache%20Camel%204.x-d4523f.svg)](https://camel.apache.org/)
 
-### Apache Camel, rewritten in Rust. If you know Camel, you already know rust-camel.
+### Apache Camel, rewritten in Rust. If you know Camel, you already know Cameleer.
 
 The same endpoint URIs. The same Enterprise Integration Patterns. The same Simple expressions, the
 same YAML routes, the same headers and the same error handling. About 230 components, languages and
@@ -15,12 +15,14 @@ data formats, ported one by one and verified against the real systems.
 **But rebuilt for the agent era:** a single native binary that starts in **10 ms**, runs in about
 **10 MB**, and routes messages **4–8x faster** than Camel on the JVM.
 
-[Website](https://pmsudhi.github.io/Rust-camel/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
+[Website](https://pmsudhi.github.io/cameleer/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
 [Agents](#rebuilt-for-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
 
+_Cameleer was called rust-camel up to v0.1.0._
+
 > Based on [Apache Camel](https://camel.apache.org/) ([source](https://github.com/apache/camel)), the
-> integration framework by the Apache Software Foundation. rust-camel follows its names, options and
+> integration framework by the Apache Software Foundation. Cameleer follows its names, options and
 > semantics but contains no Camel source code. It is an independent project, not affiliated with or
 > endorsed by the ASF. Apache, Apache Camel and Camel are trademarks of the Apache Software Foundation.
 
@@ -32,27 +34,27 @@ The same routes run on both, measured on the same machine against Apache Camel 4
 
 ```text
 Startup (spawn → routes running)                      lower is better
-  rust-camel  ▏ 10 ms
+  Cameleer  ▏ 10 ms
   Camel       ████████████████████████████████████████ 751 ms              77x faster
 
 Memory (peak, direct route)                           lower is better
-  rust-camel  █ 9 MB
+  Cameleer  █ 9 MB
   Camel       ████████████████████████████████████████ 366 MB              42x less
 
 Throughput, direct route                              higher is better
-  rust-camel  ████████████████████████████████████████ 4.96M msgs/s
+  Cameleer  ████████████████████████████████████████ 4.96M msgs/s
   Camel       █████████▍ 1.16M msgs/s                                      4.3x
 
 Throughput, seda request-reply                        higher is better
-  rust-camel  ████████████████████████████████████████ 2.09M msgs/s
+  Cameleer  ████████████████████████████████████████ 2.09M msgs/s
   Camel       ████▊ 250k msgs/s                                            8.4x
 
 p99 latency, request-reply                            lower is better
-  rust-camel  ██████▋ 5.1 µs
+  Cameleer  ██████▋ 5.1 µs
   Camel       ████████████████████████████████████████ 30.6 µs             6x lower
 ```
 
-| scenario | rust-camel | Apache Camel | faster by |
+| scenario | Cameleer | Apache Camel | faster by |
 |---|---:|---:|---:|
 | `direct` route: set a header, count | 4.96M msgs/s | 1.16M msgs/s | **4.27x** |
 | `seda`: 4 producers, 4 concurrent consumers | 5.65M msgs/s | 1.35M msgs/s | **4.18x** |
@@ -89,10 +91,10 @@ the three under 4x. HTTP is capped by the test machine: a server that does nothi
 ## Same Camel. Same signature.
 
 Here is a route that sends big orders from Kafka to SQS and taps every order into an audit topic,
-written for Apache Camel and for rust-camel:
+written for Apache Camel and for Cameleer:
 
 <table>
-<tr><th>Apache Camel (Java)</th><th>rust-camel</th></tr>
+<tr><th>Apache Camel (Java)</th><th>Cameleer</th></tr>
 <tr><td>
 
 ```java
@@ -160,7 +162,7 @@ An agent decides; something still has to *do* it:
 - open the ticket, post to Slack;
 - retry when the API times out, and never charge a card twice.
 
-That's what Camel has done for enterprises for years. rust-camel does it for agents, as a library
+That's what Camel has done for enterprises for years. Cameleer does it for agents, as a library
 inside your agent or as a 10 ms sidecar.
 
 **🖐 Give agents hands.** Every action becomes a route the agent can call over HTTP, a queue or
@@ -202,7 +204,7 @@ Integrations sit idle, then get busy all at once: exactly the load serverless is
 fights that model: it takes most of a second to boot and hundreds of megabytes to idle.
 
 - **Scale to zero, wake up instantly.** A 10 ms start fits inside a request's latency budget.
-- **Pack tens of services onto one node.** At about 10 MB each, rust-camel fits on edge gateways
+- **Pack tens of services onto one node.** At about 10 MB each, Cameleer fits on edge gateways
   and small devices that can't host a JVM.
 - **One executable, nothing to install.** No JRE to patch and no `-Xmx` to tune. `camel export`
   turns YAML routes into a standalone Rust project.
@@ -254,14 +256,14 @@ verification, are in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 ## Quick start
 
 ```rust
-use camel_core::prelude::*;
+use cameleer_core::prelude::*;
 
 fn main() -> Result<()> {
     let ctx = CamelContext::new();
     ctx.add_routes(|b| {
         b.from("timer:hello?period=200")
             .route_id("hello")
-            .set_body(simple("Hello from rust-camel #${exchangeProperty.CamelTimerCounter}"))
+            .set_body(simple("Hello from Cameleer #${exchangeProperty.CamelTimerCounter}"))
             .filter(simple("${exchangeProperty.CamelTimerCounter} > 2"))
                 .to("log:greetings")
             .end();
@@ -291,8 +293,16 @@ An agent-style route in YAML, which classifies tickets with a model and routes o
                 - to: kafka:tickets-routine
 ```
 
+Run it with Docker (linux/amd64 and linux/arm64; one static binary on distroless):
+
 ```text
-$ cargo run --release -p camel-main --bin camel -- run triage.camel.yaml
+$ docker run --rm -v "$PWD:/routes" ghcr.io/pmsudhi/cameleer run /routes/triage.camel.yaml
+```
+
+Or build the CLI from source. It installs as `cameleer`, and as `camel` for Camel JBang habits:
+
+```text
+$ cargo run --release -p cameleer-main --bin cameleer -- run triage.camel.yaml
 ```
 
 ---
@@ -316,7 +326,7 @@ or a vector database.
 No. You need Rust to build it, and nothing at run time.
 
 **Why do management statistics default differently from Camel?**
-Camel collects statistics only when `camel-management` is loaded. rust-camel always has management,
+Camel collects statistics only when `camel-management` is loaded. Cameleer always has management,
 so by default it keeps route and context counters and makes per-step timing opt-in
 (`ManagementStatisticsLevel::Default`, or `camel.main.jmxManagementStatisticsLevel=Default`).
 
@@ -336,23 +346,23 @@ See [docs/INTEROP.md](docs/INTEROP.md).
 
 | crate | contents |
 |---|---|
-| `camel-core` | `CamelContext`, `Exchange`/`Message`/`Value`, routes and the Rust DSL, EIPs, error handling, languages, data formats, core components |
-| `camel-http` | HTTP/1.1 server and client, `platform-http`, `http`, REST DSL with OpenAPI, `netty` TCP/UDP |
-| `camel-yaml` | YAML parser, Camel YAML DSL, XML DSL, route templates |
-| `camel-protocols` | ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog (with embedded test servers) |
-| `camel-tls` | from-scratch TLS 1.3/1.2, X.509, `SslContextParameters` (used by all network components) |
-| `camel-kafka-mqtt` | kafka, paho / paho-mqtt5 (with embedded test brokers) |
-| `camel-amqp` | spring-rabbitmq / rabbitmq (AMQP 0-9-1), stomp, jms / activemq / amqp-stomp (with embedded test brokers) |
-| `camel-amqp10` | AMQP 1.0 client (SASL, TLS, CBS), amqp (JMS over AMQP 1.0), azure-servicebus, azure-eventhubs |
-| `camel-sql` | embedded SQL engine, PostgreSQL client, sql / jdbc components, JDBC repositories |
-| `camel-cloud` | AWS (incl. Bedrock), Azure (incl. OpenAI), Google Cloud (incl. Vertex AI), with verifying emulators |
-| `camel-ssh` | SSH-2 + SFTP: sftp and ssh components |
-| `camel-grpc` | HTTP/2 + HPACK, protobuf, grpc component and protobuf data format |
-| `camel-datastores` | spring-redis, mongodb, elasticsearch/opensearch, cql (Cassandra), couchdb (with embedded test servers) |
-| `camel-xml` | XML 1.0 parser + DOM, XPath 1.0, XSLT 1.0, XML Schema validation, `xj`, `xmlsecurity-sign`/`-verify` |
-| `camel-saas` | openai, slack, telegram, github, twilio, jira, webhook, graphql, rss/atom (with embedded mock servers) |
-| `camel-main` | `Main` runner (application.properties, route discovery) and the `camel` CLI |
-| `camel-bench` | benchmark harness, sampling profiler and HTTP load generator |
+| `cameleer-core` | `CamelContext`, `Exchange`/`Message`/`Value`, routes and the Rust DSL, EIPs, error handling, languages, data formats, core components |
+| `cameleer-http` | HTTP/1.1 server and client, `platform-http`, `http`, REST DSL with OpenAPI, `netty` TCP/UDP |
+| `cameleer-yaml` | YAML parser, Camel YAML DSL, XML DSL, route templates |
+| `cameleer-protocols` | ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog (with embedded test servers) |
+| `cameleer-tls` | from-scratch TLS 1.3/1.2, X.509, `SslContextParameters` (used by all network components) |
+| `cameleer-kafka-mqtt` | kafka, paho / paho-mqtt5 (with embedded test brokers) |
+| `cameleer-amqp` | spring-rabbitmq / rabbitmq (AMQP 0-9-1), stomp, jms / activemq / amqp-stomp (with embedded test brokers) |
+| `cameleer-amqp10` | AMQP 1.0 client (SASL, TLS, CBS), amqp (JMS over AMQP 1.0), azure-servicebus, azure-eventhubs |
+| `cameleer-sql` | embedded SQL engine, PostgreSQL client, sql / jdbc components, JDBC repositories |
+| `cameleer-cloud` | AWS (incl. Bedrock), Azure (incl. OpenAI), Google Cloud (incl. Vertex AI), with verifying emulators |
+| `cameleer-ssh` | SSH-2 + SFTP: sftp and ssh components |
+| `cameleer-grpc` | HTTP/2 + HPACK, protobuf, grpc component and protobuf data format |
+| `cameleer-datastores` | spring-redis, mongodb, elasticsearch/opensearch, cql (Cassandra), couchdb (with embedded test servers) |
+| `cameleer-xml` | XML 1.0 parser + DOM, XPath 1.0, XSLT 1.0, XML Schema validation, `xj`, `xmlsecurity-sign`/`-verify` |
+| `cameleer-saas` | openai, slack, telegram, github, twilio, jira, webhook, graphql, rss/atom (with embedded mock servers) |
+| `cameleer-main` | `Main` runner (application.properties, route discovery) and the `camel` CLI |
+| `cameleer-bench` | benchmark harness, sampling profiler and HTTP load generator |
 
 Internals: [ARCHITECTURE.md](ARCHITECTURE.md).
 
@@ -361,7 +371,7 @@ Internals: [ARCHITECTURE.md](ARCHITECTURE.md).
 ```text
 cargo build --release
 cargo test --workspace          # hermetic: every network component runs against embedded servers
-scripts/bench.sh                # rust-camel vs Apache Camel (Linux or Git Bash; .\scripts\bench.ps1 on Windows)
+scripts/bench.sh                # Cameleer vs Apache Camel (Linux or Git Bash; .\scripts\bench.ps1 on Windows)
 ```
 
 The live interop suites run against real servers and are opt-in:
@@ -375,15 +385,15 @@ CAMEL_LIVE_INTEROP=1 cargo test --workspace live_
 
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in
-[SECURITY.md](SECURITY.md). To cite rust-camel, use the "Cite this repository" button
+[SECURITY.md](SECURITY.md). To cite Cameleer, use the "Cite this repository" button
 ([CITATION.cff](CITATION.cff)).
 
 ## License and credits
 
-rust-camel is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+Cameleer is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
 
 It exists because of [Apache Camel](https://camel.apache.org/)
 ([github.com/apache/camel](https://github.com/apache/camel)) and its community, whose design,
 documentation and Enterprise Integration Patterns catalogue it follows. Apache, Apache Camel and
-Camel are trademarks of the Apache Software Foundation; rust-camel is not affiliated with or
+Camel are trademarks of the Apache Software Foundation; Cameleer is not affiliated with or
 endorsed by the ASF.

@@ -1,5 +1,5 @@
 """azure-servicebus and azure-eventhub (pure-Python AMQP 1.0 stack, CBS SAS tokens) against
-rust-camel's AMQP 1.0 broker in Azure mode (TLS).
+Cameleer's AMQP 1.0 broker in Azure mode (TLS).
 
 usage: azure_amqp.py <connection-string> <ca-pem> <check> [check...]
 checks: servicebus-queue, servicebus-topic, servicebus-sessions, eventhub, bad-key

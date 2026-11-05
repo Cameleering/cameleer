@@ -1,12 +1,12 @@
-"""The DataStax python-cassandra driver against rust-camel's embedded Cassandra server.
+"""The DataStax python-cassandra driver against Cameleer's embedded Cassandra server.
 
 usage: cassandra_driver.py <port> <command> [user password ca]
 
 commands:
   cql        protocol v4 session: keyspace/table DDL, simple and prepared statements, batches,
              paging (fetch_size), type round trips, lightweight errors
-  seed       creates camel.from_driver rows for rust-camel to read
-  check      reads camel.from_camel rows written by rust-camel
+  seed       creates camel.from_driver rows for Cameleer to read
+  check      reads camel.from_camel rows written by Cameleer
   auth-fail  expects an authentication failure
 Prints `key: value` lines.
 """

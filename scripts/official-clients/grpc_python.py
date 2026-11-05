@@ -1,5 +1,5 @@
-"""grpcio (the official gRPC C-core based Python implementation) against rust-camel's gRPC
-stack: as a client of a rust-camel `grpc` consumer route, as a server called by the rust-camel
+"""grpcio (the official gRPC C-core based Python implementation) against Cameleer's gRPC
+stack: as a client of a Cameleer `grpc` consumer route, as a server called by the Cameleer
 `grpc` producer, and as a Pub/Sub StreamingPull client of the GcpMock gRPC service.
 
 usage:
