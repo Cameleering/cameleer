@@ -38,7 +38,7 @@ COPY . .
 ARG SOURCE_DATE_EPOCH
 # component families (cameleer-main cargo features), comma separated; empty = all of them.
 # A smaller image for one integration, e.g. --build-arg FEATURES=cloud (core, HTTP and YAML are
-# always in).
+# always in; FEATURES=core is only those).
 ARG FEATURES=
 RUN --mount=type=cache,target=/src/target,id=cameleer-target-$TARGETARCH \
     target=$(cat /target) \

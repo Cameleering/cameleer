@@ -39,6 +39,8 @@ cameleer-yaml = { path = "../cameleer-yaml", version = "0.3.0" }
 # startup with a message naming the feature to enable.
 [features]
 default = ["full"]
+# nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
+core = []
 full = ["amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
 amqp = ["dep:cameleer-amqp"]
 amqp10 = ["dep:cameleer-amqp10"]

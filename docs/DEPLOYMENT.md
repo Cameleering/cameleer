@@ -225,7 +225,8 @@ sends SIGTERM before it shuts a sandbox down; routes are stopped gracefully then
 The default build and image contain every component family. A function or an edge device that
 needs only a few can leave the rest out with the cargo features of `cameleer-main`: `amqp`,
 `amqp10`, `cloud`, `dataformats`, `datastores`, `grpc`, `kafka-mqtt`, `protocols`, `saas`,
-`script`, `soap`, `sql`, `ssh` and `xml` (`full`, the default, is all of them). Core (every EIP,
+`script`, `soap`, `sql`, `ssh` and `xml` (`full`, the default, is all of them; `core` is none
+of them). Core (every EIP,
 Simple, JsonPath, the core components), the YAML and XML DSLs, HTTP and TLS are always in.
 
 ```sh
