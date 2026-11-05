@@ -15,7 +15,7 @@ data formats, ported one by one and verified against the real systems.
 **But rebuilt for the agent era:** a single native binary that starts in **10 ms**, runs in about
 **10 MB**, and routes messages **4–8x faster** than Camel on the JVM.
 
-[Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
+[Website](https://pmsudhi.github.io/Rust-camel/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
 [Agents](#rebuilt-for-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
 

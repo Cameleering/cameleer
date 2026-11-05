@@ -12,6 +12,7 @@ Key facts:
 
 ## Docs
 
+- [Website](https://pmsudhi.github.io/Rust-camel/): overview, benchmarks and quick start
 - [README](https://github.com/pmsudhi/Rust-camel/blob/main/README.md): positioning, benchmarks, agent and serverless use cases, quick start
 - [Benchmarks](https://github.com/pmsudhi/Rust-camel/blob/main/docs/BENCHMARKS.md): rust-camel vs Apache Camel, method and results
 - [Features](https://github.com/pmsudhi/Rust-camel/blob/main/docs/FEATURES.md): every component, language and data format with its options

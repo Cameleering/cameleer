@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rust-camel: Apache Camel, rewritten in Rust</title>
+<meta name="description" content="rust-camel is Apache Camel rewritten in Rust: the same routes, EIPs, endpoint URIs and YAML DSL, about 230 components, no dependencies. Starts in 10 ms, runs in 10 MB, 2.5-8x faster than Camel on the JVM. Built for AI agents, serverless and the edge.">
+<meta name="keywords" content="Apache Camel, Rust, integration, enterprise integration patterns, EIP, AI agents, serverless, edge, Kafka, messaging, YAML DSL">
+<link rel="canonical" href="https://pmsudhi.github.io/Rust-camel/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="website">
+<meta property="og:title" content="rust-camel: Apache Camel, rewritten in Rust">
+<meta property="og:description" content="Same routes. Same patterns. 10 ms startup, 10 MB of memory, 2.5-8x the throughput.">
+<meta property="og:url" content="https://pmsudhi.github.io/Rust-camel/">
+<meta property="og:image" content="https://pmsudhi.github.io/Rust-camel/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="alternate" type="text/plain" href="llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "name": "rust-camel",
+  "description": "Apache Camel rewritten in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only.",
+  "codeRepository": "https://github.com/pmsudhi/Rust-camel",
+  "url": "https://pmsudhi.github.io/Rust-camel/",
+  "programmingLanguage": "Rust",
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "version": "0.1.0",
+  "author": {"@type": "Person", "name": "Sudheesh PM"},
+  "keywords": "Apache Camel, Rust, integration, EIP, AI agents, serverless, edge",
+  "isBasedOn": {"@type": "SoftwareSourceCode", "name": "Apache Camel", "url": "https://camel.apache.org/", "codeRepository": "https://github.com/apache/camel"}
+}
+</script>
+<style>
+:root {
+  --paper: #ffffff;
+  --ink: #18203a;
+  --muted: #5b6479;
+  --line: #e4e8f0;
+  --grid: #f0f3f9;
+  --signal: #1f4fff;
+  --signal-soft: #e8eeff;
+  --sand: #e9a21f;
+  --java: #c4cad6;
+  --sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --wrap: 1120px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 17px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 4px; }
+.wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
+code, pre { font-family: var(--mono); }
+
+/* header */
+.top { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.88); backdrop-filter: blur(10px); border-bottom: 1px solid transparent; transition: border-color .2s; }
+.top.scrolled { border-bottom-color: var(--line); }
+.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; text-decoration: none; font-size: 18px; letter-spacing: -.01em; }
+.top nav { display: flex; gap: 28px; align-items: center; font-size: 15px; }
+.top nav a { text-decoration: none; color: var(--muted); }
+.top nav a:hover { color: var(--ink); }
+.top nav .gh { color: var(--ink); font-weight: 600; display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); padding: 7px 14px; border-radius: 999px; }
+.top nav .gh:hover { border-color: var(--ink); }
+
+/* hero */
+.hero { position: relative; padding: 72px 0 88px; overflow: hidden; }
+.hero::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse 70% 80% at 75% 40%, #000 30%, transparent 75%);
+}
+.hero .wrap { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
+h1 {
+  font-size: clamp(44px, 6.4vw, 84px);
+  line-height: .98; letter-spacing: -.045em; font-weight: 800; margin: 0 0 28px;
+}
+h1 .line { display: block; }
+h1 .strike { color: var(--muted); font-weight: 500; position: relative; }
+h1 .strike::after { content: ""; position: absolute; left: 0; right: 0; top: 54%; height: .07em; background: var(--signal); transform-origin: left; animation: strike .7s .5s cubic-bezier(.6,0,.2,1) both; }
+@keyframes strike { from { transform: scaleX(0); } }
+.lede { font-size: 20px; color: var(--muted); max-width: 30em; margin: 0 0 32px; }
+.lede strong { color: var(--ink); font-weight: 600; }
+.ctas { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 10px; font-weight: 600; text-decoration: none; font-size: 16px; transition: transform .15s, background .15s, border-color .15s; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--ink); color: #fff; }
+.btn.primary:hover { background: var(--signal); }
+.btn.ghost { border: 1px solid var(--line); background: #fff; }
+.btn.ghost:hover { border-color: var(--ink); }
+.facts { display: flex; gap: 36px; margin: 44px 0 0; padding: 0; }
+.facts div { margin: 0; }
+.facts dt { font-size: 30px; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
+.facts dd { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+
+.diagram { width: 100%; height: auto; display: block; }
+.diagram .node rect { fill: #fff; stroke: var(--ink); stroke-width: 1.5; }
+.diagram .node.ai rect { fill: var(--signal-soft); stroke: var(--signal); }
+.diagram .node text { font-family: var(--sans); fill: var(--ink); }
+.diagram .node .k { font-size: 12px; fill: var(--muted); font-family: var(--mono); }
+.diagram .node .v { font-size: 16px; font-weight: 700; }
+.diagram .wire { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+.diagram .wire.dash { stroke-dasharray: 4 5; animation: flow 1.2s linear infinite; }
+@keyframes flow { to { stroke-dashoffset: -18; } }
+.diagram .choice { fill: #fff; stroke: var(--ink); stroke-width: 1.5; }
+.diagram .msg { fill: var(--sand); }
+.diagram .msg.hot { fill: var(--signal); }
+.diagram .cap { font: 500 12px var(--mono); fill: var(--muted); }
+.diagram .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 1.6s ease-out infinite; fill: none; stroke: var(--signal); }
+@keyframes pulse { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.35); } }
+
+/* sections */
+section { padding: 96px 0; }
+section + section { border-top: 1px solid var(--line); }
+h2 { font-size: clamp(32px, 4vw, 48px); line-height: 1.05; letter-spacing: -.035em; font-weight: 800; margin: 0 0 16px; max-width: 16em; }
+.sub { color: var(--muted); font-size: 19px; max-width: 34em; margin: 0 0 48px; }
+
+/* same camel */
+.same { display: grid; grid-template-columns: 1.15fr .85fr; gap: 40px; align-items: stretch; }
+.code { background: #fbfcfe; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.code header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+.code pre { margin: 0; padding: 20px; font-size: 14px; line-height: 1.65; overflow-x: auto; }
+.tk-k { color: var(--signal); }
+.tk-s { color: #0f7a55; }
+.tk-c { color: var(--muted); }
+.runner { border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: flex; flex-direction: column; }
+.toggle { display: inline-grid; grid-template-columns: 1fr 1fr; background: var(--grid); border-radius: 10px; padding: 4px; position: relative; margin-bottom: 24px; }
+.toggle button { position: relative; z-index: 1; border: 0; background: none; font: 600 15px var(--sans); padding: 10px 16px; cursor: pointer; color: var(--muted); border-radius: 8px; transition: color .2s; }
+.toggle button[aria-pressed="true"] { color: var(--ink); }
+.toggle .knob { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); background: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(24,32,58,.12), 0 0 0 1px var(--line); transition: transform .35s cubic-bezier(.5,0,.2,1); }
+.toggle[data-side="java"] .knob { transform: translateX(100%); }
+.term { font: 14px/1.6 var(--mono); background: var(--ink); color: #e9ecf5; border-radius: 10px; padding: 16px; margin: 0 0 24px; min-height: 104px; }
+.term .ok { color: #7ee2b0; }
+.term .dim { color: #8a93ab; }
+.meter { margin: 0 0 18px; }
+.meter .row { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); margin-bottom: 6px; }
+.meter .row b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.meter .bar { height: 8px; background: var(--grid); border-radius: 99px; overflow: hidden; }
+.meter .bar i { display: block; height: 100%; background: var(--signal); border-radius: 99px; transition: width .6s cubic-bezier(.5,0,.2,1), background .3s; }
+.toggle[data-side="java"] ~ .meter .bar i, .runner[data-side="java"] .meter .bar i { background: var(--java); }
+.runner .note { margin-top: auto; font-size: 14px; color: var(--muted); }
+
+/* numbers */
+.bench { display: grid; gap: 22px; max-width: 900px; }
+.bench .item { display: grid; grid-template-columns: 220px 1fr 70px; gap: 20px; align-items: center; }
+.bench .label { font-weight: 600; font-size: 16px; line-height: 1.3; }
+.bench .label small { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
+.bench .bars { display: grid; gap: 5px; }
+.bench .b { height: 14px; border-radius: 4px; width: 0; transition: width 1.1s cubic-bezier(.3,0,.1,1); position: relative; }
+.bench .b.r { background: var(--signal); }
+.bench .b.j { background: var(--java); }
+.bench .b span { position: absolute; left: calc(100% + 8px); top: -3px; font-size: 12px; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bench .x { font-size: 22px; font-weight: 800; letter-spacing: -.02em; text-align: right; font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 24px; font-size: 14px; color: var(--muted); margin: 0 0 32px; }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+.fine { font-size: 14px; color: var(--muted); margin-top: 40px; max-width: 46em; }
+
+/* uses */
+.uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px; }
+.use svg { width: 100%; max-width: 260px; height: auto; display: block; margin-bottom: 20px; }
+.use h3 { font-size: 22px; letter-spacing: -.02em; margin: 0 0 8px; }
+.use p { margin: 0; color: var(--muted); }
+.ill .s { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ill .f { fill: var(--signal-soft); stroke: var(--signal); stroke-width: 1.5; }
+.ill .d { fill: var(--sand); }
+
+/* inside */
+.inside { display: grid; grid-template-columns: .9fr 1.1fr; gap: 56px; align-items: start; }
+.wall { display: flex; flex-wrap: wrap; gap: 8px; }
+.wall span { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-size: 15px; background: #fff; }
+.wall span.k { border-color: var(--signal); color: var(--signal); }
+.count { display: flex; gap: 40px; margin-top: 32px; }
+.count b { display: block; font-size: 40px; font-weight: 800; letter-spacing: -.04em; line-height: 1; }
+.count span { color: var(--muted); font-size: 14px; }
+
+/* start */
+.start { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; }
+.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; display: grid; gap: 20px; }
+.steps li { counter-increment: s; display: grid; grid-template-columns: 36px 1fr; gap: 12px; }
+.steps li::before { content: counter(s); width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--ink); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.steps code { display: block; margin-top: 6px; font-size: 14px; background: var(--grid); padding: 8px 12px; border-radius: 8px; overflow-x: auto; white-space: nowrap; }
+.copy { border: 1px solid var(--line); background: #fff; border-radius: 7px; font: 500 13px var(--sans); padding: 4px 10px; cursor: pointer; color: var(--muted); }
+.copy:hover { color: var(--ink); border-color: var(--ink); }
+
+/* footer */
+footer { border-top: 1px solid var(--line); padding: 56px 0 64px; font-size: 15px; color: var(--muted); }
+footer .wrap { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 40px; }
+footer h4 { color: var(--ink); font-size: 15px; margin: 0 0 12px; }
+footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+footer a { text-decoration: none; }
+footer a:hover { color: var(--ink); text-decoration: underline; }
+footer .credit { max-width: 32em; }
+
+@media (max-width: 900px) {
+  .hero .wrap, .same, .inside, .start, footer .wrap { grid-template-columns: 1fr; }
+  .uses { grid-template-columns: 1fr; gap: 40px; }
+  .bench .item { grid-template-columns: 1fr 60px; }
+  .bench .label { grid-column: 1 / -1; }
+  .top nav a:not(.gh) { display: none; }
+  .hero { padding: 40px 0 64px; }
+  section { padding: 72px 0; }
+  .facts { gap: 24px; flex-wrap: wrap; }
+}
+@media (max-width: 480px) {
+  .wrap { padding: 0 16px; }
+  .bench .b span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  html { scroll-behavior: auto; }
+}
+</style>
+</head>
+<body>
+
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="#" aria-label="rust-camel home">
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect x="1" y="1" width="26" height="26" rx="7" fill="#18203a"/><path d="M6 18c2.5 0 3-6 5.5-6s2.5 4 4.5 4 2-6 4.5-6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/><circle cx="20.5" cy="10" r="2" fill="#e9a21f"/></svg>
+      rust-camel
+    </a>
+    <nav aria-label="Main">
+      <a href="#same">How it works</a>
+      <a href="#numbers">Benchmarks</a>
+      <a href="#uses">Use cases</a>
+      <a href="#start">Quick start</a>
+      <a class="gh" href="https://github.com/pmsudhi/Rust-camel">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero" aria-labelledby="h">
+  <div class="wrap">
+    <div>
+      <h1 id="h">
+        <span class="line">Apache Camel.</span>
+        <span class="line"><span class="strike">On the JVM.</span></span>
+        <span class="line">In Rust.</span>
+      </h1>
+      <p class="lede">Same routes, same patterns, same endpoint URIs. If you know Camel, you already know rust-camel. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
+      <div class="ctas">
+        <a class="btn primary" href="https://github.com/pmsudhi/Rust-camel">View on GitHub</a>
+        <a class="btn ghost" href="#start">Run your first route</a>
+      </div>
+      <dl class="facts">
+        <div><dt>10 ms</dt><dd>startup, vs 751 ms</dd></div>
+        <div><dt>9 MB</dt><dd>memory, vs 366 MB</dd></div>
+        <div><dt>8.4x</dt><dd>request-reply throughput</dd></div>
+      </dl>
+    </div>
+
+    <figure style="margin:0">
+      <svg class="diagram" viewBox="0 0 560 440" role="img" aria-labelledby="dt dd">
+        <title id="dt">A rust-camel route running</title>
+        <desc id="dd">Messages arrive from a Kafka topic, an AI model classifies each one, and a content-based router sends urgent tickets and routine tickets to different Kafka topics.</desc>
+        <defs>
+          <path id="pu" d="M114 92 V310 H262 Q282 310 282 290 V276 Q282 258 302 258 H340"/>
+          <path id="pr" d="M114 92 V370 H340"/>
+        </defs>
+        <path class="wire" d="M114 92 V170"/>
+        <path class="wire" d="M114 222 V288"/>
+        <path class="wire dash" d="M136 310 H262 Q282 310 282 290 V276 Q282 258 302 258 H340"/>
+        <path class="wire dash" d="M114 332 V370 H340"/>
+        <path class="wire" d="M332 252 l8 6 -8 6 M332 364 l8 6 -8 6"/>
+
+        <g class="msgs" aria-hidden="true">
+          <circle class="msg" r="6"><animateMotion dur="3.4s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath href="#pu"/></animateMotion></circle>
+          <circle class="msg" r="6"><animateMotion dur="3.4s" begin="-1.1s" repeatCount="indefinite"><mpath href="#pr"/></animateMotion></circle>
+          <circle class="msg" r="6"><animateMotion dur="3.4s" begin="-2.2s" repeatCount="indefinite"><mpath href="#pr"/></animateMotion></circle>
+        </g>
+
+        <g class="node"><rect x="24" y="40" width="180" height="52" rx="10"/><text class="k" x="40" y="62">from</text><text class="v" x="40" y="81">kafka:tickets</text></g>
+        <g class="node ai"><rect x="24" y="170" width="180" height="52" rx="10"/><rect class="pulse" x="24" y="170" width="180" height="52" rx="10"/><text class="k" x="40" y="192">to</text><text class="v" x="40" y="211">openai: classify</text></g>
+        <path class="choice" d="M114 288 L136 310 L114 332 L92 310 Z"/>
+        <text class="cap" x="150" y="302">urgent</text>
+        <text class="cap" x="124" y="358">otherwise</text>
+        <g class="node"><rect x="340" y="232" width="196" height="52" rx="10"/><text class="k" x="356" y="254">to</text><text class="v" x="356" y="273">kafka:urgent</text></g>
+        <g class="node"><rect x="340" y="344" width="196" height="52" rx="10"/><text class="k" x="356" y="366">to</text><text class="v" x="356" y="385">kafka:routine</text></g>
+
+        <g transform="translate(250 54)">
+          <rect width="286" height="118" rx="12" fill="#fff" stroke="#e4e8f0"/>
+          <text class="cap" x="16" y="28">triage.camel.yaml</text>
+          <text font-family="JetBrains Mono, monospace" font-size="12" fill="#18203a">
+            <tspan x="16" y="52">from: kafka:tickets</tspan>
+            <tspan x="16" y="70">  - to: openai:chat-completion</tspan>
+            <tspan x="16" y="88">  - choice: ${body} contains</tspan>
+            <tspan x="16" y="106">      'URGENT'</tspan>
+          </text>
+        </g>
+      </svg>
+    </figure>
+  </div>
+</section>
+
+<section id="same" aria-labelledby="same-h">
+  <div class="wrap">
+    <h2 id="same-h">Keep your routes. Change the runtime.</h2>
+    <p class="sub">The same YAML runs on Apache Camel and on rust-camel. Switch the runtime and watch what changes.</p>
+    <div class="same">
+      <div class="code">
+        <header><span>triage.camel.yaml</span><button class="copy" data-copy="yaml">Copy</button></header>
+<pre id="yaml"><code><span class="tk-k">- route:</span>
+    <span class="tk-k">id:</span> triage
+    <span class="tk-k">from:</span>
+      <span class="tk-k">uri:</span> kafka:support-tickets
+      <span class="tk-k">steps:</span>
+        - <span class="tk-k">to:</span> <span class="tk-s">"openai:chat-completion?model=gpt-4o-mini"</span>
+        - <span class="tk-k">choice:</span>
+            <span class="tk-k">when:</span>
+              - <span class="tk-k">simple:</span> <span class="tk-s">"${body} contains 'URGENT'"</span>
+                <span class="tk-k">steps:</span>
+                  - <span class="tk-k">to:</span> kafka:tickets-urgent
+            <span class="tk-k">otherwise:</span>
+              <span class="tk-k">steps:</span>
+                - <span class="tk-k">to:</span> kafka:tickets-routine</code></pre>
+      </div>
+      <div class="runner" id="runner" data-side="rust">
+        <div class="toggle" role="group" aria-label="Runtime" data-side="rust">
+          <span class="knob" aria-hidden="true"></span>
+          <button type="button" aria-pressed="true" data-side="rust">rust-camel</button>
+          <button type="button" aria-pressed="false" data-side="java">Apache Camel</button>
+        </div>
+        <pre class="term" id="term" aria-live="polite"></pre>
+        <div class="meter"><div class="row"><span>Startup</span><b id="m-start">10 ms</b></div><div class="bar"><i id="b-start" style="width:1.4%"></i></div></div>
+        <div class="meter"><div class="row"><span>Memory</span><b id="m-mem">9 MB</b></div><div class="bar"><i id="b-mem" style="width:2.5%"></i></div></div>
+        <div class="meter"><div class="row"><span>Install size</span><b id="m-size">one binary</b></div><div class="bar"><i id="b-size" style="width:6%"></i></div></div>
+        <p class="note">Measured on the same machine with Camel 4.23 on Java 21. Same endpoint options, headers, Simple expressions and error handling on both.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="numbers" aria-labelledby="num-h">
+  <div class="wrap">
+    <h2 id="num-h">Faster in every scenario we measured.</h2>
+    <p class="sub">Six workloads, same routes, fresh process each, default settings on both sides. All six are shown, including the ones under 4x.</p>
+    <div class="legend"><span><i style="background:var(--signal)"></i>rust-camel</span><span><i style="background:var(--java)"></i>Apache Camel 4.23, Java 21</span></div>
+    <div class="bench" id="bench">
+      <div class="item"><div class="label">Request-reply<small>seda InOut</small></div><div class="bars"><div class="b r" data-w="100"><span>2.09M msgs/s</span></div><div class="b j" data-w="12"><span>250k</span></div></div><div class="x">8.4x</div></div>
+      <div class="item"><div class="label">Direct route<small>set header, count</small></div><div class="bars"><div class="b r" data-w="100"><span>4.96M msgs/s</span></div><div class="b j" data-w="23.4"><span>1.16M</span></div></div><div class="x">4.3x</div></div>
+      <div class="item"><div class="label">Async queue<small>seda, 4 producers, 4 consumers</small></div><div class="bars"><div class="b r" data-w="100"><span>5.65M msgs/s</span></div><div class="b j" data-w="23.9"><span>1.35M</span></div></div><div class="x">4.2x</div></div>
+      <div class="item"><div class="label">Content-based router<small>filter, transform</small></div><div class="bars"><div class="b r" data-w="100"><span>2.10M msgs/s</span></div><div class="b j" data-w="28.8"><span>604k</span></div></div><div class="x">3.5x</div></div>
+      <div class="item"><div class="label">Split and aggregate<small>JSON orders, 10 items each</small></div><div class="bars"><div class="b r" data-w="100"><span>113k orders/s</span></div><div class="b j" data-w="31.5"><span>35.6k</span></div></div><div class="x">3.2x</div></div>
+      <div class="item"><div class="label">HTTP consumer<small>16 keep-alive connections</small></div><div class="bars"><div class="b r" data-w="100"><span>273k req/s</span></div><div class="b j" data-w="41"><span>112k</span></div></div><div class="x">2.5x</div></div>
+    </div>
+    <p class="fine">AMD Ryzen 5 5600X, Windows 11, idle machine. HTTP is capped by the test machine, where a server that does nothing peaks near 400k req/s. Reproduce it with <code>scripts/bench.sh</code>. <a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/BENCHMARKS.md">Full method and results</a>.</p>
+  </div>
+</section>
+
+<section id="uses" aria-labelledby="uses-h">
+  <div class="wrap">
+    <h2 id="uses-h">Small enough to go where the JVM can't.</h2>
+    <p class="sub">A 10 ms start and a 10 MB footprint change where integration code can run.</p>
+    <div class="uses">
+      <article class="use">
+        <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
+          <rect class="f" x="96" y="44" width="68" height="62" rx="14"/>
+          <circle class="s" cx="118" cy="70" r="4"/><circle class="s" cx="142" cy="70" r="4"/><path class="s" d="M116 86 q14 10 28 0"/>
+          <path class="s" d="M130 44 V28"/><circle class="d" cx="130" cy="24" r="5"/>
+          <path class="s" d="M96 75 H52 M164 75 H208 M130 106 V126"/>
+          <rect class="s" x="16" y="62" width="36" height="26" rx="6"/><rect class="s" x="208" y="62" width="36" height="26" rx="6"/><rect class="s" x="112" y="126" width="36" height="18" rx="5"/>
+        </svg>
+        <h3>The action layer for agents</h3>
+        <p>Give an agent 230 tools it can call safely: databases, queues, SaaS APIs and files, with retries, idempotency and audit built in.</p>
+      </article>
+      <article class="use">
+        <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
+          <path class="s" d="M70 104 a26 26 0 0 1 4-52 a36 36 0 0 1 68-8 a30 30 0 0 1 46 26 a20 20 0 0 1-6 34 Z"/>
+          <path class="f" d="M128 60 l-14 26 h14 l-6 24 22-32 h-14 l8-18 z"/>
+          <text x="196" y="132" font-family="JetBrains Mono, monospace" font-size="12" fill="#5b6479">10 ms</text>
+        </svg>
+        <h3>Serverless without the cold start</h3>
+        <p>Start per request, scale to zero, pay for milliseconds. No JVM warmup, no snapshot tricks.</p>
+      </article>
+      <article class="use">
+        <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
+          <rect class="s" x="90" y="40" width="80" height="72" rx="8"/>
+          <rect class="f" x="104" y="54" width="52" height="44" rx="4"/>
+          <path class="s" d="M104 40 V28 M118 40 V28 M132 40 V28 M146 40 V28 M156 40 V28 M104 112 V124 M118 112 V124 M132 112 V124 M146 112 V124 M156 112 V124 M90 60 H78 M90 76 H78 M90 92 H78 M170 60 H182 M170 76 H182 M170 92 H182"/>
+          <circle class="d" cx="130" cy="76" r="6"/>
+        </svg>
+        <h3>Gateways at the edge</h3>
+        <p>Run MQTT, Modbus-style feeds and HTTP routing on small devices, with one binary and no runtime to install.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="in-h">
+  <div class="wrap inside">
+    <div>
+      <h2 id="in-h">Everything Camel does, from scratch.</h2>
+      <p class="sub" style="margin-bottom:0">No third-party crates. Every protocol below is written on the Rust standard library and checked against real servers and official clients.</p>
+      <div class="count">
+        <div><b>230</b><span>components, languages, formats</span></div>
+        <div><b>0</b><span>dependencies</span></div>
+        <div><b>2,300+</b><span>tests</span></div>
+      </div>
+    </div>
+    <div class="wall" aria-label="Protocols and formats built in">
+      <span class="k">All Camel EIPs</span><span class="k">YAML DSL</span><span class="k">XML DSL</span><span class="k">REST DSL</span><span class="k">Kamelets</span>
+      <span>Kafka</span><span>AMQP 0-9-1</span><span>AMQP 1.0</span><span>MQTT</span><span>STOMP</span><span>JMS</span>
+      <span>HTTP/1.1</span><span>HTTP/2</span><span>gRPC</span><span>TLS 1.3</span><span>SSH / SFTP</span><span>FTP / FTPS</span>
+      <span>PostgreSQL</span><span>Redis</span><span>MongoDB</span><span>Cassandra</span><span>Elasticsearch</span><span>CouchDB</span>
+      <span>AWS S3, SQS, SNS</span><span>DynamoDB</span><span>Azure Service Bus</span><span>Event Hubs</span><span>GCP Pub/Sub</span><span>BigQuery</span>
+      <span>OpenAI</span><span>AWS Bedrock</span><span>Azure OpenAI</span><span>Vertex AI</span>
+      <span>SMTP / IMAP</span><span>SOAP</span><span>XSLT / XQuery</span><span>JSONPath</span><span>Avro</span><span>Protobuf</span><span>PGP</span>
+    </div>
+  </div>
+</section>
+
+<section id="start" aria-labelledby="start-h">
+  <div class="wrap start">
+    <div>
+      <h2 id="start-h">Run your first route in a minute.</h2>
+      <p class="sub">You need Rust stable. Nothing else gets downloaded.</p>
+      <ol class="steps">
+        <li><div>Clone the repository<code>git clone https://github.com/pmsudhi/Rust-camel</code></div></li>
+        <li><div>Build the <code style="display:inline;padding:2px 6px">camel</code> CLI<code>cargo build --release -p camel-main</code></div></li>
+        <li><div>Run any Camel YAML route<code>target/release/camel run triage.camel.yaml</code></div></li>
+      </ol>
+    </div>
+    <div class="code">
+      <header><span>Or embed it in Rust</span><button class="copy" data-copy="rs">Copy</button></header>
+<pre id="rs"><code><span class="tk-k">use</span> camel_core::prelude::*;
+<span class="tk-k">use</span> std::{thread, time::Duration};
+
+<span class="tk-k">fn</span> main() -&gt; Result&lt;()&gt; {
+    <span class="tk-k">let</span> ctx = CamelContext::new();
+    ctx.add_routes(|b| {
+        b.from(<span class="tk-s">"timer:hello?period=200"</span>)
+            .set_body(simple(<span class="tk-s">"Hello from rust-camel"</span>))
+            .to(<span class="tk-s">"log:greetings"</span>);
+    })?;
+    ctx.start()?;
+    thread::sleep(Duration::from_secs(2));
+    ctx.stop()
+}</code></pre>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>rust-camel</h4>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a> (<a href="https://github.com/apache/camel">source</a>), following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>Apache License 2.0.</p>
+    </div>
+    <div>
+      <h4>Project</h4>
+      <ul>
+        <li><a href="https://github.com/pmsudhi/Rust-camel">Source on GitHub</a></li>
+        <li><a href="https://github.com/pmsudhi/Rust-camel/releases">Releases</a></li>
+        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/SECURITY.md">Security</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/FEATURES.md">All components</a></li>
+        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/BENCHMARKS.md">Benchmarks</a></li>
+        <li><a href="https://github.com/pmsudhi/Rust-camel/blob/main/docs/ROADMAP.md">Roadmap</a></li>
+        <li><a href="llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduce) { var d = document.querySelector('.diagram'); if (d && d.pauseAnimations) d.pauseAnimations(); }
+
+  var top = document.getElementById('top');
+  addEventListener('scroll', function () { top.classList.toggle('scrolled', scrollY > 8); }, { passive: true });
+
+  // runtime toggle
+  var data = {
+    rust: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">rust-camel 0.1.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
+    java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (JBang, Java 21)</span>', '<span class="ok">Started route triage in 751 ms</span>'], start: ['751 ms', 100], mem: ['366 MB', 100], size: ['JDK + jars', 100] }
+  };
+  var term = document.getElementById('term'), runner = document.getElementById('runner'), tog = runner.querySelector('.toggle'), timer;
+  function show(side) {
+    var d = data[side];
+    tog.dataset.side = side; runner.dataset.side = side;
+    tog.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.side === side); });
+    ['start', 'mem', 'size'].forEach(function (k) { document.getElementById('m-' + k).textContent = d[k][0]; document.getElementById('b-' + k).style.width = d[k][1] + '%'; });
+    clearTimeout(timer); term.innerHTML = '';
+    var i = 0, delay = side === 'rust' ? 120 : 520;
+    (function next() { if (i >= d.lines.length) return; term.innerHTML += (i ? '\n' : '') + d.lines[i++]; timer = setTimeout(next, reduce ? 0 : delay); })();
+  }
+  tog.addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) show(b.dataset.side); });
+  show('rust');
+
+  // benchmark bars: one reveal when the chart comes into view
+  var bench = document.getElementById('bench');
+  function grow() { bench.querySelectorAll('.b').forEach(function (b, i) { b.style.transitionDelay = (reduce ? 0 : Math.floor(i / 2) * 90) + 'ms'; b.style.width = (b.dataset.w * 0.78) + '%'; }); }
+  if ('IntersectionObserver' in window && !reduce) {
+    var io = new IntersectionObserver(function (es) { if (es[0].isIntersecting) { grow(); io.disconnect(); } }, { threshold: .3 });
+    io.observe(bench);
+  } else grow();
+
+  // copy buttons
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var text = document.getElementById(btn.dataset.copy).innerText;
+      navigator.clipboard.writeText(text).then(function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1400); });
+    });
+  });
+})();
+</script>
+</body>
+</html>

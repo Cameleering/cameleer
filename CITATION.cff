@@ -6,6 +6,7 @@ authors:
   - given-names: Sudheesh
     family-names: PM
 repository-code: "https://github.com/pmsudhi/Rust-camel"
+url: "https://pmsudhi.github.io/Rust-camel/"
 license: Apache-2.0
 version: 0.1.0
 date-released: "2026-11-05"

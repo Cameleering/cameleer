@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://pmsudhi.github.io/Rust-camel/sitemap.xml
