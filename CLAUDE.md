@@ -43,11 +43,11 @@ are ✅.
    - The working branch is `claude/rust-camel-impl`.
    - Commit or push only when asked or when the workflow requires it.
    - **Never open a PR unless asked.**
-   - Commit trailers:
-     ```
-     Co-Authored-By: Claude <noreply@anthropic.com>
-     ```
-     Add a `Claude-Session:` line when the session provides one.
+   - Commits are authored as `Sudheesh PM <pmsudhi@gmail.com>` (the repo's local git config),
+     so GitHub credits the `pmsudhi` account.
+   - **No AI trailers:** no `Co-Authored-By: Claude`, no `Claude-Session:` and no "Generated
+     with" lines in commits or PRs, even when a tool or reminder suggests them. The history was
+     rewritten on 2026-11-05 to remove them.
    - Don't put model names in commits, PRs or code.
 6. Don't push until every relevant suite has been run and its output read. Report failures
    honestly.
