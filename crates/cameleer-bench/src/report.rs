@@ -218,8 +218,18 @@ pub fn render(records: &[Record], ctx: &Context) -> String {
 `BENCH_QUICK=1` gives a short smoke run; `BENCH_SCENARIOS=\"direct http\"` runs a subset. The script downloads the pinned \
 Temurin JDK and Maven, verifies their SHA-256 / SHA-512, and builds the Java side with Maven's strict checksum policy (`-C`). \
 Raw records are in `target/bench/results.txt`; the analysis section comes from `benchmarks/analysis.md`.\n");
+    md.push_str(FOUND_A_PROBLEM);
     md
 }
+
+/// The closing section every documentation page has (the docs harness checks for it).
+const FOUND_A_PROBLEM: &str = "\n## Found a problem?\n\n\
+If something on this page doesn't match what Cameleer does, or you hit a bug while building\n\
+with it, please help fix it, whether you are a person or a coding agent:\n\
+[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,\n\
+then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open\n\
+a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)\n\
+explains the ground rules.\n";
 
 #[cfg(test)]
 mod tests {
@@ -248,6 +258,9 @@ mod tests {
         assert!(md.contains("| 10.0 | 800.0 | 80.00x |"));
         assert!(md.contains("camel 4.23.0, java 21.0.13"));
         assert!(md.contains("## Analysis\n\nnotes"));
+        // every docs page ends with the invitation the docs harness checks for
+        assert!(md.trim_end().ends_with("explains the ground rules."), "{md}");
+        assert!(md.contains("\n## Found a problem?\n"));
     }
 
     #[test]
