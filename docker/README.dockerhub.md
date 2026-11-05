@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/pmsudhi/cameleer/main/site/brand/cameleer-logo.png" alt="Cameleer" width="480"></p>
+
 # Cameleer
 
 **Apache Camel routes, rebuilt in Rust.** If you know [Apache Camel](https://camel.apache.org/), you already know Cameleer: the same YAML DSL, endpoint URIs, Enterprise Integration Patterns and Simple expressions, in a single native binary.

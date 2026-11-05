@@ -1223,7 +1223,9 @@ TEMPLATE = """<!doctype html>
 <meta property="og:url" content="{url}">
 <meta property="og:image" content="{og_image}">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" href="{site_root}favicon.svg" type="image/svg+xml">
+<link rel="icon" href="{site_root}favicon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="{site_root}favicon-192.png" sizes="192x192" type="image/png">
+<link rel="apple-touch-icon" href="{site_root}apple-touch-icon.png">
 <link rel="alternate" type="text/plain" href="{site_root}llms.txt" title="LLM-readable summary">
 {alt}<link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -1236,7 +1238,7 @@ TEMPLATE = """<!doctype html>
 <header class="top scrolled" id="top">
   <div class="wrap">
     <a class="brand" href="{site_root}" aria-label="Cameleer home">
-      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><rect x="1" y="1" width="26" height="26" rx="7" fill="#18203a"/><path d="M6 18c2.5 0 3-6 5.5-6s2.5 4 4.5 4 2-6 4.5-6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/><circle cx="20.5" cy="10" r="2" fill="#e9a21f"/></svg>
+      <img src="{site_root}brand/cameleer-mark.png" width="32" height="32" alt="" aria-hidden="true">
       Cameleer
     </a>
     <nav aria-label="Main">
@@ -1318,7 +1320,7 @@ def main(argv=None):
     site_src = os.path.join(repo, "site")
     if os.path.normcase(out) != os.path.normcase(site_src):
         # building elsewhere: bring the shared assets and the home page along
-        for f in ["index.html", "favicon.svg", "og.png", "robots.txt", ".nojekyll"]:
+        for f in ["index.html", "favicon-32.png", "favicon-192.png", "apple-touch-icon.png", "og.png", "robots.txt", ".nojekyll"]:
             if os.path.exists(os.path.join(site_src, f)):
                 os.makedirs(out, exist_ok=True)
                 shutil.copyfile(os.path.join(site_src, f), os.path.join(out, f))

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="site/logo.png" alt="Cameleer: the integration layer for AI agents, Camel-compatible routes in Rust" width="640">
+  <img src="site/brand/cameleer-logo.png" alt="Cameleer: the integration layer for AI agents, Camel-compatible routes in Rust" width="520">
 </p>
 
 # Cameleer
