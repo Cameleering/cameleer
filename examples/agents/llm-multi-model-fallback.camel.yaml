@@ -1,0 +1,31 @@
+# Multi-model fallback: `POST /chat` asks the primary model (a hosted API) and fails over to a
+# second OpenAI-compatible model (for example a local Ollama or vLLM server) when the primary
+# fails: an outage, a timeout, an HTTP 429 rate limit or a 401. The `X-Answered-By` response
+# header names the model that answered.
+#
+# Needs: two OpenAI-compatible APIs. The openai component reads OPENAI_API_KEY from the
+# environment (local servers usually ignore it).
+#   export OPENAI_API_KEY=sk-... FALLBACK_BASE_URL=http://localhost:11434/v1 FALLBACK_MODEL=llama3.1
+#   # optional: PRIMARY_BASE_URL (default https://api.openai.com/v1), PRIMARY_MODEL (gpt-4o-mini)
+#
+# Run with Docker (Linux; with Docker Desktop use host.docker.internal in FALLBACK_BASE_URL):
+#   docker run --rm --network host -e OPENAI_API_KEY -e FALLBACK_BASE_URL -e FALLBACK_MODEL \
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/llm-multi-model-fallback.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/chat -d 'Explain the dead letter channel in one sentence.'
+- route:
+    id: chat-with-fallback
+    from:
+      uri: "platform-http:/chat?httpMethodRestrict=POST"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - loadBalance:
+            failover:
+              maximumFailoverAttempts: 1
+            steps:
+              - to: "openai:chat-completion?model={{env:PRIMARY_MODEL:gpt-4o-mini}}&baseUrl={{env:PRIMARY_BASE_URL:https://api.openai.com/v1}}&timeout=30s"
+              - to: "openai:chat-completion?model={{env:FALLBACK_MODEL:llama3.1}}&baseUrl={{env:FALLBACK_BASE_URL:http://localhost:11434/v1}}&timeout=60s"
+        - setHeader:
+            name: X-Answered-By
+            simple: "${header.CamelOpenAIResponseModel}"

@@ -1,0 +1,54 @@
+# LLM classification and routing: an HTTP endpoint takes support tickets, a model labels each
+# one `billing`, `technical` or `other`, and a content-based router sends the ticket to one
+# Kafka topic per label. The router only trusts a fixed list of labels, so an unexpected answer
+# (or a prompt injection in the ticket) lands on the general topic. The caller gets
+# `202 Accepted` and the label.
+#
+# Needs: a Kafka broker and an OpenAI-compatible API (OpenAI, Azure OpenAI, Ollama, vLLM, ...).
+# The openai component reads OPENAI_API_KEY from the environment.
+#   export KAFKA_BROKERS=localhost:9092 OPENAI_API_KEY=sk-...
+#   # optional: OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_MODEL=llama3.1 for a local model
+#
+# Run with Docker (Linux; with Docker Desktop use KAFKA_BROKERS=host.docker.internal:9092):
+#   docker run --rm --network host -e KAFKA_BROKERS -e OPENAI_API_KEY \
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/llm-classify-route.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/tickets -d 'I was charged twice for my invoice'
+- route:
+    id: classify-ticket
+    from:
+      uri: "platform-http:/tickets?httpMethodRestrict=POST"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setProperty:
+            name: ticket
+            simple: "${body}"
+        - to: "openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&temperature=0&systemMessage=Label the support ticket with exactly one word. billing for payments and invoices, technical for errors and outages, other for everything else."
+        - setHeader:
+            name: category
+            simple: "${body.trim().toLowerCase()}"
+        - setBody:
+            simple: "${exchangeProperty.ticket}"
+        - choice:
+            when:
+              - simple: "${header.category} == 'billing'"
+                steps:
+                  - to: "kafka:tickets-billing?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
+              - simple: "${header.category} == 'technical'"
+                steps:
+                  - to: "kafka:tickets-technical?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
+            otherwise:
+              steps:
+                - setHeader:
+                    name: category
+                    constant: other
+                - to: "kafka:tickets-general?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
+        - setHeader:
+            name: CamelHttpResponseCode
+            constant: 202
+        - setHeader:
+            name: Content-Type
+            constant: application/json
+        - setBody:
+            simple: '{"category": "${header.category}"}'

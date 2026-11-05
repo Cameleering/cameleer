@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "invoice extracted by a model",
+  "type": "object",
+  "required": ["vendor", "total", "currency"],
+  "properties": {
+    "vendor": { "type": "string", "minLength": 1 },
+    "total": { "type": "number", "minimum": 0 },
+    "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+  }
+}

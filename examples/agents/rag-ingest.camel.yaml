@@ -1,0 +1,38 @@
+# RAG ingestion: watch a folder for documents, split each one into paragraph chunks, embed every
+# chunk with an embeddings model and index it in Elasticsearch or OpenSearch with its text and
+# source, ready for k-NN search. Re-dropping a file re-indexes it under the same ids.
+#
+# Needs: an OpenAI-compatible embeddings API and Elasticsearch/OpenSearch. The openai component
+# reads OPENAI_API_KEY from the environment.
+#   export OPENAI_API_KEY=sk-... ES_HOSTS=localhost:9200   # optional: ES_INDEX, EMBEDDING_MODEL
+#
+# Run with Docker (documents in ./docs):
+#   docker run --rm --network host -e OPENAI_API_KEY -e ES_HOSTS -e INBOX_DIR=/routes/docs \
+#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" pmsudhi/cameleer run /routes/rag-ingest.camel.yaml
+- route:
+    id: rag-ingest
+    from:
+      uri: "file:{{env:INBOX_DIR:docs}}?include=.*\\.(md|txt)&move=.indexed&moveFailed=.failed"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setHeader:
+            name: docId
+            simple: "${file:onlyname.noext}"
+        - split:
+            tokenize: "\n\n"
+            steps:
+              - filter:
+                  simple: "${body.trim()} != ''"
+                  steps:
+                    - setProperty:
+                        name: chunk
+                        simple: "${body.trim()}"
+                    - to: "openai:embeddings?model={{env:EMBEDDING_MODEL:text-embedding-3-small}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}"
+                    - setHeader:
+                        name: indexId
+                        simple: "${header.docId}-${exchangeProperty.CamelSplitIndex}"
+                    - setBody:
+                        jq: '{source: header("CamelFileName"), chunk: property("CamelSplitIndex"), text: property("chunk"), embedding: .}'
+                    - to: "elasticsearch://rag?hostAddresses={{env:ES_HOSTS:localhost:9200}}&indexName={{env:ES_INDEX:docs}}&operation=Index"
+        - log: "indexed ${file:name}"

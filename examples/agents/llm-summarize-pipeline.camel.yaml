@@ -1,0 +1,27 @@
+# Summarization pipeline (map-reduce): watch a folder for long text documents, summarize each
+# paragraph with a model, then ask the model to combine the partial summaries, and write the
+# result next to the other summaries. Paragraph calls are independent, so long documents never
+# exceed the model's context window.
+#
+# Needs: an OpenAI-compatible API. The openai component reads OPENAI_API_KEY from the environment.
+#   export OPENAI_API_KEY=sk-...   # optional: OPENAI_BASE_URL, OPENAI_MODEL
+#
+# Run with Docker (documents in ./inbox, summaries written to ./outbox):
+#   mkdir -p inbox outbox
+#   docker run --rm -e OPENAI_API_KEY -e INBOX_DIR=/routes/inbox -e OUTBOX_DIR=/routes/outbox \
+#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" pmsudhi/cameleer run /routes/llm-summarize-pipeline.camel.yaml
+- route:
+    id: summarize-documents
+    from:
+      uri: "file:{{env:INBOX_DIR:inbox}}?include=.*\\.txt&move=.done&moveFailed=.failed"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - split:
+            tokenize: "\n\n"
+            aggregationStrategy: "#class:org.apache.camel.processor.aggregate.GroupedBodyAggregationStrategy"
+            steps:
+              - to: "openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&temperature=0&systemMessage=Summarize this paragraph in one sentence."
+        - to: "openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&temperature=0&systemMessage=The messages are summaries of consecutive paragraphs of one document. Combine them into a summary of at most five sentences."
+        - to: "file:{{env:OUTBOX_DIR:outbox}}?fileName=${file:onlyname.noext}.summary.txt"
+        - log: "summarized ${file:name} (${header.CamelOpenAITotalTokens} tokens for the last call)"

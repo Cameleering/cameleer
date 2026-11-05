@@ -1,0 +1,94 @@
+# Human-in-the-loop approval: an agent proposes actions with `POST /actions`. Small refunds run
+# at once; larger ones are parked as a file and a person is asked on Slack. `POST
+# /approvals/{id}` (the link in the Slack message, behind your SSO or API gateway) picks the
+# parked action up and executes it. Parked actions survive restarts because they are files.
+#
+# Needs: a Slack incoming webhook and the payments API.
+#   export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T000/B000/XXXX \
+#          PAYMENTS_URL=https://payments.internal.example.com PUBLIC_URL=https://agent-actions.example.com
+#   # optional: APPROVAL_LIMIT (default 100)
+#
+# Run with Docker (parked actions in ./pending):
+#   mkdir -p pending
+#   docker run --rm -p 8080:8080 -e SLACK_WEBHOOK_URL -e PAYMENTS_URL -e PUBLIC_URL \
+#     -e PENDING_DIR=/routes/pending --user "$(id -u):$(id -g)" -v "$PWD:/routes" \
+#     pmsudhi/cameleer run /routes/human-approval.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/actions -d '{"actionId":"a-17","orderId":"EU-4411","amount":350}'
+#   curl -XPOST localhost:8080/approvals/a-17
+- rest:
+    post:
+      - path: /actions
+        to: direct:propose
+      - path: /approvals/{id}
+        to: direct:approve
+- route:
+    id: propose-action
+    from:
+      uri: direct:propose
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setProperty:
+            name: action
+            simple: "${body}"
+        - unmarshal:
+            json: {}
+        - setHeader:
+            name: actionId
+            simple: "${body[actionId]}"
+        - choice:
+            when:
+              - simple: "${body[amount]} <= {{env:APPROVAL_LIMIT:100}}"
+                steps:
+                  - setBody:
+                      simple: "${exchangeProperty.action}"
+                  - to: direct:execute
+                  - setBody:
+                      simple: '{"status": "executed", "actionId": "${header.actionId}"}'
+            otherwise:
+              steps:
+                - setBody:
+                    simple: "${exchangeProperty.action}"
+                - to: "file:{{env:PENDING_DIR:pending}}?fileName=${header.actionId}.json"
+                - setBody:
+                    simple: "Agent wants to refund ${jsonpath($.amount)} on order ${jsonpath($.orderId)}. Approve: {{env:PUBLIC_URL:http://localhost:8080}}/approvals/${header.actionId}"
+                - to: "slack:#approvals?webhookUrl={{env:SLACK_WEBHOOK_URL}}"
+                - setHeader:
+                    name: CamelHttpResponseCode
+                    constant: 202
+                - setBody:
+                    simple: '{"status": "pending_approval", "actionId": "${header.actionId}"}'
+- route:
+    id: approve-action
+    from:
+      uri: direct:approve
+      steps:
+        - setProperty:
+            name: actionId
+            simple: "${header.id}"
+        - pollEnrich:
+            uri: "file:{{env:PENDING_DIR:pending}}?fileName=${header.id}.json&delete=true"
+            timeout: 1000
+        - choice:
+            when:
+              - simple: "${body} == null"
+                steps:
+                  - setHeader:
+                      name: CamelHttpResponseCode
+                      constant: 404
+                  - setBody:
+                      simple: "no pending action ${exchangeProperty.actionId}"
+            otherwise:
+              steps:
+                - to: direct:execute
+                - setBody:
+                    simple: '{"status": "executed", "actionId": "${exchangeProperty.actionId}"}'
+- route:
+    id: execute-action
+    from:
+      uri: direct:execute
+      steps:
+        - removeHeaders:
+            pattern: "CamelHttp*"
+        - to: "{{env:PAYMENTS_URL:http://localhost:9000}}/refunds?httpMethod=POST"
