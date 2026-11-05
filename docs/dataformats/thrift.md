@@ -1,0 +1,173 @@
+# Thrift data format
+
+> The `thrift` data format converts structured values to and from Apache Thrift binary, compact or JSON encodings, using a Thrift IDL file read at runtime instead of generated classes.
+
+**Name:** `thrift` · **Crate:** `cameleer-dataformats` ·
+**Apache Camel:** [Thrift](https://camel.apache.org/components/next/dataformats/thrift-dataformat.html)
+
+## When to use it
+
+- Talk to services and queues that carry Thrift-encoded payloads (common in older big-data
+  stacks: Scribe, HBase, Cassandra Thrift, internal RPC).
+- Turn compact binary Thrift records from Kafka into JSON for a dashboard, a search index or
+  an LLM prompt.
+- Keep one `.thrift` file as the contract and change it without recompiling anything.
+
+For Thrift RPC calls (client and server) see the `thrift` component, which uses the same IDL
+parser.
+
+## Marshal and unmarshal
+
+| direction | input body | output body |
+|---|---|---|
+| marshal | an object keyed by field name (for `json`/`sjson` also a JSON string) | Thrift bytes (`binary`, `compact`) or a JSON string (`json`, `sjson`); sets `Content-Type` |
+| unmarshal | Thrift bytes or JSON text | an object keyed by field name |
+
+Value mapping: structs, unions and exceptions are objects; enums are their names; `binary`
+fields are bytes; `list` and `set` are arrays; `map` is an object. Missing fields that have a
+default in the IDL get it; missing `required` fields fail with `TException`.
+
+The IDL parser understands `struct`, `union`, `exception`, `enum`, `typedef`, `const`,
+`service` and the base types `bool byte i8 i16 i32 i64 double string binary uuid`, plus
+`list<T>`, `set<T>` and `map<K,V>`. `namespace`, `include`, annotations and comments are
+ignored, so the same file a Java build uses works unchanged.
+
+## Example
+
+<!-- file: idl/telemetry.thrift -->
+```text
+namespace java com.example.telemetry
+
+enum Status { OK = 1, WARN = 2, FAIL = 3 }
+
+struct Reading {
+  1: required string sensor,
+  2: i32 celsius,
+  3: Status status = Status.OK,
+  4: optional list<string> tags,
+}
+```
+
+JSON in, Thrift binary out (shown as hex), and back. Field 3 is filled from its default.
+
+<!-- example: thrift-binary-round-trip -->
+```yaml
+- route:
+    id: thrift-binary
+    from:
+      uri: direct:thrift-binary
+      steps:
+        - unmarshal:
+            json: {}
+        - marshal:
+            thrift:
+              idlFile: idl/telemetry.thrift
+              instanceClass: com.example.telemetry.Reading
+        - marshal:
+            hex: {}
+        - setHeader:
+            name: hex
+            simple: "${body}"
+        - unmarshal:
+            hex: {}
+        - unmarshal:
+            thrift:
+              idlFile: idl/telemetry.thrift
+              instanceClass: Reading
+        - setBody:
+            simple: "${header.hex}\n${body}"
+```
+
+<!-- input: thrift-binary-round-trip -->
+```json
+{"sensor": "t1", "celsius": 21}
+```
+
+<!-- output: thrift-binary-round-trip -->
+```text
+0b0001000000027431080002000000150800030000000100
+{"sensor":"t1","celsius":21,"status":"OK"}
+```
+
+Read the hex as Thrift binary fields: `0b 0001 00000002 7431` is field 1, a string of length
+2 (`t1`); `08 0002 00000015` is field 2, an i32 (21); `08 0003 00000001` is field 3, the enum
+default `OK` (1); `00` ends the struct.
+
+The `json` content type is Thrift's own JSON protocol (field ids and type tags), what a
+Thrift `TJSONProtocol` client sends:
+
+<!-- example: thrift-tjson -->
+```yaml
+- route:
+    id: thrift-tjson
+    from:
+      uri: direct:thrift-tjson
+      steps:
+        - marshal:
+            thrift:
+              idlFile: idl/telemetry.thrift
+              instanceClass: Reading
+              contentTypeFormat: json
+```
+
+<!-- input: thrift-tjson -->
+```json
+{"sensor": "t1", "celsius": 21, "status": "WARN", "tags": ["roof"]}
+```
+
+<!-- output: thrift-tjson -->
+```text
+{"1":{"str":"t1"},"2":{"i32":21},"3":{"i32":2},"4":{"lst":["str",1,"roof"]}}
+```
+
+## Rust DSL
+
+```rust
+let reading = DataFormatDefinition::new("thrift")
+    .option("idlFile", "idl/telemetry.thrift")
+    .option("instanceClass", "Reading")
+    .option("contentTypeFormat", "compact");
+b.from("direct:thrift-rust")
+    .unmarshal_json()
+    .marshal(reading.clone())
+    .unmarshal(reading)
+    .marshal_json();
+```
+
+## Options
+
+| option | default | description |
+|---|---|---|
+| `instanceClass` | the only struct | Struct to encode/decode, plain or qualified (`com.example.Reading`); required when the IDL has more than one struct. |
+| `schema` | (none) | The IDL inline. Alias `idl`. |
+| `idlFile` | (none) | Path of the `.thrift` file (also `file:` and `classpath:`). Alias `schemaFile`. |
+| `contentTypeFormat` | `binary` | `binary` (TBinaryProtocol), `compact` (TCompactProtocol), `json` (TJSONProtocol) or `sjson` (plain JSON, like TSimpleJSONProtocol; validated against the IDL on marshal). |
+| `contentTypeHeader` | `true` | Set `Content-Type` (`application/octet-stream` or `application/json`) on marshal. |
+
+## Differences from Apache Camel
+
+Camel needs classes generated by the Thrift compiler (`instanceClass` is a Java class name).
+Here the IDL is parsed at runtime and the value is a plain object, so `schema` or `idlFile`
+is required and `instanceClass` names the struct in it.
+
+## Common questions
+
+### How do I convert Thrift binary to JSON?
+
+`unmarshal: thrift: {idlFile: x.thrift, instanceClass: T}` followed by `marshal: json: {}`.
+
+### Which protocol does my service use?
+
+Most services use binary (`TBinaryProtocol`). If the bytes start with field headers like
+`0x15` or `0x18` rather than `0x08`/`0x0b`, it is probably compact. Try `compact`.
+
+### Can I use the same IDL that my Java project compiles?
+
+Yes. Namespaces, includes and annotations are ignored; included files are not loaded, so put
+the types you need in the file you reference.
+
+## Related
+
+- [Protobuf data format](protobuf.md), [Avro data format](avro.md)
+- [JSON data format](json.md), [Hex data format](hex.md)
+- [Apache Camel Thrift data format](https://camel.apache.org/components/next/dataformats/thrift-dataformat.html)
