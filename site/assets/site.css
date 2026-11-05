@@ -137,6 +137,12 @@ body.docs .top .wrap, body.docs footer .wrap { max-width: 1320px; }
 .article tbody tr:last-child td { border-bottom: 0; }
 .article td code { white-space: nowrap; }
 .article td:last-child code { white-space: normal; }
+/* no column may collapse: a floor for every cell, a wider one for the description column
+   (usually last); a table wider than the page scrolls inside .table instead */
+.article th, .article td { min-width: 6.5em; overflow-wrap: anywhere; }
+.article td:last-child { min-width: 18em; }
+.article td:first-child { min-width: 11em; max-width: 26em; }
+.article td:has(> img:only-child), .article td:only-child { min-width: 0; }
 
 /* generated index pages */
 .filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 8px 0 18px; }
