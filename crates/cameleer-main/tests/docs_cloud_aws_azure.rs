@@ -15,7 +15,10 @@
 
 use std::time::{Duration, Instant};
 
-use cameleer_cloud::testing::AwsMock;
+use cameleer_amqp10::testing::Amqp10Broker;
+use cameleer_cloud::testing::azure as azurite;
+use cameleer_cloud::testing::azure_services;
+use cameleer_cloud::testing::{AwsMock, AzureMock, AzuriteMock};
 use cameleer_core::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -124,15 +127,32 @@ fn main_for(id: &str, yaml: &str, configure: impl Fn(&CamelContext)) -> cameleer
 /// An AWS example: placeholders substituted, `log:` sinks swapped, endpoints resolved against
 /// the emulator, started.
 fn run_aws(aws: &AwsMock, page: &str, id: &str, env: &[(&str, &str)], swap: &[(&str, &str)]) -> cameleer_main::Main {
+    run_with(page, id, env, swap, |ctx, yaml| aws_options(ctx, aws, yaml))
+}
+
+/// An example with placeholders substituted, `log:` sinks swapped, `configure` applied to the
+/// context, every endpoint resolved, then started.
+fn run_with(page: &str, id: &str, env: &[(&str, &str)], swap: &[(&str, &str)], configure: impl Fn(&CamelContext, &str)) -> cameleer_main::Main {
     let mut yaml = env_subst(&block(page, id), env);
     for (from, to) in swap {
         assert!(yaml.contains(from), "{} does not contain {}", id, from);
         yaml = yaml.replace(from, to);
     }
-    let mut main = main_for(id, &yaml, |ctx| aws_options(ctx, aws, &yaml));
+    let mut main = main_for(id, &yaml, |ctx| configure(ctx, &yaml));
     main.start().unwrap_or_else(|e| panic!("example {} does not start: {}", id, e));
     main
 }
+
+/// Point the Azure Storage endpoints at the Azurite emulator (path-style addressing).
+fn azurite_options(ctx: &CamelContext, az: &AzuriteMock) {
+    for (scheme, url) in [("azure-storage-blob", az.blob_url()), ("azure-storage-queue", az.queue_url()), ("azure-storage-datalake", az.dfs_url()), ("azure-storage-files", az.file_url())] {
+        ctx.set_component_option(scheme, "uriEndpointOverride", url);
+        ctx.set_component_option(scheme, "overrideEndpoint", "true");
+    }
+}
+
+const STORAGE_ENV: [(&str, &str); 2] = [("AZURE_STORAGE_ACCOUNT", azurite::ACCOUNT), ("AZURE_STORAGE_KEY", azurite::ACCOUNT_KEY)];
+const ENTRA_ENV: [(&str, &str); 3] = [("AZURE_TENANT_ID", azure_services::TENANT_ID), ("AZURE_CLIENT_ID", azure_services::CLIENT_ID), ("AZURE_CLIENT_SECRET", azure_services::CLIENT_SECRET)];
 
 fn wait_for(what: &str, f: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -667,6 +687,219 @@ fn aws2_timestream_write_readings() {
 //@@AWS_TESTS@@
 
 // ---------------------------------------------------------------------------
+// Azure
+// ---------------------------------------------------------------------------
+
+#[test]
+fn azure_storage_blob_upload_and_consume() {
+    let az = AzuriteMock::start().unwrap();
+    az.create_container("reports");
+    let main = run_with(&page("azure-storage-blob"), "azure-storage-blob-upload-report", &STORAGE_ENV, &[], |ctx, _| azurite_options(ctx, &az));
+    wait_for("the report blob", || az.blob_names("reports").len() == 1);
+    let name = az.blob_names("reports")[0].clone();
+    assert!(name.starts_with("reports/20") && name.ends_with(".csv"), "{}", name);
+    assert_eq!(az.blob("reports", &name).unwrap(), b"region,total;eu,42;us,17");
+    assert_eq!(az.blob_info("reports", &name).unwrap().0, "text/csv");
+    main.stop().unwrap();
+
+    az.put_blob("incoming", "orders/o-1.json", br#"{"orderId":"o-1"}"#);
+    let main = run_with(&page("azure-storage-blob"), "azure-storage-blob-consume-incoming", &STORAGE_ENV, &[("log:incoming", "mock:incoming")], |ctx, _| azurite_options(ctx, &az));
+    assert_eq!(mock_bodies(&main, "incoming", 1), vec![r#"{"orderId":"o-1"}"#.to_string()]);
+    wait_for("the blob to be deleted", || az.blob_names("incoming").is_empty());
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_storage_queue_send_and_work() {
+    let az = AzuriteMock::start().unwrap();
+    let main = run_with(&page("azure-storage-queue"), "azure-storage-queue-send-job", &STORAGE_ENV, &[], |ctx, _| azurite_options(ctx, &az));
+    wait_for("the job message", || az.queue_messages("jobs").len() == 1);
+    assert_eq!(az.queue_messages("jobs")[0], r#"{"job":"resize","image":"cat.jpg"}"#);
+    main.stop().unwrap();
+
+    let main = run_with(&page("azure-storage-queue"), "azure-storage-queue-worker", &STORAGE_ENV, &[("log:jobs", "mock:jobs")], |ctx, _| azurite_options(ctx, &az));
+    assert_eq!(mock_bodies(&main, "jobs", 1), vec![r#"{"job":"resize","image":"cat.jpg"}"#.to_string()]);
+    wait_for("the message to be deleted", || az.queue_messages("jobs").is_empty());
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_storage_datalake_upload() {
+    let az = AzuriteMock::start().unwrap();
+    az.create_container("raw");
+    let main = run_with(&page("azure-storage-datalake"), "azure-storage-datalake-upload", &STORAGE_ENV, &[], |ctx, _| azurite_options(ctx, &az));
+    wait_for("the file", || az.blob("raw", "sensors/readings.json").is_some());
+    assert_eq!(az.blob("raw", "sensors/readings.json").unwrap(), br#"{"device":"edge-7","temperature":21.5}"#);
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_storage_files_upload_export() {
+    let az = AzuriteMock::start().unwrap();
+    az.create_share("exports");
+    let main = run_with(&page("azure-storage-files"), "azure-storage-files-upload-export", &STORAGE_ENV, &[], |ctx, _| azurite_options(ctx, &az));
+    wait_for("the file on the share", || az.share_file("exports", "daily/stock.csv").is_some());
+    assert_eq!(az.share_file("exports", "daily/stock.csv").unwrap(), b"sku,stock;A-1,12;B-7,0");
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_cosmosdb_upsert_and_change_feed() {
+    let azm = AzureMock::start().unwrap();
+    let url = azm.url();
+    let env = [("COSMOS_ENDPOINT", url.as_str()), ("COSMOS_KEY", azure_services::COSMOS_KEY)];
+    let main = run_with(&page("azure-cosmosdb"), "azure-cosmosdb-upsert-order", &env, &[], |_, _| {});
+    wait_for("the item", || azm.cosmos_items("shop", "orders").len() == 1);
+    let item = azm.cosmos_items("shop", "orders")[0].to_json();
+    assert!(item.contains("o-1001") && item.contains("c-42"), "{}", item);
+    main.stop().unwrap();
+
+    let main = run_with(&page("azure-cosmosdb"), "azure-cosmosdb-change-feed", &env, &[("log:order-changes", "mock:order-changes")], |_, _| {});
+    mock_bodies(&main, "order-changes", 1);
+    let batch = mock(&main, "order-changes").exchange(0).unwrap().body().to_json();
+    assert!(batch.starts_with('[') && batch.contains("o-1001"), "{}", batch);
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_eventgrid_publish_order() {
+    let azm = AzureMock::start().unwrap();
+    let key = "c2VjcmV0LWV2ZW50Z3JpZC1rZXk=";
+    azm.create_eventgrid_topic("orders", key);
+    let topic = azm.eventgrid_topic_url("orders");
+    let main = run_with(&page("azure-eventgrid"), "azure-eventgrid-publish-order", &[("EVENTGRID_TOPIC_ENDPOINT", &topic), ("EVENTGRID_ACCESS_KEY", key)], &[], |_, _| {});
+    wait_for("the event", || azm.eventgrid_events("orders").len() == 1);
+    let e = azm.eventgrid_events("orders")[0].to_json();
+    assert!(e.contains("Shop.OrderPlaced") && e.contains("orders/o-1001") && e.contains("99.5"), "{}", e);
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_functions_score_leads() {
+    let az = AzuriteMock::start().unwrap();
+    let azm = AzureMock::start().unwrap();
+    azm.register_function("my-function-app", "score-lead", Some("fn-key-1"), |method, _query, body| {
+        assert_eq!(method, "POST");
+        let score = if String::from_utf8_lossy(body).contains("enterprise") { 87 } else { 20 };
+        (200, "application/json".to_string(), format!("{{\"score\":{}}}", score).into_bytes())
+    });
+    az.put_queue_message("leads", r#"{"company":"ACME","plan":"enterprise"}"#);
+    let env = [STORAGE_ENV[0], STORAGE_ENV[1], ("FUNCTION_KEY", "fn-key-1")];
+    let main = run_with(&page("azure-functions"), "azure-functions-score-leads", &env, &[("log:scores", "mock:scores")], |ctx, _| {
+        azurite_options(ctx, &az);
+        ctx.set_component_option("azure-functions", "uriEndpointOverride", format!("{}/functions/my-function-app", azm.url()));
+    });
+    mock_bodies(&main, "scores", 1);
+    let ex = mock(&main, "scores").exchange(0).unwrap();
+    assert_eq!(ex.body().get("score").and_then(|v| v.as_i64()), Some(87));
+    assert_eq!(ex.header("CamelAzureFunctionsStatusCode").and_then(|v| v.as_i64()), Some(200));
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_key_vault_create_secret_and_placeholder() {
+    let azm = AzureMock::start().unwrap();
+    let env = [ENTRA_ENV[0], ENTRA_ENV[1], ENTRA_ENV[2], ("PARTNER_TOKEN", "t0k3n")];
+    let main = run_with(&page("azure-key-vault"), "azure-key-vault-create-secret", &env, &[], |ctx, _| {
+        ctx.set_component_option("azure-key-vault", "authorityHost", azm.url());
+        ctx.set_component_option("azure-key-vault", "uriEndpointOverride", azm.url());
+        ctx.set_component_option("azure-key-vault", "overrideEndpoint", "true");
+    });
+    wait_for("the secret", || azm.secret("partner-api-token").is_some());
+    assert_eq!(azm.secret("partner-api-token").unwrap(), "t0k3n");
+    main.stop().unwrap();
+
+    let id = "azure-key-vault-placeholder";
+    let yaml = block(&page("azure-key-vault"), id).replace("log:partner-api", "mock:partner-api");
+    let mut main = main_for(id, &yaml, |_| {});
+    for (k, v) in [
+        ("vaultName", "my-vault".to_string()),
+        ("tenantId", azure_services::TENANT_ID.to_string()),
+        ("clientId", azure_services::CLIENT_ID.to_string()),
+        ("clientSecret", azure_services::CLIENT_SECRET.to_string()),
+        ("authorityHost", azm.url()),
+        ("uriEndpointOverride", azm.url()),
+    ] {
+        main.set_property(format!("camel.vault.azure.{}", k), v);
+    }
+    main.start().unwrap();
+    mock_bodies(&main, "partner-api", 1);
+    assert_eq!(mock(&main, "partner-api").exchange(0).unwrap().header("Authorization").map(|v| v.to_string()).as_deref(), Some("Bearer t0k3n"));
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_openai_answer_questions() {
+    let az = AzuriteMock::start().unwrap();
+    let azm = AzureMock::start().unwrap();
+    azm.add_openai_deployment("gpt-4o-mini");
+    let opts = azm.openai_options();
+    let api_key = opts.split("apiKey=RAW(").nth(1).unwrap().split(')').next().unwrap().to_string();
+    az.put_queue_message("questions", "How long does shipping to Norway take?");
+    let env = [STORAGE_ENV[0], STORAGE_ENV[1], ("AZURE_OPENAI_API_KEY", api_key.as_str())];
+    let main = run_with(&page("azure-openai"), "azure-openai-answer-questions", &env, &[("log:answers", "mock:answers")], |ctx, _| {
+        azurite_options(ctx, &az);
+        ctx.set_component_option("azure-openai", "uriEndpointOverride", azm.url());
+    });
+    let bodies = mock_bodies(&main, "answers", 1);
+    // the emulator echoes the last user message
+    assert!(bodies[0].contains("How long does shipping to Norway take?"), "{:?}", bodies);
+    let req = azm.openai_requests()[0].to_json();
+    assert!(req.contains("You answer customer questions about shipping in two sentences.") && req.contains("0.2"), "{}", req);
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_schema_registry_register() {
+    let azm = AzureMock::start().unwrap();
+    azm.create_schema_group("orders", "Avro");
+    let main = run_with(&page("azure-schema-registry"), "azure-schema-registry-register", &ENTRA_ENV, &[("log:schemas", "mock:schemas")], |ctx, _| {
+        ctx.set_component_option("azure-schema-registry", "authorityHost", azm.url());
+        ctx.set_component_option("azure-schema-registry", "uriEndpointOverride", azm.url());
+    });
+    let bodies = mock_bodies(&main, "schemas", 1);
+    assert!(!bodies[0].is_empty());
+    assert!(mock(&main, "schemas").exchange(0).unwrap().header("CamelAzureSchemaRegistrySchemaVersion").is_some());
+    main.stop().unwrap();
+}
+
+const SB_KEY_NAME: &str = "RootManageSharedAccessKey";
+const SB_KEY: &str = "c2VjcmV0K2tleS8xMjM=";
+
+#[test]
+fn azure_servicebus_send_and_process() {
+    let b = Amqp10Broker::builder().azure(SB_KEY_NAME, SB_KEY).start().unwrap();
+    let cs = b.connection_string(SB_KEY_NAME, SB_KEY);
+    let env = [("SERVICEBUS_CONNECTION_STRING", cs.as_str())];
+    let main = run_with(&page("azure-servicebus"), "azure-servicebus-send-order", &env, &[], |_, _| {});
+    assert!(b.wait_for(Duration::from_secs(10), |b| b.queue_depth("orders") == 1));
+    main.stop().unwrap();
+
+    let main = run_with(&page("azure-servicebus"), "azure-servicebus-process-orders", &env, &[("log:orders", "mock:orders")], |_, _| {});
+    assert_eq!(mock_bodies(&main, "orders", 1), vec![r#"{"orderId":"o-1001","item":"camel saddle"}"#.to_string()]);
+    let ex = mock(&main, "orders").exchange(0).unwrap();
+    assert_eq!(ex.header("CamelAzureServiceBusContentType").map(|v| v.to_string()).as_deref(), Some("application/json"));
+    assert!(b.wait_for(Duration::from_secs(10), |b| b.queue_depth("orders") == 0 && b.inflight_count() == 0), "completed");
+    main.stop().unwrap();
+}
+
+#[test]
+fn azure_eventhubs_send_and_consume() {
+    let b = Amqp10Broker::builder().azure(SB_KEY_NAME, SB_KEY).event_hub("telemetry", 3).start().unwrap();
+    let cs = format!("{};EntityPath=telemetry", b.connection_string(SB_KEY_NAME, SB_KEY));
+    let env = [("EVENTHUBS_CONNECTION_STRING", cs.as_str())];
+    let main = run_with(&page("azure-eventhubs"), "azure-eventhubs-send-telemetry", &env, &[], |_, _| {});
+    assert!(b.wait_for(Duration::from_secs(10), |b| (0..3).map(|p| b.partition_size("telemetry", p)).sum::<usize>() == 1));
+    main.stop().unwrap();
+
+    let main = run_with(&page("azure-eventhubs"), "azure-eventhubs-consume-telemetry", &env, &[("log:telemetry", "mock:telemetry")], |_, _| {});
+    assert_eq!(mock_bodies(&main, "telemetry", 1), vec![r#"{"device":"edge-7","temperature":21.5}"#.to_string()]);
+    let ex = mock(&main, "telemetry").exchange(0).unwrap();
+    assert_eq!(ex.header("CamelAzureEventHubsPartitionKey").map(|v| v.to_string()).as_deref(), Some("edge-7"));
+    main.stop().unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // Rust DSL snippets (verbatim from the pages)
 // ---------------------------------------------------------------------------
 
@@ -1028,6 +1261,129 @@ fn rust_dsl_aws2_timestream(ctx: &CamelContext) -> Result<()> {
     Ok(())
 }
 
+fn rust_dsl_azure_storage_blob(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("azure-storage-blob://{{env:AZURE_STORAGE_ACCOUNT:mystorageaccount}}/incoming?accessKey=RAW({{env:AZURE_STORAGE_KEY:}})&deleteAfterRead=true")
+            .log("received ${header.CamelAzureStorageBlobBlobName} (${header.CamelAzureStorageBlobBlobSize} bytes)")
+            .to("log:incoming");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_storage_queue(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("azure-storage-queue://{{env:AZURE_STORAGE_ACCOUNT:mystorageaccount}}/jobs?maxMessages=10&visibilityTimeout=PT60S&accessKey=RAW({{env:AZURE_STORAGE_KEY:}})")
+            .log("job ${header.CamelAzureStorageQueueMessageId} (dequeued ${header.CamelAzureStorageQueueDequeueCount}x): ${body}")
+            .to("log:jobs");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_storage_datalake(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:readings?repeatCount=1")
+            .set_body(constant(r#"{"device":"edge-7","temperature":21.5}"#))
+            .set_header("CamelAzureStorageDataLakeFileName", constant("readings.json"))
+            .to("azure-storage-datalake://{{env:AZURE_STORAGE_ACCOUNT:mystorageaccount}}/raw?operation=upload&directoryName=sensors&accountKey=RAW({{env:AZURE_STORAGE_KEY:}})")
+            .log("stored sensors/${header.CamelAzureStorageDataLakeFileName}");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_storage_files(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:export?repeatCount=1")
+            .set_body(constant("sku,stock;A-1,12;B-7,0"))
+            .set_header("CamelAzureStorageFilesFileName", constant("stock.csv"))
+            .to("azure-storage-files://{{env:AZURE_STORAGE_ACCOUNT:mystorageaccount}}/exports?operation=uploadFile&directoryName=daily&accessKey=RAW({{env:AZURE_STORAGE_KEY:}})")
+            .log("uploaded daily/${header.CamelAzureStorageFilesFileName}");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_cosmosdb(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("azure-cosmosdb://shop/orders?databaseEndpoint={{env:COSMOS_ENDPOINT:https://myaccount.documents.azure.com:443/}}&accountKey=RAW({{env:COSMOS_KEY:}})&changeFeedStartFromBeginning=true")
+            .log("changed orders: ${body}")
+            .to("log:order-changes");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_eventgrid(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:order-event?repeatCount=1")
+            .set_body(constant(r#"{"orderId":"o-1001","total":99.5}"#))
+            .unmarshal("json")
+            .set_header("CamelAzureEventGridEventType", constant("Shop.OrderPlaced"))
+            .set_header("CamelAzureEventGridSubject", constant("orders/o-1001"))
+            .to("azure-eventgrid:{{env:EVENTGRID_TOPIC_ENDPOINT:https://mytopic.westeurope-1.eventgrid.azure.net/api/events}}?accessKey=RAW({{env:EVENTGRID_ACCESS_KEY:}})")
+            .log("published event ${header.CamelAzureEventGridEventId}");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_functions(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("azure-storage-queue://{{env:AZURE_STORAGE_ACCOUNT:mystorageaccount}}/leads?accessKey=RAW({{env:AZURE_STORAGE_KEY:}})")
+            .to("azure-functions://{{env:FUNCTION_APP:my-function-app}}/score-lead?functionKey=RAW({{env:FUNCTION_KEY:}})&parseJson=true")
+            .log("lead score ${body[score]} (HTTP ${header.CamelAzureFunctionsStatusCode})")
+            .to("log:scores");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_key_vault(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:store-token?repeatCount=1")
+            .set_header("CamelAzureKeyVaultSecretName", constant("partner-api-token"))
+            .set_body(constant("{{env:PARTNER_TOKEN:}}"))
+            .to("azure-key-vault://{{env:AZURE_KEY_VAULT_NAME:my-vault}}?operation=createSecret&tenantId={{env:AZURE_TENANT_ID:}}&clientId={{env:AZURE_CLIENT_ID:}}&clientSecret=RAW({{env:AZURE_CLIENT_SECRET:}})")
+            .log("stored ${body} (version ${header.CamelAzureKeyVaultSecretVersion})");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_openai(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("azure-storage-queue://{{env:AZURE_STORAGE_ACCOUNT:mystorageaccount}}/questions?accessKey=RAW({{env:AZURE_STORAGE_KEY:}})")
+            .to("azure-openai://{{env:AZURE_OPENAI_RESOURCE:my-openai}}/{{env:AZURE_OPENAI_DEPLOYMENT:gpt-4o-mini}}?apiKey=RAW({{env:AZURE_OPENAI_API_KEY:}})&operation=chatCompletion&temperature=0.2&systemMessage=You answer customer questions about shipping in two sentences.")
+            .log("answer (${header.CamelAzureOpenAIFinishReason}): ${body}")
+            .to("log:answers");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_schema_registry(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:register-schema?repeatCount=1")
+            .set_body(constant(r#"{"type":"record","name":"Order","namespace":"com.example","fields":[{"name":"id","type":"string"},{"name":"total","type":"double"}]}"#))
+            .to("azure-schema-registry://{{env:EVENTHUBS_NAMESPACE:my-namespace}}/orders?operation=registerSchema&schemaName=com.example.Order&tenantId={{env:AZURE_TENANT_ID:}}&clientId={{env:AZURE_CLIENT_ID:}}&clientSecret=RAW({{env:AZURE_CLIENT_SECRET:}})")
+            .log("schema id ${body}, version ${header.CamelAzureSchemaRegistrySchemaVersion}")
+            .to("log:schemas");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_servicebus(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("azure-servicebus:orders?connectionString=RAW({{env:SERVICEBUS_CONNECTION_STRING:Endpoint=sb://my-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=change-me}})&maxConcurrentCalls=4")
+            .log("order ${header.CamelAzureServiceBusMessageId} (delivery ${header.CamelAzureServiceBusDeliveryCount}): ${body}")
+            .to("log:orders");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_azure_eventhubs(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("azure-eventhubs:?connectionString=RAW({{env:EVENTHUBS_CONNECTION_STRING:Endpoint=sb://my-namespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=change-me;EntityPath=telemetry}})&initialPosition=earliest")
+            .convert_body_to("String")
+            .log("partition ${header.CamelAzureEventHubsPartitionId} offset ${header.CamelAzureEventHubsOffset}: ${body}")
+            .to("log:telemetry");
+    })?;
+    Ok(())
+}
+
 //@@RUST_DSL@@
 
 type DslFn = fn(&CamelContext) -> Result<()>;
@@ -1070,6 +1426,18 @@ fn rust_dsl_snippets_build() {
         ("aws2-step-functions", rust_dsl_aws2_step_functions),
         ("aws2-sts", rust_dsl_aws2_sts),
         ("aws2-timestream", rust_dsl_aws2_timestream),
+        ("azure-storage-blob", rust_dsl_azure_storage_blob),
+        ("azure-storage-queue", rust_dsl_azure_storage_queue),
+        ("azure-storage-datalake", rust_dsl_azure_storage_datalake),
+        ("azure-storage-files", rust_dsl_azure_storage_files),
+        ("azure-cosmosdb", rust_dsl_azure_cosmosdb),
+        ("azure-eventgrid", rust_dsl_azure_eventgrid),
+        ("azure-functions", rust_dsl_azure_functions),
+        ("azure-key-vault", rust_dsl_azure_key_vault),
+        ("azure-openai", rust_dsl_azure_openai),
+        ("azure-schema-registry", rust_dsl_azure_schema_registry),
+        ("azure-servicebus", rust_dsl_azure_servicebus),
+        ("azure-eventhubs", rust_dsl_azure_eventhubs),
         //@@RUST_DSL_LIST@@
     ];
     let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/docs_cloud_aws_azure.rs")).unwrap().replace("\r\n", "\n");
