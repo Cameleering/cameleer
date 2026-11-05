@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-03. Branch `claude/rust-camel-impl`. The verified head before this file
+_Last updated: 2026-11-03. Branch `main`. The verified head before this file
 was added is `7de6166`._
 
 ## Where things stand
@@ -135,7 +135,7 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout claude/rust-camel-impl && cargo test --workspace`. Expect 2252 passing
+1. `git checkout main && cargo test --workspace`. Expect 2322 passing
    on Windows. Linux runs the Unix-only variants instead.
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.

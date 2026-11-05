@@ -40,7 +40,8 @@ are ✅.
    - Never create cloud accounts, accept terms or spend money on the owner's behalf. Ask
      for credentials instead.
 5. Git:
-   - The working branch is `claude/rust-camel-impl`.
+   - The working branch is `main` (the old `claude/rust-camel-impl` branch was merged into it
+     and deleted on 2026-11-05).
    - Commit or push only when asked or when the workflow requires it.
    - **Never open a PR unless asked.**
    - Commits are authored as `Sudheesh PM <pmsudhi@gmail.com>` (the repo's local git config),
