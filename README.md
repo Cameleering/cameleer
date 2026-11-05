@@ -15,7 +15,7 @@ data formats, ported one by one and verified against the real systems.
 **But rebuilt for the agent era:** a single native binary that starts in **10 ms**, runs in about
 **10 MB**, and routes messages **4–8x faster** than Camel on the JVM.
 
-[Website](https://pmsudhi.github.io/cameleer/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
+[Website](https://pmsudhi.github.io/cameleer/) · [Docs](https://pmsudhi.github.io/cameleer/docs/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
 [Agents](#rebuilt-for-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
 
@@ -337,6 +337,14 @@ target/release/cameleer run examples/rest-api.camel.yaml
 ```
 
 The CLI also installs as `camel`, so Camel JBang habits work: `camel run`, `camel ps`, `camel stop`.
+
+### Documentation
+
+Every component, language, data format and EIP has a page with tested examples:
+[pmsudhi.github.io/cameleer/docs](https://pmsudhi.github.io/cameleer/docs/) (source in [docs/](docs/README.md)).
+Start with [getting started](docs/guides/getting-started.md), the
+[agent cookbook](docs/guides/agents.md), the [edge cookbook](docs/guides/edge.md) or the
+[component index](https://pmsudhi.github.io/cameleer/docs/components/).
 
 ### Real use cases, ready to run
 

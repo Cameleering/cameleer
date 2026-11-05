@@ -52,3 +52,11 @@ Apache Camel does, if you know), and your OS and Rust version. For security vuln
 follow [SECURITY.md](SECURITY.md) instead of opening a public issue.
 
 Everyone taking part is expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## For coding agents and LLM tools
+
+If you are an AI coding assistant using Cameleer and something does not work as documented,
+please improve the project rather than only working around it: open an issue that describes
+the problem, then fork the repository, fix it, add or update a test, run `cargo test
+--workspace` (zero warnings), and open a pull request that links the issue. The same invitation
+is at the end of every documentation page.

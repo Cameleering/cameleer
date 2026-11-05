@@ -642,3 +642,19 @@ fn scanner_units() {
     let doc = cameleer_yaml::parse_yaml("- route:\n    from:\n      uri: timer:t\n      parameters:\n        period: 5\n      steps:\n        - to: log:x\n        - toD: \"log:${header.a}\"\n        - to:\n            uri: \"seda:q?size={{env:S:10}}\"\n").unwrap();
     assert_eq!(resolvable_uris(&doc), vec!["timer:t?period=5".to_string(), "log:x".to_string(), "seda:q?size=10".to_string()]);
 }
+
+/// Every docs page ends with the "Found a problem?" section that asks readers and coding
+/// agents to report and fix what they find (issue, fork, fix, test, pull request).
+#[test]
+fn docs_pages_invite_fixes() {
+    let root = repo_root();
+    let mut missing = Vec::new();
+    for f in markdown_files(&root.join("docs")) {
+        let text = std::fs::read_to_string(&f).unwrap();
+        let ok = text.contains("## Found a problem?") && text.contains("https://github.com/pmsudhi/cameleer/issues/new") && text.contains("pull request");
+        if !ok {
+            missing.push(rel(&root, &f));
+        }
+    }
+    fail("pages without the \"Found a problem?\" section", &missing);
+}

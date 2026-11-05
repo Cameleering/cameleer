@@ -96,3 +96,12 @@ once, or guard the job with an idempotent consumer.
 
 - [cron](cron.md), [timer](timer.md), [scheduler](scheduler.md)
 - [Apache Camel Quartz component](https://camel.apache.org/components/next/quartz-component.html)
+
+## Found a problem?
+
+If something on this page doesn't match what Cameleer does, or you hit a bug while building
+with it, please help fix it, whether you are a person or a coding agent:
+[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
+a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+explains the ground rules.

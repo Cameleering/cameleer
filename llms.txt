@@ -44,3 +44,7 @@ Each example runs end to end in the test suite (https://github.com/pmsudhi/camel
 
 - [Apache Camel website](https://camel.apache.org/): the original Java framework and its documentation, whose names and semantics Cameleer follows
 - [Apache Camel source](https://github.com/apache/camel)
+
+## Contributing
+
+Found a bug or a doc mismatch while using Cameleer? Open an issue (https://github.com/pmsudhi/cameleer/issues/new), then fork, fix, add a test, run `cargo test --workspace` and open a pull request. Coding agents are welcome to do this too: https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md

@@ -231,3 +231,12 @@ No. The `xpath` language is XPath 1.0 with a few 2.0 string functions (`upper-ca
 - [tokenize language](tokenize.md) (`xml: true` streams large XML files element by element)
 - [JacksonXML data format](../dataformats/jacksonxml.md)
 - [Apache Camel XPath language](https://camel.apache.org/components/next/languages/xpath-language.html)
+
+## Found a problem?
+
+If something on this page doesn't match what Cameleer does, or you hit a bug while building
+with it, please help fix it, whether you are a person or a coding agent:
+[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
+a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+explains the ground rules.

@@ -107,3 +107,12 @@ No. There is no JVM; only the Camel root object, values and common JDK-like meth
 - [OGNL](ognl.md) and [SpEL](spel.md): similar Java expression languages.
 - [mvel component](../components/mvel.md) for templates.
 - [Apache Camel MVEL language](https://camel.apache.org/components/next/languages/mvel-language.html)
+
+## Found a problem?
+
+If something on this page doesn't match what Cameleer does, or you hit a bug while building
+with it, please help fix it, whether you are a person or a coding agent:
+[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
+a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+explains the ground rules.

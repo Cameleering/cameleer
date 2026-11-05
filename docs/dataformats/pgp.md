@@ -212,3 +212,12 @@ DSA and ElGamal keys are not supported.
 - [Crypto data format](crypto.md): symmetric encryption with a shared key
 - [File component](../components/file.md), [SFTP component](../components/sftp.md)
 - [Apache Camel PGP data format](https://camel.apache.org/components/next/dataformats/pgp-dataformat.html)
+
+## Found a problem?
+
+If something on this page doesn't match what Cameleer does, or you hit a bug while building
+with it, please help fix it, whether you are a person or a coding agent:
+[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
+a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+explains the ground rules.
