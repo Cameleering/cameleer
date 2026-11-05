@@ -123,6 +123,7 @@ b.from("kafka:orders")
 Same URIs, same EIPs, same expression. Only the casing follows Rust. If you write Camel YAML, you
 don't change anything at all:
 
+<!-- example: readme-big-orders -->
 ```yaml
 - route:
     id: big-orders
@@ -259,6 +260,7 @@ verification, are in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 Save this as `hello-api.camel.yaml` (or take [examples/hello-api.camel.yaml](examples/hello-api.camel.yaml)):
 
+<!-- example: readme-hello-api -->
 ```yaml
 - rest:
     path: /orders
@@ -355,6 +357,7 @@ environment variables it needs and the exact `docker run` command.
 
 The AI triage route, for example:
 
+<!-- example: readme-ai-ticket-triage -->
 ```yaml
 - route:
     id: ticket-triage

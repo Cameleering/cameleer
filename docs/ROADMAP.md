@@ -27,6 +27,7 @@ circuit breaker. A second endpoint returns the tool list (a static JSON body, or
 descriptions). Full MCP protocol support (JSON-RPC sessions, `tools/list` schemas) is the packaged
 version on the roadmap ([2.1](#21-agents-and-ai)).
 
+<!-- example: roadmap-agent-tools -->
 ```yaml
 # sketch: a tool endpoint dispatching to one route per tool
 - route:

@@ -79,6 +79,7 @@ CMD ["run", "/routes/my-route.camel.yaml", "--prop", "camel.server.enabled=true"
 
 ## Docker Compose
 
+<!-- not-camel -->
 ```yaml
 services:
   orders:
@@ -97,6 +98,7 @@ services:
 
 ## Kubernetes
 
+<!-- not-camel -->
 ```yaml
 apiVersion: v1
 kind: ConfigMap
