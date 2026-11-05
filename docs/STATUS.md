@@ -81,6 +81,9 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
   Dockerfile).
 - **Memory:** HTTP route RSS 15.2 → 10.4 MB (all components) and 4.2 MB (musl `core`); private
   memory 1.71 → 0.72 MB; idle HTTP threads 34 → 2.
+- **Container image:** 20.5 → 20.4 MB compressed with every component, 14.5 MB with
+  `FEATURES=cloud`, 12.5 MB with `FEATURES=core`; a running HTTP route uses 2.6 MiB and 3 threads
+  (was 4.5 MiB and 34).
 - **AWS Lambda:** built-in custom runtime (`cameleer_main::lambda`, `scripts/package-lambda.sh`),
   checked end to end in AWS's `provided:al2023` image with the Runtime Interface Emulator (init
   3.5–5.2 ms there). Not yet measured on the Lambda service itself (needs an AWS account).

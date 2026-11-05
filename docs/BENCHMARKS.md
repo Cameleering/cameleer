@@ -130,6 +130,18 @@ work and moves by ±1.5 ms; a hello-world takes 4.7 ms to spawn there):
 | all components | 30.0 MB | 10.3 ms | 10.3 ms | 6.8 MB |
 | `--features core` | 8.7 MB | 9.4 ms | 10.6 ms | 6.4 MB |
 
+**Container image** (linux/amd64, distroless/cc, `docker save | gzip`; memory from `docker
+stats` serving `examples/hello-api.camel.yaml` read-only as a non-root user):
+
+| image | compressed | container memory | threads |
+|---|---:|---:|---:|
+| base (`main`) | 20.5 MB | 4.5 MiB | 34 |
+| all components | 20.4 MB | 2.6 MiB | 3 |
+| `--build-arg FEATURES=cloud` | 14.5 MB | | |
+| `--build-arg FEATURES=core` | 12.5 MB | 2.6 MiB | 3 |
+
+Most of the `core` image is the distroless base layer (about 9 MB compressed).
+
 **AWS Lambda.** The `core` musl build as `bootstrap` in AWS's own `provided:al2023` image
 (`public.ecr.aws/lambda/provided:al2023@sha256:ca6c7b9e…`, which runs the Lambda Runtime
 Interface Emulator) handled a direct invoke, an HTTP API (payload 2.0) event through a
