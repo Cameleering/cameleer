@@ -1,0 +1,43 @@
+# Rate limit and circuit breaker around a model API: `POST /ask` forwards questions to a model
+# at most five times per second (extra requests wait their turn), inside a circuit breaker.
+# When the model API keeps failing, the breaker opens and callers get a fast 503 from the
+# fallback instead of waiting for timeouts, until the API recovers.
+#
+# Needs: an OpenAI-compatible API. The openai component reads OPENAI_API_KEY from the environment.
+#   export OPENAI_API_KEY=sk-...   # optional: OPENAI_BASE_URL, OPENAI_MODEL
+#
+# Run with Docker:
+#   docker run --rm -p 8080:8080 -e OPENAI_API_KEY -v "$PWD:/routes:ro" \
+#     pmsudhi/cameleer run /routes/llm-rate-limit-breaker.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/ask -d 'What is an idempotent consumer?'
+- route:
+    id: ask-model
+    from:
+      uri: "platform-http:/ask?httpMethodRestrict=POST"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - throttle:
+            constant: 5
+            timePeriodMillis: 1000
+        - circuitBreaker:
+            resilience4jConfiguration:
+              slidingWindowSize: 10
+              minimumNumberOfCalls: 5
+              failureRateThreshold: 50
+              waitDurationInOpenState: 30
+              timeoutEnabled: true
+              timeoutDuration: 60000
+            steps:
+              - to: "openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&maxTokens=300&systemMessage=Answer in at most three sentences."
+            onFallback:
+              steps:
+                - setHeader:
+                    name: CamelHttpResponseCode
+                    constant: 503
+                - setHeader:
+                    name: Retry-After
+                    constant: 30
+                - setBody:
+                    constant: "The assistant is unavailable right now. Please retry in 30 seconds."

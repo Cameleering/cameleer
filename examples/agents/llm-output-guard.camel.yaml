@@ -1,0 +1,54 @@
+# Guard LLM output with a JSON schema: `POST /extract` sends invoice text to a model that must
+# answer with JSON, and the answer is validated against schemas/invoice.json. When the answer
+# is not valid, the model is asked once more with the validation errors; if the second answer
+# is still invalid the caller gets 422 instead of bad data.
+#
+# Needs: an OpenAI-compatible API. The openai component reads OPENAI_API_KEY from the environment.
+#   export OPENAI_API_KEY=sk-...   # optional: OPENAI_BASE_URL, OPENAI_MODEL
+#
+# Run with Docker (from the folder holding this file and schemas/):
+#   docker run --rm -p 8080:8080 -e OPENAI_API_KEY -v "$PWD:/routes:ro" \
+#     pmsudhi/cameleer run /routes/llm-output-guard.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/extract -d 'Invoice 2024-118 from ACME GmbH, total 120.50 EUR'
+- route:
+    id: extract-invoice
+    from:
+      uri: "platform-http:/extract?httpMethodRestrict=POST"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setProperty:
+            name: document
+            simple: "${body}"
+        - doTry:
+            steps:
+              - to: direct:ask-for-json
+            doCatch:
+              - exception:
+                  - org.apache.camel.ValidationException
+                steps:
+                  - setBody:
+                      simple: "Your previous answer was rejected. ${exception.message}. Reply with corrected JSON only. Document follows. ${exchangeProperty.document}"
+                  - doTry:
+                      steps:
+                        - to: direct:ask-for-json
+                      doCatch:
+                        - exception:
+                            - org.apache.camel.ValidationException
+                          steps:
+                            - setHeader:
+                                name: CamelHttpResponseCode
+                                constant: 422
+                            - setBody:
+                                simple: "the model did not return a valid invoice: ${exception.message}"
+        - setHeader:
+            name: Content-Type
+            constant: application/json
+- route:
+    id: ask-for-json
+    from:
+      uri: direct:ask-for-json
+      steps:
+        - to: "openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&temperature=0&systemMessage=Extract the invoice as a JSON object with the fields vendor (string), total (number) and currency (ISO 4217 code). Reply with the JSON object only."
+        - to: "json-validator:file:{{env:SCHEMA_DIR:schemas}}/invoice.json"

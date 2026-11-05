@@ -1,0 +1,95 @@
+# An agent tool over REST: `POST /tools/refund` is a tool an AI agent can call (declare it in
+# the agent's tool list with the JSON schema in schemas/refund-request.json). The route
+#   - validates the arguments against the schema (400 with every error when they are wrong),
+#   - writes every call to an append-only audit log (one JSON object per line),
+#   - executes each requestId once (an agent that retries a call does not refund twice),
+#   - calls the payments API with retries and exponential back-off (502 when it stays down).
+#
+# Needs: the payments API base URL.
+#   export PAYMENTS_URL=https://payments.internal.example.com
+#
+# Run with Docker (audit log written to ./audit):
+#   mkdir -p audit
+#   docker run --rm -p 8080:8080 -e PAYMENTS_URL -e AUDIT_DIR=/routes/audit \
+#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" pmsudhi/cameleer run /routes/agent-tool-api.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/tools/refund -H 'Content-Type: application/json' \
+#     -d '{"requestId":"call-0001","orderId":"EU-4411","amount":25.5,"reason":"damaged"}'
+- rest:
+    path: /tools
+    post:
+      - path: /refund
+        to: direct:refund-tool
+- routeConfiguration:
+    onException:
+      - onException:
+          exception:
+            - org.apache.camel.component.jsonvalidator.JsonValidationException
+          handled:
+            constant: true
+          steps:
+            - setHeader:
+                name: CamelHttpResponseCode
+                constant: 400
+            - setBody:
+                simple: "invalid tool arguments: ${exception.message}"
+      - onException:
+          exception:
+            - org.apache.camel.http.base.HttpOperationFailedException
+            - java.io.IOException
+          redeliveryPolicy:
+            maximumRedeliveries: 3
+            redeliveryDelay: 200
+            useExponentialBackOff: true
+          handled:
+            constant: true
+          steps:
+            - setHeader:
+                name: CamelHttpResponseCode
+                constant: 502
+            - setBody:
+                simple: "payments API unavailable, the refund was not confirmed; retry later with the same requestId"
+- route:
+    id: refund-tool
+    from:
+      uri: direct:refund-tool
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - to: "json-validator:file:{{env:SCHEMA_DIR:schemas}}/refund-request.json"
+        - unmarshal:
+            json: {}
+        - setHeader:
+            name: requestId
+            simple: "${body[requestId]}"
+        - wireTap:
+            uri: direct:audit
+        - idempotentConsumer:
+            header: requestId
+            steps:
+              - removeHeaders:
+                  pattern: "CamelHttp*"
+              - marshal:
+                  json: {}
+              - enrich:
+                  uri: "{{env:PAYMENTS_URL:http://localhost:9000}}/refunds?httpMethod=POST"
+              - setBody:
+                  simple: '{"status": "refunded", "requestId": "${header.requestId}", "payment": ${body}}'
+        - filter:
+            simple: "${exchangeProperty.CamelDuplicateMessage} == true"
+            steps:
+              - setBody:
+                  simple: '{"status": "duplicate", "requestId": "${header.requestId}"}'
+        - setHeader:
+            name: Content-Type
+            constant: application/json
+- route:
+    id: audit-tool-calls
+    from:
+      uri: direct:audit
+      steps:
+        - marshal:
+            json: {}
+        - setBody:
+            simple: "${body}\n"
+        - to: "file:{{env:AUDIT_DIR:audit}}?fileName=tool-calls.jsonl&fileExist=Append"

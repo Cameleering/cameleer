@@ -1,0 +1,26 @@
+# Syslog to Kafka: receive syslog (RFC 5424 and RFC 3164) from routers, PLCs and Linux hosts on
+# the site network over UDP, keep warnings and worse, and forward them to Kafka as JSON, keyed by
+# host name. Informational noise stays local.
+#
+# Needs: a Kafka broker.
+#   export KAFKA_BROKERS=kafka.example.com:9092   # optional: SYSLOG_PORT (default 5514)
+#
+# Run with Docker (Linux):
+#   docker run --rm --network host --read-only -e KAFKA_BROKERS \
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/syslog-to-kafka.camel.yaml
+# Try:
+#   logger -n 127.0.0.1 -P 5514 -d -p user.err "disk almost full"
+- route:
+    id: syslog-alerts
+    from:
+      uri: "syslog:udp://{{env:SYSLOG_HOST:0.0.0.0}}:{{env:SYSLOG_PORT:5514}}"
+      steps:
+        - filter:
+            simple: "${header.CamelSyslogSeverity} in 'EMERG,ALERT,CRIT,ERR,WARNING'"
+            steps:
+              - setHeader:
+                  name: kafka.KEY
+                  simple: "${header.CamelSyslogHostname}"
+              - marshal:
+                  json: {}
+              - to: "kafka:syslog-alerts?brokers={{env:KAFKA_BROKERS:localhost:9092}}"

@@ -1,0 +1,36 @@
+# HL7 v2 over MLLP to an HTTP API: a hospital edge gateway receives ADT messages from the
+# local HIS or lab system over MLLP, reads the patient id with an HL7 terser path, and posts
+# the message to a central EHR API. The MLLP acknowledgement is sent after the HTTP call: AA
+# when the EHR accepted the message, AE when it still failed after retries, so the sender
+# keeps it and resends. Other message types are acknowledged and not forwarded.
+#
+# Needs: the EHR ingest URL.
+#   export EHR_URL=https://ehr.example.org   # optional: MLLP_PORT (default 2575)
+#
+# Run with Docker:
+#   docker run --rm -p 2575:2575 --read-only -e EHR_URL \
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hl7-mllp-to-http.camel.yaml
+- route:
+    id: hl7-to-ehr
+    errorHandler:
+      defaultErrorHandler:
+        redeliveryPolicy:
+          maximumRedeliveries: 5
+          redeliveryDelay: "{{env:RETRY_DELAY_MS:2000}}"
+    from:
+      uri: "mllp://{{env:MLLP_HOST:0.0.0.0}}:{{env:MLLP_PORT:2575}}"
+      steps:
+        - filter:
+            simple: "${header.CamelMllpEventType} == 'ADT'"
+            steps:
+              - setHeader:
+                  name: X-Patient-Id
+                  hl7terser: "PID-3-1"
+              - setHeader:
+                  name: X-Message-Control-Id
+                  simple: "${header.CamelMllpMessageControlId}"
+              - setHeader:
+                  name: Content-Type
+                  constant: application/hl7-v2
+              - enrich:
+                  uri: "{{env:EHR_URL:http://localhost:9000}}/hl7/v2?httpMethod=POST"

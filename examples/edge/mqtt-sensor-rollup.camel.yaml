@@ -1,0 +1,52 @@
+# MQTT sensor ingestion at the edge: subscribe to temperature readings from every sensor on the
+# local MQTT broker, drop malformed and out-of-range readings, and send one rollup per sensor
+# (count, min, max, average of 5 readings, or whatever arrived within a minute) to Kafka, keyed
+# by sensor. Raw readings stay on site; only rollups cross the uplink.
+#
+# Needs: an MQTT broker (Mosquitto, EMQX, HiveMQ, ...) and a Kafka broker.
+#   export MQTT_BROKER=tcp://localhost:1883 KAFKA_BROKERS=kafka.example.com:9092 GATEWAY_ID=plant-7
+#
+# Run with Docker (arm64 and amd64; Linux):
+#   docker run --rm --network host --read-only -e MQTT_BROKER -e KAFKA_BROKERS -e GATEWAY_ID \
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/mqtt-sensor-rollup.camel.yaml
+# Try:
+#   mosquitto_pub -t sensors/t1/temperature -m 21.5
+- route:
+    id: sensor-rollup
+    from:
+      uri: "paho:sensors/+/temperature?brokerUrl={{env:MQTT_BROKER:tcp://localhost:1883}}&qos=1&clientId={{env:GATEWAY_ID:gateway-1}}-rollup"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setHeader:
+            name: sensor
+            simple: "${header.CamelMqttTopic.split('/')[1]}"
+        - choice:
+            when:
+              - simple: "${body} !regex '-?[0-9]+(\\.[0-9]+)?'"
+                steps:
+                  - log: "dropped malformed reading '${body}' from ${header.sensor}"
+                  - stop: {}
+        - convertBodyTo:
+            type: java.lang.Double
+        - choice:
+            when:
+              - simple: "${body} < -40 || ${body} > 125"
+                steps:
+                  - log: "dropped out-of-range reading ${body} from ${header.sensor}"
+                  - stop: {}
+        - aggregate:
+            correlationExpression:
+              header: sensor
+            aggregationStrategy: "#class:org.apache.camel.processor.aggregate.GroupedBodyAggregationStrategy"
+            completionSize: 5
+            completionInterval: 60000
+            steps:
+              - setBody:
+                  jq: '{gateway: "{{env:GATEWAY_ID:gateway-1}}", sensor: header("sensor"), count: length, min: min, max: max, avg: (add / length)}'
+              - marshal:
+                  json: {}
+              - setHeader:
+                  name: kafka.KEY
+                  simple: "${header.sensor}"
+              - to: "kafka:sensor-rollups?brokers={{env:KAFKA_BROKERS:localhost:9092}}"
