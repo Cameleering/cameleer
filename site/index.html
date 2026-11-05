@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cameleer: Camel-compatible integration routes in Rust</title>
-<meta name="description" content="Cameleer is Apache Camel rewritten in Rust: the same routes, EIPs, endpoint URIs and YAML DSL, about 230 components, no dependencies. Starts in 10 ms, runs in 10 MB, 2.5-8x faster than Camel on the JVM. Built for AI agents, serverless and the edge.">
+<meta name="description" content="Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. Runs Apache Camel routes in Rust: 10 ms startup, about 10 MB of memory.">
 <meta name="keywords" content="Apache Camel, Rust, integration, enterprise integration patterns, EIP, AI agents, serverless, edge, Kafka, messaging, YAML DSL">
 <link rel="canonical" href="https://pmsudhi.github.io/cameleer/">
 <meta name="theme-color" content="#ffffff">
@@ -12,7 +12,7 @@
 <meta name="context7-site-verification" content="ask_86adbac2b101d98629eb7020">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Cameleer: Camel-compatible integration routes in Rust">
-<meta property="og:description" content="Same routes. Same patterns. 10 ms startup, 10 MB of memory, 2.5-8x the throughput.">
+<meta property="og:description" content="The integration layer for AI agents. Runs Apache Camel routes unchanged; 10 ms startup, about 10 MB of memory, 2.5-8x the throughput.">
 <meta property="og:url" content="https://pmsudhi.github.io/cameleer/">
 <meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -59,6 +59,8 @@ h1 .strike::after { content: ""; position: absolute; left: 0; right: 0; top: 54%
 @keyframes strike { from { transform: scaleX(0); } }
 .lede { font-size: 20px; color: var(--muted); max-width: 30em; margin: 0 0 32px; }
 .lede strong { color: var(--ink); font-weight: 600; }
+.agent-line { font-size: 17px; line-height: 1.55; color: var(--ink); max-width: 32em; margin: -12px 0 32px; padding: 2px 0 2px 16px; border-left: 3px solid var(--signal); }
+.agent-line strong { font-weight: 700; }
 .ctas { display: flex; gap: 12px; flex-wrap: wrap; }
 .btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 10px; font-weight: 600; text-decoration: none; font-size: 16px; transition: transform .15s, background .15s, border-color .15s; }
 .btn:active { transform: translateY(1px); }
@@ -228,7 +230,8 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <span class="line"><span class="strike">On the JVM.</span></span>
         <span class="line">In Rust.</span>
       </h1>
-      <p class="lede">Runs your Apache Camel routes, patterns and endpoint URIs unchanged: if you know Camel, you already know Cameleer. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
+      <p class="lede">Runs your Apache Camel routes, patterns and endpoint URIs unchanged. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
+      <p class="agent-line"><strong>The integration layer for AI agents:</strong> feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.</p>
       <div class="ctas">
         <a class="btn primary" href="https://github.com/pmsudhi/cameleer">View on GitHub</a>
         <a class="btn ghost" href="#start">Run your first route</a>
