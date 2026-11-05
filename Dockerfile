@@ -36,11 +36,16 @@ WORKDIR /src
 COPY . .
 # reproducible: no build paths in the binary (panic messages), timestamps from the commit
 ARG SOURCE_DATE_EPOCH
+# component families (cameleer-main cargo features), comma separated; empty = all of them.
+# A smaller image for one integration, e.g. --build-arg FEATURES=cloud (core, HTTP and YAML are
+# always in).
+ARG FEATURES=
 RUN --mount=type=cache,target=/src/target,id=cameleer-target-$TARGETARCH \
     target=$(cat /target) \
  && export CARGO_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_LINKER=$(cat /linker) \
  && RUSTFLAGS="-C strip=symbols --remap-path-prefix=/src=. --remap-path-prefix=/usr/local/cargo=cargo" \
     cargo build --profile dist --locked -p cameleer-main --bin cameleer --target "$target" \
+      ${FEATURES:+--no-default-features --features "$FEATURES"} \
  && install -D "target/$target/dist/cameleer" /out/cameleer
 
 # distroless/cc: glibc, libgcc, CA certificates (/etc/ssl/certs), tzdata, /tmp and a non-root

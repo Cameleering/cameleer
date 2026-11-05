@@ -81,8 +81,10 @@ See [Cameleer at the edge](edge.md#small-footprint-deployment).
 ### Does it run on Kubernetes, Cloud Run or AWS Lambda?
 
 Kubernetes, Docker Compose, Google Cloud Run, Azure Container Apps, Knative and ECS/Fargate run
-the container image as it is ([deployment guide](../DEPLOYMENT.md)). A native AWS Lambda adapter
-is on the [roadmap](../ROADMAP.md).
+the container image as it is ([deployment guide](../DEPLOYMENT.md)). On AWS Lambda, `cameleer`
+is its own custom runtime for `provided.al2023`: API Gateway and function URL events go to your
+`platform-http` routes, other events to `direct:lambda`
+([AWS Lambda](../DEPLOYMENT.md#aws-lambda)).
 
 ### Does it run on Windows and macOS?
 

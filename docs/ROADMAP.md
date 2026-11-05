@@ -85,22 +85,15 @@ Keep the turn count bounded with the loop's count limit, and the cost bounded wi
 
 Dedicated vector components are on the roadmap ([2.1](#21-agents-and-ai)).
 
-### 1.4 AWS Lambda function 🧩
+### 1.4 AWS Lambda function ✅
 
 **Goal:** run routes as a Lambda function rather than a container.
 
-**How:** a Lambda custom runtime is an HTTP loop against `AWS_LAMBDA_RUNTIME_API`. Build it with
-the engine:
-- a route started once at boot does `GET /2018-06-01/runtime/invocation/next` with the `http`
-  component;
-- it sends the event body to your route with `direct:`;
-- it `POST`s the result to `/runtime/invocation/{requestId}/response`, or to `/error` from an
-  `onException`;
-- the `loop` EIP repeats it.
-
-Package the binary as `bootstrap` on the `provided.al2023` runtime; the 10 ms start makes cold starts
-cheap. A packaged adapter is on the roadmap ([2.2](#22-serverless-and-edge)). Containers on Cloud
-Run, Fargate, Azure Container Apps or Knative are ✅ today.
+**How:** `cameleer` is its own Lambda custom runtime (`provided.al2023`). Package the routes with
+`scripts/package-lambda.sh`: API Gateway and function URL events go to the `platform-http`
+routes, other events to `direct:lambda` (or the endpoint in the function's Handler setting).
+See [AWS Lambda](DEPLOYMENT.md#aws-lambda). Containers on Cloud Run, Fargate, Azure Container
+Apps or Knative work as before.
 
 ### 1.5 Streaming model output to users 🧩
 
@@ -154,10 +147,10 @@ Run, Fargate, Azure Container Apps or Knative are ✅ today.
 
 | Item | Why | Status |
 |---|---|---|
-| **AWS Lambda runtime adapter**: route as a Lambda handler, with events mapped to exchanges | packages 1.4; Lambda is the largest serverless platform | 🚧 |
+| **AWS Lambda runtime adapter**: route as a Lambda handler, with events mapped to exchanges | packages 1.4; Lambda is the largest serverless platform | ✅ built into `cameleer run` ([AWS Lambda](DEPLOYMENT.md#aws-lambda)) |
 | **Published container images and deployment examples** (Cloud Run, Fargate, Azure Container Apps, Knative) | shows scale-to-zero end to end | 🚧 |
 | **Static and ARM64 builds tested** (musl, aarch64 Linux) | edge gateways and Graviton or Ampere hosts; today the hermetic suite runs on Windows and Linux x86-64 | 🚧 |
-| **Binary size budget and feature flags per crate** | smaller images for functions that need only a few connectors | 🚧 |
+| **Binary size budget and feature flags per crate** | smaller images for functions that need only a few connectors | ✅ feature per component family ([smaller builds](DEPLOYMENT.md#smaller-builds)) |
 
 ### 2.3 Performance
 

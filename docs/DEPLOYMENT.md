@@ -155,8 +155,9 @@ spec:
           configMap: { name: orders-routes }
 ```
 
-A route uses about 10 MB at rest. Size the memory limit for your message sizes and
-concurrency, not for a JVM.
+A route uses about 10 MB at rest, most of it pages of the binary itself; the private memory of
+a running route is 1–2 MB. Size the memory limit for your message sizes and concurrency, not
+for a JVM.
 
 ## Serverless
 
@@ -164,9 +165,79 @@ concurrency, not for a JVM.
   requests to `PORT`, which is 8080 unless you change it. If you do change it, add
   `--prop camel.server.port={{env:PORT:8080}}`. Startup takes about 10 ms, so scale-to-zero
   has no practical cold-start cost from Cameleer itself.
-- **AWS Lambda (container images):** not supported yet. Lambda needs a Runtime API client,
-  which is on the [roadmap](ROADMAP.md). Use ECS/Fargate or App Runner with the image in the
-  meantime.
+- **AWS Lambda:** see [below](#aws-lambda). `cameleer` is its own Lambda custom runtime.
+
+## AWS Lambda
+
+`cameleer` serves Lambda invocations itself on the `provided.al2023` runtime: no runtime
+library, adapter or layer. When Lambda sets `AWS_LAMBDA_RUNTIME_API`, `cameleer run` starts the
+routes and then loops over the
+[Runtime API](https://docs.aws.amazon.com/lambda/latest/dg/runtimes-api.html) instead of
+waiting for a signal.
+
+- **HTTP events** (API Gateway REST and HTTP APIs, function URLs, ALB) go to your
+  `platform-http` routes as if they had come over a socket, and the HTTP response becomes the
+  proxy-integration response. The same route file runs on Lambda and in a container.
+- **Other events** (S3, SQS, EventBridge, a direct invoke) are sent request-reply to the
+  handler endpoint with the event JSON as the body; the reply body is the function result. The
+  handler endpoint is the function's **Handler** setting when it is an endpoint URI (for example
+  `direct:orders`), else `camel.main.lambda-handler`, else `direct:lambda`.
+- A failed exchange is reported to the invocation's `/error` endpoint (`errorType` is the
+  exception kind); a startup failure (a bad route file, an unknown component) to `/init/error`.
+- Exchange headers: `CamelAwsLambdaRequestId`, `CamelAwsLambdaDeadlineMs`,
+  `CamelAwsLambdaFunctionArn`, `CamelAwsLambdaTraceId`, and when Lambda sends them
+  `CamelAwsLambdaClientContext` and `CamelAwsLambdaCognitoIdentity`.
+- Status files for `cameleer ps` are off on Lambda (the file system is read-only); logs go to
+  CloudWatch through stderr.
+
+<!-- example: deployment-lambda-handler -->
+```yaml
+# orders.camel.yaml: an S3 or EventBridge event in, a JSON summary out
+- route:
+    from:
+      uri: direct:lambda
+      steps:
+        - setBody:
+            simple: '{"bucket":"${jsonpath($.Records[0].s3.bucket.name)}","ok":true}'
+```
+
+Package and deploy (the binary must be a static musl build: AL2023 has glibc 2.34, older than
+what current build machines link against):
+
+```sh
+scripts/package-lambda.sh --arch x86_64 --features cloud --out function.zip orders.camel.yaml
+aws lambda create-function --function-name orders --runtime provided.al2023 \
+  --architectures x86_64 --handler direct:lambda --zip-file fileb://function.zip \
+  --role arn:aws:iam::<account>:role/<role>
+```
+
+The zip holds `bootstrap` (the `cameleer` binary under the name Lambda starts; with no
+arguments it runs the route files in `$LAMBDA_TASK_ROOT`) and your route files. `--features`
+keeps only the component families the routes use (see [smaller builds](#smaller-builds)), which
+makes the zip and the cold start smaller. Measured init times are in
+[BENCHMARKS.md](BENCHMARKS.md#faas-cold-start-and-size).
+
+`camel.main.duration-max-messages` stops after that many invocations (useful in tests). Lambda
+sends SIGTERM before it shuts a sandbox down; routes are stopped gracefully then.
+
+## Smaller builds
+
+The default build and image contain every component family. A function or an edge device that
+needs only a few can leave the rest out with the cargo features of `cameleer-main`: `amqp`,
+`amqp10`, `cloud`, `dataformats`, `datastores`, `grpc`, `kafka-mqtt`, `protocols`, `saas`,
+`script`, `soap`, `sql`, `ssh` and `xml` (`full`, the default, is all of them). Core (every EIP,
+Simple, JsonPath, the core components), the YAML and XML DSLs, HTTP and TLS are always in.
+
+```sh
+cargo build --profile dist -p cameleer-main --no-default-features --features cloud,sql
+docker build --build-arg FEATURES=cloud,sql -t my-cameleer .
+```
+
+A route that names a component of a family left out fails at startup with the feature to
+enable: `No component found with scheme: kafka (this cameleer binary was built without the
+`kafka-mqtt` feature; rebuild cameleer-main with `--features kafka-mqtt`)`. `cameleer version`
+lists the families of a reduced build. Sizes are in
+[BENCHMARKS.md](BENCHMARKS.md#faas-cold-start-and-size).
 
 ## Without a container
 

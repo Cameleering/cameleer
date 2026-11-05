@@ -1,7 +1,7 @@
 //! Thread pools (Camel `ExecutorServiceManager` equivalent, std-only).
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
@@ -12,8 +12,9 @@ type Job = Box<dyn FnOnce() + Send + 'static>;
 /// Workers are started on demand, like the core threads of Java's `ThreadPoolExecutor`
 /// (which Camel's thread pools are): a job submitted while no started worker is idle starts
 /// a new one, until `size` workers run. An idle pool costs no threads, so a route with an
-/// HTTP consumer (32 workers) starts in microseconds instead of spawning 32 threads, and a
-/// lightly used server keeps only the threads its peak concurrency needed.
+/// HTTP consumer (32 workers) starts in microseconds instead of spawning 32 threads. A worker
+/// idle for the keep-alive time (60 s, Camel's default thread pool profile, which lets core
+/// threads time out) exits, so a burst does not leave its threads behind.
 pub struct ThreadPool {
     name: String,
     sender: Mutex<Option<Sender<Job>>>,
@@ -21,8 +22,9 @@ pub struct ThreadPool {
     workers: Mutex<Vec<JoinHandle<()>>>,
     active: Arc<AtomicUsize>,
     pending: Arc<AtomicUsize>,
-    /// Workers started so far (never more than `size`).
-    started: AtomicUsize,
+    /// Workers running (never more than `size`).
+    started: Arc<AtomicUsize>,
+    keep_alive: std::time::Duration,
     shutdown: AtomicBool,
     size: usize,
 }
@@ -39,10 +41,19 @@ impl ThreadPool {
             workers: Mutex::new(Vec::new()),
             active: Arc::new(AtomicUsize::new(0)),
             pending: Arc::new(AtomicUsize::new(0)),
-            started: AtomicUsize::new(0),
+            started: Arc::new(AtomicUsize::new(0)),
+            keep_alive: std::time::Duration::from_secs(60),
             shutdown: AtomicBool::new(false),
             size,
         })
+    }
+
+    /// Like [`ThreadPool::new`] with another idle time after which a worker exits.
+    pub fn with_keep_alive(name: &str, size: usize, keep_alive: std::time::Duration) -> Arc<ThreadPool> {
+        let pool = Self::new(name, size);
+        let mut p = Arc::try_unwrap(pool).ok().expect("new pool is not shared");
+        p.keep_alive = keep_alive;
+        Arc::new(p)
     }
 
     /// Create a pool and start all `size` workers now (Java's `prestartAllCoreThreads`).
@@ -59,11 +70,29 @@ impl ThreadPool {
         if n >= self.size || self.shutdown.load(Ordering::SeqCst) {
             return false;
         }
+        workers.retain(|h| !h.is_finished());
         let rx = self.receiver.clone();
         let active = self.active.clone();
         let pending = self.pending.clone();
+        let started = self.started.clone();
+        let keep_alive = self.keep_alive;
         let spawned = std::thread::Builder::new().name(format!("{}-{}", self.name, n + 1)).spawn(move || loop {
-            let job = { rx.lock().unwrap().recv() };
+            let job = { rx.lock().unwrap().recv_timeout(keep_alive) };
+            let job = match job {
+                Err(RecvTimeoutError::Timeout) => {
+                    // leave first, then look for work: `execute` counts a job as pending
+                    // before it reads `started`, so either this worker sees the job and
+                    // stays, or `execute` sees the worker gone and starts another
+                    started.fetch_sub(1, Ordering::SeqCst);
+                    if pending.load(Ordering::SeqCst) == 0 {
+                        break;
+                    }
+                    started.fetch_add(1, Ordering::SeqCst);
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => Err(()),
+                Ok(job) => Ok(job),
+            };
             match job {
                 Ok(job) => {
                     // active first: `execute` must never see a taken job as neither pending
@@ -79,7 +108,7 @@ impl ThreadPool {
         match spawned {
             Ok(h) => {
                 workers.push(h);
-                self.started.store(n + 1, Ordering::SeqCst);
+                self.started.fetch_add(1, Ordering::SeqCst);
                 true
             }
             // out of threads: the job waits for a running worker (there is at least one
@@ -88,7 +117,7 @@ impl ThreadPool {
         }
     }
 
-    /// Number of worker threads started so far.
+    /// Number of worker threads running.
     pub fn started_count(&self) -> usize {
         self.started.load(Ordering::SeqCst)
     }
@@ -627,6 +656,33 @@ mod tests {
         pool.shutdown();
         assert_eq!(running.load(Ordering::SeqCst), 6, "queued jobs ran before shutdown returned");
         assert_eq!(pool.started_count(), 4);
+    }
+
+    #[test]
+    fn idle_workers_exit_after_the_keep_alive_and_come_back_on_demand() {
+        let pool = ThreadPool::with_keep_alive("idle", 3, std::time::Duration::from_millis(50));
+        let futs: Vec<Future<usize>> = (0..3)
+            .map(|i| {
+                pool.submit(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    i
+                })
+            })
+            .collect();
+        assert_eq!(futs.iter().map(|f| f.get().unwrap()).sum::<usize>(), 3);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while pool.started_count() > 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(pool.started_count(), 0, "idle workers exited");
+        // jobs submitted while workers are leaving are never stranded
+        for round in 0..200 {
+            assert_eq!(pool.submit(move || round).get(), Some(round));
+            if round % 50 == 0 {
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+        }
+        pool.shutdown();
     }
 
     #[test]

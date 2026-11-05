@@ -37,6 +37,12 @@ jobs:
         run: cargo test --workspace --no-fail-fast
         env:
           RUSTFLAGS: -D warnings
+      - name: Reduced builds (cameleer-main without component families, and with one)
+        run: |
+          cargo test -p cameleer-main --no-default-features --no-fail-fast
+          cargo build -p cameleer-main --no-default-features --features cloud
+        env:
+          RUSTFLAGS: -D warnings
 
   image:
     name: container image (build and smoke test, no push)

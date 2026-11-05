@@ -227,7 +227,7 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 | a single binary running YAML or XML routes (`cameleer run`, with hot reload in dev mode) | ✅ |
 | a container on Cloud Run, Fargate, Azure Container Apps, Knative or Kubernetes | ✅ |
 | a standalone project generated from your routes (`cameleer export`) | ✅ |
-| a native AWS Lambda function | 🚧 [build it today](docs/ROADMAP.md#14-aws-lambda-function), adapter planned |
+| a native AWS Lambda function (built-in custom runtime, `provided.al2023`) | ✅ [AWS Lambda](docs/DEPLOYMENT.md#aws-lambda) |
 | an MCP server exposing routes as agent tools | 🚧 [build it today](docs/ROADMAP.md#11-agent-tool-server-mcp-style), component planned |
 
 ---
@@ -255,7 +255,6 @@ Every component named here ships today; each row is a pattern you assemble from 
 | an agent tool server (MCP-style) | `platform-http` + `toD` to one `direct:` route per tool | 🚧 MCP component |
 | a tool-calling agent loop | `loop` + `azure-openai` tool calls + `recipientList` to tool routes | 🚧 agent EIP |
 | vector search for RAG | embeddings → pgvector through `sql`, OpenSearch k-NN, or Qdrant and Pinecone through `http` | 🚧 vector components |
-| an AWS Lambda function | a boot route looping over the Lambda Runtime API with `http` | 🚧 Lambda adapter |
 | token streaming to users | model streaming chunks → `websocket` or a server-sent-events endpoint | ✅ parts ship |
 | per-tenant token budgets | model usage headers → counters in `spring-redis` → `filter` before the call | ✅ parts ship |
 | human approval of risky actions | `slack` or `mail` link → `platform-http` callback → resume the parked action | ✅ parts ship |

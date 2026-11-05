@@ -369,8 +369,10 @@ fn run_cmd(args: &[String]) -> CliResult {
     }
     // status and log files for `cameleer ps/stop/log/get/cmd`; CAMEL_LOCAL_STATUS=false turns
     // them off (the container image does: one process per container, logs go to stdout)
-    // on AWS Lambda the file system is read-only and each sandbox runs one function
-    if local::local_status_enabled() && crate::lambda::runtime_api().is_none() {
+    // not on serverless platforms: AWS Lambda (read-only file system), Cloud Run and Knative
+    // (K_SERVICE), Azure Functions custom handlers; one integration per instance there
+    let serverless = crate::lambda::runtime_api().is_some() || ["K_SERVICE", "FUNCTIONS_CUSTOMHANDLER_PORT"].iter().any(|v| std::env::var_os(v).is_some());
+    if local::local_status_enabled() && !serverless {
         let home = local::camel_home();
         main.enable_local_status(&home);
         let _ = local::log_to_file(&local::log_file(&home, std::process::id()));
