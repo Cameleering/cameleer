@@ -236,7 +236,13 @@ fn rel(root: &Path, p: &Path) -> String {
 // Endpoint URIs
 // ---------------------------------------------------------------------------
 
-/// `{{env:NAME:default}}` becomes `default`; `{{env:NAME}}` (no default) becomes `placeholder`.
+/// `{{env:NAME:default}}` becomes `default`; `{{env:NAME}}` or an empty default becomes a
+/// non-empty dummy (`cGxhY2Vob2xkZXI=`, valid base64).
+/// Resolution errors caused by a missing file or registry bean rather than by the URI.
+fn needs_environment(e: &str) -> bool {
+    ["NoSuchBeanException", "NoSuchEndpointException", "os error 2", "FileNotFoundException", "Cannot read"].iter().any(|m| e.contains(m))
+}
+
 fn substitute_env(s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
@@ -246,9 +252,11 @@ fn substitute_env(s: &str) -> String {
         match after.find("}}") {
             Some(q) => {
                 let inner = &after[..q];
+                // a missing or empty default (a secret the reader must supply) becomes a
+                // non-empty dummy that is also valid base64, as keys are checked for that
                 out.push_str(match inner.split_once(':') {
-                    Some((_, default)) => default,
-                    None => "placeholder",
+                    Some((_, default)) if !default.is_empty() => default,
+                    _ => "cGxhY2Vob2xkZXI=",
                 });
                 rest = &after[q + 2..];
             }
@@ -405,6 +413,12 @@ fn check_examples(root: &Path, files: &[PathBuf]) -> ExampleReport {
             for uri in resolvable_uris(&doc) {
                 r.uris += 1;
                 if let Err(e) = ctx.get_endpoint(&uri) {
+                    // the URI is fine but needs something the reader provides next to the route
+                    // (a .proto/.thrift/WSDL file, a bean registered from Rust); the writers'
+                    // own tests run those examples with their fixtures
+                    if needs_environment(&e.to_string()) {
+                        continue;
+                    }
                     r.errors.push(format!("{} [{}]: endpoint `{}` does not resolve: {}", at, id, uri, e));
                 }
             }
@@ -631,7 +645,7 @@ fn harness_rejects_bad_fixtures() {
 
 #[test]
 fn scanner_units() {
-    assert_eq!(substitute_env("kafka:t?brokers={{env:KAFKA_BROKERS:localhost:9092}}&x={{env:Y}}"), "kafka:t?brokers=localhost:9092&x=placeholder");
+    assert_eq!(substitute_env("kafka:t?brokers={{env:KAFKA_BROKERS:localhost:9092}}&x={{env:Y}}"), "kafka:t?brokers=localhost:9092&x=cGxhY2Vob2xkZXI=");
     assert_eq!(also_names("**Scheme:** `http:` · **Also:** `https:`, `http2` · **Crate:** `x`"), vec!["https", "http2"]);
     assert_eq!(marker_of("<!-- example: kafka-consume -->"), Marker::Example("kafka-consume".into()));
     assert_eq!(marker_of("  <!-- not-camel -->"), Marker::NotCamel);
