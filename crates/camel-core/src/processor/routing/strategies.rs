@@ -42,6 +42,9 @@ impl AggregationStrategy for UseLatestAggregationStrategy {
         }
         Ok(new)
     }
+    fn never_fails(&self) -> bool {
+        true
+    }
 }
 
 /// Keep the original (first) exchange; failures of later exchanges are propagated
@@ -77,6 +80,9 @@ impl AggregationStrategy for UseOriginalAggregationStrategy {
             }
         }
     }
+    fn never_fails(&self) -> bool {
+        true
+    }
 }
 
 fn push_to_list(ex: &mut Exchange, key: &str, v: Value) {
@@ -93,9 +99,16 @@ fn push_to_list(ex: &mut Exchange, key: &str, v: Value) {
 pub struct GroupedBodyAggregationStrategy;
 
 impl AggregationStrategy for GroupedBodyAggregationStrategy {
-    fn aggregate(&self, old: Option<Exchange>, new: Exchange) -> Result<Exchange> {
-        let body = new.message.body.clone();
-        let mut result = old.unwrap_or(new);
+    fn aggregate(&self, old: Option<Exchange>, mut new: Exchange) -> Result<Exchange> {
+        let mut result = match old {
+            // the new exchange is dropped: move its body into the list
+            Some(mut old) => {
+                push_to_list(&mut old, GROUPED_EXCHANGE, std::mem::take(&mut new.message.body));
+                return Ok(old);
+            }
+            None => new,
+        };
+        let body = result.message.body.clone();
         push_to_list(&mut result, GROUPED_EXCHANGE, body);
         Ok(result)
     }
@@ -104,14 +117,28 @@ impl AggregationStrategy for GroupedBodyAggregationStrategy {
             exchange.message.body = list;
         }
     }
+    fn never_fails(&self) -> bool {
+        true
+    }
+    fn aggregate_into(&self, group: &mut Option<Exchange>, mut new: Exchange) -> Result<()> {
+        match group {
+            Some(g) => push_to_list(g, GROUPED_EXCHANGE, std::mem::take(&mut new.message.body)),
+            None => {
+                let body = new.message.body.clone();
+                push_to_list(&mut new, GROUPED_EXCHANGE, body);
+                *group = Some(new);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Snapshot of an exchange as a value: `{exchangeId, body, headers, properties}`.
 pub fn exchange_to_value(ex: &Exchange) -> Value {
     let props: ObjectMap =
-        ex.properties.iter().filter(|(k, _)| k.as_str() != GROUPED_EXCHANGE).map(|(k, v)| (k.clone(), v.clone())).collect();
+        ex.properties.iter().filter(|(k, _)| *k != GROUPED_EXCHANGE).map(|(k, v)| (k.to_string(), v.clone())).collect();
     Value::object([
-        ("exchangeId", Value::String(ex.exchange_id.clone())),
+        ("exchangeId", Value::String(ex.exchange_id.to_string())),
         ("body", ex.message.body.clone()),
         ("headers", ex.message.headers.to_value()),
         ("properties", Value::Object(props)),
@@ -135,6 +162,9 @@ impl AggregationStrategy for GroupedExchangeAggregationStrategy {
         if let Some(list) = exchange.properties.get(GROUPED_EXCHANGE).cloned() {
             exchange.message.body = list;
         }
+    }
+    fn never_fails(&self) -> bool {
+        true
     }
 }
 

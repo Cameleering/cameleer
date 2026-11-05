@@ -203,7 +203,7 @@ impl Tracer {
             node_id: node_id.to_string(),
             node_label: label.to_string(),
             first,
-            exchange_id: ex.exchange_id.clone(),
+            exchange_id: ex.exchange_id.to_string(),
             headers: ex.message.headers.to_value(),
             body,
             body_type: ex.body().java_type_name().unwrap_or("null").to_string(),

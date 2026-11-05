@@ -155,7 +155,7 @@ impl SnsService {
         let mut p = Vec::new();
         if self.topic.ends_with(".fifo") {
             let group = match self.message_group_id_strategy.as_deref() {
-                Some("useExchangeId") => ex.exchange_id.clone(),
+                Some("useExchangeId") => ex.exchange_id.to_string(),
                 Some("usePropertyValue") => ex.property(headers::MESSAGE_GROUP_ID_PROPERTY).map(|v| v.to_string()).unwrap_or_default(),
                 _ => "CamelSingleMessageGroup".to_string(),
             };
@@ -218,7 +218,7 @@ impl CloudService for SnsService {
             p.push((format!("MessageAttributes.entry.{}.Value.DataType", n), dt.into()));
             p.push((format!("MessageAttributes.entry.{}.Value.StringValue", n), v.to_string()));
         }
-        p.extend(self.fifo_params(ex, "", &ex.exchange_id.clone()));
+        p.extend(self.fifo_params(ex, "", &ex.exchange_id.to_string()));
         let x = self.call("Publish", p)?;
         ex.set_header(headers::MESSAGE_ID, x.find_text("MessageId").unwrap_or_default());
         Ok(())

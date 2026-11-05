@@ -127,18 +127,18 @@ fn dec(v: Value) -> Value {
 /// (same layout as the JDBC aggregation repository of `camel-sql`).
 pub fn exchange_to_json(ex: &Exchange) -> String {
     let headers: ObjectMap = ex.message.headers.iter().map(|(k, v)| (k.to_string(), enc(v))).collect();
-    let props: ObjectMap = ex.properties.iter().map(|(k, v)| (k.clone(), enc(v))).collect();
+    let props: ObjectMap = ex.properties.iter().map(|(k, v)| (k.to_string(), enc(v))).collect();
     let mut m = ObjectMap::new();
-    m.insert("exchangeId".to_string(), Value::String(ex.exchange_id.clone()));
+    m.insert("exchangeId".to_string(), Value::String(ex.exchange_id.to_string()));
     m.insert("pattern".to_string(), Value::String(format!("{:?}", ex.pattern)));
     m.insert("body".to_string(), enc(&ex.message.body));
     m.insert("headers".to_string(), Value::Object(headers));
     m.insert("properties".to_string(), Value::Object(props));
     if let Some(f) = &ex.from_endpoint {
-        m.insert("fromEndpoint".to_string(), Value::String(f.clone()));
+        m.insert("fromEndpoint".to_string(), Value::String(f.to_string()));
     }
     if let Some(r) = &ex.from_route_id {
-        m.insert("fromRouteId".to_string(), Value::String(r.clone()));
+        m.insert("fromRouteId".to_string(), Value::String(r.to_string()));
     }
     Value::Object(m).to_json()
 }
@@ -150,7 +150,7 @@ pub fn exchange_from_json(text: &str, ctx: Option<CamelContext>) -> Result<Excha
     };
     let mut ex = Exchange::new(ctx);
     if let Some(Value::String(id)) = m.remove("exchangeId") {
-        ex.exchange_id = id;
+        ex.exchange_id = id.into();
     }
     if let Some(Value::String(p)) = m.remove("pattern") {
         ex.pattern = ExchangePattern::parse(&p).unwrap_or_default();
@@ -167,10 +167,10 @@ pub fn exchange_from_json(text: &str, ctx: Option<CamelContext>) -> Result<Excha
         }
     }
     if let Some(Value::String(f)) = m.remove("fromEndpoint") {
-        ex.from_endpoint = Some(f);
+        ex.from_endpoint = Some(f.into());
     }
     if let Some(Value::String(r)) = m.remove("fromRouteId") {
-        ex.from_route_id = Some(r);
+        ex.from_route_id = Some(r.into());
     }
     Ok(ex)
 }

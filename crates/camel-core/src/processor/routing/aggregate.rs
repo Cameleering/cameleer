@@ -51,10 +51,32 @@ pub trait AggregationRepository: Send + Sync {
     /// Store the aggregated exchange for a key; returns the previous one.
     fn add(&self, key: &str, exchange: Exchange) -> Option<Exchange>;
     fn get(&self, key: &str) -> Option<Exchange>;
+    /// The group's exchange for aggregating the next exchange into it; the aggregator then
+    /// stores the result with `add` or completes the group with `remove`. The default is a
+    /// copy (`get`). In-memory repositories move the exchange out instead, so a growing
+    /// group is not copied for every exchange.
+    fn take(&self, key: &str) -> Option<Exchange> {
+        self.get(key)
+    }
     /// Remove the group (when completed).
     fn remove(&self, key: &str) -> Option<Exchange>;
     /// Confirm that a completed exchange was processed.
     fn confirm(&self, _exchange_id: &str) {}
+    /// Run `f` on the group of `key` in place: its exchange, or `None` for a new group; a
+    /// group left `None` is removed. Returns false if the repository cannot (the default;
+    /// the aggregator then uses `take`/`get` and `add`).
+    fn with_slot(&self, _key: &str, _f: &mut dyn FnMut(&mut Option<Exchange>)) -> bool {
+        false
+    }
+    /// Whether [`AggregationRepository::with_slot`] is supported.
+    fn has_slots(&self) -> bool {
+        false
+    }
+    /// Whether [`AggregationRepository::confirm`] does anything (if not, the aggregator does
+    /// not need the completed exchange's id).
+    fn needs_confirm(&self) -> bool {
+        true
+    }
     /// Keys of the groups in progress (insertion order).
     fn keys(&self) -> Vec<String>;
 }
@@ -62,8 +84,27 @@ pub trait AggregationRepository: Send + Sync {
 /// Default in-memory repository.
 #[derive(Default)]
 pub struct MemoryAggregationRepository {
-    map: Mutex<HashMap<String, (u64, Exchange)>>,
+    groups: Mutex<Groups>,
     seq: AtomicU64,
+}
+
+/// The groups of a memory repository: key -> (insertion sequence, exchange); the exchange
+/// is `None` while taken out for aggregation (the group keeps its position in `keys`).
+/// The newest group is kept outside the map: consecutive exchanges usually belong to the
+/// same group, and then no key is hashed.
+#[derive(Default)]
+struct Groups {
+    map: HashMap<String, (u64, Option<Exchange>)>,
+    hot: Option<(String, u64, Option<Exchange>)>,
+}
+
+impl Groups {
+    fn slot(&mut self, key: &str) -> Option<&mut Option<Exchange>> {
+        match &mut self.hot {
+            Some((k, _, e)) if k == key => Some(e),
+            _ => self.map.get_mut(key).map(|(_, e)| e),
+        }
+    }
 }
 
 impl MemoryAggregationRepository {
@@ -73,20 +114,62 @@ impl MemoryAggregationRepository {
 }
 
 impl AggregationRepository for MemoryAggregationRepository {
+    fn needs_confirm(&self) -> bool {
+        false
+    }
+    fn has_slots(&self) -> bool {
+        true
+    }
+    fn with_slot(&self, key: &str, f: &mut dyn FnMut(&mut Option<Exchange>)) -> bool {
+        let mut g = self.groups.lock().unwrap();
+        if g.slot(key).is_none() {
+            let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+            if let Some((k, s, e)) = g.hot.replace((key.to_string(), seq, None)) {
+                g.map.insert(k, (s, e));
+            }
+        }
+        let slot = g.slot(key).expect("just created");
+        f(slot);
+        if slot.is_none() {
+            if matches!(&g.hot, Some((k, _, _)) if k == key) {
+                g.hot = None;
+            } else {
+                g.map.remove(key);
+            }
+        }
+        true
+    }
     fn add(&self, key: &str, exchange: Exchange) -> Option<Exchange> {
-        let mut m = self.map.lock().unwrap();
-        let seq = m.get(key).map(|(s, _)| *s).unwrap_or_else(|| self.seq.fetch_add(1, Ordering::Relaxed));
-        m.insert(key.to_string(), (seq, exchange)).map(|(_, e)| e)
+        let mut g = self.groups.lock().unwrap();
+        if let Some(slot) = g.slot(key) {
+            return slot.replace(exchange);
+        }
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        // the new group becomes the hot one; the previous hot group moves to the map
+        if let Some((k, s, e)) = g.hot.replace((key.to_string(), seq, Some(exchange))) {
+            g.map.insert(k, (s, e));
+        }
+        None
     }
     fn get(&self, key: &str) -> Option<Exchange> {
-        self.map.lock().unwrap().get(key).map(|(_, e)| e.clone())
+        self.groups.lock().unwrap().slot(key).and_then(|e| e.clone())
+    }
+    fn take(&self, key: &str) -> Option<Exchange> {
+        self.groups.lock().unwrap().slot(key).and_then(|e| e.take())
     }
     fn remove(&self, key: &str) -> Option<Exchange> {
-        self.map.lock().unwrap().remove(key).map(|(_, e)| e)
+        let mut g = self.groups.lock().unwrap();
+        if matches!(&g.hot, Some((k, _, _)) if k == key) {
+            return g.hot.take().and_then(|(_, _, e)| e);
+        }
+        g.map.remove(key).and_then(|(_, e)| e)
     }
     fn keys(&self) -> Vec<String> {
-        let m = self.map.lock().unwrap();
-        let mut v: Vec<(u64, String)> = m.iter().map(|(k, (s, _))| (*s, k.clone())).collect();
+        let g = self.groups.lock().unwrap();
+        let mut v: Vec<(u64, String)> = g.map.iter().map(|(k, (s, _))| (*s, k.clone())).collect();
+        if let Some((k, s, _)) = &g.hot {
+            v.push((*s, k.clone()));
+        }
         v.sort();
         v.into_iter().map(|(_, k)| k).collect()
     }
@@ -348,7 +431,7 @@ impl AggInner {
             exchange.exception = None;
             exchange.set_route_stop(false);
             exchange.properties.remove(props::ROUTE_STOP);
-            let id = exchange.exchange_id.clone();
+            let id = self.repo.needs_confirm().then(|| exchange.exchange_id.to_string());
             run_processor(self.output.as_ref(), &mut exchange);
             if let Some(e) = &exchange.exception {
                 crate::camel_warn!(
@@ -360,7 +443,9 @@ impl AggInner {
                 );
             }
             exchange.run_on_completions();
-            self.repo.confirm(&id);
+            if let Some(id) = id {
+                self.repo.confirm(&id);
+            }
         }
     }
 
@@ -393,14 +478,77 @@ impl AggInner {
                 format!("Invalid correlation key. Exchange[{}]", exchange.exchange_id),
             ));
         }
-        let key = key.to_string();
+        let key = match key {
+            Value::String(s) => s,
+            other => crate::value::to_key_string(&other),
+        };
         let mut out = Vec::new();
         {
             let mut st = self.state.lock().unwrap();
-            if st.closed.contains(&key) {
+            if !st.closed.is_empty() && st.closed.contains(&key) {
                 return Err(CamelError::new(CLOSED_CORRELATION_KEY, format!("The correlation key [{}] has been closed", key)));
             }
-            let old = self.repo.get(&key);
+            // Move the group out of the repository instead of copying it when nothing between
+            // here and storing the result can fail (a failure must leave the group as it was).
+            let infallible = self.strategy.never_fails() && self.predicate.is_none() && self.size_expr.is_none();
+            if infallible && !self.on_new_group && self.repo.has_slots() {
+                // the group is aggregated in place in the repository
+                let mut incoming = Some(if exchange.consumable { exchange.take_correlated() } else { exchange.correlated_copy() });
+                let mut by = None;
+                let mut completed = None;
+                let used = self.repo.with_slot(&key, &mut |slot| {
+                    let Some(mut inc) = incoming.take() else { return };
+                    inc.properties.remove(AGGREGATION_COMPLETE_ALL_GROUPS_INCLUSIVE);
+                    let size = slot.as_ref().map(aggregated_size).unwrap_or(0) + 1;
+                    if self.eager {
+                        inc.set_property(props::AGGREGATED_SIZE, size);
+                        // no predicate or size expression here: this cannot fail
+                        by = self.is_completed(&inc).unwrap_or(None);
+                        inc.properties.remove(props::AGGREGATED_SIZE);
+                    }
+                    let _ = self.strategy.aggregate_into(slot, inc);
+                    let Some(agg) = slot.as_mut() else { return };
+                    agg.set_property(props::AGGREGATED_SIZE, size);
+                    if !self.eager {
+                        by = self.is_completed(agg).unwrap_or(None);
+                    }
+                    if agg.properties.remove(AGGREGATION_COMPLETE_CURRENT_GROUP).map(|v| v.is_truthy()).unwrap_or(false) && by.is_none() {
+                        by = Some("strategy");
+                    }
+                    if by.is_some() {
+                        completed = slot.take();
+                    }
+                });
+                debug_assert!(used, "has_slots() but with_slot() refused");
+                {
+                    match (by, completed) {
+                        (Some(by), Some(agg)) => {
+                            if !st.deadlines.is_empty() {
+                                st.deadlines.remove(&key);
+                            }
+                            self.close_key(&mut st, &key);
+                            out.push(Completed { key: key.clone(), exchange: agg, by });
+                        }
+                        _ => {
+                            let timeout = match &self.timeout_expr {
+                                Some(e) => e.evaluate(exchange)?.as_i64().filter(|t| *t > 0).map(|t| Duration::from_millis(t as u64)).or(self.timeout),
+                                None => self.timeout,
+                            };
+                            if let Some(t) = timeout {
+                                st.deadlines.insert(key.clone(), Instant::now() + t);
+                                self.cond.notify_all();
+                            }
+                        }
+                    }
+                    if complete_all_inclusive {
+                        self.complete_all(&mut st, "force", &mut out);
+                    }
+                    drop(st);
+                    self.emit(out);
+                    return Ok(());
+                }
+            }
+            let old = if infallible { self.repo.take(&key) } else { self.repo.get(&key) };
             if old.is_none() && self.on_new_group {
                 for k in self.repo.keys() {
                     if k != key {
@@ -409,7 +557,8 @@ impl AggInner {
                 }
             }
             let size = old.as_ref().map(aggregated_size).unwrap_or(0) + 1;
-            let mut incoming = exchange.correlated_copy();
+            // a part the splitter discards after this step is moved, not copied
+            let mut incoming = if exchange.consumable { exchange.take_correlated() } else { exchange.correlated_copy() };
             incoming.properties.remove(AGGREGATION_COMPLETE_ALL_GROUPS_INCLUSIVE);
             let mut by = None;
             if self.eager {
@@ -427,7 +576,9 @@ impl AggInner {
             }
             match by {
                 Some(by) => {
-                    st.deadlines.remove(&key);
+                    if !st.deadlines.is_empty() {
+                        st.deadlines.remove(&key);
+                    }
                     self.repo.remove(&key);
                     self.close_key(&mut st, &key);
                     out.push(Completed { key: key.clone(), exchange: agg, by });

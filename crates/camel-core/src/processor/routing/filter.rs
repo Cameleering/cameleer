@@ -42,10 +42,16 @@ impl FilterProcessor {
 
 impl Processor for FilterProcessor {
     fn process(&self, exchange: &mut Exchange) -> Result<()> {
-        if Self::matches(self.predicate.as_ref(), exchange)? {
-            self.child.process(exchange)?;
+        self.process_timed(exchange, 0).0
+    }
+
+    /// The children's last clock reading is passed out (the filter ends when they do).
+    fn process_timed(&self, exchange: &mut Exchange, _start: u64) -> (Result<()>, u64) {
+        match Self::matches(self.predicate.as_ref(), exchange) {
+            Err(e) => (Err(e), 0),
+            Ok(true) => self.child.process_timed(exchange, 0),
+            Ok(false) => (Ok(()), 0),
         }
-        Ok(())
     }
 }
 

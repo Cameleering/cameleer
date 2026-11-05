@@ -366,6 +366,8 @@ pub fn compare_values(a: &Value, b: &Value) -> Option<Ordering> {
             if matches!(a, Value::Bool(_)) { Some(x.cmp(&y)) } else { Some(y.cmp(x)) }
         }
         (Value::Int(x), Value::Int(y)) => Some(x.cmp(y)),
+        // the same as comparing the `to_string()`s below, without allocating them
+        (Value::String(x), Value::String(y)) => Some(x.as_str().cmp(y.as_str())),
         _ => {
             let numeric_a = matches!(a, Value::Int(_) | Value::Float(_));
             let numeric_b = matches!(b, Value::Int(_) | Value::Float(_));
@@ -387,8 +389,42 @@ pub fn compare_values(a: &Value, b: &Value) -> Option<Ordering> {
     }
 }
 
+/// `v.to_string()`, without the formatting machinery for the usual string and integer keys
+/// (correlation keys, map keys).
+pub fn to_key_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        Value::Int(i) => {
+            let mut digits = [0u8; 20];
+            let mut n = i.unsigned_abs();
+            let mut at = digits.len();
+            loop {
+                at -= 1;
+                digits[at] = b'0' + (n % 10) as u8;
+                n /= 10;
+                if n == 0 {
+                    break;
+                }
+            }
+            let mut out = String::with_capacity(21 - at);
+            if *i < 0 {
+                out.push('-');
+            }
+            out.push_str(std::str::from_utf8(&digits[at..]).expect("ascii digits"));
+            out
+        }
+        other => other.to_string(),
+    }
+}
+
 /// Equality with type coercion (e.g. `Int(5) == String("5")`).
 pub fn values_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        // same-type strings and integers: no coercion applies
+        (Value::String(x), Value::String(y)) => return x == y,
+        (Value::Int(x), Value::Int(y)) => return x == y,
+        _ => {}
+    }
     if a == b {
         return true;
     }
@@ -468,6 +504,12 @@ impl From<BTreeMap<String, Value>> for Value {
     /// The entries keep the map's (sorted) iteration order.
     fn from(v: BTreeMap<String, Value>) -> Self {
         Value::Object(v.into())
+    }
+}
+impl From<crate::message::Properties> for Value {
+    /// The entries keep the properties' (sorted) order.
+    fn from(p: crate::message::Properties) -> Self {
+        Value::Object(p.into_iter().collect())
     }
 }
 impl<T: Into<Value>> From<Option<T>> for Value {

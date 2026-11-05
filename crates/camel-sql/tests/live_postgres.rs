@@ -336,7 +336,7 @@ fn live_postgres_consumer_and_jdbc_repositories() {
     assert_eq!(agg.get("C").unwrap().header("group"), Some(&Value::from("C")));
     ctx.stop().unwrap();
     let ex = agg.remove("C").unwrap();
-    assert_eq!(agg.scan().unwrap(), vec![ex.exchange_id.clone()]);
+    assert_eq!(agg.scan().unwrap(), vec![ex.exchange_id.to_string()]);
     assert_eq!(agg.recover(&ex.exchange_id).unwrap().unwrap().body(), &Value::from("c1"));
     agg.confirm(&ex.exchange_id);
     assert!(agg.scan().unwrap().is_empty());

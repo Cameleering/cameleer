@@ -484,3 +484,30 @@ fn split_streaming_creates_parts_on_demand() {
     assert!(ctx.create_producer_template().send_body("direct:stop", "a,b,c,d").is_err());
     assert_eq!(ctx.mock_endpoint("mock:seen").unwrap().received_counter(), 2);
 }
+
+#[test]
+fn split_json_text_with_jsonpath_keeps_headers_and_the_original_body() {
+    let ctx = CamelContext::new();
+    ctx.add_routes(|b| {
+        b.from("direct:start")
+            .set_header("orderId", jsonpath("$.orderId"))
+            .split(jsonpath("$.items"))
+            .to("mock:part")
+            .end()
+            .to("mock:result");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let order = r#"{"orderId":7,"items":[{"sku":"a"},{"sku":"b"}]}"#;
+    ctx.create_producer_template().send_body("direct:start", order).unwrap();
+    let parts = ctx.mock_endpoint("part").unwrap();
+    let bodies = parts.received_bodies();
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies[0].as_object().and_then(|o| o.get("sku")), Some(&Value::from("a")));
+    assert_eq!(bodies[1].as_object().and_then(|o| o.get("sku")), Some(&Value::from("b")));
+    for ex in parts.received_exchanges() {
+        assert_eq!(ex.message.header("orderId"), Some(&Value::from(7)));
+    }
+    // the exchange continues after the split with its original (text) body
+    assert_eq!(ctx.mock_endpoint("result").unwrap().received_bodies(), vec![Value::from(order)]);
+}

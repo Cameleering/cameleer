@@ -774,7 +774,7 @@ impl DataFormat for ZipFileDataFormat {
             .headers
             .get(crate::message::props::FILE_NAME)
             .map(|v| v.to_string())
-            .unwrap_or_else(|| ex.exchange_id.clone());
+            .unwrap_or_else(|| ex.exchange_id.to_string());
         let entry_name = name.rsplit(['/', '\\']).next().unwrap_or(&name).to_string();
         let b = ex.message.body.to_bytes();
         ex.message.body = Value::Bytes(zip_create(&[ZipEntry { name: entry_name, data: b }], self.level));

@@ -189,15 +189,15 @@ impl Script {
 
     fn parts_of(ex: &Exchange) -> Parts {
         Parts {
-            exchange_id: ex.exchange_id.clone(),
+            exchange_id: ex.exchange_id.to_string(),
             pattern: format!("{:?}", ex.pattern),
-            message_id: ex.message.message_id.clone(),
+            message_id: ex.message.message_id.to_string(),
             context: ex.context.clone(),
             headers: Headers::new(),
             body: Value::Null,
             properties: BTreeMap::new(),
             exception: ex.exception.as_ref().map(|e| (e.kind.clone(), e.message.clone())),
-            route_id: ex.from_route_id.clone(),
+            route_id: ex.from_route_id.as_deref().map(str::to_string),
         }
     }
 
@@ -206,7 +206,7 @@ impl Script {
         let mut parts = Self::parts_of(ex);
         parts.headers = ex.message.headers.clone();
         parts.body = ex.message.body.clone();
-        parts.properties = ex.properties.clone();
+        parts.properties = ex.properties.clone().into();
         self.run(parts).map(|(v, ..)| v)
     }
 
@@ -215,20 +215,20 @@ impl Script {
         let mut parts = Self::parts_of(ex);
         parts.headers = std::mem::take(&mut ex.message.headers);
         parts.body = std::mem::take(&mut ex.message.body);
-        parts.properties = std::mem::take(&mut ex.properties);
+        parts.properties = std::mem::take(&mut ex.properties).into();
         // keep copies to restore on failure
         let (h, b, p) = (parts.headers.clone(), parts.body.clone(), parts.properties.clone());
         match self.run(parts) {
             Ok((v, headers, body, props)) => {
                 ex.message.headers = headers;
                 ex.message.body = body;
-                ex.properties = props;
+                ex.properties = props.into();
                 Ok(v)
             }
             Err(e) => {
                 ex.message.headers = h;
                 ex.message.body = b;
-                ex.properties = p;
+                ex.properties = p.into();
                 Err(e)
             }
         }

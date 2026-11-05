@@ -74,11 +74,14 @@ impl<'a> Parser<'a> {
             None => Err(self.err("Unexpected end of input")),
             Some(b'{') => {
                 self.i += 1;
-                let mut map = ObjectMap::new();
+                // small objects are collected first and wrapped once (duplicate keys: the
+                // last value wins at the first position, as with `ObjectMap::insert`)
+                let mut small: Vec<(String, Value)> = Vec::new();
+                let mut map: Option<ObjectMap> = None;
                 self.ws();
                 if self.peek() == Some(b'}') {
                     self.i += 1;
-                    return Ok(Value::Object(map));
+                    return Ok(Value::Object(ObjectMap::new()));
                 }
                 loop {
                     self.ws();
@@ -93,13 +96,26 @@ impl<'a> Parser<'a> {
                     self.i += 1;
                     self.ws();
                     let v = self.value(depth + 1)?;
-                    map.insert(k, v);
+                    match &mut map {
+                        Some(m) => {
+                            m.insert(k, v);
+                        }
+                        None => match small.iter().position(|(sk, _)| *sk == k) {
+                            Some(i) => small[i].1 = v,
+                            None if small.len() < 16 => small.push((k, v)),
+                            None => {
+                                let mut m = ObjectMap::from_distinct(std::mem::take(&mut small));
+                                m.insert(k, v);
+                                map = Some(m);
+                            }
+                        },
+                    }
                     self.ws();
                     match self.peek() {
                         Some(b',') => self.i += 1,
                         Some(b'}') => {
                             self.i += 1;
-                            return Ok(Value::Object(map));
+                            return Ok(Value::Object(map.unwrap_or_else(|| ObjectMap::from_distinct(small))));
                         }
                         _ => return Err(self.err("Expected ',' or '}'")),
                     }
@@ -152,7 +168,8 @@ impl<'a> Parser<'a> {
                 _ => break,
             }
         }
-        let t = std::str::from_utf8(&self.s[start..self.i]).unwrap();
+        // the input is a `&str` and a number is ASCII
+        let t = &self.text[start..self.i];
         if !is_float {
             if let Ok(i) = t.parse::<i64>() {
                 return Ok(Value::Int(i));
@@ -163,6 +180,17 @@ impl<'a> Parser<'a> {
 
     fn string(&mut self) -> Result<String> {
         self.i += 1; // opening quote
+        // usual case: no escapes, one exact allocation (the input is a `&str`, and quotes
+        // and backslashes are ASCII, so the slice is valid UTF-8)
+        let start = self.i;
+        let mut end = start;
+        while end < self.s.len() && self.s[end] != b'"' && self.s[end] != b'\\' {
+            end += 1;
+        }
+        if end < self.s.len() && self.s[end] == b'"' {
+            self.i = end + 1;
+            return Ok(self.text[start..end].to_string());
+        }
         let mut out = String::new();
         loop {
             let start = self.i;

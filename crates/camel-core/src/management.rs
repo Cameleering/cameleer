@@ -28,14 +28,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::context::{CamelContext, CamelEvent, RouteFactoryHook, ServiceStatus};
+use crate::context::{CamelContext, RouteFactoryHook, ServiceStatus};
 use crate::error::{CamelError, Result};
 use crate::health::HealthCheckRegistry;
 use crate::message::Exchange;
 use crate::model::{ChannelWrapper, ProcessorDefinition, RouteContext, RouteDefinition};
-use crate::spi::{EventNotifier, Processor};
+use crate::stripe::{bump, slot, Padded, CELLS};
+use crate::spi::Processor;
 use crate::tracer::Tracer;
 use crate::value::{ObjectMap, Value};
 
@@ -52,75 +53,141 @@ pub(crate) fn now_millis() -> i64 {
 // ---------------------------------------------------------------------------
 
 /// Lock-free performance counters (route or processor level).
+///
+/// Times are kept as raw [`crate::clock`] ticks and converted to micros and epoch millis
+/// in [`PerfCounters::snapshot`], so recording an exchange is a few atomic operations.
+/// The counters are striped ([`crate::stripe`]): each thread updates its own cache line,
+/// and a snapshot combines the stripes.
 pub struct PerfCounters {
+    stripes: [Padded<PerfStripe>; CELLS],
+    reset_ts: AtomicI64,
+    /// Sums of `total`, `failed` and `total_ticks` at the last reset (see [`crate::stripe`]).
+    base: [AtomicU64; 3],
+}
+
+struct PerfStripe {
     total: AtomicU64,
     failed: AtomicU64,
-    total_us: AtomicU64,
-    min_us: AtomicU64,
-    max_us: AtomicU64,
-    last_us: AtomicU64,
-    first_ts: AtomicI64,
-    last_ts: AtomicI64,
-    last_failure_ts: AtomicI64,
-    reset_ts: AtomicI64,
+    total_ticks: AtomicU64,
+    min_ticks: AtomicU64,
+    max_ticks: AtomicU64,
+    last_ticks: AtomicU64,
+    /// Tick readings of the first, last and last failed exchange (0 = none).
+    first_at: AtomicU64,
+    last_at: AtomicU64,
+    last_failure_at: AtomicU64,
+}
+
+impl Default for PerfStripe {
+    fn default() -> Self {
+        PerfStripe {
+            total: AtomicU64::new(0),
+            failed: AtomicU64::new(0),
+            total_ticks: AtomicU64::new(0),
+            min_ticks: AtomicU64::new(u64::MAX),
+            max_ticks: AtomicU64::new(0),
+            last_ticks: AtomicU64::new(0),
+            first_at: AtomicU64::new(0),
+            last_at: AtomicU64::new(0),
+            last_failure_at: AtomicU64::new(0),
+        }
+    }
 }
 
 impl Default for PerfCounters {
     fn default() -> Self {
-        PerfCounters {
-            total: AtomicU64::new(0),
-            failed: AtomicU64::new(0),
-            total_us: AtomicU64::new(0),
-            min_us: AtomicU64::new(u64::MAX),
-            max_us: AtomicU64::new(0),
-            last_us: AtomicU64::new(0),
-            first_ts: AtomicI64::new(0),
-            last_ts: AtomicI64::new(0),
-            last_failure_ts: AtomicI64::new(0),
-            reset_ts: AtomicI64::new(now_millis()),
-        }
+        PerfCounters { stripes: Default::default(), reset_ts: AtomicI64::new(now_millis()), base: Default::default() }
     }
 }
 
 impl PerfCounters {
     /// Record one processed exchange.
     pub fn record(&self, elapsed: Duration, failed: bool) {
-        let us = elapsed.as_micros() as u64;
-        let now = now_millis();
-        self.total.fetch_add(1, Ordering::Relaxed);
+        let end = crate::clock::ticks();
+        self.record_ticks(end.saturating_sub(crate::clock::duration_to_ticks(elapsed)), end, failed);
+    }
+
+    /// Record one exchange timed with [`crate::clock::ticks`] readings.
+    #[inline]
+    pub fn record_ticks(&self, start: u64, end: u64, failed: bool) {
+        let slot = slot();
+        let s = &self.stripes[slot.index];
+        let t = end.saturating_sub(start);
+        let at = end.max(1);
+        bump(&s.total, 1, slot);
         if failed {
-            self.failed.fetch_add(1, Ordering::Relaxed);
-            self.last_failure_ts.store(now, Ordering::Relaxed);
+            bump(&s.failed, 1, slot);
+            s.last_failure_at.store(at, Ordering::Relaxed);
         }
-        self.total_us.fetch_add(us, Ordering::Relaxed);
-        self.min_us.fetch_min(us, Ordering::Relaxed);
-        self.max_us.fetch_max(us, Ordering::Relaxed);
-        self.last_us.store(us, Ordering::Relaxed);
-        let _ = self.first_ts.compare_exchange(0, now, Ordering::Relaxed, Ordering::Relaxed);
-        self.last_ts.store(now, Ordering::Relaxed);
+        bump(&s.total_ticks, t, slot);
+        // read before the read-modify-writes: min and max rarely change
+        if t < s.min_ticks.load(Ordering::Relaxed) {
+            s.min_ticks.fetch_min(t, Ordering::Relaxed);
+        }
+        if t > s.max_ticks.load(Ordering::Relaxed) {
+            s.max_ticks.fetch_max(t, Ordering::Relaxed);
+        }
+        s.last_ticks.store(t, Ordering::Relaxed);
+        if s.first_at.load(Ordering::Relaxed) == 0 {
+            let _ = s.first_at.compare_exchange(0, at, Ordering::Relaxed, Ordering::Relaxed);
+        }
+        s.last_at.store(at, Ordering::Relaxed);
     }
 
     /// Reset all counters to zero.
     pub fn reset(&self) {
-        self.total.store(0, Ordering::Relaxed);
-        self.failed.store(0, Ordering::Relaxed);
-        self.total_us.store(0, Ordering::Relaxed);
-        self.min_us.store(u64::MAX, Ordering::Relaxed);
-        self.max_us.store(0, Ordering::Relaxed);
-        self.last_us.store(0, Ordering::Relaxed);
-        self.first_ts.store(0, Ordering::Relaxed);
-        self.last_ts.store(0, Ordering::Relaxed);
-        self.last_failure_ts.store(0, Ordering::Relaxed);
+        // counters: a baseline (a stripe's owner may be writing its cells right now)
+        let (total, failed, ticks) = self.sums();
+        self.base[0].store(total, Ordering::Relaxed);
+        self.base[1].store(failed, Ordering::Relaxed);
+        self.base[2].store(ticks, Ordering::Relaxed);
+        for s in &self.stripes {
+            s.min_ticks.store(u64::MAX, Ordering::Relaxed);
+            s.max_ticks.store(0, Ordering::Relaxed);
+            s.last_ticks.store(0, Ordering::Relaxed);
+            s.first_at.store(0, Ordering::Relaxed);
+            s.last_at.store(0, Ordering::Relaxed);
+            s.last_failure_at.store(0, Ordering::Relaxed);
+        }
         self.reset_ts.store(now_millis(), Ordering::Relaxed);
+    }
+
+    fn sums(&self) -> (u64, u64, u64) {
+        let ld = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        self.stripes.iter().fold((0u64, 0u64, 0u64), |(a, b, c), s| {
+            (a.wrapping_add(ld(&s.total)), b.wrapping_add(ld(&s.failed)), c.wrapping_add(ld(&s.total_ticks)))
+        })
     }
 
     /// A consistent-enough copy of the counters.
     pub fn snapshot(&self) -> PerfSnapshot {
-        let total = self.total.load(Ordering::Relaxed);
-        let failed = self.failed.load(Ordering::Relaxed).min(total);
-        let total_us = self.total_us.load(Ordering::Relaxed);
-        let min = self.min_us.load(Ordering::Relaxed);
-        let opt = |v: i64| if v == 0 { None } else { Some(v) };
+        let us = |t: u64| (crate::clock::ticks_to_nanos(t) + 500) / 1000;
+        let ts = |t: u64| if t == 0 { None } else { Some(crate::clock::ticks_to_epoch_millis(t)) };
+        let ld = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let (total, failed, total_ticks) = self.sums();
+        let total = total.wrapping_sub(ld(&self.base[0]));
+        let failed = failed.wrapping_sub(ld(&self.base[1]));
+        let total_ticks = total_ticks.wrapping_sub(ld(&self.base[2]));
+        let (mut min, mut max) = (u64::MAX, 0u64);
+        let (mut first_at, mut last_at, mut last_ticks, mut last_failure_at) = (0u64, 0u64, 0u64, 0u64);
+        for s in &self.stripes {
+            min = min.min(ld(&s.min_ticks));
+            max = max.max(ld(&s.max_ticks));
+            let f = ld(&s.first_at);
+            if f != 0 && (first_at == 0 || f < first_at) {
+                first_at = f;
+            }
+            // the last exchange is the one of the stripe that recorded last
+            let l = ld(&s.last_at);
+            if l > last_at {
+                last_at = l;
+                last_ticks = ld(&s.last_ticks);
+            }
+            last_failure_at = last_failure_at.max(ld(&s.last_failure_at));
+        }
+        let failed = failed.min(total);
+        let total_us = us(total_ticks);
+        let max_us = us(max);
         PerfSnapshot {
             exchanges_total: total,
             exchanges_failed: failed,
@@ -128,13 +195,13 @@ impl PerfCounters {
             total_processing_micros: total_us,
             total_processing_time: total_us / 1000,
             mean_processing_time: if total > 0 { total_us / total / 1000 } else { 0 },
-            min_processing_time: if min == u64::MAX { 0 } else { min / 1000 },
-            max_processing_time: self.max_us.load(Ordering::Relaxed) / 1000,
-            last_processing_time: self.last_us.load(Ordering::Relaxed) / 1000,
-            max_processing_micros: self.max_us.load(Ordering::Relaxed),
-            first_exchange_timestamp: opt(self.first_ts.load(Ordering::Relaxed)),
-            last_exchange_timestamp: opt(self.last_ts.load(Ordering::Relaxed)),
-            last_exchange_failure_timestamp: opt(self.last_failure_ts.load(Ordering::Relaxed)),
+            min_processing_time: if min == u64::MAX { 0 } else { us(min) / 1000 },
+            max_processing_time: max_us / 1000,
+            last_processing_time: us(last_ticks) / 1000,
+            max_processing_micros: max_us,
+            first_exchange_timestamp: ts(first_at),
+            last_exchange_timestamp: ts(last_at),
+            last_exchange_failure_timestamp: ts(last_failure_at),
             reset_timestamp: self.reset_ts.load(Ordering::Relaxed),
         }
     }
@@ -213,38 +280,66 @@ impl RouteMgmt {
     }
 }
 
-/// Context-level exchange counters (root exchanges).
-#[derive(Default)]
-pub struct ContextCounters {
-    completed: AtomicU64,
-    failed: AtomicU64,
-}
-
-struct CountingNotifier(Arc<ContextCounters>);
-
-impl EventNotifier for CountingNotifier {
-    fn notify(&self, event: &CamelEvent) {
-        match event {
-            CamelEvent::ExchangeCompleted { .. } => {
-                self.0.completed.fetch_add(1, Ordering::Relaxed);
-            }
-            CamelEvent::ExchangeFailed { .. } => {
-                self.0.failed.fetch_add(1, Ordering::Relaxed);
-            }
-            _ => {}
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Per-context state
 // ---------------------------------------------------------------------------
 
+/// How much performance data management collects (Camel's `ManagementStatisticsLevel`).
+///
+/// - `Extended` and `Default`: route and processor (per-step) statistics. rust-camel has no
+///   extended (load) statistics yet, so `Extended` collects the same as `Default`.
+/// - `RoutesOnly` (rust-camel's default): route statistics and the context counters only.
+/// - `Off`: no route or processor statistics (the context's completed/failed counters, which
+///   cost one striped add per exchange, are still kept).
+///
+/// Apache Camel collects statistics only when `camel-management` is loaded (then at
+/// `Default`); without it there are none. rust-camel always has management, so its default
+/// sits in between: the cheap route-level numbers on, per-step timing opt-in
+/// (`set_statistics_level(Default)`, `camel.main.jmxManagementStatisticsLevel=Default`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManagementStatisticsLevel {
+    Extended,
+    Default,
+    RoutesOnly,
+    Off,
+}
+
+impl ManagementStatisticsLevel {
+    /// Parse Camel's names (case-insensitive, `routes-only` also accepted).
+    pub fn parse(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().replace(['-', '_'], "").as_str() {
+            "extended" => Ok(Self::Extended),
+            "default" => Ok(Self::Default),
+            "routesonly" => Ok(Self::RoutesOnly),
+            "off" => Ok(Self::Off),
+            _ => Err(CamelError::illegal_argument(format!("Unknown ManagementStatisticsLevel: {}", s))),
+        }
+    }
+    fn to_u8(self) -> u8 {
+        match self {
+            Self::Extended => 3,
+            Self::Default => 2,
+            Self::RoutesOnly => 1,
+            Self::Off => 0,
+        }
+    }
+    fn from_u8(v: u8) -> Self {
+        match v {
+            3 => Self::Extended,
+            2 => Self::Default,
+            1 => Self::RoutesOnly,
+            _ => Self::Off,
+        }
+    }
+}
+
 /// Per-context management state (bound in the registry as [`MANAGEMENT_STATE`]).
 pub struct ManagementState {
     routes: RwLock<HashMap<String, Arc<RouteMgmt>>>,
-    counters: Arc<ContextCounters>,
-    statistics_enabled: AtomicBool,
+    /// Context-level exchange counters (root exchanges), counted by the route processor.
+    counters: Arc<crate::context::ExchangeCounters>,
+    /// A [`ManagementStatisticsLevel`].
+    statistics_level: std::sync::atomic::AtomicU8,
     /// The tracer (standard + backlog).
     pub tracer: Arc<Tracer>,
     pub(crate) history_enabled: AtomicBool,
@@ -258,14 +353,27 @@ impl ManagementState {
     fn new(ctx: &CamelContext) -> Self {
         ManagementState {
             routes: RwLock::new(HashMap::new()),
-            counters: Arc::new(ContextCounters::default()),
-            statistics_enabled: AtomicBool::new(true),
+            counters: ctx.inner.exchange_counters.clone(),
+            statistics_level: std::sync::atomic::AtomicU8::new(ManagementStatisticsLevel::RoutesOnly.to_u8()),
             tracer: Arc::new(Tracer::default()),
             history_enabled: AtomicBool::new(false),
             health: Arc::new(HealthCheckRegistry::with_builtins(ctx)),
             templates: RwLock::new(BTreeMap::new()),
             supervising: RwLock::new(None),
         }
+    }
+
+    #[inline]
+    fn level(&self) -> u8 {
+        self.statistics_level.load(Ordering::Relaxed)
+    }
+    #[inline]
+    fn route_stats(&self) -> bool {
+        self.level() >= ManagementStatisticsLevel::RoutesOnly.to_u8()
+    }
+    #[inline]
+    fn processor_stats(&self) -> bool {
+        self.level() >= ManagementStatisticsLevel::Default.to_u8()
     }
 
     /// Management data of a route.
@@ -287,7 +395,6 @@ pub fn state(ctx: &CamelContext) -> Arc<ManagementState> {
     }
     let s = Arc::new(ManagementState::new(ctx));
     ctx.registry().bind_arc(MANAGEMENT_STATE, s.clone());
-    ctx.add_event_notifier(CountingNotifier(s.counters.clone()));
     s
 }
 
@@ -340,6 +447,8 @@ impl RouteFactoryHook for ManagementHook {
         });
         self.state.routes.write().unwrap().insert(rc.route_id.clone(), mgmt.clone());
         rc.set_attribute(ROUTE_ATTR, mgmt.clone());
+        let timer: Arc<dyn crate::context::RouteTimer> = Arc::new(RouteTimer { state: self.state.clone(), mgmt: mgmt.clone() });
+        rc.set_attribute(crate::context::ROUTE_TIMER_ATTR, timer);
         rc.set_attribute("camel.management.nodeIndex", NodeIndex(index));
         rc.channel_wrappers.push(Arc::new(InstrumentationWrapper { state: self.state.clone(), mgmt }));
         Ok(())
@@ -349,6 +458,20 @@ impl RouteFactoryHook for ManagementHook {
         let Some(mgmt) = rc.attribute::<Arc<RouteMgmt>>(ROUTE_ATTR).map(|m| (*m).clone()) else { return Ok(processor) };
         let uri = rc.context.get_endpoint(&def.input).map(|e| e.uri().to_string()).unwrap_or_else(|_| def.input.clone());
         Ok(Arc::new(RouteInstrumentation { state: self.state.clone(), mgmt, label: format!("from[{}]", uri), inner: processor }))
+    }
+}
+
+/// Route-level statistics, fed by the route processor's timing of each exchange.
+struct RouteTimer {
+    state: Arc<ManagementState>,
+    mgmt: Arc<RouteMgmt>,
+}
+
+impl crate::context::RouteTimer for RouteTimer {
+    fn record(&self, start: u64, end: u64, failed: bool) {
+        if self.state.route_stats() {
+            self.mgmt.perf.record_ticks(start, end, failed);
+        }
     }
 }
 
@@ -391,8 +514,18 @@ struct InstrumentedProcessor {
 
 impl Processor for InstrumentedProcessor {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
+        self.process_timed(ex, 0).0
+    }
+
+    fn process_timed(&self, ex: &mut Exchange, start: u64) -> (Result<()>, u64) {
         let n = &self.node;
-        if self.state.tracer.is_active() {
+        let stats = self.state.processor_stats();
+        let tracing = self.state.tracer.is_active();
+        if !stats && !tracing && !self.state.history_enabled.load(Ordering::Relaxed) {
+            // nothing to record for this step
+            return self.inner.process_timed(ex, start);
+        }
+        if tracing {
             self.state.tracer.trace(&n.route_id, &n.node_id, &n.label, false, ex);
         }
         let hist = if self.state.history_enabled.load(Ordering::Relaxed) {
@@ -400,17 +533,17 @@ impl Processor for InstrumentedProcessor {
         } else {
             None
         };
-        let stats = self.state.statistics_enabled.load(Ordering::Relaxed);
-        let start = Instant::now();
-        let r = self.inner.process(ex);
-        let elapsed = start.elapsed();
+        let start = if start != 0 { start } else { crate::clock::ticks() };
+        // a block (choice, filter...) passes out the last reading of its children
+        let (r, inner_end) = self.inner.process_timed(ex, 0);
+        let end = if inner_end != 0 { inner_end } else { crate::clock::ticks() };
         if stats {
-            n.perf.record(elapsed, r.is_err() || ex.is_failed());
+            n.perf.record_ticks(start, end, r.is_err() || ex.is_failed());
         }
         if let Some(i) = hist {
-            crate::history::end(ex, i, &n.node_id, elapsed);
+            crate::history::end(ex, i, &n.node_id, crate::clock::elapsed(start, end));
         }
-        r
+        (r, end)
     }
 }
 
@@ -423,6 +556,10 @@ struct RouteInstrumentation {
 
 impl Processor for RouteInstrumentation {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
+        self.process_timed(ex, 0).0
+    }
+
+    fn process_timed(&self, ex: &mut Exchange, outer_start: u64) -> (Result<()>, u64) {
         let id = &self.mgmt.route_id;
         if self.state.tracer.is_active() {
             self.state.tracer.trace(id, id, &self.label, true, ex);
@@ -432,16 +569,13 @@ impl Processor for RouteInstrumentation {
         } else {
             None
         };
-        let start = Instant::now();
+        // route statistics are recorded by the route processor (`RouteTimer`)
+        let Some(i) = hist else { return self.inner.process_timed(ex, outer_start) };
+        let start = crate::clock::ticks();
         let r = self.inner.process(ex);
-        let elapsed = start.elapsed();
-        if self.state.statistics_enabled.load(Ordering::Relaxed) {
-            self.mgmt.perf.record(elapsed, r.is_err() || ex.is_failed());
-        }
-        if let Some(i) = hist {
-            crate::history::end(ex, i, id, elapsed);
-        }
-        r
+        let end = crate::clock::ticks();
+        crate::history::end(ex, i, id, crate::clock::elapsed(start, end));
+        (r, end)
     }
 }
 
@@ -577,9 +711,19 @@ impl CamelContext {
         ManagedCamelContext { ctx: self.clone(), state: state(self) }
     }
 
-    /// Enable/disable collection of route and processor statistics (default enabled).
+    /// Collect route and processor statistics (`ManagementStatisticsLevel::Default`) or none
+    /// (`Off`). See [`CamelContext::set_statistics_level`].
     pub fn set_statistics_enabled(&self, enabled: bool) {
-        state(self).statistics_enabled.store(enabled, Ordering::Relaxed);
+        self.set_statistics_level(if enabled { ManagementStatisticsLevel::Default } else { ManagementStatisticsLevel::Off });
+    }
+
+    /// How much performance data management collects (default `RoutesOnly`).
+    pub fn set_statistics_level(&self, level: ManagementStatisticsLevel) {
+        state(self).statistics_level.store(level.to_u8(), Ordering::Relaxed);
+    }
+
+    pub fn statistics_level(&self) -> ManagementStatisticsLevel {
+        ManagementStatisticsLevel::from_u8(state(self).level())
     }
 }
 
@@ -607,10 +751,10 @@ impl ManagedCamelContext {
         self.exchanges_completed() + self.exchanges_failed()
     }
     pub fn exchanges_completed(&self) -> u64 {
-        self.state.counters.completed.load(Ordering::Relaxed)
+        self.state.counters.completed.get()
     }
     pub fn exchanges_failed(&self) -> u64 {
-        self.state.counters.failed.load(Ordering::Relaxed)
+        self.state.counters.failed.get()
     }
     pub fn exchanges_inflight(&self) -> usize {
         self.ctx.inflight_count()
@@ -726,18 +870,15 @@ impl ManagedCamelContext {
             n.perf.reset();
         }
         if let Some(r) = self.ctx.route(id) {
-            r.stats.exchanges_total.store(0, Ordering::Relaxed);
-            r.stats.exchanges_failed.store(0, Ordering::Relaxed);
-            r.stats.total_processing_ms.store(0, Ordering::Relaxed);
-            r.stats.last_processing_ms.store(0, Ordering::Relaxed);
+            r.stats.reset();
         }
         Ok(())
     }
 
     /// Reset all statistics (context, routes, processors).
     pub fn reset_statistics(&self) {
-        self.state.counters.completed.store(0, Ordering::Relaxed);
-        self.state.counters.failed.store(0, Ordering::Relaxed);
+        self.state.counters.completed.reset();
+        self.state.counters.failed.reset();
         for r in self.ctx.routes() {
             let _ = self.reset_route_statistics(&r.id);
         }

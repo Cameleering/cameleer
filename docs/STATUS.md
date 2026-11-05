@@ -101,8 +101,37 @@ Docker, or the lack of real accounts.
    HTTP/2/HPACK, TLS records, BSON, CQL, AMQP frames, YAML, XML).
 6. **Optional cleanup.** Run `cargo clippy --workspace`: `camel-script` has about 70 lints, and
    there are older lints elsewhere. Builds are already warning-free.
-7. **Performance:** benchmarks and comparison with Java Camel (throughput and latency of
-   seda, direct, http and kafka routes). Not started.
+7. **Performance: three rounds against the 4x target (2026-11-05); 4x is met in three of six
+   scenarios.** `scripts/bench.sh` (Linux or Git Bash; `scripts/bench.ps1` on Windows) builds and
+   runs `crates/camel-bench` and `benchmarks/java-camel`, then writes `docs/BENCHMARKS.md`. The Java
+   side uses Apache Camel 4.23.0 on Temurin 21.0.13 with Maven 3.9.16, pinned and checksum-verified.
+   Throughput on a Ryzen 5 5600X under Windows 11, idle machine (rust ÷ java, first round → final):
+   - direct 0.68x → **4.27x**, seda InOnly 1.09x → **4.18x**, seda InOut 0.77x → **8.37x**
+   - cbr 0.56x → 3.48x, splitagg 0.64x → 3.18x, HTTP 2.02x → 2.45x
+   - memory: 25–46x less peak RSS; startup: 77x faster (10 ms vs 751 ms)
+
+   What changed (details in `benchmarks/analysis.md`): a std-only thread-caching allocator
+   (`camel_core::alloc`, opt-in, installed by the `camel` CLI and the benchmark), lazy exchange
+   and message ids, vector-backed headers (with shared names) and properties (interned Camel
+   names), a copy-on-write `ObjectMap`, a TSC tick clock and striped counters for the statistics,
+   Camel's `ManagementStatisticsLevel` with **`RoutesOnly` as rust-camel's default** (per-step
+   timing is opt-in; Camel collects nothing without `camel-management`), a two-lock seda queue with
+   spin-then-park and a reusable InOut reply slot, a borrowing producer cache, faster Simple
+   comparisons, a JsonPath parse cache, in-place aggregation and moving split parts into an
+   aggregate, lazy HTTP read timeouts. `camel-bench profile <scenario> <secs>` is a std-only
+   sampling profiler for Windows; `camel-bench raw-http <port> threads|iocp8|poll` measures the HTTP
+   ceiling. Tests: `crates/camel-core/tests/perf_semantics.rs`, `mgmt_stats.rs` (each statistics
+   level), plus unit tests in the changed modules.
+
+   Still under 4x (why, and next steps, in `benchmarks/analysis.md`):
+   - HTTP: a do-nothing server (threads or IOCP) reaches only about 400k req/s with the shared load
+     generator on this machine, 3.6x Java, so 4x cannot be shown here; rust-camel reaches about 70%
+     of that. Needs the load generator on another machine. An event-driven camel-http server is
+     not built (it measured no faster here); the decision is with the owner.
+   - splitagg: JSON parsing and per-part exchange copies; next are shared JSON keys (an `ObjectMap`
+     API change) and a smaller `Exchange` (public field changes).
+   - cbr: the remaining cost is spread over many small steps.
+   - Kafka scenario (optional) not done: it needs a real broker on both sides.
 
 ## Resuming in a new session
 

@@ -138,7 +138,7 @@ impl Processor for ControlBusProducer {
             }
             Command::Route { route_id, action, run_async, restart_delay } => {
                 let id = match route_id.as_deref() {
-                    Some("current") => exchange.from_route_id.clone(),
+                    Some("current") => exchange.from_route_id.as_deref().map(str::to_string),
                     Some(id) => Some(id.to_string()),
                     None => None,
                 };

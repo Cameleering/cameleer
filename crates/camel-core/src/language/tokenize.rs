@@ -201,7 +201,7 @@ struct TokenizeExpression {
 impl Expression for TokenizeExpression {
     fn evaluate(&self, ex: &Exchange) -> Result<Value> {
         let input = match &self.header {
-            Some(h) => ex.message.headers.get(h).cloned().unwrap_or(Value::Null),
+            Some(h) => ex.message.headers.get(h).map(std::borrow::Cow::Borrowed).unwrap_or(std::borrow::Cow::Owned(Value::Null)),
             None => super::jsonpath::source_value(ex, &self.options),
         };
         Ok(self.tokenizer.tokenize_value(&input))

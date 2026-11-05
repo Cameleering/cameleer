@@ -891,7 +891,7 @@ fn split_sub_exchanges_have_own_exchange_id_and_correlation() {
     let parts = ctx.mock_endpoint("mock:part").unwrap().received_exchanges();
     assert_ne!(parts[0].exchange_id, ex.exchange_id);
     assert_ne!(parts[0].exchange_id, parts[1].exchange_id);
-    assert_eq!(parts[0].property(props::CORRELATION_ID), Some(&Value::from(ex.exchange_id.clone())));
+    assert_eq!(parts[0].property(props::CORRELATION_ID), Some(&Value::from(ex.exchange_id.to_string())));
 }
 
 #[test]

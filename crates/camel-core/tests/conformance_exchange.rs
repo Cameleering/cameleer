@@ -165,7 +165,7 @@ fn correlated_copy_has_new_id_and_correlation_property() {
     ex.set_property("p", 2);
     let c = ex.correlated_copy();
     assert_ne!(c.exchange_id, ex.exchange_id);
-    assert_eq!(c.property(props::CORRELATION_ID), Some(&Value::from(ex.exchange_id.clone())));
+    assert_eq!(c.property(props::CORRELATION_ID), Some(&Value::from(ex.exchange_id.to_string())));
     assert_eq!(c.header("h"), Some(&Value::Int(1)));
     assert_eq!(c.property("p"), Some(&Value::Int(2)));
     assert_eq!(c.body(), &Value::from("b"));

@@ -21,16 +21,24 @@ impl Pipeline {
 
 impl Processor for Pipeline {
     fn process(&self, exchange: &mut Exchange) -> Result<()> {
+        self.process_timed(exchange, 0).0
+    }
+
+    fn process_timed(&self, exchange: &mut Exchange, start: u64) -> (Result<()>, u64) {
+        // the end reading of one step is the start of the next
+        let mut t = start;
         for p in &self.processors {
             if !exchange.should_continue() {
                 break;
             }
-            if let Err(e) = p.process(exchange) {
+            let (r, end) = p.process_timed(exchange, t);
+            t = end;
+            if let Err(e) = r {
                 exchange.set_exception(e);
                 break;
             }
         }
-        Ok(())
+        (Ok(()), t)
     }
 }
 

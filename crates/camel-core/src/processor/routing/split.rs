@@ -60,6 +60,9 @@ struct SplitProcessor {
     delimiter: Option<String>,
     child: Arc<dyn Processor>,
     engine: MulticastEngine,
+    /// The parts are discarded after their only step, an aggregate (no strategy, not
+    /// parallel): the aggregate may move a part's message instead of copying it.
+    consume_parts: bool,
 }
 
 impl Processor for SplitProcessor {
@@ -72,11 +75,13 @@ impl Processor for SplitProcessor {
             let template = exchange.clone();
             exchange.message.body = body;
             let child = self.child.clone();
+            let consume = self.consume_parts;
             let mut index = 0usize;
             let mut pairs = std::iter::from_fn(move || {
                 let part = parts.next()?;
                 let last = parts.peek().is_none();
                 let mut sub = template.correlated_copy();
+                sub.consumable = consume;
                 sub.message.body = part;
                 sub.set_property(props::SPLIT_INDEX, index);
                 sub.set_property(props::SPLIT_COMPLETE, last);
@@ -90,6 +95,27 @@ impl Processor for SplitProcessor {
         }
         let parts = to_iterable(value, self.delimiter.as_deref());
         let n = parts.len();
+        if !self.engine.is_parallel() {
+            // sequential: each sub-exchange is created when its turn comes (the size is
+            // known up front, so every part still gets `CamelSplitSize`)
+            let body = std::mem::replace(&mut exchange.message.body, crate::value::Value::Null);
+            let template = exchange.clone();
+            exchange.message.body = body;
+            let child = self.child.clone();
+            let consume = self.consume_parts;
+            let mut pairs = parts.into_iter().enumerate().map(move |(i, part)| {
+                let mut sub = template.correlated_copy();
+                sub.consumable = consume;
+                sub.message.body = part;
+                sub.set_property(props::SPLIT_INDEX, i);
+                sub.set_property(props::SPLIT_SIZE, n);
+                sub.set_property(props::SPLIT_COMPLETE, i + 1 == n);
+                (sub, child.clone())
+            });
+            return self.engine.execute_lazy(exchange, &mut pairs);
+        }
+        // copy the exchange without its body for each part (the part becomes the body)
+        let body = std::mem::replace(&mut exchange.message.body, crate::value::Value::Null);
         let pairs = parts
             .into_iter()
             .enumerate()
@@ -102,6 +128,7 @@ impl Processor for SplitProcessor {
                 (sub, self.child.clone())
             })
             .collect();
+        exchange.message.body = body;
         self.engine.execute(exchange, pairs)
     }
 }
@@ -127,7 +154,11 @@ impl ProcessorDefinition for SplitDefinition {
         let expression = self.expression.resolve_expression(&rc.context)?;
         let child = rc.create_child_processor(&self.outputs.outputs)?;
         let engine = MulticastEngine::create(rc, &self.settings, "split", false)?;
-        Ok(Arc::new(SplitProcessor { expression, delimiter: self.delimiter.clone(), child, engine }))
+        let consume_parts = self.settings.strategy.is_none()
+            && !self.settings.parallel_processing
+            && self.outputs.outputs.len() == 1
+            && self.outputs.outputs[0].name() == "aggregate";
+        Ok(Arc::new(SplitProcessor { expression, delimiter: self.delimiter.clone(), child, engine, consume_parts }))
     }
     impl_definition_boilerplate!();
 }

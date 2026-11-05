@@ -555,8 +555,32 @@ pub(crate) struct ErrorChannel {
 
 impl Processor for ErrorChannel {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
+        if let Err(e) = self.inner.process(ex) {
+            ex.set_exception(e);
+        }
+        if ex.exception.is_none() {
+            return Ok(());
+        }
+        self.after_attempt(ex)
+    }
+
+    fn process_timed(&self, ex: &mut Exchange, start: u64) -> (Result<()>, u64) {
+        let (r, end) = self.inner.process_timed(ex, start);
+        if let Err(e) = r {
+            ex.set_exception(e);
+        }
+        if ex.exception.is_none() {
+            return (Ok(()), end);
+        }
+        (self.after_attempt(ex), 0)
+    }
+}
+
+impl ErrorChannel {
+    /// Error handling after the first attempt: redeliveries, then the exhausted handling.
+    fn after_attempt(&self, ex: &mut Exchange) -> Result<()> {
         let mut attempt: i32 = 0;
-        let mut run_inner = true;
+        let mut run_inner = false;
         loop {
             if run_inner {
                 if let Err(e) = self.inner.process(ex) {

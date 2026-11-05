@@ -233,6 +233,11 @@ fn accept_loop(inner: Arc<ServerInner>, listener: TcpListener) {
     }
 }
 
+/// Whether `buf` holds a complete request head (ends with an empty line).
+fn contains_head_end(buf: &[u8]) -> bool {
+    buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.windows(2).any(|w| w == b"\n\n")
+}
+
 struct BusyGuard<'a>(&'a AtomicUsize);
 impl Drop for BusyGuard<'_> {
     fn drop(&mut self) {
@@ -266,19 +271,32 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
     let mut reader = BufReader::new(stream);
     let mut writer = stream;
     let mut served = 0usize;
+    // Read timeouts are socket options (a system call each): set them only before a read
+    // that may block, and only when the value changes.
+    let mut current_timeout = None;
+    let mut set_timeout = |t: Duration| {
+        if current_timeout != Some(t) {
+            let _ = stream.set_read_timeout(Some(t));
+            current_timeout = Some(t);
+        }
+    };
     loop {
         if !inner.running.load(Ordering::SeqCst) {
             break;
         }
         // wait (idle) for the next request
-        let idle = if served == 0 { cfg.read_timeout } else { cfg.keep_alive_timeout };
-        let _ = stream.set_read_timeout(Some(idle));
+        if reader.buffer().is_empty() {
+            set_timeout(if served == 0 { cfg.read_timeout } else { cfg.keep_alive_timeout });
+        }
         match reader.fill_buf() {
             Ok([]) => break,
             Ok(_) => {}
             Err(_) => break,
         }
-        let _ = stream.set_read_timeout(Some(cfg.read_timeout));
+        // the rest of the head (if not all here yet) is read with the request timeout
+        if !contains_head_end(reader.buffer()) {
+            set_timeout(cfg.read_timeout);
+        }
         inner.busy.fetch_add(1, Ordering::SeqCst);
         let _guard = BusyGuard(&inner.busy);
         let head = read_request_head(&mut reader, Some(&mut writer), &cfg.limits).and_then(|h| match h {
@@ -297,6 +315,11 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
             }
         };
         let mut streamed = false;
+        match kind {
+            BodyKind::Length(n) if reader.buffer().len() >= n => {}
+            BodyKind::Length(_) | BodyKind::Chunked => set_timeout(cfg.read_timeout),
+            _ => {}
+        }
         if matches!(kind, BodyKind::Chunked | BodyKind::Length(_)) && inner.handler.stream_request(&req) {
             // hand the rest of the connection (buffered bytes first) to a lazy body reader
             let buffered = reader.buffer().to_vec();
@@ -341,7 +364,8 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
             && req.wants_keep_alive()
             && inner.running.load(Ordering::SeqCst)
             && served < cfg.max_keep_alive_requests
-            && inner.pool.pending_count() == 0;
+            // close keep-alive connections only when connections are waiting for a worker
+            && !inner.pool.is_saturated();
         let head = req.method == "HEAD";
         let version = req.version;
         let handler = inner.handler.clone();
@@ -391,5 +415,118 @@ mod tests {
         server.stop();
         assert!(start.elapsed() < Duration::from_secs(2));
         assert!(TcpStream::connect(server.local_addr()).is_err() || !server.is_running());
+    }
+
+    fn keep_alive_requests(addr: SocketAddr, n: usize) -> usize {
+        // returns how many responses asked to close the connection
+        let s = TcpStream::connect(addr).unwrap();
+        let mut r = BufReader::new(s.try_clone().unwrap());
+        let mut w = s;
+        let mut closes = 0;
+        for _ in 0..n {
+            w.write_all(b"GET /k HTTP/1.1
+Host: x
+
+").unwrap();
+            let mut len = 0;
+            loop {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                let l = line.trim_end().to_ascii_lowercase();
+                if l.is_empty() {
+                    break;
+                }
+                if l == "connection: close" {
+                    closes += 1;
+                }
+                if let Some(v) = l.strip_prefix("content-length:") {
+                    len = v.trim().parse().unwrap();
+                }
+            }
+            let mut body = vec![0u8; len];
+            r.read_exact(&mut body).unwrap();
+            if closes > 0 {
+                break;
+            }
+        }
+        closes
+    }
+
+    #[test]
+    fn a_request_head_split_across_packets_is_read() {
+        let server = HttpServer::bind("127.0.0.1:0", ServerConfig::default(), |_req: &mut HttpRequest| HttpResponse::text(200, "ok")).unwrap();
+        let mut s = TcpStream::connect(server.local_addr()).unwrap();
+        s.set_nodelay(true).unwrap();
+        s.write_all(b"GET /a HTTP/1.1\r\nHo").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        s.write_all(b"st: x\r\n\r\nPOST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nab").unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        s.write_all(b"cdGET /c HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").unwrap();
+        let mut all = String::new();
+        s.read_to_string(&mut all).unwrap();
+        assert_eq!(all.matches("HTTP/1.1 200").count(), 3, "{all}");
+        server.stop();
+    }
+
+    #[test]
+    fn keep_alive_survives_new_connections_while_workers_are_idle() {
+        let cfg = ServerConfig { pool_size: 8, ..ServerConfig::default() };
+        let server = HttpServer::bind("127.0.0.1:0", cfg, |_req: &mut HttpRequest| HttpResponse::text(200, "ok")).unwrap();
+        let addr = server.local_addr();
+        let stop = Arc::new(AtomicBool::new(false));
+        // connection churn: every new connection is briefly a pending job of the pool
+        let churn = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    let _ = keep_alive_requests(addr, 1);
+                }
+            })
+        };
+        let persistent: Vec<_> = (0..4).map(|_| std::thread::spawn(move || keep_alive_requests(addr, 300))).collect();
+        let closes: usize = persistent.into_iter().map(|h| h.join().unwrap()).sum();
+        stop.store(true, Ordering::SeqCst);
+        churn.join().unwrap();
+        assert_eq!(closes, 0, "keep-alive connections were closed although workers were idle");
+        server.stop();
+    }
+
+    #[test]
+    fn keep_alive_is_closed_when_connections_wait_for_a_worker() {
+        let cfg = ServerConfig { pool_size: 1, ..ServerConfig::default() };
+        let server = HttpServer::bind("127.0.0.1:0", cfg, |_req: &mut HttpRequest| HttpResponse::text(200, "ok")).unwrap();
+        let addr = server.local_addr();
+        let a = TcpStream::connect(addr).unwrap();
+        let mut ra = BufReader::new(a.try_clone().unwrap());
+        let mut wa = a;
+        let head = |w: &mut TcpStream, r: &mut BufReader<TcpStream>| -> String {
+            w.write_all(b"GET /a HTTP/1.1
+Host: x
+
+").unwrap();
+            let mut all = String::new();
+            loop {
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                if line.trim_end().is_empty() {
+                    break;
+                }
+                all.push_str(&line.to_ascii_lowercase());
+            }
+            let mut body = [0u8; 2];
+            r.read_exact(&mut body).unwrap();
+            all
+        };
+        assert!(!head(&mut wa, &mut ra).contains("connection: close"));
+        // the only worker is serving `a`: a second connection has to wait for it
+        let b = std::thread::spawn(move || keep_alive_requests(addr, 1));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while server.connection_count() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(head(&mut wa, &mut ra).contains("connection: close"));
+        assert_eq!(b.join().unwrap(), 0);
+        server.stop();
     }
 }

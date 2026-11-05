@@ -14,6 +14,7 @@
 //! Language options: `resultType`, `suppressExceptions`, `headerName`, `source`
 //! (`header:name`, `property:name`, `variable:name`), `unpackArray`.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -520,23 +521,130 @@ impl JsonPath {
 
     /// Evaluate against a JSON value. Strings/bytes are parsed as JSON first.
     pub fn evaluate(&self, input: &Value) -> Result<Value> {
-        let root = to_json_value(input)?;
-        let nodes = select(&self.segs, &root, &root);
+        let text = match input {
+            Value::String(s) => s.as_bytes(),
+            Value::Bytes(b) => b.as_slice(),
+            // structured input is navigated in place (no copy of the document)
+            other => return self.evaluate_in(other),
+        };
+        // Text is parsed, or this thread's parse of the same text is reused: routes often
+        // evaluate several paths on one body (`setHeader(jsonpath(..))` then `split(jsonpath(..))`).
+        let mut doc = match parse_cache::take(text) {
+            Some(doc) => doc,
+            None => to_json_value(input)?,
+        };
+        if self.is_definite() && self.func.is_none() {
+            let small = match select(&self.segs, &doc, &doc).first() {
+                None => return Err(CamelError::new(PATH_NOT_FOUND, format!("No results for path: {}", self.path))),
+                Some(v) => is_small(v),
+            };
+            if small {
+                let result = select(&self.segs, &doc, &doc)[0].clone();
+                parse_cache::put(text, doc);
+                return Ok(result);
+            }
+            // a large result is moved out of the document instead of copied; the document
+            // is then incomplete, so it is not kept for reuse
+            return Ok(take_definite(&self.segs, &mut doc).unwrap_or(Value::Null));
+        }
+        let result = self.evaluate_in(&doc);
+        parse_cache::put(text, doc);
+        result
+    }
+
+    fn evaluate_in(&self, root: &Value) -> Result<Value> {
+        let nodes = select(&self.segs, root, root);
         let definite = self.is_definite();
         let result = if definite {
             match nodes.into_iter().next() {
-                Some(v) => v,
+                Some(v) => v.clone(),
                 None => {
                     return Err(CamelError::new(PATH_NOT_FOUND, format!("No results for path: {}", self.path)));
                 }
             }
         } else {
-            Value::Array(nodes)
+            Value::Array(nodes.into_iter().cloned().collect())
         };
         match &self.func {
             None => Ok(result),
             Some(f) => apply_func(f, &result),
         }
+    }
+}
+
+/// Values cheap enough to copy out of a cached document.
+fn is_small(v: &Value) -> bool {
+    match v {
+        Value::String(s) => s.len() <= 256,
+        Value::Bytes(b) => b.len() <= 256,
+        Value::Array(a) => a.is_empty(),
+        Value::Object(o) => o.is_empty(),
+        _ => true,
+    }
+}
+
+/// Move the node of a definite path (names and indexes only) out of `root`, with the same
+/// matching rules as [`apply_sel`].
+fn take_definite(segs: &[Seg], root: &mut Value) -> Option<Value> {
+    let mut cur = root;
+    for seg in segs {
+        cur = match (&seg.sels[0], cur) {
+            (Sel::Name(n), Value::Object(o)) => o.get_mut(n)?,
+            (Sel::Index(i), Value::Array(a)) => {
+                let idx = if *i < 0 { a.len() as i64 + i } else { *i };
+                if idx < 0 {
+                    return None;
+                }
+                a.get_mut(idx as usize)?
+            }
+            _ => return None,
+        };
+    }
+    Some(std::mem::take(cur))
+}
+
+/// The last JSON document parsed on this thread, keyed by its exact text.
+mod parse_cache {
+    use std::cell::RefCell;
+
+    use crate::value::Value;
+
+    /// Larger documents are not kept.
+    const MAX_TEXT: usize = 256 * 1024;
+
+    thread_local! {
+        static LAST: RefCell<Option<(Vec<u8>, Value)>> = const { RefCell::new(None) };
+    }
+
+    /// The parsed document of `text`, if it is the cached one (it leaves the cache).
+    pub(super) fn take(text: &[u8]) -> Option<Value> {
+        LAST.try_with(|c| {
+            let mut c = c.borrow_mut();
+            match c.as_ref() {
+                Some((t, _)) if t.as_slice() == text => c.take().map(|(_, v)| v),
+                _ => None,
+            }
+        })
+        .ok()
+        .flatten()
+    }
+
+    /// Keep `doc`, the parse of `text`, for the next evaluation on this thread.
+    pub(super) fn put(text: &[u8], doc: Value) {
+        if text.len() > MAX_TEXT {
+            return;
+        }
+        let _ = LAST.try_with(|c| {
+            let mut c = c.borrow_mut();
+            // reuse the key buffer of the previous entry
+            let mut key = match c.take() {
+                Some((k, _)) => k,
+                None => Vec::new(),
+            };
+            key.clear();
+            key.extend_from_slice(text);
+            *c = Some((key, doc));
+        });
     }
 }
 
@@ -601,21 +709,21 @@ fn children(v: &Value) -> Vec<&Value> {
     }
 }
 
-fn apply_sel(sel: &Sel, v: &Value, root: &Value, out: &mut Vec<Value>) {
+fn apply_sel<'a>(sel: &Sel, v: &'a Value, root: &Value, out: &mut Vec<&'a Value>) {
     match sel {
         Sel::Name(n) => {
             if let Value::Object(o) = v {
                 if let Some(x) = o.get(n) {
-                    out.push(x.clone());
+                    out.push(x);
                 }
             }
         }
-        Sel::Wildcard => out.extend(children(v).into_iter().cloned()),
+        Sel::Wildcard => out.extend(children(v)),
         Sel::Index(i) => {
             if let Value::Array(a) = v {
                 let idx = if *i < 0 { a.len() as i64 + i } else { *i };
                 if idx >= 0 && (idx as usize) < a.len() {
-                    out.push(a[idx as usize].clone());
+                    out.push(&a[idx as usize]);
                 }
             }
         }
@@ -628,7 +736,7 @@ fn apply_sel(sel: &Sel, v: &Value, root: &Value, out: &mut Vec<Value>) {
                 let step = step.unwrap_or(1).max(1);
                 let mut k = st;
                 while k < en {
-                    out.push(a[k as usize].clone());
+                    out.push(&a[k as usize]);
                     k += step;
                 }
             }
@@ -641,7 +749,7 @@ fn apply_sel(sel: &Sel, v: &Value, root: &Value, out: &mut Vec<Value>) {
             };
             for it in items {
                 if eval_filter(f, it, root) {
-                    out.push(it.clone());
+                    out.push(it);
                 }
             }
         }
@@ -655,11 +763,12 @@ fn descendants<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {
     }
 }
 
-fn select(segs: &[Seg], start: &Value, root: &Value) -> Vec<Value> {
-    let mut nodes = vec![start.clone()];
+/// The nodes a path selects, borrowed from the document (callers clone only the result).
+fn select<'a>(segs: &[Seg], start: &'a Value, root: &Value) -> Vec<&'a Value> {
+    let mut nodes = vec![start];
     for seg in segs {
         let mut next = Vec::new();
-        for n in &nodes {
+        for &n in &nodes {
             if seg.descendant {
                 let mut all = Vec::new();
                 descendants(n, &mut all);
@@ -693,7 +802,7 @@ fn operand_value(o: &Operand, cur: &Value, root: &Value) -> Option<Value> {
         Operand::Path(is_root, segs, f) => {
             let base = if *is_root { root } else { cur };
             let nodes = select(segs, base, root);
-            let v = if is_definite(segs) { nodes.into_iter().next()? } else { Value::Array(nodes) };
+            let v = if is_definite(segs) { nodes.into_iter().next()?.clone() } else { Value::Array(nodes.into_iter().cloned().collect()) };
             match f {
                 Some(f) => apply_func(f, &v).ok(),
                 None => Some(v),
@@ -797,33 +906,35 @@ pub fn query(input: &Value, path: &str) -> Result<Value> {
     JsonPath::compile(path)?.evaluate(input)
 }
 
-/// Resolve the language input from options `headerName` / `source`.
-pub(crate) fn source_value(ex: &Exchange, options: &BTreeMap<String, String>) -> Value {
+/// Resolve the language input from options `headerName` / `source`. Borrowed from the
+/// exchange: expressions only read their input, so the body is not copied.
+pub(crate) fn source_value<'a>(ex: &'a Exchange, options: &BTreeMap<String, String>) -> Cow<'a, Value> {
+    let found = |v: Option<&'a Value>| v.map(Cow::Borrowed).unwrap_or(Cow::Owned(Value::Null));
     if let Some(h) = options.get("headerName").filter(|h| !h.is_empty()) {
-        return ex.message.headers.get(h).cloned().unwrap_or(Value::Null);
+        return found(ex.message.headers.get(h));
     }
     if let Some(p) = options.get("propertyName").filter(|h| !h.is_empty()) {
-        return ex.properties.get(p).cloned().unwrap_or(Value::Null);
+        return found(ex.properties.get(p));
     }
     if let Some(v) = options.get("variableName").filter(|h| !h.is_empty()) {
-        return ex.properties.get(&format!("CamelVariable.{}", v)).cloned().unwrap_or(Value::Null);
+        return found(ex.properties.get(&format!("CamelVariable.{}", v)));
     }
     if let Some(src) = options.get("source").filter(|h| !h.is_empty()) {
         if let Some(h) = src.strip_prefix("header:") {
-            return ex.message.headers.get(h).cloned().unwrap_or(Value::Null);
+            return found(ex.message.headers.get(h));
         }
         if let Some(p) = src.strip_prefix("property:").or_else(|| src.strip_prefix("exchangeProperty:")) {
-            return ex.properties.get(p).cloned().unwrap_or(Value::Null);
+            return found(ex.properties.get(p));
         }
         if let Some(v) = src.strip_prefix("variable:") {
-            return ex.properties.get(&format!("CamelVariable.{}", v)).cloned().unwrap_or(Value::Null);
+            return found(ex.properties.get(&format!("CamelVariable.{}", v)));
         }
         if src == "body" {
-            return ex.message.body.clone();
+            return Cow::Borrowed(&ex.message.body);
         }
-        return ex.message.headers.get(src).cloned().unwrap_or(Value::Null);
+        return found(ex.message.headers.get(src));
     }
-    ex.message.body.clone()
+    Cow::Borrowed(&ex.message.body)
 }
 
 fn opt_bool(options: &BTreeMap<String, String>, key: &str) -> bool {

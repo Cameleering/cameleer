@@ -254,9 +254,9 @@ fn exception_functions() {
 fn ids_random_uuid_env() {
     let ctx = ctx();
     let ex = exchange(&ctx);
-    assert_eq!(eval(&ex, "${exchangeId}"), Value::String(ex.exchange_id.clone()));
-    assert_eq!(eval(&ex, "${id}"), Value::String(ex.message.message_id.clone()));
-    assert_eq!(eval(&ex, "${messageId}"), Value::String(ex.message.message_id.clone()));
+    assert_eq!(eval(&ex, "${exchangeId}"), Value::String(ex.exchange_id.to_string()));
+    assert_eq!(eval(&ex, "${id}"), Value::String(ex.message.message_id.to_string()));
+    assert_eq!(eval(&ex, "${messageId}"), Value::String(ex.message.message_id.to_string()));
     for _ in 0..50 {
         let r = eval(&ex, "${random(10)}").as_i64().unwrap();
         assert!((0..10).contains(&r));

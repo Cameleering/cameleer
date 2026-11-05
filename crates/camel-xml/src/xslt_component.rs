@@ -195,7 +195,7 @@ impl XsltProducer {
 pub fn exchange_parameters(ex: &Exchange) -> Vec<(String, Value)> {
     let mut params: Vec<(String, Value)> = Vec::new();
     for (k, v) in ex.properties.iter() {
-        params.push((k.clone(), v.clone()));
+        params.push((k.to_string(), v.clone()));
     }
     for (k, v) in ex.message.headers.iter() {
         params.retain(|(pk, _)| pk != k);

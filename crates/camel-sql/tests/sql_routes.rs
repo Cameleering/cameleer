@@ -347,7 +347,7 @@ fn aggregation_with_jdbc_repository() {
     ctx.stop().unwrap();
     // recovery API
     let ex = repo.remove("C").unwrap();
-    assert_eq!(repo.scan().unwrap(), vec![ex.exchange_id.clone()]);
+    assert_eq!(repo.scan().unwrap(), vec![ex.exchange_id.to_string()]);
     assert_eq!(repo.recover(&ex.exchange_id).unwrap().unwrap().body(), &Value::from("c1"));
     repo.confirm(&ex.exchange_id);
     assert!(repo.scan().unwrap().is_empty());

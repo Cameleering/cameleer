@@ -157,7 +157,7 @@ pub fn headers() -> ValueBuilder {
 
 /// The exchange id.
 pub fn exchange_id() -> ValueBuilder {
-    expr(|ex| Ok(Value::String(ex.exchange_id.clone())))
+    expr(|ex| Ok(Value::String(ex.exchange_id.to_string())))
 }
 
 /// The caught exception message (null if none).

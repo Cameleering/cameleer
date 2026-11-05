@@ -15,6 +15,7 @@ pub struct ThreadPool {
     active: Arc<AtomicUsize>,
     pending: Arc<AtomicUsize>,
     shutdown: AtomicBool,
+    size: usize,
 }
 
 impl ThreadPool {
@@ -54,6 +55,7 @@ impl ThreadPool {
             active,
             pending,
             shutdown: AtomicBool::new(false),
+            size,
         })
     }
 
@@ -91,6 +93,18 @@ impl ThreadPool {
 
     pub fn pending_count(&self) -> usize {
         self.pending.load(Ordering::SeqCst)
+    }
+
+    /// Number of worker threads.
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// Whether submitted jobs have to wait for a worker: more jobs are pending than there
+    /// are idle workers. (A job submitted while workers are idle is pending only until one
+    /// of them wakes up.)
+    pub fn is_saturated(&self) -> bool {
+        self.pending_count() > self.size.saturating_sub(self.active_count())
     }
 
     /// Stop accepting jobs and wait for workers to finish queued jobs.
@@ -502,6 +516,36 @@ mod tests {
         assert_eq!(total, 90);
         pool.shutdown();
         assert!(!pool.execute(|| {}));
+    }
+
+    #[test]
+    fn saturated_only_when_pending_jobs_exceed_idle_workers() {
+        let pool = ThreadPool::new("s", 2);
+        assert_eq!(pool.size(), 2);
+        assert!(!pool.is_saturated());
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let rx = Arc::new(Mutex::new(rx));
+        for _ in 0..2 {
+            let rx = rx.clone();
+            pool.execute(move || {
+                let _ = rx.lock().unwrap().recv();
+            });
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while (pool.active_count() < 2 || pool.pending_count() > 0) && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        // both workers busy, nothing waiting
+        assert!(!pool.is_saturated());
+        pool.execute(|| {});
+        assert!(pool.is_saturated());
+        tx.send(()).unwrap();
+        tx.send(()).unwrap();
+        while pool.pending_count() > 0 && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(!pool.is_saturated());
+        pool.shutdown();
     }
 
     fn profile(core: usize, max: usize, queue: i64, policy: RejectedPolicy) -> ThreadPoolProfile {

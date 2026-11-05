@@ -417,7 +417,7 @@ impl SqsService {
             return;
         }
         let group = match self.message_group_id_strategy.as_deref() {
-            Some("useExchangeId") => ex.exchange_id.clone(),
+            Some("useExchangeId") => ex.exchange_id.to_string(),
             Some("usePropertyValue") => ex.property(headers::MESSAGE_GROUP_ID_PROPERTY).map(|v| v.to_string()).unwrap_or_default(),
             _ => "CamelSingleMessageGroup".to_string(),
         };

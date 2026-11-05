@@ -106,7 +106,7 @@ impl RedisAggregationRepository {
             args(["MULTI"]),
             args(["HDEL", self.name.as_str(), key]),
             args(["ZREM".to_string(), self.keys_set(), key.to_string()]),
-            args(["HSET".to_string(), self.completed(), ex.exchange_id.clone(), json]),
+            args(["HSET".to_string(), self.completed(), ex.exchange_id.to_string(), json]),
             args(["EXEC"]),
         ];
         let replies = self.client.pipeline(&cmds)?;

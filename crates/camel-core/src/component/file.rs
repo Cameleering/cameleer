@@ -238,8 +238,8 @@ pub fn evaluate_file_expression(text: &str, ex: &Exchange, info: Option<&FileInf
             Some(crate::util_time::format_millis(info.modified, fmt))
         } else {
             match token {
-                "exchangeId" => Some(ex.exchange_id.clone()),
-                "id" | "messageId" => Some(ex.message.message_id.clone()),
+                "exchangeId" => Some(ex.exchange_id.to_string()),
+                "id" | "messageId" => Some(ex.message.message_id.to_string()),
                 "camelId" | "camelContext.name" => ex.context.as_ref().map(|c| c.name().to_string()),
                 _ => None,
             }
@@ -1374,7 +1374,7 @@ impl FileProducer {
         } else if let Some(v) = ex.header(headers::FILE_NAME) {
             v.to_string()
         } else {
-            ex.message.message_id.clone()
+            ex.message.message_id.to_string()
         };
         if self.cfg().flatten {
             name = name.rsplit(['/', '\\']).next().unwrap_or("").to_string();

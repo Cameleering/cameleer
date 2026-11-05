@@ -338,7 +338,7 @@ impl ProcessorDefinition for ThreadsDefinition {
                 }
             } else {
                 // the async copy continues on its own unit of work
-                let id = ex.exchange_id.clone();
+                let id = ex.exchange_id.to_string();
                 let task = Task::new(move || {
                     process_safely(child.as_ref(), &mut copy);
                     if let Some(e) = &copy.exception {

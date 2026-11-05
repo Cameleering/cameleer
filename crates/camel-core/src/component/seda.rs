@@ -19,7 +19,6 @@
 use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -57,25 +56,172 @@ impl WaitForTaskToComplete {
 struct QueueItem {
     id: u64,
     exchange: Exchange,
-    reply: Option<mpsc::Sender<Exchange>>,
+    reply: Option<Reply>,
+}
+
+/// Iterations a thread spins, watching the queue length or its reply slot, before it
+/// parks: waking a parked thread costs the other side a system call, and under load the
+/// state changes within microseconds.
+const SPIN: u32 = 4000;
+
+/// Where a producer waiting for a reply (InOut) receives it. One per producer thread,
+/// reused for every request; a generation number tells replies to old (timed out)
+/// requests apart.
+struct ReplySlot {
+    state: Mutex<SlotState>,
+    filled: Condvar,
+    /// The generation of the last request answered (or discarded), for spinning without the lock.
+    done_gen: AtomicU64,
+}
+
+#[derive(Default)]
+struct SlotState {
+    gen: u64,
+    reply: Option<Exchange>,
+    discarded: bool,
+    waiting: bool,
+}
+
+thread_local! {
+    static REPLY_SLOT: Arc<ReplySlot> =
+        Arc::new(ReplySlot { state: Mutex::new(SlotState::default()), filled: Condvar::new(), done_gen: AtomicU64::new(0) });
+}
+
+/// The producer's side of a request: waits on this thread's slot.
+struct ReplyWaiter {
+    slot: Arc<ReplySlot>,
+    gen: u64,
+}
+
+/// The consumer's side, carried by the queued exchange. Dropping it unanswered tells the
+/// producer the exchange was discarded (like dropping a channel sender).
+struct Reply {
+    slot: Arc<ReplySlot>,
+    gen: u64,
+    sent: bool,
+}
+
+impl ReplyWaiter {
+    /// Start a new request on this thread's slot.
+    fn begin() -> (ReplyWaiter, Reply) {
+        let slot = REPLY_SLOT.with(|s| s.clone());
+        let gen = {
+            let mut st = slot.state.lock().unwrap();
+            st.gen += 1;
+            st.reply = None;
+            st.discarded = false;
+            st.gen
+        };
+        (ReplyWaiter { slot: slot.clone(), gen }, Reply { slot, gen, sent: false })
+    }
+
+    /// Wait for the reply: `Ok(None)` if discarded, `Err(())` on timeout (zero = forever).
+    fn wait(&self, timeout: Duration) -> std::result::Result<Option<Exchange>, ()> {
+        for _ in 0..SPIN {
+            if self.slot.done_gen.load(Ordering::Acquire) == self.gen {
+                break;
+            }
+            std::hint::spin_loop();
+        }
+        let deadline = if timeout.is_zero() { None } else { deadline_after(timeout) };
+        let mut st = self.slot.state.lock().unwrap();
+        loop {
+            if st.reply.is_some() || st.discarded {
+                return Ok(st.reply.take());
+            }
+            st.waiting = true;
+            st = match deadline {
+                None => self.slot.filled.wait(st).unwrap(),
+                Some(d) => {
+                    let now = std::time::Instant::now();
+                    if now >= d {
+                        st.waiting = false;
+                        // a late reply to this request is dropped
+                        st.gen += 1;
+                        return Err(());
+                    }
+                    self.slot.filled.wait_timeout(st, d - now).unwrap().0
+                }
+            };
+            st.waiting = false;
+        }
+    }
+}
+
+impl Reply {
+    fn deliver(&mut self, ex: Option<Exchange>) {
+        self.sent = true;
+        let mut st = self.slot.state.lock().unwrap();
+        if st.gen != self.gen {
+            return; // the producer gave up on this request
+        }
+        match ex {
+            Some(ex) => st.reply = Some(ex),
+            None => st.discarded = true,
+        }
+        self.slot.done_gen.store(self.gen, Ordering::Release);
+        if st.waiting {
+            self.slot.filled.notify_one();
+        }
+    }
+
+    fn send(mut self, ex: Exchange) {
+        self.deliver(Some(ex));
+    }
+}
+
+impl Drop for Reply {
+    fn drop(&mut self) {
+        if !self.sent {
+            self.deliver(None);
+        }
+    }
 }
 
 type Subscriber = (u64, Arc<dyn Processor>, WeakContext);
 
+/// A value alone on its cache line(s), so threads writing neighbouring fields do not
+/// invalidate it (128 bytes: adjacent-line prefetching pairs 64-byte lines).
+#[repr(align(128))]
+struct Padded<T>(T);
+
+impl<T> std::ops::Deref for Padded<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+/// Consumers and publish-subscribe subscribers of a queue.
 #[derive(Default)]
-struct QueueState {
-    items: VecDeque<QueueItem>,
+struct Members {
     consumers: usize,
     subscribers: Vec<Subscriber>,
 }
 
 /// A bounded blocking queue of exchanges shared by seda/vm endpoints with the same name.
+///
+/// Two locks, like Java's `LinkedBlockingQueue`: producers append to `inbox` under its
+/// lock, consumers take from `outbox` under another, and a consumer that finds the outbox
+/// empty swaps the inbox in. Producers and consumers then rarely contend with each other,
+/// and the order stays first-in first-out. Parked threads are only signalled when some
+/// are waiting (a signal is a system call), and both sides spin briefly before parking.
+/// Lock order: `outbox`, then `inbox`.
 pub struct SedaQueue {
     name: String,
     capacity: usize,
-    state: Mutex<QueueState>,
+    // the fields producers and consumers write are on their own cache lines
+    outbox: Padded<Mutex<VecDeque<QueueItem>>>,
+    inbox: Padded<Mutex<VecDeque<QueueItem>>>,
+    /// Waited on with the `outbox` lock.
     not_empty: Condvar,
+    /// Waited on with the `inbox` lock.
     not_full: Condvar,
+    /// Items in both halves; only increased under the `inbox` lock, so the capacity check holds.
+    count: Padded<AtomicUsize>,
+    takers_waiting: Padded<AtomicUsize>,
+    putters_waiting: Padded<AtomicUsize>,
+    members: Mutex<Members>,
     ids: AtomicU64,
     /// Serializes publish-subscribe dispatch so all subscribers see messages in order.
     pubsub: Mutex<()>,
@@ -86,12 +232,71 @@ impl SedaQueue {
         Arc::new(SedaQueue {
             name: name.to_string(),
             capacity: capacity.max(1),
-            state: Mutex::new(QueueState::default()),
+            outbox: Padded(Mutex::new(VecDeque::new())),
+            inbox: Padded(Mutex::new(VecDeque::new())),
             not_empty: Condvar::new(),
             not_full: Condvar::new(),
+            count: Padded(AtomicUsize::new(0)),
+            takers_waiting: Padded(AtomicUsize::new(0)),
+            putters_waiting: Padded(AtomicUsize::new(0)),
+            members: Mutex::new(Members::default()),
             pubsub: Mutex::new(()),
             ids: AtomicU64::new(0),
         })
+    }
+
+    /// Append under the `inbox` lock (capacity already checked), then wake a parked consumer.
+    fn push(&self, mut inbox: std::sync::MutexGuard<'_, VecDeque<QueueItem>>, item: QueueItem) {
+        inbox.push_back(item);
+        self.count.fetch_add(1, Ordering::SeqCst);
+        drop(inbox);
+        if self.takers_waiting.load(Ordering::SeqCst) > 0 {
+            // taking the lock orders this signal after the consumer started waiting
+            let _g = self.outbox.lock().unwrap();
+            self.not_empty.notify_one();
+        }
+    }
+
+    /// Take the oldest item; the caller holds the `outbox` lock.
+    fn pop_locked(&self, outbox: &mut VecDeque<QueueItem>) -> Option<QueueItem> {
+        if outbox.is_empty() {
+            if self.count.load(Ordering::SeqCst) == 0 {
+                return None;
+            }
+            std::mem::swap(outbox, &mut *self.inbox.lock().unwrap());
+        }
+        let item = outbox.pop_front()?;
+        self.count.fetch_sub(1, Ordering::SeqCst);
+        if self.putters_waiting.load(Ordering::SeqCst) > 0 {
+            let _g = self.inbox.lock().unwrap();
+            self.not_full.notify_one();
+        }
+        Some(item)
+    }
+
+    fn try_pop(&self) -> Option<QueueItem> {
+        let mut out = self.outbox.lock().unwrap();
+        self.pop_locked(&mut out)
+    }
+
+    /// Park until an item may be available, `timeout` passes or `stop` is set.
+    fn park_taker(&self, timeout: Duration, stop: Option<&StopFlag>) {
+        let out = self.outbox.lock().unwrap();
+        self.takers_waiting.fetch_add(1, Ordering::SeqCst);
+        if self.count.load(Ordering::SeqCst) == 0 && !stop.map(|f| f.is_stopped()).unwrap_or(false) {
+            drop(self.not_empty.wait_timeout(out, timeout).unwrap());
+        }
+        self.takers_waiting.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// Spin, without locks, until the item count satisfies `ready` or a while passed.
+    fn spin_until(&self, ready: impl Fn(usize) -> bool, stop: Option<&StopFlag>) {
+        for i in 0..SPIN {
+            if ready(self.count.load(Ordering::Acquire)) || (i % 64 == 0 && stop.map(|f| f.is_stopped()).unwrap_or(false)) {
+                return;
+            }
+            std::hint::spin_loop();
+        }
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -101,33 +306,45 @@ impl SedaQueue {
     }
     /// Number of exchanges currently waiting in the queue.
     pub fn size(&self) -> usize {
-        self.state.lock().unwrap().items.len()
+        self.count.load(Ordering::SeqCst)
     }
     pub fn remaining_capacity(&self) -> usize {
         self.capacity.saturating_sub(self.size())
     }
-    /// Snapshot of the queued exchanges.
+    /// Snapshot of the queued exchanges (oldest first).
     pub fn exchanges(&self) -> Vec<Exchange> {
-        self.state.lock().unwrap().items.iter().map(|i| i.exchange.clone()).collect()
+        let out = self.outbox.lock().unwrap();
+        let inbox = self.inbox.lock().unwrap();
+        out.iter().chain(inbox.iter()).map(|i| i.exchange.clone()).collect()
     }
     /// Remove all queued exchanges.
     pub fn purge(&self) {
-        self.state.lock().unwrap().items.clear();
+        let mut out = self.outbox.lock().unwrap();
+        let mut inbox = self.inbox.lock().unwrap();
+        out.clear();
+        inbox.clear();
+        self.count.store(0, Ordering::SeqCst);
         self.not_full.notify_all();
     }
     /// Number of started consumers.
     pub fn consumer_count(&self) -> usize {
-        self.state.lock().unwrap().consumers
+        self.members.lock().unwrap().consumers
     }
     fn wake_all(&self) {
-        let _g = self.state.lock().unwrap();
-        self.not_empty.notify_all();
+        {
+            let _g = self.outbox.lock().unwrap();
+            self.not_empty.notify_all();
+        }
+        let _g = self.inbox.lock().unwrap();
         self.not_full.notify_all();
     }
 
     fn offer(&self, item: QueueItem, block: bool, discard: bool, offer_timeout: Duration) -> Result<bool> {
-        let mut st = self.state.lock().unwrap();
-        if st.items.len() >= self.capacity {
+        if block && self.count.load(Ordering::Acquire) >= self.capacity {
+            self.spin_until(|n| n < self.capacity, None);
+        }
+        let mut inbox = self.inbox.lock().unwrap();
+        if self.count.load(Ordering::SeqCst) >= self.capacity {
             if discard {
                 crate::camel_debug!("seda", "Discarding exchange as queue {} is full", self.name);
                 return Ok(false);
@@ -136,24 +353,30 @@ impl SedaQueue {
                 return Err(CamelError::new(kinds::ILLEGAL_STATE, "Queue full"));
             }
             let deadline = if offer_timeout.is_zero() { None } else { deadline_after(offer_timeout) };
-            while st.items.len() >= self.capacity {
+            loop {
+                self.putters_waiting.fetch_add(1, Ordering::SeqCst);
+                if self.count.load(Ordering::SeqCst) < self.capacity {
+                    self.putters_waiting.fetch_sub(1, Ordering::SeqCst);
+                    break;
+                }
                 match deadline {
-                    None => st = self.not_full.wait(st).unwrap(),
+                    None => inbox = self.not_full.wait(inbox).unwrap(),
                     Some(d) => {
                         let now = std::time::Instant::now();
                         if now >= d {
+                            self.putters_waiting.fetch_sub(1, Ordering::SeqCst);
                             return Err(CamelError::new(
                                 kinds::ILLEGAL_STATE,
                                 format!("Fails to insert element into queue, after timeout of {} milliseconds", offer_timeout.as_millis()),
                             ));
                         }
-                        st = self.not_full.wait_timeout(st, d - now).unwrap().0;
+                        inbox = self.not_full.wait_timeout(inbox, d - now).unwrap().0;
                     }
                 }
+                self.putters_waiting.fetch_sub(1, Ordering::SeqCst);
             }
         }
-        st.items.push_back(item);
-        self.not_empty.notify_one();
+        self.push(inbox, item);
         Ok(true)
     }
 
@@ -165,21 +388,22 @@ impl SedaQueue {
     }
 
     fn remove_item(&self, id: u64) -> bool {
-        let mut st = self.state.lock().unwrap();
-        let before = st.items.len();
-        st.items.retain(|i| i.id != id);
-        let removed = st.items.len() != before;
-        if removed {
+        let mut out = self.outbox.lock().unwrap();
+        let mut inbox = self.inbox.lock().unwrap();
+        let before = out.len() + inbox.len();
+        out.retain(|i| i.id != id);
+        inbox.retain(|i| i.id != id);
+        let removed = before - (out.len() + inbox.len());
+        if removed > 0 {
+            self.count.fetch_sub(removed, Ordering::SeqCst);
             self.not_full.notify_all();
         }
-        removed
+        removed > 0
     }
 
     /// Take an item, waiting up to `timeout` (None = don't wait).
     fn poll(&self, timeout: Option<Duration>) -> Option<QueueItem> {
-        let mut st = self.state.lock().unwrap();
-        if let Some(i) = st.items.pop_front() {
-            self.not_full.notify_one();
+        if let Some(i) = self.try_pop() {
             return Some(i);
         }
         let deadline = match timeout {
@@ -189,17 +413,16 @@ impl SedaQueue {
         };
         loop {
             match deadline {
-                None => st = self.not_empty.wait(st).unwrap(),
+                None => self.park_taker(Duration::from_secs(3600), None),
                 Some(d) => {
                     let now = std::time::Instant::now();
                     if now >= d {
                         return None;
                     }
-                    st = self.not_empty.wait_timeout(st, d - now).unwrap().0;
+                    self.park_taker(d - now, None);
                 }
             }
-            if let Some(i) = st.items.pop_front() {
-                self.not_full.notify_one();
+            if let Some(i) = self.try_pop() {
                 return Some(i);
             }
         }
@@ -461,23 +684,18 @@ impl Processor for SedaProducer {
             self.queue.offer(QueueItem { id, exchange: copy, reply: None }, c.block_when_full, c.discard_when_full, c.offer_timeout)?;
             return Ok(());
         }
-        let (tx, rx) = mpsc::channel();
-        if !self.queue.offer(QueueItem { id, exchange: copy, reply: Some(tx) }, c.block_when_full, c.discard_when_full, c.offer_timeout)? {
+        let (waiter, reply) = ReplyWaiter::begin();
+        if !self.queue.offer(QueueItem { id, exchange: copy, reply: Some(reply) }, c.block_when_full, c.discard_when_full, c.offer_timeout)? {
             return Ok(());
         }
-        let reply = if c.timeout.is_zero() {
-            rx.recv().ok()
-        } else {
-            match rx.recv_timeout(c.timeout) {
-                Ok(r) => Some(r),
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    self.queue.remove_item(id);
-                    return Err(CamelError::new(
-                        kinds::EXCHANGE_TIMED_OUT,
-                        format!("Exchange timed out after waiting: {} millis. Exchange[{}]", c.timeout.as_millis(), exchange.exchange_id),
-                    ));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => None,
+        let reply = match waiter.wait(c.timeout) {
+            Ok(r) => r,
+            Err(()) => {
+                self.queue.remove_item(id);
+                return Err(CamelError::new(
+                    kinds::EXCHANGE_TIMED_OUT,
+                    format!("Exchange timed out after waiting: {} millis. Exchange[{}]", c.timeout.as_millis(), exchange.exchange_id),
+                ));
             }
         };
         match reply {
@@ -505,7 +723,7 @@ struct SedaConsumer {
 fn dispatch(item: QueueItem, queue: &SedaQueue, multiple: bool, processor: &Arc<dyn Processor>, ctx: &WeakContext, logger: &str) {
     let QueueItem { mut exchange, reply, .. } = item;
     if multiple {
-        let subs: Vec<Subscriber> = queue.state.lock().unwrap().subscribers.clone();
+        let subs: Vec<Subscriber> = queue.members.lock().unwrap().subscribers.clone();
         let mut last: Option<Exchange> = None;
         let n = subs.len();
         for (i, (_, p, sctx)) in subs.into_iter().enumerate() {
@@ -517,15 +735,18 @@ fn dispatch(item: QueueItem, queue: &SedaQueue, multiple: bool, processor: &Arc<
             last = Some(copy);
         }
         if let (Some(tx), Some(l)) = (reply, last) {
-            let _ = tx.send(l);
+            tx.send(l);
         }
     } else {
-        if let Some(c) = ctx.upgrade() {
-            exchange.context = Some(c);
+        // usually the exchange already belongs to this context: leave its (shared) handle alone
+        if !exchange.context.as_ref().map(|c| ctx.is(c)).unwrap_or(false) {
+            if let Some(c) = ctx.upgrade() {
+                exchange.context = Some(c);
+            }
         }
         process_consumer_exchange(logger, processor.as_ref(), &mut exchange);
         if let Some(tx) = reply {
-            let _ = tx.send(exchange);
+            tx.send(exchange);
         }
     }
 }
@@ -546,38 +767,40 @@ struct SedaWorker {
 /// asynchronous delay (`asyncDelayed`, `asyncDelayedRedelivery`) releases this thread, a
 /// replacement consumer thread takes over the queue and this thread exits after the exchange.
 fn seda_worker(w: Arc<SedaWorker>, flag: Arc<StopFlag>) {
-    let mut st = w.queue.state.lock().unwrap();
+    let mut spun = false;
+    let on_release = || {
+        let (w2, f2) = (w.clone(), flag.clone());
+        if let Err(e) = w.spawner.spawn(&w.name, f2, move |flag| seda_worker(w2, flag)) {
+            crate::camel_warn!("seda", "Cannot start a replacement consumer thread for {}: {}", w.logger, e);
+        }
+    };
     loop {
         if flag.is_stopped() {
             break;
         }
         if w.suspend.get() {
             // suspended: leave the messages queued until resumed
-            drop(st);
             if w.suspend.wait_while_suspended(&flag) {
                 break;
             }
-            st = w.queue.state.lock().unwrap();
             continue;
         }
-        if let Some(item) = st.items.pop_front() {
-            w.queue.not_full.notify_one();
-            drop(st);
-            let (w2, f2) = (w.clone(), flag.clone());
-            let on_release = move || {
-                let w3 = w2.clone();
-                if let Err(e) = w2.spawner.spawn(&w2.name, f2, move |flag| seda_worker(w3, flag)) {
-                    crate::camel_warn!("seda", "Cannot start a replacement consumer thread for {}: {}", w2.logger, e);
-                }
-            };
-            let ((), released) = async_delay::run_detachable(on_release, || dispatch(item, &w.queue, false, &w.processor, &w.ctx, &w.logger));
+        if let Some(item) = w.queue.try_pop() {
+            spun = false;
+            let ((), released) = async_delay::run_detachable_ref(&on_release, || dispatch(item, &w.queue, false, &w.processor, &w.ctx, &w.logger));
             if released {
                 return;
             }
-            st = w.queue.state.lock().unwrap();
             continue;
         }
-        st = w.queue.not_empty.wait_timeout(st, w.poll_timeout).unwrap().0;
+        if !spun {
+            // empty: spin a little before parking (producers are usually microseconds away)
+            w.queue.spin_until(|n| n > 0, Some(&flag));
+            spun = true;
+            continue;
+        }
+        spun = false;
+        w.queue.park_taker(w.poll_timeout, Some(&flag));
     }
 }
 
@@ -588,10 +811,10 @@ impl Service for SedaConsumer {
             return Ok(());
         }
         {
-            let mut st = self.queue.state.lock().unwrap();
-            st.consumers += 1;
+            let mut m = self.queue.members.lock().unwrap();
+            m.consumers += 1;
             if self.config.multiple_consumers {
-                st.subscribers.push((self.id, self.processor.clone(), self.ctx.clone()));
+                m.subscribers.push((self.id, self.processor.clone(), self.ctx.clone()));
             }
         }
         for i in 0..self.config.concurrent_consumers {
@@ -615,17 +838,14 @@ impl Service for SedaConsumer {
                                 continue;
                             }
                         };
-                        let mut st = queue.state.lock().unwrap();
-                        let item = match st.items.pop_front() {
+                        let item = match queue.try_pop() {
                             Some(i) => Some(i),
                             None => {
-                                st = queue.not_empty.wait_timeout(st, poll_timeout.min(Duration::from_millis(100))).unwrap().0;
-                                st.items.pop_front()
+                                queue.park_taker(poll_timeout.min(Duration::from_millis(100)), Some(&flag));
+                                queue.try_pop()
                             }
                         };
-                        drop(st);
                         if let Some(item) = item {
-                            queue.not_full.notify_one();
                             dispatch(item, &queue, multiple, &processor, &ctx, &logger);
                         }
                     }
@@ -664,9 +884,9 @@ impl Service for SedaConsumer {
         self.queue.wake_all();
         self.threads.stop();
         {
-            let mut st = self.queue.state.lock().unwrap();
-            st.consumers = st.consumers.saturating_sub(1);
-            st.subscribers.retain(|s| s.0 != self.id);
+            let mut m = self.queue.members.lock().unwrap();
+            m.consumers = m.consumers.saturating_sub(1);
+            m.subscribers.retain(|s| s.0 != self.id);
         }
         if self.config.purge_when_stopping {
             self.queue.purge();
@@ -693,7 +913,7 @@ impl PollingConsumer for SedaPollingConsumer {
             }
             if let Some(tx) = item.reply {
                 // a polling consumer completes the exchange as-is for a waiting producer
-                let _ = tx.send(ex.clone());
+                tx.send(ex.clone());
             }
             ex
         }))

@@ -419,3 +419,87 @@ fn aggregated_output_failure_does_not_fail_incoming() {
     ctx.create_producer_template().send_body_and_header("direct:start", "a", "id", "1").unwrap();
     assert_eq!(ctx.mock_endpoint("after").unwrap().received_counter(), 1);
 }
+
+#[test]
+fn memory_repository_take_moves_the_group_and_keeps_its_order() {
+    use camel_core::processor::routing::AggregationRepository;
+    let repo = MemoryAggregationRepository::new();
+    repo.add("a", Exchange::with_body(None, "A"));
+    repo.add("b", Exchange::with_body(None, "B"));
+    let a = repo.take("a").unwrap();
+    assert_eq!(a.message.body, Value::from("A"));
+    // taken out, but still a group in progress, in its original position
+    assert!(repo.get("a").is_none());
+    assert_eq!(repo.keys(), vec!["a", "b"]);
+    assert!(repo.add("a", Exchange::with_body(None, "A2")).is_none());
+    assert_eq!(repo.keys(), vec!["a", "b"]);
+    assert_eq!(repo.get("a").unwrap().message.body, Value::from("A2"));
+    assert_eq!(repo.add("a", Exchange::with_body(None, "A3")).unwrap().message.body, Value::from("A2"));
+    assert_eq!(repo.remove("a").unwrap().message.body, Value::from("A3"));
+    assert_eq!(repo.keys(), vec!["b"]);
+}
+
+#[test]
+fn grouped_body_groups_are_moved_not_copied_and_complete_in_order() {
+    let ctx = CamelContext::new();
+    let repo = Arc::new(MemoryAggregationRepository::new());
+    let r = repo.clone();
+    ctx.add_routes(move |b| {
+        b.from("direct:start").aggregate(header("id"), grouped_body()).aggregation_repository(r.clone()).completion_size(3).to("mock:agg").end();
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    for (b, id) in [("a", "1"), ("b", "2"), ("c", "1"), ("d", "2"), ("e", "1")] {
+        send(&t, b, id);
+    }
+    {
+        use camel_core::processor::routing::AggregationRepository;
+        // group 2 is in progress and still readable from the repository
+        assert_eq!(repo.keys(), vec!["2"]);
+        assert_eq!(repo.get("2").unwrap().message.body, Value::from("b"));
+    }
+    send(&t, "f", "2");
+    let m = ctx.mock_endpoint("agg").unwrap();
+    assert_eq!(
+        m.received_bodies(),
+        vec![
+            Value::Array(vec![Value::from("a"), Value::from("c"), Value::from("e")]),
+            Value::Array(vec![Value::from("b"), Value::from("d"), Value::from("f")]),
+        ]
+    );
+}
+
+#[test]
+fn a_failing_strategy_leaves_the_group_in_the_repository() {
+    let ctx = CamelContext::new();
+    let repo = Arc::new(MemoryAggregationRepository::new());
+    let r = repo.clone();
+    let strategy = |old: Option<Exchange>, new: Exchange| -> Result<Exchange> {
+        if new.message.body == Value::from("bad") {
+            return Err(CamelError::illegal_argument("bad body"));
+        }
+        Ok(match old {
+            None => new,
+            Some(mut o) => {
+                o.message.body = Value::from(format!("{}+{}", o.message.body, new.message.body));
+                o
+            }
+        })
+    };
+    ctx.add_routes(move |b| {
+        b.from("direct:start").aggregate(header("id"), strategy).aggregation_repository(r.clone()).completion_size(3).to("mock:agg").end();
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    send(&t, "a", "1");
+    send(&t, "b", "1");
+    assert!(t.send_body_and_header("direct:start", "bad", "id", "1").is_err());
+    {
+        use camel_core::processor::routing::AggregationRepository;
+        assert_eq!(repo.get("1").unwrap().message.body, Value::from("a+b"));
+    }
+    send(&t, "c", "1");
+    assert_eq!(ctx.mock_endpoint("agg").unwrap().received_bodies(), vec![Value::from("a+b+c")]);
+}

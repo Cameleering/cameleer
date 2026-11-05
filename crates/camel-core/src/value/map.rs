@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::iter::FusedIterator;
 use std::ops::Index;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::Value;
 
@@ -28,23 +29,102 @@ use super::Value;
 const INDEX_THRESHOLD: usize = 12;
 
 /// An insertion-ordered map from `String` to [`Value`] (Camel's `LinkedHashMap`).
+///
+/// The entries are shared copy-on-write: cloning a map (and so a `Value::Object`, an
+/// exchange body...) only bumps a reference count, and the first change to a shared map
+/// copies it. Copies keep value semantics; they are just cheap, like the reference copies
+/// a Java exchange copy makes.
 #[derive(Clone, Default)]
 pub struct ObjectMap {
-    entries: Vec<(String, Value)>,
-    index: Option<HashMap<String, usize>>,
+    /// `None` for an empty map (no allocation).
+    inner: Option<Shared>,
 }
 
-impl ObjectMap {
-    /// An empty map.
-    pub fn new() -> Self {
-        ObjectMap { entries: Vec::new(), index: None }
+/// A reference-counted, copy-on-write `Inner`. Like `Arc` without weak references, so
+/// the "am I the only owner" check before a change is a plain load (`Arc::make_mut` and
+/// `Arc::get_mut` do a read-modify-write for the weak count).
+struct Shared {
+    ptr: std::ptr::NonNull<SharedBox>,
+}
+
+struct SharedBox {
+    count: AtomicUsize,
+    inner: Inner,
+}
+
+// SAFETY: `Inner` is `Send + Sync`; the count is atomic, and `Inner` is only mutated by
+// the sole owner (see `make_mut`).
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+impl Shared {
+    fn new(inner: Inner) -> Self {
+        let b = Box::new(SharedBox { count: AtomicUsize::new(1), inner });
+        Shared { ptr: std::ptr::NonNull::from(Box::leak(b)) }
     }
 
-    /// An empty map with room for `n` entries.
-    pub fn with_capacity(n: usize) -> Self {
-        ObjectMap { entries: Vec::with_capacity(n), index: None }
+    fn get(&self) -> &Inner {
+        // SAFETY: the box lives while any `Shared` points to it.
+        unsafe { &self.ptr.as_ref().inner }
     }
 
+    /// The inner map for changing it, copied first if another owner shares it.
+    fn make_mut(&mut self) -> &mut Inner {
+        // SAFETY: as in `get`. With a count of one this is the only owner, and `&mut self`
+        // keeps it so (no one can clone it meanwhile); the acquire load orders the change
+        // after other owners' (released) drops.
+        unsafe {
+            if self.ptr.as_ref().count.load(Ordering::Acquire) != 1 {
+                *self = Shared::new(self.get().clone());
+            }
+            &mut (*self.ptr.as_ptr()).inner
+        }
+    }
+
+    fn into_inner(self) -> Inner {
+        // SAFETY: as in `make_mut`; the box is freed without dropping the moved-out map.
+        unsafe {
+            if self.ptr.as_ref().count.load(Ordering::Acquire) == 1 {
+                let b = Box::from_raw(self.ptr.as_ptr());
+                std::mem::forget(self);
+                return b.inner;
+            }
+        }
+        self.get().clone()
+    }
+}
+
+impl Clone for Shared {
+    fn clone(&self) -> Self {
+        // SAFETY: as in `get`.
+        unsafe { self.ptr.as_ref().count.fetch_add(1, Ordering::Relaxed) };
+        Shared { ptr: self.ptr }
+    }
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        // SAFETY: as in `get`; the last owner frees the box after synchronizing with the
+        // other owners' releases.
+        unsafe {
+            if self.ptr.as_ref().count.fetch_sub(1, Ordering::Release) == 1 {
+                std::sync::atomic::fence(Ordering::Acquire);
+                drop(Box::from_raw(self.ptr.as_ptr()));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct Inner {
+    entries: Vec<(String, Value)>,
+    /// Boxed so that the inner map stays small.
+    index: Option<Box<HashMap<String, usize>>>,
+}
+
+static EMPTY: Inner = Inner { entries: Vec::new(), index: None };
+
+impl Inner {
     fn position(&self, key: &str) -> Option<usize> {
         match &self.index {
             Some(ix) => ix.get(key).copied(),
@@ -54,15 +134,13 @@ impl ObjectMap {
 
     fn rebuild_index(&mut self) {
         if self.entries.len() > INDEX_THRESHOLD {
-            self.index = Some(self.entries.iter().enumerate().map(|(i, (k, _))| (k.clone(), i)).collect());
+            self.index = Some(Box::new(self.entries.iter().enumerate().map(|(i, (k, _))| (k.clone(), i)).collect()));
         } else {
             self.index = None;
         }
     }
 
-    /// Insert `key` → `value`. An existing key keeps its position and its old value is returned;
-    /// a new key is appended at the end.
-    pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
+    fn insert(&mut self, key: String, value: Value) -> Option<Value> {
         if let Some(i) = self.position(&key) {
             return Some(std::mem::replace(&mut self.entries[i].1, value));
         }
@@ -77,33 +155,96 @@ impl ObjectMap {
         None
     }
 
+    fn remove_at(&mut self, i: usize) -> (String, Value) {
+        let e = self.entries.remove(i);
+        if self.index.is_some() {
+            self.rebuild_index();
+        }
+        e
+    }
+}
+
+impl ObjectMap {
+    /// An empty map.
+    pub fn new() -> Self {
+        ObjectMap { inner: None }
+    }
+
+    /// An empty map with room for `n` entries.
+    pub fn with_capacity(n: usize) -> Self {
+        if n == 0 {
+            return ObjectMap::new();
+        }
+        ObjectMap { inner: Some(Shared::new(Inner { entries: Vec::with_capacity(n), index: None })) }
+    }
+
+    /// A map of entries with distinct keys (from a parser that checked them).
+    pub(crate) fn from_distinct(entries: Vec<(String, Value)>) -> Self {
+        if entries.is_empty() {
+            return ObjectMap::new();
+        }
+        let mut inner = Inner { entries, index: None };
+        inner.rebuild_index();
+        ObjectMap { inner: Some(Shared::new(inner)) }
+    }
+
+    #[inline]
+    fn r(&self) -> &Inner {
+        match &self.inner {
+            Some(s) => s.get(),
+            None => &EMPTY,
+        }
+    }
+
+    /// The entries for changing them (copied first if shared).
+    #[inline]
+    fn w(&mut self) -> &mut Inner {
+        self.inner.get_or_insert_with(|| Shared::new(Inner::default())).make_mut()
+    }
+
+    fn take_entries(self) -> Vec<(String, Value)> {
+        match self.inner {
+            None => Vec::new(),
+            Some(s) => s.into_inner().entries,
+        }
+    }
+
+    /// Insert `key` → `value`. An existing key keeps its position and its old value is returned;
+    /// a new key is appended at the end.
+    pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
+        self.w().insert(key, value)
+    }
+
     pub fn get(&self, key: &str) -> Option<&Value> {
-        self.position(key).map(|i| &self.entries[i].1)
+        let r = self.r();
+        r.position(key).map(|i| &r.entries[i].1)
     }
 
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
-        self.position(key).map(move |i| &mut self.entries[i].1)
+        let i = self.r().position(key)?;
+        Some(&mut self.w().entries[i].1)
     }
 
     pub fn get_key_value(&self, key: &str) -> Option<(&String, &Value)> {
-        self.position(key).map(|i| {
-            let (k, v) = &self.entries[i];
+        let r = self.r();
+        r.position(key).map(|i| {
+            let (k, v) = &r.entries[i];
             (k, v)
         })
     }
 
     /// Entry at position `i` in insertion order.
     pub fn get_index(&self, i: usize) -> Option<(&String, &Value)> {
-        self.entries.get(i).map(|(k, v)| (k, v))
+        self.r().entries.get(i).map(|(k, v)| (k, v))
     }
 
     /// Position of `key` in insertion order.
     pub fn get_index_of(&self, key: &str) -> Option<usize> {
-        self.position(key)
+        self.r().position(key)
     }
 
     pub fn contains_key(&self, key: &str) -> bool {
-        self.position(key).is_some()
+        self.r().position(key).is_some()
     }
 
     /// Remove `key`, shifting later entries down (order of the rest is kept).
@@ -113,25 +254,20 @@ impl ObjectMap {
 
     /// Remove `key` and return the stored key and value (order of the rest is kept).
     pub fn remove_entry(&mut self, key: &str) -> Option<(String, Value)> {
-        let i = self.position(key)?;
-        let e = self.entries.remove(i);
-        if self.index.is_some() {
-            self.rebuild_index();
-        }
-        Some(e)
+        let i = self.r().position(key)?;
+        Some(self.w().remove_at(i))
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.r().entries.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.r().entries.is_empty()
     }
 
     pub fn clear(&mut self) {
-        self.entries.clear();
-        self.index = None;
+        self.inner = None;
     }
 
     /// The first entry in insertion order.
@@ -141,52 +277,66 @@ impl ObjectMap {
 
     /// The last entry in insertion order.
     pub fn last(&self) -> Option<(&String, &Value)> {
-        self.entries.last().map(|(k, v)| (k, v))
+        self.r().entries.last().map(|(k, v)| (k, v))
     }
 
     /// Remove and return the last entry.
     pub fn pop(&mut self) -> Option<(String, Value)> {
-        let e = self.entries.pop()?;
-        if let Some(ix) = &mut self.index {
+        if self.is_empty() {
+            return None;
+        }
+        let m = self.w();
+        let e = m.entries.pop()?;
+        if let Some(ix) = &mut m.index {
             ix.remove(&e.0);
         }
         Some(e)
     }
 
     pub fn iter(&self) -> Iter<'_> {
-        Iter(self.entries.iter())
+        Iter(self.r().entries.iter())
     }
 
     pub fn iter_mut(&mut self) -> IterMut<'_> {
-        IterMut(self.entries.iter_mut())
+        if self.is_empty() {
+            return IterMut([].iter_mut());
+        }
+        IterMut(self.w().entries.iter_mut())
     }
 
     pub fn keys(&self) -> Keys<'_> {
-        Keys(self.entries.iter())
+        Keys(self.r().entries.iter())
     }
 
     pub fn values(&self) -> Values<'_> {
-        Values(self.entries.iter())
+        Values(self.r().entries.iter())
     }
 
     pub fn values_mut(&mut self) -> ValuesMut<'_> {
-        ValuesMut(self.entries.iter_mut())
+        if self.is_empty() {
+            return ValuesMut([].iter_mut());
+        }
+        ValuesMut(self.w().entries.iter_mut())
     }
 
     pub fn into_keys(self) -> impl DoubleEndedIterator<Item = String> + ExactSizeIterator {
-        self.entries.into_iter().map(|(k, _)| k)
+        self.take_entries().into_iter().map(|(k, _)| k)
     }
 
     pub fn into_values(self) -> impl DoubleEndedIterator<Item = Value> + ExactSizeIterator {
-        self.entries.into_iter().map(|(_, v)| v)
+        self.take_entries().into_iter().map(|(_, v)| v)
     }
 
     /// Keep only the entries for which `f` returns true (order is kept).
     pub fn retain(&mut self, mut f: impl FnMut(&String, &mut Value) -> bool) {
-        let before = self.entries.len();
-        self.entries.retain_mut(|(k, v)| f(k, v));
-        if self.entries.len() != before {
-            self.rebuild_index();
+        if self.is_empty() {
+            return;
+        }
+        let m = self.w();
+        let before = m.entries.len();
+        m.entries.retain_mut(|(k, v)| f(k, v));
+        if m.entries.len() != before {
+            m.rebuild_index();
         }
     }
 
@@ -198,14 +348,18 @@ impl ObjectMap {
 
     /// Sort the entries by key (for the few outputs that are sorted on purpose).
     pub fn sort_keys(&mut self) {
-        self.entries.sort_by(|a, b| a.0.cmp(&b.0));
-        self.rebuild_index();
+        if self.is_empty() {
+            return;
+        }
+        let m = self.w();
+        m.entries.sort_by(|a, b| a.0.cmp(&b.0));
+        m.rebuild_index();
     }
 
     /// Like `==` but also requires the same key order (recursively for nested objects).
     pub fn eq_ordered(&self, other: &ObjectMap) -> bool {
         self.len() == other.len()
-            && self.entries.iter().zip(other.entries.iter()).all(|((ka, va), (kb, vb))| {
+            && self.r().entries.iter().zip(other.r().entries.iter()).all(|((ka, va), (kb, vb))| {
                 ka == kb
                     && match (va, vb) {
                         (Value::Object(a), Value::Object(b)) => a.eq_ordered(b),
@@ -216,7 +370,7 @@ impl ObjectMap {
 
     /// Entry API (like `BTreeMap::entry`).
     pub fn entry(&mut self, key: String) -> Entry<'_> {
-        match self.position(&key) {
+        match self.r().position(&key) {
             Some(index) => Entry::Occupied(OccupiedEntry { map: self, index }),
             None => Entry::Vacant(VacantEntry { map: self, key }),
         }
@@ -226,7 +380,7 @@ impl ObjectMap {
 impl PartialEq for ObjectMap {
     /// Order-insensitive, like `java.util.Map.equals`.
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.entries.iter().all(|(k, v)| other.get(k) == Some(v))
+        self.len() == other.len() && self.r().entries.iter().all(|(k, v)| other.get(k) == Some(v))
     }
 }
 
@@ -282,7 +436,7 @@ impl From<BTreeMap<String, Value>> for ObjectMap {
 impl From<ObjectMap> for BTreeMap<String, Value> {
     /// Loses the insertion order (entries are re-sorted by key).
     fn from(m: ObjectMap) -> Self {
-        m.entries.into_iter().collect()
+        m.take_entries().into_iter().collect()
     }
 }
 
@@ -294,7 +448,7 @@ impl From<Vec<(String, Value)>> for ObjectMap {
 
 impl From<ObjectMap> for Vec<(String, Value)> {
     fn from(m: ObjectMap) -> Self {
-        m.entries
+        m.take_entries()
     }
 }
 
@@ -370,7 +524,7 @@ impl IntoIterator for ObjectMap {
     type Item = (String, Value);
     type IntoIter = IntoIter;
     fn into_iter(self) -> IntoIter {
-        IntoIter(self.entries.into_iter())
+        IntoIter(self.take_entries().into_iter())
     }
 }
 
@@ -446,27 +600,23 @@ impl<'a> Entry<'a> {
 
 impl<'a> OccupiedEntry<'a> {
     pub fn key(&self) -> &str {
-        &self.map.entries[self.index].0
+        &self.map.r().entries[self.index].0
     }
     pub fn get(&self) -> &Value {
-        &self.map.entries[self.index].1
+        &self.map.r().entries[self.index].1
     }
     pub fn get_mut(&mut self) -> &mut Value {
-        &mut self.map.entries[self.index].1
+        &mut self.map.w().entries[self.index].1
     }
     pub fn into_mut(self) -> &'a mut Value {
-        &mut self.map.entries[self.index].1
+        &mut self.map.w().entries[self.index].1
     }
     pub fn insert(&mut self, value: Value) -> Value {
         std::mem::replace(self.get_mut(), value)
     }
     /// Remove the entry (order of the rest is kept).
     pub fn remove(self) -> Value {
-        let e = self.map.entries.remove(self.index);
-        if self.map.index.is_some() {
-            self.map.rebuild_index();
-        }
-        e.1
+        self.map.w().remove_at(self.index).1
     }
 }
 
@@ -476,9 +626,10 @@ impl<'a> VacantEntry<'a> {
     }
     pub fn insert(self, value: Value) -> &'a mut Value {
         let VacantEntry { map, key } = self;
-        map.insert(key, value);
-        let i = map.entries.len() - 1;
-        &mut map.entries[i].1
+        let m = map.w();
+        m.insert(key, value);
+        let i = m.entries.len() - 1;
+        &mut m.entries[i].1
     }
 }
 

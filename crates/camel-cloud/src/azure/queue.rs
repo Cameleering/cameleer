@@ -61,7 +61,7 @@ pub struct QueueMessage {
 impl QueueMessage {
     pub fn to_value(&self) -> Value {
         obj([
-            ("messageId", Value::from(self.message_id.clone())),
+            ("messageId", Value::from(self.message_id.to_string())),
             ("popReceipt", Value::from(self.pop_receipt.clone())),
             ("messageText", Value::from(self.text.clone())),
             ("dequeueCount", Value::Int(self.dequeue_count)),
@@ -72,7 +72,7 @@ impl QueueMessage {
     }
 
     fn set_headers(&self, ex: &mut Exchange) {
-        ex.set_header(headers::MESSAGE_ID, self.message_id.clone());
+        ex.set_header(headers::MESSAGE_ID, self.message_id.to_string());
         ex.set_header(headers::POP_RECEIPT, self.pop_receipt.clone());
         ex.set_header(headers::INSERTION_TIME, self.insertion_time.clone());
         ex.set_header(headers::EXPIRATION_TIME, self.expiration_time.clone());

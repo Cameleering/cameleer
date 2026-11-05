@@ -27,7 +27,39 @@ pub const MAX_RELEASED_THREADS: usize = 1000;
 
 static RELEASED: AtomicUsize = AtomicUsize::new(0);
 
-type Hook = Box<dyn FnOnce()>;
+/// What starts a replacement consumer: owned, or borrowed from the consumer loop's stack
+/// for the duration of one exchange (no allocation per exchange).
+enum Hook {
+    Owned(Box<dyn FnOnce()>),
+    Borrowed(*const (dyn Fn() + 'static)),
+}
+
+impl Hook {
+    fn call(self) {
+        match self {
+            Hook::Owned(f) => f(),
+            // SAFETY: a borrowed hook is only installed while `run_detachable_ref` runs on
+            // this thread, and removed (also on unwinding) before the borrow ends.
+            Hook::Borrowed(f) => unsafe { (*f)() },
+        }
+    }
+}
+
+/// Restores the previous hook and release flag when `run_*` returns or unwinds.
+struct Restore {
+    prev_hook: Option<Option<Hook>>,
+    prev_released: bool,
+}
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let prev = self.prev_hook.take().flatten();
+        let _ = HOOK.try_with(|h| *h.borrow_mut() = prev);
+        if let Ok(true) = RELEASED_HERE.try_with(|r| r.replace(self.prev_released)) {
+            RELEASED.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
 
 thread_local! {
     static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
@@ -39,11 +71,28 @@ thread_local! {
 /// a replacement consumer thread) and `true` is returned: the calling thread should finish its
 /// current work and exit its consumer loop.
 pub fn run_detachable<R>(on_release: impl FnOnce() + 'static, f: impl FnOnce() -> R) -> (R, bool) {
-    let prev_hook = HOOK.with(|h| h.borrow_mut().replace(Box::new(on_release)));
-    let prev_released = RELEASED_HERE.with(|r| r.replace(false));
+    run_with(Hook::Owned(Box::new(on_release)), f)
+}
+
+/// [`run_detachable`] with a hook the consumer loop keeps for all its exchanges.
+pub fn run_detachable_ref<R>(on_release: &dyn Fn(), f: impl FnOnce() -> R) -> (R, bool) {
+    // SAFETY: only the lifetime is erased; `run_with` removes the hook before returning
+    // (also when `f` unwinds), so it is never called after `on_release` is gone.
+    let hook: *const (dyn Fn() + 'static) = unsafe { std::mem::transmute::<*const dyn Fn(), *const (dyn Fn() + 'static)>(on_release) };
+    run_with(Hook::Borrowed(hook), f)
+}
+
+fn run_with<R>(hook: Hook, f: impl FnOnce() -> R) -> (R, bool) {
+    let mut restore = Restore {
+        prev_hook: Some(HOOK.with(|h| h.borrow_mut().replace(hook))),
+        prev_released: RELEASED_HERE.with(|r| r.replace(false)),
+    };
     let result = f();
-    HOOK.with(|h| *h.borrow_mut() = prev_hook);
-    let released = RELEASED_HERE.with(|r| r.replace(prev_released));
+    let released = RELEASED_HERE.with(|r| r.get());
+    let prev = restore.prev_hook.take().flatten();
+    HOOK.with(|h| *h.borrow_mut() = prev);
+    RELEASED_HERE.with(|r| r.set(restore.prev_released));
+    std::mem::forget(restore);
     if released {
         RELEASED.fetch_sub(1, Ordering::SeqCst);
     }
@@ -71,7 +120,7 @@ pub fn release_consumer() -> bool {
         return false;
     }
     RELEASED_HERE.with(|r| r.set(true));
-    hook();
+    hook.call();
     true
 }
 
@@ -94,6 +143,29 @@ pub fn released_threads() -> usize {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn a_borrowed_hook_releases_once_and_is_removed_afterwards() {
+        let calls = Cell::new(0);
+        let hook = || calls.set(calls.get() + 1);
+        let ((), released) = run_detachable_ref(&hook, || {
+            assert!(can_release());
+            assert!(async_sleep(Duration::ZERO));
+            assert!(async_sleep(Duration::ZERO));
+        });
+        assert!(released);
+        assert_eq!(calls.get(), 1);
+        assert!(!can_release());
+        // not released: the hook is not called
+        let ((), released) = run_detachable_ref(&hook, || ());
+        assert!(!released);
+        assert_eq!(calls.get(), 1);
+        // the hook is removed also when the exchange panics
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_detachable_ref(&hook, || panic!("boom"))));
+        assert!(r.is_err());
+        assert!(!can_release());
+        assert!(!release_consumer());
+    }
 
     #[test]
     fn release_runs_hook_once() {

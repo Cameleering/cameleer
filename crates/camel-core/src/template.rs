@@ -30,29 +30,53 @@ impl ProducerTemplate {
 
     /// Send an exchange; returns the exchange after processing (check `exception`).
     pub fn send(&self, uri: &str, mut exchange: Exchange) -> Exchange {
+        self.send_in_place(uri, &mut exchange);
+        exchange
+    }
+
+    /// Send an exchange in place (an exchange is large: every move is a copy).
+    fn send_in_place(&self, uri: &str, exchange: &mut Exchange) {
         if exchange.context.is_none() {
             exchange.context = Some(self.ctx.clone());
         }
-        let start = std::time::Instant::now();
-        self.ctx.notify(&crate::context::CamelEvent::ExchangeSending { exchange_id: exchange.exchange_id.clone(), endpoint: uri.to_string() });
-        match self.ctx.get_producer(uri) {
-            Ok(p) => {
-                if let Err(e) = p.process(&mut exchange) {
-                    exchange.set_exception(e);
-                }
-            }
-            Err(e) => exchange.set_exception(e),
+        // events are only built when someone listens
+        let notify = self.ctx.has_event_notifiers();
+        let start = if notify { crate::clock::ticks() } else { 0 };
+        if notify {
+            self.ctx.notify(&crate::context::CamelEvent::ExchangeSending { exchange_id: exchange.exchange_id.to_string(), endpoint: uri.to_string() });
         }
-        self.ctx.notify(&crate::context::CamelEvent::ExchangeSent {
-            exchange_id: exchange.exchange_id.clone(),
-            endpoint: uri.to_string(),
-            elapsed_ms: start.elapsed().as_millis() as u64,
-        });
+        match self.ctx.with_producer(uri, |p| p.process(exchange)) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) | Err(e) => exchange.set_exception(e),
+        }
+        if notify {
+            self.ctx.notify(&crate::context::CamelEvent::ExchangeSent {
+                exchange_id: exchange.exchange_id.to_string(),
+                endpoint: uri.to_string(),
+                elapsed_ms: crate::clock::elapsed(start, crate::clock::ticks()).as_millis() as u64,
+            });
+        }
         if exchange.from_route_id.is_none() {
             // not routed through a route processor (e.g. direct producer runs inline) - complete unit of work
             exchange.run_on_completions();
         }
-        exchange
+    }
+
+    /// Build an exchange with `f`, send it in place and return `g` of the result, or the
+    /// failure as an error (as [`ProducerTemplate::to_result`]).
+    fn send_then<R>(&self, uri: &str, pattern: ExchangePattern, f: impl FnOnce(&mut Exchange), g: impl FnOnce(&mut Exchange) -> R) -> Result<R> {
+        let mut ex = self.ctx.create_exchange();
+        ex.pattern = pattern;
+        f(&mut ex);
+        self.send_in_place(uri, &mut ex);
+        match ex.exception {
+            Some(ref e) => Err(Self::failure(e)),
+            None => Ok(g(&mut ex)),
+        }
+    }
+
+    fn failure(e: &CamelError) -> CamelError {
+        CamelError::new(kinds::CAMEL_EXECUTION, format!("Exception occurred during execution on the exchange: {}", e)).with_cause(e.clone())
     }
 
     /// Build and send an exchange using a closure to populate it.
@@ -65,8 +89,7 @@ impl ProducerTemplate {
 
     fn to_result(ex: Exchange) -> Result<Exchange> {
         match ex.exception {
-            Some(ref e) => Err(CamelError::new(kinds::CAMEL_EXECUTION, format!("Exception occurred during execution on the exchange: {}", e))
-                .with_cause(e.clone())),
+            Some(ref e) => Err(Self::failure(e)),
             None => Ok(ex),
         }
     }
@@ -74,8 +97,7 @@ impl ProducerTemplate {
     /// Send a body (InOnly). Returns an error if the exchange failed.
     pub fn send_body(&self, uri: &str, body: impl Into<Value>) -> Result<()> {
         let body = body.into();
-        let ex = self.send_with(uri, ExchangePattern::InOnly, |ex| ex.message.body = body);
-        Self::to_result(ex).map(|_| ())
+        self.send_then(uri, ExchangePattern::InOnly, |ex| ex.message.body = body, |_| ())
     }
 
     /// Send a body to the default endpoint.
@@ -86,22 +108,30 @@ impl ProducerTemplate {
 
     pub fn send_body_and_header(&self, uri: &str, body: impl Into<Value>, key: &str, value: impl Into<Value>) -> Result<()> {
         let (body, value) = (body.into(), value.into());
-        let ex = self.send_with(uri, ExchangePattern::InOnly, |ex| {
-            ex.message.body = body;
-            ex.message.headers.set(key, value);
-        });
-        Self::to_result(ex).map(|_| ())
+        self.send_then(
+            uri,
+            ExchangePattern::InOnly,
+            |ex| {
+                ex.message.body = body;
+                ex.message.headers.set(key, value);
+            },
+            |_| (),
+        )
     }
 
     pub fn send_body_and_headers(&self, uri: &str, body: impl Into<Value>, headers: Vec<(&str, Value)>) -> Result<()> {
         let body = body.into();
-        let ex = self.send_with(uri, ExchangePattern::InOnly, |ex| {
-            ex.message.body = body;
-            for (k, v) in headers {
-                ex.message.headers.set(k, v);
-            }
-        });
-        Self::to_result(ex).map(|_| ())
+        self.send_then(
+            uri,
+            ExchangePattern::InOnly,
+            |ex| {
+                ex.message.body = body;
+                for (k, v) in headers {
+                    ex.message.headers.set(k, v);
+                }
+            },
+            |_| (),
+        )
     }
 
     pub fn send_body_and_property(&self, uri: &str, body: impl Into<Value>, key: &str, value: impl Into<Value>) -> Result<()> {
@@ -116,8 +146,7 @@ impl ProducerTemplate {
     /// Request/reply (InOut): returns the reply body.
     pub fn request_body(&self, uri: &str, body: impl Into<Value>) -> Result<Value> {
         let body = body.into();
-        let ex = self.send_with(uri, ExchangePattern::InOut, |ex| ex.message.body = body);
-        Self::to_result(ex).map(|ex| ex.message.body)
+        self.send_then(uri, ExchangePattern::InOut, |ex| ex.message.body = body, |ex| std::mem::take(&mut ex.message.body))
     }
 
     pub fn request_body_and_header(&self, uri: &str, body: impl Into<Value>, key: &str, value: impl Into<Value>) -> Result<Value> {

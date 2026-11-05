@@ -410,7 +410,6 @@ impl SecretsRefreshTask {
         }
         if !updated.is_empty() {
             camel_core::camel_info!("aws-secrets-manager", "Secrets {:?} updated: reloading the CamelContext routes", updated);
-            self.reloads.fetch_add(1, Ordering::SeqCst);
             let listeners = self.listeners.lock().unwrap().clone();
             for l in listeners {
                 l(&updated);
@@ -421,6 +420,8 @@ impl SecretsRefreshTask {
                     ctx.start_route(&id)?;
                 }
             }
+            // counted once the reload is done (listeners called, routes restarted)
+            self.reloads.fetch_add(1, Ordering::SeqCst);
         }
         Ok(updated)
     }

@@ -1,7 +1,10 @@
+use camel_core::management::ManagementStatisticsLevel;
 use camel_core::prelude::*;
 
 fn ctx_with_routes() -> CamelContext {
     let ctx = CamelContext::with_name("mgmt-test");
+    // per-step statistics are opt-in (the default level is RoutesOnly)
+    ctx.set_statistics_level(ManagementStatisticsLevel::Default);
     ctx.add_routes(|b| {
         b.from("direct:start")
             .route_id("main")
@@ -156,5 +159,48 @@ fn statistics_can_be_disabled() {
     ctx.start().unwrap();
     ctx.create_producer_template().send_body("direct:other", "x").unwrap();
     assert_eq!(ctx.managed_context().route("other").unwrap().stats.exchanges_total, 0);
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn each_statistics_level_collects_what_camel_does() {
+    use ManagementStatisticsLevel::*;
+    assert_eq!(CamelContext::new().statistics_level(), RoutesOnly, "rust-camel's default");
+    for (level, routes, steps) in [(Extended, true, true), (Default, true, true), (RoutesOnly, true, false), (Off, false, false)] {
+        let ctx = ctx_with_routes();
+        ctx.set_statistics_level(level);
+        assert_eq!(ctx.statistics_level(), level);
+        ctx.start().unwrap();
+        let t = ctx.create_producer_template();
+        for _ in 0..3 {
+            t.send_body("direct:other", "x").unwrap();
+        }
+        let mc = ctx.managed_context();
+        let r = mc.route("other").unwrap();
+        assert_eq!(r.stats.exchanges_total, if routes { 3 } else { 0 }, "{level:?} route");
+        assert_eq!(ctx.route("other").unwrap().stats.exchanges_total(), 3, "{level:?}: the route's own counter");
+        for p in mc.processors("other") {
+            assert_eq!(p.stats.exchanges_total, if steps { 3 } else { 0 }, "{level:?} step {}", p.node_id);
+        }
+        // the context counters are always kept
+        assert_eq!(mc.exchanges_completed(), 3, "{level:?}");
+        ctx.stop().unwrap();
+    }
+    for (text, level) in [("Extended", Extended), ("default", Default), ("RoutesOnly", RoutesOnly), ("routes-only", RoutesOnly), ("OFF", Off)] {
+        assert_eq!(ManagementStatisticsLevel::parse(text).unwrap(), level);
+    }
+    assert!(ManagementStatisticsLevel::parse("verbose").is_err());
+}
+
+#[test]
+fn tracing_still_sees_every_step_when_step_statistics_are_off() {
+    let ctx = ctx_with_routes();
+    ctx.set_statistics_level(ManagementStatisticsLevel::RoutesOnly);
+    ctx.set_backlog_tracing(true);
+    ctx.start().unwrap();
+    ctx.create_producer_template().send_body("direct:other", "x").unwrap();
+    let steps = ctx.managed_context().processors("other").len();
+    let events = ctx.tracer().backlog_events_for("other");
+    assert!(events.len() > steps, "{} events for {} steps", events.len(), steps);
     ctx.stop().unwrap();
 }

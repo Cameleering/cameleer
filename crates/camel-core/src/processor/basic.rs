@@ -173,11 +173,17 @@ impl SetDefinition {
 pub struct SetProcessor {
     target: SetTarget,
     expression: Arc<dyn Expression>,
+    /// The header name, shared by the headers of every exchange this sets it on.
+    header: Option<Arc<str>>,
 }
 
 impl SetProcessor {
     pub fn new(target: SetTarget, expression: Arc<dyn Expression>) -> Self {
-        SetProcessor { target, expression }
+        let header = match &target {
+            SetTarget::Header(n) => Some(Arc::from(n.as_str())),
+            _ => None,
+        };
+        SetProcessor { target, expression, header }
     }
 }
 
@@ -190,7 +196,10 @@ impl Processor for SetProcessor {
         let v = self.expression.evaluate(exchange)?;
         match &self.target {
             SetTarget::Body => exchange.message.body = v,
-            SetTarget::Header(n) => exchange.message.headers.set(n.clone(), v),
+            SetTarget::Header(n) => match &self.header {
+                Some(h) => exchange.message.headers.set_shared(h, v),
+                None => exchange.message.headers.set(n.clone(), v),
+            },
             SetTarget::Property(n) => {
                 exchange.properties.insert(n.clone(), v);
             }
@@ -270,7 +279,7 @@ impl ProcessorDefinition for RemoveDefinition {
                             crate::util::matches_pattern(k, pattern)
                                 && !excludes.iter().any(|e| crate::util::matches_pattern(k, e))
                         })
-                        .cloned()
+                        .map(str::to_string)
                         .collect();
                     for k in keys {
                         ex.properties.remove(&k);

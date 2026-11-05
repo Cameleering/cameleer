@@ -469,6 +469,7 @@ impl Main {
 
     /// Tracing, message history and route controller options
     /// (`camel.main.tracing`, `camel.main.backlog-tracing`, `camel.main.message-history`,
+    /// `camel.main.jmxManagementStatisticsLevel`,
     /// `camel.main.route-controller-supervise-enabled` / `camel.routecontroller.enabled`,
     /// `...-initial-delay`, `...-back-off-delay`, `...-back-off-max-attempts`).
     fn apply_management_properties(&mut self) -> Result<()> {
@@ -481,6 +482,12 @@ impl Main {
         }
         if let Some(t) = flag("camel.main.message-history") {
             self.ctx.set_message_history(t);
+        }
+        // Camel's name; the kebab-case spelling is accepted too
+        let level = console::prop(&self.properties, "camel.main.jmxManagementStatisticsLevel")
+            .or_else(|| console::prop(&self.properties, "camel.main.jmx-management-statistics-level"));
+        if let Some(l) = level {
+            self.ctx.set_statistics_level(camel_core::management::ManagementStatisticsLevel::parse(&l)?);
         }
         if flag("camel.main.route-controller-supervise-enabled").or_else(|| flag("camel.routecontroller.enabled")).unwrap_or(false) {
             let dur = |k: &str| -> Result<Option<Duration>> {

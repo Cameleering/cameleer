@@ -1120,7 +1120,7 @@ impl FtpProducer {
         } else if let Some(f) = &c.file_name {
             evaluate_file_expression(f, ex, None)?
         } else {
-            ex.message.message_id.clone()
+            ex.message.message_id.to_string()
         };
         if c.flatten {
             name = name.rsplit('/').next().unwrap_or("").to_string();

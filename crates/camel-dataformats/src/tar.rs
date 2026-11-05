@@ -288,7 +288,7 @@ impl ArchiveOptions {
 
 /// Entries to marshal: (name, data) pairs, and the base file name.
 pub(crate) fn marshal_entries(ex: &Exchange, opts: &ArchiveOptions) -> (Vec<(String, Vec<u8>)>, String) {
-    let name = ex.message.headers.get(FILE_NAME).map(|v| v.to_string()).unwrap_or_else(|| ex.exchange_id.clone());
+    let name = ex.message.headers.get(FILE_NAME).map(|v| v.to_string()).unwrap_or_else(|| ex.exchange_id.to_string());
     let entry_name = |n: &str| -> String {
         if opts.preserve_path_elements {
             n.trim_start_matches('/').to_string()

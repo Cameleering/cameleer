@@ -2,6 +2,10 @@
 
 use std::process::ExitCode;
 
+/// rust-camel's thread-caching allocator (see `camel_core::alloc`).
+#[global_allocator]
+static GLOBAL: camel_core::alloc::CamelAllocator = camel_core::alloc::CamelAllocator;
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let stdout = std::io::stdout();

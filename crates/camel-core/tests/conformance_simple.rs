@@ -297,7 +297,7 @@ fn doc_message_history_function() {
 fn doc_exchange_id_and_route_id() {
     let mut ex = exchange();
     ex.from_route_id = Some("myRoute".into());
-    assert_eq!(eval(&ex, "${exchangeId}"), Value::from(ex.exchange_id.clone()));
+    assert_eq!(eval(&ex, "${exchangeId}"), Value::from(ex.exchange_id.to_string()));
     assert_eq!(eval(&ex, "${routeId}"), Value::from("myRoute"));
 }
 

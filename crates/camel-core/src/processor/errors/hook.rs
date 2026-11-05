@@ -406,6 +406,11 @@ struct RouteWrapper {
 
 impl Processor for RouteWrapper {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
+        self.process_timed(ex, 0).0
+    }
+
+    fn process_timed(&self, ex: &mut Exchange, start: u64) -> (Result<()>, u64) {
+        let mut end = 0;
         // a called route has its own error handler scope (doTry of the caller does not apply)
         let saved_try = ex.remove_property(TRY_ROUTE_BLOCK);
         // The original message belongs to the unit of work, which spans routes connected
@@ -446,8 +451,13 @@ impl Processor for RouteWrapper {
             }
         }
         if proceed {
-            if let Err(e) = self.inner.process(ex) {
-                ex.set_exception(e);
+            let (r, e) = self.inner.process_timed(ex, start);
+            if let Err(err) = r {
+                ex.set_exception(err);
+            }
+            // work after the route's steps is timed by the caller reading the clock again
+            if self.rt.on_completions.is_empty() && self.rt.route_policies.is_empty() {
+                end = e;
             }
         }
         for oc in &self.rt.on_completions {
@@ -464,6 +474,6 @@ impl Processor for RouteWrapper {
         if let Some(v) = saved_try {
             ex.set_property(TRY_ROUTE_BLOCK, v);
         }
-        Ok(())
+        (Ok(()), end)
     }
 }

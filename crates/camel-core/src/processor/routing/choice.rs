@@ -125,15 +125,22 @@ struct ChoiceProcessor {
 
 impl Processor for ChoiceProcessor {
     fn process(&self, exchange: &mut Exchange) -> Result<()> {
+        self.process_timed(exchange, 0).0
+    }
+
+    /// The branch's last clock reading is passed out (the choice ends when its branch does).
+    fn process_timed(&self, exchange: &mut Exchange, _start: u64) -> (Result<()>, u64) {
         for (p, child) in &self.whens {
-            if FilterProcessor::matches(p.as_ref(), exchange)? {
-                return child.process(exchange);
+            match FilterProcessor::matches(p.as_ref(), exchange) {
+                Err(e) => return (Err(e), 0),
+                Ok(true) => return child.process_timed(exchange, 0),
+                Ok(false) => {}
             }
         }
         if let Some(o) = &self.otherwise {
-            return o.process(exchange);
+            return o.process_timed(exchange, 0);
         }
-        Ok(())
+        (Ok(()), 0)
     }
 }
 

@@ -687,9 +687,9 @@ fn bean_value(it: &mut Interp, name: &str, pos: u32) -> R<V> {
 /// An exchange built from the script's view (for invoking registry beans).
 fn exchange_copy(it: &Interp, body: Value) -> Exchange {
     let mut ex = Exchange::with_body(it.host.context.clone(), body);
-    ex.exchange_id = it.host.exchange_id.clone();
+    ex.exchange_id = it.host.exchange_id.to_string().into();
     ex.message.headers = it.host.headers.borrow().clone();
-    ex.properties = it.host.properties.borrow().clone();
+    ex.properties = it.host.properties.borrow().clone().into();
     ex
 }
 

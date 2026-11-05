@@ -112,11 +112,11 @@ pub fn template_context(ex: &Exchange, allow_context_map_all: bool) -> Value {
     let message = Value::object([
         ("body", ex.message.body.clone()),
         ("headers", headers.clone()),
-        ("messageId", Value::String(ex.message.message_id.clone())),
+        ("messageId", Value::String(ex.message.message_id.to_string())),
     ]);
     let exchange = Value::object([
         ("properties", Value::from(ex.properties.clone())),
-        ("exchangeId", Value::String(ex.exchange_id.clone())),
+        ("exchangeId", Value::String(ex.exchange_id.to_string())),
         ("pattern", Value::String(format!("{:?}", ex.pattern))),
         ("message", message.clone()),
         ("in", message.clone()),

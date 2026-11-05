@@ -152,3 +152,19 @@ fn console_not_started_by_default() {
     assert!(main.context().is_message_history());
     main.stop().unwrap();
 }
+
+#[test]
+fn statistics_level_property() {
+    use camel_core::management::ManagementStatisticsLevel;
+    for (value, level) in [("Default", ManagementStatisticsLevel::Default), ("off", ManagementStatisticsLevel::Off)] {
+        let mut main = camel_main::new_main();
+        main.configure(|ctx| ctx.add_routes(|b| { b.from("direct:x").to("mock:x"); }));
+        main.set_property("camel.main.jmxManagementStatisticsLevel", value);
+        main.start().unwrap();
+        assert_eq!(main.context().statistics_level(), level);
+        main.stop().unwrap();
+    }
+    let mut main = camel_main::new_main();
+    main.set_property("camel.main.jmx-management-statistics-level", "nonsense");
+    assert!(main.start().is_err());
+}

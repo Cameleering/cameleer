@@ -3,7 +3,7 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -279,28 +279,40 @@ fn split_key_default(s: &str) -> (&str, Option<&str>) {
 // Inflight repository
 // ---------------------------------------------------------------------------
 
+/// Inflight exchange counts, in total and per route. Each route has its own atomic counter
+/// (created once), so counting an exchange takes no lock and allocates nothing.
 #[derive(Default)]
 pub struct InflightRepository {
-    total: AtomicUsize,
-    per_route: Mutex<HashMap<String, usize>>,
+    per_route: RwLock<HashMap<String, Arc<crate::stripe::Gauge>>>,
 }
 
 impl InflightRepository {
+    /// The counter of a route, created on first use.
+    pub(crate) fn counter(&self, route_id: &str) -> Arc<crate::stripe::Gauge> {
+        if let Some(c) = self.per_route.read().unwrap().get(route_id) {
+            return c.clone();
+        }
+        self.per_route.write().unwrap().entry(route_id.to_string()).or_default().clone()
+    }
     pub fn add(&self, route_id: &str) {
-        self.total.fetch_add(1, Ordering::SeqCst);
-        *self.per_route.lock().unwrap().entry(route_id.to_string()).or_insert(0) += 1;
+        Self::add_to(&self.counter(route_id));
     }
     pub fn remove(&self, route_id: &str) {
-        self.total.fetch_sub(1, Ordering::SeqCst);
-        if let Some(c) = self.per_route.lock().unwrap().get_mut(route_id) {
-            *c = c.saturating_sub(1);
-        }
+        Self::remove_from(&self.counter(route_id));
     }
+    pub(crate) fn add_to(route: &crate::stripe::Gauge) {
+        route.inc();
+    }
+    pub(crate) fn remove_from(route: &crate::stripe::Gauge) {
+        // striped: the sum never reads below zero (see `Gauge::get`)
+        route.dec();
+    }
+    /// The total over all routes (no shared counter: every route thread would contend on it).
     pub fn size(&self) -> usize {
-        self.total.load(Ordering::SeqCst)
+        self.per_route.read().unwrap().values().map(|c| c.get()).sum()
     }
     pub fn route_size(&self, route_id: &str) -> usize {
-        self.per_route.lock().unwrap().get(route_id).copied().unwrap_or(0)
+        self.per_route.read().unwrap().get(route_id).map(|c| c.get()).unwrap_or(0)
     }
 }
 
@@ -311,17 +323,48 @@ impl InflightRepository {
 /// Statistics for a route.
 #[derive(Default)]
 pub struct RouteStats {
-    pub exchanges_total: AtomicU64,
-    pub exchanges_failed: AtomicU64,
-    pub total_processing_ms: AtomicU64,
-    pub last_processing_ms: AtomicU64,
+    exchanges_total: crate::stripe::Counter,
+    exchanges_failed: crate::stripe::Counter,
+    total_processing_ms: crate::stripe::Counter,
+    last_processing_ms: AtomicU64,
 }
 
 impl RouteStats {
+    pub fn exchanges_total(&self) -> u64 {
+        self.exchanges_total.get()
+    }
+    pub fn exchanges_failed(&self) -> u64 {
+        self.exchanges_failed.get()
+    }
+    pub fn total_processing_ms(&self) -> u64 {
+        self.total_processing_ms.get()
+    }
+    pub fn last_processing_ms(&self) -> u64 {
+        self.last_processing_ms.load(Ordering::Relaxed)
+    }
+    fn record(&self, elapsed_ms: u64, failed: bool) {
+        self.exchanges_total.add(1);
+        if elapsed_ms > 0 {
+            self.total_processing_ms.add(elapsed_ms);
+        }
+        // a plain store: only written when it changes (the cache line stays shared)
+        if self.last_processing_ms.load(Ordering::Relaxed) != elapsed_ms {
+            self.last_processing_ms.store(elapsed_ms, Ordering::Relaxed);
+        }
+        if failed {
+            self.exchanges_failed.add(1);
+        }
+    }
+    pub fn reset(&self) {
+        self.exchanges_total.reset();
+        self.exchanges_failed.reset();
+        self.total_processing_ms.reset();
+        self.last_processing_ms.store(0, Ordering::Relaxed);
+    }
     pub fn snapshot(&self) -> Value {
-        let total = self.exchanges_total.load(Ordering::Relaxed);
-        let failed = self.exchanges_failed.load(Ordering::Relaxed);
-        let ms = self.total_processing_ms.load(Ordering::Relaxed);
+        let total = self.exchanges_total.get();
+        let failed = self.exchanges_failed.get();
+        let ms = self.total_processing_ms.get();
         Value::object([
             ("exchangesTotal", Value::from(total)),
             ("exchangesFailed", Value::from(failed)),
@@ -378,61 +421,100 @@ pub trait RouteStartupFailureHandler: Send + Sync {
     fn on_route_startup_failure(&self, ctx: &CamelContext, route_id: &str, error: &CamelError) -> Result<()>;
 }
 
+/// Context-level counters of completed and failed root exchanges (management's
+/// `ExchangesCompleted` / `ExchangesFailed` of the context).
+#[derive(Default)]
+pub struct ExchangeCounters {
+    pub completed: crate::stripe::Counter,
+    pub failed: crate::stripe::Counter,
+}
+
+/// Records the route-level processing time of each exchange. Management registers one in
+/// the route context ([`ROUTE_TIMER_ATTR`]); the route processor, which times every
+/// exchange anyway, feeds it, so a route is timed once.
+pub trait RouteTimer: Send + Sync {
+    fn record(&self, start_ticks: u64, end_ticks: u64, failed: bool);
+}
+
+/// Route context attribute holding an `Arc<dyn RouteTimer>`.
+pub const ROUTE_TIMER_ATTR: &str = "camel.route.timer";
+
 /// Wraps a route's processor: sets exchange metadata, tracks inflight/statistics,
 /// emits events and runs on-completion callbacks (the unit of work).
 struct RouteProcessor {
-    route_id: String,
-    endpoint_uri: String,
+    route_id: Arc<str>,
+    endpoint_uri: Arc<str>,
     inner: Arc<dyn Processor>,
     ctx: WeakContext,
     stats: Arc<RouteStats>,
+    inflight: Arc<crate::stripe::Gauge>,
+    counters: Arc<ExchangeCounters>,
+    notifiers: Arc<AtomicBool>,
+    timer: Option<Arc<dyn RouteTimer>>,
 }
 
 impl Processor for RouteProcessor {
     fn process(&self, exchange: &mut Exchange) -> Result<()> {
-        let ctx = match self.ctx.upgrade() {
-            Some(c) => c,
-            None => return Err(CamelError::illegal_state("CamelContext has been dropped")),
+        // events are only built when someone listens (they clone ids)
+        let notify = self.notifiers.load(Ordering::Acquire);
+        // the context is only needed to attach it to the exchange or to notify
+        let ctx = if exchange.context.is_none() || notify {
+            match self.ctx.upgrade() {
+                Some(c) => Some(c),
+                None => return Err(CamelError::illegal_state("CamelContext has been dropped")),
+            }
+        } else {
+            None
         };
         if exchange.context.is_none() {
-            exchange.context = Some(ctx.clone());
+            exchange.context = ctx.clone();
         }
         let is_root = exchange.from_route_id.is_none();
         if is_root {
             exchange.from_route_id = Some(self.route_id.clone());
             exchange.from_endpoint = Some(self.endpoint_uri.clone());
-            ctx.notify(&CamelEvent::ExchangeCreated { exchange_id: exchange.exchange_id.clone(), route_id: Some(self.route_id.clone()) });
+            if let (true, Some(ctx)) = (notify, &ctx) {
+                ctx.notify(&CamelEvent::ExchangeCreated { exchange_id: exchange.exchange_id.to_string(), route_id: Some(self.route_id.to_string()) });
+            }
         }
-        ctx.inner.inflight.add(&self.route_id);
-        let start = Instant::now();
-        if let Err(e) = self.inner.process(exchange) {
+        InflightRepository::add_to(&self.inflight);
+        let start = crate::clock::ticks();
+        let (r, end) = self.inner.process_timed(exchange, start);
+        if let Err(e) = r {
             exchange.set_exception(e);
         }
-        // a stop() inside this route must not leak to a calling route
-        let elapsed = start.elapsed().as_millis() as u64;
-        ctx.inner.inflight.remove(&self.route_id);
-        self.stats.exchanges_total.fetch_add(1, Ordering::Relaxed);
-        self.stats.total_processing_ms.fetch_add(elapsed, Ordering::Relaxed);
-        self.stats.last_processing_ms.store(elapsed, Ordering::Relaxed);
-        if exchange.is_failed() {
-            self.stats.exchanges_failed.fetch_add(1, Ordering::Relaxed);
+        // the end reading of the last instrumented step, if the route passed it out
+        let end = if end != 0 { end } else { crate::clock::ticks() };
+        if let Some(t) = &self.timer {
+            t.record(start, end, exchange.is_failed());
         }
+        let elapsed = crate::clock::ticks_to_millis(end.saturating_sub(start));
+        InflightRepository::remove_from(&self.inflight);
+        self.stats.record(elapsed, exchange.is_failed());
         if is_root {
-            if let Some(e) = &exchange.exception {
-                ctx.notify(&CamelEvent::ExchangeFailed {
-                    exchange_id: exchange.exchange_id.clone(),
-                    route_id: Some(self.route_id.clone()),
-                    error: e.clone(),
-                });
-            } else {
-                ctx.notify(&CamelEvent::ExchangeCompleted {
-                    exchange_id: exchange.exchange_id.clone(),
-                    route_id: Some(self.route_id.clone()),
-                    elapsed_ms: elapsed,
-                });
-            }
-            exchange.run_on_completions();
+            let c = &self.counters;
+            if exchange.exception.is_some() { &c.failed } else { &c.completed }.add(1);
         }
+        // root exchanges with listeners: completion events, then the unit of work ends
+        let ctx = match (is_root && notify, ctx) {
+            (true, Some(c)) => c,
+            _ => {
+                if is_root {
+                    exchange.run_on_completions();
+                }
+                return Ok(());
+            }
+        };
+        if let Some(e) = &exchange.exception {
+            ctx.notify(&CamelEvent::ExchangeFailed { exchange_id: exchange.exchange_id.to_string(), route_id: Some(self.route_id.to_string()), error: e.clone() });
+        } else {
+            ctx.notify(&CamelEvent::ExchangeCompleted {
+                exchange_id: exchange.exchange_id.to_string(),
+                route_id: Some(self.route_id.to_string()),
+                elapsed_ms: elapsed,
+            });
+        }
+        exchange.run_on_completions();
         Ok(())
     }
 }
@@ -461,6 +543,12 @@ pub(crate) struct ContextInner {
     component_factories: RwLock<HashMap<String, Arc<dyn Fn() -> Arc<dyn Component> + Send + Sync>>>,
     endpoints: RwLock<HashMap<String, Arc<dyn Endpoint>>>,
     producers: RwLock<HashMap<String, Arc<dyn Producer>>>,
+    /// `get_producer` results keyed by the uri exactly as given (without placeholders), so
+    /// repeated sends to the same uri skip parsing and normalizing it.
+    producers_by_uri: RwLock<HashMap<String, Arc<dyn Producer>>>,
+    /// Changes whenever `producers_by_uri` is cleared and is unique across contexts, so a
+    /// thread's cached lookup (`LAST_PRODUCER`) can tell when it is stale.
+    producer_epoch: AtomicU64,
     registry: Registry,
     properties: PropertiesComponent,
     languages: RwLock<HashMap<String, Arc<dyn Language>>>,
@@ -468,16 +556,29 @@ pub(crate) struct ContextInner {
     routes: RwLock<Vec<Arc<Route>>>,
     status: RwLock<ServiceStatus>,
     notifiers: RwLock<Vec<Arc<dyn EventNotifier>>>,
+    has_notifiers: Arc<AtomicBool>,
     route_hooks: RwLock<Vec<Arc<dyn RouteFactoryHook>>>,
     channel_wrappers: RwLock<Vec<Arc<dyn ChannelWrapper>>>,
     pub(crate) inflight: InflightRepository,
+    pub(crate) exchange_counters: Arc<ExchangeCounters>,
     route_counter: AtomicUsize,
     shutdown_timeout: RwLock<Duration>,
     started_at: Mutex<Option<Instant>>,
     services: RwLock<Vec<Arc<dyn Service>>>,
     global_options: RwLock<BTreeMap<String, String>>,
+    /// Whether any global option is set (lets the per-exchange lookups skip the lock).
+    has_global_options: AtomicBool,
     startup_failure_handler: RwLock<Option<Arc<dyn RouteStartupFailureHandler>>>,
     type_converter: Arc<crate::typeconverter::TypeConverterRegistry>,
+}
+
+static PRODUCER_EPOCHS: AtomicU64 = AtomicU64::new(0);
+
+type LastProducer = Option<(usize, u64, String, Arc<dyn Producer>)>;
+
+thread_local! {
+    /// The last `get_producer` result of this thread: (context, epoch, uri, producer).
+    static LAST_PRODUCER: std::cell::RefCell<LastProducer> = const { std::cell::RefCell::new(None) };
 }
 
 /// The Camel context. Cheap to clone (shared handle).
@@ -493,6 +594,10 @@ pub struct WeakContext(Weak<ContextInner>);
 impl WeakContext {
     pub fn upgrade(&self) -> Option<CamelContext> {
         self.0.upgrade().map(|inner| CamelContext { inner })
+    }
+    /// Whether this is a handle to `ctx` (no reference count is touched).
+    pub fn is(&self, ctx: &CamelContext) -> bool {
+        std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&ctx.inner))
     }
 }
 
@@ -542,6 +647,8 @@ impl CamelContext {
                 component_factories: RwLock::new(HashMap::new()),
                 endpoints: RwLock::new(HashMap::new()),
                 producers: RwLock::new(HashMap::new()),
+                producers_by_uri: RwLock::new(HashMap::new()),
+                producer_epoch: AtomicU64::new(PRODUCER_EPOCHS.fetch_add(1, Ordering::AcqRel) + 1),
                 registry: Registry::default(),
                 properties: PropertiesComponent::default(),
                 languages: RwLock::new(HashMap::new()),
@@ -549,14 +656,17 @@ impl CamelContext {
                 routes: RwLock::new(Vec::new()),
                 status: RwLock::new(ServiceStatus::Initialized),
                 notifiers: RwLock::new(Vec::new()),
+                has_notifiers: Arc::new(AtomicBool::new(false)),
                 route_hooks: RwLock::new(Vec::new()),
                 channel_wrappers: RwLock::new(Vec::new()),
                 inflight: InflightRepository::default(),
+                exchange_counters: Arc::new(ExchangeCounters::default()),
                 route_counter: AtomicUsize::new(0),
                 shutdown_timeout: RwLock::new(Duration::from_secs(45)),
                 started_at: Mutex::new(None),
                 services: RwLock::new(Vec::new()),
                 global_options: RwLock::new(BTreeMap::new()),
+                has_global_options: AtomicBool::new(false),
                 startup_failure_handler: RwLock::new(None),
                 type_converter: Arc::new(crate::typeconverter::TypeConverterRegistry::new()),
             }),
@@ -610,8 +720,13 @@ impl CamelContext {
     /// Global options (e.g. `CamelLogDebugBodyMaxChars`).
     pub fn set_global_option(&self, key: impl Into<String>, value: impl Into<String>) {
         self.inner.global_options.write().unwrap().insert(key.into(), value.into());
+        self.inner.has_global_options.store(true, Ordering::Release);
     }
+    #[inline]
     pub fn global_option(&self, key: &str) -> Option<String> {
+        if !self.inner.has_global_options.load(Ordering::Acquire) {
+            return None;
+        }
         self.inner.global_options.read().unwrap().get(key).cloned()
     }
 
@@ -796,16 +911,69 @@ impl CamelContext {
 
     /// Get a cached, started producer for a URI (used by toD, templates, recipient list...).
     pub fn get_producer(&self, uri: &str) -> Result<Arc<dyn Producer>> {
+        // uris with placeholders or registry references may resolve differently over time
+        // this thread's last lookup (a template sends to the same uri again and again)
+        let ctx_key = Arc::as_ptr(&self.inner) as usize;
+        let epoch = self.inner.producer_epoch.load(Ordering::Acquire);
+        let hit = LAST_PRODUCER
+            .try_with(|c| match c.try_borrow().as_deref() {
+                Ok(Some((k, e, u, p))) if *k == ctx_key && *e == epoch && u == uri => Some(p.clone()),
+                _ => None,
+            })
+            .ok()
+            .flatten();
+        if let Some(p) = hit {
+            return Ok(p);
+        }
+        // only cacheable uris are ever inserted, so look up first
+        let cached = self.inner.producers_by_uri.read().unwrap().get(uri).cloned();
+        if let Some(p) = cached {
+            let _ = LAST_PRODUCER.try_with(|c| {
+                // busy while a send borrows it (a nested send): just don't cache
+                if let Ok(mut c) = c.try_borrow_mut() {
+                    *c = Some((ctx_key, epoch, uri.to_string(), p.clone()));
+                }
+            });
+            return Ok(p);
+        }
+        let cacheable = !uri.contains("{{") && !uri.trim_start().starts_with("ref:");
         let endpoint = self.get_endpoint(uri)?;
         let key = endpoint.uri().to_string();
         let key = crate::util::normalize_uri(&key).unwrap_or(key);
-        if let Some(p) = self.inner.producers.read().unwrap().get(&key) {
-            return Ok(p.clone());
+        let cached = self.inner.producers.read().unwrap().get(&key).cloned();
+        let p = match cached {
+            Some(p) => p,
+            None => {
+                let p = endpoint.create_producer()?;
+                p.start()?;
+                self.inner.producers.write().unwrap().insert(key, p.clone());
+                p
+            }
+        };
+        if cacheable {
+            self.inner.producers_by_uri.write().unwrap().insert(uri.to_string(), p.clone());
         }
-        let p = endpoint.create_producer()?;
-        p.start()?;
-        self.inner.producers.write().unwrap().insert(key, p.clone());
         Ok(p)
+    }
+
+    /// Run `f` with the producer for `uri`. A repeated uri borrows this thread's cached
+    /// producer instead of cloning it (a reference count shared by every sending thread).
+    pub fn with_producer<R>(&self, uri: &str, f: impl FnOnce(&dyn Producer) -> R) -> Result<R> {
+        let ctx_key = Arc::as_ptr(&self.inner) as usize;
+        let epoch = self.inner.producer_epoch.load(Ordering::Acquire);
+        let mut f = Some(f);
+        let hit = LAST_PRODUCER
+            .try_with(|c| match c.try_borrow().as_deref() {
+                Ok(Some((k, e, u, p))) if *k == ctx_key && *e == epoch && u == uri => f.take().map(|f| f(&**p)),
+                _ => None,
+            })
+            .ok()
+            .flatten();
+        if let Some(r) = hit {
+            return Ok(r);
+        }
+        let p = self.get_producer(uri)?;
+        Ok((f.take().expect("not called yet"))(&*p))
     }
 
     /// All cached endpoints' uris.
@@ -850,9 +1018,19 @@ impl CamelContext {
 
     pub fn add_event_notifier(&self, n: impl EventNotifier + 'static) {
         self.inner.notifiers.write().unwrap().push(Arc::new(n));
+        self.inner.has_notifiers.store(true, Ordering::Release);
+    }
+
+    /// Whether any event notifier is registered. Hot paths check this before building an
+    /// event, which clones ids.
+    pub fn has_event_notifiers(&self) -> bool {
+        self.inner.has_notifiers.load(Ordering::Acquire)
     }
 
     pub fn notify(&self, event: &CamelEvent) {
+        if !self.has_event_notifiers() {
+            return;
+        }
         let notifiers = self.inner.notifiers.read().unwrap().clone();
         for n in notifiers {
             n.notify(event);
@@ -993,11 +1171,15 @@ impl CamelContext {
         }
         let stats = Arc::new(RouteStats::default());
         let route_processor: Arc<dyn Processor> = Arc::new(RouteProcessor {
-            route_id: id.clone(),
-            endpoint_uri: endpoint.uri().to_string(),
+            route_id: Arc::from(id.as_str()),
+            endpoint_uri: Arc::from(endpoint.uri()),
             inner: processor,
             ctx: self.downgrade(),
             stats: stats.clone(),
+            inflight: self.inner.inflight.counter(&id),
+            counters: self.inner.exchange_counters.clone(),
+            notifiers: self.inner.has_notifiers.clone(),
+            timer: rc.attribute::<Arc<dyn RouteTimer>>(ROUTE_TIMER_ATTR).map(|t| (*t).clone()),
         });
         let services = rc.take_services();
         Ok(Arc::new(Route {
@@ -1152,6 +1334,8 @@ impl CamelContext {
         for r in &routes {
             let _ = self.stop_route_internal(r, timeout);
         }
+        self.inner.producers_by_uri.write().unwrap().clear();
+        self.inner.producer_epoch.store(PRODUCER_EPOCHS.fetch_add(1, Ordering::AcqRel) + 1, Ordering::Release);
         let producers: Vec<Arc<dyn Producer>> = self.inner.producers.write().unwrap().drain().map(|(_, p)| p).collect();
         for p in producers {
             let _ = p.stop();

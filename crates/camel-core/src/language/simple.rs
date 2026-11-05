@@ -84,6 +84,8 @@ impl Expression for SimpleExpression {
 pub struct SimplePredicate {
     text: String,
     pred: Pred,
+    /// The common `${header.name} <op> literal` comparison, evaluated directly.
+    header_cmp: Option<(String, Op, Value)>,
 }
 
 impl SimplePredicate {
@@ -91,7 +93,14 @@ impl SimplePredicate {
     pub fn parse(text: &str) -> Result<Self> {
         let p = P::new(text);
         let pred = p.predicate(0, p.chars.len(), false)?;
-        Ok(SimplePredicate { text: text.to_string(), pred })
+        let header_cmp = match &pred {
+            Pred::Cmp(Expr::Func(f), op @ (Op::Eq | Op::Ne | Op::Gt | Op::Ge | Op::Lt | Op::Le), Expr::Literal(lit), None) => match &**f {
+                Func::Scoped(Scope::Header, name, None) => Some((name.clone(), *op, lit.clone())),
+                _ => None,
+            },
+            _ => None,
+        };
+        Ok(SimplePredicate { text: text.to_string(), pred, header_cmp })
     }
     pub fn text(&self) -> &str {
         &self.text
@@ -100,6 +109,11 @@ impl SimplePredicate {
 
 impl Predicate for SimplePredicate {
     fn matches(&self, ex: &Exchange) -> Result<bool> {
+        if let Some((name, op, lit)) = &self.header_cmp {
+            // what `Pred::eval` does for this shape, without the general machinery
+            static NULL: Value = Value::Null;
+            return op_matches(*op, ex.message.headers.get(name).unwrap_or(&NULL), lit, None);
+        }
         self.pred.eval(ex)
     }
 }
@@ -1176,15 +1190,49 @@ fn literal_keyword(t: &str) -> Option<Value> {
 // ---------------------------------------------------------------------------
 
 impl Expr {
+    /// Like [`Expr::eval`], but borrows literals, plain body references and plain
+    /// header/property references instead of cloning them (predicates only compare).
+    fn eval_ref<'a>(&'a self, ex: &'a Exchange) -> Result<std::borrow::Cow<'a, Value>> {
+        use std::borrow::Cow;
+        match self {
+            Expr::Literal(v) => Ok(Cow::Borrowed(v)),
+            Expr::Func(f) => match &**f {
+                Func::Body(navs) if navs.is_empty() => Ok(Cow::Borrowed(&ex.message.body)),
+                Func::Constant(v) => Ok(Cow::Borrowed(v)),
+                Func::Scoped(scope @ (Scope::Header | Scope::Property), name, alt) => {
+                    let found = match scope {
+                        Scope::Header => ex.message.headers.get(name),
+                        _ => ex.properties.get(name.as_str()),
+                    };
+                    match (found, alt) {
+                        (Some(v), _) => Ok(Cow::Borrowed(v)),
+                        (None, None) => Ok(Cow::Owned(Value::Null)),
+                        (None, Some(_)) => f.eval(ex).map(Cow::Owned),
+                    }
+                }
+                _ => f.eval(ex).map(Cow::Owned),
+            },
+            _ => self.eval(ex).map(Cow::Owned),
+        }
+    }
+
     fn eval(&self, ex: &Exchange) -> Result<Value> {
         match self {
             Expr::Literal(v) => Ok(v.clone()),
             Expr::Template(parts) => {
-                let mut out = String::new();
+                let mut out = String::with_capacity(32);
                 for p in parts {
                     match p {
                         Part::Text(t) => out.push_str(t),
-                        Part::Expr(e) => out.push_str(&e.eval(ex)?.to_string()),
+                        Part::Expr(e) => match &*e.eval_ref(ex)? {
+                            // the usual parts, without the formatting machinery
+                            Value::String(s) => out.push_str(s),
+                            Value::Int(i) => out.push_str(&crate::value::to_key_string(&Value::Int(*i))),
+                            other => {
+                                use std::fmt::Write as _;
+                                let _ = write!(out, "{}", other);
+                            }
+                        },
                     }
                 }
                 Ok(Value::String(out))
@@ -1332,10 +1380,10 @@ impl Pred {
                 }
                 Ok(true)
             }
-            Pred::Truthy(e) => Ok(value_predicate(&e.eval(ex)?)),
+            Pred::Truthy(e) => Ok(value_predicate(&*e.eval_ref(ex)?)),
             Pred::Cmp(l, op, r, re) => {
-                let lv = l.eval(ex)?;
-                let rv = r.eval(ex)?;
+                let lv = l.eval_ref(ex)?;
+                let rv = r.eval_ref(ex)?;
                 // numeric literal vs numeric-looking string compare numerically
                 op_matches(*op, &lv, &rv, re.as_ref())
             }
@@ -1579,10 +1627,10 @@ impl Func {
             Func::Variables => Ok(Value::Object(
                 ex.properties.iter().filter_map(|(k, v)| k.strip_prefix("CamelVariable.").map(|n| (n.to_string(), v.clone()))).collect(),
             )),
-            Func::ExchangeId => Ok(Value::String(ex.exchange_id.clone())),
-            Func::MessageId => Ok(Value::String(ex.message.message_id.clone())),
+            Func::ExchangeId => Ok(Value::String(ex.exchange_id.to_string())),
+            Func::MessageId => Ok(Value::String(ex.message.message_id.to_string())),
             Func::MessageTimestamp => Ok(Value::Int(ex.created_millis())),
-            Func::RouteId | Func::FromRouteId => Ok(ex.from_route_id.clone().map(Value::String).unwrap_or(Value::Null)),
+            Func::RouteId | Func::FromRouteId => Ok(ex.from_route_id.as_deref().map(Value::from).unwrap_or(Value::Null)),
             Func::CamelId => Ok(ex.context.as_ref().map(|c| Value::String(c.name().to_string())).unwrap_or(Value::Null)),
             Func::Exception(navs) => match exception_of(ex) {
                 None => Ok(Value::Null),

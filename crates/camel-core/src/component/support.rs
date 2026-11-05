@@ -15,6 +15,8 @@ use crate::spi::Processor;
 pub struct StopFlag {
     stopped: Mutex<bool>,
     cond: Condvar,
+    /// `stopped`, readable without the lock (consumer loops check it for every message).
+    fast: std::sync::atomic::AtomicBool,
 }
 
 impl StopFlag {
@@ -23,15 +25,19 @@ impl StopFlag {
     }
     /// Signal stop and wake up all waiters.
     pub fn stop(&self) {
-        *self.stopped.lock().unwrap() = true;
+        let mut s = self.stopped.lock().unwrap();
+        *s = true;
+        self.fast.store(true, std::sync::atomic::Ordering::SeqCst);
         self.cond.notify_all();
     }
     /// Clear the stop signal (before restarting).
     pub fn reset(&self) {
-        *self.stopped.lock().unwrap() = false;
+        let mut s = self.stopped.lock().unwrap();
+        *s = false;
+        self.fast.store(false, std::sync::atomic::Ordering::SeqCst);
     }
     pub fn is_stopped(&self) -> bool {
-        *self.stopped.lock().unwrap()
+        self.fast.load(std::sync::atomic::Ordering::SeqCst)
     }
     /// Sleep for `d` or until stopped. Returns true if stopped.
     pub fn sleep(&self, d: Duration) -> bool {
@@ -68,6 +74,8 @@ impl StopFlag {
 pub struct SuspendState {
     suspended: Mutex<bool>,
     cond: Condvar,
+    /// `suspended`, readable without the lock.
+    fast: std::sync::atomic::AtomicBool,
 }
 
 impl SuspendState {
@@ -75,11 +83,13 @@ impl SuspendState {
         Arc::new(SuspendState::default())
     }
     pub fn set(&self, suspended: bool) {
-        *self.suspended.lock().unwrap() = suspended;
+        let mut s = self.suspended.lock().unwrap();
+        *s = suspended;
+        self.fast.store(suspended, std::sync::atomic::Ordering::SeqCst);
         self.cond.notify_all();
     }
     pub fn get(&self) -> bool {
-        *self.suspended.lock().unwrap()
+        self.fast.load(std::sync::atomic::Ordering::SeqCst)
     }
     /// Block while suspended. Returns true when `flag` was stopped meanwhile.
     pub fn wait_while_suspended(&self, flag: &StopFlag) -> bool {

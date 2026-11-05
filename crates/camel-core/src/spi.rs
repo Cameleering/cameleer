@@ -15,6 +15,15 @@ use crate::value::Value;
 /// (the routing engine stores the error in `exchange.exception`).
 pub trait Processor: Send + Sync {
     fn process(&self, exchange: &mut Exchange) -> Result<()>;
+
+    /// [`Processor::process`] inside a timed sequence (route statistics): `start` is a
+    /// [`crate::clock::ticks`] reading taken just before this call, or 0. Returns the
+    /// reading taken at the end, or 0 if this processor took none. Instrumented steps of a
+    /// pipeline pass the end of one step on as the start of the next, so the clock is read
+    /// once per step instead of twice. Wrappers forward it; the default does not time.
+    fn process_timed(&self, exchange: &mut Exchange, _start: u64) -> (Result<()>, u64) {
+        (self.process(exchange), 0)
+    }
 }
 
 impl<F> Processor for F
@@ -29,6 +38,9 @@ where
 impl Processor for Arc<dyn Processor> {
     fn process(&self, exchange: &mut Exchange) -> Result<()> {
         (**self).process(exchange)
+    }
+    fn process_timed(&self, exchange: &mut Exchange, start: u64) -> (Result<()>, u64) {
+        (**self).process_timed(exchange, start)
     }
 }
 
@@ -205,6 +217,21 @@ pub trait AggregationStrategy: Send + Sync {
     fn timeout(&self, _old: &Exchange, _index: usize, _total: usize, _timeout_ms: u64) {}
     /// Called when the aggregation completes (optional), may modify the result.
     fn on_completion(&self, _exchange: &mut Exchange) {}
+    /// Whether `aggregate` never returns an error. The aggregate EIP then moves the group
+    /// out of its repository instead of copying it for every exchange (a failing strategy
+    /// must leave the group in the repository untouched, as in Camel).
+    fn never_fails(&self) -> bool {
+        false
+    }
+    /// Aggregate `new` into the group in place (`None` for a new group). The default calls
+    /// [`AggregationStrategy::aggregate`]; strategies that only add to the group override it
+    /// so the group exchange is not moved out and back for every exchange. The aggregate
+    /// EIP only uses it when [`AggregationStrategy::never_fails`] is true.
+    fn aggregate_into(&self, group: &mut Option<Exchange>, new: Exchange) -> Result<()> {
+        let old = group.take();
+        *group = Some(self.aggregate(old, new)?);
+        Ok(())
+    }
 }
 
 impl<F> AggregationStrategy for F
