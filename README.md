@@ -1,5 +1,11 @@
 # rust-camel
 
+[![CI](https://github.com/pmsudhi/Rust-camel/actions/workflows/ci.yml/badge.svg)](https://github.com/pmsudhi/Rust-camel/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
+[![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)
+[![Apache Camel compatible](https://img.shields.io/badge/follows-Apache%20Camel%204.x-d4523f.svg)](https://camel.apache.org/)
+
 ### Apache Camel, rewritten in Rust. If you know Camel, you already know rust-camel.
 
 The same endpoint URIs. The same Enterprise Integration Patterns. The same Simple expressions, the
@@ -12,6 +18,11 @@ data formats, ported one by one and verified against the real systems.
 [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
 [Agents](#rebuilt-for-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
+
+> Based on [Apache Camel](https://camel.apache.org/) ([source](https://github.com/apache/camel)), the
+> integration framework by the Apache Software Foundation. rust-camel follows its names, options and
+> semantics but contains no Camel source code. It is an independent project, not affiliated with or
+> endorsed by the ASF. Apache, Apache Camel and Camel are trademarks of the Apache Software Foundation.
 
 ---
 
@@ -359,3 +370,20 @@ The live interop suites run against real servers and are opt-in:
 sudo scripts/live-interop.sh all
 CAMEL_LIVE_INTEROP=1 cargo test --workspace live_
 ```
+
+## Contributing, security and citing
+
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md). To cite rust-camel, use the "Cite this repository" button
+([CITATION.cff](CITATION.cff)).
+
+## License and credits
+
+rust-camel is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).
+
+It exists because of [Apache Camel](https://camel.apache.org/)
+([github.com/apache/camel](https://github.com/apache/camel)) and its community, whose design,
+documentation and Enterprise Integration Patterns catalogue it follows. Apache, Apache Camel and
+Camel are trademarks of the Apache Software Foundation; rust-camel is not affiliated with or
+endorsed by the ASF.

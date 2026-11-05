@@ -3,6 +3,11 @@ name = "camel-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords = ["camel", "integration", "eip", "messaging", "agents"]
+categories = ["network-programming", "web-programming"]
 description = "Core of rust-camel: exchanges, routes, EIPs, DSL, languages, core components"
 
 [dependencies]

@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use rust-camel in your work, please cite it as below."
+title: "rust-camel: Apache Camel's integration model in Rust"
+type: software
+authors:
+  - given-names: Sudheesh
+    family-names: PM
+repository-code: "https://github.com/pmsudhi/Rust-camel"
+license: Apache-2.0
+version: 0.1.0
+date-released: "2026-11-05"
+keywords:
+  - rust
+  - apache-camel
+  - enterprise-integration-patterns
+  - integration
+  - ai-agents
+  - serverless
+abstract: >-
+  rust-camel is an independent reimplementation of Apache Camel in Rust: routes,
+  Enterprise Integration Patterns, about 230 components, languages and data formats, and
+  the Rust, YAML and XML DSLs, built on the Rust standard library only. It starts in about
+  10 ms, uses about 10 MB of memory and outperforms Apache Camel on the JVM in published
+  benchmarks.
+references:
+  - type: software
+    title: Apache Camel
+    url: "https://camel.apache.org/"
+    repository-code: "https://github.com/apache/camel"
+    authors:
+      - name: The Apache Software Foundation

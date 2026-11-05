@@ -3,6 +3,9 @@ name = "camel-kafka-mqtt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "rust-camel messaging components (std only): kafka (wire protocol client) and paho / paho-mqtt5 (MQTT 3.1.1 / 5.0), with embedded test brokers"
 
 [dependencies]

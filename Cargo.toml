@@ -6,6 +6,9 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+repository = "https://github.com/pmsudhi/Rust-camel"
+homepage = "https://github.com/pmsudhi/Rust-camel"
+authors = ["Sudheesh PM <pmsudhi@gmail.com>"]
 
 # The from-scratch cryptography (constant-time bitsliced AES, bignum RSA/ECC) is far too
 # slow unoptimized; optimize it even in dev/test builds.

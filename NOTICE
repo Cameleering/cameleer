@@ -1,0 +1,24 @@
+rust-camel
+Copyright 2026 The rust-camel authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+rust-camel is an independent reimplementation, in Rust, of the integration model of
+Apache Camel (https://camel.apache.org/, https://github.com/apache/camel): its routes,
+Enterprise Integration Patterns, component and endpoint names, options, headers and the
+Simple language. It is written from scratch and contains no Apache Camel source code.
+Apache Camel, Camel and Apache are trademarks of The Apache Software Foundation. rust-camel
+is not affiliated with, endorsed by or sponsored by The Apache Software Foundation.
+
+This product bundles:
+
+- The IANA Time Zone Database (https://www.iana.org/time-zones), release 2026f, compiled
+  into crates/camel-core/tzdata/zones.bin from the PyPI "tzdata" package. The time zone
+  database is in the public domain.
+
+- Test images from the ZXing project's blackbox test suite (https://github.com/zxing/zxing),
+  Copyright ZXing authors, licensed under the Apache License, Version 2.0, in
+  crates/camel-dataformats/src/barcode/testdata/zxing (see ATTRIBUTION.txt there).
+
+The benchmark harness in benchmarks/java-camel depends on Apache Camel and other Java
+libraries, downloaded by Maven at build time and not redistributed here.

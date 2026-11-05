@@ -3,6 +3,9 @@ name = "camel-soap"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "rust-camel SOAP stack (std only): WSDL 1.1, SOAP 1.1/1.2 envelopes and faults, WS-Security, cxf / cxfrs / spring-ws components, the jaxb data format, FHIR R4 (fhirJson / fhirXml data formats, fhir component, mock server)"
 
 [dependencies]

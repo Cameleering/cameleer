@@ -3,6 +3,11 @@ name = "camel-main"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords = ["camel", "integration", "cli", "yaml", "serverless"]
+categories = ["command-line-utilities", "network-programming"]
 description = "rust-camel main runner and `camel` CLI (like Camel Main / Camel JBang)"
 
 [dependencies]

@@ -3,6 +3,9 @@ name = "camel-yaml"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "YAML 1.2 parser/emitter and the Camel YAML (and XML) route DSL loader for rust-camel"
 
 [dependencies]

@@ -3,6 +3,9 @@ name = "camel-amqp10"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "rust-camel AMQP 1.0 (std only): OASIS AMQP 1.0 client with SASL/TLS/CBS, `amqp` (JMS over AMQP 1.0), `azure-servicebus` and `azure-eventhubs` components, embedded AMQP 1.0 test broker with Azure emulation"
 
 [dependencies]

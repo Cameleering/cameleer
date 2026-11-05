@@ -3,6 +3,9 @@ name = "camel-dataformats"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "rust-camel data formats: Avro, Bindy, YAML, Tar, Zip, Crypto, PGP, CBOR, Thrift, ASN.1, iCal, MIME multipart, Fory (xlang), Barcode (QR, Data Matrix, Code 128/39, EAN-13, UPC-A)"
 
 [dependencies]

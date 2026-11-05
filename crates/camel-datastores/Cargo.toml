@@ -3,6 +3,9 @@ name = "camel-datastores"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "rust-camel datastore connectors (std only): Redis (spring-redis), MongoDB, Elasticsearch/OpenSearch, Cassandra (cql), CouchDB, with wire protocols and embedded test servers"
 
 [dependencies]

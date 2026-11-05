@@ -3,6 +3,9 @@ name = "camel-grpc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
 description = "rust-camel HTTP/2 (RFC 9113 + HPACK), Protocol Buffers (.proto parser, dynamic codec, protobuf data format) and the gRPC component"
 
 [dependencies]
