@@ -25,7 +25,7 @@
   "@type": "SoftwareSourceCode",
   "name": "Cameleer",
   "alternateName": "rust-camel",
-  "description": "Apache Camel rewritten in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only.",
+  "description": "Apache Camel rewritten in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.",
   "codeRepository": "https://github.com/pmsudhi/cameleer",
   "url": "https://pmsudhi.github.io/cameleer/",
   "programmingLanguage": "Rust",
@@ -336,6 +336,20 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
   </div>
 </section>
 
+<section id="agents" class="agents" aria-labelledby="agents-h">
+  <div class="wrap">
+    <h2 id="agents-h">The integration layer for AI agents.</h2>
+    <p class="agents-lede">Cameleer feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.</p>
+    <ol class="flow" aria-label="How an agent uses Cameleer">
+      <li><b>Events in</b><span>Kafka, MQTT, webhooks, files, queues, databases</span></li>
+      <li><b>Model</b><span>OpenAI and compatible servers, Bedrock, Azure OpenAI, Vertex AI</span></li>
+      <li><b>Route on the answer</b><span>content-based routing, JSON schema checks on the output</span></li>
+      <li><b>Reliable actions</b><span>idempotency, retries, rate limits, circuit breakers, fallbacks, audit log</span></li>
+    </ol>
+    <p class="agents-more"><a href="docs/guides/agents.html">Agent cookbook: eight tested patterns</a> · <a href="docs/guides/ai-components.html">AI components</a></p>
+  </div>
+</section>
+
 <section id="uses" aria-labelledby="uses-h">
   <div class="wrap">
     <h2 id="uses-h">Small enough to go where the JVM can't.</h2>
@@ -379,21 +393,23 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
   <div class="wrap inside">
     <div>
       <h2 id="in-h">Everything Camel does, from scratch.</h2>
-      <p class="sub" style="margin-bottom:0">No third-party crates. Every protocol below is written on the Rust standard library and checked against real servers and official clients.</p>
+      <p class="sub" style="margin-bottom:0">No third-party crates. Every protocol is written on the Rust standard library and checked against real servers and official clients.</p>
       <div class="count">
         <div><b>230</b><span>components, languages, formats</span></div>
         <div><b>0</b><span>dependencies</span></div>
-        <div><b>2,300+</b><span>tests</span></div>
+        <div><b>2,600+</b><span>tests</span></div>
       </div>
     </div>
-    <div class="wall" aria-label="Protocols and formats built in">
-      <span class="k">All Camel EIPs</span><span class="k">YAML DSL</span><span class="k">XML DSL</span><span class="k">REST DSL</span><span class="k">Kamelets</span>
-      <span>Kafka</span><span>AMQP 0-9-1</span><span>AMQP 1.0</span><span>MQTT</span><span>STOMP</span><span>JMS</span>
-      <span>HTTP/1.1</span><span>HTTP/2</span><span>gRPC</span><span>TLS 1.3</span><span>SSH / SFTP</span><span>FTP / FTPS</span>
-      <span>PostgreSQL</span><span>Redis</span><span>MongoDB</span><span>Cassandra</span><span>Elasticsearch</span><span>CouchDB</span>
-      <span>AWS S3, SQS, SNS</span><span>DynamoDB</span><span>Azure Service Bus</span><span>Event Hubs</span><span>GCP Pub/Sub</span><span>BigQuery</span>
-      <span>OpenAI</span><span>AWS Bedrock</span><span>Azure OpenAI</span><span>Vertex AI</span>
-      <span>SMTP / IMAP</span><span>SOAP</span><span>XSLT / XQuery</span><span>JSONPath</span><span>Avro</span><span>Protobuf</span><span>PGP</span>
+    <div class="wall" aria-label="A selection of built-in components, each linked to its documentation">
+      <div class="grp"><h3>Patterns and DSLs</h3><div class="chips"><a href="docs/guides/eips.html">All Camel EIPs</a><a href="docs/guides/concepts.html">YAML DSL</a><a href="docs/components/rest.html">REST DSL</a><a href="docs/components/kamelet.html">Kamelets</a><a href="docs/languages/simple.html">Simple language</a><a href="docs/guides/error-handling.html">Error handling</a></div></div>
+      <div class="grp"><h3>Messaging and streaming</h3><div class="chips"><a href="docs/components/kafka.html">Kafka</a><a href="docs/components/rabbitmq.html">RabbitMQ (AMQP 0-9-1)</a><a href="docs/components/amqp.html">AMQP 1.0</a><a href="docs/components/paho.html">MQTT</a><a href="docs/components/jms.html">JMS</a><a href="docs/components/stomp.html">STOMP</a></div></div>
+      <div class="grp"><h3>Web and APIs</h3><div class="chips"><a href="docs/components/http.html">HTTP and HTTP/2</a><a href="docs/components/platform-http.html">REST server</a><a href="docs/components/websocket.html">WebSocket</a><a href="docs/components/grpc.html">gRPC</a><a href="docs/components/cxf.html">SOAP</a></div></div>
+      <div class="grp"><h3>Data stores</h3><div class="chips"><a href="docs/components/sql.html">PostgreSQL / SQL</a><a href="docs/components/spring-redis.html">Redis</a><a href="docs/components/mongodb.html">MongoDB</a><a href="docs/components/cql.html">Cassandra</a><a href="docs/components/elasticsearch.html">Elasticsearch</a><a href="docs/components/couchdb.html">CouchDB</a></div></div>
+      <div class="grp"><h3>Cloud</h3><div class="chips"><a href="docs/components/aws2-s3.html">AWS S3</a><a href="docs/components/aws2-sqs.html">AWS SQS</a><a href="docs/components/aws2-ddb.html">DynamoDB</a><a href="docs/components/azure-servicebus.html">Azure Service Bus</a><a href="docs/components/azure-eventhubs.html">Azure Event Hubs</a><a href="docs/components/google-pubsub.html">Google Pub/Sub</a><a href="docs/components/google-bigquery.html">BigQuery</a></div></div>
+      <div class="grp"><h3>AI</h3><div class="chips"><a href="docs/components/openai.html">OpenAI and compatible</a><a href="docs/components/aws-bedrock.html">AWS Bedrock</a><a href="docs/components/azure-openai.html">Azure OpenAI</a><a href="docs/components/google-vertexai.html">Vertex AI</a></div></div>
+      <div class="grp"><h3>Files and protocols</h3><div class="chips"><a href="docs/components/file.html">Files</a><a href="docs/components/sftp.html">SFTP</a><a href="docs/components/ftp.html">FTP / FTPS</a><a href="docs/components/smtp.html">Email (SMTP, IMAP)</a></div></div>
+      <div class="grp"><h3>Formats and languages</h3><div class="chips"><a href="docs/dataformats/json.html">JSON</a><a href="docs/dataformats/csv.html">CSV</a><a href="docs/dataformats/avro.html">Avro</a><a href="docs/dataformats/protobuf.html">Protobuf</a><a href="docs/components/xslt.html">XSLT</a><a href="docs/languages/jsonpath.html">JSONPath</a><a href="docs/dataformats/pgp.html">PGP</a></div></div>
+      <p class="wall-all">A selection of the 164 components, 26 languages and 30 data formats. Every one has a page with tested examples: <a href="docs/components/">browse all components</a>, <a href="docs/languages/">languages</a>, <a href="docs/dataformats/">data formats</a>.</p>
     </div>
   </div>
 </section>

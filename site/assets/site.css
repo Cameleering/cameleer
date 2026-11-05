@@ -188,3 +188,30 @@ body.docs .top .wrap, body.docs footer .wrap { max-width: 1320px; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   html { scroll-behavior: auto; }
 }
+
+/* agents band */
+.agents { background: var(--ink); color: #fff; }
+section.agents + section { border-top: 0; }
+.agents h2 { color: #fff; max-width: 18em; }
+.agents-lede { font-size: clamp(19px, 2.2vw, 24px); line-height: 1.45; color: #c9cfdf; max-width: 36em; margin: 0 0 44px; }
+.flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; counter-reset: f; }
+.flow li { counter-increment: f; position: relative; padding: 20px 28px 0 0; border-top: 2px solid #3b4566; }
+.flow li::before { content: counter(f); position: absolute; top: -13px; left: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--sand); color: var(--ink); font: 700 13px/24px var(--sans); text-align: center; }
+.flow li:last-child { border-top-color: var(--sand); }
+.flow b { display: block; font-size: 18px; margin: 10px 0 6px; }
+.flow span { color: #a9b1c7; font-size: 15px; }
+.agents-more { margin: 40px 0 0; font-size: 15px; color: #a9b1c7; }
+.agents-more a { color: #fff; }
+@media (max-width: 900px) {
+  .flow { grid-template-columns: 1fr; gap: 28px; }
+  .flow li { padding-right: 0; }
+}
+
+/* component wall: grouped, every chip links to its page */
+.wall { display: grid; gap: 20px; }
+.wall .grp h3 { font-size: 14px; font-weight: 600; color: var(--muted); margin: 0 0 8px; letter-spacing: 0; }
+.wall .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.wall .chips a { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-size: 15px; background: #fff; text-decoration: none; color: var(--ink); transition: border-color .15s, color .15s; }
+.wall .chips a:hover, .wall .chips a:focus-visible { border-color: var(--signal); color: var(--signal); }
+.wall-all { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+.wall-all a { color: var(--signal); }

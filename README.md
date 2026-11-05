@@ -158,6 +158,8 @@ Your team's Camel experience, designs and routes come with you.
 
 ## Rebuilt for agents
 
+**Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.**
+
 An agent decides; something still has to *do* it:
 - read from Kafka, call the model, write to Postgres;
 - open the ticket, post to Slack;
@@ -425,7 +427,7 @@ so by default it keeps route and context counters and makes per-step timing opt-
 (`ManagementStatisticsLevel::Default`, or `camel.main.jmxManagementStatisticsLevel=Default`).
 
 **How is it verified?**
-- 2,300+ hermetic tests against embedded servers;
+- 2,600+ hermetic tests against embedded servers;
 - live suites against real PostgreSQL, Redis, RabbitMQ, ActiveMQ, Mosquitto, vsftpd,
   Postfix/Dovecot and nginx;
 - official clients: librdkafka, pymongo, the DataStax driver, boto3, the Azure SDK, gcloud and
