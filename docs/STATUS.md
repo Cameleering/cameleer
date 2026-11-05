@@ -89,10 +89,10 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
   3.5–5.2 ms there). Not yet measured on the Lambda service itself (needs an AWS account).
 - **Throughput:** unchanged within noise after fixing two regressions a bisect found (log macro
   level check, allocator bin size). Static musl is 3–22% slower, so the image stays glibc.
-- **Tests:** hermetic suite 2697 passed on Linux; on Windows 2696 passed and 1 failed once under
-  load (`cameleer-tls` `mutual_tls_rejects_missing_and_untrusted_certificates`, untouched by this
-  branch, 15/15 passes on rerun; see follow-ups). `cargo test -p cameleer-main
-  --no-default-features`: 24 passed.
+- **Tests:** hermetic suite 2697 passed, 0 failed on Linux (WSL2) and on Windows, zero warnings;
+  `cargo test -p cameleer-main --no-default-features`: 24 passed. One earlier Windows run under
+  heavy load failed `cameleer-tls` `mutual_tls_rejects_missing_and_untrusted_certificates` once
+  (untouched by this branch; 15/15 on rerun, green in the final run; see follow-ups).
 
 Follow-ups: core cargo features for template engines, jq and the core XPath subset; optional
 HTTP/2 (`cameleer-grpc`) in `cameleer-http`; `validate`/`schema` behind a feature; XQuery/XSLT
@@ -200,8 +200,8 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect about 2697 passing
-   (2696 on Windows, which runs Windows variants of the Unix-only tests).
+1. `git checkout main && cargo test --workspace`. Expect 2697 passing
+   on Windows and on Linux.
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
 4. Update this file, and `docs/INTEROP.md` or `docs/FEATURES.md` where relevant, as part of
