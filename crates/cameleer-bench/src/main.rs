@@ -9,6 +9,8 @@
 //! cameleer-bench loadgen <port> <conns> <secs>                load an already running HTTP server
 //! cameleer-bench measure --side S --scenario X [--http CONNS] [--repeat N]
 //!                     [--warmup s --iter s --iters n] -- <command...>
+//! cameleer-bench coldstart [--repeat N] [--ready TEXT] [--kill] -- <command...>
+//!                     spawn to ready line / exit, peak RSS of any command (the CLI)
 //! cameleer-bench report --results F --machine F [--analysis F] --plan TEXT --out F
 //! ```
 //! The Java harness (`benchmarks/java-camel`) implements the same `run`, `http-server` and
@@ -155,6 +157,28 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
             println!("READY");
             version();
             ctx.stop().map_err(s)
+        }
+        Some("coldstart") => {
+            let sep = args.iter().position(|a| a == "--").ok_or("coldstart: missing -- <command>")?;
+            let mut opts = cameleer_bench::coldstart::Options { repeat: 10, ready: "READY".into(), kill: false, command: args[sep + 1..].to_vec() };
+            let mut i = 1;
+            while i < sep {
+                match args[i].as_str() {
+                    "--kill" => opts.kill = true,
+                    "--repeat" => {
+                        i += 1;
+                        opts.repeat = args.get(i).and_then(|v| v.parse().ok()).ok_or("bad --repeat")?;
+                    }
+                    "--ready" => {
+                        i += 1;
+                        opts.ready = args.get(i).cloned().ok_or("missing --ready value")?;
+                    }
+                    k => return Err(format!("unknown option {k}")),
+                }
+                i += 1;
+            }
+            println!("{}", cameleer_bench::coldstart::run(&opts)?);
+            Ok(())
         }
         Some("measure") => {
             let sep = args.iter().position(|a| a == "--").ok_or("measure: missing -- <command>")?;

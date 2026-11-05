@@ -3,6 +3,7 @@
 //! the latency histogram, the HTTP load generator and the RSS probe live here.
 
 pub mod breakdown;
+pub mod coldstart;
 pub mod driver;
 pub mod hist;
 pub mod loadgen;
