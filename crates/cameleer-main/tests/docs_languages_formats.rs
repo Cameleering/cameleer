@@ -22,6 +22,9 @@
 //! Routes whose result is binary or random are checked by the custom assertions in `custom`.
 //! Rust DSL snippets in the pages (```rust blocks) must appear verbatim in this file.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Once;

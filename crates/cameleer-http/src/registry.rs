@@ -370,6 +370,26 @@ impl ServerRegistry {
     pub fn paths(&self, port: u16) -> Vec<String> {
         self.servers.lock().unwrap().get(&port).map(|s| s.router.paths()).unwrap_or_default()
     }
+
+    /// Serve a request in process, without a socket (the AWS Lambda runtime turns API Gateway
+    /// and function URL events into requests). Servers are tried in port order; the first
+    /// answer that is not 404 wins. `None` when no HTTP route is registered.
+    pub fn dispatch(&self, req: &mut HttpRequest) -> Option<HttpResponse> {
+        let mut servers: Vec<(u16, Arc<SharedServer>)> = self.servers.lock().unwrap().iter().map(|(p, s)| (*p, s.clone())).collect();
+        if servers.is_empty() {
+            return None;
+        }
+        servers.sort_by_key(|(p, _)| *p);
+        let mut last = None;
+        for (_, s) in servers {
+            let resp = s.router.dispatch(req);
+            if resp.status != 404 {
+                return Some(resp);
+            }
+            last = Some(resp);
+        }
+        last
+    }
 }
 
 #[cfg(test)]

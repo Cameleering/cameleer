@@ -9,6 +9,9 @@
 //! (`rust_snippets_are_copied_verbatim` checks it) and most of them run against the same
 //! assertions as their YAML twin.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};

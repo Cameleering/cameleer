@@ -871,7 +871,13 @@ impl CamelContext {
         // Like Camel, endpoints are created with (and report) the normalized uri:
         // `mock:result` -> `mock://result`, parameters sorted.
         let component = self.get_component(&parsed.scheme).ok_or_else(|| {
-            CamelError::resolve_endpoint_failed(key, format!("No component found with scheme: {}", parsed.scheme))
+            let mut msg = format!("No component found with scheme: {}", parsed.scheme);
+            if let Some(h) = crate::component::unavailable_hint("component", &parsed.scheme) {
+                msg.push_str(" (");
+                msg.push_str(&h);
+                msg.push(')');
+            }
+            CamelError::resolve_endpoint_failed(key, msg)
         })?;
         let mut params = Parameters::new(parsed.params.clone());
         // component-level options (`camel.component.<scheme>.<option>` properties or
@@ -1026,7 +1032,13 @@ impl CamelContext {
     }
 
     pub fn resolve_language(&self, name: &str) -> Result<Arc<dyn Language>> {
-        self.inner.languages.read().unwrap().get(name).cloned().ok_or_else(|| CamelError::no_such_language(name))
+        self.inner.languages.read().unwrap().get(name).cloned().ok_or_else(|| {
+            let mut e = CamelError::no_such_language(name);
+            if let Some(h) = crate::component::unavailable_hint("language", name) {
+                e.message = format!("{} ({})", e.message, h);
+            }
+            e
+        })
     }
 
     pub fn language_names(&self) -> Vec<String> {

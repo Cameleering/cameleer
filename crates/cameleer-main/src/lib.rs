@@ -13,7 +13,9 @@
 pub mod cli;
 pub mod config;
 pub mod console;
+pub mod features;
 pub mod integration;
+pub mod lambda;
 pub mod local;
 pub mod properties;
 pub mod schema;
@@ -74,19 +76,49 @@ pub struct Main {
     route_sources: Vec<(String, String)>,
     /// Ids of the routes created from route files (replaced on reload).
     file_route_ids: Vec<String>,
+    /// `host:port` of the AWS Lambda Runtime API (default: `AWS_LAMBDA_RUNTIME_API`).
+    lambda_api: Option<String>,
 }
 
 struct CompletedCounter {
     completed: Arc<AtomicU64>,
     last_activity: Arc<std::sync::Mutex<Instant>>,
+    /// `camel.main.duration-max-messages` (known once the context started): reaching it
+    /// wakes the run loop at once.
+    max_messages: Arc<std::sync::OnceLock<Option<u64>>>,
+    wake: Arc<Wake>,
+}
+
+/// Wakes [`Main::run`]'s loop before its next periodic check.
+#[derive(Default)]
+struct Wake {
+    flag: std::sync::Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+impl Wake {
+    fn notify(&self) {
+        *self.flag.lock().unwrap() = true;
+        self.cv.notify_all();
+    }
+
+    /// Wait until notified or `timeout` passes.
+    fn wait(&self, timeout: Duration) {
+        let guard = self.flag.lock().unwrap();
+        let (mut guard, _) = self.cv.wait_timeout_while(guard, timeout, |woken| !*woken).unwrap();
+        *guard = false;
+    }
 }
 
 impl EventNotifier for CompletedCounter {
     fn notify(&self, event: &CamelEvent) {
         match event {
             CamelEvent::ExchangeCompleted { .. } | CamelEvent::ExchangeFailed { .. } => {
-                self.completed.fetch_add(1, Ordering::SeqCst);
+                let n = self.completed.fetch_add(1, Ordering::SeqCst) + 1;
                 *self.last_activity.lock().unwrap() = Instant::now();
+                if self.max_messages.get().copied().flatten() == Some(n) {
+                    self.wake.notify();
+                }
             }
             CamelEvent::ExchangeCreated { .. } => {
                 *self.last_activity.lock().unwrap() = Instant::now();
@@ -122,7 +154,19 @@ impl Main {
             local_dir: None,
             route_sources: Vec::new(),
             file_route_ids: Vec::new(),
+            lambda_api: lambda::runtime_api(),
         }
+    }
+
+    /// Serve AWS Lambda invocations from the Runtime API at `host:port` in [`Self::run`]
+    /// (Lambda sets `AWS_LAMBDA_RUNTIME_API`, which is the default); `None` turns it off.
+    pub fn set_lambda_runtime_api(&mut self, api: Option<String>) {
+        self.lambda_api = api;
+    }
+
+    /// Whether [`Self::run`] serves AWS Lambda invocations (see [`lambda`]).
+    pub fn is_lambda(&self) -> bool {
+        self.lambda_api.is_some()
     }
 
     /// Publish status files in `dir` and accept commands from the `cameleer` CLI (see
@@ -548,9 +592,21 @@ impl Main {
     pub fn run(&mut self) -> Result<()> {
         let completed = Arc::new(AtomicU64::new(0));
         let last_activity = Arc::new(std::sync::Mutex::new(Instant::now()));
-        self.ctx.add_event_notifier(CompletedCounter { completed: completed.clone(), last_activity: last_activity.clone() });
+        let wake = Arc::new(Wake::default());
+        // the counter reads the limit when the first exchange completes (after start)
+        let max_messages = Arc::new(std::sync::OnceLock::new());
+        self.ctx.add_event_notifier(CompletedCounter {
+            completed: completed.clone(),
+            last_activity: last_activity.clone(),
+            max_messages: max_messages.clone(),
+            wake: wake.clone(),
+        });
         signal::install();
+        if let Some(api) = self.lambda_api.clone() {
+            return self.run_lambda(&api);
+        }
         self.start()?;
+        let _ = max_messages.set(self.config.duration_max_messages);
         let started = Instant::now();
         let reason;
         let mut last_check = Instant::now();
@@ -588,7 +644,8 @@ impl Main {
                     break;
                 }
             }
-            std::thread::sleep(Duration::from_millis(20));
+            // signals and file changes are polled; reaching max messages wakes at once
+            wake.wait(Duration::from_millis(20));
         }
         cameleer_core::camel_info!("Main", "Stopping CamelContext: {}", reason);
         self.stop_console();
@@ -596,6 +653,40 @@ impl Main {
             l.stop();
         }
         self.ctx.stop()
+    }
+
+    /// [`Self::run`] as an AWS Lambda custom runtime: start, then serve invocations until a
+    /// signal (Lambda sends SIGTERM at shutdown) or `camel.main.duration-max-messages`
+    /// invocations.
+    fn run_lambda(&mut self, api: &str) -> Result<()> {
+        let started = Instant::now();
+        if let Err(e) = self.start() {
+            let runtime = lambda::LambdaRuntime::new(api, lambda::DEFAULT_HANDLER);
+            if let Err(re) = runtime.init_error(&e) {
+                cameleer_core::camel_warn!("Lambda", "Cannot report the init error: {}", re);
+            }
+            return Err(e);
+        }
+        let property = config::relaxed_get(&self.properties, "camel.main.lambda-handler").cloned();
+        let handler = lambda::handler_endpoint(property.as_deref(), std::env::var("_HANDLER").ok().as_deref());
+        let runtime = lambda::LambdaRuntime::new(api, handler);
+        cameleer_core::camel_info!(
+            "Lambda",
+            "Serving AWS Lambda invocations from {} (init {}; HTTP events to platform-http routes, others to {})",
+            api,
+            cameleer_core::startup::format_duration(started.elapsed()),
+            runtime.handler()
+        );
+        let result = runtime.run(&self.ctx, self.config.duration_max_messages, &signal::received);
+        let reason = if signal::received() { "signal received" } else { "duration max messages reached" };
+        cameleer_core::camel_info!("Main", "Stopping CamelContext: {}", reason);
+        self.stop_console();
+        if let Some(l) = self.local.take() {
+            l.stop();
+        }
+        let stopped = self.ctx.stop();
+        result?;
+        stopped
     }
 
     pub fn stop(&self) -> Result<()> {
@@ -688,24 +779,42 @@ pub fn new_main() -> Main {
 
 fn new_main_inner() -> Main {
     let mut main = Main::new();
+    // families left out of this build explain themselves in "No component found" errors
+    cameleer_core::component::set_unavailable_hint(features::unavailable_hint);
+    #[cfg(feature = "xml")]
     cameleer_xml::register(main.context()); // xpath 1.0, xslt, validator (XSD), xj (before others: overrides core's xpath/validator)
     cameleer_http::register(main.context());
     cameleer_yaml::register_kamelet_component(main.context());
+    #[cfg(feature = "ssh")]
     cameleer_ssh::register(main.context()); // sftp, ssh (before cameleer_protocols, whose sftp is a placeholder)
     // ftp, smtp/pop3/imap, websocket, mllp, syslog
+    #[cfg(feature = "protocols")]
     cameleer_protocols::register(main.context());
+    #[cfg(feature = "kafka-mqtt")]
     cameleer_kafka_mqtt::register(main.context()); // kafka, paho, paho-mqtt5
     // sql, jdbc, sql-stored + `camel.datasource[.<name>].url` data sources
-    cameleer_sql::register(main.context());
-    main.configure(cameleer_sql::configure_datasources_from_properties);
+    #[cfg(feature = "sql")]
+    {
+        cameleer_sql::register(main.context());
+        main.configure(cameleer_sql::configure_datasources_from_properties);
+    }
+    #[cfg(feature = "amqp")]
     cameleer_amqp::register(main.context());
+    #[cfg(feature = "amqp10")]
     cameleer_amqp10::register(main.context()); // amqp (AMQP 1.0, replaces cameleer-amqp's STOMP flavour, now `amqp-stomp`), azure-servicebus, azure-eventhubs
+    #[cfg(feature = "grpc")]
     cameleer_grpc::register(main.context()); // grpc component + protobuf data format
+    #[cfg(feature = "cloud")]
     cameleer_cloud::register(main.context()); // aws2-s3/sqs/sns/ddb/lambda, azure-storage-blob/queue, google-storage/pubsub
+    #[cfg(feature = "datastores")]
     cameleer_datastores::register(main.context()); // spring-redis, mongodb, elasticsearch/opensearch, cql, couchdb
+    #[cfg(feature = "script")]
     cameleer_script::register(main.context()); // js, groovy, python, ognl, mvel, spel, datasonnet, csimple, joor
+    #[cfg(feature = "saas")]
     cameleer_saas::register(main.context()); // slack, telegram, github, twilio, jira, openai, webhook, graphql, rss, atom
+    #[cfg(feature = "soap")]
     cameleer_soap::register(main.context()); // cxf, cxfrs, spring-ws, fhir + jaxb, fhirJson, fhirXml data formats
+    #[cfg(feature = "dataformats")]
     cameleer_dataformats::register(main.context()); // avro, bindy, yaml, tarFile, zipFile, crypto, pgp, cbor, thrift, asn1, iCal, mimeMultipart, univocity
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
@@ -741,6 +850,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn new_main_binds_datasources_from_properties() {
         let mut main = new_main();
         main.set_property("camel.datasource.url", "jdbc:rustsql:mem:camelMainDsTest");
@@ -756,6 +866,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn new_main_registers_xml_and_saas() {
         let main = new_main();
         let ctx = main.context();
@@ -769,6 +880,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "full")]
     fn new_main_registers_dataformats() {
         let main = new_main();
         for name in ["avro", "bindyCsv", "yaml", "tarFile", "pgp", "crypto", "cbor", "iCal", "mimeMultipart"] {
@@ -778,6 +890,28 @@ mod tests {
         let mut ex = cameleer_core::message::Exchange::with_body(Some(main.context().clone()), cameleer_core::value::Value::Int(500));
         df.marshal(&mut ex).unwrap();
         assert_eq!(ex.message.body, cameleer_core::value::Value::Bytes(vec![0x19, 0x01, 0xf4]));
+    }
+
+    #[test]
+    fn reaching_max_messages_stops_without_waiting_for_the_next_poll() {
+        // a run-once job (FaaS, batch): the process must not linger after its last message
+        let mut main = Main::new();
+        main.set_property("camel.main.duration-max-messages", "1");
+        main.configure(|ctx| {
+            ctx.add_routes(|b| {
+                b.from("timer:once?repeatCount=1&delay=0").set_body(constant("x")).to("mock:out");
+            })
+        });
+        let t0 = Instant::now();
+        main.run().unwrap();
+        let wake = Wake::default();
+        // the wake itself is immediate once notified
+        wake.notify();
+        let w0 = Instant::now();
+        wake.wait(Duration::from_secs(5));
+        assert!(w0.elapsed() < Duration::from_secs(1));
+        assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
+        assert_eq!(main.context().status(), ServiceStatus::Stopped);
     }
 
     #[test]

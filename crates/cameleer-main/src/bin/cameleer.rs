@@ -8,7 +8,12 @@ static GLOBAL: cameleer_core::alloc::CamelAllocator = cameleer_core::alloc::Came
 
 fn main() -> ExitCode {
     cameleer_core::startup::mark_process_start();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // AWS Lambda custom runtime: the executable is `bootstrap`, started without arguments in
+    // $LAMBDA_TASK_ROOT; run the route files there (see cameleer_main::lambda)
+    if args.is_empty() && cameleer_main::cli::invoked_as_bootstrap(std::env::args().next().as_deref()) {
+        args.push("run".into());
+    }
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     let code = cameleer_main::cli::run_status(&args, &mut out, &mut std::io::stderr());

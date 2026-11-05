@@ -3,6 +3,9 @@
 //! duplicated here), parsed and its endpoint URIs resolved with every component registered; the
 //! examples that have an embedded server or mock run end to end below.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;

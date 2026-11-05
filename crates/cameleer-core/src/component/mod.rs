@@ -61,6 +61,23 @@ pub mod velocity;
 pub mod xml_validator;
 
 /// Register built-in components on a new context. Components are created lazily.
+/// Explains why a component or language is not available in this binary (`kind` is
+/// `"component"` or `"language"`). Set once per process by binaries built without some
+/// component families (see `cameleer-main`'s cargo features).
+pub type UnavailableHint = fn(kind: &str, name: &str) -> Option<String>;
+
+static UNAVAILABLE_HINT: std::sync::OnceLock<UnavailableHint> = std::sync::OnceLock::new();
+
+/// Install the process-wide [`UnavailableHint`] (the first call wins).
+pub fn set_unavailable_hint(hint: UnavailableHint) {
+    let _ = UNAVAILABLE_HINT.set(hint);
+}
+
+/// The hint for a missing component or language, as a sentence to append to an error.
+pub fn unavailable_hint(kind: &str, name: &str) -> Option<String> {
+    UNAVAILABLE_HINT.get().and_then(|h| h(kind, name))
+}
+
 pub fn register_builtin_components(ctx: &CamelContext) {
     ctx.add_component_factory("direct", || Arc::new(direct::DirectComponent::new()));
     ctx.add_component_factory("mock", || Arc::new(mock::MockComponent::new()));

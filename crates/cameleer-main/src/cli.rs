@@ -63,12 +63,24 @@ pub fn usage() -> &'static str {
   cameleer help"
 }
 
+/// Whether the executable was started as `bootstrap` (an AWS Lambda custom runtime).
+pub fn invoked_as_bootstrap(argv0: Option<&str>) -> bool {
+    argv0.map(Path::new).and_then(|p| p.file_stem()).and_then(|s| s.to_str()) == Some("bootstrap")
+}
+
 /// Run a command, writing its output to `out`.
 pub fn run(args: &[String], out: &mut dyn Write) -> CliResult {
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
     match cmd {
-        "version" | "--version" | "-v" => w(out, &format!("Cameleer {}", env!("CARGO_PKG_VERSION"))),
+        "version" | "--version" | "-v" => {
+            if crate::features::is_full() {
+                w(out, &format!("Cameleer {}", env!("CARGO_PKG_VERSION")))
+            } else {
+                // a reduced build says which component families it has
+                w(out, &format!("Cameleer {} (components: core, http, yaml{}{})", env!("CARGO_PKG_VERSION"), if crate::features::enabled().is_empty() { "" } else { ", " }, crate::features::enabled().join(", ")))
+            }
+        }
         "help" | "--help" | "-h" => w(out, usage()),
         "catalog" => catalog(rest, out),
         "init" => init(rest, out),
@@ -357,7 +369,8 @@ fn run_cmd(args: &[String]) -> CliResult {
     }
     // status and log files for `cameleer ps/stop/log/get/cmd`; CAMEL_LOCAL_STATUS=false turns
     // them off (the container image does: one process per container, logs go to stdout)
-    if local::local_status_enabled() {
+    // on AWS Lambda the file system is read-only and each sandbox runs one function
+    if local::local_status_enabled() && crate::lambda::runtime_api().is_none() {
         let home = local::camel_home();
         main.enable_local_status(&home);
         let _ = local::log_to_file(&local::log_file(&home, std::process::id()));

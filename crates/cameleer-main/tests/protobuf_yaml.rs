@@ -1,6 +1,9 @@
 //! YAML `marshal: {protobuf: {...}}` with options resolves a configured protobuf data format
 //! (registered by cameleer-grpc as a data format factory).
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use cameleer_core::prelude::*;
 
 #[test]
