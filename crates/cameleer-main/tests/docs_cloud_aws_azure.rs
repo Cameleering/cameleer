@@ -687,6 +687,121 @@ fn aws2_timestream_write_readings() {
 //@@AWS_TESTS@@
 
 // ---------------------------------------------------------------------------
+// guides/cloud-credentials.md
+// ---------------------------------------------------------------------------
+
+const GUIDE: &str = "guides/cloud-credentials.md";
+
+#[test]
+fn cloud_credentials_localstack_override() {
+    let aws = AwsMock::start().unwrap();
+    aws.add_credentials("test", "test");
+    let url = aws.url();
+    let main = run_with(GUIDE, "cloud-credentials-localstack", &[("AWS_ENDPOINT_URL", &url)], &[], |_, _| {});
+    wait_for("the message", || aws.queue_messages("orders") == vec!["hello from Cameleer".to_string()]);
+    main.stop().unwrap();
+}
+
+#[test]
+fn cloud_credentials_azurite_override() {
+    let az = AzuriteMock::start().unwrap();
+    az.create_container("uploads");
+    let url = az.blob_url();
+    let main = run_with(GUIDE, "cloud-credentials-azurite", &[("AZURITE_BLOB_URL", &url)], &[], |_, _| {});
+    wait_for("the blob", || az.blob("uploads", "hello.txt").is_some());
+    assert_eq!(az.blob("uploads", "hello.txt").unwrap(), b"hello from Cameleer");
+    main.stop().unwrap();
+}
+
+/// The route without any AWS option runs with component defaults given as `CAMEL_COMPONENT_*`
+/// environment variables, then as `camel.component.*` properties (the page's properties block).
+#[test]
+fn cloud_credentials_component_defaults() {
+    let id = "cloud-credentials-component-defaults";
+    let yaml = block(GUIDE, id);
+
+    let aws = AwsMock::start().unwrap();
+    let mut main = cameleer_main::new_main();
+    let env: std::collections::BTreeMap<String, String> = [
+        ("CAMEL_COMPONENT_AWS2_SQS_REGION", "us-east-1".to_string()),
+        ("CAMEL_COMPONENT_AWS2_SQS_ACCESS_KEY", AwsMock::ACCESS_KEY.to_string()),
+        ("CAMEL_COMPONENT_AWS2_SQS_SECRET_KEY", AwsMock::SECRET_KEY.to_string()),
+        ("CAMEL_COMPONENT_AWS2_SQS_URI_ENDPOINT_OVERRIDE", aws.url()),
+        ("CAMEL_COMPONENT_AWS2_SQS_OVERRIDE_ENDPOINT", "true".to_string()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v))
+    .collect();
+    main.set_environment(env);
+    main.add_route_source(format!("{}.camel.yaml", id), yaml.clone());
+    main.start().unwrap();
+    resolve_all(main.context(), id, &yaml);
+    wait_for("the message (environment variables)", || aws.queue_messages("orders") == vec!["order o-1001".to_string()]);
+    main.stop().unwrap();
+
+    let aws = AwsMock::start().unwrap();
+    let text = std::fs::read_to_string(docs_dir().join(GUIDE)).unwrap().replace("\r\n", "\n");
+    let after = &text[text.find(&format!("<!-- example: {} -->", id)).unwrap()..];
+    let start = after.find("```properties\n").unwrap() + 14;
+    let props = after[start..start + after[start..].find("```").unwrap()].replace("eu-west-1", "us-east-1").replace("http://localhost:4566", &aws.url());
+    let mut main = cameleer_main::new_main();
+    main.set_environment(Default::default());
+    main.load_properties_text(&format!("{}camel.component.aws2-sqs.accessKey={}\ncamel.component.aws2-sqs.secretKey={}\n", props, AwsMock::ACCESS_KEY, AwsMock::SECRET_KEY), false).unwrap();
+    main.add_route_source(format!("{}.camel.yaml", id), yaml.clone());
+    main.start().unwrap();
+    wait_for("the message (properties)", || aws.queue_messages("orders") == vec!["order o-1001".to_string()]);
+    main.stop().unwrap();
+}
+
+/// Placeholder defaults may contain `:` (model ids, ARNs, connection strings).
+#[test]
+fn env_placeholder_defaults_keep_colons() {
+    let main = cameleer_main::new_main();
+    let p = main.context().properties();
+    assert_eq!(p.resolve("{{env:CAMELEER_DOCS_UNSET_A:anthropic.claude-3-haiku-20240307-v1:0}}").unwrap(), "anthropic.claude-3-haiku-20240307-v1:0");
+    assert_eq!(p.resolve("{{env:CAMELEER_DOCS_UNSET_B:arn:aws:kafka:us-east-1:123456789012:cluster/events/abcd}}").unwrap(), "arn:aws:kafka:us-east-1:123456789012:cluster/events/abcd");
+    assert_eq!(p.resolve("x{{env:CAMELEER_DOCS_UNSET_C:}}y").unwrap(), "xy");
+}
+
+/// Every YAML block of the AWS / Azure pages and of the guide has a unique example marker,
+/// parses, and its endpoints resolve (with test values for the placeholders).
+#[test]
+fn all_examples_marked_parsed_and_resolved() {
+    let mut pages: Vec<String> = std::fs::read_dir(docs_dir().join("components"))
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+        .filter(|n| (n.starts_with("aws") || n.starts_with("azure-")) && n.ends_with(".md"))
+        .map(|n| format!("components/{}", n))
+        .collect();
+    pages.sort();
+    pages.push(GUIDE.to_string());
+    assert_eq!(pages.len(), 47, "34 AWS pages, 12 Azure pages and the guide: {:?}", pages);
+    let env: Vec<(&str, &str)> = STORAGE_ENV.iter().chain(ENTRA_ENV.iter()).copied().chain([("COSMOS_KEY", azure_services::COSMOS_KEY), ("EVENTGRID_ACCESS_KEY", "c2VjcmV0LWV2ZW50Z3JpZC1rZXk="), ("AZURE_OPENAI_API_KEY", "test-key"), ("FUNCTION_KEY", "test-key"), ("PARTNER_TOKEN", "test-token")]).collect();
+    let mut ids = std::collections::BTreeSet::new();
+    let mut count = 0;
+    for p in &pages {
+        let text = std::fs::read_to_string(docs_dir().join(p)).unwrap().replace("\r\n", "\n");
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, l) in lines.iter().enumerate() {
+            if *l != "```yaml" {
+                continue;
+            }
+            let prev = if i > 0 { lines[i - 1] } else { "" };
+            let id = prev.strip_prefix("<!-- example: ").and_then(|r| r.strip_suffix(" -->")).unwrap_or_else(|| panic!("{} line {}: yaml block without an example marker", p, i + 1));
+            assert!(ids.insert(id.to_string()), "duplicate example id {}", id);
+            let yaml = env_subst(&block(p, id), &env);
+            let main = cameleer_main::new_main();
+            let routes = cameleer_yaml::load_routes(main.context(), &yaml).unwrap_or_else(|e| panic!("{}: {} does not parse: {}", p, id, e));
+            assert!(!routes.is_empty(), "{}: no routes", id);
+            resolve_all(main.context(), id, &yaml);
+            count += 1;
+        }
+    }
+    assert_eq!(count, ids.len());
+    assert!(count >= 55, "{} examples", count);
+}
+
+// ---------------------------------------------------------------------------
 // Azure
 // ---------------------------------------------------------------------------
 
@@ -728,7 +843,7 @@ fn azure_storage_datalake_upload() {
     let az = AzuriteMock::start().unwrap();
     az.create_container("raw");
     let main = run_with(&page("azure-storage-datalake"), "azure-storage-datalake-upload", &STORAGE_ENV, &[], |ctx, _| azurite_options(ctx, &az));
-    wait_for("the file", || az.blob("raw", "sensors/readings.json").is_some());
+    wait_for("the file", || az.blob("raw", "sensors/readings.json").is_some_and(|b| !b.is_empty()));
     assert_eq!(az.blob("raw", "sensors/readings.json").unwrap(), br#"{"device":"edge-7","temperature":21.5}"#);
     main.stop().unwrap();
 }
@@ -738,7 +853,7 @@ fn azure_storage_files_upload_export() {
     let az = AzuriteMock::start().unwrap();
     az.create_share("exports");
     let main = run_with(&page("azure-storage-files"), "azure-storage-files-upload-export", &STORAGE_ENV, &[], |ctx, _| azurite_options(ctx, &az));
-    wait_for("the file on the share", || az.share_file("exports", "daily/stock.csv").is_some());
+    wait_for("the file on the share", || az.share_file("exports", "daily/stock.csv").as_deref() == Some(&b"sku,stock;A-1,12;B-7,0"[..]));
     assert_eq!(az.share_file("exports", "daily/stock.csv").unwrap(), b"sku,stock;A-1,12;B-7,0");
     main.stop().unwrap();
 }

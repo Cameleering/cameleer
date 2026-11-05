@@ -124,6 +124,11 @@ docker run --rm -e AZURE_STORAGE_ACCOUNT -e AZURE_STORAGE_KEY \
 
 ## Common questions
 
+### Why do I get `ContainerNotFound`?
+
+Uploads do not create the container. Create it once with `operation=createBlobContainer` (or in the
+portal or your infrastructure code).
+
 ### How do I test against Azurite?
 
 Use the account `devstoreaccount1` with Azurite's well-known key and add
