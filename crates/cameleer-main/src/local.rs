@@ -1,4 +1,4 @@
-//! Local process management used by the `camel` CLI (like Camel JBang's `~/.camel`
+//! Local process management used by the `cameleer` CLI (like Camel JBang's `~/.camel`
 //! directory): a running integration publishes `<pid>.json` (name, routes, context,
 //! health, backlog trace) every 500 ms, logs to `<pid>.log`, and executes the commands
 //! written to `<pid>-action.json` (`stop`, `reload`, `start-route`, `stop-route`,
@@ -13,7 +13,7 @@ use std::time::Duration;
 use cameleer_core::component::support::{BackgroundThreads, StopFlag};
 use cameleer_core::prelude::*;
 
-/// Whether `camel run` writes status and log files: off when `CAMEL_LOCAL_STATUS` is
+/// Whether `cameleer run` writes status and log files: off when `CAMEL_LOCAL_STATUS` is
 /// `false`, `0`, `off` or `no`.
 pub fn local_status_enabled() -> bool {
     !matches!(std::env::var("CAMEL_LOCAL_STATUS").map(|v| v.trim().to_ascii_lowercase()).as_deref(), Ok("false" | "0" | "off" | "no"))

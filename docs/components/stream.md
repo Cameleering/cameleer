@@ -88,7 +88,7 @@ docker run --rm -v "$PWD:/routes:ro" -v /var/log/app:/logs:ro -e LOG_FILE=/logs/
 
 ### How do I read standard input line by line?
 
-`from: stream:in`, then run with `docker run -i ...` or pipe into the `camel` CLI.
+`from: stream:in`, then run with `docker run -i ...` or pipe into the `cameleer` CLI.
 
 ### Does `scanStream` start at the end of the file?
 

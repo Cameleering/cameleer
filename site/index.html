@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cameleer: Apache Camel, rewritten in Rust</title>
+<title>Cameleer: Camel-compatible integration routes in Rust</title>
 <meta name="description" content="Cameleer is Apache Camel rewritten in Rust: the same routes, EIPs, endpoint URIs and YAML DSL, about 230 components, no dependencies. Starts in 10 ms, runs in 10 MB, 2.5-8x faster than Camel on the JVM. Built for AI agents, serverless and the edge.">
 <meta name="keywords" content="Apache Camel, Rust, integration, enterprise integration patterns, EIP, AI agents, serverless, edge, Kafka, messaging, YAML DSL">
 <link rel="canonical" href="https://pmsudhi.github.io/cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Cameleer: Apache Camel, rewritten in Rust">
+<meta property="og:title" content="Cameleer: Camel-compatible integration routes in Rust">
 <meta property="og:description" content="Same routes. Same patterns. 10 ms startup, 10 MB of memory, 2.5-8x the throughput.">
 <meta property="og:url" content="https://pmsudhi.github.io/cameleer/">
 <meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
@@ -222,11 +222,11 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
   <div class="wrap">
     <div>
       <h1 id="h">
-        <span class="line">Apache Camel.</span>
+        <span class="line">Integration routes.</span>
         <span class="line"><span class="strike">On the JVM.</span></span>
         <span class="line">In Rust.</span>
       </h1>
-      <p class="lede">Same routes, same patterns, same endpoint URIs. If you know Camel, you already know Cameleer. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
+      <p class="lede">Runs your Apache Camel routes, patterns and endpoint URIs unchanged: if you know Camel, you already know Cameleer. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
       <div class="ctas">
         <a class="btn primary" href="https://github.com/pmsudhi/cameleer">View on GitHub</a>
         <a class="btn ghost" href="#start">Run your first route</a>
@@ -490,8 +490,8 @@ curl localhost:8080/api/greet/Ada</code></pre></div></li>
         <ol class="steps">
           <li><div>Install the CLI from crates.io<pre class="cmd"><code>cargo install cameleer-main</code></pre></div></li>
           <li><div>Run any Camel YAML route<pre class="cmd"><code>cameleer run hello-api.camel.yaml</code></pre></div></li>
-          <li><div>Manage running integrations, Camel JBang style<pre class="cmd"><code>camel ps
-camel stop hello-api</code></pre></div></li>
+          <li><div>Manage running integrations, Camel JBang style<pre class="cmd"><code>cameleer ps
+cameleer stop hello-api</code></pre></div></li>
         </ol>
         <div class="code">
           <header><span>Also installed as <code class="in">camel</code></span></header>
@@ -585,7 +585,7 @@ $ cameleer --help
   // runtime toggle
   var data = {
     rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.2.1</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
-    java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (JBang, Java 21)</span>', '<span class="ok">Started route triage in 751 ms</span>'], start: ['751 ms', 100], mem: ['366 MB', 100], size: ['JDK + jars', 100] }
+    java: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (JBang, Java 21)</span>', '<span class="ok">Started route triage in 751 ms</span>'], start: ['751 ms', 100], mem: ['366 MB', 100], size: ['JDK + jars', 100] }
   };
   var term = document.getElementById('term'), runner = document.getElementById('runner'), tog = runner.querySelector('.toggle'), timer;
   function show(side) {

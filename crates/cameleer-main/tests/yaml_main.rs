@@ -1,4 +1,4 @@
-//! The `camel` runner (`new_main`) with YAML/XML route files using the REST DSL and
+//! The `cameleer` runner (`new_main`) with YAML/XML route files using the REST DSL and
 //! route configurations.
 
 use std::path::PathBuf;

@@ -8,7 +8,7 @@
 //! [`integration`]), starts the context and keeps running until stopped (signal, stop file,
 //! max duration, max messages or idle timeout). With `--dev` (`camel.main.dev-reload`) route
 //! files are reloaded when they change; [`local`] publishes the status files used by the
-//! `camel ps/get/cmd/log/trace/stop` commands.
+//! `cameleer ps/get/cmd/log/trace/stop` commands.
 
 pub mod cli;
 pub mod config;
@@ -43,7 +43,7 @@ pub struct MainConfig {
     pub duration_max_idle_seconds: Option<u64>,
     pub shutdown_timeout: Option<Duration>,
     pub log_level: Option<String>,
-    /// Reload route files when they change (`camel run --dev`).
+    /// Reload route files when they change (`cameleer run --dev`).
     pub dev_reload: bool,
 }
 
@@ -123,7 +123,7 @@ impl Main {
         }
     }
 
-    /// Publish status files in `dir` and accept commands from the `camel` CLI (see
+    /// Publish status files in `dir` and accept commands from the `cameleer` CLI (see
     /// [`local`]).
     pub fn enable_local_status(&mut self, dir: impl Into<PathBuf>) {
         self.local_dir = Some(dir.into());
@@ -191,7 +191,7 @@ impl Main {
         self.route_files.push(path.into());
     }
 
-    /// Add an in-memory route source (e.g. embedded with `include_str!` by `camel export`);
+    /// Add an in-memory route source (e.g. embedded with `include_str!` by `cameleer export`);
     /// the loader is chosen by the extension of `name`.
     pub fn add_route_source(&mut self, name: impl Into<String>, content: impl Into<String>) {
         self.route_sources.push((name.into(), content.into()));
@@ -451,7 +451,7 @@ impl Main {
         if let Some(dir) = &self.local_dir {
             let name = self.config.name.clone().unwrap_or_else(|| self.ctx.name().to_string());
             // best-effort: a read-only filesystem or a home without write access must not
-            // stop the integration, only `camel ps/stop/log` lose sight of it
+            // stop the integration, only `cameleer ps/stop/log` lose sight of it
             match local::LocalStatus::start(&self.ctx, &name, dir) {
                 Ok(l) => self.local = Some(l),
                 Err(e) => cameleer_core::camel_warn!("Main", "Local status files disabled: {}", e),

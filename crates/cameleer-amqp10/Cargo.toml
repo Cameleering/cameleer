@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "amqp", "servicebus", "eventhubs", "azure"]
+categories = ["network-programming", "api-bindings"]
 description = "Cameleer AMQP 1.0 (std only): OASIS AMQP 1.0 client with SASL/TLS/CBS, `amqp` (JMS over AMQP 1.0), `azure-servicebus` and `azure-eventhubs` components, embedded AMQP 1.0 test broker with Azure emulation"
 
 [dependencies]

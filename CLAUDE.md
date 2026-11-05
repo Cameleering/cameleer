@@ -12,7 +12,7 @@ A Rust reimplementation of [Apache Camel](https://camel.apache.org/). It covers:
 - the routing engine and the Enterprise Integration Patterns (EIPs)
 - about 230 components, languages and data formats
 - the Rust, YAML and XML DSLs, the REST DSL and Kamelets
-- route templates, management and health checks, and a Camel-JBang-like `camel` CLI
+- route templates, management and health checks, and a Camel-JBang-like `cameleer` CLI
 
 The goal given by the owner: *replicate Camel in Rust, keep going until the implementation is
 complete and verified.* Feature parity is tracked row by row in `docs/FEATURES.md`. All rows
@@ -64,7 +64,7 @@ are ✅.
   - `cameleer-sql`, `cameleer-cloud` (AWS, Azure, GCP), `cameleer-ssh`, `cameleer-grpc`.
   - `cameleer-datastores` (Redis, MongoDB, Elasticsearch, Cassandra, CouchDB).
   - `cameleer-xml`, `cameleer-saas`, `cameleer-script`, `cameleer-dataformats`, `cameleer-soap`.
-  - `cameleer-main` (`Main` runner and `camel` CLI).
+  - `cameleer-main` (`Main` runner and `cameleer` CLI; there is deliberately no `camel` binary, which is Apache Camel's own CLI name).
 - Docs:
   - `ARCHITECTURE.md`: internals and conventions.
   - `docs/FEATURES.md`: parity table.

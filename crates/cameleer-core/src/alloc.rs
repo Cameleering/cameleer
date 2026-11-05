@@ -15,7 +15,7 @@
 //!   kept for reuse and not returned to the operating system;
 //! - larger or over-aligned blocks go straight to the system allocator.
 //!
-//! It is opt-in. The `camel` CLI and the benchmark harness install it; an application
+//! It is opt-in. The `cameleer` CLI and the benchmark harness install it; an application
 //! does so with
 //!
 //! ```ignore

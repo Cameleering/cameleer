@@ -175,8 +175,8 @@ cargo install cameleer-main
 cameleer run my-route.camel.yaml
 ```
 
-The binary also installs as `camel`, so Camel JBang habits work: `camel ps`, `camel log`,
-`camel stop`. Those commands use status files under `~/.camel` (`CAMEL_HOME`). Set
+Camel JBang habits carry over with the `cameleer` command: `cameleer ps`, `cameleer log`,
+`cameleer stop`. Those commands use status files under `~/.camel` (`CAMEL_HOME`). Set
 `CAMEL_LOCAL_STATUS=false` to run without them.
 
 ## Found a problem?

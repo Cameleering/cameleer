@@ -33,3 +33,19 @@ jobs:
           path: site
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+      - name: Tell search engines about the pages (IndexNow; Bing, Yandex and others, not Google)
+        continue-on-error: true
+        env:
+          INDEXNOW_KEY: c7c97f8e9934b0549f4bb12932539293
+        run: |
+          set -euo pipefail
+          base="https://pmsudhi.github.io/cameleer"
+          python3 - <<'PY' > urls.json
+          import json, os, re
+          urls = re.findall(r"<loc>([^<]+)</loc>", open("site/sitemap.xml", encoding="utf-8").read())
+          print(json.dumps({"host": "pmsudhi.github.io", "key": os.environ["INDEXNOW_KEY"],
+                            "keyLocation": "https://pmsudhi.github.io/cameleer/" + os.environ["INDEXNOW_KEY"] + ".txt",
+                            "urlList": urls[:10000]}))
+          PY
+          code=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "https://api.indexnow.org/indexnow"             -H "Content-Type: application/json; charset=utf-8" --data @urls.json)
+          echo "IndexNow answered HTTP $code for $(python3 -c 'import json;print(len(json.load(open("urls.json"))["urlList"]))') URLs"

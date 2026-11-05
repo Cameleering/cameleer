@@ -33,8 +33,7 @@ cargo install cameleer-main
 cameleer run hello.camel.yaml
 ```
 
-This installs two names for the same program: `cameleer` and `camel`, so Camel JBang habits
-work (`camel run`, `camel ps`, `camel log`, `camel stop`). To build from source:
+This installs the `cameleer` command. Its subcommands follow Camel JBang (`run`, `init`, `ps`, `stop`, `log`, ...). To build from source:
 
 ```sh
 git clone https://github.com/pmsudhi/cameleer && cd cameleer

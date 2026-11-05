@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "xml", "xpath", "xslt", "xquery"]
+categories = ["parser-implementations", "text-processing"]
 description = "Cameleer XML stack (std only): XML 1.0 parser + DOM, XPath 1.0, XQuery 1.0, XSLT 1.0 (xslt/xslt-saxon components), XML Schema validation (validator component), xj, xmlsecurity"
 
 [dependencies]

@@ -1,0 +1,75 @@
+name: Traffic archive
+
+# GitHub keeps traffic data (views, clones, referrers, popular paths) for 14 days only. This job
+# saves a daily snapshot, plus stars, forks, crates.io downloads and Docker Hub pulls, to the
+# `traffic-data` branch: one JSON file per day and an appended summary CSV.
+#
+# The traffic API needs a token with "Administration: Read" on this repository, which the
+# built-in GITHUB_TOKEN cannot have. Create a fine-grained personal access token limited to
+# pmsudhi/cameleer with Administration (read-only), then: gh secret set TRAFFIC_TOKEN
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: traffic
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HAS_TOKEN: ${{ secrets.TRAFFIC_TOKEN != '' }}
+      REPO: ${{ github.repository }}
+    steps:
+      - if: env.HAS_TOKEN != 'true'
+        run: echo "::notice::TRAFFIC_TOKEN is not set; no traffic snapshot was taken (see the comment at the top of this workflow)"
+      - if: env.HAS_TOKEN == 'true'
+        name: Collect
+        env:
+          GH_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          day=$(date -u +%F)
+          mkdir -p out
+          gh api "repos/$REPO/traffic/views" > out/views.json
+          gh api "repos/$REPO/traffic/clones" > out/clones.json
+          gh api "repos/$REPO/traffic/popular/referrers" > out/referrers.json
+          gh api "repos/$REPO/traffic/popular/paths" > out/paths.json
+          gh api "repos/$REPO" --jq '{stars: .stargazers_count, forks: .forks_count, watchers: .subscribers_count, open_issues: .open_issues_count}' > out/repo.json
+          curl -fsS -A "cameleer-traffic-archive (github.com/$REPO)" https://crates.io/api/v1/crates/cameleer-main \
+            | jq '{crate: .crate.name, downloads: .crate.downloads, recent_downloads: .crate.recent_downloads, max_version: .crate.max_version}' > out/crates.json || echo '{}' > out/crates.json
+          curl -fsS https://hub.docker.com/v2/repositories/pmsudhi/cameleer/ \
+            | jq '{pull_count: .pull_count, star_count: .star_count}' > out/dockerhub.json || echo '{}' > out/dockerhub.json
+          jq -n --arg day "$day" \
+            --slurpfile views out/views.json --slurpfile clones out/clones.json \
+            --slurpfile referrers out/referrers.json --slurpfile paths out/paths.json \
+            --slurpfile repo out/repo.json --slurpfile crates out/crates.json --slurpfile docker out/dockerhub.json \
+            '{date: $day, repo: $repo[0], views: $views[0], clones: $clones[0], referrers: $referrers[0], paths: $paths[0], crates_io: $crates[0], docker_hub: $docker[0]}' > "out/$day.json"
+          echo "day=$day" >> "$GITHUB_ENV"
+      - if: env.HAS_TOKEN == 'true'
+        name: Save to the traffic-data branch
+        run: |
+          set -euo pipefail
+          git config user.name "traffic-archive"
+          git config user.email "traffic-archive@users.noreply.github.com"
+          url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$REPO.git"
+          if git ls-remote --exit-code --heads "$url" traffic-data >/dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch traffic-data "$url" data
+          else
+            git init --quiet data && git -C data checkout --quiet --orphan traffic-data
+            printf '# Traffic archive\n\nDaily snapshots written by .github/workflows/traffic.yml.\n' > data/README.md
+            echo "date,stars,forks,views_14d,unique_views_14d,clones_14d,unique_clones_14d,crates_io_downloads,docker_pulls" > data/summary.csv
+            git -C data remote add origin "$url"
+          fi
+          mkdir -p data/daily
+          cp "out/$day.json" "data/daily/$day.json"
+          jq -r '[.date, .repo.stars, .repo.forks, .views.count, .views.uniques, .clones.count, .clones.uniques, (.crates_io.downloads // ""), (.docker_hub.pull_count // "")] | @csv' "out/$day.json" >> data/summary.csv
+          git -C data add -A
+          git -C data commit --quiet -m "Traffic snapshot $day" || { echo "nothing new"; exit 0; }
+          git -C data push --quiet origin traffic-data

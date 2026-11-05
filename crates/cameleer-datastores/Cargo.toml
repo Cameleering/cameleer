@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "redis", "mongodb", "elasticsearch", "cassandra"]
+categories = ["database", "network-programming"]
 description = "Cameleer datastore connectors (std only): Redis (spring-redis), MongoDB, Elasticsearch/OpenSearch, Cassandra (cql), CouchDB, with wire protocols and embedded test servers"
 
 [dependencies]

@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "http", "rest", "websocket", "integration"]
+categories = ["web-programming::http-server", "web-programming::http-client", "network-programming"]
 description = "Cameleer HTTP/1.1 server and client, http/platform-http components, REST DSL and netty (tcp/udp)"
 
 [dependencies]

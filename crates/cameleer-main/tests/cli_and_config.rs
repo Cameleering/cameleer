@@ -1,5 +1,5 @@
 //! cameleer-main configuration (application.yaml, profiles, env, aliases, beans, component
-//! options), Camel K Integrations, dev reload and the `camel` CLI commands.
+//! options), Camel K Integrations, dev reload and the `cameleer` CLI commands.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

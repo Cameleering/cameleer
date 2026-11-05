@@ -109,6 +109,12 @@ impl ScheduledPollConfig {
 }
 
 type PollFn = Arc<dyn Fn() -> Result<usize> + Send + Sync>;
+
+thread_local! {
+    /// Set while this thread runs a poll: a route that suspends itself from inside its own
+    /// poll (control bus) must not wait for that poll to finish.
+    static IN_POLL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
 type EmptyFn = Arc<dyn Fn() + Send + Sync>;
 
 struct PollInner {
@@ -127,6 +133,19 @@ impl PollInner {
             return Ok(0); // suspended: skip the poll (Camel ScheduledPollConsumer)
         }
         let _g = self.lock.lock().unwrap();
+        // checked again under the lock: suspend() takes the lock after setting the flag, so a
+        // poll that starts after suspend() returned never runs
+        if self.suspend.get() {
+            return Ok(0);
+        }
+        struct InPoll;
+        impl Drop for InPoll {
+            fn drop(&mut self) {
+                IN_POLL.with(|f| f.set(false));
+            }
+        }
+        IN_POLL.with(|f| f.set(true));
+        let _in_poll = InPoll;
         self.polls.fetch_add(1, Ordering::SeqCst);
         crate::log::log(self.config.run_logging_level, &self.name, "Scheduled task started");
         let r = (self.poll)();
@@ -296,7 +315,26 @@ impl Service for ScheduledPollConsumer {
         Ok(())
     }
     fn as_suspendable(&self) -> Option<&dyn SuspendableService> {
-        Some(&*self.inner.suspend)
+        Some(&*self.inner)
+    }
+}
+
+/// Suspending waits for a poll in progress to finish, as Camel's ScheduledPollConsumer does:
+/// once `suspend()` returns, no poll runs until `resume()`.
+impl SuspendableService for PollInner {
+    fn suspend(&self) -> Result<()> {
+        self.suspend.set(true);
+        if !IN_POLL.with(|f| f.get()) {
+            drop(self.lock.lock().unwrap());
+        }
+        Ok(())
+    }
+    fn resume(&self) -> Result<()> {
+        self.suspend.set(false);
+        Ok(())
+    }
+    fn is_suspended(&self) -> bool {
+        self.suspend.get()
     }
 }
 
@@ -322,6 +360,67 @@ mod tests {
         }
         c.stop().unwrap();
         assert_eq!(n.load(Ordering::SeqCst), 3);
+    }
+
+    /// Regression: suspend() returned while a poll was still running, so that poll could
+    /// still pick up work after the route was suspended (flaky file consumer test on CI).
+    #[test]
+    fn suspend_waits_for_the_poll_in_progress() {
+        let started = Arc::new(AtomicUsize::new(0));
+        let finished = Arc::new(AtomicUsize::new(0));
+        let (s2, f2) = (started.clone(), finished.clone());
+        let cfg = ScheduledPollConfig::new(Duration::ZERO, Duration::from_millis(1));
+        let c = ScheduledPollConsumer::new("t", cfg, move || {
+            s2.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(150));
+            f2.fetch_add(1, Ordering::SeqCst);
+            Ok(0)
+        });
+        c.start().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while started.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        c.as_suspendable().unwrap().suspend().unwrap();
+        // the poll that was running has finished, and no new one starts while suspended
+        let done = finished.load(Ordering::SeqCst);
+        assert_eq!(done, started.load(Ordering::SeqCst), "suspend() returned during a poll");
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(started.load(Ordering::SeqCst), done, "a poll ran while suspended");
+        c.as_suspendable().unwrap().resume().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while started.load(Ordering::SeqCst) == done && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(started.load(Ordering::SeqCst) > done, "polls resume");
+        c.stop().unwrap();
+    }
+
+    /// A poll that suspends its own consumer (control bus from inside the route) must not
+    /// deadlock waiting for itself.
+    #[test]
+    fn suspend_from_inside_the_poll_does_not_deadlock() {
+        let slot: Arc<Mutex<Option<Arc<PollInner>>>> = Arc::new(Mutex::new(None));
+        let slot2 = slot.clone();
+        let n = Arc::new(AtomicUsize::new(0));
+        let n2 = n.clone();
+        let cfg = ScheduledPollConfig::new(Duration::ZERO, Duration::from_millis(1));
+        let c = ScheduledPollConsumer::new("t", cfg, move || {
+            if let Some(inner) = slot2.lock().unwrap().clone() {
+                inner.suspend().unwrap();
+            }
+            n2.fetch_add(1, Ordering::SeqCst);
+            Ok(0)
+        });
+        *slot.lock().unwrap() = Some(c.inner.clone());
+        c.start().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while n.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(n.load(Ordering::SeqCst), 1, "the self-suspending poll completed");
+        assert!(c.as_suspendable().unwrap().is_suspended());
+        c.stop().unwrap();
     }
 
     #[test]

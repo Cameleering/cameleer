@@ -1,4 +1,4 @@
-//! `cameleer` command line tool (inspired by Camel JBang; also installed as `camel`); see [`cameleer_main::cli`].
+//! `cameleer` command line tool (inspired by Camel JBang); see [`cameleer_main::cli`].
 
 use std::process::ExitCode;
 

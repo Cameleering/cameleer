@@ -5,3 +5,6 @@ __pycache__/
 
 # Read the Docs / Sphinx build output
 /docs/_build/
+
+# maintainer-only notes (launch and setup guides)
+/.local/

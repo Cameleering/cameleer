@@ -105,7 +105,7 @@ fn management_endpoints_over_http() {
     assert_eq!(r.status, 503);
     assert_eq!(json::parse(&r.body_text()).unwrap().get("status").unwrap().as_str(), Some("DOWN"));
     assert_eq!(c.get(&format!("{}/q/health/live", base)).unwrap().status, 200);
-    // `camel get health` fails while DOWN, so it can serve as a container health check
+    // `cameleer get health` fails while DOWN, so it can serve as a container health check
     let health = |base: &str| cameleer_main::cli::run(&["get".to_string(), "health".to_string(), "--url".to_string(), base.to_string()], &mut Vec::new());
     assert!(health(&base).is_err(), "get health must fail while DOWN");
     assert_eq!(c.post(&format!("{}/q/dev/route/other/start", base), "text/plain", b"").unwrap().status, 200);
@@ -118,8 +118,8 @@ fn management_endpoints_over_http() {
     assert_eq!(c.get(&format!("{}/q/health/ready", base)).unwrap().status, 200);
     assert!(health(&base).is_ok(), "get health succeeds when UP");
 
-    // `camel get routes --url ...`
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_camel")).args(["get", "routes", "--url", &base]).output().unwrap();
+    // `cameleer get routes --url ...`
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_cameleer")).args(["get", "routes", "--url", &base]).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();

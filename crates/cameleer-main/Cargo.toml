@@ -5,11 +5,12 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
 keywords = ["camel", "integration", "cli", "yaml", "serverless"]
 categories = ["command-line-utilities", "network-programming"]
-description = "Cameleer main runner and `camel` CLI (like Camel Main / Camel JBang)"
+description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel JBang)"
 
 [dependencies]
 cameleer-amqp = { path = "../cameleer-amqp", version = "0.2.1" }
@@ -34,7 +35,3 @@ cameleer-yaml = { path = "../cameleer-yaml", version = "0.2.1" }
 name = "cameleer"
 path = "src/bin/cameleer.rs"
 
-# `camel`, as in Camel JBang: the same CLI under the name Camel users type
-[[bin]]
-name = "camel"
-path = "src/bin/camel.rs"

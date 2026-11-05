@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "amqp", "rabbitmq", "stomp", "jms"]
+categories = ["network-programming"]
 description = "Cameleer messaging components (std only): AMQP 0-9-1 (rabbitmq, spring-rabbitmq), STOMP 1.2 (stomp) and JMS-style jms/activemq/amqp over STOMP"
 
 [dependencies]

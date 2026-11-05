@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["tls", "x509", "camel", "std-only", "crypto"]
+categories = ["cryptography", "network-programming"]
 description = "Cameleer std-only TLS 1.3 / TLS 1.2 client and server with from-scratch cryptography"
 
 [dependencies]

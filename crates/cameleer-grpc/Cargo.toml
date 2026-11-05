@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "grpc", "protobuf", "http2", "integration"]
+categories = ["network-programming", "encoding"]
 description = "Cameleer HTTP/2 (RFC 9113 + HPACK), Protocol Buffers (.proto parser, dynamic codec, protobuf data format) and the gRPC component"
 
 [dependencies]

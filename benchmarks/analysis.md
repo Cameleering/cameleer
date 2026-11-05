@@ -88,7 +88,7 @@ tests in the changed modules).
 Allocation and copying:
 
 1. **A std-only thread-caching allocator** (`cameleer_core::alloc::CamelAllocator`), installed by the
-   `camel` CLI and the benchmark binary (applications opt in with `#[global_allocator]`). Blocks up to
+   `cameleer` CLI and the benchmark binary (applications opt in with `#[global_allocator]`). Blocks up to
    4 KiB come from per-thread size-class free lists; threads that allocate on one side and free on the
    other (seda) exchange whole batches through a lock-free stack. An allocate+free pair went from about
    30 ns (`HeapAlloc`) to about 7 ns.

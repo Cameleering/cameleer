@@ -13,7 +13,7 @@ no access to crates.io. Never add dependencies to `Cargo.toml` other than worksp
 | `crates/cameleer-yaml` | YAML 1.2 parser + Camel YAML DSL loader |
 | `crates/cameleer-protocols` | ftp, mail (smtp/pop3/imap), websocket, mllp/hl7, syslog — plus embedded test servers in `testing` |
 | `crates/cameleer-datastores` | Redis (RESP2/3), MongoDB (BSON/OP_MSG), Elasticsearch/OpenSearch (REST), Cassandra (CQL v4), CouchDB connectors + embedded test servers |
-| `crates/cameleer-main` | `camel` CLI binary, application.properties, route loading, dev console |
+| `crates/cameleer-main` | `cameleer` CLI binary, application.properties, route loading, dev console |
 | `crates/cameleer-tls` | from-scratch TLS 1.3/1.2 client+server (`TlsStream<S: Read+Write>`, `split` into read/write halves), crypto primitives, X.509/PEM/PKCS#8/CRL, trust store, `keystore` (PKCS#12, JKS, JCEKS), mutual TLS (`ClientAuth`), session resumption (client `ClientSessionCache`, server tickets), certificate/CRL generator (`certgen`); `net::NetStream` (cloneable plain/TLS socket used by all network components), `SslContextParameters` + Camel glue in `camel_support` (`sslContextParameters=#bean`, `camel.ssl.*`, `camel.server.ssl.*`, `endpoint_tls`, error kinds), `sasl` (PLAIN, SCRAM-SHA-256/512), `ocsp` (OCSP responses, used for `status_request` stapling), TLS 1.3 0-RTT, `stream_body` (stream-handle message bodies shared by ftp `streamDownload` and the http streaming paths), `testing` (test PKI); depends on cameleer-core only |
 | `crates/cameleer-grpc` | HPACK + HTTP/2 client/server (`h2`, public for reuse; prior knowledge, TLS + ALPN and HTTP/1.1 `Upgrade: h2c`), JWT / Google service-account call credentials (`auth`), `.proto` parser + dynamic protobuf codec (`proto`), gRPC framing/status/client/server (`grpc`), Camel `grpc` component and `protobuf` data format |
 | `crates/cameleer-tls` | from-scratch TLS 1.3/1.2 client+server (`TlsStream<S: Read+Write>`, `split` into read/write halves), crypto primitives, X.509/PEM/PKCS#8/CRL, trust store, `keystore` (PKCS#12, JKS, JCEKS), mutual TLS (`ClientAuth`), session resumption (client `ClientSessionCache`, server tickets), certificate/CRL generator (`certgen`); `net::NetStream` (cloneable plain/TLS socket used by all network components), `SslContextParameters` + Camel glue in `camel_support` (`sslContextParameters=#bean`, `camel.ssl.*`, `camel.server.ssl.*`, `endpoint_tls`, error kinds), `sasl` (PLAIN, SCRAM-SHA-256/512), `ocsp` (OCSP responses, used for `status_request` stapling), TLS 1.3 0-RTT, `stream_body` (stream-handle message bodies shared by ftp `streamDownload` and the http streaming paths), `testing` (test PKI); depends on cameleer-core only |
@@ -95,7 +95,7 @@ Other crates: `cameleer-http` (HTTP/1.1 server and client, platform-http/jetty/u
 http producer, REST DSL + OpenAPI, netty TCP/UDP), `cameleer-yaml` (YAML 1.2 parser/emitter, YAML
 DSL step registry in `src/dsl.rs`, `src/dsl/eips.rs`, `src/dsl/config.rs`, XML DSL, Kamelets + `kamelet:` component in `src/kamelet.rs`), `cameleer-main`
 (`Main`, `application.properties`, dev console in `console.rs`, YAML REST glue in
-`yaml_rest.rs`, `camel` CLI). Feature coverage versus Apache Camel: `docs/FEATURES.md`.
+`yaml_rest.rs`, `cameleer` CLI). Feature coverage versus Apache Camel: `docs/FEATURES.md`.
 
 TLS in components: network code uses `cameleer_tls::net::NetStream` instead of `TcpStream`
 (same `try_clone`/timeout/shutdown idioms; TLS clones share one session with independently

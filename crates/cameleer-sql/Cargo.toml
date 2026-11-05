@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "sql", "postgresql", "jdbc", "integration"]
+categories = ["database", "network-programming"]
 description = "Cameleer SQL support (std only): DataSource SPI, embedded rustsql engine, PostgreSQL wire client, sql/jdbc components, JDBC repositories"
 
 [dependencies]

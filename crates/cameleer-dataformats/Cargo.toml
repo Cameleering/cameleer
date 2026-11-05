@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "csv", "avro", "protobuf", "dataformat"]
+categories = ["encoding", "parser-implementations"]
 description = "Cameleer data formats: Avro, Bindy, YAML, Tar, Zip, Crypto, PGP, CBOR, Thrift, ASN.1, iCal, MIME multipart, Fory (xlang), Barcode (QR, Data Matrix, Code 128/39, EAN-13, UPC-A)"
 
 [dependencies]

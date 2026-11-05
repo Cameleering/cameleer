@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "benchmark"]
+categories = ["development-tools::profiling"]
 description = "Benchmark harness comparing Cameleer with Apache Camel (std-only, no criterion)"
 publish = false
 

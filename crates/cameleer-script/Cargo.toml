@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "groovy", "javascript", "python", "interpreter"]
+categories = ["development-tools", "parser-implementations"]
 description = "Cameleer scripting languages: JavaScript, Groovy, Python, OGNL, MVEL, SpEL, DataSonnet (tree-walking interpreters)"
 
 [dependencies]

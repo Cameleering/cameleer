@@ -47,7 +47,7 @@ impl Default for ConsoleConfig {
 }
 
 impl ConsoleConfig {
-    /// Everything enabled on `port` (as `camel run --console --port N`).
+    /// Everything enabled on `port` (as `cameleer run --console --port N`).
     pub fn all(port: u16) -> Self {
         ConsoleConfig { enabled: true, host: "0.0.0.0".into(), port, dev_console: true, health: true, metrics: true }
     }
@@ -299,7 +299,7 @@ fn cell(v: Option<&Value>) -> String {
     }
 }
 
-/// Format the JSON of `/q/dev/routes` as a table (`camel get routes`).
+/// Format the JSON of `/q/dev/routes` as a table (`cameleer get routes`).
 pub fn format_routes_table(v: &Value) -> String {
     let headers = ["ID", "FROM", "STATUS", "AGE", "TOTAL", "FAIL", "INFLIGHT", "MEAN", "MIN", "MAX", "LAST"];
     let mut rows: Vec<Vec<String>> = Vec::new();

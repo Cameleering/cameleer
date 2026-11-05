@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "openai", "slack", "github", "integration"]
+categories = ["api-bindings", "web-programming::http-client"]
 description = "Cameleer SaaS / API connectors over REST (std only): slack, telegram, github, twilio, jira, openai, webhook, graphql, rss/atom, with embedded mock servers"
 
 [dependencies]

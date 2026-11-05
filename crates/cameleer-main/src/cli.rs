@@ -1,26 +1,26 @@
-//! The `camel` command line (a Rust counterpart of Camel JBang).
+//! The `cameleer` command line (a Rust counterpart of Camel JBang).
 //!
 //! ```text
-//! camel init <file> [--directory DIR]           create a route (.yaml, .xml), Kamelet
+//! cameleer init <file> [--directory DIR]           create a route (.yaml, .xml), Kamelet
 //!                                               (.kamelet.yaml), Pipe (.pipe.yaml) or Camel K
 //!                                               Integration (.integration.yaml) from a template
-//! camel run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
+//! cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
 //!           [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop k=v]
 //!           [--log-level L] [--console] [--port N] [--trace]
-//! camel export [files...] --directory DIR [--name N] [--camel-path PATH]
+//! cameleer export [files...] --directory DIR [--name N] [--camel-path PATH]
 //!                                               standalone Cargo project embedding the routes
-//! camel bind <name> --source S --sink S [--step S]... [--property source.k=v]...
+//! cameleer bind <name> --source S --sink S [--step S]... [--property source.k=v]...
 //!           [--error-handler log|none|sink:<uri or kamelet>] [--output FILE]
 //!                                               Pipe resource binding Kamelets / endpoints
-//! camel ps                                      running integrations
-//! camel stop [name|pid] [--all]
-//! camel get [routes|context|health|endpoints] [name] [--url URL]
-//! camel cmd start-route|stop-route|suspend-route|resume-route|reset-stats|reload
+//! cameleer ps                                      running integrations
+//! cameleer stop [name|pid] [--all]
+//! cameleer get [routes|context|health|endpoints] [name] [--url URL]
+//! cameleer cmd start-route|stop-route|suspend-route|resume-route|reset-stats|reload
 //!           [name] [--id ROUTE]
-//! camel log [name] [--follow] [--tail N]
-//! camel trace [name] [--disable]
-//! camel catalog [components|languages|kamelets]
-//! camel version | help
+//! cameleer log [name] [--follow] [--tail N]
+//! cameleer trace [name] [--disable]
+//! cameleer catalog [components|languages|kamelets]
+//! cameleer version | help
 //! ```
 //!
 //! Running integrations publish status files in `$CAMEL_HOME` (default `~/.camel`), see
@@ -39,22 +39,22 @@ type CliResult = Result<(), String>;
 
 pub fn usage() -> &'static str {
     "Usage:
-  camel init <file> [--directory DIR]
-  camel run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
+  cameleer init <file> [--directory DIR]
+  cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
             [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop key=value]
             [--log-level LEVEL] [--console] [--port N] [--trace]
-  camel export [files...] --directory DIR [--name N] [--camel-path PATH]
-  camel bind <name> --source S --sink S [--step S]... [--property source.k=v]...
+  cameleer export [files...] --directory DIR [--name N] [--camel-path PATH]
+  cameleer bind <name> --source S --sink S [--step S]... [--property source.k=v]...
              [--error-handler log|none|sink:URI] [--output FILE]
-  camel ps
-  camel stop [name|pid] [--all]
-  camel get [routes|context|health|endpoints] [name] [--url http://localhost:8080]
-  camel cmd start-route|stop-route|suspend-route|resume-route|reset-stats|reload [name] [--id ROUTE]
-  camel log [name] [--follow] [--tail N]
-  camel trace [name] [--disable]
-  camel catalog [components|languages|kamelets]
-  camel version
-  camel help"
+  cameleer ps
+  cameleer stop [name|pid] [--all]
+  cameleer get [routes|context|health|endpoints] [name] [--url http://localhost:8080]
+  cameleer cmd start-route|stop-route|suspend-route|resume-route|reset-stats|reload [name] [--id ROUTE]
+  cameleer log [name] [--follow] [--tail N]
+  cameleer trace [name] [--disable]
+  cameleer catalog [components|languages|kamelets]
+  cameleer version
+  cameleer help"
 }
 
 /// Run a command, writing its output to `out`.
@@ -172,7 +172,7 @@ pub fn init_template(file: &str) -> Result<String, String> {
             "apiVersion: camel.apache.org/v1\nkind: Integration\nmetadata:\n  name: {name}\nspec:\n  traits:\n    camel:\n      properties:\n        - greeting=Hello from {name}\n  flows:\n    - from:\n        uri: \"timer:yaml\"\n        parameters:\n          period: \"1000\"\n        steps:\n          - setBody:\n              simple: \"{{{{greeting}}}}\"\n          - log: \"${{body}}\"\n"
         )
     } else if lower.ends_with(".yaml") || lower.ends_with(".yml") {
-        "# camel run this file with: camel run FILE\n- route:\n    from:\n      uri: \"timer:yaml\"\n      parameters:\n        period: \"1000\"\n      steps:\n        - setBody:\n            simple: \"Hello Camel from ${routeId}\"\n        - log: \"${body}\"\n".to_string()
+        "# cameleer run this file with: cameleer run FILE\n- route:\n    from:\n      uri: \"timer:yaml\"\n      parameters:\n        period: \"1000\"\n      steps:\n        - setBody:\n            simple: \"Hello Camel from ${routeId}\"\n        - log: \"${body}\"\n".to_string()
     } else if lower.ends_with(".xml") {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<routes xmlns=\"http://camel.apache.org/schema/spring\">\n    <route>\n        <from uri=\"timer:xml?period=1000\"/>\n        <setBody>\n            <simple>Hello Camel from ${routeId}</simple>\n        </setBody>\n        <log message=\"${body}\"/>\n    </route>\n</routes>\n".to_string()
     } else if lower.ends_with(".properties") {
@@ -185,7 +185,7 @@ pub fn init_template(file: &str) -> Result<String, String> {
 fn init(args: &[String], out: &mut dyn Write) -> CliResult {
     let a = Args::parse(args, &[])?;
     a.check(&["directory"])?;
-    let file = a.positional.first().ok_or("camel init requires a file name")?;
+    let file = a.positional.first().ok_or("cameleer init requires a file name")?;
     let dir = PathBuf::from(a.get("directory").unwrap_or("."));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(file);
@@ -280,7 +280,7 @@ fn run_cmd(args: &[String]) -> CliResult {
             main.set_property("camel.main.name", base_name(f));
         }
     }
-    // status and log files for `camel ps/stop/log/get/cmd`; CAMEL_LOCAL_STATUS=false turns
+    // status and log files for `cameleer ps/stop/log/get/cmd`; CAMEL_LOCAL_STATUS=false turns
     // them off (the container image does: one process per container, logs go to stdout)
     if local::local_status_enabled() {
         let home = local::camel_home();
@@ -332,9 +332,9 @@ pub fn export_project(files: &[PathBuf], dir: &Path, name: &str, camel_path: &Pa
     let pkg = rust_ident(name);
     let cp = camel_path.display().to_string().replace('\\', "/");
     let cargo = format!(
-        "[package]\nname = \"{pkg}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n# Exported by `camel export`: a standalone Cameleer application.\n[dependencies]\ncameleer-main = {{ path = \"{cp}/cameleer-main\" }}\n\n[workspace]\n"
+        "[package]\nname = \"{pkg}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n# Exported by `cameleer export`: a standalone Cameleer application.\n[dependencies]\ncameleer-main = {{ path = \"{cp}/cameleer-main\" }}\n\n[workspace]\n"
     );
-    let mut main_rs = String::from("//! Generated by `camel export`.\n\nfn main() -> std::process::ExitCode {\n    let mut main = cameleer_main::new_main();\n");
+    let mut main_rs = String::from("//! Generated by `cameleer export`.\n\nfn main() -> std::process::ExitCode {\n    let mut main = cameleer_main::new_main();\n");
     main_rs.push_str(&format!("    main.set_property(\"camel.main.name\", {:?});\n", name));
     for c in &config {
         let yaml = c.ends_with(".yaml") || c.ends_with(".yml");
@@ -357,7 +357,7 @@ pub fn export_project(files: &[PathBuf], dir: &Path, name: &str, camel_path: &Pa
 fn export(args: &[String], out: &mut dyn Write) -> CliResult {
     let a = Args::parse(args, &[])?;
     a.check(&["directory", "name", "camel-path"])?;
-    let dir = PathBuf::from(a.get("directory").ok_or("camel export requires --directory")?);
+    let dir = PathBuf::from(a.get("directory").ok_or("cameleer export requires --directory")?);
     let mut files: Vec<PathBuf> = a.positional.iter().map(PathBuf::from).collect();
     if files.is_empty() {
         for f in crate::glob_files("*").unwrap_or_default() {
@@ -451,11 +451,11 @@ pub fn pipe_yaml(name: &str, source: &str, sink: &str, steps: &[&str], propertie
 fn bind(args: &[String], out: &mut dyn Write) -> CliResult {
     let a = Args::parse(args, &[])?;
     a.check(&["source", "sink", "step", "property", "error-handler", "output"])?;
-    let name = a.positional.first().ok_or("camel bind requires a name")?;
+    let name = a.positional.first().ok_or("cameleer bind requires a name")?;
     let text = pipe_yaml(
         name,
-        a.get("source").ok_or("camel bind requires --source")?,
-        a.get("sink").ok_or("camel bind requires --sink")?,
+        a.get("source").ok_or("cameleer bind requires --source")?,
+        a.get("sink").ok_or("cameleer bind requires --sink")?,
         &a.all("step"),
         &a.all("property"),
         a.get("error-handler"),
@@ -559,7 +559,7 @@ fn get(args: &[String], out: &mut dyn Write) -> CliResult {
 fn cmd_action(args: &[String], out: &mut dyn Write) -> CliResult {
     let a = Args::parse(args, &[])?;
     a.check(&["id"])?;
-    let action = a.positional.first().ok_or("camel cmd requires an action")?;
+    let action = a.positional.first().ok_or("cameleer cmd requires an action")?;
     if !["start-route", "stop-route", "suspend-route", "resume-route", "reset-stats", "reload"].contains(&action.as_str()) {
         return Err(format!("Unknown cmd action {}", action));
     }

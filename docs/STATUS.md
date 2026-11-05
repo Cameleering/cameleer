@@ -9,7 +9,7 @@ was added is `7de6166`._
   uses the same name and owns `camel-core` and most `camel-*` names on crates.io; "CAMEL" is also
   the CAMEL-AI agent framework. Crates are now `cameleer-*` (module paths `cameleer_*`), the repo
   is `pmsudhi/cameleer` (GitHub redirects the old URL), the site is
-  https://pmsudhi.github.io/cameleer/. The CLI installs as `cameleer` and as `camel`.
+  https://pmsudhi.github.io/cameleer/. The CLI is `cameleer` (no `camel` binary: that is Apache Camel's CLI name).
 - **Container image:** `pmsudhi/cameleer` on Docker Hub and `ghcr.io/pmsudhi/cameleer`
   (linux/amd64, linux/arm64), a glibc binary on distroless/cc (static musl measured 3-17% slower:
   direct -3%, seda InOut -10%, cbr -8%, splitagg -17%, same container, 2 rounds), built by `.github/workflows/container.yml` on `v*` tags (manual runs publish
@@ -130,7 +130,7 @@ Docker, or the lack of real accounts.
    - memory: 25–46x less peak RSS; startup: 77x faster (10 ms vs 751 ms)
 
    What changed (details in `benchmarks/analysis.md`): a std-only thread-caching allocator
-   (`cameleer_core::alloc`, opt-in, installed by the `camel` CLI and the benchmark), lazy exchange
+   (`cameleer_core::alloc`, opt-in, installed by the `cameleer` CLI and the benchmark), lazy exchange
    and message ids, vector-backed headers (with shared names) and properties (interned Camel
    names), a copy-on-write `ObjectMap`, a TSC tick clock and striped counters for the statistics,
    Camel's `ManagementStatisticsLevel` with **`RoutesOnly` as Cameleer's default** (per-step

@@ -6,14 +6,15 @@
 [![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)
 [![Apache Camel compatible](https://img.shields.io/badge/follows-Apache%20Camel%204.x-d4523f.svg)](https://camel.apache.org/)
 
-### Apache Camel, rewritten in Rust. If you know Camel, you already know Cameleer.
+### Camel's integration model, rebuilt in Rust. If you know Apache Camel, you already know Cameleer.
 
 The same endpoint URIs. The same Enterprise Integration Patterns. The same Simple expressions, the
 same YAML routes, the same headers and the same error handling. About 230 components, languages and
 data formats, ported one by one and verified against the real systems.
 
 **But rebuilt for the agent era:** a single native binary that starts in **10 ms**, runs in about
-**10 MB**, and routes messages **4–8x faster** than Camel on the JVM.
+**10 MB**, and routes messages **2.5–8x faster** than Camel on the JVM
+([all six benchmarks](docs/BENCHMARKS.md), including the three under 4x).
 
 [Website](https://pmsudhi.github.io/cameleer/) · [Docs](https://pmsudhi.github.io/cameleer/docs/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
 [Agents](#rebuilt-for-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
@@ -138,7 +139,7 @@ don't change anything at all:
 ```
 
 ```text
-$ camel run big-orders.camel.yaml        # the Camel JBang workflow, as one native binary
+$ cameleer run big-orders.camel.yaml        # the Camel JBang workflow, as one native binary
 ```
 
 **What carries over from Camel:**
@@ -150,7 +151,7 @@ $ camel run big-orders.camel.yaml        # the Camel JBang workflow, as one nati
 - `onException` and the dead letter channel;
 - the YAML and XML DSLs, the REST DSL, Kamelets and route templates;
 - health checks, metrics, tracing;
-- the `camel` CLI (`run`, `init`, `export`, `get`, `trace`).
+- a Camel JBang-style CLI, `cameleer` (`run`, `init`, `export`, `get`, `trace`).
 
 Your team's Camel experience, designs and routes come with you.
 
@@ -209,15 +210,15 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 - **Scale to zero, wake up instantly.** A 10 ms start fits inside a request's latency budget.
 - **Pack tens of services onto one node.** At about 10 MB each, Cameleer fits on edge gateways
   and small devices that can't host a JVM.
-- **One executable, nothing to install.** No JRE to patch and no `-Xmx` to tune. `camel export`
+- **One executable, nothing to install.** No JRE to patch and no `-Xmx` to tune. `cameleer export`
   turns YAML routes into a standalone Rust project.
 
 | Run it as | Status |
 |---|---|
 | a library inside your Rust service or agent | ✅ |
-| a single binary running YAML or XML routes (`camel run`, with hot reload in dev mode) | ✅ |
+| a single binary running YAML or XML routes (`cameleer run`, with hot reload in dev mode) | ✅ |
 | a container on Cloud Run, Fargate, Azure Container Apps, Knative or Kubernetes | ✅ |
-| a standalone project generated from your routes (`camel export`) | ✅ |
+| a standalone project generated from your routes (`cameleer export`) | ✅ |
 | a native AWS Lambda function | 🚧 [build it today](docs/ROADMAP.md#14-aws-lambda-function), adapter planned |
 | an MCP server exposing routes as agent tools | 🚧 [build it today](docs/ROADMAP.md#11-agent-tool-server-mcp-style), component planned |
 
@@ -338,7 +339,7 @@ cargo build --release -p cameleer-main
 target/release/cameleer run examples/rest-api.camel.yaml
 ```
 
-The CLI also installs as `camel`, so Camel JBang habits work: `camel run`, `camel ps`, `camel stop`.
+Camel JBang habits carry over: `cameleer run`, `cameleer ps`, `cameleer stop`.
 
 ### Documentation
 
@@ -457,7 +458,7 @@ See [docs/INTEROP.md](docs/INTEROP.md).
 | `cameleer-datastores` | spring-redis, mongodb, elasticsearch/opensearch, cql (Cassandra), couchdb (with embedded test servers) |
 | `cameleer-xml` | XML 1.0 parser + DOM, XPath 1.0, XSLT 1.0, XML Schema validation, `xj`, `xmlsecurity-sign`/`-verify` |
 | `cameleer-saas` | openai, slack, telegram, github, twilio, jira, webhook, graphql, rss/atom (with embedded mock servers) |
-| `cameleer-main` | `Main` runner (application.properties, route discovery) and the `camel` CLI |
+| `cameleer-main` | `Main` runner (application.properties, route discovery) and the `cameleer` CLI |
 | `cameleer-bench` | benchmark harness, sampling profiler and HTTP load generator |
 
 Internals: [ARCHITECTURE.md](ARCHITECTURE.md).

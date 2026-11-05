@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "ssh", "sftp", "scp", "integration"]
+categories = ["network-programming", "cryptography"]
 description = "Cameleer std-only SSH-2 client/server, SFTP v3 and the sftp / ssh components"
 
 [dependencies]

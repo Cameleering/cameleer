@@ -28,7 +28,7 @@ page lists what carries over, what differs, a checklist, and the known deviation
 - **Configuration**: `application.properties` and `application.yaml`, `{{placeholders}}` with
   defaults, `{{env:NAME}}`, profiles, `camel.component.<scheme>.<option>`, Spring Boot and Quarkus
   key aliases, `CAMEL_*` environment variables.
-- **Tooling**: the `camel` command (`run`, `init`, `ps`, `stop`, `get`, `log`, `trace`,
+- **Tooling**: the `cameleer` command (the Camel JBang commands under a different name: `run`, `init`, `ps`, `stop`, `get`, `log`, `trace`,
   `export`, `bind`, `catalog`), health checks at `/q/health`, metrics, the dev console, message
   history and tracing.
 

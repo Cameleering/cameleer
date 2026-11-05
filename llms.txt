@@ -5,7 +5,7 @@
 Key facts:
 
 - Language: Rust, standard library only (TLS, HTTP/2, gRPC, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch).
-- About 230 components, languages and data formats; all Camel EIPs; Rust, YAML and XML DSLs; REST DSL; Kamelets; a Camel-JBang-style CLI installed as `cameleer` and `camel`.
+- About 230 components, languages and data formats; all Camel EIPs; Rust, YAML and XML DSLs; REST DSL; Kamelets; a Camel-JBang-style CLI, `cameleer`.
 - Formerly named rust-camel (up to v0.1.0).
 - AI integrations: OpenAI-compatible chat and embeddings, AWS Bedrock (Converse, streaming, guardrails, Agent Runtime), Azure OpenAI (tool calls, Assistants), Google Vertex AI (Gemini, partner models).
 - Not yet packaged: MCP server, native AWS Lambda runtime, vector store components (build-it-yourself patterns are documented).

@@ -5,8 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
+keywords = ["camel", "yaml", "dsl", "routes", "integration"]
+categories = ["parser-implementations", "config"]
 description = "YAML 1.2 parser/emitter and the Camel YAML (and XML) route DSL loader for Cameleer"
 
 [dependencies]
