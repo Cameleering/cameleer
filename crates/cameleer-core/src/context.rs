@@ -1293,31 +1293,38 @@ impl CamelContext {
         *self.inner.status.write().unwrap() = ServiceStatus::Starting;
         self.notify(&CamelEvent::ContextStarting);
         let result = (|| -> Result<()> {
-            let comps: Vec<Arc<dyn Component>> = self.inner.components.read().unwrap().values().cloned().collect();
-            for c in comps {
-                c.start()?;
-            }
-            for s in self.inner.services.read().unwrap().iter() {
-                s.start()?;
-            }
+            crate::startup::step("components", "start", || -> Result<()> {
+                let comps: Vec<Arc<dyn Component>> = self.inner.components.read().unwrap().values().cloned().collect();
+                for c in comps {
+                    c.start()?;
+                }
+                for s in self.inner.services.read().unwrap().iter() {
+                    s.start()?;
+                }
+                Ok(())
+            })?;
             let pending: Vec<RouteDefinition> = std::mem::take(&mut *self.inner.pending_routes.lock().unwrap());
-            let mut created = Vec::new();
-            for def in pending {
-                let r = self.create_route(def)?;
-                self.inner.routes.write().unwrap().push(r.clone());
-                self.notify(&CamelEvent::RouteAdded(r.id.clone()));
-                created.push(r);
-            }
+            crate::startup::step("routes", "create", || -> Result<()> {
+                for def in pending {
+                    let name = def.id.clone().unwrap_or_default();
+                    let r = crate::startup::step("route", name, || self.create_route(def))?;
+                    self.inner.routes.write().unwrap().push(r.clone());
+                    self.notify(&CamelEvent::RouteAdded(r.id.clone()));
+                }
+                Ok(())
+            })?;
             // Mark started before starting consumers so routes added later start immediately.
             *self.inner.status.write().unwrap() = ServiceStatus::Started;
             let mut all = self.routes();
             all.sort_by_key(|r| r.startup_order);
-            for r in all {
-                if r.auto_startup {
-                    self.start_auto_route(&r)?;
+            crate::startup::step("routes", "start", || -> Result<()> {
+                for r in all {
+                    if r.auto_startup {
+                        crate::startup::step("consumer", r.id.clone(), || self.start_auto_route(&r))?;
+                    }
                 }
-            }
-            Ok(())
+                Ok(())
+            })
         })();
         match result {
             Ok(()) => {

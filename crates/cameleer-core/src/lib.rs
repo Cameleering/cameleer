@@ -27,6 +27,7 @@ pub mod processor;
 pub mod regex;
 pub mod spi;
 pub mod stack;
+pub mod startup;
 pub mod stripe;
 pub mod supervising;
 pub mod template;

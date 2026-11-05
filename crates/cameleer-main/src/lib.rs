@@ -419,8 +419,10 @@ impl Main {
 
     /// Initialize and start the context (does not block).
     pub fn start(&mut self) -> Result<()> {
-        self.prescan_integrations()?;
-        self.apply_properties()?;
+        cameleer_core::startup::step("main", "configure", || -> Result<()> {
+            self.prescan_integrations()?;
+            self.apply_properties()
+        })?;
         if let Some(l) = &self.config.log_level {
             if let Some(level) = cameleer_core::log::Level::parse(l) {
                 cameleer_core::log::set_level(level);
@@ -438,7 +440,7 @@ impl Main {
         let before: Vec<String> = self.ctx.assign_pending_route_ids();
         for f in self.discover_route_files()? {
             cameleer_core::camel_info!("Main", "Loading routes from: {}", f.display());
-            self.load_route_file(&f)?;
+            cameleer_core::startup::step("routes-loader", f.display().to_string(), || self.load_route_file(&f))?;
             let mtime = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
             self.loaded_files.push((f, mtime));
         }
@@ -449,7 +451,7 @@ impl Main {
             cameleer_core::camel_info!("Main", "Loading routes from: {} (embedded)", name);
             loader(&self.ctx, &content, Path::new(&name))?;
         }
-        self.ctx.start()?;
+        cameleer_core::startup::step("context", "start", || self.ctx.start())?;
         if let Some(dir) = &self.local_dir {
             let name = self.config.name.clone().unwrap_or_else(|| self.ctx.name().to_string());
             // best-effort: a read-only filesystem or a home without write access must not
@@ -462,6 +464,12 @@ impl Main {
         for line in console::startup_summary(&self.ctx) {
             cameleer_core::camel_info!("Main", "{}", line);
         }
+        if self.startup_recorder_logging() {
+            cameleer_core::camel_info!("Main", "Startup steps (offset from process start, duration):");
+            for line in cameleer_core::startup::report_lines() {
+                cameleer_core::camel_info!("Main", "{}", line);
+            }
+        }
         let cfg = console::ConsoleConfig::from_properties(&self.properties)?;
         if cfg.is_active() && self.console.is_none() {
             match console::DevConsoleServer::start(&self.ctx, &cfg) {
@@ -473,6 +481,11 @@ impl Main {
             }
         }
         Ok(())
+    }
+
+    /// Whether `camel.main.startupRecorder` (`startup-recorder`) is `logging`.
+    fn startup_recorder_logging(&self) -> bool {
+        config::relaxed_get(&self.properties, "camel.main.startup-recorder").map(|v| v.trim().eq_ignore_ascii_case("logging")).unwrap_or(false)
     }
 
     /// Tracing, message history and route controller options
@@ -670,6 +683,10 @@ pub fn ant_match(pattern: &str, path: &str) -> bool {
 
 /// Create a [`Main`] with all available components and route loaders registered.
 pub fn new_main() -> Main {
+    cameleer_core::startup::step("main", "register components", new_main_inner)
+}
+
+fn new_main_inner() -> Main {
     let mut main = Main::new();
     cameleer_xml::register(main.context()); // xpath 1.0, xslt, validator (XSD), xj (before others: overrides core's xpath/validator)
     cameleer_http::register(main.context());

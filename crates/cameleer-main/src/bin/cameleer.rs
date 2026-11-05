@@ -7,6 +7,7 @@ use std::process::ExitCode;
 static GLOBAL: cameleer_core::alloc::CamelAllocator = cameleer_core::alloc::CamelAllocator;
 
 fn main() -> ExitCode {
+    cameleer_core::startup::mark_process_start();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
