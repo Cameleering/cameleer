@@ -15,7 +15,7 @@
 
 use std::time::{Duration, Instant};
 
-use cameleer_cloud::testing::{AwsMock, AzureMock, AzuriteMock};
+use cameleer_cloud::testing::AwsMock;
 use cameleer_core::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -406,6 +406,264 @@ fn aws2_transcribe_start_jobs() {
     main.stop().unwrap();
 }
 
+/// Call an AWS endpoint of the emulator directly (test setup).
+fn aws_call(main: &cameleer_main::Main, aws: &AwsMock, uri: &str, body: impl Into<Value>, headers: Vec<(&str, Value)>) -> Exchange {
+    let sep = if uri.contains('?') { '&' } else { '?' };
+    let t = template(main);
+    let mut ex = Exchange::new(Some(main.context().clone()));
+    ex.set_body(body.into());
+    for (k, v) in headers {
+        ex.set_header(k, v);
+    }
+    let out = t.send(&format!("{}{}{}", uri, sep, aws.endpoint_options()), ex);
+    if let Some(e) = &out.exception {
+        panic!("{}: {}", uri, e);
+    }
+    out
+}
+
+#[test]
+fn aws_cloudtrail_s3_audit() {
+    let aws = AwsMock::start().unwrap();
+    aws.add_cloudtrail_event("s3.amazonaws.com", "DeleteBucket", "alice");
+    aws.add_cloudtrail_event("iam.amazonaws.com", "CreateUser", "bob");
+    let main = run_aws(&aws, &page("aws-cloudtrail"), "aws-cloudtrail-s3-audit", &[], &[("log:s3-audit", "mock:s3-audit")]);
+    let bodies = mock_bodies(&main, "s3-audit", 1);
+    assert!(bodies[0].contains("DeleteBucket"), "{:?}", bodies);
+    let ex = mock(&main, "s3-audit").exchange(0).unwrap();
+    assert_eq!(ex.header("CamelAwsCloudTrailEventUsername").map(|v| v.to_string()).as_deref(), Some("alice"));
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(mock(&main, "s3-audit").received_counter(), 1, "only S3 events");
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws_config_put_rule() {
+    let aws = AwsMock::start().unwrap();
+    let main = run_aws(&aws, &page("aws-config"), "aws-config-put-rule", &[], &[]);
+    wait_for("the config rule", || aws.config_rule_names().contains(&"s3-bucket-public-read-prohibited".to_string()));
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws_secrets_manager_create_and_placeholder() {
+    let aws = AwsMock::start().unwrap();
+    let main = run_aws(&aws, &page("aws-secrets-manager"), "aws-secrets-manager-create-secret", &[("PARTNER_TOKEN", "t0k3n")], &[]);
+    wait_for("the secret", || aws.secret("partner-api").is_some());
+    assert_eq!(aws.secret("partner-api").unwrap(), r#"{"token":"t0k3n"}"#);
+    main.stop().unwrap();
+
+    // the {{aws:...}} placeholder, configured with camel.vault.aws.* properties
+    let id = "aws-secrets-manager-placeholder";
+    let yaml = block(&page("aws-secrets-manager"), id).replace("log:partner-api", "mock:partner-api");
+    let mut main = main_for(id, &yaml, |_| {});
+    for (k, v) in [("accessKey", AwsMock::ACCESS_KEY.to_string()), ("secretKey", AwsMock::SECRET_KEY.to_string()), ("region", "us-east-1".to_string()), ("uriEndpointOverride", aws.url()), ("overrideEndpoint", "true".to_string())] {
+        main.set_property(format!("camel.vault.aws.{}", k), v);
+    }
+    main.start().unwrap();
+    mock_bodies(&main, "partner-api", 1);
+    assert_eq!(mock(&main, "partner-api").exchange(0).unwrap().header("Authorization").map(|v| v.to_string()).as_deref(), Some("Bearer t0k3n"));
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_athena_daily_report() {
+    let aws = AwsMock::start().unwrap();
+    aws.set_athena_result("FROM orders", vec![vec!["region", "orders"], vec!["eu", "42"], vec!["us", "17"]]);
+    let main = run_aws(&aws, &page("aws2-athena"), "aws2-athena-daily-report", &[], &[("log:report", "mock:report")]);
+    mock_bodies(&main, "report", 1);
+    let rows = mock(&main, "report").exchange(0).unwrap().body().to_json();
+    assert!(rows.contains("\"eu\"") && rows.contains("\"42\"") && rows.contains("\"us\""), "{}", rows);
+    assert_eq!(aws.athena_query_count(), 1);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_cw_count_orders_by_channel() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("orders");
+    aws.send_sqs("orders", r#"{"channel":"web"}"#);
+    let main = run_aws(&aws, &page("aws2-cw"), "aws2-cw-count-orders-by-channel", &[], &[]);
+    wait_for("the metric", || aws.metrics().len() == 1);
+    let m = &aws.metrics()[0];
+    assert_eq!((m.namespace.as_str(), m.name.as_str(), m.value, m.unit.as_str()), ("Shop/Orders", "OrdersReceived", 1.0, "Count"));
+    assert_eq!(m.dimensions, vec![("channel".to_string(), "web".to_string())]);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_ec2_stop_dev_instances() {
+    let aws = AwsMock::start().unwrap();
+    let id = aws.run_instance("ami-12345678", "t3.micro");
+    let main = run_aws(&aws, &page("aws2-ec2"), "aws2-ec2-stop-dev-instances", &[("DEV_INSTANCE_IDS", &id)], &[]);
+    wait_for("the instance to stop", || aws.ec2_instances().iter().any(|(i, s)| i == &id && s == "stopped"));
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_ecs_and_eks_list_clusters() {
+    let aws = AwsMock::start().unwrap();
+    let setup = cameleer_main::new_main();
+    aws_call(&setup, &aws, "aws2-ecs://setup?operation=createCluster", "", vec![("CamelAwsECSClusterName", Value::from("edge-workers"))]);
+    let main = run_aws(&aws, &page("aws2-ecs"), "aws2-ecs-list-clusters", &[], &[("log:ecs-clusters", "mock:ecs-clusters")]);
+    mock_bodies(&main, "ecs-clusters", 1);
+    let arns = mock(&main, "ecs-clusters").exchange(0).unwrap().body().to_json();
+    assert!(arns.contains("arn:aws:ecs") && arns.contains("edge-workers"), "{}", arns);
+    main.stop().unwrap();
+
+    let mut vpc = cameleer_core::value::ObjectMap::new();
+    vpc.insert("subnetIds".into(), Value::Array(vec![Value::from("subnet-1")]));
+    aws_call(
+        &setup,
+        &aws,
+        "aws2-eks://setup?operation=createCluster",
+        "",
+        vec![("CamelAwsEKSClusterName", Value::from("prod-k8s")), ("CamelAwsEKSRoleARN", Value::from("arn:aws:iam::000000000000:role/eks")), ("CamelAwsEKSVPCConfig", Value::Object(vpc))],
+    );
+    let main = run_aws(&aws, &page("aws2-eks"), "aws2-eks-list-clusters", &[], &[("log:eks-clusters", "mock:eks-clusters")]);
+    mock_bodies(&main, "eks-clusters", 1);
+    assert_eq!(mock(&main, "eks-clusters").exchange(0).unwrap().body().to_json(), r#"["prod-k8s"]"#);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_iam_onboard_users() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("onboarding");
+    aws.send_sqs("onboarding", "alice");
+    let main = run_aws(&aws, &page("aws2-iam"), "aws2-iam-onboard-users", &[], &[]);
+    wait_for("the IAM user", || aws.iam_users().contains(&"alice".to_string()));
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_kms_encrypt_to_s3() {
+    let aws = AwsMock::start().unwrap();
+    let setup = cameleer_main::new_main();
+    let key = aws_call(&setup, &aws, "aws2-kms://setup?operation=createKey", "", vec![("CamelAwsKMSDescription", Value::from("customer data"))]).header("CamelAwsKMSKeyId").unwrap().to_string();
+    aws.create_queue("customer-records");
+    aws.send_sqs("customer-records", r#"{"name":"Ada","iban":"NO9386011117947"}"#);
+    let main = run_aws(&aws, &page("aws2-kms"), "aws2-kms-encrypt-to-s3", &[("KMS_KEY_ID", &key)], &[]);
+    wait_for("the encrypted record", || aws.object_keys("encrypted-archive").len() == 1);
+    let k = aws.object_keys("encrypted-archive")[0].clone();
+    let cipher = aws.object("encrypted-archive", &k).unwrap();
+    assert!(!String::from_utf8_lossy(&cipher).contains("Ada"), "stored encrypted");
+    let plain = aws_call(&setup, &aws, "aws2-kms://setup?operation=decrypt", cipher, vec![]);
+    assert_eq!(plain.body().to_string(), r#"{"name":"Ada","iban":"NO9386011117947"}"#);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_mq_list_brokers() {
+    let aws = AwsMock::start().unwrap();
+    let setup = cameleer_main::new_main();
+    aws_call(&setup, &aws, "aws2-mq://setup?operation=createBroker", "", vec![("CamelAwsMQBrokerName", Value::from("orders-broker")), ("CamelAwsMQBrokerInstanceType", Value::from("mq.t3.micro"))]);
+    let main = run_aws(&aws, &page("aws2-mq"), "aws2-mq-list-brokers", &[], &[("log:brokers", "mock:brokers")]);
+    mock_bodies(&main, "brokers", 1);
+    let brokers = mock(&main, "brokers").exchange(0).unwrap().body().to_json();
+    assert!(brokers.contains("orders-broker"), "{}", brokers);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_msk_bootstrap_brokers() {
+    let aws = AwsMock::start().unwrap();
+    let setup = cameleer_main::new_main();
+    let mut group = cameleer_core::value::ObjectMap::new();
+    group.insert("instanceType".into(), Value::from("kafka.m5.large"));
+    group.insert("clientSubnets".into(), Value::Array(vec![Value::from("subnet-1"), Value::from("subnet-2")]));
+    let created = aws_call(
+        &setup,
+        &aws,
+        "aws2-msk://setup?operation=createCluster",
+        "",
+        vec![("CamelAwsMSKClusterName", Value::from("events")), ("CamelAwsMSKClusterKafkaVersion", Value::from("3.6.0")), ("CamelAwsMSKBrokerNodesNumber", Value::from(2)), ("CamelAwsMSKBrokerNodesGroupInfo", Value::Object(group))],
+    );
+    let arn = created.header("CamelAwsMSKClusterArn").unwrap().to_string();
+    let main = run_aws(&aws, &page("aws2-msk"), "aws2-msk-bootstrap-brokers", &[("MSK_CLUSTER_ARN", &arn)], &[("log:bootstrap", "mock:bootstrap")]);
+    mock_bodies(&main, "bootstrap", 1);
+    let brokers = mock(&main, "bootstrap").exchange(0).unwrap().body().clone();
+    assert!(brokers.get("bootstrapBrokerStringSaslIam").unwrap().to_string().ends_with(":9098"), "{}", brokers.to_json());
+    main.stop().unwrap();
+
+    // the kafka uri of the page resolves with the AWS_MSK_IAM mechanism
+    let text = std::fs::read_to_string(docs_dir().join(page("aws2-msk"))).unwrap();
+    let start = text.find("kafka:orders?").unwrap();
+    let uri = &text[start..start + text[start..].find('\n').unwrap()];
+    setup.context().get_endpoint(uri).unwrap_or_else(|e| panic!("{}: {}", uri, e));
+}
+
+#[test]
+fn aws2_redshift_data_sales_report() {
+    let aws = AwsMock::start().unwrap();
+    aws.add_redshift_table("sales", &["region", "total"], vec![vec![Value::from("eu"), Value::from(42)], vec![Value::from("us"), Value::from(17)]]);
+    let main = run_aws(&aws, &page("aws2-redshift-data"), "aws2-redshift-data-sales-report", &[], &[("log:sales", "mock:sales")]);
+    mock_bodies(&main, "sales", 1);
+    let ex = mock(&main, "sales").exchange(0).unwrap();
+    let rows = ex.body().to_json();
+    assert!(rows.contains("\"region\"") && rows.contains("\"eu\"") && rows.contains("42"), "{}", rows);
+    assert_eq!(ex.header("CamelAwsRedshiftDataTotalNumRows").and_then(|v| v.as_i64()), Some(2));
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_ses_mail_alerts() {
+    let aws = AwsMock::start().unwrap();
+    aws.create_queue("alerts");
+    aws.send_sqs("alerts", "Disk almost full on edge-7");
+    let main = run_aws(&aws, &page("aws2-ses"), "aws2-ses-mail-alerts", &[], &[]);
+    wait_for("the mail", || aws.sent_emails().len() == 1);
+    let m = &aws.sent_emails()[0];
+    assert_eq!((m.source.as_str(), m.to.clone(), m.subject.as_str()), ("alerts@example.com", vec!["oncall@example.com".to_string()], "Production alert"));
+    assert_eq!(m.text.as_deref(), Some("Disk almost full on edge-7"));
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_step_functions_start_orders() {
+    let aws = AwsMock::start().unwrap();
+    let setup = cameleer_main::new_main();
+    let arn = aws_call(
+        &setup,
+        &aws,
+        "aws2-step-functions://setup?operation=createStateMachine",
+        r#"{"StartAt":"Done","States":{"Done":{"Type":"Pass","End":true}}}"#,
+        vec![("CamelAwsStepFunctionsStateMachineName", Value::from("order-fulfilment")), ("CamelAwsStepFunctionsStateMachineRoleArn", Value::from("arn:aws:iam::000000000000:role/sfn"))],
+    )
+    .body()
+    .to_string();
+    aws.create_queue("orders");
+    aws.send_sqs("orders", r#"{"orderId":"o-1"}"#);
+    let main = run_aws(&aws, &page("aws2-step-functions"), "aws2-step-functions-start-orders", &[("STATE_MACHINE_ARN", &arn)], &[("log:executions", "mock:executions")]);
+    let bodies = mock_bodies(&main, "executions", 1);
+    assert!(bodies[0].starts_with("arn:aws:states:") && bodies[0].contains(":execution:order-fulfilment:"), "{:?}", bodies);
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_sts_caller_identity() {
+    let aws = AwsMock::start().unwrap();
+    let main = run_aws(&aws, &page("aws2-sts"), "aws2-sts-caller-identity", &[], &[("log:identity", "mock:identity")]);
+    mock_bodies(&main, "identity", 1);
+    let id = mock(&main, "identity").exchange(0).unwrap().body().clone();
+    assert!(id.get("arn").is_some() && id.get("account").is_some(), "{}", id.to_json());
+    main.stop().unwrap();
+}
+
+#[test]
+fn aws2_timestream_write_readings() {
+    let aws = AwsMock::start().unwrap();
+    let setup = cameleer_main::new_main();
+    aws_call(&setup, &aws, "aws2-timestream://write:setup?operation=createDatabase", "", vec![("CamelAwsTimestreamDatabaseName", Value::from("iot"))]);
+    aws_call(&setup, &aws, "aws2-timestream://write:setup?operation=createTable", "", vec![("CamelAwsTimestreamDatabaseName", Value::from("iot")), ("CamelAwsTimestreamTableName", Value::from("readings"))]);
+    aws.create_queue("sensor-readings");
+    aws.send_sqs("sensor-readings", r#"{"Dimensions":[{"Name":"device","Value":"edge-7"}],"MeasureName":"temperature","MeasureValue":"21.5","MeasureValueType":"DOUBLE","Time":"1730800000000"}"#);
+    let main = run_aws(&aws, &page("aws2-timestream"), "aws2-timestream-write-readings", &[], &[]);
+    wait_for("the record", || aws.timestream_records("iot", "readings").len() == 1);
+    assert!(aws.timestream_records("iot", "readings")[0].to_json().contains("edge-7"));
+    main.stop().unwrap();
+}
+
 //@@AWS_TESTS@@
 
 // ---------------------------------------------------------------------------
@@ -589,6 +847,187 @@ fn rust_dsl_aws2_transcribe(ctx: &CamelContext) -> Result<()> {
     Ok(())
 }
 
+fn rust_dsl_aws_cloudtrail(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws-cloudtrail://s3-audit?region={{env:AWS_REGION:us-east-1}}&eventSource=s3.amazonaws.com&maxResults=10&delay=60000")
+            .convert_body_to("String")
+            .log("${header.CamelAwsCloudTrailEventUsername} called ${header.CamelAwsCloudTrailEventName}")
+            .to("log:s3-audit");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws_config(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:config-rules?repeatCount=1")
+            .set_header("CamelAwsConfigRuleName", constant("s3-bucket-public-read-prohibited"))
+            .set_header("CamelAwsConfigRuleSourceIdentifier", constant("S3_BUCKET_PUBLIC_READ_PROHIBITED"))
+            .to("aws-config://rules?region={{env:AWS_REGION:us-east-1}}&operation=putConfigRule")
+            .log("rule ${header.CamelAwsConfigRuleName} is in place");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws_secrets_manager(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:store-token?repeatCount=1")
+            .set_header("CamelAwsSecretsManagerSecretName", constant("partner-api"))
+            .set_header("CamelAwsSecretsManagerSecretDescription", constant("Token of the partner API"))
+            .set_body(constant(r#"{"token":"{{env:PARTNER_TOKEN:}}"}"#))
+            .to("aws-secrets-manager://secrets?region={{env:AWS_REGION:us-east-1}}&operation=createSecret")
+            .log("created ${body} (version ${header.CamelAwsSecretsManagerSecretVersionId})");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_athena(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:athena-report?repeatCount=1")
+            .set_body(constant("SELECT region, count(*) AS orders FROM orders GROUP BY region"))
+            .to("aws2-athena://report?region={{env:AWS_REGION:us-east-1}}&database=analytics&outputLocation=s3://{{env:ATHENA_RESULTS_BUCKET:athena-results}}/&waitTimeout=60000&operation=startQueryExecution")
+            .to("aws2-athena://report?region={{env:AWS_REGION:us-east-1}}&operation=getQueryResults")
+            .log("rows: ${body}")
+            .to("log:report");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_cw(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://orders?region={{env:AWS_REGION:us-east-1}}")
+            .unmarshal("json")
+            .set_header("CamelAwsCwMetricDimensions", simple("${body}"))
+            .to("aws2-cw://Shop/Orders?region={{env:AWS_REGION:us-east-1}}&name=OrdersReceived&value=1&unit=Count");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_ec2(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:stop-dev?period=86400000")
+            .set_header("CamelAwsEC2InstancesIds", constant("{{env:DEV_INSTANCE_IDS:i-0123456789abcdef0}}"))
+            .to("aws2-ec2://ops?region={{env:AWS_REGION:us-east-1}}&operation=stopInstances")
+            .log("state changes: ${body}");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_ecs(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:ecs-inventory?repeatCount=1")
+            .to("aws2-ecs://inventory?region={{env:AWS_REGION:us-east-1}}&operation=listClusters")
+            .log("ECS clusters: ${body}")
+            .to("log:ecs-clusters");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_eks(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:eks-inventory?repeatCount=1")
+            .to("aws2-eks://inventory?region={{env:AWS_REGION:us-east-1}}&operation=listClusters")
+            .log("EKS clusters: ${body}")
+            .to("log:eks-clusters");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_iam(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://onboarding?region={{env:AWS_REGION:us-east-1}}")
+            .set_header("CamelAwsIAMUsername", simple("${body}"))
+            .to("aws2-iam://iam?operation=createUser")
+            .log("created IAM user ${body[userName]} (${body[arn]})");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_kms(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://customer-records?region={{env:AWS_REGION:us-east-1}}")
+            .set_header("CamelAwsKMSKeyId", constant("{{env:KMS_KEY_ID:alias/customer-data}}"))
+            .set_header("CamelAwsS3Key", simple("records/${header.CamelAwsSqsMessageId}.bin"))
+            .to("aws2-kms://crypto?region={{env:AWS_REGION:us-east-1}}&operation=encrypt")
+            .to("aws2-s3://{{env:ARCHIVE_BUCKET:encrypted-archive}}?region={{env:AWS_REGION:us-east-1}}&autoCreateBucket=true");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_mq(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:mq-inventory?repeatCount=1")
+            .to("aws2-mq://inventory?region={{env:AWS_REGION:us-east-1}}&operation=listBrokers")
+            .log("brokers: ${body}")
+            .to("log:brokers");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_msk(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:msk?repeatCount=1")
+            .set_header("CamelAwsMSKClusterArn", constant("{{env:MSK_CLUSTER_ARN:arn:aws:kafka:us-east-1:123456789012:cluster/events/abcd}}"))
+            .to("aws2-msk://ops?region={{env:AWS_REGION:us-east-1}}&operation=getBootstrapBrokers")
+            .log("IAM bootstrap: ${body[bootstrapBrokerStringSaslIam]}")
+            .to("log:bootstrap");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_redshift_data(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:sales-report?repeatCount=1")
+            .set_body(constant("SELECT * FROM sales"))
+            .to("aws2-redshift-data://warehouse?region={{env:AWS_REGION:us-east-1}}&database=dev&clusterIdentifier={{env:REDSHIFT_CLUSTER:analytics-cluster}}&dbUser=reporter&operation=executeStatement&waitTimeout=60000")
+            .to("aws2-redshift-data://warehouse?region={{env:AWS_REGION:us-east-1}}&operation=getStatementResult")
+            .log("${header.CamelAwsRedshiftDataTotalNumRows} rows: ${body}")
+            .to("log:sales");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_ses(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://alerts?region={{env:AWS_REGION:us-east-1}}")
+            .to("aws2-ses://{{env:ALERT_SENDER:alerts@example.com}}?region={{env:AWS_REGION:us-east-1}}&to={{env:ONCALL_ADDRESS:oncall@example.com}}&subject=Production alert")
+            .log("sent mail ${header.CamelAwsSesMessageId}");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_step_functions(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://orders?region={{env:AWS_REGION:us-east-1}}")
+            .set_header("CamelAwsStepFunctionsStateMachineArn", constant("{{env:STATE_MACHINE_ARN:arn:aws:states:us-east-1:123456789012:stateMachine:order-fulfilment}}"))
+            .to("aws2-step-functions://orders?region={{env:AWS_REGION:us-east-1}}&operation=startExecution")
+            .log("started ${body}")
+            .to("log:executions");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_sts(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("timer:whoami?repeatCount=1")
+            .to("aws2-sts://sts?region={{env:AWS_REGION:us-east-1}}&operation=getCallerIdentity")
+            .log("running as ${body[arn]} in account ${body[account]}")
+            .to("log:identity");
+    })?;
+    Ok(())
+}
+
+fn rust_dsl_aws2_timestream(ctx: &CamelContext) -> Result<()> {
+    ctx.add_routes(|b| {
+        b.from("aws2-sqs://sensor-readings?region={{env:AWS_REGION:us-east-1}}")
+            .unmarshal("json")
+            .set_header("CamelAwsTimestreamDatabaseName", constant("iot"))
+            .set_header("CamelAwsTimestreamTableName", constant("readings"))
+            .to("aws2-timestream://write:sensors?region={{env:AWS_REGION:us-east-1}}&operation=writeRecords")
+            .log("records ingested: ${body}");
+    })?;
+    Ok(())
+}
+
 //@@RUST_DSL@@
 
 type DslFn = fn(&CamelContext) -> Result<()>;
@@ -614,6 +1053,23 @@ fn rust_dsl_snippets_build() {
         ("aws2-polly", rust_dsl_aws2_polly),
         ("aws2-rekognition", rust_dsl_aws2_rekognition),
         ("aws2-transcribe", rust_dsl_aws2_transcribe),
+        ("aws-cloudtrail", rust_dsl_aws_cloudtrail),
+        ("aws-config", rust_dsl_aws_config),
+        ("aws-secrets-manager", rust_dsl_aws_secrets_manager),
+        ("aws2-athena", rust_dsl_aws2_athena),
+        ("aws2-cw", rust_dsl_aws2_cw),
+        ("aws2-ec2", rust_dsl_aws2_ec2),
+        ("aws2-ecs", rust_dsl_aws2_ecs),
+        ("aws2-eks", rust_dsl_aws2_eks),
+        ("aws2-iam", rust_dsl_aws2_iam),
+        ("aws2-kms", rust_dsl_aws2_kms),
+        ("aws2-mq", rust_dsl_aws2_mq),
+        ("aws2-msk", rust_dsl_aws2_msk),
+        ("aws2-redshift-data", rust_dsl_aws2_redshift_data),
+        ("aws2-ses", rust_dsl_aws2_ses),
+        ("aws2-step-functions", rust_dsl_aws2_step_functions),
+        ("aws2-sts", rust_dsl_aws2_sts),
+        ("aws2-timestream", rust_dsl_aws2_timestream),
         //@@RUST_DSL_LIST@@
     ];
     let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/docs_cloud_aws_azure.rs")).unwrap().replace("\r\n", "\n");
