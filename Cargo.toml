@@ -17,11 +17,13 @@ readme = "README.md"
 [profile.dev.package.cameleer-tls]
 opt-level = 2
 
-# Release binaries (CLI, container image): cross-crate inlining and one codegen unit make
-# a smaller, faster binary at the cost of a longer build; `cargo build --release` and the
-# tests keep the default profile. `panic = "abort"` is not possible: the executor and the
-# HTTP server catch panics in routes.
+# Release binaries (CLI, container image, Lambda zip): whole-program (fat) LTO and one
+# codegen unit, at the cost of a longer build; `cargo build --release` and the tests keep the
+# default profile. Fat LTO measured faster than thin (splitagg +6-8%) with 25% less peak RSS,
+# for a binary about 8% larger (benchmarks/analysis.md, fourth round). `opt-level = "s"` was
+# 13% smaller but 10-19% slower, so it is not used. `panic = "abort"` is not possible: the
+# executor and the HTTP server catch panics in routes.
 [profile.dist]
 inherits = "release"
-lto = "thin"
+lto = "fat"
 codegen-units = 1
