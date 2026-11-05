@@ -36,46 +36,8 @@
   "isBasedOn": {"@type": "SoftwareSourceCode", "name": "Apache Camel", "url": "https://camel.apache.org/", "codeRepository": "https://github.com/apache/camel"}
 }
 </script>
+<link rel="stylesheet" href="assets/site.css">
 <style>
-:root {
-  --paper: #ffffff;
-  --ink: #18203a;
-  --muted: #5b6479;
-  --line: #e4e8f0;
-  --grid: #f0f3f9;
-  --signal: #1f4fff;
-  --signal-soft: #e8eeff;
-  --sand: #e9a21f;
-  --java: #c4cad6;
-  --sans: "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --wrap: 1120px;
-}
-* { box-sizing: border-box; }
-html { scroll-behavior: smooth; scroll-padding-top: 80px; }
-body {
-  margin: 0;
-  background: var(--paper);
-  color: var(--ink);
-  font: 400 17px/1.6 var(--sans);
-  -webkit-font-smoothing: antialiased;
-}
-a { color: inherit; }
-:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; border-radius: 4px; }
-.wrap { max-width: var(--wrap); margin: 0 auto; padding: 0 24px; }
-code, pre { font-family: var(--mono); }
-
-/* header */
-.top { position: sticky; top: 0; z-index: 10; background: rgba(255,255,255,.88); backdrop-filter: blur(10px); border-bottom: 1px solid transparent; transition: border-color .2s; }
-.top.scrolled { border-bottom-color: var(--line); }
-.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; text-decoration: none; font-size: 18px; letter-spacing: -.01em; }
-.top nav { display: flex; gap: 28px; align-items: center; font-size: 15px; }
-.top nav a { text-decoration: none; color: var(--muted); }
-.top nav a:hover { color: var(--ink); }
-.top nav .gh { color: var(--ink); font-weight: 600; display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); padding: 7px 14px; border-radius: 999px; }
-.top nav .gh:hover { border-color: var(--ink); }
-
 /* hero */
 .hero { position: relative; padding: 72px 0 88px; overflow: hidden; }
 .hero::before {
@@ -180,10 +142,11 @@ h2 { font-size: clamp(32px, 4vw, 48px); line-height: 1.05; letter-spacing: -.035
 
 /* inside */
 .inside { display: grid; grid-template-columns: .9fr 1.1fr; gap: 56px; align-items: start; }
+.same > *, .inside > *, .hero .wrap > * { min-width: 0; }
 .wall { display: flex; flex-wrap: wrap; gap: 8px; }
 .wall span { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-size: 15px; background: #fff; }
 .wall span.k { border-color: var(--signal); color: var(--signal); }
-.count { display: flex; gap: 40px; margin-top: 32px; }
+.count { display: flex; flex-wrap: wrap; gap: 24px 40px; margin-top: 32px; }
 .count b { display: block; font-size: 40px; font-weight: 800; letter-spacing: -.04em; line-height: 1; }
 .count span { color: var(--muted); font-size: 14px; }
 
@@ -216,36 +179,19 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
 .example { margin-top: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
 .example summary { cursor: pointer; padding: 14px 18px; font-weight: 600; }
 .example pre { margin: 0; padding: 0 18px 18px; font-size: 13px; line-height: 1.6; overflow-x: auto; }
-.copy { border: 1px solid var(--line); background: #fff; border-radius: 7px; font: 500 13px var(--sans); padding: 4px 10px; cursor: pointer; color: var(--muted); }
-.copy:hover { color: var(--ink); border-color: var(--ink); }
-
-/* footer */
-footer { border-top: 1px solid var(--line); padding: 56px 0 64px; font-size: 15px; color: var(--muted); }
-footer .wrap { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 40px; }
-footer h4 { color: var(--ink); font-size: 15px; margin: 0 0 12px; }
-footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-footer a { text-decoration: none; }
-footer a:hover { color: var(--ink); text-decoration: underline; }
-footer .credit { max-width: 32em; }
 
 @media (max-width: 900px) {
-  .hero .wrap, .same, .inside, .qs, footer .wrap { grid-template-columns: 1fr; }
+  .hero .wrap, .same, .inside, .qs { grid-template-columns: 1fr; }
   .cases { grid-template-columns: 1fr; }
   .uses { grid-template-columns: 1fr; gap: 40px; }
   .bench .item { grid-template-columns: 1fr 60px; }
   .bench .label { grid-column: 1 / -1; }
-  .top nav a:not(.gh) { display: none; }
   .hero { padding: 40px 0 64px; }
   section { padding: 72px 0; }
   .facts { gap: 24px; flex-wrap: wrap; }
 }
 @media (max-width: 480px) {
-  .wrap { padding: 0 16px; }
   .bench .b span { display: none; }
-}
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-  html { scroll-behavior: auto; }
 }
 </style>
 </head>
@@ -258,6 +204,7 @@ footer .credit { max-width: 32em; }
       Cameleer
     </a>
     <nav aria-label="Main">
+      <a class="keep" href="docs/">Docs</a>
       <a href="#same">How it works</a>
       <a href="#numbers">Benchmarks</a>
       <a href="#uses">Use cases</a>
@@ -601,9 +548,10 @@ $ cameleer --help
     <div>
       <h4>Docs</h4>
       <ul>
-        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/docs/FEATURES.md">All components</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md">Benchmarks</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/docs/ROADMAP.md">Roadmap</a></li>
+        <li><a href="docs/">Documentation</a></li>
+        <li><a href="docs/components/">All components</a></li>
+        <li><a href="docs/BENCHMARKS.html">Benchmarks</a></li>
+        <li><a href="docs/ROADMAP.html">Roadmap</a></li>
         <li><a href="llms.txt">llms.txt</a></li>
       </ul>
     </div>

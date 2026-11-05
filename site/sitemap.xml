@@ -2,4 +2,16 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://pmsudhi.github.io/cameleer/</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/llms.txt</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/llms-full.txt</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/BENCHMARKS.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/DEPLOYMENT.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/FEATURES.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/INTEROP.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/ROADMAP.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/STATUS.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/dataformats/</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/languages/</loc><lastmod>2026-11-05</lastmod></url>
 </urlset>
