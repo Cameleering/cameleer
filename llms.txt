@@ -30,6 +30,11 @@ Each example runs end to end in the test suite (https://github.com/pmsudhi/camel
 - [rest_service.rs](https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/rest_service.rs): a REST service in the Rust DSL using `cameleer-core` and `cameleer-http`.
 - [embed_yaml.rs](https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/embed_yaml.rs): a Rust program that runs Camel YAML routes with every component.
 
+## Connect a coding agent
+
+- Docs MCP server: https://gitmcp.io/pmsudhi/cameleer (Claude Code: `claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer`)
+- Also indexed by Context7 (https://context7.com) and DeepWiki (https://deepwiki.com/pmsudhi/cameleer).
+
 ## Docs
 
 - [Website](https://pmsudhi.github.io/cameleer/): overview, benchmarks and quick start

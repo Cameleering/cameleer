@@ -349,6 +349,25 @@ Start with [getting started](docs/guides/getting-started.md), the
 [agent cookbook](docs/guides/agents.md), the [edge cookbook](docs/guides/edge.md) or the
 [component index](https://pmsudhi.github.io/cameleer/docs/components/).
 
+### Connect your coding agent
+
+Give Cursor, Claude, Windsurf, VS Code or any MCP-capable assistant Cameleer's real docs, so it
+writes routes from the documentation instead of guessing. The docs MCP server is
+`https://gitmcp.io/pmsudhi/cameleer` (it serves this repository's `llms.txt`, docs and README).
+
+| tool | add this |
+|---|---|
+| Claude Code | `claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer` |
+| Cursor (`~/.cursor/mcp.json`) | `{"mcpServers": {"cameleer-docs": {"url": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
+| Windsurf (`~/.codeium/windsurf/mcp_config.json`) | `{"mcpServers": {"cameleer-docs": {"serverUrl": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
+| VS Code (`.vscode/mcp.json`) | `{"servers": {"cameleer-docs": {"type": "http", "url": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
+| Claude Desktop (`claude_desktop_config.json`) | `{"mcpServers": {"cameleer-docs": {"command": "npx", "args": ["mcp-remote", "https://gitmcp.io/pmsudhi/cameleer"]}}}` |
+
+The docs are also indexed by [Context7](https://context7.com) (ask your assistant to "use
+context7" for Cameleer) and [DeepWiki](https://deepwiki.com/pmsudhi/cameleer). Agents that read
+files directly can start from [llms.txt](https://pmsudhi.github.io/cameleer/llms.txt) or
+[llms-full.txt](https://pmsudhi.github.io/cameleer/llms-full.txt).
+
 ### Real use cases, ready to run
 
 Every file below runs end to end in the test suite
