@@ -1,0 +1,57 @@
+# A valid file: every check passes (consumers for every direct/seda producer).
+- route:
+    id: orders-in
+    from:
+      uri: timer:orders
+      parameters:
+        period: 1000
+        repeatCount: 1
+      steps:
+        - setBody:
+            constant: '{"id": 7, "items": [1, 2]}'
+        - setHeader:
+            name: orderId
+            jsonpath: "$.id"
+        - choice:
+            when:
+              - simple: "${header.orderId} > 5"
+                steps:
+                  - to: direct:big
+            otherwise:
+              steps:
+                - to:
+                    uri: seda:small
+                    parameters:
+                      size: 10
+        - log:
+            message: "order ${header.orderId}"
+            loggingLevel: INFO
+- route:
+    id: big
+    from:
+      uri: direct:big
+      steps:
+        - split:
+            jsonpath: "$.items"
+            steps:
+              - transform:
+                  simple: "item ${body}"
+        - to: "log:big?level={{log.level:INFO}}"
+- route:
+    id: small
+    from:
+      uri: seda:small
+      steps:
+        - doTry:
+            steps:
+              - throwException:
+                  exceptionType: java.lang.IllegalStateException
+                  message: small
+            doCatch:
+              - exception:
+                  - java.lang.IllegalStateException
+                steps:
+                  - log: "caught ${exception.message}"
+            doFinally:
+              steps:
+                - to: mock:done

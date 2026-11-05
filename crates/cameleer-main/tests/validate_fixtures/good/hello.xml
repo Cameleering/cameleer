@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<routes xmlns="http://camel.apache.org/schema/spring">
+    <route id="hello-xml">
+        <from uri="timer:xml?period=1000"/>
+        <setBody>
+            <simple>Hello from ${routeId}</simple>
+        </setBody>
+        <log message="${body}"/>
+        <to uri="mock:xml"/>
+    </route>
+</routes>

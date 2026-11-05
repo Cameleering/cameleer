@@ -1,0 +1,14 @@
+- route:
+    id: producer
+    from:
+      uri: timer:x
+      steps:
+        - to: direct:nowhere
+        - to: direct:somewhere
+        - to: seda:queue
+- route:
+    id: consumer
+    from:
+      uri: direct:somewhere
+      steps:
+        - to: mock:x

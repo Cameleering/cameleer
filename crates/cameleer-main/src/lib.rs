@@ -16,7 +16,9 @@ pub mod console;
 pub mod integration;
 pub mod local;
 pub mod properties;
+pub mod schema;
 pub mod signal;
+pub mod validate;
 pub mod yaml_rest;
 
 use std::collections::BTreeMap;

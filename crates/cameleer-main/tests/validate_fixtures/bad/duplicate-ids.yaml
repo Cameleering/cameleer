@@ -1,0 +1,12 @@
+- route:
+    id: same
+    from:
+      uri: timer:a
+      steps:
+        - to: mock:a
+- route:
+    id: same
+    from:
+      uri: timer:b
+      steps:
+        - to: mock:b

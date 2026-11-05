@@ -1,0 +1,12 @@
+- route:
+    id: endpoints
+    from:
+      uri: timer:tick
+      parameters:
+        perod: 1000
+      steps:
+        - to: tmer:x
+        - to: "log:x?levl=INFO"
+        - toD: "mock:${header.name}"
+        - toD: "nosuch:${header.name}"
+        - to: "{{env:TARGET:mock:fallback}}"

@@ -1,0 +1,6 @@
+<routes>
+    <route id="broken">
+        <from uri="timer:x"/>
+        <to uri="mock:x">
+    </route>
+</routes>

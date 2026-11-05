@@ -1,0 +1,5 @@
+- route:
+    from:
+      uri: timer:x
+      steps:
+        - log: [unclosed
