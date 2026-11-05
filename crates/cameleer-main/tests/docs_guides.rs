@@ -1674,3 +1674,201 @@ fn agents_multi_model_fallback() {
     assert!(fallback.server.requests().is_empty());
     main.stop().unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// edge.md and examples/edge/
+// ---------------------------------------------------------------------------
+
+const EDGE: &str = "edge.md";
+
+const ADT: &str = "MSH|^~\\&|HIS|WARD3|EHR|CENTRAL|20240102120000||ADT^A01^ADT_A01|MSG00001|P|2.5\rEVN|A01|20240102120000\rPID|1||12345^^^MRN||Doe^John||19800101|M\r";
+
+fn kafka_mock_route(main: &mut cameleer_main::Main, topic: &'static str, bootstrap: &str) {
+    let b2 = bootstrap.to_string();
+    main.configure(move |ctx| {
+        ctx.add_routes(move |b| {
+            b.from(format!("kafka:{}?brokers={}&groupId=test-{}&autoOffsetReset=earliest", topic, b2, topic)).to(format!("mock:{}", topic));
+        })
+    });
+}
+
+#[test]
+fn edge_sensor_rollup() {
+    assert_guide_shows_file(EDGE, "edge-sensor-rollup", "edge/mqtt-sensor-rollup.camel.yaml");
+    let mqtt = cameleer_kafka_mqtt::testing::MqttBroker::start().unwrap();
+    let kafka = cameleer_kafka_mqtt::testing::KafkaBroker::start().unwrap();
+    let bootstrap = kafka.bootstrap();
+    let text = subst(
+        &example_file("edge/mqtt-sensor-rollup.camel.yaml"),
+        &[("MQTT_BROKER", &mqtt.url()), ("KAFKA_BROKERS", &bootstrap), ("GATEWAY_ID", "plant-7")],
+    );
+    resolve_all("mqtt-sensor-rollup", &text);
+    let mut main = cameleer_main::new_main();
+    main.add_route_source("mqtt-sensor-rollup.camel.yaml", text);
+    kafka_mock_route(&mut main, "sensor-rollups", &bootstrap);
+    main.start().unwrap();
+    let ctx = main.context().clone();
+    let t = template(&ctx);
+    let publish = |sensor: &str, v: &str| t.send_body(&format!("paho:sensors/{}/temperature?brokerUrl={}&qos=1", sensor, mqtt.url()), v.to_string()).unwrap();
+    for v in ["20", "garbage", "21.5", "999", "22", "23.5"] {
+        publish("t1", v);
+    }
+    publish("t2", "5");
+    publish("t1", "18");
+    let rollups = wait_bodies(&ctx, "mock:sensor-rollups", 1);
+    let r = cameleer_core::json::parse(&rollups[0]).unwrap();
+    assert_eq!(r.get("sensor").map(|v| v.to_string()).as_deref(), Some("t1"));
+    assert_eq!(r.get("gateway").map(|v| v.to_string()).as_deref(), Some("plant-7"));
+    assert_eq!(r.get("count").and_then(|v| v.as_f64()), Some(5.0), "malformed and out-of-range readings dropped: {}", rollups[0]);
+    assert_eq!(r.get("min").and_then(|v| v.as_f64()), Some(18.0));
+    assert_eq!(r.get("max").and_then(|v| v.as_f64()), Some(23.5));
+    assert_eq!(r.get("avg").and_then(|v| v.as_f64()), Some(21.0));
+    assert_eq!(header_of(&mock(&ctx, "mock:sensor-rollups").received_exchanges()[0], "kafka.KEY"), "t1");
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(bodies(&ctx, "mock:sensor-rollups").len(), 1, "t2 has one reading and waits for its minute");
+    main.stop().unwrap();
+}
+
+#[test]
+fn edge_store_and_forward() {
+    assert_guide_shows_file(EDGE, "edge-store-and-forward", "edge/store-and-forward.camel.yaml");
+    let mqtt = cameleer_kafka_mqtt::testing::MqttBroker::start().unwrap();
+    let down = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let d2 = down.clone();
+    let cloud = MockServer::start(move |_r| {
+        if d2.load(std::sync::atomic::Ordering::SeqCst) {
+            cameleer_http::HttpResponse::text(503, "uplink down")
+        } else {
+            cameleer_http::HttpResponse::text(202, "accepted")
+        }
+    });
+    let (buffer, buffer_s) = temp_dir("edge-buffer");
+    let text = subst(
+        &example_file("edge/store-and-forward.camel.yaml"),
+        &[
+            ("MQTT_BROKER", &mqtt.url()),
+            ("UPLINK_URL", &cloud.url()),
+            ("BUFFER_DIR", &buffer_s),
+            ("GATEWAY_ID", "gw-test"),
+            ("RETRY_DELAY_MS", "10"),
+            ("REPLAY_DELAY_MS", "200"),
+        ],
+    );
+    let main = start_route_file("store-and-forward", &text, None);
+    let t = template(main.context());
+    let mqtt_uri = format!("paho:telemetry/gw-test/room1?brokerUrl={}&qos=1", mqtt.url());
+    t.send_body(&mqtt_uri, "t=21.5").unwrap();
+    let buffered = || std::fs::read_dir(&buffer).unwrap().filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".msg")).count();
+    wait_for("the message to be buffered", || buffered() == 1);
+    let tries = cloud.requests_to("/telemetry");
+    assert!(tries.len() >= 4, "one call and three retries: {}", tries.len());
+    assert!(tries.iter().all(|r| r.text() == "t=21.5" && r.header("X-Gateway") == Some("gw-test")), "every retry resends the original message");
+
+    // the uplink comes back: the buffer is replayed and moved to .sent
+    down.store(false, std::sync::atomic::Ordering::SeqCst);
+    let sent_dir = buffer.join(".sent");
+    wait_for("the replay", || sent_dir.exists() && std::fs::read_dir(&sent_dir).unwrap().count() == 1 && buffered() == 0);
+    let ok: Vec<_> = cloud.requests_to("/telemetry").into_iter().filter(|r| r.header("X-Replayed") == Some("true")).collect();
+    assert_eq!(ok.last().unwrap().text(), "t=21.5");
+
+    // online again: new messages go straight through
+    t.send_body(&mqtt_uri, "t=22.0").unwrap();
+    wait_for("the live message", || cloud.requests_to("/telemetry").iter().any(|r| r.text() == "t=22.0"));
+    assert_eq!(buffered(), 0);
+    main.stop().unwrap();
+    let _ = std::fs::remove_dir_all(&buffer);
+}
+
+#[test]
+fn edge_syslog_to_kafka() {
+    assert_guide_shows_file(EDGE, "edge-syslog-to-kafka", "edge/syslog-to-kafka.camel.yaml");
+    let kafka = cameleer_kafka_mqtt::testing::KafkaBroker::start().unwrap();
+    let bootstrap = kafka.bootstrap();
+    let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port().to_string();
+    let text = subst(
+        &example_file("edge/syslog-to-kafka.camel.yaml"),
+        &[("KAFKA_BROKERS", &bootstrap), ("SYSLOG_HOST", "127.0.0.1"), ("SYSLOG_PORT", &port)],
+    );
+    resolve_all("syslog-to-kafka", &text);
+    let mut main = cameleer_main::new_main();
+    main.add_route_source("syslog-to-kafka.camel.yaml", text);
+    kafka_mock_route(&mut main, "syslog-alerts", &bootstrap);
+    main.start().unwrap();
+    let ctx = main.context().clone();
+    let sock = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let port: u16 = port.parse().unwrap();
+    // RFC 5424, local4.notice: kept local
+    sock.send_to(b"<165>1 2003-10-11T22:14:15.003Z plc-4.site evntslog - ID47 - cycle completed", ("127.0.0.1", port)).unwrap();
+    // RFC 3164, auth.crit: forwarded
+    sock.send_to(b"<34>Oct 11 22:14:15 router-1 su: 'su root' failed for lonvick on /dev/pts/8", ("127.0.0.1", port)).unwrap();
+    let got = wait_bodies(&ctx, "mock:syslog-alerts", 1);
+    assert!(got[0].contains("'su root' failed for lonvick"), "{}", got[0]);
+    assert_eq!(header_of(&mock(&ctx, "mock:syslog-alerts").received_exchanges()[0], "kafka.KEY"), "router-1");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(bodies(&ctx, "mock:syslog-alerts").len(), 1, "the notice is not forwarded");
+    main.stop().unwrap();
+}
+
+#[test]
+fn edge_hl7_mllp_to_http() {
+    assert_guide_shows_file(EDGE, "edge-hl7-mllp", "edge/hl7-mllp-to-http.camel.yaml");
+    let ehr = MockServer::start(|r| {
+        if r.text().contains("MSGFAIL") {
+            cameleer_http::HttpResponse::text(500, "EHR error")
+        } else {
+            cameleer_http::HttpResponse::text(201, "created")
+        }
+    });
+    let port = free_port();
+    let text = subst(
+        &example_file("edge/hl7-mllp-to-http.camel.yaml"),
+        &[("EHR_URL", &ehr.url()), ("MLLP_HOST", "127.0.0.1"), ("MLLP_PORT", &port.to_string()), ("RETRY_DELAY_MS", "10")],
+    );
+    let main = start_route_file("hl7-mllp-to-http", &text, None);
+    let t = template(main.context());
+    let mllp = format!("mllp://127.0.0.1:{}?receiveTimeout=10000", port);
+    let ctx = main.context().clone();
+    // send an HL7 message like the hospital system would; returns the acknowledgement
+    let send = |msg: &str| {
+        let ex = t.send(&mllp, Exchange::with_body(Some(ctx.clone()), msg.to_string()));
+        (header_of(&ex, "CamelMllpAcknowledgementType"), header_of(&ex, "CamelMllpAcknowledgementString"))
+    };
+
+    let (kind, ack) = send(ADT);
+    assert_eq!(kind, "AA");
+    assert!(ack.contains("MSA|AA|MSG00001"), "{}", ack);
+    let posts = ehr.requests_to("/hl7/v2");
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0].header("X-Patient-Id"), Some("12345"));
+    assert_eq!(posts[0].header("X-Message-Control-Id"), Some("MSG00001"));
+    assert!(posts[0].text().contains("PID|1||12345^^^MRN||Doe^John"), "{}", posts[0].text());
+
+    let oru = "MSH|^~\\&|LAB|WARD3|EHR|CENTRAL|20240102120000||ORU^R01|MSG00002|P|2.5\rPID|1||12345^^^MRN||Doe^John\r";
+    let (kind, ack) = send(oru);
+    assert_eq!(kind, "AA");
+    assert!(ack.contains("MSA|AA|MSG00002"), "{}", ack);
+    assert_eq!(ehr.requests_to("/hl7/v2").len(), 1, "only ADT messages are forwarded");
+
+    let failing = ADT.replace("MSG00001", "MSGFAIL");
+    let (kind, ack) = send(&failing);
+    assert_eq!(kind, "AE");
+    assert!(ack.contains("MSA|AE|MSGFAIL"), "{}", ack);
+    let tries: Vec<_> = ehr.requests_to("/hl7/v2").into_iter().filter(|r| r.text().contains("MSGFAIL")).collect();
+    assert_eq!(tries.len(), 6, "one call and five retries");
+    assert!(tries.iter().all(|r| r.text() == failing), "every retry resends the HL7 message");
+    main.stop().unwrap();
+}
+
+#[test]
+fn edge_gateway_heartbeat() {
+    assert_guide_shows_file(EDGE, "edge-gateway-heartbeat", "edge/gateway-heartbeat.camel.yaml");
+    let mqtt = cameleer_kafka_mqtt::testing::MqttBroker::start().unwrap();
+    let text = subst(
+        &example_file("edge/gateway-heartbeat.camel.yaml"),
+        &[("MQTT_BROKER", &mqtt.url()), ("GATEWAY_ID", "gw-test"), ("HEARTBEAT_MS", "100")],
+    );
+    let main = start_route_file("gateway-heartbeat", &text, None);
+    wait_for("the retained status", || mqtt.retained("gateways/gw-test/status").as_deref() == Some(b"online".as_slice()));
+    assert!(mqtt.connected_clients().iter().any(|c| c == "gw-test-status"), "{:?}", mqtt.connected_clients());
+    main.stop().unwrap();
+}

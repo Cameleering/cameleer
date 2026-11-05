@@ -1,0 +1,54 @@
+# Store and forward: telemetry from the local MQTT broker is posted to a cloud ingest API. When
+# the uplink is down, each message is retried with back-off, then written to a local buffer
+# folder instead of being lost. A second route replays the buffer every 30 seconds and moves
+# each file to `.sent` once the cloud accepted it. Nothing is dropped while offline, and the
+# buffer survives restarts.
+#
+# Needs: an MQTT broker and the cloud ingest URL.
+#   export MQTT_BROKER=tcp://localhost:1883 UPLINK_URL=https://ingest.example.com GATEWAY_ID=plant-7
+#
+# Run with Docker (the buffer is the only thing written, on its own volume):
+#   docker run --rm --network host --read-only -e MQTT_BROKER -e UPLINK_URL -e GATEWAY_ID \
+#     -e BUFFER_DIR=/buffer -v cameleer-buffer:/buffer -v "$PWD:/routes:ro" \
+#     pmsudhi/cameleer run /routes/store-and-forward.camel.yaml
+- route:
+    id: telemetry-in
+    from:
+      uri: "paho:telemetry/#?brokerUrl={{env:MQTT_BROKER:tcp://localhost:1883}}&qos=1&clientId={{env:GATEWAY_ID:gateway-1}}-uplink"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - to: "seda:uplink?size=10000&blockWhenFull=true"
+- route:
+    id: uplink
+    errorHandler:
+      deadLetterChannel:
+        deadLetterUri: "file:{{env:BUFFER_DIR:buffer}}?fileName=${date:now:yyyyMMddHHmmssSSS}-${exchangeId}.msg"
+        useOriginalMessage: true
+        redeliveryPolicy:
+          maximumRedeliveries: 3
+          redeliveryDelay: "{{env:RETRY_DELAY_MS:1000}}"
+          useExponentialBackOff: true
+    from:
+      uri: "seda:uplink?size=10000"
+      steps:
+        - setHeader:
+            name: X-Gateway
+            constant: "{{env:GATEWAY_ID:gateway-1}}"
+        - enrich:
+            uri: "{{env:UPLINK_URL:http://localhost:9000}}/telemetry?httpMethod=POST"
+- route:
+    id: replay-buffer
+    from:
+      uri: "file:{{env:BUFFER_DIR:buffer}}?include=.*\\.msg&sortBy=file:name&move=.sent&delay={{env:REPLAY_DELAY_MS:30000}}"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setHeader:
+            name: X-Gateway
+            constant: "{{env:GATEWAY_ID:gateway-1}}"
+        - setHeader:
+            name: X-Replayed
+            constant: "true"
+        - enrich:
+            uri: "{{env:UPLINK_URL:http://localhost:9000}}/telemetry?httpMethod=POST"

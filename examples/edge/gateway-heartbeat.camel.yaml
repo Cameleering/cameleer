@@ -1,0 +1,21 @@
+# Gateway presence over MQTT: publish a retained `online` status for this gateway every 30
+# seconds, with an MQTT last will of `offline`. If the gateway loses power or its network, the
+# broker publishes `offline` for it, so dashboards and the cloud always see the last known state
+# without polling, and nothing is needed from the gateway to report its own failure.
+#
+# Needs: an MQTT broker.
+#   export MQTT_BROKER=tcp://localhost:1883 GATEWAY_ID=plant-7
+#
+# Run with Docker (Linux):
+#   docker run --rm --network host --read-only -e MQTT_BROKER -e GATEWAY_ID \
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/gateway-heartbeat.camel.yaml
+# Watch:
+#   mosquitto_sub -v -t 'gateways/+/status'
+- route:
+    id: gateway-heartbeat
+    from:
+      uri: "timer:heartbeat?period={{env:HEARTBEAT_MS:30000}}"
+      steps:
+        - setBody:
+            constant: online
+        - to: "paho:gateways/{{env:GATEWAY_ID:gateway-1}}/status?brokerUrl={{env:MQTT_BROKER:tcp://localhost:1883}}&clientId={{env:GATEWAY_ID:gateway-1}}-status&qos=1&retained=true&willTopic=gateways/{{env:GATEWAY_ID:gateway-1}}/status&willPayload=offline&willQos=1&willRetained=true"
