@@ -1295,8 +1295,10 @@ applies to every route; with an `id`, list it in each route's `routeConfiguratio
 
 ### Is there a JSON Schema for editors?
 
-If your version has it, `cameleer schema` prints a JSON Schema of the YAML DSL that editors
-(VS Code with the YAML extension, IntelliJ) use for completion and checks.
+Yes: `cameleer schema > cameleer.schema.json` prints a JSON Schema of the YAML DSL that editors
+(VS Code with the YAML extension, IntelliJ) use for completion and checks. Setup steps are in
+[editor support](validate.md#editor-support); `cameleer validate` covers what a schema cannot,
+such as endpoint options and expressions.
 
 ## Related
 

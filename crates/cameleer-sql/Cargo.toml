@@ -13,5 +13,5 @@ categories = ["database", "network-programming"]
 description = "Cameleer SQL support (std only): DataSource SPI, embedded rustsql engine, PostgreSQL wire client, sql/jdbc components, JDBC repositories"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.3.0" }

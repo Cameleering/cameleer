@@ -13,6 +13,6 @@ categories = ["database", "network-programming"]
 description = "Cameleer datastore connectors (std only): Redis (spring-redis), MongoDB, Elasticsearch/OpenSearch, Cassandra (cql), CouchDB, with wire protocols and embedded test servers"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
-cameleer-http = { path = "../cameleer-http", version = "0.2.1" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
+cameleer-http = { path = "../cameleer-http", version = "0.3.0" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.3.0" }

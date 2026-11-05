@@ -3,7 +3,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cameleer-main = "0.2"
+//! cameleer-main = "0.3"
 //! ```
 //!
 //! Run: `cargo run --release -p cameleer-main --example embed_yaml -- examples/rest-api.camel.yaml`

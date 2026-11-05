@@ -248,7 +248,7 @@ instead.
 
 ## The validate loop
 
-`cameleer validate` (also `camel validate`) checks route files without starting routes or
+`cameleer validate` checks route files without starting routes or
 connecting to anything. It is safe to run on any file, any number of times.
 
 ```sh

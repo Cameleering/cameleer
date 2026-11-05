@@ -13,4 +13,4 @@ categories = ["parser-implementations", "config"]
 description = "YAML 1.2 parser/emitter and the Camel YAML (and XML) route DSL loader for Cameleer"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }

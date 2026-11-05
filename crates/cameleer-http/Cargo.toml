@@ -13,6 +13,6 @@ categories = ["web-programming::http-server", "web-programming::http-client", "n
 description = "Cameleer HTTP/1.1 server and client, http/platform-http components, REST DSL and netty (tcp/udp)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }
-cameleer-grpc = { path = "../cameleer-grpc", version = "0.2.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.3.0" }
+cameleer-grpc = { path = "../cameleer-grpc", version = "0.3.0" }

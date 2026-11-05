@@ -48,8 +48,8 @@ DSL) and the crates for the components you need:
 
 ```toml
 [dependencies]
-cameleer-core = "0.2"
-cameleer-http = "0.2"
+cameleer-core = "0.3"
+cameleer-http = "0.3"
 ```
 
 `cameleer-main` bundles every component and runs YAML routes from Rust; see

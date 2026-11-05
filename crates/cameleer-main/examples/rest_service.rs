@@ -2,8 +2,8 @@
 //!
 //! ```toml
 //! [dependencies]
-//! cameleer-core = "0.2"
-//! cameleer-http = "0.2"
+//! cameleer-core = "0.3"
+//! cameleer-http = "0.3"
 //! ```
 //!
 //! Run: `cargo run --release -p cameleer-main --example rest_service`, then

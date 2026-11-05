@@ -1,6 +1,6 @@
 # Validate routes with `cameleer validate`
 
-> `cameleer validate` checks YAML route files for syntax, structure, endpoint options,
+> `cameleer validate` checks YAML and XML route files for syntax, structure, endpoint options,
 > expressions, placeholders and route ids without starting any route or connecting to
 > anything, and reports each problem with its line, column and a hint.
 
@@ -16,15 +16,14 @@ cameleer validate <file-or-dir>... [--format text|json] [--strict]
                   [--properties FILE] [--prop key=value]...
 ```
 
-`camel validate` is the same command.
 
 | argument | description |
 |---|---|
-| `<file-or-dir>...` | one or more route files, or folders whose route files are checked together |
+| `<file-or-dir>...` | one or more route files, or folders: `*.yaml`, `*.yml` and `*.xml` files are found recursively, skipping `application*` files, hidden folders and `target` |
 | `--format text` | human-readable output (the default) |
 | `--format json` | one JSON document on standard output, for tools and agents |
 | `--strict` | warnings make the exit code 1 |
-| `--properties FILE` | a properties file used to resolve `{{...}}` placeholders |
+| `--properties FILE` | a properties file used to resolve `{{...}}` placeholders (repeatable). Without it, `application.*` in the current folder is loaded, as `run` does |
 | `--prop key=value` | one property; repeat for more |
 
 Files are validated together: a `direct:` endpoint used in one file and consumed in another is
@@ -45,6 +44,7 @@ docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes --format 
 | code | severity | what it means |
 |---|---|---|
 | `yaml-syntax` | error | the file is not valid YAML (bad indentation, an unclosed quote, a tab) |
+| `xml-syntax` | error | an `.xml` route file is not well-formed XML |
 | `dsl-structure` | error | the YAML does not have the shape of the YAML DSL: an unknown top-level element, step or key, a missing required key, a value of the wrong type. The hint suggests the name you probably meant ("did you mean ...") |
 | `endpoint` | error | an unknown scheme, or an option the component does not support, decided the same way Apache Camel does |
 | `expression` | error | an expression (Simple, JSONPath, jq, XPath, ...) does not compile |
@@ -55,6 +55,21 @@ docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes --format 
 `unresolved-placeholder` is a warning because the value often comes from the environment where
 the route runs. Pass the same properties file you run with, or use `--strict` to make warnings
 fail too.
+
+How placeholders, secrets and beans are treated, so results are the same on every machine:
+
+- `{{env:NAME}}` is looked up in `--prop`/`--properties` (key `NAME`), never in the process
+  environment. `{{env:NAME:default}}` uses the default.
+- A secret with an empty default (`accessKey=RAW({{env:KEY:}})`) is checked again with a stand-in
+  value when the empty value is rejected, so misspelled option names are still caught.
+- An endpoint that only fails because a bean is missing from the registry (a `dataSource`, a
+  `ref:` endpoint) is not reported: beans can come from code, `camel.beans.*` or
+  `camel.datasource.*`.
+- Endpoints that read a companion file when they are created (a `.proto`, `.thrift` or WSDL file
+  next to the route) are reported if the file is not where the URI says. Validate the route from
+  the folder it runs in.
+- XML routes go through the same structure checks after the loader converts them; findings in
+  XML files have no line or column (except `xml-syntax`).
 
 ## Output
 
@@ -173,10 +188,24 @@ cameleer validate $(git diff --cached --name-only -- '*.camel.yaml') --strict
 
 ## Editor support
 
-If your version has it, `cameleer schema` prints a JSON Schema of the YAML DSL. Point your
-editor's YAML extension at it (for example with a `# yaml-language-server: $schema=...`
-comment) for completion and inline errors while you type; run `cameleer validate` for the
-checks a schema cannot do, such as endpoint options and expressions.
+`cameleer schema` prints a JSON Schema (draft 2020-12) of the YAML DSL, generated from the
+same tables the validator uses: every top-level element, all steps with their keys and types,
+required keys, nested elements and every expression form. Use it for completion and inline
+errors while you type:
+
+```sh
+cameleer schema > cameleer.schema.json
+```
+
+- VS Code with the YAML extension: add to `.vscode/settings.json`:
+  `"yaml.schemas": {"./cameleer.schema.json": "*.camel.yaml"}`, or put
+  `# yaml-language-server: $schema=./cameleer.schema.json` on the first line of a route file.
+- JetBrains IDEs: Settings, Languages & Frameworks, Schemas and DTDs, JSON Schema Mappings, add
+  the file for `*.camel.yaml`.
+
+The schema does not know component options (they depend on the URI) or data-format and language
+options, and covers Kamelet, Pipe and Integration resources only partly. Run `cameleer validate`
+for those checks.
 
 ## Common questions
 

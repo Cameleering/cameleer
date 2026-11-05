@@ -13,5 +13,5 @@ categories = ["network-programming", "email"]
 description = "Cameleer network protocol components (std only): ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.3.0" }

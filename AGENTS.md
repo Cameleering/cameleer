@@ -48,3 +48,10 @@ it rather than only working around it:
 [open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
 a pull request.
+
+## Connect your coding agent to the docs
+
+The docs are served as an MCP server at `https://gitmcp.io/pmsudhi/cameleer` (Claude Code:
+`claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer`; other tools:
+see the README's "Connect your coding agent" table). They are also indexed by Context7 and
+DeepWiki, and the full text is in https://pmsudhi.github.io/cameleer/llms-full.txt.

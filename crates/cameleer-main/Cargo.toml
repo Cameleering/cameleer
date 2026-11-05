@@ -13,23 +13,23 @@ categories = ["command-line-utilities", "network-programming"]
 description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel JBang)"
 
 [dependencies]
-cameleer-amqp = { path = "../cameleer-amqp", version = "0.2.1" }
-cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.2.1" }
-cameleer-cloud = { path = "../cameleer-cloud", version = "0.2.1" }
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
-cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.2.1" }
-cameleer-datastores = { path = "../cameleer-datastores", version = "0.2.1" }
-cameleer-grpc = { path = "../cameleer-grpc", version = "0.2.1" }
-cameleer-http = { path = "../cameleer-http", version = "0.2.1" }
-cameleer-protocols = { path = "../cameleer-protocols", version = "0.2.1" }
-cameleer-script = { path = "../cameleer-script", version = "0.2.1" }
-cameleer-soap = { path = "../cameleer-soap", version = "0.2.1" }
-cameleer-saas = { path = "../cameleer-saas", version = "0.2.1" }
-cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.2.1" }
-cameleer-sql = { path = "../cameleer-sql", version = "0.2.1" }
-cameleer-ssh = { path = "../cameleer-ssh", version = "0.2.1" }
-cameleer-xml = { path = "../cameleer-xml", version = "0.2.1" }
-cameleer-yaml = { path = "../cameleer-yaml", version = "0.2.1" }
+cameleer-amqp = { path = "../cameleer-amqp", version = "0.3.0" }
+cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.3.0" }
+cameleer-cloud = { path = "../cameleer-cloud", version = "0.3.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
+cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.3.0" }
+cameleer-datastores = { path = "../cameleer-datastores", version = "0.3.0" }
+cameleer-grpc = { path = "../cameleer-grpc", version = "0.3.0" }
+cameleer-http = { path = "../cameleer-http", version = "0.3.0" }
+cameleer-protocols = { path = "../cameleer-protocols", version = "0.3.0" }
+cameleer-script = { path = "../cameleer-script", version = "0.3.0" }
+cameleer-soap = { path = "../cameleer-soap", version = "0.3.0" }
+cameleer-saas = { path = "../cameleer-saas", version = "0.3.0" }
+cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.3.0" }
+cameleer-sql = { path = "../cameleer-sql", version = "0.3.0" }
+cameleer-ssh = { path = "../cameleer-ssh", version = "0.3.0" }
+cameleer-xml = { path = "../cameleer-xml", version = "0.3.0" }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.3.0" }
 
 [[bin]]
 name = "cameleer"

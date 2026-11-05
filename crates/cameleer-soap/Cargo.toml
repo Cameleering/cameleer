@@ -13,7 +13,7 @@ categories = ["web-programming", "encoding"]
 description = "Cameleer SOAP stack (std only): WSDL 1.1, SOAP 1.1/1.2 envelopes and faults, WS-Security, cxf / cxfrs / spring-ws components, the jaxb data format, FHIR R4 (fhirJson / fhirXml data formats, fhir component, mock server)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
-cameleer-http = { path = "../cameleer-http", version = "0.2.1" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.2.1" }
-cameleer-xml = { path = "../cameleer-xml", version = "0.2.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
+cameleer-http = { path = "../cameleer-http", version = "0.3.0" }
+cameleer-tls = { path = "../cameleer-tls", version = "0.3.0" }
+cameleer-xml = { path = "../cameleer-xml", version = "0.3.0" }

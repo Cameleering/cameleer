@@ -57,7 +57,7 @@ docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
 | tag | meaning |
 |---|---|
 | `latest` | the latest release |
-| `0.2.1`, `0.2` | a release, and the latest patch of a minor version |
+| `0.3.0`, `0.3` | a release, and the latest patch of a minor version |
 | `edge` | a manual build from `main` |
 | `sha-<commit>` | the image of one commit |
 

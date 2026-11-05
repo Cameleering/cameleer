@@ -13,4 +13,4 @@ categories = ["cryptography", "network-programming"]
 description = "Cameleer std-only TLS 1.3 / TLS 1.2 client and server with from-scratch cryptography"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.2.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0" }

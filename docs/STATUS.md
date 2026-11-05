@@ -22,6 +22,16 @@ was added is `7de6166`._
 - **Deployment guide:** `docs/DEPLOYMENT.md` (Docker, Compose, Kubernetes, Cloud Run). Images run
   with `CAMEL_LOCAL_STATUS=false` (no status or log files) and work with a read-only root filesystem.
 
+- **0.3.0: `cameleer validate` and `cameleer schema`** (`crates/cameleer-main/src/validate.rs`,
+  `schema.rs`, DSL tables in `crates/cameleer-yaml/src/model.rs`, `CamelContext::check_endpoint`).
+  Codes: yaml-syntax, xml-syntax, dsl-structure, endpoint, expression, unresolved-placeholder,
+  dangling-endpoint, duplicate-route-id; text or JSON output; exit 0/1/2. A test validates every
+  doc example and every file in `examples/`. Guides: `docs/guides/yaml-dsl.md`,
+  `docs/guides/yaml-for-coding-agents.md`, `docs/guides/validate.md`, and `AGENTS.md`.
+- **Open findings from the documentation pass** are GitHub issues #2-#15 (Simple numeric string
+  comparison, http producer overwriting the message on failure, S3 bucket header, webhook
+  signatures, vault env vars, YAML `dataFormats`, `cameleer run <directory>`, ...).
+
 ## Where things stand
 
 The implementation is complete against the feature list: `docs/FEATURES.md` has 228 rows, all
