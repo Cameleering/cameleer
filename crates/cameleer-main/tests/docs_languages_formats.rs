@@ -10,7 +10,8 @@
 //! - `<!-- input: id -->` / `<!-- output: id -->` above a fenced block: the body sent to the
 //!   route's `direct:` endpoint and the expected result body. Further cases of one route use
 //!   `id#2`, `id#3`... An optional JSON object after the id sets `headers`, `send` (another
-//!   endpoint) or `contains` (output is a substring check instead of an exact match).
+//!   endpoint); on an output marker, `{"contains":true}` checks each line as a substring.
+//!   `<!-- output: id error -->` expects the route to fail with an error containing the block.
 //! - `<!-- file: path -->` above a fenced block: a file (template, schema, key...) written to the
 //!   working directory of the tests before any route runs.
 //! - `<!-- fixture: name -->` above a ```json block: a message (`body`, `headers`, `properties`,
@@ -305,16 +306,22 @@ fn run_example(ex: &Marked, cases: &[(String, Option<Marked>, Option<Marked>)]) 
                 e.set_header(k.clone(), v.clone());
             }
         });
-        let result = result.unwrap_or_else(|e| panic!("{}: request failed: {}", case, e));
-        if let Some(err) = &result.exception {
-            if output.as_ref().map(|o| o.args.contains("error")).unwrap_or(false) {
+        let expects_error = output.as_ref().map(|o| o.args.split_whitespace().nth(1) == Some("error")).unwrap_or(false);
+        let failure = match &result {
+            Err(e) => Some(e.to_string()),
+            Ok(r) => r.exception.as_ref().map(|e| e.to_string()),
+        };
+        if let Some(err) = failure {
+            if expects_error {
                 let want = norm(&output.as_ref().unwrap().content);
-                assert!(err.to_string().contains(&want), "{}: error\n{}\ndoes not contain\n{}", case, err, want);
+                assert!(err.contains(&want), "{}: error\n{}\ndoes not contain\n{}", case, err, want);
                 asserted = true;
                 continue;
             }
             panic!("{}: route failed: {}", case, err);
         }
+        assert!(!expects_error, "{}: expected an error but the route succeeded", case);
+        let result = result.unwrap();
         if let Some(out) = output {
             let got = norm(&result.body().to_string());
             let want = norm(&out.content);
@@ -622,31 +629,275 @@ fn rust_dsl_languages() {
 
 // --- data formats A ---
 
-fn rust_routes_formats_a(_b: &mut RouteBuilder) {}
+fn rust_routes_formats_a(b: &mut RouteBuilder) {
+    // json.md
+    b.from("direct:json-rust")
+        .unmarshal(DataFormatDefinition::json())
+        .set_body(simple("${body.intent}"));
+    // csv.md
+    b.from("direct:csv-rust")
+        .unmarshal(DataFormatDefinition::csv().use_maps(true))
+        .marshal(DataFormatDefinition::json());
+    // base64.md
+    b.from("direct:base64-rust")
+        .marshal(DataFormatDefinition::base64().line_length(0));
+    // hex.md
+    b.from("direct:hex-rust")
+        .marshal(DataFormatDefinition::hex());
+    // string.md
+    b.from("direct:string-rust")
+        .marshal(DataFormatDefinition::string().charset("ISO-8859-1"));
+    // gzip.md
+    b.from("direct:gzip-rust")
+        .marshal(DataFormatDefinition::gzip().compression_level(9))
+        .unmarshal(DataFormatDefinition::gzip());
+    // zip-deflater.md
+    b.from("direct:zlib-rust")
+        .marshal(DataFormatDefinition::zip_deflater())
+        .unmarshal(DataFormatDefinition::zip_deflater());
+    // zipfile.md
+    b.from("direct:zipfile-rust")
+        .set_header("CamelFileName", constant("data.csv"))
+        .marshal(DataFormatDefinition::zip_file());
+    // urlencoded.md
+    b.from("direct:urlencoded-rust")
+        .unmarshal(DataFormatDefinition::urlencoded())
+        .set_body(simple("${body[name]}"));
+    // jacksonxml.md
+    b.from("direct:xml-rust")
+        .unmarshal(DataFormatDefinition::json())
+        .marshal(DataFormatDefinition::xml().root_name("order"));
+    // yaml.md
+    b.from("direct:yaml-rust")
+        .unmarshal(DataFormatDefinition::new("yaml"))
+        .marshal(DataFormatDefinition::json());
+    // cbor.md
+    b.from("direct:cbor-rust")
+        .marshal(DataFormatDefinition::new("cbor"))
+        .unmarshal(DataFormatDefinition::new("cbor"));
+    // avro.md
+    b.from("direct:avro-rust")
+        .unmarshal(DataFormatDefinition::json())
+        .marshal(DataFormatDefinition::new("avro").option("schemaFile", "sensor.avsc"))
+        .unmarshal(DataFormatDefinition::new("avro").option("schemaFile", "sensor.avsc"));
+    // protobuf.md
+    b.from("direct:protobuf-rust")
+        .marshal(
+            DataFormatDefinition::new("protobuf")
+                .option("instanceClass", "edge.Reading")
+                .option("protoFile", "reading.proto"),
+        );
+    // bindy.md
+    b.from("direct:bindy-rust")
+        .unmarshal(DataFormatDefinition::new("bindyCsv").option("descriptorFile", "order-csv.yaml"))
+        .marshal(DataFormatDefinition::json());
+    // univocity.md
+    b.from("direct:univocity-rust")
+        .unmarshal(DataFormatDefinition::new("univocityTsv").option("headerExtractionEnabled", true).option("asMap", true))
+        .marshal(DataFormatDefinition::json());
+}
 
 #[test]
 fn rust_dsl_formats_a() {
     let main = rust_main(rust_routes_formats_a);
+    let s = |uri: &str, body: &str| rust_req(&main, uri, body.to_string());
+    assert_eq!(s("direct:json-rust", r#"{"intent":"refund"}"#).body().to_string(), "refund");
+    assert_eq!(s("direct:csv-rust", "a,b\n1,2\n").body().to_string(), r#"[{"a":"1","b":"2"}]"#);
+    assert_eq!(s("direct:base64-rust", "Hi").body().to_string(), "SGk=");
+    assert_eq!(s("direct:hex-rust", "Hi").body().to_string(), "4869");
+    assert_eq!(s("direct:string-rust", "é").body().to_bytes(), vec![0xe9]);
+    assert_eq!(s("direct:gzip-rust", "abc").body().to_bytes(), b"abc".to_vec());
+    assert_eq!(s("direct:zlib-rust", "abc").body().to_bytes(), b"abc".to_vec());
+    let z = s("direct:zipfile-rust", "x,y");
+    assert_eq!(z.header("CamelFileName").unwrap().to_string(), "data.csv.zip");
+    assert_eq!(&z.body().to_bytes()[..2], b"PK");
+    assert_eq!(s("direct:urlencoded-rust", "name=Ada&x=1").body().to_string(), "Ada");
+    assert_eq!(s("direct:xml-rust", r#"{"id":"1"}"#).body().to_string(), "<order><id>1</id></order>");
+    assert_eq!(s("direct:yaml-rust", "a: 1").body().to_string(), r#"{"a":1}"#);
+    assert_eq!(rust_req(&main, "direct:cbor-rust", Value::from(vec![Value::Int(1), Value::Int(2)])).body().to_string(), "[1,2]");
+    assert_eq!(s("direct:avro-rust", r#"{"id":"s-1","temp":21.5,"ok":true}"#).body().to_string(), r#"{"id":"s-1","temp":21.5,"ok":true}"#);
+    assert_eq!(s("direct:protobuf-rust", r#"{"id":"s-1"}"#).body().to_bytes(), b"\x0a\x03s-1".to_vec());
+    assert_eq!(s("direct:bindy-rust", "h\n1,Ada,49.5,02-01-2024\n").body().to_string(), r#"{"orderNr":1,"customer":"Ada","amount":49.5,"orderDate":"2024-01-02"}"#);
+    assert_eq!(s("direct:univocity-rust", "a\tb\n1\t2\n").body().to_string(), r#"[{"a":"1","b":"2"}]"#);
     main.stop().unwrap();
 }
 
 // --- data formats B ---
 
-fn rust_routes_formats_b(_b: &mut RouteBuilder) {}
+fn rust_routes_formats_b(b: &mut RouteBuilder) {
+    // tarfile.md
+    b.from("direct:tar-rust")
+        .set_header("CamelFileName", constant("notes.txt"))
+        .marshal(DataFormatDefinition::new("tarFile"))
+        .unmarshal(DataFormatDefinition::new("tarFile"))
+        .convert_body_to("String");
+    // crypto.md
+    let aes = DataFormatDefinition::new("crypto")
+        .option("algorithm", "AES/GCM/NoPadding")
+        .option("key", "hex:000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+        .option("inline", "true");
+    b.from("direct:crypto-rust")
+        .marshal(aes.clone())
+        .unmarshal(aes)
+        .convert_body_to("String");
+    // pgp.md
+    b.from("direct:pgp-rust")
+        .marshal(DataFormatDefinition::new("pgp").option("keyFileName", "keys/docs-pub.asc").option("armored", "true"))
+        .unmarshal(DataFormatDefinition::new("pgp").option("keyFileName", "keys/docs-sec.asc").option("password", "docs-only"))
+        .convert_body_to("String");
+    // thrift.md
+    let reading = DataFormatDefinition::new("thrift")
+        .option("idlFile", "idl/telemetry.thrift")
+        .option("instanceClass", "Reading")
+        .option("contentTypeFormat", "compact");
+    b.from("direct:thrift-rust")
+        .unmarshal_json()
+        .marshal(reading.clone())
+        .unmarshal(reading)
+        .marshal_json();
+    // asn1.md
+    b.from("direct:asn1-rust")
+        .unmarshal(DataFormatDefinition::new("asn1").option("usingIterator", "true"))
+        .split(simple("${body}"))
+        .to("mock:asn1-record")
+        .end();
+    // fory.md
+    b.from("direct:fory-rust")
+        .unmarshal_json()
+        .marshal(DataFormatDefinition::new("fory"))
+        .unmarshal(DataFormatDefinition::new("fory"))
+        .marshal_json();
+    // barcode.md
+    b.from("direct:barcode-rust")
+        .marshal(DataFormatDefinition::new("barcode").option("barcodeFormat", "DATA_MATRIX").option("imageType", "PNG"))
+        .unmarshal(DataFormatDefinition::new("barcode").option("barcodeFormat", "DATA_MATRIX"));
+    // ical.md
+    b.from("direct:ical-rust")
+        .unmarshal(DataFormatDefinition::new("iCal"))
+        .set_body(simple("${body.components[0].properties.SUMMARY}"));
+    // mime-multipart.md
+    b.from("direct:mime-rust")
+        .marshal(DataFormatDefinition::new("mimeMultipart").option("headersInline", "true").option("multipartWithoutAttachment", "true"))
+        .unmarshal(DataFormatDefinition::new("mimeMultipart").option("headersInline", "true"));
+    // hl7.md
+    b.from("direct:hl7-rust")
+        .unmarshal(DataFormatDefinition::named("hl7"))
+        .set_body(simple("${header.CamelHL7MessageType}^${header.CamelHL7TriggerEvent}"));
+    // syslog.md
+    b.from("direct:syslog-rust")
+        .unmarshal(DataFormatDefinition::named("syslog"))
+        .set_body(simple("${header.CamelSyslogSeverity}: ${body.logMessage}"));
+    // fhir.md
+    b.from("direct:fhir-rust")
+        .unmarshal(DataFormatDefinition::new("fhirXml"))
+        .marshal(DataFormatDefinition::new("fhirJson"));
+    // jaxb.md
+    b.from("direct:jaxb-rust")
+        .unmarshal(DataFormatDefinition::new("jaxb").option("contextPath", "schemas/order.xsd"))
+        .marshal_json();
+}
 
 #[test]
 fn rust_dsl_formats_b() {
     let main = rust_main(rust_routes_formats_b);
+    let s = |uri: &str, body: &str| rust_req(&main, uri, body.to_string()).body().to_string();
+    assert_eq!(s("direct:tar-rust", "tar me"), "tar me");
+    assert_eq!(s("direct:crypto-rust", "secret"), "secret");
+    assert_eq!(s("direct:pgp-rust", "for docs only"), "for docs only");
+    assert_eq!(s("direct:thrift-rust", r#"{"sensor":"t9","celsius":4}"#), r#"{"sensor":"t9","celsius":4,"status":"OK"}"#);
+    rust_req(&main, "direct:asn1-rust", Value::Bytes(vec![0x30, 0x03, 0x02, 0x01, 0x01, 0x30, 0x03, 0x02, 0x01, 0x02]));
+    assert_eq!(main.context().mock_endpoint("mock:asn1-record").unwrap().received_exchanges().len(), 2);
+    assert_eq!(s("direct:fory-rust", r#"{"a":[1,2]}"#), r#"{"a":[1,2]}"#);
+    assert_eq!(s("direct:barcode-rust", "LOT-2026-11"), "LOT-2026-11");
+    assert_eq!(s("direct:ical-rust", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\nBEGIN:VEVENT\r\nSUMMARY:Standup\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"), "Standup");
+    assert_eq!(s("direct:mime-rust", "only a body"), "only a body");
+    assert_eq!(s("direct:hl7-rust", "MSH|^~\\&|A|B|C|D|20260101||ORU^R01|1|P|2.5\rPID|1"), "ORU^R01");
+    assert_eq!(s("direct:syslog-rust", "<11>1 2026-11-05T10:00:00Z h app - - - disk full"), "ERR: disk full");
+    assert!(s("direct:fhir-rust", r#"<Patient xmlns="http://hl7.org/fhir"><id value="p2"/></Patient>"#).contains(r#""id":"p2""#));
+    assert_eq!(s("direct:jaxb-rust", r#"<order id="1"><customer>C</customer><line><sku>S</sku><qty>2</qty></line></order>"#), r#"{"@id":1,"customer":"C","line":[{"sku":"S","qty":2}]}"#);
     main.stop().unwrap();
 }
-
 // --- template and XML components ---
 
-fn rust_routes_components(_b: &mut RouteBuilder) {}
+fn rust_routes_components(b: &mut RouteBuilder) {
+    // mustache.md
+    b.from("direct:mustache-rust")
+        .to("mustache:templates/support-prompt.mustache?contentCache=true");
+    // freemarker.md
+    b.from("direct:freemarker-rust")
+        .unmarshal(DataFormatDefinition::json())
+        .to("freemarker:templates/greeting.ftl");
+    // velocity.md
+    b.from("direct:velocity-rust")
+        .set_header("CamelVelocitySupplementalContext", simple("${map('name','Ada','team','ops')}"))
+        .to("velocity:templates/hello.vm");
+    // string-template.md
+    b.from("direct:string-template-rust")
+        .to("string-template:templates/item.st?delimiterStart=$&delimiterStop=$");
+    // mvel.md
+    b.from("direct:mvel-rust")
+        .unmarshal(DataFormatDefinition::json())
+        .to("mvel:templates/order.mvel");
+    // xslt.md
+    b.from("direct:xslt-rust")
+        .set_header("currency", constant("GBP"))
+        .to("xslt:xsl/order-to-json.xsl");
+    // xslt-saxon.md
+    b.from("direct:xslt-saxon-rust")
+        .to("xslt-saxon:xsl/sales-by-region.xsl");
+    // xquery.md
+    b.from("direct:xquery-rust")
+        .to("xquery:xq/names.xq?resultsFormat=String");
+    // xj.md
+    b.from("direct:xj-rust")
+        .to("xj:identity?transformDirection=XML2JSON");
+    // validator.md
+    b.from("direct:validator-rust")
+        .to("validator:xsd/order.xsd")
+        .set_body(constant("valid"));
+    // json-validator.md
+    b.from("direct:json-validator-rust")
+        .to("json-validator:schemas/triage-answer.json")
+        .set_body(constant("ok"));
+    // xmlsecurity-sign.md
+    b.from("direct:xmlsecurity-sign-rust")
+        .to("xmlsecurity-sign:invoice?privateKey=file:keys/docs-sign.pem&addKeyValue=true");
+    // xmlsecurity-verify.md
+    b.from("direct:xmlsecurity-verify-rust")
+        .to("xmlsecurity-sign:report?privateKey=file:keys/docs-verify.pem")
+        .to("xmlsecurity-verify:report?publicKey=file:keys/docs-verify.pub.pem&removeSignature=false");
+}
 
 #[test]
 fn rust_dsl_components() {
     let main = rust_main(rust_routes_components);
+    let order = cameleer_core::json::parse(r#"{"customer":"Ada","question":"Q?","docs":[]}"#).unwrap();
+    let r = rust_req(&main, "direct:mustache-rust", order);
+    assert!(r.body().to_string().contains("Question: Q?"), "{}", r.body());
+    let r = rust_req(&main, "direct:freemarker-rust", r#"{"name":"cy"}"#);
+    assert_eq!(r.body().to_string().trim(), "Hello Cy, you have 0 points.");
+    let r = rust_req(&main, "direct:velocity-rust", "x");
+    assert_eq!(r.body().to_string().trim(), "Hello Ada from ops, quiet missing value: []");
+    let r = rust_req(&main, "direct:string-template-rust", "Rust");
+    assert_eq!(r.body().to_string().trim(), "<li>Rust</li>");
+    let r = rust_req(&main, "direct:mvel-rust", r#"{"id":1,"customer":"bo","items":[{"sku":"C3","qty":1,"price":5}]}"#);
+    assert!(r.body().to_string().contains("Total: 5"), "{}", r.body());
+    let r = rust_req(&main, "direct:xslt-rust", r#"<order id="X"><customer><name>Bo</name></customer><line sku="A" qty="1" price="2"/></order>"#);
+    assert!(r.body().to_string().contains(r#""currency":"GBP""#), "{}", r.body());
+    let r = rust_req(&main, "direct:xslt-saxon-rust", r#"<sales><sale region="n" rep="x" amount="5"/></sales>"#);
+    assert_eq!(r.body().to_string().trim(), "n: 5 (x)");
+    let r = rust_req(&main, "direct:xquery-rust", r#"<t><person name="b"/><person name="a"/></t>"#);
+    assert_eq!(r.body().to_string().trim(), "a, b");
+    let r = rust_req(&main, "direct:xj-rust", "<a><b>1</b></a>");
+    assert_eq!(r.body().to_string().trim(), r#"{"b":"1"}"#);
+    let r = rust_req(&main, "direct:validator-rust", r#"<order id="1"><customer>A</customer><qty>1</qty></order>"#);
+    assert_eq!(r.body().to_string(), "valid");
+    let r = rust_req(&main, "direct:json-validator-rust", r#"{"priority":"P3","team":"ops","summary":"s"}"#);
+    assert_eq!(r.body().to_string(), "ok");
+    let r = rust_req(&main, "direct:xmlsecurity-sign-rust", "<a>1</a>");
+    assert!(r.body().to_string().contains("ECKeyValue"), "{}", r.body());
+    let r = rust_req(&main, "direct:xmlsecurity-verify-rust", "<a>1</a>");
+    assert!(r.body().to_string().contains("<ds:Signature"), "{}", r.body());
     main.stop().unwrap();
 }
 
