@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="site/logo.png" alt="Cameleer: the integration layer for AI agents, Camel-compatible routes in Rust" width="640">
+</p>
+
 # Cameleer
 
-[![CI](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml/badge.svg)](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml)
+[![CI](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)

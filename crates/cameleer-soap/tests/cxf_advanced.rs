@@ -101,7 +101,10 @@ fn ws_addressing_and_reliable_messaging() {
     }
     let m = ctx.mock_endpoint("mock:rm").unwrap();
     wait_for(&m, 3);
-    let rx = m.received_exchanges();
+    // the wire tap is asynchronous (as in Camel), so the copies can reach the mock out of
+    // order: compare them sorted by their WS-RM message number
+    let mut rx = m.received_exchanges();
+    rx.sort_by_key(|e| e.message.headers.get("CamelCxfRmMessageNumber").and_then(|v| v.as_i64()).unwrap_or(0));
     let seq = rx[0].message.headers.get("CamelCxfRmSequenceId").cloned().unwrap();
     for (i, e) in rx.iter().enumerate() {
         assert_eq!(e.message.headers.get("CamelCxfRmSequenceId"), Some(&seq));
