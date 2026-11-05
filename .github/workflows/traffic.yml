@@ -56,8 +56,9 @@ jobs:
         name: Save to the traffic-data branch
         run: |
           set -euo pipefail
-          git config user.name "traffic-archive"
-          git config user.email "traffic-archive@users.noreply.github.com"
+          # the job has no checkout, so set the identity globally (the data repo is cloned below)
+          git config --global user.name "traffic-archive"
+          git config --global user.email "traffic-archive@users.noreply.github.com"
           url="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/$REPO.git"
           if git ls-remote --exit-code --heads "$url" traffic-data >/dev/null 2>&1; then
             git clone --quiet --depth 1 --branch traffic-data "$url" data
