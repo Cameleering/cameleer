@@ -221,3 +221,29 @@ section.agents + section { border-top: 0; }
 .wall .chips a:hover, .wall .chips a:focus-visible { border-color: var(--signal); color: var(--signal); }
 .wall-all { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
 .wall-all a { color: var(--signal); }
+
+/* component catalog */
+.catalog-head { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 48px; align-items: end; margin-bottom: 48px; }
+.catalog-head .sub { margin-bottom: 0; }
+.catalog-stats { display: flex; gap: 40px; margin: 0; justify-content: flex-end; }
+.catalog-stats div { margin: 0; }
+.catalog-stats dt { font-size: 40px; font-weight: 800; letter-spacing: -.04em; line-height: 1; }
+.catalog-stats dd { margin: 6px 0 0; color: var(--muted); font-size: 14px; max-width: 11em; }
+.cats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0 32px; }
+.cat { border-top: 2px solid var(--ink); padding: 18px 0 32px; display: flex; flex-direction: column; }
+.cat h3 { font-size: 17px; letter-spacing: -.01em; margin: 0; }
+.cat-n { margin: 4px 0 12px; color: var(--muted); font-size: 14px; }
+.cat-n b { color: var(--signal); font-weight: 700; }
+.cat ul { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 4px; }
+.cat li a { color: var(--ink); text-decoration: none; font-size: 15px; }
+.cat li a:hover, .cat li a:focus-visible { color: var(--signal); text-decoration: underline; text-underline-offset: 3px; }
+.cat-more { margin-top: auto; font-size: 14px; font-weight: 600; color: var(--signal); text-decoration: none; margin-right: 12px; }
+.cat-more:hover, .cat-more:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
+.catalog-foot { margin: 8px 0 0; color: var(--muted); font-size: 15px; }
+.catalog-foot a { color: var(--signal); }
+@media (max-width: 1000px) { .cats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 900px) {
+  .catalog-head { grid-template-columns: 1fr; gap: 28px; align-items: start; }
+  .catalog-stats { justify-content: flex-start; flex-wrap: wrap; gap: 24px 32px; }
+}
+@media (max-width: 560px) { .cats { grid-template-columns: 1fr; } }
