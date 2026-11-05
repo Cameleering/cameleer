@@ -4,7 +4,7 @@
 
 **Apache Camel routes, rebuilt in Rust.** If you know [Apache Camel](https://camel.apache.org/), you already know Cameleer: the same YAML DSL, endpoint URIs, Enterprise Integration Patterns and Simple expressions, in a single native binary.
 
-- **10 ms** startup, about **10 MB** of memory, **2.5–8x** Apache Camel's throughput on Java 21 ([benchmarks](https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md))
+- **About 1 ms** startup on Linux, about **10 MB** of memory, **2.5–8x** Apache Camel's throughput on Java 21 ([benchmarks](https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md))
 - About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
 - Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, under 20 MB to download

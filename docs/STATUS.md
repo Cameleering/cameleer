@@ -19,7 +19,8 @@ was added is `7de6166`._
   per 10 minutes). `cameleer-bench` is `publish = false`. The account needs a verified email.
 - **Docker Hub:** `pmsudhi/cameleer`. CI pushes there when the `DOCKERHUB_TOKEN` secret is set;
   `.github/workflows/dockerhub-description.yml` syncs `docker/README.dockerhub.md` as the overview.
-- **Deployment guide:** `docs/DEPLOYMENT.md` (Docker, Compose, Kubernetes, Cloud Run). Images run
+- **Deployment guide:** `docs/DEPLOYMENT.md` (Docker, Compose, Kubernetes, Cloud Run, AWS Lambda,
+  smaller builds). Images run
   with `CAMEL_LOCAL_STATUS=false` (no status or log files) and work with a read-only root filesystem.
 
 - **0.3.0: `cameleer validate` and `cameleer schema`** (`crates/cameleer-main/src/validate.rs`,
@@ -64,6 +65,38 @@ Independent verification found and fixed about 30 interoperability bugs. They're
   - moto 5.2.5 (AWS), Azurite 3.37.0
   - fake-gcs-server 1.53.1, pstest (Pub/Sub over gRPC)
   - FerretDB 1.24.2 on PostgreSQL (MongoDB wire), kfake (Kafka wire)
+
+## FaaS and efficiency round (2026-11-05, branch `performance-improvement`)
+
+Research in `benchmarks/perf-research.md`, review with baselines in `benchmarks/perf-review.md`,
+results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
+`benchmarks/analysis.md`. Linux, `dist` builds, against `main`:
+
+- **Cold start:** HTTP route ready 3.27 → 1.17 ms (all components) and 0.69 ms (static musl,
+  `core`); timer route 1.52 → 0.66 ms (musl `core`); a run-once job exits in 1.4–2.2 ms instead
+  of 22 ms. Windows: HTTP route 12.1 → 10.3 ms, most of it process creation (a hello-world takes
+  4.7 ms there).
+- **Size:** 24.9 → 23.9 MB with every component; 11.7 MB with `--features cloud`, 7.3 MB with
+  `core` (cargo features per component family in `cameleer-main`; `FEATURES` build arg in the
+  Dockerfile).
+- **Memory:** HTTP route RSS 15.2 → 10.4 MB (all components) and 4.2 MB (musl `core`); private
+  memory 1.71 → 0.72 MB; idle HTTP threads 34 → 2.
+- **AWS Lambda:** built-in custom runtime (`cameleer_main::lambda`, `scripts/package-lambda.sh`),
+  checked end to end in AWS's `provided:al2023` image with the Runtime Interface Emulator (init
+  3.5–5.2 ms there). Not yet measured on the Lambda service itself (needs an AWS account).
+- **Throughput:** unchanged within noise after fixing two regressions a bisect found (log macro
+  level check, allocator bin size). Static musl is 3–22% slower, so the image stays glibc.
+- **Tests:** hermetic suite 2697 passed on Linux; on Windows 2696 passed and 1 failed once under
+  load (`cameleer-tls` `mutual_tls_rejects_missing_and_untrusted_certificates`, untouched by this
+  branch, 15/15 passes on rerun; see follow-ups). `cargo test -p cameleer-main
+  --no-default-features`: 24 passed.
+
+Follow-ups: core cargo features for template engines, jq and the core XPath subset; optional
+HTTP/2 (`cameleer-grpc`) in `cameleer-http`; `validate`/`schema` behind a feature; XQuery/XSLT
+per-evaluation threads with 128–256 MiB stacks; a shared timer thread per timer name; the status
+thread rewriting its file every 500 ms; `-z pack-relative-relocs` for the glibc image; measuring
+on the Lambda service across memory sizes and arm64; the TLS 1.3 alert-timing flake above (a
+reset can arrive before the alert on Windows under load).
 
 ## Pending / todo
 
@@ -164,8 +197,8 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect 2322 passing
-   on Windows. Linux runs the Unix-only variants instead.
+1. `git checkout main && cargo test --workspace`. Expect about 2697 passing
+   (2696 on Windows, which runs Windows variants of the Unix-only tests).
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
 4. Update this file, and `docs/INTEROP.md` or `docs/FEATURES.md` where relevant, as part of

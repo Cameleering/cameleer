@@ -3,7 +3,7 @@
 _2026-11-05, branch `performance-improvement` from `main` at `0b44c98` (v0.3.0). Baselines
 were measured on the unchanged `main` build before any change; the "after" columns are in
 [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md#faas-cold-start-and-size) and
-[`analysis.md`](analysis.md#fourth-round-faas-and-efficiency). The landscape and the techniques
+[`analysis.md`](analysis.md#fourth-round-what-changed). The landscape and the techniques
 behind the priorities are in [`perf-research.md`](perf-research.md)._
 
 ## How it was measured
@@ -118,10 +118,16 @@ Ranked by expected impact for FaaS (cold start, then image size and RSS, then th
 | 3 | HTTP consumer starts 32 threads eagerly | `ThreadPool` starts workers on demand (Java `ThreadPoolExecutor` core-thread semantics), `prestarted()` for the old behaviour | S / low | done |
 | 4 | Run-once jobs linger 20 ms | run loop waits on a condition variable woken when max messages is reached | S / low | done |
 | 5 | Startup cost is invisible | `camel.main.startupRecorder=logging` (Camel's `StartupStepRecorder`), `cameleer_core::startup` | S / none | done |
-| 6 | Thin LTO leaves speed and RSS on the table | fat LTO in `dist`: see the profile table in `docs/BENCHMARKS.md` | S / build time | measured, see BENCHMARKS |
-| 7 | glibc version too new for AL2023 | Lambda builds use static musl (`x86_64/aarch64-unknown-linux-musl`) | S / musl is slower for allocation-heavy routes | see BENCHMARKS |
+| 6 | Thin LTO leaves speed and RSS on the table | fat LTO in `dist` (splitagg +6–8%, peak RSS −25%, +8% size on the same code) | S / longer builds | done |
+| 7 | glibc version too new for AL2023 | Lambda zips use static musl (`scripts/package-lambda.sh`); starts fastest of all (0.31 ms `version`), 3–22% slower throughput, so the image stays glibc | S / low | done |
 | 8 | 0.5 MB of relocations processed at every start | `-z pack-relative-relocs` (DT_RELR): `.rela.dyn` 535 KB → 4 KB + 6 KB `.relr.dyn`, −0.5 MB; needs glibc ≥ 2.36 at run time (Debian 12 distroless yes, AL2023 no) | S / ties the image to glibc ≥ 2.36 | measured, not adopted (see BENCHMARKS) |
 | 9 | Configuration merge ~0.5 ms | relaxed-binding lookups scan and re-normalise every key per lookup; precompute | S | follow-up |
+| 11 | Log macros inline a `format!` at ~190 call sites and format disabled-level records | one out-of-line `log_args(format_args!)`, inline atomic level check | S / low | done: −3.1 MB (11%) |
+| 12 | A new allocator chunk is written block by block (every page resident) | bump-pointer carving | S / low | done: private memory 1.71 → 0.72 MB |
+| 13 | Pool workers never exit after a burst | 60 s keep-alive (Camel's default profile) | S / low | done |
+| 14 | Status files and a 500 ms status thread on serverless platforms | off on Lambda, Cloud Run/Knative, Azure Functions | S / none | done |
+| 15 | Template engines, jq, the core XPath subset are always in core (~0.7–1 MB of the 7.3 MB `core` build); `cameleer-http` pulls `cameleer-grpc` for HTTP/2; `validate`/`schema` in every binary | core cargo features; optional HTTP/2 | M | follow-up |
+| 16 | XQuery/XSLT start a thread with a 128–256 MiB stack per evaluation; one thread per timer; supervising controller thread never exits | run on the caller unless the stack is low (as `cameleer-script` does); shared timer thread per name; exit when idle | S–M | follow-up |
 | 10 | `opt-level = "s"` | −13% size (thin) but −10 to −14% throughput | S | rejected as default |
 
 Not pursued, with reasons (details in `perf-research.md`):

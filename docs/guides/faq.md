@@ -51,8 +51,10 @@ to 491 MB for Camel on the JVM (25 to 46 times less). See [BENCHMARKS.md](../BEN
 
 ### How long does it take to start?
 
-About 10 ms from process start to routes running, against 751 ms for Camel on the JVM (77 times
-faster), which makes scale-to-zero and serverless practical.
+On Linux about 1 ms from process start to routes running (0.7 ms for a static build with only
+the components a function needs). On Windows about 10 ms, most of which is creating the process;
+on the same Windows machine Camel on the JVM takes 751 ms. That makes scale-to-zero and serverless
+practical ([BENCHMARKS.md](../BENCHMARKS.md#faas-cold-start-and-size)).
 
 ### How big is the Docker image?
 

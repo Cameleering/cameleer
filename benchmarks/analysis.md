@@ -1,3 +1,118 @@
+### FaaS cold start and size
+
+Fourth round (branch `performance-improvement`, 2026-11-05): Cameleer as a function runtime.
+The throughput tables above are from the third round and still stand; this round's changes
+moved in-process throughput by no more than the noise (see below). The prioritised review is in
+[`benchmarks/perf-review.md`](../benchmarks/perf-review.md), the landscape in
+[`benchmarks/perf-research.md`](../benchmarks/perf-research.md).
+
+**Method.** `cameleer-bench coldstart` spawns the real `cameleer` CLI 40 times and records
+spawn → the `Routes startup` log line (ready), spawn → exit, and peak RSS; medians. Routes: a
+`timer` that fires once with `--max-messages 1` (a run-once job), and one `platform-http` route
+(killed when ready). Linux is WSL2 Ubuntu 24.04 on the Ryzen 5 5600X, page cache warm, `dist`
+builds, stripped. *Base* is `main` at `0b44c98` as shipped (thin LTO, glibc); the other rows are
+this branch (fat LTO). Timings are from the quietest run (branch at `5d496fe`); sizes at the
+final head (`a2c0639`, within 8 KB). A Rust hello-world takes 0.48 ms on the same setup.
+
+| build (Linux x86-64) | binary | `version` | timer: ready | timer: exit after 1 message | HTTP route: ready | RSS, HTTP route | of which private | threads, idle HTTP |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| base: `main`, all components, glibc | 24.9 MB | 0.82 ms | 1.52 ms | 21.9 ms | 3.27 ms | 15.2 MB | 1.71 MB | 34 |
+| all components, glibc | 23.9 MB | 0.71 ms | 1.14 ms | 2.15 ms | 1.17 ms | 10.4 MB | 0.72 MB | 2 |
+| `--features cloud`, glibc | 11.7 MB | 0.66 ms | 1.01 ms | 2.01 ms | 1.07 ms | 7.4 MB | 0.56 MB | 2 |
+| `--features core`, glibc | 7.3 MB | 0.64 ms | 0.94 ms | 1.95 ms | 0.97 ms | 6.2 MB | 0.49 MB | 2 |
+| all components, static musl | 24.0 MB | 0.40 ms | 0.96 ms | 1.78 ms | 0.92 ms | 7.4 MB | 0.75 MB | 2 |
+| `--features cloud`, static musl | 11.8 MB | 0.34 ms | 0.71 ms | 1.48 ms | 0.75 ms | 5.3 MB | 0.58 MB | 2 |
+| `--features core`, static musl | 7.5 MB | **0.31 ms** | **0.66 ms** | **1.41 ms** | **0.69 ms** | **4.2 MB** | 0.51 MB | 2 |
+
+So a function build starts its routes in **0.7 ms** (static musl, `core` or `cloud`), a run-once
+job is done in 1.4 ms instead of 22 ms, and an idle HTTP function holds 2 threads and about
+0.5 MB of private memory. RSS is mostly pages of the binary (shared and clean), which is why it
+follows the binary size. Static musl starts fastest because there is no dynamic loader and no
+relocation pass: `version` costs less than a dynamically linked hello-world.
+
+Windows 11, same machine, `dist` builds, medians of 30 (the machine was shared with other
+work and moves by ±1.5 ms; a hello-world takes 4.7 ms to spawn there):
+
+| build (Windows x86-64) | exe | HTTP route: ready | timer: exit after 1 message | peak working set, HTTP |
+|---|---:|---:|---:|---:|
+| base: `main` | 33.5 MB | 12.1 ms | 33.5 ms | 9.1 MB |
+| all components | 30.0 MB | 10.3 ms | 10.3 ms | 6.8 MB |
+| `--features core` | 8.7 MB | 9.4 ms | 10.6 ms | 6.4 MB |
+
+**AWS Lambda.** The `core` musl build as `bootstrap` in AWS's own `provided:al2023` image
+(`public.ecr.aws/lambda/provided:al2023@sha256:ca6c7b9e…`, which runs the Lambda Runtime
+Interface Emulator) handled a direct invoke, an HTTP API (payload 2.0) event through a
+`platform-http` route and a 404, all correctly. The emulator reported `INIT REPORT` of
+**3.5–5.2 ms** (5 cold starts, binary baked into the image; this includes the emulator's own
+process start) and warm invocations of **0.7–1.3 ms**. That is an emulator on a desktop, not the
+Lambda service; for comparison, the public `maxday/lambda-perf` dashboard (2026-11-05) shows a
+Rust hello-world on `provided.al2023` at 17.5 ms (arm64) / 19.5 ms (x86-64) init on real
+Lambda, GraalVM native Java at 131–154 ms and managed Java 21 at 184–244 ms
+([perf-research.md](../benchmarks/perf-research.md)). Measuring on the service needs an AWS
+account (`docs/STATUS.md`).
+
+**Throughput did not regress** (Linux, `cargo build --release` as in `scripts/bench.sh`,
+in-process scenarios, base vs branch interleaved). A first pass showed `direct` 5.6% slower; a
+bisect found two causes, both fixed: the log macros had stopped checking the level inline
+(debug statements sit on hot paths), and the allocator's per-class bins had doubled to 32 bytes.
+After the fixes, pinned to two cores, 6 interleaved runs each: `direct` base 4.77M msg/s (max
+5.24M), branch 4.81M (max 5.12M); `cbr` 2.13M / 2.14M; `seda`, `seda-inout` and `splitagg`
+within ±5% run to run, with `splitagg` 4–10% faster on the branch in every round. Static musl
+is slower for allocation-heavy work: −3% `direct`, −11% `cbr`, −14% `seda-inout`, −22%
+`splitagg` against glibc, so the container image stays glibc and musl is used where it is
+needed (Lambda).
+
+### Fourth round: what changed
+
+1. **Thread pools start workers on demand** (`cameleer_core::executor::ThreadPool`), like Java's
+   `ThreadPoolExecutor` core threads, and an idle worker exits after the keep-alive (60 s,
+   Camel's default thread pool profile allows core threads to time out). The HTTP server's
+   32-thread pool was the largest startup cost: 1.7 ms of 3.3 ms on Linux. `ThreadPool::prestarted`
+   keeps the old behaviour. Tests: `workers_start_on_demand_up_to_the_size`,
+   `idle_workers_exit_after_the_keep_alive_and_come_back_on_demand` (a job submitted while a
+   worker is leaving is never stranded).
+2. **Component families are cargo features of `cameleer-main`** (`amqp`, `amqp10`, `cloud`,
+   `dataformats`, `datastores`, `grpc`, `kafka-mqtt`, `protocols`, `saas`, `script`, `soap`,
+   `sql`, `ssh`, `xml`; default `full`, `core` = none). Core, the YAML/XML DSL, HTTP and TLS are
+   always in. A route that names a left-out component fails with the feature to enable
+   (`cameleer_core::component::set_unavailable_hint`). `tests/features.rs` checks the scheme
+   table against what each family registers; CI builds and tests the reduced build. The
+   Dockerfile takes `--build-arg FEATURES=...`.
+3. **Log macros format only enabled records** and call one out-of-line function
+   (`log::log_args` with `format_args!`) instead of an inlined `format!` at each of about 190
+   call sites; the level check is one relaxed atomic load. This alone made the full binary 3.1 MB
+   (11%) smaller.
+4. **Fat LTO** for `dist`: measured against thin LTO on the same code, `splitagg` +6–8%, peak RSS
+   −25%, binary +8% (before item 3). `opt-level = "s"` was 13% smaller but 10–19% slower, so it
+   is not used.
+5. **The run loop wakes when max messages is reached** instead of polling every 20 ms (a
+   condition variable; signals and file changes are still polled).
+6. **The allocator carves chunks lazily**: a new 4–16 KiB chunk was split into a free list,
+   which wrote into, and so made resident, every page of it; now blocks are taken from a bump
+   region as needed. Private memory of an HTTP route: 1.71 → 0.72 MB.
+7. **AWS Lambda custom runtime** built into `cameleer run` (`cameleer_main::lambda`): Runtime API
+   loop, `/init/error` for startup failures, `/error` with the exception kind, HTTP events served
+   in process by the `platform-http` routes (no socket is bound), `bootstrap` as the executable
+   name. Tests: `tests/lambda.rs` against an embedded Runtime API, plus the AL2023 emulator run
+   above (which found that binding port 8080 failed inside the sandbox). Packaging:
+   `scripts/package-lambda.sh` (static musl, because AL2023's glibc 2.34 is older than the
+   `GLIBC_2.35` `hypot` a current build links against).
+8. **Startup recorder** (`camel.main.startupRecorder=logging`, Camel's `StartupStepRecorder`):
+   per-step offsets and durations in the log.
+9. No local status files or status thread on Lambda, Cloud Run/Knative (`K_SERVICE`) and Azure
+   Functions custom handlers.
+
+Measured and not adopted: `-z pack-relative-relocs` cuts `.rela.dyn` from 535 KB to 10 KB
+(−0.5 MB) but needs glibc ≥ 2.36 at run time (fine for the Debian 12 image, not for AL2023);
+its timing was measured on a loaded machine, so it is left for a follow-up.
+
+Follow-ups (from the review): core cargo features for the template engines, jq and the core
+XPath subset (an estimated 0.7–1 MB of the 7.3 MB `core` build); `cameleer-http` without
+`cameleer-grpc` unless HTTP/2 is used; CLI-only code (`validate`, `schema`) behind a feature;
+XQuery/XSLT start a thread with a 128–256 MiB stack per evaluation; the local status thread
+rewrites its file every 500 ms even when nothing changed; a shared timer thread per timer name
+(Camel's `java.util.Timer` model).
+
 ### Where Cameleer stands against the 4x target
 
 Cameleer reaches **4x in `direct` (4.27x), `seda` (4.18x) and `seda-inout` (8.37x)** and is

@@ -57,7 +57,7 @@ COPY LICENSE NOTICE /usr/share/doc/cameleer/
 ENV CAMEL_LOCAL_STATUS=false \
     CAMEL_HOME=/tmp/cameleer
 LABEL org.opencontainers.image.title="Cameleer" \
-      org.opencontainers.image.description="Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, about 10 MB of memory." \
+      org.opencontainers.image.description="Apache Camel routes, rebuilt in Rust: one native binary, about 1 ms startup, about 10 MB of memory." \
       org.opencontainers.image.source="https://github.com/pmsudhi/cameleer" \
       org.opencontainers.image.url="https://pmsudhi.github.io/cameleer/" \
       org.opencontainers.image.documentation="https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md" \

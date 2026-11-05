@@ -20,7 +20,8 @@ know Cameleer.** The same endpoint URIs, Enterprise Integration Patterns, Simple
 routes, headers and error handling. About 230 components, languages and data formats, ported one
 by one and verified against the real systems.
 
-One native binary that starts in **10 ms**, runs in about **10 MB**, and routes messages
+One native binary that starts its routes in **about 1 ms on Linux** (0.7 ms as a static
+function build; 10 ms on Windows, most of it process creation), runs in about **10 MB**, and routes messages
 **2.5–8x faster** than Camel on the JVM
 ([all six benchmarks](docs/BENCHMARKS.md), including the three under 4x).
 
@@ -215,7 +216,8 @@ Assistants (`azure-openai`), and Google Vertex AI with Gemini plus Anthropic and
 Integrations sit idle, then get busy all at once: exactly the load serverless is priced for. A JVM
 fights that model: it takes most of a second to boot and hundreds of megabytes to idle.
 
-- **Scale to zero, wake up instantly.** A 10 ms start fits inside a request's latency budget.
+- **Scale to zero, wake up instantly.** A 1 ms start fits inside a request's latency budget, and
+  `cameleer` is its own [AWS Lambda runtime](docs/DEPLOYMENT.md#aws-lambda).
 - **Pack tens of services onto one node.** At about 10 MB each, Cameleer fits on edge gateways
   and small devices that can't host a JVM.
 - **One executable, nothing to install.** No JRE to patch and no `-Xmx` to tune. `cameleer export`
