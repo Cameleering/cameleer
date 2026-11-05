@@ -6,14 +6,18 @@
 [![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)
 [![Apache Camel compatible](https://img.shields.io/badge/follows-Apache%20Camel%204.x-d4523f.svg)](https://camel.apache.org/)
 
-### Camel's integration model, rebuilt in Rust. If you know Apache Camel, you already know Cameleer.
+### The integration layer for AI agents.
 
-The same endpoint URIs. The same Enterprise Integration Patterns. The same Simple expressions, the
-same YAML routes, the same headers and the same error handling. About 230 components, languages and
-data formats, ported one by one and verified against the real systems.
+Cameleer feeds events to models, routes on their answers, and turns agent tool calls into
+reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.
 
-**But rebuilt for the agent era:** a single native binary that starts in **10 ms**, runs in about
-**10 MB**, and routes messages **2.5–8x faster** than Camel on the JVM
+It is Apache Camel's integration model, rebuilt in Rust: **if you know Apache Camel, you already
+know Cameleer.** The same endpoint URIs, Enterprise Integration Patterns, Simple expressions, YAML
+routes, headers and error handling. About 230 components, languages and data formats, ported one
+by one and verified against the real systems.
+
+One native binary that starts in **10 ms**, runs in about **10 MB**, and routes messages
+**2.5–8x faster** than Camel on the JVM
 ([all six benchmarks](docs/BENCHMARKS.md), including the three under 4x).
 
 [Website](https://pmsudhi.github.io/cameleer/) · [Docs](https://pmsudhi.github.io/cameleer/docs/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
