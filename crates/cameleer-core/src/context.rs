@@ -837,10 +837,41 @@ impl CamelContext {
         if let Some(e) = self.inner.endpoints.read().unwrap().get(&key) {
             return Ok(e.clone());
         }
+        let endpoint = self.create_endpoint_unstarted(&parsed, &key)?;
+        if endpoint.is_singleton() {
+            let mut eps = self.inner.endpoints.write().unwrap();
+            if let Some(existing) = eps.get(&key) {
+                return Ok(existing.clone());
+            }
+            endpoint.start()?;
+            eps.insert(key, endpoint.clone());
+        } else {
+            endpoint.start()?;
+        }
+        Ok(endpoint)
+    }
+
+    /// Check that an endpoint URI resolves, exactly as [`get_endpoint`](Self::get_endpoint)
+    /// would (unknown scheme, unknown or invalid options fail), without starting the endpoint
+    /// or caching it. Used by `cameleer validate`: nothing is started and no connection is
+    /// opened.
+    pub fn check_endpoint(&self, uri: &str) -> Result<()> {
+        let resolved = self.resolve_placeholders(uri.trim())?;
+        let parsed = EndpointUri::parse(&resolved)?;
+        let key = parsed.normalized();
+        if self.inner.endpoints.read().unwrap().contains_key(&key) {
+            return Ok(());
+        }
+        self.create_endpoint_unstarted(&parsed, &key).map(|_| ())
+    }
+
+    /// Create an endpoint with its component and reject unknown parameters (not started,
+    /// not cached).
+    fn create_endpoint_unstarted(&self, parsed: &EndpointUri, key: &str) -> Result<Arc<dyn Endpoint>> {
         // Like Camel, endpoints are created with (and report) the normalized uri:
         // `mock:result` -> `mock://result`, parameters sorted.
         let component = self.get_component(&parsed.scheme).ok_or_else(|| {
-            CamelError::resolve_endpoint_failed(&key, format!("No component found with scheme: {}", parsed.scheme))
+            CamelError::resolve_endpoint_failed(key, format!("No component found with scheme: {}", parsed.scheme))
         })?;
         let mut params = Parameters::new(parsed.params.clone());
         // component-level options (`camel.component.<scheme>.<option>` properties or
@@ -856,12 +887,12 @@ impl CamelContext {
             }
         }
         let endpoint = component
-            .create_endpoint(self, &key, &parsed.path, &mut params)
+            .create_endpoint(self, key, &parsed.path, &mut params)
             .map_err(|e| {
                 if e.kind == kinds::RESOLVE_ENDPOINT_FAILED {
                     e
                 } else {
-                    CamelError::resolve_endpoint_failed(&key, &e.message).with_cause(e)
+                    CamelError::resolve_endpoint_failed(key, &e.message).with_cause(e)
                 }
             })?;
         for k in injected {
@@ -870,23 +901,13 @@ impl CamelContext {
         if !params.is_empty() && !component.lenient_properties() {
             let unknown: Vec<String> = params.keys().cloned().collect();
             return Err(CamelError::resolve_endpoint_failed(
-                &key,
+                key,
                 format!(
                     "There are {} parameters that couldn't be set on the endpoint. Check the uri if the parameters are spelt correctly and that they are properties of the endpoint. Unknown parameters=[{}]",
                     unknown.len(),
                     unknown.join(", ")
                 ),
             ));
-        }
-        if endpoint.is_singleton() {
-            let mut eps = self.inner.endpoints.write().unwrap();
-            if let Some(existing) = eps.get(&key) {
-                return Ok(existing.clone());
-            }
-            endpoint.start()?;
-            eps.insert(key, endpoint.clone());
-        } else {
-            endpoint.start()?;
         }
         Ok(endpoint)
     }
@@ -1548,6 +1569,23 @@ impl Drop for ContextInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn check_endpoint_validates_without_caching() {
+        let ctx = CamelContext::new();
+        ctx.check_endpoint("timer:t?period=10").unwrap();
+        assert!(ctx.endpoint_uris().is_empty(), "check_endpoint must not cache: {:?}", ctx.endpoint_uris());
+        let e = ctx.check_endpoint("timer:t?perod=10").unwrap_err();
+        assert_eq!(e.kind, kinds::RESOLVE_ENDPOINT_FAILED);
+        assert!(e.message.contains("Unknown parameters=[perod]"), "{}", e.message);
+        let e = ctx.check_endpoint("nosuch:x").unwrap_err();
+        assert!(e.message.contains("No component found with scheme: nosuch"), "{}", e.message);
+        // get_endpoint is unchanged: creates and caches
+        ctx.get_endpoint("timer:t?period=10").unwrap();
+        assert_eq!(ctx.endpoint_uris().len(), 1);
+        ctx.check_endpoint("timer:t?period=10").unwrap();
+        assert!(ctx.get_endpoint("timer:t?perod=10").is_err());
+    }
 
     #[test]
     fn placeholders() {

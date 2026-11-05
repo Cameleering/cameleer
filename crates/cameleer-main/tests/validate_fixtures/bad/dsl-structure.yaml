@@ -1,0 +1,45 @@
+# Every kind of dsl-structure error (one per route).
+- route:
+    id: unknown-step
+    from:
+      uri: timer:a
+      steps:
+        - setHeadr:
+            name: x
+            constant: y
+- route:
+    id: unknown-key
+    from:
+      uri: timer:b
+      steps:
+        - setHeader:
+            nam: x
+            constant: y
+- route:
+    id: missing-uri
+    from:
+      steps:
+        - log: hi
+- route:
+    id: wrong-place
+    from:
+      uri: timer:c
+      steps:
+        - when:
+            simple: "${body} != null"
+- route:
+    id: step-as-key
+    from:
+      uri: timer:d
+      to: mock:d
+- route:
+    id: missing-expression
+    from:
+      uri: timer:e
+      steps:
+        - filter:
+            steps:
+              - to: mock:e
+- rout:
+    from:
+      uri: timer:f

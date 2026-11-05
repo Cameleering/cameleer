@@ -10,11 +10,6 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
-    match cameleer_main::cli::run(&args, &mut out) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            ExitCode::FAILURE
-        }
-    }
+    let code = cameleer_main::cli::run_status(&args, &mut out, &mut std::io::stderr());
+    ExitCode::from(code as u8)
 }

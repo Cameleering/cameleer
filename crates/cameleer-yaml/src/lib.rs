@@ -7,6 +7,8 @@
 //! - [`dsl`]: the Camel YAML DSL loader ([`load_routes`], [`add_routes_from_yaml`],
 //!   [`add_routes_from_file`]) built around an extensible [`StepRegistry`].
 //! - [`xml`]: a minimal XML parser and the Camel XML DSL loader, reusing the YAML step handlers.
+//! - [`model`]: the shape of the YAML DSL (steps, keys, expressions, endpoints) as data,
+//!   used by `cameleer validate` and `cameleer schema`.
 //! - [`kamelet`]: Kamelets ([`add_kamelet`], [`load_kamelets_from_dir`], built-in catalog),
 //!   the `kamelet:` component ([`register_kamelet_component`]) and Pipes / KameletBindings.
 //!
@@ -27,6 +29,7 @@
 
 pub mod dsl;
 pub mod kamelet;
+pub mod model;
 pub mod xml;
 pub mod yaml;
 

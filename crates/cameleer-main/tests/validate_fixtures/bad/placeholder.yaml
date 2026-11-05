@@ -1,0 +1,9 @@
+- route:
+    id: placeholders
+    from:
+      uri: "timer:{{timer.name}}"
+      parameters:
+        period: "{{env:PERIOD}}"
+      steps:
+        - to: "{{target}}"
+        - to: "mock:{{name:default}}"

@@ -1,0 +1,20 @@
+- route:
+    id: expressions
+    from:
+      uri: timer:x
+      steps:
+        - setBody:
+            simple: "${body"
+        - setHeader:
+            name: a
+            jsonpath: "$.items[?(@.price >"
+        - filter:
+            xpath: "//order[@id="
+            steps:
+              - to: mock:x
+        - setHeader:
+            name: b
+            jq: ".items | map("
+        - setHeader:
+            name: ok
+            simple: "${header.a} == 'x'"

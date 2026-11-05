@@ -20,6 +20,10 @@
 //! camel log [name] [--follow] [--tail N]
 //! camel trace [name] [--disable]
 //! camel catalog [components|languages|kamelets]
+//! camel validate <file-or-dir>... [--format text|json] [--strict] [--properties FILE] [--prop k=v]
+//!                                               check route files without running them
+//!                                               (exit 0 valid, 1 errors, 2 usage error)
+//! camel schema                                  JSON Schema of the YAML DSL
 //! camel version | help
 //! ```
 //!
@@ -53,6 +57,8 @@ pub fn usage() -> &'static str {
   camel log [name] [--follow] [--tail N]
   camel trace [name] [--disable]
   camel catalog [components|languages|kamelets]
+  camel validate <file-or-dir>... [--format text|json] [--strict] [--properties FILE] [--prop key=value]
+  camel schema
   camel version
   camel help"
 }
@@ -75,7 +81,34 @@ pub fn run(args: &[String], out: &mut dyn Write) -> CliResult {
         "cmd" => cmd_action(rest, out),
         "log" => log(rest, out),
         "trace" => trace(rest, out),
+        "validate" => match validate_cmd(rest, out)? {
+            0 => Ok(()),
+            _ => Err("validation failed".into()),
+        },
+        "schema" => schema_cmd(rest, out),
         other => Err(format!("Unknown command: {}\n{}", other, usage())),
+    }
+}
+
+/// Run a command and return the process exit code, writing errors to `err`: 0 success, 1
+/// failure (for `validate`: errors found, or warnings with `--strict`), 2 usage error of
+/// `validate` (unknown option, missing or unknown path, bad `--prop`).
+pub fn run_status(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    if args.first().map(|s| s.as_str()) == Some("validate") {
+        return match validate_cmd(&args[1..], out) {
+            Ok(code) => code,
+            Err(e) => {
+                let _ = writeln!(err, "Error: {}", e);
+                2
+            }
+        };
+    }
+    match run(args, out) {
+        Ok(()) => 0,
+        Err(e) => {
+            let _ = writeln!(err, "Error: {}", e);
+            1
+        }
     }
 }
 
@@ -144,6 +177,48 @@ fn catalog(args: &[String], out: &mut dyn Write) -> CliResult {
         w(out, &i)?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// validate / schema
+// ---------------------------------------------------------------------------
+
+/// `camel validate`: returns the exit code (0 valid, 1 invalid); `Err` is a usage error.
+fn validate_cmd(args: &[String], out: &mut dyn Write) -> Result<i32, String> {
+    let a = Args::parse(args, &["strict"])?;
+    a.check(&["format", "strict", "properties", "prop"])?;
+    if a.positional.is_empty() {
+        return Err(format!("camel validate requires at least one file or directory\n{}", usage()));
+    }
+    let format = a.get("format").unwrap_or("text");
+    if format != "text" && format != "json" {
+        return Err(format!("Unknown format '{}' (text, json)", format));
+    }
+    // like `camel run`: --properties files, else application.* of the current directory
+    let mut props = std::collections::BTreeMap::new();
+    let files: Vec<PathBuf> = match a.all("properties") {
+        f if f.is_empty() => crate::config::application_files(Path::new(".")),
+        f => f.into_iter().map(PathBuf::from).collect(),
+    };
+    for f in files {
+        let (base, _) = crate::config::load_file(&f).map_err(|e| format!("Cannot load properties {}: {}", f.display(), e.message))?;
+        props.extend(base);
+    }
+    for kv in a.all("prop") {
+        let (k, v) = kv.split_once('=').ok_or_else(|| format!("--prop expects key=value, got {}", kv))?;
+        props.insert(k.to_string(), v.to_string());
+    }
+    let report = crate::validate::validate_paths(&a.positional, props)?;
+    let strict = a.flag("strict");
+    let text = if format == "json" { report.to_json(strict) + "\n" } else { report.to_text(strict) };
+    out.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(report.exit_code(strict))
+}
+
+fn schema_cmd(args: &[String], out: &mut dyn Write) -> CliResult {
+    let a = Args::parse(args, &[])?;
+    a.check(&[])?;
+    out.write_all(crate::schema::json_schema().as_bytes()).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------
