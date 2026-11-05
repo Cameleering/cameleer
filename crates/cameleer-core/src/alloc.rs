@@ -75,13 +75,26 @@ struct Node {
 struct Bin {
     head: *mut Node,
     len: u32,
-    /// The not yet used part of the last carved chunk: blocks are taken from `bump` up to
-    /// `end` only when the free list is empty, so untouched blocks stay untouched pages.
-    bump: *mut u8,
+}
+
+const EMPTY: Bin = Bin { head: null_mut(), len: 0 };
+
+/// The not yet used part of the last chunk carved for a class: blocks are taken from `ptr` up
+/// to `end` only when the free list is empty, so untouched blocks stay untouched pages. Kept
+/// apart from the bins, which the fast path reads, so those stay 16 bytes each.
+#[derive(Clone, Copy)]
+struct Bump {
+    ptr: *mut u8,
     end: *mut u8,
 }
 
-const EMPTY: Bin = Bin { head: null_mut(), len: 0, bump: null_mut(), end: null_mut() };
+const NO_BUMP: Bump = Bump { ptr: null_mut(), end: null_mut() };
+
+/// A thread's free lists and bump regions.
+struct Bins {
+    bins: [Bin; CLASSES],
+    bumps: [Bump; CLASSES],
+}
 
 impl Bin {
     unsafe fn push(&mut self, p: *mut u8) {
@@ -154,7 +167,7 @@ const DEAD: u8 = 3;
 /// A thread's state and bins, in one thread-local so the fast path reads TLS once.
 struct Cache {
     state: Cell<u8>,
-    bins: UnsafeCell<[Bin; CLASSES]>,
+    bins: UnsafeCell<Bins>,
 }
 
 /// Flushes the thread's cache to the shared lists when the thread exits.
@@ -165,16 +178,16 @@ impl Drop for Guard {
         // SAFETY: the state is DEAD, so this thread no longer touches its cache.
         let _ = CACHE.try_with(|c| unsafe {
             c.state.set(DEAD);
-            let bins = &mut *c.bins.get();
-            for (class, bin) in bins.iter_mut().enumerate() {
-                give_back(class, bin);
+            let t = &mut *c.bins.get();
+            for class in 0..CLASSES {
+                give_back(class, &mut t.bins[class], &mut t.bumps[class]);
             }
         });
     }
 }
 
 thread_local! {
-    static CACHE: Cache = const { Cache { state: Cell::new(UNINIT), bins: UnsafeCell::new([EMPTY; CLASSES]) } };
+    static CACHE: Cache = const { Cache { state: Cell::new(UNINIT), bins: UnsafeCell::new(Bins { bins: [EMPTY; CLASSES], bumps: [NO_BUMP; CLASSES] }) } };
     static GUARD: Guard = const { Guard };
 }
 
@@ -200,23 +213,24 @@ const fn class_size(class: usize) -> usize {
 
 /// Move all blocks of a thread bin, including the unused rest of its chunk, to the shared
 /// stack of the class.
-unsafe fn give_back(class: usize, bin: &mut Bin) {
+unsafe fn give_back(class: usize, bin: &mut Bin, bump: &mut Bump) {
     let size = class_size(class);
-    while bin.bump < bin.end {
-        let p = bin.bump;
-        bin.bump = p.add(size);
+    while bump.ptr < bump.end {
+        let p = bump.ptr;
+        bump.ptr = p.add(size);
         bin.push(p);
     }
     push_batch(class, bin.head, bin.len);
     *bin = EMPTY;
+    *bump = NO_BUMP;
 }
 
-/// Take a block from the unused rest of the bin's chunk.
+/// Take a block from the unused rest of the class's last chunk.
 #[inline]
-unsafe fn take_bump(class: usize, bin: &mut Bin) -> *mut u8 {
-    if bin.bump < bin.end {
-        let p = bin.bump;
-        bin.bump = p.add(class_size(class));
+unsafe fn take_bump(class: usize, bump: &mut Bump) -> *mut u8 {
+    if bump.ptr < bump.end {
+        let p = bump.ptr;
+        bump.ptr = p.add(class_size(class));
         p
     } else {
         null_mut()
@@ -242,8 +256,8 @@ unsafe fn give_back_cold(class: usize, bin: &mut Bin, keep: u32) {
 
 /// Fill a thread bin from the shared list, carving a new chunk if that is empty.
 /// Returns one block for the caller.
-unsafe fn refill(class: usize, bin: &mut Bin) -> *mut u8 {
-    let p = take_bump(class, bin);
+unsafe fn refill(class: usize, bin: &mut Bin, bump: &mut Bump) -> *mut u8 {
+    let p = take_bump(class, bump);
     if !p.is_null() {
         return p;
     }
@@ -256,12 +270,12 @@ unsafe fn refill(class: usize, bin: &mut Bin) -> *mut u8 {
     if !p.is_null() {
         return p;
     }
-    carve(class, bin)
+    carve(class, bump)
 }
 
 /// Carve a chunk of blocks of a class: the first is returned, the rest become the bin's bump
 /// region (handed out one by one, see [`take_bump`]).
-unsafe fn carve(class: usize, bin: &mut Bin) -> *mut u8 {
+unsafe fn carve(class: usize, bump: &mut Bump) -> *mut u8 {
     let size = class_size(class);
     let count = (CHUNK / size).clamp(1, batch(class) as usize);
     let chunk = System.alloc(Layout::from_size_align_unchecked(size * count, GRANULE));
@@ -269,15 +283,15 @@ unsafe fn carve(class: usize, bin: &mut Bin) -> *mut u8 {
         return chunk;
     }
     // a previous region is empty here (refill takes from it first)
-    bin.bump = chunk.add(size);
-    bin.end = chunk.add(size * count);
+    bump.ptr = chunk.add(size);
+    bump.end = chunk.add(size * count);
     chunk
 }
 
 /// Run `f` with this thread's cache, or return `None` while the thread-local storage is
 /// being set up or torn down (the caller then uses the shared lists).
 #[inline]
-fn with_cache<R>(f: impl FnOnce(&mut [Bin; CLASSES]) -> R) -> Option<R> {
+fn with_cache<R>(f: impl FnOnce(&mut Bins) -> R) -> Option<R> {
     CACHE
         .try_with(|c| {
             match c.state.get() {
@@ -306,20 +320,19 @@ unsafe impl GlobalAlloc for CamelAllocator {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let Some(class) = class_of(&layout) else { return System.alloc(layout) };
-        match with_cache(|bins| {
-            let bin = &mut bins[class];
-            let p = bin.pop();
+        match with_cache(|t| {
+            let p = t.bins[class].pop();
             if p.is_null() {
-                refill(class, bin)
+                refill(class, &mut t.bins[class], &mut t.bumps[class])
             } else {
                 p
             }
         }) {
             Some(p) => p,
             None => {
-                let mut tmp = EMPTY;
-                let p = refill(class, &mut tmp);
-                give_back(class, &mut tmp);
+                let (mut tmp, mut bump) = (EMPTY, NO_BUMP);
+                let p = refill(class, &mut tmp, &mut bump);
+                give_back(class, &mut tmp, &mut bump);
                 p
             }
         }
@@ -328,8 +341,8 @@ unsafe impl GlobalAlloc for CamelAllocator {
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let Some(class) = class_of(&layout) else { return System.dealloc(ptr, layout) };
-        let cached = with_cache(|bins| {
-            let bin = &mut bins[class];
+        let cached = with_cache(|t| {
+            let bin = &mut t.bins[class];
             bin.push(ptr);
             if bin.len >= bin_cap(class) {
                 give_back_cold(class, bin, batch(class));
@@ -338,7 +351,7 @@ unsafe impl GlobalAlloc for CamelAllocator {
         if cached.is_none() {
             let mut tmp = EMPTY;
             tmp.push(ptr);
-            give_back(class, &mut tmp);
+            give_back(class, &mut tmp, &mut { NO_BUMP });
         }
     }
 
@@ -420,7 +433,7 @@ mod tests {
             let l = layout(1000, 8);
             let class = class_of(&l).unwrap();
             let p = unsafe { a.alloc(l) };
-            let (len, bump, end) = with_cache(|bins| (bins[class].len, bins[class].bump, bins[class].end)).unwrap();
+            let (len, bump, end) = with_cache(|t| (t.bins[class].len, t.bumps[class].ptr, t.bumps[class].end)).unwrap();
             assert_eq!(len, 0, "no free-list entries were written into the chunk");
             assert_eq!(bump, unsafe { p.add(class_size(class)) });
             assert!(end > bump);
