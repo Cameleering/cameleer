@@ -77,21 +77,22 @@ one_side() { # one_side <phase> <side> <node-pub> <node-priv> <node-name>
   case " $SIDES " in *" $side "*) ;; *) return 0 ;; esac
   local env="BENCH_KAFKA=$L_PRIV:9092 BENCH_PG=$L_PRIV BENCH_RUN=$phase$side$(date +%s)"
   local tag="phase=$phase node=$node"
+  # a failing step is recorded as a FAILED line and the run goes on with the next one
   log "phase $phase: $side on $node, in-process scenarios"
-  on "$pub" "$env /root/cameleer/scripts/cloud-bench/bench-node.sh inproc $side $WARMUP $ITER $ITERS" 2>>"$OUT/run.log" \
-    | sed "s/^\([A-Z]*\) /\1 $tag /" | tee -a "$results"
+  { on "$pub" "$env /root/cameleer/scripts/cloud-bench/bench-node.sh inproc $side $WARMUP $ITER $ITERS" 2>>"$OUT/run.log" \
+    || echo "FAILED side=$side scenario=inproc"; } | sed "s/^\([A-Z]*\) /\1 $tag /" | tee -a "$results"
   log "phase $phase: $side on $node, kafka-stream"
-  on "$pub" "$env /root/cameleer/scripts/cloud-bench/bench-node.sh stream $side $WARMUP $ITER $ITERS" 2>>"$OUT/run.log" \
-    | sed "s/^\([A-Z]*\) /\1 $tag /" | tee -a "$results"
+  { on "$pub" "$env /root/cameleer/scripts/cloud-bench/bench-node.sh stream $side $WARMUP $ITER $ITERS" 2>>"$OUT/run.log" \
+    || echo "FAILED side=$side scenario=kafka-stream"; } | sed "s/^\([A-Z]*\) /\1 $tag /" | tee -a "$results"
   local secs=$((WARMUP + ITER * ITERS + 10))
   for sc in $SERVED; do
     log "phase $phase: $side on $node, $sc over the network ($CONNS connections)"
     [ "$sc" = http-sql ] && on "$L_PUB" "PGPASSWORD=camelpw psql -q -h 127.0.0.1 -U camel -d bench -c 'TRUNCATE orders'"
-    on "$pub" "$env /root/cameleer/scripts/cloud-bench/bench-node.sh serve $side $sc $PORT $secs" 2>>"$OUT/run.log" \
-      | sed "s/^\([A-Z]*\) /\1 $tag scenario=$sc /" | tee -a "$results"
-    on "$L_PUB" "/root/cameleer/target/release/cameleer-bench loadgen-remote $priv $PORT $sc $CONNS $WARMUP $ITER $ITERS" 2>>"$OUT/run.log" \
-      | sed "s/^RESULT /RESULT $tag side=$side /" | tee -a "$results"
-    on "$pub" "/root/cameleer/scripts/cloud-bench/bench-node.sh served-wait" | sed "s/^PROC /PROC $tag /" | tee -a "$results"
+    { on "$pub" "$env /root/cameleer/scripts/cloud-bench/bench-node.sh serve $side $sc $PORT $secs" 2>>"$OUT/run.log" \
+      || echo "FAILED side=$side"; } | sed "s/^\([A-Z]*\) /\1 $tag scenario=$sc /" | tee -a "$results"
+    { on "$L_PUB" "/root/cameleer/target/release/cameleer-bench loadgen-remote $priv $PORT $sc $CONNS $WARMUP $ITER $ITERS" 2>>"$OUT/run.log" \
+      || echo "FAILED scenario=$sc"; } | sed -e "s/^RESULT /RESULT $tag side=$side /" -e "s/^FAILED /FAILED $tag side=$side /" | tee -a "$results"
+    { on "$pub" "/root/cameleer/scripts/cloud-bench/bench-node.sh served-wait" || true; } | sed "s/^PROC /PROC $tag /" | tee -a "$results"
     if [ "$sc" = http-sql ]; then
       on "$L_PUB" "PGPASSWORD=camelpw psql -At -h 127.0.0.1 -U camel -d bench -c \"SELECT 'ROWS $tag side=$side scenario=http-sql rows=' || count(*) FROM orders\"" | tee -a "$results"
     fi

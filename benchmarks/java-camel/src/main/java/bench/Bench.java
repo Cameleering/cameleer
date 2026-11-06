@@ -51,10 +51,22 @@ public final class Bench {
         return v == null || v.isEmpty() ? d : v;
     }
 
-    static final String KAFKA = env("BENCH_KAFKA", "127.0.0.1:9092");
-    static final String PG = env("BENCH_PG", "127.0.0.1");
-    static final String SIDE = env("BENCH_SIDE", "java");
-    static final String RUN = env("BENCH_RUN", "0");
+    // read when used, not in a static initializer: a native image runs those at build time
+    static String kafka() {
+        return env("BENCH_KAFKA", "127.0.0.1:9092");
+    }
+
+    static String pg() {
+        return env("BENCH_PG", "127.0.0.1");
+    }
+
+    static String side() {
+        return env("BENCH_SIDE", "java");
+    }
+
+    static String run() {
+        return env("BENCH_RUN", "0");
+    }
 
     public static void main(String[] args) throws Exception {
         String cmd = args.length > 0 ? args[0] : "";
@@ -174,7 +186,7 @@ public final class Bench {
     /** The PostgreSQL pool of http-sql on the JVM (Camel Quarkus binds its own Agroal pool as "ds"). */
     static void bindHikari(CamelContext ctx) {
         HikariConfig cfg = new HikariConfig();
-        cfg.setJdbcUrl("jdbc:postgresql://" + PG + ":5432/bench");
+        cfg.setJdbcUrl("jdbc:postgresql://" + pg() + ":5432/bench");
         cfg.setUsername("camel");
         cfg.setPassword("camelpw");
         cfg.setMaximumPoolSize(PG_POOL);
@@ -204,7 +216,7 @@ public final class Bench {
                             .convertBodyTo(String.class)
                             .setHeader("orderId", jsonpath("$.orderId"))
                             .setHeader("kafka.KEY", simple("${header.orderId}"))
-                            .to("kafka:orders-" + SIDE + "?brokers=" + KAFKA)
+                            .to("kafka:orders-" + side() + "?brokers=" + kafka())
                             .setHeader("Content-Type", constant("application/json"))
                             .setBody(constant("{\"status\":\"queued\"}"));
                     case "http-sql" -> from(base + "/persist")
@@ -212,7 +224,7 @@ public final class Bench {
                             .convertBodyTo(String.class)
                             .setHeader("orderId", jsonpath("$.orderId"))
                             .setHeader("customer", jsonpath("$.customer"))
-                            .to("sql:insert into orders (order_id, customer, side) values (:#orderId, :#customer, '" + SIDE
+                            .to("sql:insert into orders (order_id, customer, side) values (:#orderId, :#customer, '" + side()
                                     + "')?dataSource=#ds")
                             .setHeader("Content-Type", constant("application/json"))
                             .setBody(constant("{\"status\":\"stored\"}"));
@@ -227,7 +239,7 @@ public final class Bench {
         ctx.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {
-                from("kafka:stream-in?brokers=" + KAFKA + "&groupId=stream-" + SIDE + "-" + RUN
+                from("kafka:stream-in?brokers=" + kafka() + "&groupId=stream-" + side() + "-" + run()
                         + "&autoOffsetReset=earliest&consumersCount=" + STREAM_CONSUMERS)
                         .routeId("kafka-stream")
                         .convertBodyTo(String.class)
@@ -235,7 +247,7 @@ public final class Bench {
                         .setHeader("amount", jsonpath("$.amount"))
                         .filter(simple("${header.amount} > 10"))
                             .transform(simple("{\"orderId\":${header.orderId},\"amount\":${header.amount},\"checked\":true}"))
-                            .to("kafka:stream-out-" + SIDE + "?brokers=" + KAFKA)
+                            .to("kafka:stream-out-" + side() + "?brokers=" + kafka())
                             .process(counter(sink))
                         .end();
             }
