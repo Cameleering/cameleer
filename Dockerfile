@@ -16,11 +16,17 @@ FROM --platform=$BUILDPLATFORM rust:1.99.1-slim-bookworm@sha256:ed2c95ca377d6571
 ARG TARGETARCH
 ARG BUILDARCH
 # the target's standard library and, when cross-compiling, its linker and glibc (signed Debian
-# packages); in their own layer so source changes don't fetch them again
+# packages); in their own layer so source changes don't fetch them again.
+# amd64 links with -z pack-relative-relocs (DT_RELR): .rela.dyn 410 KB -> 4 KB plus a 5 KB
+# .relr.dyn, -0.4 MB binary and -0.5 MB peak RSS, start-up time unchanged (docs/BENCHMARKS.md).
+# It needs glibc >= 2.36 at run time (GLIBC_ABI_DT_RELR), which the Debian 12 runtime below has;
+# it is only for this image, never for the musl Lambda build or for older glibc. Not on arm64:
+# Debian 12's aarch64 GNU ld (2.40) ignores the option with a warning.
 RUN set -eu; \
     case "$TARGETARCH" in \
-      amd64) target=x86_64-unknown-linux-gnu; gnu=x86-64-linux-gnu; dev=amd64 ;; \
-      arm64) target=aarch64-unknown-linux-gnu; gnu=aarch64-linux-gnu; dev=arm64 ;; \
+      amd64) target=x86_64-unknown-linux-gnu; gnu=x86-64-linux-gnu; dev=amd64; \
+             relr="-C link-arg=-Wl,-z,pack-relative-relocs" ;; \
+      arm64) target=aarch64-unknown-linux-gnu; gnu=aarch64-linux-gnu; dev=arm64; relr= ;; \
       *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac; \
     rustup target add "$target"; \
@@ -31,7 +37,7 @@ RUN set -eu; \
       rm -rf /var/lib/apt/lists/*; \
       linker="$gnu-gcc"; \
     fi; \
-    echo "$target" > /target; echo "$linker" > /linker
+    echo "$target" > /target; echo "$linker" > /linker; echo "$relr" > /relr
 WORKDIR /src
 COPY . .
 # reproducible: no build paths in the binary (panic messages), timestamps from the commit
@@ -43,7 +49,7 @@ ARG FEATURES=
 RUN --mount=type=cache,target=/src/target,id=cameleer-target-$TARGETARCH \
     target=$(cat /target) \
  && export CARGO_TARGET_$(echo "$target" | tr 'a-z-' 'A-Z_')_LINKER=$(cat /linker) \
- && RUSTFLAGS="-C strip=symbols --remap-path-prefix=/src=. --remap-path-prefix=/usr/local/cargo=cargo" \
+ && RUSTFLAGS="-C strip=symbols $(cat /relr) --remap-path-prefix=/src=. --remap-path-prefix=/usr/local/cargo=cargo" \
     cargo build --profile dist --locked -p cameleer-main --bin cameleer --target "$target" \
       ${FEATURES:+--no-default-features --features "$FEATURES"} \
  && install -D "target/$target/dist/cameleer" /out/cameleer
