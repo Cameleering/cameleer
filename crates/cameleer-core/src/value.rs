@@ -250,20 +250,36 @@ impl Value {
 
 /// Escape a string for inclusion in JSON.
 pub fn json_escape(s: &str, out: &mut String) {
+    out.reserve(s.len() + 2);
     out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
+    // copy runs of bytes that need no escaping in one go; only `"`, `\` and control characters
+    // are escaped, and they are ASCII, so never part of a multi-byte UTF-8 sequence
+    let bytes = s.as_bytes();
+    let mut start = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        let esc: &str = match b {
+            b'"' => "\\\"",
+            b'\\' => "\\\\",
+            b'\n' => "\\n",
+            b'\r' => "\\r",
+            b'\t' => "\\t",
+            0x08 => "\\b",
+            0x0c => "\\f",
+            0..=0x1f => "",
+            _ => continue,
+        };
+        out.push_str(&s[start..i]);
+        if esc.is_empty() {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            out.push_str("\\u00");
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 15) as usize] as char);
+        } else {
+            out.push_str(esc);
         }
+        start = i + 1;
     }
+    out.push_str(&s[start..]);
     out.push('"');
 }
 

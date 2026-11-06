@@ -177,6 +177,8 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
                     });
                 } else if scenario == "http" {
                     let _ = cameleer_bench::loadgen::run(port, "/bench", 16, plan);
+                } else if scenario.starts_with("ai-") {
+                    let _ = cameleer_bench::ai::run(&c2, &scenario, plan);
                 } else {
                     let _ = scenarios::run(&c2, &sink, &scenario, plan);
                 }

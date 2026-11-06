@@ -318,11 +318,17 @@ pub struct ToolEntry {
     breaker: Mutex<Breaker>,
     calls: Mutex<HashMap<String, VecDeque<Instant>>>,
     cache: Mutex<HashMap<String, (Instant, ToolResult)>>,
+    /// Consecutive calls that finished in under a tenth of the timeout; from
+    /// [`INLINE_AFTER`] on, calls run on the caller's thread (see `execute`).
+    fast_calls: AtomicU64,
 }
+
+/// Fast calls in a row after which a tool's calls run on the caller's thread.
+const INLINE_AFTER: u64 = 8;
 
 impl ToolEntry {
     pub fn new(definition: ToolDefinition, policy: ToolPolicy, processor: Arc<dyn Processor>, ctx: &CamelContext) -> ToolEntry {
-        ToolEntry { definition, policy, processor, ctx: ctx.downgrade(), breaker: Mutex::default(), calls: Mutex::default(), cache: Mutex::default() }
+        ToolEntry { definition, policy, processor, ctx: ctx.downgrade(), breaker: Mutex::default(), calls: Mutex::default(), cache: Mutex::default(), fast_calls: AtomicU64::new(0) }
     }
 }
 
@@ -484,6 +490,8 @@ pub struct AiRegistry {
     listeners: Mutex<Vec<(u64, Listener)>>,
     seq: AtomicU64,
     ctx: WeakContext,
+    /// `camel.ai.disabled-tools`, read again only when the properties change.
+    disabled_prop: Mutex<(u64, Vec<String>)>,
 }
 
 static CREATE: Mutex<()> = Mutex::new(());
@@ -528,6 +536,7 @@ impl AiRegistry {
             sagas: Mutex::default(),
             listeners: Mutex::default(),
             seq: AtomicU64::new(0),
+            disabled_prop: Mutex::new((u64::MAX, Vec::new())),
             ctx: ctx.downgrade(),
         });
         ctx.registry().bind_arc(REGISTRY_BEAN, reg.clone());
@@ -815,7 +824,7 @@ impl AiRegistry {
         let def = &entry.definition;
         let policy = &entry.policy;
         // 1. kill switch
-        if self.is_disabled(&def.name) || property_lists(entry, "camel.ai.disabled-tools", &def.name) {
+        if self.is_disabled(&def.name) || self.disabled_by_property(entry, &def.name) {
             audit.decision = "disabled".into();
             return ToolResult::error(format!("Tool {} is disabled", def.name));
         }
@@ -1135,13 +1144,40 @@ impl AiRegistry {
             }
             return Exec::Done(r);
         }
+        // A tool whose recent calls all took under a tenth of its timeout runs on the caller's
+        // thread with a deadline on the exchange: no thread handoff, and the route still stops
+        // at its next step once the timeout has passed. A tool that is new, or got slow, runs
+        // on a worker, so the caller returns at the timeout even if a step blocks.
+        if entry.fast_calls.load(Ordering::Relaxed) >= INLINE_AFTER {
+            let started = Instant::now();
+            ex.set_deadline(started + timeout);
+            let r = run_route(entry, &mut ex);
+            let took = started.elapsed();
+            if let Some(id) = interaction_id {
+                self.interactions.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+            }
+            if took >= timeout || ex.is_cancelled() {
+                entry.fast_calls.store(0, Ordering::Relaxed);
+                if let Some(key) = idem_key {
+                    self.idem_finish(&key, &r, &entry.policy);
+                }
+                return Exec::TimedOut;
+            }
+            if took * 10 >= timeout {
+                entry.fast_calls.store(0, Ordering::Relaxed);
+            }
+            return Exec::Done(r);
+        }
         // run on a worker; the caller waits up to the timeout, then cancels
+        let started = Instant::now();
         let slot = Arc::new(Handoff { state: Mutex::new((None, false)), cv: Condvar::new() });
         let worker_slot = slot.clone();
         let worker_entry = entry.clone();
         let registry_ctx = self.ctx.clone();
         let worker_policy = entry.policy.clone();
-        let spawned = std::thread::Builder::new().name(format!("ai-tool-{}", entry.definition.name)).spawn(move || {
+        // a pooled worker: no thread start per call (workers are started on demand and exit
+        // after a minute idle); a call that outlives its timeout keeps its worker until done
+        let spawned = tool_pool().execute(move || {
             let r = run_route(&worker_entry, &mut ex);
             drop(ex);
             if let (Some(id), Some(reg)) = (interaction_id, registry_ctx.upgrade().and_then(|c| AiRegistry::of(&c).ok())) {
@@ -1160,19 +1196,25 @@ impl AiRegistry {
                 worker_slot.cv.notify_all();
             }
         });
-        if let Err(e) = spawned {
-            return Exec::Done(ToolResult::error(format!("Cannot start the call: {}", e)));
+        if !spawned {
+            return Exec::Done(ToolResult::error("Cannot start the call: the tool worker pool is shut down"));
         }
         let deadline = Instant::now() + timeout;
         let mut st = slot.state.lock().unwrap_or_else(|p| p.into_inner());
         loop {
             if let Some(r) = st.0.take() {
+                if started.elapsed() * 10 < timeout {
+                    entry.fast_calls.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    entry.fast_calls.store(0, Ordering::Relaxed);
+                }
                 return Exec::Done(r);
             }
             let now = Instant::now();
             if now >= deadline {
                 st.1 = true;
                 cancel.store(true, Ordering::Relaxed);
+                entry.fast_calls.store(0, Ordering::Relaxed);
                 return Exec::TimedOut;
             }
             st = slot.cv.wait_timeout(st, deadline - now).unwrap_or_else(|p| p.into_inner()).0;
@@ -1478,6 +1520,12 @@ struct Handoff {
     cv: Condvar,
 }
 
+/// The workers tool calls run on (shared by every context; started on demand).
+fn tool_pool() -> &'static Arc<cameleer_core::executor::ThreadPool> {
+    static POOL: std::sync::OnceLock<Arc<cameleer_core::executor::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| cameleer_core::executor::ThreadPool::new("ai-tool", 4096))
+}
+
 fn run_route(entry: &ToolEntry, ex: &mut Exchange) -> ToolResult {
     let r = entry.processor.process(ex);
     if ex.is_cancelled() {
@@ -1613,13 +1661,19 @@ fn idempotency_key(def: &ToolDefinition, args: &ObjectMap, call: &ToolCall) -> S
     format!("args:{}", digest)
 }
 
-fn property_lists(entry: &ToolEntry, property: &str, name: &str) -> bool {
-    entry
-        .ctx
-        .upgrade()
-        .and_then(|c| c.properties().get(property))
-        .map(|v| v.split(',').any(|s| s.trim() == name))
-        .unwrap_or(false)
+impl AiRegistry {
+    /// Whether `camel.ai.disabled-tools` lists the tool (cached until a property changes).
+    fn disabled_by_property(&self, entry: &ToolEntry, name: &str) -> bool {
+        let Some(ctx) = entry.ctx.upgrade() else { return false };
+        let props = ctx.properties();
+        let generation = props.generation();
+        let mut cached = self.disabled_prop.lock().unwrap_or_else(|p| p.into_inner());
+        if cached.0 != generation {
+            let list = props.get("camel.ai.disabled-tools").map(|v| v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+            *cached = (generation, list);
+        }
+        cached.1.iter().any(|t| t == name)
+    }
 }
 
 fn prompt_message(v: &Value) -> Result<PromptMessage> {

@@ -784,6 +784,9 @@ pub struct Exchange {
     /// [`Exchange::should_continue`] is false and pipelines stop before their next step
     /// (set by callers that give up waiting, such as an `ai-tool` call that timed out).
     pub(crate) cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// With a cancellation flag: past this instant the exchange counts as cancelled (set by
+    /// [`Exchange::set_deadline`]), so a timeout needs no watchdog thread.
+    pub(crate) deadline: Option<std::time::Instant>,
 }
 
 impl std::fmt::Debug for Exchange {
@@ -817,6 +820,7 @@ impl Clone for Exchange {
             on_completions: Vec::new(),
             consumable: false,
             cancel: self.cancel.clone(),
+            deadline: self.deadline,
         }
     }
 }
@@ -843,6 +847,7 @@ impl Exchange {
             on_completions: Vec::new(),
             consumable: false,
             cancel: None,
+            deadline: None,
         }
     }
 
@@ -870,6 +875,7 @@ impl Exchange {
             on_completions: Vec::new(),
             consumable: false,
             cancel: self.cancel.clone(),
+            deadline: self.deadline,
         };
         c.properties.set(props::CORRELATION_ID, Value::from(&self.exchange_id));
         c
@@ -896,6 +902,7 @@ impl Exchange {
             on_completions: Vec::new(),
             consumable: false,
             cancel: self.cancel.clone(),
+            deadline: self.deadline,
         };
         c.properties.set(props::CORRELATION_ID, Value::from(&self.exchange_id));
         c
@@ -957,8 +964,21 @@ impl Exchange {
     pub fn cancel_token(&self) -> Option<&std::sync::Arc<std::sync::atomic::AtomicBool>> {
         self.cancel.as_ref()
     }
-    /// True once the attached cancellation flag was set.
+    /// Cancel the exchange (and its copies) once `deadline` has passed, checked before every
+    /// step like the cancellation flag; attaches a flag if there is none.
+    pub fn set_deadline(&mut self, deadline: std::time::Instant) {
+        if self.cancel.is_none() {
+            self.cancel = Some(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        }
+        self.deadline = Some(deadline);
+    }
+    /// True once the attached cancellation flag was set, or the deadline has passed.
     pub fn is_cancelled(&self) -> bool {
+        if let (Some(d), Some(flag)) = (self.deadline, &self.cancel) {
+            if !flag.load(std::sync::atomic::Ordering::Relaxed) && std::time::Instant::now() >= d {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
         match &self.cancel {
             Some(c) => c.load(std::sync::atomic::Ordering::Relaxed),
             None => false,

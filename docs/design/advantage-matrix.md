@@ -35,7 +35,7 @@ otherwise; rows marked *(droplet run 2)* are filled from the run in `target/clou
 | feature / use case | vs Apache Camel 4.23 (`camel-ai-tool`, `camel-mcp-server`) | vs by hand (MCP SDKs, agent frameworks) | verdict |
 |---|---|---|---|
 | Tool envelope (schema checks, deduplication, approvals, rate limits, breakers, timeouts that cancel, compensation, hash-chained audit, pinning, kill switch, redaction) | Camel: required-argument checks, advisory hints, timeouts that don't stop the route, denial events; no deduplication, approvals, rate limits, compensation or audit log | each guarantee is code the author writes and tests; the SDKs give none of them | significant / significant |
-| Envelope cost | | *(droplet run 2: `ai-tool` vs `ai-tool-direct`)* | to measure |
+| Envelope cost | | 3.0 µs per call with every check, audit record and hash on (was 90 µs: a thread per call, JSON-object audit records, software SHA-256); hand-written checks of the same kind cost the same order, Python/TypeScript validators more | significant (the envelope is affordable on every call) |
 | MCP server: protocol | both eras on one endpoint (2026-07-28 stateless and 2025-11-25 sessions), stdio with resources, progress, logs, elicitation, sampling; Camel: sessions only, stdio tools only | the SDKs implement the protocol; the envelope is still missing | significant / significant |
 | MCP server: auth | API keys, JWT (JWKS, HMAC), introspection, RFC 9728/8707 built in; Camel: platform-http basic or JWT, OAuth through camel-oauth | hand-written per server | significant / significant |
 | MCP server: throughput, latency, memory | *(droplet run 2: `mcp-session` against `camel-mcp-server`)* | *(droplet run 2: against the official TypeScript SDK)* | to measure |
@@ -60,8 +60,11 @@ otherwise; rows marked *(droplet run 2)* are filled from the run in `target/clou
 2. **HTTP into Kafka, p99 worse than Camel.** Find what dominates the tail (waiting for a
    batch, the broker round trip, or one connection per broker shared by every sender) and fix
    it so p99 drops below Camel's while throughput stays ahead.
-3. **Envelope cost** and **MCP throughput** are measured in droplet run 2; if the envelope adds
-   more than a few µs per call, profile it (`cameleer-bench profile ai-tool`).
+3. **Envelope cost: done.** 90 µs → 3.0 µs per call (Windows, Ryzen 5 5600X): pooled workers and,
+   for tools whose calls finish well within their timeout, the caller's thread with a deadline
+   on the exchange; audit records written as canonical JSON directly; SHA-256 with the CPU's SHA
+   instructions; JSON string escaping copies runs instead of characters (helps every JSON
+   route); the kill-switch property cached. **MCP throughput** is measured in droplet run 2.
 4. **In-process LLM overhead**: measure a model call through `openai:` against a local mock vs a
    raw HTTP call, to back the "no hop" claim with a number.
 5. **Model providers** are at parity with Camel through LangChain4j; the reason to choose

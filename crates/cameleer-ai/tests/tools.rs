@@ -278,6 +278,36 @@ fn a_timeout_cancels_the_route() {
 }
 
 #[test]
+fn a_fast_tool_that_turns_slow_still_times_out_and_is_cancelled() {
+    // after a few fast calls a tool runs on the caller's thread; a call that then overruns its
+    // timeout is still reported as timed out and its route stops at the next step
+    let ctx = context();
+    ctx.add_routes(|b| {
+        b.from("ai-tool:sometimes_slow?timeout=300ms&readOnlyHint=true&parameter.ms=integer")
+            .delay(simple("${header.ms}"))
+            .to("mock:after-delay")
+            .set_body(constant("done"));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let reg = AiRegistry::of(&ctx).unwrap();
+    for _ in 0..12 {
+        let r = reg.call(ToolCall::new("sometimes_slow", json(r#"{"ms":0}"#)));
+        assert_eq!(r.text, "done", "{:?}", r);
+    }
+    let after = ctx.mock_endpoint("mock:after-delay").unwrap().received_counter();
+    let r = reg.call(ToolCall::new("sometimes_slow", json(r#"{"ms":500}"#)));
+    assert!(r.is_error && r.text.contains("did not answer within 300 ms and was cancelled"), "{}", r.text);
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(ctx.mock_endpoint("mock:after-delay").unwrap().received_counter(), after, "the step after the delay did not run");
+    // the next call goes to a worker again: a hang returns at the timeout
+    let t0 = Instant::now();
+    let r = reg.call(ToolCall::new("sometimes_slow", json(r#"{"ms":2000}"#)));
+    assert!(r.is_error && t0.elapsed() < Duration::from_millis(1500), "{:?} after {:?}", r, t0.elapsed());
+    ctx.stop().unwrap();
+}
+
+#[test]
 fn a_failed_conversation_compensates_newest_first() {
     let ctx = context();
     ctx.add_routes(|b| {

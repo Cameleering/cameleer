@@ -134,16 +134,26 @@ pub struct PropertiesComponent {
     /// Higher-priority override properties.
     overrides: RwLock<BTreeMap<String, String>>,
     functions: RwLock<BTreeMap<String, PropertiesFunction>>,
+    /// Changes with every `set`, `set_override` and `set_all`, so a reader can cache a value.
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl PropertiesComponent {
     pub fn set(&self, key: impl Into<String>, value: impl Into<String>) {
         self.props.write().unwrap().insert(key.into(), value.into());
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::Release);
     }
     pub fn set_override(&self, key: impl Into<String>, value: impl Into<String>) {
         self.overrides.write().unwrap().insert(key.into(), value.into());
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+    /// A number that changes whenever a property is set (environment variables are not
+    /// tracked).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
     }
     pub fn set_all(&self, map: BTreeMap<String, String>) {
+        self.generation.fetch_add(1, std::sync::atomic::Ordering::Release);
         self.props.write().unwrap().extend(map);
     }
     pub fn get(&self, key: &str) -> Option<String> {

@@ -12,13 +12,13 @@
 //! - `camel.ai.audit.maxRecords` (default 1000): records kept in memory.
 
 use std::collections::VecDeque;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use cameleer_core::error::{CamelError, Result};
-use cameleer_core::value::{ObjectMap, Value};
+use cameleer_core::value::Value;
 
 use crate::tool::{canonical_json, sha256_hex};
 
@@ -56,13 +56,17 @@ pub struct AuditLog {
 struct AuditState {
     seq: u64,
     last_hash: String,
-    records: VecDeque<Value>,
+    /// The records as their canonical JSON with `hash` (sorted keys); parsed on read, so a
+    /// call pays for one string and one SHA-256, not for building a JSON object.
+    records: VecDeque<String>,
+    /// The audit file, opened once.
+    out: Option<File>,
 }
 
 impl AuditLog {
     /// A log; `file` is continued if it exists.
     pub fn new(enabled: bool, file: Option<PathBuf>, max: usize) -> Result<AuditLog> {
-        let mut state = AuditState { seq: 0, last_hash: GENESIS.to_string(), records: VecDeque::new() };
+        let mut state = AuditState { seq: 0, last_hash: GENESIS.to_string(), records: VecDeque::new(), out: None };
         if let Some(path) = &file {
             if path.exists() {
                 let (count, last) = verify_file(path)?;
@@ -70,6 +74,12 @@ impl AuditLog {
                 if let Some(h) = last {
                     state.last_hash = h;
                 }
+            }
+        }
+        if let Some(path) = &file {
+            match OpenOptions::new().create(true).append(true).open(path) {
+                Ok(f) => state.out = Some(f),
+                Err(err) => cameleer_core::camel_warn!("ai-audit", "Cannot open the audit file {}: {}", path.display(), err),
             }
         }
         Ok(AuditLog { enabled, file, max: max.max(1), state: Mutex::new(state) })
@@ -84,51 +94,81 @@ impl AuditLog {
         self.enabled
     }
 
-    /// Append a record and return it (with `seq`, `time`, `prev` and `hash`).
-    pub fn append(&self, e: &AuditEntry) -> Option<Value> {
+    /// Append a record; returns its `seq`. The record (with `seq`, `time`, `prev` and `hash`)
+    /// is in [`AuditLog::records`] and the file.
+    pub fn append(&self, e: &AuditEntry) -> Option<u64> {
         if !self.enabled {
             return None;
         }
+        let time = now_iso();
         let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
         st.seq += 1;
-        let mut m = ObjectMap::new();
-        m.insert("seq".into(), Value::Int(st.seq as i64));
-        m.insert("time".into(), Value::from(now_iso()));
-        m.insert("tool".into(), Value::from(e.tool.as_str()));
-        let opt = |s: &Option<String>| s.as_deref().map(Value::from).unwrap_or(Value::Null);
-        m.insert("principal".into(), opt(&e.principal));
-        m.insert("callId".into(), opt(&e.call_id));
-        m.insert("conversationId".into(), opt(&e.conversation_id));
-        m.insert("argumentsDigest".into(), Value::from(e.arguments_digest.as_str()));
-        m.insert("decision".into(), Value::from(e.decision.as_str()));
-        m.insert("approver".into(), opt(&e.approver));
-        m.insert("duplicate".into(), Value::Bool(e.duplicate));
-        m.insert("outcome".into(), Value::from(e.outcome.as_str()));
-        m.insert("resultDigest".into(), opt(&e.result_digest));
-        m.insert("durationMs".into(), Value::Int(e.duration_ms as i64));
-        m.insert("detail".into(), opt(&e.detail));
-        m.insert("prev".into(), Value::from(st.last_hash.as_str()));
-        let hash = chain_hash(&st.last_hash, &Value::Object(m.clone()));
-        m.insert("hash".into(), Value::from(hash.as_str()));
-        let record = Value::Object(m);
-        if let Some(path) = &self.file {
-            let line = format!("{}\n", record.to_json());
-            let written = OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| f.write_all(line.as_bytes()));
-            if let Err(err) = written {
-                cameleer_core::camel_warn!("ai-audit", "Cannot append to the audit file {}: {}", path.display(), err);
+        let seq = st.seq;
+        // the canonical JSON without `hash`: keys in sorted order, as `canonical_json` writes it
+        let mut body = String::with_capacity(512);
+        let s = |out: &mut String, k: &str, v: &str| {
+            out.push_str(k);
+            cameleer_core::value::json_escape(v, out);
+        };
+        let o = |out: &mut String, k: &str, v: &Option<String>| {
+            out.push_str(k);
+            match v {
+                Some(v) => cameleer_core::value::json_escape(v, out),
+                None => out.push_str("null"),
+            }
+        };
+        o(&mut body, "{\"approver\":", &e.approver);
+        s(&mut body, ",\"argumentsDigest\":", &e.arguments_digest);
+        o(&mut body, ",\"callId\":", &e.call_id);
+        o(&mut body, ",\"conversationId\":", &e.conversation_id);
+        s(&mut body, ",\"decision\":", &e.decision);
+        o(&mut body, ",\"detail\":", &e.detail);
+        body.push_str(if e.duplicate { ",\"duplicate\":true" } else { ",\"duplicate\":false" });
+        body.push_str(",\"durationMs\":");
+        body.push_str(&e.duration_ms.to_string());
+        s(&mut body, ",\"outcome\":", &e.outcome);
+        s(&mut body, ",\"prev\":", &st.last_hash);
+        o(&mut body, ",\"principal\":", &e.principal);
+        o(&mut body, ",\"resultDigest\":", &e.result_digest);
+        body.push_str(",\"seq\":");
+        body.push_str(&seq.to_string());
+        s(&mut body, ",\"time\":", &time);
+        s(&mut body, ",\"tool\":", &e.tool);
+        let mut data = String::with_capacity(64 + body.len() + 1);
+        data.push_str(&st.last_hash);
+        data.push_str(&body);
+        data.push('}');
+        let hash = sha256_hex(data.as_bytes());
+        // the record with `hash`, which sorts between `durationMs` and `outcome`
+        let at = body.find(",\"outcome\":").expect("outcome field");
+        let mut record = String::with_capacity(body.len() + 80);
+        record.push_str(&body[..at]);
+        record.push_str(",\"hash\":\"");
+        record.push_str(&hash);
+        record.push('"');
+        record.push_str(&body[at..]);
+        record.push('}');
+        if let Some(f) = st.out.as_mut() {
+            let mut line = String::with_capacity(record.len() + 1);
+            line.push_str(&record);
+            line.push('\n');
+            if let Err(err) = f.write_all(line.as_bytes()) {
+                let path = self.file.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+                cameleer_core::camel_warn!("ai-audit", "Cannot append to the audit file {}: {}", path, err);
             }
         }
         st.last_hash = hash;
-        st.records.push_back(record.clone());
+        st.records.push_back(record);
         while st.records.len() > self.max {
             st.records.pop_front();
         }
-        Some(record)
+        Some(seq)
     }
 
     /// The records kept in memory, oldest first.
     pub fn records(&self) -> Vec<Value> {
-        self.state.lock().unwrap_or_else(|p| p.into_inner()).records.iter().cloned().collect()
+        let st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        st.records.iter().filter_map(|r| cameleer_core::json::parse(r).ok()).collect()
     }
 
     /// The hash of the latest record (64 zeros before the first one).
