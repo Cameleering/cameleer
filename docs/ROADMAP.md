@@ -24,8 +24,8 @@ and idempotency.
 **How:** one `platform-http` route receives tool calls and dispatches them by name to a `direct:`
 route per tool with `toD`. Each tool route is ordinary Camel: error handling, idempotent consumer,
 circuit breaker. A second endpoint returns the tool list (a static JSON body, or one built from route
-descriptions). Full MCP protocol support (JSON-RPC sessions, `tools/list` schemas) is the packaged
-version on the roadmap ([2.1](#21-agents-and-ai)).
+descriptions). The packaged version is the [MCP server](guides/mcp-server.md) with
+[`ai-tool`](components/ai-tool.md) routes ([2.1](#21-agents-and-ai)).
 
 <!-- example: roadmap-agent-tools -->
 ```yaml
@@ -135,7 +135,7 @@ Apps or Knative work as before.
 
 | Item | Why | Status |
 |---|---|---|
-| **MCP server component**: expose routes as MCP tools (JSON-RPC, `tools/list` with JSON schemas, `tools/call`) | the standard way agents discover and call tools; today it's the pattern in 1.1 | 🚧 |
+| **MCP server**: routes as MCP tools, resources and prompts ([ai-tool](components/ai-tool.md), [MCP server guide](guides/mcp-server.md)) | the standard way agents discover and call tools, with the reliability envelope on every call | ✅ (unreleased, branch `agent-action-layer`) |
 | **Tool calls in `openai` and `aws-bedrock`**: pass tool definitions and return tool calls (as `azure-openai` already does) | removes the main gap for the agent loop in 1.2 | 🚧 |
 | **An agent EIP / DSL step**: model call → tool dispatch → loop, with turn and token limits | packages 1.2 so it's one step in a route | 🚧 |
 | **Vector store components**: pgvector, Qdrant, OpenSearch k-NN, Pinecone | first-class retrieval instead of SQL/REST in 1.3 | 🚧 |

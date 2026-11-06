@@ -62,8 +62,12 @@ pub struct Main {
     route_files: Vec<PathBuf>,
     configurers: Vec<Box<dyn FnOnce(&CamelContext) -> Result<()>>>,
     console: Option<console::DevConsoleServer>,
+    /// The MCP server's HTTP endpoint (`camel.server.mcp-enabled`), stopped when dropped.
+    mcp: std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>,
     /// Properties set in code / on the command line (highest precedence).
     explicit: BTreeMap<String, String>,
+    /// Defaults set in code / on the command line (lowest precedence).
+    defaults: BTreeMap<String, String>,
     /// Per-profile YAML documents of the loaded configuration files.
     profile_docs: Vec<(String, BTreeMap<String, String>)>,
     /// Directories of the loaded configuration files (for `application-<profile>.*`).
@@ -146,6 +150,8 @@ impl Main {
             route_files: Vec::new(),
             configurers: Vec::new(),
             console: None,
+            mcp: std::sync::Mutex::new(None),
+            defaults: BTreeMap::new(),
             explicit: BTreeMap::new(),
             profile_docs: Vec::new(),
             config_dirs: Vec::new(),
@@ -268,6 +274,12 @@ impl Main {
         self.explicit.insert(key.into(), value.into());
     }
 
+    /// Set a property only if no file, profile, environment variable or explicit property
+    /// sets it.
+    pub fn set_default_property(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        self.defaults.insert(key.into(), value.into());
+    }
+
     /// The effective properties (after `start`: files, profile, environment and explicit
     /// properties merged).
     pub fn properties(&self) -> &BTreeMap<String, String> {
@@ -341,6 +353,11 @@ impl Main {
             }
         }
         props.extend(self.explicit.clone());
+        for (k, v) in &self.defaults {
+            if config::relaxed_get(&props, k).is_none() {
+                props.insert(k.clone(), v.clone());
+            }
+        }
         config::apply_aliases(&mut props);
         if let Some(p) = profile {
             props.entry("camel.main.profile".into()).or_insert(p);
@@ -526,6 +543,52 @@ impl Main {
                 }
             }
         }
+        if let Err(e) = self.start_mcp() {
+            let _ = self.ctx.stop();
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// The MCP server (`camel.server.mcp-enabled=true`): over HTTP on `camel.server.port`, or
+    /// over stdio (`camel.server.mcp-transport=stdio`), where the process stops when stdin
+    /// ends.
+    #[cfg(feature = "ai")]
+    fn start_mcp(&self) -> Result<()> {
+        use cameleer_ai::mcp::{http::McpHttpServer, McpConfig, McpServer};
+        if self.mcp.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        let cfg = McpConfig::from_properties(&self.properties)?;
+        if !cfg.enabled {
+            return Ok(());
+        }
+        let server = McpServer::new(&self.ctx, cfg.clone())?;
+        if cfg.transport == "stdio" {
+            cameleer_core::camel_info!("mcp", "MCP server on stdio (protocol {} and {})", cameleer_ai::mcp::MODERN_VERSION, cameleer_ai::mcp::LEGACY_VERSIONS.join(", "));
+            std::thread::Builder::new()
+                .name("mcp-stdio".into())
+                .spawn(move || {
+                    let stdin = std::io::stdin();
+                    cameleer_ai::mcp::stdio::serve(server, stdin.lock(), std::io::stdout());
+                    cameleer_core::camel_info!("mcp", "stdin closed");
+                    signal::trigger();
+                })
+                .map_err(|e| CamelError::io(format!("Cannot start the MCP stdio server: {}", e)))?;
+            *self.mcp.lock().unwrap() = Some(Box::new(()));
+        } else {
+            let http = McpHttpServer::start(server)?;
+            *self.mcp.lock().unwrap() = Some(Box::new(http));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "ai"))]
+    fn start_mcp(&self) -> Result<()> {
+        let on = console::prop(&self.properties, "camel.server.mcp-enabled").map(|v| v.trim().eq_ignore_ascii_case("true")).unwrap_or(false);
+        if on {
+            return Err(CamelError::illegal_argument("camel.server.mcp-enabled=true needs the ai feature: rebuild with --features ai"));
+        }
         Ok(())
     }
 
@@ -588,6 +651,7 @@ impl Main {
         if let Some(c) = &self.console {
             c.stop();
         }
+        self.mcp.lock().unwrap().take();
     }
 
     /// Start and block until a stop condition happens, then stop the context.

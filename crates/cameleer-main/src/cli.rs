@@ -46,7 +46,7 @@ pub fn usage() -> &'static str {
   cameleer init <file> [--directory DIR]
   cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
             [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop key=value]
-            [--log-level LEVEL] [--console] [--port N] [--trace]
+            [--log-level LEVEL] [--console] [--port N] [--trace] [--mcp | --mcp-stdio]
   cameleer export [files...] --directory DIR [--name N] [--camel-path PATH]
   cameleer bind <name> --source S --sink S [--step S]... [--property source.k=v]...
              [--error-handler log|none|sink:URI] [--output FILE]
@@ -307,11 +307,14 @@ fn init(args: &[String], out: &mut dyn Write) -> CliResult {
 // ---------------------------------------------------------------------------
 
 fn run_cmd(args: &[String]) -> CliResult {
-    let a = Args::parse(args, &["dev", "console", "trace", "background"])?;
+    let a = Args::parse(args, &["dev", "console", "trace", "background", "mcp", "mcp-stdio"])?;
     a.check(&[
         "properties", "profile", "dev", "name", "background", "max-seconds", "max-messages", "max-idle-seconds", "prop", "log-level", "console",
-        "port", "trace",
+        "port", "trace", "mcp", "mcp-stdio",
     ])?;
+    if a.flag("mcp-stdio") && a.flag("background") {
+        return Err("--mcp-stdio talks over stdin and stdout; it can't run in the background".into());
+    }
     if a.flag("background") {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let fwd: Vec<&String> = args.iter().filter(|s| s.as_str() != "--background").collect();
@@ -376,6 +379,12 @@ fn run_cmd(args: &[String]) -> CliResult {
     }
     if a.flag("trace") {
         main.set_property("camel.main.tracing", "true");
+    }
+    // the MCP server; on the command line it exposes every tool unless camel.server.mcp-tags says otherwise
+    if a.flag("mcp") || a.flag("mcp-stdio") {
+        main.set_property("camel.server.mcp-enabled", "true");
+        main.set_property("camel.server.mcp-transport", if a.flag("mcp-stdio") { "stdio" } else { "http" });
+        main.set_default_property("camel.server.mcp-tags", "*");
     }
     for kv in a.all("prop") {
         let (k, v) = kv.split_once('=').ok_or_else(|| format!("--prop expects key=value, got {}", kv))?;

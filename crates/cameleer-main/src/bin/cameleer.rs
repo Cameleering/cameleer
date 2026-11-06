@@ -14,8 +14,8 @@ fn main() -> ExitCode {
     if args.is_empty() && cameleer_main::cli::invoked_as_bootstrap(std::env::args().next().as_deref()) {
         args.push("run".into());
     }
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    // not `stdout().lock()`: `run --mcp-stdio` writes protocol messages from another thread
+    let mut out = std::io::stdout();
     let code = cameleer_main::cli::run_status(&args, &mut out, &mut std::io::stderr());
     ExitCode::from(code as u8)
 }

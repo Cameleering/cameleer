@@ -75,7 +75,11 @@ route, `to: ai-resource:order` with the `CamelAiResourceUri` header reads it int
 ## Differences from Apache Camel
 
 - URI templates and the producer are Cameleer extensions.
-- The MCP server that lists and serves resources to MCP clients is planned.
+- The [MCP server](../guides/mcp-server.md) lists and serves resources and templates to MCP
+  clients, over HTTP and stdio, with subscriptions.
+- `to: ai-resource:name?operation=updated` tells subscribed clients that the resource changed
+  (MCP `notifications/resources/updated`).
+- `values.NAME=a,b,c` lists completion values for a template variable.
 
 ## Related
 

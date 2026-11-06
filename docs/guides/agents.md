@@ -213,9 +213,8 @@ envelope, whoever makes it:
 ```
 
 Routes call tools with `to: ai-tool:refund`, and Rust code with
-`cameleer_ai::AiRegistry::of(&ctx)?.call(...)`. The MCP server that exposes these tools to
-MCP clients is planned (see the [roadmap](../ROADMAP.md)). Until it lands, put a REST route in
-front of the tool, as in the next section. Read-only context goes in
+`cameleer_ai::AiRegistry::of(&ctx)?.call(...)`, and MCP clients through the
+[MCP server](mcp-server.md): `cameleer run tools.camel.yaml --mcp` (HTTP) or `--mcp-stdio`. Read-only context goes in
 [`ai-resource`](../components/ai-resource.md) routes, and prompt templates in
 [`ai-prompt`](../components/ai-prompt.md) routes. A complete file is
 [examples/agents/ai-tools.camel.yaml](../../examples/agents/ai-tools.camel.yaml).
@@ -597,9 +596,9 @@ Ollama, vLLM or another OpenAI-compatible server, or use `aws-bedrock`, `azure-o
 
 Yes. A route that consumes from `ai-tool:name` is a tool, with argument checks, deduplication,
 approvals, timeouts and an audit log built in (see
-[Publish routes as tools](#publish-routes-as-tools-with-ai-tool)). An MCP server that exposes
-them to MCP clients is planned. Until then, put a REST endpoint in front of the tools, as in
-the [tool pattern](#expose-a-tool-to-an-agent-over-rest).
+[Publish routes as tools](#publish-routes-as-tools-with-ai-tool)), and the
+[MCP server](mcp-server.md) serves them to MCP clients. Agents without MCP can call a REST
+endpoint in front of the tools, as in the [tool pattern](#expose-a-tool-to-an-agent-over-rest).
 
 ### How do I stop an agent from executing the same action twice?
 

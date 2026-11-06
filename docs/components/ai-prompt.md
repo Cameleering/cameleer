@@ -53,6 +53,7 @@ the messages as a list of `{role, content}` maps.
 | `argument.NAME` | | Declares an argument with this description |
 | `argument.NAME.description` | | The argument's description |
 | `argument.NAME.required` | `false` | Whether the argument is required |
+| `argument.NAME.values` | | Comma-separated completion values for the argument (MCP `completion/complete`) |
 | `tags` | | Comma-separated tags |
 
 ## Message headers
@@ -65,7 +66,8 @@ the messages as a list of `{role, content}` maps.
 ## Behavior
 
 - A text body becomes one `user` message. A list of `{role, content}` maps (roles `user` and
-  `assistant`) becomes those messages.
+  `assistant`) becomes those messages. A `content` that is an MCP content block (an image, an
+  embedded resource) is passed on as it is.
 - A missing required argument fails before the route runs.
 - An unknown prompt fails with `PromptNotFoundException`.
 

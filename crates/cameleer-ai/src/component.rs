@@ -69,7 +69,19 @@ impl Component for AiComponent {
             Kind::Prompt => Spec::Prompt(prompt_spec(&name, params)),
         };
         let throw_on_error = params.take_bool("throwOnError", false)?;
-        Ok(Arc::new(AiEndpoint { uri: uri.to_string(), name, spec, throw_on_error, ctx: ctx.clone() }))
+        let notify_updated = match params.take_string("operation", "read").as_str() {
+            "read" => false,
+            "updated" if self.kind == Kind::Resource => true,
+            other => {
+                return Err(CamelError::illegal_argument(format!(
+                    "Unknown operation {} for {} (use read{})",
+                    other,
+                    scheme(self.kind),
+                    if self.kind == Kind::Resource { " or updated" } else { "" }
+                )))
+            }
+        };
+        Ok(Arc::new(AiEndpoint { uri: uri.to_string(), name, spec, throw_on_error, notify_updated, ctx: ctx.clone() }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -180,7 +192,12 @@ fn tool_spec(ctx: &CamelContext, name: &str, params: &mut Parameters) -> Result<
     };
     policy.approval_endpoint = params.take("approvalEndpoint");
     policy.approval_timeout = params.take_duration("approvalTimeout", Duration::from_secs(3600))?;
-    policy.timeout = params.take_duration("timeout", Duration::from_secs(20))?;
+    // Camel's camel.server.mcp-tool-timeout is the default for tools that set no timeout
+    let default_timeout = match ctx.properties().get("camel.server.mcp-tool-timeout").or_else(|| ctx.properties().get("camel.server.mcpToolTimeout")) {
+        Some(t) => cameleer_core::util::parse_duration(t.trim())?,
+        None => Duration::from_secs(20),
+    };
+    policy.timeout = params.take_duration("timeout", default_timeout)?;
     let limit = params.take_usize("rateLimit", 0)?;
     let period = params.take_duration("rateLimitPeriod", Duration::from_secs(60))?;
     if limit > 0 {
@@ -204,6 +221,7 @@ fn tool_spec(ctx: &CamelContext, name: &str, params: &mut Parameters) -> Result<
 }
 
 struct ResourceSpec {
+    completions: BTreeMap<String, Vec<String>>,
     uri: Option<String>,
     title: Option<String>,
     description: Option<String>,
@@ -214,6 +232,7 @@ struct ResourceSpec {
 fn resource_spec(name: &str, params: &mut Parameters) -> ResourceSpec {
     let _ = name;
     ResourceSpec {
+        completions: params.take_prefixed("values.").into_iter().map(|(k, v)| (k, csv(Some(v)))).collect(),
         uri: params.take("uri").or_else(|| params.take("resourceUri")).or_else(|| params.take("uriTemplate")),
         title: params.take("title"),
         description: params.take("description"),
@@ -223,6 +242,7 @@ fn resource_spec(name: &str, params: &mut Parameters) -> ResourceSpec {
 }
 
 struct PromptSpec {
+    completions: BTreeMap<String, Vec<String>>,
     title: Option<String>,
     description: Option<String>,
     arguments: Vec<(String, Option<String>, bool)>,
@@ -233,11 +253,17 @@ fn prompt_spec(name: &str, params: &mut Parameters) -> PromptSpec {
     let _ = name;
     let raw = params.take_prefixed("argument.");
     let mut args: BTreeMap<String, (Option<String>, bool)> = BTreeMap::new();
+    let mut completions = BTreeMap::new();
     for (k, v) in raw {
         let (n, attr) = match k.split_once('.') {
             Some((n, a)) => (n.to_string(), a.to_string()),
             None => (k.clone(), "description".to_string()),
         };
+        if attr == "values" {
+            completions.insert(n.clone(), csv(Some(v)));
+            args.entry(n).or_insert((None, false));
+            continue;
+        }
         let e = args.entry(n).or_insert((None, false));
         match attr.as_str() {
             "required" => e.1 = v.trim().eq_ignore_ascii_case("true"),
@@ -245,6 +271,7 @@ fn prompt_spec(name: &str, params: &mut Parameters) -> PromptSpec {
         }
     }
     PromptSpec {
+        completions,
         title: params.take("title"),
         description: params.take("description"),
         arguments: args.into_iter().map(|(n, (d, r))| (n, d, r)).collect(),
@@ -264,6 +291,7 @@ pub struct AiEndpoint {
     name: String,
     spec: Spec,
     throw_on_error: bool,
+    notify_updated: bool,
     ctx: CamelContext,
 }
 
@@ -291,7 +319,14 @@ impl Endpoint for AiEndpoint {
             Spec::Resource(r) => r.uri.clone(),
             _ => None,
         };
-        Ok(Arc::new(AiProducer { kind, name: self.name.clone(), resource_uri: uri, throw_on_error: self.throw_on_error, ctx: self.ctx.clone() }))
+        Ok(Arc::new(AiProducer {
+            kind,
+            name: self.name.clone(),
+            resource_uri: uri,
+            throw_on_error: self.throw_on_error,
+            notify_updated: self.notify_updated,
+            ctx: self.ctx.clone(),
+        }))
     }
     fn create_consumer(&self, processor: Arc<dyn Processor>) -> Result<Arc<dyn Consumer>> {
         Ok(Arc::new(AiConsumer { endpoint_name: self.name.clone(), spec: self.spec_clone(), processor, ctx: self.ctx.clone(), registered: Mutex::new(false) }))
@@ -311,16 +346,36 @@ impl AiEndpoint {
                 description: r.description.clone(),
                 mime_type: r.mime_type.clone(),
                 tags: r.tags.clone(),
+                completions: r.completions.clone(),
             },
-            Spec::Prompt(p) => SpecData::Prompt { title: p.title.clone(), description: p.description.clone(), arguments: p.arguments.clone(), tags: p.tags.clone() },
+            Spec::Prompt(p) => SpecData::Prompt {
+                title: p.title.clone(),
+                description: p.description.clone(),
+                arguments: p.arguments.clone(),
+                tags: p.tags.clone(),
+                completions: p.completions.clone(),
+            },
         }
     }
 }
 
 enum SpecData {
     Tool(ToolDefinition, ToolPolicy),
-    Resource { uri: String, title: Option<String>, description: Option<String>, mime_type: String, tags: Vec<String> },
-    Prompt { title: Option<String>, description: Option<String>, arguments: Vec<(String, Option<String>, bool)>, tags: Vec<String> },
+    Resource {
+        uri: String,
+        title: Option<String>,
+        description: Option<String>,
+        mime_type: String,
+        tags: Vec<String>,
+        completions: BTreeMap<String, Vec<String>>,
+    },
+    Prompt {
+        title: Option<String>,
+        description: Option<String>,
+        arguments: Vec<(String, Option<String>, bool)>,
+        tags: Vec<String>,
+        completions: BTreeMap<String, Vec<String>>,
+    },
 }
 
 struct AiConsumer {
@@ -340,25 +395,33 @@ impl Service for AiConsumer {
         }
         match &self.spec {
             SpecData::Tool(def, policy) => reg.register_tool(ToolEntry::new(def.clone(), policy.clone(), self.processor.clone(), &self.ctx))?,
-            SpecData::Resource { uri, title, description, mime_type, tags } => reg.register_resource(ResourceEntry::new(
-                self.endpoint_name.clone(),
-                uri.clone(),
-                title.clone(),
-                description.clone(),
-                mime_type.clone(),
-                tags.clone(),
-                self.processor.clone(),
-                &self.ctx,
-            ))?,
-            SpecData::Prompt { title, description, arguments, tags } => reg.register_prompt(PromptEntry::new(
-                self.endpoint_name.clone(),
-                title.clone(),
-                description.clone(),
-                arguments.clone(),
-                tags.clone(),
-                self.processor.clone(),
-                &self.ctx,
-            ))?,
+            SpecData::Resource { uri, title, description, mime_type, tags, completions } => {
+                let mut e = ResourceEntry::new(
+                    self.endpoint_name.clone(),
+                    uri.clone(),
+                    title.clone(),
+                    description.clone(),
+                    mime_type.clone(),
+                    tags.clone(),
+                    self.processor.clone(),
+                    &self.ctx,
+                );
+                e.completions = completions.clone();
+                reg.register_resource(e)?
+            }
+            SpecData::Prompt { title, description, arguments, tags, completions } => {
+                let mut e = PromptEntry::new(
+                    self.endpoint_name.clone(),
+                    title.clone(),
+                    description.clone(),
+                    arguments.clone(),
+                    tags.clone(),
+                    self.processor.clone(),
+                    &self.ctx,
+                );
+                e.completions = completions.clone();
+                reg.register_prompt(e)?
+            }
         }
         *done = true;
         Ok(())
@@ -385,6 +448,7 @@ struct AiProducer {
     name: String,
     resource_uri: Option<String>,
     throw_on_error: bool,
+    notify_updated: bool,
     ctx: CamelContext,
 }
 
@@ -407,6 +471,7 @@ impl Processor for AiProducer {
                     principal: text_header(ex, headers::PRINCIPAL),
                     approved_by: text_header(ex, headers::APPROVED_BY),
                     properties: ex.properties.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+                    headers: Vec::new(),
                 };
                 let r = reg.call(call);
                 ex.set_header(headers::STATUS, r.status.as_str());
@@ -436,6 +501,10 @@ impl Processor for AiProducer {
                     .or_else(|| self.resource_uri.clone())
                     .or_else(|| reg.resource_uri(&self.name))
                     .unwrap_or_else(|| format!("ai-resource://{}", self.name));
+                if self.notify_updated {
+                    reg.resource_updated(&uri);
+                    return Ok(());
+                }
                 let c = reg.read_resource(&uri)?;
                 ex.set_header(headers::RESOURCE_MIME_TYPE, c.mime_type.as_str());
                 match (c.text, c.blob) {

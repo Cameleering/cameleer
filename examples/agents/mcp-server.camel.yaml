@@ -1,0 +1,51 @@
+# An MCP server for AI agents: one tool, one resource and one prompt, served to MCP clients
+# (Claude Desktop, VS Code, Cursor, agent frameworks) in both protocol eras (2026-07-28 and
+# 2025-11-25).
+#
+# Over HTTP (http://localhost:8080/mcp):
+#   cameleer run mcp-server.camel.yaml --mcp
+# Over stdio, for a client that starts the server itself:
+#   cameleer run mcp-server.camel.yaml --mcp-stdio
+#
+# On the command line every tool is exposed; in application.properties choose with
+#   camel.server.mcp-enabled=true
+#   camel.server.mcp-tags=support
+- route:
+    id: lookup-order
+    from:
+      uri: ai-tool:lookup_order
+      parameters:
+        description: Look up an order by id
+        tags: support
+        parameter.orderId: string
+        parameter.orderId.description: The order id, such as EU-4411
+        parameter.orderId.required: true
+        readOnlyHint: true
+      steps:
+        - setBody:
+            simple: '{"orderId": "${header.orderId}", "status": "shipped", "carrier": "DHL"}'
+- route:
+    id: refund-policy
+    from:
+      uri: ai-resource:refund-policy
+      parameters:
+        uri: docs://refund-policy
+        description: When and how much we refund
+        mimeType: text/markdown
+        tags: support
+      steps:
+        - setBody:
+            constant: "# Refund policy\n\nDamaged items are refunded in full within 30 days."
+- route:
+    id: support-reply
+    from:
+      uri: ai-prompt:support-reply
+      parameters:
+        description: Draft a reply to a customer
+        tags: support
+        argument.question.description: The customer's question
+        argument.question.required: true
+        argument.tone.values: friendly,formal
+      steps:
+        - setBody:
+            simple: "Write a ${header.tone} reply to this customer question, citing our refund policy: ${header.question}"

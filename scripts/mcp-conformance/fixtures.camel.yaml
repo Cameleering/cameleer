@@ -1,0 +1,140 @@
+# The tools, resources and prompts the official MCP conformance suite calls, as Cameleer routes
+# (scripts/mcp-conformance.sh serves them with `cameleer run --mcp`).
+- route:
+    from:
+      uri: ai-tool:test_simple_text
+      parameters:
+        description: Returns simple text
+        readOnlyHint: true
+      steps:
+        - setBody:
+            constant: This is a simple text response for testing.
+- route:
+    from:
+      uri: ai-tool:test_error_handling
+      parameters:
+        description: Always fails
+        readOnlyHint: true
+      steps:
+        - throwException:
+            exceptionType: java.lang.IllegalStateException
+            message: This tool intentionally returns an error for testing
+- route:
+    from:
+      uri: ai-tool:test_image_content
+      parameters:
+        description: Returns an image
+        readOnlyHint: true
+      steps:
+        - setHeader:
+            name: CamelAiToolContent
+            constant: '[{"type":"image","mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="}]'
+- route:
+    from:
+      uri: ai-tool:test_audio_content
+      parameters:
+        description: Returns audio
+        readOnlyHint: true
+      steps:
+        - setHeader:
+            name: CamelAiToolContent
+            constant: '[{"type":"audio","mimeType":"audio/wav","data":"UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="}]'
+- route:
+    from:
+      uri: ai-tool:test_embedded_resource
+      parameters:
+        description: Returns an embedded resource
+        readOnlyHint: true
+      steps:
+        - setHeader:
+            name: CamelAiToolContent
+            constant: '[{"type":"resource","resource":{"uri":"test://embedded-resource","mimeType":"text/plain","text":"This is an embedded resource content."}}]'
+- route:
+    from:
+      uri: ai-tool:test_multiple_content_types
+      parameters:
+        description: Returns text, an image and a resource
+        readOnlyHint: true
+      steps:
+        - setHeader:
+            name: CamelAiToolContent
+            constant: '[{"type":"text","text":"Multiple content types test:"},{"type":"image","mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="},{"type":"resource","resource":{"uri":"test://mixed-content-resource","mimeType":"application/json","text":"{\"test\":\"data\",\"value\":123}"}}]'
+- route:
+    from:
+      uri: ai-resource:static-text
+      parameters:
+        uri: test://static-text
+        mimeType: text/plain
+      steps:
+        - setBody:
+            constant: This is the content of the static text resource.
+- route:
+    from:
+      uri: ai-resource:static-binary
+      parameters:
+        uri: test://static-binary
+        mimeType: image/png
+      steps:
+        - setBody:
+            constant: iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==
+        - unmarshal:
+            base64: {}
+- route:
+    from:
+      uri: ai-resource:template
+      parameters:
+        uri: "test://template/{id}/data"
+        mimeType: application/json
+      steps:
+        - setBody:
+            simple: '{"id":"${header.id}","templateTest":true,"data":"Data for ID: ${header.id}"}'
+- route:
+    from:
+      uri: ai-resource:watched
+      parameters:
+        uri: test://watched-resource
+      steps:
+        - setBody:
+            constant: watched
+- route:
+    from:
+      uri: ai-prompt:test_simple_prompt
+      parameters:
+        description: A simple prompt
+      steps:
+        - setBody:
+            constant: This is a simple prompt for testing.
+- route:
+    from:
+      uri: ai-prompt:test_prompt_with_arguments
+      parameters:
+        description: A prompt with arguments
+        argument.arg1.description: First test argument
+        argument.arg1.required: true
+        argument.arg1.values: paris,park,party
+        argument.arg2.description: Second test argument
+        argument.arg2.required: true
+      steps:
+        - setBody:
+            simple: "Prompt with arguments: arg1='${header.arg1}', arg2='${header.arg2}'"
+- route:
+    from:
+      uri: ai-prompt:test_prompt_with_embedded_resource
+      parameters:
+        description: A prompt with an embedded resource
+        argument.resourceUri.required: true
+      steps:
+        - setBody:
+            simple: '[{"role":"user","content":{"type":"resource","resource":{"uri":"${header.resourceUri}","mimeType":"text/plain","text":"Embedded resource content for testing."}}},{"role":"user","content":{"type":"text","text":"Please process the embedded resource above."}}]'
+        - unmarshal:
+            json: {}
+- route:
+    from:
+      uri: ai-prompt:test_prompt_with_image
+      parameters:
+        description: A prompt with an image
+      steps:
+        - setBody:
+            constant: '[{"role":"user","content":{"type":"image","mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="}},{"role":"user","content":{"type":"text","text":"Please analyze the image above."}}]'
+        - unmarshal:
+            json: {}

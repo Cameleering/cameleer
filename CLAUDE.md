@@ -84,6 +84,7 @@ are ✅.
 | live real servers | `sudo scripts/live-interop.sh all` then `CAMEL_LIVE_INTEROP=1 cargo test --workspace live_` | Ubuntu 24.04 apt packages: PostgreSQL 16, Redis, Mosquitto, RabbitMQ, ActiveMQ 5.17.6, vsftpd, Postfix+Dovecot, nginx |
 | official clients | `sudo scripts/official-clients.sh install` then `scripts/official-clients.sh test` (`CAMEL_OFFICIAL_CLIENTS=1 ... --test 'official_*'`) | python3 clients, kcat, gcloud SDK, Go |
 | simulators | `scripts/simulators.sh install && scripts/live-interop.sh start && scripts/simulators.sh start && scripts/simulators.sh test` (`CAMEL_SIMULATORS=1 ... --test 'sim_*'`) | pip, npm, Go |
+| MCP conformance | `scripts/mcp-conformance.sh` (official `@modelcontextprotocol/conformance` 0.1.16, pinned and checksum-verified, against `scripts/mcp-conformance/fixtures.camel.yaml`; known gaps in `expected-failures.yaml`) | Node.js 20+, npm |
 
 Live state is kept in `/var/lib/camel-interop`. Simulator tools are in `/opt/camel-sim`. The
 test user and password are `camel` / `camelpw`.

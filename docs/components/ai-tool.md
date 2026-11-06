@@ -140,6 +140,8 @@ goes through.
 | `CamelAiToolApprovalHandle` | out (producer) | The handle of a call that waits for approval |
 | `CamelAiToolReturnDirect` | out (producer) | The tool's `returnDirect` flag |
 | `CamelAiToolStructuredContent` | out (producer) | The structured result (an object or array) |
+| `CamelAiToolContent` | out (tool route) | Set by the route: MCP content blocks for the result (images, audio, embedded resources) |
+| `CamelMcpSecurityPrincipal`, `CamelMcpSecurityPrincipalScopes`, `CamelMcpSecurityMethod` | in (over MCP) | The authenticated caller |
 
 ## Behavior
 
@@ -167,8 +169,9 @@ goes through.
 6. **Approval.** A call that needs approval doesn't run. It is parked with a handle and the
    result says so (`CamelAiToolStatus=approval-required`). An approver resolves it with
    `AiRegistry::approve(handle, approver)`, which runs it and returns its result, or
-   `AiRegistry::deny(handle, approver, reason)`, which runs nothing. The MCP server (planned)
-   will ask the user through the client instead.
+   `AiRegistry::deny(handle, approver, reason)`, which runs nothing. Over MCP, a tool without
+   an approval endpoint asks the client's user instead (see
+   [MCP server: approvals](../guides/mcp-server.md#approvals)).
 7. **Idempotency.** The key is the `idempotency_key` argument if the schema declares one, else
    the call id, else a digest of the principal and the arguments. A repeated call returns the
    recorded result with `CamelAiToolDuplicate=true`. A repeat that arrives while the first is
@@ -236,11 +239,14 @@ or schema can't change under a client that already trusts it.
 - Results keep their structure: a map or list is JSON plus structured content, not
   `toString()`.
 - The producer (calling a tool from a route) is a Cameleer extension.
-- The MCP server that exposes these tools to MCP clients is planned. Today you call tools with
-  the producer, from Rust (`AiRegistry::call`), or behind your own REST route.
+- The [MCP server](../guides/mcp-server.md) serves these tools to MCP clients in both protocol
+  eras (2026-07-28 and 2025-11-25), with the same envelope.
+- A route can return images, audio or embedded resources by setting `CamelAiToolContent` to a
+  list of MCP content blocks.
 
 ## Related
 
+- [MCP server](../guides/mcp-server.md): serving these tools to MCP clients.
 - [ai-resource](ai-resource.md) and [ai-prompt](ai-prompt.md): the other two things an agent
   can use.
 - [json-validator](json-validator.md): the JSON Schema support used for arguments.

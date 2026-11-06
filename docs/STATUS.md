@@ -181,6 +181,37 @@ of 5 is done: the tool model and the reliability envelope.
   needs a control channel to a running process) and exporting audit records as span
   attributes.
 
+## Action layer for AI agents, phase 2: MCP server (2026-11-06, branch `agent-action-layer`)
+
+- **`cameleer_ai::mcp`**: `McpServer` (protocol engine), `http` (Streamable HTTP on the shared
+  server of `camel.server.port`), `stdio`, `auth`, `sse`. Started by Main when
+  `camel.server.mcp-enabled=true`; `cameleer run --mcp` / `--mcp-stdio` (these default
+  `camel.server.mcp-tags` to `*`; a config file must choose tags, nothing is exposed otherwise).
+- **Dual era on one endpoint**: 2026-07-28 (stateless `_meta`, `server/discover`,
+  `resultType`, `input_required` approvals with an AES-256-GCM `requestState` bound to
+  principal, tool, argument digest and expiry, single use through the parked approval handle,
+  `subscriptions/listen`, `ttlMs`/`cacheScope`, `Mcp-Method`/`Mcp-Name`/`MCP-Protocol-Version`
+  checks, -32020/-32021/-32022) and 2025-11-25/06-18/03-26 (`initialize`, `Mcp-Session-Id`,
+  GET stream, `DELETE`, `ping`, `resources/subscribe`, `logging/setLevel` accepted,
+  `elicitation/create` approvals on the response stream or stdout).
+- **Auth** (HTTP): API keys, JWT (JWKS RS/PS/ES or HMAC), RFC 7662 introspection, RFC 9728
+  metadata, RFC 8707 audience; `Origin` check; principal in `CamelMcpSecurityPrincipal*`.
+- **Registry additions**: typed change events (`subscribe`/`unsubscribe`, `Change`),
+  `resource_updated` (also `ai-resource:x?operation=updated`), completion values
+  (`argument.NAME.values`, `values.NAME`), `ToolCall.headers`, rich content
+  (`CamelAiToolContent`, prompt content blocks), `camel.server.mcp-tool-timeout` default.
+- **Fix found by the end-to-end test**: the `cameleer` binary held the stdout lock for the whole
+  command, so another thread could never write; it now uses the unlocked handle.
+- **Tests**: hermetic suite 2776 passed, 0 failed on Windows 11, zero warnings; `crates/cameleer-ai/tests/mcp.rs` (12, real HTTP and stdio in both eras),
+  `crates/cameleer-main/tests/mcp_main.rs` (Main over HTTP, the binary with `--mcp-stdio`).
+  `scripts/mcp-conformance.sh`: official suite 0.1.16 passes with the baseline, 25/31 for
+  2025-11-25 and 22/26 for 2025-06-18; the gaps are log and progress notifications during a
+  call, sampling, and elicitation other than approvals. The suite predates 2026-07-28, so that
+  era is covered only by the hermetic tests.
+- **Not done**: progress and log notifications, sampling, `cameleer tool disable`, the website
+  pages planned for this phase (tagline, `/use-cases/mcp-tool-server/`, "Cameleer vs Camel MCP
+  server").
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

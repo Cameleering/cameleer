@@ -15,7 +15,17 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   tool's route, rate limits per principal, circuit breakers, compensation per conversation, a
   hash-chained audit log (`camel.ai.audit.*`), definition pinning (`version`,
   `camel.ai.manifest`) and a kill switch (`camel.ai.disabled-tools`). See
-  [ai-tool](docs/components/ai-tool.md). The MCP server that serves these tools is next.
+  [ai-tool](docs/components/ai-tool.md).
+- **MCP server** with Camel's `camel.server.mcp-*` properties, serving those routes to MCP
+  clients over Streamable HTTP and stdio (`cameleer run --mcp`, `--mcp-stdio`). It speaks
+  2026-07-28 (stateless, `server/discover`, approvals as multi round-trip requests with a
+  sealed `requestState`, `subscriptions/listen`, caching hints) and 2025-11-25, 2025-06-18 and
+  2025-03-26 (sessions, `elicitation/create` approvals) on the same endpoint. Tools,
+  resources, templates, prompts, completion, pagination and change notifications;
+  authentication with API keys, JWTs or token introspection, with protected-resource metadata
+  and audience checks. Tool routes can return images, audio and embedded resources
+  (`CamelAiToolContent`). Checked with the official conformance suite
+  (`scripts/mcp-conformance.sh`). See the [MCP server guide](docs/guides/mcp-server.md).
 - **`json-validator`: JSON Schema 2020-12 keywords** `prefixItems`, `minContains`,
   `maxContains`, `dependentSchemas`, `unevaluatedProperties` and `unevaluatedItems`.
 - **Cooperative cancellation of an exchange** (`Exchange::set_cancel_token`): once the token is

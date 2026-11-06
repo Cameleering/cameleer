@@ -20,6 +20,7 @@
 
 pub mod audit;
 pub mod component;
+pub mod mcp;
 pub mod registry;
 pub mod tool;
 
@@ -57,6 +58,9 @@ pub mod headers {
     pub const RETURN_DIRECT: &str = "CamelAiToolReturnDirect";
     /// The structured result (an object or array), on the result.
     pub const STRUCTURED: &str = "CamelAiToolStructuredContent";
+    /// Set by a tool route: MCP content blocks for the result (a list of
+    /// `{"type": "image", "data": ..., "mimeType": ...}`, audio or embedded resources).
+    pub const CONTENT: &str = "CamelAiToolContent";
     /// The resource's URI (resource routes).
     pub const RESOURCE_URI: &str = "CamelAiResourceUri";
     /// The resource's name (resource routes).

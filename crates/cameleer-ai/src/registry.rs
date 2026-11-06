@@ -58,6 +58,9 @@ pub struct ToolCall {
     pub approved_by: Option<String>,
     /// Properties (and variables, `CamelVariable.*`) copied to the tool's exchange.
     pub properties: Vec<(String, Value)>,
+    /// Headers set by the surface itself (never from the model's arguments), such as the
+    /// authenticated principal (`CamelMcpSecurityPrincipal`) or `traceparent`.
+    pub headers: Vec<(String, Value)>,
 }
 
 impl ToolCall {
@@ -119,14 +122,17 @@ pub struct ToolResult {
     pub duplicate: bool,
     /// The tool's `returnDirect` flag.
     pub return_direct: bool,
+    /// MCP content blocks the route set in `CamelAiToolContent` (images, audio, embedded
+    /// resources); `None` means one text block with `text`.
+    pub content: Option<Vec<Value>>,
 }
 
 impl ToolResult {
     pub fn ok(text: impl Into<String>, structured: Option<Value>) -> ToolResult {
-        ToolResult { text: text.into(), structured, is_error: false, status: ToolStatus::Completed, duplicate: false, return_direct: false }
+        ToolResult { text: text.into(), structured, is_error: false, status: ToolStatus::Completed, duplicate: false, return_direct: false, content: None }
     }
     pub fn error(text: impl Into<String>) -> ToolResult {
-        ToolResult { text: text.into(), structured: None, is_error: true, status: ToolStatus::Error, duplicate: false, return_direct: false }
+        ToolResult { text: text.into(), structured: None, is_error: true, status: ToolStatus::Error, duplicate: false, return_direct: false, content: None }
     }
 }
 
@@ -159,6 +165,9 @@ pub struct ResourceContent {
 pub struct PromptMessage {
     pub role: String,
     pub text: String,
+    /// The MCP content block when the route gave one (an image, an embedded resource);
+    /// `None` means a text block with `text`.
+    pub content: Option<Value>,
 }
 
 /// A rendered prompt.
@@ -166,6 +175,15 @@ pub struct PromptMessage {
 pub struct PromptResult {
     pub description: Option<String>,
     pub messages: Vec<PromptMessage>,
+}
+
+/// What a completion request completes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CompletionRef {
+    /// A prompt argument (`ref/prompt`).
+    Prompt(String),
+    /// A resource template variable (`ref/resource`, the template URI).
+    Resource(String),
 }
 
 /// Decides whether a principal may call a tool (`authorizationPolicy=#bean`, bound as
@@ -264,6 +282,8 @@ pub struct ResourceEntry {
     pub description: Option<String>,
     pub mime_type: String,
     pub tags: Vec<String>,
+    /// Completion values per template variable.
+    pub completions: BTreeMap<String, Vec<String>>,
     processor: Arc<dyn Processor>,
     ctx: WeakContext,
 }
@@ -280,7 +300,7 @@ impl ResourceEntry {
         processor: Arc<dyn Processor>,
         ctx: &CamelContext,
     ) -> ResourceEntry {
-        ResourceEntry { name, uri, title, description, mime_type, tags, processor, ctx: ctx.downgrade() }
+        ResourceEntry { name, uri, title, description, mime_type, tags, completions: BTreeMap::new(), processor, ctx: ctx.downgrade() }
     }
     /// The resource as MCP lists it (`uri`, `name`, `title`, `description`, `mimeType`; a
     /// URI with `{...}` is listed as a template with `uriTemplate`).
@@ -311,6 +331,8 @@ pub struct PromptEntry {
     /// (name, description, required)
     pub arguments: Vec<(String, Option<String>, bool)>,
     pub tags: Vec<String>,
+    /// Completion values per argument.
+    pub completions: BTreeMap<String, Vec<String>>,
     processor: Arc<dyn Processor>,
     ctx: WeakContext,
 }
@@ -325,7 +347,7 @@ impl PromptEntry {
         processor: Arc<dyn Processor>,
         ctx: &CamelContext,
     ) -> PromptEntry {
-        PromptEntry { name, title, description, arguments, tags, processor, ctx: ctx.downgrade() }
+        PromptEntry { name, title, description, arguments, tags, completions: BTreeMap::new(), processor, ctx: ctx.downgrade() }
     }
     /// The prompt as MCP lists it.
     pub fn to_value(&self) -> Value {
@@ -378,7 +400,17 @@ struct Compensation {
     ctx: WeakContext,
 }
 
-type Listener = Arc<dyn Fn() + Send + Sync>;
+type Listener = Arc<dyn Fn(&Change) + Send + Sync>;
+
+/// What changed in the registry (MCP `list_changed` and `resources/updated`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Change {
+    Tools,
+    Resources,
+    Prompts,
+    /// A resource's content changed (`AiRegistry::resource_updated`).
+    ResourceUpdated(String),
+}
 
 /// The context's tools, resources and prompts, and the envelope state they share.
 pub struct AiRegistry {
@@ -393,7 +425,7 @@ pub struct AiRegistry {
     idem_cv: Condvar,
     approvals: Mutex<HashMap<String, Pending>>,
     sagas: Mutex<HashMap<String, Vec<Compensation>>>,
-    listeners: Mutex<Vec<Listener>>,
+    listeners: Mutex<Vec<(u64, Listener)>>,
     seq: AtomicU64,
     ctx: WeakContext,
 }
@@ -460,7 +492,7 @@ impl AiRegistry {
             }
             tools.insert(name, Arc::new(entry));
         }
-        self.notify();
+        self.notify(Change::Tools);
         Ok(())
     }
 
@@ -468,7 +500,7 @@ impl AiRegistry {
     pub fn unregister_tool(&self, name: &str) {
         let removed = self.tools.write().unwrap_or_else(|p| p.into_inner()).remove(name).is_some();
         if removed {
-            self.notify();
+            self.notify(Change::Tools);
         }
     }
 
@@ -479,13 +511,13 @@ impl AiRegistry {
         }
         res.insert(entry.name.clone(), Arc::new(entry));
         drop(res);
-        self.notify();
+        self.notify(Change::Resources);
         Ok(())
     }
 
     pub fn unregister_resource(&self, name: &str) {
         if self.resources.write().unwrap_or_else(|p| p.into_inner()).remove(name).is_some() {
-            self.notify();
+            self.notify(Change::Resources);
         }
     }
 
@@ -496,26 +528,67 @@ impl AiRegistry {
         }
         pr.insert(entry.name.clone(), Arc::new(entry));
         drop(pr);
-        self.notify();
+        self.notify(Change::Prompts);
         Ok(())
     }
 
     pub fn unregister_prompt(&self, name: &str) {
         if self.prompts.write().unwrap_or_else(|p| p.into_inner()).remove(name).is_some() {
-            self.notify();
+            self.notify(Change::Prompts);
         }
     }
 
     /// Run `f` whenever the tool, resource or prompt lists change (MCP `list_changed`).
     pub fn on_change(&self, f: impl Fn() + Send + Sync + 'static) {
-        self.listeners.lock().unwrap_or_else(|p| p.into_inner()).push(Arc::new(f));
+        self.subscribe(move |_| f());
     }
 
-    fn notify(&self) {
-        let ls: Vec<Listener> = self.listeners.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    /// Run `f` on every change, with what changed; returns an id for [`AiRegistry::unsubscribe`].
+    pub fn subscribe(&self, f: impl Fn(&Change) + Send + Sync + 'static) -> u64 {
+        let id = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        self.listeners.lock().unwrap_or_else(|p| p.into_inner()).push((id, Arc::new(f)));
+        id
+    }
+
+    /// Remove a listener added with [`AiRegistry::subscribe`].
+    pub fn unsubscribe(&self, id: u64) {
+        self.listeners.lock().unwrap_or_else(|p| p.into_inner()).retain(|(i, _)| *i != id);
+    }
+
+    /// Tell subscribers that a resource's content changed (MCP `notifications/resources/updated`).
+    pub fn resource_updated(&self, uri: &str) {
+        self.notify(Change::ResourceUpdated(uri.to_string()));
+    }
+
+    fn notify(&self, change: Change) {
+        let ls: Vec<Listener> = self.listeners.lock().unwrap_or_else(|p| p.into_inner()).iter().map(|(_, l)| l.clone()).collect();
         for l in ls {
-            l();
+            l(&change);
         }
+    }
+
+    /// The approval endpoint of a tool, if it has one (approvals then happen out of band).
+    pub fn approval_endpoint(&self, name: &str) -> Option<String> {
+        self.tools.read().unwrap_or_else(|p| p.into_inner()).get(name).and_then(|t| t.policy.approval_endpoint.clone())
+    }
+
+    /// Completion values for a prompt argument or a resource template variable that start
+    /// with `prefix` (`argument.NAME.values` / `values.NAME` options).
+    pub fn completions(&self, reference: &CompletionRef, argument: &str, prefix: &str) -> Vec<String> {
+        let values: Vec<String> = match reference {
+            CompletionRef::Prompt(name) => {
+                self.prompts.read().unwrap_or_else(|p| p.into_inner()).get(name).and_then(|p| p.completions.get(argument).cloned()).unwrap_or_default()
+            }
+            CompletionRef::Resource(uri) => self
+                .resources
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .values()
+                .find(|r| &r.uri == uri)
+                .and_then(|r| r.completions.get(argument).cloned())
+                .unwrap_or_default(),
+        };
+        values.into_iter().filter(|v| v.starts_with(prefix)).collect()
     }
 
     // --- pinning ---
@@ -554,14 +627,14 @@ impl AiRegistry {
     pub fn disable(&self, name: &str) {
         let added = self.disabled.write().unwrap_or_else(|p| p.into_inner()).insert(name.to_string());
         if added {
-            self.notify();
+            self.notify(Change::Tools);
         }
     }
 
     pub fn enable(&self, name: &str) {
         let removed = self.disabled.write().unwrap_or_else(|p| p.into_inner()).remove(name);
         if removed {
-            self.notify();
+            self.notify(Change::Tools);
         }
     }
 
@@ -606,6 +679,16 @@ impl AiRegistry {
             .filter(|r| tags.is_empty() || r.tags.iter().any(|g| tags.contains(&g.as_str())))
             .map(|r| r.to_value())
             .collect()
+    }
+
+    /// The published resources.
+    pub fn resource_entries(&self) -> Vec<Arc<ResourceEntry>> {
+        self.resources.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
+    }
+
+    /// The published prompts.
+    pub fn prompt_entries(&self) -> Vec<Arc<PromptEntry>> {
+        self.prompts.read().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
     }
 
     /// The audit log.
@@ -908,6 +991,9 @@ impl AiRegistry {
         if let Some(p) = &call.principal {
             ex.set_header(headers::PRINCIPAL, p.as_str());
         }
+        for (k, v) in &call.headers {
+            ex.set_header(k.as_str(), v.clone());
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         ex.set_cancel_token(cancel.clone());
         let timeout = entry.policy.timeout;
@@ -1006,6 +1092,7 @@ impl AiRegistry {
             status: ToolStatus::ApprovalRequired { handle },
             duplicate: false,
             return_direct: false,
+            content: None,
         }
     }
 
@@ -1061,7 +1148,7 @@ impl AiRegistry {
         } else {
             format!("The call to {} was rejected by {}: {}", p.request.tool, approver, reason)
         };
-        ToolResult { text, structured: None, is_error: true, status: ToolStatus::Denied, duplicate: false, return_direct: false }
+        ToolResult { text, structured: None, is_error: true, status: ToolStatus::Denied, duplicate: false, return_direct: false, content: None }
     }
 
     // --- compensation ---
@@ -1200,8 +1287,8 @@ impl AiRegistry {
             Value::Array(items) => items.iter().map(prompt_message).collect::<Result<Vec<_>>>()?,
             Value::Object(m) => vec![prompt_message(&Value::Object(m))?],
             Value::Null => Vec::new(),
-            Value::Bytes(b) => vec![PromptMessage { role: "user".into(), text: String::from_utf8_lossy(&b).into_owned() }],
-            v => vec![PromptMessage { role: "user".into(), text: v.to_string() }],
+            Value::Bytes(b) => vec![PromptMessage { role: "user".into(), text: String::from_utf8_lossy(&b).into_owned(), content: None }],
+            v => vec![PromptMessage { role: "user".into(), text: v.to_string(), content: None }],
         };
         Ok(PromptResult { description: entry.description.clone(), messages })
     }
@@ -1240,7 +1327,27 @@ fn run_route(entry: &ToolEntry, ex: &mut Exchange) -> ToolResult {
     if let Some(e) = &ex.exception {
         return ToolResult::error(format!("Tool {} failed: {}", entry.definition.name, e.message));
     }
-    to_result(&entry.definition, std::mem::take(&mut ex.message.body))
+    let blocks = match ex.message.headers.remove(headers::CONTENT) {
+        Some(Value::Array(a)) => Some(a),
+        Some(v @ Value::Object(_)) => Some(vec![v]),
+        Some(Value::String(s)) => match cameleer_core::json::parse(&s) {
+            Ok(Value::Array(a)) => Some(a),
+            Ok(v @ Value::Object(_)) => Some(vec![v]),
+            _ => None,
+        },
+        _ => None,
+    };
+    let body = std::mem::take(&mut ex.message.body);
+    match blocks {
+        Some(blocks) => {
+            // the text mirror: the text blocks, else the body
+            let texts: Vec<String> = blocks.iter().filter_map(|b| b.as_object()).filter(|b| b.get("type").and_then(|t| t.as_str()) == Some("text")).filter_map(|b| b.get("text").map(|t| t.to_string())).collect();
+            let mut r = if texts.is_empty() { to_result(&entry.definition, body) } else { ToolResult::ok(texts.join("\n"), None) };
+            r.content = Some(blocks);
+            r
+        }
+        None => to_result(&entry.definition, body),
+    }
 }
 
 /// The body of a finished call as a result: an object or array is structured content (with
@@ -1354,14 +1461,22 @@ fn prompt_message(v: &Value) -> Result<PromptMessage> {
             if role != "user" && role != "assistant" {
                 return Err(CamelError::illegal_argument(format!("Prompt message role must be user or assistant, got {}", role)));
             }
-            let text = match m.get("content").or_else(|| m.get("text")) {
-                Some(Value::Object(c)) => c.get("text").map(|t| t.to_string()).unwrap_or_default(),
-                Some(t) => t.to_string(),
-                None => String::new(),
+            let (text, content) = match m.get("content").or_else(|| m.get("text")) {
+                Some(Value::Object(c)) => {
+                    let text = c.get("text").map(|t| t.to_string()).unwrap_or_default();
+                    // a typed block other than text (image, audio, resource) is kept as it is
+                    let raw = match c.get("type").and_then(|t| t.as_str()) {
+                        Some("text") | None => None,
+                        Some(_) => Some(Value::Object(c.clone())),
+                    };
+                    (text, raw)
+                }
+                Some(t) => (t.to_string(), None),
+                None => (String::new(), None),
             };
-            Ok(PromptMessage { role, text })
+            Ok(PromptMessage { role, text, content })
         }
-        other => Ok(PromptMessage { role: "user".into(), text: other.to_string() }),
+        other => Ok(PromptMessage { role: "user".into(), text: other.to_string(), content: None }),
     }
 }
 
