@@ -57,6 +57,10 @@ footer .credit { max-width: 32em; }
 }
 @media (max-width: 480px) {
   .wrap { padding: 0 16px; }
+  .brand { font-size: 17px; gap: 8px; }
+  .top nav { gap: 12px; font-size: 14px; }
+  .top nav a { white-space: nowrap; }
+  .top nav .gh { padding: 6px 10px; gap: 6px; }
 }
 
 /* ------------------------------------------------------------------ docs */
