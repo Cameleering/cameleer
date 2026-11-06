@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "resolve_damaged_order tool input",
+  "description": "Refund a delivered order that arrived damaged and send the customer a return label. The amount is taken from the order, never from the caller.",
+  "type": "object",
+  "required": ["requestId", "orderId", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "requestId": { "type": "string", "pattern": "^[A-Za-z0-9-]{8,64}$", "description": "Unique per tool call; a repeated call with the same id is not executed again." },
+    "orderId": { "type": "string", "pattern": "^[A-Z]{2}-[0-9]+$", "description": "The order number the customer gave, such as EU-4411." },
+    "reason": { "type": "string", "enum": ["damaged", "missing_parts", "wrong_item"] }
+  }
+}

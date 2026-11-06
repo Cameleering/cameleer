@@ -183,6 +183,9 @@ route handles *how*, including the failures.
 > "Refund order 4411 and tell the customer" → `platform-http` → idempotent consumer → payments API
 > with redelivery → `slack` or `aws-ses`, dead letter on failure.
 
+[Direct tool calls vs tool calls through Cameleer](docs/guides/agent-tool-calls.md) compares the two
+on a damaged-order refund across four systems, with the tested route.
+
 **⚡ Feed agents events, not polling loops.** Turn Kafka, SQS, MQTT, webhooks, mailboxes and file
 drops into model calls. Filter and enrich first, so you pay for fewer tokens. Route on the answer.
 > New ticket on `kafka` → drop spam with a filter → `aws-bedrock` (Claude) classifies → urgent ones

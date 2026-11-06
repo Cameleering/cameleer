@@ -282,6 +282,10 @@ The test makes the payments mock fail the first call with `503`, and checks the 
 duplicate, the `400` for a call without `orderId` and with an amount over the schema's maximum,
 and the two audit lines.
 
+For a tool that spans several systems (refund, return label, email) in one call, with a saga
+that rolls back half-done work, see
+[AI agent tool calls: direct vs through Cameleer](agent-tool-calls.md).
+
 For one endpoint per tool without one route per tool, use `toD: direct:tool-${header.name}` on
 a path parameter, with a fixed set of `direct:` routes behind it. A packaged MCP server is on the
 [roadmap](../ROADMAP.md).
@@ -562,6 +566,7 @@ OpenSearch, PostgreSQL with pgvector, or any store with an HTTP API).
 
 ## Related
 
+- [AI agent tool calls: direct vs through Cameleer](agent-tool-calls.md): a multi-step tool with a saga, compared with letting the model call each API
 - [AI components](ai-components.md), [openai component](../components/openai.md)
 - [EIPs](eips.md), [error handling](error-handling.md), [edge cookbook](edge.md)
 - [Roadmap: agent tool server and agent loop](../ROADMAP.md)

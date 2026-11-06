@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" width="960" height="600" role="img" aria-labelledby="t d">
+  <title id="t">AI agent tool calls: direct versus through Cameleer</title>
+  <desc id="d">Left: an agent calls the orders, payments, shipping and email APIs itself, four tool calls and five model turns, with the rules in the prompt; a retry after a timeout refunds twice and a failed label leaves the refund half done. Right: the agent makes one tool call to a Cameleer route that validates the arguments, runs each request once, checks policy, runs the refund and the label as a saga with rollback, retries and writes an audit log, then calls the same four APIs.</desc>
+  <style>
+    .s { fill: none; stroke: #18203a; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+    .box { fill: #ffffff; stroke: #18203a; stroke-width: 1.5; }
+    .f { fill: #e8eeff; stroke: #1f4fff; stroke-width: 1.5; }
+    .chip { fill: #ffffff; stroke: #1f4fff; stroke-width: 1.2; }
+    .d { fill: #e9a21f; }
+    .faint { fill: none; stroke: #c4cad6; stroke-width: 1.5; stroke-linecap: round; }
+    .h { font: 700 20px "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif; fill: #18203a; letter-spacing: -0.02em; }
+    .sub { font: 400 14px "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif; fill: #5b6479; }
+    .lbl { font: 500 14px "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif; fill: #18203a; }
+    .m { font: 400 12px "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace; fill: #5b6479; }
+    .mc { font: 500 12px "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace; fill: #1f4fff; }
+    .n { font: 700 11px "JetBrains Mono", ui-monospace, Consolas, monospace; fill: #18203a; }
+    .item { font: 400 14px "Schibsted Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif; fill: #18203a; }
+    .stat { font: 500 13px "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace; fill: #18203a; }
+  </style>
+  <rect x="0.75" y="0.75" width="958.5" height="598.5" rx="18" fill="#ffffff" stroke="#e4e8f0" stroke-width="1.5"/>
+  <path d="M480 28 V572" stroke="#e4e8f0" stroke-width="1.5" stroke-dasharray="4 6"/>
+
+  <!-- ============ left: direct tool calls ============ -->
+  <text class="h" x="40" y="52">Direct tool calls</text>
+  <text class="sub" x="40" y="74">The model orchestrates every step</text>
+
+  <!-- agent -->
+  <g transform="translate(192 100)">
+    <path class="s" d="M48 0 V-12"/><circle class="d" cx="48" cy="-16" r="5"/>
+    <rect class="box" x="0" y="0" width="96" height="58" rx="14"/>
+    <circle class="s" cx="34" cy="24" r="4"/><circle class="s" cx="62" cy="24" r="4"/>
+    <path class="s" d="M34 38 q14 9 28 0"/>
+  </g>
+  <text class="m" x="300" y="128">agent (LLM)</text>
+  <text class="m" x="300" y="144">holds API keys</text>
+
+  <!-- four calls, each a model turn -->
+  <path class="s" d="M220 158 L75 366"/>
+  <path class="s" d="M232 158 L185 366"/>
+  <path class="s" d="M248 158 L295 366"/>
+  <path class="s" d="M260 158 L405 366"/>
+  <circle class="d" cx="133" cy="283" r="5"/><circle class="d" cx="204" cy="283" r="5"/>
+  <circle class="d" cx="276" cy="283" r="5"/><circle class="d" cx="347" cy="283" r="5"/>
+  <g>
+    <circle cx="162" cy="241" r="10" fill="#ffffff" stroke="#18203a" stroke-width="1.5"/><text class="n" x="162" y="245" text-anchor="middle">1</text>
+    <circle cx="213" cy="241" r="10" fill="#ffffff" stroke="#18203a" stroke-width="1.5"/><text class="n" x="213" y="245" text-anchor="middle">2</text>
+    <circle cx="267" cy="241" r="10" fill="#ffffff" stroke="#18203a" stroke-width="1.5"/><text class="n" x="267" y="245" text-anchor="middle">3</text>
+    <circle cx="318" cy="241" r="10" fill="#ffffff" stroke="#18203a" stroke-width="1.5"/><text class="n" x="318" y="245" text-anchor="middle">4</text>
+  </g>
+  <text class="m" x="40" y="176">tool definitions,</text>
+  <text class="m" x="40" y="192">rules in the prompt</text>
+
+  <!-- APIs -->
+  <g>
+    <rect class="box" x="29" y="366" width="92" height="44" rx="8"/><text class="lbl" x="75" y="393" text-anchor="middle">Orders</text>
+    <rect class="box" x="139" y="366" width="92" height="44" rx="8"/><text class="lbl" x="185" y="393" text-anchor="middle">Payments</text>
+    <rect class="box" x="249" y="366" width="92" height="44" rx="8"/><text class="lbl" x="295" y="393" text-anchor="middle">Shipping</text>
+    <rect class="box" x="359" y="366" width="92" height="44" rx="8"/><text class="lbl" x="405" y="393" text-anchor="middle">Email</text>
+  </g>
+
+  <!-- what can go wrong -->
+  <g>
+    <circle class="d" cx="48" cy="455" r="9"/><text x="48" y="459" text-anchor="middle" class="n">!</text>
+    <text class="item" x="66" y="460">A retry after a timeout refunds twice</text>
+    <circle class="d" cx="48" cy="487" r="9"/><text x="48" y="491" text-anchor="middle" class="n">!</text>
+    <text class="item" x="66" y="492">Label fails after the refund: half done</text>
+    <circle class="d" cx="48" cy="519" r="9"/><text x="48" y="523" text-anchor="middle" class="n">!</text>
+    <text class="item" x="66" y="524">The model sets the amount and the rules</text>
+  </g>
+  <text class="stat" x="40" y="566">4 tool calls · 5 model turns</text>
+
+  <!-- ============ right: through Cameleer ============ -->
+  <text class="h" x="520" y="52">Through Cameleer</text>
+  <text class="sub" x="520" y="74">The model decides, a route executes</text>
+
+  <g transform="translate(672 100)">
+    <path class="s" d="M48 0 V-12"/><circle class="d" cx="48" cy="-16" r="5"/>
+    <rect class="box" x="0" y="0" width="96" height="58" rx="14"/>
+    <circle class="s" cx="34" cy="24" r="4"/><circle class="s" cx="62" cy="24" r="4"/>
+    <path class="s" d="M34 38 q14 9 28 0"/>
+  </g>
+  <text class="m" x="780" y="128">agent (LLM)</text>
+  <text class="m" x="780" y="144">no API keys</text>
+
+  <!-- one tool call -->
+  <path class="s" d="M720 158 V196"/>
+  <circle class="d" cx="720" cy="176" r="5"/>
+  <text class="mc" x="732" y="181">1 tool call</text>
+
+  <!-- the route -->
+  <rect class="f" x="530" y="196" width="380" height="112" rx="12"/>
+  <text class="mc" x="548" y="220">POST /tools/resolve-damaged-order</text>
+  <g>
+    <rect class="chip" x="548" y="232" width="110" height="26" rx="13"/><text class="m" x="603" y="249" text-anchor="middle" fill="#18203a">validate args</text>
+    <rect class="chip" x="665" y="232" width="110" height="26" rx="13"/><text class="m" x="720" y="249" text-anchor="middle" fill="#18203a">run once</text>
+    <rect class="chip" x="782" y="232" width="110" height="26" rx="13"/><text class="m" x="837" y="249" text-anchor="middle" fill="#18203a">check policy</text>
+    <rect class="chip" x="548" y="268" width="110" height="26" rx="13"/><text class="m" x="603" y="285" text-anchor="middle" fill="#18203a">saga, rollback</text>
+    <rect class="chip" x="665" y="268" width="110" height="26" rx="13"/><text class="m" x="720" y="285" text-anchor="middle" fill="#18203a">retries</text>
+    <rect class="chip" x="782" y="268" width="110" height="26" rx="13"/><text class="m" x="837" y="285" text-anchor="middle" fill="#18203a">audit log</text>
+  </g>
+
+  <!-- route to the same APIs -->
+  <path class="s" d="M555 308 V366 M665 308 V366 M775 308 V366 M885 308 V366"/>
+  <circle class="d" cx="555" cy="337" r="5"/><circle class="d" cx="665" cy="337" r="5"/>
+  <circle class="d" cx="775" cy="337" r="5"/><circle class="d" cx="885" cy="337" r="5"/>
+  <g>
+    <rect class="box" x="509" y="366" width="92" height="44" rx="8"/><text class="lbl" x="555" y="393" text-anchor="middle">Orders</text>
+    <rect class="box" x="619" y="366" width="92" height="44" rx="8"/><text class="lbl" x="665" y="393" text-anchor="middle">Payments</text>
+    <rect class="box" x="729" y="366" width="92" height="44" rx="8"/><text class="lbl" x="775" y="393" text-anchor="middle">Shipping</text>
+    <rect class="box" x="839" y="366" width="92" height="44" rx="8"/><text class="lbl" x="885" y="393" text-anchor="middle">Email</text>
+  </g>
+
+  <g>
+    <circle cx="528" cy="455" r="9" fill="#e8eeff" stroke="#1f4fff" stroke-width="1.5"/><path d="M523.5 455 l3 3 l5.5 -6" fill="none" stroke="#1f4fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="item" x="546" y="460">Each requestId runs once</text>
+    <circle cx="528" cy="487" r="9" fill="#e8eeff" stroke="#1f4fff" stroke-width="1.5"/><path d="M523.5 487 l3 3 l5.5 -6" fill="none" stroke="#1f4fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="item" x="546" y="492">Label fails: the refund is cancelled</text>
+    <circle cx="528" cy="519" r="9" fill="#e8eeff" stroke="#1f4fff" stroke-width="1.5"/><path d="M523.5 519 l3 3 l5.5 -6" fill="none" stroke="#1f4fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text class="item" x="546" y="524">Amount from the order, approval over 200</text>
+  </g>
+  <text class="stat" x="520" y="566">1 tool call · 2 model turns</text>
+</svg>
