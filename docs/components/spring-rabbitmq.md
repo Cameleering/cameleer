@@ -2,7 +2,7 @@
 
 > The `spring-rabbitmq` component sends messages to and consumes messages from RabbitMQ exchanges and queues over AMQP 0-9-1, with Apache Camel's `spring-rabbitmq` options.
 
-**Scheme:** `spring-rabbitmq:` · **Crate:** `cameleer-amqp` ·
+**Scheme:** `spring-rabbitmq:` · **Crate:** `cameleer-amqp` · **Cargo feature:** [`amqp`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Spring RabbitMQ](https://camel.apache.org/components/next/spring-rabbitmq-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `sftp` component downloads files from and uploads files to an SSH server over SFTP, polling a remote directory for new files.
 
-**Scheme:** `sftp:` · **Crate:** `cameleer-ssh` ·
+**Scheme:** `sftp:` · **Crate:** `cameleer-ssh` · **Cargo feature:** [`ssh`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [SFTP](https://camel.apache.org/components/next/sftp-component.html)
 
 Cameleer has its own SSH-2 and SFTP v3 implementation (interop-tested against OpenSSH), with

@@ -2,7 +2,7 @@
 
 > The `aws2-cw` component publishes custom metrics to Amazon CloudWatch.
 
-**Scheme:** `aws2-cw:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-cw:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS CloudWatch](https://camel.apache.org/components/next/aws2-cw-component.html)
 
 ## When to use it

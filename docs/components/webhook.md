@@ -2,7 +2,7 @@
 
 > The `webhook` component receives events from a SaaS service through a webhook: it serves an HTTP endpoint for a delegate endpoint (GitHub or Telegram) and registers that endpoint with the service on start.
 
-**Scheme:** `webhook:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `webhook:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Webhook](https://camel.apache.org/components/next/webhook-component.html)
 
 `webhook:` wraps another endpoint URI. On start it binds an HTTP path on

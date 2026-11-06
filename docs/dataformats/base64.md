@@ -2,7 +2,7 @@
 
 > The `base64` data format encodes the message body as Base64 text (marshal) and decodes Base64 text back to bytes (unmarshal).
 
-**Name:** `base64` · **Crate:** `cameleer-core` ·
+**Name:** `base64` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [Base64](https://camel.apache.org/components/next/dataformats/base64-dataformat.html)
 
 ## When to use it

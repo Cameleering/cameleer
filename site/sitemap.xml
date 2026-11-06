@@ -3,10 +3,10 @@
   <url><loc>https://pmsudhi.github.io/cameleer/</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/llms.txt</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/llms-full.txt</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/BENCHMARKS.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/BENCHMARKS.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/DEPLOYMENT.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/FEATURES.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/INTEROP.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/INTEROP.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/ROADMAP.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/STATUS.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/activemq.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -102,7 +102,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/grpc.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/http.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/imap.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/jdbc.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/jetty.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/jira.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -151,7 +151,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/telegram.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/test.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/thrift.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/timer.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/timer.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/twilio.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/undertow.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/validator.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -200,6 +200,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/agent-tool-calls.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/agents.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/ai-components.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/build-features.html</loc></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/cloud-credentials.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/concepts.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/edge.html</loc><lastmod>2026-11-06</lastmod></url>

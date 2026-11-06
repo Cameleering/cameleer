@@ -2,7 +2,7 @@
 
 > The `pop3` component downloads email from a POP3 mailbox on a schedule and turns each message into an exchange.
 
-**Scheme:** `pop3:` · **Also:** `pop3s:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `pop3:` · **Also:** `pop3s:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Mail](https://camel.apache.org/components/next/mail-component.html)
 
 `pop3s:` uses implicit TLS (port 995); `pop3:` can upgrade with STLS

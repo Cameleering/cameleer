@@ -2,7 +2,7 @@
 
 > The `netty-http` component serves HTTP requests on an address given in the URI, for routes written for Apache Camel's camel-netty-http.
 
-**Scheme:** `netty-http:` · **Crate:** `cameleer-http` ·
+**Scheme:** `netty-http:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Netty HTTP](https://camel.apache.org/components/next/netty-http-component.html)
 
 `netty-http:` endpoints run on Cameleer's embedded HTTP/1.1 server, the same one as

@@ -2,7 +2,7 @@
 
 > The `couchdb` component saves, reads and deletes JSON documents in Apache CouchDB and consumes the database's changes feed.
 
-**Scheme:** `couchdb:` · **Crate:** `cameleer-datastores` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `couchdb:` · **Crate:** `cameleer-datastores` · **Cargo feature:** [`datastores`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [CouchDB](https://camel.apache.org/components/next/couchdb-component.html)
 
 ## When to use it

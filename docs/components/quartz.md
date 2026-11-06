@@ -2,7 +2,7 @@
 
 > The `quartz` component starts a route from a cron trigger or a simple repeating trigger, using Apache Camel's Quartz endpoint syntax.
 
-**Scheme:** `quartz:` · **Crate:** `cameleer-core` ·
+**Scheme:** `quartz:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Quartz](https://camel.apache.org/components/next/quartz-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `scheduler` component starts a route repeatedly with a scheduled poll consumer: a delay between runs, optional back-off when idle, or a cron expression.
 
-**Scheme:** `scheduler:` · **Crate:** `cameleer-core` ·
+**Scheme:** `scheduler:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Scheduler](https://camel.apache.org/components/next/scheduler-component.html)
 
 ## When to use it

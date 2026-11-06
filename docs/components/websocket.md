@@ -2,7 +2,7 @@
 
 > The `websocket` component runs a WebSocket server: the consumer receives messages from connected clients and the producer sends to one client or broadcasts to all of them.
 
-**Scheme:** `websocket:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `websocket:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [WebSocket (Jetty)](https://camel.apache.org/components/next/websocket-component.html)
 
 Cameleer implements RFC 6455 itself (no Jetty): text and binary messages, fragmentation,

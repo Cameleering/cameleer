@@ -3,7 +3,7 @@
 > The `jacksonXml` data format converts between XML text and a structured body: object keys become elements, lists repeat the element, and options map keys to attributes, text and namespaces.
 
 **Name:** `jacksonXml` · **Also:** `xml`, `jacksonxml` (and `jaxb` when `cameleer-soap` is not
-registered) · **Crate:** `cameleer-core` ·
+registered) · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [Jackson XML](https://camel.apache.org/components/next/dataformats/jacksonXml-dataformat.html)
 
 ## When to use it

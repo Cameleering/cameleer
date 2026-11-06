@@ -2,7 +2,7 @@
 
 > The `iCal` data format parses iCalendar (RFC 5545, `.ics`) text into a structured value and writes such values back as iCalendar text.
 
-**Name:** `iCal` · **Also:** `ical` · **Crate:** `cameleer-dataformats` ·
+**Name:** `iCal` · **Also:** `ical` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [iCal](https://camel.apache.org/components/next/dataformats/ical-dataformat.html)
 
 ## When to use it

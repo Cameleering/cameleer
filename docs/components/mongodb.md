@@ -2,7 +2,7 @@
 
 > The `mongodb` component inserts, queries, updates and deletes documents in MongoDB, and consumes change streams and tailable cursors.
 
-**Scheme:** `mongodb:` · **Crate:** `cameleer-datastores` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `mongodb:` · **Crate:** `cameleer-datastores` · **Cargo feature:** [`datastores`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [MongoDB](https://camel.apache.org/components/next/mongodb-component.html)
 
 ## When to use it

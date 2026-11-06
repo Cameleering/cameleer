@@ -2,7 +2,7 @@
 
 > The `google-pubsub` component publishes messages to Google Cloud Pub/Sub topics and consumes messages from Pub/Sub subscriptions, with gRPC streaming pull by default.
 
-**Scheme:** `google-pubsub:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-pubsub:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Google Pubsub](https://camel.apache.org/components/next/google-pubsub-component.html)
 
 ## When to use it

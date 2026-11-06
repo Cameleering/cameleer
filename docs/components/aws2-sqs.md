@@ -2,7 +2,7 @@
 
 > The `aws2-sqs` component sends messages to and receives messages from Amazon SQS queues, including FIFO queues.
 
-**Scheme:** `aws2-sqs:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `aws2-sqs:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [AWS Simple Queue Service (SQS)](https://camel.apache.org/components/next/aws2-sqs-component.html)
 
 ## When to use it

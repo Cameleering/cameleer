@@ -10,6 +10,7 @@
 :maxdepth: 1
 
 guides/getting-started
+guides/build-features
 guides/concepts
 guides/yaml-dsl
 guides/yaml-for-coding-agents

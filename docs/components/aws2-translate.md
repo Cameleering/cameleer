@@ -2,7 +2,7 @@
 
 > The `aws2-translate` component translates text between languages with Amazon Translate, with optional automatic source language detection.
 
-**Scheme:** `aws2-translate:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-translate:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Translate](https://camel.apache.org/components/next/aws2-translate-component.html)
 
 ## When to use it

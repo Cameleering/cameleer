@@ -2,7 +2,7 @@
 
 > The `google-calendar-stream` component polls a Google Calendar and emits new and changed events, optionally using incremental sync tokens so deleted events are reported too.
 
-**Scheme:** `google-calendar-stream:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-calendar-stream:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Google Calendar Stream](https://camel.apache.org/components/next/google-calendar-stream-component.html)
 
 ## When to use it

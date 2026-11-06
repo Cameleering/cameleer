@@ -2,7 +2,7 @@
 
 > The `activemq` component sends and receives messages on Apache ActiveMQ (Classic or Artemis) queues and topics with JMS semantics, over the broker's STOMP connector.
 
-**Scheme:** `activemq:` · **Crate:** `cameleer-amqp` ·
+**Scheme:** `activemq:` · **Crate:** `cameleer-amqp` · **Cargo feature:** [`amqp`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [ActiveMQ](https://camel.apache.org/components/next/activemq-component.html)
 
 ## When to use it

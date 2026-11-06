@@ -2,7 +2,7 @@
 
 > The `zipDeflater` data format compresses the message body with zlib/DEFLATE (marshal) and decompresses it (unmarshal), like Java's `java.util.zip.Deflater`.
 
-**Name:** `zipDeflater` · **Also:** `zip`, `deflate`, `zlib`, `zipdeflater` · **Crate:** `cameleer-core` ·
+**Name:** `zipDeflater` · **Also:** `zip`, `deflate`, `zlib`, `zipdeflater` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [Zip Deflater](https://camel.apache.org/components/next/dataformats/zipDeflater-dataformat.html)
 
 ## When to use it

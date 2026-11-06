@@ -2,7 +2,7 @@
 
 > The `constant` language returns its text unchanged, optionally converted to a type with `resultType`.
 
-**Name:** `constant` · **Crate:** `cameleer-core` · **Apache Camel:** [Constant](https://camel.apache.org/components/next/languages/constant-language.html)
+**Name:** `constant` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [Constant](https://camel.apache.org/components/next/languages/constant-language.html)
 
 ## When to use it
 

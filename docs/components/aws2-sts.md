@@ -2,7 +2,7 @@
 
 > The `aws2-sts` component gets temporary AWS credentials (assume role, session and federation tokens) and tells which identity the credentials belong to.
 
-**Scheme:** `aws2-sts:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-sts:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Security Token Service (STS)](https://camel.apache.org/components/next/aws2-sts-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `tokenize` language cuts text into a list of pieces (by a token, a regular expression, a start and end token, or an XML element name), mostly to drive the `split` EIP.
 
-**Name:** `tokenize` · **Crate:** `cameleer-core` · **Apache Camel:** [Tokenize](https://camel.apache.org/components/next/languages/tokenize-language.html)
+**Name:** `tokenize` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [Tokenize](https://camel.apache.org/components/next/languages/tokenize-language.html)
 
 ## When to use it
 

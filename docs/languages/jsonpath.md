@@ -2,7 +2,7 @@
 
 > The `jsonpath` language selects values from a JSON document with JSONPath expressions such as `$.choices[0].message.content`.
 
-**Name:** `jsonpath` · **Crate:** `cameleer-core` · **Apache Camel:** [JSONPath](https://camel.apache.org/components/next/languages/jsonpath-language.html)
+**Name:** `jsonpath` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [JSONPath](https://camel.apache.org/components/next/languages/jsonpath-language.html)
 
 ## When to use it
 

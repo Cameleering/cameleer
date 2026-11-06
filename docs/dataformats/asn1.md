@@ -2,7 +2,7 @@
 
 > The `asn1` data format encodes values as ASN.1 BER/DER and decodes BER/DER back into values, either as a generic tree or typed by an ASN.1 module compiled at runtime; it can also split a stream of BER records.
 
-**Name:** `asn1` · **Crate:** `cameleer-dataformats` ·
+**Name:** `asn1` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [ASN.1 File](https://camel.apache.org/components/next/dataformats/asn1-dataformat.html)
 
 ## When to use it

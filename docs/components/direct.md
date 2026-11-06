@@ -2,7 +2,7 @@
 
 > The `direct` component calls another route synchronously, in the same thread, inside the same Cameleer process.
 
-**Scheme:** `direct:` · **Crate:** `cameleer-core` ·
+**Scheme:** `direct:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Direct](https://camel.apache.org/components/next/direct-component.html)
 
 ## When to use it

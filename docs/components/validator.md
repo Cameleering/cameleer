@@ -2,7 +2,7 @@
 
 > The `validator` component checks the XML message body against an XML Schema (XSD) and fails the exchange with a `SchemaValidationException` listing every error when it does not conform.
 
-**Scheme:** `validator:` · **Crate:** `cameleer-xml` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `validator:` · **Crate:** `cameleer-xml` · **Cargo feature:** none for a well-formedness check; [`xml`](../guides/build-features.md) for full XML Schema validation · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [Validator](https://camel.apache.org/components/next/validator-component.html)
 
 ## When to use it

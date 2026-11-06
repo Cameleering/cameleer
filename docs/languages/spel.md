@@ -2,7 +2,7 @@
 
 > The `spel` language evaluates Spring Expression Language expressions and `#{...}` templates against the exchange.
 
-**Name:** `spel` · **Crate:** `cameleer-script` ·
+**Name:** `spel` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [SpEL](https://camel.apache.org/components/next/languages/spel-language.html)
 
 ## When to use it

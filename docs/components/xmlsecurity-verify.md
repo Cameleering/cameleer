@@ -2,7 +2,7 @@
 
 > The `xmlsecurity-verify` component checks the XML Signature in the message body against a trusted key and, by default, removes the signature; a bad signature fails the exchange.
 
-**Scheme:** `xmlsecurity-verify:` · **Crate:** `cameleer-xml` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `xmlsecurity-verify:` · **Crate:** `cameleer-xml` · **Cargo feature:** [`xml`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [XML Security Verify](https://camel.apache.org/components/next/xmlsecurity-verify-component.html)
 
 ## When to use it

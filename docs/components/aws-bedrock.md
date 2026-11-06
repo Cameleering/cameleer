@@ -2,7 +2,7 @@
 
 > The `aws-bedrock` component calls foundation models on Amazon Bedrock (Claude, Llama, Titan, Mistral and others) with the Converse and InvokeModel APIs, including streaming and guardrails.
 
-**Scheme:** `aws-bedrock:` · **Also:** `aws2-bedrock:` (same component) · **Crate:** `cameleer-cloud` ·
+**Scheme:** `aws-bedrock:` · **Also:** `aws2-bedrock:` (same component) · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [AWS Bedrock](https://camel.apache.org/components/next/aws-bedrock-component.html)
 
 ## When to use it

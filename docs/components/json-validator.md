@@ -2,7 +2,7 @@
 
 > The `json-validator` component checks the message body (or a header) against a JSON Schema and fails the exchange with a `JsonValidationException` listing every error when it does not conform.
 
-**Scheme:** `json-validator:` · **Crate:** `cameleer-core` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `json-validator:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [JSON Schema Validator](https://camel.apache.org/components/next/json-validator-component.html)
 
 ## When to use it

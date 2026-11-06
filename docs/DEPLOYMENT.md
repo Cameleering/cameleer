@@ -10,7 +10,7 @@ covers the container image: Docker, Docker Compose, Kubernetes and serverless pl
 | Name | `pmsudhi/cameleer` on Docker Hub, also `ghcr.io/pmsudhi/cameleer` |
 | Platforms | `linux/amd64`, `linux/arm64` |
 | Contents | one native binary (glibc) on `gcr.io/distroless/cc-debian12:nonroot`: CA certificates, tzdata, no shell |
-| Size | about 20 MB to download; 12.5 MB built with `FEATURES=core` |
+| Size | about 20 MB to download; under 12.5 MB built with `FEATURES=core` ([build features](guides/build-features.md)) |
 | Entrypoint | `cameleer` (the CLI): `run`, `version`, `get health`, `--help` |
 | Working directory | `/routes`: mount route files here, read-only is fine |
 | Port | `8080`: the REST DSL, `platform-http` and the health endpoints share it |
@@ -213,7 +213,7 @@ aws lambda create-function --function-name orders --runtime provided.al2023 \
 
 The zip holds `bootstrap` (the `cameleer` binary under the name Lambda starts; with no
 arguments it runs the route files in `$LAMBDA_TASK_ROOT`) and your route files. `--features`
-keeps only the component families the routes use (see [smaller builds](#smaller-builds)), which
+keeps only the component families the routes use (see [build features](guides/build-features.md)), which
 makes the zip and the cold start smaller. Measured init times are in
 [BENCHMARKS.md](BENCHMARKS.md#faas-cold-start-and-size).
 
@@ -222,35 +222,27 @@ sends SIGTERM before it shuts a sandbox down; routes are stopped gracefully then
 
 ## Smaller builds
 
-The default build and image contain every component family. A function or an edge device that
-needs only a few can leave the rest out with the cargo features of `cameleer-main`: `amqp`,
-`amqp10`, `cloud`, `dataformats`, `datastores`, `grpc`, `kafka-mqtt`, `protocols`, `saas`,
-`script`, `soap`, `sql`, `ssh` and `xml`. Five smaller parts are features too:
-
-| feature | what it adds |
-|---|---|
-| `templates` | the `mustache`, `velocity`, `freemarker` and `string-template` components |
-| `jq` | the `jq` language and Simple's `${jq(...)}` |
-| `xpath` | the core XPath 1.0 subset: the `xpath` language and Simple's `${xpath(...)}` (the `xml` family brings the full XPath for the `xpath` language) |
-| `http2` | `httpVersion=HTTP/2` on the `http` producer |
-| `validate` | the `cameleer validate` and `cameleer schema` commands |
-
-`full`, the default, is all of them; `core` is none of them. Core (every EIP, Simple, JsonPath
-and the other core languages, the core components), the YAML and XML DSLs, HTTP/1.1 and TLS
-are always in. A list of features replaces the default, so name every part you use:
+The default build and image contain every component family. A function, an edge device or a
+slim image can leave the rest out with the cargo features of `cameleer-main`. The
+[build features guide](guides/build-features.md) lists every feature and what it adds, shows how
+to choose them for your routes, and has the commands for each kind of build. In short:
 
 ```sh
-cargo build --profile dist -p cameleer-main --no-default-features --features cloud,sql,jq
 docker build --build-arg FEATURES=cloud,sql,jq -t my-cameleer .
+cargo install cameleer-main --no-default-features --features cloud,sql,jq
+scripts/package-lambda.sh --features cloud,jq --out function.zip orders.camel.yaml
 ```
 
-A route that names a component or language left out fails at startup with the feature to
-enable: `No component found with scheme: kafka (this cameleer binary was built without the
-`kafka-mqtt` feature; rebuild cameleer-main with `--features kafka-mqtt`)`. The same goes for
-`velocity:` (`templates`), the `jq` language, `httpVersion=HTTP/2` (`http2`) and `cameleer
-validate` (`validate`). `cameleer version` lists the features of a reduced build. The `core`
-build is 5.8 MB (glibc) or 6.0 MB (static musl) on Linux x86-64; every component is 23.9 MB. More sizes and the cold-start times are in
-[BENCHMARKS.md](BENCHMARKS.md#faas-cold-start-and-size).
+- A feature list **replaces** the default: name every family you use. The template engines,
+  `jq`, the core XPath subset, `http2` and `validate` (`cameleer validate`, `cameleer schema`)
+  are features too.
+- A route that uses something left out fails at startup with the feature to add, for example
+  ``No component found with scheme: kafka (this cameleer binary was built without the
+  `kafka-mqtt` feature; rebuild cameleer-main with `--features kafka-mqtt`)``.
+- `cameleer version` lists the features of a build.
+- `FEATURES=core` is the smallest: 5.8 MB (glibc) or 6.0 MB (static musl) on Linux x86-64,
+  against 23.9 MB with every component. More sizes and cold-start times are in
+  [BENCHMARKS.md](BENCHMARKS.md#faas-cold-start-and-size).
 
 ## Without a container
 

@@ -2,7 +2,7 @@
 
 > The `google-pubsub-lite` component publishes messages to Google Cloud Pub/Sub Lite topics and consumes Pub/Sub Lite subscriptions over gRPC, partition by partition.
 
-**Scheme:** `google-pubsub-lite:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-pubsub-lite:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Google PubSub Lite](https://camel.apache.org/components/next/google-pubsub-lite-component.html)
 
 **Note:** Google deprecated Pub/Sub Lite in 2024 and announced its shutdown for March 2026.

@@ -2,7 +2,7 @@
 
 > The `aws2-step-functions` component starts and manages AWS Step Functions workflows (state machines, executions and activities).
 
-**Scheme:** `aws2-step-functions:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-step-functions:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Step Functions](https://camel.apache.org/components/next/aws2-step-functions-component.html)
 
 ## When to use it

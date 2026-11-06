@@ -2,7 +2,7 @@
 
 > The `jq` language queries and transforms JSON with jq 1.7 programs such as `.items | map(.price) | add`.
 
-**Name:** `jq` · **Crate:** `cameleer-core` · **Apache Camel:** [JQ](https://camel.apache.org/components/next/languages/jq-language.html)
+**Name:** `jq` · **Crate:** `cameleer-core` · **Cargo feature:** [`jq`](../guides/build-features.md) · **Apache Camel:** [JQ](https://camel.apache.org/components/next/languages/jq-language.html)
 
 ## When to use it
 

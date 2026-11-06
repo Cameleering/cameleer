@@ -2,7 +2,7 @@
 
 > The `datasonnet` language maps the message body to a new document with Jsonnet: the body is `payload`, the result is JSON text by default.
 
-**Name:** `datasonnet` · **Crate:** `cameleer-script` ·
+**Name:** `datasonnet` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [DataSonnet](https://camel.apache.org/components/next/languages/datasonnet-language.html)
 
 ## When to use it

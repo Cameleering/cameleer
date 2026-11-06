@@ -2,7 +2,7 @@
 
 > The `dataformat` component marshals or unmarshals the message body with a data format (JSON, CSV, Base64, ...) as an endpoint, so it can be used anywhere a URI is accepted.
 
-**Scheme:** `dataformat:` · **Crate:** `cameleer-core` ·
+**Scheme:** `dataformat:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Data Format](https://camel.apache.org/components/next/dataformat-component.html)
 
 ## When to use it

@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-05. Branch `main`. The verified head before this file
+_Last updated: 2026-11-06. Branch `main`. The verified head before this file
 was added is `7de6166`._
 
 ## Name, packaging and release (2026-11-05)
@@ -29,6 +29,13 @@ was added is `7de6166`._
   dangling-endpoint, duplicate-route-id; text or JSON output; exit 0/1/2. A test validates every
   doc example and every file in `examples/`. Guides: `docs/guides/yaml-dsl.md`,
   `docs/guides/yaml-for-coding-agents.md`, `docs/guides/validate.md`, and `AGENTS.md`.
+- **0.4.0: serverless and smaller builds** (2026-11-06). AWS Lambda custom runtime in
+  `cameleer run`; every component family plus `templates`, `jq`, `xpath`, `http2` and `validate`
+  as cargo features of `cameleer-main`; fewer idle threads (on-demand pool workers, one timer
+  thread per timer name, XQuery/XSLT on the caller); the TLS alert fix. Release notes are in
+  `CHANGELOG.md`. Feature docs: `docs/guides/build-features.md`, and every component, language
+  and data format page names its feature in its header (`**Cargo feature:**`, checked by
+  `crates/cameleer-main/tests/features.rs` `reference_pages_name_their_cargo_feature`).
 - **Open findings from the documentation pass** are GitHub issues #2-#15 (Simple numeric string
   comparison, http producer overwriting the message on failure, S3 bucket header, webhook
   signatures, vault env vars, YAML `dataFormats`, `cameleer run <directory>`, ...).

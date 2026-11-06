@@ -2,7 +2,7 @@
 
 > The `file` component reads files from a directory (polling for new ones) and writes message bodies to files.
 
-**Scheme:** `file:` · **Crate:** `cameleer-core` ·
+**Scheme:** `file:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [File](https://camel.apache.org/components/next/file-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `google-drive` component uploads, downloads, lists, copies and deletes Google Drive files through the Drive v3 REST API, and can poll a file listing to emit created, modified and removed files.
 
-**Scheme:** `google-drive:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-drive:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes (file changes of `drive-files/list`) · **Producer:** yes · **Apache Camel:** [Google Drive](https://camel.apache.org/components/next/google-drive-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `fory` data format serializes values to and from the Apache Fory (formerly Fury) cross-language binary format, so Rust, Java, Python, Go and JavaScript services can share compact payloads.
 
-**Name:** `fory` · **Crate:** `cameleer-dataformats` ·
+**Name:** `fory` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Fory](https://camel.apache.org/components/next/dataformats/fory-dataformat.html)
 
 ## When to use it

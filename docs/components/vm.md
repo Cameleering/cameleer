@@ -2,7 +2,7 @@
 
 > The `vm` component is a [seda](seda.md) queue shared by every `CamelContext` in the same process, so separately deployed route sets can pass messages in memory.
 
-**Scheme:** `vm:` · **Crate:** `cameleer-core` ·
+**Scheme:** `vm:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [VM](https://camel.apache.org/components/next/vm-component.html)
 
 ## When to use it

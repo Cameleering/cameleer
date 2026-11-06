@@ -2,7 +2,7 @@
 
 > The `xj` component converts XML to JSON and JSON to XML, either directly (`xj:identity`) or through an XSLT stylesheet.
 
-**Scheme:** `xj:` · **Crate:** `cameleer-xml` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `xj:` · **Crate:** `cameleer-xml` · **Cargo feature:** [`xml`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [XJ](https://camel.apache.org/components/next/xj-component.html)
 
 ## When to use it

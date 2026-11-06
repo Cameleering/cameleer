@@ -2,7 +2,7 @@
 
 > The `ws` component is a WebSocket client: it connects to a WebSocket server, receives the server's messages as exchanges and sends messages on the same connection.
 
-**Scheme:** `ws:` · **Also:** `wss:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `ws:` · **Also:** `wss:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [AHC WebSocket](https://camel.apache.org/components/next/ahc-ws-component.html)
 
 `wss:` connects over TLS and always verifies the server certificate. To run a WebSocket server,

@@ -2,7 +2,7 @@
 
 > The `vertx-websocket` component runs a WebSocket server (or client) with Vert.x-style headers, including events when a client connects or disconnects.
 
-**Scheme:** `vertx-websocket:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `vertx-websocket:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Vert.x WebSocket](https://camel.apache.org/components/next/vertx-websocket-component.html)
 
 Cameleer has no Vert.x; the scheme runs on the same RFC 6455 implementation as

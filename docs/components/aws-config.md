@@ -2,7 +2,7 @@
 
 > The `aws-config` component manages AWS Config rules and conformance packs and reads their compliance results.
 
-**Scheme:** `aws-config:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws-config:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Config Service](https://camel.apache.org/components/next/aws-config-component.html)
 
 ## When to use it

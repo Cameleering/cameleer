@@ -188,3 +188,64 @@ fn validate_and_schema_name_the_validate_feature() {
     let err = String::from_utf8(err).unwrap();
     assert!(err.contains("`cameleer schema` is not in this binary") && err.contains("`validate` feature"), "{err}");
 }
+
+/// Every component, language and data format page names the cargo feature that provides it
+/// (`**Cargo feature:**` in its header line), and that name matches `features::feature_for`, so
+/// people and coding agents can trust the page when they pick features for a smaller build.
+#[test]
+fn reference_pages_name_their_cargo_feature() {
+    use cameleer_main::features::feature_for;
+    let docs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+    // features named in the header's `**Cargo feature:**` segment; empty when "none"
+    fn named(text: &str) -> Option<Vec<String>> {
+        let at = text.find("**Cargo feature:**")?;
+        let seg = &text[at + 18..];
+        let seg = &seg[..seg.find(" · ").or_else(|| seg.find('\n')).unwrap_or(seg.len())];
+        Some(seg.split('`').skip(1).step_by(2).map(str::to_string).collect())
+    }
+    fn first_code(text: &str, label: &str) -> Option<String> {
+        let at = text.find(label)? + label.len();
+        let rest = &text[at..];
+        let a = rest.find('`')? + 1;
+        let b = a + rest[a..].find('`')?;
+        Some(rest[a..b].trim_end_matches(':').to_string())
+    }
+    let family = |crate_name: &str| -> Option<&'static str> {
+        ["amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
+            .into_iter()
+            .find(|f| crate_name == format!("cameleer-{f}"))
+    };
+    let mut checked = 0;
+    let mut wrong = Vec::new();
+    for (dir, kind, label) in [("components", "component", "**Scheme:**"), ("languages", "language", "**Name:**"), ("dataformats", "dataformat", "**Name:**")] {
+        for entry in std::fs::read_dir(docs.join(dir)).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let page = path.file_name().unwrap().to_string_lossy().to_string();
+            let Some(listed) = named(&text) else {
+                wrong.push(format!("{dir}/{page}: no **Cargo feature:** in the header"));
+                continue;
+            };
+            let expected = if kind == "dataformat" {
+                first_code(&text, "**Crate:**").and_then(|c| family(&c)).map(str::to_string)
+            } else {
+                let name = first_code(&text, label).unwrap_or_default();
+                feature_for(kind, &name).map(str::to_string)
+            };
+            let ok = match &expected {
+                Some(f) => listed.contains(f),
+                // a part of core may still mention an optional extra (HTTP/2 on `http`)
+                None => text[text.find("**Cargo feature:**").unwrap()..].starts_with("**Cargo feature:** none"),
+            };
+            if !ok {
+                wrong.push(format!("{dir}/{page}: page lists {listed:?}, the code says {expected:?}"));
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 200, "only {checked} pages checked");
+    assert!(wrong.is_empty(), "reference pages with a wrong cargo feature:\n{}", wrong.join("\n"));
+}

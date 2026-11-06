@@ -2,7 +2,7 @@
 
 > The `google-vertexai` component calls Gemini and other models on Google Cloud Vertex AI: text and chat generation, streaming, multimodal prompts, embeddings, Imagen images, token counts and partner models such as Claude.
 
-**Scheme:** `google-vertexai:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-vertexai:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Google Vertex AI](https://camel.apache.org/components/next/google-vertexai-component.html)
 
 ## When to use it

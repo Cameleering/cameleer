@@ -2,7 +2,7 @@
 
 > The `jetty` component serves HTTP requests on an address given in the URI, for routes written for Apache Camel's camel-jetty.
 
-**Scheme:** `jetty:` · **Crate:** `cameleer-http` ·
+**Scheme:** `jetty:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Jetty](https://camel.apache.org/components/next/jetty-component.html)
 
 Cameleer has no Jetty: `jetty:` endpoints run on the same embedded HTTP/1.1 server as

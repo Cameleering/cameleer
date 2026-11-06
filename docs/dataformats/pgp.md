@@ -2,7 +2,7 @@
 
 > The `pgp` data format encrypts and signs message bodies with OpenPGP public keys on marshal, and decrypts and verifies them on unmarshal, compatible with GnuPG.
 
-**Name:** `pgp` · **Crate:** `cameleer-dataformats` ·
+**Name:** `pgp` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [PGP](https://camel.apache.org/components/next/dataformats/pgp-dataformat.html)
 
 ## When to use it

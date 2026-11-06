@@ -2,7 +2,7 @@
 
 > The `aws2-comprehend` component analyses text with Amazon Comprehend: sentiment, language, entities, key phrases, PII, syntax, toxicity and custom classification.
 
-**Scheme:** `aws2-comprehend:` · **Also:** `aws-comprehend:` (same component) · **Crate:** `cameleer-cloud` ·
+**Scheme:** `aws2-comprehend:` · **Also:** `aws-comprehend:` (same component) · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** `camel-aws-comprehend` (see the [component list](https://camel.apache.org/components/next/index.html))
 
 ## When to use it

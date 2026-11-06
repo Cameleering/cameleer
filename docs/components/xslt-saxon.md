@@ -2,7 +2,7 @@
 
 > The `xslt-saxon` component transforms XML with an XSLT stylesheet like `xslt`, under the scheme Camel uses for Saxon; `version="2.0"` stylesheets get XPath 2.0 and the XSLT 2.0 core.
 
-**Scheme:** `xslt-saxon:` · **Crate:** `cameleer-xml` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `xslt-saxon:` · **Crate:** `cameleer-xml` · **Cargo feature:** [`xml`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [XSLT Saxon](https://camel.apache.org/components/next/xslt-saxon-component.html)
 
 ## When to use it

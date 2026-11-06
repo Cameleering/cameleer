@@ -2,7 +2,7 @@
 
 > The `browse` component keeps the messages sent to it in memory so they can be listed later, and passes them on to a consuming route if there is one.
 
-**Scheme:** `browse:` · **Crate:** `cameleer-core` ·
+**Scheme:** `browse:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Browse](https://camel.apache.org/components/next/browse-component.html)
 
 ## When to use it

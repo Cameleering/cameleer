@@ -2,7 +2,7 @@
 
 > The `csimple` language is an alias of the Simple language in Cameleer: the same syntax and the same results, so routes written for Camel's compiled Simple run unchanged.
 
-**Name:** `csimple` · **Crate:** `cameleer-script` · **Apache Camel:** [CSimple](https://camel.apache.org/components/next/languages/csimple-language.html)
+**Name:** `csimple` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) · **Apache Camel:** [CSimple](https://camel.apache.org/components/next/languages/csimple-language.html)
 
 ## When to use it
 

@@ -2,7 +2,7 @@
 
 > The `elasticsearch` component indexes, updates, gets, deletes and searches documents in Elasticsearch over its REST API.
 
-**Scheme:** `elasticsearch:` · **Also:** `opensearch:` (same component, see [opensearch](opensearch.md)) · **Crate:** `cameleer-datastores` ·
+**Scheme:** `elasticsearch:` · **Also:** `opensearch:` (same component, see [opensearch](opensearch.md)) · **Crate:** `cameleer-datastores` · **Cargo feature:** [`datastores`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Elasticsearch](https://camel.apache.org/components/next/elasticsearch-component.html)
 
 ## When to use it

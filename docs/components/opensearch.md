@@ -2,7 +2,7 @@
 
 > The `opensearch` component indexes, gets, deletes and searches documents in OpenSearch (including Amazon OpenSearch Service with basic authentication) over its REST API.
 
-**Scheme:** `opensearch:` · **Crate:** `cameleer-datastores` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `opensearch:` · **Crate:** `cameleer-datastores` · **Cargo feature:** [`datastores`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [OpenSearch](https://camel.apache.org/components/next/opensearch-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `yaml` data format parses YAML text into a structured body (unmarshal) and writes any body as YAML (marshal), like Camel's SnakeYAML data format.
 
-**Name:** `yaml` · **Also:** `snakeYaml`, `snakeyaml`, `snake-yaml` · **Crate:** `cameleer-dataformats` ·
+**Name:** `yaml` · **Also:** `snakeYaml`, `snakeyaml`, `snake-yaml` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [YAML SnakeYAML](https://camel.apache.org/components/next/dataformats/yaml-snakeyaml-dataformat.html)
 
 ## When to use it

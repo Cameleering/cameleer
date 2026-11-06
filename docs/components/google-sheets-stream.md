@@ -2,7 +2,7 @@
 
 > The `google-sheets-stream` component polls a range of a Google Sheets spreadsheet and emits the rows that were appended since the previous poll.
 
-**Scheme:** `google-sheets-stream:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-sheets-stream:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Google Sheets Stream](https://camel.apache.org/components/next/google-sheets-stream-component.html)
 
 ## When to use it

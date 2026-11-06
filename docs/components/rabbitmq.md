@@ -2,7 +2,7 @@
 
 > The `rabbitmq` component sends and consumes RabbitMQ messages over AMQP 0-9-1 with the options of Apache Camel's older `camel-rabbitmq` component.
 
-**Scheme:** `rabbitmq:` · **Crate:** `cameleer-amqp` ·
+**Scheme:** `rabbitmq:` · **Crate:** `cameleer-amqp` · **Cargo feature:** [`amqp`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [RabbitMQ (Camel 3)](https://camel.apache.org/components/3.20.x/rabbitmq-component.html)
 
 ## When to use it

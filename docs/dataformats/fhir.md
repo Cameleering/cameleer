@@ -2,7 +2,7 @@
 
 > The `fhirJson` and `fhirXml` data formats parse HL7 FHIR resources from JSON or XML into a value and serialize resources back, which also converts between the two FHIR encodings.
 
-**Name:** `fhirJson`, `fhirXml` · **Crate:** `cameleer-soap` ·
+**Name:** `fhirJson`, `fhirXml` · **Crate:** `cameleer-soap` · **Cargo feature:** [`soap`](../guides/build-features.md) ·
 **Apache Camel:** [FHIR JSon](https://camel.apache.org/components/next/dataformats/fhirJson-dataformat.html),
 [FHIR XML](https://camel.apache.org/components/next/dataformats/fhirXml-dataformat.html)
 

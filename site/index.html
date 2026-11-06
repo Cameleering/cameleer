@@ -382,7 +382,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
           <text x="196" y="132" font-family="JetBrains Mono, monospace" font-size="12" fill="#5b6479">1 ms</text>
         </svg>
         <h3>Serverless without the cold start</h3>
-        <p>Start per request, scale to zero, pay for milliseconds. No JVM warmup, no snapshot tricks, and the binary is its own AWS Lambda runtime.</p>
+        <p>Start per request, scale to zero, pay for milliseconds. No JVM warmup, no snapshot tricks, and the binary is its own AWS Lambda runtime. <a href="docs/guides/build-features.html">Build only the components a function uses</a>.</p>
       </article>
       <article class="use">
         <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
@@ -392,7 +392,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
           <circle class="d" cx="130" cy="76" r="6"/>
         </svg>
         <h3>Gateways at the edge</h3>
-        <p>Run MQTT, Modbus-style feeds and HTTP routing on small devices, with one binary and no runtime to install.</p>
+        <p>Run MQTT, Modbus-style feeds and HTTP routing on small devices, with one binary and no runtime to install, down to 5.8 MB with <a href="docs/guides/build-features.html">build features</a>.</p>
       </article>
     </div>
   </div>
@@ -532,8 +532,8 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <div class="qs">
         <ol class="steps">
           <li><div>Add the crates to <code class="in">Cargo.toml</code><pre class="cmd"><code>[dependencies]
-cameleer-core = "0.3"
-cameleer-http = "0.3"</code></pre></div></li>
+cameleer-core = "0.4"
+cameleer-http = "0.4"</code></pre></div></li>
           <li><div>Write routes in the Rust DSL (right)</div></li>
           <li><div>Run and call it<pre class="cmd"><code>cargo run --release
 curl localhost:8080/api/greet/Ada</code></pre></div></li>
@@ -572,7 +572,7 @@ cameleer stop hello-api</code></pre></div></li>
           <header><span>Also installed as <code class="in">camel</code></span></header>
 <pre><code>$ cameleer run hello-api.camel.yaml
 <span class="tk-c">INFO  HTTP server started on 0.0.0.0:8080</span>
-<span class="tk-c">INFO  Cameleer 0.3.0 (camel-1) started (3 routes, 3 started)</span>
+<span class="tk-c">INFO  Cameleer 0.4.0 (camel-1) started (3 routes, 3 started)</span>
 
 $ cameleer --help
 <span class="tk-c">init, run, export, bind, ps, stop, get, cmd, log, trace, catalog, version</span></code></pre>
@@ -659,7 +659,7 @@ $ cameleer --help
 
   // runtime toggle
   var data = {
-    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.3.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
+    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.4.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
     java: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (JBang, Java 21)</span>', '<span class="ok">Started route triage in 751 ms</span>'], start: ['751 ms', 100], mem: ['366 MB', 100], size: ['JDK + jars', 100] }
   };
   var term = document.getElementById('term'), runner = document.getElementById('runner'), tog = runner.querySelector('.toggle'), timer;

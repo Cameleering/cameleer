@@ -225,6 +225,9 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
   and small devices that can't host a JVM.
 - **One executable, nothing to install.** No JRE to patch and no `-Xmx` to tune. `cameleer export`
   turns YAML routes into a standalone Rust project.
+- **Ship only what the routes use.** Every build includes everything by default; with
+  [build features](docs/guides/build-features.md) a function keeps only its component families
+  (`--features cloud,jq`), down to a 5.8 MB binary with `core`.
 
 | Run it as | Status |
 |---|---|
@@ -307,8 +310,8 @@ same way. Kubernetes, Docker Compose and Cloud Run setups are in the
 
 ```toml
 [dependencies]
-cameleer-core = "0.3"
-cameleer-http = "0.3"
+cameleer-core = "0.4"
+cameleer-http = "0.4"
 ```
 
 ```rust
@@ -353,11 +356,25 @@ target/release/cameleer run examples/rest-api.camel.yaml
 
 Camel JBang habits carry over: `cameleer run`, `cameleer ps`, `cameleer stop`.
 
+### A smaller build
+
+The image, `cargo install` and the default build include every component, so any route runs
+without setup. For a function or an edge device, keep only the families your routes use:
+
+```sh
+cargo install cameleer-main --no-default-features --features cloud,jq,sql
+docker build --build-arg FEATURES=cloud,jq,sql -t my-cameleer .
+```
+
+A feature list replaces the default, so name every family you use. Each component page names
+its feature, and a route that needs a missing one fails at startup with the feature to add. The
+[build features guide](docs/guides/build-features.md) lists them all.
+
 ### Documentation
 
 Every component, language, data format and EIP has a page with tested examples:
 [pmsudhi.github.io/cameleer/docs](https://pmsudhi.github.io/cameleer/docs/) (source in [docs/](docs/README.md)).
-Start with [getting started](docs/guides/getting-started.md), the
+Start with [getting started](docs/guides/getting-started.md), [build features](docs/guides/build-features.md), the
 [agent cookbook](docs/guides/agents.md), the [edge cookbook](docs/guides/edge.md) or the
 [component index](https://pmsudhi.github.io/cameleer/docs/components/).
 
@@ -489,7 +506,7 @@ See [docs/INTEROP.md](docs/INTEROP.md).
 | `cameleer-datastores` | spring-redis, mongodb, elasticsearch/opensearch, cql (Cassandra), couchdb (with embedded test servers) |
 | `cameleer-xml` | XML 1.0 parser + DOM, XPath 1.0, XSLT 1.0, XML Schema validation, `xj`, `xmlsecurity-sign`/`-verify` |
 | `cameleer-saas` | openai, slack, telegram, github, twilio, jira, webhook, graphql, rss/atom (with embedded mock servers) |
-| `cameleer-main` | `Main` runner (application.properties, route discovery) and the `cameleer` CLI |
+| `cameleer-main` | `Main` runner (application.properties, route discovery) and the `cameleer` CLI; each family crate above is one of its [cargo features](docs/guides/build-features.md) |
 | `cameleer-bench` | benchmark harness, sampling profiler and HTTP load generator |
 
 Internals: [ARCHITECTURE.md](ARCHITECTURE.md).

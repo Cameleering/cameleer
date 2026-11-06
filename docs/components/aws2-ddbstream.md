@@ -2,7 +2,7 @@
 
 > The `aws2-ddbstream` component consumes the change records (inserts, updates, deletes) of an Amazon DynamoDB table's stream.
 
-**Scheme:** `aws2-ddbstream:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** no ·
+**Scheme:** `aws2-ddbstream:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** no ·
 **Apache Camel:** [AWS DynamoDB Streams](https://camel.apache.org/components/next/aws2-ddbstream-component.html)
 
 ## When to use it

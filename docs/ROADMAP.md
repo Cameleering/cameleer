@@ -150,7 +150,7 @@ Apps or Knative work as before.
 | **AWS Lambda runtime adapter**: route as a Lambda handler, with events mapped to exchanges | packages 1.4; Lambda is the largest serverless platform | ✅ built into `cameleer run` ([AWS Lambda](DEPLOYMENT.md#aws-lambda)) |
 | **Published container images and deployment examples** (Cloud Run, Fargate, Azure Container Apps, Knative) | shows scale-to-zero end to end | 🚧 |
 | **Static and ARM64 builds tested** (musl, aarch64 Linux) | edge gateways and Graviton or Ampere hosts; today the hermetic suite runs on Windows and Linux x86-64 | 🚧 |
-| **Binary size budget and feature flags per crate** | smaller images for functions that need only a few connectors | ✅ feature per component family ([smaller builds](DEPLOYMENT.md#smaller-builds)) |
+| **Binary size budget and feature flags per crate** | smaller images for functions that need only a few connectors | ✅ a feature per component family, plus `templates`, `jq`, `xpath`, `http2` and `validate` ([build features](guides/build-features.md)) |
 
 ### 2.3 Performance
 

@@ -2,7 +2,7 @@
 
 > The `hl7terser` language reads a field from an HL7 v2 message with a terser path such as `PID-5-1` (patient family name).
 
-**Name:** `hl7terser` · **Crate:** `cameleer-protocols` · **Apache Camel:** [HL7 Terser](https://camel.apache.org/components/next/languages/hl7terser-language.html)
+**Name:** `hl7terser` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) · **Apache Camel:** [HL7 Terser](https://camel.apache.org/components/next/languages/hl7terser-language.html)
 
 ## When to use it
 

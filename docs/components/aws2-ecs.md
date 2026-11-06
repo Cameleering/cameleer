@@ -2,7 +2,7 @@
 
 > The `aws2-ecs` component lists, creates, describes and deletes Amazon ECS clusters.
 
-**Scheme:** `aws2-ecs:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-ecs:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Elastic Container Service (ECS)](https://camel.apache.org/components/next/aws2-ecs-component.html)
 
 ## When to use it

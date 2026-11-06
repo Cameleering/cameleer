@@ -2,7 +2,7 @@
 
 > The `jaxb` data format converts XML to structured values and back, typed and optionally validated by an XML Schema (XSD), without generated Java classes.
 
-**Name:** `jaxb` · **Crate:** `cameleer-soap` ·
+**Name:** `jaxb` · **Crate:** `cameleer-soap` · **Cargo feature:** [`soap`](../guides/build-features.md) ·
 **Apache Camel:** [JAXB](https://camel.apache.org/components/next/dataformats/jaxb-dataformat.html)
 
 ## When to use it

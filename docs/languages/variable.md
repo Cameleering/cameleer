@@ -2,7 +2,7 @@
 
 > The `variable` language returns the value of one exchange variable (set with `setVariable`), or null when it is not set.
 
-**Name:** `variable` · **Crate:** `cameleer-core` · **Apache Camel:** [Variable](https://camel.apache.org/components/next/languages/variable-language.html)
+**Name:** `variable` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [Variable](https://camel.apache.org/components/next/languages/variable-language.html)
 
 ## When to use it
 

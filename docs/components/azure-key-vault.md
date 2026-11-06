@@ -2,7 +2,7 @@
 
 > The `azure-key-vault` component manages secrets, keys and certificates in Azure Key Vault and signs, verifies, encrypts and decrypts with vault keys; the `{{azure:...}}` placeholder puts secrets into routes.
 
-**Scheme:** `azure-key-vault:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `azure-key-vault:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [Azure Key Vault](https://camel.apache.org/components/next/azure-key-vault-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `rest` component defines REST endpoints (the REST DSL, with a generated OpenAPI 3 document) and calls REST APIs with path templates filled from headers.
 
-**Scheme:** `rest:` · **Crate:** `cameleer-http` ·
+**Scheme:** `rest:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [REST](https://camel.apache.org/components/next/rest-component.html)
 
 Most people use REST through the REST DSL: `rest` and `restConfiguration` blocks in YAML (or

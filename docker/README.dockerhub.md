@@ -59,7 +59,7 @@ docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
 | tag | meaning |
 |---|---|
 | `latest` | the latest release |
-| `0.3.0`, `0.3` | a release, and the latest patch of a minor version |
+| `0.4.0`, `0.4` | a release, and the latest patch of a minor version |
 | `edge` | a manual build from `main` |
 | `sha-<commit>` | the image of one commit |
 
@@ -79,6 +79,19 @@ The same image is published to `ghcr.io/pmsudhi/cameleer`. Every push carries an
 | Health | with `--prop camel.server.healthCheckEnabled=true`: `/q/health/live` and `/q/health/ready` on port 8080 |
 
 Kubernetes, Docker Compose and Cloud Run setups are in the [deployment guide](https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md).
+
+## A smaller image
+
+This image includes every component. To build one with only the component families your routes
+use, clone the repository and pass them as `FEATURES`:
+
+```sh
+docker build --build-arg FEATURES=cloud,jq -t my-cameleer .
+```
+
+A feature list replaces the default, so name every family you use (`templates`, `jq`, `xpath`,
+`http2` and `validate` are features too). The [build features guide](https://pmsudhi.github.io/cameleer/docs/guides/build-features.html)
+lists them and what each adds.
 
 ## Rust crates and CLI
 

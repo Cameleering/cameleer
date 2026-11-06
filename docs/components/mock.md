@@ -2,7 +2,7 @@
 
 > The `mock` component records the messages a route sends to it and checks them against expectations, so you can test routes without real systems.
 
-**Scheme:** `mock:` · **Crate:** `cameleer-core` ·
+**Scheme:** `mock:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Mock](https://camel.apache.org/components/next/mock-component.html)
 
 ## When to use it

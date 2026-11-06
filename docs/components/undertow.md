@@ -2,7 +2,7 @@
 
 > The `undertow` component serves HTTP requests on an address given in the URI, for routes written for Apache Camel's camel-undertow.
 
-**Scheme:** `undertow:` · **Crate:** `cameleer-http` ·
+**Scheme:** `undertow:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Undertow](https://camel.apache.org/components/next/undertow-component.html)
 
 `undertow:` endpoints run on Cameleer's embedded HTTP/1.1 server, the same one as

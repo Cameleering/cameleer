@@ -2,7 +2,7 @@
 
 > The `python` language evaluates Python 3 expressions and scripts against the message, with `body`, `headers`, `request` and `exchange` available as variables.
 
-**Name:** `python` · **Crate:** `cameleer-script` ·
+**Name:** `python` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [Python](https://camel.apache.org/components/next/languages/python-language.html)
 
 ## When to use it

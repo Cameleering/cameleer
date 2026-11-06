@@ -2,7 +2,7 @@
 
 > The `seda` component hands messages to another route through a bounded in-memory queue, so the sender does not wait for the processing.
 
-**Scheme:** `seda:` · **Crate:** `cameleer-core` ·
+**Scheme:** `seda:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [SEDA](https://camel.apache.org/components/next/seda-component.html)
 
 ## When to use it

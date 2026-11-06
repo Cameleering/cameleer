@@ -2,7 +2,7 @@
 
 > The `grpc` component calls gRPC services and hosts gRPC services in a route, with messages described by a `.proto` file read at runtime.
 
-**Scheme:** `grpc:` · **Crate:** `cameleer-grpc` ·
+**Scheme:** `grpc:` · **Crate:** `cameleer-grpc` · **Cargo feature:** [`grpc`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [gRPC](https://camel.apache.org/components/next/grpc-component.html)
 
 Cameleer has its own HTTP/2, HPACK and protobuf implementation. Instead of generated Java stubs,

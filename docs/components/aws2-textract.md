@@ -2,7 +2,7 @@
 
 > The `aws2-textract` component extracts text, forms, tables and invoice fields from documents and images with Amazon Textract.
 
-**Scheme:** `aws2-textract:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-textract:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Textract](https://camel.apache.org/components/next/aws2-textract-component.html)
 
 ## When to use it

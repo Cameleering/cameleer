@@ -2,7 +2,7 @@
 
 > The `aws2-athena` component runs SQL queries on data in S3 with Amazon Athena, waits for them to finish and returns the result rows.
 
-**Scheme:** `aws2-athena:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-athena:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Athena](https://camel.apache.org/components/next/aws2-athena-component.html)
 
 ## When to use it

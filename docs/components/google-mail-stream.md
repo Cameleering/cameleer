@@ -2,7 +2,7 @@
 
 > The `google-mail-stream` component polls a Gmail mailbox and emits each new message that matches a Gmail search query, then marks it as read.
 
-**Scheme:** `google-mail-stream:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-mail-stream:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Google Mail Stream](https://camel.apache.org/components/next/google-mail-stream-component.html)
 
 ## When to use it

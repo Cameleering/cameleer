@@ -2,7 +2,7 @@
 
 > The `spring-redis` component runs Redis commands (strings, hashes, lists, sets, sorted sets, geo, pub/sub) and subscribes to Redis channels.
 
-**Scheme:** `spring-redis:` · **Crate:** `cameleer-datastores` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `spring-redis:` · **Crate:** `cameleer-datastores` · **Cargo feature:** [`datastores`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Spring Redis](https://camel.apache.org/components/next/spring-redis-component.html)
 
 ## When to use it

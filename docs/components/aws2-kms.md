@@ -2,7 +2,7 @@
 
 > The `aws2-kms` component manages AWS KMS keys and, as a Cameleer extension, encrypts and decrypts data with them.
 
-**Scheme:** `aws2-kms:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-kms:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Key Management Service (KMS)](https://camel.apache.org/components/next/aws2-kms-component.html)
 
 ## When to use it

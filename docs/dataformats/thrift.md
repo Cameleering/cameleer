@@ -2,7 +2,7 @@
 
 > The `thrift` data format converts structured values to and from Apache Thrift binary, compact or JSON encodings, using a Thrift IDL file read at runtime instead of generated classes.
 
-**Name:** `thrift` · **Crate:** `cameleer-dataformats` ·
+**Name:** `thrift` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Thrift](https://camel.apache.org/components/next/dataformats/thrift-dataformat.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `syslog` component receives and sends syslog messages (RFC 5424 and RFC 3164) over UDP, TCP or TLS and parses them into structured fields.
 
-**Scheme:** `syslog:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `syslog:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Syslog data format](https://camel.apache.org/components/next/dataformats/syslog-dataformat.html)
 
 ## When to use it

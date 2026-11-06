@@ -2,7 +2,7 @@
 
 > The `aws2-rekognition` component analyses images and stored videos with Amazon Rekognition: labels, text, faces, moderation labels, celebrities and face collections.
 
-**Scheme:** `aws2-rekognition:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-rekognition:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** none (a Cameleer component that follows the naming of the other `aws2-*` components)
 
 ## When to use it

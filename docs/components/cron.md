@@ -2,7 +2,7 @@
 
 > The `cron` component starts a route on a cron schedule, such as every night at 02:00 in a given time zone.
 
-**Scheme:** `cron:` · **Crate:** `cameleer-core` ·
+**Scheme:** `cron:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Cron](https://camel.apache.org/components/next/cron-component.html)
 
 ## When to use it

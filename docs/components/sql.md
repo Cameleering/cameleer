@@ -2,7 +2,7 @@
 
 > The `sql` component runs SQL queries and updates against PostgreSQL or the embedded in-memory database, and polls tables for new rows.
 
-**Scheme:** `sql:` · **Crate:** `cameleer-sql` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `sql:` · **Crate:** `cameleer-sql` · **Cargo feature:** [`sql`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [SQL](https://camel.apache.org/components/next/sql-component.html)
 
 ## When to use it

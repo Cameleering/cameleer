@@ -3,7 +3,7 @@
 > The uniVocity data formats (`univocityCsv`, `univocityTsv`, `univocityFixed`) parse and write CSV, tab-separated and fixed-width files as rows or maps, with uniVocity's option names.
 
 **Name:** `univocityCsv` · **Also:** `univocityTsv`, `univocityFixed` (and the `univocity-csv`,
-`univocitycsv`... spellings) · **Crate:** `cameleer-dataformats` ·
+`univocitycsv`... spellings) · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [uniVocity CSV](https://camel.apache.org/components/next/dataformats/univocityCsv-dataformat.html)
 
 ## When to use it

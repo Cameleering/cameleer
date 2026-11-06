@@ -2,7 +2,7 @@
 
 > The `google-sheets` component reads, writes, appends and clears cell values in Google Sheets spreadsheets, and creates and updates spreadsheets, over the Sheets v4 REST API.
 
-**Scheme:** `google-sheets:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-sheets:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no (see [google-sheets-stream](google-sheets-stream.md)) · **Producer:** yes · **Apache Camel:** [Google Sheets](https://camel.apache.org/components/next/google-sheets-component.html)
 
 ## When to use it

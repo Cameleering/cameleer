@@ -2,7 +2,7 @@
 
 > The `mimeMultipart` data format writes a message body and its attachments as one MIME multipart document, and splits a multipart document back into a body and attachments.
 
-**Name:** `mimeMultipart` · **Also:** `mime-multipart` · **Crate:** `cameleer-dataformats` ·
+**Name:** `mimeMultipart` · **Also:** `mime-multipart` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [MIME Multipart](https://camel.apache.org/components/next/dataformats/mimeMultipart-dataformat.html)
 
 ## When to use it

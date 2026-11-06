@@ -2,7 +2,7 @@
 
 > The `language` component evaluates a script in any supported language (Simple, JSONPath, XPath, jq, ...) and uses the result as the new message body.
 
-**Scheme:** `language:` · **Crate:** `cameleer-core` ·
+**Scheme:** `language:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Language](https://camel.apache.org/components/next/language-component.html)
 
 ## When to use it

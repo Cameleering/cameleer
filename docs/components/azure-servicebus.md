@@ -2,7 +2,7 @@
 
 > The `azure-servicebus` component sends messages to and receives messages from Azure Service Bus queues and topic subscriptions over AMQP 1.0, with peek-lock, sessions, scheduling, dead-lettering and transactions.
 
-**Scheme:** `azure-servicebus:` · **Crate:** `cameleer-amqp10` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `azure-servicebus:` · **Crate:** `cameleer-amqp10` · **Cargo feature:** [`amqp10`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Azure ServiceBus](https://camel.apache.org/components/next/azure-servicebus-component.html)
 
 ## When to use it

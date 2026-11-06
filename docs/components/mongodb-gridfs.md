@@ -2,7 +2,7 @@
 
 > The `mongodb-gridfs` component stores, reads, lists and deletes files in MongoDB GridFS buckets, and polls a bucket for new files.
 
-**Scheme:** `mongodb-gridfs:` · **Crate:** `cameleer-datastores` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `mongodb-gridfs:` · **Crate:** `cameleer-datastores` · **Cargo feature:** [`datastores`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [MongoDB GridFS](https://camel.apache.org/components/next/mongodb-gridfs-component.html)
 
 ## When to use it

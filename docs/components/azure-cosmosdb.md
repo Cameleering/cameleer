@@ -2,7 +2,7 @@
 
 > The `azure-cosmosdb` component creates, reads, upserts, queries and deletes items in Azure Cosmos DB (SQL API) and consumes a container's change feed.
 
-**Scheme:** `azure-cosmosdb:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `azure-cosmosdb:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Azure CosmosDB](https://camel.apache.org/components/next/azure-cosmosdb-component.html)
 
 ## When to use it

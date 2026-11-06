@@ -2,7 +2,7 @@
 
 > The `netty` component runs TCP and UDP servers and clients for plain socket protocols: text lines or raw bytes, one-way or request/reply.
 
-**Scheme:** `netty:` · **Crate:** `cameleer-http` ·
+**Scheme:** `netty:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Netty](https://camel.apache.org/components/next/netty-component.html)
 
 ## When to use it

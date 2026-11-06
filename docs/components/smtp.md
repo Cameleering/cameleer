@@ -2,7 +2,7 @@
 
 > The `smtp` component sends email: the message body becomes the mail text and headers such as `To` and `Subject` set the recipients and subject.
 
-**Scheme:** `smtp:` · **Also:** `smtps:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `smtp:` · **Also:** `smtps:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Mail](https://camel.apache.org/components/next/mail-component.html)
 
 `smtps:` uses implicit TLS (port 465). Plain `smtp:` can upgrade with STARTTLS

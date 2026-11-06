@@ -2,7 +2,7 @@
 
 > The `amqp` component sends and receives messages over AMQP 1.0 with JMS semantics, for ActiveMQ Artemis, ActiveMQ Classic, Qpid, RabbitMQ's AMQP 1.0 support and Azure Service Bus.
 
-**Scheme:** `amqp:` · **Crate:** `cameleer-amqp10` ·
+**Scheme:** `amqp:` · **Crate:** `cameleer-amqp10` · **Cargo feature:** [`amqp10`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [AMQP](https://camel.apache.org/components/next/amqp-component.html)
 
 ## When to use it

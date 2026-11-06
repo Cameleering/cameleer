@@ -2,7 +2,7 @@
 
 > The `azure-eventgrid` component publishes events to an Azure Event Grid topic, as CloudEvents or in the Event Grid schema.
 
-**Scheme:** `azure-eventgrid:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `azure-eventgrid:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [Azure Event Grid](https://camel.apache.org/components/next/azure-eventgrid-component.html)
 
 ## When to use it

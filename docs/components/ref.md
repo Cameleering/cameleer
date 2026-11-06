@@ -2,7 +2,7 @@
 
 > The `ref` component uses an endpoint looked up by name in the registry, so the real endpoint can be chosen at startup instead of in the route.
 
-**Scheme:** `ref:` · **Crate:** `cameleer-core` ·
+**Scheme:** `ref:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Ref](https://camel.apache.org/components/next/ref-component.html)
 
 ## When to use it

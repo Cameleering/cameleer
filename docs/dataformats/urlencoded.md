@@ -2,7 +2,7 @@
 
 > The `urlencoded` data format parses `application/x-www-form-urlencoded` text into a map (unmarshal) and writes a map as form text (marshal).
 
-**Name:** `urlencoded` · **Crate:** `cameleer-core` · **Apache Camel:** no direct equivalent (Camel
+**Name:** `urlencoded` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** no direct equivalent (Camel
 handles forms in the HTTP components)
 
 ## When to use it

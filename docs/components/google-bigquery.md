@@ -2,7 +2,7 @@
 
 > The `google-bigquery` component streams rows into Google BigQuery tables, runs load and extract jobs between BigQuery and Cloud Storage, and manages tables and datasets.
 
-**Scheme:** `google-bigquery:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-bigquery:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Google BigQuery](https://camel.apache.org/components/next/google-bigquery-component.html)
 
 For SQL queries use [`google-bigquery-sql`](google-bigquery-sql.md).

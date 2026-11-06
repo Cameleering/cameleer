@@ -2,7 +2,7 @@
 
 > The `java` language (also `joor`) evaluates Java snippets against the message, with `exchange`, `message` and `body` available as variables.
 
-**Name:** `java` · **Also:** `joor` · **Crate:** `cameleer-script` ·
+**Name:** `java` · **Also:** `joor` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [Java](https://camel.apache.org/components/next/languages/java-language.html),
 [jOOR](https://camel.apache.org/components/next/languages/joor-language.html)
 

@@ -2,7 +2,7 @@
 
 > The `aws-bedrock-agent-runtime` component queries Amazon Bedrock knowledge bases (retrieve, retrieve-and-generate) and invokes Bedrock Agents.
 
-**Scheme:** `aws-bedrock-agent-runtime:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws-bedrock-agent-runtime:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Bedrock Agent Runtime](https://camel.apache.org/components/next/aws-bedrock-agent-runtime-component.html)
 
 ## When to use it

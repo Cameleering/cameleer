@@ -2,7 +2,7 @@
 
 > The `ognl` language evaluates OGNL expressions against the exchange, with `request`, `headers`, `body` and `exchange` as the root object's properties.
 
-**Name:** `ognl` · **Crate:** `cameleer-script` ·
+**Name:** `ognl` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [OGNL](https://camel.apache.org/components/next/languages/ognl-language.html)
 
 ## When to use it

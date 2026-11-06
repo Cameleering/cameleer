@@ -2,7 +2,7 @@
 
 > The `log` component writes each message that reaches it to the log, with control over the level and which parts (body, headers, properties) are shown.
 
-**Scheme:** `log:` · **Crate:** `cameleer-core` ·
+**Scheme:** `log:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Log](https://camel.apache.org/components/next/log-component.html)
 
 ## When to use it

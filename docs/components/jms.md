@@ -2,7 +2,7 @@
 
 > The `jms` component sends and receives JMS-style messages (queues, topics, selectors, request/reply, transactions) through any broker that speaks STOMP 1.2, such as ActiveMQ, Artemis or RabbitMQ.
 
-**Scheme:** `jms:` · **Also:** `activemq:`, `amqp-stomp:` (same component, see [activemq](activemq.md), [amqp-stomp](amqp-stomp.md)) · **Crate:** `cameleer-amqp` ·
+**Scheme:** `jms:` · **Also:** `activemq:`, `amqp-stomp:` (same component, see [activemq](activemq.md), [amqp-stomp](amqp-stomp.md)) · **Crate:** `cameleer-amqp` · **Cargo feature:** [`amqp`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [JMS](https://camel.apache.org/components/next/jms-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `exchangeProperty` language returns the value of one exchange property, or null when the property is not set.
 
-**Name:** `exchangeProperty` · **Crate:** `cameleer-core` · **Apache Camel:** [ExchangeProperty](https://camel.apache.org/components/next/languages/exchangeProperty-language.html)
+**Name:** `exchangeProperty` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [ExchangeProperty](https://camel.apache.org/components/next/languages/exchangeProperty-language.html)
 
 ## When to use it
 

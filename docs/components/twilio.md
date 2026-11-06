@@ -2,7 +2,7 @@
 
 > The `twilio` component calls the Twilio REST API (2010-04-01): send and list SMS and MMS messages, place calls, manage phone numbers, queues, recordings and the other resources Camel's `twilio` component exposes.
 
-**Scheme:** `twilio:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `twilio:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Twilio](https://camel.apache.org/components/next/twilio-component.html)
 
 ## When to use it

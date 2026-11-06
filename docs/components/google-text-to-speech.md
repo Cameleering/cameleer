@@ -2,7 +2,7 @@
 
 > The `google-text-to-speech` component turns text or SSML into speech audio (MP3, OGG Opus, WAV) with the Google Cloud Text-to-Speech v1 API.
 
-**Scheme:** `google-text-to-speech:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-text-to-speech:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** none (Cameleer component)
 
 ## When to use it

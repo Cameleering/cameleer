@@ -2,7 +2,7 @@
 
 > The `class` component calls a bean by name, like [bean](bean.md); in Cameleer the "class name" is looked up in the registry.
 
-**Scheme:** `class:` · **Crate:** `cameleer-core` ·
+**Scheme:** `class:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Class](https://camel.apache.org/components/next/class-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `aws2-timestream` component writes time series records to Amazon Timestream and runs queries on them.
 
-**Scheme:** `aws2-timestream:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-timestream:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Timestream](https://camel.apache.org/components/next/aws2-timestream-component.html)
 
 ## When to use it

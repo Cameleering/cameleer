@@ -2,7 +2,7 @@
 
 > The `timer` component starts a route at a fixed interval, for example every 5 seconds, a set number of times or forever.
 
-**Scheme:** `timer:` · **Crate:** `cameleer-core` ·
+**Scheme:** `timer:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Timer](https://camel.apache.org/components/next/timer-component.html)
 
 ## When to use it

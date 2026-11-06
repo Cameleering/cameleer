@@ -2,7 +2,7 @@
 
 > The `ftps` component transfers files with an FTP server over TLS (FTPS), in explicit (`AUTH TLS`) or implicit mode, with encrypted data connections.
 
-**Scheme:** `ftps:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `ftps:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [FTPS](https://camel.apache.org/components/next/ftps-component.html)
 
 `ftps` has every option of [ftp](ftp.md) plus the TLS options below. The server certificate and

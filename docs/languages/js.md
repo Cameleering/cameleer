@@ -2,7 +2,7 @@
 
 > The `js` language evaluates JavaScript expressions and scripts against the message, with `body`, `headers` and `exchange` available as variables.
 
-**Name:** `js` · **Also:** `javascript`, `javaScript` · **Crate:** `cameleer-script` ·
+**Name:** `js` · **Also:** `javascript`, `javaScript` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [JavaScript](https://camel.apache.org/components/next/languages/js-language.html)
 
 ## When to use it

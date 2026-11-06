@@ -2,7 +2,7 @@
 
 > The `google-speech-to-text` component transcribes audio to text with the Google Cloud Speech-to-Text v1 API, from audio bytes or a `gs://` file.
 
-**Scheme:** `google-speech-to-text:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-speech-to-text:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** none (Cameleer component)
 
 ## When to use it

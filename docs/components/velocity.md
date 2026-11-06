@@ -2,7 +2,7 @@
 
 > The `velocity` component renders an Apache Velocity (VTL) template against the message and sets the rendered text as the new body.
 
-**Scheme:** `velocity:` · **Crate:** `cameleer-core` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `velocity:` · **Crate:** `cameleer-core` · **Cargo feature:** [`templates`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [Velocity](https://camel.apache.org/components/next/velocity-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `jdbc` component executes the SQL statement in the message body against a data source and returns the rows or the update count.
 
-**Scheme:** `jdbc:` · **Crate:** `cameleer-sql` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `jdbc:` · **Crate:** `cameleer-sql` · **Cargo feature:** [`sql`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [JDBC](https://camel.apache.org/components/next/jdbc-component.html)
 
 ## When to use it
