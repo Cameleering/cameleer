@@ -16,6 +16,9 @@
   <properties>
     <camel.version>4.23.0</camel.version>
     <slf4j.version>2.0.17</slf4j.version>
+    <!-- the versions camel-parent 4.23.0 manages -->
+    <pgjdbc.version>42.7.13</pgjdbc.version>
+    <hikaricp.version>7.1.0</hikaricp.version>
     <maven.compiler.release>21</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
@@ -44,6 +47,25 @@
     <dependency>
       <groupId>org.apache.camel</groupId>
       <artifactId>camel-netty-http</artifactId>
+    </dependency>
+    <!-- real-use scenarios: HTTP into Kafka and PostgreSQL, Kafka stream processing -->
+    <dependency>
+      <groupId>org.apache.camel</groupId>
+      <artifactId>camel-kafka</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.camel</groupId>
+      <artifactId>camel-sql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <version>${pgjdbc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.zaxxer</groupId>
+      <artifactId>HikariCP</artifactId>
+      <version>${hikaricp.version}</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>

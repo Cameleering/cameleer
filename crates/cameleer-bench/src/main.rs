@@ -1,8 +1,11 @@
 //! `cameleer-bench`: the Cameleer side of the benchmark suite, plus the shared tools.
 //!
 //! ```text
-//! cameleer-bench run <scenario> <warmup_s> <iter_s> <iters>   one in-process scenario
+//! cameleer-bench run <scenario> <warmup_s> <iter_s> <iters>   one in-process scenario (or kafka-stream)
 //! cameleer-bench http-server <port>                           serve the HTTP route until stdin closes
+//! cameleer-bench serve <scenario> <port> <secs>               serve a real-use HTTP scenario on 0.0.0.0
+//! cameleer-bench loadgen-remote <host> <port> <scenario> <conns> <warmup_s> <iter_s> <iters>
+//!                     load a served scenario on another machine
 //! cameleer-bench startup                                      start all routes, print READY, exit
 //! cameleer-bench breakdown [n]                                per-stage cost of a direct send
 //! cameleer-bench profile <scenario|http> <secs> [top]         sampling profile (Windows)
@@ -22,7 +25,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cameleer_bench::driver::Plan;
-use cameleer_bench::{measure, report, scenarios};
+use cameleer_bench::{measure, realworld, report, scenarios};
 use cameleer_core::prelude::*;
 
 /// Cameleer's thread-caching allocator (see `cameleer_core::alloc`).
@@ -52,9 +55,49 @@ fn context(sink: &Arc<AtomicU64>) -> Result<CamelContext> {
     Ok(ctx)
 }
 
+/// A context with the components of the real-use scenarios (HTTP, Kafka, SQL).
+fn realworld_context() -> CamelContext {
+    let ctx = CamelContext::new();
+    cameleer_http::register(&ctx);
+    cameleer_kafka_mqtt::register(&ctx);
+    cameleer_sql::register(&ctx);
+    ctx
+}
+
 fn dispatch(args: &[String]) -> std::result::Result<(), String> {
     let s = |e: CamelError| e.to_string();
     match args.first().map(|s| s.as_str()) {
+        Some("run") if args.len() == 5 && args[1] == "kafka-stream" => {
+            let plan = Plan { warmup: secs(&args[2])?, iteration: secs(&args[3])?, iters: args[4].parse().map_err(|_| "bad iters")? };
+            let sink = Arc::new(AtomicU64::new(0));
+            let ctx = realworld_context();
+            realworld::add_stream_route(&ctx, &realworld::Env::from_env(), &sink).map_err(s)?;
+            ctx.start().map_err(s)?;
+            version();
+            println!("READY");
+            let out = realworld::run_stream(&sink, plan);
+            println!("{}", out.result_line("kafka-stream"));
+            ctx.stop().map_err(s)
+        }
+        Some("serve") if args.len() == 4 => {
+            let port: u16 = args[2].parse().map_err(|_| "bad port")?;
+            let ctx = realworld_context();
+            realworld::add_server_route(&ctx, &args[1], port, &realworld::Env::from_env()).map_err(s)?;
+            ctx.start().map_err(s)?;
+            version();
+            println!("READY");
+            std::thread::sleep(secs(&args[3])?);
+            ctx.stop().map_err(s)
+        }
+        Some("loadgen-remote") if args.len() == 8 => {
+            let port: u16 = args[2].parse().map_err(|_| "bad port")?;
+            let (path, body) = realworld::served(&args[3]).ok_or("not a served scenario")?;
+            let conns: usize = args[4].parse().map_err(|_| "bad conns")?;
+            let plan = Plan { warmup: secs(&args[5])?, iteration: secs(&args[6])?, iters: args[7].parse().map_err(|_| "bad iters")? };
+            let (out, connects) = cameleer_bench::loadgen::run_remote(&args[1], port, path, body, conns, plan);
+            println!("{} connects={connects}", out.result_line(&args[3]));
+            Ok(())
+        }
         Some("run") if args.len() == 5 => {
             let plan = Plan { warmup: secs(&args[2])?, iteration: secs(&args[3])?, iters: args[4].parse().map_err(|_| "bad iters")? };
             let sink = Arc::new(AtomicU64::new(0));

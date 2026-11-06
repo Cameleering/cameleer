@@ -16,6 +16,8 @@ publish = false
 [dependencies]
 cameleer-core = { path = "../cameleer-core", version = "0.4.0" }
 cameleer-http = { path = "../cameleer-http", version = "0.4.0" }
+cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.4.0" }
+cameleer-sql = { path = "../cameleer-sql", version = "0.4.0" }
 
 [[bin]]
 name = "cameleer-bench"

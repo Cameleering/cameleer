@@ -10,12 +10,15 @@ use cameleer_core::processor::routing::strategies::grouped_body;
 use crate::driver::{self, Outcome, Plan};
 
 /// In-process scenarios, in report order.
-pub const SCENARIOS: &[&str] = &["direct", "seda", "seda-inout", "cbr", "splitagg"];
+pub const SCENARIOS: &[&str] = &["direct", "seda", "seda-inout", "cbr", "splitagg", "csv"];
 
 /// Producer threads for the seda scenarios (the route has 4 concurrent consumers).
 pub const SEDA_PRODUCERS: usize = 4;
 /// Items per order in the splitter/aggregator scenario.
 pub const ITEMS: usize = 10;
+/// Rows per file in the CSV batch scenario, and rows per aggregated batch.
+pub const CSV_ROWS: usize = 1000;
+pub const CSV_BATCH: usize = 100;
 
 /// A sink that counts what reaches the end of a route (the cheapest equivalent of a
 /// `mock`/`log` sink with logging off, and the same on both sides).
@@ -32,6 +35,14 @@ pub fn order_json(id: u64) -> String {
     let items: Vec<String> =
         (0..ITEMS).map(|i| format!("{{\"sku\":\"SKU-{i}\",\"qty\":{},\"price\":{}.99}}", i + 1, i + 3)).collect();
     format!("{{\"orderId\":{id},\"customer\":\"ACME\",\"items\":[{}]}}", items.join(","))
+}
+
+/// One CSV file of `CSV_ROWS` order rows; a third of them are in the EU.
+pub fn csv_file(id: u64) -> String {
+    let regions = ["EU", "US", "APAC"];
+    let rows: Vec<String> =
+        (0..CSV_ROWS).map(|i| format!("{},{},{},ACME-{},{}.25", id, i, regions[i % 3], i % 50, 10 + i % 90)).collect();
+    rows.join("\n")
 }
 
 /// The HTTP consumer route (`netty-http`, the same component name as the Java side).
@@ -98,6 +109,20 @@ pub fn add_routes(ctx: &CamelContext, sink: &Arc<AtomicU64>) -> Result<()> {
             .process(counter(sink))
             .end()
             .end();
+
+        // 5. CSV batch: split a file into rows, keep the EU rows, reshape them and write them
+        //    out in batches
+        b.from("direct:csv")
+            .route_id("csv")
+            .split(tokenize("\n"))
+            .filter(simple("${body} contains ',EU,'"))
+            .transform(simple("${body},checked"))
+            .aggregate(constant(true), grouped_body())
+            .completion_size(CSV_BATCH)
+            .process(counter(sink))
+            .end()
+            .end()
+            .end();
     })
 }
 
@@ -136,6 +161,14 @@ pub fn run(ctx: &CamelContext, sink: &Arc<AtomicU64>, scenario: &str, plan: Plan
             move || {
                 i += 1;
                 t.send_body("direct:splitagg", order_json(i)).expect("splitagg send")
+            }
+        }),
+        "csv" => driver::run(plan, 1, None, |_| {
+            let t = t.clone();
+            let mut i = 0u64;
+            move || {
+                i += 1;
+                t.send_body("direct:csv", csv_file(i)).expect("csv send")
             }
         }),
         other => return Err(CamelError::illegal_argument(format!("unknown scenario: {other}"))),
@@ -177,6 +210,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert_eq!(sink.load(Ordering::SeqCst), 6);
+
+        // csv: 3 files of 1000 rows have 1000 EU rows, which make 10 batches of 100
+        for i in 0..3 {
+            t.send_body("direct:csv", csv_file(i)).unwrap();
+        }
+        assert_eq!(sink.load(Ordering::SeqCst), 16);
         ctx.stop().unwrap();
     }
 
