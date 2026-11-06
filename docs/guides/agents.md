@@ -1,8 +1,9 @@
 # Cameleer for AI agents
 
-> Cameleer is the integration layer for AI agents: it feeds events to models, routes on their
-> answers, and turns agent tool calls into reliable actions with validation, idempotency,
-> retries, rate limits, fallbacks and an audit log.
+> Cameleer is the action layer for AI agents: the model decides what, a tested route decides
+> how. It feeds events to models, routes on their answers, and turns agent tool calls into
+> reliable actions with validation, idempotency, retries, sagas, human approval, rate limits,
+> fallbacks and an audit log.
 
 An agent decides what to do; a route does it. This cookbook shows eight patterns, each a
 complete route file in [`examples/agents/`](../../examples/agents/) that runs end to end in the

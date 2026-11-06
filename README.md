@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="site/brand/cameleer-logo.png" alt="Cameleer: the integration layer for AI agents, Camel-compatible routes in Rust" width="520">
+  <img src="site/brand/cameleer-logo.png" alt="Cameleer: Camel routes in Rust, reliable actions for AI agents" width="520">
 </p>
 
 # Cameleer
@@ -10,22 +10,25 @@
 [![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)
 [![Apache Camel compatible](https://img.shields.io/badge/follows-Apache%20Camel%204.x-d4523f.svg)](https://camel.apache.org/)
 
-### The integration layer for AI agents.
+### Camel routes in Rust. Reliable actions for AI agents.
 
-Cameleer feeds events to models, routes on their answers, and turns agent tool calls into
-reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.
+Cameleer is Apache Camel's integration model, rebuilt in Rust: **if you know Apache Camel, you
+already know Cameleer.** The same endpoint URIs, Enterprise Integration Patterns, Simple
+expressions, YAML routes, headers and error handling. About 230 components, languages and data
+formats, ported one by one and verified against the real systems.
 
-It is Apache Camel's integration model, rebuilt in Rust: **if you know Apache Camel, you already
-know Cameleer.** The same endpoint URIs, Enterprise Integration Patterns, Simple expressions, YAML
-routes, headers and error handling. About 230 components, languages and data formats, ported one
-by one and verified against the real systems.
+- **Act reliably.** An agent decides; a route does it. Every tool call is validated against a
+  JSON schema, runs once, retries with back-off, rolls back with a saga, waits for a person when
+  the stakes are high, and lands in an audit log ([the action layer for agents](#the-action-layer-for-ai-agents)).
+- **Keep your routes.** Camel YAML and XML routes run unchanged; your team's Camel designs and
+  habits come with you ([migrating from Apache Camel](docs/guides/migrating-from-apache-camel.md)).
+- **Run anywhere.** One native binary that starts in **3 ms**, runs in **megabytes**, is its own AWS
+  Lambda runtime, and moves **1.7–8.7x the messages** of Apache Camel on the same CPUs, in every
+  scenario we measured ([Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/)).
 
-One native binary that starts in **3 ms**, runs in **megabytes**, and moves **1.7–8.7x the messages**
-of Apache Camel on the same CPUs, in every scenario we measured, from in-memory routing to REST APIs,
-Kafka and PostgreSQL ([Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/)).
-
-[Website](https://pmsudhi.github.io/cameleer/) · [Docs](https://pmsudhi.github.io/cameleer/docs/) · [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
-[Agents](#rebuilt-for-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
+[Website](https://pmsudhi.github.io/cameleer/) · [Docs](https://pmsudhi.github.io/cameleer/docs/) · [Use cases](https://pmsudhi.github.io/cameleer/use-cases/) ·
+[Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
+[Agents](#the-action-layer-for-ai-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
 
 _Cameleer was called rust-camel up to v0.1.0._
@@ -176,9 +179,13 @@ Your team's Camel experience, designs and routes come with you.
 
 ---
 
-## Rebuilt for agents
+## The action layer for AI agents
 
-**Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.**
+**The model decides *what*; a tested route decides *how*.** Cameleer feeds events to models,
+routes on their answers, and turns agent tool calls into reliable actions with validation,
+idempotency, retries, sagas, human approval, rate limits, fallbacks and an audit log. Today a
+tool is an HTTP endpoint, which every framework with function calling supports; an MCP tool
+server is 🚧 [planned](docs/ROADMAP.md#21-agents-and-ai).
 
 An agent decides; something still has to *do* it:
 - read from Kafka, call the model, write to Postgres;
@@ -262,7 +269,9 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 | **AI ops** | `github` events and alerts on `platform-http` | model summary → dedupe → route by severity | one Slack thread per incident, not a hundred alerts |
 | **File exchange** | partner files on `sftp` | unmarshal CSV, XML or EDI → validate → `split` | rows in PostgreSQL, rejects back to the partner |
 
-Every component named here ships today; each row is a pattern you assemble from them.
+Every component named here ships today; each row is a pattern you assemble from them. The
+[use-case pages](https://pmsudhi.github.io/cameleer/use-cases/) walk through the tested routes
+for AI agent tools, HL7 over MLLP, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
 
 ---
 

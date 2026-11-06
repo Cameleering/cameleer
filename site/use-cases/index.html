@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cameleer Use Cases: AI Agent Tools, HL7, MQTT Edge, Serverless, Files | Cameleer</title>
+<meta name="description" content="What people run on Cameleer, each with a tested route: tools for AI agents, HL7 over MLLP, MQTT edge gateways, AWS Lambda and Cloud Run, file and SFTP pipelines, webhooks, change data capture, scheduled jobs.">
+<link rel="canonical" href="https://pmsudhi.github.io/cameleer/use-cases/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Cameleer use cases">
+<meta property="og:description" content="Tools for AI agents, HL7 over MLLP, MQTT edge gateways, serverless functions, file and SFTP pipelines, webhooks, change data capture and scheduled jobs, each with a tested route.">
+<meta property="og:url" content="https://pmsudhi.github.io/cameleer/use-cases/">
+<meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<style>
+.uc-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.uc-grid .card { display: flex; flex-direction: column; text-decoration: none; }
+.uc-grid .card:hover { border-color: var(--ink); }
+.uc-grid .card h3 { margin: 0 0 8px; }
+.uc-grid .card p { margin: 0 0 12px; }
+.uc-grid .card .who { margin-top: auto; font: 500 12.5px var(--mono); color: var(--signal); }
+.uc-grid .card .plan { font-size: 13px; color: var(--muted); margin: 0; }
+.uc-grid .card code { font-size: 13px; background: #f3f5fa; padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 900px) { .uc-grid { grid-template-columns: 1fr; } }
+</style>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "CollectionPage", "name": "Cameleer use cases",
+ "url": "https://pmsudhi.github.io/cameleer/use-cases/",
+ "description": "What people run on Cameleer, each with a tested route.",
+ "hasPart": [
+  {"@type": "TechArticle", "headline": "AI agent tool calls: direct vs through Cameleer", "url": "https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/"},
+  {"@type": "TechArticle", "headline": "HL7 v2 over MLLP and FHIR integration", "url": "https://pmsudhi.github.io/cameleer/use-cases/hl7-mllp-healthcare-integration/"},
+  {"@type": "TechArticle", "headline": "MQTT and IoT edge gateways", "url": "https://pmsudhi.github.io/cameleer/use-cases/mqtt-iot-edge-gateway/"},
+  {"@type": "TechArticle", "headline": "Serverless integration on AWS Lambda and Cloud Run", "url": "https://pmsudhi.github.io/cameleer/use-cases/serverless-aws-lambda/"},
+  {"@type": "TechArticle", "headline": "File, FTP and SFTP pipelines", "url": "https://pmsudhi.github.io/cameleer/use-cases/file-sftp-pipelines/"},
+  {"@type": "TechArticle", "headline": "Migrating from Apache Camel", "url": "https://pmsudhi.github.io/cameleer/docs/guides/migrating-from-apache-camel.html"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://pmsudhi.github.io/cameleer/"},
+ {"@type": "ListItem", "position": 2, "name": "Use cases"}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleer home"><img src="../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../docs/">Docs</a>
+      <a class="keep" href="./">Use cases</a>
+      <a href="../docs/guides/agents.html">Agents</a>
+      <a href="../compare/">Compare</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleer</a> / Use cases</p>
+    <p class="kicker">Tested routes, not slideware</p>
+    <h1>What people run on Cameleer</h1>
+    <p class="lede">Every use case below has a route in the repository that the test suite runs end to end, against embedded brokers and mock APIs. Each page names the components, shows the route, and gives the exact Docker command. Same Camel YAML, one native binary.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="pages">
+  <div class="wrap">
+    <h2>Use cases with their own page</h2>
+    <div class="uc-grid">
+      <a class="card" href="../compare/ai-agent-tool-calls-direct-vs-cameleer/">
+        <h3>Tools for AI agents</h3>
+        <p>An agent calls one tool; a route validates the arguments against a JSON schema, runs each step once, retries the flaky API, rolls back with a saga, parks risky actions for a person and writes the audit line.</p>
+        <p class="plan">Shipped: tools over REST. Planned: MCP tool server (on the roadmap).</p>
+        <span class="who">examples/agents/ · 8 routes</span>
+      </a>
+      <a class="card" href="hl7-mllp-healthcare-integration/">
+        <h3>Healthcare: HL7 v2 over MLLP, FHIR</h3>
+        <p>Receive ADT and lab messages over MLLP, read fields with HL7 terser paths, post to the EHR or a FHIR server, and acknowledge only after delivery so the sender resends on failure.</p>
+        <span class="who">mllp · hl7 · hl7terser · fhir</span>
+      </a>
+      <a class="card" href="mqtt-iot-edge-gateway/">
+        <h3>MQTT and IoT edge gateways</h3>
+        <p>Subscribe to sensors, validate and aggregate on site, buffer to disk when the uplink is down and replay later, bridge syslog into Kafka, publish presence with a last will. About 10 MB of memory, arm64 image.</p>
+        <span class="who">paho · paho-mqtt5 · syslog · kafka · file</span>
+      </a>
+      <a class="card" href="serverless-aws-lambda/">
+        <h3>Serverless: AWS Lambda, Cloud Run</h3>
+        <p>The binary is its own Lambda runtime: API Gateway, function URL and ALB events reach your <code>platform-http</code> routes, other events a handler route. Cloud Run, Knative and Azure Container Apps run the image as it is.</p>
+        <span class="who">provided.al2023 · platform-http · build features</span>
+      </a>
+      <a class="card" href="file-sftp-pipelines/">
+        <h3>File, FTP and SFTP pipelines</h3>
+        <p>Poll folders and remote servers, parse CSV and fixed-width records, split, validate, deduplicate, load into PostgreSQL or S3, and move each file to done or failed. Twice Apache Camel's throughput on CSV batches.</p>
+        <span class="who">file · ftp · ftps · sftp · csv · bindy · aws2-s3 · sql</span>
+      </a>
+      <a class="card" href="../docs/guides/migrating-from-apache-camel.html">
+        <h3>Camel routes off the JVM</h3>
+        <p>YAML and XML routes, URIs, EIPs, Simple, headers and error handling carry over unchanged. A checklist for Java beans and processors, and the known deviations, on one page.</p>
+        <span class="who">guide · compare page · 450x startup, up to 54x memory</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="more">
+  <div class="wrap">
+    <h2>More use cases, from the same parts</h2>
+    <p class="intro">Each of these is built from components and patterns that ship today. The links go to the component page or the tested example.</p>
+    <div class="uc-grid">
+      <a class="card" id="llm" href="../docs/guides/agents.html">
+        <h3>LLM pipelines and RAG ingestion</h3>
+        <p>Classify and route on a model's answer with a fixed label set; map-reduce summaries; chunk, embed and index documents in Elasticsearch, OpenSearch or pgvector; validate model JSON against a schema and re-ask once; throttle, circuit-break and fail over between models.</p>
+        <span class="who">openai · aws-bedrock · azure-openai · google-vertexai · json-validator</span>
+      </a>
+      <a class="card" id="webhooks" href="https://github.com/pmsudhi/cameleer/blob/main/examples/alerts-to-slack.camel.yaml">
+        <h3>SaaS webhooks to chat and tickets</h3>
+        <p>An HTTP endpoint takes monitoring alerts and keeps the critical ones for Slack; the <code>webhook</code> component registers itself with GitHub or Telegram; <code>github</code> polls pull requests and issues; <code>jira</code>, <code>twilio</code> and <code>smtp</code> act on the result.</p>
+        <span class="who">platform-http · webhook · slack · github · jira · telegram · twilio</span>
+      </a>
+      <a class="card" id="cdc" href="../docs/components/aws2-ddbstream.html">
+        <h3>Change data capture</h3>
+        <p>React to every insert, update and delete from DynamoDB Streams, MongoDB change streams and the Cosmos DB change feed, or poll a table as a work queue with the <code>sql</code> consumer and <code>onConsume</code>. No Debezium-style log reader for PostgreSQL yet.</p>
+        <span class="who">aws2-ddbstream · mongodb · azure-cosmosdb · sql</span>
+      </a>
+      <a class="card" id="scheduled" href="../docs/components/cron.html">
+        <h3>Scheduled jobs</h3>
+        <p>Start a route on a cron expression in a time zone, on Quartz trigger syntax, or with a scheduler that backs off when idle; stop after a run with <code>camel.main.duration-max-messages</code>, or run it as a Lambda on an EventBridge schedule.</p>
+        <span class="who">cron · quartz · scheduler · timer</span>
+      </a>
+      <a class="card" id="apis" href="https://github.com/pmsudhi/cameleer/blob/main/examples/rest-api.camel.yaml">
+        <h3>REST APIs and backends for frontends</h3>
+        <p>The REST DSL with JSON binding, path and query parameters, CORS and a generated OpenAPI 3 document; <code>enrich</code> and <code>multicast</code> to call several services and aggregate one answer; throttle and circuit breaker in front of slow dependencies. 80k requests per second with JSON on four cores.</p>
+        <span class="who">rest · platform-http · http · json-validator</span>
+      </a>
+      <a class="card" id="approval" href="../docs/guides/agents.html#human-in-the-loop-approval">
+        <h3>Human approval of risky actions</h3>
+        <p>Actions under a limit run at once; larger ones are parked as a file and a person gets a Slack message with an approval link. The approval route picks the action up with <code>pollEnrich</code>, so it runs at most once even when the link is clicked twice.</p>
+        <span class="who">rest · file · slack · pollEnrich</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Run one</h2>
+    <p class="intro">Every example file starts with the environment variables it needs and its Docker command. Validate first, then run.</p>
+    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples
+docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml</pre>
+    <div class="cta">
+      <a class="btn primary" href="../docs/guides/getting-started.html">Getting started</a>
+      <a class="btn" href="https://github.com/pmsudhi/cameleer/tree/main/examples">All example routes</a>
+      <a class="btn" href="../docs/components/">All components</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+    </div>
+    <div>
+      <h4>Use cases</h4>
+      <ul>
+        <li><a href="../compare/ai-agent-tool-calls-direct-vs-cameleer/">Tools for AI agents</a></li>
+        <li><a href="hl7-mllp-healthcare-integration/">HL7 over MLLP</a></li>
+        <li><a href="mqtt-iot-edge-gateway/">MQTT edge gateways</a></li>
+        <li><a href="serverless-aws-lambda/">Serverless</a></li>
+        <li><a href="file-sftp-pipelines/">File and SFTP pipelines</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../docs/">Documentation</a></li>
+        <li><a href="../compare/">Compare</a></li>
+        <li><a href="../docs/ROADMAP.html">Roadmap</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

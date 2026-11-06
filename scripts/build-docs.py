@@ -12,8 +12,8 @@ What it writes (under --out, default site/):
   docs/index.html       docs home (docs/README.md, or generated)
   docs/{components,languages,dataformats,guides}/index.html   generated section indexes
   docs/** (other files) images and other assets copied from the docs tree
-  sitemap.xml           the home page, llms.txt, the designed pages under compare/ and alternatives/,
-                        and every docs page
+  sitemap.xml           the home page, llms.txt, the designed pages under compare/, alternatives/ and
+                        use-cases/, and every docs page
                         (except a page whose canonical URL is elsewhere)
   llms.txt              the site's llms.txt with a generated "## Documentation" section
   llms-full.txt         every docs page concatenated as plain markdown
@@ -38,6 +38,8 @@ import time
 
 # Files that exist only for the Read the Docs build (docs/conf.py), skipped here.
 SPHINX_ONLY = {"index.md", "conf.py", "requirements.txt"}
+# Working documents for the project (plans and strategy) that stay in the repository only.
+INTERNAL = {"website-plan.md"}
 
 SITE_URL = "https://pmsudhi.github.io/cameleer/"
 REPO_URL = "https://github.com/pmsudhi/cameleer"
@@ -800,7 +802,7 @@ class Site:
             for f in sorted(files):
                 full = os.path.join(root, f)
                 rel = os.path.relpath(full, self.docs).replace("\\", "/")
-                if rel in SPHINX_ONLY:
+                if rel in SPHINX_ONLY or rel in INTERNAL:
                     continue
                 if f.lower().endswith(".md"):
                     with open(full, encoding="utf-8") as fh:
@@ -1138,9 +1140,9 @@ class Site:
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
 
     def designed_pages(self):
-        """Hand-written landing pages: <out>/compare/** and <out>/alternatives/** (index.html)."""
+        """Hand-written landing pages: <out>/compare/**, <out>/alternatives/** and <out>/use-cases/** (index.html)."""
         found = []
-        for d, _, files in (w for top in ("compare", "alternatives") for w in os.walk(os.path.join(self.out, top))):
+        for d, _, files in (w for top in ("compare", "alternatives", "use-cases") for w in os.walk(os.path.join(self.out, top))):
             if "index.html" in files:
                 found.append(os.path.relpath(os.path.join(d, "index.html"), self.out).replace("\\", "/"))
         return sorted(found)
@@ -1264,13 +1266,14 @@ TEMPLATE = """<!doctype html>
 <header class="top scrolled" id="top">
   <div class="wrap">
     <a class="brand" href="{site_root}" aria-label="Cameleer home">
-      <img src="{site_root}brand/cameleer-mark.png" width="32" height="32" alt="" aria-hidden="true">
+      <img src="{site_root}brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">
       Cameleer
     </a>
     <nav aria-label="Main">
       <a class="keep" href="{root}index.html">Docs</a>
       <a href="{root}guides/index.html">Guides</a>
       <a href="{root}components/index.html">Components</a>
+      <a href="{site_root}use-cases/">Use cases</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
@@ -1308,6 +1311,8 @@ TEMPLATE = """<!doctype html>
       <h4>Project</h4>
       <ul>
         <li><a href="{site_root}">Home</a></li>
+        <li><a href="{site_root}use-cases/">Use cases</a></li>
+        <li><a href="{site_root}compare/">Compare</a></li>
         <li><a href="https://github.com/pmsudhi/cameleer">Source on GitHub</a></li>
         <li><a href="https://github.com/pmsudhi/cameleer/releases">Releases</a></li>
         <li><a href="https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>

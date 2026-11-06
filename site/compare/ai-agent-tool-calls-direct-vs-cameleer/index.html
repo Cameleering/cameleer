@@ -39,9 +39,11 @@
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Is Cameleer an AI agent framework?", "acceptedAnswer": {"@type": "Answer", "text": "No. The agent framework runs the model loop and decides which tool to call. Cameleer executes the tool: it is the integration layer between the agent and your systems."}},
+ {"@type": "Question", "name": "Is Cameleer an AI agent framework?", "acceptedAnswer": {"@type": "Answer", "text": "No. The agent framework runs the model loop and decides which tool to call. Cameleer executes the tool: it is the action layer between the agent and your systems."}},
  {"@type": "Question", "name": "Does routing tool calls through Cameleer replace function calling?", "acceptedAnswer": {"@type": "Answer", "text": "No. The model still uses function calling; the tool it calls is a Cameleer route behind an HTTP endpoint, declared with the same JSON schema the route validates against."}},
  {"@type": "Question", "name": "Which models and agent frameworks does it work with?", "acceptedAnswer": {"@type": "Answer", "text": "Any that support function calling or tool use and can make an HTTP request: OpenAI, Anthropic, Google, AWS Bedrock and Azure OpenAI models, open models on Ollama or vLLM, and frameworks that let you define a tool as an HTTP call."}},
+ {"@type": "Question", "name": "Does Cameleer speak MCP?", "acceptedAnswer": {"@type": "Answer", "text": "Not yet. Today a tool is an HTTP endpoint, which every framework with function calling can call; an MCP tool server that exposes routes as tools is on the roadmap. Apache Camel 4.22 ships an MCP server; Cameleer brings the reliability patterns now and the protocol next."}},
+ {"@type": "Question", "name": "How is this different from a hosted tool catalog such as Composio or Arcade?", "acceptedAnswer": {"@type": "Answer", "text": "Those platforms give an agent many pre-built connectors with managed OAuth, hosted and priced per use. Cameleer is open source and self-hosted: a 20 MB container or a library, about 230 components, and the reliability around the call written as a tested route: schema validation, idempotency, retries, sagas, human approval, rate limits and an audit log. Use a catalog for breadth of SaaS actions; use Cameleer when the action changes money, stock or records and must run exactly once inside your own network."}},
  {"@type": "Question", "name": "What happens when an agent retries a tool call?", "acceptedAnswer": {"@type": "Answer", "text": "The route sees the same requestId and answers duplicate without executing anything again."}},
  {"@type": "Question", "name": "When is a direct tool call enough?", "acceptedAnswer": {"@type": "Answer", "text": "When the call only reads, is a single step with no other system to keep consistent, or is a prototype. Use a route as soon as a call changes something, spans several systems, needs a rule the model must not override, or must be audited."}},
  {"@type": "Question", "name": "Does an extra hop make tool calls slower?", "acceptedAnswer": {"@type": "Answer", "text": "A route adds microseconds to a call; a model turn takes hundreds of milliseconds to seconds. A multi-step job through one route saves model turns, so it is usually faster end to end."}}]}
@@ -50,9 +52,10 @@
 <body>
 <header class="top" id="top">
   <div class="wrap">
-    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
     <nav aria-label="Main">
       <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
       <a href="../">Compare</a>
       <a href="../apache-camel-vs-cameleer/">vs Apache Camel</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
@@ -64,7 +67,7 @@
 <section class="c-hero">
   <div class="wrap">
     <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / AI agent tool calls</p>
-    <p class="kicker">Function calling, done reliably</p>
+    <p class="kicker">The action layer for AI agents</p>
     <h1>AI agent tool calls: direct function calling vs Cameleer</h1>
     <p class="lede">When an agent calls your APIs directly, retries, duplicate actions, half-done work and business rules are left to the model. Route each tool through Cameleer and the model decides <em>what</em> to do while tested code decides <em>how</em>.</p>
     <div class="stats">
@@ -167,9 +170,11 @@
 <section class="c-sec faq" id="faq">
   <div class="wrap">
     <h2>Common questions</h2>
-    <details><summary>Is Cameleer an AI agent framework?</summary><p>No. The agent framework runs the model loop and decides which tool to call. Cameleer executes the tool: it is the integration layer between the agent and your systems.</p></details>
+    <details><summary>Is Cameleer an AI agent framework?</summary><p>No. The agent framework runs the model loop and decides which tool to call. Cameleer executes the tool: it is the action layer between the agent and your systems.</p></details>
     <details><summary>Does routing tool calls through Cameleer replace function calling?</summary><p>No. The model still uses function calling; the tool it calls is a Cameleer route behind an HTTP endpoint, declared with the same JSON schema the route validates against.</p></details>
     <details><summary>Which models and agent frameworks does it work with?</summary><p>Any that support function calling or tool use and can make an HTTP request: OpenAI, Anthropic, Google, AWS Bedrock and Azure OpenAI models, open models on Ollama or vLLM, and frameworks that let you define a tool as an HTTP call.</p></details>
+    <details><summary>Does Cameleer speak MCP?</summary><p>Not yet. Today a tool is an HTTP endpoint, which every framework with function calling can call; an MCP tool server that exposes routes as tools is on the <a href="../../docs/ROADMAP.html">roadmap</a>. Apache Camel 4.22 ships an MCP server; Cameleer brings the reliability patterns now and the protocol next.</p></details>
+    <details><summary>How is this different from a hosted tool catalog such as Composio or Arcade?</summary><p>Those platforms give an agent many pre-built connectors with managed OAuth, hosted and priced per use. Cameleer is open source and self-hosted: a 20 MB container or a library, about 230 components, and the reliability around the call written as a tested route: schema validation, idempotency, retries, sagas, human approval, rate limits and an audit log. Use a catalog for breadth of SaaS actions; use Cameleer when the action changes money, stock or records and must run exactly once inside your own network.</p></details>
     <details><summary>What happens when an agent retries a tool call?</summary><p>The route sees the same <code>requestId</code> and answers <code>duplicate</code> without executing anything again.</p></details>
     <details><summary>When is a direct tool call enough?</summary><p>When the call only reads, is a single step with no other system to keep consistent, or is a prototype. Use a route as soon as a call changes something, spans several systems, needs a rule the model must not override, or must be audited.</p></details>
     <details><summary>Does an extra hop make tool calls slower?</summary><p>A route adds microseconds to a call; a model turn takes hundreds of milliseconds to seconds. A multi-step job through one route saves model turns, so it is usually faster end to end.</p></details>
@@ -186,6 +191,7 @@ docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes/damaged-o
       <a class="btn primary" href="../../docs/guides/agent-tool-calls.html">Read the full guide</a>
       <a class="btn" href="https://github.com/pmsudhi/cameleer/blob/main/examples/agents/damaged-order-tool.camel.yaml">See the route</a>
       <a class="btn" href="../../docs/guides/agents.html">Agent cookbook</a>
+      <a class="btn" href="../../use-cases/">More use cases</a>
     </div>
   </div>
 </section>
