@@ -26,6 +26,7 @@
 //! `$ref` to local JSON pointers (`#`, `#/definitions/x`, `#/$defs/x`). Remote `$ref`s
 //! are not supported.
 
+use std::collections::HashSet;
 use std::any::Any;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -387,7 +388,29 @@ impl<'a> Validator<'a> {
                     errs.push(format!("{}: the items in the array must be unique", path));
                 }
             }
+            // 2020-12: `prefixItems` validates by position, then `items` covers the rest
+            let prefix_len = match m.get("prefixItems") {
+                Some(Value::Array(prefix)) => {
+                    for (i, (item, sch)) in items.iter().zip(prefix.iter()).enumerate() {
+                        self.validate(item, sch, &format!("{}[{}]", path, i), errs, depth + 1);
+                    }
+                    Some(prefix.len())
+                }
+                _ => None,
+            };
             match m.get("items") {
+                Some(sch) if prefix_len.is_some() => {
+                    let start = prefix_len.unwrap_or(0);
+                    for (i, item) in items.iter().enumerate().skip(start) {
+                        match sch {
+                            Value::Bool(false) => errs.push(format!(
+                                "{}: index '{}' is not defined in the schema and the schema does not allow additional items",
+                                path, i
+                            )),
+                            _ => self.validate(item, sch, &format!("{}[{}]", path, i), errs, depth + 1),
+                        }
+                    }
+                }
                 Some(Value::Array(tuple)) => {
                     for (i, item) in items.iter().enumerate() {
                         let p = format!("{}[{}]", path, i);
@@ -411,8 +434,41 @@ impl<'a> Validator<'a> {
                 None => {}
             }
             if let Some(c) = m.get("contains") {
-                if !items.iter().any(|it| self.is_valid(it, c, depth + 1)) {
-                    errs.push(format!("{}: does not contain an element that passes these validations: {}", path, c.to_json()));
+                let n = items.iter().filter(|it| self.is_valid(it, c, depth + 1)).count();
+                let min_c = num("minContains").unwrap_or(1.0);
+                if (n as f64) < min_c {
+                    if min_c <= 1.0 {
+                        errs.push(format!("{}: does not contain an element that passes these validations: {}", path, c.to_json()));
+                    } else {
+                        errs.push(format!(
+                            "{}: must contain at least {} elements that pass these validations: {}",
+                            path,
+                            fmt_num(min_c),
+                            c.to_json()
+                        ));
+                    }
+                }
+                if let Some(max_c) = num("maxContains") {
+                    if (n as f64) > max_c {
+                        errs.push(format!(
+                            "{}: must contain at most {} elements that pass these validations: {}",
+                            path,
+                            fmt_num(max_c),
+                            c.to_json()
+                        ));
+                    }
+                }
+            }
+            if let Some(un) = m.get("unevaluatedItems") {
+                let seen = self.evaluated_items(v, s, depth + 1, false);
+                for (i, item) in items.iter().enumerate().skip(seen) {
+                    match un {
+                        Value::Bool(false) => errs.push(format!(
+                            "{}: index '{}' is not evaluated and the schema does not allow unevaluated items",
+                            path, i
+                        )),
+                        sch => self.validate(item, sch, &format!("{}[{}]", path, i), errs, depth + 1),
+                    }
                 }
             }
         }
@@ -491,6 +547,28 @@ impl<'a> Validator<'a> {
                     }
                 }
             }
+            if let Some(Value::Object(deps)) = m.get("dependentSchemas") {
+                for (k, sch) in deps {
+                    if obj.contains_key(k) {
+                        self.validate(v, sch, path, errs, depth + 1);
+                    }
+                }
+            }
+            if let Some(un) = m.get("unevaluatedProperties") {
+                let seen = self.evaluated_properties(v, s, depth + 1, false);
+                for (k, val) in obj {
+                    if seen.contains(k.as_str()) {
+                        continue;
+                    }
+                    let p = child_path(path, k);
+                    match un {
+                        Value::Bool(false) => {
+                            errs.push(format!("{}: is not evaluated and the schema does not allow unevaluated properties", p))
+                        }
+                        sch => self.validate(val, sch, &p, errs, depth + 1),
+                    }
+                }
+            }
         }
         // combinators
         if let Some(Value::Array(all)) = m.get("allOf") {
@@ -527,6 +605,100 @@ impl<'a> Validator<'a> {
                 self.validate(v, e, path, errs, depth + 1);
             }
         }
+    }
+}
+
+impl<'a> Validator<'a> {
+    /// The property names of `v` that `s` evaluates (2020-12 annotation collection for
+    /// `unevaluatedProperties`): `properties`, matching `patternProperties`,
+    /// `additionalProperties`, plus the subschemas that apply (`$ref`, `allOf`, valid
+    /// `anyOf`/`oneOf` branches, `if`/`then`/`else`, `dependentSchemas`).
+    fn evaluated_properties(&self, v: &Value, s: &Value, depth: usize, nested: bool) -> HashSet<String> {
+        let mut out = HashSet::new();
+        let (Value::Object(obj), Value::Object(m)) = (v, s) else { return out };
+        if depth > 64 {
+            return out;
+        }
+        let props = m.get("properties").and_then(|p| p.as_object());
+        let pattern: Vec<Regex> = m
+            .get("patternProperties")
+            .and_then(|p| p.as_object())
+            .map(|pp| pp.keys().filter_map(|k| Regex::new(k).ok()).collect())
+            .unwrap_or_default();
+        let additional = matches!(m.get("additionalProperties"), Some(Value::Object(_)) | Some(Value::Bool(true)));
+        let unevaluated = nested && matches!(m.get("unevaluatedProperties"), Some(Value::Object(_)) | Some(Value::Bool(true)));
+        for k in obj.keys() {
+            let named = props.map(|p| p.contains_key(k)).unwrap_or(false);
+            if named || pattern.iter().any(|r| r.is_match(k)) || additional || unevaluated {
+                out.insert(k.clone());
+            }
+        }
+        for sch in self.applied_subschemas(v, m, depth) {
+            out.extend(self.evaluated_properties(v, sch, depth + 1, true));
+        }
+        if let Some(Value::Object(deps)) = m.get("dependentSchemas") {
+            for (k, sch) in deps {
+                if obj.contains_key(k) {
+                    out.extend(self.evaluated_properties(v, sch, depth + 1, true));
+                }
+            }
+        }
+        out
+    }
+
+    /// How many leading items of `v` `s` evaluates (for `unevaluatedItems`); `usize::MAX`
+    /// when `items` or a nested `unevaluatedItems` covers them all.
+    fn evaluated_items(&self, v: &Value, s: &Value, depth: usize, nested: bool) -> usize {
+        let (Value::Array(_), Value::Object(m)) = (v, s) else { return 0 };
+        if depth > 64 {
+            return 0;
+        }
+        let mut n = match m.get("prefixItems") {
+            Some(Value::Array(p)) => p.len(),
+            _ => 0,
+        };
+        match m.get("items") {
+            Some(Value::Array(t)) => n = n.max(t.len()),
+            Some(_) => return usize::MAX,
+            None => {}
+        }
+        if nested && matches!(m.get("unevaluatedItems"), Some(Value::Object(_)) | Some(Value::Bool(true))) {
+            return usize::MAX;
+        }
+        for sch in self.applied_subschemas(v, m, depth) {
+            n = n.max(self.evaluated_items(v, sch, depth + 1, true));
+        }
+        n
+    }
+
+    /// The in-place subschemas that apply to `v`: `$ref`, `allOf`, the valid `anyOf` and
+    /// `oneOf` branches, and `if` with `then` or `else`.
+    fn applied_subschemas(&self, v: &Value, m: &'a crate::value::ObjectMap, depth: usize) -> Vec<&'a Value> {
+        let mut subs: Vec<&'a Value> = Vec::new();
+        if let Some(Value::String(r)) = m.get("$ref") {
+            if let Some(t) = self.resolve_ref(r) {
+                subs.push(t);
+            }
+        }
+        if let Some(Value::Array(all)) = m.get("allOf") {
+            subs.extend(all.iter());
+        }
+        for key in ["anyOf", "oneOf"] {
+            if let Some(Value::Array(branches)) = m.get(key) {
+                subs.extend(branches.iter().filter(|sch| self.is_valid(v, sch, depth + 1)));
+            }
+        }
+        if let Some(cond) = m.get("if") {
+            if self.is_valid(v, cond, depth + 1) {
+                subs.push(cond);
+                if let Some(t) = m.get("then") {
+                    subs.push(t);
+                }
+            } else if let Some(e) = m.get("else") {
+                subs.push(e);
+            }
+        }
+        subs
     }
 }
 
@@ -664,5 +836,46 @@ mod tests {
         assert_eq!(errs(r##"{"$ref":"#/nope"}"##, "1").len(), 1);
         assert!(errs("true", "1").is_empty());
         assert_eq!(errs("false", "1").len(), 1);
+    }
+
+    #[test]
+    fn draft_2020_12_keywords() {
+        // prefixItems, then items for the rest
+        let t = r#"{"prefixItems":[{"type":"string"},{"type":"integer"}],"items":false}"#;
+        assert!(errs(t, r#"["a",1]"#).is_empty());
+        assert_eq!(errs(t, r#"["a","b"]"#), ["$[1]: string found, integer expected"]);
+        assert_eq!(errs(t, r#"["a",1,true]"#).len(), 1);
+        assert!(errs(r#"{"prefixItems":[{"type":"string"}],"items":{"type":"integer"}}"#, r#"["a",1,2]"#).is_empty());
+        // $defs through a local $ref
+        let d = r##"{"$defs":{"id":{"type":"string","minLength":2}},"properties":{"a":{"$ref":"#/$defs/id"}}}"##;
+        assert!(errs(d, r#"{"a":"xy"}"#).is_empty());
+        assert_eq!(errs(d, r#"{"a":"x"}"#).len(), 1);
+        // minContains / maxContains
+        let c = r#"{"contains":{"type":"integer"},"minContains":2,"maxContains":3}"#;
+        assert!(errs(c, r#"[1,2,"a"]"#).is_empty());
+        assert_eq!(errs(c, r#"[1,"a"]"#).len(), 1);
+        assert_eq!(errs(c, "[1,2,3,4]").len(), 1);
+        assert!(errs(r#"{"contains":{"type":"integer"},"minContains":0}"#, r#"["a"]"#).is_empty());
+        // dependentSchemas
+        let ds = r#"{"dependentSchemas":{"card":{"required":["cvv"]}}}"#;
+        assert!(errs(ds, r#"{"name":"x"}"#).is_empty());
+        assert_eq!(errs(ds, r#"{"card":"1"}"#).len(), 1);
+        // unevaluatedProperties sees through allOf and $ref, unlike additionalProperties
+        let u = r##"{"$defs":{"base":{"properties":{"id":{"type":"string"}}}},"allOf":[{"$ref":"#/$defs/base"}],"properties":{"name":{"type":"string"}},"unevaluatedProperties":false}"##;
+        assert!(errs(u, r#"{"id":"1","name":"n"}"#).is_empty());
+        assert_eq!(errs(u, r#"{"id":"1","extra":1}"#), ["$.extra: is not evaluated and the schema does not allow unevaluated properties"]);
+        // only the valid anyOf branch counts, and if/then annotations count
+        let any = r#"{"anyOf":[{"properties":{"a":{"type":"string"}},"required":["a"]},{"properties":{"b":{"type":"string"}},"required":["b"]}],"unevaluatedProperties":false}"#;
+        assert!(errs(any, r#"{"a":"x"}"#).is_empty());
+        assert_eq!(errs(any, r#"{"a":"x","c":1}"#).len(), 1);
+        let it = r#"{"if":{"properties":{"kind":{"const":"a"}}},"then":{"properties":{"x":true}},"unevaluatedProperties":false}"#;
+        assert!(errs(it, r#"{"kind":"a","x":1}"#).is_empty());
+        assert_eq!(errs(it, r#"{"kind":"b","x":1}"#).len(), 2);
+        // unevaluatedProperties with a schema validates the rest
+        assert_eq!(errs(r#"{"properties":{"a":true},"unevaluatedProperties":{"type":"integer"}}"#, r#"{"a":"s","b":"t"}"#).len(), 1);
+        // unevaluatedItems
+        let ui = r#"{"allOf":[{"prefixItems":[true,true]}],"unevaluatedItems":false}"#;
+        assert!(errs(ui, "[1,2]").is_empty());
+        assert_eq!(errs(ui, "[1,2,3]"), ["$: index '2' is not evaluated and the schema does not allow unevaluated items"]);
     }
 }

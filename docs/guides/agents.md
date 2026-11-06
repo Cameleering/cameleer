@@ -170,6 +170,56 @@ and other stores: PostgreSQL with pgvector through the [`sql` component](../comp
 or a vector database's REST API through [`http`](../components/http.md). Create the index with a
 `dense_vector` (Elasticsearch) or `knn_vector` (OpenSearch) mapping before you ingest.
 
+## Publish routes as tools with `ai-tool`
+
+A route that consumes from [`ai-tool:name`](../components/ai-tool.md) is a tool. Its
+arguments arrive as headers and its body is the result. Every call goes through the same
+envelope, whoever makes it:
+
+- the arguments are checked against the tool's JSON Schema, and a bad call gets an error that
+  names each field;
+- a tool with side effects is deduplicated, so a retried call runs once;
+- a destructive tool waits for approval;
+- a slow call is cancelled after `timeout`;
+- every call goes into a hash-chained audit log.
+
+<!-- example: agents-ai-tool-refund -->
+```yaml
+- route:
+    from:
+      uri: ai-tool:refund
+      parameters:
+        description: Refund part or all of an order
+        parameter.orderId: string
+        parameter.orderId.required: true
+        parameter.amount: number
+        parameter.amount.required: true
+        approval: "${header.amount} > 100"     # small refunds run, large ones wait for a person
+        approvalEndpoint: direct:approvals
+        compensation: direct:reverse-refund
+      steps:
+        - setBody:
+            simple: "Refunded ${header.amount} on order ${header.orderId}"
+- route:
+    from:
+      uri: direct:approvals
+      steps:
+        - to: log:approvals
+- route:
+    from:
+      uri: direct:reverse-refund
+      steps:
+        - to: log:reversed
+```
+
+Routes call tools with `to: ai-tool:refund`, and Rust code with
+`cameleer_ai::AiRegistry::of(&ctx)?.call(...)`. The MCP server that exposes these tools to
+MCP clients is planned (see the [roadmap](../ROADMAP.md)). Until it lands, put a REST route in
+front of the tool, as in the next section. Read-only context goes in
+[`ai-resource`](../components/ai-resource.md) routes, and prompt templates in
+[`ai-prompt`](../components/ai-prompt.md) routes. A complete file is
+[examples/agents/ai-tools.camel.yaml](../../examples/agents/ai-tools.camel.yaml).
+
 ## Expose a tool to an agent over REST
 
 Agents call tools; a tool is a route behind an HTTP endpoint. This refund tool shows the four
@@ -545,14 +595,18 @@ Ollama, vLLM or another OpenAI-compatible server, or use `aws-bedrock`, `azure-o
 
 ### Can an AI agent call Cameleer routes as tools?
 
-Yes. Expose each tool as a REST endpoint (`rest` or `platform-http`), validate the arguments
-with `json-validator`, and add idempotency and retries, as in the
-[tool pattern](#expose-a-tool-to-an-agent-over-rest). An MCP server component is planned.
+Yes. A route that consumes from `ai-tool:name` is a tool, with argument checks, deduplication,
+approvals, timeouts and an audit log built in (see
+[Publish routes as tools](#publish-routes-as-tools-with-ai-tool)). An MCP server that exposes
+them to MCP clients is planned. Until then, put a REST endpoint in front of the tools, as in
+the [tool pattern](#expose-a-tool-to-an-agent-over-rest).
 
 ### How do I stop an agent from executing the same action twice?
 
-Have the agent send a unique request id with every tool call and wrap the side effect in
-`idempotentConsumer` on that id. Use the JDBC or Redis idempotent repository to keep the ids
+With `ai-tool` this is the default for tools that are neither read-only nor idempotent: a
+call with the same call id (or the same declared `idempotency_key`) returns the recorded result
+and the route does not run again. In a plain route, have the agent send a unique request id
+with every tool call and wrap the side effect in `idempotentConsumer` on that id. Use the JDBC or Redis idempotent repository to keep the ids
 across restarts and instances.
 
 ### How do I test routes that call an LLM without paying for tokens?
@@ -569,6 +623,7 @@ OpenSearch, PostgreSQL with pgvector, or any store with an HTTP API).
 
 - [AI agent tool calls: direct vs through Cameleer](agent-tool-calls.md): a multi-step tool with a saga, compared with letting the model call each API
 - [AI components](ai-components.md), [openai component](../components/openai.md)
+- [ai-tool](../components/ai-tool.md), [ai-resource](../components/ai-resource.md), [ai-prompt](../components/ai-prompt.md)
 - [EIPs](eips.md), [error handling](error-handling.md), [edge cookbook](edge.md)
 - [Roadmap: agent tool server and agent loop](../ROADMAP.md)
 

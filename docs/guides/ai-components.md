@@ -37,8 +37,11 @@ Be aware of these limits before you design around them:
   [elasticsearch](../components/elasticsearch.md), [spring-redis](../components/spring-redis.md),
   files).
 - **No LangChain4j components** (`langchain4j-chat`, `langchain4j-embeddings`, ...), no MCP
-  client or server, and no direct Anthropic or Gemini API component: use Claude through
-  Bedrock or Vertex AI, and Gemini through Vertex AI.
+  client or server yet, and no direct Anthropic or Gemini API component: use Claude through
+  Bedrock or Vertex AI, and Gemini through Vertex AI. Routes can already be published as tools,
+  resources and prompts with [`ai-tool`](../components/ai-tool.md),
+  [`ai-resource`](../components/ai-resource.md) and [`ai-prompt`](../components/ai-prompt.md);
+  the MCP server that serves them is planned.
 - **No native Ollama API.** Ollama, vLLM and LM Studio are used through their OpenAI-compatible
   `/v1` endpoint with `openai:` and `baseUrl`.
 

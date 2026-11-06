@@ -20,6 +20,7 @@ fn added(register: impl Fn(&CamelContext)) -> Vec<String> {
 #[test]
 fn table_covers_every_registered_component() {
     let families: Vec<(&str, Vec<String>)> = vec![
+        ("ai", added(cameleer_ai::register)),
         ("xml", added(cameleer_xml::register)),
         ("ssh", added(cameleer_ssh::register)),
         ("kafka-mqtt", added(cameleer_kafka_mqtt::register)),
@@ -211,7 +212,7 @@ fn reference_pages_name_their_cargo_feature() {
         Some(rest[a..b].trim_end_matches(':').to_string())
     }
     let family = |crate_name: &str| -> Option<&'static str> {
-        ["amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
+        ["ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
             .into_iter()
             .find(|f| crate_name == format!("cameleer-{f}"))
     };

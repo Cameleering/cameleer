@@ -116,7 +116,7 @@ body, for example after `unmarshal: json`, is validated directly.
 
 ### Supported JSON Schema
 
-Drafts 04 to 07 and a 2019-09 subset: boolean schemas, `type` (also lists), `enum`, `const`,
+Drafts 04 to 07, 2019-09 and 2020-12: boolean schemas, `type` (also lists), `enum`, `const`,
 `minimum` / `maximum`, `exclusiveMinimum` / `exclusiveMaximum`, `multipleOf`,
 `minLength` / `maxLength`, `pattern`, `format` (`date-time`, `date`, `time`, `email`, `ipv4`,
 `uuid`, `hostname`, `uri`; other formats are ignored), `items` / `additionalItems`,
@@ -124,7 +124,11 @@ Drafts 04 to 07 and a 2019-09 subset: boolean schemas, `type` (also lists), `enu
 `additionalProperties`, `patternProperties`, `propertyNames`, `minProperties` /
 `maxProperties`, `dependencies` / `dependentRequired`, `allOf` / `anyOf` / `oneOf` / `not`,
 `if` / `then` / `else`, and `$ref` to local pointers (`#/definitions/x`, `#/$defs/x`).
-**Remote `$ref`s are not supported.**
+From 2020-12: `prefixItems` (with `items` for the remaining items), `minContains` /
+`maxContains`, `dependentSchemas`, `unevaluatedProperties` and `unevaluatedItems` (they see
+through `$ref`, `allOf`, the valid `anyOf` / `oneOf` branches, `if` / `then` / `else` and
+`dependentSchemas`).
+**Remote `$ref`s are not supported**, and neither are `$anchor`, `$dynamicRef` or references by `$id`.
 
 ## Message headers
 

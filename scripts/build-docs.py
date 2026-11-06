@@ -40,6 +40,8 @@ import time
 SPHINX_ONLY = {"index.md", "conf.py", "requirements.txt"}
 # Working documents for the project (plans and strategy) that stay in the repository only.
 INTERNAL = {"website-plan.md"}
+# Directories of working documents (design notes for planned work), also repository only.
+INTERNAL_DIRS = {"design"}
 
 SITE_URL = "https://pmsudhi.github.io/cameleer/"
 REPO_URL = "https://github.com/pmsudhi/cameleer"
@@ -798,7 +800,7 @@ class Site:
     def load(self):
         for root, dirs, files in os.walk(self.docs):
             # the Read the Docs (Sphinx) build output is not part of the website
-            dirs[:] = sorted(d for d in dirs if d != "_build")
+            dirs[:] = sorted(d for d in dirs if d != "_build" and not (root == self.docs and d in INTERNAL_DIRS))
             for f in sorted(files):
                 full = os.path.join(root, f)
                 rel = os.path.relpath(full, self.docs).replace("\\", "/")

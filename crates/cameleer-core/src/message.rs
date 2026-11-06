@@ -780,6 +780,10 @@ pub struct Exchange {
     /// part whose only step is an aggregate): that step may move the message out instead
     /// of copying it. Not copied on clone.
     pub(crate) consumable: bool,
+    /// Cooperative cancellation, shared by every copy of this exchange: once cancelled,
+    /// [`Exchange::should_continue`] is false and pipelines stop before their next step
+    /// (set by callers that give up waiting, such as an `ai-tool` call that timed out).
+    pub(crate) cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl std::fmt::Debug for Exchange {
@@ -812,6 +816,7 @@ impl Clone for Exchange {
             created: self.created,
             on_completions: Vec::new(),
             consumable: false,
+            cancel: self.cancel.clone(),
         }
     }
 }
@@ -837,6 +842,7 @@ impl Exchange {
             created: crate::clock::now_system_time(),
             on_completions: Vec::new(),
             consumable: false,
+            cancel: None,
         }
     }
 
@@ -863,6 +869,7 @@ impl Exchange {
             created: self.created,
             on_completions: Vec::new(),
             consumable: false,
+            cancel: self.cancel.clone(),
         };
         c.properties.set(props::CORRELATION_ID, Value::from(&self.exchange_id));
         c
@@ -888,6 +895,7 @@ impl Exchange {
             created: self.created,
             on_completions: Vec::new(),
             consumable: false,
+            cancel: self.cancel.clone(),
         };
         c.properties.set(props::CORRELATION_ID, Value::from(&self.exchange_id));
         c
@@ -938,7 +946,23 @@ impl Exchange {
     }
     /// Whether routing should continue to the next processor in a pipeline.
     pub fn should_continue(&self) -> bool {
-        !self.is_failed() && !self.is_route_stop() && !self.rollback_only
+        !self.is_failed() && !self.is_route_stop() && !self.rollback_only && !self.is_cancelled()
+    }
+    /// Attach a cancellation flag: setting it to true stops routing this exchange and its
+    /// copies before their next pipeline step. Steps already running are not interrupted.
+    pub fn set_cancel_token(&mut self, token: std::sync::Arc<std::sync::atomic::AtomicBool>) {
+        self.cancel = Some(token);
+    }
+    /// The cancellation flag, if one is attached.
+    pub fn cancel_token(&self) -> Option<&std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.cancel.as_ref()
+    }
+    /// True once the attached cancellation flag was set.
+    pub fn is_cancelled(&self) -> bool {
+        match &self.cancel {
+            Some(c) => c.load(std::sync::atomic::Ordering::Relaxed),
+            None => false,
+        }
     }
     pub fn is_out_capable(&self) -> bool {
         self.pattern == ExchangePattern::InOut

@@ -149,6 +149,38 @@ Linux), old and new builds alternately on Windows 11 and WSL2 Ubuntu 24.04:
 - **Tests:** hermetic suite 2712 passed, 0 failed, zero warnings, twice on Windows 11 and once on
   WSL2 Ubuntu 24.04 (Linux caught a unix-only compile error in the first build).
 
+## Action layer for AI agents, phase 1 (2026-11-06, branch `agent-action-layer`)
+
+Design and decisions in `docs/design/agent-action-layer.md` (internal, not on the site). Phase 1
+of 5 is done: the tool model and the reliability envelope.
+
+- **New crate `cameleer-ai`**, feature `ai` (in `full`): `ai-tool`, `ai-resource`, `ai-prompt`
+  and `AiRegistry` (bound in the context as `cameleer.ai.registry`). Camel option names and
+  semantics for `ai-tool`; producers, URI templates and `ai-prompt` are extensions.
+- **Envelope** (`crates/cameleer-ai/src/registry.rs`), applied in this order: kill switch,
+  `authorizationPolicy`, argument filtering and JSON Schema 2020-12 validation, rate limit,
+  circuit breaker, approval (parked calls with handles; `approve`/`deny`), idempotency
+  (concurrent repeats wait for the first call), compensation registered before the call,
+  the call on a worker with a timeout that cancels the route, output schema check, audit.
+- **Core changes:** `Exchange` has a cooperative cancel token (`set_cancel_token`,
+  `is_cancelled`, checked by `should_continue`, shared by copies); `json-validator` gained
+  `prefixItems`, `minContains`/`maxContains`, `dependentSchemas`, `unevaluatedProperties`,
+  `unevaluatedItems`.
+- **Docs:** `docs/components/ai-tool.md`, `ai-resource.md`, `ai-prompt.md`; agents guide
+  section; FEATURES rows; `examples/agents/ai-tools.camel.yaml`. `docs/design/` and
+  `docs/website-plan.md` are excluded from the site, Sphinx and the doc harness.
+- **Tests:** `crates/cameleer-ai/tests/tools.rs` proves each guarantee (a retried call runs
+  once, a rejected call runs nothing, a timeout cancels the route, a failed conversation
+  compensates newest first, a changed tool is refused, an edited audit record is detected);
+  `crates/cameleer-core/tests/cancel.rs`. Hermetic suite on Windows 11: 2756 passed, 0 failed,
+  zero warnings; `cameleer-main --no-default-features` builds.
+- **Next phases:** 2, the MCP server (2026-07-28 and 2025-11-25, Streamable HTTP and stdio,
+  approvals over MRTR/elicitation, `camel.server.mcp-*`); 3, tool calling in the model
+  components plus the `agent` step; phases 1 to 3 ship as 0.5.0. Not done in phase 1: the
+  `cameleer tool disable` CLI command (the property and `AiRegistry::disable` work; the CLI
+  needs a control channel to a running process) and exporting audit records as span
+  attributes.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

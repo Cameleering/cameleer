@@ -220,6 +220,12 @@ fn markdown_files(dir: &Path) -> Vec<PathBuf> {
         let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
         entries.sort();
         for p in entries {
+            // working documents that stay in the repository (scripts/build-docs.py INTERNAL)
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let parent = p.parent().and_then(|d| d.file_name()).and_then(|n| n.to_str()).unwrap_or("");
+            if parent == "docs" && (name == "design" || name == "website-plan.md") {
+                continue;
+            }
             if p.is_dir() {
                 walk(&p, out);
             } else if p.extension().and_then(|e| e.to_str()) == Some("md") {

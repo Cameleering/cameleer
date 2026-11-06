@@ -13,6 +13,7 @@ categories = ["command-line-utilities", "network-programming"]
 description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel JBang)"
 
 [dependencies]
+cameleer-ai = { path = "../cameleer-ai", version = "0.4.0", optional = true }
 cameleer-amqp = { path = "../cameleer-amqp", version = "0.4.0", optional = true }
 cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.4.0", optional = true }
 cameleer-cloud = { path = "../cameleer-cloud", version = "0.4.0", optional = true }
@@ -46,7 +47,7 @@ default = ["full"]
 # nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
 core = []
 full = [
-    "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
     "templates", "jq", "xpath", "http2", "validate",
 ]
 templates = ["cameleer-core/templates"]
@@ -54,6 +55,7 @@ jq = ["cameleer-core/jq"]
 xpath = ["cameleer-core/xpath"]
 http2 = ["cameleer-http/http2"]
 validate = []
+ai = ["dep:cameleer-ai"]
 amqp = ["dep:cameleer-amqp"]
 amqp10 = ["dep:cameleer-amqp10"]
 cloud = ["dep:cameleer-cloud"]

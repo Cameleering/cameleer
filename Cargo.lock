@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "cameleer-ai"
+version = "0.4.0"
+dependencies = [
+ "cameleer-core",
+]
+
+[[package]]
 name = "cameleer-amqp"
 version = "0.4.0"
 dependencies = [
@@ -92,6 +99,7 @@ dependencies = [
 name = "cameleer-main"
 version = "0.4.0"
 dependencies = [
+ "cameleer-ai",
  "cameleer-amqp",
  "cameleer-amqp10",
  "cameleer-cloud",

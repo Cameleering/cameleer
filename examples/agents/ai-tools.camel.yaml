@@ -1,0 +1,70 @@
+# Routes as tools for an AI agent, with the reliability envelope (the `ai` feature):
+#   - order_status is read-only: no approval, no deduplication;
+#   - refund is destructive: each call waits for approval (the approver is told on
+#     direct:approvals), a retried call with the same call id runs once, and the refund is
+#     undone by direct:reverse-refund if the agent's conversation fails later;
+#   - every call is checked against the declared arguments and written to a hash-chained
+#     audit log (audit/tool-calls.jsonl).
+#
+# Run:
+#   mkdir -p audit
+#   cameleer run ai-tools.camel.yaml
+# Tools are called through `ai-tool:` producers (as direct:try-refund does below), from Rust
+# with cameleer_ai::AiRegistry, or by an MCP client once the MCP server lands.
+- route:
+    id: order-status
+    from:
+      uri: ai-tool:order_status
+      parameters:
+        description: The status of an order
+        parameter.orderId: string
+        parameter.orderId.description: The order id, such as EU-4411
+        parameter.orderId.required: true
+        readOnlyHint: true
+      steps:
+        - setBody:
+            simple: '{"orderId": "${header.orderId}", "status": "shipped"}'
+- route:
+    id: refund
+    from:
+      uri: ai-tool:refund
+      parameters:
+        description: Refund part or all of an order
+        parameter.orderId: string
+        parameter.orderId.required: true
+        parameter.amount: number
+        parameter.amount.required: true
+        destructiveHint: true
+        approvalEndpoint: direct:approvals
+        compensation: direct:reverse-refund
+        rateLimit: 10
+        rateLimitPeriod: 1m
+        timeout: 10s
+      steps:
+        - log: "refunding ${header.amount} on ${header.orderId} for ${header.CamelAiToolPrincipal}"
+        - setBody:
+            simple: "Refunded ${header.amount} on order ${header.orderId}"
+- route:
+    id: approvals
+    from:
+      uri: direct:approvals
+      steps:
+        - log: "approval needed: ${header.CamelAiToolName} ${body} (handle ${header.CamelAiToolApprovalHandle})"
+- route:
+    id: reverse-refund
+    from:
+      uri: direct:reverse-refund
+      steps:
+        - log: "reversing the refund on ${header.orderId}: ${body}"
+- route:
+    id: try-refund
+    from:
+      uri: direct:try-refund
+      steps:
+        - setHeader:
+            name: CamelAiToolCallId
+            constant: call-0001
+        - setBody:
+            constant: '{"orderId": "EU-4411", "amount": 25.5}'
+        - to: ai-tool:refund
+        - log: "${header.CamelAiToolStatus}: ${body}"

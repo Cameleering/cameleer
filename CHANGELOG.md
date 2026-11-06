@@ -3,6 +3,24 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+### Added
+
+- **Routes as tools for AI agents** (new crate `cameleer-ai`, new `ai` feature, in `full`):
+  `ai-tool`, `ai-resource` and `ai-prompt` with Camel's option names and semantics, and a tool
+  registry. Every call goes through a reliability envelope: JSON Schema 2020-12 checks of the
+  arguments (with an error the model can act on), structured results, deduplication of tools
+  with side effects, approval of destructive or matching calls, timeouts that cancel the
+  tool's route, rate limits per principal, circuit breakers, compensation per conversation, a
+  hash-chained audit log (`camel.ai.audit.*`), definition pinning (`version`,
+  `camel.ai.manifest`) and a kill switch (`camel.ai.disabled-tools`). See
+  [ai-tool](docs/components/ai-tool.md). The MCP server that serves these tools is next.
+- **`json-validator`: JSON Schema 2020-12 keywords** `prefixItems`, `minContains`,
+  `maxContains`, `dependentSchemas`, `unevaluatedProperties` and `unevaluatedItems`.
+- **Cooperative cancellation of an exchange** (`Exchange::set_cancel_token`): once the token is
+  set, the exchange and its copies stop before their next pipeline step.
+
 ## 0.4.0 (2026-11-06)
 
 Measured against Apache Camel with the same routes, Cameleer starts 450 times faster (3 ms vs

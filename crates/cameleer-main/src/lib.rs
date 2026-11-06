@@ -802,6 +802,8 @@ fn new_main_inner() -> Main {
         cameleer_sql::register(main.context());
         main.configure(cameleer_sql::configure_datasources_from_properties);
     }
+    #[cfg(feature = "ai")]
+    cameleer_ai::register(main.context()); // ai-tool, ai-resource, ai-prompt
     #[cfg(feature = "amqp")]
     cameleer_amqp::register(main.context());
     #[cfg(feature = "amqp10")]

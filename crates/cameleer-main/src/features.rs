@@ -8,6 +8,7 @@
 
 /// (feature, compiled in) for every optional family and part.
 pub const FEATURES: &[(&str, bool)] = &[
+    ("ai", cfg!(feature = "ai")),
     ("amqp", cfg!(feature = "amqp")),
     ("amqp10", cfg!(feature = "amqp10")),
     ("cloud", cfg!(feature = "cloud")),
@@ -43,6 +44,7 @@ pub fn is_full() -> bool {
 /// Component schemes of each family (the cloud family is matched by prefix, see
 /// [`feature_for`]). `tests/features.rs` checks this table against what each family registers.
 pub const COMPONENTS: &[(&str, &[&str])] = &[
+    ("ai", &["ai-prompt", "ai-resource", "ai-tool"]),
     ("xml", &["xj", "xmlsecurity-sign", "xmlsecurity-verify", "xquery", "xslt", "xslt-saxon"]),
     ("ssh", &["sftp", "ssh"]),
     (

@@ -26,7 +26,7 @@ version = ".".join(release.split(".")[:2])
 extensions = ["myst_parser", "sphinx_copybutton"]
 source_suffix = {".md": "markdown"}
 root_doc = "index"
-exclude_patterns = ["_build", "README.md", "requirements.txt", "conf.py"]
+exclude_patterns = ["_build", "README.md", "requirements.txt", "conf.py", "website-plan.md", "design"]
 
 # MyST: GitHub-style anchors for "#section" links, and `{{env:...}}` placeholders in route
 # examples must not be read as substitutions
