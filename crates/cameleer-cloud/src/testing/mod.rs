@@ -31,7 +31,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use cameleer_tls::{TlsServerConfig, TlsStream};
+use cameleer_tls::TlsServerConfig;
 
 use crate::http::{read_request, write_response, Response, ServerRequest};
 
@@ -133,7 +133,7 @@ impl MockServer {
                         }
                     }
                     let stream: Box<dyn Conn> = match tls {
-                        Some(cfg) => match TlsStream::accept(sock, &cfg) {
+                        Some(cfg) => match cameleer_tls::net::accept_tls(sock, &cfg) {
                             Ok(s) => Box::new(s),
                             Err(_) => return,
                         },

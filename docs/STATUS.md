@@ -92,14 +92,24 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
 - **Tests:** hermetic suite 2697 passed, 0 failed on Linux (WSL2) and on Windows, zero warnings;
   `cargo test -p cameleer-main --no-default-features`: 24 passed. One earlier Windows run under
   heavy load failed `cameleer-tls` `mutual_tls_rejects_missing_and_untrusted_certificates` once
-  (untouched by this branch; 15/15 on rerun, green in the final run; see follow-ups).
+  (untouched by this branch; 15/15 on rerun, green in the final run). Fixed since: a library bug,
+  see the TLS alert fix below.
 
 Follow-ups: core cargo features for template engines, jq and the core XPath subset; optional
 HTTP/2 (`cameleer-grpc`) in `cameleer-http`; `validate`/`schema` behind a feature; XQuery/XSLT
 per-evaluation threads with 128–256 MiB stacks; a shared timer thread per timer name; the status
 thread rewriting its file every 500 ms; `-z pack-relative-relocs` for the glibc image; measuring
-on the Lambda service across memory sizes and arm64; the TLS 1.3 alert-timing flake above (a
-reset can arrive before the alert on Windows under load).
+on the Lambda service across memory sizes and arm64.
+
+**TLS alert lost to a TCP reset (2026-11-06, fixed).** The flake above was a library bug. A TLS 1.3
+client sends application data right after its Finished; when the server rejected the client
+certificate it sent the alert and dropped the socket, the late data drew a TCP reset, and on Windows
+a reset discards the unread alert, so the client saw "connection reset" instead of
+`certificate_required`. Servers now close gracefully after a fatal alert (FIN, then drain until the
+peer closes, at most 2 s): `cameleer_tls::net::lingering_close` and `accept_tls`, used by
+`NetStream::server`, the gRPC server and the cloud mock servers. Code that calls `TlsStream::accept`
+on a raw `TcpStream` should use `accept_tls`. Regression test
+`alert_survives_a_client_that_reads_late`; details in `docs/INTEROP.md` bug 18.
 
 ## Pending / todo
 

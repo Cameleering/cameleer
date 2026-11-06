@@ -73,7 +73,10 @@ impl<S: Read + Write> TlsStream<S> {
         self.conn.early_accepted
     }
 
-    /// Performs a server handshake.
+    /// Performs a server handshake. On failure the fatal alert has been sent, but
+    /// dropping the transport right away can let a TCP reset overtake it (see
+    /// [`crate::net::lingering_close`]); over TCP use [`crate::net::accept_tls`] or
+    /// [`crate::net::NetStream::server`], which close gracefully.
     pub fn accept(stream: S, config: &TlsServerConfig) -> Result<TlsStream<S>, TlsError> {
         let mut conn = Conn::new(stream, false);
         if let Err(e) = conn.server_handshake(config) {

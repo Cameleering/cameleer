@@ -47,7 +47,7 @@ fn server(cfg: TlsServerConfig, n: usize) -> (u16, mpsc::Receiver<Result<ServerS
             };
             s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
             let r = (|| {
-                let mut t = TlsStream::accept(s, &cfg)?;
+                let mut t = cameleer_tls::net::accept_tls(s, &cfg)?;
                 let mut line = String::new();
                 BufReader::new(&mut t).read_line(&mut line).map_err(TlsError::Io)?;
                 t.write_all(line.to_uppercase().as_bytes()).map_err(TlsError::Io)?;
@@ -142,6 +142,41 @@ fn mutual_tls_rejects_missing_and_untrusted_certificates() {
         let missing = if v == TlsVersion::Tls13 { alert::CERTIFICATE_REQUIRED } else { alert::HANDSHAKE_FAILURE };
         expect_rejected(port, &client_cfg(mtls_anonymous_client_params()), &rx, missing, &format!("{label} without certificate"));
         expect_rejected(port, &client_cfg(mtls_untrusted_client_params()), &rx, alert::UNKNOWN_CA, &format!("{label} untrusted certificate"));
+    }
+}
+
+/// A TLS 1.3 client writes application data right after its Finished, before it reads
+/// the server's verdict on its certificate. If the server dropped the socket right after
+/// its alert, that data would draw a TCP reset, which on Windows discards the unread
+/// alert; a slow client then saw "connection reset" (seen as a rare flake of the test
+/// above under load). The server closes gracefully, so even a client that waits before
+/// reading gets the alert. Checked for `net::accept_tls` and `NetStream::server`.
+#[test]
+fn alert_survives_a_client_that_reads_late() {
+    for net_stream in [false, true] {
+        let cfg = server_cfg(ClientAuth::Need, TlsVersion::Tls13);
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let srv = thread::spawn(move || {
+            let (s, _) = l.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+            if net_stream {
+                cameleer_tls::net::NetStream::server(s, &cfg).is_err()
+            } else {
+                cameleer_tls::net::accept_tls(s, &cfg).is_err()
+            }
+        });
+        let s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        let mut t = TlsStream::connect(s, "localhost", &client_cfg(mtls_anonymous_client_params())).unwrap();
+        t.write_all(b"ping
+").unwrap();
+        // let the server reject the certificate and close before reading
+        thread::sleep(Duration::from_millis(300));
+        let e = t.read(&mut [0u8; 16]).unwrap_err();
+        let a = e.get_ref().and_then(|i| i.downcast_ref::<TlsError>());
+        assert!(matches!(a, Some(TlsError::AlertReceived(alert::CERTIFICATE_REQUIRED))), "net_stream={net_stream}: {e:?}");
+        assert!(srv.join().unwrap(), "net_stream={net_stream}: server accepted");
     }
 }
 
