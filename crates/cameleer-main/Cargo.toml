@@ -16,11 +16,11 @@ description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel 
 cameleer-amqp = { path = "../cameleer-amqp", version = "0.3.0", optional = true }
 cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.3.0", optional = true }
 cameleer-cloud = { path = "../cameleer-cloud", version = "0.3.0", optional = true }
-cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0", default-features = false }
 cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.3.0", optional = true }
 cameleer-datastores = { path = "../cameleer-datastores", version = "0.3.0", optional = true }
 cameleer-grpc = { path = "../cameleer-grpc", version = "0.3.0", optional = true }
-cameleer-http = { path = "../cameleer-http", version = "0.3.0" }
+cameleer-http = { path = "../cameleer-http", version = "0.3.0", default-features = false }
 cameleer-protocols = { path = "../cameleer-protocols", version = "0.3.0", optional = true }
 cameleer-script = { path = "../cameleer-script", version = "0.3.0", optional = true }
 cameleer-soap = { path = "../cameleer-soap", version = "0.3.0", optional = true }
@@ -34,14 +34,26 @@ cameleer-yaml = { path = "../cameleer-yaml", version = "0.3.0" }
 # Component families. The default build has all of them; a FaaS or edge build picks only
 # what its routes use, e.g.
 #   cargo build --profile dist -p cameleer-main --no-default-features --features cloud
-# Always included: core (EIPs, languages, core components), YAML/XML DSL, HTTP (platform-http,
-# http, rest, netty) and TLS. A route that names a component left out of the build fails at
-# startup with a message naming the feature to enable.
+# Always included: core (EIPs, Simple, JsonPath and the other core languages, core components),
+# YAML/XML DSL, HTTP/1.1 (platform-http, http, rest, netty) and TLS. A route that names a
+# component or language left out of the build fails at startup with a message naming the feature
+# to enable. Besides the component families: `templates` (mustache, velocity, freemarker,
+# string-template), `jq`, `xpath` (the core XPath subset; the `xml` family has the full XPath),
+# `http2` (`httpVersion=HTTP/2` of the http producer) and `validate` (`cameleer validate` and
+# `cameleer schema`).
 [features]
 default = ["full"]
 # nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
 core = []
-full = ["amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
+full = [
+    "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "templates", "jq", "xpath", "http2", "validate",
+]
+templates = ["cameleer-core/templates"]
+jq = ["cameleer-core/jq"]
+xpath = ["cameleer-core/xpath"]
+http2 = ["cameleer-http/http2"]
+validate = []
 amqp = ["dep:cameleer-amqp"]
 amqp10 = ["dep:cameleer-amqp10"]
 cloud = ["dep:cameleer-cloud"]

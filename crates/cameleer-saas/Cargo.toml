@@ -13,6 +13,11 @@ categories = ["api-bindings", "web-programming::http-client"]
 description = "Cameleer SaaS / API connectors over REST (std only): slack, telegram, github, twilio, jira, openai, webhook, graphql, rss/atom, with embedded mock servers"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
-cameleer-http = { path = "../cameleer-http", version = "0.3.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.3.0", default-features = false }
+cameleer-http = { path = "../cameleer-http", version = "0.3.0", default-features = false }
 cameleer-xml = { path = "../cameleer-xml", version = "0.3.0" }
+
+[dev-dependencies]
+# the tests use every optional part of core/http (their default features); the library does not
+cameleer-core = { path = "../cameleer-core" }
+cameleer-http = { path = "../cameleer-http" }

@@ -24,6 +24,8 @@
 //! | `json-validator` | [`json_validator`] JSON Schema validation |
 //! | `validator` | [`xml_validator`] XML well-formedness validation |
 //!
+//! The template components are the cargo feature `templates` (on by default).
+//!
 //! Helpers: [`support`] (stoppable background threads), [`scheduled`] (scheduled poll consumer).
 
 use std::sync::Arc;
@@ -40,11 +42,13 @@ pub mod dataset;
 pub mod direct;
 pub mod exec;
 pub mod file;
+#[cfg(feature = "templates")]
 pub mod freemarker;
 pub mod json_validator;
 pub mod language;
 pub mod log;
 pub mod mock;
+#[cfg(feature = "templates")]
 pub mod mustache;
 pub mod quartz;
 pub mod reference;
@@ -52,11 +56,14 @@ pub mod scheduled;
 pub mod scheduler;
 pub mod seda;
 pub mod stream;
+#[cfg(feature = "templates")]
 pub mod stringtemplate;
 pub mod support;
 pub mod template_support;
+#[cfg(feature = "templates")]
 pub mod templating;
 pub mod timer;
+#[cfg(feature = "templates")]
 pub mod velocity;
 pub mod xml_validator;
 
@@ -102,10 +109,13 @@ pub fn register_builtin_components(ctx: &CamelContext) {
     ctx.add_component_factory("test", || Arc::new(dataset::DataSetTestComponent::default()));
     ctx.add_component_factory("cron", || Arc::new(cron::CronComponent));
     ctx.add_component_factory("quartz", || Arc::new(quartz::QuartzComponent));
-    ctx.add_component_factory("mustache", || Arc::new(mustache::MustacheComponent));
-    ctx.add_component_factory("string-template", || Arc::new(templating::StringTemplateComponent));
-    ctx.add_component_factory("velocity", || Arc::new(templating::VelocityComponent));
-    ctx.add_component_factory("freemarker", || Arc::new(templating::FreemarkerComponent));
+    #[cfg(feature = "templates")]
+    {
+        ctx.add_component_factory("mustache", || Arc::new(mustache::MustacheComponent));
+        ctx.add_component_factory("string-template", || Arc::new(templating::StringTemplateComponent));
+        ctx.add_component_factory("velocity", || Arc::new(templating::VelocityComponent));
+        ctx.add_component_factory("freemarker", || Arc::new(templating::FreemarkerComponent));
+    }
     ctx.add_component_factory("json-validator", || Arc::new(json_validator::JsonValidatorComponent));
     ctx.add_component_factory("validator", || Arc::new(xml_validator::XmlValidatorComponent));
 }

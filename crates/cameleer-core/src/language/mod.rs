@@ -2,7 +2,8 @@
 //!
 //! Built-in languages registered on every context: `simple`, `constant`, `header`,
 //! `exchangeProperty`, `variable`, `jsonpath`, `xpath`, `tokenize`, `jq`, `ref`, `method`
-//! and `bean`. `groovy`, `js` etc. are not supported (resolving them gives
+//! and `bean`. `xpath` and `jq` are cargo features of this crate (on by default); without
+//! them the builder functions still exist and the route fails with `NoSuchLanguageException`. `groovy`, `js` etc. are not supported (resolving them gives
 //! `NoSuchLanguageException`).
 //!
 //! Builder functions for the Rust DSL: [`jsonpath`], [`jsonpath_as`], [`tokenize`],
@@ -20,15 +21,27 @@ use crate::message::Exchange;
 use crate::spi::{Expression, Language, Predicate};
 use crate::value::Value;
 
+#[cfg(feature = "jq")]
 pub mod jq;
 pub mod jsonpath;
 pub mod simple;
 pub mod support;
 pub mod tokenize;
 pub mod xml;
+#[cfg(feature = "xpath")]
 pub mod xpath;
 
 pub use support::{bind_bean_method, BeanMethod};
+
+/// `NoSuchLanguageException` for `name`, with the reason when the language was left out of this
+/// binary (see [`crate::component::set_unavailable_hint`]).
+pub fn no_such_language(name: &str) -> CamelError {
+    let mut e = CamelError::no_such_language(name);
+    if let Some(h) = crate::component::unavailable_hint("language", name) {
+        e.message = format!("{} ({})", e.message, h);
+    }
+    e
+}
 
 /// `constant` language: the text itself.
 pub struct ConstantLanguage;
@@ -157,8 +170,10 @@ pub fn register_builtin_languages(ctx: &CamelContext) {
     ctx.add_language(VariableLanguage);
     ctx.add_language(simple::SimpleLanguage);
     ctx.add_language(jsonpath::JsonPathLanguage);
+    #[cfg(feature = "xpath")]
     ctx.add_language(xpath::XPathLanguage);
     ctx.add_language(tokenize::TokenizeLanguage);
+    #[cfg(feature = "jq")]
     ctx.add_language(jq::JqLanguage);
     ctx.add_language(RefLanguage);
     ctx.add_language(MethodLanguage("method"));

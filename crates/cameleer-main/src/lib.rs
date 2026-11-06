@@ -18,8 +18,10 @@ pub mod integration;
 pub mod lambda;
 pub mod local;
 pub mod properties;
+#[cfg(feature = "validate")]
 pub mod schema;
 pub mod signal;
+#[cfg(feature = "validate")]
 pub mod validate;
 pub mod yaml_rest;
 
