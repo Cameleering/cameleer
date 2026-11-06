@@ -25,7 +25,7 @@ pub use gcp::GcpMock;
 pub use imds::ImdsMock;
 
 use std::io::{self, BufReader, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -105,7 +105,7 @@ impl MockServer {
     }
 
     fn start_inner(handler: Handler, tls: Option<Arc<TlsServerConfig>>, h2: Option<H2Handler>) -> io::Result<MockServer> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let listener = cameleer_tls::net::bind_loopback()?;
         let port = listener.local_addr()?.port();
         let stop = Arc::new(AtomicBool::new(false));
         let requests = Arc::new(AtomicUsize::new(0));
@@ -209,7 +209,7 @@ pub struct ConnectProxy {
 
 impl ConnectProxy {
     pub fn start() -> io::Result<ConnectProxy> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let listener = cameleer_tls::net::bind_loopback()?;
         let port = listener.local_addr()?.port();
         let tunnels = Arc::new(AtomicUsize::new(0));
         let stop = Arc::new(AtomicBool::new(false));

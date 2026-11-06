@@ -101,6 +101,31 @@ pub fn bind_listener(addr: impl ToSocketAddrs) -> io::Result<TcpListener> {
     TcpListener::bind(&addrs[..])
 }
 
+/// Binds `127.0.0.1` on a free port for an embedded test server. A busy machine running many
+/// tests in parallel can briefly run out of socket resources (Windows reports `WSAENOBUFS`,
+/// error 10055, or `WSAEADDRINUSE`); this retries such errors for up to 5 seconds instead of
+/// failing the test that happened to bind at that moment.
+pub fn bind_loopback() -> io::Result<TcpListener> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut wait = Duration::from_millis(10);
+    loop {
+        match TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => return Ok(l),
+            Err(e) if is_transient_bind_error(&e) && Instant::now() + wait < deadline => {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_millis(500));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Bind errors that go away once other sockets are released.
+fn is_transient_bind_error(e: &io::Error) -> bool {
+    const WSAENOBUFS: i32 = 10055;
+    matches!(e.kind(), io::ErrorKind::AddrInUse | io::ErrorKind::AddrNotAvailable) || (cfg!(windows) && e.raw_os_error() == Some(WSAENOBUFS))
+}
+
 /// Shuts `tcp` down and wakes threads blocked reading it, as `shutdown` does on
 /// Unix. On Windows `shutdown` does not interrupt a blocked `recv`, so the socket's
 /// pending I/O is cancelled too (the reader then gets an error).
@@ -565,5 +590,16 @@ mod tests {
         let l = bind_listener("localhost:0").unwrap();
         assert!(l.local_addr().unwrap().is_ipv4());
         TcpStream::connect(("127.0.0.1", l.local_addr().unwrap().port())).unwrap();
+    }
+
+    #[test]
+    fn bind_loopback_gives_a_free_port_and_retries_only_transient_errors() {
+        let l = bind_loopback().unwrap();
+        assert!(l.local_addr().unwrap().ip().is_loopback());
+        TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        assert!(is_transient_bind_error(&io::Error::from(io::ErrorKind::AddrInUse)));
+        assert!(!is_transient_bind_error(&io::Error::from(io::ErrorKind::PermissionDenied)));
+        #[cfg(windows)]
+        assert!(is_transient_bind_error(&io::Error::from_raw_os_error(10055)));
     }
 }

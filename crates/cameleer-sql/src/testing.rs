@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufReader};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 
 use cameleer_tls::net::NetStream;
 use cameleer_tls::TlsServerConfig;
@@ -84,7 +84,7 @@ impl PgTestServer {
     }
 
     fn start_inner(db: &str, auth: PgAuth, users: &[(&str, &str)], iterations: u32, tls: Option<Arc<TlsServerConfig>>) -> io::Result<PgTestServer> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let listener = cameleer_tls::net::bind_loopback()?;
         let port = listener.local_addr()?.port();
         let users = users
             .iter()
