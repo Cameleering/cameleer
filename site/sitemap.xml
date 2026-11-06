@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://pmsudhi.github.io/cameleer/</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/llms.txt</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/llms-full.txt</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/llms.txt</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/llms-full.txt</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/BENCHMARKS.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/DEPLOYMENT.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/DEPLOYMENT.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/FEATURES.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/INTEROP.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/ROADMAP.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/STATUS.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/STATUS.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/activemq.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/amqp-stomp.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/amqp.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -197,12 +197,12 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/dataformats/yaml.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/dataformats/zip-deflater.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/dataformats/zipfile.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/agent-tool-calls.html</loc></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/agents.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/agent-tool-calls.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/agents.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/ai-components.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/cloud-credentials.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/concepts.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/edge.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/edge.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/eips.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/eips/flow-control.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/eips/routing.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -210,9 +210,9 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/eips/system.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/eips/transformation.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/error-handling.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/faq.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/getting-started.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/faq.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/getting-started.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/migrating-from-apache-camel.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-05</lastmod></url>
