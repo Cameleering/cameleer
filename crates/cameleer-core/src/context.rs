@@ -1032,13 +1032,7 @@ impl CamelContext {
     }
 
     pub fn resolve_language(&self, name: &str) -> Result<Arc<dyn Language>> {
-        self.inner.languages.read().unwrap().get(name).cloned().ok_or_else(|| {
-            let mut e = CamelError::no_such_language(name);
-            if let Some(h) = crate::component::unavailable_hint("language", name) {
-                e.message = format!("{} ({})", e.message, h);
-            }
-            e
-        })
+        self.inner.languages.read().unwrap().get(name).cloned().ok_or_else(|| crate::language::no_such_language(name))
     }
 
     pub fn language_names(&self) -> Vec<String> {

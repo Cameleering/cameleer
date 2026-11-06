@@ -1,11 +1,12 @@
-//! Component families compiled into this binary (`cameleer-main` cargo features).
+//! Component families and other optional parts compiled into this binary (`cameleer-main`
+//! cargo features).
 //!
 //! The default build has every family. A smaller build (`--no-default-features --features
 //! cloud,sql`, for a FaaS function or an edge device) leaves the others out; a route that names
 //! a component of a missing family then fails with a message naming the feature, instead of a
 //! bare "No component found".
 
-/// (feature, compiled in) for every optional family.
+/// (feature, compiled in) for every optional family and part.
 pub const FEATURES: &[(&str, bool)] = &[
     ("amqp", cfg!(feature = "amqp")),
     ("amqp10", cfg!(feature = "amqp10")),
@@ -21,6 +22,12 @@ pub const FEATURES: &[(&str, bool)] = &[
     ("sql", cfg!(feature = "sql")),
     ("ssh", cfg!(feature = "ssh")),
     ("xml", cfg!(feature = "xml")),
+    // parts of core, http and this crate
+    ("templates", cfg!(feature = "templates")),
+    ("jq", cfg!(feature = "jq")),
+    ("xpath", cfg!(feature = "xpath")),
+    ("http2", cfg!(feature = "http2")),
+    ("validate", cfg!(feature = "validate")),
 ];
 
 /// The families compiled in.
@@ -52,6 +59,7 @@ pub const COMPONENTS: &[(&str, &[&str])] = &[
     ("saas", &["atom", "github", "graphql", "jira", "openai", "rss", "slack", "telegram", "twilio", "webhook"]),
     ("soap", &["cxf", "cxfrs", "fhir", "spring-ws"]),
     ("dataformats", &["thrift"]),
+    ("templates", &["freemarker", "mustache", "string-template", "velocity"]),
 ];
 
 /// Languages of each family.
@@ -59,6 +67,9 @@ pub const LANGUAGES: &[(&str, &[&str])] = &[
     ("script", &["js", "javascript", "javaScript", "groovy", "python", "ognl", "mvel", "spel", "datasonnet", "joor", "java", "csimple"]),
     ("xml", &["xquery"]),
     ("protocols", &["hl7terser"]),
+    ("jq", &["jq"]),
+    // the `xml` family registers the full XPath too, so this hint only shows when both are out
+    ("xpath", &["xpath"]),
 ];
 
 /// The feature that provides a component scheme (`kind` = `"component"`) or a language.
@@ -99,8 +110,18 @@ mod tests {
     #[test]
     fn hints_only_for_missing_families() {
         for (f, on) in FEATURES {
-            let scheme = COMPONENTS.iter().find(|(n, _)| n == f).map(|(_, s)| s[0]).unwrap_or("aws2-s3");
-            assert_eq!(unavailable_hint("component", scheme).is_some(), !on, "{f}");
+            let hint = if let Some((_, s)) = COMPONENTS.iter().find(|(n, _)| n == f) {
+                unavailable_hint("component", s[0])
+            } else if let Some((_, l)) = LANGUAGES.iter().find(|(n, _)| n == f && !matches!(*f, "script" | "xml" | "protocols")) {
+                unavailable_hint("language", l[0])
+            } else if *f == "cloud" {
+                unavailable_hint("component", "aws2-s3")
+            } else {
+                continue; // http2 and validate are not names of components or languages
+            };
+            assert_eq!(hint.is_some(), !on, "{f}");
         }
+        assert_eq!(feature_for("component", "velocity"), Some("templates"));
+        assert_eq!(feature_for("language", "jq"), Some("jq"));
     }
 }

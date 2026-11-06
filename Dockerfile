@@ -43,8 +43,9 @@ COPY . .
 # reproducible: no build paths in the binary (panic messages), timestamps from the commit
 ARG SOURCE_DATE_EPOCH
 # component families (cameleer-main cargo features), comma separated; empty = all of them.
-# A smaller image for one integration, e.g. --build-arg FEATURES=cloud (core, HTTP and YAML are
-# always in; FEATURES=core is only those).
+# A smaller image for one integration, e.g. --build-arg FEATURES=cloud (core, HTTP/1.1 and YAML
+# are always in; FEATURES=core is only those). The template components, jq, the core XPath,
+# HTTP/2 and `cameleer validate` are features too: FEATURES=cloud,jq,http2 adds them back.
 ARG FEATURES=
 RUN --mount=type=cache,target=/src/target,id=cameleer-target-$TARGETARCH \
     target=$(cat /target) \

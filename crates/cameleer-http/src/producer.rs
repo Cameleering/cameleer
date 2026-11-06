@@ -22,7 +22,8 @@
 //! (`connectionsPerRoute` idle connections, default 20; `connectionClose=true` disables
 //! pooling; stale pooled connections are retried once). `httpVersion=HTTP/2` (or `2`, `h2`)
 //! uses HTTP/2 through cameleer-grpc's client (`https`: TLS with ALPN `h2`; `http`: h2c prior
-//! knowledge), one multiplexed connection per target.
+//! knowledge), one multiplexed connection per target. HTTP/2 is the cargo feature `http2` (on by
+//! default); a build without it rejects `httpVersion=HTTP/2` with the feature to enable.
 //!
 //! Content coding: unless `contentCompressionDisabled=true`, requests advertise
 //! `Accept-Encoding: gzip, deflate` and `gzip` / `deflate` (zlib or raw) response bodies are
@@ -54,6 +55,7 @@ use cameleer_core::value::{ObjectMap, Value};
 use crate::binding::{add_header_value, body_to_value, headers, value_to_body, write_message_headers};
 use crate::client::{HttpClient, HttpConnection, ProxyAddr, ProxyConfig, Url};
 use crate::http::HttpResponse;
+#[cfg(feature = "http2")]
 use cameleer_grpc::h2::{H2Config, H2Connection, H2Request};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -183,7 +185,13 @@ impl Component for HttpComponent {
             http2: match params.take("httpVersion").or_else(|| params.take("protocolVersion")) {
                 None => false,
                 Some(v) => match v.trim().to_ascii_uppercase().trim_start_matches("HTTP/") {
-                    "2" | "2.0" | "H2" | "H2C" => true,
+                    "2" | "2.0" | "H2" | "H2C" if cfg!(feature = "http2") => true,
+                    "2" | "2.0" | "H2" | "H2C" => {
+                        return Err(CamelError::illegal_argument(format!(
+                            "httpVersion={} needs HTTP/2, which this build left out: enable the `http2` feature of cameleer-http (cameleer-main: `--features http2`)",
+                            v
+                        )))
+                    }
                     "1.1" | "1.0" | "1" => false,
                     other => return Err(CamelError::illegal_argument(format!("Unsupported httpVersion: {} (HTTP/1.1 or HTTP/2)", other))),
                 },
@@ -251,7 +259,10 @@ impl Endpoint for HttpEndpoint {
         &self.uri
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
-        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone(), pool: Mutex::new(HashMap::new()), h2: Mutex::new(HashMap::new()) }))
+        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone(), pool: Mutex::new(HashMap::new()),
+            #[cfg(feature = "http2")]
+            h2: Mutex::new(HashMap::new()),
+        }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -263,12 +274,14 @@ pub struct HttpProducer {
     base: Url,
     opts: HttpProducerOptions,
     pool: Mutex<HashMap<String, Vec<HttpConnection>>>,
+    #[cfg(feature = "http2")]
     h2: Mutex<HashMap<String, H2Connection>>,
 }
 
 impl Service for HttpProducer {
     fn stop(&self) -> Result<()> {
         self.pool.lock().unwrap().clear();
+        #[cfg(feature = "http2")]
         for (_, c) in self.h2.lock().unwrap().drain() {
             c.close();
         }
@@ -302,6 +315,7 @@ impl HttpProducer {
     }
 
     fn send(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>) -> Result<HttpResponse> {
+        #[cfg(feature = "http2")]
         if self.opts.http2 {
             return self.send_h2(method, url, headers, body);
         }
@@ -388,6 +402,7 @@ impl HttpProducer {
             .map_err(|e| CamelError::io(format!("Invalid HTTP response from {}: {}", what, e)))
     }
 
+    #[cfg(feature = "http2")]
     fn send_h2(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>) -> Result<HttpResponse> {
         let key = format!("{}://{}", url.scheme, url.authority());
         let what = url.to_string();

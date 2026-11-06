@@ -225,19 +225,31 @@ sends SIGTERM before it shuts a sandbox down; routes are stopped gracefully then
 The default build and image contain every component family. A function or an edge device that
 needs only a few can leave the rest out with the cargo features of `cameleer-main`: `amqp`,
 `amqp10`, `cloud`, `dataformats`, `datastores`, `grpc`, `kafka-mqtt`, `protocols`, `saas`,
-`script`, `soap`, `sql`, `ssh` and `xml` (`full`, the default, is all of them; `core` is none
-of them). Core (every EIP,
-Simple, JsonPath, the core components), the YAML and XML DSLs, HTTP and TLS are always in.
+`script`, `soap`, `sql`, `ssh` and `xml`. Five smaller parts are features too:
+
+| feature | what it adds |
+|---|---|
+| `templates` | the `mustache`, `velocity`, `freemarker` and `string-template` components |
+| `jq` | the `jq` language and Simple's `${jq(...)}` |
+| `xpath` | the core XPath 1.0 subset: the `xpath` language and Simple's `${xpath(...)}` (the `xml` family brings the full XPath for the `xpath` language) |
+| `http2` | `httpVersion=HTTP/2` on the `http` producer |
+| `validate` | the `cameleer validate` and `cameleer schema` commands |
+
+`full`, the default, is all of them; `core` is none of them. Core (every EIP, Simple, JsonPath
+and the other core languages, the core components), the YAML and XML DSLs, HTTP/1.1 and TLS
+are always in. A list of features replaces the default, so name every part you use:
 
 ```sh
-cargo build --profile dist -p cameleer-main --no-default-features --features cloud,sql
-docker build --build-arg FEATURES=cloud,sql -t my-cameleer .
+cargo build --profile dist -p cameleer-main --no-default-features --features cloud,sql,jq
+docker build --build-arg FEATURES=cloud,sql,jq -t my-cameleer .
 ```
 
-A route that names a component of a family left out fails at startup with the feature to
+A route that names a component or language left out fails at startup with the feature to
 enable: `No component found with scheme: kafka (this cameleer binary was built without the
-`kafka-mqtt` feature; rebuild cameleer-main with `--features kafka-mqtt`)`. `cameleer version`
-lists the families of a reduced build. Sizes are in
+`kafka-mqtt` feature; rebuild cameleer-main with `--features kafka-mqtt`)`. The same goes for
+`velocity:` (`templates`), the `jq` language, `httpVersion=HTTP/2` (`http2`) and `cameleer
+validate` (`validate`). `cameleer version` lists the features of a reduced build. The `core`
+build is 5.8 MB (glibc) or 6.0 MB (static musl) on Linux x86-64; every component is 23.9 MB. More sizes and the cold-start times are in
 [BENCHMARKS.md](BENCHMARKS.md#faas-cold-start-and-size).
 
 ## Without a container

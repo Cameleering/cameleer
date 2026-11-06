@@ -195,7 +195,25 @@ fn catalog(args: &[String], out: &mut dyn Write) -> CliResult {
 // validate / schema
 // ---------------------------------------------------------------------------
 
+/// Why `cameleer validate` / `cameleer schema` are missing from a build without the `validate`
+/// feature.
+#[cfg(not(feature = "validate"))]
+fn validate_missing(cmd: &str) -> String {
+    format!("`cameleer {cmd}` is not in this binary: it was built without the `validate` feature; rebuild cameleer-main with `--features validate`")
+}
+
+#[cfg(not(feature = "validate"))]
+fn validate_cmd(_args: &[String], _out: &mut dyn Write) -> Result<i32, String> {
+    Err(validate_missing("validate"))
+}
+
+#[cfg(not(feature = "validate"))]
+fn schema_cmd(_args: &[String], _out: &mut dyn Write) -> CliResult {
+    Err(validate_missing("schema"))
+}
+
 /// `cameleer validate`: returns the exit code (0 valid, 1 invalid); `Err` is a usage error.
+#[cfg(feature = "validate")]
 fn validate_cmd(args: &[String], out: &mut dyn Write) -> Result<i32, String> {
     let a = Args::parse(args, &["strict"])?;
     a.check(&["format", "strict", "properties", "prop"])?;
@@ -227,6 +245,7 @@ fn validate_cmd(args: &[String], out: &mut dyn Write) -> Result<i32, String> {
     Ok(report.exit_code(strict))
 }
 
+#[cfg(feature = "validate")]
 fn schema_cmd(args: &[String], out: &mut dyn Write) -> CliResult {
     let a = Args::parse(args, &[])?;
     a.check(&[])?;
