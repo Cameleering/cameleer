@@ -214,15 +214,29 @@ const fn class_size(class: usize) -> usize {
 /// Move all blocks of a thread bin, including the unused rest of its chunk, to the shared
 /// stack of the class.
 unsafe fn give_back(class: usize, bin: &mut Bin, bump: &mut Bump) {
+    drain_bump(class, bin, bump);
+    give_back_bin(class, bin);
+}
+
+/// Move the unused rest of a chunk into `bin`, block by block. A thread that never carved a
+/// chunk for the class has no bump region (null pointers): nothing to move.
+unsafe fn drain_bump(class: usize, bin: &mut Bin, bump: &mut Bump) {
+    if bump.ptr.is_null() {
+        return;
+    }
     let size = class_size(class);
     while bump.ptr < bump.end {
         let p = bump.ptr;
         bump.ptr = p.add(size);
         bin.push(p);
     }
+    *bump = NO_BUMP;
+}
+
+/// Move the blocks of `bin` to the shared stack of the class.
+unsafe fn give_back_bin(class: usize, bin: &mut Bin) {
     push_batch(class, bin.head, bin.len);
     *bin = EMPTY;
-    *bump = NO_BUMP;
 }
 
 /// Take a block from the unused rest of the class's last chunk.
@@ -351,7 +365,7 @@ unsafe impl GlobalAlloc for CamelAllocator {
         if cached.is_none() {
             let mut tmp = EMPTY;
             tmp.push(ptr);
-            give_back(class, &mut tmp, &mut { NO_BUMP });
+            give_back_bin(class, &mut tmp);
         }
     }
 

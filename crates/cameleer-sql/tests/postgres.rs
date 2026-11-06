@@ -221,8 +221,11 @@ fn pooled_datasource_rolls_back_returned_connections() {
 fn pool_size_caps_open_connections_and_callers_wait() {
     // 12 concurrent callers share a pool of 3: like HikariCP's maximumPoolSize, the pool never
     // opens more than 3 connections; the others wait for one to come back
-    let s = server(PgAuth::ScramSha256);
-    let ds = PgDataSource::from_url(&format!("{}&poolSize=3", s.url("camel", "s3cret"))).unwrap();
+    // a password made up for this run: nothing secret lives in the source
+    let password = unique("pw");
+    let s = PgTestServer::start(&unique("pgdb"), PgAuth::ScramSha256, &[("camel", &password)]).unwrap();
+    let url = s.url("camel", &password);
+    let ds = PgDataSource::from_url(&format!("{url}&poolSize=3")).unwrap();
     let busiest = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let callers: Vec<_> = (0..12)
         .map(|_| {
@@ -246,7 +249,7 @@ fn pool_size_caps_open_connections_and_callers_wait() {
     assert_eq!(ds.idle_connections(), 3);
 
     // a caller that can't get a connection within poolTimeout fails instead of waiting forever
-    let one = PgDataSource::from_url(&format!("{}&poolSize=1&poolTimeout=1", s.url("camel", "s3cret"))).unwrap();
+    let one = PgDataSource::from_url(&format!("{url}&poolSize=1&poolTimeout=1")).unwrap();
     let held = one.get_connection().unwrap();
     let started = std::time::Instant::now();
     let err = one.get_connection().err().expect("the pool is exhausted");
