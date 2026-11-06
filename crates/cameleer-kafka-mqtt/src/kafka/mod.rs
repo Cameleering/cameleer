@@ -11,6 +11,10 @@
 //!   longs, bytes as is), except `Camel*`, `org.apache.camel*` and `kafka.*`. After the
 //!   send, `kafka.RECORD_META` holds an array of `{topic, partition, offset, timestamp}`
 //!   objects and `kafka.PARTITION` / `kafka.OFFSET` the location of the (last) record.
+//!   Each exchange waits for its records to be acknowledged (`requestRequiredAcks`). Records
+//!   sent while another send is in flight are batched into one produce request per partition
+//!   (as Kafka's own producer does), so concurrent senders don't wait in line one record at
+//!   a time; order within a partition is the order of the sends.
 //! - **Consumer**: `consumersCount` threads, each a member of consumer group `groupId`
 //!   (range assignor, heartbeats, rebalancing, committed offsets). Without a `groupId`
 //!   every thread reads all partitions without committing. Message headers:
@@ -389,7 +393,13 @@ impl Endpoint for KafkaEndpoint {
         &self.uri
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
-        Ok(Arc::new(KafkaProducer { cfg: self.cfg.clone(), client: Mutex::new(None), round_robin: AtomicUsize::new(0) }))
+        Ok(Arc::new(KafkaProducer {
+            cfg: self.cfg.clone(),
+            client: Mutex::new(None),
+            queue: Mutex::new(Vec::new()),
+            round_robin: AtomicUsize::new(0),
+            requests: AtomicUsize::new(0),
+        }))
     }
     fn create_consumer(&self, processor: Arc<dyn Processor>) -> Result<Arc<dyn Consumer>> {
         if self.cfg.topic.is_empty() {
@@ -429,10 +439,89 @@ fn value_bytes(v: &Value) -> Option<Vec<u8>> {
     }
 }
 
+/// Where a send's result is left for its exchange: `(partition, base offset, append time)`.
+type SendSlot = Arc<Mutex<Option<Result<(i32, i64, i64)>>>>;
+
+/// One exchange's records, waiting to be sent.
+struct PendingSend {
+    topic: String,
+    key: Option<Vec<u8>>,
+    explicit_partition: Option<i32>,
+    records: Vec<Record>,
+    slot: SendSlot,
+}
+
 struct KafkaProducer {
     cfg: KafkaConfig,
     client: Mutex<Option<KafkaClient>>,
+    /// Sends queued while the client is busy; the next sender to get the client sends them all.
+    queue: Mutex<Vec<PendingSend>>,
     round_robin: AtomicUsize,
+    /// Produce requests sent (for tests).
+    requests: AtomicUsize,
+}
+
+impl KafkaProducer {
+    /// Send every queued record: one produce request per partition, records in queue order.
+    /// Each send's slot gets its partition and offsets, or the error of its request.
+    fn send_queued(&self, client: &mut Option<KafkaClient>, sends: Vec<PendingSend>) {
+        // partition of each send, grouped by (topic, partition) in order of first appearance
+        let mut groups: Vec<((String, i32), Vec<usize>)> = Vec::new();
+        for (i, s) in sends.iter().enumerate() {
+            let partition = (|| -> Result<i32> {
+                if client.is_none() {
+                    *client = Some(KafkaClient::new(self.cfg.client_config("")?));
+                }
+                let count = client.as_mut().unwrap().partitions(&s.topic, false)?.len();
+                Ok(match (s.explicit_partition, &s.key) {
+                    (Some(p), _) => p,
+                    (None, Some(k)) => partition_for_key(k, count),
+                    (None, None) => (self.round_robin.fetch_add(1, Ordering::Relaxed) % count.max(1)) as i32,
+                })
+            })();
+            match partition {
+                Ok(p) => match groups.iter_mut().find(|(k, _)| k.0 == s.topic && k.1 == p) {
+                    Some((_, members)) => members.push(i),
+                    None => groups.push(((s.topic.clone(), p), vec![i])),
+                },
+                Err(e) => {
+                    if let Some(mut c) = client.take() {
+                        c.close();
+                    }
+                    *s.slot.lock().unwrap() = Some(Err(e));
+                }
+            }
+        }
+        for ((topic, partition), members) in groups {
+            let records: Vec<Record> = members.iter().flat_map(|&i| sends[i].records.iter().cloned()).collect();
+            let result = (|| -> Result<(i64, i64)> {
+                if client.is_none() {
+                    *client = Some(KafkaClient::new(self.cfg.client_config("")?));
+                }
+                self.requests.fetch_add(1, Ordering::Relaxed);
+                client.as_mut().unwrap().produce(&topic, partition, &records, self.cfg.request_required_acks, self.cfg.request_timeout.as_millis() as i32)
+            })();
+            match result {
+                Ok((base, append_time)) => {
+                    let mut next = base;
+                    for &i in &members {
+                        *sends[i].slot.lock().unwrap() = Some(Ok((partition, next, append_time)));
+                        if next >= 0 {
+                            next += sends[i].records.len() as i64;
+                        }
+                    }
+                }
+                Err(e) => {
+                    if let Some(mut c) = client.take() {
+                        c.close();
+                    }
+                    for &i in &members {
+                        *sends[i].slot.lock().unwrap() = Some(Err(e.clone()));
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Service for KafkaProducer {
@@ -483,34 +572,22 @@ impl Processor for KafkaProducer {
             return Ok(());
         }
 
+        // queue the records, then take the client: whoever holds it sends everything queued, so
+        // a send that waited for the client usually finds its result already there
+        let count = records.len();
+        let slot: SendSlot = Arc::new(Mutex::new(None));
+        self.queue.lock().unwrap().push(PendingSend { topic: topic.clone(), key, explicit_partition, records, slot: slot.clone() });
         let mut guard = self.client.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some(KafkaClient::new(self.cfg.client_config("")?));
+        if slot.lock().unwrap().is_none() {
+            let sends = std::mem::take(&mut *self.queue.lock().unwrap());
+            self.send_queued(&mut guard, sends);
         }
-        let client = guard.as_mut().unwrap();
-        let result = (|| -> Result<(i32, i64, i64)> {
-            let count = client.partitions(&topic, false)?.len();
-            let partition = match (explicit_partition, &key) {
-                (Some(p), _) => p,
-                (None, Some(k)) => partition_for_key(k, count),
-                (None, None) => (self.round_robin.fetch_add(1, Ordering::Relaxed) % count.max(1)) as i32,
-            };
-            let (base, append_time) = client.produce(&topic, partition, &records, self.cfg.request_required_acks, self.cfg.request_timeout.as_millis() as i32)?;
-            Ok((partition, base, append_time))
-        })();
-        let (partition, base, append_time) = match result {
-            Ok(r) => r,
-            Err(e) => {
-                if let Some(mut c) = guard.take() {
-                    c.close();
-                }
-                return Err(e);
-            }
-        };
         drop(guard);
+        let result = slot.lock().unwrap().take().unwrap_or_else(|| Err(CamelError::new(protocol::KAFKA_EXCEPTION, "Kafka send was not attempted")));
+        let (partition, base, append_time) = result?;
         let ts = if append_time >= 0 { append_time } else { timestamp };
         if self.cfg.record_metadata {
-            let meta: Vec<Value> = (0..records.len())
+            let meta: Vec<Value> = (0..count)
                 .map(|i| {
                     Value::object([
                         ("topic", Value::String(topic.clone())),
@@ -523,7 +600,7 @@ impl Processor for KafkaProducer {
             ex.set_header(headers::RECORD_META, Value::Array(meta));
         }
         ex.set_header(headers::PARTITION, partition as i64);
-        ex.set_header(headers::OFFSET, if base >= 0 { base + records.len() as i64 - 1 } else { -1 });
+        ex.set_header(headers::OFFSET, if base >= 0 { base + count as i64 - 1 } else { -1 });
         Ok(())
     }
 }

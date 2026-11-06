@@ -354,3 +354,44 @@ fn client_api_create_topics_and_offsets() {
     c.close();
     assert!(c.metadata(None, false).is_err());
 }
+
+#[test]
+fn concurrent_sends_share_produce_requests_and_keep_their_offsets() {
+    let broker = KafkaBroker::start_with_partitions(1).unwrap();
+    let ctx = context();
+    ctx.start().unwrap();
+    let uri = format!("kafka:batched?brokers={}", broker.bootstrap());
+    let t = ctx.create_producer_template();
+    t.send_body(&uri, "warm").unwrap();
+    const SENDERS: usize = 16;
+    const EACH: usize = 50;
+    let senders: Vec<_> = (0..SENDERS)
+        .map(|s| {
+            let (t, uri) = (t.clone(), uri.clone());
+            std::thread::spawn(move || {
+                (0..EACH)
+                    .map(|i| {
+                        let body = format!("s{s}-{i}");
+                        let ex = t.send_with(&uri, ExchangePattern::InOnly, |ex: &mut Exchange| ex.set_body(body.clone()));
+                        assert!(ex.exception.is_none(), "{:?}", ex.exception);
+                        (body, int(&ex, "kafka.OFFSET"))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let sent: Vec<Vec<(String, i64)>> = senders.into_iter().map(|h| h.join().unwrap()).collect();
+    let records = broker.records("batched", 0);
+    assert_eq!(records.len(), 1 + SENDERS * EACH);
+    for per_sender in &sent {
+        // every exchange's offset holds its own record, and one sender's records keep their order
+        for (body, offset) in per_sender {
+            assert_eq!(records[*offset as usize].value.as_deref(), Some(body.as_bytes()));
+        }
+        assert!(per_sender.windows(2).all(|w| w[0].1 < w[1].1));
+    }
+    // sends that waited for the client went out together instead of one request each
+    let batches = broker.batch_compression("batched", 0).len();
+    assert!(batches < 1 + SENDERS * EACH, "{batches} batches for {} records", 1 + SENDERS * EACH);
+    ctx.stop().unwrap();
+}

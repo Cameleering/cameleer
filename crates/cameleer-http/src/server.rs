@@ -57,7 +57,11 @@ where
 pub struct ServerConfig {
     /// Name used for worker threads.
     pub name: String,
-    /// Number of worker threads (each serves one connection at a time).
+    /// Maximum worker threads (each serves one connection at a time). Workers start on
+    /// demand and exit when idle, so a large limit costs nothing while traffic is light. When
+    /// every worker is busy, a keep-alive connection is closed after its response so a waiting
+    /// connection gets a turn; the limit should therefore exceed the number of concurrent
+    /// clients. 200 is the default of Tomcat's and Jetty's thread pools.
     pub pool_size: usize,
     pub limits: Limits,
     /// Timeout while reading a request once it started.
@@ -77,7 +81,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             name: "cameleer-http".into(),
-            pool_size: 32,
+            pool_size: 200,
             limits: Limits::default(),
             read_timeout: Duration::from_secs(30),
             keep_alive_timeout: Duration::from_secs(15),
@@ -424,10 +428,7 @@ mod tests {
         let mut w = s;
         let mut closes = 0;
         for _ in 0..n {
-            w.write_all(b"GET /k HTTP/1.1
-Host: x
-
-").unwrap();
+            w.write_all(b"GET /k HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
             let mut len = 0;
             loop {
                 let mut line = String::new();
@@ -500,10 +501,7 @@ Host: x
         let mut ra = BufReader::new(a.try_clone().unwrap());
         let mut wa = a;
         let head = |w: &mut TcpStream, r: &mut BufReader<TcpStream>| -> String {
-            w.write_all(b"GET /a HTTP/1.1
-Host: x
-
-").unwrap();
+            w.write_all(b"GET /a HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
             let mut all = String::new();
             loop {
                 let mut line = String::new();
@@ -527,6 +525,32 @@ Host: x
         std::thread::sleep(Duration::from_millis(50));
         assert!(head(&mut wa, &mut ra).contains("connection: close"));
         assert_eq!(b.join().unwrap(), 0);
+        server.stop();
+    }
+
+    #[test]
+    fn more_concurrent_clients_than_the_old_32_workers_keep_their_connections() {
+        // 64 clients is a modest load for an HTTP service; with the default limit none of them
+        // should be pushed to reconnect after each response. The handler takes 1 ms, like a
+        // route that does some work, so all 64 connections are open at the same time.
+        let server = HttpServer::bind("127.0.0.1:0", ServerConfig::default(), |_req: &mut HttpRequest| {
+            std::thread::sleep(Duration::from_millis(1));
+            HttpResponse::text(200, "ok")
+        })
+        .unwrap();
+        let addr = server.local_addr();
+        let barrier = Arc::new(std::sync::Barrier::new(64));
+        let clients: Vec<_> = (0..64)
+            .map(|_| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    keep_alive_requests(addr, 20)
+                })
+            })
+            .collect();
+        let closes: usize = clients.into_iter().map(|c| c.join().unwrap()).sum();
+        assert_eq!(closes, 0);
         server.stop();
     }
 }
