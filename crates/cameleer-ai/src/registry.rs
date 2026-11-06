@@ -700,6 +700,13 @@ impl AiRegistry {
         self.disabled.read().unwrap_or_else(|p| p.into_inner()).contains(name)
     }
 
+    /// The names withdrawn by the kill switch (also names no route publishes yet), sorted.
+    pub fn disabled_tools(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.disabled.read().unwrap_or_else(|p| p.into_inner()).iter().cloned().collect();
+        v.sort();
+        v
+    }
+
     // --- listing ---
 
     /// The enabled tools, optionally only those with one of `tags`.
@@ -713,6 +720,11 @@ impl AiRegistry {
             .filter(|t| tags.is_empty() || t.definition.tags.iter().any(|g| tags.contains(&g.as_str())))
             .map(|t| t.definition.clone())
             .collect()
+    }
+
+    /// Every published tool, disabled ones included (management views), by name.
+    pub fn all_tools(&self) -> Vec<ToolDefinition> {
+        self.tools.read().unwrap_or_else(|p| p.into_inner()).values().map(|t| t.definition.clone()).collect()
     }
 
     pub fn tool(&self, name: &str) -> Option<ToolDefinition> {

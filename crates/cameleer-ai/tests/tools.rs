@@ -382,6 +382,9 @@ fn the_kill_switch_withdraws_a_tool_everywhere() {
     assert!(reg.call(ToolCall::new("legacy", Value::Null)).text.contains("disabled"));
     reg.disable("a");
     assert!(reg.tools(&[]).is_empty());
+    // management views still see every tool and the disabled names
+    assert_eq!(reg.all_tools().iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["a", "legacy"]);
+    assert_eq!(reg.disabled_tools(), ["a", "legacy"]);
     assert!(reg.call(ToolCall::new("a", Value::Null)).text.contains("Tool a is disabled"));
     reg.enable("a");
     assert_eq!(reg.call(ToolCall::new("a", Value::Null)).text, "a");

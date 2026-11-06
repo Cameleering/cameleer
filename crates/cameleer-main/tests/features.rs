@@ -190,6 +190,22 @@ fn validate_and_schema_name_the_validate_feature() {
     assert!(err.contains("`cameleer schema` is not in this binary") && err.contains("`validate` feature"), "{err}");
 }
 
+/// `cameleer tool ...` and `/q/dev/tools` say they need the `ai` feature.
+#[cfg(not(feature = "ai"))]
+#[test]
+fn tool_commands_name_the_ai_feature() {
+    let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    assert_eq!(cameleer_main::cli::run_status(&args(&["tool", "list"]), &mut out, &mut err), 1);
+    let err = String::from_utf8(err).unwrap();
+    assert!(err.contains("built without the `ai` feature"), "{err}");
+    let ctx = cameleer_core::context::CamelContext::new();
+    let cfg = cameleer_main::console::ConsoleConfig { enabled: true, dev_console: true, ..Default::default() };
+    let r = cameleer_main::console::handle_request(&ctx, &cfg, &cameleer_http::http::HttpRequest::new("GET", "/q/dev/tools"));
+    assert_eq!(r.status, 501);
+    assert!(String::from_utf8_lossy(&r.body).contains("`ai` feature"));
+}
+
 /// Every component, language and data format page names the cargo feature that provides it
 /// (`**Cargo feature:**` in its header line), and that name matches `features::feature_for`, so
 /// people and coding agents can trust the page when they pick features for a smaller build.

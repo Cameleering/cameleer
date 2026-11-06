@@ -2,7 +2,9 @@
 //! directory): a running integration publishes `<pid>.json` (name, routes, context,
 //! health, backlog trace), logs to `<pid>.log`, and executes the commands
 //! written to `<pid>-action.json` (`stop`, `reload`, `start-route`, `stop-route`,
-//! `suspend-route`, `resume-route`, `reset-stats`, `trace`). The directory is
+//! `suspend-route`, `resume-route`, `reset-stats`, `trace`, and the `tool-*` actions of
+//! [`crate::tools`]). The answer goes to `<pid>-action-result.json`: `status` (`ok` or
+//! `error`), `message`, and `data` for actions that return a document. The directory is
 //! `$CAMEL_HOME` or `~/.camel`.
 //!
 //! The status is checked every 500 ms but the file is only rewritten when it changed, not
@@ -178,18 +180,21 @@ impl LocalStatus {
                     Ok(a) => match a.get("action").map(|x| x.to_string()).as_deref() {
                         Some("stop") => {
                             stop.store(true, Ordering::SeqCst);
-                            Ok("stopping".to_string())
+                            Ok(("stopping".to_string(), None))
                         }
                         Some("reload") => {
                             reload.store(true, Ordering::SeqCst);
-                            Ok("reloading".to_string())
+                            Ok(("reloading".to_string(), None))
                         }
-                        _ => execute_action(&ctx, &a),
+                        // the AI tools' kill switch and approvals (`cameleer tool ...`)
+                        _ if crate::tools::is_tool_action(&a) => crate::tools::execute(&ctx, &a).map(|(m, d)| (m, Some(d))),
+                        _ => execute_action(&ctx, &a).map(|m| (m, None)),
                     },
                     Err(e) => Err(e),
                 };
                 let out = match result {
-                    Ok(m) => Value::object([("status", Value::from("ok")), ("message", Value::from(m))]),
+                    Ok((m, None)) => Value::object([("status", Value::from("ok")), ("message", Value::from(m))]),
+                    Ok((m, Some(d))) => Value::object([("status", Value::from("ok")), ("message", Value::from(m)), ("data", d)]),
                     Err(e) => Value::object([("status", Value::from("error")), ("message", Value::from(e.to_string()))]),
                 };
                 let _ = write_atomic(&dir.join(format!("{}-action-result.json", pid)), &out.to_json());

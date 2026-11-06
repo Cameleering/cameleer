@@ -40,6 +40,10 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   recordings.
 - **`json-validator`: JSON Schema 2020-12 keywords** `prefixItems`, `minContains`,
   `maxContains`, `dependentSchemas`, `unevaluatedProperties` and `unevaluatedItems`.
+- **`cameleer tool`**: the kill switch and approvals of a running integration from the command
+  line (`tool list`, `disable`, `enable`, `approvals`, `approve`, `deny`), and `GET /q/dev/tools`
+  with `POST /q/dev/tools/{name}/disable|enable` on the dev console. MCP clients get
+  `list_changed` when a tool is withdrawn.
 - **Cooperative cancellation of an exchange** (`Exchange::set_cancel_token`): once the token is
   set, the exchange and its copies stop before their next pipeline step.
 

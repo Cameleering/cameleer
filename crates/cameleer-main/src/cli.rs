@@ -19,6 +19,12 @@
 //!           [name] [--id ROUTE]
 //! cameleer log [name] [--follow] [--tail N]
 //! cameleer trace [name] [--disable]
+//! cameleer tool list|approvals [name|pid] [--json]
+//! cameleer tool disable|enable <tool> [name|pid]
+//! cameleer tool approve <handle> [--by NAME] [name|pid]
+//! cameleer tool deny <handle> [--by NAME] [--reason TEXT] [name|pid]
+//!                                               AI tools of a running integration: kill switch
+//!                                               and approvals (needs the `ai` feature)
 //! cameleer catalog [components|languages|kamelets]
 //! cameleer validate <file-or-dir>... [--format text|json] [--strict] [--properties FILE] [--prop k=v]
 //!                                               check route files without running them
@@ -28,7 +34,7 @@
 //! ```
 //!
 //! Running integrations publish status files in `$CAMEL_HOME` (default `~/.camel`), see
-//! [`crate::local`]; `get`/`cmd`/`log`/`trace`/`ps`/`stop` use them (`get --url` queries a
+//! [`crate::local`]; `get`/`cmd`/`log`/`trace`/`ps`/`stop`/`tool` use them (`get --url` queries a
 //! management server instead).
 
 use std::io::Write;
@@ -56,6 +62,10 @@ pub fn usage() -> &'static str {
   cameleer cmd start-route|stop-route|suspend-route|resume-route|reset-stats|reload [name] [--id ROUTE]
   cameleer log [name] [--follow] [--tail N]
   cameleer trace [name] [--disable]
+  cameleer tool list|approvals [name|pid] [--json]
+  cameleer tool disable|enable <tool> [name|pid]
+  cameleer tool approve <handle> [--by NAME] [name|pid]
+  cameleer tool deny <handle> [--by NAME] [--reason TEXT] [name|pid]
   cameleer catalog [components|languages|kamelets]
   cameleer test <test-file>...
   cameleer validate <file-or-dir>... [--format text|json] [--strict] [--properties FILE] [--prop key=value]
@@ -94,6 +104,7 @@ pub fn run(args: &[String], out: &mut dyn Write) -> CliResult {
         "cmd" => cmd_action(rest, out),
         "log" => log(rest, out),
         "trace" => trace(rest, out),
+        "tool" => tool_cmd(rest, out),
         "validate" => match validate_cmd(rest, out)? {
             0 => Ok(()),
             _ => Err("validation failed".into()),
@@ -708,6 +719,70 @@ fn cmd_action(args: &[String], out: &mut dyn Write) -> CliResult {
         return Err(msg);
     }
     w(out, &msg)
+}
+
+/// `cameleer tool ...`: list, disable and enable the AI tools of a running integration, and
+/// list, approve and deny the calls waiting for approval (see [`crate::tools`]).
+fn tool_cmd(args: &[String], out: &mut dyn Write) -> CliResult {
+    let a = Args::parse(args, &["json"])?;
+    let sub = a.positional.first().map(String::as_str).ok_or_else(|| format!("cameleer tool requires list, disable, enable, approvals, approve or deny
+{}", usage()))?;
+    // (positional arguments after the subcommand, allowed options)
+    let (operands, allowed): (usize, &[&str]) = match sub {
+        "list" | "approvals" => (0, &["json"]),
+        "disable" | "enable" => (1, &[]),
+        "approve" => (1, &["by"]),
+        "deny" => (1, &["by", "reason"]),
+        other => return Err(format!("Unknown tool command {} (list, disable, enable, approvals, approve or deny)", other)),
+    };
+    a.check(allowed)?;
+    if !crate::tools::available() {
+        return Err(crate::tools::NO_AI_FEATURE.to_string());
+    }
+    let operand = if operands == 1 {
+        Some(a.positional.get(1).ok_or_else(|| format!("cameleer tool {} requires {}", sub, if sub == "approve" || sub == "deny" { "an approval handle" } else { "a tool name" }))?.as_str())
+    } else {
+        None
+    };
+    let selector = a.positional.get(1 + operands).map(String::as_str);
+    if a.positional.len() > 2 + operands {
+        return Err(format!("Too many arguments for cameleer tool {}
+{}", sub, usage()));
+    }
+    let by = a.get("by").map(str::to_string).unwrap_or_else(|| std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "cli".into()));
+    let mut fields: Vec<(&str, Value)> = vec![("action", Value::from(format!("tool-{}", sub)))];
+    match sub {
+        "disable" | "enable" => fields.push(("tool", Value::from(operand.unwrap_or_default()))),
+        "approve" | "deny" => {
+            fields.push(("handle", Value::from(operand.unwrap_or_default())));
+            fields.push(("by", Value::from(by)));
+            fields.push(("reason", Value::from(a.get("reason").unwrap_or(""))));
+        }
+        _ => {}
+    }
+    let dir = home();
+    let p = local::find_process(&dir, selector).map_err(|e| e.message)?;
+    // approving runs the call, which may take up to the tool's timeout
+    let timeout = Duration::from_secs(if sub == "approve" { 120 } else { 30 });
+    let r = local::send_action(&dir, p.pid, &Value::object(fields), timeout).map_err(|e| e.message)?;
+    let msg = r.get("message").map(|m| m.to_string()).unwrap_or_default();
+    if r.get("status").map(|s| s.to_string()) == Some("error".into()) {
+        return Err(if msg.starts_with("Unknown action tool-") { format!("{} ({}) does not support AI tool commands: it is an older Cameleer", p.name, p.pid) } else { msg });
+    }
+    let data = r.get("data").cloned().unwrap_or(Value::Null);
+    match sub {
+        "list" | "approvals" if a.flag("json") => w(out, &data.to_json()),
+        "list" => write!(out, "{}", crate::tools::format_tools(&data)).map_err(|e| e.to_string()),
+        "approvals" => write!(out, "{}", crate::tools::format_approvals(&data)).map_err(|e| e.to_string()),
+        "approve" | "deny" => {
+            w(out, &msg)?;
+            if data.get("isError").map(|e| e.is_truthy()).unwrap_or(false) && data.get("status").map(|s| s.to_string()).as_deref() != Some("denied") {
+                return Err(format!("the approved call failed: {}", data.get("text").map(|t| t.to_string()).unwrap_or_default()));
+            }
+            Ok(())
+        }
+        _ => w(out, &msg),
+    }
 }
 
 fn log(args: &[String], out: &mut dyn Write) -> CliResult {

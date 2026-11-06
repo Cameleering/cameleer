@@ -22,6 +22,7 @@ pub mod properties;
 #[cfg(feature = "validate")]
 pub mod schema;
 pub mod signal;
+pub mod tools;
 #[cfg(feature = "validate")]
 pub mod validate;
 pub mod yaml_rest;

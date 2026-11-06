@@ -176,10 +176,8 @@ of 5 is done: the tool model and the reliability envelope.
   zero warnings; `cameleer-main --no-default-features` builds.
 - **Next phases:** 2, the MCP server (2026-07-28 and 2025-11-25, Streamable HTTP and stdio,
   approvals over MRTR/elicitation, `camel.server.mcp-*`); 3, tool calling in the model
-  components plus the `agent` step; phases 1 to 3 ship as 0.5.0. Not done in phase 1: the
-  `cameleer tool disable` CLI command (the property and `AiRegistry::disable` work; the CLI
-  needs a control channel to a running process) and exporting audit records as span
-  attributes.
+  components plus the `agent` step; phases 1 to 3 ship as 0.5.0. Not done in phase 1:
+  exporting audit records as span attributes.
 
 ## Action layer for AI agents, phase 2: MCP server (2026-11-06, branch `agent-action-layer`)
 
@@ -208,7 +206,7 @@ of 5 is done: the tool model and the reliability envelope.
   2025-11-25 and 22/26 for 2025-06-18; the gaps are log and progress notifications during a
   call, sampling, and elicitation other than approvals. The suite predates 2026-07-28, so that
   era is covered only by the hermetic tests.
-- **Not done**: progress and log notifications, sampling, `cameleer tool disable`, the website
+- **Not done**: progress and log notifications, sampling, the website
   pages planned for this phase (tagline, `/use-cases/mcp-tool-server/`, "Cameleer vs Camel MCP
   server").
 
@@ -234,6 +232,19 @@ of 5 is done: the tool model and the reliability envelope.
   YAML with record and replay), `cameleer_test.rs`, unit tests in `ai.rs` and `ai/wire.rs`.
 - **Not done**: streaming with the tool loop, the Responses API, Ollama `/api/chat`, MCP tools
   in `tools` (phase 4, the MCP client), the website pages for the action layer.
+
+## Action layer: kill switch and approvals for operators (2026-11-06)
+
+- **`cameleer tool list|disable|enable|approvals|approve|deny [name|pid]`** (`crates/cameleer-main/src/tools.rs`,
+  `cli.rs`): the running process applies `AiRegistry::disable/enable/approve/deny` through the local
+  status files (new `tool-*` action documents; the action result gains an optional `data` field,
+  the existing format is unchanged). `--json` for `list` and `approvals`; unknown tool names and
+  handles are refused. `AiRegistry::all_tools` and `disabled_tools` are new.
+- **Dev console**: `GET /q/dev/tools`, `POST /q/dev/tools/{name}/disable|enable` (501 without the
+  `ai` feature).
+- **Tests**: `crates/cameleer-main/tests/tool_cli.rs` (the real binary: list, disable, enable,
+  an approval parked by a timer route, approve; the console in-process), unit tests in
+  `tools.rs`, and `features.rs` `tool_commands_name_the_ai_feature` for builds without `ai`.
 
 ## Pending / todo
 
