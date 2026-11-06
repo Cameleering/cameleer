@@ -115,8 +115,6 @@ pub(crate) fn registered_module(uri: &str) -> Option<String> {
     MODULES.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(u, _)| u == uri).map(|(_, s)| s.clone())
 }
 
-/// Stack size of the evaluation thread (deeply recursive user functions).
-const EVAL_STACK: usize = 256 * 1024 * 1024;
 
 /// A compiled XQuery main module.
 #[derive(Clone, Debug)]
@@ -189,26 +187,28 @@ impl XQuery {
     /// * `context`: the context item source (parsed as an XML document; `Null` or a
     ///   non-XML value leaves the context item absent, which only fails when used).
     /// * `resolve(uri, local)`: values of external variables (`None` = unbound).
-    /// * `convert`: turns the result sequence into the caller's representation (it runs on
-    ///   the evaluation thread, where the documents live).
+    /// * `convert`: turns the result sequence into the caller's representation (it runs
+    ///   where the documents live, before they are dropped).
     pub fn evaluate<T: Send>(
         &self,
         context: Option<&Value>,
         resolve: &(dyn Fn(&str, &str) -> Option<Value> + Sync),
         convert: impl FnOnce(&Docs, &[Item]) -> T + Send,
     ) -> XqResult<T> {
-        std::thread::scope(|s| {
-            let h = std::thread::Builder::new()
-                .name("xquery".into())
-                .stack_size(EVAL_STACK)
-                .spawn_scoped(s, move || self.evaluate_here(context, resolve, convert))
-                .map_err(|e| XqError::new("FOER0000", format!("Cannot start the XQuery evaluation thread: {}", e)))?;
-            h.join().unwrap_or_else(|_| Err(XqError::new("FOER0000", "XQuery evaluation panicked")))
-        })
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.evaluate_here(context, resolve, convert)))
+            .unwrap_or_else(|_| Err(XqError::new("FOER0000", "XQuery evaluation panicked")))
     }
 
-    /// Evaluate on the calling thread (deep recursion is limited by its stack).
+    /// Evaluate on the calling thread. The evaluator checks the stack left at every
+    /// expression and continues deep recursion on new stack segments, so no thread is started
+    /// unless the query recurses deeply (or the caller's stack is nearly used up).
     pub fn evaluate_here<T>(&self, context: Option<&Value>, resolve: &dyn Fn(&str, &str) -> Option<Value>, convert: impl FnOnce(&Docs, &[Item]) -> T) -> XqResult<T> {
+        // SAFETY: the closure borrows the caller's arguments only while the caller waits; the
+        // evaluator uses no thread-locals or locks.
+        unsafe { cameleer_core::stack::maybe_grow(eval::RED_ZONE, eval::SEGMENT, || self.evaluate_inner(context, resolve, convert)) }
+    }
+
+    fn evaluate_inner<T>(&self, context: Option<&Value>, resolve: &dyn Fn(&str, &str) -> Option<Value>, convert: impl FnOnce(&Docs, &[Item]) -> T) -> XqResult<T> {
         let docs = Docs::default();
         let mut context_error = None;
         let focus = match context {

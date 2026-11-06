@@ -264,16 +264,26 @@ fn value_to_xvalue(v: &Value) -> XValue {
     }
 }
 
-/// Run a transformation on a thread with a large stack (deeply recursive stylesheets).
+/// Stack kept free between two stack checks (one template or instruction level plus the
+/// XPath evaluation it does). Below it, the transformation continues on a new segment.
+const RED_ZONE: usize = 512 * 1024;
+/// Size of an additional stack segment (enough for [`MAX_DEPTH`] nested templates).
+const SEGMENT: usize = 128 << 20;
+
+/// Run `f` here, or on a new stack segment when the stack is nearly used up.
+#[inline]
+fn guarded<T>(f: impl FnOnce() -> T) -> T {
+    // SAFETY: the transformation state (`Rc`s, `RefCell`s) is used by the segment thread only
+    // while this thread waits for it; the transformer uses no thread-locals or locks.
+    unsafe { cameleer_core::stack::maybe_grow(RED_ZONE, SEGMENT, f) }
+}
+
+/// Run a transformation on the calling thread. Template and instruction recursion checks the
+/// stack left and continues on new stack segments, so only deeply recursive stylesheets (or a
+/// caller whose stack is nearly used up) start a thread.
 pub(crate) fn run(ss: &Stylesheet, source: Document, params: &[(String, Value)]) -> Result<TransformResult, CamelError> {
-    let r = std::thread::scope(|s| {
-        let h = std::thread::Builder::new()
-            .name("camel-xslt".into())
-            .stack_size(128 << 20)
-            .spawn_scoped(s, || run_inner(ss, source, params))
-            .map_err(|e| format!("Cannot start transformer thread: {}", e))?;
-        h.join().unwrap_or_else(|_| Err("Transformation panicked".to_string()))
-    });
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| guarded(|| run_inner(ss, source, params))))
+        .unwrap_or_else(|_| Err("Transformation panicked".to_string()));
     r.map_err(|m| {
         crate::register_kinds();
         CamelError::new(crate::TRANSFORMER_EXCEPTION, m)
@@ -724,6 +734,10 @@ impl<'s> Exec<'s> {
     }
 
     fn process_node(&self, f: Frame, mode: &Option<Key>, params: &[(Key, XValue)]) -> XR<()> {
+        guarded(|| self.process_node_here(f, mode, params))
+    }
+
+    fn process_node_here(&self, f: Frame, mode: &Option<Key>, params: &[(Key, XValue)]) -> XR<()> {
         match self.find_template(f.node, mode, None)? {
             Some(t) => self.invoke(t, f, params, mode),
             None => self.builtin(f, mode),
@@ -1234,7 +1248,7 @@ impl<'s> Exec<'s> {
 
     fn exec_body(&self, body: &[Instr], f: &Frame, locals: &mut Vec<(Key, XValue)>) -> XR<()> {
         let mark = locals.len();
-        let r = self.exec_instrs(body, f, locals);
+        let r = guarded(|| self.exec_instrs(body, f, locals));
         locals.truncate(mark);
         r
     }

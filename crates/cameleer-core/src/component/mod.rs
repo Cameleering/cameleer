@@ -83,7 +83,7 @@ pub fn register_builtin_components(ctx: &CamelContext) {
     ctx.add_component_factory("mock", || Arc::new(mock::MockComponent::new()));
     ctx.add_component_factory("log", || Arc::new(log::LogComponent));
     ctx.add_component_factory("file", || Arc::new(file::FileComponent));
-    ctx.add_component_factory("timer", || Arc::new(timer::TimerComponent));
+    ctx.add_component_factory("timer", || Arc::new(timer::TimerComponent::default()));
     ctx.add_component_factory("scheduler", || Arc::new(scheduler::SchedulerComponent));
     ctx.add_component_factory("seda", || Arc::new(seda::SedaComponent::new()));
     ctx.add_component_factory("vm", || Arc::new(seda::SedaComponent::vm()));

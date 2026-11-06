@@ -45,6 +45,16 @@ use cameleer_core::context::CamelContext;
 use cameleer_core::error::{kinds, register_kind_parent};
 
 pub use dom::{Document, NodeId, NodeType, QName};
+
+/// Run one level of a tree recursion (copying or serializing a node and its children) here,
+/// or on a new stack segment when the thread's stack is nearly used up, so very deep
+/// documents do not overflow the caller's stack.
+#[inline]
+pub(crate) fn tree_level<T>(f: impl FnOnce() -> T) -> T {
+    // SAFETY: tree recursions only touch the documents they were given, which the segment
+    // thread uses while the calling thread waits; no thread-locals or locks are involved.
+    unsafe { cameleer_core::stack::maybe_grow(256 * 1024, 64 << 20, f) }
+}
 pub use language::xpath_ns;
 pub use xpath::{XPath, XValue};
 pub use xquery::XQuery;

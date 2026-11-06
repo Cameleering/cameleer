@@ -376,3 +376,28 @@ fn exslt_node_set() {
     );
     assert_eq!(out, "123");
 }
+
+#[test]
+fn deep_template_recursion_from_a_small_stack() {
+    // 4000 nested call-templates from a 2 MiB thread (a route thread): the transformation continues on new
+    // stack segments instead of overflowing (no thread is started for shallow stylesheets)
+    let ss = Stylesheet::compile(
+        &xsl(r#"<xsl:template match="/"><r><xsl:call-template name="r"><xsl:with-param name="n" select="4000"/></xsl:call-template></r></xsl:template>
+<xsl:template name="r"><xsl:param name="n"/><xsl:choose><xsl:when test="$n &gt; 0"><xsl:call-template name="r"><xsl:with-param name="n" select="$n - 1"/></xsl:call-template></xsl:when><xsl:otherwise>bottom</xsl:otherwise></xsl:choose></xsl:template>"#),
+        None,
+    )
+    .unwrap();
+    let out = std::thread::Builder::new().stack_size(2 << 20).spawn(move || ss.transform_to_string("<a/>", &[]).unwrap()).unwrap().join().unwrap();
+    assert_eq!(out, "<r>bottom</r>");
+    // and over a deeply nested document through the built-in templates
+    let depth = 3000;
+    let doc = format!("{}x{}", "<e>".repeat(depth), "</e>".repeat(depth));
+    let ss = Stylesheet::compile(&xsl(""), None).unwrap();
+    let copy = doc.clone();
+    let out = std::thread::Builder::new().stack_size(2 << 20).spawn(move || ss.transform_to_string(&doc, &[]).unwrap()).unwrap().join().unwrap();
+    assert_eq!(out, "x");
+    // a deeply nested result is serialized too
+    let ss = Stylesheet::compile(&xsl(r#"<xsl:template match="/"><xsl:copy-of select="."/></xsl:template>"#), None).unwrap();
+    let out = std::thread::Builder::new().stack_size(2 << 20).spawn(move || ss.transform_to_string(&copy, &[]).unwrap()).unwrap().join().unwrap();
+    assert_eq!(out.len(), depth * 7 + 1);
+}

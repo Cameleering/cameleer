@@ -326,6 +326,10 @@ impl<'a> Serializer<'a> {
     }
 
     fn element(&mut self, id: NodeId, level: usize) {
+        crate::tree_level(|| self.element_here(id, level))
+    }
+
+    fn element_here(&mut self, id: NodeId, level: usize) {
         let doc = self.doc;
         let n = doc.node(id);
         let mark = self.scope.len();

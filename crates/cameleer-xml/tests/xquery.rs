@@ -147,3 +147,29 @@ declare function local:total($o as element(order)) as xs:decimal {
     ctx.stop().unwrap();
     std::fs::remove_dir_all(&d).ok();
 }
+
+#[test]
+fn xquery_evaluates_on_the_calling_thread_and_recurses_deeply_from_a_small_stack() {
+    use cameleer_xml::xquery::XQuery;
+    let none = |_: &str, _: &str| -> Option<Value> { None };
+    // an ordinary query does not start a thread
+    let q = XQuery::compile("sum(for $i in //item return $i/@qty)", &[]).unwrap();
+    let doc = Value::from("<o><item qty='2'/><item qty='3'/></o>");
+    let me = std::thread::current().id();
+    let (thread, n) = q.evaluate(Some(&doc), &none, |docs, items| (std::thread::current().id(), cameleer_xml::xquery::items_to_string(docs, items))).unwrap();
+    assert_eq!(thread, me);
+    assert_eq!(n, "5");
+    // deep recursion from a 2 MiB thread (a route thread) continues on new stack segments
+    let deep = XQuery::compile("declare function local:f($n) { if ($n = 0) then 0 else 1 + local:f($n - 1) }; local:f(2900)", &[]).unwrap();
+    let r = std::thread::Builder::new()
+        .stack_size(2 << 20)
+        .spawn(move || deep.evaluate(None, &none, |docs, items| cameleer_xml::xquery::items_to_string(docs, items)).unwrap())
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(r, "2900");
+    // unbounded recursion still fails cleanly at the depth limit
+    let inf = XQuery::compile("declare function local:loop($n) { local:loop($n + 1) }; local:loop(1)", &[]).unwrap();
+    let e = std::thread::Builder::new().stack_size(2 << 20).spawn(move || inf.evaluate(None, &none, |_, _| ()).unwrap_err()).unwrap().join().unwrap();
+    assert_eq!(e.code, "XPDY0130");
+}
