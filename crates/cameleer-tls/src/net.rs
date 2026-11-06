@@ -26,7 +26,7 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The TCP socket shared by every clone of a `NetStream` and by both TLS halves.
 /// On Windows socket options such as the read timeout belong to the handle, so a
@@ -127,6 +127,51 @@ fn cancel_pending_io(tcp: &TcpStream) {
     }
 }
 
+/// How long [`lingering_close`] waits for the peer to close after a fatal alert.
+pub const ALERT_LINGER: Duration = Duration::from_secs(2);
+
+/// Closes a connection on which a fatal TLS alert was just sent without losing the
+/// alert. Dropping the socket at once makes the kernel answer data the peer is still
+/// sending (a TLS 1.3 client writes application data right after its Finished,
+/// before it reads the server's verdict on its certificate) with a TCP reset, and on
+/// Windows a reset discards the alert waiting unread in the peer's receive buffer:
+/// the peer then sees "connection reset" instead of, say, `certificate_required`.
+/// So, like a lingering HTTP close, this sends FIN after the alert and reads and
+/// discards whatever arrives until the peer closes, [`ALERT_LINGER`] passes or
+/// 256 KiB were read.
+pub fn lingering_close(tcp: &TcpStream) {
+    let _ = tcp.shutdown(Shutdown::Write);
+    let deadline = Instant::now() + ALERT_LINGER;
+    let mut buf = [0u8; 4096];
+    let mut total = 0usize;
+    while total < 256 * 1024 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || tcp.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match (&*tcp).read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+}
+
+/// [`TlsStream::accept`] over an accepted TCP connection that, when the handshake
+/// fails with a fatal alert, closes the connection with [`lingering_close`] so the
+/// client receives the alert (instead of a reset) even if it is still sending.
+pub fn accept_tls(tcp: TcpStream, config: &TlsServerConfig) -> Result<TlsStream<TcpStream>, TlsError> {
+    let keep = tcp.try_clone().ok();
+    let r = TlsStream::accept(tcp, config);
+    if let (Err(e), Some(keep)) = (&r, &keep) {
+        if e.alert_to_send().is_some() {
+            lingering_close(keep);
+        }
+    }
+    r
+}
+
 /// Converts a TLS error into an `io::Error` (certificate problems keep their text).
 pub fn tls_io_error(e: TlsError) -> io::Error {
     match e {
@@ -194,8 +239,19 @@ impl NetStream {
     }
 
     fn server_shared(tcp: Arc<TcpStream>, config: &TlsServerConfig) -> io::Result<NetStream> {
-        let tls = with_handshake_timeout(SharedTcp(tcp), |t| TlsStream::accept(t, config))?;
-        NetStream::from_tls(tls, None)
+        let mut alerted = false;
+        let r = with_handshake_timeout(SharedTcp(tcp.clone()), |t| {
+            TlsStream::accept(t, config).inspect_err(|e| alerted = e.alert_to_send().is_some())
+        });
+        match r {
+            Ok(tls) => NetStream::from_tls(tls, None),
+            Err(e) => {
+                if alerted {
+                    lingering_close(&tcp);
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Connects to `host:port` and, when `tls` is given, performs a client handshake.
