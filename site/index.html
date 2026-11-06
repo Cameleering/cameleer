@@ -61,8 +61,10 @@ h1 {
 }
 h1 .line { display: block; }
 h1 .strike { color: var(--muted); font-weight: 500; position: relative; }
-h1 .strike::after { content: ""; position: absolute; left: 0; right: 0; top: 54%; height: .07em; background: var(--signal); transform-origin: left; animation: strike .7s .5s cubic-bezier(.6,0,.2,1) both; }
-@keyframes strike { from { transform: scaleX(0); } }
+h1 .strike::after { content: ""; position: absolute; left: 0; right: 0; top: 54%; height: .07em; background: var(--signal); transform: scaleX(1); transform-origin: left; animation: strike .7s .5s cubic-bezier(.6,0,.2,1) backwards; }
+/* both ends explicit: the line ends drawn on every browser, and stays drawn without the animation */
+@keyframes strike { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { h1 .strike::after { animation: none; } }
 .lede { font-size: 20px; color: var(--muted); max-width: 30em; margin: 0 0 32px; }
 .lede strong { color: var(--ink); font-weight: 600; }
 .agent-line { font-size: 17px; line-height: 1.55; color: var(--ink); max-width: 32em; margin: -12px 0 32px; padding: 2px 0 2px 16px; border-left: 3px solid var(--signal); }
