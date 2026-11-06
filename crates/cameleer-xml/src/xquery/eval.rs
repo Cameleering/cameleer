@@ -276,6 +276,14 @@ impl<'a> Interp<'a> {
         if cameleer_core::stack::here() >= self.stack_floor {
             return self.eval_inner(e, f);
         }
+        self.eval_on_new_segment(e, f)
+    }
+
+    /// The rare path of [`Interp::eval`], kept out of line so it does not enlarge every
+    /// evaluation frame.
+    #[cold]
+    #[inline(never)]
+    fn eval_on_new_segment(&mut self, e: &Expr, f: &Focus) -> R<Seq> {
         let saved = self.stack_floor;
         // SAFETY: the interpreter state (`Rc`s, the documents) is used by the segment thread
         // only while this thread waits for it; the evaluator uses no thread-locals or locks.
