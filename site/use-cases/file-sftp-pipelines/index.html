@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File, FTP and SFTP Pipelines in Rust: CSV Batches, Polling, S3 | Cameleer</title>
+<meta name="description" content="Poll folders, FTP, FTPS and SFTP servers, parse CSV and fixed-width files, split, validate and load into PostgreSQL or S3 with Cameleer. Camel YAML routes, one native binary, twice Apache Camel's CSV batch throughput.">
+<link rel="canonical" href="https://pmsudhi.github.io/cameleer/use-cases/file-sftp-pipelines/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="File, FTP and SFTP pipelines, in Rust">
+<meta property="og:description" content="Folder and server polling, CSV and fixed-width parsing, split and aggregate, done and failed folders, S3 and PostgreSQL targets. Tested routes, one binary.">
+<meta property="og:url" content="https://pmsudhi.github.io/cameleer/use-cases/file-sftp-pipelines/">
+<meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "File, FTP and SFTP pipelines in Rust: CSV batches, polling, S3 and PostgreSQL",
+ "description": "Poll folders and FTP, FTPS and SFTP servers, parse CSV and fixed-width files, split, validate and load with Cameleer's Camel-compatible routes.",
+ "url": "https://pmsudhi.github.io/cameleer/use-cases/file-sftp-pipelines/",
+ "inLanguage": "en", "image": "https://pmsudhi.github.io/cameleer/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://pmsudhi.github.io/cameleer/"},
+ "about": [{"@type": "Thing", "name": "SFTP"}, {"@type": "Thing", "name": "Batch processing"}, {"@type": "Thing", "name": "CSV"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://pmsudhi.github.io/cameleer/"},
+ {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://pmsudhi.github.io/cameleer/use-cases/"},
+ {"@type": "ListItem", "position": 3, "name": "File and SFTP pipelines"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "Which file protocols does Cameleer support?", "acceptedAnswer": {"@type": "Answer", "text": "Local folders (file), FTP and FTPS (explicit and implicit TLS, tested against vsftpd), and SFTP over Cameleer's own SSH-2 implementation, tested against OpenSSH, with password or OpenSSH and PEM key authentication and known_hosts checking. S3, Azure Blob and Data Lake, Google Cloud Storage and Google Drive cover object storage."}},
+ {"@type": "Question", "name": "Which file formats can it parse?", "acceptedAnswer": {"@type": "Answer", "text": "CSV (csv and univocity), fixed-length and key-value records (bindyFixed, bindyKvp, bindyCsv), JSON, XML, YAML, Avro, Protobuf, zip, tar and gzip archives, Base64, PGP and symmetric crypto, HL7 v2 and more; 29 data formats in all."}},
+ {"@type": "Question", "name": "How are processed files handled?", "acceptedAnswer": {"@type": "Answer", "text": "As in Apache Camel: move to a done folder, moveFailed to a failed folder, or delete, with include and exclude patterns, read locks and idempotent repositories so a file is processed once."}},
+ {"@type": "Question", "name": "How fast is a CSV batch?", "acceptedAnswer": {"@type": "Answer", "text": "In the cloud benchmark a route that splits a 1,000-row file, keeps the EU rows, reshapes them and aggregates batches of 100 processed 998 files per second on Cameleer against 468 on Apache Camel 4.23 (JVM) and 163 on Camel Quarkus native, with 8 MB of peak memory against 337 MB."}},
+ {"@type": "Question", "name": "Does it parse EDI (EDIFACT, X12)?", "acceptedAnswer": {"@type": "Answer", "text": "There is no dedicated EDIFACT or X12 data format. Delimited and fixed-width partner files are handled with csv, univocity and bindy; segment-based EDI needs a tokenize split and your own mapping."}}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../">Use cases</a>
+      <a href="../../docs/guides/agents.html">Agents</a>
+      <a href="../../compare/">Compare</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / File and SFTP pipelines</p>
+    <p class="kicker">Files, FTP, SFTP and batches</p>
+    <h1>File and SFTP pipelines that run in megabytes</h1>
+    <p class="lede">Partner files still arrive by SFTP at 02:00. Cameleer polls the folder or the server, parses CSV and fixed-width records, splits, validates, deduplicates, loads into PostgreSQL or S3, and moves each file to done or failed. The routes are Apache Camel's file patterns; the runtime is one binary.</p>
+    <div class="stats">
+      <div class="stat"><b>2.1x</b><span>Apache Camel's CSV batch throughput: 998 vs 468 files/s</span></div>
+      <div class="stat"><b>8 MB</b><span>peak memory on that batch, against 337 MB on the JVM</span></div>
+      <div class="stat"><b>SSH-2</b><span>and SFTP written from scratch, tested against OpenSSH; FTP and FTPS against vsftpd</span></div>
+      <div class="stat"><b>29</b><span>data formats: CSV, fixed-width, JSON, XML, Avro, zip, PGP, HL7 and more</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="route">
+  <div class="wrap">
+    <h2>The tested route: files to S3</h2>
+    <p class="intro">From <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml"><code>examples/files-to-s3.camel.yaml</code></a>, which the test suite runs against a mock S3. Swap <code>file:</code> for <code>sftp:</code> and the route polls a partner's server instead.</p>
+    <pre class="cmd">- route:
+    id: files-to-s3
+    from:
+      uri: "file:{{env:INBOX_DIR:inbox}}?include=.*\\.csv&amp;move=.done&amp;moveFailed=.failed"
+      steps:
+        - setHeader:
+            name: CamelAwsS3Key
+            simple: "${file:name}"
+        - to: "aws2-s3://{{env:S3_BUCKET:my-bucket}}?region={{env:AWS_REGION:us-east-1}}&amp;useDefaultCredentialsProvider=true"
+        - log: "uploaded ${file:name} to s3://{{env:S3_BUCKET:my-bucket}}"</pre>
+    <div class="two">
+      <div class="pane">
+        <h3>The same shape, other ends</h3>
+        <ul>
+          <li><strong>Pick up from SFTP:</strong> <code>sftp://user@host/outbox?privateKeyFile=/routes/id_ed25519&amp;knownHostsFile=/routes/known_hosts&amp;strictHostKeyChecking=yes&amp;delete=true&amp;delay=30000</code></li>
+          <li><strong>Parse and load:</strong> <code>unmarshal: csv</code> (or <code>bindyFixed</code> for fixed-width), <code>split</code> by row, <code>to: sql:insert into ...</code> with named parameters.</li>
+          <li><strong>Batch the writes:</strong> <code>aggregate</code> with <code>completionSize: 100</code> and one insert per batch.</li>
+          <li><strong>Reject bad rows:</strong> <code>validate</code> or <code>json-validator</code>, and a dead letter channel to a rejects folder the partner can fetch.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Components and formats</h3>
+        <ul>
+          <li><a href="../../docs/components/file.html"><code>file</code></a>, <a href="../../docs/components/ftp.html"><code>ftp</code></a>, <a href="../../docs/components/ftps.html"><code>ftps</code></a>, <a href="../../docs/components/sftp.html"><code>sftp</code></a>; <a href="../../docs/components/aws2-s3.html"><code>aws2-s3</code></a>, <a href="../../docs/components/azure-storage-blob.html"><code>azure-storage-blob</code></a>, <a href="../../docs/components/google-storage.html"><code>google-storage</code></a>, <a href="../../docs/components/google-drive.html"><code>google-drive</code></a></li>
+          <li><a href="../../docs/dataformats/csv.html"><code>csv</code></a>, <a href="../../docs/dataformats/univocity.html"><code>univocity</code></a>, <a href="../../docs/dataformats/bindy.html"><code>bindy</code></a>, <a href="../../docs/dataformats/zipfile.html"><code>zipfile</code></a>, <a href="../../docs/dataformats/tarfile.html"><code>tarfile</code></a>, <a href="../../docs/dataformats/gzip.html"><code>gzip</code></a>, <a href="../../docs/dataformats/pgp.html"><code>pgp</code></a></li>
+          <li><a href="../../docs/components/sql.html"><code>sql</code></a> for PostgreSQL, <a href="../../docs/components/kafka.html"><code>kafka</code></a> for downstream consumers</li>
+          <li>EIPs: <a href="../../docs/guides/eips/split-aggregate.html">split and aggregate</a>, <a href="../../docs/guides/eips/flow-control.html#idempotent-consumer">idempotent consumer</a>, <a href="../../docs/guides/error-handling.html">dead letter channel</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="numbers">
+  <div class="wrap">
+    <h2>The CSV batch, measured</h2>
+    <p class="intro">A 1,000-row file is split into rows; EU rows are kept, reshaped and written out in batches of 100. The same route on three runtimes, on identical machines.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>runtime</th><th class="num">files/s</th><th class="num">p99 per file</th><th class="num">peak memory</th></tr></thead>
+      <tbody>
+        <tr><td>Cameleer</td><td class="num"><span class="win">998</span></td><td class="num"><span class="win">1.7 ms</span></td><td class="num"><span class="win">8 MB</span></td></tr>
+        <tr><td>Apache Camel (JVM)</td><td class="num">468</td><td class="num">3.2 ms</td><td class="num">337 MB</td></tr>
+        <tr><td>Apache Camel (Quarkus native)</td><td class="num">163</td><td class="num">12.5 ms</td><td class="num">126 MB</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">From the cloud benchmark; method, machines and raw data in <a href="../../compare/apache-camel-vs-cameleer/#how">how we tested</a> and <a href="../../docs/BENCHMARKS.html">BENCHMARKS</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="ops">
+  <div class="wrap">
+    <h2>What operations teams ask</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Exactly-once-ish file handling</h3>
+        <ul>
+          <li><code>move</code>, <code>moveFailed</code> and <code>delete</code> after processing; <code>include</code> and <code>exclude</code> patterns; read locks for files still being written.</li>
+          <li>An idempotent repository keyed by file name (in memory, JDBC or Redis) so a re-uploaded file is skipped, or processed again on purpose.</li>
+          <li><code>sftp</code> checks the host key against <code>known_hosts</code> with <code>strictHostKeyChecking=yes</code>.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Scheduling and scale</h3>
+        <ul>
+          <li>Poll every <code>delay</code> milliseconds, back off when idle, or start on a <a href="../../docs/components/cron.html">cron</a> expression.</li>
+          <li>Run as a cron-triggered container, a Kubernetes CronJob, or an <a href="../serverless-aws-lambda/">AWS Lambda on an EventBridge schedule</a>; the binary starts in milliseconds, so there is no warm pool to keep.</li>
+          <li>One binary per partner feed costs tens of MB, not hundreds.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Which file protocols does Cameleer support?</summary><p>Local folders (<code>file</code>), FTP and FTPS (explicit and implicit TLS, tested against vsftpd), and SFTP over Cameleer's own SSH-2 implementation, tested against OpenSSH, with password or OpenSSH and PEM key authentication and <code>known_hosts</code> checking. S3, Azure Blob and Data Lake, Google Cloud Storage and Google Drive cover object storage.</p></details>
+    <details><summary>Which file formats can it parse?</summary><p>CSV (<code>csv</code> and <code>univocity</code>), fixed-length and key-value records (<code>bindyFixed</code>, <code>bindyKvp</code>, <code>bindyCsv</code>), JSON, XML, YAML, Avro, Protobuf, zip, tar and gzip archives, Base64, PGP and symmetric crypto, HL7 v2 and more; <a href="../../docs/dataformats/">29 data formats</a> in all.</p></details>
+    <details><summary>How are processed files handled?</summary><p>As in Apache Camel: <code>move</code> to a done folder, <code>moveFailed</code> to a failed folder, or <code>delete</code>, with <code>include</code> and <code>exclude</code> patterns, read locks and idempotent repositories so a file is processed once.</p></details>
+    <details><summary>How fast is a CSV batch?</summary><p>In the cloud benchmark a route that splits a 1,000-row file, keeps the EU rows, reshapes them and aggregates batches of 100 processed 998 files per second on Cameleer against 468 on Apache Camel 4.23 (JVM) and 163 on Camel Quarkus native, with 8 MB of peak memory against 337 MB.</p></details>
+    <details><summary>Does it parse EDI (EDIFACT, X12)?</summary><p>There is no dedicated EDIFACT or X12 data format. Delimited and fixed-width partner files are handled with <code>csv</code>, <code>univocity</code> and <code>bindy</code>; segment-based EDI needs a <code>tokenize</code> split and your own mapping.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Run it</h2>
+    <p class="intro">Drop a CSV file into <code>./inbox</code> and watch it land in the bucket and move to <code>.done</code>.</p>
+    <pre class="cmd">export S3_BUCKET=my-bucket AWS_REGION=eu-west-1 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
+docker run --rm -e S3_BUCKET -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
+  -e INBOX_DIR=/routes/inbox --user "$(id -u):$(id -g)" -v "$PWD:/routes" \
+  pmsudhi/cameleer run /routes/files-to-s3.camel.yaml</pre>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml">See the route</a>
+      <a class="btn" href="../../docs/components/sftp.html">The sftp component</a>
+      <a class="btn" href="../../docs/dataformats/csv.html">The csv data format</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. Other product names are trademarks of their owners.</p>
+    </div>
+    <div>
+      <h4>Use cases</h4>
+      <ul>
+        <li><a href="../">All use cases</a></li>
+        <li><a href="../serverless-aws-lambda/">Serverless</a></li>
+        <li><a href="../mqtt-iot-edge-gateway/">MQTT edge gateways</a></li>
+        <li><a href="../hl7-mllp-healthcare-integration/">HL7 over MLLP</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../docs/">Documentation</a></li>
+        <li><a href="../../docs/dataformats/">Data formats</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
