@@ -488,6 +488,8 @@ pub struct McpServer {
     registry: Arc<AiRegistry>,
     state_cipher: cameleer_tls::crypto::aes::AesGcm,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// When idle sessions were last looked for (at most once a second, never waited for).
+    last_expiry: Mutex<std::time::Instant>,
     /// Legacy server-to-client requests waiting for the client's answer, by request id.
     pending: Mutex<HashMap<String, Sender<std::result::Result<Value, Value>>>>,
     seq: AtomicU64,
@@ -510,6 +512,7 @@ impl McpServer {
             registry,
             state_cipher: cameleer_tls::crypto::aes::AesGcm::new(&key),
             sessions: Mutex::default(),
+            last_expiry: Mutex::new(std::time::Instant::now()),
             pending: Mutex::default(),
             seq: AtomicU64::new(0),
         }))
@@ -669,6 +672,13 @@ impl McpServer {
     }
 
     fn expire_sessions(&self) {
+        {
+            let Ok(mut last) = self.last_expiry.try_lock() else { return };
+            if last.elapsed() < Duration::from_secs(1) {
+                return;
+            }
+            *last = std::time::Instant::now();
+        }
         let ttl = self.config.session_idle_ttl;
         let expired: Vec<Arc<Session>> = {
             let mut map = self.sessions.lock().unwrap_or_else(|p| p.into_inner());

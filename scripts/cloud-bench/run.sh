@@ -162,10 +162,12 @@ ceiling() { # what a do-nothing Rust HTTP server reaches with this load generato
   local secs=$((WARMUP + ITER * ITERS + 5))
   for model in threads poll; do
     log "HTTP ceiling on server a: raw-http $model"
-    on "$A_PUB" "pkill -f 'cameleer-bench raw-http' || true; nohup timeout $secs /root/cameleer/target/release/cameleer-bench raw-http $PORT $model >/root/raw.out 2>&1 &"
+    # separate calls: a command line that also starts the server would match its own pkill
+    on "$A_PUB" "pkill -f '[c]ameleer-bench raw-http' || true"
+    on "$A_PUB" "nohup timeout $secs /root/cameleer/target/release/cameleer-bench raw-http $PORT $model >/root/raw.out 2>&1 &"
     sleep 1
     on "$L_PUB" "/root/cameleer/target/release/cameleer-bench loadgen-remote $A_PRIV $PORT http $CONNS $WARMUP $ITER $ITERS"       | sed "s/^RESULT /RESULT ceiling=raw-$model /" | tee -a "$OUT/ceiling.txt"
-    on "$A_PUB" "pkill -f 'cameleer-bench raw-http' || true"
+    on "$A_PUB" "pkill -f '[c]ameleer-bench raw-http' || true"
   done
 }
 
