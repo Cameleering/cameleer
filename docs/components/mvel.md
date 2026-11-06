@@ -2,7 +2,7 @@
 
 > The `mvel` component renders an MVEL 2 template (orb tags such as `@{expr}` and `@foreach{}`) against the message and sets the rendered text as the new body.
 
-**Scheme:** `mvel:` · **Crate:** `cameleer-script` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `mvel:` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [MVEL](https://camel.apache.org/components/next/mvel-component.html)
 
 ## When to use it

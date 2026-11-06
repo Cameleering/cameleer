@@ -2,7 +2,7 @@
 
 > The `stub` component stands in for any endpoint: it accepts any URI and options and queues the messages in memory like [seda](seda.md), so you can run a route without the real system.
 
-**Scheme:** `stub:` · **Crate:** `cameleer-core` ·
+**Scheme:** `stub:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Stub](https://camel.apache.org/components/next/stub-component.html)
 
 ## When to use it

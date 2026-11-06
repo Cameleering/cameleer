@@ -2,7 +2,7 @@
 
 > The `xpath` language selects values from an XML message with XPath 1.0 expressions such as `/order/@id` or `count(//item)`.
 
-**Name:** `xpath` · **Crate:** `cameleer-xml` (a smaller subset in `cameleer-core`) · **Apache Camel:** [XPath](https://camel.apache.org/components/next/languages/xpath-language.html)
+**Name:** `xpath` · **Crate:** `cameleer-xml` (a smaller subset in `cameleer-core`) · **Cargo feature:** [`xml`](../guides/build-features.md) for XPath 1.0 in full, or [`xpath`](../guides/build-features.md) for the core subset · **Apache Camel:** [XPath](https://camel.apache.org/components/next/languages/xpath-language.html)
 
 ## When to use it
 

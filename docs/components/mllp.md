@@ -2,7 +2,7 @@
 
 > The `mllp` component sends and receives HL7 v2 healthcare messages over TCP with MLLP framing, and generates HL7 acknowledgements automatically.
 
-**Scheme:** `mllp:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `mllp:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [MLLP](https://camel.apache.org/components/next/mllp-component.html)
 
 ## When to use it

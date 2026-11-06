@@ -6,8 +6,8 @@ use std::net::{TcpStream, ToSocketAddrs};
 
 use cameleer_tls::net::NetStream;
 use cameleer_tls::SslContextParameters;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use cameleer_core::error::{CamelError, Result};
 use cameleer_core::util::{parse_query, url_decode};
@@ -71,8 +71,12 @@ pub struct PgConfig {
     /// Socket read timeout (`socketTimeout`, seconds in the url; 0 = none).
     pub read_timeout: Option<Duration>,
     pub application_name: String,
-    /// Maximum idle connections kept by [`PgDataSource`].
+    /// Maximum connections [`PgDataSource`] opens (`poolSize`), like HikariCP's
+    /// `maximumPoolSize`: when all are in use, a caller waits for one to be returned.
     pub pool_size: usize,
+    /// How long a caller waits for a free connection (`poolTimeout`, seconds) before failing,
+    /// like HikariCP's `connectionTimeout`.
+    pub pool_timeout: Duration,
 }
 
 impl Default for PgConfig {
@@ -93,6 +97,7 @@ impl Default for PgConfig {
             read_timeout: Some(Duration::from_secs(60)),
             application_name: "Cameleer".into(),
             pool_size: 8,
+            pool_timeout: Duration::from_secs(30),
         }
     }
 }
@@ -154,6 +159,7 @@ impl PgConfig {
                 }
                 "ApplicationName" | "applicationName" => cfg.application_name = v,
                 "poolSize" => cfg.pool_size = v.parse().unwrap_or(8),
+                "poolTimeout" => cfg.pool_timeout = Duration::from_secs(v.parse().unwrap_or(30)),
                 "sslmode" => {
                     cfg.ssl_mode = SslMode::parse(&v).ok_or_else(|| {
                         CamelError::illegal_argument(format!("Invalid sslmode '{}' (disable, allow, prefer, require, verify-ca, verify-full): {}", v, url))
@@ -635,12 +641,33 @@ impl Drop for PgConnection {
     }
 }
 
-struct Pool {
-    cfg: PgConfig,
-    idle: Mutex<Vec<PgConnection>>,
+struct PoolState {
+    idle: Vec<PgConnection>,
+    /// Connections open, idle or in use; never more than `pool_size`.
+    open: usize,
 }
 
-/// A data source for a PostgreSQL server with a small idle-connection pool.
+struct Pool {
+    cfg: PgConfig,
+    state: Mutex<PoolState>,
+    /// Signalled when a connection goes back to the pool or is closed.
+    freed: Condvar,
+}
+
+impl Pool {
+    fn release(&self, conn: Option<PgConnection>) {
+        let mut st = self.state.lock().unwrap();
+        match conn {
+            Some(c) => st.idle.push(c),
+            None => st.open = st.open.saturating_sub(1),
+        }
+        drop(st);
+        self.freed.notify_one();
+    }
+}
+
+/// A data source for a PostgreSQL server with a connection pool of at most `poolSize`
+/// connections.
 #[derive(Clone)]
 pub struct PgDataSource {
     pool: Arc<Pool>,
@@ -648,7 +675,7 @@ pub struct PgDataSource {
 
 impl PgDataSource {
     pub fn new(cfg: PgConfig) -> Self {
-        PgDataSource { pool: Arc::new(Pool { cfg, idle: Mutex::new(Vec::new()) }) }
+        PgDataSource { pool: Arc::new(Pool { cfg, state: Mutex::new(PoolState { idle: Vec::new(), open: 0 }), freed: Condvar::new() }) }
     }
     /// Create from a `jdbc:postgresql://` url.
     pub fn from_url(url: &str) -> Result<Self> {
@@ -659,11 +686,21 @@ impl PgDataSource {
     }
     /// Number of idle pooled connections.
     pub fn idle_connections(&self) -> usize {
-        self.pool.idle.lock().unwrap().len()
+        self.pool.state.lock().unwrap().idle.len()
+    }
+    /// Number of open connections, idle or in use.
+    pub fn open_connections(&self) -> usize {
+        self.pool.state.lock().unwrap().open
     }
     /// Close all idle connections.
     pub fn close(&self) {
-        self.pool.idle.lock().unwrap().clear();
+        let closed: Vec<PgConnection> = {
+            let mut st = self.pool.state.lock().unwrap();
+            st.open -= st.idle.len();
+            std::mem::take(&mut st.idle)
+        };
+        drop(closed);
+        self.pool.freed.notify_all();
     }
 }
 
@@ -682,15 +719,12 @@ impl PooledConnection {
 impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(mut c) = self.conn.take() {
-            if c.broken {
-                return;
-            }
-            if c.status != b'I' && c.simple_query("ROLLBACK").is_err() {
-                return;
-            }
-            let mut idle = self.pool.idle.lock().unwrap();
-            if idle.len() < self.pool.cfg.pool_size {
-                idle.push(c);
+            let reusable = !c.broken && (c.status == b'I' || c.simple_query("ROLLBACK").is_ok());
+            if reusable {
+                self.pool.release(Some(c));
+            } else {
+                drop(c);
+                self.pool.release(None);
             }
         }
     }
@@ -719,12 +753,38 @@ impl Connection for PooledConnection {
 
 impl DataSource for PgDataSource {
     fn get_connection(&self) -> Result<Box<dyn Connection>> {
-        let pooled = self.pool.idle.lock().unwrap().pop();
-        let conn = match pooled {
-            Some(c) if c.is_valid() => c,
-            _ => PgConnection::connect(&self.pool.cfg)?,
-        };
-        Ok(Box::new(PooledConnection { conn: Some(conn), pool: self.pool.clone() }))
+        let pool = &self.pool;
+        let max = pool.cfg.pool_size.max(1);
+        let deadline = Instant::now() + pool.cfg.pool_timeout;
+        let mut st = pool.state.lock().unwrap();
+        loop {
+            if let Some(c) = st.idle.pop() {
+                if c.is_valid() {
+                    return Ok(Box::new(PooledConnection { conn: Some(c), pool: pool.clone() }));
+                }
+                st.open -= 1;
+                continue;
+            }
+            if st.open < max {
+                st.open += 1;
+                drop(st);
+                return match PgConnection::connect(&pool.cfg) {
+                    Ok(c) => Ok(Box::new(PooledConnection { conn: Some(c), pool: pool.clone() })),
+                    Err(e) => {
+                        pool.release(None);
+                        Err(e)
+                    }
+                };
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(sql_error(
+                    "08001",
+                    format!("Connection is not available, request timed out after {} ms (poolSize={max})", pool.cfg.pool_timeout.as_millis()),
+                ));
+            }
+            st = pool.freed.wait_timeout(st, deadline - now).unwrap().0;
+        }
     }
     fn description(&self) -> String {
         self.pool.cfg.url()

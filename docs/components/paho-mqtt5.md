@@ -2,7 +2,7 @@
 
 > The `paho-mqtt5` component publishes and subscribes to MQTT 5.0 topics, with user properties, clean start and session expiry.
 
-**Scheme:** `paho-mqtt5:` · **Crate:** `cameleer-kafka-mqtt` ·
+**Scheme:** `paho-mqtt5:` · **Crate:** `cameleer-kafka-mqtt` · **Cargo feature:** [`kafka-mqtt`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Paho MQTT 5](https://camel.apache.org/components/next/paho-mqtt5-component.html)
 
 ## When to use it

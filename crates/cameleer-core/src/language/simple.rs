@@ -2038,14 +2038,21 @@ fn call(name: &str, args: &[Expr], ex: &Exchange) -> Result<Value> {
             let (input, path) = if args.len() == 2 { (ev(0)?, evs(1)?) } else { (body(), evs(0)?) };
             super::jsonpath::query(&input, &path)?
         }
+        #[cfg(feature = "jq")]
         "jq" => {
             let (input, q) = if args.len() == 2 { (ev(0)?, evs(1)?) } else { (body(), evs(0)?) };
             super::jq::query(&input, &q)?
         }
+        #[cfg(feature = "xpath")]
         "xpath" => {
             let (input, q) = if args.len() == 2 { (ev(0)?, evs(1)?) } else { (body(), evs(0)?) };
             super::xpath::query(&input.to_string(), &q, None)?
         }
+        // left out of this build (cameleer-core features `jq` / `xpath`)
+        #[cfg(not(feature = "jq"))]
+        "jq" => return Err(super::no_such_language(name)),
+        #[cfg(not(feature = "xpath"))]
+        "xpath" => return Err(super::no_such_language(name)),
         "messageHistory" => {
             // ${messageHistory} / ${messageHistory(false)}: without the exchange details
             let details = if args.is_empty() { true } else { ev(0)?.is_predicate_true() };

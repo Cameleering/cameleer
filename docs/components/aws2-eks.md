@@ -2,7 +2,7 @@
 
 > The `aws2-eks` component lists, creates, describes and deletes Amazon EKS (Kubernetes) clusters.
 
-**Scheme:** `aws2-eks:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-eks:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Elastic Kubernetes Service (EKS)](https://camel.apache.org/components/next/aws2-eks-component.html)
 
 ## When to use it

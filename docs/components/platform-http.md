@@ -2,7 +2,7 @@
 
 > The `platform-http` component serves HTTP requests on Cameleer's embedded HTTP/1.1 server: each route binds a path and its reply becomes the HTTP response.
 
-**Scheme:** `platform-http:` · **Crate:** `cameleer-http` ·
+**Scheme:** `platform-http:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Platform HTTP](https://camel.apache.org/components/next/platform-http-component.html)
 
 All `platform-http` routes share one server and one port (`camel.server.port`, default 8080).

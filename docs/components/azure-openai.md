@@ -2,7 +2,7 @@
 
 > The `azure-openai` component calls models deployed on Azure OpenAI: chat completions (with streaming and tool calls), embeddings, image generation and the Assistants API.
 
-**Scheme:** `azure-openai:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `azure-openai:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** none (Apache Camel reaches Azure OpenAI through LangChain4j; this is a Cameleer component)
 
 ## When to use it

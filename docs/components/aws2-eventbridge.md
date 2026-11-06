@@ -2,7 +2,7 @@
 
 > The `aws2-eventbridge` component publishes events to Amazon EventBridge buses and manages rules and targets.
 
-**Scheme:** `aws2-eventbridge:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-eventbridge:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Eventbridge](https://camel.apache.org/components/next/aws2-eventbridge-component.html)
 
 ## When to use it

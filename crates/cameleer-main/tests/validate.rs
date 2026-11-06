@@ -3,6 +3,9 @@
 //! `examples/` and every `<!-- example: id -->` YAML block in `docs/` (all must validate
 //! without errors).
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 

@@ -15,7 +15,7 @@ Pick one of three ways. They run the same routes.
 ### Docker
 
 The image `pmsudhi/cameleer` on Docker Hub is a single binary on a distroless base, for
-`linux/amd64` and `linux/arm64`, under 20 MB to download. Mount your route files and run them:
+`linux/amd64` and `linux/arm64`, about 20 MB to download. Mount your route files and run them:
 
 ```sh
 docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello.camel.yaml
@@ -33,7 +33,7 @@ cargo install cameleer-main
 cameleer run hello.camel.yaml
 ```
 
-This installs the `cameleer` command. Its subcommands follow Camel JBang (`run`, `init`, `ps`, `stop`, `log`, ...). To build from source:
+This installs the `cameleer` command with every component. Its subcommands follow Camel JBang (`run`, `init`, `ps`, `stop`, `log`, ...). To build from source:
 
 ```sh
 git clone https://github.com/pmsudhi/cameleer && cd cameleer
@@ -48,12 +48,20 @@ DSL) and the crates for the components you need:
 
 ```toml
 [dependencies]
-cameleer-core = "0.3"
-cameleer-http = "0.3"
+cameleer-core = "0.4"
+cameleer-http = "0.4"
 ```
 
 `cameleer-main` bundles every component and runs YAML routes from Rust; see
 [Embed routes in a Rust program](#embed-routes-in-a-rust-program) below.
+
+### Every component is included by default
+
+The image, `cargo install cameleer-main` and the crates' default features contain every
+component, language and data format, so any route in these docs runs without extra setup.
+For a smaller binary (a serverless function, an edge device, a slim image) pick only the
+families your routes use with cargo features; [Build features](build-features.md) lists them
+and shows the commands. Each component page names its feature in its header line.
 
 ## Your first route
 
@@ -196,6 +204,7 @@ and use `cameleer_main::new_main()`, then `add_route_file("routes/hello.camel.ya
 ## Where to go next
 
 - [Concepts](concepts.md): routes, endpoints, exchanges, messages, components and the DSLs.
+- [Build features](build-features.md): a smaller build with only the components you use.
 - [Enterprise Integration Patterns](eips.md): every EIP with a YAML and a Rust example.
 - [Error handling](error-handling.md): retries, dead letter channels, `onException`.
 - [Cameleer for AI agents](agents.md) and [Cameleer at the edge](edge.md): cookbooks.

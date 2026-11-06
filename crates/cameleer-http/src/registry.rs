@@ -7,7 +7,7 @@
 //! `produces` / `Accept` mismatches.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use cameleer_core::error::{CamelError, Result};
@@ -275,7 +275,10 @@ impl crate::server::HttpHandler for RouterHandler {
 
 /// A server shared by all consumers bound to its port.
 pub struct SharedServer {
-    pub server: HttpServer,
+    /// The socket server; `None` when the registry serves in process only
+    /// ([`ServerRegistry::set_in_process_only`]).
+    pub server: Option<HttpServer>,
+    tls: bool,
     pub router: Arc<Router>,
 }
 
@@ -291,6 +294,9 @@ pub struct Registration {
 #[derive(Default)]
 pub struct ServerRegistry {
     servers: Mutex<HashMap<u16, Arc<SharedServer>>>,
+    in_process_only: AtomicBool,
+    /// Ports handed out for port 0 in in-process mode (no socket picks one).
+    next_virtual_port: AtomicU16,
 }
 
 /// The global server registry.
@@ -300,6 +306,17 @@ pub fn registry() -> &'static ServerRegistry {
 }
 
 impl ServerRegistry {
+    /// Serve HTTP routes only through [`Self::dispatch`], without opening sockets (the AWS
+    /// Lambda runtime: requests arrive as events, and the sandbox's ports are not ours).
+    /// Applies to servers registered afterwards.
+    pub fn set_in_process_only(&self, on: bool) {
+        self.in_process_only.store(on, Ordering::SeqCst);
+    }
+
+    pub fn is_in_process_only(&self) -> bool {
+        self.in_process_only.load(Ordering::SeqCst)
+    }
+
     /// Stream the request bodies of a registered route (`disableStreamCache=true`).
     pub fn set_streaming(&self, reg: &Registration, streaming: bool) {
         if let Some(s) = self.servers.lock().unwrap().get(&reg.port) {
@@ -313,11 +330,11 @@ impl ServerRegistry {
         let mut servers = self.servers.lock().unwrap();
         if port != 0 {
             if let Some(s) = servers.get(&port) {
-                if s.server.is_tls() != config.tls.is_some() {
+                if s.tls != config.tls.is_some() {
                     return Err(CamelError::illegal_argument(format!(
                         "Port {} is already used by an {} server; cannot register an {} endpoint on it",
                         port,
-                        if s.server.is_tls() { "https" } else { "http" },
+                        if s.tls { "https" } else { "http" },
                         if config.tls.is_some() { "https" } else { "http" }
                     )));
                 }
@@ -327,13 +344,28 @@ impl ServerRegistry {
         }
         let router = Arc::new(Router::new());
         let route_id = router.add(spec, handler)?;
+        if self.is_in_process_only() {
+            let port = if port != 0 {
+                port
+            } else {
+                loop {
+                    let p = 40_000u16.wrapping_add(self.next_virtual_port.fetch_add(1, Ordering::SeqCst)).max(1);
+                    if !servers.contains_key(&p) {
+                        break p;
+                    }
+                }
+            };
+            cameleer_core::camel_debug!("cameleer-http", "HTTP routes on port {} served in process (no socket)", port);
+            servers.insert(port, Arc::new(SharedServer { server: None, tls: config.tls.is_some(), router }));
+            return Ok(Registration { port, route_id });
+        }
         let r2 = router.clone();
         let bind_host = if host.contains(':') && !host.starts_with('[') { format!("[{}]", host) } else { host.to_string() };
         let server = HttpServer::bind(format!("{}:{}", bind_host, port), config.clone(), RouterHandler(r2))
             .map_err(|e| CamelError::io(format!("Failed to bind HTTP server on {}:{}: {}", host, port, e)))?;
         let actual = server.port();
         cameleer_core::camel_info!("cameleer-http", "HTTP server started on {}:{}", host, actual);
-        servers.insert(actual, Arc::new(SharedServer { server, router }));
+        servers.insert(actual, Arc::new(SharedServer { server: Some(server), tls: config.tls.is_some(), router }));
         Ok(Registration { port: actual, route_id })
     }
 
@@ -353,8 +385,8 @@ impl ServerRegistry {
                 None => None,
             }
         };
-        if let Some(s) = to_stop {
-            s.server.stop();
+        if let Some(server) = to_stop.as_ref().and_then(|s| s.server.as_ref()) {
+            server.stop();
             cameleer_core::camel_info!("cameleer-http", "HTTP server on port {} stopped", reg.port);
         }
     }
@@ -369,6 +401,26 @@ impl ServerRegistry {
     /// Paths registered on a port.
     pub fn paths(&self, port: u16) -> Vec<String> {
         self.servers.lock().unwrap().get(&port).map(|s| s.router.paths()).unwrap_or_default()
+    }
+
+    /// Serve a request in process, without a socket (the AWS Lambda runtime turns API Gateway
+    /// and function URL events into requests). Servers are tried in port order; the first
+    /// answer that is not 404 wins. `None` when no HTTP route is registered.
+    pub fn dispatch(&self, req: &mut HttpRequest) -> Option<HttpResponse> {
+        let mut servers: Vec<(u16, Arc<SharedServer>)> = self.servers.lock().unwrap().iter().map(|(p, s)| (*p, s.clone())).collect();
+        if servers.is_empty() {
+            return None;
+        }
+        servers.sort_by_key(|(p, _)| *p);
+        let mut last = None;
+        for (_, s) in servers {
+            let resp = s.router.dispatch(req);
+            if resp.status != 404 {
+                return Some(resp);
+            }
+            last = Some(resp);
+        }
+        last
     }
 }
 
@@ -406,5 +458,29 @@ mod tests {
         assert_eq!(resp.headers.get("Allow"), Some("GET"));
         let mut req = HttpRequest::new("GET", "/nope");
         assert_eq!(r.dispatch(&mut req).status, 404);
+    }
+
+    #[test]
+    fn in_process_only_registers_without_a_socket_and_dispatches() {
+        // a port that is taken: binding it would fail
+        let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = taken.local_addr().unwrap().port();
+        let reg = ServerRegistry::default();
+        let h: RouteHandler = Arc::new(|_req, p| HttpResponse::text(200, format!("hi {:?}", p)));
+        assert!(reg.dispatch(&mut HttpRequest::new("GET", "/x")).is_none(), "no routes yet");
+        reg.set_in_process_only(true);
+        let a = reg.register("127.0.0.1", port, &ServerConfig::default(), HttpRouteSpec { path: "/greet/{n}".into(), ..Default::default() }, h.clone()).unwrap();
+        assert_eq!(a.port, port);
+        // port 0 gets a distinct virtual port
+        let b = reg.register("127.0.0.1", 0, &ServerConfig::default(), HttpRouteSpec { path: "/other".into(), ..Default::default() }, h).unwrap();
+        assert_ne!(b.port, port);
+        let resp = reg.dispatch(&mut HttpRequest::new("GET", "/greet/ada")).unwrap();
+        assert_eq!(resp.status, 200);
+        assert_eq!(resp.body_text(), r#"hi [("n", "ada")]"#);
+        assert_eq!(reg.dispatch(&mut HttpRequest::new("GET", "/missing")).unwrap().status, 404);
+        reg.unregister(&a);
+        reg.unregister(&b);
+        assert!(reg.ports().is_empty());
+        drop(taken);
     }
 }

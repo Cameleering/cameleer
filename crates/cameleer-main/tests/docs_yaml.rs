@@ -9,6 +9,9 @@
 //! and the test checks what reaches the `mock:` endpoints, the HTTP reply or the output folder.
 //! The loader error messages quoted on the pages are checked too.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};

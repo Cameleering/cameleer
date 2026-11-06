@@ -2,7 +2,7 @@
 
 > The `paho` component publishes and subscribes to MQTT 3.1.1 topics, for IoT sensors, edge gateways and any MQTT broker such as Mosquitto, EMQX, HiveMQ or AWS IoT Core.
 
-**Scheme:** `paho:` · **Crate:** `cameleer-kafka-mqtt` ·
+**Scheme:** `paho:` · **Crate:** `cameleer-kafka-mqtt` · **Cargo feature:** [`kafka-mqtt`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Paho](https://camel.apache.org/components/next/paho-component.html)
 
 ## When to use it

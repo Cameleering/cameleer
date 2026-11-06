@@ -2,7 +2,7 @@
 
 > The `csv` data format parses CSV text into rows (lists or maps) and writes rows back as CSV, following RFC 4180.
 
-**Name:** `csv` · **Crate:** `cameleer-core` ·
+**Name:** `csv` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [CSV](https://camel.apache.org/components/next/dataformats/csv-dataformat.html)
 
 ## When to use it

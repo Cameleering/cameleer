@@ -1,0 +1,211 @@
+# One agent tool for a multi-step job: `POST /tools/resolve-damaged-order` refunds a delivered
+# order that arrived damaged, creates a return label and emails the customer. The agent sends
+# only requestId, orderId and reason (schemas/damaged-order-request.json); the route
+#   - validates the arguments (400 with every error, so the agent can correct itself),
+#   - executes each requestId once (a retried call does not refund twice),
+#   - reads the order and takes the amount from it, never from the model,
+#   - refuses orders that are not delivered (409) and parks large refunds for a person (202),
+#   - runs the refund and the return label as a saga: if the label fails, the refund is
+#     cancelled, so nothing is left half done (502),
+#   - retries the payments and shipping calls with exponential back-off,
+#   - emails the customer and appends every call to an audit log, off the critical path.
+#
+# Needs: the orders, payments, shipping and email APIs.
+#   export ORDERS_URL=https://orders.internal.example.com PAYMENTS_URL=https://payments.internal.example.com \
+#          SHIPPING_URL=https://shipping.internal.example.com EMAIL_URL=https://email.internal.example.com
+#   # optional: APPROVAL_LIMIT (default 200)
+#
+# Run with Docker (audit log and parked refunds written to ./audit and ./pending):
+#   mkdir -p audit pending
+#   docker run --rm -p 8080:8080 -e ORDERS_URL -e PAYMENTS_URL -e SHIPPING_URL -e EMAIL_URL \
+#     -e AUDIT_DIR=/routes/audit -e PENDING_DIR=/routes/pending -e SCHEMA_DIR=/routes/schemas \
+#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" pmsudhi/cameleer run /routes/damaged-order-tool.camel.yaml
+# Try:
+#   curl -XPOST localhost:8080/tools/resolve-damaged-order -H 'Content-Type: application/json' \
+#     -d '{"requestId":"call-7f3a9c","orderId":"EU-4411","reason":"damaged"}'
+- rest:
+    path: /tools
+    post:
+      - path: /resolve-damaged-order
+        to: direct:resolve-damaged-order
+- routeConfiguration:
+    id: tool-errors
+    onException:
+      - onException:
+          exception:
+            - org.apache.camel.component.jsonvalidator.JsonValidationException
+          handled:
+            constant: true
+          steps:
+            - setHeader:
+                name: CamelHttpResponseCode
+                constant: 400
+            - setBody:
+                simple: "invalid tool arguments: ${exception.message}"
+      - onException:
+          exception:
+            - org.apache.camel.http.base.HttpOperationFailedException
+            - java.io.IOException
+          handled:
+            constant: true
+          steps:
+            - setHeader:
+                name: CamelHttpResponseCode
+                constant: 502
+            - setHeader:
+                name: Content-Type
+                constant: application/json
+            - setBody:
+                simple: '{"status": "failed", "requestId": "${header.requestId}", "detail": "a backend did not answer; nothing was changed, retry later with a new requestId"}'
+- route:
+    id: resolve-damaged-order
+    routeConfigurationId: tool-errors
+    from:
+      uri: direct:resolve-damaged-order
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - to: "json-validator:file:{{env:SCHEMA_DIR:schemas}}/damaged-order-request.json"
+        - unmarshal:
+            json: {}
+        - setHeader:
+            name: requestId
+            simple: "${body[requestId]}"
+        - setHeader:
+            name: orderId
+            simple: "${body[orderId]}"
+        - setHeader:
+            name: reason
+            simple: "${body[reason]}"
+        - wireTap:
+            uri: direct:audit-order-tool
+        - idempotentConsumer:
+            header: requestId
+            steps:
+              - removeHeaders:
+                  pattern: "CamelHttp*"
+              - toD: "{{env:ORDERS_URL:http://localhost:9001}}/orders/${header.orderId}?httpMethod=GET"
+              - unmarshal:
+                  json: {}
+              - setHeader:
+                  name: amount
+                  simple: "${body[total]}"
+              - setHeader:
+                  name: email
+                  simple: "${body[email]}"
+              - choice:
+                  when:
+                    - simple: "${body[status]} != 'delivered'"
+                      steps:
+                        - setHeader:
+                            name: CamelHttpResponseCode
+                            constant: 409
+                        - setBody:
+                            simple: '{"status": "rejected", "requestId": "${header.requestId}", "detail": "order ${header.orderId} is ${body[status]}; only delivered orders can be refunded"}'
+                    - simple: "${header.amount} > {{env:APPROVAL_LIMIT:200}}"
+                      steps:
+                        - setBody:
+                            simple: '{"requestId": "${header.requestId}", "orderId": "${header.orderId}", "amount": ${header.amount}, "reason": "${header.reason}"}'
+                        - to: "file:{{env:PENDING_DIR:pending}}?fileName=${header.requestId}.json"
+                        - setHeader:
+                            name: CamelHttpResponseCode
+                            constant: 202
+                        - setBody:
+                            simple: '{"status": "pending_approval", "requestId": "${header.requestId}", "detail": "refunds over {{env:APPROVAL_LIMIT:200}} need a person; tell the customer they will hear back within one business day"}'
+                  otherwise:
+                    steps:
+                      - doTry:
+                          steps:
+                            - to: direct:refund-with-label
+                            - wireTap:
+                                uri: direct:notify-customer
+                            - setHeader:
+                                name: CamelHttpResponseCode
+                                constant: 200
+                            - setBody:
+                                simple: '{"status": "resolved", "requestId": "${header.requestId}", "refundId": "${header.refundId}", "amount": ${header.amount}, "returnLabel": "${header.labelUrl}"}'
+                          doCatch:
+                            - exception:
+                                - org.apache.camel.http.base.HttpOperationFailedException
+                                - java.io.IOException
+                              steps:
+                                - setHeader:
+                                    name: CamelHttpResponseCode
+                                    constant: 502
+                                - setBody:
+                                    simple: '{"status": "failed", "requestId": "${header.requestId}", "detail": "the return label failed, so the refund was cancelled; nothing was changed. To try again later, call with a new requestId"}'
+        - filter:
+            simple: "${exchangeProperty.CamelDuplicateMessage} == true"
+            steps:
+              - setBody:
+                  simple: '{"status": "duplicate", "requestId": "${header.requestId}"}'
+        - setHeader:
+            name: Content-Type
+            constant: application/json
+- route:
+    id: refund-with-label
+    errorHandler:
+      defaultErrorHandler:
+        redeliveryPolicy:
+          maximumRedeliveries: 2
+          redeliveryDelay: 200
+          useExponentialBackOff: true
+    from:
+      uri: direct:refund-with-label
+      steps:
+        - saga:
+            compensation:
+              uri: direct:cancel-refund
+            option:
+              - key: requestId
+                expression:
+                  simple: "${header.requestId}"
+            steps:
+              - setBody:
+                  simple: '{"requestId": "${header.requestId}", "orderId": "${header.orderId}", "amount": ${header.amount}, "reason": "${header.reason}"}'
+              - enrich:
+                  uri: "{{env:PAYMENTS_URL:http://localhost:9002}}/refunds?httpMethod=POST"
+              - unmarshal:
+                  json: {}
+              - setHeader:
+                  name: refundId
+                  simple: "${body[refundId]}"
+              - setBody:
+                  simple: '{"orderId": "${header.orderId}", "requestId": "${header.requestId}"}'
+              - enrich:
+                  uri: "{{env:SHIPPING_URL:http://localhost:9003}}/return-labels?httpMethod=POST"
+              - unmarshal:
+                  json: {}
+              - setHeader:
+                  name: labelUrl
+                  simple: "${body[labelUrl]}"
+- route:
+    id: cancel-refund
+    from:
+      uri: direct:cancel-refund
+      steps:
+        - removeHeaders:
+            pattern: "CamelHttp*"
+        - setBody:
+            simple: '{"requestId": "${header.requestId}"}'
+        - to: "{{env:PAYMENTS_URL:http://localhost:9002}}/refunds/cancel?httpMethod=POST"
+- route:
+    id: notify-customer
+    from:
+      uri: direct:notify-customer
+      steps:
+        - removeHeaders:
+            pattern: "CamelHttp*"
+        - setBody:
+            simple: '{"to": "${header.email}", "template": "refund-issued", "orderId": "${header.orderId}", "amount": ${header.amount}, "returnLabel": "${header.labelUrl}"}'
+        - to: "{{env:EMAIL_URL:http://localhost:9004}}/messages?httpMethod=POST"
+- route:
+    id: audit-order-tool
+    from:
+      uri: direct:audit-order-tool
+      steps:
+        - marshal:
+            json: {}
+        - setBody:
+            simple: "${body}\n"
+        - to: "file:{{env:AUDIT_DIR:audit}}?fileName=tool-calls.jsonl&fileExist=Append"

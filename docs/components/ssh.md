@@ -2,7 +2,7 @@
 
 > The `ssh` component runs commands on remote hosts over SSH: the producer runs the message body as a command and returns its output, the consumer runs a command on a schedule.
 
-**Scheme:** `ssh:` · **Crate:** `cameleer-ssh` ·
+**Scheme:** `ssh:` · **Crate:** `cameleer-ssh` · **Cargo feature:** [`ssh`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [SSH](https://camel.apache.org/components/next/ssh-component.html)
 
 Cameleer has its own SSH-2 client (interop-tested against OpenSSH): password, public key,

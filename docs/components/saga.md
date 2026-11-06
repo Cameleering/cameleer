@@ -2,7 +2,7 @@
 
 > The `saga` component completes or compensates the current saga from a route, for sagas started with the Saga EIP.
 
-**Scheme:** `saga:` · **Crate:** `cameleer-core` ·
+**Scheme:** `saga:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Saga](https://camel.apache.org/components/next/saga-component.html)
 
 ## When to use it

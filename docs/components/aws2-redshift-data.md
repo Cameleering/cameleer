@@ -2,7 +2,7 @@
 
 > The `aws2-redshift-data` component runs SQL on Amazon Redshift clusters and Redshift Serverless workgroups through the Redshift Data API, without a database driver or connection pool.
 
-**Scheme:** `aws2-redshift-data:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-redshift-data:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Redshift Data](https://camel.apache.org/components/next/aws2-redshift-data-component.html)
 
 ## When to use it

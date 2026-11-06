@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -204,7 +204,7 @@ pub struct TcpServer {
 impl TcpServer {
     /// Binds `127.0.0.1:0` and serves each connection with `handler` on its own thread.
     pub fn start(name: &str, tls: Option<Arc<TlsServerConfig>>, handler: impl Fn(NetStream) + Send + Sync + 'static) -> io::Result<TcpServer> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let listener = cameleer_tls::net::bind_loopback()?;
         let addr = listener.local_addr()?;
         let shared = Arc::new(ServerShared { running: AtomicBool::new(true), conns: Mutex::new(HashMap::new()) });
         let handler = Arc::new(handler);

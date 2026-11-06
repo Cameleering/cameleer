@@ -1,6 +1,9 @@
 //! cameleer-main configuration (application.yaml, profiles, env, aliases, beans, component
 //! options), Camel K Integrations, dev reload and the `cameleer` CLI commands.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};

@@ -18,6 +18,11 @@ pub(crate) type Seq = Vec<Item>;
 
 /// Maximum depth of user-defined function calls.
 pub(crate) const MAX_DEPTH: usize = 3000;
+/// Stack kept free between two stack checks (one `eval` level plus the builtins it calls).
+/// Below it, evaluation continues on a new segment of [`SEGMENT`] bytes.
+pub(crate) const RED_ZONE: usize = 512 * 1024;
+/// Size of an additional stack segment (enough for [`MAX_DEPTH`] nested calls).
+pub(crate) const SEGMENT: usize = 256 << 20;
 
 /// The focus (context item, position, size).
 #[derive(Clone, Debug)]
@@ -50,6 +55,9 @@ pub(crate) struct Interp<'a> {
     pub now: String,
     /// Pending update list (XQuery Update Facility).
     pub pul: Vec<super::update::Update>,
+    /// Stack address below which evaluation moves to a new segment
+    /// (`cameleer_core::stack::floor(RED_ZONE)` of the thread evaluating).
+    pub stack_floor: usize,
 }
 
 pub(crate) fn new_root(ty: NodeType, name: QName, value: String) -> Document {
@@ -261,7 +269,35 @@ impl<'a> Interp<'a> {
 
     // ---------------------------------------------------------------- evaluation
 
+    /// Evaluate `e`. Runs on the current thread while enough stack is left; deep recursion
+    /// continues on a new stack segment (see [`RED_ZONE`]).
+    #[inline]
     pub fn eval(&mut self, e: &Expr, f: &Focus) -> R<Seq> {
+        if cameleer_core::stack::here() >= self.stack_floor {
+            return self.eval_inner(e, f);
+        }
+        self.eval_on_new_segment(e, f)
+    }
+
+    /// The rare path of [`Interp::eval`], kept out of line so it does not enlarge every
+    /// evaluation frame.
+    #[cold]
+    #[inline(never)]
+    fn eval_on_new_segment(&mut self, e: &Expr, f: &Focus) -> R<Seq> {
+        let saved = self.stack_floor;
+        // SAFETY: the interpreter state (`Rc`s, the documents) is used by the segment thread
+        // only while this thread waits for it; the evaluator uses no thread-locals or locks.
+        let r = unsafe {
+            cameleer_core::stack::on_new_stack(SEGMENT, || {
+                self.stack_floor = cameleer_core::stack::floor(RED_ZONE);
+                self.eval_inner(e, f)
+            })
+        };
+        self.stack_floor = saved;
+        r
+    }
+
+    fn eval_inner(&mut self, e: &Expr, f: &Focus) -> R<Seq> {
         match e {
             Expr::Seq(v) => {
                 let mut out = Vec::new();

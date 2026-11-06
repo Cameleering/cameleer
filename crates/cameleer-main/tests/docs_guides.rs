@@ -9,6 +9,9 @@
 //! (`rust_snippets_are_copied_verbatim` checks it) and most of them run against the same
 //! assertions as their YAML twin.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
@@ -31,6 +34,7 @@ const PAGES: &[&str] = &[
     "eips/system.md",
     "error-handling.md",
     "agents.md",
+    "agent-tool-calls.md",
     "edge.md",
     "migrating-from-apache-camel.md",
     "faq.md",
@@ -2102,4 +2106,131 @@ fn guide_links_resolve() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// agent-tool-calls.md: one tool for a multi-step job
+// ---------------------------------------------------------------------------
+
+const TOOL_CALLS: &str = "agent-tool-calls.md";
+
+#[test]
+fn agent_tool_calls_damaged_order() {
+    assert_guide_shows_file(TOOL_CALLS, "agent-tool-calls-damaged-order", "agents/damaged-order-tool.camel.yaml");
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let order = |status: &str, total: f64| {
+        mock_json(200, &Value::object([("status", Value::from(status)), ("total", Value::Float(total)), ("email", Value::from("ann@example.com"))]))
+    };
+    let orders = MockServer::start(move |r| match r.path.as_str() {
+        "/orders/EU-4411" => order("delivered", 129.9),
+        "/orders/EU-9000" => order("delivered", 899.0),
+        "/orders/EU-1200" => order("shipped", 40.0),
+        "/orders/EU-5000" => order("delivered", 49.0),
+        _ => cameleer_http::HttpResponse::text(404, "no such order"),
+    });
+    let refunds = Arc::new(AtomicUsize::new(0));
+    let r2 = refunds.clone();
+    let payments = MockServer::start(move |r| {
+        if r.path == "/refunds/cancel" {
+            return mock_json(200, &Value::object([("cancelled", Value::Bool(true))]));
+        }
+        let n = r2.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            cameleer_http::HttpResponse::text(503, "busy")
+        } else {
+            mock_json(201, &Value::object([("refundId", Value::from(format!("r-{}", n)))]))
+        }
+    });
+    let shipping = MockServer::start(|r| {
+        if r.text().contains("EU-5000") {
+            cameleer_http::HttpResponse::text(500, "label printer offline")
+        } else {
+            mock_json(201, &Value::object([("labelUrl", Value::from("https://labels.example.com/l-1.pdf"))]))
+        }
+    });
+    let email = MockServer::start(|_r| mock_json(202, &Value::object([("queued", Value::Bool(true))])));
+    let (audit, audit_s) = temp_dir("damaged-audit");
+    let (pending, pending_s) = temp_dir("damaged-pending");
+    let port = free_port();
+    let text = agent_route(
+        "agents/damaged-order-tool.camel.yaml",
+        &[
+            ("ORDERS_URL", &orders.url()),
+            ("PAYMENTS_URL", &payments.url()),
+            ("SHIPPING_URL", &shipping.url()),
+            ("EMAIL_URL", &email.url()),
+            ("AUDIT_DIR", &audit_s),
+            ("PENDING_DIR", &pending_s),
+            ("SCHEMA_DIR", &schema_dir()),
+        ],
+    );
+    let main = start_route_file("damaged-order-tool", &text, Some(port));
+    let json_ct = [("Content-Type", "application/json")];
+    let tool = "/tools/resolve-damaged-order";
+
+    // 1. resolved: the payments API fails once and is retried; amount comes from the order
+    let call = r#"{"requestId":"call-7f3a9c","orderId":"EU-4411","reason":"damaged"}"#;
+    let (status, body) = http(port, "POST", tool, &json_ct, call);
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains(r#""status": "resolved""#) && body.contains(r#""refundId": "r-1""#) && body.contains("129.9") && body.contains("l-1.pdf"), "{}", body);
+    assert_eq!(payments.requests_to("/refunds").len(), 2, "one retry after the 503");
+    let sent = payments.requests_to("/refunds")[1].json();
+    assert_eq!(sent.get("amount").map(|v| v.to_string()).as_deref(), Some("129.9"));
+    assert_eq!(shipping.requests_to("/return-labels").len(), 1);
+    wait_for("the customer email", || email.requests_to("/messages").len() == 1);
+    let mail = email.requests_to("/messages")[0].json();
+    assert_eq!(mail.get("to").map(|v| v.to_string()).as_deref(), Some("ann@example.com"));
+
+    // 2. the agent retries the same call: nothing is executed again
+    let (status, body) = http(port, "POST", tool, &json_ct, call);
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains(r#""status": "duplicate""#), "{}", body);
+    assert_eq!(payments.requests_to("/refunds").len(), 2);
+
+    // 3. the model invents an amount and a free-text reason: rejected with every error
+    let (status, body) = http(port, "POST", tool, &json_ct, r#"{"requestId":"call-8b21d0","orderId":"4411","reason":"customer is angry","amount":1299}"#);
+    assert_eq!(status, 400, "{}", body);
+    assert!(body.contains("invalid tool arguments") && body.contains("orderId") && body.contains("reason") && body.contains("amount"), "{}", body);
+
+    // 4. not delivered yet: refused, nothing executed
+    let (status, body) = http(port, "POST", tool, &json_ct, r#"{"requestId":"call-1200aa","orderId":"EU-1200","reason":"damaged"}"#);
+    assert_eq!(status, 409, "{}", body);
+    assert!(body.contains(r#""status": "rejected""#) && body.contains("shipped"), "{}", body);
+
+    // 5. over the approval limit: parked for a person
+    let (status, body) = http(port, "POST", tool, &json_ct, r#"{"requestId":"call-9000bb","orderId":"EU-9000","reason":"wrong_item"}"#);
+    assert_eq!(status, 202, "{}", body);
+    assert!(body.contains(r#""status": "pending_approval""#), "{}", body);
+    let parked = std::fs::read_to_string(pending.join("call-9000bb.json")).unwrap();
+    assert!(parked.contains("899"), "{}", parked);
+    assert_eq!(payments.requests_to("/refunds").len(), 2, "no refund before approval");
+
+    // 6. the return label fails after the refund: the saga cancels the refund
+    let (status, body) = http(port, "POST", tool, &json_ct, r#"{"requestId":"call-5000cc","orderId":"EU-5000","reason":"damaged"}"#);
+    assert_eq!(status, 502, "{}", body);
+    assert!(body.contains(r#""status": "failed""#), "{}", body);
+    assert_eq!(payments.requests_to("/refunds").len(), 3, "the refund was issued once");
+    assert_eq!(shipping.requests_to("/return-labels").len(), 4, "the label call was retried twice");
+    wait_for("the compensation", || payments.requests_to("/refunds/cancel").len() == 1);
+    let cancel = payments.requests_to("/refunds/cancel")[0].json();
+    assert_eq!(cancel.get("requestId").map(|v| v.to_string()).as_deref(), Some("call-5000cc"));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(email.requests_to("/messages").len(), 1, "no email for the failed call");
+
+    assert!(body.contains("new requestId"), "{}", body);
+
+    // 7. the failed call was answered, so its requestId is used up: a retry with it is a duplicate
+    let (status, body) = http(port, "POST", tool, &json_ct, r#"{"requestId":"call-5000cc","orderId":"EU-5000","reason":"damaged"}"#);
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains(r#""status": "duplicate""#), "{}", body);
+    assert_eq!(payments.requests_to("/refunds").len(), 3);
+
+    // every call that passed validation is in the audit log
+    let log = audit.join("tool-calls.jsonl");
+    wait_for("six audit lines", || std::fs::read_to_string(&log).map(|t| t.lines().count() == 6).unwrap_or(false));
+    assert!(!std::fs::read_to_string(&log).unwrap().contains("call-8b21d0"), "invalid calls are rejected before the audit tap");
+    main.stop().unwrap();
+    let _ = std::fs::remove_dir_all(&audit);
+    let _ = std::fs::remove_dir_all(&pending);
 }

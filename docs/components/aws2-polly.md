@@ -2,7 +2,7 @@
 
 > The `aws2-polly` component turns text into speech with Amazon Polly and manages lexicons and long speech synthesis tasks.
 
-**Scheme:** `aws2-polly:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-polly:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Polly](https://camel.apache.org/components/next/aws2-polly-component.html)
 
 ## When to use it

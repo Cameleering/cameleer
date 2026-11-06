@@ -2,7 +2,7 @@
 
 > The `aws-cloudtrail` component polls AWS CloudTrail for new management events (who did what, when) and turns each event into a message.
 
-**Scheme:** `aws-cloudtrail:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** no ·
+**Scheme:** `aws-cloudtrail:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** no ·
 **Apache Camel:** [AWS CloudTrail](https://camel.apache.org/components/next/aws-cloudtrail-component.html)
 
 ## When to use it

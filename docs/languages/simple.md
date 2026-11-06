@@ -2,7 +2,7 @@
 
 > Simple is Camel's built-in expression language: text templates with `${...}` functions that read the body, headers, properties and variables, plus predicates with operators such as `==`, `contains`, `regex` and `in`.
 
-**Name:** `simple` · **Also:** `csimple` (same implementation, see [csimple](csimple.md)) · **Crate:** `cameleer-core` ·
+**Name:** `simple` · **Also:** `csimple` (same implementation, see [csimple](csimple.md)) · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [Simple](https://camel.apache.org/components/next/languages/simple-language.html)
 
 Simple is what you use most in Cameleer routes: to build a message body or a prompt, set a

@@ -2,7 +2,7 @@
 
 > The `aws2-ddb` component writes, reads, queries, scans and deletes items in Amazon DynamoDB tables, using plain maps instead of DynamoDB attribute values.
 
-**Scheme:** `aws2-ddb:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-ddb:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS DynamoDB](https://camel.apache.org/components/next/aws2-ddb-component.html)
 
 ## When to use it

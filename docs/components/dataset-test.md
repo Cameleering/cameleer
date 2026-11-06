@@ -2,7 +2,7 @@
 
 > The `dataset-test` component checks a route's output against expected messages read from another endpoint, such as a file of expected lines.
 
-**Scheme:** `dataset-test:` · **Also:** `test:` (see [test](test.md)) · **Crate:** `cameleer-core` ·
+**Scheme:** `dataset-test:` · **Also:** `test:` (see [test](test.md)) · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [DataSet Test](https://camel.apache.org/components/next/dataset-test-component.html)
 
 ## When to use it

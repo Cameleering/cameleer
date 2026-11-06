@@ -2,7 +2,7 @@
 
 > The `google-functions` component calls Google Cloud Functions (1st gen) and manages them: list, get, create, update, delete and source upload URLs.
 
-**Scheme:** `google-functions:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-functions:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Google Functions](https://camel.apache.org/components/next/google-functions-component.html)
 
 ## When to use it

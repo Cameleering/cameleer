@@ -2,7 +2,7 @@
 
 > The `timer` component starts a route at a fixed interval, for example every 5 seconds, a set number of times or forever.
 
-**Scheme:** `timer:` · **Crate:** `cameleer-core` ·
+**Scheme:** `timer:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Timer](https://camel.apache.org/components/next/timer-component.html)
 
 ## When to use it
@@ -97,6 +97,14 @@ Use `timer:once?repeatCount=1&delay=0`.
 ### How do I run a route every day at a fixed time?
 
 The timer only knows intervals. Use [cron](cron.md) (`schedule=0 0 2 * * ?`) or [quartz](quartz.md).
+
+### Do timer routes run on their own threads?
+
+As in Camel, all routes that use the same timer name share one thread (Camel keeps one
+`java.util.Timer` per name): their fires run one after the other, so a slow route delays the
+others of that name. Give routes different names (`timer:a`, `timer:b`) to run them
+independently. The thread starts with the first route of a name and exits when the last one
+stops or finishes its `repeatCount`.
 
 ### What time zone does the `time` option use?
 

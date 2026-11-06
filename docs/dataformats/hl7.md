@@ -2,7 +2,7 @@
 
 > The `hl7` data format parses HL7 v2 messages (ER7, the pipe-delimited text) into a structured value with the `CamelHL7*` headers, and encodes such values back to ER7 text.
 
-**Name:** `hl7` · **Crate:** `cameleer-protocols` ·
+**Name:** `hl7` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Apache Camel:** [HL7](https://camel.apache.org/components/next/dataformats/hl7-dataformat.html)
 
 ## When to use it

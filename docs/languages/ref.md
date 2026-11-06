@@ -2,7 +2,7 @@
 
 > The `ref` language looks up an expression or predicate by name in the registry and evaluates it, so routes can reuse logic written in Rust.
 
-**Name:** `ref` · **Crate:** `cameleer-core` · **Apache Camel:** [Ref](https://camel.apache.org/components/next/languages/ref-language.html)
+**Name:** `ref` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [Ref](https://camel.apache.org/components/next/languages/ref-language.html)
 
 ## When to use it
 

@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "cameleer-amqp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-amqp10"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-amqp",
  "cameleer-core",
@@ -21,15 +21,17 @@ dependencies = [
 
 [[package]]
 name = "cameleer-bench"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
+ "cameleer-kafka-mqtt",
+ "cameleer-sql",
 ]
 
 [[package]]
 name = "cameleer-cloud"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-amqp10",
  "cameleer-core",
@@ -41,11 +43,11 @@ dependencies = [
 
 [[package]]
 name = "cameleer-core"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "cameleer-dataformats"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -54,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-datastores"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -63,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-grpc"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -71,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-http"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-grpc",
@@ -80,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-kafka-mqtt"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -88,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-main"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-amqp",
  "cameleer-amqp10",
@@ -111,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-protocols"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -119,7 +121,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-saas"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -128,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-script"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -137,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-soap"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -147,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-sql"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -155,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-ssh"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -163,14 +165,14 @@ dependencies = [
 
 [[package]]
 name = "cameleer-tls"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
 ]
 
 [[package]]
 name = "cameleer-xml"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -178,7 +180,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-yaml"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "cameleer-core",
 ]

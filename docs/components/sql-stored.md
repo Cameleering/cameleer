@@ -2,7 +2,7 @@
 
 > The `sql-stored` component calls stored procedures and functions in PostgreSQL or the embedded database, passing IN parameters and returning OUT values and result sets.
 
-**Scheme:** `sql-stored:` · **Crate:** `cameleer-sql` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `sql-stored:` · **Crate:** `cameleer-sql` · **Cargo feature:** [`sql`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [SQL Stored Procedure](https://camel.apache.org/components/next/sql-stored-component.html)
 
 ## When to use it

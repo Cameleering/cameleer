@@ -2,7 +2,7 @@
 
 > The `google-calendar` component creates, lists, updates and deletes Google Calendar events and manages calendars, ACLs and watch channels through the Calendar v3 REST API.
 
-**Scheme:** `google-calendar:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-calendar:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no (see [google-calendar-stream](google-calendar-stream.md)) · **Producer:** yes · **Apache Camel:** [Google Calendar](https://camel.apache.org/components/next/google-calendar-component.html)
 
 ## When to use it

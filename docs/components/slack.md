@@ -2,7 +2,7 @@
 
 > The `slack` component posts messages to Slack channels (incoming webhook or the `chat.postMessage` Web API) and reads new channel messages by polling `conversations.history`.
 
-**Scheme:** `slack:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `slack:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Slack](https://camel.apache.org/components/next/slack-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `sql` component runs SQL queries and updates against PostgreSQL or the embedded in-memory database, and polls tables for new rows.
 
-**Scheme:** `sql:` · **Crate:** `cameleer-sql` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `sql:` · **Crate:** `cameleer-sql` · **Cargo feature:** [`sql`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [SQL](https://camel.apache.org/components/next/sql-component.html)
 
 ## When to use it
@@ -47,6 +47,12 @@ and `camel.datasource.password`), which the container also reads from the
 `CAMEL_DATASOURCE_URL` environment variable. `camel.datasource.<name>.url` binds more data
 sources by name. Other databases (MySQL, Oracle, SQL Server) are not supported: there are no
 JDBC drivers, only these two engines.
+
+A PostgreSQL data source is a connection pool, sized in its URL like HikariCP:
+`?poolSize=16` opens at most 16 connections (default 8) and reuses them. When all of them are
+busy, a caller waits for one to come back, up to `poolTimeout` seconds (default 30), then fails
+with `Connection is not available`. Size the pool for the database, not for the number of
+concurrent requests: PostgreSQL handles a few busy connections better than many.
 
 ## Example
 

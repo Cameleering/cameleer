@@ -2,7 +2,7 @@
 
 > The `aws2-kinesis-firehose` component sends records to Amazon Data Firehose (Kinesis Data Firehose) delivery streams, which deliver them to S3, Redshift, OpenSearch or HTTP endpoints.
 
-**Scheme:** `aws2-kinesis-firehose:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-kinesis-firehose:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Kinesis Firehose](https://camel.apache.org/components/next/aws2-kinesis-firehose-component.html)
 
 ## When to use it

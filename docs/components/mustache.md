@@ -2,7 +2,7 @@
 
 > The `mustache` component renders a Mustache template against the message (body, headers, properties) and sets the rendered text as the new body.
 
-**Scheme:** `mustache:` · **Crate:** `cameleer-core` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `mustache:` · **Crate:** `cameleer-core` · **Cargo feature:** [`templates`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [Mustache](https://camel.apache.org/components/next/mustache-component.html)
 
 ## When to use it

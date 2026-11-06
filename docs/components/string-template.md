@@ -2,7 +2,7 @@
 
 > The `string-template` component renders a StringTemplate 4 template against the message and sets the rendered text as the new body.
 
-**Scheme:** `string-template:` · **Crate:** `cameleer-core` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `string-template:` · **Crate:** `cameleer-core` · **Cargo feature:** [`templates`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [String Template](https://camel.apache.org/components/next/string-template-component.html)
 
 ## When to use it

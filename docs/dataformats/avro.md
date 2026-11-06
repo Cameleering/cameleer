@@ -3,7 +3,7 @@
 > The `avro` data format encodes the message body as Apache Avro (binary, JSON or Object Container File) using an Avro schema, and decodes Avro data back into a structured body.
 
 **Name:** `avro` · **Also:** `avroJackson` (`avro-jackson`, `avrojackson`, `jacksonAvro`) ·
-**Crate:** `cameleer-dataformats` ·
+**Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Avro](https://camel.apache.org/components/next/dataformats/avro-dataformat.html),
 [Avro Jackson](https://camel.apache.org/components/next/dataformats/avroJackson-dataformat.html)
 

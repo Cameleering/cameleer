@@ -13,5 +13,9 @@ categories = ["network-programming", "email"]
 description = "Cameleer network protocol components (std only): ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.3.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.4.0" }
+
+[dev-dependencies]
+# the tests use every optional part of core/http (their default features); the library does not
+cameleer-core = { path = "../cameleer-core" }

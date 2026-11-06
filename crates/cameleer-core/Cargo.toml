@@ -13,3 +13,15 @@ categories = ["network-programming", "web-programming"]
 description = "Core of Cameleer: exchanges, routes, EIPs, DSL, languages, core components"
 
 [dependencies]
+
+# Optional parts of core, all on by default (and in cameleer-main's `full`). A smaller binary
+# (`cameleer-main --no-default-features --features core`) leaves them out; a route that uses one
+# then fails with the feature to enable.
+[features]
+default = ["templates", "jq", "xpath"]
+# the mustache, velocity, freemarker and string-template components
+templates = []
+# the jq language (and Simple's `${jq(...)}`)
+jq = []
+# the core XPath 1.0 subset (`xpath` language, Simple's `${xpath(...)}`); cameleer-xml has the full XPath
+xpath = []

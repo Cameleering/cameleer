@@ -2,7 +2,7 @@
 
 > The `jira` component creates, updates, transitions, comments and searches Jira issues over the Jira REST API v2, and polls for new issues, new comments and field changes.
 
-**Scheme:** `jira:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `jira:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Jira](https://camel.apache.org/components/next/jira-component.html)
 
 ## When to use it

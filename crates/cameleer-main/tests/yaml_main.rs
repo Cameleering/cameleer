@@ -1,6 +1,9 @@
 //! The `cameleer` runner (`new_main`) with YAML/XML route files using the REST DSL and
 //! route configurations.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::path::PathBuf;
 use std::time::Duration;
 

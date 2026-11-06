@@ -2,7 +2,7 @@
 
 > The `xslt` component transforms the XML message body with an XSLT stylesheet and sets the result (XML, HTML or text) as the new body.
 
-**Scheme:** `xslt:` · **Crate:** `cameleer-xml` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `xslt:` · **Crate:** `cameleer-xml` · **Cargo feature:** [`xml`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [XSLT](https://camel.apache.org/components/next/xslt-component.html)
 
 ## When to use it

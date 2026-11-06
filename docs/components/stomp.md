@@ -2,7 +2,7 @@
 
 > The `stomp` component sends and receives messages over STOMP 1.2 with brokers such as ActiveMQ, Artemis and RabbitMQ, mapping STOMP headers to message headers.
 
-**Scheme:** `stomp:` · **Crate:** `cameleer-amqp` ·
+**Scheme:** `stomp:` · **Crate:** `cameleer-amqp` · **Cargo feature:** [`amqp`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Stomp](https://camel.apache.org/components/next/stomp-component.html)
 
 ## When to use it

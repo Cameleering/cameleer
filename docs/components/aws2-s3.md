@@ -2,7 +2,7 @@
 
 > The `aws2-s3` component uploads, downloads, lists, copies and deletes objects in Amazon S3 buckets, and polls a bucket for new objects.
 
-**Scheme:** `aws2-s3:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `aws2-s3:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [AWS S3 Storage Service](https://camel.apache.org/components/next/aws2-s3-component.html)
 
 ## When to use it

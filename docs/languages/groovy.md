@@ -2,7 +2,7 @@
 
 > The `groovy` language evaluates Groovy expressions and scripts against the message, with `body`, `headers`, `request` and `exchange` available as variables.
 
-**Name:** `groovy` · **Crate:** `cameleer-script` ·
+**Name:** `groovy` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [Groovy](https://camel.apache.org/components/next/languages/groovy-language.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `azure-storage-datalake` component reads, writes, appends, lists and deletes files and directories in Azure Data Lake Storage Gen2, sets ACLs and runs query acceleration.
 
-**Scheme:** `azure-storage-datalake:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `azure-storage-datalake:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Azure Storage Datalake Service](https://camel.apache.org/components/next/azure-storage-datalake-component.html)
 
 ## When to use it

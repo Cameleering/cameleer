@@ -2,7 +2,7 @@
 
 > The `bean` language (also named `method`) calls a function registered in the registry and uses its return value as the expression result.
 
-**Name:** `bean` · **Also:** `method` · **Crate:** `cameleer-core` · **Apache Camel:** [Bean method](https://camel.apache.org/components/next/languages/bean-language.html)
+**Name:** `bean` · **Also:** `method` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [Bean method](https://camel.apache.org/components/next/languages/bean-language.html)
 
 ## When to use it
 

@@ -2,7 +2,7 @@
 
 > The `bean` component calls your own Rust code, registered in the registry under a name, from a route.
 
-**Scheme:** `bean:` · **Also:** `class:` (see [class](class.md)) · **Crate:** `cameleer-core` ·
+**Scheme:** `bean:` · **Also:** `class:` (see [class](class.md)) · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Bean](https://camel.apache.org/components/next/bean-component.html)
 
 ## When to use it

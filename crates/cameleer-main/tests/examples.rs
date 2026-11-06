@@ -3,6 +3,9 @@
 //! replacing the `{{env:...}}` placeholders (and ports) in the file text; the routes
 //! themselves run unchanged.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};

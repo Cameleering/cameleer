@@ -2,7 +2,7 @@
 
 > The `aws2-kinesis` component puts records into and consumes records from Amazon Kinesis Data Streams.
 
-**Scheme:** `aws2-kinesis:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `aws2-kinesis:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [AWS Kinesis](https://camel.apache.org/components/next/aws2-kinesis-component.html)
 
 ## When to use it

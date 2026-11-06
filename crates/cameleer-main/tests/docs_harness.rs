@@ -13,6 +13,9 @@
 //! The checks are plain functions over a directory, so the fixture tests at the bottom run
 //! them on `tests/docs_fixtures/` (good and deliberately broken pages).
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 

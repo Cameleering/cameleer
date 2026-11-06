@@ -2,7 +2,7 @@
 
 > The `spring-ws` component hosts and calls payload-oriented SOAP web services: consumers are selected by the payload root element, SOAP action, XPath or WS-Addressing, and the body is the payload XML.
 
-**Scheme:** `spring-ws:` · **Crate:** `cameleer-soap` ·
+**Scheme:** `spring-ws:` · **Crate:** `cameleer-soap` · **Cargo feature:** [`soap`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Spring Web Services](https://camel.apache.org/components/next/spring-ws-component.html)
 
 No Spring is involved: the scheme reproduces camel-spring-ws on Cameleer's HTTP server. Unlike

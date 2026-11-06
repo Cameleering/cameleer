@@ -2,7 +2,7 @@
 
 > The `cbor` data format encodes the message body as CBOR, a compact binary form of JSON (RFC 8949), and decodes CBOR back into a structured body.
 
-**Name:** `cbor` · **Crate:** `cameleer-dataformats` ·
+**Name:** `cbor` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [CBOR](https://camel.apache.org/components/next/dataformats/cbor-dataformat.html)
 
 ## When to use it

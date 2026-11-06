@@ -2,7 +2,7 @@
 
 > The `amqp-stomp` component is Cameleer's JMS-over-STOMP component under a third name, for routes that used Cameleer's former STOMP-based `amqp` scheme.
 
-**Scheme:** `amqp-stomp:` · **Crate:** `cameleer-amqp` ·
+**Scheme:** `amqp-stomp:` · **Crate:** `cameleer-amqp` · **Cargo feature:** [`amqp`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** none (Cameleer only; see [JMS](https://camel.apache.org/components/next/jms-component.html))
 
 ## When to use it

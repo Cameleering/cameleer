@@ -3,7 +3,7 @@
 > The `zipFile` data format packs the message body into a `.zip` archive (marshal) and unpacks entries from a `.zip` archive (unmarshal).
 
 **Name:** `zipFile` · **Also:** `zipfile` · **Crate:** `cameleer-dataformats` (replaces the
-single-entry version in `cameleer-core` when registered, as `cameleer_main::new_main` does) ·
+single-entry version in `cameleer-core` when registered, as `cameleer_main::new_main` does) · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Zip File](https://camel.apache.org/components/next/dataformats/zipFile-dataformat.html)
 
 ## When to use it

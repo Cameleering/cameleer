@@ -2,7 +2,7 @@
 
 > The `azure-schema-registry` component registers and looks up Avro, JSON and custom schemas in the Azure Event Hubs Schema Registry.
 
-**Scheme:** `azure-schema-registry:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `azure-schema-registry:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** none (Apache Camel offers the registry only as a Kafka serializer library; this is a Cameleer component)
 
 ## When to use it

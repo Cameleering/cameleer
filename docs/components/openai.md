@@ -2,7 +2,7 @@
 
 > The `openai` component calls any OpenAI-compatible API (OpenAI, Ollama, vLLM, LM Studio, LiteLLM and other gateways) for chat completions and embeddings.
 
-**Scheme:** `openai:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `openai:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** no direct equivalent; closest are [LangChain4j Chat](https://camel.apache.org/components/next/langchain4j-chat-component.html) and [LangChain4j Embeddings](https://camel.apache.org/components/next/langchain4j-embeddings-component.html)
 
 ## When to use it

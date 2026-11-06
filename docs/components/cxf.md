@@ -2,7 +2,7 @@
 
 > The `cxf` component calls SOAP web services and hosts SOAP services in a route, from a WSDL, with SOAP 1.1 and 1.2, faults, WS-Security, WS-Addressing and MTOM.
 
-**Scheme:** `cxf:` · **Crate:** `cameleer-soap` ·
+**Scheme:** `cxf:` · **Crate:** `cameleer-soap` · **Cargo feature:** [`soap`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [CXF](https://camel.apache.org/components/next/cxf-component.html)
 
 There is no Apache CXF inside: Cameleer parses the WSDL and XSD itself and maps parameters to

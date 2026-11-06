@@ -2,7 +2,7 @@
 
 > The `imap` component reads email from an IMAP mailbox: it polls a folder for new (unseen) messages and turns each one into an exchange.
 
-**Scheme:** `imap:` · **Also:** `imaps:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `imap:` · **Also:** `imaps:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Mail](https://camel.apache.org/components/next/mail-component.html)
 
 `imaps:` uses implicit TLS (port 993); `imap:` can upgrade with STARTTLS

@@ -2,7 +2,7 @@
 
 > The `aws2-sns` component publishes messages to Amazon SNS topics, including FIFO topics and batches.
 
-**Scheme:** `aws2-sns:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-sns:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Simple Notification System (SNS)](https://camel.apache.org/components/next/aws2-sns-component.html)
 
 ## When to use it

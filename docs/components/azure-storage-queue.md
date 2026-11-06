@@ -2,7 +2,7 @@
 
 > The `azure-storage-queue` component sends messages to and receives messages from Azure Queue Storage.
 
-**Scheme:** `azure-storage-queue:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `azure-storage-queue:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Azure Storage Queue Service](https://camel.apache.org/components/next/azure-storage-queue-component.html)
 
 ## When to use it

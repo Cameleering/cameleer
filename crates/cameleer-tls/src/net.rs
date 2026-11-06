@@ -26,7 +26,7 @@ use std::io::{self, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The TCP socket shared by every clone of a `NetStream` and by both TLS halves.
 /// On Windows socket options such as the read timeout belong to the handle, so a
@@ -101,6 +101,31 @@ pub fn bind_listener(addr: impl ToSocketAddrs) -> io::Result<TcpListener> {
     TcpListener::bind(&addrs[..])
 }
 
+/// Binds `127.0.0.1` on a free port for an embedded test server. A busy machine running many
+/// tests in parallel can briefly run out of socket resources (Windows reports `WSAENOBUFS`,
+/// error 10055, or `WSAEADDRINUSE`); this retries such errors for up to 5 seconds instead of
+/// failing the test that happened to bind at that moment.
+pub fn bind_loopback() -> io::Result<TcpListener> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut wait = Duration::from_millis(10);
+    loop {
+        match TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => return Ok(l),
+            Err(e) if is_transient_bind_error(&e) && Instant::now() + wait < deadline => {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_millis(500));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Bind errors that go away once other sockets are released.
+fn is_transient_bind_error(e: &io::Error) -> bool {
+    const WSAENOBUFS: i32 = 10055;
+    matches!(e.kind(), io::ErrorKind::AddrInUse | io::ErrorKind::AddrNotAvailable) || (cfg!(windows) && e.raw_os_error() == Some(WSAENOBUFS))
+}
+
 /// Shuts `tcp` down and wakes threads blocked reading it, as `shutdown` does on
 /// Unix. On Windows `shutdown` does not interrupt a blocked `recv`, so the socket's
 /// pending I/O is cancelled too (the reader then gets an error).
@@ -125,6 +150,51 @@ fn cancel_pending_io(tcp: &TcpStream) {
     unsafe {
         CancelIoEx(tcp.as_raw_socket() as *mut core::ffi::c_void, std::ptr::null_mut());
     }
+}
+
+/// How long [`lingering_close`] waits for the peer to close after a fatal alert.
+pub const ALERT_LINGER: Duration = Duration::from_secs(2);
+
+/// Closes a connection on which a fatal TLS alert was just sent without losing the
+/// alert. Dropping the socket at once makes the kernel answer data the peer is still
+/// sending (a TLS 1.3 client writes application data right after its Finished,
+/// before it reads the server's verdict on its certificate) with a TCP reset, and on
+/// Windows a reset discards the alert waiting unread in the peer's receive buffer:
+/// the peer then sees "connection reset" instead of, say, `certificate_required`.
+/// So, like a lingering HTTP close, this sends FIN after the alert and reads and
+/// discards whatever arrives until the peer closes, [`ALERT_LINGER`] passes or
+/// 256 KiB were read.
+pub fn lingering_close(tcp: &TcpStream) {
+    let _ = tcp.shutdown(Shutdown::Write);
+    let deadline = Instant::now() + ALERT_LINGER;
+    let mut buf = [0u8; 4096];
+    let mut total = 0usize;
+    while total < 256 * 1024 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || tcp.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match (&*tcp).read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+}
+
+/// [`TlsStream::accept`] over an accepted TCP connection that, when the handshake
+/// fails with a fatal alert, closes the connection with [`lingering_close`] so the
+/// client receives the alert (instead of a reset) even if it is still sending.
+pub fn accept_tls(tcp: TcpStream, config: &TlsServerConfig) -> Result<TlsStream<TcpStream>, TlsError> {
+    let keep = tcp.try_clone().ok();
+    let r = TlsStream::accept(tcp, config);
+    if let (Err(e), Some(keep)) = (&r, &keep) {
+        if e.alert_to_send().is_some() {
+            lingering_close(keep);
+        }
+    }
+    r
 }
 
 /// Converts a TLS error into an `io::Error` (certificate problems keep their text).
@@ -194,8 +264,19 @@ impl NetStream {
     }
 
     fn server_shared(tcp: Arc<TcpStream>, config: &TlsServerConfig) -> io::Result<NetStream> {
-        let tls = with_handshake_timeout(SharedTcp(tcp), |t| TlsStream::accept(t, config))?;
-        NetStream::from_tls(tls, None)
+        let mut alerted = false;
+        let r = with_handshake_timeout(SharedTcp(tcp.clone()), |t| {
+            TlsStream::accept(t, config).inspect_err(|e| alerted = e.alert_to_send().is_some())
+        });
+        match r {
+            Ok(tls) => NetStream::from_tls(tls, None),
+            Err(e) => {
+                if alerted {
+                    lingering_close(&tcp);
+                }
+                Err(e)
+            }
+        }
     }
 
     /// Connects to `host:port` and, when `tls` is given, performs a client handshake.
@@ -509,5 +590,16 @@ mod tests {
         let l = bind_listener("localhost:0").unwrap();
         assert!(l.local_addr().unwrap().is_ipv4());
         TcpStream::connect(("127.0.0.1", l.local_addr().unwrap().port())).unwrap();
+    }
+
+    #[test]
+    fn bind_loopback_gives_a_free_port_and_retries_only_transient_errors() {
+        let l = bind_loopback().unwrap();
+        assert!(l.local_addr().unwrap().ip().is_loopback());
+        TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        assert!(is_transient_bind_error(&io::Error::from(io::ErrorKind::AddrInUse)));
+        assert!(!is_transient_bind_error(&io::Error::from(io::ErrorKind::PermissionDenied)));
+        #[cfg(windows)]
+        assert!(is_transient_bind_error(&io::Error::from_raw_os_error(10055)));
     }
 }

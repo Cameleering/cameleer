@@ -2,7 +2,7 @@
 
 > The `gzipDeflater` data format compresses the message body to gzip (marshal) and decompresses gzip data (unmarshal).
 
-**Name:** `gzipDeflater` · **Also:** `gzip`, `gzipdeflater` · **Crate:** `cameleer-core` ·
+**Name:** `gzipDeflater` · **Also:** `gzip`, `gzipdeflater` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [GZip Deflater](https://camel.apache.org/components/next/dataformats/gzipDeflater-dataformat.html)
 
 ## When to use it

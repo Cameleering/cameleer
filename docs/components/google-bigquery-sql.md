@@ -2,7 +2,7 @@
 
 > The `google-bigquery-sql` component runs standard SQL queries and DML statements on Google BigQuery, with named `@parameters` bound from message headers or the body.
 
-**Scheme:** `google-bigquery-sql:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-bigquery-sql:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Google BigQuery Standard SQL](https://camel.apache.org/components/next/google-bigquery-sql-component.html)
 
 ## When to use it

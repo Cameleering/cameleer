@@ -2,7 +2,7 @@
 
 > The `string` data format converts the body to bytes in a chosen charset (marshal) and bytes back to text (unmarshal).
 
-**Name:** `string` · **Crate:** `cameleer-core` ·
+**Name:** `string` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [String](https://camel.apache.org/components/next/dataformats/string-dataformat.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `kamelet` component uses Kamelets, reusable route snippets with typed parameters, as sources, actions and sinks in a route.
 
-**Scheme:** `kamelet:` · **Crate:** `cameleer-yaml` ·
+**Scheme:** `kamelet:` · **Crate:** `cameleer-yaml` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Kamelet](https://camel.apache.org/components/next/kamelet-component.html)
 
 ## When to use it

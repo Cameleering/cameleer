@@ -2,7 +2,7 @@
 
 > The `syslog` data format parses RFC 5424 and RFC 3164 syslog lines into a structured value with the `CamelSyslog*` headers, and formats such values back into syslog lines.
 
-**Name:** `syslog` · **Crate:** `cameleer-protocols` ·
+**Name:** `syslog` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Apache Camel:** [Syslog](https://camel.apache.org/components/next/dataformats/syslog-dataformat.html)
 
 ## When to use it

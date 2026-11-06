@@ -2,7 +2,7 @@
 
 > The `azure-eventhubs` component sends events to and consumes events from Azure Event Hubs over AMQP 1.0, with partitions, checkpoints and load balancing between consumers.
 
-**Scheme:** `azure-eventhubs:` · **Crate:** `cameleer-amqp10` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `azure-eventhubs:` · **Crate:** `cameleer-amqp10` · **Cargo feature:** [`amqp10`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Azure Event Hubs](https://camel.apache.org/components/next/azure-eventhubs-component.html)
 
 ## When to use it

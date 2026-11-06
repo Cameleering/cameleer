@@ -2,7 +2,7 @@
 
 > The `kafka` component sends messages to and consumes messages from Apache Kafka topics, with consumer groups, keys, partitions, TLS and SASL.
 
-**Scheme:** `kafka:` · **Crate:** `cameleer-kafka-mqtt` ·
+**Scheme:** `kafka:` · **Crate:** `cameleer-kafka-mqtt` · **Cargo feature:** [`kafka-mqtt`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Kafka](https://camel.apache.org/components/next/kafka-component.html)
 
 ## When to use it

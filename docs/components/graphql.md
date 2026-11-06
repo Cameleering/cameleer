@@ -2,7 +2,7 @@
 
 > The `graphql` component sends GraphQL queries and mutations to a GraphQL server over HTTP or HTTPS and returns the JSON response.
 
-**Scheme:** `graphql:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `graphql:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [GraphQL](https://camel.apache.org/components/next/graphql-component.html)
 
 ## When to use it

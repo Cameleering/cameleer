@@ -2,7 +2,7 @@
 
 > The `atom` component polls an Atom feed and emits each new entry as an exchange whose body is the entry.
 
-**Scheme:** `atom:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `atom:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Atom](https://camel.apache.org/components/next/atom-component.html)
 
 `atom` shares its implementation with [rss](rss.md) and parses Atom 1.0, RSS 2.0 and RSS 1.0.

@@ -2,7 +2,7 @@
 
 > The `aws2-ec2` component starts, stops, creates, terminates, tags and describes Amazon EC2 instances.
 
-**Scheme:** `aws2-ec2:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-ec2:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Elastic Compute Cloud (EC2)](https://camel.apache.org/components/next/aws2-ec2-component.html)
 
 ## When to use it

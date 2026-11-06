@@ -2,7 +2,7 @@
 
 > The `controlbus` component starts, stops, suspends and inspects routes from a message, and evaluates scripts sent as messages.
 
-**Scheme:** `controlbus:` · **Crate:** `cameleer-core` ·
+**Scheme:** `controlbus:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Control Bus](https://camel.apache.org/components/next/controlbus-component.html)
 
 ## When to use it

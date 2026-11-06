@@ -2,7 +2,7 @@
 
 > The `aws-secrets-manager` component creates, reads, updates, rotates and deletes secrets in AWS Secrets Manager, and the `{{aws:...}}` placeholder puts secrets into routes and endpoint options.
 
-**Scheme:** `aws-secrets-manager:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws-secrets-manager:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Secrets Manager](https://camel.apache.org/components/next/aws-secrets-manager-component.html)
 
 ## When to use it

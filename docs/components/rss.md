@@ -2,7 +2,7 @@
 
 > The `rss` component polls an RSS feed (RSS 2.0, RSS 1.0 or Atom) and emits new entries as exchanges.
 
-**Scheme:** `rss:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `rss:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [RSS](https://camel.apache.org/components/next/rss-component.html)
 
 Feeds and entries are maps. With `splitEntries=true` (the default) each exchange carries the feed

@@ -2,7 +2,7 @@
 
 > The `xquery` language evaluates an XQuery expression (FLWOR, constructors, XPath) against an XML message and returns the result.
 
-**Name:** `xquery` · **Crate:** `cameleer-xml` · **Apache Camel:** [XQuery](https://camel.apache.org/components/next/languages/xquery-language.html)
+**Name:** `xquery` · **Crate:** `cameleer-xml` · **Cargo feature:** [`xml`](../guides/build-features.md) · **Apache Camel:** [XQuery](https://camel.apache.org/components/next/languages/xquery-language.html)
 
 ## When to use it
 

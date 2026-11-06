@@ -2,7 +2,7 @@
 
 > The `cql` component runs CQL statements against Apache Cassandra and ScyllaDB, and polls a CQL query on a schedule.
 
-**Scheme:** `cql:` · **Crate:** `cameleer-datastores` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `cql:` · **Crate:** `cameleer-datastores` · **Cargo feature:** [`datastores`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Cassandra CQL](https://camel.apache.org/components/next/cql-component.html)
 
 ## When to use it

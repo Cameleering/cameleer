@@ -1,3 +1,6 @@
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::sync::{Arc, Mutex};
 
 use cameleer_core::json;

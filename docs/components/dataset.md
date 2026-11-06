@@ -2,7 +2,7 @@
 
 > The `dataset` component load-tests a route: it sends a known set of messages into the route and checks that the same messages come out.
 
-**Scheme:** `dataset:` · **Crate:** `cameleer-core` ·
+**Scheme:** `dataset:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [DataSet](https://camel.apache.org/components/next/dataset-component.html)
 
 ## When to use it

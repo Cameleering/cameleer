@@ -2,7 +2,7 @@
 
 > The `google-mail` component sends, lists, reads, labels and deletes Gmail messages, drafts, labels and threads through the Gmail v1 REST API.
 
-**Scheme:** `google-mail:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-mail:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no (see [google-mail-stream](google-mail-stream.md)) · **Producer:** yes · **Apache Camel:** [Google Mail](https://camel.apache.org/components/next/google-mail-component.html)
 
 ## When to use it

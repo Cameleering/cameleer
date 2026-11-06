@@ -2,7 +2,7 @@
 
 > The `header` language returns the value of one message header, or null when the header is not set.
 
-**Name:** `header` · **Crate:** `cameleer-core` · **Apache Camel:** [Header](https://camel.apache.org/components/next/languages/header-language.html)
+**Name:** `header` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** [Header](https://camel.apache.org/components/next/languages/header-language.html)
 
 ## When to use it
 

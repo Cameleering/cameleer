@@ -2,7 +2,7 @@
 
 > The `xmlsecurity-sign` component adds an XML Signature (XMLDSig, RSA-SHA256 or ECDSA-SHA256) to the XML message body, enveloped, enveloping or detached.
 
-**Scheme:** `xmlsecurity-sign:` · **Crate:** `cameleer-xml` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `xmlsecurity-sign:` · **Crate:** `cameleer-xml` · **Cargo feature:** [`xml`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [XML Security Sign](https://camel.apache.org/components/next/xmlsecurity-sign-component.html)
 
 ## When to use it

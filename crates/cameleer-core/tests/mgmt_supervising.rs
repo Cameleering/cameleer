@@ -172,3 +172,46 @@ fn stopping_the_context_stops_retrying() {
     std::thread::sleep(Duration::from_millis(30));
     assert_eq!(attempts.load(Ordering::SeqCst), n);
 }
+
+#[test]
+fn controller_thread_runs_only_while_routes_wait_for_a_restart() {
+    use cameleer_core::supervising::controller_thread_running;
+    let ctx = CamelContext::new();
+    ctx.add_component("flaky", FlakyComponent { fail_times: 1, attempts: Arc::default() });
+    ctx.add_component("flaky2", FlakyComponent { fail_times: 1, attempts: Arc::default() });
+    ctx.add_routes(|b| {
+        b.from("flaky:a").route_id("a").to("mock:out");
+    })
+    .unwrap();
+    ctx.enable_supervising_route_controller(SupervisingRouteControllerConfig::default().back_off_delay(Duration::from_millis(20)));
+    assert!(!controller_thread_running(&ctx), "no thread before a failure");
+    ctx.start().unwrap();
+    assert!(wait_until(Duration::from_secs(5), || ctx.route("a").unwrap().status() == ServiceStatus::Started));
+    // the route recovered: nothing left to supervise, the thread exits
+    assert!(wait_until(Duration::from_secs(5), || !controller_thread_running(&ctx)), "thread still running");
+    // a new failure starts it again
+    ctx.add_routes(|b| {
+        b.from("flaky2:b").route_id("b").to("mock:out");
+    })
+    .unwrap();
+    assert!(controller_thread_running(&ctx) || ctx.route("b").unwrap().status() == ServiceStatus::Started);
+    assert!(wait_until(Duration::from_secs(5), || ctx.route("b").unwrap().status() == ServiceStatus::Started));
+    assert!(wait_until(Duration::from_secs(5), || !controller_thread_running(&ctx)));
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn controller_thread_exits_when_the_only_failing_route_is_exhausted() {
+    use cameleer_core::supervising::controller_thread_running;
+    let ctx = CamelContext::new();
+    ctx.add_component("flaky", FlakyComponent { fail_times: 1000, attempts: Arc::default() });
+    ctx.add_routes(|b| {
+        b.from("flaky:e").route_id("e").to("mock:out");
+    })
+    .unwrap();
+    ctx.enable_supervising_route_controller(SupervisingRouteControllerConfig::default().back_off_delay(Duration::from_millis(5)).back_off_max_attempts(2));
+    ctx.start().unwrap();
+    assert!(wait_until(Duration::from_secs(5), || ctx.route_controller_status().route("e").map(|r| r.state.as_str() == "Exhausted").unwrap_or(false)));
+    assert!(wait_until(Duration::from_secs(5), || !controller_thread_running(&ctx)));
+    ctx.stop().unwrap();
+}

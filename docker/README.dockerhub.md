@@ -4,10 +4,10 @@
 
 **Apache Camel routes, rebuilt in Rust.** If you know [Apache Camel](https://camel.apache.org/), you already know Cameleer: the same YAML DSL, endpoint URIs, Enterprise Integration Patterns and Simple expressions, in a single native binary.
 
-- **10 ms** startup, about **10 MB** of memory, **2.5–8x** Apache Camel's throughput on Java 21 ([benchmarks](https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md))
+- **450x faster startup** than Apache Camel (3 ms vs 1.1 s), **up to 54x less memory**, **1.7–8.7x** the throughput in every scenario ([comparison](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/))
 - About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
-- Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, under 20 MB to download
+- Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, about 20 MB to download
 
 Website: https://pmsudhi.github.io/cameleer/ · Source: https://github.com/pmsudhi/cameleer
 
@@ -59,7 +59,7 @@ docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
 | tag | meaning |
 |---|---|
 | `latest` | the latest release |
-| `0.3.0`, `0.3` | a release, and the latest patch of a minor version |
+| `0.4.0`, `0.4` | a release, and the latest patch of a minor version |
 | `edge` | a manual build from `main` |
 | `sha-<commit>` | the image of one commit |
 
@@ -79,6 +79,19 @@ The same image is published to `ghcr.io/pmsudhi/cameleer`. Every push carries an
 | Health | with `--prop camel.server.healthCheckEnabled=true`: `/q/health/live` and `/q/health/ready` on port 8080 |
 
 Kubernetes, Docker Compose and Cloud Run setups are in the [deployment guide](https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md).
+
+## A smaller image
+
+This image includes every component. To build one with only the component families your routes
+use, clone the repository and pass them as `FEATURES`:
+
+```sh
+docker build --build-arg FEATURES=cloud,jq -t my-cameleer .
+```
+
+A feature list replaces the default, so name every family you use (`templates`, `jq`, `xpath`,
+`http2` and `validate` are features too). The [build features guide](https://pmsudhi.github.io/cameleer/docs/guides/build-features.html)
+lists them and what each adds.
 
 ## Rust crates and CLI
 

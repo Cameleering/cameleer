@@ -2,7 +2,7 @@
 
 > The `telegram` component sends messages, photos and documents through a Telegram bot and receives the messages people send to the bot (long polling with `getUpdates`, or a webhook).
 
-**Scheme:** `telegram:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `telegram:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Telegram](https://camel.apache.org/components/next/telegram-component.html)
 
 ## When to use it

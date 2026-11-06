@@ -11,8 +11,9 @@
 //! - a thread's list that grows past [`bin_cap`] blocks hands half of them to a shared,
 //!   mutex-protected list per class, which threads refill from in batches (so blocks freed
 //!   on a seda consumer thread go back to the producer thread);
-//! - new blocks are carved from chunks taken from the system allocator; small blocks are
-//!   kept for reuse and not returned to the operating system;
+//! - new blocks are carved from chunks taken from the system allocator, one block at a time
+//!   (a bump pointer), so the pages of a chunk become resident only as they are used; small
+//!   blocks are kept for reuse and not returned to the operating system;
 //! - larger or over-aligned blocks go straight to the system allocator.
 //!
 //! It is opt-in. The `cameleer` CLI and the benchmark harness install it; an application
@@ -77,6 +78,22 @@ struct Bin {
 }
 
 const EMPTY: Bin = Bin { head: null_mut(), len: 0 };
+
+/// The not yet used part of the last chunk carved for a class: blocks are taken from `ptr` up
+/// to `end` only when the free list is empty, so untouched blocks stay untouched pages. Kept
+/// apart from the bins, which the fast path reads, so those stay 16 bytes each. A class with
+/// no chunk carved yet has no region (`None`), so both pointers always point into a chunk.
+#[derive(Clone, Copy)]
+struct Bump {
+    ptr: *mut u8,
+    end: *mut u8,
+}
+
+/// A thread's free lists and bump regions.
+struct Bins {
+    bins: [Bin; CLASSES],
+    bumps: [Option<Bump>; CLASSES],
+}
 
 impl Bin {
     unsafe fn push(&mut self, p: *mut u8) {
@@ -149,7 +166,7 @@ const DEAD: u8 = 3;
 /// A thread's state and bins, in one thread-local so the fast path reads TLS once.
 struct Cache {
     state: Cell<u8>,
-    bins: UnsafeCell<[Bin; CLASSES]>,
+    bins: UnsafeCell<Bins>,
 }
 
 /// Flushes the thread's cache to the shared lists when the thread exits.
@@ -160,16 +177,16 @@ impl Drop for Guard {
         // SAFETY: the state is DEAD, so this thread no longer touches its cache.
         let _ = CACHE.try_with(|c| unsafe {
             c.state.set(DEAD);
-            let bins = &mut *c.bins.get();
-            for (class, bin) in bins.iter_mut().enumerate() {
-                give_back(class, bin);
+            let t = &mut *c.bins.get();
+            for class in 0..CLASSES {
+                give_back(class, &mut t.bins[class], &mut t.bumps[class]);
             }
         });
     }
 }
 
 thread_local! {
-    static CACHE: Cache = const { Cache { state: Cell::new(UNINIT), bins: UnsafeCell::new([EMPTY; CLASSES]) } };
+    static CACHE: Cache = const { Cache { state: Cell::new(UNINIT), bins: UnsafeCell::new(Bins { bins: [EMPTY; CLASSES], bumps: [None; CLASSES] }) } };
     static GUARD: Guard = const { Guard };
 }
 
@@ -193,10 +210,37 @@ const fn class_size(class: usize) -> usize {
     }
 }
 
-/// Move all blocks of a thread bin to the shared stack of the class.
-unsafe fn give_back(class: usize, bin: &mut Bin) {
+/// Move all blocks of a thread bin, including the unused rest of its chunk, to the shared
+/// stack of the class.
+unsafe fn give_back(class: usize, bin: &mut Bin, bump: &mut Option<Bump>) {
+    if let Some(mut b) = bump.take() {
+        let size = class_size(class);
+        while b.ptr < b.end {
+            let p = b.ptr;
+            b.ptr = p.add(size);
+            bin.push(p);
+        }
+    }
+    give_back_bin(class, bin);
+}
+
+/// Move the blocks of `bin` to the shared stack of the class.
+unsafe fn give_back_bin(class: usize, bin: &mut Bin) {
     push_batch(class, bin.head, bin.len);
     *bin = EMPTY;
+}
+
+/// Take a block from the unused rest of the class's last chunk.
+#[inline]
+unsafe fn take_bump(class: usize, bump: &mut Option<Bump>) -> *mut u8 {
+    match bump {
+        Some(b) if b.ptr < b.end => {
+            let p = b.ptr;
+            b.ptr = p.add(class_size(class));
+            p
+        }
+        _ => null_mut(),
+    }
 }
 
 /// Keep the `keep` most recently freed (cache-hot) blocks of a bin and move the others to
@@ -218,7 +262,11 @@ unsafe fn give_back_cold(class: usize, bin: &mut Bin, keep: u32) {
 
 /// Fill a thread bin from the shared list, carving a new chunk if that is empty.
 /// Returns one block for the caller.
-unsafe fn refill(class: usize, bin: &mut Bin) -> *mut u8 {
+unsafe fn refill(class: usize, bin: &mut Bin, bump: &mut Option<Bump>) -> *mut u8 {
+    let p = take_bump(class, bump);
+    if !p.is_null() {
+        return p;
+    }
     // the bin is empty here: take a whole batch
     if let Some((head, count)) = pop_batch(class) {
         bin.head = head;
@@ -228,27 +276,27 @@ unsafe fn refill(class: usize, bin: &mut Bin) -> *mut u8 {
     if !p.is_null() {
         return p;
     }
-    carve(class, bin)
+    carve(class, bump)
 }
 
-/// Carve a chunk of blocks of a class: one is returned, the rest go to `bin`.
-unsafe fn carve(class: usize, bin: &mut Bin) -> *mut u8 {
+/// Carve a chunk of blocks of a class: the first is returned, the rest become the bin's bump
+/// region (handed out one by one, see [`take_bump`]).
+unsafe fn carve(class: usize, bump: &mut Option<Bump>) -> *mut u8 {
     let size = class_size(class);
     let count = (CHUNK / size).clamp(1, batch(class) as usize);
     let chunk = System.alloc(Layout::from_size_align_unchecked(size * count, GRANULE));
     if chunk.is_null() {
         return chunk;
     }
-    for i in 1..count {
-        bin.push(chunk.add(i * size));
-    }
+    // a previous region is empty here (refill takes from it first)
+    *bump = Some(Bump { ptr: chunk.add(size), end: chunk.add(size * count) });
     chunk
 }
 
 /// Run `f` with this thread's cache, or return `None` while the thread-local storage is
 /// being set up or torn down (the caller then uses the shared lists).
 #[inline]
-fn with_cache<R>(f: impl FnOnce(&mut [Bin; CLASSES]) -> R) -> Option<R> {
+fn with_cache<R>(f: impl FnOnce(&mut Bins) -> R) -> Option<R> {
     CACHE
         .try_with(|c| {
             match c.state.get() {
@@ -277,20 +325,19 @@ unsafe impl GlobalAlloc for CamelAllocator {
     #[inline]
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let Some(class) = class_of(&layout) else { return System.alloc(layout) };
-        match with_cache(|bins| {
-            let bin = &mut bins[class];
-            let p = bin.pop();
+        match with_cache(|t| {
+            let p = t.bins[class].pop();
             if p.is_null() {
-                refill(class, bin)
+                refill(class, &mut t.bins[class], &mut t.bumps[class])
             } else {
                 p
             }
         }) {
             Some(p) => p,
             None => {
-                let mut tmp = EMPTY;
-                let p = refill(class, &mut tmp);
-                give_back(class, &mut tmp);
+                let (mut tmp, mut bump) = (EMPTY, None);
+                let p = refill(class, &mut tmp, &mut bump);
+                give_back(class, &mut tmp, &mut bump);
                 p
             }
         }
@@ -299,8 +346,8 @@ unsafe impl GlobalAlloc for CamelAllocator {
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let Some(class) = class_of(&layout) else { return System.dealloc(ptr, layout) };
-        let cached = with_cache(|bins| {
-            let bin = &mut bins[class];
+        let cached = with_cache(|t| {
+            let bin = &mut t.bins[class];
             bin.push(ptr);
             if bin.len >= bin_cap(class) {
                 give_back_cold(class, bin, batch(class));
@@ -309,7 +356,7 @@ unsafe impl GlobalAlloc for CamelAllocator {
         if cached.is_none() {
             let mut tmp = EMPTY;
             tmp.push(ptr);
-            give_back(class, &mut tmp);
+            give_back_bin(class, &mut tmp);
         }
     }
 
@@ -379,6 +426,34 @@ mod tests {
                 unsafe { a.dealloc(p, l) };
             }
         }
+    }
+
+    #[test]
+    fn a_new_chunk_is_used_block_by_block() {
+        // a fresh thread: the first block of a class carves a chunk but writes nothing into
+        // its other blocks (they stay untouched pages until used), and the next blocks come
+        // from the chunk in address order
+        std::thread::spawn(|| {
+            let a = CamelAllocator;
+            let l = layout(1000, 8);
+            let class = class_of(&l).unwrap();
+            let p = unsafe { a.alloc(l) };
+            let (len, region) = with_cache(|t| (t.bins[class].len, t.bumps[class])).unwrap();
+            let Bump { ptr: bump, end } = region.expect("the first allocation carved a chunk");
+            assert_eq!(len, 0, "no free-list entries were written into the chunk");
+            assert_eq!(bump, unsafe { p.add(class_size(class)) });
+            assert!(end > bump);
+            let q = unsafe { a.alloc(l) };
+            assert_eq!(q, bump, "the next block is the next one in the chunk");
+            unsafe {
+                a.dealloc(q, l);
+                a.dealloc(p, l);
+            }
+            // freed blocks are reused before the chunk's untouched rest
+            assert_eq!(unsafe { a.alloc(l) }, p);
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

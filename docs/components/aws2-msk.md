@@ -2,7 +2,7 @@
 
 > The `aws2-msk` component manages Amazon MSK (Managed Streaming for Apache Kafka) clusters, and Cameleer adds the `AWS_MSK_IAM` SASL mechanism so the `kafka` component can connect to MSK with IAM authentication.
 
-**Scheme:** `aws2-msk:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-msk:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Managed Streaming for Apache Kafka (MSK)](https://camel.apache.org/components/next/aws2-msk-component.html)
 
 ## When to use it

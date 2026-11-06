@@ -13,6 +13,9 @@
 //! The Rust DSL snippets of the pages are copied verbatim into the `rust_dsl_*` functions at
 //! the end, which a test builds on a context with every component.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::time::{Duration, Instant};
 
 use cameleer_amqp10::testing::Amqp10Broker;

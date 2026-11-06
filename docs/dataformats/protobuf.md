@@ -2,7 +2,7 @@
 
 > The `protobuf` data format encodes the message body as Protocol Buffers bytes (or proto3 JSON) using a `.proto` file, and decodes protobuf data back into a structured body.
 
-**Name:** `protobuf` · **Crate:** `cameleer-grpc` ·
+**Name:** `protobuf` · **Crate:** `cameleer-grpc` · **Cargo feature:** [`grpc`](../guides/build-features.md) ·
 **Apache Camel:** [Protobuf](https://camel.apache.org/components/next/dataformats/protobuf-dataformat.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `aws2-ses` component sends e-mails (text, HTML or raw MIME) with Amazon Simple Email Service.
 
-**Scheme:** `aws2-ses:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-ses:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Simple Email Service (SES)](https://camel.apache.org/components/next/aws2-ses-component.html)
 
 ## When to use it

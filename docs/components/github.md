@@ -2,7 +2,7 @@
 
 > The `github` component polls a GitHub repository for new pull requests, issues, commits, tags and events, and creates issues, comments and commit statuses through the GitHub REST API.
 
-**Scheme:** `github:` · **Crate:** `cameleer-saas` ·
+**Scheme:** `github:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [GitHub](https://camel.apache.org/components/next/github-component.html)
 
 ## When to use it

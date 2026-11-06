@@ -2,7 +2,7 @@
 
 > The `google-firestore` component reads, writes, queries and listens to documents in Google Cloud Firestore, with plain maps as message bodies.
 
-**Scheme:** `google-firestore:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-firestore:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** none (Cameleer component; Camel has no Firestore component)
 
 ## When to use it

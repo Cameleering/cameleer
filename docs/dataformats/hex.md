@@ -2,7 +2,7 @@
 
 > The `hex` data format writes the message body as hexadecimal text (marshal) and reads hexadecimal text back into bytes (unmarshal).
 
-**Name:** `hex` · **Crate:** `cameleer-core` · **Apache Camel:** no direct equivalent (Camel uses
+**Name:** `hex` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) · **Apache Camel:** no direct equivalent (Camel uses
 `base64` or a type converter)
 
 ## When to use it

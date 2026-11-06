@@ -3,7 +3,7 @@
 > The Bindy data formats (`bindyCsv`, `bindyFixed`, `bindyKvp`) map delimited, fixed-length and key-value records to typed fields described by a record descriptor, in both directions.
 
 **Name:** `bindyCsv` · **Also:** `bindy` (with `type: Csv`, `Fixed` or `KeyValue`), `bindyFixed`,
-`bindyKvp` (and the `bindy-csv`, `bindycsv`... spellings) · **Crate:** `cameleer-dataformats` ·
+`bindyKvp` (and the `bindy-csv`, `bindycsv`... spellings) · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Bindy](https://camel.apache.org/components/next/dataformats/bindyCsv-dataformat.html)
 
 ## When to use it

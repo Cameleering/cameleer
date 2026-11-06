@@ -2,7 +2,7 @@
 
 > The `google-storage` component uploads, downloads, lists, copies and deletes objects in Google Cloud Storage buckets, and consumes new objects from a bucket.
 
-**Scheme:** `google-storage:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-storage:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Google Storage](https://camel.apache.org/components/next/google-storage-component.html)
 
 ## When to use it

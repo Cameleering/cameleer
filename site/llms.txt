@@ -1,20 +1,23 @@
 # Cameleer
 
-> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. It starts in about 10 ms, uses about 10 MB of memory and is 2.5-8x faster than Apache Camel 4.23 on Java 21 in the published benchmarks. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. It is also aimed at serverless and edge deployments. It is an independent project, not affiliated with the Apache Software Foundation.
+> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. With the same routes it starts in 3 ms (Apache Camel 4.23 on Java 21: 1.1 s), uses up to 54x less memory and handles 1.7-8.7x the throughput across routing, REST APIs, Kafka and PostgreSQL (comparison: https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/), and it is its own AWS Lambda runtime. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. It is also aimed at serverless and edge deployments. It is an independent project, not affiliated with the Apache Software Foundation.
 
 Key facts:
 
 - Language: Rust, standard library only (TLS, HTTP/2, gRPC, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch).
 - About 230 components, languages and data formats; all Camel EIPs; Rust, YAML and XML DSLs; REST DSL; Kamelets; a Camel-JBang-style CLI, `cameleer`.
 - Formerly named rust-camel (up to v0.1.0).
+- Comparisons: Apache Camel vs Cameleer (https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/), Apache Camel alternatives (https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/), AI agent tool calls direct vs through Cameleer (https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/).
 - AI integrations: OpenAI-compatible chat and embeddings, AWS Bedrock (Converse, streaming, guardrails, Agent Runtime), Azure OpenAI (tool calls, Assistants), Google Vertex AI (Gemini, partner models).
-- Not yet packaged: MCP server, native AWS Lambda runtime, vector store components (build-it-yourself patterns are documented).
+- Serverless: `cameleer` is its own AWS Lambda custom runtime (`provided.al2023`, `scripts/package-lambda.sh`); a function build starts in under 1 ms.
+- Not yet packaged: MCP server, vector store components (build-it-yourself patterns are documented).
 - License: Apache-2.0.
 
 ## Quick start
 
 - Docker (linux/amd64, linux/arm64; Docker Hub `pmsudhi/cameleer`, also `ghcr.io/pmsudhi/cameleer`; deployment guide: https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md): `docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml`
 - CLI from crates.io: `cargo install cameleer-main`, then `cameleer run my-route.camel.yaml`
+- Every build includes every component by default. For a smaller binary or image, pick component families with cargo features (a list replaces the default): `cargo install cameleer-main --no-default-features --features cloud,jq` or `docker build --build-arg FEATURES=cloud,jq .`; each component page names its feature, and a missing one fails at startup with the feature to add. Guide: https://pmsudhi.github.io/cameleer/docs/guides/build-features.html
 - Rust crates: `cameleer-core` (engine, EIPs, Rust DSL) plus one crate per area, for example `cameleer-http` (HTTP and REST DSL), `cameleer-kafka-mqtt`, `cameleer-cloud` (AWS, Azure, GCP), `cameleer-saas` (OpenAI, Slack, ...); `cameleer-main` bundles all of them and runs YAML routes via `cameleer_main::new_main()`.
 - Routes written for Apache Camel's YAML DSL run unchanged; environment values use `{{env:NAME:default}}` placeholders.
 
@@ -40,7 +43,7 @@ Each example runs end to end in the test suite (https://github.com/pmsudhi/camel
 The full documentation as one plain-markdown file: https://pmsudhi.github.io/cameleer/llms-full.txt. Every page is also served as markdown next to its HTML (same path, `.md`).
 
 - [Docs home](https://pmsudhi.github.io/cameleer/docs/): what is where
-- [Guides](https://pmsudhi.github.io/cameleer/docs/guides/): Step-by-step guides for building, running and operating Cameleer routes. (18 pages)
+- [Guides](https://pmsudhi.github.io/cameleer/docs/guides/): Step-by-step guides for building, running and operating Cameleer routes. (20 pages)
 - [Components](https://pmsudhi.github.io/cameleer/docs/components/): Every Cameleer component: the endpoint schemes you use in from and to, grouped by category. (157 pages)
 - [Languages](https://pmsudhi.github.io/cameleer/docs/languages/): The expression and predicate languages you can use in Cameleer routes, such as Simple, JSONPath and XPath. (22 pages)
 - [Data formats](https://pmsudhi.github.io/cameleer/docs/dataformats/): The data formats that marshal and unmarshal message bodies in Cameleer routes, such as JSON, CSV and Avro. (29 pages)
@@ -52,7 +55,9 @@ Guides:
 - [YAML DSL reference](https://pmsudhi.github.io/cameleer/docs/guides/yaml-dsl.html): The YAML DSL describes Cameleer routes in *.camel.yaml files: one input (from), a list of steps (EIPs), endpoints written as URIs, and expressions in Simple or another language, with the same names as the Apache Camel YAML DSL.
 - [Enterprise Integration Patterns in Cameleer](https://pmsudhi.github.io/cameleer/docs/guides/eips.html): Cameleer implements Apache Camel's Enterprise Integration Patterns (EIPs) with the same names, options and semantics; this page lists every one and links to a tested YAML example and its Rust DSL equivalent.
 - [Error handling](https://pmsudhi.github.io/cameleer/docs/guides/error-handling.html): Cameleer handles failures the way Apache Camel does: an error handler retries failed steps with a redelivery policy and then gives up or moves the message to a dead letter channel, onException reacts to specific exception types, and doTry/doCatch/doFinally handle errors inline.
+- [AI agent tool calls: direct vs through Cameleer](https://pmsudhi.github.io/cameleer/docs/guides/agent-tool-calls.html): Direct tool calls leave retries, duplicates, half-done work and business rules to the model; routing them through Cameleer makes each tool a tested route that validates, runs once, rolls back, retries and audits, so the model only decides what to do.
 - [AI components](https://pmsudhi.github.io/cameleer/docs/guides/ai-components.html): Cameleer calls large language models from routes with four components: openai (OpenAI and any OpenAI-compatible server such as Ollama or vLLM), azure-openai, aws-bedrock and google-vertexai; they cover chat, embeddings and, depending on the provider, streaming, tool calls and images.
+- [Build features: choose what goes into your build](https://pmsudhi.github.io/cameleer/docs/guides/build-features.html): Cameleer's default build, image and cargo install include every component. Cargo features let you build a smaller binary that contains only the component families your routes use, for a serverless function, an edge device or a smaller container image.
 - [Cameleer at the edge](https://pmsudhi.github.io/cameleer/docs/guides/edge.html): Cameleer runs integration routes on gateways and small devices: a single native binary of about 10 MB of memory that ingests MQTT, syslog and HL7 locally, filters and aggregates on site, buffers when the uplink is down, and forwards to Kafka or HTTP in the cloud.
 - [Cameleer FAQ](https://pmsudhi.github.io/cameleer/docs/guides/faq.html): Short, factual answers to the questions people ask about Cameleer: what it is, how it relates to Apache Camel, how fast it is, where it runs, and how to use it with Kafka, LLMs and edge devices.
 - [Cameleer for AI agents](https://pmsudhi.github.io/cameleer/docs/guides/agents.html): Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.

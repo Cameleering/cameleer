@@ -28,6 +28,12 @@ docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes
 `cameleer validate` never starts routes or connects to anything. Codes, output formats and
 exit codes: [docs/guides/validate.md](docs/guides/validate.md).
 
+The image and `cargo install cameleer-main` include every component. If a run fails with
+``this cameleer binary was built without the `x` feature``, the binary is a reduced build: use the
+full image or rebuild with that feature added
+([docs/guides/build-features.md](docs/guides/build-features.md)). Each component page names its
+feature in its header line.
+
 ## Changing Cameleer itself
 
 - **Standard library only.** Do not add a dependency to any `Cargo.toml`.

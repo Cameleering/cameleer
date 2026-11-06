@@ -2,7 +2,7 @@
 
 > The `freemarker` component renders a FreeMarker (FTL) template against the message and sets the rendered text as the new body.
 
-**Scheme:** `freemarker:` · **Crate:** `cameleer-core` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `freemarker:` · **Crate:** `cameleer-core` · **Cargo feature:** [`templates`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [FreeMarker](https://camel.apache.org/components/next/freemarker-component.html)
 
 ## When to use it

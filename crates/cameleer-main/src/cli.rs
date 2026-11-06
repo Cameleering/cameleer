@@ -63,12 +63,24 @@ pub fn usage() -> &'static str {
   cameleer help"
 }
 
+/// Whether the executable was started as `bootstrap` (an AWS Lambda custom runtime).
+pub fn invoked_as_bootstrap(argv0: Option<&str>) -> bool {
+    argv0.map(Path::new).and_then(|p| p.file_stem()).and_then(|s| s.to_str()) == Some("bootstrap")
+}
+
 /// Run a command, writing its output to `out`.
 pub fn run(args: &[String], out: &mut dyn Write) -> CliResult {
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
     match cmd {
-        "version" | "--version" | "-v" => w(out, &format!("Cameleer {}", env!("CARGO_PKG_VERSION"))),
+        "version" | "--version" | "-v" => {
+            if crate::features::is_full() {
+                w(out, &format!("Cameleer {}", env!("CARGO_PKG_VERSION")))
+            } else {
+                // a reduced build says which component families it has
+                w(out, &format!("Cameleer {} (components: core, http, yaml{}{})", env!("CARGO_PKG_VERSION"), if crate::features::enabled().is_empty() { "" } else { ", " }, crate::features::enabled().join(", ")))
+            }
+        }
         "help" | "--help" | "-h" => w(out, usage()),
         "catalog" => catalog(rest, out),
         "init" => init(rest, out),
@@ -183,7 +195,25 @@ fn catalog(args: &[String], out: &mut dyn Write) -> CliResult {
 // validate / schema
 // ---------------------------------------------------------------------------
 
+/// Why `cameleer validate` / `cameleer schema` are missing from a build without the `validate`
+/// feature.
+#[cfg(not(feature = "validate"))]
+fn validate_missing(cmd: &str) -> String {
+    format!("`cameleer {cmd}` is not in this binary: it was built without the `validate` feature; rebuild cameleer-main with `--features validate`")
+}
+
+#[cfg(not(feature = "validate"))]
+fn validate_cmd(_args: &[String], _out: &mut dyn Write) -> Result<i32, String> {
+    Err(validate_missing("validate"))
+}
+
+#[cfg(not(feature = "validate"))]
+fn schema_cmd(_args: &[String], _out: &mut dyn Write) -> CliResult {
+    Err(validate_missing("schema"))
+}
+
 /// `cameleer validate`: returns the exit code (0 valid, 1 invalid); `Err` is a usage error.
+#[cfg(feature = "validate")]
 fn validate_cmd(args: &[String], out: &mut dyn Write) -> Result<i32, String> {
     let a = Args::parse(args, &["strict"])?;
     a.check(&["format", "strict", "properties", "prop"])?;
@@ -215,6 +245,7 @@ fn validate_cmd(args: &[String], out: &mut dyn Write) -> Result<i32, String> {
     Ok(report.exit_code(strict))
 }
 
+#[cfg(feature = "validate")]
 fn schema_cmd(args: &[String], out: &mut dyn Write) -> CliResult {
     let a = Args::parse(args, &[])?;
     a.check(&[])?;
@@ -357,7 +388,10 @@ fn run_cmd(args: &[String]) -> CliResult {
     }
     // status and log files for `cameleer ps/stop/log/get/cmd`; CAMEL_LOCAL_STATUS=false turns
     // them off (the container image does: one process per container, logs go to stdout)
-    if local::local_status_enabled() {
+    // not on serverless platforms: AWS Lambda (read-only file system), Cloud Run and Knative
+    // (K_SERVICE), Azure Functions custom handlers; one integration per instance there
+    let serverless = crate::lambda::runtime_api().is_some() || ["K_SERVICE", "FUNCTIONS_CUSTOMHANDLER_PORT"].iter().any(|v| std::env::var_os(v).is_some());
+    if local::local_status_enabled() && !serverless {
         let home = local::camel_home();
         main.enable_local_status(&home);
         let _ = local::log_to_file(&local::log_file(&home, std::process::id()));

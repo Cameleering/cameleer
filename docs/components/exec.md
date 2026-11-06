@@ -2,7 +2,7 @@
 
 > The `exec` component runs a local program or script from a route, writes the message body to its standard input and returns its standard output as the new body.
 
-**Scheme:** `exec:` · **Crate:** `cameleer-core` ·
+**Scheme:** `exec:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Exec](https://camel.apache.org/components/next/exec-component.html)
 
 ## When to use it

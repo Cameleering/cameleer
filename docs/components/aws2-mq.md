@@ -2,7 +2,7 @@
 
 > The `aws2-mq` component lists, creates, describes, reboots and deletes Amazon MQ brokers (ActiveMQ and RabbitMQ).
 
-**Scheme:** `aws2-mq:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-mq:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS MQ](https://camel.apache.org/components/next/aws2-mq-component.html)
 
 ## When to use it

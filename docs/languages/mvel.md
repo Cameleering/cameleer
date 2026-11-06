@@ -2,7 +2,7 @@
 
 > The `mvel` language evaluates MVEL 2 expressions against the exchange, with `request`, `headers`, `body` and `exchange` as the root object's properties.
 
-**Name:** `mvel` · **Crate:** `cameleer-script` ·
+**Name:** `mvel` · **Crate:** `cameleer-script` · **Cargo feature:** [`script`](../guides/build-features.md) ·
 **Apache Camel:** [MVEL](https://camel.apache.org/components/next/languages/mvel-language.html)
 
 ## When to use it

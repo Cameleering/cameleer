@@ -8,8 +8,8 @@ authors:
 repository-code: "https://github.com/pmsudhi/cameleer"
 url: "https://pmsudhi.github.io/cameleer/"
 license: Apache-2.0
-version: 0.1.0
-date-released: "2026-11-05"
+version: 0.4.0
+date-released: "2026-11-06"
 keywords:
   - rust
   - apache-camel
@@ -20,9 +20,9 @@ keywords:
 abstract: >-
   Cameleer is an independent reimplementation of Apache Camel in Rust: routes,
   Enterprise Integration Patterns, about 230 components, languages and data formats, and
-  the Rust, YAML and XML DSLs, built on the Rust standard library only. It starts in about
-  10 ms, uses about 10 MB of memory and outperforms Apache Camel on the JVM in published
-  benchmarks.
+  the Rust, YAML and XML DSLs, built on the Rust standard library only. In published benchmarks
+  with the same routes it starts in 3 ms (Apache Camel on the JVM: 1.1 s), uses up to 54 times less
+  memory and handles 1.7 to 8.7 times the throughput.
 references:
   - type: software
     title: Apache Camel

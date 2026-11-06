@@ -13,7 +13,12 @@ categories = ["web-programming", "encoding"]
 description = "Cameleer SOAP stack (std only): WSDL 1.1, SOAP 1.1/1.2 envelopes and faults, WS-Security, cxf / cxfrs / spring-ws components, the jaxb data format, FHIR R4 (fhirJson / fhirXml data formats, fhir component, mock server)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
-cameleer-http = { path = "../cameleer-http", version = "0.3.0" }
-cameleer-tls = { path = "../cameleer-tls", version = "0.3.0" }
-cameleer-xml = { path = "../cameleer-xml", version = "0.3.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
+cameleer-http = { path = "../cameleer-http", version = "0.4.0", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.4.0" }
+cameleer-xml = { path = "../cameleer-xml", version = "0.4.0" }
+
+[dev-dependencies]
+# the tests use every optional part of core/http (their default features); the library does not
+cameleer-core = { path = "../cameleer-core" }
+cameleer-http = { path = "../cameleer-http" }

@@ -2,7 +2,7 @@
 
 > The `azure-functions` component invokes HTTP-triggered Azure Functions and returns their response.
 
-**Scheme:** `azure-functions:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `azure-functions:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** none (a Cameleer component)
 
 ## When to use it

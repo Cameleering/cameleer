@@ -2,7 +2,7 @@
 
 > The `aws2-lambda` component invokes AWS Lambda functions and manages functions, versions, aliases, tags and event source mappings.
 
-**Scheme:** `aws2-lambda:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-lambda:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Lambda](https://camel.apache.org/components/next/aws2-lambda-component.html)
 
 ## When to use it

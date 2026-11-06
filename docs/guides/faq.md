@@ -38,25 +38,31 @@ The Apache License 2.0 ([LICENSE](../../LICENSE)).
 
 ### How fast is Cameleer?
 
-On the published benchmark (AMD Ryzen 5 5600X, Windows 11) against Apache Camel 4.23 on Java 21,
-Cameleer is 4.27x faster on a `direct` route (4.96 million messages per second), 8.37x on seda
-request-reply, 3.48x on a content-based router, 3.18x on JSON split and aggregate, and 2.45x on
-an HTTP consumer. All six scenarios, including the three under 4x, are in
-[BENCHMARKS.md](../BENCHMARKS.md).
+With the same routes, Cameleer handles 1.7 to 8.7 times the throughput of Apache Camel 4.23 on
+Java 21 in every scenario measured: 2.1x on a REST API with JSON, 2.3x writing to PostgreSQL,
+1.7x publishing to Kafka, 8.7x on Kafka stream processing and 3.0x on a content-based router.
+Every scenario, the method and the raw data are on the
+[Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/)
+page and in [BENCHMARKS.md](../BENCHMARKS.md).
 
 ### How much memory does it use?
 
-A route uses about 10 MB: peak memory was 9 to 15 MB across the benchmark scenarios, against 263
-to 491 MB for Camel on the JVM (25 to 46 times less). See [BENCHMARKS.md](../BENCHMARKS.md).
+A route uses about 10 MB: 8 MB at startup, and 8 to 68 MB at peak across the benchmark scenarios,
+against 213 to 440 MB for Apache Camel on the JVM (up to 54 times less). See
+[BENCHMARKS.md](../BENCHMARKS.md).
 
 ### How long does it take to start?
 
-About 10 ms from process start to routes running, against 751 ms for Camel on the JVM (77 times
-faster), which makes scale-to-zero and serverless practical.
+3 ms from process start to routes running in the benchmark, against 1.1 s for Apache Camel on
+the JVM and 30 ms compiled natively with Quarkus. A function build with only the components it
+needs starts in under 1 ms. That makes scale-to-zero and serverless practical
+([BENCHMARKS.md](../BENCHMARKS.md#faas-cold-start-and-size)).
 
 ### How big is the Docker image?
 
-The `pmsudhi/cameleer` image is under 20 MB to download: one native binary on a distroless base.
+The `pmsudhi/cameleer` image is about 20 MB to download: one native binary on a distroless base. Built with only the
+component families you need it is smaller: 14.5 MB with `FEATURES=cloud`, 12.5 MB with
+`FEATURES=core`.
 See the [deployment guide](../DEPLOYMENT.md).
 
 ## Running it
@@ -81,8 +87,10 @@ See [Cameleer at the edge](edge.md#small-footprint-deployment).
 ### Does it run on Kubernetes, Cloud Run or AWS Lambda?
 
 Kubernetes, Docker Compose, Google Cloud Run, Azure Container Apps, Knative and ECS/Fargate run
-the container image as it is ([deployment guide](../DEPLOYMENT.md)). A native AWS Lambda adapter
-is on the [roadmap](../ROADMAP.md).
+the container image as it is ([deployment guide](../DEPLOYMENT.md)). On AWS Lambda, `cameleer`
+is its own custom runtime for `provided.al2023`: API Gateway and function URL events go to your
+`platform-http` routes, other events to `direct:lambda`
+([AWS Lambda](../DEPLOYMENT.md#aws-lambda)).
 
 ### Does it run on Windows and macOS?
 

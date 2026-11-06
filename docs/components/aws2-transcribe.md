@@ -2,7 +2,7 @@
 
 > The `aws2-transcribe` component starts and manages Amazon Transcribe speech-to-text jobs, including medical and call analytics jobs, custom vocabularies and language models.
 
-**Scheme:** `aws2-transcribe:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-transcribe:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Transcribe](https://camel.apache.org/components/next/aws2-transcribe-component.html)
 
 ## When to use it

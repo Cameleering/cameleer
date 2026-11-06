@@ -2,7 +2,7 @@
 
 > The `google-secret-manager` component creates, reads, versions, lists and deletes secrets in Google Cloud Secret Manager, and the `{{gcp:name}}` placeholder reads secrets into route configuration.
 
-**Scheme:** `google-secret-manager:` · **Crate:** `cameleer-cloud` ·
+**Scheme:** `google-secret-manager:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [Google Secret Manager](https://camel.apache.org/components/next/google-secret-manager-component.html)
 
 ## When to use it

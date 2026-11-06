@@ -2,7 +2,7 @@
 
 > The `azure-storage-files` component uploads, downloads, lists and deletes files and directories in Azure Files shares, and polls a directory for new files.
 
-**Scheme:** `azure-storage-files:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `azure-storage-files:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** Camel's [Azure Files](https://camel.apache.org/components/next/azure-files-component.html) component uses the scheme `azure-files` and FTP-style options; `azure-storage-files` follows the other Azure storage components and also supports those FTP-style options
 
 ## When to use it

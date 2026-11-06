@@ -8,6 +8,9 @@
 //! on the result. The Rust DSL snippets of the pages are copied into this file (and checked to be
 //! verbatim) so they keep compiling.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 

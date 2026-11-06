@@ -2,7 +2,7 @@
 
 > The `tarFile` data format packs a message body into a tar archive and unpacks tar archives back into one body or a list of entries.
 
-**Name:** `tarFile` · **Also:** `tar`, `tarfile` · **Crate:** `cameleer-dataformats` ·
+**Name:** `tarFile` · **Also:** `tar`, `tarfile` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Tar File](https://camel.apache.org/components/next/dataformats/tarFile-dataformat.html)
 
 ## When to use it

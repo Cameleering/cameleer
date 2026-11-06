@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use cameleer_tls::{TlsServerConfig, TlsStream};
+use cameleer_tls::TlsServerConfig;
 
 use super::conn::{H2Config, H2Error, H2Stream, NewStreamFn, Role, Shared};
 use super::transport::Transport;
@@ -203,7 +203,7 @@ fn serve_connection(sock: TcpStream, inner: &Arc<Inner>, handler: Arc<dyn H2Hand
         Some(cfg) => {
             let _ = sock.set_read_timeout(Some(config.connect_timeout));
             let _ = sock.set_write_timeout(Some(config.connect_timeout));
-            let stream = TlsStream::accept(sock, &cfg).map_err(|e| H2Error::Io(format!("TLS handshake failed: {}", e)))?;
+            let stream = cameleer_tls::net::accept_tls(sock, &cfg).map_err(|e| H2Error::Io(format!("TLS handshake failed: {}", e)))?;
             if let Some(p) = stream.alpn_protocol() {
                 if p != b"h2" {
                     return Err(H2Error::Protocol(super::ErrorCode::HTTP_1_1_REQUIRED, "client negotiated a protocol other than h2".into()));

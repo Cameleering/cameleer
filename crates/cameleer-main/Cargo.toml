@@ -13,25 +13,71 @@ categories = ["command-line-utilities", "network-programming"]
 description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel JBang)"
 
 [dependencies]
-cameleer-amqp = { path = "../cameleer-amqp", version = "0.3.0" }
-cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.3.0" }
-cameleer-cloud = { path = "../cameleer-cloud", version = "0.3.0" }
-cameleer-core = { path = "../cameleer-core", version = "0.3.0" }
-cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.3.0" }
-cameleer-datastores = { path = "../cameleer-datastores", version = "0.3.0" }
-cameleer-grpc = { path = "../cameleer-grpc", version = "0.3.0" }
-cameleer-http = { path = "../cameleer-http", version = "0.3.0" }
-cameleer-protocols = { path = "../cameleer-protocols", version = "0.3.0" }
-cameleer-script = { path = "../cameleer-script", version = "0.3.0" }
-cameleer-soap = { path = "../cameleer-soap", version = "0.3.0" }
-cameleer-saas = { path = "../cameleer-saas", version = "0.3.0" }
-cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.3.0" }
-cameleer-sql = { path = "../cameleer-sql", version = "0.3.0" }
-cameleer-ssh = { path = "../cameleer-ssh", version = "0.3.0" }
-cameleer-xml = { path = "../cameleer-xml", version = "0.3.0" }
-cameleer-yaml = { path = "../cameleer-yaml", version = "0.3.0" }
+cameleer-amqp = { path = "../cameleer-amqp", version = "0.4.0", optional = true }
+cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.4.0", optional = true }
+cameleer-cloud = { path = "../cameleer-cloud", version = "0.4.0", optional = true }
+cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
+cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.4.0", optional = true }
+cameleer-datastores = { path = "../cameleer-datastores", version = "0.4.0", optional = true }
+cameleer-grpc = { path = "../cameleer-grpc", version = "0.4.0", optional = true }
+cameleer-http = { path = "../cameleer-http", version = "0.4.0", default-features = false }
+cameleer-protocols = { path = "../cameleer-protocols", version = "0.4.0", optional = true }
+cameleer-script = { path = "../cameleer-script", version = "0.4.0", optional = true }
+cameleer-soap = { path = "../cameleer-soap", version = "0.4.0", optional = true }
+cameleer-saas = { path = "../cameleer-saas", version = "0.4.0", optional = true }
+cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.4.0", optional = true }
+cameleer-sql = { path = "../cameleer-sql", version = "0.4.0", optional = true }
+cameleer-ssh = { path = "../cameleer-ssh", version = "0.4.0", optional = true }
+cameleer-xml = { path = "../cameleer-xml", version = "0.4.0", optional = true }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.4.0" }
+
+# Component families. The default build has all of them; a FaaS or edge build picks only
+# what its routes use, e.g.
+#   cargo build --profile dist -p cameleer-main --no-default-features --features cloud
+# Always included: core (EIPs, Simple, JsonPath and the other core languages, core components),
+# YAML/XML DSL, HTTP/1.1 (platform-http, http, rest, netty) and TLS. A route that names a
+# component or language left out of the build fails at startup with a message naming the feature
+# to enable. Besides the component families: `templates` (mustache, velocity, freemarker,
+# string-template), `jq`, `xpath` (the core XPath subset; the `xml` family has the full XPath),
+# `http2` (`httpVersion=HTTP/2` of the http producer) and `validate` (`cameleer validate` and
+# `cameleer schema`).
+[features]
+default = ["full"]
+# nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
+core = []
+full = [
+    "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "templates", "jq", "xpath", "http2", "validate",
+]
+templates = ["cameleer-core/templates"]
+jq = ["cameleer-core/jq"]
+xpath = ["cameleer-core/xpath"]
+http2 = ["cameleer-http/http2"]
+validate = []
+amqp = ["dep:cameleer-amqp"]
+amqp10 = ["dep:cameleer-amqp10"]
+cloud = ["dep:cameleer-cloud"]
+dataformats = ["dep:cameleer-dataformats"]
+datastores = ["dep:cameleer-datastores"]
+grpc = ["dep:cameleer-grpc"]
+kafka-mqtt = ["dep:cameleer-kafka-mqtt"]
+protocols = ["dep:cameleer-protocols"]
+saas = ["dep:cameleer-saas"]
+script = ["dep:cameleer-script"]
+soap = ["dep:cameleer-soap"]
+sql = ["dep:cameleer-sql"]
+ssh = ["dep:cameleer-ssh"]
+xml = ["dep:cameleer-xml"]
 
 [[bin]]
 name = "cameleer"
 path = "src/bin/cameleer.rs"
 
+[[example]]
+name = "embed_yaml"
+required-features = ["full"]
+
+
+[[example]]
+name = "idle_threads"
+required-features = ["xml"]

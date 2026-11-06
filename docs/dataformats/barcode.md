@@ -2,7 +2,7 @@
 
 > The `barcode` data format turns text into a barcode image (QR Code, Data Matrix, PDF417, Aztec, Code 128, EAN and more) on marshal, and reads the text back from a barcode image on unmarshal.
 
-**Name:** `barcode` · **Crate:** `cameleer-dataformats` ·
+**Name:** `barcode` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Barcode](https://camel.apache.org/components/next/dataformats/barcode-dataformat.html)
 
 ## When to use it

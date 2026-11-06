@@ -2,7 +2,7 @@
 
 > The `cxfrs` component serves and calls JAX-RS style REST resources: operations are matched by HTTP method and path template, and the matching operation name is passed to the route.
 
-**Scheme:** `cxfrs:` · **Crate:** `cameleer-soap` ·
+**Scheme:** `cxfrs:` · **Crate:** `cameleer-soap` · **Cargo feature:** [`soap`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [CXF-RS](https://camel.apache.org/components/next/cxfrs-component.html)
 
 Java resource classes do not exist in Cameleer. The resource model is given inline with

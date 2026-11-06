@@ -2,7 +2,7 @@
 
 > The `ftp` component downloads files from and uploads files to an FTP server, polling a remote directory for new files.
 
-**Scheme:** `ftp:` · **Crate:** `cameleer-protocols` ·
+**Scheme:** `ftp:` · **Crate:** `cameleer-protocols` · **Cargo feature:** [`protocols`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [FTP](https://camel.apache.org/components/next/ftp-component.html)
 
 The options and headers follow the [file](file.md) component. For TLS use [ftps](ftps.md); for

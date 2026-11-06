@@ -2,7 +2,7 @@
 
 > The `json` data format turns JSON text into a structured message body (unmarshal) and any body back into JSON text (marshal).
 
-**Name:** `json` · **Also:** `jackson`, `gson`, `jsonb`, `fastjson`, `johnzon` · **Crate:** `cameleer-core` ·
+**Name:** `json` · **Also:** `jackson`, `gson`, `jsonb`, `fastjson`, `johnzon` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Apache Camel:** [Jackson](https://camel.apache.org/components/next/dataformats/jackson-dataformat.html)
 
 ## When to use it

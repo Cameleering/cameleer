@@ -2,7 +2,7 @@
 
 > The `xquery` component runs an XQuery file against the XML message body and replaces the body with the query result.
 
-**Scheme:** `xquery:` · **Crate:** `cameleer-xml` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `xquery:` · **Crate:** `cameleer-xml` · **Cargo feature:** [`xml`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [XQuery](https://camel.apache.org/components/next/xquery-component.html)
 
 ## When to use it

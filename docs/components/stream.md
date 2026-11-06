@@ -2,7 +2,7 @@
 
 > The `stream` component reads lines from standard input or a file (optionally tailing it) and writes messages to standard output, standard error or a file.
 
-**Scheme:** `stream:` · **Crate:** `cameleer-core` ·
+**Scheme:** `stream:` · **Crate:** `cameleer-core` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [Stream](https://camel.apache.org/components/next/stream-component.html)
 
 ## When to use it

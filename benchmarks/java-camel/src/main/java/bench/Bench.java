@@ -21,24 +21,70 @@ import org.apache.camel.builder.RouteBuilder;
 import org.apache.camel.impl.DefaultCamelContext;
 import org.apache.camel.processor.aggregate.GroupedBodyAggregationStrategy;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
 /**
  * Apache Camel side of the benchmark suite. Same commands, routes, driver and output records
  * as crates/cameleer-bench (see its src/main.rs, scenarios.rs and driver.rs):
  *
  * <pre>
- * run &lt;scenario&gt; &lt;warmup_s&gt; &lt;iter_s&gt; &lt;iters&gt;
+ * run &lt;scenario&gt; &lt;warmup_s&gt; &lt;iter_s&gt; &lt;iters&gt;      (also kafka-stream)
  * http-server &lt;port&gt;
+ * serve &lt;scenario&gt; &lt;port&gt; &lt;secs&gt;               (real-use HTTP scenarios on 0.0.0.0)
  * startup
  * </pre>
+ *
+ * The real-use scenarios read BENCH_KAFKA, BENCH_PG, BENCH_SIDE and BENCH_RUN like
+ * crates/cameleer-bench/src/realworld.rs.
  */
 public final class Bench {
     static final int SEDA_PRODUCERS = 4;
     static final int ITEMS = 10;
+    static final int CSV_ROWS = 1000;
+    static final int CSV_BATCH = 100;
+    static final int PG_POOL = 16;
+    static final int STREAM_CONSUMERS = 4;
+
+    static String env(String k, String d) {
+        String v = System.getenv(k);
+        return v == null || v.isEmpty() ? d : v;
+    }
+
+    // read when used, not in a static initializer: a native image runs those at build time
+    static String kafka() {
+        return env("BENCH_KAFKA", "127.0.0.1:9092");
+    }
+
+    static String pg() {
+        return env("BENCH_PG", "127.0.0.1");
+    }
+
+    static String side() {
+        return env("BENCH_SIDE", "java");
+    }
+
+    static String run() {
+        return env("BENCH_RUN", "0");
+    }
 
     public static void main(String[] args) throws Exception {
         String cmd = args.length > 0 ? args[0] : "";
         switch (cmd) {
             case "run" -> {
+                if (args[1].equals("kafka-stream")) {
+                    AtomicLong sink = new AtomicLong();
+                    CamelContext ctx = new DefaultCamelContext();
+                    addStreamRoute(ctx, sink);
+                    ctx.start();
+                    version(ctx);
+                    System.out.println("READY");
+                    Outcome out = Driver.run(Double.parseDouble(args[2]), Double.parseDouble(args[3]),
+                            Integer.parseInt(args[4]), 1, sink, i -> () -> Thread.sleep(20));
+                    System.out.println(out.resultLine("kafka-stream"));
+                    ctx.stop();
+                    break;
+                }
                 AtomicLong sink = new AtomicLong();
                 CamelContext ctx = new DefaultCamelContext();
                 addRoutes(ctx, sink);
@@ -64,6 +110,18 @@ public final class Bench {
                 }
                 ctx.stop();
             }
+            case "serve" -> {
+                CamelContext ctx = new DefaultCamelContext();
+                if (args[1].equals("http-sql")) {
+                    bindHikari(ctx);
+                }
+                addServerRoute(ctx, args[1], Integer.parseInt(args[2]));
+                ctx.start();
+                version(ctx);
+                System.out.println("READY");
+                Thread.sleep((long) (Double.parseDouble(args[3]) * 1000));
+                ctx.stop();
+            }
             case "startup" -> {
                 AtomicLong sink = new AtomicLong();
                 CamelContext ctx = new DefaultCamelContext();
@@ -75,7 +133,7 @@ public final class Bench {
                 ctx.stop();
             }
             default -> {
-                System.err.println("usage: run|http-server|startup");
+                System.err.println("usage: run|http-server|serve|startup");
                 System.exit(1);
             }
         }
@@ -110,6 +168,90 @@ public final class Bench {
             items.add("{\"sku\":\"SKU-" + i + "\",\"qty\":" + (i + 1) + ",\"price\":" + (i + 3) + ".99}");
         }
         return "{\"orderId\":" + id + ",\"customer\":\"ACME\",\"items\":[" + String.join(",", items) + "]}";
+    }
+
+    static String csvFile(long id) {
+        String[] regions = {"EU", "US", "APAC"};
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < CSV_ROWS; i++) {
+            if (i > 0) {
+                b.append('\n');
+            }
+            b.append(id).append(',').append(i).append(',').append(regions[i % 3]).append(",ACME-").append(i % 50)
+                    .append(',').append(10 + i % 90).append(".25");
+        }
+        return b.toString();
+    }
+
+    /** The PostgreSQL pool of http-sql on the JVM (Camel Quarkus binds its own Agroal pool as "ds"). */
+    static void bindHikari(CamelContext ctx) {
+        HikariConfig cfg = new HikariConfig();
+        cfg.setJdbcUrl("jdbc:postgresql://" + pg() + ":5432/bench");
+        cfg.setUsername("camel");
+        cfg.setPassword("camelpw");
+        cfg.setMaximumPoolSize(PG_POOL);
+        ctx.getRegistry().bind("ds", new HikariDataSource(cfg));
+    }
+
+    /** The real-use HTTP scenarios; see crates/cameleer-bench/src/realworld.rs. */
+    static void addServerRoute(CamelContext ctx, String scenario, int port) throws Exception {
+        ctx.addRoutes(new RouteBuilder() {
+            @Override
+            public void configure() {
+                String base = "netty-http:http://0.0.0.0:" + port;
+                switch (scenario) {
+                    case "http" -> from(base + "/bench")
+                            .routeId("http")
+                            .setHeader("Content-Type", constant("application/json"))
+                            .setBody(constant("{\"status\":\"ok\"}"));
+                    case "rest-json" -> from(base + "/orders")
+                            .routeId("rest-json")
+                            .convertBodyTo(String.class)
+                            .setHeader("orderId", jsonpath("$.orderId"))
+                            .setHeader("customer", jsonpath("$.customer"))
+                            .setHeader("Content-Type", constant("application/json"))
+                            .setBody(simple("{\"orderId\":${header.orderId},\"customer\":\"${header.customer}\",\"status\":\"accepted\"}"));
+                    case "http-kafka" -> from(base + "/ingest")
+                            .routeId("http-kafka")
+                            .convertBodyTo(String.class)
+                            .setHeader("orderId", jsonpath("$.orderId"))
+                            .setHeader("kafka.KEY", simple("${header.orderId}"))
+                            .to("kafka:orders-" + side() + "?brokers=" + kafka())
+                            .setHeader("Content-Type", constant("application/json"))
+                            .setBody(constant("{\"status\":\"queued\"}"));
+                    case "http-sql" -> from(base + "/persist")
+                            .routeId("http-sql")
+                            .convertBodyTo(String.class)
+                            .setHeader("orderId", jsonpath("$.orderId"))
+                            .setHeader("customer", jsonpath("$.customer"))
+                            .to("sql:insert into orders (order_id, customer, side) values (:#orderId, :#customer, '" + side()
+                                    + "')?dataSource=#ds")
+                            .setHeader("Content-Type", constant("application/json"))
+                            .setBody(constant("{\"status\":\"stored\"}"));
+                    default -> throw new IllegalArgumentException("not a served scenario: " + scenario);
+                }
+            }
+        });
+    }
+
+    /** Kafka stream processing; see crates/cameleer-bench/src/realworld.rs. */
+    static void addStreamRoute(CamelContext ctx, AtomicLong sink) throws Exception {
+        ctx.addRoutes(new RouteBuilder() {
+            @Override
+            public void configure() {
+                from("kafka:stream-in?brokers=" + kafka() + "&groupId=stream-" + side() + "-" + run()
+                        + "&autoOffsetReset=earliest&consumersCount=" + STREAM_CONSUMERS)
+                        .routeId("kafka-stream")
+                        .convertBodyTo(String.class)
+                        .setHeader("orderId", jsonpath("$.orderId"))
+                        .setHeader("amount", jsonpath("$.amount"))
+                        .filter(simple("${header.amount} > 10"))
+                            .transform(simple("{\"orderId\":${header.orderId},\"amount\":${header.amount},\"checked\":true}"))
+                            .to("kafka:stream-out-" + side() + "?brokers=" + kafka())
+                            .process(counter(sink))
+                        .end();
+            }
+        });
     }
 
     static void addHttpRoute(CamelContext ctx, int port) throws Exception {
@@ -170,6 +312,20 @@ public final class Bench {
                                 .process(counter(sink))
                             .end()
                         .end();
+
+                // 5. CSV batch: split a file into rows, keep the EU rows, reshape them and write
+                //    them out in batches
+                from("direct:csv")
+                        .routeId("csv")
+                        .split(body().tokenize("\n"))
+                            .filter(simple("${body} contains ',EU,'"))
+                                .transform(simple("${body},checked"))
+                                .aggregate(constant(true), new GroupedBodyAggregationStrategy())
+                                    .completionSize(CSV_BATCH)
+                                    .process(counter(sink))
+                                .end()
+                            .end()
+                        .end();
             }
         });
     }
@@ -208,6 +364,15 @@ public final class Bench {
                 public void call() {
                     n++;
                     t.sendBody("direct:splitagg", orderJson(n));
+                }
+            });
+            case "csv" -> Driver.run(warmup, iter, iters, 1, null, i -> new Op() {
+                long n;
+
+                @Override
+                public void call() {
+                    n++;
+                    t.sendBody("direct:csv", csvFile(n));
                 }
             });
             default -> throw new IllegalArgumentException("unknown scenario: " + scenario);

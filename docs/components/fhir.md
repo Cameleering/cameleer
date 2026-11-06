@@ -2,7 +2,7 @@
 
 > The `fhir` component reads and writes healthcare data on a FHIR server (R4, R4B, R5, DSTU3): create, read, update, delete, search, history, transactions, operations, patch and validation.
 
-**Scheme:** `fhir:` · **Crate:** `cameleer-soap` ·
+**Scheme:** `fhir:` · **Crate:** `cameleer-soap` · **Cargo feature:** [`soap`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [FHIR](https://camel.apache.org/components/next/fhir-component.html)
 
 Cameleer implements the FHIR REST API and the JSON and XML formats itself (no HAPI). Resources

@@ -257,8 +257,8 @@ a clean stop of the route does not mark the gateway offline, so publish `offline
 ## Small footprint deployment
 
 The Docker image `pmsudhi/cameleer` is one native binary on a distroless base, for `linux/amd64`
-and `linux/arm64`, under 20 MB to download. A running route uses about 10 MB of memory (9 to
-15 MB peak in the [benchmarks](../BENCHMARKS.md)) and starts in about 10 ms. Nothing is written to
+and `linux/arm64`, about 20 MB to download (12.5 MB built with `FEATURES=core`). A running route uses about 10 MB of memory (8 MB at startup in the
+[benchmarks](../BENCHMARKS.md)) and starts its routes in milliseconds. Nothing is written to
 the filesystem unless a route writes files, so the container runs with a read-only root:
 
 ```sh

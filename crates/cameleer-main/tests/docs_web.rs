@@ -5,6 +5,9 @@
 //! server or mock exists the route runs end to end. The Rust DSL snippets of the pages are
 //! copied verbatim below and run or at least compile.
 
+// needs every component family (the default features)
+#![cfg(feature = "full")]
+
 #![allow(clippy::needless_raw_string_hashes)]
 
 use std::io::{Read, Write};

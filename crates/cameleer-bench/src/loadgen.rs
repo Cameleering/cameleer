@@ -1,6 +1,8 @@
 //! Closed-loop HTTP/1.1 keep-alive load generator, used against both the Cameleer and the
-//! Apache Camel HTTP consumers. Each connection has its own thread and sends one small JSON
-//! POST at a time, reconnecting when the server closes the connection.
+//! Apache Camel HTTP consumers, on the same machine or over the network. Each connection has
+//! its own thread and sends one JSON POST at a time, reconnecting when the server closes the
+//! connection. The body is either a fixed small document or an order whose id changes with
+//! every request (so Kafka keys spread over the partitions).
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
@@ -19,6 +21,39 @@ pub fn request_bytes(port: u16, path: &str) -> Vec<u8> {
         REQUEST_BODY.len()
     )
     .into_bytes()
+}
+
+/// An order request for the real-use scenarios: `POST path` with an order of id `id`.
+pub fn order_request(host: &str, port: u16, path: &str, id: u64) -> Vec<u8> {
+    let body = format!("{{\"orderId\":{id},\"customer\":\"ACME\",\"items\":[{{\"sku\":\"SKU-1\",\"qty\":2,\"price\":9.99}}]}}");
+    format!("POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len())
+        .into_bytes()
+}
+
+/// Read one response and return `(status, body)` (chunked bodies are not supported here).
+pub fn read_response_body<R: BufRead>(r: &mut R, line: &mut String) -> io::Result<(u16, String)> {
+    line.clear();
+    r.read_line(line)?;
+    let status: u16 = line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).ok_or_else(|| bad("bad status line"))?;
+    let mut len = 0usize;
+    loop {
+        line.clear();
+        if r.read_line(line)? == 0 {
+            return Err(bad("eof in headers"));
+        }
+        let h = line.trim_end();
+        if h.is_empty() {
+            break;
+        }
+        if let Some((k, v)) = h.split_once(':') {
+            if k.eq_ignore_ascii_case("content-length") {
+                len = v.trim().parse().map_err(|_| bad("bad content-length"))?;
+            }
+        }
+    }
+    let mut body = vec![0; len];
+    r.read_exact(&mut body)?;
+    Ok((status, String::from_utf8_lossy(&body).into_owned()))
 }
 
 /// Read one response; returns `(status, keep_alive)`. The body is read and discarded.
@@ -86,6 +121,7 @@ fn bad(msg: &str) -> io::Error {
 }
 
 struct Conn {
+    host: String,
     port: u16,
     reader: Option<BufReader<TcpStream>>,
     connects: Arc<AtomicU64>,
@@ -94,7 +130,7 @@ struct Conn {
 impl Conn {
     fn exchange(&mut self, req: &[u8], line: &mut String) -> io::Result<u16> {
         if self.reader.is_none() {
-            let s = TcpStream::connect(("127.0.0.1", self.port))?;
+            let s = TcpStream::connect((self.host.as_str(), self.port))?;
             self.connects.fetch_add(1, Ordering::Relaxed);
             s.set_nodelay(true)?;
             s.set_read_timeout(Some(Duration::from_secs(30)))?;
@@ -115,19 +151,36 @@ impl Conn {
 /// TCP connections were opened (more than `conns` means the server closed keep-alive
 /// connections).
 pub fn run(port: u16, path: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
-    let req = request_bytes(port, path);
+    run_remote("127.0.0.1", port, path, "small", conns, plan)
+}
+
+/// Load `host:port/path` with `conns` connections. `body` is `small` (the fixed document of
+/// [`run`]) or `order` (an order with a new id on every request).
+pub fn run_remote(host: &str, port: u16, path: &str, body: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
+    let small = request_bytes(port, path);
+    let orders = body == "order";
     let connects = Arc::new(AtomicU64::new(0));
-    let out = driver::run(plan, conns, None, |_| {
-        let req = req.clone();
-        let mut conn = Conn { port, reader: None, connects: connects.clone() };
+    let out = driver::run(plan, conns, None, |w| {
+        let small = small.clone();
+        let mut conn = Conn { host: host.to_string(), port, reader: None, connects: connects.clone() };
         let mut line = String::new();
+        let (host, path) = (host.to_string(), path.to_string());
+        let mut n = 0u64;
         move || {
+            n += 1;
+            let order;
+            let req: &[u8] = if orders {
+                order = order_request(&host, port, &path, (w as u64 + 1) * 1_000_000_000 + n);
+                &order
+            } else {
+                &small
+            };
             // a server may close a keep-alive connection between requests: retry once
-            let status = match conn.exchange(&req, &mut line) {
+            let status = match conn.exchange(req, &mut line) {
                 Ok(s) => s,
                 Err(_) => {
                     conn.reader = None;
-                    conn.exchange(&req, &mut line).expect("http request failed")
+                    conn.exchange(req, &mut line).expect("http request failed")
                 }
             };
             assert_eq!(status, 200, "unexpected HTTP status");

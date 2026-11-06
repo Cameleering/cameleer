@@ -2,7 +2,7 @@
 
 > The `azure-storage-blob` component uploads, downloads, lists, copies and deletes blobs in Azure Blob Storage (block, append and page blobs), and polls a container for new blobs.
 
-**Scheme:** `azure-storage-blob:` · **Crate:** `cameleer-cloud` · **Consumer:** yes · **Producer:** yes ·
+**Scheme:** `azure-storage-blob:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** yes · **Producer:** yes ·
 **Apache Camel:** [Azure Storage Blob Service](https://camel.apache.org/components/next/azure-storage-blob-component.html)
 
 ## When to use it

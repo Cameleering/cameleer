@@ -2,7 +2,7 @@
 
 > The `aws2-iam` component manages AWS IAM users, groups, access keys, roles, policies and instance profiles.
 
-**Scheme:** `aws2-iam:` · **Crate:** `cameleer-cloud` · **Consumer:** no · **Producer:** yes ·
+**Scheme:** `aws2-iam:` · **Crate:** `cameleer-cloud` · **Cargo feature:** [`cloud`](../guides/build-features.md) · **Consumer:** no · **Producer:** yes ·
 **Apache Camel:** [AWS Identity and Access Management (IAM)](https://camel.apache.org/components/next/aws2-iam-component.html)
 
 ## When to use it

@@ -2,7 +2,7 @@
 
 > The `crypto` data format encrypts a message body with a symmetric key (AES, DES or Triple DES) on marshal and decrypts it on unmarshal, with an optional HMAC to detect tampering.
 
-**Name:** `crypto` · **Crate:** `cameleer-dataformats` ·
+**Name:** `crypto` · **Crate:** `cameleer-dataformats` · **Cargo feature:** [`dataformats`](../guides/build-features.md) ·
 **Apache Camel:** [Crypto (Java Cryptographic Extension)](https://camel.apache.org/components/next/dataformats/crypto-dataformat.html)
 
 ## When to use it
