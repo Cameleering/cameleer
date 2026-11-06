@@ -114,9 +114,42 @@ needed (Lambda).
 9. No local status files or status thread on Lambda, Cloud Run/Knative (`K_SERVICE`) and Azure
    Functions custom handlers.
 
-Measured and not adopted: `-z pack-relative-relocs` cuts `.rela.dyn` from 535 KB to 10 KB
-(−0.5 MB) but needs glibc ≥ 2.36 at run time (fine for the Debian 12 image, not for AL2023);
-its timing was measured on a loaded machine, so it is left for a follow-up.
+**DT_RELR in the amd64 image (adopted, 2026-11-06).** The Dockerfile links the linux/amd64
+binary with `-z pack-relative-relocs`, which stores the relative relocations as a bitmap
+(`.relr.dyn`) instead of 24-byte `Elf64_Rela` entries. Measured inside the actual images
+(`docker build --build-arg FEATURES=...`, distroless/cc on Debian 12, glibc 2.36), with and
+without the flag, at `7c9cd8c`:
+
+| linux/amd64 | binary | `.rela.dyn` + `.relr.dyn` | image, uncompressed | image, `docker save \| gzip -9` |
+|---|---:|---:|---:|---:|
+| all components | 23.89 → **23.49 MB** (−400 KB) | 410 KB (17,071 entries) → 4.0 KB + 5.0 KB | 72.40 → 71.96 MB | 20.37 → 20.34 MB (−33 KB) |
+| `FEATURES=core` | 7.33 → **7.16 MB** (−171 KB) | 178 KB (7,414 entries) → 3.9 KB + 2.3 KB | 47.97 → 47.78 MB | 12.50 → 12.48 MB (−18 KB) |
+
+(The 535 KB in the earlier note was an older head.) Relocations compress well, so the
+compressed image barely changes; the saving is on disk and in memory.
+
+Timing and memory: `cameleer-bench coldstart` inside the image (the image plus the second
+binary, `cameleer-bench` and a busybox driver), 4 rounds × 40 runs per binary, off and on
+interleaved run by run with alternating order; pooled medians of 160 runs, peak RSS median.
+The machine was idle (host CPU about 4%, WSL load average under 1 at the start, no builds).
+
+| linux/amd64, in the image | `version` exit | timer: ready | timer: exit | HTTP route: ready | peak RSS, HTTP route |
+|---|---:|---:|---:|---:|---:|
+| all components, without | 1.11 ms | 4.08 ms | 5.22 ms | 4.18 ms | 10.36 MiB |
+| all components, DT_RELR | 1.10 ms | 4.15 ms | 5.28 ms | 4.26 ms | **9.89 MiB** |
+| `core`, without | 1.00 ms | 3.85 ms | 4.96 ms | 3.99 ms | 6.41 MiB |
+| `core`, DT_RELR | 1.00 ms | 3.89 ms | 5.01 ms | 4.00 ms | **6.27 MiB** |
+
+Start-up time is unchanged within the noise: `version` is identical, the route runs are 0–2%
+slower in the pooled medians, less than the 4–8% the same binary moves between rounds, and
+the sign changes from round to round. The relocation pass is not a measurable part of start-up.
+Peak RSS is lower in every run: −0.48 MiB (all components), −0.13 MiB (`core`). Times inside
+Docker Desktop's VM are higher than the WSL2 table above and are not comparable with it.
+
+Scope: amd64 only. Debian 12's aarch64 GNU ld (2.40) ignores the option with a warning, so
+the arm64 image is unchanged. DT_RELR binaries need glibc ≥ 2.36 at run time
+(`GLIBC_ABI_DT_RELR`): fine for the Debian 12 image, so the flag is set only in the
+Dockerfile's build, not in the Cargo profiles; the Lambda zip stays static musl.
 
 Follow-ups (from the review): core cargo features for the template engines, jq and the core
 XPath subset (an estimated 0.7–1 MB of the 7.3 MB `core` build); `cameleer-http` without

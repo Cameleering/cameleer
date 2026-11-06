@@ -92,6 +92,10 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
   3.5–5.2 ms there). Not yet measured on the Lambda service itself (needs an AWS account).
 - **Throughput:** unchanged within noise after fixing two regressions a bisect found (log macro
   level check, allocator bin size). Static musl is 3–22% slower, so the image stays glibc.
+- **DT_RELR (2026-11-06):** the amd64 container build links with `-z pack-relative-relocs`:
+  binary −400 KB (core −171 KB), peak RSS −0.48 MiB (core −0.13 MiB), start-up unchanged
+  (measured inside the images, 4×40 interleaved runs), compressed image −33 KB. Needs glibc ≥ 2.36,
+  so it is set only in the Dockerfile (Debian 12 runtime), never for the musl Lambda zip.
 - **Tests:** hermetic suite 2697 passed, 0 failed on Linux (WSL2) and on Windows, zero warnings;
   `cargo test -p cameleer-main --no-default-features`: 24 passed. One earlier Windows run under
   heavy load failed `cameleer-tls` `mutual_tls_rejects_missing_and_untrusted_certificates` once
@@ -101,7 +105,8 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
 Follow-ups: core cargo features for template engines, jq and the core XPath subset; optional
 HTTP/2 (`cameleer-grpc`) in `cameleer-http`; `validate`/`schema` behind a feature; XQuery/XSLT
 per-evaluation threads with 128–256 MiB stacks; a shared timer thread per timer name; the status
-thread rewriting its file every 500 ms; `-z pack-relative-relocs` for the glibc image; measuring
+thread rewriting its file every 500 ms; `-z pack-relative-relocs` for the arm64 image (Debian 12's
+aarch64 ld ignores it; needs a newer binutils or lld in the builder); measuring
 on the Lambda service across memory sizes and arm64.
 
 **TLS alert lost to a TCP reset (2026-11-06, fixed).** The flake above was a library bug. A TLS 1.3
