@@ -120,10 +120,66 @@ its timing was measured on a loaded machine, so it is left for a follow-up.
 
 Follow-ups (from the review): core cargo features for the template engines, jq and the core
 XPath subset (an estimated 0.7–1 MB of the 7.3 MB `core` build); `cameleer-http` without
-`cameleer-grpc` unless HTTP/2 is used; CLI-only code (`validate`, `schema`) behind a feature;
-XQuery/XSLT start a thread with a 128–256 MiB stack per evaluation; the local status thread
-rewrites its file every 500 ms even when nothing changed; a shared timer thread per timer name
-(Camel's `java.util.Timer` model).
+`cameleer-grpc` unless HTTP/2 is used; CLI-only code (`validate`, `schema`) behind a feature.
+The idle-thread items of the review (finding 16) are done, see below.
+
+### Idle threads and per-evaluation threads (perf-review finding 16)
+
+Branch `claude/mystifying-swartz-034e67` (2026-11-06), on top of the fourth round. Measured with
+`cargo run --release -p cameleer-main --example idle_threads` (Windows 11, Ryzen 5 5600X) and
+`scripts/idle-threads.sh` (WSL2 Ubuntu 24.04, same machine); the old and new builds were run
+alternately, twice, medians of 5000 evaluations (200 for the recursion rows). The evaluation rows
+run on a thread with a 2 MiB stack, like a route thread.
+
+| measurement | Windows before | Windows after | Linux before | Linux after |
+|---|---:|---:|---:|---:|
+| 20 timer routes, one timer name: threads | 20 | **1** | 20 | **1** |
+| 20 timer routes, 20 timer names: threads | 20 | 20 | 20 | 20 |
+| supervising controller, 1 s after the route recovered: threads | 1 | **0** | 1 | **0** |
+| local status file writes in 5 s, idle context | 10 | **1** | 10 | **1** |
+| XQuery, small query, per evaluation | 110 µs | **10.2 µs** | 142 µs | **6.5 µs** |
+| XQuery, same, on the main thread | 111 µs | **10.0 µs** | 144 µs | **6.9 µs** |
+| XSLT, small transform, per evaluation | 103 µs | **6.3 µs** | 138 µs | **4.0 µs** |
+| XQuery, user-function recursion 2000 deep | 14.4 ms | 14.9 ms | 9.3–11.2 ms | 12.2–15.3 ms |
+| XSLT, template recursion 2000 deep | 7.5 ms | 6.8 ms | 5.6–6.2 ms | 4.4–5.2 ms |
+
+What changed:
+
+1. **XQuery and XSLT run on the caller's thread.** They used to start a thread with a 256 MiB
+   (XQuery) or 128 MiB (XSLT) stack for every evaluation, which cost about 100 µs and a thread.
+   Now the evaluator checks the stack left at every XQuery `eval` and every XSLT template and
+   instruction level, and only when less than 512 KiB is left does it continue on a new stack
+   segment (a helper thread the caller waits for), as `cameleer-script` already did. The shared
+   helper is `cameleer_core::stack::maybe_grow` / `on_new_stack`; deep DOM copies and the
+   serializer use it too, so very deep documents do not overflow the caller. Ordinary queries
+   are 10–35x faster per evaluation. Deep recursion still works from a 2 MiB thread (tests
+   recurse 2900 XQuery calls and 4000 XSLT templates, and copy and serialize a 3000-deep
+   document); on Linux XQuery recursion 2000 deep is about 30% slower than before (Windows is
+   unchanged and XSLT is faster on both), which was not traced further: neither a cheaper stack
+   check nor moving the segment path out of line changed it.
+2. **One timer thread per timer name**, as Camel's `TimerComponent` keeps one `java.util.Timer`
+   per name: the tasks of one name run one after the other on that thread (a slow task delays the
+   others of its name, as in Camel), each with its own schedule and counter. The thread starts
+   with the first consumer of the name and exits when the last one stops or finishes its
+   `repeatCount`. `period`, `delay`, `fixedRate`, `repeatCount`, `includeMetadata`, `time` and
+   suspension behave as before; an asynchronous delay still releases the thread and a replacement
+   takes over the queue.
+3. **The supervising route controller thread exits** when no route is left to retry (restarted,
+   exhausted or removed) and starts again at the next failure. It used to wake every 500 ms
+   forever.
+4. **The local status file is written only when it changes.** The status thread still checks
+   every 500 ms (and reads the action file), but it compares the status without the fields that
+   only move with the clock (`updated`, `uptime`, `uptimeMillis`); readers (`cameleer ps`, `get`)
+   bring those up to date from `updated`. Liveness of a listed process now comes from the
+   operating system (`/proc`, `kill(pid, 0)`, `OpenProcess`) instead of a fresh `updated` stamp,
+   which only worked while the file was rewritten.
+
+Tests: `cameleer-core` `stack` unit tests, `tests/component_timer.rs` (shared thread, separate
+schedules and counters, a slow task delaying its name, self-stop, huge delay and period),
+`tests/mgmt_supervising.rs` (thread exits after recovery and after exhaustion, comes back),
+`cameleer-xml` `tests/xquery.rs` and `tests/xslt.rs` (no thread for an ordinary query, deep
+recursion and deep documents from a 2 MiB thread), `cameleer-main` `local` unit tests
+(fingerprint, uptime refresh, liveness, write-on-change).
 
 ### Where Cameleer stands against the 4x target
 

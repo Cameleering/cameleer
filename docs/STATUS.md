@@ -95,11 +95,29 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
   (untouched by this branch; 15/15 on rerun, green in the final run; see follow-ups).
 
 Follow-ups: core cargo features for template engines, jq and the core XPath subset; optional
-HTTP/2 (`cameleer-grpc`) in `cameleer-http`; `validate`/`schema` behind a feature; XQuery/XSLT
-per-evaluation threads with 128–256 MiB stacks; a shared timer thread per timer name; the status
-thread rewriting its file every 500 ms; `-z pack-relative-relocs` for the glibc image; measuring
+HTTP/2 (`cameleer-grpc`) in `cameleer-http`; `validate`/`schema` behind a feature;
+`-z pack-relative-relocs` for the glibc image; measuring
 on the Lambda service across memory sizes and arm64; the TLS 1.3 alert-timing flake above (a
 reset can arrive before the alert on Windows under load).
+
+## Idle threads round (2026-11-06, branch `claude/mystifying-swartz-034e67`)
+
+Perf-review finding 16, details and tables in `benchmarks/analysis.md` (section "Idle threads and
+per-evaluation threads"); measured with the `idle_threads` example (`scripts/idle-threads.sh` on
+Linux), old and new builds alternately on Windows 11 and WSL2 Ubuntu 24.04:
+
+- **XQuery/XSLT** evaluate on the caller's thread and move to a new stack segment only when less
+  than 512 KiB of stack is left (`cameleer_core::stack::maybe_grow`). Per evaluation: XQuery
+  110 → 10 µs (Windows), 142 → 6.5 µs (Linux); XSLT 103 → 6.3 µs, 138 → 4.0 µs. Deep recursion
+  still works from a 2 MiB thread; XQuery recursion 2000 deep is about 30% slower on Linux
+  (unchanged on Windows), not traced further.
+- **timer:** one thread per timer name (Camel's `java.util.Timer` per name): 20 routes on one
+  name use 1 thread instead of 20; the thread exits after the last consumer.
+- **Supervising route controller:** its thread exits when nothing is left to retry (1 → 0 threads
+  after a recovery).
+- **Local status file:** written only when the content changes (10 → 1 writes in 5 s idle);
+  readers refresh uptimes from `updated`, and liveness comes from the operating system.
+- **Tests:** TESTS_PLACEHOLDER
 
 ## Pending / todo
 
