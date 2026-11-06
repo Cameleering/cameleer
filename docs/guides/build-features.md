@@ -33,7 +33,7 @@ names its feature in its header line (**Cargo feature:**).
 
 | feature | adds | crate |
 |---|---|---|
-| `ai` | `ai-tool`, `ai-resource`, `ai-prompt`: routes as tools, resources and prompts for AI agents, with the reliability envelope | `cameleer-ai` |
+| `ai` | `ai-tool`, `ai-resource`, `ai-prompt`: routes as tools, resources and prompts for AI agents, with the reliability envelope; the MCP server and client and the `mcp` component | `cameleer-ai` |
 | `amqp` | `activemq`, `amqp-stomp`, `jms`, `rabbitmq`, `spring-rabbitmq`, `stomp` (AMQP 0-9-1, STOMP and JMS) | `cameleer-amqp` |
 | `amqp10` | `amqp` (AMQP 1.0, JMS over AMQP), `azure-servicebus`, `azure-eventhubs` | `cameleer-amqp10` |
 | `cloud` | every `aws*`, `azure-*` and `google-*` component except the two above (62 components: S3, SQS, SNS, DynamoDB, Lambda, Bedrock, Blob, Cosmos DB, Azure OpenAI, Pub/Sub, BigQuery, Vertex AI, ...) and the `{{aws:...}}`, `{{azure:...}}` and `{{gcp:...}}` secret placeholders | `cameleer-cloud` |
@@ -42,7 +42,7 @@ names its feature in its header line (**Cargo feature:**).
 | `grpc` | the `grpc` component and the `protobuf` data format | `cameleer-grpc` |
 | `kafka-mqtt` | `kafka`, `paho`, `paho-mqtt5` | `cameleer-kafka-mqtt` |
 | `protocols` | `ftp`, `ftps`, `smtp`/`smtps`, `pop3`/`pop3s`, `imap`/`imaps`, `mllp`, `syslog`, `websocket`/`ws`/`wss`, `vertx-websocket`; the `hl7terser` language; the `hl7` and `syslog` data formats | `cameleer-protocols` |
-| `saas` | `openai`, `slack`, `telegram`, `github`, `twilio`, `jira`, `webhook`, `graphql`, `rss`, `atom` | `cameleer-saas` |
+| `saas` | `openai`, `llm`, `anthropic`, `gemini`, `slack`, `telegram`, `github`, `twilio`, `jira`, `webhook`, `graphql`, `rss`, `atom` | `cameleer-saas` |
 | `script` | the languages `js`/`javascript`, `groovy`, `python`, `java`/`joor`, `csimple`, `mvel`, `ognl`, `spel`, `datasonnet`, and the `mvel` component | `cameleer-script` |
 | `soap` | `cxf`, `cxfrs`, `spring-ws`, `fhir`; the `jaxb` and `fhir` data formats | `cameleer-soap` |
 | `sql` | `sql`, `sql-stored`, `jdbc` (embedded SQL engine and PostgreSQL client) | `cameleer-sql` |
@@ -154,7 +154,9 @@ feature; rebuild cameleer-main with `--features kafka-mqtt`)
 The same applies to the template components (`templates`), the `jq` language and Simple's
 `${jq(...)}` (`jq`), `${xpath(...)}` (`xpath` or `xml`), `httpVersion=HTTP/2` (`http2`) and the
 `cameleer validate` and `cameleer schema` commands (`validate`). Rebuild with the feature added
-to your list; nothing else needs to change.
+to your list; nothing else needs to change. The `agent` step and the tool loop of the model
+components come with any of `ai`, `saas` or `cloud` (they are `cameleer-core`'s `agent` feature,
+which those turn on); in a build without all three, an `agent:` step fails with their names.
 
 Two parts don't fail when their feature is left out. They fall back to a smaller version that is
 always included:
