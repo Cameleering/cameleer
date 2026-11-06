@@ -1,0 +1,164 @@
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=direct msgs=15350308 secs=25.001 tput=613995 tput_min=596715 tput_max=634165 mean_us=1.58 p50_us=1.29 p99_us=3.31 max_us=1313.48
+RSS phase=1 node=a side=java scenario=direct peak_kb=393896
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=seda msgs=13884644 secs=25.001 tput=555361 tput_min=552550 tput_max=560638 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=1 node=a side=java scenario=seda peak_kb=396060
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=seda-inout msgs=2558755 secs=25.001 tput=102348 tput_min=101532 tput_max=103299 mean_us=38.97 p50_us=34.05 p99_us=94.72 max_us=3099.22
+RSS phase=1 node=a side=java scenario=seda-inout peak_kb=244756
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=cbr msgs=8673061 secs=25.001 tput=346914 tput_min=310390 tput_max=368030 mean_us=2.83 p50_us=2.54 p99_us=6.30 max_us=2065.37
+RSS phase=1 node=a side=java scenario=cbr peak_kb=367596
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=splitagg msgs=616054 secs=25.001 tput=24641 tput_min=23346 tput_max=27482 mean_us=40.52 p50_us=32.64 p99_us=78.34 max_us=4128.52
+RSS phase=1 node=a side=java scenario=splitagg peak_kb=284236
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=csv msgs=10923 secs=25.001 tput=437 tput_min=404 tput_max=465 mean_us=2287.64 p50_us=2146.30 p99_us=3260.42 max_us=4616.88
+RSS phase=1 node=a side=java scenario=csv peak_kb=343476
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RSS phase=1 node=a side=java scenario=startup peak_kb=116596
+STARTUP phase=1 node=a side=java ms=1168.2 runs=1168,1157,1136,1183,1179
+VERSION phase=1 node=a side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=kafka-stream msgs=17340 secs=25.001 tput=694 tput_min=689 tput_max=698 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=1 node=a side=java scenario=kafka-stream peak_kb=218612
+VERSION phase=1 node=a scenario=http side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=http msgs=1317962 secs=25.000 tput=52717 tput_min=38734 tput_max=60095 mean_us=1213.69 p50_us=1056.77 p99_us=4227.07 max_us=17211.42 connects=64
+PROC phase=1 node=a side=java scenario=http peak_rss_kb=249276 cpu_pct=315% user_s=113.24 sys_s=47.72
+VERSION phase=1 node=a scenario=rest-json side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=rest-json msgs=856803 secs=25.000 tput=34272 tput_min=21930 tput_max=42051 mean_us=1867.05 p50_us=1466.37 p99_us=7897.09 max_us=28275.44 connects=64
+PROC phase=1 node=a side=java scenario=rest-json peak_rss_kb=441348 cpu_pct=313% user_s=122.80 sys_s=37.63
+VERSION phase=1 node=a scenario=http-kafka side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=http-kafka msgs=252535 secs=25.000 tput=10101 tput_min=9973 tput_max=10214 mean_us=6334.93 p50_us=6324.22 p99_us=7831.55 max_us=25827.93 connects=64
+PROC phase=1 node=a side=java scenario=http-kafka peak_rss_kb=355248 cpu_pct=157% user_s=65.29 sys_s=16.15
+VERSION phase=1 node=a scenario=http-sql side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=http-sql msgs=118973 secs=25.000 tput=4759 tput_min=4698 tput_max=4823 mean_us=13449.00 p50_us=13303.81 p99_us=20578.30 max_us=47357.26 connects=64
+PROC phase=1 node=a side=java scenario=http-sql peak_rss_kb=300584 cpu_pct=176% user_s=72.30 sys_s=19.64
+ROWS phase=1 node=a side=java scenario=http-sql rows=169130
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=direct msgs=62531268 secs=25.001 tput=2501185 tput_min=2479393 tput_max=2525837 mean_us=0.37 p50_us=0.35 p99_us=0.41 max_us=1188.17
+RSS phase=1 node=b side=rust scenario=direct peak_kb=7552
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=seda msgs=47190956 secs=25.000 tput=1887611 tput_min=1860331 tput_max=1907645 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=1 node=b side=rust scenario=seda peak_kb=9344
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=seda-inout msgs=19594658 secs=25.003 tput=783698 tput_min=776359 tput_max=793446 mean_us=5.04 p50_us=2.74 p99_us=28.80 max_us=9155.05
+RSS phase=1 node=b side=rust scenario=seda-inout peak_kb=8704
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=cbr msgs=33536811 secs=25.001 tput=1341439 tput_min=1337296 tput_max=1353873 mean_us=0.71 p50_us=0.71 p99_us=0.84 max_us=150.61
+RSS phase=1 node=b side=rust scenario=cbr peak_kb=7552
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=splitagg msgs=2071967 secs=25.001 tput=82876 tput_min=82017 tput_max=83618 mean_us=12.03 p50_us=11.58 p99_us=19.33 max_us=223.46
+RSS phase=1 node=b side=rust scenario=splitagg peak_kb=7680
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=csv msgs=30988 secs=25.001 tput=1239 tput_min=1224 tput_max=1253 mean_us=806.73 p50_us=790.53 p99_us=913.41 max_us=1465.08
+RSS phase=1 node=b side=rust scenario=csv peak_kb=8192
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RSS phase=1 node=b side=rust scenario=startup peak_kb=7808
+STARTUP phase=1 node=b side=rust ms=2.3 runs=2,2,2,2,2
+VERSION phase=1 node=b side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=kafka-stream msgs=93825 secs=25.000 tput=3753 tput_min=3488 tput_max=3834 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=1 node=b side=rust scenario=kafka-stream peak_kb=36496
+VERSION phase=1 node=b scenario=http side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=http msgs=2715636 secs=25.001 tput=108623 tput_min=107692 tput_max=109401 mean_us=588.77 p50_us=485.38 p99_us=3096.58 max_us=57299.63 connects=4372
+PROC phase=1 node=b side=rust scenario=http peak_rss_kb=17920 cpu_pct=316% user_s=56.77 sys_s=101.67
+VERSION phase=1 node=b scenario=rest-json side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=rest-json msgs=2221245 secs=25.002 tput=88841 tput_min=87905 tput_max=89793 mean_us=719.96 p50_us=634.88 p99_us=2072.58 max_us=42372.11 connects=3608
+PROC phase=1 node=b side=rust scenario=rest-json peak_rss_kb=19328 cpu_pct=319% user_s=72.70 sys_s=87.05
+VERSION phase=1 node=b scenario=http-kafka side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=http-kafka msgs=237154 secs=25.001 tput=9486 tput_min=9378 tput_max=9653 mean_us=6745.93 p50_us=6782.98 p99_us=13959.17 max_us=35372.11 connects=387
+PROC phase=1 node=b side=rust scenario=http-kafka peak_rss_kb=66176 cpu_pct=54% user_s=14.53 sys_s=12.63
+VERSION phase=1 node=b scenario=http-sql side=rust impl=Cameleer camel=0.4.0
+RESULT phase=1 node=b side=rust scenario=http-sql msgs=235344 secs=25.001 tput=9414 tput_min=9158 tput_max=9634 mean_us=6799.69 p50_us=4947.97 p99_us=44302.34 max_us=203982.70 connects=384
+PROC phase=1 node=b side=rust scenario=http-sql peak_rss_kb=29696 cpu_pct=170% user_s=68.06 sys_s=17.43
+ROWS phase=1 node=b side=rust scenario=http-sql rows=368076
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=direct msgs=49164106 secs=25.001 tput=1966519 tput_min=1896942 tput_max=2033568 mean_us=0.47 p50_us=0.38 p99_us=0.86 max_us=155.33
+RSS phase=2 node=a side=rust scenario=direct peak_kb=7424
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=seda msgs=37516171 secs=25.002 tput=1500529 tput_min=1464946 tput_max=1517982 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=2 node=a side=rust scenario=seda peak_kb=9216
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=seda-inout msgs=16222107 secs=25.001 tput=648865 tput_min=638155 tput_max=658175 mean_us=6.08 p50_us=2.99 p99_us=51.97 max_us=8998.44
+RSS phase=2 node=a side=rust scenario=seda-inout peak_kb=8704
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=cbr msgs=24380642 secs=25.001 tput=975201 tput_min=931209 tput_max=1026820 mean_us=0.98 p50_us=0.78 p99_us=1.99 max_us=148.47
+RSS phase=2 node=a side=rust scenario=cbr peak_kb=7552
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=splitagg msgs=1629217 secs=25.001 tput=65167 tput_min=64456 tput_max=66706 mean_us=15.30 p50_us=12.48 p99_us=36.10 max_us=659.90
+RSS phase=2 node=a side=rust scenario=splitagg peak_kb=7936
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=csv msgs=23561 secs=25.001 tput=942 tput_min=898 tput_max=985 mean_us=1061.04 p50_us=872.45 p99_us=2342.91 max_us=2487.30
+RSS phase=2 node=a side=rust scenario=csv peak_kb=8192
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RSS phase=2 node=a side=rust scenario=startup peak_kb=7680
+STARTUP phase=2 node=a side=rust ms=2.6 runs=3,3,3,3,3
+VERSION phase=2 node=a side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=kafka-stream msgs=107855 secs=25.000 tput=4314 tput_min=3392 tput_max=4822 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=2 node=a side=rust scenario=kafka-stream peak_kb=40008
+VERSION phase=2 node=a scenario=http side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=http msgs=2222387 secs=25.000 tput=88894 tput_min=88444 tput_max=89444 mean_us=719.59 p50_us=602.11 p99_us=3194.88 max_us=26729.29 connects=3596
+PROC phase=2 node=a side=rust scenario=http peak_rss_kb=17792 cpu_pct=318% user_s=67.12 sys_s=91.97
+VERSION phase=2 node=a scenario=rest-json side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=rest-json msgs=1859584 secs=25.001 tput=74380 tput_min=73661 tput_max=74970 mean_us=860.09 p50_us=733.18 p99_us=3129.34 max_us=15854.48 connects=3004
+PROC phase=2 node=a side=rust scenario=rest-json peak_rss_kb=19328 cpu_pct=319% user_s=78.93 sys_s=80.71
+VERSION phase=2 node=a scenario=http-kafka side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=http-kafka msgs=211003 secs=25.001 tput=8440 tput_min=8306 tput_max=8606 mean_us=7581.86 p50_us=7503.87 p99_us=20054.02 max_us=43355.18 connects=384
+PROC phase=2 node=a side=rust scenario=http-kafka peak_rss_kb=64756 cpu_pct=62% user_s=18.25 sys_s=13.21
+VERSION phase=2 node=a scenario=http-sql side=rust impl=Cameleer camel=0.4.0
+RESULT phase=2 node=a side=rust scenario=http-sql msgs=271911 secs=25.001 tput=10876 tput_min=10476 tput_max=11471 mean_us=5883.39 p50_us=4554.75 p99_us=27656.19 max_us=165275.93 connects=448
+PROC phase=2 node=a side=rust scenario=http-sql peak_rss_kb=29696 cpu_pct=158% user_s=59.46 sys_s=20.04
+ROWS phase=2 node=a side=rust scenario=http-sql rows=429502
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=direct msgs=17835663 secs=25.001 tput=713407 tput_min=693362 tput_max=733034 mean_us=1.36 p50_us=1.24 p99_us=2.48 max_us=1398.74
+RSS phase=2 node=b side=java scenario=direct peak_kb=423716
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=seda msgs=16290928 secs=25.006 tput=651492 tput_min=647977 tput_max=655765 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=2 node=b side=java scenario=seda peak_kb=505644
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=seda-inout msgs=3313475 secs=25.001 tput=132535 tput_min=131125 tput_max=135230 mean_us=30.10 p50_us=27.01 p99_us=75.26 max_us=3158.13
+RSS phase=2 node=b side=java scenario=seda-inout peak_kb=280632
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=cbr msgs=10088015 secs=25.001 tput=403509 tput_min=398928 tput_max=407141 mean_us=2.43 p50_us=2.35 p99_us=4.96 max_us=6144.93
+RSS phase=2 node=b side=java scenario=cbr peak_kb=312104
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=splitagg msgs=715120 secs=25.001 tput=28604 tput_min=26895 tput_max=30556 mean_us=34.90 p50_us=32.38 p99_us=62.21 max_us=1655.69
+RSS phase=2 node=b side=java scenario=splitagg peak_kb=328040
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=csv msgs=12449 secs=25.001 tput=498 tput_min=485 tput_max=508 mean_us=2007.08 p50_us=1990.66 p99_us=3129.34 max_us=9194.01
+RSS phase=2 node=b side=java scenario=csv peak_kb=347076
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RSS phase=2 node=b side=java scenario=startup peak_kb=117100
+STARTUP phase=2 node=b side=java ms=1043.9 runs=1038,1044,1020,1119,1047
+VERSION phase=2 node=b side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=kafka-stream msgs=17532 secs=25.001 tput=701 tput_min=694 tput_max=708 mean_us=- p50_us=- p99_us=- max_us=-
+RSS phase=2 node=b side=java scenario=kafka-stream peak_kb=218948
+VERSION phase=2 node=b scenario=http side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=http msgs=1518861 secs=25.000 tput=60753 tput_min=49326 tput_max=64907 mean_us=1053.15 p50_us=929.79 p99_us=3391.49 max_us=11312.04 connects=64
+PROC phase=2 node=b side=java scenario=http peak_rss_kb=250488 cpu_pct=315% user_s=107.21 sys_s=53.46
+VERSION phase=2 node=b scenario=rest-json side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=rest-json msgs=1033920 secs=25.000 tput=41356 tput_min=31220 tput_max=44845 mean_us=1547.25 p50_us=1417.22 p99_us=4620.29 max_us=15774.93 connects=64
+PROC phase=2 node=b side=java scenario=rest-json peak_rss_kb=382680 cpu_pct=313% user_s=119.38 sys_s=41.01
+VERSION phase=2 node=b scenario=http-kafka side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=http-kafka msgs=250093 secs=25.001 tput=10003 tput_min=9897 tput_max=10048 mean_us=6397.26 p50_us=6455.30 p99_us=7700.48 max_us=15683.49 connects=64
+PROC phase=2 node=b side=java scenario=http-kafka peak_rss_kb=316656 cpu_pct=140% user_s=56.92 sys_s=15.71
+VERSION phase=2 node=b scenario=http-sql side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=http-sql msgs=116532 secs=25.000 tput=4661 tput_min=4565 tput_max=4695 mean_us=13731.49 p50_us=13303.81 p99_us=19005.44 max_us=42673.48 connects=64
+PROC phase=2 node=b side=java scenario=http-sql peak_rss_kb=257532 cpu_pct=176% user_s=72.66 sys_s=19.02
+ROWS phase=2 node=b side=java scenario=http-sql rows=164380

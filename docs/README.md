@@ -16,7 +16,8 @@ same. Start with a guide, then look up the components your route uses.
 | run Cameleer in Docker, Kubernetes, Cloud Run or AWS Lambda | [Deployment](DEPLOYMENT.md) |
 | build a smaller binary or image with only the components you use | [Build features](guides/build-features.md) |
 | check which Camel features are implemented, with their options | [Feature matrix](FEATURES.md) |
-| compare performance with Apache Camel on the JVM | [Benchmarks](BENCHMARKS.md) |
+| compare Cameleer with Apache Camel: throughput, memory, startup | [Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/) and the [benchmark report](BENCHMARKS.md) |
+| choose between Apache Camel alternatives | [Apache Camel alternatives](https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/) |
 | see what was verified against real servers and clients | [Interop](INTEROP.md) |
 | see what is planned | [Roadmap](ROADMAP.md) |
 

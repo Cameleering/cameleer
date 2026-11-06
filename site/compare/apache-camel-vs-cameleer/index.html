@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apache Camel vs Cameleer: Throughput, Memory and Startup Benchmarks | Cameleer</title>
+<meta name="description" content="Apache Camel vs Cameleer, measured with the same routes: throughput, latency, memory and startup across routing, REST APIs, Kafka, PostgreSQL and batch jobs, including Apache Camel on Quarkus native.">
+<link rel="canonical" href="https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Apache Camel vs Cameleer: same routes, measured">
+<meta property="og:description" content="Throughput, latency, memory and startup of Apache Camel (JVM and Quarkus native) and Cameleer on the same routes and use cases.">
+<meta property="og:url" content="https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/">
+<meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "Apache Camel vs Cameleer: throughput, memory and startup benchmarks",
+ "description": "Apache Camel (JVM and Quarkus native) and Cameleer measured with the same routes across routing, REST APIs, Kafka, PostgreSQL and batch jobs.",
+ "url": "https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/",
+ "inLanguage": "en", "image": "https://pmsudhi.github.io/cameleer/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://pmsudhi.github.io/cameleer/"},
+ "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"},
+           {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/pmsudhi/cameleer"}],
+ "isBasedOn": {"@type": "Dataset", "name": "Cameleer and Apache Camel benchmark results", "url": "https://github.com/pmsudhi/cameleer/tree/main/benchmarks/results"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://pmsudhi.github.io/cameleer/"},
+ {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://pmsudhi.github.io/cameleer/compare/"},
+ {"@type": "ListItem", "position": 3, "name": "Apache Camel vs Cameleer"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "Is Cameleer a drop-in replacement for Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "For routes written in Camel's YAML or XML DSL with the components Cameleer provides, yes: the same endpoint URIs, EIPs, Simple expressions and headers. Routes that call Java beans or use the Java DSL need those parts rewritten, and a few Camel components have no Cameleer equivalent."}},
+ {"@type": "Question", "name": "Was the JVM warmed up?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Every scenario runs 15 seconds of warmup before five timed 5-second iterations, on both sides, so the JIT compiler has finished its work before anything is measured."}},
+ {"@type": "Question", "name": "Was Apache Camel tuned?", "acceptedAnswer": {"@type": "Answer", "text": "Both sides ran their default settings: no JVM flags, no thread pool or GC tuning, and the same connection pool size for PostgreSQL. The routes are identical on both sides."}},
+ {"@type": "Question", "name": "What about Apache Camel on Quarkus native?", "acceptedAnswer": {"@type": "Answer", "text": "It is in the benchmark. Native compilation makes Camel start much faster and use less memory than on the JVM, but without a JIT compiler its throughput is lower than on the JVM. Cameleer is faster and smaller than both."}},
+ {"@type": "Question", "name": "Can I run the benchmark myself?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The routes, the harness and the scripts that create the cloud machines are in the Cameleer repository under scripts/cloud-bench; a full run costs about one US dollar of cloud time."}}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a href="#results">Results</a>
+      <a href="#use-cases">Use cases</a>
+      <a href="#how">How we tested</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / Apache Camel vs Cameleer</p>
+    <p class="kicker">Same routes. Measured.</p>
+    <h1>Apache Camel vs Cameleer</h1>
+    <p class="lede">Cameleer runs Apache Camel's routes, EIPs and YAML DSL as one native binary. We ran the same routes on both, from in-memory routing to REST APIs, Kafka and PostgreSQL. Cameleer starts in milliseconds, runs in megabytes and moves more messages on the same CPUs.</p>
+    <div class="stats">
+      <div class="stat"><b><!-- bench:stat-startup-x -->450x<!-- /bench:stat-startup-x --></b><span>faster startup</span><small><!-- bench:stat-startup-ms -->3 ms<!-- /bench:stat-startup-ms --> vs <!-- bench:stat-java-startup -->1.1 s<!-- /bench:stat-java-startup --></small></div>
+      <div class="stat"><b>up to <!-- bench:stat-mem-max -->54x<!-- /bench:stat-mem-max --></b><span>less memory</span><small><!-- bench:stat-mem-direct -->8 MB vs 399 MB<!-- /bench:stat-mem-direct --> on the same route</small></div>
+      <div class="stat"><b><!-- bench:stat-tput -->1.7–8.7x<!-- /bench:stat-tput --></b><span>the throughput</span><small>in every scenario</small></div>
+      <div class="stat"><b>0</b><span>changes to Camel YAML routes</span><small>same URIs, EIPs and DSL</small></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="glance">
+  <div class="wrap">
+    <h2>Apache Camel and Cameleer at a glance</h2>
+    <p class="intro">Same integration model, different runtime.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th></th><th>Apache Camel</th><th>Cameleer</th></tr></thead>
+      <tbody>
+        <tr><td>Runtime</td><td>Java virtual machine (or a native image with Camel Quarkus)</td><td>one native binary, no runtime to install</td></tr>
+        <tr><td>Routes and EIPs</td><td>the reference implementation</td><td>the same EIPs, endpoint URIs, Simple expressions and headers</td></tr>
+        <tr><td>DSLs</td><td>Java, YAML, XML</td><td>YAML, XML and Rust; Camel YAML routes run unchanged</td></tr>
+        <tr><td>Components</td><td>300+ components</td><td>about 230 components, languages and data formats</td></tr>
+        <tr><td>Startup</td><td>about a second on the JVM</td><td class="win">milliseconds</td></tr>
+        <tr><td>Memory</td><td>hundreds of MB on the JVM</td><td class="win">tens of MB</td></tr>
+        <tr><td>Serverless</td><td>with Camel Quarkus native or a JVM snapshot</td><td class="win">built-in AWS Lambda runtime</td></tr>
+        <tr><td>Ecosystem</td><td class="win">two decades, Java libraries, commercial support</td><td>younger project, Rust standard library only</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="results">
+  <div class="wrap">
+    <h2>Throughput: in-process routing</h2>
+    <p class="intro">Messages per second through the same route on each runtime.</p>
+    <p class="legend"><span><i style="background:var(--signal)"></i>Cameleer</span><span><i style="background:#8d97ad"></i>Apache Camel (JVM)</span><span><i style="background:#c9d0de"></i>Apache Camel (Quarkus native)</span></p>
+    <!-- bench:bars-inprocess --><div class="bars">
+<div class="bar-group"><h4>Direct call through a route</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">2,230,208 msg/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:29.8%"></i></span><span class="val">663,701 msg/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:10.9%"></i></span><span class="val">243,522 msg/s</span></div>
+</div>
+<div class="bar-group"><h4>In-memory queue (seda), one-way</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">1,644,186 msg/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:36.7%"></i></span><span class="val">603,426 msg/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:19.2%"></i></span><span class="val">316,442 msg/s</span></div>
+</div>
+<div class="bar-group"><h4>In-memory queue (seda), request-reply</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">719,433 msg/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:16.3%"></i></span><span class="val">117,442 msg/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:10.0%"></i></span><span class="val">72,113 msg/s</span></div>
+</div>
+<div class="bar-group"><h4>Content-based router</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">1,144,857 msg/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:32.8%"></i></span><span class="val">375,212 msg/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:10.4%"></i></span><span class="val">119,416 msg/s</span></div>
+</div>
+<div class="bar-group"><h4>Split and aggregate a JSON order</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">70,926 orders/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:37.5%"></i></span><span class="val">26,622 orders/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:13.1%"></i></span><span class="val">9,274 orders/s</span></div>
+</div>
+<div class="bar-group"><h4>CSV batch (1,000-row files)</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">998 files/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:46.9%"></i></span><span class="val">468 files/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:16.3%"></i></span><span class="val">163 files/s</span></div>
+</div>
+</div><!-- /bench:bars-inprocess -->
+  </div>
+</section>
+
+<section class="c-sec" id="network">
+  <div class="wrap">
+    <h2>Throughput: APIs, Kafka and databases</h2>
+    <p class="intro">Requests per second from clients on another machine, and records per second through Kafka. Kafka and PostgreSQL run on their own machine, as in production.</p>
+    <p class="legend"><span><i style="background:var(--signal)"></i>Cameleer</span><span><i style="background:#8d97ad"></i>Apache Camel (JVM)</span><span><i style="background:#c9d0de"></i>Apache Camel (Quarkus native)</span></p>
+    <!-- bench:bars-network --><div class="bars">
+<div class="bar-group"><h4>HTTP, fixed reply</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">99,012 req/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:57.3%"></i></span><span class="val">56,735 req/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:28.9%"></i></span><span class="val">28,584 req/s</span></div>
+</div>
+<div class="bar-group"><h4>REST API with JSON</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">80,367 req/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:47.1%"></i></span><span class="val">37,814 req/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:22.2%"></i></span><span class="val">17,860 req/s</span></div>
+</div>
+<div class="bar-group"><h4>HTTP into Kafka</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">17,854 req/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:56.3%"></i></span><span class="val">10,052 req/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:51.9%"></i></span><span class="val">9,267 req/s</span></div>
+</div>
+<div class="bar-group"><h4>HTTP into PostgreSQL</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">11,007 req/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:42.8%"></i></span><span class="val">4,710 req/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:32.2%"></i></span><span class="val">3,540 req/s</span></div>
+</div>
+<div class="bar-group"><h4>Kafka stream processing</h4>
+<div class="bar us"><span>Cameleer</span><span class="track"><i class="fill" style="width:100.0%"></i></span><span class="val">6,081 records/s</span></div>
+<div class="bar jvm"><span>Apache Camel (JVM)</span><span class="track"><i class="fill" style="width:11.5%"></i></span><span class="val">698 records/s</span></div>
+<div class="bar native"><span>Apache Camel (Quarkus native)</span><span class="track"><i class="fill" style="width:11.4%"></i></span><span class="val">694 records/s</span></div>
+</div>
+</div><!-- /bench:bars-network -->
+  </div>
+</section>
+
+<section class="c-sec" id="use-cases">
+  <div class="wrap">
+    <h2>Benchmarked use cases</h2>
+    <p class="intro">Each one is an ordinary integration, written once and run unchanged on both runtimes. The figure is Cameleer's throughput against Apache Camel on the JVM.</p>
+    <div class="cards">
+      <div class="card"><h3>Order API</h3><p>A REST endpoint reads fields from the JSON order and answers with a JSON confirmation.</p><p class="res"><!-- bench:card-rest-json -->2.1x <small>80,367 vs 37,814 req/s</small><!-- /bench:card-rest-json --></p></div>
+      <div class="card"><h3>Order ingestion into Kafka</h3><p>Each order posted over HTTP is published to Kafka, keyed by order id, then acknowledged.</p><p class="res"><!-- bench:card-http-kafka -->1.7x <small>17,854 vs 10,052 req/s</small><!-- /bench:card-http-kafka --></p></div>
+      <div class="card"><h3>Stream processing</h3><p>Orders are consumed from Kafka, filtered by amount, reshaped and published to another topic.</p><p class="res"><!-- bench:card-kafka-stream -->8.7x <small>6,081 vs 698 records/s</small><!-- /bench:card-kafka-stream --></p></div>
+      <div class="card"><h3>Writing to PostgreSQL</h3><p>Each order posted over HTTP is inserted into PostgreSQL through a pool of 16 connections.</p><p class="res"><!-- bench:card-http-sql -->2.3x <small>11,007 vs 4,710 req/s</small><!-- /bench:card-http-sql --></p></div>
+      <div class="card"><h3>CSV batch</h3><p>A 1,000-row file is split into rows; EU rows are kept, reshaped and written out in batches of 100.</p><p class="res"><!-- bench:card-csv -->2.1x <small>998 vs 468 files/s</small><!-- /bench:card-csv --></p></div>
+      <div class="card"><h3>Order splitting</h3><p>A JSON order is split into its line items and aggregated back per order.</p><p class="res"><!-- bench:card-splitagg -->2.6x <small>70,926 vs 26,622 orders/s</small><!-- /bench:card-splitagg --></p></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="tables">
+  <div class="wrap">
+    <h2>Full results</h2>
+    <p class="intro">Every scenario, including Apache Camel compiled to a native executable with Quarkus. Each figure is the mean of two runs on two identical machines.</p>
+    <h3>Throughput</h3>
+    <!-- bench:table-throughput --><div class="c-table-wrap"><table class="c-table"><thead><tr><th>scenario</th><th class="num">Cameleer</th><th class="num">Apache Camel (JVM)</th><th class="num">Apache Camel (Quarkus native)</th><th class="num">Cameleer vs Camel JVM</th><th class="num">Cameleer vs Camel native</th></tr></thead><tbody><tr><td>Direct call through a route</td><td class="num">2,230,208 msg/s</td><td class="num">663,701 msg/s</td><td class="num">243,522 msg/s</td><td class="num"><span class="win">3.3x</span></td><td class="num"><span class="win">9.1x</span></td></tr><tr><td>In-memory queue (seda), one-way</td><td class="num">1,644,186 msg/s</td><td class="num">603,426 msg/s</td><td class="num">316,442 msg/s</td><td class="num"><span class="win">2.7x</span></td><td class="num"><span class="win">5.1x</span></td></tr><tr><td>In-memory queue (seda), request-reply</td><td class="num">719,433 msg/s</td><td class="num">117,442 msg/s</td><td class="num">72,113 msg/s</td><td class="num"><span class="win">6.1x</span></td><td class="num"><span class="win">9.9x</span></td></tr><tr><td>Content-based router</td><td class="num">1,144,857 msg/s</td><td class="num">375,212 msg/s</td><td class="num">119,416 msg/s</td><td class="num"><span class="win">3.0x</span></td><td class="num"><span class="win">9.5x</span></td></tr><tr><td>Split and aggregate a JSON order</td><td class="num">70,926 orders/s</td><td class="num">26,622 orders/s</td><td class="num">9,274 orders/s</td><td class="num"><span class="win">2.6x</span></td><td class="num"><span class="win">7.6x</span></td></tr><tr><td>CSV batch (1,000-row files)</td><td class="num">998 files/s</td><td class="num">468 files/s</td><td class="num">163 files/s</td><td class="num"><span class="win">2.1x</span></td><td class="num"><span class="win">6.1x</span></td></tr><tr><td>Kafka stream processing</td><td class="num">6,081 records/s</td><td class="num">698 records/s</td><td class="num">694 records/s</td><td class="num"><span class="win">8.7x</span></td><td class="num"><span class="win">8.7x</span></td></tr><tr><td>HTTP, fixed reply</td><td class="num">99,012 req/s</td><td class="num">56,735 req/s</td><td class="num">28,584 req/s</td><td class="num"><span class="win">1.7x</span></td><td class="num"><span class="win">3.4x</span></td></tr><tr><td>REST API with JSON</td><td class="num">80,367 req/s</td><td class="num">37,814 req/s</td><td class="num">17,860 req/s</td><td class="num"><span class="win">2.1x</span></td><td class="num"><span class="win">4.4x</span></td></tr><tr><td>HTTP into Kafka</td><td class="num">17,854 req/s</td><td class="num">10,052 req/s</td><td class="num">9,267 req/s</td><td class="num"><span class="win">1.7x</span></td><td class="num"><span class="win">1.9x</span></td></tr><tr><td>HTTP into PostgreSQL</td><td class="num">11,007 req/s</td><td class="num">4,710 req/s</td><td class="num">3,540 req/s</td><td class="num"><span class="win">2.3x</span></td><td class="num"><span class="win">3.1x</span></td></tr></tbody></table></div><!-- /bench:table-throughput -->
+    <h3>Latency</h3>
+    <!-- bench:table-latency --><div class="c-table-wrap"><table class="c-table"><thead><tr><th>scenario, p99 latency</th><th class="num">Cameleer</th><th class="num">Apache Camel (JVM)</th><th class="num">Apache Camel (Quarkus native)</th></tr></thead><tbody><tr><td>Direct call through a route</td><td class="num">1 µs</td><td class="num">3 µs</td><td class="num">10 µs</td></tr><tr><td>In-memory queue (seda), request-reply</td><td class="num">38 µs</td><td class="num">85 µs</td><td class="num">137 µs</td></tr><tr><td>Content-based router</td><td class="num">2 µs</td><td class="num">6 µs</td><td class="num">22 µs</td></tr><tr><td>Split and aggregate a JSON order</td><td class="num">30 µs</td><td class="num">70 µs</td><td class="num">382 µs</td></tr><tr><td>CSV batch (1,000-row files)</td><td class="num">1.7 ms</td><td class="num">3.2 ms</td><td class="num">12.5 ms</td></tr><tr><td>HTTP, fixed reply</td><td class="num">2.9 ms</td><td class="num">3.8 ms</td><td class="num">7.4 ms</td></tr><tr><td>REST API with JSON</td><td class="num">2.6 ms</td><td class="num">6.3 ms</td><td class="num">12.3 ms</td></tr><tr><td>HTTP into Kafka</td><td class="num">8.6 ms</td><td class="num">7.8 ms</td><td class="num">12.6 ms</td></tr><tr><td>HTTP into PostgreSQL</td><td class="num">10.6 ms</td><td class="num">19.8 ms</td><td class="num">27.7 ms</td></tr></tbody></table></div><!-- /bench:table-latency -->
+    <h3>Memory</h3>
+    <!-- bench:table-memory --><div class="c-table-wrap"><table class="c-table"><thead><tr><th>scenario, peak memory</th><th class="num">Cameleer</th><th class="num">Apache Camel (JVM)</th><th class="num">Apache Camel (Quarkus native)</th></tr></thead><tbody><tr><td>Direct call through a route</td><td class="num">7 MB</td><td class="num">399 MB</td><td class="num">113 MB</td></tr><tr><td>In-memory queue (seda), one-way</td><td class="num">9 MB</td><td class="num">440 MB</td><td class="num">199 MB</td></tr><tr><td>In-memory queue (seda), request-reply</td><td class="num">9 MB</td><td class="num">257 MB</td><td class="num">113 MB</td></tr><tr><td>Content-based router</td><td class="num">7 MB</td><td class="num">332 MB</td><td class="num">113 MB</td></tr><tr><td>Split and aggregate a JSON order</td><td class="num">8 MB</td><td class="num">299 MB</td><td class="num">114 MB</td></tr><tr><td>CSV batch (1,000-row files)</td><td class="num">8 MB</td><td class="num">337 MB</td><td class="num">126 MB</td></tr><tr><td>Kafka stream processing</td><td class="num">36 MB</td><td class="num">214 MB</td><td class="num">130 MB</td></tr><tr><td>HTTP, fixed reply</td><td class="num">18 MB</td><td class="num">244 MB</td><td class="num">121 MB</td></tr><tr><td>REST API with JSON</td><td class="num">19 MB</td><td class="num">402 MB</td><td class="num">129 MB</td></tr><tr><td>HTTP into Kafka</td><td class="num">67 MB</td><td class="num">328 MB</td><td class="num">129 MB</td></tr><tr><td>HTTP into PostgreSQL</td><td class="num">25 MB</td><td class="num">273 MB</td><td class="num">133 MB</td></tr></tbody></table></div><!-- /bench:table-memory -->
+    <h3>Startup</h3>
+    <!-- bench:table-startup --><div class="c-table-wrap"><table class="c-table"><thead><tr><th></th><th class="num">Cameleer</th><th class="num">Apache Camel (JVM)</th><th class="num">Apache Camel (Quarkus native)</th></tr></thead><tbody><tr><td>Time to a started context</td><td class="num">2.5 ms</td><td class="num">1106 ms</td><td class="num">30 ms</td></tr><tr><td>Memory at startup</td><td class="num">8 MB</td><td class="num">114 MB</td><td class="num">69 MB</td></tr></tbody></table></div><!-- /bench:table-startup -->
+  </div>
+</section>
+
+<section class="c-sec" id="native">
+  <div class="wrap">
+    <h2>What about Apache Camel on Quarkus native?</h2>
+    <p class="intro">Compiling Camel ahead of time with Quarkus and GraalVM (Mandrel) removes most of the JVM's startup time and memory. It is the closest thing to Cameleer in the Java world, so we measured it too.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>What native compilation gives Camel</h3>
+        <ul>
+          <li>Startup in tens of milliseconds instead of about a second.</li>
+          <li>Much less memory than on the JVM.</li>
+          <li>One executable to ship.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>What it costs</h3>
+        <ul>
+          <li>No JIT compiler: throughput is lower than the same routes on the JVM.</li>
+          <li>Long native builds and closed-world restrictions on reflection and dynamic features.</li>
+          <li>Cameleer still starts faster, uses less memory and has more throughput than both.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="how">
+  <div class="wrap">
+    <h2>How we tested</h2>
+    <p class="intro">Three identical cloud machines on one private network, default settings on every runtime, and the servers swapped halfway so neither side got the better machine.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>Setup</h3>
+        <ul>
+          <li>Three DigitalOcean CPU-optimized droplets (<code>c-4</code>): 4 dedicated vCPUs (Intel Xeon Platinum 8168), 8 GB RAM, Ubuntu 24.04, region <code>blr1</code>.</li>
+          <li>Two servers take turns running each runtime; the third runs the HTTP load generator, Apache Kafka 4.3.2 and PostgreSQL 16.</li>
+          <li>Apache Camel 4.23.0 on Temurin 21.0.13. Apache Camel 4.22.1 on Quarkus 3.40.0, compiled with Mandrel 25.0.4.1. Cameleer 0.4.0, built with Rust 1.99.1.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Method</h3>
+        <ul>
+          <li>The same routes on every side, defined once per language from one specification.</li>
+          <li>15 s warmup, then five timed 5-second iterations; the figure is the mean of both servers.</li>
+          <li>64 concurrent HTTP keep-alive connections from the load machine; PostgreSQL pool of 16 on every side.</li>
+          <li>Default settings: no JVM flags, no GC or thread tuning. Peak memory and CPU from <code>/usr/bin/time</code>.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>Run it yourself</h3>
+    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer
+export DO_TOKEN_FILE=~/do-token.txt
+scripts/cloud-bench/droplets.sh up
+scripts/cloud-bench/run.sh all
+scripts/cloud-bench/droplets.sh down</pre>
+    <p class="note">The routes are in <a href="https://github.com/pmsudhi/cameleer/tree/main/crates/cameleer-bench/src">crates/cameleer-bench</a>, <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/java-camel">benchmarks/java-camel</a> and <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/camel-quarkus">benchmarks/camel-quarkus</a>. Raw results: <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/results">benchmarks/results</a>. The full report with every caveat: <a href="../../docs/BENCHMARKS.html">BENCHMARKS</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Is Cameleer a drop-in replacement for Apache Camel?</summary><p>For routes written in Camel's YAML or XML DSL with the components Cameleer provides, yes: the same endpoint URIs, EIPs, Simple expressions and headers. Routes that call Java beans or use the Java DSL need those parts rewritten, and a few Camel components have no Cameleer equivalent.</p></details>
+    <details><summary>Was the JVM warmed up?</summary><p>Yes. Every scenario runs 15 seconds of warmup before five timed 5-second iterations, on both sides, so the JIT compiler has finished its work before anything is measured.</p></details>
+    <details><summary>Was Apache Camel tuned?</summary><p>Both sides ran their default settings: no JVM flags, no thread pool or GC tuning, and the same connection pool size for PostgreSQL. The routes are identical on both sides.</p></details>
+    <details><summary>What about Apache Camel on Quarkus native?</summary><p>It is in the benchmark. Native compilation makes Camel start much faster and use less memory than on the JVM, but without a JIT compiler its throughput is lower than on the JVM. Cameleer is faster and smaller than both.</p></details>
+    <details><summary>Can I run the benchmark myself?</summary><p>Yes. The routes, the harness and the scripts that create the cloud machines are in the repository under <code>scripts/cloud-bench</code>; a full run costs about one US dollar of cloud time.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Run your Camel routes on Cameleer</h2>
+    <p class="intro">Mount a Camel YAML route and run it. No JVM, no build.</p>
+    <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml</pre>
+    <div class="cta">
+      <a class="btn primary" href="../../docs/guides/getting-started.html">Get started</a>
+      <a class="btn" href="../../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a>
+      <a class="btn" href="../../alternatives/apache-camel-alternatives/">Other alternatives</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+    </div>
+    <div>
+      <h4>Compare</h4>
+      <ul>
+        <li><a href="./">Apache Camel vs Cameleer</a></li>
+        <li><a href="../../alternatives/apache-camel-alternatives/">Apache Camel alternatives</a></li>
+        <li><a href="../ai-agent-tool-calls-direct-vs-cameleer/">AI agent tool calls</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../docs/">Documentation</a></li>
+        <li><a href="../../docs/BENCHMARKS.html">Benchmark report</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

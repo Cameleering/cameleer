@@ -10,6 +10,7 @@ Stdlib only.
 """
 import argparse
 import json
+import math
 import re
 import sys
 from collections import defaultdict
@@ -91,7 +92,8 @@ def fmt(v, unit=""):
 
 
 def ratio(a, b):
-    return "-" if not a or not b else f"{a / b:.1f}x"
+    """a / b, rounded down to one decimal (a published ratio never rounds up)."""
+    return "-" if not a or not b else f"{math.floor(a / b * 10) / 10:.1f}x"
 
 
 def markdown(data):
@@ -137,17 +139,138 @@ def markdown(data):
     return "\n".join(out) + "\n"
 
 
+def esc(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def tput(data, side, sc):
+    return data.get(side, {}).get("scenarios", {}).get(sc, {}).get("tput")
+
+
+def html_fragments(data):
+    """HTML pieces for the comparison page, keyed by marker name (<!-- bench:NAME -->)."""
+    sides = [(k, n) for k, n in SIDES if k in data]
+    frag = {}
+    # bar charts: one group per scenario, bars scaled to the fastest side
+    groups = {
+        "bars-inprocess": ["direct", "seda", "seda-inout", "cbr", "splitagg", "csv"],
+        "bars-network": ["http", "rest-json", "http-kafka", "http-sql", "kafka-stream"],
+    }
+    for name, scs in groups.items():
+        h = ['<div class="bars">']
+        for sc in scs:
+            vals = [(k, n, tput(data, k, sc)) for k, n in sides]
+            if all(v is None for _, _, v in vals):
+                continue
+            top = max(v for _, _, v in vals if v)
+            unit = UNITS.get(sc, "msg/s")
+            h.append(f'<div class="bar-group"><h4>{esc(NAMES[sc])}</h4>')
+            for k, n, v in vals:
+                if v is None:
+                    continue
+                cls = {"rust": "bar us", "java": "bar jvm", "native": "bar native"}[k]
+                h.append(f'<div class="{cls}"><span>{esc(n)}</span><span class="track"><i class="fill" style="width:{100 * v / top:.1f}%"></i></span><span class="val">{fmt(v)} {unit}</span></div>')
+            h.append("</div>")
+        h.append("</div>")
+        frag[name] = "\n".join(h)
+    # tables
+    num = ' class="num"'
+
+    def table(head, rows):
+        th = "".join("<th%s>%s</th>" % (num if i else "", esc(c)) for i, c in enumerate(head))
+        body = "".join("<tr>" + "".join("<td%s>%s</td>" % (num if i else "", c) for i, c in enumerate(r)) + "</tr>" for r in rows)
+        return '<div class="c-table-wrap"><table class="c-table"><thead><tr>%s</tr></thead><tbody>%s</tbody></table></div>' % (th, body)
+    others = [(k, n) for k, n in sides if k != "rust"]
+    rows = []
+    for sc in ORDER:
+        vals = [tput(data, k, sc) for k, _ in sides]
+        if all(v is None for v in vals):
+            continue
+        unit = UNITS.get(sc, "msg/s")
+        rust = tput(data, "rust", sc)
+        rows.append([esc(NAMES[sc])] + [f"{fmt(v)} {unit}" if v else "-" for v in vals]
+                    + [f'<span class="win">{ratio(rust, tput(data, k, sc))}</span>' if tput(data, k, sc) else "-" for k, _ in others])
+    frag["table-throughput"] = table(["scenario"] + [n for _, n in sides] + [SHORT[k] for k, _ in others], rows)
+    rows = []
+    for sc in ORDER:
+        vals = [data[k]["scenarios"].get(sc, {}).get("p99_us") for k, _ in sides]
+        if all(v is None for v in vals):
+            continue
+        rows.append([esc(NAMES[sc])] + ["-" if v is None else (f"{v / 1000:.1f} ms" if v >= 1000 else f"{v:.0f} µs") for v in vals])
+    frag["table-latency"] = table(["scenario, p99 latency"] + [n for _, n in sides], rows)
+    rows = []
+    for sc in ORDER:
+        vals = [data[k]["scenarios"].get(sc, {}).get("peak_rss_mb") for k, _ in sides]
+        if all(v is None for v in vals):
+            continue
+        rows.append([esc(NAMES[sc])] + ["-" if v is None else f"{v:.0f} MB" for v in vals])
+    frag["table-memory"] = table(["scenario, peak memory"] + [n for _, n in sides], rows)
+    # use-case cards: Cameleer's throughput, and how it compares with Camel on the JVM
+    for sc in ORDER:
+        rust, java = tput(data, "rust", sc), tput(data, "java", sc)
+        if rust and java:
+            unit = UNITS.get(sc, "msg/s")
+            frag[f"card-{sc}"] = f'{ratio(rust, java)} <small>{fmt(rust)} vs {fmt(java)} {unit}</small>'
+    frag["table-startup"] = table(["", *[n for _, n in sides]], [
+        ["Time to a started context"] + ["-" if data[k]["startup_ms"] is None else (f"{data[k]['startup_ms']:.0f} ms" if data[k]["startup_ms"] >= 10 else f"{data[k]['startup_ms']:.1f} ms") for k, _ in sides],
+        ["Memory at startup"] + ["-" if data[k]["startup_rss_mb"] is None else f"{data[k]['startup_rss_mb']:.0f} MB" for k, _ in sides],
+    ])
+    return frag
+
+
+def headline(data):
+    """The figures quoted in headlines, all against Apache Camel on the JVM."""
+    r, j = data["rust"], data["java"]
+    tp = [tput(data, "rust", sc) / tput(data, "java", sc) for sc in ORDER if tput(data, "rust", sc) and tput(data, "java", sc)]
+    mem = [r["scenarios"][sc]["peak_rss_mb"] and j["scenarios"][sc]["peak_rss_mb"] / r["scenarios"][sc]["peak_rss_mb"]
+           for sc in ORDER if sc in r["scenarios"] and sc in j["scenarios"] and r["scenarios"][sc].get("peak_rss_mb") and j["scenarios"][sc].get("peak_rss_mb")]
+    return {
+        "startup_ms": r["startup_ms"], "java_startup_ms": j["startup_ms"], "startup_x": j["startup_ms"] / r["startup_ms"],
+        "tput_min_x": min(tp), "tput_max_x": max(tp), "mem_min_x": min(mem), "mem_max_x": max(mem),
+        "max_rss_mb": max(s["peak_rss_mb"] for s in r["scenarios"].values() if s.get("peak_rss_mb")),
+    }
+
+
+def fill(path, frag):
+    text = open(path, encoding="utf-8").read()
+    for name, body in frag.items():
+        pat = re.compile(r"(<!-- bench:%s -->).*?(<!-- /bench:%s -->)" % (re.escape(name), re.escape(name)), re.S)
+        text, n = pat.subn(lambda m: m.group(1) + body + m.group(2), text)
+        if n == 0:
+            continue
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--side", action="append", required=True, help="side=results-file")
     ap.add_argument("--json", help="also write the summary as JSON")
+    ap.add_argument("--fill", action="append", default=[], help="replace <!-- bench:NAME --> regions in this HTML file")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     files = dict(s.split("=", 1) for s in a.side)
     data = summarize(files)
     if a.json:
         with open(a.json, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(data, f, indent=1, sort_keys=True)
+            json.dump({"sides": data, "headline": headline(data) if "rust" in data and "java" in data else None}, f, indent=1, sort_keys=True)
+    for path in a.fill:
+        frag = html_fragments(data)
+        h = headline(data)
+        # headline numbers always round against Cameleer: its times and memory up, ratios down
+        r, j = data["rust"]["scenarios"], data["java"]["scenarios"]
+        frag.update({
+            "stat-startup-ms": f"{math.ceil(h['startup_ms'])} ms",
+            "stat-java-startup": f"{math.floor(h['java_startup_ms'] / 100) / 10:.1f} s",
+            "stat-startup-x": f"{int(h['startup_x'] // 50 * 50)}x",
+            "stat-tput": f"{math.floor(h['tput_min_x'] * 10) / 10:.1f}–{math.floor(h['tput_max_x'] * 10) / 10:.1f}x",
+            "stat-mem": f"{math.floor(h['mem_min_x'] * 10) / 10:.1f}–{math.floor(h['mem_max_x'])}x",
+            "stat-mem-max": f"{math.floor(h['mem_max_x'])}x",
+            "stat-mem-direct": f"{math.ceil(r['direct']['peak_rss_mb'])} MB vs {math.floor(j['direct']['peak_rss_mb'])} MB",
+            "stat-max-rss": f"{math.ceil(h['max_rss_mb'])} MB",
+        })
+        frag["md-tables"] = "\n" + markdown(data) + "\n"
+        fill(path, frag)
     sys.stdout.write(markdown(data))
 
 

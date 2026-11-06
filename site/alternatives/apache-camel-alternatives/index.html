@@ -89,9 +89,9 @@
     <h2>Cameleer: Apache Camel's routes without the JVM</h2>
     <p class="intro">If you like Camel's model and want it smaller and faster, Cameleer keeps the routes and changes the runtime. Same EIPs, endpoint URIs, Simple expressions and YAML DSL; one native binary instead of a JVM.</p>
     <div class="stats" id="alt-stats">
-      <div class="stat"><b>~400x</b><span>faster startup than Apache Camel on the JVM</span></div>
-      <div class="stat"><b>15x+</b><span>less memory under load</span></div>
-      <div class="stat"><b>2-6x</b><span>more messages per second on the same CPUs</span></div>
+      <div class="stat"><b><!-- bench:stat-startup-x -->450x<!-- /bench:stat-startup-x --></b><span>faster startup than Apache Camel on the JVM</span></div>
+      <div class="stat"><b>up to <!-- bench:stat-mem-max -->54x<!-- /bench:stat-mem-max --></b><span>less memory</span></div>
+      <div class="stat"><b><!-- bench:stat-tput -->1.7–8.7x<!-- /bench:stat-tput --></b><span>the throughput, in every scenario</span></div>
       <div class="stat"><b>0</b><span>route changes for Camel YAML routes</span></div>
     </div>
     <div class="cta" style="margin-top:28px">

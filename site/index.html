@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cameleer: Camel-compatible integration routes in Rust</title>
-<meta name="description" content="Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. Runs Apache Camel routes in Rust: about 1 ms startup on Linux, about 10 MB of memory, its own AWS Lambda runtime.">
+<meta name="description" content="Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. Runs Apache Camel routes in Rust: 450x faster startup and up to 54x less memory than Apache Camel, with its own AWS Lambda runtime.">
 <meta name="keywords" content="Apache Camel, Rust, integration, enterprise integration patterns, EIP, AI agents, serverless, edge, Kafka, messaging, YAML DSL">
 <link rel="canonical" href="https://pmsudhi.github.io/cameleer/">
 <meta name="theme-color" content="#ffffff">
@@ -12,7 +12,7 @@
 <meta name="context7-site-verification" content="ask_86adbac2b101d98629eb7020">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Cameleer: Camel-compatible integration routes in Rust">
-<meta property="og:description" content="The integration layer for AI agents. Runs Apache Camel routes unchanged; starts in about 1 ms on Linux, about 10 MB of memory, 2.5-8x the throughput, its own AWS Lambda runtime.">
+<meta property="og:description" content="The integration layer for AI agents. Runs Apache Camel routes unchanged: starts in 3 ms, runs in megabytes, and moves 1.7-8.7x the messages of Apache Camel.">
 <meta property="og:url" content="https://pmsudhi.github.io/cameleer/">
 <meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -214,7 +214,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
     <nav aria-label="Main">
       <a class="keep" href="docs/">Docs</a>
       <a href="#same">How it works</a>
-      <a href="#numbers">Benchmarks</a>
+      <a href="compare/apache-camel-vs-cameleer/">vs Apache Camel</a>
       <a href="#uses">Use cases</a>
       <a href="#start">Quick start</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">
@@ -234,16 +234,16 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <span class="line"><span class="strike">On the JVM.</span></span>
         <span class="line">In Rust.</span>
       </h1>
-      <p class="lede">Runs your Apache Camel routes, patterns and endpoint URIs unchanged. <strong>It starts in about 1 ms on Linux and fits in 10 MB.</strong></p>
+      <p class="lede">Runs your Apache Camel routes, patterns and endpoint URIs unchanged. <strong>It starts in 3 ms and runs in megabytes.</strong></p>
       <p class="agent-line"><strong>The integration layer for AI agents:</strong> feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.</p>
       <div class="ctas">
         <a class="btn primary" href="https://github.com/pmsudhi/cameleer">View on GitHub</a>
         <a class="btn ghost" href="#start">Run your first route</a>
       </div>
       <dl class="facts">
-        <div><dt>1 ms</dt><dd>startup on Linux (Windows: 10 ms, vs 751 ms)</dd></div>
-        <div><dt>9 MB</dt><dd>memory, vs 366 MB</dd></div>
-        <div><dt>8.4x</dt><dd>request-reply throughput</dd></div>
+        <div><dt>450x</dt><dd>faster startup than Apache Camel: 3 ms vs 1.1 s</dd></div>
+        <div><dt>54x</dt><dd>less memory: 8 MB vs 399 MB</dd></div>
+        <div><dt>1.7–8.7x</dt><dd>the throughput, in every scenario</dd></div>
       </dl>
     </div>
 
@@ -319,10 +319,10 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
           <button type="button" aria-pressed="false" data-side="java">Apache Camel</button>
         </div>
         <pre class="term" id="term" aria-live="polite"></pre>
-        <div class="meter"><div class="row"><span>Startup</span><b id="m-start">10 ms</b></div><div class="bar"><i id="b-start" style="width:1.4%"></i></div></div>
-        <div class="meter"><div class="row"><span>Memory</span><b id="m-mem">9 MB</b></div><div class="bar"><i id="b-mem" style="width:2.5%"></i></div></div>
+        <div class="meter"><div class="row"><span>Startup</span><b id="m-start">3 ms</b></div><div class="bar"><i id="b-start" style="width:1%"></i></div></div>
+        <div class="meter"><div class="row"><span>Memory</span><b id="m-mem">8 MB</b></div><div class="bar"><i id="b-mem" style="width:2%"></i></div></div>
         <div class="meter"><div class="row"><span>Install size</span><b id="m-size">one binary</b></div><div class="bar"><i id="b-size" style="width:6%"></i></div></div>
-        <p class="note">Measured on the same Windows machine with Camel 4.23 on Java 21; on Linux Cameleer starts its routes in about 1 ms. Same endpoint options, headers, Simple expressions and error handling on both.</p>
+        <p class="note">Measured against Apache Camel 4.23 on Java 21 with the same routes (<a href="compare/apache-camel-vs-cameleer/">full comparison</a>). Same endpoint options, headers, Simple expressions and error handling on both.</p>
       </div>
     </div>
   </div>
@@ -331,17 +331,17 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
 <section id="numbers" aria-labelledby="num-h">
   <div class="wrap">
     <h2 id="num-h">Faster in every scenario we measured.</h2>
-    <p class="sub">Six workloads, same routes, fresh process each, default settings on both sides. All six are shown, including the ones under 4x.</p>
+    <p class="sub">The same routes on Cameleer and Apache Camel: APIs, Kafka, PostgreSQL and in-memory routing.</p>
     <div class="legend"><span><i style="background:var(--signal)"></i>Cameleer</span><span><i style="background:var(--java)"></i>Apache Camel 4.23, Java 21</span></div>
     <div class="bench" id="bench">
-      <div class="item"><div class="label">Request-reply<small>seda InOut</small></div><div class="bars"><div class="b r" data-w="100"><span>2.09M msgs/s</span></div><div class="b j" data-w="12"><span>250k</span></div></div><div class="x">8.4x</div></div>
-      <div class="item"><div class="label">Direct route<small>set header, count</small></div><div class="bars"><div class="b r" data-w="100"><span>4.96M msgs/s</span></div><div class="b j" data-w="23.4"><span>1.16M</span></div></div><div class="x">4.3x</div></div>
-      <div class="item"><div class="label">Async queue<small>seda, 4 producers, 4 consumers</small></div><div class="bars"><div class="b r" data-w="100"><span>5.65M msgs/s</span></div><div class="b j" data-w="23.9"><span>1.35M</span></div></div><div class="x">4.2x</div></div>
-      <div class="item"><div class="label">Content-based router<small>filter, transform</small></div><div class="bars"><div class="b r" data-w="100"><span>2.10M msgs/s</span></div><div class="b j" data-w="28.8"><span>604k</span></div></div><div class="x">3.5x</div></div>
-      <div class="item"><div class="label">Split and aggregate<small>JSON orders, 10 items each</small></div><div class="bars"><div class="b r" data-w="100"><span>113k orders/s</span></div><div class="b j" data-w="31.5"><span>35.6k</span></div></div><div class="x">3.2x</div></div>
-      <div class="item"><div class="label">HTTP consumer<small>16 keep-alive connections</small></div><div class="bars"><div class="b r" data-w="100"><span>273k req/s</span></div><div class="b j" data-w="41"><span>112k</span></div></div><div class="x">2.5x</div></div>
+      <div class="item"><div class="label">REST API<small>read JSON, answer JSON</small></div><div class="bars"><div class="b r" data-w="100"><span>80.3k req/s</span></div><div class="b j" data-w="47.0"><span>37.9k</span></div></div><div class="x">2.1x</div></div>
+      <div class="item"><div class="label">Writing to PostgreSQL<small>insert per request, pool of 16</small></div><div class="bars"><div class="b r" data-w="100"><span>11.0k req/s</span></div><div class="b j" data-w="42.8"><span>4.8k</span></div></div><div class="x">2.3x</div></div>
+      <div class="item"><div class="label">Order ingestion<small>HTTP into Kafka, keyed</small></div><div class="bars"><div class="b r" data-w="100"><span>17.8k req/s</span></div><div class="b j" data-w="56.3"><span>10.1k</span></div></div><div class="x">1.7x</div></div>
+      <div class="item"><div class="label">Stream processing<small>Kafka in, filter, Kafka out</small></div><div class="bars"><div class="b r" data-w="100"><span>6.0k rec/s</span></div><div class="b j" data-w="11.5"><span>698</span></div></div><div class="x">8.7x</div></div>
+      <div class="item"><div class="label">Content-based router<small>choice, filter, transform</small></div><div class="bars"><div class="b r" data-w="100"><span>1.14M msgs/s</span></div><div class="b j" data-w="32.8"><span>376k</span></div></div><div class="x">3.0x</div></div>
+      <div class="item"><div class="label">Request-reply<small>in-memory queue</small></div><div class="bars"><div class="b r" data-w="100"><span>719k msgs/s</span></div><div class="b j" data-w="16.3"><span>118k</span></div></div><div class="x">6.1x</div></div>
     </div>
-    <p class="fine">AMD Ryzen 5 5600X, Windows 11, idle machine. HTTP is capped by the test machine, where a server that does nothing peaks near 400k req/s. Reproduce it with <code>scripts/bench.sh</code>. <a href="https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md">Full method and results</a>.</p>
+    <p class="fine">Apache Camel compiled natively with Quarkus starts faster than on the JVM but has lower throughput; it is in the full comparison. <a href="compare/apache-camel-vs-cameleer/">Every scenario, the method and the raw data</a>.</p>
   </div>
 </section>
 
@@ -362,7 +362,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
 <section id="uses" aria-labelledby="uses-h">
   <div class="wrap">
     <h2 id="uses-h">Small enough to go where the JVM can't.</h2>
-    <p class="sub">A 1 ms start and a 10 MB footprint change where integration code can run.</p>
+    <p class="sub">A 3 ms start and an 8 MB footprint change where integration code can run.</p>
     <div class="uses">
       <article class="use">
         <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
@@ -642,6 +642,9 @@ $ cameleer --help
         <li><a href="docs/">Documentation</a></li>
         <li><a href="docs/components/">All components</a></li>
         <li><a href="docs/BENCHMARKS.html">Benchmarks</a></li>
+        <li><a href="compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a></li>
+        <li><a href="alternatives/apache-camel-alternatives/">Apache Camel alternatives</a></li>
+        <li><a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">AI agent tool calls compared</a></li>
         <li><a href="docs/ROADMAP.html">Roadmap</a></li>
         <li><a href="llms.txt">llms.txt</a></li>
       </ul>
@@ -659,8 +662,8 @@ $ cameleer --help
 
   // runtime toggle
   var data = {
-    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.4.0</span>', '<span class="ok">Started route triage in 10 ms</span>'], start: ['10 ms', 1.4], mem: ['9 MB', 2.5], size: ['one binary', 6] },
-    java: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (JBang, Java 21)</span>', '<span class="ok">Started route triage in 751 ms</span>'], start: ['751 ms', 100], mem: ['366 MB', 100], size: ['JDK + jars', 100] }
+    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.4.0</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
+    java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (Java 21)</span>', '<span class="ok">Started route triage in 1.1 s</span>'], start: ['1.1 s', 100], mem: ['399 MB', 100], size: ['JDK + jars', 100] }
   };
   var term = document.getElementById('term'), runner = document.getElementById('runner'), tog = runner.querySelector('.toggle'), timer;
   function show(side) {

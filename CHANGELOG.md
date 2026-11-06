@@ -5,8 +5,12 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## 0.4.0 (2026-11-06)
 
-Built for serverless and the edge: about 1 ms startup on Linux, a built-in AWS Lambda runtime,
-and builds that contain only the components your routes use.
+Measured against Apache Camel with the same routes, Cameleer starts 450 times faster (3 ms vs
+1.1 s), uses up to 54 times less memory and handles 1.7 to 8.7 times the throughput, across
+routing, REST APIs, Kafka, PostgreSQL and batch jobs
+([comparison](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/),
+[report](docs/BENCHMARKS.md)). This release also adds a built-in AWS Lambda runtime and builds
+that contain only the components your routes use.
 
 ### Added
 
@@ -27,6 +31,12 @@ and builds that contain only the components your routes use.
 - `cameleer-bench coldstart` measures spawn-to-ready, spawn-to-exit and peak memory of the CLI.
 - Guide: [AI agent tool calls, direct or through Cameleer](docs/guides/agent-tool-calls.md), with a
   tested saga route in `examples/agents/`.
+- **A reproducible cloud benchmark** against Apache Camel on the JVM and on Quarkus native:
+  `scripts/cloud-bench` creates three cloud machines, runs every scenario (in-process routing,
+  REST APIs, HTTP into Kafka and PostgreSQL, Kafka stream processing, CSV batch) and deletes
+  them. Raw results are in `benchmarks/results/`.
+- Comparison pages on the website: Apache Camel vs Cameleer, Apache Camel alternatives, and AI
+  agent tool calls made directly or through Cameleer.
 
 ### Changed
 
@@ -55,6 +65,16 @@ and builds that contain only the components your routes use.
 
 ### Fixed
 
+- **HTTP server keep-alive under load.** The server had 32 worker threads and closed keep-alive
+  connections while all were busy, so more than 32 concurrent clients reconnected on every
+  request. The default is now 200 workers, started on demand; REST throughput roughly doubled.
+- **Kafka producer throughput.** Concurrent sends waited in line one record at a time. Records
+  sent while another send is in flight are now batched into one produce request per broker,
+  as Kafka's own producer does; each exchange still waits for its own acknowledgement.
+- **PostgreSQL connection pool.** `poolSize` only limited idle connections, so a burst opened
+  extra connections (each with a full login) and closed them again. It is now a hard maximum,
+  like HikariCP's `maximumPoolSize`; a caller waits up to `poolTimeout` seconds (default 30)
+  for a free connection.
 - **TLS:** a server that rejected a client certificate could lose its alert to a TCP reset on
   Windows, so the client saw "connection reset" instead of `certificate_required`. Servers now
   close gracefully after a fatal alert. Code that calls `TlsStream::accept` on a raw

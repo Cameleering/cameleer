@@ -530,7 +530,7 @@ the two endpoints; to spread load instead, use `roundRobin` (see
   trail and evaluation data.
 - Use [`enrich`](eips/transformation.md#content-enricher-enrich) to add customer data from SQL
   or a CRM to the prompt.
-- Run the routes as a sidecar that starts in about 1 ms next to your agent (Docker image `pmsudhi/cameleer`) or embed
+- Run the routes as a sidecar that starts in milliseconds next to your agent (Docker image `pmsudhi/cameleer`) or embed
   them in a Rust agent with `cameleer_main::new_main()`.
 
 ## Common questions

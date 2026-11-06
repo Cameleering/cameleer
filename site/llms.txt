@@ -1,14 +1,15 @@
 # Cameleer
 
-> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. It starts its routes in about 1 ms on Linux, uses about 10 MB of memory, is its own AWS Lambda runtime and is 2.5-8x faster than Apache Camel 4.23 on Java 21 in the published benchmarks. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. It is also aimed at serverless and edge deployments. It is an independent project, not affiliated with the Apache Software Foundation.
+> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. With the same routes it starts in 3 ms (Apache Camel 4.23 on Java 21: 1.1 s), uses up to 54x less memory and handles 1.7-8.7x the throughput across routing, REST APIs, Kafka and PostgreSQL (comparison: https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/), and it is its own AWS Lambda runtime. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. It is also aimed at serverless and edge deployments. It is an independent project, not affiliated with the Apache Software Foundation.
 
 Key facts:
 
 - Language: Rust, standard library only (TLS, HTTP/2, gRPC, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch).
 - About 230 components, languages and data formats; all Camel EIPs; Rust, YAML and XML DSLs; REST DSL; Kamelets; a Camel-JBang-style CLI, `cameleer`.
 - Formerly named rust-camel (up to v0.1.0).
+- Comparisons: Apache Camel vs Cameleer (https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/), Apache Camel alternatives (https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/), AI agent tool calls direct vs through Cameleer (https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/).
 - AI integrations: OpenAI-compatible chat and embeddings, AWS Bedrock (Converse, streaming, guardrails, Agent Runtime), Azure OpenAI (tool calls, Assistants), Google Vertex AI (Gemini, partner models).
-- Serverless: `cameleer` is its own AWS Lambda custom runtime (`provided.al2023`, `scripts/package-lambda.sh`); about 1 ms startup on Linux.
+- Serverless: `cameleer` is its own AWS Lambda custom runtime (`provided.al2023`, `scripts/package-lambda.sh`); a function build starts in under 1 ms.
 - Not yet packaged: MCP server, vector store components (build-it-yourself patterns are documented).
 - License: Apache-2.0.
 

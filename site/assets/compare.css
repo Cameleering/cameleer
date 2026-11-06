@@ -30,11 +30,13 @@
 .bars { display: grid; gap: 22px; }
 .bar-group h4 { margin: 0 0 8px; font-size: 16px; }
 .bar-group p { margin: 4px 0 0; font-size: 14px; color: var(--muted); }
-.bar { display: grid; grid-template-columns: 170px 1fr 110px; align-items: center; gap: 12px; font-size: 14px; margin: 4px 0; }
+.bar { display: grid; grid-template-columns: 200px 1fr 160px; align-items: center; gap: 12px; font-size: 14px; margin: 4px 0; }
 .bar .track { background: var(--grid); border-radius: 6px; height: 14px; overflow: hidden; }
 .bar .fill { display: block; height: 100%; border-radius: 6px; background: var(--java); }
 .bar.us .fill { background: var(--signal); }
-.bar .val { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px; }
+.bar.jvm .fill { background: #8d97ad; }
+.bar.native .fill { background: #c9d0de; }
+.bar .val { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px; white-space: nowrap; }
 .legend { display: flex; gap: 18px; font-size: 14px; color: var(--muted); margin: 0 0 18px; flex-wrap: wrap; }
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
 
@@ -69,5 +71,6 @@ pre.cmd { background: #0f1424; color: #e8ecf6; padding: 16px 18px; border-radius
 @media (max-width: 900px) {
   .stats { grid-template-columns: 1fr 1fr; }
   .cards, .two, .hub-list { grid-template-columns: 1fr; }
-  .bar { grid-template-columns: 110px 1fr 90px; }
+  .bar { grid-template-columns: 1fr 140px; }
+  .bar .track { grid-column: 1 / -1; order: 3; }
 }

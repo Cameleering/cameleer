@@ -163,7 +163,7 @@ for a JVM.
 
 - **Google Cloud Run, Knative, Azure Container Apps, Fly.io:** these run the image as it is. Cloud Run sends
   requests to `PORT`, which is 8080 unless you change it. If you do change it, add
-  `--prop camel.server.port={{env:PORT:8080}}`. Startup takes about 1 ms on Linux, so scale-to-zero
+  `--prop camel.server.port={{env:PORT:8080}}`. Startup takes milliseconds, so scale-to-zero
   has no practical cold-start cost from Cameleer itself.
 - **AWS Lambda:** see [below](#aws-lambda). `cameleer` is its own Lambda custom runtime.
 

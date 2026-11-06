@@ -12,7 +12,7 @@
 #   BENCH_SCENARIOS="..."  subset of: direct seda cbr splitagg http startup
 #   BENCH_TOOLS=dir        where the JDK and Maven are cached (default ~/.cache/cameleer-bench)
 #   BENCH_JAVA_HOME=dir    use this JDK instead of the pinned Temurin download
-#   BENCH_OUT=file         report path (default docs/BENCHMARKS.md)
+#   BENCH_OUT=file         report path (default benchmarks/local.md; docs/BENCHMARKS.md is the cloud report)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +32,7 @@ MAVEN_TGZ_SHA512="831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0c
 
 TOOLS="${BENCH_TOOLS:-$HOME/.cache/cameleer-bench}"
 OUTDIR="$ROOT/target/bench"
-REPORT="${BENCH_OUT:-$ROOT/docs/BENCHMARKS.md}"
+REPORT="${BENCH_OUT:-$ROOT/benchmarks/local.md}"
 SCENARIOS="${BENCH_SCENARIOS:-direct seda cbr splitagg http startup}"
 
 case "$(uname -s)" in

@@ -4,6 +4,10 @@
 > routing them through Cameleer makes each tool a tested route that validates, runs once, rolls
 > back, retries and audits, so the model only decides what to do.
 
+The short version, with the comparison table and FAQ, is on the
+[AI agent tool calls: direct vs Cameleer](https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/)
+page.
+
 Function calling (also called tool use) is how an AI agent acts: the model answers with the
 name of a tool and its arguments as JSON, and your code executes it. This page compares two
 ways to execute those calls, on a real multi-step job, and shows the complete Cameleer route
