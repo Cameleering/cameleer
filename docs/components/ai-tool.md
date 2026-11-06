@@ -80,7 +80,7 @@ assert_eq!(result.text, "Oslo: 21 degrees");
 
 | option | default | description |
 |---|---|---|
-| `description` | | What the tool does; the model reads it to decide when to call the tool |
+| `description` | the tool's name | What the tool does; the model reads it to decide when to call the tool. Without one the name is used, as in Camel |
 | `title` | | A human-readable name |
 | `tags` | | Comma-separated tags; an agent or server can offer only the tools with given tags |
 | `parameter.NAME` | `string` | Declares an argument and its type: `string`, `integer`, `number`, `boolean`, `object`, `array` |
@@ -119,6 +119,9 @@ goes through.
 | `circuitBreakerDelay` | `30s` | How long the breaker stays open before one trial call |
 | `circuitBreakerFallback` | | The text the model gets while the breaker is open |
 | `compensation` | | An endpoint (usually `direct:`) that undoes the call; see [Compensation](#compensation) |
+| `authorize` | | A Simple predicate over the arguments and the caller; a call it doesn't match is refused. See [Guardrails](#guardrails) |
+| `redact` | | Kinds of data replaced in results: `secret`, `email`, `creditCard`, `iban`, `ssn`, `ipv4`, `phone`, `all`, or `regex:NAME=PATTERN`, comma separated. See [Guardrails](#guardrails) |
+| `cacheTtl` | `0` (off) | Reuse a successful result for the same arguments and principal for this long |
 | `audit` | `true` | Write this tool's calls to the audit log |
 | `version` | `1` | The definition's version, for pinning |
 | `pin` | `true` | Refuse a changed definition that keeps its version |
@@ -141,7 +144,13 @@ goes through.
 | `CamelAiToolReturnDirect` | out (producer) | The tool's `returnDirect` flag |
 | `CamelAiToolStructuredContent` | out (producer) | The structured result (an object or array) |
 | `CamelAiToolContent` | out (tool route) | Set by the route: MCP content blocks for the result (images, audio, embedded resources) |
-| `CamelMcpSecurityPrincipal`, `CamelMcpSecurityPrincipalScopes`, `CamelMcpSecurityMethod` | in (over MCP) | The authenticated caller |
+| `CamelMcpSecurityPrincipal`, `CamelMcpSecurityPrincipalName`, `CamelMcpSecurityPrincipalRoles`, `CamelMcpSecurityPrincipalScopes`, `CamelMcpSecurityMethod` | in (over MCP) | The authenticated caller: its name, its scopes as a list (`Roles`) and as one space-separated string (`Scopes`), and how it authenticated |
+| `CamelAiToolProgress`, `CamelAiToolProgressTotal` | in (`operation=progress`) | The progress so far and the total, if known |
+| `CamelAiToolLogLevel`, `CamelAiToolLogger` | in (`operation=log`) | The level (default `info`) and the logger name |
+| `CamelAiToolElicitSchema` | in (`operation=elicit`) | The JSON Schema of the answer, when the body is the message text |
+| `CamelAiToolElicitAction` | out (`operation=elicit`) | `accept`, `decline` or `cancel` |
+| `CamelAiToolSampleMaxTokens` | in (`operation=sample`) | The maximum tokens of the answer (default `500`) |
+| `CamelAiToolSampleModel` | out (`operation=sample`) | The model that answered |
 
 ## Behavior
 
@@ -164,27 +173,199 @@ goes through.
    Example of valid arguments: {"city":"text"}
    ```
 
-4. **Rate limit**, per principal.
-5. **Circuit breaker.** While it is open, calls get the fallback text and the route doesn't run.
-6. **Approval.** A call that needs approval doesn't run. It is parked with a handle and the
+4. **`authorize`.** The predicate sees the arguments as headers and the caller; a call it
+   doesn't match is refused (see [Guardrails](#guardrails)).
+5. **Result cache.** With `cacheTtl`, a result recorded for the same arguments and principal is
+   returned and the route doesn't run.
+6. **Rate limit**, per principal.
+7. **Circuit breaker.** While it is open, calls get the fallback text and the route doesn't run.
+8. **Approval.** A call that needs approval doesn't run. It is parked with a handle and the
    result says so (`CamelAiToolStatus=approval-required`). An approver resolves it with
    `AiRegistry::approve(handle, approver)`, which runs it and returns its result, or
    `AiRegistry::deny(handle, approver, reason)`, which runs nothing. Over MCP, a tool without
    an approval endpoint asks the client's user instead (see
    [MCP server: approvals](../guides/mcp-server.md#approvals)).
-7. **Idempotency.** The key is the `idempotency_key` argument if the schema declares one, else
+9. **Idempotency.** The key is the `idempotency_key` argument if the schema declares one, else
    the call id, else a digest of the principal and the arguments. A repeated call returns the
    recorded result with `CamelAiToolDuplicate=true`. A repeat that arrives while the first is
    running waits for it. A failed call is not recorded, so a retry runs it.
-8. **The route** runs on a new exchange that keeps only the caller's properties and variables
+10. **Compensation.** The undo step is registered, see [Compensation](#compensation).
+11. **The route** runs on a new exchange that keeps only the caller's properties and variables
    (`CamelVariable.*`), as in Camel. Headers and the body don't leak into the tool.
-9. **Timeout.** When the caller stops waiting, the call is cancelled: the route stops before its
+12. **Timeout.** When the caller stops waiting, the call is cancelled: the route stops before its
    next step (a step that is already running is not interrupted), and the exchange is released.
    In Camel the call keeps running.
-10. **Result.** An object or array body is the structured result, with its JSON as the text. An
+13. **Result.** An object or array body is the structured result, with its JSON as the text. An
     empty body is `No result`, and any other body is its text. With an `outputSchema`, a result
     that doesn't match it is an error.
-11. **Audit.** One record per call, see [Audit log](#audit-log).
+14. **Redaction.** With `redact`, matching values in the result are replaced.
+15. **Audit.** One record per call, see [Audit log](#audit-log).
+
+### Guardrails
+
+Three options put rules on a tool that a prompt can't talk its way around.
+
+**`authorize`** is a [Simple](../languages/simple.md) predicate. It is evaluated after the
+arguments are validated, on an exchange whose headers are the arguments, the call's own
+headers (over MCP, `CamelMcpSecurityPrincipal`, `CamelMcpSecurityPrincipalRoles` and the
+others), `CamelAiToolPrincipal` and `CamelAiToolName`. If it doesn't match, the route doesn't
+run and the model gets `Not authorized to call refund_small with these arguments`. The audit
+record has the decision `denied` and the rule. `authorizationPolicy` (a bean) is checked
+before it, for rules that need code.
+
+Inside an endpoint URI, `&` separates options, so write `&&` as `%26%26` (and `+` as `%2B`,
+because `+` decodes to a space). The same goes for YAML `parameters:`: they are joined into the
+URI, and a value that contains `${` or `{{` is copied as it is, not URL-encoded, so a
+predicate's `&&` would cut it in two. `RAW(...)` also works when the predicate has no `)`.
+
+<!-- example: ai-tool-guardrails -->
+```yaml
+- route:
+    from:
+      uri: ai-tool:refund_small
+      parameters:
+        description: Refund up to 100 on an order
+        parameter.orderId: string
+        parameter.orderId.required: true
+        parameter.amount: number
+        parameter.amount.required: true
+        authorize: "${header.amount} <= 100 %26%26 ${header.CamelAiToolPrincipal} == 'support'"
+      steps:
+        - setBody:
+            simple: "Refunded ${header.amount} on order ${header.orderId}"
+- route:
+    from:
+      uri: ai-tool:customer
+      parameters:
+        description: A customer's record
+        parameter.id: string
+        parameter.id.required: true
+        readOnlyHint: true
+        redact: email,phone,secret       # or all, or regex:ticket=TCK-[0-9]+
+        cacheTtl: 5m
+      steps:
+        - to: direct:load-customer
+- route:
+    from:
+      uri: direct:load-customer
+      steps:
+        - setBody:
+            simple: '{"id": "${header.id}", "name": "Ann", "email": "ann@example.com"}'
+```
+
+**`redact`** replaces personal data and secrets in a completed result with
+`[REDACTED:kind]`, in the text, the structured result and the content blocks. It is applied
+before the result reaches the model, the MCP client or the audit log (the audit record keeps
+the digest of the redacted result and notes `redacted N value(s)`). The kinds:
+
+| kind | matches |
+|---|---|
+| `secret` | API keys and tokens: `sk-...`, `sk-ant-...`, AWS `AKIA...`, GitHub `ghp_...` and similar, Slack `xox?-...`, JWTs, PEM private key headers |
+| `email` | E-mail addresses |
+| `creditCard` | 13 to 19 digits, with spaces or dashes, that pass the Luhn check |
+| `iban` | IBANs: two letters, two digits, 11 to 30 letters or digits |
+| `ssn` | US social security numbers, `123-45-6789` |
+| `ipv4` | IPv4 addresses |
+| `phone` | Phone numbers: an optional `+`, then digits with spaces, dashes, dots or parentheses between them, 9 characters or more |
+| `all` | Every kind above |
+| `regex:NAME=PATTERN` | Your own pattern, replaced with `[REDACTED:NAME]` |
+
+Custom patterns run first, then the built-in kinds in the order of the table, so a card number
+is not also taken for a phone number. A pattern can't contain a comma, because commas separate
+the kinds. An unknown kind or an invalid pattern fails when the route starts.
+
+**`cacheTtl`** reuses a successful result for the same arguments and principal (a SHA-256 of
+both) for that long. Errors are not cached. A cached call doesn't run the route, the rate limit
+or the approval, and its audit record has the decision `cached`. Use it for read-only tools
+whose answer doesn't change by the second; for deduplicating calls with side effects, use
+`idempotency`.
+
+### Talking to the client: progress, logs, elicitation and sampling
+
+While a tool route runs for an MCP client, it can send progress and log messages to the
+client, ask the client's user a question (elicitation) or ask the client's model for a
+completion (sampling). A step `to: ai-tool:current?operation=...` does it. The name in the URI
+is not used; the step finds the running call from the exchange.
+
+<!-- example: ai-tool-interaction -->
+```yaml
+- route:
+    from:
+      uri: ai-tool:import_contacts
+      parameters:
+        description: Import a contact list after the user confirms the target list
+        parameter.file: string
+        parameter.file.required: true
+      steps:
+        - setHeader:
+            name: CamelAiToolElicitSchema
+            constant: '{"type": "object", "properties": {"list": {"type": "string"}}, "required": ["list"]}'
+        - setBody:
+            constant: Which mailing list should the contacts go to?
+        - to: ai-tool:current?operation=elicit
+        - choice:
+            when:
+              - simple: "${header.CamelAiToolElicitAction} != 'accept'"
+                steps:
+                  - setBody:
+                      constant: Import cancelled by the user
+                  - stop: {}
+        - setProperty:
+            name: list
+            simple: "${body[list]}"
+        - setHeader:
+            name: CamelAiToolProgress
+            constant: 1
+        - setHeader:
+            name: CamelAiToolProgressTotal
+            constant: 2
+        - setBody:
+            constant: Reading the file
+        - to: ai-tool:current?operation=progress
+        - setHeader:
+            name: CamelAiToolLogLevel
+            constant: info
+        - setBody:
+            simple: "Importing into ${exchangeProperty.list}"
+        - to: ai-tool:current?operation=log
+        - setBody:
+            simple: "Imported ${header.file} into ${exchangeProperty.list}"
+```
+
+| operation | input | what the client gets | after the step |
+|---|---|---|---|
+| `progress` | `CamelAiToolProgress` (required), `CamelAiToolProgressTotal`, the body as the message | `notifications/progress`, only when the request carried a `progressToken` | nothing changes |
+| `log` | `CamelAiToolLogLevel` (default `info`), `CamelAiToolLogger`, the body as `data` | `notifications/message`, only when the client asked for logs at that level or below | nothing changes |
+| `elicit` | the body as the message and `CamelAiToolElicitSchema`, or the body as a whole `{message, requestedSchema}` object | `elicitation/create` | the body is the answer's `content`; `CamelAiToolElicitAction` is `accept`, `decline` or `cancel` |
+| `sample` | the body as the user's message and `CamelAiToolSampleMaxTokens` (default `500`), or the body as a whole `sampling/createMessage` params object | `sampling/createMessage` | the body is the text of the answer; `CamelAiToolSampleModel` is the model that answered |
+
+Log levels are MCP's: `debug`, `info`, `notice`, `warning`, `error`, `critical`, `alert`,
+`emergency`. In 2026-07-28 the client sets the minimum level in the request's `_meta`
+(`io.modelcontextprotocol/logLevel`); in legacy sessions it calls `logging/setLevel`. Without
+either, no log messages are sent. Notifications go on the request's event stream over HTTP and
+on stdout over stdio.
+
+How a question reaches the client depends on the era:
+
+- **2025-11-25 and earlier.** The server sends `elicitation/create` or `sampling/createMessage`
+  to the client during the call, on the response stream (HTTP) or on stdout (stdio), and the
+  step waits up to 10 minutes for the answer.
+- **2026-07-28.** The server sends no requests to the client. The call ends with
+  `resultType: input_required`, the questions in `inputRequests` and a sealed `requestState`.
+  The client gets the answers and calls again with `inputResponses`. **The route runs again
+  from the start**, and this time each step gets its answer, in order. Keep the steps before a
+  question free of side effects, or make them idempotent.
+
+A client that didn't declare the `elicitation` or `sampling` capability can't be asked: the
+step fails with the error kind `org.apache.camel.component.ai.InteractionUnavailableException`
+(`the client did not declare the sampling capability`), and so does a legacy client that
+doesn't answer. Handle it with `doTry` or `onException` to fall back, for example to a default
+value. Unhandled, the call fails and the client gets the reason; it is not hidden like other
+route errors (see `camel.server.mcp-expose-errors` in the
+[MCP server configuration](../guides/mcp-server.md#configuration)).
+
+Outside an MCP call (the producer, the agent step, `tags` on a model component), `progress` and
+`log` do nothing, and `elicit` and `sample` fail with `InteractionUnavailableException`.
 
 ### Compensation
 
@@ -200,7 +381,7 @@ result as the body and `CamelAiToolCompensating=true`.
 Each call appends a record: time, tool, principal, call and conversation ids, a SHA-256 digest
 of the arguments and of the result (never the data itself), the decision (`allowed`,
 `invalid`, `approval-required`, `approved`, `rejected`, `rate-limited`, `circuit-open`,
-`disabled`, `denied`, `compensate`), the approver, the duplicate flag, the outcome and the
+`disabled`, `denied`, `cached`, `compensate`), the approver, the duplicate flag, the outcome and the
 duration. Records are hash-chained: each one holds the SHA-256 of the previous record plus its
 own content, so an edited, removed or reordered record fails
 `cameleer_ai::audit::verify_file`.
@@ -269,10 +450,16 @@ need the `ai` feature in the running binary; without it they say so.
   eras (2026-07-28 and 2025-11-25), with the same envelope.
 - A route can return images, audio or embedded resources by setting `CamelAiToolContent` to a
   list of MCP content blocks.
+- `authorize`, `redact`, `cacheTtl` and the interaction operations (`progress`, `log`,
+  `elicit`, `sample`) are Cameleer extensions.
+- Tools of remote MCP servers can be imported and go through the same envelope, see
+  [MCP client](../guides/mcp-client.md).
 
 ## Related
 
 - [MCP server](../guides/mcp-server.md): serving these tools to MCP clients.
+- [MCP client](../guides/mcp-client.md) and the [mcp component](mcp.md): using the tools of
+  remote MCP servers.
 - [ai-resource](ai-resource.md) and [ai-prompt](ai-prompt.md): the other two things an agent
   can use.
 - [json-validator](json-validator.md): the JSON Schema support used for arguments.

@@ -169,19 +169,22 @@ ctx.add_routes(|b| {
 | option | default | description |
 |---|---|---|
 | `model` | | Model name (`gpt-4o-mini`, `text-embedding-3-small`, `llama3.2`, ...). The `CamelOpenAIModel` header overrides it. |
-| `apiKey` | `OPENAI_API_KEY` env | Sent as `Authorization: Bearer ...`. |
+| `provider` | `openai` | A preset for an OpenAI-compatible provider: `gemini`, `mistral`, `deepseek`, `xai`, `groq`, `cerebras`, `together`, `fireworks`, `openrouter`, `perplexity`, `huggingface`, `dashscope`, `moonshot`, `cohere`, `nvidia`, `ollama`, `vllm`, `lmstudio`, `llamacpp`. It sets the default `baseUrl` and the environment variable the key is read from ([the table](../guides/model-providers.md#provider-presets)). |
+| `apiKey` | the preset's env variable (`OPENAI_API_KEY`) | Sent as `Authorization: Bearer ...`. |
 | `organization` | | Sent as the `OpenAI-Organization` header. |
-| `baseUrl` | `https://api.openai.com/v1` | API base URL: any OpenAI-compatible server (for `apiFormat=ollama`, the Ollama server root). |
+| `baseUrl` | the preset's (`https://api.openai.com/v1`) | API base URL: any OpenAI-compatible server (for `apiFormat=ollama`, the Ollama server root). |
 | `apiFormat` | `openai` | `chat-completion` only: `ollama` calls Ollama's native `/api/chat` ([details](#ollamas-native-api)). |
 | `streaming` | `false` | Chat and Responses: stream the answer ([details](#streaming)); the `CamelOpenAIStreaming` header overrides it. |
 | `streamingChunkProcessor` | | `#bean`: a `Processor` that receives each streamed text delta as its body. |
 | `systemMessage` | | Chat: system prompt (the `CamelOpenAISystemMessage` header overrides it; `instructions` for the Responses API). |
 | `temperature` | | Chat: sampling temperature. |
-| `maxTokens` | | Chat: `max_tokens` (`max_output_tokens` for the Responses API, `options.num_predict` for Ollama). |
+| `maxTokens` | | Chat: `max_tokens` (`max_completion_tokens` for OpenAI's o-series and GPT-5 models, `max_output_tokens` for the Responses API, `options.num_predict` for Ollama). |
 | `topP` | | Chat: `top_p`. |
 | `user` | | Chat: end-user id sent as `user`. |
 | `outputType` | | `full` keeps the whole JSON response as the body instead of the answer text (or the vectors). |
 | `tags`, `autoToolExecution`, `maxToolIterations`, `maxAgenticTokens`, `parallelToolExecution`, `hallucinatedToolNameStrategy`, `record`, `replay` | | Tool calling: offer the `ai-tool` routes with these tags and run the loop ([the options](../guides/agent-step.md#tool-calling-in-the-model-components)). |
+| `maxRetries` | `2` | Retries of 429, 5xx, timeouts and resets, with exponential backoff from `retryDelay` (`500ms`). |
+| `fallbackModels`, `responseCache`, `responseCacheTtl`, `responseCacheSize`, `coalesce` | | Fallback models, the exact response cache and coalescing of identical requests ([details](../guides/model-providers.md#reliability-and-cost)). |
 | `timeout` | `120s` | HTTP timeout. |
 
 Values in a request-map body win over the options (an option is only added when the key is
@@ -254,13 +257,23 @@ system message) and `unmarshal: json` the answer.
 ### What happens on an API error?
 
 A non-2xx response fails with `HttpOperationFailedException`; the message contains the status
-and the API's `error.message` (for example `Incorrect API key provided`). Rate limits (429) can
-be retried with `onException` and a redelivery policy.
+and the API's `error.message` (for example `Incorrect API key provided`). Rate limits (429),
+server errors and timeouts are retried first (`maxRetries`, default 2), then `fallbackModels`
+are tried in order. A streamed call is not retried once text has arrived.
+
+### Which providers does it work with?
+
+Every server with an OpenAI-compatible Chat Completions API. `provider=groq` (or `mistral`,
+`deepseek`, `openrouter`, `ollama`, ...) fills in the base URL and the key's environment
+variable; see [model providers](../guides/model-providers.md). Anthropic and Gemini also have
+native components ([anthropic](anthropic.md), [gemini](gemini.md)) that keep provider features
+the compatible APIs drop.
 
 ## Related
 
 - [AI components guide](../guides/ai-components.md)
-- [azure-openai](azure-openai.md), [aws-bedrock](aws-bedrock.md), [google-vertexai](google-vertexai.md)
+- [Model providers and call optimizations](../guides/model-providers.md)
+- [anthropic](anthropic.md), [gemini](gemini.md), [azure-openai](azure-openai.md), [aws-bedrock](aws-bedrock.md), [google-vertexai](google-vertexai.md)
 - [slack](slack.md), [jira](jira.md), [telegram](telegram.md) for agents that post their results
 - [Apache Camel LangChain4j Chat](https://camel.apache.org/components/next/langchain4j-chat-component.html)
 

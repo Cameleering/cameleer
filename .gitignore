@@ -8,3 +8,4 @@ __pycache__/
 
 # maintainer-only notes (launch and setup guides)
 /.local/
+scripts/cloud-bench/mcp-ts/node_modules/

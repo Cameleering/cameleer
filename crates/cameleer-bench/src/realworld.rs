@@ -22,7 +22,7 @@ use crate::driver::{self, Outcome, Plan};
 
 /// Scenarios served over HTTP, with the path the load generator calls and its request body.
 pub const SERVED: &[(&str, &str, &str)] =
-    &[("http", "/bench", "small"), ("rest-json", "/orders", "order"), ("http-kafka", "/ingest", "order"), ("http-sql", "/persist", "order")];
+    &[("http", "/bench", "small"), ("rest-json", "/orders", "order"), ("http-kafka", "/ingest", "order"), ("http-sql", "/persist", "order"), ("mcp", "/mcp", "mcp"), ("mcp-session", "/mcp", "mcp-session")];
 
 /// PostgreSQL pool size on both sides (Cameleer `poolSize`, HikariCP `maximumPoolSize`).
 pub const PG_POOL: usize = 16;

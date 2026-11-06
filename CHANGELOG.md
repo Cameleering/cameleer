@@ -51,6 +51,52 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   `list_changed` when a tool is withdrawn.
 - **Cooperative cancellation of an exchange** (`Exchange::set_cancel_token`): once the token is
   set, the exchange and its copies stop before their next pipeline step.
+- **MCP client and gateway**: `camel.ai.mcp.NAME.*` connects to MCP servers over HTTP or stdio
+  (both protocol eras) and imports their tools into the tool registry, where they run through
+  the same envelope (approvals, deduplication, rate limits, audit) and can be used by the agent
+  step (`tools: mcp:github`), by model components with `tags`, and re-exported by Cameleer's own
+  MCP server. Tool lists re-sync on `list_changed` and reconnects; a tool whose definition
+  changes after it was pinned is withdrawn. The new `mcp:` component calls a server's tools,
+  resources and prompts from a route. See the [MCP client guide](docs/guides/mcp-client.md).
+- **Progress, logs, elicitation and sampling from tool routes**: `ai-tool:x?operation=progress`,
+  `log`, `elicit` and `sample` inside a tool route send MCP progress and log notifications, ask
+  the client's user a question, or ask the client's model, in both protocol eras. The official
+  conformance suite now passes every scenario (39 of 39 for 2025-11-25, 26 of 26 for
+  2025-06-18).
+- **Tool guardrails** on `ai-tool`: `redact` replaces secrets, e-mail addresses, card numbers
+  (Luhn-checked), IBANs, SSNs, IPv4 addresses, phone numbers or custom patterns in results
+  before they reach the model, the client or the audit log; `authorize` is a Simple predicate
+  over the arguments and the caller; `cacheTtl` reuses results.
+- **`gemini` component** for the Gemini API with API keys, with tool calling and thought
+  signatures.
+- **Provider presets** on `openai`/`llm`: `provider=groq` (or `mistral`, `deepseek`, `xai`,
+  `openrouter`, `together`, `fireworks`, `cerebras`, `perplexity`, `huggingface`, `dashscope`,
+  `moonshot`, `cohere`, `nvidia`, `gemini`, `ollama`, `vllm`, `lmstudio`, `llamacpp`) sets the
+  base URL and the key's environment variable. OpenAI reasoning models get
+  `max_completion_tokens`; DeepSeek, Qwen and Kimi get their `reasoning_content` back during a
+  tool loop. See [model providers](docs/guides/model-providers.md).
+- **Model call options on every model component**: `maxRetries` (429, 5xx and timeouts, with
+  backoff), `fallbackModels`, an exact `responseCache` and `coalesce` for identical concurrent
+  requests, all in process. Prompt caching: `anthropic` adds `cache_control` breakpoints by
+  default and `aws-bedrock` adds Converse `cachePoint`s with `promptCaching=true`;
+  `CamelAiCacheReadTokens` and `CamelAiCacheWriteTokens` report cached input.
+- **Keep-alive connection pools** for the REST clients of the SaaS components and the cloud
+  clients: model and API calls after the first skip the TCP and TLS handshakes.
+
+### Changed
+
+- `openai`/`llm` and the other model components: `parallelToolExecution` now defaults to
+  `false` and `hallucinatedToolNameStrategy` takes Camel's `failExchange` and `repromptModel`
+  (the default; `report` and `fail` still work); `maxAgenticTokens=0` means unlimited, as in
+  Camel. The agent step's `parallelToolCalls` is unchanged.
+- MCP server, as in Camel: `camel.server.mcp-tags=*` no longer exposes untagged items (the
+  new pattern `untagged` does; `--mcp` and `--mcp-stdio` default to `*,untagged`); the server
+  name defaults to the context's name; route exceptions reach clients as a generic message
+  with an error id unless `camel.server.mcp-expose-errors=true`; the keep-alive interval is
+  30 s and idle legacy sessions expire after 5 minutes. New properties
+  `camel.server.mcp-server-title`, `-server-description`, `-server-website-url` and
+  `-server-icons`.
+- `ai-tool`: `description` defaults to the tool's name, as in Camel.
 
 ## 0.4.0 (2026-11-06)
 

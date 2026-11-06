@@ -111,6 +111,12 @@ public final class Bench {
                 ctx.stop();
             }
             case "serve" -> {
+                if (args[1].equals("mcp-session")) {
+                    // camel-mcp-server (JVM build only, see McpBench)
+                    Class.forName("bench.McpBench").getMethod("serve", int.class, double.class)
+                            .invoke(null, Integer.parseInt(args[2]), Double.parseDouble(args[3]));
+                    break;
+                }
                 CamelContext ctx = new DefaultCamelContext();
                 if (args[1].equals("http-sql")) {
                     bindHikari(ctx);

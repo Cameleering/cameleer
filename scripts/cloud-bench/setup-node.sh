@@ -19,6 +19,11 @@ KAFKA_SHA512=c2063485f90312bba795052df3e49b8eea337adf97f1111b946c60771c7a2f08805
 MANDREL_VERSION=25.0.4.1-Final
 MANDREL_FILE=mandrel-java25-linux-amd64-$MANDREL_VERSION.tar.gz
 MANDREL_SHA256=e47ff6bfe6a8dbb482fdc65c9a49fc6f3ba2fa61ef3cc8fb6229a88989054c31
+# the "node" side of the mcp-session scenario: a hand-written server on the official MCP
+# TypeScript SDK (scripts/cloud-bench/mcp-ts, packages pinned with integrity in package-lock.json)
+NODE_VERSION=22.23.4
+NODE_FILE=node-v$NODE_VERSION-linux-x64.tar.xz
+NODE_SHA256=1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce
 
 log() { printf '==> [%s] %s\n' "$(hostname)" "$*" >&2; }
 
@@ -66,6 +71,15 @@ server() {
   local tools=/root/.cache/cameleer-bench
   JAVA_HOME="$(ls -d $tools/jdk-*/ | head -1)" "$(ls -d $tools/apache-maven-*/ | head -1)bin/mvn" -C -B -q -f benchmarks/camel-quarkus/pom.xml package -Dnative \
     -Dquarkus.native.graalvm-home=/opt/mandrel -Dquarkus.native.native-image-xmx=6g >/root/native.log 2>&1 || { tail -40 /root/native.log; exit 1; }
+  log "Node.js $NODE_VERSION and the MCP TypeScript SDK baseline"
+  fetch "https://nodejs.org/dist/v$NODE_VERSION/$NODE_FILE" "/root/$NODE_FILE" sha256 "$NODE_SHA256"
+  [ -x /opt/node/bin/node ] || { mkdir -p /opt/node && tar -xJf "/root/$NODE_FILE" -C /opt/node --strip-components=1; }
+  (cd scripts/cloud-bench/mcp-ts && PATH=/opt/node/bin:$PATH npm ci --ignore-scripts --no-audit --no-fund >/root/npm.log 2>&1) || { tail -20 /root/npm.log; exit 1; }
+  if [ -d /root/cameleer-base ]; then
+    log "building the baseline Cameleer (cameleer-bench) in /root/cameleer-base"
+    (cd /root/cameleer-base && cargo build -q --release -p cameleer-bench) >/root/build-base.log 2>&1 || { tail -40 /root/build-base.log; exit 1; }
+    ls -la /root/cameleer-base/target/release/cameleer-bench >&2
+  fi
   ls -la target/release/cameleer-bench benchmarks/java-camel/target/classes/bench/Bench.class benchmarks/camel-quarkus/target/*-runner >&2
 }
 
@@ -120,7 +134,7 @@ EOF
     for _ in $(seq 60); do (exec 3<>/dev/tcp/127.0.0.1/9092) 2>/dev/null && break; sleep 1; done
   fi
   local kt="/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092"
-  for t in orders-rust orders-java orders-native stream-in stream-out-rust stream-out-java stream-out-native; do
+  for t in orders-rust orders-java orders-native orders-base stream-in stream-out-rust stream-out-java stream-out-native stream-out-base; do
     JAVA_HOME="$java_home" $kt --create --if-not-exists --topic "$t" --partitions 4 --replication-factor 1 >/dev/null
   done
   JAVA_HOME="$java_home" $kt --list >&2

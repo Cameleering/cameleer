@@ -58,7 +58,7 @@ pub const COMPONENTS: &[(&str, &[&str])] = &[
     ("grpc", &["grpc"]),
     ("datastores", &["couchdb", "cql", "elasticsearch", "mongodb", "mongodb-gridfs", "opensearch", "spring-redis"]),
     ("script", &["mvel"]),
-    ("saas", &["anthropic", "atom", "github", "graphql", "jira", "llm", "openai", "rss", "slack", "telegram", "twilio", "webhook"]),
+    ("saas", &["anthropic", "atom", "gemini", "github", "graphql", "jira", "llm", "openai", "rss", "slack", "telegram", "twilio", "webhook"]),
     ("soap", &["cxf", "cxfrs", "fhir", "spring-ws"]),
     ("dataformats", &["thrift"]),
     ("templates", &["freemarker", "mustache", "string-template", "velocity"]),

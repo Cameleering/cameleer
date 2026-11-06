@@ -73,7 +73,7 @@ impl Component for CloudComponent {
         let mut opts = Opts::new(params, context, self.scheme);
         let svc = (self.factory)(remaining.trim_start_matches('/'), &mut opts)?;
         // chat models take the tool options (Camel's names on openai/llm)
-        let tools = if svc.supports_chat() { Some(cameleer_core::ai::ToolLoopOptions::take(params)?) } else { None };
+        let tools = if svc.supports_chat() { Some(cameleer_core::ai::ToolLoopOptions::take(params)?.with_context(context)) } else { None };
         Ok(Arc::new(CloudEndpoint { uri: uri.to_string(), ctx: context.downgrade(), svc, tools }))
     }
     fn as_any(&self) -> &dyn Any {

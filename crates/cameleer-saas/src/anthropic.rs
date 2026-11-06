@@ -50,10 +50,12 @@ struct Config {
     system_message: Option<String>,
     max_tokens: i64,
     temperature: Option<f64>,
+    /// `promptCaching=auto` (default): cache breakpoints on tools, system and history.
+    prompt_caching: bool,
 }
 
 impl Component for AnthropicComponent {
-    fn create_endpoint(&self, _ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
+    fn create_endpoint(&self, ctx: &CamelContext, uri: &str, remaining: &str, params: &mut Parameters) -> Result<Arc<dyn Endpoint>> {
         match remaining.trim() {
             "messages" | "chat" | "" => {}
             other => return Err(CamelError::illegal_argument(format!("anthropic: unsupported operation '{}' (messages)", other))),
@@ -69,8 +71,13 @@ impl Component for AnthropicComponent {
                 Some(v) => Some(v.trim().parse().map_err(|_| CamelError::illegal_argument("anthropic: temperature must be a number"))?),
                 None => None,
             },
+            prompt_caching: match params.take_string("promptCaching", "auto").to_ascii_lowercase().as_str() {
+                "auto" | "true" | "on" => true,
+                "off" | "false" | "none" => false,
+                other => return Err(CamelError::illegal_argument(format!("anthropic: promptCaching must be auto or off, got {}", other))),
+            },
         };
-        let tools = ToolLoopOptions::take(params)?;
+        let tools = ToolLoopOptions::take(params)?.with_context(ctx);
         let timeout = params.take_duration("timeout", Duration::from_secs(120))?;
         params.take("lazyStartProducer");
         Ok(Arc::new(AnthropicEndpoint { uri: uri.to_string(), model: Arc::new(AnthropicModel { cfg, rest: Rest::new(timeout) }), tools }))
@@ -102,6 +109,9 @@ impl AnthropicModel {
 }
 
 impl ChatModel for AnthropicModel {
+    fn model_id(&self) -> String {
+        self.cfg.model.clone().unwrap_or_default()
+    }
     fn chat(&self, request: &ChatRequest) -> Result<ChatResponse> {
         let model = self.cfg.model.clone().ok_or_else(|| CamelError::illegal_argument("anthropic: the model option is required"))?;
         let mut r = request.clone();
@@ -114,6 +124,9 @@ impl ChatModel for AnthropicModel {
         let mut body = ai::wire::to_anthropic(&model, &r);
         if let (Some(t), Some(m)) = (self.cfg.temperature, body.as_object_mut()) {
             m.insert("temperature".into(), Value::Float(t));
+        }
+        if self.cfg.prompt_caching {
+            ai::wire::anthropic_cache_breakpoints(&mut body);
         }
         ai::wire::from_anthropic(&self.post(&body)?)
     }

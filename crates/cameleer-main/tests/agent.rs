@@ -219,3 +219,34 @@ fn google_vertexai_calls_tools_and_keeps_thought_signatures() {
     check_provider("google-vertexai", format!("google-vertexai:{}:us-central1:gemini-2.5-flash?{}", cameleer_cloud::testing::gcp::PROJECT, gcp.endpoint_options(&key)));
     let _ = std::fs::remove_file(&key);
 }
+
+#[test]
+fn gemini_calls_tools() {
+    let m = cameleer_saas::testing::GeminiMock::start();
+    let uri = format!("gemini:generate?model=gemini-test&apiKey={}&baseUrl={}", cameleer_saas::testing::GeminiMock::API_KEY, m.base_url());
+    check_provider("gemini", uri.clone());
+    let ctx = context();
+    let u = format!("{}&systemMessage=terse", uri);
+    let bad = format!("gemini:generate?model=gemini-test&apiKey=wrong&baseUrl={}", m.base_url());
+    ctx.add_routes(move |b| {
+        b.from("direct:chat").to(u.as_str());
+        b.from("direct:bad").to(bad.as_str());
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    let out = t.send("direct:chat", Exchange::with_body(Some(ctx.clone()), "hello"));
+    assert!(out.exception.is_none(), "{:?}", out.exception);
+    assert_eq!(out.body().to_string(), "[terse] Echo: hello");
+    assert_eq!(out.header("CamelGeminiPromptTokenCount").unwrap().as_i64(), Some(9));
+    // the CamelGeminiModel header picks another model; a raw request map returns the response
+    let mut ex = Exchange::with_body(Some(ctx.clone()), cameleer_core::json::parse(r#"{"contents":[{"role":"user","parts":[{"text":"raw"}]}]}"#).unwrap());
+    ex.set_header("CamelGeminiModel", "gemini-other");
+    let out = t.send("direct:chat", ex);
+    assert!(out.exception.is_none(), "{:?}", out.exception);
+    assert_eq!(out.body().get("modelVersion").unwrap().to_string(), "gemini-other");
+    assert_eq!(out.header("CamelGeminiFinishReason").unwrap().to_string(), "STOP");
+    let out = t.send("direct:bad", Exchange::with_body(Some(ctx.clone()), "hello"));
+    assert!(out.exception.as_ref().unwrap().message.contains("API key not valid"), "{:?}", out.exception);
+    ctx.stop().unwrap();
+}

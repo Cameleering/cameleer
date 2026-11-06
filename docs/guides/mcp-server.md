@@ -50,9 +50,9 @@ files in other clients):
 }
 ```
 
-On the command line, `--mcp` and `--mcp-stdio` expose every tool, resource and prompt unless
-`camel.server.mcp-tags` says otherwise. In a configuration file nothing is exposed until you
-choose:
+On the command line, `--mcp` and `--mcp-stdio` expose every tool, resource and prompt, tagged
+or not (they default `camel.server.mcp-tags` to `*,untagged`), unless `camel.server.mcp-tags`
+says otherwise. In a configuration file nothing is exposed until you choose:
 
 ```properties
 camel.server.mcp-enabled=true
@@ -65,22 +65,38 @@ camel.server.mcp-tags=support
 |---|---|---|
 | `camel.server.mcp-enabled` | `false` | Start the MCP server |
 | `camel.server.mcp-transport` | `http` | `http` or `stdio` |
-| `camel.server.mcp-tags` | none | Tag patterns of what is exposed: `*`, `support`, `crm-*` (comma separated). Without it nothing is exposed |
+| `camel.server.mcp-tags` | none | Tag patterns of what is exposed: `*`, `support`, `crm-*`, `untagged` (comma separated). Without it nothing is exposed; see [Tags](#tags) |
 | `camel.server.mcp-path` | `/mcp` | The HTTP path |
 | `camel.server.port`, `camel.server.host` | `8080`, `0.0.0.0` | Shared with `platform-http` routes and the management endpoints |
-| `camel.server.mcp-server-name`, `-server-version` | `cameleer`, the Cameleer version | What clients see |
+| `camel.server.mcp-server-name` | the context's name | The `name` in `serverInfo`, as in Camel |
+| `camel.server.mcp-server-version` | the Cameleer version | The `version` in `serverInfo` |
+| `camel.server.mcp-server-title`, `-server-description`, `-server-website-url` | | More of `serverInfo`: a display name, a description and a web site |
+| `camel.server.mcp-server-icons` | | `serverInfo.icons`, a JSON array such as `[{"src": "https://example.com/icon.png", "mimeType": "image/png"}]` |
 | `camel.server.mcp-instructions` | | Instructions for the model, sent in `server/discover` and `initialize` |
 | `camel.server.mcp-tool-timeout` | `20s` | The default `timeout` of tools that set none |
+| `camel.server.mcp-expose-errors` | `false` | Send route exceptions to clients as they are. By default a client gets `Tool NAME failed (error ID). The cause is in the server log.` and the cause is logged with the same id |
 | `camel.server.mcp-resource-timeout` | `20s` | How long a resource read or a prompt may take |
 | `camel.server.mcp-page-size` | `100` | Items per page of the lists |
 | `camel.server.mcp-cache-ttl` | `0` | `ttlMs` on lists, `server/discover` and reads (2026-07-28) |
 | `camel.server.mcp-allowed-origins` | localhost | Origins allowed to call the endpoint from a browser (`*` for any); other origins get `403` |
-| `camel.server.mcp-session-keep-alive-interval` | `15s` | Keep-alive comments on event streams |
-| `camel.server.mcp-session-idle-ttl` | `30m` | When an idle legacy session expires |
+| `camel.server.mcp-session-keep-alive-interval` | `30s` | Keep-alive comments on event streams |
+| `camel.server.mcp-session-idle-ttl` | `300s` | When an idle legacy session expires |
 | `camel.server.mcp-request-state-key` | random per process | 64 hex characters: the AES-256-GCM key of `requestState`; set it when several instances serve one endpoint |
 | `camel.server.mcp-request-state-ttl` | `10m` | How long an approval request stays valid |
 
 Authentication properties are in [Authentication](#authentication).
+
+## Tags
+
+`camel.server.mcp-tags` decides which tools, resources and prompts clients see. Each pattern
+matches tags, with `*` as a wildcard: `support` matches the tag `support`, `crm-*` matches
+`crm-orders`. As in Camel, `*` alone matches every item that has a tag, but not items without
+tags. The pattern `untagged` (a Cameleer extension) exposes the items without tags. So
+`camel.server.mcp-tags=*,untagged` exposes everything, which is what `--mcp` and `--mcp-stdio`
+use by default.
+
+Tools imported from other MCP servers have the tags `mcp` and `mcp:NAME`, so `mcp:*` exposes
+all of them (see [MCP client: gateway](mcp-client.md#gateway)).
 
 ## Protocol versions
 
@@ -126,6 +142,26 @@ lists the waiting calls of a running integration, and `cameleer tool approve <ha
 connected clients get `notifications/tools/list_changed` and the tool's calls are refused. See
 [ai-tool: kill switch](../components/ai-tool.md#kill-switch).
 
+## Progress, logs, elicitation and sampling
+
+A tool route can talk back to the client while it runs, with steps such as
+`to: ai-tool:current?operation=progress`:
+
+- `progress` sends `notifications/progress` when the request carried a `progressToken`.
+- `log` sends `notifications/message` at or above the level the client asked for
+  (`io.modelcontextprotocol/logLevel` in `_meta` in 2026-07-28, `logging/setLevel` in legacy
+  sessions).
+- `elicit` asks the client's user a question with a JSON Schema for the answer
+  (`elicitation/create`).
+- `sample` asks the client's model for a completion (`sampling/createMessage`).
+
+In legacy sessions the questions are requests to the client on the call's response stream or on
+stdout. In 2026-07-28 the call returns `input_required` with the questions, and the client
+calls again with the answers; the route then runs again from the start. A client that didn't
+declare the `elicitation` or `sampling` capability can't be asked, and the step fails with
+`InteractionUnavailableException`. The options, headers and an example are in
+[ai-tool: talking to the client](../components/ai-tool.md#talking-to-the-client-progress-logs-elicitation-and-sampling).
+
 ## Rich results
 
 A tool route can return MCP content blocks (images, audio, embedded resources) by setting the
@@ -169,9 +205,11 @@ request without a valid token gets `401` with
 server.
 
 The client's token is never passed to the routes or downstream. Tool routes see the principal
-in `CamelMcpSecurityPrincipal`, its scopes in `CamelMcpSecurityPrincipalScopes` and the method
-in `CamelMcpSecurityMethod`. Rate limits, the audit log and approvals use the same principal.
-Over stdio the principal is `stdio`.
+in `CamelMcpSecurityPrincipal` and `CamelMcpSecurityPrincipalName` (Camel's name), its scopes
+as a list in `CamelMcpSecurityPrincipalRoles` and as one space-separated string in
+`CamelMcpSecurityPrincipalScopes`, and the method in `CamelMcpSecurityMethod`. The same
+headers are visible to a tool's `authorize` predicate. Rate limits, the audit log and
+approvals use the same principal. Over stdio the principal is `stdio`.
 
 ## What a call carries
 
@@ -192,14 +230,17 @@ same arguments may legitimately repeat.
 - `scripts/mcp-conformance.sh` runs the official conformance suite
   (`@modelcontextprotocol/conformance` 0.1.16, pinned and checksum-verified) against
   [scripts/mcp-conformance/fixtures.camel.yaml](../../scripts/mcp-conformance/fixtures.camel.yaml).
-  2025-11-25 passes 25 of 31 scenarios and 2025-06-18 passes 22 of 26. The rest are features
-  not built yet, listed in `scripts/mcp-conformance/expected-failures.yaml`: log and progress
-  notifications during a call, sampling, and elicitation for anything other than approvals.
-  This suite version predates 2026-07-28.
+  It passes all 39 scenarios for 2025-11-25 and all 26 for 2025-06-18, including log and
+  progress notifications during a call, sampling and elicitation. The baseline of known
+  failures, `scripts/mcp-conformance/expected-failures.yaml`, is empty (`server: []`); a
+  scenario that fails makes the run fail. This suite version predates 2026-07-28, so that era
+  is covered by the hermetic tests.
 
 ## Related
 
 - [ai-tool](../components/ai-tool.md), [ai-resource](../components/ai-resource.md), [ai-prompt](../components/ai-prompt.md)
+- [MCP client and gateway](mcp-client.md): using the tools of other MCP servers, and serving
+  them again from this server
 - [Cameleer for AI agents](agents.md)
 
 ## Found a problem?

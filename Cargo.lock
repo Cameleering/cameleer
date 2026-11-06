@@ -32,6 +32,7 @@ dependencies = [
 name = "cameleer-bench"
 version = "0.4.0"
 dependencies = [
+ "cameleer-ai",
  "cameleer-core",
  "cameleer-http",
  "cameleer-kafka-mqtt",

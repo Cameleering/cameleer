@@ -44,8 +44,10 @@ answers.
 | `systemMessage` | | The system prompt (the `CamelAnthropicSystemMessage` header overrides it) |
 | `maxTokens` | `1024` | `max_tokens` (required by the API) |
 | `temperature` | | Sampling temperature |
+| `promptCaching` | `auto` | `auto` puts `cache_control` breakpoints on the last tool, the system prompt and the last message, so the next turn reads the stable prefix from Anthropic's cache (about a tenth of the input price); `off` sends the request unchanged |
 | `timeout` | `120s` | HTTP timeout |
 | `tags`, `autoToolExecution`, `maxToolIterations`, `maxAgenticTokens`, `parallelToolExecution`, `hallucinatedToolNameStrategy`, `record`, `replay` | | Tool calling, as on every model component ([the options](../guides/agent-step.md#tool-calling-in-the-model-components)) |
+| `maxRetries`, `retryDelay`, `fallbackModels`, `responseCache`, `responseCacheTtl`, `responseCacheSize`, `coalesce` | | Retries, fallbacks, response cache and coalescing ([model providers](../guides/model-providers.md#reliability-and-cost)) |
 
 ## Message headers
 
@@ -57,6 +59,7 @@ answers.
 | `CamelAnthropicInputTokens`, `CamelAnthropicOutputTokens` | out | Token usage (all turns of a tool loop) |
 | `CamelAiAgentTurns`, `CamelAiAgentToolCalls`, `CamelAiAgentStopReason`, `CamelAiAgentTotalTokens` | out | The tool loop |
 | `CamelAiRequestedToolCalls` | out | With `autoToolExecution=false`: the calls Claude asked for |
+| `CamelAiCacheReadTokens`, `CamelAiCacheWriteTokens` | out | Input tokens read from and written to the prompt cache (when there were any) |
 
 Bodies: a text body is one user message; a list body is the message list
 (`{"role", "content"}`); a map body is sent as the whole request (`model` and `max_tokens` are

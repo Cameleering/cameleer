@@ -1,6 +1,6 @@
 # AI components
 
-> Cameleer calls large language models from routes with four components: `openai` (OpenAI and any OpenAI-compatible server such as Ollama or vLLM), `azure-openai`, `aws-bedrock` and `google-vertexai`; they cover chat, embeddings and, depending on the provider, streaming, tool calls and images.
+> Cameleer calls large language models from routes with seven components: `openai`/`llm` (OpenAI, the Responses API, Ollama and any OpenAI-compatible server, with `provider=` presets for 19 services), `anthropic`, `gemini`, `azure-openai`, `aws-bedrock` and `google-vertexai`; they cover chat, embeddings, tool calling and, depending on the provider, streaming and images.
 
 Every AI component is a producer: a step in a route that sends the message body to a model and
 replaces the body with the answer. Everything else (where the text comes from, what happens with
@@ -27,7 +27,8 @@ each component page for the exact option and header names.
 
 Be aware of these limits before you design around them:
 
-- **Tool calling and the agent loop** work in `openai`/`llm`, `anthropic`, `azure-openai`,
+- **Tool calling and the agent loop** work in `openai`/`llm` (and every
+  [`provider`](model-providers.md) preset), `anthropic`, `gemini`, `azure-openai`,
   `aws-bedrock` (Converse) and `google-vertexai` (Gemini): with `tags` they run your
   [`ai-tool`](../components/ai-tool.md) routes for the model, and the
   [agent step](agent-step.md) adds memory, approvals and limits. Server-side agents also work:
@@ -36,9 +37,10 @@ Be aware of these limits before you design around them:
   them with the data store you already run ([mongodb](../components/mongodb.md),
   [elasticsearch](../components/elasticsearch.md), [spring-redis](../components/spring-redis.md),
   files).
-- **No LangChain4j components** (`langchain4j-chat`, `langchain4j-embeddings`, ...), no MCP
-  client yet, and no direct Gemini API component (use Vertex AI). Claude is available directly
-  with [`anthropic`](../components/anthropic.md), or through Bedrock and Vertex AI. Routes are published as tools, resources and prompts
+- **No LangChain4j components** (`langchain4j-chat`, `langchain4j-embeddings`, ...). Claude
+  and Gemini are available directly with [`anthropic`](../components/anthropic.md) and
+  [`gemini`](../components/gemini.md), or through Bedrock and Vertex AI; tools of other MCP
+  servers come in through the [MCP client](mcp-client.md). Routes are published as tools, resources and prompts
   with [`ai-tool`](../components/ai-tool.md), [`ai-resource`](../components/ai-resource.md) and
   [`ai-prompt`](../components/ai-prompt.md), and the [MCP server](mcp-server.md) serves them.
 

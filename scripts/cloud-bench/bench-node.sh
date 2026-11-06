@@ -23,6 +23,8 @@ set -f
 cmd_for() { # the benchmark command of a side
   case "$1" in
     rust) echo "$BENCH" ;;
+    base) echo "/root/cameleer-base/target/release/cameleer-bench" ;;
+    node) echo "/opt/node/bin/node $SRC/scripts/cloud-bench/mcp-ts/server.mjs" ;;
     java) echo "$JAVA -cp $JDIR/target/classes:$JDIR/target/lib/* bench.Bench" ;;
     native) echo "$NATIVE" ;;
     *) echo "unknown side $1" >&2; exit 1 ;;
@@ -33,7 +35,10 @@ case "$1" in
   inproc)
     side=$2; warm=$3; iter=$4; iters=$5
     # shellcheck disable=SC2046
-    for s in direct seda seda-inout cbr splitagg csv; do
+    scen="direct seda seda-inout cbr splitagg csv"
+    # the AI scenarios exist only in this version of Cameleer
+    [ "$side" = rust ] && scen="$scen ai-tool ai-tool-direct"
+    for s in $scen; do
       "$BENCH" measure --side "$side" --scenario "$s" -- $(cmd_for "$side") run "$s" "$warm" "$iter" "$iters"
     done
     "$BENCH" measure --side "$side" --scenario startup --repeat 5 -- $(cmd_for "$side") startup

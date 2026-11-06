@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cameleer Use Cases: AI Agent Tools, HL7, MQTT Edge, Serverless, Files | Cameleer</title>
-<meta name="description" content="What people run on Cameleer, each with a tested route: tools for AI agents, HL7 over MLLP, MQTT edge gateways, AWS Lambda and Cloud Run, file and SFTP pipelines, webhooks, change data capture, scheduled jobs.">
+<title>Cameleer Use Cases: MCP Tools, HL7, MQTT Edge, Serverless, Files | Cameleer</title>
+<meta name="description" content="What people run on Cameleer, each with a tested route: MCP tools for AI agents, model calls without a gateway, HL7 over MLLP, MQTT edge gateways, AWS Lambda and Cloud Run, file and SFTP pipelines, webhooks, change data capture, scheduled jobs.">
 <link rel="canonical" href="https://pmsudhi.github.io/cameleer/use-cases/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
@@ -38,6 +38,8 @@
  "url": "https://pmsudhi.github.io/cameleer/use-cases/",
  "description": "What people run on Cameleer, each with a tested route.",
  "hasPart": [
+  {"@type": "TechArticle", "headline": "Integration routes as MCP tools", "url": "https://pmsudhi.github.io/cameleer/use-cases/mcp-tool-server/"},
+  {"@type": "TechArticle", "headline": "Model calls without a separate LLM gateway", "url": "https://pmsudhi.github.io/cameleer/use-cases/llm-gateway-in-process/"},
   {"@type": "TechArticle", "headline": "AI agent tool calls: direct vs through Cameleer", "url": "https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/"},
   {"@type": "TechArticle", "headline": "HL7 v2 over MLLP and FHIR integration", "url": "https://pmsudhi.github.io/cameleer/use-cases/hl7-mllp-healthcare-integration/"},
   {"@type": "TechArticle", "headline": "MQTT and IoT edge gateways", "url": "https://pmsudhi.github.io/cameleer/use-cases/mqtt-iot-edge-gateway/"},
@@ -79,11 +81,20 @@
   <div class="wrap">
     <h2>Use cases with their own page</h2>
     <div class="uc-grid">
+      <a class="card" href="mcp-tool-server/">
+        <h3>Routes as MCP tools</h3>
+        <p>Serve tools, resources and prompts to Claude Desktop, VS Code, Cursor and agent frameworks with <code>cameleer run --mcp</code>. Every call is schema-checked, run once, approved when risky, cancelled when slow and audited; a gateway mode puts the same rules on other MCP servers.</p>
+        <span class="who">ai-tool · ai-resource · ai-prompt · mcp</span>
+      </a>
+      <a class="card" href="llm-gateway-in-process/">
+        <h3>Model calls without a gateway</h3>
+        <p>23 model providers with retries, fallback models, prompt caching, an exact response cache and coalescing of identical requests, in the same process as the routes. No extra hop, and a retried model turn never runs a tool twice.</p>
+        <span class="who">openai · llm · anthropic · gemini · aws-bedrock · azure-openai · google-vertexai</span>
+      </a>
       <a class="card" href="../compare/ai-agent-tool-calls-direct-vs-cameleer/">
         <h3>Tools for AI agents</h3>
         <p>An agent calls one tool; a route validates the arguments against a JSON schema, runs each step once, retries the flaky API, rolls back with a saga, parks risky actions for a person and writes the audit line.</p>
-        <p class="plan">Shipped: tools over REST. Planned: MCP tool server (on the roadmap).</p>
-        <span class="who">examples/agents/ · 8 routes</span>
+        <span class="who">examples/agents/ · tested routes</span>
       </a>
       <a class="card" href="hl7-mllp-healthcare-integration/">
         <h3>Healthcare: HL7 v2 over MLLP, FHIR</h3>
@@ -178,6 +189,8 @@ docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/h
     <div>
       <h4>Use cases</h4>
       <ul>
+        <li><a href="mcp-tool-server/">Routes as MCP tools</a></li>
+        <li><a href="llm-gateway-in-process/">Model calls without a gateway</a></li>
         <li><a href="../compare/ai-agent-tool-calls-direct-vs-cameleer/">Tools for AI agents</a></li>
         <li><a href="hl7-mllp-healthcare-integration/">HL7 over MLLP</a></li>
         <li><a href="mqtt-iot-edge-gateway/">MQTT edge gateways</a></li>

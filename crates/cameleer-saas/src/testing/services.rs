@@ -1409,6 +1409,14 @@ impl AnthropicMock {
                 Some(Value::Array(a)) => a.iter().filter_map(|x| x.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join(""),
                 _ => String::new(),
             };
+            // prompt caching: a request with `cache_control` reports a cache read of 7 tokens
+            let cached = b.to_json().contains("\"cache_control\"");
+            let mut usage = vec![("input_tokens", Value::Int(11)), ("output_tokens", Value::Int(5))];
+            if cached {
+                usage.push(("cache_read_input_tokens", Value::Int(7)));
+                usage.push(("cache_creation_input_tokens", Value::Int(0)));
+            }
+            let usage = obj(usage);
             let reply = |content: Vec<Value>, stop: &str| {
                 json(
                     200,
@@ -1419,7 +1427,7 @@ impl AnthropicMock {
                         ("model", b.get("model").cloned().unwrap_or(Value::Null)),
                         ("content", Value::Array(content)),
                         ("stop_reason", stop.into()),
-                        ("usage", obj(vec![("input_tokens", Value::Int(11)), ("output_tokens", Value::Int(5))])),
+                        ("usage", usage.clone()),
                     ]),
                 )
             };
@@ -1444,10 +1452,92 @@ impl AnthropicMock {
                     return reply(uses, "tool_use");
                 }
             }
-            let system = b.get("system").map(|s| format!(" [{}]", s)).unwrap_or_default();
+            let system = b.get("system").map(|s| format!(" [{}]", text_of(&obj(vec![("content", s.clone())])))).unwrap_or_default();
             reply(vec![text_block(format!("Echo: {}{}", text_of(&last), system))], "end_turn")
         });
         AnthropicMock { server }
+    }
+
+    /// Base url to use as `baseUrl`.
+    pub fn base_url(&self) -> String {
+        self.server.url()
+    }
+}
+
+/// Gemini API mock (`x-goog-api-key` [`GeminiMock::API_KEY`], `POST
+/// /v1beta/models/MODEL:generateContent`, base url `base_url()`). A text answer is
+/// `Echo: <last user text>` (prefixed by `[system]`); with `tools`, a user message
+/// `call NAME {json}` gets `functionCall` parts with a `thoughtSignature`, which must be sent
+/// back, and `functionResponse` parts get `Done: <results>`.
+pub struct GeminiMock {
+    pub server: MockServer,
+}
+
+impl GeminiMock {
+    pub const API_KEY: &'static str = "gemini-test-key";
+
+    pub fn start() -> GeminiMock {
+        let server = MockServer::start(move |r| {
+            let err = |status: u16, st: &str, m: &str| json(status, &obj(vec![("error", obj(vec![("code", Value::Int(status as i64)), ("message", m.into()), ("status", st.into())]))]));
+            if r.header("x-goog-api-key") != Some(Self::API_KEY) {
+                return err(403, "PERMISSION_DENIED", "API key not valid. Please pass a valid API key.");
+            }
+            let Some(model) = r.path.strip_prefix("/v1beta/models/").and_then(|m| m.strip_suffix(":generateContent")) else {
+                return err(404, "NOT_FOUND", "Not found");
+            };
+            if r.method != "POST" || model.is_empty() {
+                return err(400, "INVALID_ARGUMENT", "POST /v1beta/models/MODEL:generateContent expected");
+            }
+            let b = r.json();
+            let contents = b.get("contents").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+            if contents.is_empty() {
+                return err(400, "INVALID_ARGUMENT", "* GenerateContentRequest.contents: contents is not specified");
+            }
+            let parts = |c: &Value| c.get("parts").and_then(|p| p.as_array()).cloned().unwrap_or_default();
+            for c in &contents {
+                for p in parts(c) {
+                    if p.get("functionCall").is_some() && p.get("thoughtSignature").map(|s| s.to_string()).filter(|s| s.starts_with("sig-")).is_none() {
+                        return err(400, "INVALID_ARGUMENT", "Function call is missing a thought_signature in functionCall parts.");
+                    }
+                }
+            }
+            let usage = obj(vec![("promptTokenCount", Value::Int(9)), ("candidatesTokenCount", Value::Int(3)), ("totalTokenCount", Value::Int(12))]);
+            let reply = |ps: Vec<Value>| {
+                json(
+                    200,
+                    &obj(vec![
+                        ("candidates", Value::Array(vec![obj(vec![("content", obj(vec![("role", "model".into()), ("parts", Value::Array(ps))])), ("finishReason", "STOP".into())])])),
+                        ("usageMetadata", usage.clone()),
+                        ("modelVersion", model.into()),
+                    ]),
+                )
+            };
+            let last = contents.last().cloned().unwrap_or_default();
+            let has_tools = b.get("tools").and_then(|t| t.as_array()).is_some_and(|t| !t.is_empty());
+            let responses: Vec<String> = parts(&last)
+                .iter()
+                .filter_map(|p| p.get("functionResponse"))
+                .map(|x| x.get("response").and_then(|r| r.get("content").or_else(|| r.get("error"))).map(|v| v.to_string()).unwrap_or_default())
+                .collect();
+            if has_tools && !responses.is_empty() {
+                return reply(vec![obj(vec![("text", format!("Done: {}", responses.join(" | ")).into())])]);
+            }
+            let text: String = parts(&last).iter().filter_map(|p| p.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join("");
+            if has_tools {
+                let calls = scripted_tool_calls(&text);
+                if !calls.is_empty() {
+                    let ps = calls
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (n, a))| obj(vec![("functionCall", obj(vec![("name", n.as_str().into()), ("args", a.clone())])), ("thoughtSignature", format!("sig-{}", i + 1).into())]))
+                        .collect();
+                    return reply(ps);
+                }
+            }
+            let system = b.get("systemInstruction").map(|si| parts(si).iter().filter_map(|p| p.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join("")).map(|s| format!("[{}] ", s)).unwrap_or_default();
+            reply(vec![obj(vec![("text", format!("{}Echo: {}", system, text).into())])])
+        });
+        GeminiMock { server }
     }
 
     /// Base url to use as `baseUrl`.

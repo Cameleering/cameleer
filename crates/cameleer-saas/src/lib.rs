@@ -19,6 +19,7 @@
 //! reach the internet. `weather` is not provided.
 
 pub mod anthropic;
+pub mod gemini;
 pub mod feed;
 pub mod github;
 pub mod graphql;
@@ -49,6 +50,7 @@ pub fn register(ctx: &CamelContext) {
     // Camel 4.23 renamed openai to llm; both names work
     ctx.add_component_factory("llm", || Arc::new(openai::OpenAiComponent));
     ctx.add_component_factory("anthropic", || Arc::new(anthropic::AnthropicComponent));
+    ctx.add_component_factory("gemini", || Arc::new(gemini::GeminiComponent));
     ctx.add_component_factory("webhook", || Arc::new(webhook::WebhookComponent));
     ctx.add_component_factory("graphql", || Arc::new(graphql::GraphqlComponent));
     ctx.add_component_factory("rss", || Arc::new(feed::FeedComponent::rss()));

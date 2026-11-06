@@ -253,7 +253,7 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 | a container on Cloud Run, Fargate, Azure Container Apps, Knative or Kubernetes | ✅ |
 | a standalone project generated from your routes (`cameleer export`) | ✅ |
 | a native AWS Lambda function (built-in custom runtime, `provided.al2023`) | ✅ [AWS Lambda](docs/DEPLOYMENT.md#aws-lambda) |
-| an MCP server exposing routes as agent tools | 🚧 [build it today](docs/ROADMAP.md#11-agent-tool-server-mcp-style), component planned |
+| an MCP server exposing routes as agent tools (`cameleer run --mcp`) | ✅ [MCP server](docs/guides/mcp-server.md) |
 
 ---
 

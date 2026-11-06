@@ -2,7 +2,7 @@
 
 > The `agent` step runs a model and its tools in a loop as one step of a route: the model asks for tools, Cameleer runs them through the `ai-tool` envelope (argument checks, deduplication, approvals, timeouts, audit), and the loop stops on the model's answer or a limit. The same loop runs inside every model component with `tags`. Recorded model responses let `cameleer test` check an agent route without a model.
 
-**Cargo feature:** [`ai`](build-features.md) for the tools; the model components are in `saas` (`openai`, `llm`, `anthropic`) and `cloud` (`azure-openai`, `aws-bedrock`, `google-vertexai`) · **Apache Camel:** no agent EIP; the `tags` options mirror Camel 4.23's `openai`/`llm` component
+**Cargo feature:** [`ai`](build-features.md) for the tools; the model components are in `saas` (`openai`, `llm`, `anthropic`, `gemini`) and `cloud` (`azure-openai`, `aws-bedrock`, `google-vertexai`) · **Apache Camel:** no agent EIP; the `tags` options mirror Camel 4.23's `openai`/`llm` component
 
 ## The agent step
 
@@ -28,8 +28,8 @@ step the body is the model's answer.
 
 | option | default | description |
 |---|---|---|
-| `model` | required | A model endpoint: `openai:` / `llm:`, `anthropic:`, `azure-openai:`, `aws-bedrock:` (Converse), `google-vertexai:` (Gemini) |
-| `tools` | none | Comma-separated `ai-tool` tags; `*` offers every tool |
+| `model` | required | A model endpoint: `openai:` / `llm:` (`chat-completion`, `responses`, `apiFormat=ollama`, or any [`provider`](model-providers.md) preset), `anthropic:`, `gemini:`, `azure-openai:`, `aws-bedrock:` (Converse), `google-vertexai:` (Gemini on Vertex AI) |
+| `tools` | none | Comma-separated `ai-tool` tags; `*` offers every tool; `mcp:SERVER` offers the tools imported from an MCP server ([MCP client](mcp-client.md)) |
 | `systemMessage` | the model endpoint's | The system prompt |
 | `maxTurns` | `10` | Model calls before the loop stops |
 | `maxTokens` | none | Total tokens (input and output) before the loop stops |
@@ -115,18 +115,21 @@ agent step, but nothing is remembered between calls.
 | `tags` | none | `ai-tool` tags to offer |
 | `autoToolExecution` | `true` | Run the tools and loop; `false` makes one call and returns the requested calls (`CamelOpenAIToolCalls` on `openai`, `CamelAiRequestedToolCalls` elsewhere) |
 | `maxToolIterations` | `50` | Model calls in the loop |
-| `maxAgenticTokens` | none | Total tokens before the loop stops |
-| `parallelToolExecution` | `true` | Run a turn's tools in parallel |
-| `hallucinatedToolNameStrategy` | `report` | `report` tells the model the tool doesn't exist; `fail` fails the exchange |
+| `maxAgenticTokens` | `0` (unlimited) | Total tokens before the loop stops |
+| `parallelToolExecution` | `false` | Run a turn's tools in parallel (on at most 4 threads); by default they run one after another, as in Camel |
+| `hallucinatedToolNameStrategy` | `repromptModel` | `repromptModel` tells the model the tool doesn't exist and lets it answer; `failExchange` fails the exchange (Camel's names; `report` and `fail` also work) |
 | `record`, `replay` | | `file:PATH`, as on the agent step |
+| `maxRetries`, `retryDelay`, `fallbackModels`, `responseCache`, `responseCacheTtl`, `responseCacheSize`, `coalesce` | | Retries, fallback models, the response cache and coalescing ([model providers](model-providers.md#reliability-and-cost)) |
 
 | component | wire format |
 |---|---|
-| `openai`, `llm` | Chat Completions `tools` and `tool_calls` (also Ollama, vLLM, LM Studio; missing call ids are generated) |
-| `azure-openai` | the same, on Azure deployments |
-| `aws-bedrock` (Converse) | `toolConfig`, `toolUse`, `toolResult` |
-| `google-vertexai` (Gemini) | `functionDeclarations`, `functionCall` (its `thoughtSignature` is sent back), `functionResponse` |
-| `anthropic` | Messages API `tools`, `tool_use`, `tool_result` |
+| `openai`, `llm` | Chat Completions `tools` and `tool_calls` (also every [`provider`](model-providers.md) preset, Ollama, vLLM, LM Studio; missing call ids are generated; DeepSeek, Qwen and Kimi `reasoning_content` is sent back with the calls); with `streaming=true` every turn is streamed, tool call deltas are joined by `index` and text deltas go to `streamingChunkProcessor` |
+| `openai:responses`, `llm:responses` | Responses API `tools`, `function_call` and `function_call_output` items matched by `call_id`, `instructions` |
+| `openai`/`llm` with `apiFormat=ollama` | Ollama's `/api/chat`: `tool_calls` with object arguments, `tool` messages with `tool_name`, generated call ids |
+| `azure-openai` | the same as `openai`, on Azure deployments |
+| `aws-bedrock` (Converse) | `toolConfig`, `toolUse`, `toolResult`; `cachePoint`s with `promptCaching=true` |
+| `google-vertexai`, `gemini` | `functionDeclarations`, `functionCall` (its `thoughtSignature` is sent back), `functionResponse` |
+| `anthropic` | Messages API `tools`, `tool_use`, `tool_result`; `cache_control` breakpoints (`promptCaching=auto`) |
 
 ## Testing without a model
 
@@ -178,16 +181,20 @@ with [its test](../../examples/agents/tests/support-agent.test.yaml).
 
 ## Not supported yet
 
-- Streaming together with the tool loop: a model component with `tags` waits for each complete
-  answer.
-- The OpenAI Responses API and Ollama's native `/api/chat` (use the Chat Completions API,
-  which Ollama also serves).
-- Tools from MCP servers (`mcp:` references in `tools`), which need the MCP client.
+- Streaming with Ollama's native API (`apiFormat=ollama`); stream from Ollama through its
+  OpenAI-compatible `/v1` API (the default format) instead.
+- Streaming in the tool loop of `azure-openai`, `aws-bedrock`, `google-vertexai`, `gemini` and
+  `anthropic`: with `tags` they wait for each complete answer. `openai`/`llm` stream every
+  turn with `streaming=true`.
+- Server-side conversation state of the Responses API (`previous_response_id`): Cameleer
+  sends the whole conversation each turn.
 
 ## Related
 
 - [ai-tool](../components/ai-tool.md): what a tool is and the envelope every call goes through
 - [MCP server](mcp-server.md): the same tools for MCP clients
+- [MCP client](mcp-client.md): tools of other MCP servers in the loop
+- [Model providers and call optimizations](model-providers.md)
 - [Cameleer for AI agents](agents.md)
 
 ## Found a problem?

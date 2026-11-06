@@ -157,8 +157,21 @@ pub fn run(port: u16, path: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
 /// Load `host:port/path` with `conns` connections. `body` is `small` (the fixed document of
 /// [`run`]) or `order` (an order with a new id on every request).
 pub fn run_remote(host: &str, port: u16, path: &str, body: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
+    if body == "mcp-session" {
+        let connects = Arc::new(AtomicU64::new(0));
+        let out = driver::run(plan, conns, None, |w| {
+            let mut s = crate::ai::McpSession::new(host, port, connects.clone());
+            let mut n = 0u64;
+            move || {
+                n += 1;
+                s.call((w as u64 + 1) * 1_000_000_000 + n).expect("mcp call failed");
+            }
+        });
+        return (out, connects.load(Ordering::Relaxed));
+    }
     let small = request_bytes(port, path);
     let orders = body == "order";
+    let mcp = body == "mcp";
     let connects = Arc::new(AtomicU64::new(0));
     let out = driver::run(plan, conns, None, |w| {
         let small = small.clone();
@@ -169,7 +182,10 @@ pub fn run_remote(host: &str, port: u16, path: &str, body: &str, conns: usize, p
         move || {
             n += 1;
             let order;
-            let req: &[u8] = if orders {
+            let req: &[u8] = if mcp {
+                order = crate::ai::mcp_request(&host, port, (w as u64 + 1) * 1_000_000_000 + n);
+                &order
+            } else if orders {
                 order = order_request(&host, port, &path, (w as u64 + 1) * 1_000_000_000 + n);
                 &order
             } else {

@@ -2,6 +2,7 @@
 //! and `scripts/bench.sh`. Std-only: no criterion, so the warmup / timed-iteration driver,
 //! the latency histogram, the HTTP load generator and the RSS probe live here.
 
+pub mod ai;
 pub mod breakdown;
 pub mod coldstart;
 pub mod driver;

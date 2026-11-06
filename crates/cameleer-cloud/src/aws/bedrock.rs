@@ -103,6 +103,8 @@ pub struct BedrockService {
     pub guardrail_identifier: Option<String>,
     pub guardrail_version: Option<String>,
     pub guardrail_trace: bool,
+    /// `promptCaching=true`: Converse `cachePoint`s after tools, system and history.
+    pub prompt_caching: bool,
     pub chunk_processor: Option<Arc<dyn Processor>>,
 }
 
@@ -125,6 +127,7 @@ pub fn create(_remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         guardrail_identifier: o.get("guardrailIdentifier"),
         guardrail_version: o.get("guardrailVersion"),
         guardrail_trace: o.bool("guardrailTrace", false)?,
+        prompt_caching: o.bool("promptCaching", false)?,
         chunk_processor,
         aws,
     }))
@@ -336,6 +339,9 @@ impl CloudService for BedrockService {
         if let (Some((id, version)), Some(m)) = (self.guardrail_identifier.clone().map(|i| (i, self.guardrail_version.clone().unwrap_or_else(|| "DRAFT".into()))), req.as_object_mut()) {
             let trace = if self.guardrail_trace { "enabled" } else { "disabled" };
             m.insert("guardrailConfig".into(), obj([("guardrailIdentifier", Value::from(id)), ("guardrailVersion", Value::from(version)), ("trace", Value::from(trace))]));
+        }
+        if self.prompt_caching {
+            cameleer_core::ai::wire::converse_cache_points(&mut req);
         }
         let r = self.aws.rest_json("POST", "bedrock-runtime", &format!("/model/{}/converse", uri_encode(&model, false)), &[], Some(&req), "bedrock", kinds::BEDROCK)?;
         cameleer_core::ai::wire::from_converse(&r)

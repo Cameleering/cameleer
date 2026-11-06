@@ -85,8 +85,41 @@ enum Api {
     Ollama,
 }
 
+/// `provider=` presets: OpenAI-compatible Chat Completions endpoints, with the base URL and the
+/// environment variable that holds the key. `baseUrl` and `apiKey` still override them.
+pub const PROVIDERS: &[(&str, &str, &str)] = &[
+    ("openai", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+    ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai", "GEMINI_API_KEY"),
+    ("mistral", "https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
+    ("deepseek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"),
+    ("xai", "https://api.x.ai/v1", "XAI_API_KEY"),
+    ("groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+    ("cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY"),
+    ("together", "https://api.together.xyz/v1", "TOGETHER_API_KEY"),
+    ("fireworks", "https://api.fireworks.ai/inference/v1", "FIREWORKS_API_KEY"),
+    ("openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+    ("perplexity", "https://api.perplexity.ai", "PERPLEXITY_API_KEY"),
+    ("huggingface", "https://router.huggingface.co/v1", "HF_TOKEN"),
+    ("dashscope", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", "DASHSCOPE_API_KEY"),
+    ("moonshot", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY"),
+    ("cohere", "https://api.cohere.ai/compatibility/v1", "COHERE_API_KEY"),
+    ("nvidia", "https://integrate.api.nvidia.com/v1", "NVIDIA_API_KEY"),
+    ("ollama", "http://localhost:11434/v1", "OLLAMA_API_KEY"),
+    ("vllm", "http://localhost:8000/v1", "VLLM_API_KEY"),
+    ("lmstudio", "http://localhost:1234/v1", "LMSTUDIO_API_KEY"),
+    ("llamacpp", "http://localhost:8080/v1", "LLAMACPP_API_KEY"),
+];
+
+/// OpenAI reasoning models take `max_completion_tokens` instead of `max_tokens`.
+fn uses_max_completion_tokens(provider: &str, model: &str) -> bool {
+    let m = model.rsplit('/').next().unwrap_or(model);
+    matches!(provider, "openai" | "openrouter") && (m.starts_with("o1") || m.starts_with("o3") || m.starts_with("o4") || m.starts_with("gpt-5"))
+}
+
 #[derive(Clone, Debug)]
 struct Config {
+    /// The `provider` preset (`openai` when none is given).
+    provider: String,
     operation: String,
     api: Api,
     model: Option<String>,
@@ -111,6 +144,7 @@ struct Config {
     fail_on_unknown_tool: bool,
     record: Option<String>,
     replay: Option<String>,
+    reliability: ai::reliable::Reliability,
 }
 
 impl Config {
@@ -148,13 +182,18 @@ impl Component for OpenAiComponent {
             },
             Some(other) => return Err(CamelError::illegal_argument(format!("openai: apiFormat must be openai or ollama, got {}", other))),
         };
+        let provider = params.take("provider").map(|p| p.trim().to_ascii_lowercase()).filter(|p| !p.is_empty()).unwrap_or_else(|| "openai".into());
+        let (_, preset_url, preset_env) = *PROVIDERS.iter().find(|(n, _, _)| *n == provider).ok_or_else(|| {
+            CamelError::illegal_argument(format!("openai: unknown provider {} ({})", provider, PROVIDERS.iter().map(|p| p.0).collect::<Vec<_>>().join(", ")))
+        })?;
         let cfg = Config {
+            provider,
             operation,
             api,
             model: params.take("model").filter(|s| !s.is_empty()),
-            api_key: params.take("apiKey").filter(|s| !s.is_empty()).or_else(|| std::env::var("OPENAI_API_KEY").ok()),
+            api_key: params.take("apiKey").filter(|s| !s.is_empty()).or_else(|| std::env::var(preset_env).ok()),
             organization: params.take("organization"),
-            base_url: params.take("baseUrl").unwrap_or_else(|| "https://api.openai.com/v1".into()),
+            base_url: params.take("baseUrl").unwrap_or_else(|| preset_url.into()),
             system_message: params.take("systemMessage"),
             temperature: num(params, "temperature")?,
             max_tokens: num(params, "maxTokens")?.map(|v| v as i64),
@@ -166,18 +205,12 @@ impl Component for OpenAiComponent {
             tags: params.take("tags").map(|t| t.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default(),
             auto_tool_execution: params.take_bool("autoToolExecution", true)?,
             max_tool_iterations: params.take_usize("maxToolIterations", 50)?,
-            max_agentic_tokens: match params.take("maxAgenticTokens") {
-                Some(v) => Some(v.trim().parse().map_err(|_| CamelError::illegal_argument("openai: maxAgenticTokens must be a number"))?),
-                None => None,
-            },
-            parallel_tool_execution: params.take_bool("parallelToolExecution", true)?,
-            fail_on_unknown_tool: match params.take_string("hallucinatedToolNameStrategy", "report").to_ascii_lowercase().as_str() {
-                "report" | "inform" | "continue" => false,
-                "fail" | "throw" | "exception" => true,
-                other => return Err(CamelError::illegal_argument(format!("openai: hallucinatedToolNameStrategy must be report or fail, got {}", other))),
-            },
+            max_agentic_tokens: ai::agentic_tokens(params.take("maxAgenticTokens"))?,
+            parallel_tool_execution: params.take_bool("parallelToolExecution", false)?,
+            fail_on_unknown_tool: ai::hallucinated_strategy(&params.take_string("hallucinatedToolNameStrategy", "repromptModel"))? == ai::HallucinatedTool::Fail,
             record: params.take("record"),
             replay: params.take("replay"),
+            reliability: ai::reliable::Reliability::take(params)?.with_context(ctx),
         };
         if cfg.api == Api::Ollama && cfg.streaming {
             return Err(CamelError::illegal_argument("openai: streaming is not available with apiFormat=ollama; use the default format with baseUrl http://localhost:11434/v1"));
@@ -212,6 +245,7 @@ impl Endpoint for OpenAiEndpoint {
         }
         let deltas = if self.cfg.streaming { Some(Deltas::new(Some(self.ctx.clone()), self.cfg.chunk_processor.clone(), None)) } else { None };
         let base: Arc<dyn ChatModel> = Arc::new(OpenAiChatModel { cfg: self.cfg.clone(), rest: self.rest.clone(), deltas });
+        let base = self.cfg.reliability.without_retries().wrap(base, self.cfg.model.as_deref().unwrap_or(""));
         cameleer_core::ai::with_recording(Some(base), self.cfg.record.as_deref(), self.cfg.replay.as_deref()).ok().flatten()
     }
     fn as_any(&self) -> &dyn Any {
@@ -262,11 +296,13 @@ impl OpenAiProducer {
     }
 
     fn call(&self, path: &str, body: &Value) -> Result<Value> {
-        let r = self.rest.send(self.request(path, body))?;
-        if !r.is_success() {
-            return Err(Self::failed(path, &r));
-        }
-        r.json()
+        self.cfg.reliability.retry(|| {
+            let r = self.rest.send(self.request(path, body))?;
+            if !r.is_success() {
+                return Err(Self::failed(path, &r));
+            }
+            r.json()
+        })
     }
 
     /// A streamed Chat Completions call: text deltas go to `on_delta` as they arrive, tool call
@@ -368,6 +404,12 @@ impl OpenAiProducer {
                         body.entry(k.into()).or_insert(v);
                     }
                 }
+                let model = body.get("model").map(|m| m.to_string()).unwrap_or_default();
+                if api == Api::ChatCompletions && uses_max_completion_tokens(&cfg.provider, &model) {
+                    if let Some(v) = body.remove("max_tokens") {
+                        body.entry("max_completion_tokens".into()).or_insert(v);
+                    }
+                }
             }
         }
     }
@@ -380,7 +422,7 @@ impl OpenAiProducer {
 impl Processor for OpenAiProducer {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         let streaming = self.streaming(ex);
-        if self.cfg.is_chat() && !matches!(ex.body(), Value::Object(_)) && (!self.cfg.tags.is_empty() || self.cfg.replay.is_some() || self.cfg.record.is_some() || self.cfg.api != Api::ChatCompletions) {
+        if self.cfg.is_chat() && !matches!(ex.body(), Value::Object(_)) && (!self.cfg.tags.is_empty() || self.cfg.replay.is_some() || self.cfg.record.is_some() || self.cfg.api != Api::ChatCompletions || self.cfg.reliability.needs_wrapper()) {
             return self.tool_chat(ex, streaming);
         }
         let model = header_str(ex, MODEL).or_else(|| self.cfg.model.clone());
@@ -496,6 +538,7 @@ impl OpenAiProducer {
         }
         let deltas = if streaming { Some(Deltas::new(ex.context().ok().map(|c| c.downgrade()), cfg.chunk_processor.clone(), conversation(ex))) } else { None };
         let base: Arc<dyn ChatModel> = Arc::new(OpenAiChatModel { cfg: cfg.clone(), rest: self.rest.clone(), deltas: deltas.clone() });
+        let base = cfg.reliability.without_retries().wrap(base, cfg.model.as_deref().unwrap_or(""));
         let model = ai::with_recording(Some(base), cfg.record.as_deref(), cfg.replay.as_deref())?.expect("model");
         let ctx = ex.context()?.clone();
         let provider = ai::tool_provider(&ctx);
@@ -762,7 +805,7 @@ mod tests {
         assert_eq!(r.message.text(), "Hello there");
         let calls: Vec<(String, String, String)> = r.message.tool_uses().into_iter().map(|(i, n, a)| (i.to_string(), n.to_string(), a.to_json())).collect();
         assert_eq!(calls, vec![("call_1".into(), "lookup".into(), r#"{"q":1}"#.into()), ("call_2".into(), "other".into(), "{}".into())]);
-        assert_eq!((r.stop_reason.as_str(), r.usage), ("tool_calls", Usage { input: 5, output: 3 }));
+        assert_eq!((r.stop_reason.as_str(), r.usage), ("tool_calls", Usage::new(5, 3)));
         let mut acc = ChunkAccumulator::default();
         assert!(acc.push(&cameleer_core::json::parse(r#"{"error":{"message":"overloaded"}}"#).unwrap(), &mut |_| Ok(())).is_err());
     }

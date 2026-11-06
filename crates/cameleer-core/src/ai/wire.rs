@@ -66,6 +66,13 @@ pub fn to_openai(model: Option<&str>, req: &ChatRequest) -> Value {
                 if !calls.is_empty() {
                     a.insert("tool_calls".into(), Value::Array(calls));
                 }
+                let reasoning = m.parts.iter().find_map(|p| match p {
+                    Part::ToolUse { meta: Some(meta), .. } => meta.get("reasoning_content").cloned(),
+                    _ => None,
+                });
+                if let Some(r) = reasoning {
+                    a.insert("reasoning_content".into(), r);
+                }
                 msgs.push(Value::Object(a));
             }
         }
@@ -101,15 +108,77 @@ pub fn from_openai(resp: &Value) -> Result<ChatResponse> {
         for (i, c) in calls.iter().enumerate() {
             let f = c.get("function").cloned().unwrap_or(Value::Null);
             let id = c.get("id").map(|v| v.to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| format!("call_{}", i + 1));
-            parts.push(Part::ToolUse { id, name: f.get("name").map(|v| v.to_string()).unwrap_or_default(), arguments: parse_args(f.get("arguments")), meta: None });
+            // DeepSeek, Qwen and Kimi want their reasoning back with the calls during a tool loop
+            let meta = if i == 0 { m.get("reasoning_content").filter(|r| !r.is_null()).map(|r| obj([("reasoning_content", r.clone())])) } else { None };
+            parts.push(Part::ToolUse { id, name: f.get("name").map(|v| v.to_string()).unwrap_or_default(), arguments: parse_args(f.get("arguments")), meta });
         }
     }
     let usage = resp.get("usage");
     Ok(ChatResponse {
         message: ChatMessage { role: Role::Assistant, parts },
         stop_reason: choice.get("finish_reason").map(|f| f.to_string()).unwrap_or_default(),
-        usage: Usage { input: n(usage.and_then(|u| u.get("prompt_tokens"))), output: n(usage.and_then(|u| u.get("completion_tokens"))) },
+        usage: Usage {
+            input: n(usage.and_then(|u| u.get("prompt_tokens"))),
+            output: n(usage.and_then(|u| u.get("completion_tokens"))),
+            cache_read: n(usage.and_then(|u| u.get("prompt_tokens_details")).and_then(|d| d.get("cached_tokens")).or_else(|| usage.and_then(|u| u.get("prompt_cache_hit_tokens")))),
+            cache_write: 0,
+        },
     })
+}
+
+/// Prompt caching for the Messages API: `cache_control` breakpoints on the last tool, the
+/// system prompt and the last message, so the stable prefix (tools, system, history) is read
+/// from Anthropic's cache on the next turn. Prompts below the model's minimum are simply not
+/// cached.
+pub fn anthropic_cache_breakpoints(body: &mut Value) {
+    let Some(m) = body.as_object_mut() else { return };
+    let mark = || obj([("type", Value::from("ephemeral"))]);
+    if let Some(Value::Array(tools)) = m.get_mut("tools") {
+        if let Some(Value::Object(t)) = tools.last_mut() {
+            t.insert("cache_control".into(), mark());
+        }
+    }
+    if let Some(Value::String(s)) = m.get("system").cloned() {
+        m.insert("system".into(), Value::Array(vec![obj([("type", Value::from("text")), ("text", Value::from(s)), ("cache_control", mark())])]));
+    }
+    if let Some(Value::Array(msgs)) = m.get_mut("messages") {
+        if let Some(Value::Object(last)) = msgs.last_mut() {
+            if let Some(Value::String(s)) = last.get("content").cloned() {
+                last.insert("content".into(), Value::Array(vec![obj([("type", Value::from("text")), ("text", Value::from(s))])]));
+            }
+            if let Some(Value::Array(blocks)) = last.get_mut("content") {
+                if let Some(Value::Object(b)) = blocks.last_mut() {
+                    b.insert("cache_control".into(), mark());
+                }
+            }
+        }
+    }
+}
+
+/// Prompt caching for Bedrock Converse: `cachePoint` blocks after the tools, the system prompt
+/// and the last message (for models that support it; others reject the request).
+pub fn converse_cache_points(body: &mut Value) {
+    let Some(m) = body.as_object_mut() else { return };
+    let point = || obj([("cachePoint", obj([("type", Value::from("default"))]))]);
+    if let Some(Value::Object(tc)) = m.get_mut("toolConfig") {
+        if let Some(Value::Array(tools)) = tc.get_mut("tools") {
+            if !tools.is_empty() {
+                tools.push(point());
+            }
+        }
+    }
+    if let Some(Value::Array(sys)) = m.get_mut("system") {
+        if !sys.is_empty() {
+            sys.push(point());
+        }
+    }
+    if let Some(Value::Array(msgs)) = m.get_mut("messages") {
+        if let Some(Value::Object(last)) = msgs.last_mut() {
+            if let Some(Value::Array(c)) = last.get_mut("content") {
+                c.push(point());
+            }
+        }
+    }
 }
 
 // --- Amazon Bedrock Converse ---
@@ -185,7 +254,12 @@ pub fn from_converse(resp: &Value) -> Result<ChatResponse> {
     Ok(ChatResponse {
         message: ChatMessage { role: Role::Assistant, parts },
         stop_reason: resp.get("stopReason").map(|s| s.to_string()).unwrap_or_default(),
-        usage: Usage { input: n(usage.and_then(|u| u.get("inputTokens"))), output: n(usage.and_then(|u| u.get("outputTokens"))) },
+        usage: Usage {
+            input: n(usage.and_then(|u| u.get("inputTokens"))),
+            output: n(usage.and_then(|u| u.get("outputTokens"))),
+            cache_read: n(usage.and_then(|u| u.get("cacheReadInputTokens"))),
+            cache_write: n(usage.and_then(|u| u.get("cacheWriteInputTokens"))),
+        },
     })
 }
 
@@ -265,7 +339,12 @@ pub fn from_gemini(resp: &Value) -> Result<ChatResponse> {
     Ok(ChatResponse {
         message: ChatMessage { role: Role::Assistant, parts },
         stop_reason: cand.get("finishReason").map(|s| s.to_string()).unwrap_or_default(),
-        usage: Usage { input: n(usage.and_then(|u| u.get("promptTokenCount"))), output: n(usage.and_then(|u| u.get("candidatesTokenCount"))) },
+        usage: Usage {
+            input: n(usage.and_then(|u| u.get("promptTokenCount"))),
+            output: n(usage.and_then(|u| u.get("candidatesTokenCount"))),
+            cache_read: n(usage.and_then(|u| u.get("cachedContentTokenCount"))),
+            cache_write: 0,
+        },
     })
 }
 
@@ -334,7 +413,12 @@ pub fn from_anthropic(resp: &Value) -> Result<ChatResponse> {
     Ok(ChatResponse {
         message: ChatMessage { role: Role::Assistant, parts },
         stop_reason: resp.get("stop_reason").map(|s| s.to_string()).unwrap_or_default(),
-        usage: Usage { input: n(usage.and_then(|u| u.get("input_tokens"))), output: n(usage.and_then(|u| u.get("output_tokens"))) },
+        usage: Usage {
+            input: n(usage.and_then(|u| u.get("input_tokens"))),
+            output: n(usage.and_then(|u| u.get("output_tokens"))),
+            cache_read: n(usage.and_then(|u| u.get("cache_read_input_tokens"))),
+            cache_write: n(usage.and_then(|u| u.get("cache_creation_input_tokens"))),
+        },
     })
 }
 
@@ -368,7 +452,7 @@ mod tests {
         );
         let r = from_openai(&crate::json::parse(r#"{"choices":[{"message":{"content":null,"tool_calls":[{"function":{"name":"w","arguments":"{\"a\":1}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}"#).unwrap()).unwrap();
         assert_eq!(r.message.tool_uses()[0].0, "call_1");
-        assert_eq!(r.usage, Usage { input: 3, output: 2 });
+        assert_eq!(r.usage, Usage::new(3, 2));
     }
 
     #[test]
@@ -505,7 +589,12 @@ pub fn from_responses(resp: &Value) -> Result<ChatResponse> {
     Ok(ChatResponse {
         message: ChatMessage { role: Role::Assistant, parts },
         stop_reason,
-        usage: Usage { input: n(usage.and_then(|u| u.get("input_tokens"))), output: n(usage.and_then(|u| u.get("output_tokens"))) },
+        usage: Usage {
+            input: n(usage.and_then(|u| u.get("input_tokens"))),
+            output: n(usage.and_then(|u| u.get("output_tokens"))),
+            cache_read: n(usage.and_then(|u| u.get("input_tokens_details")).and_then(|d| d.get("cached_tokens"))),
+            cache_write: 0,
+        },
     })
 }
 
@@ -584,7 +673,7 @@ pub fn from_ollama(resp: &Value) -> Result<ChatResponse> {
     Ok(ChatResponse {
         message: ChatMessage { role: Role::Assistant, parts },
         stop_reason: resp.get("done_reason").map(|f| f.to_string()).unwrap_or_default(),
-        usage: Usage { input: n(resp.get("prompt_eval_count")), output: n(resp.get("eval_count")) },
+        usage: Usage::new(n(resp.get("prompt_eval_count")), n(resp.get("eval_count"))),
     })
 }
 
@@ -620,7 +709,7 @@ mod responses_and_ollama_tests {
         assert_eq!(r.message.text(), "Let me check.");
         let city = Value::object([("city", Value::from("Oslo"))]);
         assert_eq!(r.message.tool_uses(), vec![("call_a", "weather", &city)]);
-        assert_eq!((r.stop_reason.as_str(), r.usage), ("completed", Usage { input: 9, output: 3 }));
+        assert_eq!((r.stop_reason.as_str(), r.usage), ("completed", Usage::new(9, 3)));
         let r = from_responses(&crate::json::parse(r#"{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}"#).unwrap()).unwrap();
         assert_eq!(r.stop_reason, "incomplete: max_output_tokens");
         assert!(from_responses(&crate::json::parse(r#"{"status":"failed","error":{"message":"boom"},"output":[]}"#).unwrap()).is_err());
@@ -637,10 +726,28 @@ mod responses_and_ollama_tests {
         let r = from_ollama(&crate::json::parse(r#"{"model":"llama3.2","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"a","arguments":{"x":1}}},{"function":{"name":"b","arguments":{}}}]},"done":true,"done_reason":"stop","prompt_eval_count":20,"eval_count":7}"#).unwrap()).unwrap();
         let ids: Vec<&str> = r.message.tool_uses().iter().map(|(i, _, _)| *i).collect();
         assert_eq!(ids, vec!["call_1", "call_2"]);
-        assert_eq!((r.stop_reason.as_str(), r.usage), ("stop", Usage { input: 20, output: 7 }));
+        assert_eq!((r.stop_reason.as_str(), r.usage), ("stop", Usage::new(20, 7)));
         assert!(r.message.text().is_empty());
         let r = from_ollama(&crate::json::parse(r#"{"message":{"role":"assistant","content":"hi"},"done_reason":"stop"}"#).unwrap()).unwrap();
         assert_eq!(r.message.text(), "hi");
         assert!(from_ollama(&crate::json::parse(r#"{"error":"model not found"}"#).unwrap()).is_err());
+    }
+
+    #[test]
+    fn reasoning_content_and_cache_markers() {
+        // DeepSeek-style reasoning comes back with the calls on the next turn
+        let r = from_openai(&crate::json::parse(r#"{"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":"think","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":6}}}"#).unwrap()).unwrap();
+        assert_eq!(r.usage, Usage { input: 10, output: 2, cache_read: 6, cache_write: 0 });
+        let req = ChatRequest { messages: vec![ChatMessage::user("q"), r.message], ..ChatRequest::default() };
+        let body = to_openai(Some("m"), &req).to_json();
+        assert!(body.contains(r#""reasoning_content":"think""#), "{}", body);
+        // Converse cache points after tools, system and the last message
+        let mut v = crate::json::parse(r#"{"system":[{"text":"s"}],"messages":[{"role":"user","content":[{"text":"q"}]}],"toolConfig":{"tools":[{"toolSpec":{"name":"f"}}]}}"#).unwrap();
+        converse_cache_points(&mut v);
+        let j = v.to_json();
+        assert_eq!(j.matches(r#"{"cachePoint":{"type":"default"}}"#).count(), 3, "{}", j);
+        // Anthropic usage with cache reads and writes
+        let r = from_anthropic(&crate::json::parse(r#"{"content":[{"type":"text","text":"a"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":1,"cache_read_input_tokens":100,"cache_creation_input_tokens":20}}"#).unwrap()).unwrap();
+        assert_eq!(r.usage, Usage { input: 3, output: 1, cache_read: 100, cache_write: 20 });
     }
 }

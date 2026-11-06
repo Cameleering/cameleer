@@ -70,6 +70,7 @@ Common AWS options (region, credentials, endpoint override, proxy) are listed in
 | `streamingChunkProcessor` | | `#bean` of a processor called for every chunk while the response streams (body = chunk text). |
 | `guardrailIdentifier`, `guardrailVersion` | | Guardrail used by `applyGuardrail` and applied to invoke and converse requests. |
 | `guardrailTrace` | `false` | Ask for the guardrail trace. |
+| `promptCaching` | `false` | Converse (tool loop and agent step): add `cachePoint` blocks after the tools, the system prompt and the last message, so the stable prefix is read from Bedrock's prompt cache. Only for models that support prompt caching; others reject the request. |
 
 The invoke operations post the body as is (a map is sent as JSON): you write the request in the
 model's own format (for Anthropic models the Messages API body, for Titan `{"inputText": ...}`),

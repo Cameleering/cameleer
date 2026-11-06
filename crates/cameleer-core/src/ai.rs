@@ -5,6 +5,7 @@
 //!
 //! Model components expose their chat API through [`crate::spi::Endpoint::chat_model`].
 
+pub mod reliable;
 pub mod wire;
 
 use std::collections::HashMap;
@@ -26,6 +27,10 @@ pub mod headers {
     pub const INPUT_TOKENS: &str = "CamelAiAgentInputTokens";
     pub const OUTPUT_TOKENS: &str = "CamelAiAgentOutputTokens";
     pub const TOTAL_TOKENS: &str = "CamelAiAgentTotalTokens";
+    /// Input tokens served from the provider's prompt cache over the whole run.
+    pub const CACHE_READ_TOKENS: &str = "CamelAiCacheReadTokens";
+    /// Input tokens written to the provider's prompt cache over the whole run.
+    pub const CACHE_WRITE_TOKENS: &str = "CamelAiCacheWriteTokens";
     pub const TOOL_CALLS: &str = "CamelAiAgentToolCalls";
     /// `answer`, `max-turns`, `max-tokens`, `deadline`, `repeated-failure`, `approval-required`,
     /// `approval-denied`, `approval-pending`.
@@ -176,6 +181,22 @@ pub struct ChatRequest {
 pub struct Usage {
     pub input: i64,
     pub output: i64,
+    /// Input tokens read from the provider's prompt cache (billed at a fraction of `input`).
+    pub cache_read: i64,
+    /// Input tokens written to the provider's prompt cache.
+    pub cache_write: i64,
+}
+
+impl Usage {
+    pub fn new(input: i64, output: i64) -> Usage {
+        Usage { input, output, ..Usage::default() }
+    }
+    fn add(&mut self, o: &Usage) {
+        self.input += o.input;
+        self.output += o.output;
+        self.cache_read += o.cache_read;
+        self.cache_write += o.cache_write;
+    }
 }
 
 /// A model's answer.
@@ -192,7 +213,10 @@ impl ChatResponse {
         Value::object([
             ("message", self.message.to_value()),
             ("stopReason", Value::from(self.stop_reason.as_str())),
-            ("usage", Value::object([("input", Value::Int(self.usage.input)), ("output", Value::Int(self.usage.output))])),
+            (
+                "usage",
+                Value::object([("input", Value::Int(self.usage.input)), ("output", Value::Int(self.usage.output)), ("cacheRead", Value::Int(self.usage.cache_read)), ("cacheWrite", Value::Int(self.usage.cache_write))]),
+            ),
         ])
     }
     pub fn from_value(v: &Value) -> Result<ChatResponse> {
@@ -202,7 +226,7 @@ impl ChatResponse {
         Ok(ChatResponse {
             message: ChatMessage::from_value(m.get("message").unwrap_or(&Value::Null))?,
             stop_reason: m.get("stopReason").map(|s| s.to_string()).unwrap_or_default(),
-            usage: Usage { input: n("input"), output: n("output") },
+            usage: Usage { input: n("input"), output: n("output"), cache_read: n("cacheRead"), cache_write: n("cacheWrite") },
         })
     }
 }
@@ -210,6 +234,10 @@ impl ChatResponse {
 /// A chat model with tool calling (implemented by the model components).
 pub trait ChatModel: Send + Sync {
     fn chat(&self, request: &ChatRequest) -> Result<ChatResponse>;
+    /// Tells apart models behind one endpoint (the model name) for the response cache.
+    fn model_id(&self) -> String {
+        String::new()
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -387,8 +415,7 @@ pub fn run_agent(
         }
         let resp = model.chat(&request)?;
         turns += 1;
-        usage.input += resp.usage.input;
-        usage.output += resp.usage.output;
+        usage.add(&resp.usage);
         let calls: Vec<(String, String, Value)> = resp.message.tool_uses().into_iter().map(|(i, n, a)| (i.to_string(), n.to_string(), a.clone())).collect();
         request.messages.push(resp.message.clone());
         if calls.is_empty() {
@@ -530,7 +557,9 @@ pub fn exchange_messages(ex: &crate::message::Exchange) -> Result<Vec<ChatMessag
 
 /// The tool-calling options a model endpoint takes (Camel's names on `openai`/`llm`): `tags`,
 /// `autoToolExecution`, `maxToolIterations`, `maxAgenticTokens`, `parallelToolExecution`,
-/// `hallucinatedToolNameStrategy`, plus Cameleer's `record` and `replay`.
+/// `hallucinatedToolNameStrategy`, plus Cameleer's `record` and `replay` and the
+/// [`reliable::Reliability`] options (`maxRetries`, `fallbackModels`, `responseCache`,
+/// `coalesce`).
 #[derive(Clone, Debug, Default)]
 pub struct ToolLoopOptions {
     pub tags: Vec<String>,
@@ -538,6 +567,29 @@ pub struct ToolLoopOptions {
     pub limits: AgentLimits,
     pub record: Option<String>,
     pub replay: Option<String>,
+    pub reliability: reliable::Reliability,
+}
+
+/// Camel's `hallucinatedToolNameStrategy`: `failExchange` and `repromptModel` (Camel's names),
+/// also `fail` and `report`. Cameleer's default is `repromptModel` (the model is told the tool
+/// doesn't exist and answers with that).
+pub fn hallucinated_strategy(v: &str) -> Result<HallucinatedTool> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "repromptmodel" | "reprompt" | "report" | "inform" | "continue" => Ok(HallucinatedTool::Report),
+        "failexchange" | "fail" | "throw" | "exception" => Ok(HallucinatedTool::Fail),
+        other => Err(CamelError::illegal_argument(format!("hallucinatedToolNameStrategy must be failExchange or repromptModel, got {}", other))),
+    }
+}
+
+/// Camel's `maxAgenticTokens`: `0` (or absent) is unlimited.
+pub fn agentic_tokens(v: Option<String>) -> Result<Option<i64>> {
+    match v {
+        Some(v) => {
+            let n: i64 = v.trim().parse().map_err(|_| CamelError::illegal_argument("maxAgenticTokens must be a number"))?;
+            Ok(if n > 0 { Some(n) } else { None })
+        }
+        None => Ok(None),
+    }
 }
 
 impl ToolLoopOptions {
@@ -546,23 +598,24 @@ impl ToolLoopOptions {
         let tags = params.take("tags").map(|t| t.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
         let auto = params.take_bool("autoToolExecution", true)?;
         let max_turns = params.take_usize("maxToolIterations", 50)?;
-        let max_tokens = match params.take("maxAgenticTokens") {
-            Some(v) => Some(v.trim().parse().map_err(|_| CamelError::illegal_argument("maxAgenticTokens must be a number"))?),
-            None => None,
-        };
-        let parallel = params.take_bool("parallelToolExecution", true)?;
-        let hallucinated = match params.take_string("hallucinatedToolNameStrategy", "report").to_ascii_lowercase().as_str() {
-            "report" | "inform" | "continue" => HallucinatedTool::Report,
-            "fail" | "throw" | "exception" => HallucinatedTool::Fail,
-            other => return Err(CamelError::illegal_argument(format!("hallucinatedToolNameStrategy must be report or fail, got {}", other))),
-        };
+        let max_tokens = agentic_tokens(params.take("maxAgenticTokens"))?;
+        // Camel runs the calls of one turn one after another unless asked
+        let parallel = params.take_bool("parallelToolExecution", false)?;
+        let hallucinated = hallucinated_strategy(&params.take_string("hallucinatedToolNameStrategy", "repromptModel"))?;
         Ok(ToolLoopOptions {
             tags,
             auto,
             limits: AgentLimits { max_turns: max_turns.max(1), max_tokens, parallel: if parallel { 4 } else { 1 }, hallucinated, ..Default::default() },
             record: params.take("record"),
             replay: params.take("replay"),
+            reliability: reliable::Reliability::take(params)?,
         })
+    }
+
+    /// The context that resolves `fallbackModels`.
+    pub fn with_context(mut self, ctx: &crate::context::CamelContext) -> ToolLoopOptions {
+        self.reliability = self.reliability.with_context(ctx);
+        self
     }
 
     /// Whether the endpoint should chat through the neutral model (tools or a recording).
@@ -570,8 +623,10 @@ impl ToolLoopOptions {
         !self.tags.is_empty() || self.replay.is_some() || self.record.is_some()
     }
 
-    /// The model wrapped for `record` / `replay`.
+    /// The model wrapped for the reliability options and `record` / `replay`.
     pub fn wrap(&self, model: Arc<dyn ChatModel>) -> Result<Arc<dyn ChatModel>> {
+        let id = model.model_id();
+        let model = self.reliability.wrap(model, &id);
         with_recording(Some(model), self.record.as_deref(), self.replay.as_deref()).map(|m| m.expect("model"))
     }
 }
@@ -619,6 +674,10 @@ pub fn chat_exchange(ex: &mut crate::message::Exchange, model: Arc<dyn ChatModel
     ex.set_header(headers::INPUT_TOKENS, run.usage.input);
     ex.set_header(headers::OUTPUT_TOKENS, run.usage.output);
     ex.set_header(headers::TOTAL_TOKENS, run.usage.input + run.usage.output);
+    if run.usage.cache_read > 0 || run.usage.cache_write > 0 {
+        ex.set_header(headers::CACHE_READ_TOKENS, run.usage.cache_read);
+        ex.set_header(headers::CACHE_WRITE_TOKENS, run.usage.cache_write);
+    }
     ex.set_header(headers::TOOL_CALLS, run.tool_calls.len() as i64);
     ex.set_header(headers::STOP_REASON, run.stop.as_str());
     ex.set_body(run.answer.clone());
@@ -722,7 +781,7 @@ mod tests {
             } else {
                 ChatMessage::assistant(format!("answer: {}", results.join(" | ")))
             };
-            Ok(ChatResponse { message, stop_reason: "x".into(), usage: Usage { input: 10, output: 5 } })
+            Ok(ChatResponse { message, stop_reason: "x".into(), usage: Usage::new(10, 5) })
         }
     }
 
@@ -742,7 +801,7 @@ mod tests {
         let run = run_agent(&Scripted, Some(&Tools), req, &AgentLimits::default(), &ToolInvocation::default()).unwrap();
         assert_eq!(run.stop, StopReason::Answer);
         assert_eq!(run.turns, 2);
-        assert_eq!(run.usage, Usage { input: 20, output: 10 });
+        assert_eq!(run.usage, Usage::new(20, 10));
         assert_eq!(run.answer, "answer: found x1 | There is no tool named nope. Available tools: lookup");
         // every call id has a result
         let results = run.messages[2].parts.len();
@@ -764,7 +823,7 @@ mod tests {
             role: Role::Assistant,
             parts: vec![Part::Text("a".into()), Part::ToolUse { id: "1".into(), name: "t".into(), arguments: Value::object([("x", Value::Int(1))]), meta: Some(Value::from("sig")) }],
         };
-        let r = ChatResponse { message: m, stop_reason: "tool_use".into(), usage: Usage { input: 3, output: 4 } };
+        let r = ChatResponse { message: m, stop_reason: "tool_use".into(), usage: Usage::new(3, 4) };
         assert_eq!(ChatResponse::from_value(&r.to_value()).unwrap(), r);
         assert_eq!(truncate("abcdef", 3).lines().next(), Some("abc"));
     }

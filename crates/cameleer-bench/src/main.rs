@@ -51,7 +51,9 @@ fn secs(s: &str) -> std::result::Result<Duration, String> {
 fn context(sink: &Arc<AtomicU64>) -> Result<CamelContext> {
     let ctx = CamelContext::new();
     cameleer_http::register(&ctx);
+    cameleer_ai::register(&ctx);
     scenarios::add_routes(&ctx, sink)?;
+    cameleer_bench::ai::add_routes(&ctx)?;
     Ok(ctx)
 }
 
@@ -77,6 +79,20 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
             println!("READY");
             let out = realworld::run_stream(&sink, plan);
             println!("{}", out.result_line("kafka-stream"));
+            ctx.stop().map_err(s)
+        }
+        Some("serve") if args.len() == 4 && (args[1] == "mcp" || args[1] == "mcp-session") => {
+            let port: u16 = args[2].parse().map_err(|_| "bad port")?;
+            let ctx = CamelContext::new();
+            cameleer_http::register(&ctx);
+            cameleer_ai::register(&ctx);
+            cameleer_bench::ai::add_routes(&ctx).map_err(s)?;
+            ctx.start().map_err(s)?;
+            let (_server, http) = cameleer_bench::ai::serve_mcp(&ctx, port).map_err(s)?;
+            version();
+            println!("READY");
+            std::thread::sleep(secs(&args[3])?);
+            http.stop();
             ctx.stop().map_err(s)
         }
         Some("serve") if args.len() == 4 => {
@@ -105,7 +121,7 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
             ctx.start().map_err(s)?;
             version();
             println!("READY");
-            let out = scenarios::run(&ctx, &sink, &args[1], plan).map_err(s)?;
+            let out = if args[1].starts_with("ai-") { cameleer_bench::ai::run(&ctx, &args[1], plan) } else { scenarios::run(&ctx, &sink, &args[1], plan) }.map_err(s)?;
             println!("{}", out.result_line(&args[1]));
             ctx.stop().map_err(s)
         }
