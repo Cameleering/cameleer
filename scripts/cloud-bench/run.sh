@@ -46,7 +46,7 @@ setup() {
   on "$L_PUB" /root/cameleer/scripts/cloud-bench/setup-node.sh load "$L_PRIV" >"$OUT/setup-load.log" 2>&1 &
   local failed=0
   for j in $(jobs -p); do wait "$j" || failed=1; done
-  tail -3 "$OUT"/setup-*.log
+  for f in "$OUT"/setup-*.log; do tail -n 3 "$f"; done
   [ "$failed" = 0 ] || { echo "setup failed, see $OUT/setup-*.log" >&2; exit 1; }
 }
 
