@@ -1,9 +1,14 @@
 //! Local process management used by the `cameleer` CLI (like Camel JBang's `~/.camel`
 //! directory): a running integration publishes `<pid>.json` (name, routes, context,
-//! health, backlog trace) every 500 ms, logs to `<pid>.log`, and executes the commands
+//! health, backlog trace), logs to `<pid>.log`, and executes the commands
 //! written to `<pid>-action.json` (`stop`, `reload`, `start-route`, `stop-route`,
 //! `suspend-route`, `resume-route`, `reset-stats`, `trace`). The directory is
 //! `$CAMEL_HOME` or `~/.camel`.
+//!
+//! The status is checked every 500 ms but the file is only rewritten when it changed, not
+//! counting the fields that only move with the clock (`updated`, `uptime`, `uptimeMillis`):
+//! readers ([`list_processes`]) bring those up to date from `updated`, the time of the
+//! snapshot. Whether the process is still alive is asked of the operating system.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,6 +58,60 @@ pub fn status_value(ctx: &CamelContext, name: &str, pid: u32) -> Value {
         ("health", ctx.health().to_value()),
         ("trace", Value::object([("enabled", Value::Bool(t.is_backlog_enabled())), ("events", t.backlog_value())])),
     ])
+}
+
+/// Fields that change with the clock alone (left out when deciding whether to rewrite).
+const CLOCK_FIELDS: [&str; 3] = ["updated", "uptime", "uptimeMillis"];
+
+/// The status without the fields that change with the clock alone: the status file is
+/// rewritten only when this changes.
+pub fn status_fingerprint(status: &Value) -> String {
+    fn strip(v: &Value) -> Value {
+        match v {
+            Value::Object(m) => {
+                let mut out = cameleer_core::value::ObjectMap::new();
+                for (k, v) in m.iter() {
+                    if !CLOCK_FIELDS.contains(&k.as_str()) {
+                        out.insert(k.clone(), strip(v));
+                    }
+                }
+                Value::Object(out)
+            }
+            Value::Array(a) => Value::Array(a.iter().map(strip).collect()),
+            other => other.clone(),
+        }
+    }
+    strip(status).to_json()
+}
+
+/// Bring the uptimes of a status read from a file up to date: the context and the started
+/// routes have been up for the time since the snapshot (`updated`) as well.
+pub fn refresh_uptimes(status: &mut Value, now_millis: i64) {
+    let Some(updated) = status.get("updated").and_then(|v| v.as_i64()) else { return };
+    let elapsed = (now_millis - updated).max(0) as u64;
+    if elapsed == 0 {
+        return;
+    }
+    fn bump(m: &mut cameleer_core::value::ObjectMap, elapsed: u64) {
+        if m.get("state").map(|s| s.to_string()).as_deref() != Some("Started") {
+            return;
+        }
+        let Some(ms) = m.get("uptimeMillis").and_then(|v| v.as_i64()) else { return };
+        let ms = ms.max(0) as u64 + elapsed;
+        m.insert("uptimeMillis".into(), Value::from(ms));
+        m.insert("uptime".into(), Value::from(cameleer_core::management::format_uptime(ms)));
+    }
+    let Value::Object(top) = status else { return };
+    if let Some(Value::Object(c)) = top.get_mut("context") {
+        bump(c, elapsed);
+    }
+    if let Some(Value::Array(routes)) = top.get_mut("routes") {
+        for r in routes.iter_mut() {
+            if let Value::Object(r) = r {
+                bump(r, elapsed);
+            }
+        }
+    }
 }
 
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
@@ -110,6 +169,7 @@ impl LocalStatus {
         };
         let (weak, name, dir) = (ctx.downgrade(), name.to_string(), dir.to_path_buf());
         let (stop, reload) = (ls.stop_requested.clone(), ls.reload_requested.clone());
+        let mut last = String::new();
         let publish = move |flag: Arc<StopFlag>| loop {
             let Some(ctx) = weak.upgrade() else { return };
             if let Ok(text) = std::fs::read_to_string(action_file(&dir, pid)) {
@@ -134,7 +194,15 @@ impl LocalStatus {
                 };
                 let _ = write_atomic(&dir.join(format!("{}-action-result.json", pid)), &out.to_json());
             }
-            let _ = write_atomic(&status_file(&dir, pid), &status_value(&ctx, &name, pid).to_json());
+            let status = status_value(&ctx, &name, pid);
+            let fingerprint = status_fingerprint(&status);
+            let file = status_file(&dir, pid);
+            // rewrite when the content changed (or the file was removed)
+            if fingerprint != last || !file.exists() {
+                if write_atomic(&file, &status.to_json()).is_ok() {
+                    last = fingerprint;
+                }
+            }
             drop(ctx);
             if flag.sleep(Duration::from_millis(500)) {
                 return;
@@ -209,14 +277,51 @@ pub struct LocalProcess {
     pub status: Value,
 }
 
-fn alive(pid: u32, status: &Value) -> bool {
+/// Whether process `pid` is running.
+#[cfg(unix)]
+pub fn alive(pid: u32) -> bool {
     let proc_dir = Path::new("/proc");
-    if proc_dir.is_dir() {
+    if proc_dir.join("self").exists() {
         return proc_dir.join(pid.to_string()).exists();
     }
-    // no /proc: consider the process alive while it keeps updating its status
-    let updated = status.get("updated").and_then(|v| v.as_i64()).unwrap_or(0);
-    cameleer_core::util_time::now_millis() - updated < 5000
+    extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    const EPERM: i32 = 1;
+    let Ok(p) = i32::try_from(pid) else { return false };
+    // SAFETY: signal 0 only checks that the process exists (and may be signalled).
+    let ok = unsafe { kill(p, 0) } == 0;
+    ok || std::io::Error::last_os_error().raw_os_error() == Some(EPERM)
+}
+
+/// Whether process `pid` is running.
+#[cfg(windows)]
+pub fn alive(pid: u32) -> bool {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+        fn GetExitCodeProcess(process: isize, code: *mut u32) -> i32;
+        fn CloseHandle(handle: isize) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    const STILL_ACTIVE: u32 = 259;
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h == 0 {
+            return false;
+        }
+        let mut code = 0u32;
+        let ok = GetExitCodeProcess(h, &mut code) != 0;
+        CloseHandle(h);
+        ok && code == STILL_ACTIVE
+    }
+}
+
+/// Whether process `pid` is running (unknown on this platform: assumed so).
+#[cfg(not(any(unix, windows)))]
+pub fn alive(_pid: u32) -> bool {
+    true
 }
 
 /// The running integrations (stale status files of dead processes are removed).
@@ -227,11 +332,12 @@ pub fn list_processes(dir: &Path) -> Vec<LocalProcess> {
         let p = e.path();
         let Some(stem) = p.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".json")) else { continue };
         let Ok(pid) = stem.parse::<u32>() else { continue };
-        let Some(status) = std::fs::read_to_string(&p).ok().and_then(|t| cameleer_core::json::parse(&t).ok()) else { continue };
-        if !alive(pid, &status) {
+        let Some(mut status) = std::fs::read_to_string(&p).ok().and_then(|t| cameleer_core::json::parse(&t).ok()) else { continue };
+        if !alive(pid) {
             let _ = std::fs::remove_file(&p);
             continue;
         }
+        refresh_uptimes(&mut status, cameleer_core::util_time::now_millis());
         let name = status.get("name").map(|n| n.to_string()).unwrap_or_default();
         out.push(LocalProcess { pid, name, status });
     }
@@ -273,4 +379,111 @@ pub fn send_action(dir: &Path, pid: u32, action: &Value, timeout: Duration) -> R
         std::thread::sleep(Duration::from_millis(20));
     }
     Err(CamelError::new(kinds::TIMEOUT, format!("No answer from integration {} within {:?}", pid, timeout)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    fn idle_context() -> CamelContext {
+        let ctx = CamelContext::new();
+        ctx.add_routes(|b| {
+            b.from("direct:in").route_id("r1").to("log:local-test?level=OFF");
+            b.from("direct:off").route_id("r2").auto_startup(false).to("log:local-test?level=OFF");
+        })
+        .unwrap();
+        ctx.start().unwrap();
+        ctx
+    }
+
+    #[test]
+    fn fingerprint_ignores_the_clock_but_not_the_content() {
+        let ctx = idle_context();
+        let a = status_value(&ctx, "app", 1);
+        std::thread::sleep(Duration::from_millis(1100));
+        let b = status_value(&ctx, "app", 1);
+        assert_ne!(a.to_json(), b.to_json(), "the clock fields moved");
+        assert_eq!(status_fingerprint(&a), status_fingerprint(&b), "an idle context's status does not change");
+        ctx.create_producer_template().send_body("direct:in", "x").unwrap();
+        let c = status_value(&ctx, "app", 1);
+        assert_ne!(status_fingerprint(&b), status_fingerprint(&c), "an exchange changes the status");
+        ctx.stop().unwrap();
+    }
+
+    #[test]
+    fn readers_bring_uptimes_up_to_date() {
+        let ctx = idle_context();
+        let mut s = status_value(&ctx, "app", 1);
+        let updated = s.get("updated").and_then(|v| v.as_i64()).unwrap();
+        let ctx_up = s.get("context").and_then(|c| c.get("uptimeMillis")).and_then(|v| v.as_i64()).unwrap();
+        refresh_uptimes(&mut s, updated + 65_000);
+        let c = s.get("context").unwrap();
+        assert_eq!(c.get("uptimeMillis").and_then(|v| v.as_i64()), Some(ctx_up + 65_000));
+        assert_eq!(c.get("uptime").map(|v| v.to_string()), Some(cameleer_core::management::format_uptime((ctx_up + 65_000) as u64)));
+        let routes = s.get("routes").and_then(|r| r.as_array()).unwrap();
+        let up = |id: &str| routes.iter().find(|r| r.get("routeId").map(|v| v.to_string()).as_deref() == Some(id)).and_then(|r| r.get("uptimeMillis")).and_then(|v| v.as_i64()).unwrap();
+        assert!(up("r1") >= 65_000, "a started route keeps counting");
+        assert_eq!(up("r2"), 0, "a stopped route has no uptime");
+        ctx.stop().unwrap();
+    }
+
+    #[test]
+    fn liveness_comes_from_the_operating_system() {
+        assert!(alive(std::process::id()));
+        let exe = std::env::current_exe().unwrap();
+        let mut child = std::process::Command::new(exe).arg("--exact").arg("no-such-test").stdout(std::process::Stdio::null()).spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        // the pid may be reused, but not this quickly in practice
+        assert!(!alive(pid), "exited child {pid} still alive");
+    }
+
+    #[test]
+    fn the_status_file_is_rewritten_only_when_the_status_changes() {
+        let dir = std::env::temp_dir().join(format!("cameleer-local-writes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let ctx = idle_context();
+        let ls = LocalStatus::start(&ctx, "writes", &dir).unwrap();
+        let file = status_file(&dir, ls.pid());
+        let read = || std::fs::read_to_string(&file).ok().and_then(|t| cameleer_core::json::parse(&t).ok());
+        let stamp = |v: &Value| v.get("updated").and_then(|u| u.as_i64()).unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        let first = loop {
+            if let Some(v) = read() {
+                break v;
+            }
+            assert!(Instant::now() < end, "no status file");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // idle: three publishing rounds go by without a rewrite
+        std::thread::sleep(Duration::from_millis(1600));
+        assert_eq!(stamp(&read().unwrap()), stamp(&first), "idle status rewritten");
+        // the listing still reports a growing uptime
+        let listed = list_processes(&dir).into_iter().find(|p| p.pid == ls.pid()).expect("listed");
+        let up = |v: &Value| v.get("context").and_then(|c| c.get("uptimeMillis")).and_then(|u| u.as_i64()).unwrap();
+        assert!(up(&listed.status) >= up(&first) + 1500, "{} vs {}", up(&listed.status), up(&first));
+        // a change is published
+        ctx.create_producer_template().send_body("direct:in", "x").unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        loop {
+            let v = read().unwrap();
+            if v.get("context").and_then(|c| c.get("exchangesTotal")).and_then(|t| t.as_i64()) == Some(1) {
+                assert!(stamp(&v) > stamp(&first));
+                break;
+            }
+            assert!(Instant::now() < end, "change not published");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        // a removed file is written again
+        std::fs::remove_file(&file).unwrap();
+        let end = Instant::now() + Duration::from_secs(5);
+        while read().is_none() {
+            assert!(Instant::now() < end, "status file not restored");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        ls.stop();
+        ctx.stop().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -108,9 +108,7 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
   (untouched by this branch; 15/15 on rerun, green in the final run). Fixed since: a library bug,
   see the TLS alert fix below.
 
-Follow-ups: XQuery/XSLT
-per-evaluation threads with 128–256 MiB stacks; a shared timer thread per timer name; the status
-thread rewriting its file every 500 ms; `-z pack-relative-relocs` for the arm64 image (Debian 12's
+Follow-ups: `-z pack-relative-relocs` for the arm64 image (Debian 12's
 aarch64 ld ignores it; needs a newer binutils or lld in the builder); measuring
 on the Lambda service across memory sizes and arm64.
 
@@ -123,6 +121,26 @@ peer closes, at most 2 s): `cameleer_tls::net::lingering_close` and `accept_tls`
 `NetStream::server`, the gRPC server and the cloud mock servers. Code that calls `TlsStream::accept`
 on a raw `TcpStream` should use `accept_tls`. Regression test
 `alert_survives_a_client_that_reads_late`; details in `docs/INTEROP.md` bug 18.
+
+## Idle threads round (2026-11-06, branch `claude/mystifying-swartz-034e67`)
+
+Perf-review finding 16, details and tables in `benchmarks/analysis.md` (section "Idle threads and
+per-evaluation threads"); measured with the `idle_threads` example (`scripts/idle-threads.sh` on
+Linux), old and new builds alternately on Windows 11 and WSL2 Ubuntu 24.04:
+
+- **XQuery/XSLT** evaluate on the caller's thread and move to a new stack segment only when less
+  than 512 KiB of stack is left (`cameleer_core::stack::maybe_grow`). Per evaluation: XQuery
+  110 → 10 µs (Windows), 142 → 6.5 µs (Linux); XSLT 103 → 6.3 µs, 138 → 4.0 µs. Deep recursion
+  still works from a 2 MiB thread; XQuery recursion 2000 deep is about 30% slower on Linux
+  (unchanged on Windows), not traced further.
+- **timer:** one thread per timer name (Camel's `java.util.Timer` per name): 20 routes on one
+  name use 1 thread instead of 20; the thread exits after the last consumer.
+- **Supervising route controller:** its thread exits when nothing is left to retry (1 → 0 threads
+  after a recovery).
+- **Local status file:** written only when the content changes (10 → 1 writes in 5 s idle);
+  readers refresh uptimes from `updated`, and liveness comes from the operating system.
+- **Tests:** hermetic suite 2712 passed, 0 failed, zero warnings, twice on Windows 11 and once on
+  WSL2 Ubuntu 24.04 (Linux caught a unix-only compile error in the first build).
 
 ## Pending / todo
 
@@ -223,7 +241,7 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect 2697 passing
+1. `git checkout main && cargo test --workspace`. Expect 2712 passing
    on Windows and on Linux.
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.

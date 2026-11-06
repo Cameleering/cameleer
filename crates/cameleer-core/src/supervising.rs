@@ -10,6 +10,9 @@
 //! * after `back_off_max_attempts` restarts (0 = unlimited) the route is *exhausted*
 //!   and no longer retried.
 //!
+//! The restarts run on one background thread, which runs only while a route waits for a
+//! restart: it starts at the first failure and exits when nothing is left to retry.
+//!
 //! [`CamelContext::route_controller_status`] reports, per route, whether it is started,
 //! restarting or exhausted, the number of attempts and the last error.
 
@@ -209,6 +212,9 @@ impl SupervisingRouteController {
         drop(inner);
         let me = self.clone();
         let h = std::thread::Builder::new().name("camel-route-controller".into()).spawn(move || me.run()).ok();
+        if h.is_none() {
+            self.inner.lock().unwrap().thread_running = false;
+        }
         *self.thread.lock().unwrap() = h;
     }
 
@@ -229,7 +235,10 @@ impl SupervisingRouteController {
                             inner = self.cond.wait_timeout(inner, at - now).unwrap().0;
                         }
                         None => {
-                            inner = self.cond.wait_timeout(inner, Duration::from_millis(500)).unwrap().0;
+                            // nothing left to retry: the thread exits, the next failure
+                            // starts a new one
+                            inner.thread_running = false;
+                            return;
                         }
                     }
                 }
@@ -353,6 +362,16 @@ pub fn failing_routes(ctx: &CamelContext) -> Vec<(String, String)> {
     match crate::management::state(ctx).supervising.read().unwrap().as_ref() {
         Some(c) => c.inner.lock().unwrap().failing.iter().map(|(k, f)| (k.clone(), f.last_error.clone())).collect(),
         None => Vec::new(),
+    }
+}
+
+/// Whether the supervising route controller's thread is running. It runs only while routes
+/// wait for a restart: it starts when a route fails to start and exits when no route is left
+/// to retry (restarted, exhausted or removed).
+pub fn controller_thread_running(ctx: &CamelContext) -> bool {
+    match crate::management::state(ctx).supervising.read().unwrap().as_ref() {
+        Some(c) => c.inner.lock().unwrap().thread_running,
+        None => false,
     }
 }
 

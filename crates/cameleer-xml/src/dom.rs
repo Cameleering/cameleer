@@ -457,6 +457,10 @@ impl Document {
     }
 
     fn copy_children(&mut self, from: &Document, src: NodeId, el: NodeId) {
+        crate::tree_level(|| self.copy_children_here(from, src, el))
+    }
+
+    fn copy_children_here(&mut self, from: &Document, src: NodeId, el: NodeId) {
         for &a in &from.nodes[src].attrs {
             let an = &from.nodes[a];
             self.set_attribute(el, an.name.clone(), an.value.clone());

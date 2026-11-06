@@ -98,6 +98,14 @@ Use `timer:once?repeatCount=1&delay=0`.
 
 The timer only knows intervals. Use [cron](cron.md) (`schedule=0 0 2 * * ?`) or [quartz](quartz.md).
 
+### Do timer routes run on their own threads?
+
+As in Camel, all routes that use the same timer name share one thread (Camel keeps one
+`java.util.Timer` per name): their fires run one after the other, so a slow route delays the
+others of that name. Give routes different names (`timer:a`, `timer:b`) to run them
+independently. The thread starts with the first route of a name and exits when the last one
+stops or finishes its `repeatCount`.
+
 ### What time zone does the `time` option use?
 
 The process default zone, which is UTC unless `TZ` is set. Add `Z`, an offset or `[Zone/Id]` to choose
