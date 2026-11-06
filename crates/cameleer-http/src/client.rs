@@ -12,8 +12,9 @@
 
 use std::io::{BufReader, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use cameleer_tls::net::NetStream;
 use cameleer_tls::TlsClientConfig;
@@ -409,6 +410,10 @@ pub struct HttpClient {
     pub tls_server_name: Option<String>,
     /// Proxy settings (none by default; see [`ProxyConfig::from_env`]).
     pub proxy: Option<ProxyConfig>,
+    /// Reuse connections from a process-wide pool (HTTP/1.1 keep-alive) instead of one
+    /// connection per request. Requests through a proxy, with a custom TLS server name or with
+    /// chunked bodies still use their own connection.
+    pub keep_alive: bool,
 }
 
 impl Default for HttpClient {
@@ -423,6 +428,7 @@ impl Default for HttpClient {
             tls: None,
             tls_server_name: None,
             proxy: None,
+            keep_alive: false,
         }
     }
 }
@@ -430,6 +436,12 @@ impl Default for HttpClient {
 impl HttpClient {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Reuse pooled keep-alive connections (see [`HttpClient::keep_alive`]).
+    pub fn with_keep_alive(mut self, on: bool) -> Self {
+        self.keep_alive = on;
+        self
     }
 
     /// Uses `config` for `https` URLs.
@@ -495,6 +507,9 @@ impl HttpClient {
         let t = timeout.unwrap_or(self.read_timeout);
         let t = if t.is_zero() { None } else { Some(t) };
         let proxy = self.proxy.as_ref().and_then(|p| p.proxy_for(url));
+        if self.keep_alive && proxy.is_none() && self.tls_server_name.is_none() && !(self.chunked_requests && body.is_some()) {
+            return self.execute_pooled(method, url, headers, body, t);
+        }
         let (stream, absolute) = open_stream(url, self.tls.as_deref(), self.tls_server_name.as_deref(), proxy, self.connect_timeout, t)?;
         let mut h = headers.clone();
         if !h.contains("Host") {
@@ -522,6 +537,92 @@ impl HttpClient {
 /// Perform a single request with default client settings.
 pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, timeout: Option<Duration>) -> Result<HttpResponse> {
     HttpClient::new().request(method, url, headers, body, timeout)
+}
+
+/// Idle keep-alive connections, by origin and TLS configuration.
+struct Pool {
+    idle: Mutex<HashMap<String, Vec<(Instant, HttpConnection)>>>,
+}
+
+/// Connections idle longer than this are closed (servers commonly drop them after 60 s).
+const POOL_IDLE: Duration = Duration::from_secs(30);
+/// Idle connections kept per origin.
+const POOL_MAX_IDLE: usize = 16;
+
+fn pool() -> &'static Pool {
+    static POOL: OnceLock<Pool> = OnceLock::new();
+    POOL.get_or_init(|| Pool { idle: Mutex::new(HashMap::new()) })
+}
+
+impl Pool {
+    fn take(&self, key: &str) -> Option<HttpConnection> {
+        let mut idle = self.idle.lock().unwrap_or_else(|p| p.into_inner());
+        let list = idle.get_mut(key)?;
+        while let Some((at, c)) = list.pop() {
+            if at.elapsed() < POOL_IDLE && !c.is_closed() {
+                return Some(c);
+            }
+        }
+        None
+    }
+    fn put(&self, key: String, c: HttpConnection) {
+        let mut idle = self.idle.lock().unwrap_or_else(|p| p.into_inner());
+        let list = idle.entry(key).or_default();
+        list.retain(|(at, _)| at.elapsed() < POOL_IDLE);
+        if list.len() < POOL_MAX_IDLE {
+            list.push((Instant::now(), c));
+        }
+    }
+}
+
+/// Connections in the keep-alive pool (for tests and diagnostics).
+pub fn pooled_connections() -> usize {
+    pool().idle.lock().unwrap_or_else(|p| p.into_inner()).values().map(|v| v.len()).sum()
+}
+
+impl HttpClient {
+    /// A request on a pooled connection. A reused connection the server already closed is
+    /// replaced once (the request had not reached the server); timeouts are never retried.
+    fn execute_pooled(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>, t: Option<Duration>) -> Result<HttpResponse> {
+        let default_cfg;
+        let tls = if url.is_https() {
+            Some(match &self.tls {
+                Some(c) => c.as_ref(),
+                None => {
+                    default_cfg = default_tls_config();
+                    default_cfg.as_ref()
+                }
+            })
+        } else {
+            None
+        };
+        let key = format!("{}://{}#{:p}", if url.is_https() { "https" } else { "http" }, url.authority(), tls.map(|c| c as *const TlsClientConfig).unwrap_or(std::ptr::null()));
+        let hv: Vec<(String, String)> = headers.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("Connection")).map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut h: Vec<(&str, &str)> = hv.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let host = url.host_header();
+        if !headers.contains("Host") {
+            h.push(("Host", host.as_str()));
+        }
+        let target = url.request_target();
+        for attempt in 0..2 {
+            let (mut conn, reused) = match pool().take(&key) {
+                Some(c) => (c, true),
+                None => (HttpConnection::connect_with(&url.host, url.port, tls, self.connect_timeout)?, false),
+            };
+            conn.set_timeout(t);
+            match conn.send(method, &target, &h, body) {
+                Ok(resp) => {
+                    if !conn.is_closed() {
+                        pool().put(key, conn);
+                    }
+                    return Ok(resp);
+                }
+                Err(e) if reused && attempt == 0 && e.kind != kinds::SOCKET_TIMEOUT => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(CamelError::io(format!("Connection to {} failed", url.authority())))
+    }
 }
 
 /// A persistent (keep-alive) client connection to one server.
@@ -570,6 +671,12 @@ impl HttpConnection {
             self.closed = true;
         }
         Ok(resp)
+    }
+
+    /// Set the read and write timeout for the next requests.
+    pub fn set_timeout(&self, t: Option<Duration>) {
+        let _ = self.stream.set_read_timeout(t);
+        let _ = self.stream.set_write_timeout(t);
     }
 
     /// Whether the server signalled that the connection will be closed.

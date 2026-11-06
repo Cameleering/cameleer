@@ -187,7 +187,8 @@ fn modern_discover_list_and_call() {
     assert_eq!(get(res, "resultType").to_string(), "complete");
     assert_eq!(get(res, "supportedVersions").to_json(), r#"["2026-07-28"]"#);
     assert_eq!(get(res, "capabilities.resources.subscribe"), &Value::Bool(true));
-    assert_eq!(get(res, "_meta.io.modelcontextprotocol/serverInfo.name").to_string(), "cameleer");
+    // as in Camel, the server is named after the context unless camel.server.mcp-server-name is set
+    assert_eq!(get(res, "_meta.io.modelcontextprotocol/serverInfo.name").to_string(), ctx.name());
     assert_eq!(get(res, "cacheScope").to_string(), "public");
 
     let (_, r) = c.modern(2, "tools/list", json("{}"), "{}", &[]);
@@ -365,7 +366,7 @@ fn legacy_sessions_over_http() {
     let (st, r, resp) = c.post(&[], &init);
     assert_eq!(st, 200);
     assert_eq!(get(&r, "result.protocolVersion").to_string(), "2025-06-18");
-    assert_eq!(get(&r, "result.serverInfo.name").to_string(), "cameleer");
+    assert_eq!(get(&r, "result.serverInfo.name").to_string(), ctx.name());
     assert!(!get(&r, "result").as_object().unwrap().contains_key("resultType"));
     let sid = resp.headers.get("Mcp-Session-Id").unwrap().to_string();
     let h = |extra: &'static str| -> Vec<(String, String)> { vec![("Mcp-Session-Id".into(), sid.clone()), ("MCP-Protocol-Version".into(), extra.into())] };
@@ -594,5 +595,137 @@ fn rich_content_and_older_legacy_clients() {
     let sid = resp.headers.get("Mcp-Session-Id").unwrap().to_string();
     let (st, r, _) = c.post(&[("Mcp-Session-Id", sid.as_str()), ("MCP-Protocol-Version", "2025-03-26")], &json(r#"{"jsonrpc":"2.0","id":4,"method":"logging/setLevel","params":{"level":"debug"}}"#));
     assert_eq!((st, r.to_json()), (200, r#"{"jsonrpc":"2.0","id":4,"result":{}}"#.to_string()));
+    ctx.stop().unwrap();
+}
+
+fn interactive_context() -> CamelContext {
+    let ctx = CamelContext::new();
+    cameleer_ai::register(&ctx);
+    ctx.add_routes(|b| {
+        b.from("ai-tool:report?tags=public&readOnlyHint=true")
+            .set_header("CamelAiToolProgress", constant(50))
+            .set_header("CamelAiToolProgressTotal", constant(100))
+            .set_body(constant("halfway"))
+            .to("ai-tool:current?operation=progress")
+            .set_header("CamelAiToolLogLevel", constant("info"))
+            .set_body(constant("working"))
+            .to("ai-tool:current?operation=log")
+            .set_header("CamelAiToolLogLevel", constant("debug"))
+            .set_body(constant("noise"))
+            .to("ai-tool:current?operation=log")
+            .set_body(constant("done"));
+        b.from("ai-tool:signup?tags=public&readOnlyHint=true")
+            .set_header("CamelAiToolElicitSchema", constant(r#"{"type":"object","properties":{"email":{"type":"string"}},"required":["email"]}"#))
+            .set_body(constant("Which email should I use?"))
+            .to("ai-tool:current?operation=elicit")
+            .set_body(simple("signed up ${body[email]} (${header.CamelAiToolElicitAction})"));
+        b.from("ai-tool:summarize?tags=public&readOnlyHint=true")
+            .set_body(constant("Summarize the release notes"))
+            .to("ai-tool:current?operation=sample")
+            .set_body(simple("summary: ${body}"));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    ctx
+}
+
+#[test]
+fn modern_progress_and_logs_stream_on_the_call() {
+    let ctx = interactive_context();
+    let (_s, _h, c) = Http::start(&ctx, config());
+    let body = json(&format!(
+        r#"{{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{{"name":"report","arguments":{{}},"_meta":{{"progressToken":"p1","io.modelcontextprotocol/logLevel":"info","io.modelcontextprotocol/protocolVersion":"{}","io.modelcontextprotocol/clientCapabilities":{{}}}}}}}}"#,
+        V
+    ));
+    let (st, mut sse) = Sse::open(c.port, "POST", &[("MCP-Protocol-Version", V), ("Mcp-Method", "tools/call"), ("Mcp-Name", "report")], Some(&body));
+    assert_eq!(st, 200);
+    let p = sse.next();
+    assert_eq!(get(&p, "method").to_string(), "notifications/progress");
+    assert_eq!((get(&p, "params.progressToken").to_string().as_str(), get(&p, "params.progress").as_f64(), get(&p, "params.message").to_string().as_str()), ("p1", Some(50.0), "halfway"));
+    let l = sse.next();
+    assert_eq!(get(&l, "method").to_string(), "notifications/message");
+    assert_eq!((get(&l, "params.level").to_string().as_str(), get(&l, "params.data").to_string().as_str()), ("info", "working"));
+    // the debug message is below the requested level; next is the result
+    let r = sse.next();
+    assert_eq!(get(&r, "id"), &Value::Int(5));
+    assert_eq!(get(&r, "result.content.0.text").to_string(), "done");
+    // without a progress token or log level the call is plain JSON and sends nothing extra
+    let (_, r) = c.modern(6, "tools/call", json(r#"{"name":"report","arguments":{}}"#), "{}", &[]);
+    assert_eq!(get(&r, "result.content.0.text").to_string(), "done");
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn modern_elicitation_and_sampling_from_a_route_use_multi_round_trips() {
+    let ctx = interactive_context();
+    let (_s, _h, c) = Http::start(&ctx, config());
+    let caps = r#"{"elicitation":{"form":{}},"sampling":{}}"#;
+    let (_, r) = c.modern(1, "tools/call", json(r#"{"name":"signup","arguments":{}}"#), caps, &[]);
+    assert_eq!(get(&r, "result.resultType").to_string(), "input_required", "{}", r.to_json());
+    assert_eq!(get(&r, "result.inputRequests.input-1.method").to_string(), "elicitation/create");
+    assert_eq!(get(&r, "result.inputRequests.input-1.params.message").to_string(), "Which email should I use?");
+    let state = get(&r, "result.requestState").to_string();
+    let retry = json(&format!(r#"{{"name":"signup","arguments":{{}},"inputResponses":{{"input-1":{{"action":"accept","content":{{"email":"ann@example.com"}}}}}},"requestState":"{}"}}"#, state));
+    let (_, r) = c.modern(2, "tools/call", retry, caps, &[]);
+    assert_eq!(get(&r, "result.content.0.text").to_string(), "signed up ann@example.com (accept)", "{}", r.to_json());
+    // sampling
+    let (_, r) = c.modern(3, "tools/call", json(r#"{"name":"summarize","arguments":{}}"#), caps, &[]);
+    assert_eq!(get(&r, "result.inputRequests.input-1.method").to_string(), "sampling/createMessage");
+    let state = get(&r, "result.requestState").to_string();
+    let retry = json(&format!(r#"{{"name":"summarize","arguments":{{}},"inputResponses":{{"input-1":{{"role":"assistant","content":{{"type":"text","text":"All good."}},"model":"m"}}}},"requestState":"{}"}}"#, state));
+    let (_, r) = c.modern(4, "tools/call", retry, caps, &[]);
+    assert_eq!(get(&r, "result.content.0.text").to_string(), "summary: All good.");
+    // a client without the capability gets an error result
+    let (_, r) = c.modern(5, "tools/call", json(r#"{"name":"signup","arguments":{}}"#), "{}", &[]);
+    assert_eq!(get(&r, "result.isError"), &Value::Bool(true));
+    assert!(get(&r, "result.content.0.text").to_string().contains("elicitation capability"), "{}", r.to_json());
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn legacy_sampling_and_logs_over_stdio() {
+    let ctx = interactive_context();
+    let mut io = Stdio::start(&ctx);
+    io.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"sampling":{},"elicitation":{}}}}"#);
+    io.recv();
+    io.send(r#"{"jsonrpc":"2.0","id":2,"method":"logging/setLevel","params":{"level":"debug"}}"#);
+    io.recv();
+    io.send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"report","arguments":{},"_meta":{"progressToken":7}}}"#);
+    let methods: Vec<String> = (0..3).map(|_| io.recv()).map(|m| m.get("method").map(|x| x.to_string()).unwrap_or_else(|| "result".into())).collect();
+    assert_eq!(methods, ["notifications/progress", "notifications/message", "notifications/message"]);
+    assert_eq!(get(&io.recv(), "result.content.0.text").to_string(), "done");
+    io.send(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"summarize","arguments":{}}}"#);
+    let ask = io.recv();
+    assert_eq!(get(&ask, "method").to_string(), "sampling/createMessage");
+    io.send(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"role":"assistant","content":{{"type":"text","text":"Short."}},"model":"m"}}}}"#, get(&ask, "id").to_json()));
+    assert_eq!(get(&io.recv(), "result.content.0.text").to_string(), "summary: Short.");
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn star_exposes_tagged_items_only_and_route_errors_stay_in_the_log() {
+    let ctx = CamelContext::new();
+    cameleer_ai::register(&ctx);
+    ctx.add_routes(|b| {
+        b.from("ai-tool:tagged?tags=a&readOnlyHint=true").set_body(constant("t"));
+        b.from("ai-tool:plain?readOnlyHint=true").set_body(constant("p"));
+        b.from("ai-tool:broken?tags=a&readOnlyHint=true").throw_exception("java.lang.IllegalStateException", "db password=hunter2 rejected");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let names = |tags: &[&str]| {
+        let (_s, _h, c) = Http::start(&ctx, McpConfig { tags: tags.iter().map(|t| t.to_string()).collect(), ..config() });
+        let (_, r) = c.modern(1, "tools/list", json("{}"), "{}", &[]);
+        get(&r, "result.tools").as_array().unwrap().iter().map(|t| get(t, "name").to_string()).collect::<Vec<_>>()
+    };
+    assert_eq!(names(&["*"]), ["broken", "tagged"]);
+    assert_eq!(names(&["*", "untagged"]), ["broken", "plain", "tagged"]);
+    let (_s, _h, c) = Http::start(&ctx, McpConfig { tags: vec!["*".into()], ..config() });
+    let (_, r) = c.modern(2, "tools/call", json(r#"{"name":"broken","arguments":{}}"#), "{}", &[]);
+    let text = get(&r, "result.content.0.text").to_string();
+    assert!(text.starts_with("Tool broken failed (error ") && !text.contains("hunter2"), "{}", text);
+    let (_s2, _h2, c2) = Http::start(&ctx, McpConfig { tags: vec!["*".into()], expose_errors: true, ..config() });
+    let (_, r) = c2.modern(3, "tools/call", json(r#"{"name":"broken","arguments":{}}"#), "{}", &[]);
+    assert!(get(&r, "result.content.0.text").to_string().contains("rejected"));
     ctx.stop().unwrap();
 }

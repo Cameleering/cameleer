@@ -15,6 +15,8 @@
 //! and stdio ([`stdio`]). Every tool call goes through the [`AiRegistry`] envelope.
 
 pub mod auth;
+pub mod client;
+pub mod component;
 pub mod http;
 pub mod sse;
 pub mod stdio;
@@ -139,6 +141,17 @@ pub struct McpConfig {
     pub server_name: String,
     pub server_version: String,
     pub instructions: Option<String>,
+    /// `serverInfo` extras (Camel's `-server-title`, `-server-description`,
+    /// `-server-website-url`, `-server-icons`).
+    pub server_title: Option<String>,
+    pub server_description: Option<String>,
+    pub server_website_url: Option<String>,
+    pub server_icons: Option<Value>,
+    /// Whether `-server-name` was set (otherwise the context's name is used, as in Camel).
+    pub server_name_set: bool,
+    /// Send route exceptions to MCP clients as they are (default: a generic message, the cause
+    /// is logged), as `camel.server.mcp-expose-errors`.
+    pub expose_errors: bool,
     pub keep_alive: Duration,
     pub session_idle_ttl: Duration,
     pub resource_timeout: Duration,
@@ -161,10 +174,16 @@ impl Default for McpConfig {
             host: "0.0.0.0".into(),
             port: 8080,
             server_name: "cameleer".into(),
+            server_title: None,
+            server_description: None,
+            server_website_url: None,
+            server_icons: None,
+            server_name_set: false,
+            expose_errors: false,
             server_version: env!("CARGO_PKG_VERSION").into(),
             instructions: None,
-            keep_alive: Duration::from_secs(15),
-            session_idle_ttl: Duration::from_secs(1800),
+            keep_alive: Duration::from_secs(30),
+            session_idle_ttl: Duration::from_secs(300),
             resource_timeout: Duration::from_secs(20),
             page_size: 100,
             cache_ttl: Duration::ZERO,
@@ -218,6 +237,14 @@ impl McpConfig {
             c.server_version = v;
         }
         c.instructions = get("camel.server.mcp-instructions");
+        c.server_name_set = get("camel.server.mcp-server-name").is_some();
+        c.server_title = get("camel.server.mcp-server-title");
+        c.server_description = get("camel.server.mcp-server-description");
+        c.server_website_url = get("camel.server.mcp-server-website-url");
+        if let Some(icons) = get("camel.server.mcp-server-icons") {
+            c.server_icons = Some(cameleer_core::json::parse(&icons).map_err(|e| CamelError::illegal_argument(format!("camel.server.mcp-server-icons must be a JSON array: {}", e.message)))?);
+        }
+        c.expose_errors = flag("camel.server.mcp-expose-errors").unwrap_or(false);
         c.keep_alive = dur("camel.server.mcp-session-keep-alive-interval", c.keep_alive)?;
         c.session_idle_ttl = dur("camel.server.mcp-session-idle-ttl", c.session_idle_ttl)?;
         c.resource_timeout = dur("camel.server.mcp-resource-timeout", c.resource_timeout)?;
@@ -239,12 +266,14 @@ impl McpConfig {
     }
 
     /// Whether a tool, resource or prompt with these tags is exposed.
+    /// As in Camel, `*` matches every tagged item but never untagged ones; the pattern
+    /// `untagged` (a Cameleer extension) exposes items without tags.
     pub fn exposes(&self, tags: &[String]) -> bool {
         self.tags.iter().any(|pattern| {
-            if pattern == "*" {
-                return true;
+            if tags.is_empty() {
+                return pattern == "untagged";
             }
-            tags.iter().any(|t| glob_match(pattern, t))
+            pattern == "*" || tags.iter().any(|t| glob_match(pattern, t))
         })
     }
 }
@@ -270,7 +299,7 @@ pub(crate) fn csv(s: &str) -> Vec<String> {
     s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
 }
 
-fn glob_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     match pattern.split_once('*') {
         None => pattern == text,
         Some((pre, post)) => text.len() >= pre.len() + post.len() && text.starts_with(pre) && glob_match_rest(post, &text[pre.len()..]),
@@ -329,6 +358,87 @@ pub struct RequestContext {
     pub session_id: Option<String>,
     /// Legacy: a way to send `elicitation/create` to the client during this request.
     pub client: Option<Arc<dyn ClientChannel>>,
+    /// Where notifications related to this request go (progress, logs): the request's event
+    /// stream over HTTP, stdout over stdio.
+    pub notify: Option<Arc<dyn Fn(&Value) + Send + Sync>>,
+}
+
+impl RequestContext {
+    pub fn new(era: Era, principal: Principal, client_capabilities: Value) -> RequestContext {
+        RequestContext { era, principal, client_capabilities, session_id: None, client: None, notify: None }
+    }
+}
+
+/// A tool call's line back to the MCP client.
+struct McpInteraction {
+    modern: bool,
+    progress_token: Option<Value>,
+    log_level: Option<String>,
+    notify: Option<Arc<dyn Fn(&Value) + Send + Sync>>,
+    client: Option<Arc<dyn ClientChannel>>,
+    caps: Value,
+    /// 2026-07-28: the answers of a retried call (`inputResponses`).
+    responses: ObjectMap,
+    asked: std::sync::atomic::AtomicUsize,
+    /// 2026-07-28: questions to send back as `inputRequests`.
+    pending: Mutex<Vec<(String, Value)>>,
+}
+
+fn severity(level: &str) -> usize {
+    ["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"].iter().position(|l| l.eq_ignore_ascii_case(level)).unwrap_or(1)
+}
+
+impl crate::registry::CallInteraction for McpInteraction {
+    fn progress(&self, progress: f64, total: Option<f64>, message: Option<String>) {
+        let (Some(token), Some(notify)) = (&self.progress_token, &self.notify) else { return };
+        let mut p = ObjectMap::new();
+        p.insert("progressToken".into(), token.clone());
+        p.insert("progress".into(), Value::Float(progress));
+        if let Some(t) = total {
+            p.insert("total".into(), Value::Float(t));
+        }
+        if let Some(m) = message {
+            p.insert("message".into(), Value::from(m));
+        }
+        notify(&notification("notifications/progress", Value::Object(p)));
+    }
+    fn log(&self, level: &str, logger: Option<&str>, data: Value) {
+        let (Some(min), Some(notify)) = (&self.log_level, &self.notify) else { return };
+        if severity(level) < severity(min) {
+            return;
+        }
+        let mut p = ObjectMap::new();
+        p.insert("level".into(), Value::from(level.to_ascii_lowercase()));
+        if let Some(l) = logger {
+            p.insert("logger".into(), Value::from(l));
+        }
+        p.insert("data".into(), data);
+        notify(&notification("notifications/message", Value::Object(p)));
+    }
+    fn ask(&self, method: &str, params: Value) -> crate::registry::AskOutcome {
+        use crate::registry::AskOutcome;
+        let cap = if method == "sampling/createMessage" { "sampling" } else { "elicitation" };
+        if !self.caps.as_object().map(|c| c.contains_key(cap)).unwrap_or(false) {
+            return AskOutcome::Unavailable(format!("the client did not declare the {} capability", cap));
+        }
+        if self.modern {
+            let n = self.asked.fetch_add(1, Ordering::SeqCst) + 1;
+            let key = format!("input-{}", n);
+            if let Some(answer) = self.responses.get(&key) {
+                return AskOutcome::Answer(answer.clone());
+            }
+            self.pending.lock().unwrap_or_else(|p| p.into_inner()).push((key, Value::object([("method", Value::from(method)), ("params", params)])));
+            return AskOutcome::Retry;
+        }
+        match &self.client {
+            Some(c) => match c.request(method, params, Duration::from_secs(600)) {
+                Some(Ok(v)) => AskOutcome::Answer(v),
+                Some(Err(e)) => AskOutcome::Unavailable(format!("the client answered with an error: {}", e.to_json())),
+                None => AskOutcome::Unavailable("the client did not answer".into()),
+            },
+            None => AskOutcome::Unavailable("this connection cannot carry requests to the client".into()),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -344,6 +454,8 @@ pub struct Session {
     subscriptions: Mutex<HashSet<String>>,
     stream: Mutex<Option<sse::SseStream>>,
     listener: Mutex<Option<u64>>,
+    /// `logging/setLevel`: send log notifications at this level and above.
+    log_level: Mutex<Option<String>>,
     /// stdio: where server notifications go.
     sink: Mutex<Option<Arc<dyn Fn(&Value) + Send + Sync>>>,
 }
@@ -371,6 +483,8 @@ impl Session {
 /// The protocol engine shared by the transports.
 pub struct McpServer {
     pub config: McpConfig,
+    /// `-server-name`, else the context's name.
+    server_name: String,
     registry: Arc<AiRegistry>,
     state_cipher: cameleer_tls::crypto::aes::AesGcm,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
@@ -389,7 +503,9 @@ impl McpServer {
                 "The MCP server is enabled but camel.server.mcp-tags is not set, so it exposes no tools, resources or prompts; set it to * to expose all of them"
             );
         }
+        let server_name = if config.server_name_set { config.server_name.clone() } else { ctx.name().to_string() };
         Ok(Arc::new(McpServer {
+            server_name,
             config,
             registry,
             state_cipher: cameleer_tls::crypto::aes::AesGcm::new(&key),
@@ -404,7 +520,18 @@ impl McpServer {
     }
 
     fn server_info(&self) -> Value {
-        Value::object([("name", Value::from(self.config.server_name.as_str())), ("version", Value::from(self.config.server_version.as_str()))])
+        let mut m = ObjectMap::new();
+        m.insert("name".into(), Value::from(self.server_name.as_str()));
+        m.insert("version".into(), Value::from(self.config.server_version.as_str()));
+        for (k, v) in [("title", &self.config.server_title), ("description", &self.config.server_description), ("websiteUrl", &self.config.server_website_url)] {
+            if let Some(v) = v {
+                m.insert(k.into(), Value::from(v.as_str()));
+            }
+        }
+        if let Some(i) = &self.config.server_icons {
+            m.insert("icons".into(), i.clone());
+        }
+        Value::Object(m)
     }
 
     fn capabilities(&self) -> Value {
@@ -471,6 +598,7 @@ impl McpServer {
             subscriptions: Mutex::default(),
             stream: Mutex::new(None),
             listener: Mutex::new(None),
+            log_level: Mutex::new(None),
             sink: Mutex::new(None),
         });
         // list_changed and resources/updated go to the session's stream
@@ -603,8 +731,13 @@ impl McpServer {
         let result = match method {
             "server/discover" if modern => self.discover(),
             "ping" if !modern => Ok(Value::Object(ObjectMap::new())),
-            // accepted for legacy clients; the server sends no log notifications
-            "logging/setLevel" if !modern => Ok(Value::Object(ObjectMap::new())),
+            // legacy clients choose the level of the log notifications tool routes send
+            "logging/setLevel" if !modern => {
+                if let Some(s) = rc.session_id.as_deref().and_then(|id| self.session(id)) {
+                    *s.log_level.lock().unwrap_or_else(|p| p.into_inner()) = params.get("level").map(|l| l.to_string());
+                }
+                Ok(Value::Object(ObjectMap::new()))
+            }
             "tools/list" => self.list(params, rc, ListKind::Tools),
             "tools/call" => self.call_tool(params, rc),
             "resources/list" => self.list(params, rc, ListKind::Resources),
@@ -691,6 +824,27 @@ impl McpServer {
         Ok(Value::Object(m))
     }
 
+    fn interaction_for(&self, params: &ObjectMap, rc: &RequestContext, responses: ObjectMap) -> Arc<McpInteraction> {
+        let meta = params.get("_meta").and_then(|m| m.as_object());
+        let modern = rc.era == Era::Modern;
+        let log_level = if modern {
+            meta.and_then(|m| m.get("io.modelcontextprotocol/logLevel")).map(|l| l.to_string())
+        } else {
+            rc.session_id.as_deref().and_then(|id| self.session(id)).and_then(|s| s.log_level.lock().unwrap_or_else(|p| p.into_inner()).clone())
+        };
+        Arc::new(McpInteraction {
+            modern,
+            progress_token: meta.and_then(|m| m.get("progressToken")).filter(|t| !t.is_null()).cloned(),
+            log_level,
+            notify: rc.notify.clone(),
+            client: rc.client.clone(),
+            caps: rc.client_capabilities.clone(),
+            responses,
+            asked: std::sync::atomic::AtomicUsize::new(0),
+            pending: Mutex::default(),
+        })
+    }
+
     fn tool_call_for(&self, params: &ObjectMap, rc: &RequestContext) -> std::result::Result<ToolCall, RpcError> {
         let name = params.get("name").and_then(|n| n.as_str()).ok_or_else(|| RpcError::new(codes::INVALID_PARAMS, "tools/call needs a name"))?;
         let def = self.registry.tool(name).filter(|d| self.config.exposes(&d.tags) && !self.registry.is_disabled(name));
@@ -701,6 +855,8 @@ impl McpServer {
         let meta_str = |k: &str| meta.and_then(|m| m.get(k)).filter(|v| !v.is_null()).map(|v| v.to_string());
         let mut headers = vec![
             ("CamelMcpSecurityPrincipal".to_string(), Value::from(rc.principal.name.as_str())),
+            ("CamelMcpSecurityPrincipalName".to_string(), Value::from(rc.principal.name.as_str())),
+            ("CamelMcpSecurityPrincipalRoles".to_string(), Value::Array(rc.principal.scopes.iter().map(|s| Value::from(s.as_str())).collect())),
             ("CamelMcpSecurityPrincipalScopes".to_string(), Value::from(rc.principal.scopes.join(" "))),
             ("CamelMcpSecurityMethod".to_string(), Value::from(rc.principal.method.as_str())),
         ];
@@ -718,20 +874,47 @@ impl McpServer {
             approved_by: None,
             properties: Vec::new(),
             headers,
+            interaction: Default::default(),
         })
     }
 
     fn call_tool(&self, params: &ObjectMap, rc: &RequestContext) -> std::result::Result<Value, RpcError> {
-        let call = self.tool_call_for(params, rc)?;
-        // 2026-07-28 retry of a call that waited for approval
+        let mut call = self.tool_call_for(params, rc)?;
+        let mut responses = ObjectMap::new();
+        // 2026-07-28 retry of a call that waited for approval or for the client's answers
         if rc.era == Era::Modern {
             if let Some(state) = params.get("requestState") {
-                return self.resume_approval(state, params, &call, rc);
+                let handle = self.open_state(state.as_str().unwrap_or(""), &call, rc).map_err(|m| RpcError::new(codes::INVALID_PARAMS, format!("Invalid requestState: {}", m)))?;
+                if handle != INPUT_STATE {
+                    return self.resume_approval(state, params, &call, rc);
+                }
+                responses = params.get("inputResponses").and_then(|r| r.as_object()).cloned().unwrap_or_default();
             }
         }
+        let interaction = self.interaction_for(params, rc, responses);
+        call.interaction = crate::registry::Interaction(Some(interaction.clone()));
         let result = self.registry.call(call.clone());
+        let questions = std::mem::take(&mut *interaction.pending.lock().unwrap_or_else(|p| p.into_inner()));
+        if !questions.is_empty() {
+            // the route asked the client (2026-07-28): return the questions; the client retries
+            let mut requests = ObjectMap::new();
+            for (k, q) in questions {
+                requests.insert(k, q);
+            }
+            let mut m = ObjectMap::new();
+            m.insert("resultType".into(), Value::from("input_required"));
+            m.insert("inputRequests".into(), Value::Object(requests));
+            m.insert("requestState".into(), Value::from(self.seal_state(INPUT_STATE, &call, rc)));
+            return Ok(Value::Object(m));
+        }
         match &result.status {
             ToolStatus::ApprovalRequired { handle } => self.ask_approval(handle, &call, &result, rc),
+            _ if result.route_error && !self.config.expose_errors => {
+                // like Camel: the client gets a generic message, the cause stays in the log
+                let id = cameleer_core::language::support::to_hex(&cameleer_tls::crypto::rng::random_bytes(4));
+                cameleer_core::camel_warn!("mcp", "Tool {} failed (error {}): {}", call.name, id, result.text);
+                Ok(tool_result(&ToolResult::error(format!("Tool {} failed (error {}). The cause is in the server log.", call.name, id))))
+            }
             _ => Ok(tool_result(&result)),
         }
     }
@@ -1010,6 +1193,9 @@ pub fn tool_result(r: &ToolResult) -> Value {
     m.insert("isError".into(), Value::Bool(r.is_error));
     Value::Object(m)
 }
+
+/// The `requestState` marker of a call retried with the client's answers (not an approval).
+const INPUT_STATE: &str = "input";
 
 fn approval_message(call: &ToolCall, parked: &ToolResult) -> String {
     let args = match &call.arguments {

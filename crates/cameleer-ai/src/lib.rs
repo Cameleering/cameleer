@@ -20,6 +20,7 @@
 
 pub mod audit;
 pub mod component;
+pub mod guard;
 pub mod mcp;
 pub mod registry;
 pub mod tool;
@@ -28,7 +29,7 @@ use std::sync::Arc;
 
 use cameleer_core::context::CamelContext;
 
-pub use registry::{AiRegistry, ApprovalRequest, PromptMessage, PromptResult, ResourceContent, ToolCall, ToolResult, ToolStatus};
+pub use registry::{AiRegistry, ApprovalRequest, AskOutcome, CallInteraction, Interaction, PromptMessage, PromptResult, ResourceContent, ToolCall, ToolResult, ToolStatus};
 pub use tool::{Hints, ToolDefinition};
 
 /// Header and property names (Camel's `CamelAiTool*` names, plus Cameleer's extensions).
@@ -69,6 +70,22 @@ pub mod headers {
     pub const RESOURCE_MIME_TYPE: &str = "CamelAiResourceMimeType";
     /// The prompt's name (prompt routes).
     pub const PROMPT_NAME: &str = "CamelAiPromptName";
+    /// `operation=progress`: the progress so far (a number).
+    pub const PROGRESS: &str = "CamelAiToolProgress";
+    /// `operation=progress`: the total, if known.
+    pub const PROGRESS_TOTAL: &str = "CamelAiToolProgressTotal";
+    /// `operation=log`: the level (`debug`, `info`, `notice`, `warning`, `error`, ...).
+    pub const LOG_LEVEL: &str = "CamelAiToolLogLevel";
+    /// `operation=log`: the logger name.
+    pub const LOGGER: &str = "CamelAiToolLogger";
+    /// `operation=elicit`: the JSON Schema of the answer when the body is the message text.
+    pub const ELICIT_SCHEMA: &str = "CamelAiToolElicitSchema";
+    /// `operation=elicit`, out: `accept`, `decline` or `cancel`.
+    pub const ELICIT_ACTION: &str = "CamelAiToolElicitAction";
+    /// `operation=sample`: the maximum tokens of the client's model answer.
+    pub const SAMPLE_MAX_TOKENS: &str = "CamelAiToolSampleMaxTokens";
+    /// `operation=sample`, out: the model that answered.
+    pub const SAMPLE_MODEL: &str = "CamelAiToolSampleModel";
 }
 
 /// Register `ai-tool`, `ai-resource` and `ai-prompt` on a context (lazily created).
@@ -77,6 +94,7 @@ pub fn register(ctx: &CamelContext) {
     ctx.add_component_factory("ai-tool", || Arc::new(component::AiComponent::tool()));
     ctx.add_component_factory("ai-resource", || Arc::new(component::AiComponent::resource()));
     ctx.add_component_factory("ai-prompt", || Arc::new(component::AiComponent::prompt()));
+    ctx.add_component_factory("mcp", || Arc::new(mcp::component::McpComponent));
     // the agent step and the model components' tool loops call tools through the registry
     let tools: Arc<dyn cameleer_core::ai::ToolProvider> = Arc::new(registry::RegistryTools { ctx: ctx.downgrade() });
     ctx.registry().bind(cameleer_core::ai::TOOL_PROVIDER_BEAN, tools);

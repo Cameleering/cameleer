@@ -581,3 +581,38 @@ fn a_full_argschema_is_validated_with_2020_12_keywords() {
     assert!(bad.text.contains("$.roles[0]: must be a constant value user"), "{}", bad.text);
     ctx.stop().unwrap();
 }
+
+#[test]
+fn guardrails_redact_authorize_and_cache() {
+    let ctx = context();
+    let runs = counter();
+    let r2 = runs.clone();
+    ctx.add_routes(move |b| {
+        let r2 = r2.clone();
+        b.from("ai-tool:customer?parameter.id=string&readOnlyHint=true&redact=email,secret&cacheTtl=1m").process(move |ex: &mut Exchange| {
+            r2.fetch_add(1, Ordering::SeqCst);
+            ex.set_body(json(r#"{"name":"Ann","email":"ann@example.com","note":"key sk-abcdefghijklmnopqrstuv"}"#));
+            Ok(())
+        });
+        b.from("ai-tool:refund_small?parameter.amount=integer&readOnlyHint=true&authorize=${header.amount} <= 100 %26%26 ${header.CamelAiToolPrincipal} == 'support'")
+            .set_body(simple("refunded ${header.amount}"));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let reg = AiRegistry::of(&ctx).unwrap();
+    let r = reg.call(ToolCall::new("customer", json(r#"{"id":"c1"}"#)));
+    assert_eq!(r.structured.unwrap().to_json(), r#"{"name":"Ann","email":"[REDACTED:email]","note":"key [REDACTED:secret]"}"#);
+    assert!(!r.text.contains("ann@example.com"));
+    // the second call with the same arguments comes from the cache
+    reg.call(ToolCall::new("customer", json(r#"{"id":"c1"}"#)));
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+    reg.call(ToolCall::new("customer", json(r#"{"id":"c2"}"#)));
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+    // authorize looks at the arguments and the caller
+    assert_eq!(reg.call(ToolCall::new("refund_small", json(r#"{"amount":50}"#)).with_principal("support")).text, "refunded 50");
+    assert!(reg.call(ToolCall::new("refund_small", json(r#"{"amount":500}"#)).with_principal("support")).text.contains("Not authorized"));
+    assert!(reg.call(ToolCall::new("refund_small", json(r#"{"amount":50}"#)).with_principal("guest")).text.contains("Not authorized"));
+    // a tool's description defaults to its name, as in Camel
+    assert_eq!(reg.tool("customer").unwrap().description, "customer");
+    ctx.stop().unwrap();
+}

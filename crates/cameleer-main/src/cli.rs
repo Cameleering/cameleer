@@ -402,7 +402,7 @@ fn run_cmd(args: &[String]) -> CliResult {
     if a.flag("mcp") || a.flag("mcp-stdio") {
         main.set_property("camel.server.mcp-enabled", "true");
         main.set_property("camel.server.mcp-transport", if a.flag("mcp-stdio") { "stdio" } else { "http" });
-        main.set_default_property("camel.server.mcp-tags", "*");
+        main.set_default_property("camel.server.mcp-tags", "*,untagged");
     }
     for kv in a.all("prop") {
         let (k, v) = kv.split_once('=').ok_or_else(|| format!("--prop expects key=value, got {}", kv))?;

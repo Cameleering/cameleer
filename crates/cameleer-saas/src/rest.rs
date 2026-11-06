@@ -220,6 +220,8 @@ impl Rest {
         let mut c = HttpClient::new();
         c.read_timeout = read_timeout;
         c.connect_timeout = Duration::from_secs(10);
+        // reuse connections: a model call or API request skips the TCP and TLS handshakes
+        c.keep_alive = true;
         Rest { client: Arc::new(c) }
     }
 

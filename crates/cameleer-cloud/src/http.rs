@@ -10,8 +10,9 @@
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, TcpStream, ToSocketAddrs};
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use cameleer_core::error::{kinds as core_kinds, CamelError, Result};
 use cameleer_tls::{TlsClientConfig, TlsStream};
@@ -284,10 +285,78 @@ impl HttpClient {
         Err(connect_err(authority, last.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no address"))))
     }
 
-    /// Send a request and read the full response.
+    /// Send a request and read the full response. Without a proxy the connection comes from
+    /// a process-wide keep-alive pool, so repeated calls to one service skip the TCP and TLS
+    /// handshakes; a pooled connection the server already closed is replaced once.
     pub fn send(&self, req: &Request) -> Result<Response> {
+        if self.proxy_for(&req.url).is_none() {
+            return self.send_pooled(req);
+        }
         let mut reader = self.write_request(req, None)?;
         read_response(&mut reader, &req.method).map_err(|e| self.io_err(req, e))
+    }
+
+    fn pool_key(&self, url: &Url) -> String {
+        let tls = match &self.tls {
+            Some(c) => Arc::as_ptr(c) as usize,
+            None => Arc::as_ptr(&default_tls(self.insecure)) as usize,
+        };
+        format!("{}://{}#{}#{}#{}", if url.is_https() { "https" } else { "http" }, url.authority(), tls, self.insecure, self.timeout.as_millis())
+    }
+
+    fn send_pooled(&self, req: &Request) -> Result<Response> {
+        let key = self.pool_key(&req.url);
+        for attempt in 0..2 {
+            let (mut reader, reused) = match cloud_pool().take(&key) {
+                Some(r) => (r, true),
+                None => {
+                    let url = &req.url;
+                    let stream: Box<dyn Stream> = if url.is_https() { Box::new(self.tls_wrap(self.connect_tcp(&url.authority())?, url)?) } else { Box::new(self.connect_tcp(&url.authority())?) };
+                    (BufReader::new(stream), false)
+                }
+            };
+            let head = self.request_head(req, &req.url.target(), true, req.body.len() as u64, None);
+            let written = reader.get_mut().write_all(head.as_bytes()).and_then(|_| reader.get_mut().write_all(&req.body)).and_then(|_| reader.get_mut().flush());
+            let resp = written.and_then(|_| read_response(&mut reader, &req.method));
+            match resp {
+                Ok(r) => {
+                    let close = r.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("connection") && v.to_ascii_lowercase().contains("close"));
+                    let delimited = req.method == "HEAD" || matches!(r.status, 204 | 304) || r.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding"));
+                    if !close && delimited {
+                        cloud_pool().put(key, reader);
+                    }
+                    return Ok(r);
+                }
+                Err(e) if reused && attempt == 0 && !matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => continue,
+                Err(e) => return Err(self.io_err(req, e)),
+            }
+        }
+        Err(CamelError::new(core_kinds::IO, format!("I/O error talking to {}", req.url.origin())))
+    }
+
+    /// The request line and headers.
+    fn request_head(&self, req: &Request, target: &str, keep_alive: bool, body_len: u64, proxy_auth: Option<&str>) -> String {
+        let mut head = format!("{} {} HTTP/1.1\r\n", req.method, target);
+        if req.get_header("Host").is_none() {
+            head.push_str(&format!("Host: {}\r\n", req.url.host_header()));
+        }
+        for (k, v) in &req.headers {
+            if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("connection") {
+                continue;
+            }
+            head.push_str(&format!("{}: {}\r\n", k, v));
+        }
+        if let Some(auth) = proxy_auth {
+            head.push_str(&format!("Proxy-Authorization: {}\r\n", auth));
+        }
+        if req.get_header("User-Agent").is_none() {
+            head.push_str("User-Agent: cameleer-cloud/0.1\r\n");
+        }
+        if body_len > 0 || matches!(req.method.as_str(), "POST" | "PUT" | "PATCH") {
+            head.push_str(&format!("Content-Length: {}\r\n", body_len));
+        }
+        head.push_str(if keep_alive { "Connection: keep-alive\r\n\r\n" } else { "Connection: close\r\n\r\n" });
+        head
     }
 
     /// Send a request whose body is streamed from `body` (`len` bytes; `req.body` is ignored).
@@ -374,6 +443,37 @@ impl HttpClient {
             None => default_tls(self.insecure),
         };
         TlsStream::connect(tcp, &url.host, &cfg).map_err(|e| CamelError::new("SSLHandshakeException", format!("TLS handshake with {} failed: {}", url.authority(), e)))
+    }
+}
+
+/// Idle keep-alive connections of [`HttpClient::send`], by origin and TLS settings.
+struct CloudPool {
+    idle: Mutex<HashMap<String, Vec<(Instant, BufReader<Box<dyn Stream>>)>>>,
+}
+
+fn cloud_pool() -> &'static CloudPool {
+    static POOL: OnceLock<CloudPool> = OnceLock::new();
+    POOL.get_or_init(|| CloudPool { idle: Mutex::new(HashMap::new()) })
+}
+
+impl CloudPool {
+    fn take(&self, key: &str) -> Option<BufReader<Box<dyn Stream>>> {
+        let mut idle = self.idle.lock().unwrap_or_else(|p| p.into_inner());
+        let list = idle.get_mut(key)?;
+        while let Some((at, r)) = list.pop() {
+            if at.elapsed() < Duration::from_secs(30) {
+                return Some(r);
+            }
+        }
+        None
+    }
+    fn put(&self, key: String, r: BufReader<Box<dyn Stream>>) {
+        let mut idle = self.idle.lock().unwrap_or_else(|p| p.into_inner());
+        let list = idle.entry(key).or_default();
+        list.retain(|(at, _)| at.elapsed() < Duration::from_secs(30));
+        if list.len() < 16 {
+            list.push((Instant::now(), r));
+        }
     }
 }
 

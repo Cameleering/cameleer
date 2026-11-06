@@ -138,3 +138,91 @@
             constant: '[{"role":"user","content":{"type":"image","mimeType":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="}},{"role":"user","content":{"type":"text","text":"Please analyze the image above."}}]'
         - unmarshal:
             json: {}
+- route:
+    from:
+      uri: ai-tool:test_tool_with_logging
+      parameters:
+        description: Sends three log messages
+        readOnlyHint: true
+      steps:
+        - setHeader: {name: CamelAiToolLogLevel, constant: info}
+        - setBody: {constant: Tool execution started}
+        - to: ai-tool:current?operation=log
+        - delay: {constant: 50}
+        - setBody: {constant: Tool processing data}
+        - to: ai-tool:current?operation=log
+        - delay: {constant: 50}
+        - setBody: {constant: Tool execution completed}
+        - to: ai-tool:current?operation=log
+        - setBody: {constant: Logging test completed}
+- route:
+    from:
+      uri: ai-tool:test_tool_with_progress
+      parameters:
+        description: Reports progress
+        readOnlyHint: true
+      steps:
+        - setHeader: {name: CamelAiToolProgressTotal, constant: 100}
+        - setHeader: {name: CamelAiToolProgress, constant: 0}
+        - to: ai-tool:current?operation=progress
+        - delay: {constant: 50}
+        - setHeader: {name: CamelAiToolProgress, constant: 50}
+        - to: ai-tool:current?operation=progress
+        - delay: {constant: 50}
+        - setHeader: {name: CamelAiToolProgress, constant: 100}
+        - to: ai-tool:current?operation=progress
+        - setBody: {constant: Progress test completed}
+- route:
+    from:
+      uri: ai-tool:test_sampling
+      parameters:
+        description: Asks the client's model
+        parameter.prompt: string
+        parameter.prompt.required: true
+        readOnlyHint: true
+      steps:
+        - setHeader: {name: CamelAiToolSampleMaxTokens, constant: 100}
+        - setBody: {simple: "${header.prompt}"}
+        - to: ai-tool:current?operation=sample
+        - setBody: {simple: "LLM response: ${body}"}
+- route:
+    from:
+      uri: ai-tool:test_elicitation
+      parameters:
+        description: Asks the user
+        parameter.message: string
+        parameter.message.required: true
+        readOnlyHint: true
+      steps:
+        - setHeader:
+            name: CamelAiToolElicitSchema
+            constant: '{"type":"object","properties":{"username":{"type":"string","description":"User''s response"},"email":{"type":"string","description":"User''s email address"}},"required":["username","email"]}'
+        - setBody: {simple: "${header.message}"}
+        - to: ai-tool:current?operation=elicit
+        - setBody: {simple: "User response: action=${header.CamelAiToolElicitAction}, content=${body}"}
+- route:
+    from:
+      uri: ai-tool:test_elicitation_sep1034_defaults
+      parameters:
+        description: Asks the user with defaults
+        readOnlyHint: true
+      steps:
+        - setHeader:
+            name: CamelAiToolElicitSchema
+            constant: '{"type":"object","properties":{"name":{"type":"string","default":"John Doe"},"age":{"type":"integer","default":30},"score":{"type":"number","default":95.5},"status":{"type":"string","enum":["active","inactive","pending"],"default":"active"},"verified":{"type":"boolean","default":true}}}'
+        - setBody: {constant: Please review your details}
+        - to: ai-tool:current?operation=elicit
+        - setBody: {simple: "Elicitation completed: action=${header.CamelAiToolElicitAction}, content=${body}"}
+- route:
+    from:
+      uri: ai-tool:test_elicitation_sep1330_enums
+      parameters:
+        description: Asks the user with enums
+        readOnlyHint: true
+      steps:
+        - setHeader:
+            name: CamelAiToolElicitSchema
+            constant: '{"type":"object","properties":{"untitledSingle":{"type":"string","enum":["option1","option2","option3"]},"titledSingle":{"type":"string","oneOf":[{"const":"value1","title":"First Option"},{"const":"value2","title":"Second Option"},{"const":"value3","title":"Third Option"}]},"legacyEnum":{"type":"string","enum":["opt1","opt2","opt3"],"enumNames":["Option One","Option Two","Option Three"]},"untitledMulti":{"type":"array","items":{"type":"string","enum":["option1","option2","option3"]}},"titledMulti":{"type":"array","items":{"anyOf":[{"const":"value1","title":"First Choice"},{"const":"value2","title":"Second Choice"},{"const":"value3","title":"Third Choice"}]}}}}'
+        - setBody: {constant: Pick your options}
+        - to: ai-tool:current?operation=elicit
+        - setBody: {simple: "Elicitation completed: action=${header.CamelAiToolElicitAction}, content=${body}"}

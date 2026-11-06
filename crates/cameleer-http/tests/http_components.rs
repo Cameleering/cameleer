@@ -550,3 +550,34 @@ fn streaming_request_and_response_bodies() {
     ctx.stop().unwrap();
     assert_eq!(stream_body::pending(), 0, "no stream left behind");
 }
+
+#[test]
+fn keep_alive_clients_reuse_pooled_connections() {
+    use std::sync::{Arc, Mutex};
+    let peers: Arc<Mutex<Vec<String>>> = Arc::default();
+    let p2 = peers.clone();
+    let server = cameleer_http::server::HttpServer::bind("127.0.0.1:0", cameleer_http::server::ServerConfig::default(), move |req: &mut cameleer_http::HttpRequest| {
+        p2.lock().unwrap().push(req.remote_addr.map(|a| a.to_string()).unwrap_or_default());
+        cameleer_http::HttpResponse::text(200, "ok")
+    })
+    .unwrap();
+    let url = format!("http://127.0.0.1:{}/x", server.port());
+    let pooled = HttpClient::new().with_keep_alive(true);
+    for _ in 0..5 {
+        assert_eq!(pooled.request("POST", &url, &[], Some(b"{}"), None).unwrap().body_text(), "ok");
+    }
+    let seen = peers.lock().unwrap().clone();
+    assert!(seen.iter().all(|p| p == &seen[0]), "every request used the same connection: {:?}", seen);
+    // a plain client opens one connection per request
+    peers.lock().unwrap().clear();
+    for _ in 0..3 {
+        HttpClient::new().request("GET", &url, &[], None, None).unwrap();
+    }
+    let seen = peers.lock().unwrap().clone();
+    assert_eq!(seen.iter().collect::<std::collections::HashSet<_>>().len(), 3);
+    // a pooled connection the server closed is replaced transparently
+    server.stop();
+    let server2 = cameleer_http::server::HttpServer::bind(format!("127.0.0.1:{}", server.port()), cameleer_http::server::ServerConfig::default(), |_req: &mut cameleer_http::HttpRequest| cameleer_http::HttpResponse::text(200, "again")).unwrap();
+    assert_eq!(pooled.request("GET", &url, &[], None, None).unwrap().body_text(), "again");
+    server2.stop();
+}

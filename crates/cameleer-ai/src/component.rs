@@ -17,7 +17,7 @@ use cameleer_core::util::Parameters;
 use cameleer_core::value::Value;
 
 use crate::headers;
-use crate::registry::{AiRegistry, ApprovalRule, PromptEntry, ResourceEntry, ToolAuthorizationPolicy, ToolCall, ToolEntry, ToolPolicy, ToolStatus, PROMPT_NOT_FOUND, RESOURCE_NOT_FOUND};
+use crate::registry::{AiRegistry, ApprovalRule, AskOutcome, PromptEntry, ResourceEntry, ToolAuthorizationPolicy, ToolCall, ToolEntry, ToolPolicy, ToolStatus, PROMPT_NOT_FOUND, RESOURCE_NOT_FOUND};
 use crate::tool::{check_schema_bounds, parse_schema_option, schema_from_parameters, Hints, ToolDefinition};
 
 /// Error kind raised by the `ai-tool` producer with `throwOnError=true`.
@@ -71,12 +71,12 @@ impl Component for AiComponent {
         let throw_on_error = params.take_bool("throwOnError", false)?;
         let operation = params.take_string("operation", "read");
         let approval_op = match operation.as_str() {
-            "approve" | "deny" if self.kind == Kind::Tool => Some(operation.clone()),
+            "approve" | "deny" | "progress" | "log" | "elicit" | "sample" if self.kind == Kind::Tool => Some(operation.clone()),
             _ => None,
         };
         let notify_updated = match operation.as_str() {
             "read" | "call" => false,
-            "approve" | "deny" if self.kind == Kind::Tool => false,
+            "approve" | "deny" | "progress" | "log" | "elicit" | "sample" if self.kind == Kind::Tool => false,
             "updated" if self.kind == Kind::Resource => true,
             other => {
                 return Err(CamelError::illegal_argument(format!(
@@ -85,7 +85,7 @@ impl Component for AiComponent {
                     scheme(self.kind),
                     match self.kind {
                         Kind::Resource => "read or updated",
-                        Kind::Tool => "call, approve or deny",
+                        Kind::Tool => "call, approve, deny, progress, log, elicit or sample",
                         Kind::Prompt => "read",
                     }
                 )))
@@ -123,7 +123,8 @@ struct ToolSpec {
 }
 
 fn tool_spec(ctx: &CamelContext, name: &str, params: &mut Parameters) -> Result<ToolSpec> {
-    let description = params.take("description").unwrap_or_default();
+    // Camel: the description defaults to the tool's name
+    let description = params.take("description").filter(|d| !d.trim().is_empty()).unwrap_or_else(|| name.to_string());
     let title = params.take("title");
     let tags = csv(params.take("tags"));
     let flat = params.take_prefixed("parameter.");
@@ -218,6 +219,16 @@ fn tool_spec(ctx: &CamelContext, name: &str, params: &mut Parameters) -> Result<
     policy.breaker_fallback = params.take("circuitBreakerFallback");
     policy.compensation = params.take("compensation");
     policy.audit = params.take_bool("audit", true)?;
+    if let Some(expr) = params.take("authorize") {
+        let pred = ctx.resolve_language("simple")?.create_predicate(&expr, &BTreeMap::new())?;
+        policy.authorize = Some((pred, expr));
+    }
+    if let Some(r) = params.take("redact") {
+        policy.redact = Arc::new(crate::guard::parse(&r)?);
+    }
+    if let Some(t) = params.take("cacheTtl") {
+        policy.cache_ttl = Some(cameleer_core::util::parse_duration(t.trim())?).filter(|d| !d.is_zero());
+    }
     policy.pin = params.take_bool("pin", true)?;
     if let Some(a) = params.take("authorizationPolicy") {
         let bean = a.trim().trim_start_matches('#');
@@ -471,6 +482,9 @@ impl Processor for AiProducer {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         let reg = AiRegistry::of(&self.ctx)?;
         match self.kind {
+            Kind::Tool if matches!(self.approval_op.as_deref(), Some("progress" | "log" | "elicit" | "sample")) => {
+                interact(&reg, ex, self.approval_op.as_deref().unwrap_or_default())
+            }
             Kind::Tool if self.approval_op.is_some() => {
                 // resolve a parked call: header CamelAiToolApprovalHandle, approver in CamelAiToolApprovedBy
                 let handle = ex
@@ -505,6 +519,7 @@ impl Processor for AiProducer {
                     approved_by: text_header(ex, headers::APPROVED_BY),
                     properties: ex.properties.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
                     headers: Vec::new(),
+                    interaction: Default::default(),
                 };
                 let r = reg.call(call);
                 ex.set_header(headers::STATUS, r.status.as_str());
@@ -571,5 +586,83 @@ impl Processor for AiProducer {
                 Ok(())
             }
         }
+    }
+}
+
+/// Error kind when a tool route asks the client for input it can't give.
+pub const INTERACTION_UNAVAILABLE: &str = "org.apache.camel.component.ai.InteractionUnavailableException";
+/// Error kind that ends a call so it can be retried with the client's answer (2026-07-28).
+pub const INPUT_REQUIRED: &str = "org.apache.camel.component.ai.InputRequiredException";
+
+/// `ai-tool:current?operation=progress|log|elicit|sample` inside a tool's route: talk back to
+/// the caller of the running call.
+fn interact(reg: &AiRegistry, ex: &mut Exchange, op: &str) -> Result<()> {
+    let Some(i) = reg.interaction(ex) else {
+        // outside an MCP call (a producer or agent call): progress and logs go nowhere
+        return match op {
+            "progress" | "log" => Ok(()),
+            _ => Err(CamelError::new(INTERACTION_UNAVAILABLE, format!("ai-tool {}: this call has no client to ask (only MCP calls do)", op))),
+        };
+    };
+    let num = |ex: &Exchange, k: &str| ex.header(k).and_then(|v| v.as_f64().or_else(|| v.to_string().trim().parse().ok()));
+    match op {
+        "progress" => {
+            let progress = num(ex, headers::PROGRESS).ok_or_else(|| CamelError::illegal_argument("ai-tool progress needs the CamelAiToolProgress header"))?;
+            let message = match ex.body() {
+                Value::Null => None,
+                v => Some(v.to_string()),
+            };
+            i.progress(progress, num(ex, headers::PROGRESS_TOTAL), message);
+            Ok(())
+        }
+        "log" => {
+            let level = ex.header(headers::LOG_LEVEL).map(|v| v.to_string()).unwrap_or_else(|| "info".into());
+            let logger = ex.header(headers::LOGGER).map(|v| v.to_string());
+            i.log(&level, logger.as_deref(), ex.body().clone());
+            Ok(())
+        }
+        "elicit" | "sample" => {
+            let (method, params) = if op == "elicit" {
+                let p = match ex.body() {
+                    Value::Object(m) => Value::Object(m.clone()),
+                    Value::String(s) if s.trim_start().starts_with('{') => cameleer_core::json::parse(s).map_err(|e| CamelError::illegal_argument(format!("ai-tool elicit: {}", e.message)))?,
+                    v => {
+                        let schema = match ex.header(headers::ELICIT_SCHEMA) {
+                            Some(Value::String(s)) => cameleer_core::json::parse(s).map_err(|e| CamelError::illegal_argument(format!("ai-tool elicit schema: {}", e.message)))?,
+                            Some(s @ Value::Object(_)) => s.clone(),
+                            _ => return Err(CamelError::illegal_argument("ai-tool elicit needs a {message, requestedSchema} body or the CamelAiToolElicitSchema header")),
+                        };
+                        Value::object([("message", Value::from(v.to_string())), ("requestedSchema", schema)])
+                    }
+                };
+                ("elicitation/create", p)
+            } else {
+                let p = match ex.body() {
+                    Value::Object(m) => Value::Object(m.clone()),
+                    v => Value::object([
+                        ("messages", Value::Array(vec![Value::object([("role", Value::from("user")), ("content", Value::object([("type", Value::from("text")), ("text", Value::from(v.to_string()))]))])])),
+                        ("maxTokens", Value::Int(num(ex, headers::SAMPLE_MAX_TOKENS).map(|n| n as i64).unwrap_or(500))),
+                    ]),
+                };
+                ("sampling/createMessage", p)
+            };
+            match i.ask(method, params) {
+                AskOutcome::Answer(v) => {
+                    if op == "elicit" {
+                        let action = v.get("action").map(|a| a.to_string()).unwrap_or_else(|| "cancel".into());
+                        ex.set_header(headers::ELICIT_ACTION, action.as_str());
+                        ex.set_body(v.get("content").cloned().unwrap_or(Value::Null));
+                    } else {
+                        let text = v.get("content").and_then(|c| c.get("text")).map(|t| t.to_string()).unwrap_or_default();
+                        ex.set_header(headers::SAMPLE_MODEL, v.get("model").cloned().unwrap_or(Value::Null));
+                        ex.set_body(text);
+                    }
+                    Ok(())
+                }
+                AskOutcome::Retry => Err(CamelError::new(INPUT_REQUIRED, format!("{} needs the client's answer", method))),
+                AskOutcome::Unavailable(why) => Err(CamelError::new(INTERACTION_UNAVAILABLE, why)),
+            }
+        }
+        _ => Ok(()),
     }
 }

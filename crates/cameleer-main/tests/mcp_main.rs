@@ -128,3 +128,29 @@ fn cameleer_run_mcp_stdio() {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+#[test]
+fn an_agent_uses_tools_of_a_stdio_mcp_server() {
+    use cameleer_core::processor::agent::AgentDefinition;
+    let f = routes_file("stdio-client");
+    let ai = cameleer_saas::testing::OpenAiMock::start();
+    let mut main = cameleer_main::new_main();
+    main.set_property("camel.ai.mcp.local.command", env!("CARGO_BIN_EXE_cameleer"));
+    main.set_property("camel.ai.mcp.local.args", format!("run,{},--mcp-stdio", f.to_string_lossy().replace('\\', "/")));
+    main.set_property("camel.ai.mcp.local.env.CAMEL_LOCAL_STATUS", "false");
+    main.set_property("camel.ai.mcp.local.include", "greet");
+    let model = format!("openai:chat-completion?model=m&apiKey={}&baseUrl={}", cameleer_saas::testing::OpenAiMock::API_KEY, ai.base_url());
+    main.configure(move |ctx| {
+        ctx.add_routes(move |b| {
+            b.from("direct:agent").agent(AgentDefinition::new(model.as_str()).tools("mcp:local"));
+        })
+    });
+    main.start().unwrap();
+    let ctx = main.context().clone();
+    let reg = cameleer_ai::AiRegistry::of(&ctx).unwrap();
+    assert_eq!(reg.tools(&["mcp:local"]).iter().map(|t| t.name.clone()).collect::<Vec<_>>(), ["local_greet"]);
+    let out = ctx.create_producer_template().send("direct:agent", cameleer_core::message::Exchange::with_body(Some(ctx.clone()), r#"call local_greet {"name":"Ann"}"#));
+    assert!(out.exception.is_none(), "{:?}", out.exception);
+    assert_eq!(out.body().to_string(), "Done: Hello Ann");
+    main.stop().unwrap();
+}

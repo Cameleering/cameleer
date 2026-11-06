@@ -61,7 +61,45 @@ pub struct ToolCall {
     /// Headers set by the surface itself (never from the model's arguments), such as the
     /// authenticated principal (`CamelMcpSecurityPrincipal`) or `traceparent`.
     pub headers: Vec<(String, Value)>,
+    /// How the tool's route can talk back to the caller during the call (progress, logs,
+    /// questions for the user or the client's model). MCP sets it.
+    pub interaction: Interaction,
 }
+
+/// A tool route's line back to whoever called the tool (an MCP client).
+pub trait CallInteraction: Send + Sync {
+    /// Report progress (`notifications/progress`).
+    fn progress(&self, progress: f64, total: Option<f64>, message: Option<String>);
+    /// Send a log message (`notifications/message`) at `level` (`debug`, `info`, `warning`, `error`, ...).
+    fn log(&self, level: &str, logger: Option<&str>, data: Value);
+    /// Ask the client: `elicitation/create` or `sampling/createMessage`.
+    fn ask(&self, method: &str, params: Value) -> AskOutcome;
+}
+
+/// The answer to [`CallInteraction::ask`].
+#[derive(Clone, Debug)]
+pub enum AskOutcome {
+    /// The client's result.
+    Answer(Value),
+    /// The question was recorded; the call must end and be retried with the answer
+    /// (2026-07-28 multi round-trip requests).
+    Retry,
+    /// The client can't answer (no capability, no channel, an error).
+    Unavailable(String),
+}
+
+/// The optional interaction of a call (a wrapper so `ToolCall` stays `Clone` and `Debug`).
+#[derive(Clone, Default)]
+pub struct Interaction(pub Option<Arc<dyn CallInteraction>>);
+
+impl std::fmt::Debug for Interaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() { "Interaction(Some)" } else { "Interaction(None)" })
+    }
+}
+
+/// The property that identifies a running call's interaction (see [`AiRegistry::interaction`]).
+pub const CALL_CONTEXT: &str = "CamelAiToolCallContext";
 
 impl ToolCall {
     pub fn new(name: impl Into<String>, arguments: Value) -> ToolCall {
@@ -125,14 +163,17 @@ pub struct ToolResult {
     /// MCP content blocks the route set in `CamelAiToolContent` (images, audio, embedded
     /// resources); `None` means one text block with `text`.
     pub content: Option<Vec<Value>>,
+    /// The tool's route failed (an exception), as opposed to a refusal by the envelope; MCP
+    /// sends clients a generic message for these unless `camel.server.mcp-expose-errors`.
+    pub route_error: bool,
 }
 
 impl ToolResult {
     pub fn ok(text: impl Into<String>, structured: Option<Value>) -> ToolResult {
-        ToolResult { text: text.into(), structured, is_error: false, status: ToolStatus::Completed, duplicate: false, return_direct: false, content: None }
+        ToolResult { text: text.into(), structured, is_error: false, status: ToolStatus::Completed, duplicate: false, return_direct: false, content: None, route_error: false }
     }
     pub fn error(text: impl Into<String>) -> ToolResult {
-        ToolResult { text: text.into(), structured: None, is_error: true, status: ToolStatus::Error, duplicate: false, return_direct: false, content: None }
+        ToolResult { text: text.into(), structured: None, is_error: true, status: ToolStatus::Error, duplicate: false, return_direct: false, content: None, route_error: false }
     }
 }
 
@@ -226,6 +267,13 @@ pub struct ToolPolicy {
     pub pin: bool,
     pub arguments_as_body: bool,
     pub authorization: Option<Arc<dyn ToolAuthorizationPolicy>>,
+    /// `authorize`: a Simple predicate over the arguments (as headers) and the caller
+    /// (`CamelAiToolPrincipal`, `CamelMcpSecurityPrincipal*`); false refuses the call.
+    pub authorize: Option<(Arc<dyn Predicate>, String)>,
+    /// `redact`: personal data and secrets replaced in results.
+    pub redact: Arc<Vec<crate::guard::Redaction>>,
+    /// `cacheTtl`: successful results are reused for the same arguments and caller.
+    pub cache_ttl: Option<Duration>,
 }
 
 impl Default for ToolPolicy {
@@ -247,6 +295,9 @@ impl Default for ToolPolicy {
             pin: true,
             arguments_as_body: false,
             authorization: None,
+            authorize: None,
+            redact: Arc::new(Vec::new()),
+            cache_ttl: None,
         }
     }
 }
@@ -266,11 +317,12 @@ pub struct ToolEntry {
     ctx: WeakContext,
     breaker: Mutex<Breaker>,
     calls: Mutex<HashMap<String, VecDeque<Instant>>>,
+    cache: Mutex<HashMap<String, (Instant, ToolResult)>>,
 }
 
 impl ToolEntry {
     pub fn new(definition: ToolDefinition, policy: ToolPolicy, processor: Arc<dyn Processor>, ctx: &CamelContext) -> ToolEntry {
-        ToolEntry { definition, policy, processor, ctx: ctx.downgrade(), breaker: Mutex::default(), calls: Mutex::default() }
+        ToolEntry { definition, policy, processor, ctx: ctx.downgrade(), breaker: Mutex::default(), calls: Mutex::default(), cache: Mutex::default() }
     }
 }
 
@@ -424,6 +476,8 @@ pub struct AiRegistry {
     idem: Mutex<HashMap<String, Idem>>,
     idem_cv: Condvar,
     approvals: Mutex<HashMap<String, Pending>>,
+    /// Interactions of running calls, by id (the `CamelAiToolCallContext` property).
+    interactions: Mutex<HashMap<u64, Arc<dyn CallInteraction>>>,
     /// Results of resolved approvals, by handle (a paused agent resumes from them).
     resolved: Mutex<HashMap<String, (Instant, ToolResult)>>,
     sagas: Mutex<HashMap<String, Vec<Compensation>>>,
@@ -470,6 +524,7 @@ impl AiRegistry {
             idem_cv: Condvar::new(),
             approvals: Mutex::default(),
             resolved: Mutex::default(),
+            interactions: Mutex::default(),
             sagas: Mutex::default(),
             listeners: Mutex::default(),
             seq: AtomicU64::new(0),
@@ -721,7 +776,16 @@ impl AiRegistry {
             self.audit.append(&audit);
             return ToolResult::error(format!("Unknown tool: {}", call.name));
         };
-        let result = self.call_entry(&entry, &call, &mut audit);
+        let mut result = self.call_entry(&entry, &call, &mut audit);
+        if !entry.policy.redact.is_empty() && result.status == ToolStatus::Completed {
+            let (text, n) = crate::guard::redact_text(&entry.policy.redact, &result.text);
+            if n > 0 {
+                result.text = text;
+                result.structured = result.structured.as_ref().map(|s| crate::guard::redact_value(&entry.policy.redact, s).0);
+                result.content = result.content.as_ref().map(|c| c.iter().map(|b| crate::guard::redact_value(&entry.policy.redact, b).0).collect());
+                audit.detail = Some(format!("redacted {} value(s)", n));
+            }
+        }
         audit.duration_ms = started.elapsed().as_millis() as u64;
         if audit.result_digest.is_none() && !result.text.is_empty() && audit.outcome != "none" {
             audit.result_digest = Some(sha256_hex(result.text.as_bytes()));
@@ -769,6 +833,43 @@ impl AiRegistry {
                 errors.join("\n- "),
                 example_for(&def.input_schema).to_json()
             ));
+        }
+        // 3b. the authorize predicate, over the arguments and the caller
+        if let Some((pred, text)) = &policy.authorize {
+            let mut ex = Exchange::new(entry.ctx.upgrade());
+            for (k, v) in args.iter() {
+                ex.set_header(k.as_str(), v.clone());
+            }
+            for (k, v) in &call.headers {
+                ex.set_header(k.as_str(), v.clone());
+            }
+            if let Some(p) = &call.principal {
+                ex.set_header(headers::PRINCIPAL, p.as_str());
+            }
+            ex.set_header(headers::TOOL_NAME, def.name.as_str());
+            match pred.matches(&ex) {
+                Ok(true) => {}
+                Ok(false) => {
+                    audit.decision = "denied".into();
+                    audit.detail = Some(format!("authorize {}", text));
+                    return ToolResult::error(format!("Not authorized to call {} with these arguments", def.name));
+                }
+                Err(e) => {
+                    audit.decision = "denied".into();
+                    return ToolResult::error(format!("Cannot evaluate the authorize rule of {}: {}", def.name, e.message));
+                }
+            }
+        }
+        // 3c. the result cache
+        let cache_key = policy.cache_ttl.map(|_| sha256_hex(format!("{}\u{0}{}", call.principal.as_deref().unwrap_or(""), canonical_json(&Value::Object(args.clone()))).as_bytes()));
+        if let (Some(ttl), Some(key)) = (policy.cache_ttl, &cache_key) {
+            if let Some((at, r)) = entry.cache.lock().unwrap_or_else(|p| p.into_inner()).get(key) {
+                if at.elapsed() < ttl {
+                    audit.decision = "cached".into();
+                    audit.outcome = "ok".into();
+                    return r.clone();
+                }
+            }
         }
         // 4. rate limit
         if let Some((limit, period)) = policy.rate_limit {
@@ -871,6 +972,13 @@ impl AiRegistry {
             Exec::Done(r) => {
                 audit.outcome = if r.is_error { "error" } else { "ok" }.into();
                 self.record_breaker(entry, !r.is_error);
+                if let (Some(key), false) = (&cache_key, r.is_error) {
+                    let mut c = entry.cache.lock().unwrap_or_else(|p| p.into_inner());
+                    if c.len() >= 10_000 {
+                        c.clear();
+                    }
+                    c.insert(key.clone(), (Instant::now(), r.clone()));
+                }
                 if let Some(key) = &idem_key {
                     self.idem_finish(key, &r, policy);
                 }
@@ -997,11 +1105,22 @@ impl AiRegistry {
         for (k, v) in &call.headers {
             ex.set_header(k.as_str(), v.clone());
         }
+        let interaction_id = call.interaction.0.as_ref().map(|i| {
+            let id = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+            self.interactions.lock().unwrap_or_else(|p| p.into_inner()).insert(id, i.clone());
+            id
+        });
+        if let Some(id) = interaction_id {
+            ex.set_property(CALL_CONTEXT, Value::Int(id as i64));
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         ex.set_cancel_token(cancel.clone());
         let timeout = entry.policy.timeout;
         if timeout.is_zero() {
             let r = run_route(entry, &mut ex);
+            if let Some(id) = interaction_id {
+                self.interactions.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+            }
             return Exec::Done(r);
         }
         // run on a worker; the caller waits up to the timeout, then cancels
@@ -1013,6 +1132,9 @@ impl AiRegistry {
         let spawned = std::thread::Builder::new().name(format!("ai-tool-{}", entry.definition.name)).spawn(move || {
             let r = run_route(&worker_entry, &mut ex);
             drop(ex);
+            if let (Some(id), Some(reg)) = (interaction_id, registry_ctx.upgrade().and_then(|c| AiRegistry::of(&c).ok())) {
+                reg.interactions.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+            }
             let mut st = worker_slot.state.lock().unwrap_or_else(|p| p.into_inner());
             if st.1 {
                 // the caller gave up: settle idempotency and the breaker here
@@ -1096,6 +1218,7 @@ impl AiRegistry {
             duplicate: false,
             return_direct: false,
             content: None,
+            route_error: false,
         }
     }
 
@@ -1136,6 +1259,13 @@ impl AiRegistry {
         m.insert(handle.to_string(), (Instant::now(), r.clone()));
     }
 
+    /// The interaction of a running call, from the `CamelAiToolCallContext` property of its
+    /// exchange.
+    pub fn interaction(&self, ex: &Exchange) -> Option<Arc<dyn CallInteraction>> {
+        let id = ex.property(CALL_CONTEXT).and_then(|v| v.as_i64())? as u64;
+        self.interactions.lock().unwrap_or_else(|p| p.into_inner()).get(&id).cloned()
+    }
+
     /// The result of a resolved approval (approved and run, or rejected), kept for a day.
     pub fn approval_result(&self, handle: &str) -> Option<ToolResult> {
         self.resolved.lock().unwrap_or_else(|p| p.into_inner()).get(handle).map(|(_, r)| r.clone())
@@ -1166,7 +1296,7 @@ impl AiRegistry {
         } else {
             format!("The call to {} was rejected by {}: {}", p.request.tool, approver, reason)
         };
-        let r = ToolResult { text, structured: None, is_error: true, status: ToolStatus::Denied, duplicate: false, return_direct: false, content: None };
+        let r = ToolResult { text, structured: None, is_error: true, status: ToolStatus::Denied, duplicate: false, return_direct: false, content: None, route_error: false };
         self.remember(handle, &r);
         r
     }
@@ -1341,11 +1471,17 @@ fn run_route(entry: &ToolEntry, ex: &mut Exchange) -> ToolResult {
     if ex.is_cancelled() {
         return ToolResult::error(format!("Tool {} was cancelled", entry.definition.name));
     }
+    // a client that can't answer a question is a refusal the caller should see, not an
+    // internal failure to hide
+    let failed = |e: &CamelError| ToolResult {
+        route_error: e.kind != crate::component::INTERACTION_UNAVAILABLE && e.kind != crate::component::INPUT_REQUIRED,
+        ..ToolResult::error(format!("Tool {} failed: {}", entry.definition.name, e.message))
+    };
     if let Err(e) = r {
-        return ToolResult::error(format!("Tool {} failed: {}", entry.definition.name, e.message));
+        return failed(&e);
     }
     if let Some(e) = &ex.exception {
-        return ToolResult::error(format!("Tool {} failed: {}", entry.definition.name, e.message));
+        return failed(e);
     }
     let blocks = match ex.message.headers.remove(headers::CONTENT) {
         Some(Value::Array(a)) => Some(a),
@@ -1650,6 +1786,7 @@ impl cameleer_core::ai::ToolProvider for RegistryTools {
             approved_by: None,
             properties: inv.properties,
             headers: Vec::new(),
+            interaction: Interaction::default(),
         };
         outcome(reg.call(call))
     }

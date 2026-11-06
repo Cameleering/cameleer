@@ -560,6 +560,27 @@ impl Main {
         if self.mcp.lock().unwrap().is_some() {
             return Ok(());
         }
+        // MCP clients (camel.ai.mcp.NAME.*): their tools join the registry; a server that is
+        // down is retried in the background
+        for client in cameleer_ai::mcp::client::McpClientConfig::from_properties(&self.properties)? {
+            let clients = cameleer_ai::mcp::client::McpClients::of(&self.ctx);
+            let name = client.name.clone();
+            match clients.add(&self.ctx, client.clone()) {
+                Ok(n) => cameleer_core::camel_info!("mcp-client", "Imported {} tools from MCP server {}", n, name),
+                Err(e) => {
+                    cameleer_core::camel_warn!("mcp-client", "MCP server {} is not reachable ({}); retrying every 30s", name, e.message);
+                    let weak = self.ctx.downgrade();
+                    let _ = std::thread::Builder::new().name(format!("mcp-connect-{}", name)).spawn(move || loop {
+                        std::thread::sleep(Duration::from_secs(30));
+                        let Some(ctx) = weak.upgrade() else { return };
+                        if let Ok(n) = cameleer_ai::mcp::client::McpClients::of(&ctx).add(&ctx, client.clone()) {
+                            cameleer_core::camel_info!("mcp-client", "Imported {} tools from MCP server {}", n, name);
+                            return;
+                        }
+                    });
+                }
+            }
+        }
         let cfg = McpConfig::from_properties(&self.properties)?;
         if !cfg.enabled {
             return Ok(());
@@ -653,6 +674,8 @@ impl Main {
             c.stop();
         }
         self.mcp.lock().unwrap().take();
+        #[cfg(feature = "ai")]
+        cameleer_ai::mcp::client::McpClients::of(&self.ctx).close_all(&self.ctx);
     }
 
     /// Start and block until a stop condition happens, then stop the context.

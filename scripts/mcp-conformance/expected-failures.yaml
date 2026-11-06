@@ -1,13 +1,3 @@
-# Scenarios of the official suite that Cameleer does not pass yet, each for a feature it does not
-# have. A scenario that starts passing makes the run fail (stale baseline): remove it here.
-server:
-  # log notifications during a tool call (notifications/message)
-  - tools-call-with-logging
-  # progress notifications during a tool call (notifications/progress)
-  - tools-call-with-progress
-  # a tool that asks the client to sample a model (sampling/createMessage)
-  - tools-call-sampling
-  # elicitation other than approvals: tools that ask the user for arbitrary input
-  - tools-call-elicitation
-  - elicitation-sep1034-defaults
-  - elicitation-sep1330-enums
+# Scenarios of the official suite that Cameleer does not pass yet. A scenario that starts
+# passing makes the run fail (stale baseline): remove it here.
+server: []

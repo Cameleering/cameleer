@@ -22,6 +22,13 @@ fn write(out: &Out, msg: &Value) -> bool {
     w.write_all(line.as_bytes()).and_then(|_| w.flush()).is_ok()
 }
 
+fn notifier(out: &Out) -> Arc<dyn Fn(&Value) + Send + Sync> {
+    let o = out.clone();
+    Arc::new(move |m: &Value| {
+        write(&o, m);
+    })
+}
+
 fn principal() -> Principal {
     Principal { name: "stdio".into(), scopes: Vec::new(), method: "stdio".into() }
 }
@@ -98,9 +105,10 @@ pub fn serve(server: Arc<McpServer>, input: impl BufRead, output: impl Write + S
                 client_capabilities: s.client_capabilities.clone(),
                 session_id: Some(s.id.clone()),
                 client: Some(Arc::new(StdioClientChannel { server: server.clone(), out: out.clone() })),
+                notify: Some(notifier(&out)),
             },
             None => match server.check_modern_meta(&params) {
-                Ok(caps) => RequestContext { era: Era::Modern, principal: principal(), client_capabilities: caps, session_id: None, client: None },
+                Ok(caps) => RequestContext { notify: Some(notifier(&out)), ..RequestContext::new(Era::Modern, principal(), caps) },
                 Err(e) => {
                     write(&out, &response(&id, Err(e)));
                     continue;

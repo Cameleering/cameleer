@@ -226,22 +226,30 @@ impl Endpoint {
             client_capabilities: session.client_capabilities.clone(),
             session_id: Some(session.id.clone()),
             client: None,
+            notify: None,
         };
         let wants_sse = req.headers.get("Accept").map(|a| a.contains("text/event-stream")).unwrap_or(false);
         if method == "tools/call" && wants_sse {
-            return self.legacy_call_with_channel(id, params, rc);
+            return self.call_with_channel(id, params, rc);
         }
         // legacy JSON-RPC errors travel in a 200 response, as the 2025 SDKs do
         json_rpc(200, &response(&id, self.server.dispatch(method, &params, &rc)))
     }
 
-    /// A legacy `tools/call` that may need to ask the client (`elicitation/create`): the call
-    /// runs on a worker; if it asks, the response becomes an event stream that carries the
-    /// request and then the result, otherwise it is plain JSON.
-    fn legacy_call_with_channel(&self, id: Value, params: ObjectMap, mut rc: RequestContext) -> HttpResponse {
+    /// A `tools/call` that may talk back to the client (progress and log notifications, and in
+    /// legacy sessions `elicitation/create` or `sampling/createMessage`): the call runs on a
+    /// worker; on its first message to the client the response becomes an event stream that
+    /// carries the messages and then the result, otherwise it is plain JSON.
+    fn call_with_channel(&self, id: Value, params: ObjectMap, mut rc: RequestContext) -> HttpResponse {
         let (tx, rx) = channel::<Event>();
-        let chan = Arc::new(HttpClientChannel { server: self.server.clone(), events: Mutex::new(tx.clone()) });
-        rc.client = Some(chan);
+        if rc.era != Era::Modern {
+            let chan = Arc::new(HttpClientChannel { server: self.server.clone(), events: Mutex::new(tx.clone()) });
+            rc.client = Some(chan);
+        }
+        let ntx = Mutex::new(tx.clone());
+        rc.notify = Some(Arc::new(move |m: &Value| {
+            let _ = ntx.lock().unwrap_or_else(|p| p.into_inner()).send(Event::Request(m.clone()));
+        }));
         let server = self.server.clone();
         let id2 = id.clone();
         let spawned = std::thread::Builder::new().name("mcp-call".into()).spawn(move || {
@@ -297,9 +305,16 @@ impl Endpoint {
                 None => return mismatch("Mcp-Name is required"),
             }
         }
-        let rc = RequestContext { era: Era::Modern, principal, client_capabilities: caps, session_id: None, client: None };
+        let rc = RequestContext::new(Era::Modern, principal, caps);
         if method == "subscriptions/listen" {
             return self.listen(id, params);
+        }
+        // a call that wants progress or log notifications gets an event stream
+        let meta = params.get("_meta").and_then(|m| m.as_object());
+        let wants_events = meta.map(|m| m.get("progressToken").is_some() || m.get("io.modelcontextprotocol/logLevel").is_some()).unwrap_or(false);
+        let accepts_sse = req.headers.get("Accept").map(|a| a.contains("text/event-stream")).unwrap_or(false);
+        if method == "tools/call" && wants_events && accepts_sse {
+            return self.call_with_channel(id, params, rc);
         }
         match self.server.dispatch(method, &params, &rc) {
             Ok(r) => json_rpc(200, &response(&id, Ok(r))),
