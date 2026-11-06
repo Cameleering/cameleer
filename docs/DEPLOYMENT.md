@@ -10,7 +10,7 @@ covers the container image: Docker, Docker Compose, Kubernetes and serverless pl
 | Name | `pmsudhi/cameleer` on Docker Hub, also `ghcr.io/pmsudhi/cameleer` |
 | Platforms | `linux/amd64`, `linux/arm64` |
 | Contents | one native binary (glibc) on `gcr.io/distroless/cc-debian12:nonroot`: CA certificates, tzdata, no shell |
-| Size | under 20 MB to download |
+| Size | about 20 MB to download; 12.5 MB built with `FEATURES=core` |
 | Entrypoint | `cameleer` (the CLI): `run`, `version`, `get health`, `--help` |
 | Working directory | `/routes`: mount route files here, read-only is fine |
 | Port | `8080`: the REST DSL, `platform-http` and the health endpoints share it |

@@ -67,13 +67,13 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=Cameleer
-            org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, about 10 MB of memory.
+            org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, about 1 ms startup, about 10 MB of memory.
             org.opencontainers.image.url=https://pmsudhi.github.io/cameleer/
             org.opencontainers.image.documentation=https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md
             org.opencontainers.image.licenses=Apache-2.0
           annotations: |
             org.opencontainers.image.title=Cameleer
-            org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, about 10 MB of memory.
+            org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, about 1 ms startup, about 10 MB of memory.
             org.opencontainers.image.licenses=Apache-2.0
       - name: Build and test each platform before pushing
         run: |

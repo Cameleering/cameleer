@@ -176,7 +176,7 @@ An agent decides; something still has to *do* it:
 - retry when the API times out, and never charge a card twice.
 
 That's what Camel has done for enterprises for years. Cameleer does it for agents, as a library
-inside your agent or as a 10 ms sidecar.
+inside your agent or as a sidecar that starts in about 1 ms.
 
 **🖐 Give agents hands.** Every action becomes a route the agent can call over HTTP, a queue or
 directly, with retries, timeouts, idempotency and a dead letter channel. The agent says *what*; the

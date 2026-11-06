@@ -15,7 +15,7 @@ Pick one of three ways. They run the same routes.
 ### Docker
 
 The image `pmsudhi/cameleer` on Docker Hub is a single binary on a distroless base, for
-`linux/amd64` and `linux/arm64`, under 20 MB to download. Mount your route files and run them:
+`linux/amd64` and `linux/arm64`, about 20 MB to download. Mount your route files and run them:
 
 ```sh
 docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello.camel.yaml

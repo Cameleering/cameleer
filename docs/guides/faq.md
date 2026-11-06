@@ -58,7 +58,9 @@ practical ([BENCHMARKS.md](../BENCHMARKS.md#faas-cold-start-and-size)).
 
 ### How big is the Docker image?
 
-The `pmsudhi/cameleer` image is under 20 MB to download: one native binary on a distroless base.
+The `pmsudhi/cameleer` image is about 20 MB to download: one native binary on a distroless base. Built with only the
+component families you need it is smaller: 14.5 MB with `FEATURES=cloud`, 12.5 MB with
+`FEATURES=core`.
 See the [deployment guide](../DEPLOYMENT.md).
 
 ## Running it

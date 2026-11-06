@@ -20,8 +20,8 @@ keywords:
 abstract: >-
   Cameleer is an independent reimplementation of Apache Camel in Rust: routes,
   Enterprise Integration Patterns, about 230 components, languages and data formats, and
-  the Rust, YAML and XML DSLs, built on the Rust standard library only. It starts in about
-  10 ms, uses about 10 MB of memory and outperforms Apache Camel on the JVM in published
+  the Rust, YAML and XML DSLs, built on the Rust standard library only. It starts its routes in
+  about 1 ms on Linux (10 ms on Windows), uses about 10 MB of memory and outperforms Apache Camel on the JVM in published
   benchmarks.
 references:
   - type: software

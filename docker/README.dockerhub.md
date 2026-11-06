@@ -7,7 +7,7 @@
 - **About 1 ms** startup on Linux, about **10 MB** of memory, **2.5–8x** Apache Camel's throughput on Java 21 ([benchmarks](https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md))
 - About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
-- Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, under 20 MB to download
+- Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, about 20 MB to download
 
 Website: https://pmsudhi.github.io/cameleer/ · Source: https://github.com/pmsudhi/cameleer
 

@@ -1,6 +1,6 @@
 # Cameleer
 
-> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. It starts in about 10 ms, uses about 10 MB of memory and is 2.5-8x faster than Apache Camel 4.23 on Java 21 in the published benchmarks. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. It is also aimed at serverless and edge deployments. It is an independent project, not affiliated with the Apache Software Foundation.
+> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. It starts its routes in about 1 ms on Linux, uses about 10 MB of memory, is its own AWS Lambda runtime and is 2.5-8x faster than Apache Camel 4.23 on Java 21 in the published benchmarks. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. It is also aimed at serverless and edge deployments. It is an independent project, not affiliated with the Apache Software Foundation.
 
 Key facts:
 

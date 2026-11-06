@@ -28,6 +28,6 @@ jobs:
           username: pmsudhi
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: pmsudhi/cameleer
-          short-description: "Apache Camel routes, rebuilt in Rust: one native binary, 10 ms startup, ~10 MB RAM, amd64/arm64"
+          short-description: "Apache Camel routes, rebuilt in Rust: one native binary, ~1 ms startup, ~10 MB RAM, amd64/arm64"
           readme-filepath: docker/README.dockerhub.md
           enable-url-completion: true

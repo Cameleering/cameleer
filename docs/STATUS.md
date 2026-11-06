@@ -46,6 +46,9 @@ The implementation is complete against the feature list: `docs/FEATURES.md` has 
 | official clients (`CAMEL_OFFICIAL_CLIENTS=1`) | **58 / 0** |
 | third-party simulators (`CAMEL_SIMULATORS=1`) | **35 / 0** |
 
+The hermetic suite has grown since that run: **2697 passed, 0 failed** on Windows 11 and on
+Linux (WSL2) at the end of the FaaS round (2026-11-05), with zero warnings.
+
 Independent verification found and fixed about 30 interoperability bugs. They're listed in
 `docs/INTEROP.md`, and each has a hermetic regression test.
 

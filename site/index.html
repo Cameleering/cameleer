@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cameleer: Camel-compatible integration routes in Rust</title>
-<meta name="description" content="Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. Runs Apache Camel routes in Rust: 10 ms startup, about 10 MB of memory.">
+<meta name="description" content="Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. Runs Apache Camel routes in Rust: about 1 ms startup on Linux, about 10 MB of memory, its own AWS Lambda runtime.">
 <meta name="keywords" content="Apache Camel, Rust, integration, enterprise integration patterns, EIP, AI agents, serverless, edge, Kafka, messaging, YAML DSL">
 <link rel="canonical" href="https://pmsudhi.github.io/cameleer/">
 <meta name="theme-color" content="#ffffff">
@@ -12,7 +12,7 @@
 <meta name="context7-site-verification" content="ask_86adbac2b101d98629eb7020">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Cameleer: Camel-compatible integration routes in Rust">
-<meta property="og:description" content="The integration layer for AI agents. Runs Apache Camel routes unchanged; 10 ms startup, about 10 MB of memory, 2.5-8x the throughput.">
+<meta property="og:description" content="The integration layer for AI agents. Runs Apache Camel routes unchanged; starts in about 1 ms on Linux, about 10 MB of memory, 2.5-8x the throughput, its own AWS Lambda runtime.">
 <meta property="og:url" content="https://pmsudhi.github.io/cameleer/">
 <meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -234,14 +234,14 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <span class="line"><span class="strike">On the JVM.</span></span>
         <span class="line">In Rust.</span>
       </h1>
-      <p class="lede">Runs your Apache Camel routes, patterns and endpoint URIs unchanged. <strong>It just starts in 10 ms and fits in 10 MB.</strong></p>
+      <p class="lede">Runs your Apache Camel routes, patterns and endpoint URIs unchanged. <strong>It starts in about 1 ms on Linux and fits in 10 MB.</strong></p>
       <p class="agent-line"><strong>The integration layer for AI agents:</strong> feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log.</p>
       <div class="ctas">
         <a class="btn primary" href="https://github.com/pmsudhi/cameleer">View on GitHub</a>
         <a class="btn ghost" href="#start">Run your first route</a>
       </div>
       <dl class="facts">
-        <div><dt>10 ms</dt><dd>startup, vs 751 ms</dd></div>
+        <div><dt>1 ms</dt><dd>startup on Linux (Windows: 10 ms, vs 751 ms)</dd></div>
         <div><dt>9 MB</dt><dd>memory, vs 366 MB</dd></div>
         <div><dt>8.4x</dt><dd>request-reply throughput</dd></div>
       </dl>
@@ -322,7 +322,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <div class="meter"><div class="row"><span>Startup</span><b id="m-start">10 ms</b></div><div class="bar"><i id="b-start" style="width:1.4%"></i></div></div>
         <div class="meter"><div class="row"><span>Memory</span><b id="m-mem">9 MB</b></div><div class="bar"><i id="b-mem" style="width:2.5%"></i></div></div>
         <div class="meter"><div class="row"><span>Install size</span><b id="m-size">one binary</b></div><div class="bar"><i id="b-size" style="width:6%"></i></div></div>
-        <p class="note">Measured on the same machine with Camel 4.23 on Java 21. Same endpoint options, headers, Simple expressions and error handling on both.</p>
+        <p class="note">Measured on the same Windows machine with Camel 4.23 on Java 21; on Linux Cameleer starts its routes in about 1 ms. Same endpoint options, headers, Simple expressions and error handling on both.</p>
       </div>
     </div>
   </div>
@@ -362,7 +362,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
 <section id="uses" aria-labelledby="uses-h">
   <div class="wrap">
     <h2 id="uses-h">Small enough to go where the JVM can't.</h2>
-    <p class="sub">A 10 ms start and a 10 MB footprint change where integration code can run.</p>
+    <p class="sub">A 1 ms start and a 10 MB footprint change where integration code can run.</p>
     <div class="uses">
       <article class="use">
         <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
@@ -379,10 +379,10 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
           <path class="s" d="M70 104 a26 26 0 0 1 4-52 a36 36 0 0 1 68-8 a30 30 0 0 1 46 26 a20 20 0 0 1-6 34 Z"/>
           <path class="f" d="M128 60 l-14 26 h14 l-6 24 22-32 h-14 l8-18 z"/>
-          <text x="196" y="132" font-family="JetBrains Mono, monospace" font-size="12" fill="#5b6479">10 ms</text>
+          <text x="196" y="132" font-family="JetBrains Mono, monospace" font-size="12" fill="#5b6479">1 ms</text>
         </svg>
         <h3>Serverless without the cold start</h3>
-        <p>Start per request, scale to zero, pay for milliseconds. No JVM warmup, no snapshot tricks.</p>
+        <p>Start per request, scale to zero, pay for milliseconds. No JVM warmup, no snapshot tricks, and the binary is its own AWS Lambda runtime.</p>
       </article>
       <article class="use">
         <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
