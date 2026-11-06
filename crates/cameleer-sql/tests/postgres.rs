@@ -218,6 +218,45 @@ fn pooled_datasource_rolls_back_returned_connections() {
 }
 
 #[test]
+fn pool_size_caps_open_connections_and_callers_wait() {
+    // 12 concurrent callers share a pool of 3: like HikariCP's maximumPoolSize, the pool never
+    // opens more than 3 connections; the others wait for one to come back
+    let s = server(PgAuth::ScramSha256);
+    let ds = PgDataSource::from_url(&format!("{}&poolSize=3", s.url("camel", "s3cret"))).unwrap();
+    let busiest = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let callers: Vec<_> = (0..12)
+        .map(|_| {
+            let (ds, busiest) = (ds.clone(), busiest.clone());
+            std::thread::spawn(move || {
+                for _ in 0..10 {
+                    let mut c = ds.get_connection().unwrap();
+                    busiest.fetch_max(ds.open_connections(), std::sync::atomic::Ordering::SeqCst);
+                    c.execute("SELECT 1", &[]).unwrap();
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+            })
+        })
+        .collect();
+    for c in callers {
+        c.join().unwrap();
+    }
+    assert_eq!(busiest.load(std::sync::atomic::Ordering::SeqCst), 3);
+    assert_eq!(s.connection_count(), 3, "connections are reused, never opened beyond poolSize");
+    assert_eq!(ds.open_connections(), 3);
+    assert_eq!(ds.idle_connections(), 3);
+
+    // a caller that can't get a connection within poolTimeout fails instead of waiting forever
+    let one = PgDataSource::from_url(&format!("{}&poolSize=1&poolTimeout=1", s.url("camel", "s3cret"))).unwrap();
+    let held = one.get_connection().unwrap();
+    let started = std::time::Instant::now();
+    let err = one.get_connection().err().expect("the pool is exhausted");
+    assert!(started.elapsed() >= Duration::from_millis(900), "{:?}", started.elapsed());
+    assert!(err.message.contains("Connection is not available"), "{}", err.message);
+    drop(held);
+    assert!(one.get_connection().is_ok());
+}
+
+#[test]
 fn routes_over_postgres_consumer_transactions_and_idempotency() {
     let s = server(PgAuth::ScramSha256);
     let ds: Arc<dyn DataSource> = Arc::new(PgDataSource::from_url(&s.url("camel", "s3cret")).unwrap());

@@ -48,6 +48,12 @@ and `camel.datasource.password`), which the container also reads from the
 sources by name. Other databases (MySQL, Oracle, SQL Server) are not supported: there are no
 JDBC drivers, only these two engines.
 
+A PostgreSQL data source is a connection pool, sized in its URL like HikariCP:
+`?poolSize=16` opens at most 16 connections (default 8) and reuses them. When all of them are
+busy, a caller waits for one to come back, up to `poolTimeout` seconds (default 30), then fails
+with `Connection is not available`. Size the pool for the database, not for the number of
+concurrent requests: PostgreSQL handles a few busy connections better than many.
+
 ## Example
 
 This route polls a table as a work queue: every new order is logged once and marked as

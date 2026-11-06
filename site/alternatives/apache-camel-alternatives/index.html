@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apache Camel Alternatives: When to Choose Cameleer, Camel Quarkus, Spring Integration or Kafka Connect | Cameleer</title>
+<meta name="description" content="Looking for an Apache Camel alternative? Compare Cameleer, Camel on Quarkus, Spring Integration, Kafka Connect, Apache NiFi and managed iPaaS: what each is for, and when to stay on Camel.">
+<link rel="canonical" href="https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Apache Camel alternatives: which one fits your integration?">
+<meta property="og:description" content="An honest guide to the alternatives to Apache Camel, and when Camel itself is still the right answer.">
+<meta property="og:url" content="https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/">
+<meta property="og:image" content="https://pmsudhi.github.io/cameleer/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "Apache Camel alternatives: when to choose Cameleer, Camel Quarkus, Spring Integration or Kafka Connect",
+ "description": "What each Apache Camel alternative is for, and when to stay on Camel.",
+ "url": "https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/",
+ "inLanguage": "en", "image": "https://pmsudhi.github.io/cameleer/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://pmsudhi.github.io/cameleer/"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://pmsudhi.github.io/cameleer/"},
+ {"@type": "ListItem", "position": 2, "name": "Apache Camel alternatives"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "What is the best alternative to Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "It depends on why you are leaving. To keep Camel routes but drop the JVM's startup time and memory, use Cameleer or Camel on Quarkus native. For Spring-centric applications, Spring Integration. For moving data between Kafka and other systems without routing logic, Kafka Connect. For a visual, managed platform, an iPaaS such as MuleSoft or a cloud provider's integration service."}},
+ {"@type": "Question", "name": "Is there an Apache Camel alternative without the JVM?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Cameleer runs Apache Camel's routes, EIPs and YAML DSL as a native Rust binary with no JVM, and Camel on Quarkus can be compiled to a native executable with GraalVM or Mandrel."}},
+ {"@type": "Question", "name": "Can I keep my Camel YAML routes if I switch?", "acceptedAnswer": {"@type": "Answer", "text": "With Cameleer and Camel on Quarkus, yes: both run Camel's YAML DSL, endpoint URIs and Simple expressions. Spring Integration, Kafka Connect and iPaaS products need the integrations rewritten."}},
+ {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When you depend on a component, data format or Java library Cameleer does not cover, run inside a Java application server or Spring Boot, or have a team and operations built around the JVM."}}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a href="../../compare/">Compare</a>
+      <a href="../../compare/apache-camel-vs-cameleer/">vs Apache Camel</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / Apache Camel alternatives</p>
+    <p class="kicker">Apache Camel alternatives</p>
+    <h1>Apache Camel alternatives: which one fits your integration?</h1>
+    <p class="lede">Most teams look for an alternative to Apache Camel for one of four reasons: JVM startup and memory, the Java toolchain, a framework that matches the rest of their stack, or a managed platform. Each reason points to a different answer, and sometimes the answer is to stay on Camel.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="overview">
+  <div class="wrap">
+    <h2>The alternatives at a glance</h2>
+    <p class="intro">Keep Camel routes unchanged with the first two. The others replace Camel's model with their own.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>option</th><th>what it is</th><th>keeps Camel routes</th><th>best when</th><th>trade-offs</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Cameleer</strong></td><td>Apache Camel's routing engine, EIPs and about 230 components rewritten in Rust; one native binary</td><td class="win">yes (YAML, XML, URIs, Simple)</td><td>startup time, memory and cost matter: serverless, edge, sidecars, many small services, AI agent tools</td><td>younger project; components follow Camel's names but not every Camel component exists; no Java beans or Java DSL</td></tr>
+        <tr><td><strong>Apache Camel on Quarkus (native)</strong></td><td>Camel compiled ahead of time with GraalVM or Mandrel</td><td class="win">yes</td><td>you want Camel itself with faster startup and less memory, and can accept native-image build times and restrictions</td><td>long native builds; reflection and dynamic features need configuration; no JIT, so peak throughput can be lower than on the JVM</td></tr>
+        <tr><td><strong>Spring Integration</strong></td><td>the EIPs as part of the Spring ecosystem</td><td>no</td><td>the application is already Spring Boot and the integrations live inside it</td><td>rewrite of routes; the JVM's startup and memory remain</td></tr>
+        <tr><td><strong>Kafka Connect</strong></td><td>source and sink connectors that move data in and out of Kafka</td><td>no</td><td>the job is moving data between Kafka and other systems with little routing logic</td><td>Kafka-centric; content-based routing, enrichment and request-reply are not its model</td></tr>
+        <tr><td><strong>Apache NiFi</strong></td><td>visual dataflow tool with a web UI</td><td>no</td><td>operators want to build and watch data flows in a browser</td><td>a heavyweight server; flows live in NiFi rather than in code and Git</td></tr>
+        <tr><td><strong>Managed iPaaS</strong> (MuleSoft, cloud integration services)</td><td>hosted integration platforms with connectors and visual designers</td><td>no</td><td>you prefer buying a platform and support over running a framework</td><td>licence or usage cost, vendor lock-in, less control over runtime and data</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="cameleer">
+  <div class="wrap">
+    <h2>Cameleer: Apache Camel's routes without the JVM</h2>
+    <p class="intro">If you like Camel's model and want it smaller and faster, Cameleer keeps the routes and changes the runtime. Same EIPs, endpoint URIs, Simple expressions and YAML DSL; one native binary instead of a JVM.</p>
+    <div class="stats" id="alt-stats">
+      <div class="stat"><b>~400x</b><span>faster startup than Apache Camel on the JVM</span></div>
+      <div class="stat"><b>15x+</b><span>less memory under load</span></div>
+      <div class="stat"><b>2-6x</b><span>more messages per second on the same CPUs</span></div>
+      <div class="stat"><b>0</b><span>route changes for Camel YAML routes</span></div>
+    </div>
+    <div class="cta" style="margin-top:28px">
+      <a class="btn primary" href="../../compare/apache-camel-vs-cameleer/">See the full comparison</a>
+      <a class="btn" href="../../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="stay">
+  <div class="wrap">
+    <h2>When to stay on Apache Camel</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Stay on Camel when you</h3>
+        <ul>
+          <li>depend on a component, data format or Java library Cameleer does not cover;</li>
+          <li>call Java beans or use the Java DSL heavily inside routes;</li>
+          <li>run inside a Java application server or a large Spring Boot application;</li>
+          <li>have a team and operations built around the JVM, and startup and memory are not a cost for you.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Consider Cameleer when you</h3>
+        <ul>
+          <li>run integrations as functions, sidecars or many small services;</li>
+          <li>pay for memory per instance, or scale to zero and need fast cold starts;</li>
+          <li>deploy to edge devices that can't host a JVM;</li>
+          <li>want AI agents to call your systems through tested routes.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>What is the best alternative to Apache Camel?</summary><p>It depends on why you are leaving. To keep Camel routes but drop the JVM's startup time and memory, use Cameleer or Camel on Quarkus native. For Spring-centric applications, Spring Integration. For moving data between Kafka and other systems without routing logic, Kafka Connect. For a visual, managed platform, an iPaaS.</p></details>
+    <details><summary>Is there an Apache Camel alternative without the JVM?</summary><p>Yes. Cameleer runs Apache Camel's routes, EIPs and YAML DSL as a native Rust binary with no JVM, and Camel on Quarkus can be compiled to a native executable with GraalVM or Mandrel.</p></details>
+    <details><summary>Can I keep my Camel YAML routes if I switch?</summary><p>With Cameleer and Camel on Quarkus, yes: both run Camel's YAML DSL, endpoint URIs and Simple expressions. Spring Integration, Kafka Connect and iPaaS products need the integrations rewritten.</p></details>
+    <details><summary>When should I stay on Apache Camel?</summary><p>When you depend on a component, data format or Java library Cameleer does not cover, run inside a Java application server or Spring Boot, or have a team and operations built around the JVM.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. Other product names are trademarks of their owners.</p>
+    </div>
+    <div>
+      <h4>Compare</h4>
+      <ul>
+        <li><a href="../../compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a></li>
+        <li><a href="./">Apache Camel alternatives</a></li>
+        <li><a href="../../compare/ai-agent-tool-calls-direct-vs-cameleer/">AI agent tool calls</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../docs/">Documentation</a></li>
+        <li><a href="../../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

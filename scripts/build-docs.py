@@ -12,14 +12,18 @@ What it writes (under --out, default site/):
   docs/index.html       docs home (docs/README.md, or generated)
   docs/{components,languages,dataformats,guides}/index.html   generated section indexes
   docs/** (other files) images and other assets copied from the docs tree
-  sitemap.xml           the home page, llms.txt and every docs page
+  sitemap.xml           the home page, llms.txt, the designed pages under compare/ and alternatives/,
+                        and every docs page
+                        (except a page whose canonical URL is elsewhere)
   llms.txt              the site's llms.txt with a generated "## Documentation" section
   llms-full.txt         every docs page concatenated as plain markdown
 
 Page conventions (see docs/README.md): the first line under the H1 is a blockquote that
 answers the page's question (it becomes the meta description); component pages carry a
 `**Scheme:** ... · **Also:** ...` line; "## Common questions" with "### question" headings
-becomes FAQPage structured data.
+becomes FAQPage structured data. A page can name another canonical URL with a line
+`<!-- canonical: https://... -->`: the markdown twin of a designed landing page (site/compare/**)
+points search engines at the landing page, and is left out of the sitemap.
 """
 
 import argparse
@@ -694,6 +698,8 @@ class Page:
         self.answer = ""
         self.fields = {}
         self.faq = []
+        m = re.search(r"<!--\s*canonical:\s*(\S+)\s*-->", text)
+        self.canonical = m.group(1) if m else None
         title_line = None
         for k, l in enumerate(prose):
             m = HEADING_RE.match(l)
@@ -964,8 +970,8 @@ class Site:
             crumbs.append((title, out))
         return crumbs
 
-    def page_html(self, out, title, answer, body, headings, faq, source_rel=None):
-        url = abs_url(out)
+    def page_html(self, out, title, answer, body, headings, faq, source_rel=None, canonical=None):
+        url = canonical or abs_url(out)
         root = relurl(out, "index.html")[:-len("index.html")]  # '' or '../'
         site_root = root + "../"
         desc = answer or "%s: Cameleer documentation." % title
@@ -1024,7 +1030,7 @@ class Site:
         # mark the answer blockquote
         body = re.sub(r"(</h1>\s*)<blockquote>", r'\1<blockquote class="answer">', body, count=1)
         self.ids_by_out[p.out] = set(re.findall(r' id="([^"]+)"', body))
-        return self.page_html(p.out, p.title, p.answer, body, r.headings, p.faq, p.rel)
+        return self.page_html(p.out, p.title, p.answer, body, r.headings, p.faq, p.rel, p.canonical)
 
     def index_table(self, out, pages, with_category):
         rows = []
@@ -1118,13 +1124,33 @@ class Site:
     def write_sitemap(self):
         home_date = max([d for d in self.dates.values()] or [""]) or None
         urls = [(SITE_URL, home_date), (SITE_URL + "llms.txt", home_date), (SITE_URL + "llms-full.txt", home_date)]
+        for rel in self.designed_pages():
+            urls.append((SITE_URL + rel[: -len("index.html")], self.git_date(os.path.join(self.out, rel)) or home_date))
         for out in self.all_outs():
+            p = self.by_out.get(out)
+            if p is not None and p.canonical:
+                continue
             urls.append((abs_url(out), self.date_of(out)))
         lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
         for u, d in urls:
             lines.append("  <url><loc>%s</loc>%s</url>" % (esc(u), "<lastmod>%s</lastmod>" % d if d else ""))
         lines.append("</urlset>")
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
+
+    def designed_pages(self):
+        """Hand-written landing pages: <out>/compare/** and <out>/alternatives/** (index.html)."""
+        found = []
+        for d, _, files in (w for top in ("compare", "alternatives") for w in os.walk(os.path.join(self.out, top))):
+            if "index.html" in files:
+                found.append(os.path.relpath(os.path.join(d, "index.html"), self.out).replace("\\", "/"))
+        return sorted(found)
+
+    def git_date(self, path):
+        try:
+            out = subprocess.run(["git", "log", "-1", "--format=%cs", "--", path], cwd=self.repo, capture_output=True, text=True, check=False).stdout.strip()
+            return out or None
+        except OSError:
+            return None
 
     def abs_md(self, page, text):
         """Markdown text with relative links made absolute (for llms-full.txt)."""
