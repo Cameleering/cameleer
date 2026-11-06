@@ -55,6 +55,9 @@ pub(crate) struct Interp<'a> {
     pub now: String,
     /// Pending update list (XQuery Update Facility).
     pub pul: Vec<super::update::Update>,
+    /// Stack address below which evaluation moves to a new segment
+    /// (`cameleer_core::stack::floor(RED_ZONE)` of the thread evaluating).
+    pub stack_floor: usize,
 }
 
 pub(crate) fn new_root(ty: NodeType, name: QName, value: String) -> Document {
@@ -270,12 +273,20 @@ impl<'a> Interp<'a> {
     /// continues on a new stack segment (see [`RED_ZONE`]).
     #[inline]
     pub fn eval(&mut self, e: &Expr, f: &Focus) -> R<Seq> {
-        if cameleer_core::stack::remaining() >= RED_ZONE {
+        if cameleer_core::stack::here() >= self.stack_floor {
             return self.eval_inner(e, f);
         }
+        let saved = self.stack_floor;
         // SAFETY: the interpreter state (`Rc`s, the documents) is used by the segment thread
         // only while this thread waits for it; the evaluator uses no thread-locals or locks.
-        unsafe { cameleer_core::stack::on_new_stack(SEGMENT, || self.eval_inner(e, f)) }
+        let r = unsafe {
+            cameleer_core::stack::on_new_stack(SEGMENT, || {
+                self.stack_floor = cameleer_core::stack::floor(RED_ZONE);
+                self.eval_inner(e, f)
+            })
+        };
+        self.stack_floor = saved;
+        r
     }
 
     fn eval_inner(&mut self, e: &Expr, f: &Focus) -> R<Seq> {

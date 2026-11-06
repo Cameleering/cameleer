@@ -77,6 +77,20 @@ pub fn remaining() -> usize {
     sp().saturating_sub(low())
 }
 
+/// The stack address below which the current thread has less than `red_zone` bytes left.
+/// Hot recursive code computes it once per thread and compares [`here`] with it, which is
+/// cheaper than calling [`remaining`] at every level.
+pub fn floor(red_zone: usize) -> usize {
+    low().saturating_add(red_zone)
+}
+
+/// The current stack address (approximate; the stack grows down).
+#[inline(always)]
+pub fn here() -> usize {
+    let marker = 0u8;
+    std::hint::black_box(&marker) as *const u8 as usize
+}
+
 /// Run `f` on the current thread when at least `red_zone` bytes of stack are left, otherwise
 /// on a new stack segment (see [`on_new_stack`]). Recursive evaluators call this at their
 /// recursion points, so ordinary evaluations never leave the caller's thread and only deep

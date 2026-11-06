@@ -244,6 +244,7 @@ impl XQuery {
             context_error,
             now,
             pul: Vec::new(),
+            stack_floor: cameleer_core::stack::floor(eval::RED_ZONE),
         };
         for v in &self.module.vars {
             let mut val = None;
