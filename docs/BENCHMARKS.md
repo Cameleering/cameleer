@@ -209,10 +209,32 @@ Measured and not adopted: `-z pack-relative-relocs` cuts `.rela.dyn` from 535 KB
 (−0.5 MB) but needs glibc ≥ 2.36 at run time (fine for the Debian 12 image, not for AL2023);
 its timing was measured on a loaded machine, so it is left for a follow-up.
 
-Follow-ups (from the review): core cargo features for the template engines, jq and the core
-XPath subset (an estimated 0.7–1 MB of the 7.3 MB `core` build); `cameleer-http` without
-`cameleer-grpc` unless HTTP/2 is used; CLI-only code (`validate`, `schema`) behind a feature;
-XQuery/XSLT start a thread with a 128–256 MiB stack per evaluation; the local status thread
+**Smaller `core` build (review finding 15, 2026-11-06).** Five more parts became cargo
+features, all in `full`: `templates` (the mustache, velocity, freemarker and string-template
+components), `jq` and `xpath` (the core XPath subset) in `cameleer-core`, `http2` in
+`cameleer-http` (so `cameleer-grpc` is linked only for `httpVersion=HTTP/2`), and `validate`
+(`cameleer validate`, `cameleer schema`) in `cameleer-main`. A left-out part fails with the
+feature to enable, like a component family (`tests/features.rs` checks each gate). Workspace
+crates now depend on `cameleer-core` and `cameleer-http` without default features, so a family
+does not pull the parts back in. Sizes, Linux x86-64, `dist`, stripped, same WSL2 setup:
+
+| build | before | after |
+|---|---:|---:|
+| `--features core`, glibc | 7.33 MB | **5.82 MB** (−1.52 MB, −21%) |
+| `--features core`, static musl | 7.49 MB | **5.95 MB** (−1.54 MB, −21%) |
+| all components (`full`), glibc | 23.89 MB | 23.89 MB (+0.7 KB) |
+| all components (`full`), static musl | 24.05 MB | 24.05 MB (same) |
+
+What each part adds back to the glibc `core` build: `templates` +0.50 MB, `jq` +0.42 MB,
+`validate` +0.27 MB, `http2` +0.26 MB, `xpath` +0.09 MB; all five together give 7.34 MB again.
+That is twice the review's estimate of 0.7–1 MB. The cold-start rows in the table above are from
+the 7.3/7.5 MB builds and were not measured again. In-process throughput of the full build is unchanged: the
+same `cameleer-bench` scenarios, before and after alternated, median of three rounds on the idle
+Windows machine, moved by −2% to +3% (direct 4.52M → 4.64M, seda 5.45M → 5.35M, seda-inout
+1.95M → 2.00M, cbr 2.12M → 2.08M, splitagg 112.9k → 112.9k msgs/s), within run-to-run noise;
+the full build compiles the same code as before.
+
+Follow-ups (from the review): XQuery/XSLT start a thread with a 128–256 MiB stack per evaluation; the local status thread
 rewrites its file every 500 ms even when nothing changed; a shared timer thread per timer name
 (Camel's `java.util.Timer` model).
 

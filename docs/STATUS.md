@@ -78,7 +78,11 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
   4.7 ms there).
 - **Size:** 24.9 → 23.9 MB with every component; 11.7 MB with `--features cloud`, 7.3 MB with
   `core` (cargo features per component family in `cameleer-main`; `FEATURES` build arg in the
-  Dockerfile).
+  Dockerfile). Then (2026-11-06, review finding 15) the template components, jq, the core XPath
+  subset, HTTP/2 (and with it `cameleer-grpc`) and `validate`/`schema` became features too
+  (`templates`, `jq`, `xpath`, `http2`, `validate`, all in `full`): `core` is now 5.82 MB glibc
+  and 5.95 MB static musl (was 7.33 / 7.49 MB, −21%); `full` is unchanged. Details in
+  `benchmarks/analysis.md`.
 - **Memory:** HTTP route RSS 15.2 → 10.4 MB (all components) and 4.2 MB (musl `core`); private
   memory 1.71 → 0.72 MB; idle HTTP threads 34 → 2.
 - **Container image:** 20.5 → 20.4 MB compressed with every component, 14.5 MB with
@@ -94,8 +98,7 @@ results in `docs/BENCHMARKS.md` (section "FaaS cold start and size") and
   heavy load failed `cameleer-tls` `mutual_tls_rejects_missing_and_untrusted_certificates` once
   (untouched by this branch; 15/15 on rerun, green in the final run; see follow-ups).
 
-Follow-ups: core cargo features for template engines, jq and the core XPath subset; optional
-HTTP/2 (`cameleer-grpc`) in `cameleer-http`; `validate`/`schema` behind a feature; XQuery/XSLT
+Follow-ups: XQuery/XSLT
 per-evaluation threads with 128–256 MiB stacks; a shared timer thread per timer name; the status
 thread rewriting its file every 500 ms; `-z pack-relative-relocs` for the glibc image; measuring
 on the Lambda service across memory sizes and arm64; the TLS 1.3 alert-timing flake above (a
