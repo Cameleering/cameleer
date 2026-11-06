@@ -252,11 +252,13 @@ impl Endpoint {
         }));
         let server = self.server.clone();
         let id2 = id.clone();
-        let spawned = std::thread::Builder::new().name("mcp-call".into()).spawn(move || {
+        // a pooled worker (no thread start per call): the call may stream events, and in a
+        // legacy session it may wait for the client's answer to an elicitation or sampling request
+        let spawned = call_pool().execute(move || {
             let r = server.dispatch("tools/call", &params, &rc);
             let _ = tx.send(Event::Final(response(&id2, r)));
         });
-        if spawned.is_err() {
+        if !spawned {
             return rpc_error(&id, RpcError::new(codes::INTERNAL_ERROR, "Cannot start the call"));
         }
         match rx.recv() {
@@ -346,7 +348,7 @@ enum Event {
 }
 
 fn forward(rx: Receiver<Event>, stream: SseStream) {
-    let _ = std::thread::Builder::new().name("mcp-call-stream".into()).spawn(move || {
+    call_pool().execute(move || {
         while let Ok(ev) = rx.recv() {
             match ev {
                 Event::Request(m) => {
@@ -376,4 +378,10 @@ impl ClientChannel for HttpClientChannel {
         self.server.end_client_request(&id);
         answer
     }
+}
+
+/// Workers for calls that stream events (started on demand, shared by every MCP server).
+fn call_pool() -> &'static Arc<cameleer_core::executor::ThreadPool> {
+    static POOL: std::sync::OnceLock<Arc<cameleer_core::executor::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| cameleer_core::executor::ThreadPool::new("mcp-call", 4096))
 }

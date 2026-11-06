@@ -1279,17 +1279,22 @@ fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
+/// Workers for resource reads and prompts (started on demand).
+fn read_pool() -> &'static Arc<cameleer_core::executor::ThreadPool> {
+    static POOL: std::sync::OnceLock<Arc<cameleer_core::executor::ThreadPool>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| cameleer_core::executor::ThreadPool::new("mcp-read", 4096))
+}
+
 fn with_timeout<T: Send + 'static>(timeout: Duration, f: impl FnOnce() -> Result<T> + Send + 'static) -> Result<T> {
     if timeout.is_zero() {
         return f();
     }
     let (tx, rx) = channel();
-    std::thread::Builder::new()
-        .name("mcp-read".into())
-        .spawn(move || {
-            let _ = tx.send(f());
-        })
-        .map_err(|e| CamelError::io(format!("Cannot start the read: {}", e)))?;
+    if !read_pool().execute(move || {
+        let _ = tx.send(f());
+    }) {
+        return Err(CamelError::io("Cannot start the read: the worker pool is shut down"));
+    }
     rx.recv_timeout(timeout).unwrap_or_else(|_| Err(CamelError::new(cameleer_core::error::kinds::SOCKET_TIMEOUT, format!("No answer within {:?}", timeout))))
 }
 
