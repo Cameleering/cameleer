@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs on a server droplet of the cloud benchmark, called by run.sh over SSH. Starts one side
-# (rust = Cameleer, java = Apache Camel) the same way for both and prints the records of
+# (rust = Cameleer, java = Apache Camel on the JVM, native = Apache Camel on Quarkus, native) the same way for all and prints the records of
 # docs/BENCHMARKS.md (RESULT, PROC, VERSION), tagged with the side.
 #
 #   bench-node.sh inproc <side> <warmup> <iter> <iters>      in-process scenarios and startup
@@ -15,6 +15,7 @@ SRC=/root/cameleer
 BENCH="$SRC/target/release/cameleer-bench"
 JAVA="$(ls -d /root/.cache/cameleer-bench/jdk-*)/bin/java"
 JDIR="$SRC/benchmarks/java-camel"
+NATIVE="$(ls $SRC/benchmarks/camel-quarkus/target/*-runner 2>/dev/null | head -1)"
 ulimit -n 65536
 # the commands below are split into words unquoted; `lib/*` must reach java as one classpath entry
 set -f
@@ -23,6 +24,7 @@ cmd_for() { # the benchmark command of a side
   case "$1" in
     rust) echo "$BENCH" ;;
     java) echo "$JAVA -cp $JDIR/target/classes:$JDIR/target/lib/* bench.Bench" ;;
+    native) echo "$NATIVE" ;;
     *) echo "unknown side $1" >&2; exit 1 ;;
   esac
 }

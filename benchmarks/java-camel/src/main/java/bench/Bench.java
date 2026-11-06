@@ -100,6 +100,9 @@ public final class Bench {
             }
             case "serve" -> {
                 CamelContext ctx = new DefaultCamelContext();
+                if (args[1].equals("http-sql")) {
+                    bindHikari(ctx);
+                }
                 addServerRoute(ctx, args[1], Integer.parseInt(args[2]));
                 ctx.start();
                 version(ctx);
@@ -168,16 +171,18 @@ public final class Bench {
         return b.toString();
     }
 
+    /** The PostgreSQL pool of http-sql on the JVM (Camel Quarkus binds its own Agroal pool as "ds"). */
+    static void bindHikari(CamelContext ctx) {
+        HikariConfig cfg = new HikariConfig();
+        cfg.setJdbcUrl("jdbc:postgresql://" + PG + ":5432/bench");
+        cfg.setUsername("camel");
+        cfg.setPassword("camelpw");
+        cfg.setMaximumPoolSize(PG_POOL);
+        ctx.getRegistry().bind("ds", new HikariDataSource(cfg));
+    }
+
     /** The real-use HTTP scenarios; see crates/cameleer-bench/src/realworld.rs. */
     static void addServerRoute(CamelContext ctx, String scenario, int port) throws Exception {
-        if (scenario.equals("http-sql")) {
-            HikariConfig cfg = new HikariConfig();
-            cfg.setJdbcUrl("jdbc:postgresql://" + PG + ":5432/bench");
-            cfg.setUsername("camel");
-            cfg.setPassword("camelpw");
-            cfg.setMaximumPoolSize(PG_POOL);
-            ctx.getRegistry().bind("ds", new HikariDataSource(cfg));
-        }
         ctx.addRoutes(new RouteBuilder() {
             @Override
             public void configure() {

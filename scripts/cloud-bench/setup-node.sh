@@ -2,7 +2,7 @@
 # Prepare one Ubuntu 24.04 droplet of the cloud benchmark. Runs as root on the droplet, from the
 # unpacked source tree (/root/cameleer).
 #
-#   setup-node.sh server              build both benchmark sides (Cameleer and Apache Camel)
+#   setup-node.sh server              build the benchmark sides (Cameleer, Apache Camel, Camel Quarkus native)
 #   setup-node.sh load <private-ip>   build the load generator, start Kafka and PostgreSQL
 #
 # Every download is pinned and checksum-verified. Both servers get the same OS settings.
@@ -15,6 +15,10 @@ RUSTUP_SHA256=b1c8cb14e30889e7e2999e6b69e62d9e9b9ffc0f4df8180564d306d9680e6c55
 KAFKA_VERSION=4.3.2
 KAFKA_FILE=kafka_2.13-$KAFKA_VERSION.tgz
 KAFKA_SHA512=c2063485f90312bba795052df3e49b8eea337adf97f1111b946c60771c7a2f088055d2ccc7221d72fe30bd6a3f7a58348f14e14240eaddfe60446ea1c033618b
+# the GraalVM release Quarkus 3.40 is built against (benchmarks/camel-quarkus)
+MANDREL_VERSION=25.0.4.1-Final
+MANDREL_FILE=mandrel-java25-linux-amd64-$MANDREL_VERSION.tar.gz
+MANDREL_SHA256=e47ff6bfe6a8dbb482fdc65c9a49fc6f3ba2fa61ef3cc8fb6229a88989054c31
 
 log() { printf '==> [%s] %s\n' "$(hostname)" "$*" >&2; }
 
@@ -53,9 +57,16 @@ EOF
 server() {
   base
   cd "$SRC"
-  log "building both sides (scripts/bench.sh build)"
+  log "building Cameleer and Apache Camel on the JVM (scripts/bench.sh build)"
   BENCH_TOOLS=/root/.cache/cameleer-bench scripts/bench.sh build >/root/build.log 2>&1 || { tail -40 /root/build.log; exit 1; }
-  ls -la target/release/cameleer-bench benchmarks/java-camel/target/classes/bench/Bench.class >&2
+  log "Mandrel $MANDREL_VERSION and the Camel Quarkus native executable"
+  apt-get install -y -qq zlib1g-dev >/dev/null
+  fetch "https://github.com/graalvm/mandrel/releases/download/mandrel-$MANDREL_VERSION/$MANDREL_FILE" "/root/$MANDREL_FILE" sha256 "$MANDREL_SHA256"
+  [ -x /opt/mandrel/bin/native-image ] || { mkdir -p /opt/mandrel && tar -xzf "/root/$MANDREL_FILE" -C /opt/mandrel --strip-components=1; }
+  local tools=/root/.cache/cameleer-bench
+  JAVA_HOME="$(ls -d $tools/jdk-*)" "$(ls -d $tools/apache-maven-*)/bin/mvn" -C -B -q -f benchmarks/camel-quarkus/pom.xml package -Dnative \
+    -Dquarkus.native.graalvm-home=/opt/mandrel -Dquarkus.native.native-image-xmx=6g >/root/native.log 2>&1 || { tail -40 /root/native.log; exit 1; }
+  ls -la target/release/cameleer-bench benchmarks/java-camel/target/classes/bench/Bench.class benchmarks/camel-quarkus/target/*-runner >&2
 }
 
 load() {
@@ -109,7 +120,7 @@ EOF
     for _ in $(seq 60); do (exec 3<>/dev/tcp/127.0.0.1/9092) 2>/dev/null && break; sleep 1; done
   fi
   local kt="/opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092"
-  for t in orders-rust orders-java stream-in stream-out-rust stream-out-java; do
+  for t in orders-rust orders-java orders-native stream-in stream-out-rust stream-out-java stream-out-native; do
     JAVA_HOME="$java_home" $kt --create --if-not-exists --topic "$t" --partitions 4 --replication-factor 1 >/dev/null
   done
   JAVA_HOME="$java_home" $kt --list >&2

@@ -9,8 +9,9 @@
 #   scripts/cloud-bench/run.sh all        setup, prefill, bench
 #
 # Layout: two identical servers (a, b) and a load node with Kafka, PostgreSQL and the load
-# generator. Phase 1 runs Apache Camel on a and Cameleer on b, phase 2 swaps them, so a
-# difference between the two machines cancels out. Only one side runs at a time.
+# generator. Phase 1 runs Apache Camel (JVM and Quarkus native) on a and Cameleer on b, phase 2
+# swaps them, so a difference between the two machines cancels out. Only one side runs at a time.
+# BENCH_SIDES limits the sides (default: java rust native).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -19,6 +20,7 @@ STATE="$OUT/droplets.txt"
 KEY="${DO_SSH_KEY:-$HOME/.ssh/id_ed25519}"
 WARMUP="${BENCH_WARMUP:-15}"; ITER="${BENCH_ITER:-5}"; ITERS="${BENCH_ITERS:-5}"
 CONNS="${BENCH_CONNS:-64}"
+SIDES="${BENCH_SIDES:-java rust native}"
 STREAM_RECORDS="${BENCH_STREAM_RECORDS:-30000000}"
 SERVED="${BENCH_SERVED:-http rest-json http-kafka http-sql}"
 PORT=8080
@@ -72,6 +74,7 @@ machine() {
 
 one_side() { # one_side <phase> <side> <node-pub> <node-priv> <node-name>
   local phase=$1 side=$2 pub=$3 priv=$4 node=$5 results="$OUT/results.txt"
+  case " $SIDES " in *" $side "*) ;; *) return 0 ;; esac
   local env="BENCH_KAFKA=$L_PRIV:9092 BENCH_PG=$L_PRIV BENCH_RUN=$phase$side$(date +%s)"
   local tag="phase=$phase node=$node"
   log "phase $phase: $side on $node, in-process scenarios"
@@ -103,8 +106,10 @@ bench() {
   : > "$OUT/results.txt"; : > "$OUT/run.log"
   one_side 1 java "$A_PUB" "$A_PRIV" a
   one_side 1 rust "$B_PUB" "$B_PRIV" b
+  one_side 1 native "$A_PUB" "$A_PRIV" a
   one_side 2 rust "$A_PUB" "$A_PRIV" a
   one_side 2 java "$B_PUB" "$B_PRIV" b
+  one_side 2 native "$B_PUB" "$B_PRIV" b
   log "results in $OUT/results.txt"
 }
 
