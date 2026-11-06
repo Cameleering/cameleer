@@ -119,6 +119,13 @@ A tool that needs approval (`destructiveHint=true`, or an `approval` rule, see
 - A client that didn't declare the `elicitation` capability gets `-32021` and the call doesn't
   run.
 
+Out-of-band approvals can also be resolved from the command line: `cameleer tool approvals`
+lists the waiting calls of a running integration, and `cameleer tool approve <handle>` or
+`cameleer tool deny <handle>` decides one. `cameleer tool disable <name>` (or
+`POST /q/dev/tools/{name}/disable` on the dev console) withdraws a tool while the server runs:
+connected clients get `notifications/tools/list_changed` and the tool's calls are refused. See
+[ai-tool: kill switch](../components/ai-tool.md#kill-switch).
+
 ## Rich results
 
 A tool route can return MCP content blocks (images, audio, embedded resources) by setting the

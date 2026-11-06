@@ -227,8 +227,34 @@ or schema can't change under a client that already trusts it.
 ### Kill switch
 
 `camel.ai.disabled-tools=a,b` withdraws tools at startup. `AiRegistry::disable(name)` and
-`enable(name)` do it at runtime. Either way the tool disappears from every list, and
-`AiRegistry::on_change` listeners are told.
+`enable(name)` do it at runtime. Either way the tool disappears from every list, its calls are
+refused, and `AiRegistry::on_change` listeners are told, so MCP clients get
+`notifications/tools/list_changed`.
+
+An operator does the same from the command line, against an integration started with
+`cameleer run` (it finds the process by name or pid, like `cameleer stop`):
+
+```text
+$ cameleer tool list orders
+NAME    TAGS    READ-ONLY  DESTRUCTIVE  VERSION  STATUS
+lookup  orders  yes                     1        enabled
+refund  orders             yes          2        enabled
+Pending approvals: 1
+$ cameleer tool disable refund orders
+tool refund disabled
+$ cameleer tool enable refund orders
+tool refund enabled
+```
+
+`cameleer tool approvals` lists the calls waiting for approval (handle, tool, principal, age,
+reason). `cameleer tool approve <handle> [--by NAME]` runs one and prints its result, and
+`cameleer tool deny <handle> [--by NAME] [--reason TEXT]` rejects it; both go to the audit log
+with the approver (`--by`, default the user name). `tool list` and `tool approvals` take
+`--json`. A name that no route publishes is refused, so a typo doesn't go unnoticed.
+
+With the dev console (`camel.server.dev-console-enabled=true`), `GET /q/dev/tools` returns the
+same list as JSON, and `POST /q/dev/tools/{name}/disable` and `/enable` flip the switch. Both
+need the `ai` feature in the running binary; without it they say so.
 
 ## Differences from Apache Camel
 

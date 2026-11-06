@@ -16,8 +16,10 @@
 //! - `GET /q/metrics`: Prometheus text exposition
 //! - `GET /q/dev`: list of consoles; `/q/dev/context`, `/q/dev/routes`, `/q/dev/route/{id}`,
 //!   `/q/dev/endpoints`, `/q/dev/health`, `/q/dev/trace` (backlog tracer),
-//!   `/q/dev/route-controller`, `/q/dev/templates`
+//!   `/q/dev/route-controller`, `/q/dev/templates`, `/q/dev/tools` (AI tools, needs the `ai`
+//!   feature)
 //! - `POST /q/dev/route/{id}/start|stop|suspend|resume|reset-stats`
+//! - `POST /q/dev/tools/{name}/disable|enable` (the AI tools' kill switch)
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -159,6 +161,7 @@ const CONSOLES: &[(&str, &str, &str)] = &[
     ("trace", "Trace", "Backlog tracer events"),
     ("route-controller", "Route Controller", "Route controller status (supervising)"),
     ("templates", "Route Templates", "Registered route templates"),
+    ("tools", "AI Tools", "AI tools (kill switch: POST /q/dev/tools/{name}/disable|enable) and pending approvals"),
 ];
 
 /// Answer one management request (also usable without a server, e.g. in tests).
@@ -263,6 +266,23 @@ fn dev_console(ctx: &CamelContext, method: &str, rest: &[&str]) -> HttpResponse 
                 })
                 .collect();
             json(200, &Value::object([("templates", Value::Array(list))]))
+        }
+        ["tools"] if get => match crate::tools::tools_value(ctx) {
+            Ok(v) => json(200, &v),
+            Err(e) => error(if crate::tools::available() { 500 } else { 501 }, e.to_string()),
+        },
+        ["tools", name, action] if method == "POST" => {
+            let enabled = match *action {
+                "enable" => true,
+                "disable" => false,
+                other => return error(400, format!("Unknown tool action {}", other)),
+            };
+            match crate::tools::set_enabled(ctx, name, enabled) {
+                Ok(()) => json(200, &Value::object([("tool", Value::from(*name)), ("action", Value::from(*action)), ("disabled", Value::Bool(!enabled))])),
+                Err(e) if !crate::tools::available() => error(501, e.to_string()),
+                Err(e) if e.to_string().contains("No tool named") => error(404, e.to_string()),
+                Err(e) => error(500, e.to_string()),
+            }
         }
         _ if !get && method != "POST" => error(405, "Method Not Allowed"),
         _ => error(404, format!("Unknown dev console: /q/dev/{}", rest.join("/"))),
