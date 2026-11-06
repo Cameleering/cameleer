@@ -44,6 +44,7 @@ pub(super) struct TailState {
     streams: BTreeMap<String, DdbStream>,
     throughput: BTreeMap<String, (i64, i64)>,
     stream_seq: u64,
+    latest_iterators: usize,
 }
 
 impl AwsMock {
@@ -62,6 +63,11 @@ impl AwsMock {
     /// Records of a table's stream.
     pub fn ddb_stream_records(&self, table: &str) -> Vec<Value> {
         self.lock().tail.streams.get(table).map(|s| s.records.clone()).unwrap_or_default()
+    }
+    /// Number of `GetShardIterator` requests of type `LATEST` served (a FROM_LATEST consumer is
+    /// positioned once this counts its first request).
+    pub fn ddb_latest_iterator_requests(&self) -> usize {
+        self.lock().tail.latest_iterators
     }
     /// Event source mappings (UUID -> mapping).
     pub fn lambda_event_source_mappings(&self) -> Vec<Value> {
@@ -1367,7 +1373,11 @@ fn describe_extra(g: &super::State, name: &str) -> Value {
 const SHARD_ID: &str = "shardId-00000001700000000000-00000001";
 
 fn streams(st: &Shared, op: &str, body: &Value) -> Response {
-    let g = st.0.lock().unwrap();
+    let mut g = st.0.lock().unwrap();
+    if op == "GetShardIterator" && body.get("ShardIteratorType").map(|t| t.to_string()).as_deref() == Some("LATEST") {
+        g.tail.latest_iterators += 1;
+    }
+    let g = g;
     let arn = body.get("StreamArn").map(|a| a.to_string()).unwrap_or_default();
     let find = |arn: &str| g.tail.streams.iter().find(|(_, s)| s.arn == arn).map(|(t, s)| (t.clone(), s));
     let err = |code: &str, msg: &str| json_error(400, "com.amazonaws.dynamodb.v20120810", code, msg);

@@ -305,7 +305,13 @@ fn ddbstream_consumer_reads_item_changes() {
     m.expected_message_count(4);
     let latest = ctx.mock_endpoint("mock:latest").unwrap();
     ctx.start().unwrap();
-    std::thread::sleep(Duration::from_millis(150));
+    // FROM_LATEST positions itself with its first GetShardIterator; write only after that, or a
+    // slow start (a loaded machine) lets it miss the first changes.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while mock.ddb_latest_iterator_requests() == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(mock.ddb_latest_iterator_requests() > 0, "the FROM_LATEST consumer never asked for a shard iterator");
     req(&t, &u("UpdateItem"), "", &[("CamelAwsDdbKey", Value::object([("id", Value::from("a"))])), ("CamelAwsDdbUpdateExpression", Value::from("SET v = v + :one")), ("CamelAwsDdbExpressionAttributeValues", json(r#"{":one":1}"#))]);
     req(&t, &u("PutItem"), "", &[("CamelAwsDdbItem", Value::object([("id", Value::from("b")), ("v", Value::Int(9))]))]);
     req(&t, &u("DeleteItem"), "", &[("CamelAwsDdbKey", Value::object([("id", Value::from("a"))]))]);
