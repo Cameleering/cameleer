@@ -16,3 +16,7 @@ roles halfway (phase 1 and 2).
 
 The Cameleer rows of `results-all-sides.txt` for `ai-tool`, `mcp` and `mcp-session` are from the
 build before the envelope fixes (a thread per tool call); the reruns supersede them.
+
+`sizes.txt` is from `7ea0b91`. After `c4599aa` (the `agent` feature of cameleer-core) the
+stripped `core` build is 5,931,840 bytes against 5,869,104 for `main`, with the same cold start
+(1.33 ms median of 60 runs each, alternating) and peak RSS (6.1 MB).

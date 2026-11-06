@@ -229,6 +229,19 @@ p99. The other scenarios are within noise of the first run (direct 3.2x, seda re
 content-based router 3.1x, split and aggregate 2.7x, CSV 2.3x, REST with JSON 2.2x, HTTP into
 PostgreSQL 2.3x Camel on the JVM).
 
+### Size and cold start against `main`
+
+`cameleer` CLI, `dist` builds, stripped, on the same droplet (cold start: spawn to `Routes
+startup` of one `platform-http` route, median of 80 runs alternating with `main`):
+
+| build | `main` | this branch |
+|---|---:|---:|
+| every component (`full`) | 24.26 MB, ready in 2.00 ms, 10.0 MB RSS | 25.78 MB (+1.5 MB for the MCP server and client, `gemini`, the agent step and the call options), 2.12 ms, 11.0 MB |
+| `core` | 5.87 MB, ready in 1.33 ms, 6.1 MB RSS | 5.93 MB (+63 KB), 1.33 ms, 6.1 MB |
+
+The AI core and the agent step are `cameleer-core`'s `agent` feature, so `core` builds leave them
+out (they were +165 KB before that change).
+
 ### The HTTP ceiling
 
 A do-nothing HTTP server without Camel (`cameleer-bench raw-http`, one thread per connection, one
