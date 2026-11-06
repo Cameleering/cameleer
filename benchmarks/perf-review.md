@@ -127,7 +127,7 @@ Ranked by expected impact for FaaS (cold start, then image size and RSS, then th
 | 13 | Pool workers never exit after a burst | 60 s keep-alive (Camel's default profile) | S / low | done |
 | 14 | Status files and a 500 ms status thread on serverless platforms | off on Lambda, Cloud Run/Knative, Azure Functions | S / none | done |
 | 15 | Template engines, jq, the core XPath subset are always in core (~0.7–1 MB of the 7.3 MB `core` build); `cameleer-http` pulls `cameleer-grpc` for HTTP/2; `validate`/`schema` in every binary | core cargo features; optional HTTP/2 | M | follow-up |
-| 16 | XQuery/XSLT start a thread with a 128–256 MiB stack per evaluation; one thread per timer; supervising controller thread never exits | run on the caller unless the stack is low (as `cameleer-script` does); shared timer thread per name; exit when idle | S–M | follow-up |
+| 16 | XQuery/XSLT start a thread with a 128–256 MiB stack per evaluation; one thread per timer; supervising controller thread never exits | run on the caller unless the stack is low (as `cameleer-script` does); shared timer thread per name; exit when idle | S–M | done (status file also written only on change) |
 | 10 | `opt-level = "s"` | −13% size (thin) but −10 to −14% throughput | S | rejected as default |
 
 Not pursued, with reasons (details in `perf-research.md`):

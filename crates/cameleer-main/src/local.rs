@@ -290,7 +290,8 @@ pub fn alive(pid: u32) -> bool {
     const EPERM: i32 = 1;
     let Ok(p) = i32::try_from(pid) else { return false };
     // SAFETY: signal 0 only checks that the process exists (and may be signalled).
-    unsafe { kill(p, 0) == 0 } || std::io::Error::last_os_error().raw_os_error() == Some(EPERM)
+    let ok = unsafe { kill(p, 0) } == 0;
+    ok || std::io::Error::last_os_error().raw_os_error() == Some(EPERM)
 }
 
 /// Whether process `pid` is running.
