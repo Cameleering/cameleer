@@ -81,19 +81,18 @@ const EMPTY: Bin = Bin { head: null_mut(), len: 0 };
 
 /// The not yet used part of the last chunk carved for a class: blocks are taken from `ptr` up
 /// to `end` only when the free list is empty, so untouched blocks stay untouched pages. Kept
-/// apart from the bins, which the fast path reads, so those stay 16 bytes each.
+/// apart from the bins, which the fast path reads, so those stay 16 bytes each. A class with
+/// no chunk carved yet has no region (`None`), so both pointers always point into a chunk.
 #[derive(Clone, Copy)]
 struct Bump {
     ptr: *mut u8,
     end: *mut u8,
 }
 
-const NO_BUMP: Bump = Bump { ptr: null_mut(), end: null_mut() };
-
 /// A thread's free lists and bump regions.
 struct Bins {
     bins: [Bin; CLASSES],
-    bumps: [Bump; CLASSES],
+    bumps: [Option<Bump>; CLASSES],
 }
 
 impl Bin {
@@ -187,7 +186,7 @@ impl Drop for Guard {
 }
 
 thread_local! {
-    static CACHE: Cache = const { Cache { state: Cell::new(UNINIT), bins: UnsafeCell::new(Bins { bins: [EMPTY; CLASSES], bumps: [NO_BUMP; CLASSES] }) } };
+    static CACHE: Cache = const { Cache { state: Cell::new(UNINIT), bins: UnsafeCell::new(Bins { bins: [EMPTY; CLASSES], bumps: [None; CLASSES] }) } };
     static GUARD: Guard = const { Guard };
 }
 
@@ -213,24 +212,16 @@ const fn class_size(class: usize) -> usize {
 
 /// Move all blocks of a thread bin, including the unused rest of its chunk, to the shared
 /// stack of the class.
-unsafe fn give_back(class: usize, bin: &mut Bin, bump: &mut Bump) {
-    drain_bump(class, bin, bump);
+unsafe fn give_back(class: usize, bin: &mut Bin, bump: &mut Option<Bump>) {
+    if let Some(mut b) = bump.take() {
+        let size = class_size(class);
+        while b.ptr < b.end {
+            let p = b.ptr;
+            b.ptr = p.add(size);
+            bin.push(p);
+        }
+    }
     give_back_bin(class, bin);
-}
-
-/// Move the unused rest of a chunk into `bin`, block by block. A thread that never carved a
-/// chunk for the class has no bump region (null pointers): nothing to move.
-unsafe fn drain_bump(class: usize, bin: &mut Bin, bump: &mut Bump) {
-    if bump.ptr.is_null() {
-        return;
-    }
-    let size = class_size(class);
-    while bump.ptr < bump.end {
-        let p = bump.ptr;
-        bump.ptr = p.add(size);
-        bin.push(p);
-    }
-    *bump = NO_BUMP;
 }
 
 /// Move the blocks of `bin` to the shared stack of the class.
@@ -241,13 +232,14 @@ unsafe fn give_back_bin(class: usize, bin: &mut Bin) {
 
 /// Take a block from the unused rest of the class's last chunk.
 #[inline]
-unsafe fn take_bump(class: usize, bump: &mut Bump) -> *mut u8 {
-    if bump.ptr < bump.end {
-        let p = bump.ptr;
-        bump.ptr = p.add(class_size(class));
-        p
-    } else {
-        null_mut()
+unsafe fn take_bump(class: usize, bump: &mut Option<Bump>) -> *mut u8 {
+    match bump {
+        Some(b) if b.ptr < b.end => {
+            let p = b.ptr;
+            b.ptr = p.add(class_size(class));
+            p
+        }
+        _ => null_mut(),
     }
 }
 
@@ -270,7 +262,7 @@ unsafe fn give_back_cold(class: usize, bin: &mut Bin, keep: u32) {
 
 /// Fill a thread bin from the shared list, carving a new chunk if that is empty.
 /// Returns one block for the caller.
-unsafe fn refill(class: usize, bin: &mut Bin, bump: &mut Bump) -> *mut u8 {
+unsafe fn refill(class: usize, bin: &mut Bin, bump: &mut Option<Bump>) -> *mut u8 {
     let p = take_bump(class, bump);
     if !p.is_null() {
         return p;
@@ -289,7 +281,7 @@ unsafe fn refill(class: usize, bin: &mut Bin, bump: &mut Bump) -> *mut u8 {
 
 /// Carve a chunk of blocks of a class: the first is returned, the rest become the bin's bump
 /// region (handed out one by one, see [`take_bump`]).
-unsafe fn carve(class: usize, bump: &mut Bump) -> *mut u8 {
+unsafe fn carve(class: usize, bump: &mut Option<Bump>) -> *mut u8 {
     let size = class_size(class);
     let count = (CHUNK / size).clamp(1, batch(class) as usize);
     let chunk = System.alloc(Layout::from_size_align_unchecked(size * count, GRANULE));
@@ -297,8 +289,7 @@ unsafe fn carve(class: usize, bump: &mut Bump) -> *mut u8 {
         return chunk;
     }
     // a previous region is empty here (refill takes from it first)
-    bump.ptr = chunk.add(size);
-    bump.end = chunk.add(size * count);
+    *bump = Some(Bump { ptr: chunk.add(size), end: chunk.add(size * count) });
     chunk
 }
 
@@ -344,7 +335,7 @@ unsafe impl GlobalAlloc for CamelAllocator {
         }) {
             Some(p) => p,
             None => {
-                let (mut tmp, mut bump) = (EMPTY, NO_BUMP);
+                let (mut tmp, mut bump) = (EMPTY, None);
                 let p = refill(class, &mut tmp, &mut bump);
                 give_back(class, &mut tmp, &mut bump);
                 p
@@ -447,7 +438,8 @@ mod tests {
             let l = layout(1000, 8);
             let class = class_of(&l).unwrap();
             let p = unsafe { a.alloc(l) };
-            let (len, bump, end) = with_cache(|t| (t.bins[class].len, t.bumps[class].ptr, t.bumps[class].end)).unwrap();
+            let (len, region) = with_cache(|t| (t.bins[class].len, t.bumps[class])).unwrap();
+            let Bump { ptr: bump, end } = region.expect("the first allocation carved a chunk");
             assert_eq!(len, 0, "no free-list entries were written into the chunk");
             assert_eq!(bump, unsafe { p.add(class_size(class)) });
             assert!(end > bump);

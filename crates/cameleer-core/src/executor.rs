@@ -1,18 +1,32 @@
 //! Thread pools (Camel `ExecutorServiceManager` equivalent, std-only).
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
+/// One job waiting, one job running, and a job moving from waiting to running (one fewer
+/// waiting, one more running, in a single wrapping add) in [`ThreadPool`]'s `jobs` word.
+const WAITING: u64 = 1 << 32;
+const RUNNING: u64 = 1;
+const TAKE: u64 = RUNNING.wrapping_sub(WAITING);
+
+fn pending_of(jobs: u64) -> usize {
+    (jobs >> 32) as usize
+}
+
+fn active_of(jobs: u64) -> usize {
+    (jobs & 0xFFFF_FFFF) as usize
+}
+
 /// A thread pool with at most `size` worker threads.
 ///
 /// Workers are started on demand, like the core threads of Java's `ThreadPoolExecutor`
 /// (which Camel's thread pools are): a job submitted while no started worker is idle starts
 /// a new one, until `size` workers run. An idle pool costs no threads, so a route with an
-/// HTTP consumer (32 workers) starts in microseconds instead of spawning 32 threads. A worker
+/// HTTP consumer (200 workers) starts in microseconds instead of spawning 200 threads. A worker
 /// idle for the keep-alive time (60 s, Camel's default thread pool profile, which lets core
 /// threads time out) exits, so a burst does not leave its threads behind.
 pub struct ThreadPool {
@@ -20,8 +34,11 @@ pub struct ThreadPool {
     sender: Mutex<Option<Sender<Job>>>,
     receiver: Arc<Mutex<Receiver<Job>>>,
     workers: Mutex<Vec<JoinHandle<()>>>,
-    active: Arc<AtomicUsize>,
-    pending: Arc<AtomicUsize>,
+    /// Jobs waiting (high 32 bits) and jobs running (low 32 bits), in one word so a worker
+    /// that takes a job moves it from waiting to running in one step: `execute` must never
+    /// see a taken job in both counts (it would start a worker no job needs) or in neither
+    /// (it would not start one a blocked job needs).
+    jobs: Arc<AtomicU64>,
     /// Workers running (never more than `size`).
     started: Arc<AtomicUsize>,
     keep_alive: std::time::Duration,
@@ -39,8 +56,7 @@ impl ThreadPool {
             sender: Mutex::new(Some(tx)),
             receiver: Arc::new(Mutex::new(rx)),
             workers: Mutex::new(Vec::new()),
-            active: Arc::new(AtomicUsize::new(0)),
-            pending: Arc::new(AtomicUsize::new(0)),
+            jobs: Arc::new(AtomicU64::new(0)),
             started: Arc::new(AtomicUsize::new(0)),
             keep_alive: std::time::Duration::from_secs(60),
             shutdown: AtomicBool::new(false),
@@ -72,8 +88,7 @@ impl ThreadPool {
         }
         workers.retain(|h| !h.is_finished());
         let rx = self.receiver.clone();
-        let active = self.active.clone();
-        let pending = self.pending.clone();
+        let jobs = self.jobs.clone();
         let started = self.started.clone();
         let keep_alive = self.keep_alive;
         let spawned = std::thread::Builder::new().name(format!("{}-{}", self.name, n + 1)).spawn(move || loop {
@@ -84,7 +99,7 @@ impl ThreadPool {
                     // before it reads `started`, so either this worker sees the job and
                     // stays, or `execute` sees the worker gone and starts another
                     started.fetch_sub(1, Ordering::SeqCst);
-                    if pending.load(Ordering::SeqCst) == 0 {
+                    if pending_of(jobs.load(Ordering::SeqCst)) == 0 {
                         break;
                     }
                     started.fetch_add(1, Ordering::SeqCst);
@@ -95,12 +110,9 @@ impl ThreadPool {
             };
             match job {
                 Ok(job) => {
-                    // active first: `execute` must never see a taken job as neither pending
-                    // nor active, or it would not start a worker for the next job
-                    active.fetch_add(1, Ordering::SeqCst);
-                    pending.fetch_sub(1, Ordering::SeqCst);
+                    jobs.fetch_add(TAKE, Ordering::SeqCst);
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job));
-                    active.fetch_sub(1, Ordering::SeqCst);
+                    jobs.fetch_sub(RUNNING, Ordering::SeqCst);
                 }
                 Err(_) => break,
             }
@@ -133,7 +145,7 @@ impl ThreadPool {
         }
         let sent = match self.sender.lock().unwrap().as_ref() {
             Some(tx) => {
-                self.pending.fetch_add(1, Ordering::SeqCst);
+                self.jobs.fetch_add(WAITING, Ordering::SeqCst);
                 tx.send(Box::new(f)).is_ok()
             }
             None => false,
@@ -141,7 +153,8 @@ impl ThreadPool {
         if sent {
             // start a worker when the jobs waiting outnumber the idle started workers
             let started = self.started.load(Ordering::SeqCst);
-            if started < self.size && self.pending.load(Ordering::SeqCst) > started.saturating_sub(self.active.load(Ordering::SeqCst)) && !self.start_worker() && started == 0 {
+            let jobs = self.jobs.load(Ordering::SeqCst);
+            if started < self.size && pending_of(jobs) > started.saturating_sub(active_of(jobs)) && !self.start_worker() && started == 0 {
                 return false;
             }
         }
@@ -159,11 +172,11 @@ impl ThreadPool {
     }
 
     pub fn active_count(&self) -> usize {
-        self.active.load(Ordering::SeqCst)
+        active_of(self.jobs.load(Ordering::SeqCst))
     }
 
     pub fn pending_count(&self) -> usize {
-        self.pending.load(Ordering::SeqCst)
+        pending_of(self.jobs.load(Ordering::SeqCst))
     }
 
     /// Maximum number of worker threads.
@@ -175,7 +188,8 @@ impl ThreadPool {
     /// are idle workers. (A job submitted while workers are idle is pending only until one
     /// of them wakes up.)
     pub fn is_saturated(&self) -> bool {
-        self.pending_count() > self.size.saturating_sub(self.active_count())
+        let jobs = self.jobs.load(Ordering::SeqCst);
+        pending_of(jobs) > self.size.saturating_sub(active_of(jobs))
     }
 
     /// Stop accepting jobs and wait for workers to finish queued jobs.
@@ -617,6 +631,20 @@ mod tests {
         }
         assert!(!pool.is_saturated());
         pool.shutdown();
+    }
+
+    #[test]
+    fn taking_a_job_moves_it_from_waiting_to_running_in_one_step() {
+        let jobs = AtomicU64::new(0);
+        jobs.fetch_add(WAITING, Ordering::SeqCst);
+        jobs.fetch_add(WAITING, Ordering::SeqCst);
+        jobs.fetch_add(TAKE, Ordering::SeqCst);
+        let j = jobs.load(Ordering::SeqCst);
+        assert_eq!((pending_of(j), active_of(j)), (1, 1));
+        jobs.fetch_add(TAKE, Ordering::SeqCst);
+        jobs.fetch_sub(RUNNING, Ordering::SeqCst);
+        let j = jobs.load(Ordering::SeqCst);
+        assert_eq!((pending_of(j), active_of(j)), (0, 1));
     }
 
     #[test]

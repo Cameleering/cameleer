@@ -221,8 +221,9 @@ fn pooled_datasource_rolls_back_returned_connections() {
 fn pool_size_caps_open_connections_and_callers_wait() {
     // 12 concurrent callers share a pool of 3: like HikariCP's maximumPoolSize, the pool never
     // opens more than 3 connections; the others wait for one to come back
-    // a password made up for this run: nothing secret lives in the source
-    let password = unique("pw");
+    // a password made up for this run from the clock: nothing secret lives in the source
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    let password: String = (0..16).map(|i| char::from(b'a' + ((nanos >> (i * 4)) % 26) as u8)).collect();
     let s = PgTestServer::start(&unique("pgdb"), PgAuth::ScramSha256, &[("camel", &password)]).unwrap();
     let url = s.url("camel", &password);
     let ds = PgDataSource::from_url(&format!("{url}&poolSize=3")).unwrap();
