@@ -249,6 +249,123 @@ impl Rest {
     pub fn json(&self, req: Req) -> Result<Value> {
         self.send_ok(req)?.json()
     }
+
+    /// Send a request and decode a `text/event-stream` response incrementally: the `data` of
+    /// each server-sent event goes to `on_event` as soon as the event is complete. An error
+    /// from `on_event` aborts the stream. A response that is not an event stream (an error
+    /// status, or a server that answered with plain JSON) is returned buffered in `body`; for
+    /// an event stream `body` is empty.
+    pub fn send_events(&self, req: Req, on_event: &mut dyn FnMut(&str) -> Result<()>) -> Result<Resp> {
+        use std::io::{Read, Write};
+        let url = cameleer_http::Url::parse(&req.url)?;
+        let what = url.to_string();
+        let io_err = |e: std::io::Error| CamelError::io(format!("I/O error talking to {}: {}", what, e));
+        let c = &self.client;
+        let proxy = c.proxy.as_ref().and_then(|p| p.proxy_for(&url));
+        let timeout = if c.read_timeout.is_zero() { None } else { Some(c.read_timeout) };
+        let (stream, absolute) = cameleer_http::client::open_stream(&url, c.tls.as_deref(), c.tls_server_name.as_deref(), proxy, c.connect_timeout, timeout)?;
+        let mut h = HttpHeaders::new();
+        h.set("Host", url.host_header());
+        h.set("User-Agent", "Cameleer");
+        for (k, v) in &req.headers {
+            h.set(k.clone(), v.clone());
+        }
+        h.set("Connection", "close");
+        let target = if absolute {
+            if let Some(cred) = proxy.and_then(|p| p.credentials.as_ref()) {
+                h.set("Proxy-Authorization", format!("Basic {}", base64(cred.as_bytes())));
+            }
+            url.to_string()
+        } else {
+            url.request_target()
+        };
+        let mut head = Vec::new();
+        cameleer_http::http::write_request(&mut head, &req.method, &target, &h, req.body.as_deref(), false).map_err(io_err)?;
+        (&stream).write_all(&head).map_err(io_err)?;
+        let reader = std::io::BufReader::new(&stream);
+        let (resp, mut body) = cameleer_http::http::read_response_streaming(reader, &req.method, &c.limits).map_err(|e| CamelError::io(format!("I/O error talking to {}: {}", what, e)))?;
+        let headers: Vec<(String, String)> = resp.headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let is_events = headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("Content-Type") && v.to_ascii_lowercase().starts_with("text/event-stream"));
+        if !(200..300).contains(&resp.status) || !is_events {
+            let mut all = Vec::new();
+            body.read_to_end(&mut all).map_err(io_err)?;
+            return Ok(Resp { status: resp.status, headers, body: all });
+        }
+        let mut decoder = SseDecoder::default();
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = body.read(&mut buf).map_err(io_err)?;
+            if n == 0 {
+                break;
+            }
+            decoder.push(&buf[..n], on_event)?;
+        }
+        decoder.finish(on_event)?;
+        let _ = stream.close_notify();
+        Ok(Resp { status: resp.status, headers, body: Vec::new() })
+    }
+}
+
+/// An incremental Server-Sent Events decoder (`text/event-stream`): lines are split as bytes
+/// arrive, `data:` fields are joined with `\n`, a blank line dispatches the event, `:` comments
+/// and other fields are ignored.
+#[derive(Default)]
+pub struct SseDecoder {
+    buf: Vec<u8>,
+    data: String,
+    has_data: bool,
+}
+
+impl SseDecoder {
+    /// Feed bytes; complete events go to `on_event`.
+    pub fn push(&mut self, bytes: &[u8], on_event: &mut dyn FnMut(&str) -> Result<()>) -> Result<()> {
+        self.buf.extend_from_slice(bytes);
+        while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
+            let mut line: Vec<u8> = self.buf.drain(..=pos).collect();
+            line.pop();
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let line = String::from_utf8_lossy(&line).into_owned();
+            self.line(&line, on_event)?;
+        }
+        Ok(())
+    }
+
+    /// Dispatch what is left at the end of the stream.
+    pub fn finish(&mut self, on_event: &mut dyn FnMut(&str) -> Result<()>) -> Result<()> {
+        if !self.buf.is_empty() {
+            let rest = String::from_utf8_lossy(&std::mem::take(&mut self.buf)).into_owned();
+            self.line(rest.trim_end_matches('\r'), on_event)?;
+        }
+        self.line("", on_event)
+    }
+
+    fn line(&mut self, line: &str, on_event: &mut dyn FnMut(&str) -> Result<()>) -> Result<()> {
+        if line.is_empty() {
+            if self.has_data {
+                self.has_data = false;
+                let data = std::mem::take(&mut self.data);
+                on_event(&data)?;
+            }
+            return Ok(());
+        }
+        if line.starts_with(':') {
+            return Ok(());
+        }
+        let (field, value) = match line.split_once(':') {
+            Some((f, v)) => (f, v.strip_prefix(' ').unwrap_or(v)),
+            None => (line, ""),
+        };
+        if field == "data" {
+            if self.has_data {
+                self.data.push('\n');
+            }
+            self.data.push_str(value);
+            self.has_data = true;
+        }
+        Ok(())
+    }
 }
 
 /// `HttpOperationFailedException` for a response.
@@ -324,5 +441,28 @@ mod tests {
         assert_eq!(join_url("http://h/api/", "/x"), "http://h/api/x");
         assert_eq!(query(&[("a b", "c&d".into())]), "a%20b=c%26d");
         assert_eq!(strip_secrets("https://api.telegram.org/bot123:ABC/sendMessage"), "https://api.telegram.org/bot***/sendMessage");
+    }
+
+    #[test]
+    fn sse_decoder_splits_events_across_reads() {
+        let mut got: Vec<String> = Vec::new();
+        let mut d = SseDecoder::default();
+        let body = b": keep-alive\r\nevent: x\r\ndata: {\"a\":\r\ndata: 1}\r\n\r\ndata: [DONE]\n\ndata: tail";
+        for chunk in body.chunks(3) {
+            d.push(chunk, &mut |e| {
+                got.push(e.to_string());
+                Ok(())
+            })
+            .unwrap();
+        }
+        d.finish(&mut |e| {
+            got.push(e.to_string());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(got, vec!["{\"a\":\n1}", "[DONE]", "tail"]);
+        // an error from the callback stops decoding
+        let mut d = SseDecoder::default();
+        assert!(d.push(b"data: x\n\n", &mut |_| Err(CamelError::illegal_state("stop"))).is_err());
     }
 }

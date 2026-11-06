@@ -11,11 +11,11 @@ Cameleer is a route: a trigger, one or more model calls, and the systems the age
 
 | | [openai](../components/openai.md) | [azure-openai](../components/azure-openai.md) | [aws-bedrock](../components/aws-bedrock.md) | [google-vertexai](../components/google-vertexai.md) |
 |---|---|---|---|---|
-| Providers | OpenAI, Ollama, vLLM, LM Studio, LiteLLM, any `/v1/chat/completions` server | Azure OpenAI deployments | Models on Amazon Bedrock (Anthropic, Amazon Titan, Meta, Mistral, ...) | Gemini; partner models (Anthropic, Meta, Mistral) via `rawPredict` |
-| Chat | `chat-completion` | `chatCompletion` | `converse`, `invokeTextModel` | `generateText`, `generateChat`, `generateCode`, `generateMultimodal` |
+| Providers | OpenAI (Chat Completions and the Responses API), Ollama (also its native `/api/chat`), vLLM, LM Studio, LiteLLM, any `/v1/chat/completions` server | Azure OpenAI deployments | Models on Amazon Bedrock (Anthropic, Amazon Titan, Meta, Mistral, ...) | Gemini; partner models (Anthropic, Meta, Mistral) via `rawPredict` |
+| Chat | `chat-completion`, `responses` | `chatCompletion` | `converse`, `invokeTextModel` | `generateText`, `generateChat`, `generateCode`, `generateMultimodal` |
 | Embeddings | `embeddings` | `embeddings` | `invokeEmbeddingsModel` | `generateEmbeddings` |
-| Streaming | no | yes (`streaming=true`) | yes (`converseStream`, `invoke*Streaming`) | yes (`generate*Streaming`, `streamRawPredict`) |
-| Tool calls | pass-through only: send `tools` in a request map, read the raw response with `outputType=full` | the model's tool calls in the `CamelAzureOpenAIToolCalls` header | `CamelAwsBedrockConverseToolConfig` header; tool-use blocks in `CamelAwsBedrockConverseOutputMessage` | pass-through only: send `tools` in a request map, read the raw response in `CamelGoogleVertexAIResponse` |
+| Streaming | yes (`streaming=true`, also in the tool loop) | yes (`streaming=true`) | yes (`converseStream`, `invoke*Streaming`) | yes (`generate*Streaming`, `streamRawPredict`) |
+| Tool calls | `tags`: the tool loop over your `ai-tool` routes; `autoToolExecution=false` returns the calls in `CamelOpenAIToolCalls` | the model's tool calls in the `CamelAzureOpenAIToolCalls` header | `CamelAwsBedrockConverseToolConfig` header; tool-use blocks in `CamelAwsBedrockConverseOutputMessage` | pass-through only: send `tools` in a request map, read the raw response in `CamelGoogleVertexAIResponse` |
 | Images | no | `imageGeneration` (DALL-E) | `invokeImageModel` | `generateImage` (Imagen), image input with `generateMultimodal` |
 | Extras | | Assistants API (`runAssistant`, threads, runs) | Guardrails, knowledge bases and agents (`aws-bedrock-agent-runtime`) | token counting (`countTokens`) |
 | Auth | API key (Bearer) or none | API key or Entra ID client credentials | AWS credentials (SigV4) | Google service account / workload identity |
@@ -32,7 +32,6 @@ Be aware of these limits before you design around them:
   [`ai-tool`](../components/ai-tool.md) routes for the model, and the
   [agent step](agent-step.md) adds memory, approvals and limits. Server-side agents also work:
   Bedrock Agents (`aws-bedrock-agent-runtime`) and Azure OpenAI Assistants (`runAssistant`).
-- **`openai` has no streaming.** It waits for the complete answer, also in a tool loop.
 - **No vector store component.** Embeddings are lists of numbers in the body; store and search
   them with the data store you already run ([mongodb](../components/mongodb.md),
   [elasticsearch](../components/elasticsearch.md), [spring-redis](../components/spring-redis.md),
@@ -42,8 +41,6 @@ Be aware of these limits before you design around them:
   with [`anthropic`](../components/anthropic.md), or through Bedrock and Vertex AI. Routes are published as tools, resources and prompts
   with [`ai-tool`](../components/ai-tool.md), [`ai-resource`](../components/ai-resource.md) and
   [`ai-prompt`](../components/ai-prompt.md), and the [MCP server](mcp-server.md) serves them.
-- **No native Ollama API.** Ollama, vLLM and LM Studio are used through their OpenAI-compatible
-  `/v1` endpoint with `openai:` and `baseUrl`.
 
 ## Classify and summarise with an LLM, then act
 

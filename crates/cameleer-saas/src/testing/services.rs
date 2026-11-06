@@ -991,7 +991,12 @@ pub fn scripted_tool_calls(text: &str) -> Vec<(String, Value)> {
 /// OpenAI-compatible API mock (API key [`OpenAiMock::API_KEY`], base url `url() + "/v1"`).
 /// Chat completions answer `Echo: <last user message>`. With `tools`, a last user message
 /// `call NAME {json}` (see [`scripted_tool_calls`]) gets tool calls, and tool results get
-/// `Done: <results>`. Tool messages must answer every call id, as on the real API.
+/// `Done: <results>`. Tool messages must answer every call id, as on the real API. With
+/// `"stream": true` the answer comes as `chat.completion.chunk` events (text word by word, tool
+/// calls with id and name first and arguments in pieces, a usage chunk with
+/// `stream_options.include_usage`, then `[DONE]`). `/v1/responses` is the Responses API with
+/// the same script (every `function_call` must have a `function_call_output` with its
+/// `call_id`; streamed as `response.*` events).
 pub struct OpenAiMock {
     pub server: MockServer,
 }
@@ -1038,7 +1043,12 @@ impl OpenAiMock {
                     let has_tools = b.get("tools").and_then(|t| t.as_array()).map(|t| !t.is_empty()).unwrap_or(false);
                     let last = msgs.last().cloned().unwrap_or(Value::Null);
                     let usage = obj(vec![("prompt_tokens", Value::Int(12)), ("completion_tokens", Value::Int(4)), ("total_tokens", Value::Int(16))]);
-                    let reply = |message: Value, finish: &str| {
+                    let stream = b.get("stream").map(|s| s.is_truthy()).unwrap_or(false);
+                    let include_usage = b.get("stream_options").and_then(|o| o.get("include_usage")).map(|u| u.is_truthy()).unwrap_or(false);
+                    let reply_with = |message: Value, finish: &str, usage: Value| {
+                        if stream {
+                            return chat_completion_chunks(&model, &message, finish, if include_usage { Some(usage) } else { None });
+                        }
                         json(
                             200,
                             &obj(vec![
@@ -1046,10 +1056,11 @@ impl OpenAiMock {
                                 ("object", "chat.completion".into()),
                                 ("model", model.clone().into()),
                                 ("choices", Value::Array(vec![obj(vec![("index", Value::Int(0)), ("message", message), ("finish_reason", finish.into())])])),
-                                ("usage", usage.clone()),
+                                ("usage", usage),
                             ]),
                         )
                     };
+                    let reply = |message: Value, finish: &str| reply_with(message, finish, usage.clone());
                     if has_tools && last.get("role").map(|r| r.to_string() == "tool").unwrap_or(false) {
                         let results: Vec<String> = msgs
                             .iter()
@@ -1084,17 +1095,13 @@ impl OpenAiMock {
                     let content = format!("Echo: {}{}", last_user, system);
                     let prompt_tokens = msgs.iter().map(|m| m.get("content").map(|c| c.to_string().split_whitespace().count()).unwrap_or(0)).sum::<usize>() as i64;
                     let completion_tokens = content.split_whitespace().count() as i64;
-                    json(
-                        200,
-                        &obj(vec![
-                            ("id", "chatcmpl-test".into()),
-                            ("object", "chat.completion".into()),
-                            ("model", model.into()),
-                            ("choices", Value::Array(vec![obj(vec![("index", Value::Int(0)), ("message", obj(vec![("role", "assistant".into()), ("content", content.into())])), ("finish_reason", "stop".into())])])),
-                            ("usage", obj(vec![("prompt_tokens", Value::Int(prompt_tokens)), ("completion_tokens", Value::Int(completion_tokens)), ("total_tokens", Value::Int(prompt_tokens + completion_tokens))])),
-                        ]),
+                    reply_with(
+                        obj(vec![("role", "assistant".into()), ("content", content.into())]),
+                        "stop",
+                        obj(vec![("prompt_tokens", Value::Int(prompt_tokens)), ("completion_tokens", Value::Int(completion_tokens)), ("total_tokens", Value::Int(prompt_tokens + completion_tokens))]),
                     )
                 }
+                "/v1/responses" => responses_api(&b, &model),
                 "/v1/embeddings" => {
                     let inputs: Vec<String> = match b.get("input") {
                         Some(Value::Array(a)) => a.iter().map(|x| x.to_string()).collect(),
@@ -1120,6 +1127,236 @@ impl OpenAiMock {
     /// Base url to use as `baseUrl` (`http://127.0.0.1:port/v1`).
     pub fn base_url(&self) -> String {
         format!("{}/v1", self.server.url())
+    }
+}
+
+/// A chunked `text/event-stream` response with these `(event, data)` events.
+fn event_stream(events: &[(Option<&str>, String)]) -> HttpResponse {
+    let mut out = String::new();
+    for (event, data) in events {
+        if let Some(e) = event {
+            out.push_str(&format!("event: {}\n", e));
+        }
+        out.push_str(&format!("data: {}\n\n", data));
+    }
+    HttpResponse::new(200).with_header("Content-Type", "text/event-stream").with_header("Cache-Control", "no-cache").with_body(out.into_bytes()).with_chunked(true)
+}
+
+/// Text split into word deltas (`"a b"` → `"a "`, `"b"`), as models stream it.
+fn word_deltas(text: &str) -> Vec<String> {
+    text.split_inclusive(' ').map(|s| s.to_string()).collect()
+}
+
+/// A Chat Completions answer as `chat.completion.chunk` events: a role chunk, the text word by
+/// word, each tool call with its id and name first and its arguments in pieces, the finish
+/// reason, the usage chunk (when asked for) and `[DONE]`.
+fn chat_completion_chunks(model: &str, message: &Value, finish: &str, usage: Option<Value>) -> HttpResponse {
+    let chunk = |choices: Vec<Value>, usage: Option<Value>| {
+        let mut c = vec![("id", Value::from("chatcmpl-test")), ("object", "chat.completion.chunk".into()), ("model", model.into()), ("choices", Value::Array(choices))];
+        if let Some(u) = usage {
+            c.push(("usage", u));
+        }
+        (None, obj(c).to_json())
+    };
+    let delta = |d: Value, finish: Value| obj(vec![("index", Value::Int(0)), ("delta", d), ("finish_reason", finish)]);
+    let mut events = vec![chunk(vec![delta(obj(vec![("role", "assistant".into()), ("content", "".into())]), Value::Null)], None)];
+    if let Some(t) = message.get("content").filter(|c| !c.is_null()) {
+        for w in word_deltas(&t.to_string()) {
+            events.push(chunk(vec![delta(obj(vec![("content", w.into())]), Value::Null)], None));
+        }
+    }
+    for (i, c) in message.get("tool_calls").and_then(|t| t.as_array()).cloned().unwrap_or_default().iter().enumerate() {
+        let f = c.get("function").cloned().unwrap_or(Value::Null);
+        let head = obj(vec![
+            ("index", Value::Int(i as i64)),
+            ("id", c.get("id").cloned().unwrap_or(Value::Null)),
+            ("type", "function".into()),
+            ("function", obj(vec![("name", f.get("name").cloned().unwrap_or(Value::Null)), ("arguments", "".into())])),
+        ]);
+        events.push(chunk(vec![delta(obj(vec![("tool_calls", Value::Array(vec![head]))]), Value::Null)], None));
+        let args: Vec<char> = f.get("arguments").map(|a| a.to_string()).unwrap_or_default().chars().collect();
+        for piece in args.chunks(args.len().div_ceil(3).max(1)) {
+            let tc = obj(vec![("index", Value::Int(i as i64)), ("function", obj(vec![("arguments", piece.iter().collect::<String>().into())]))]);
+            events.push(chunk(vec![delta(obj(vec![("tool_calls", Value::Array(vec![tc]))]), Value::Null)], None));
+        }
+    }
+    events.push(chunk(vec![delta(obj(vec![]), finish.into())], None));
+    if let Some(u) = usage {
+        events.push(chunk(vec![], Some(u)));
+    }
+    events.push((None, "[DONE]".to_string()));
+    event_stream(&events)
+}
+
+/// The OpenAI Responses API (`POST /v1/responses`) of [`OpenAiMock`].
+fn responses_api(b: &Value, model: &str) -> HttpResponse {
+    let err = |status: u16, m: &str, param: &str| json(status, &obj(vec![("error", obj(vec![("message", m.into()), ("type", "invalid_request_error".into()), ("param", param.into())]))]));
+    let items: Vec<Value> = match b.get("input") {
+        Some(Value::String(s)) => vec![obj(vec![("type", "message".into()), ("role", "user".into()), ("content", s.as_str().into())])],
+        Some(Value::Array(a)) if !a.is_empty() => a.clone(),
+        _ => return err(400, "Missing required parameter: 'input'.", "input"),
+    };
+    let tools = b.get("tools").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+    for (i, t) in tools.iter().enumerate() {
+        if t.get("name").is_none() || t.get("type").map(|x| x.to_string()).as_deref() != Some("function") {
+            return err(400, &format!("Missing required parameter: 'tools[{}].name'.", i), &format!("tools[{}].name", i));
+        }
+    }
+    let kind = |m: &Value| m.get("type").map(|t| t.to_string()).unwrap_or_else(|| "message".into());
+    // every function call needs its output later in the input
+    for (i, it) in items.iter().enumerate() {
+        if kind(it) != "function_call" {
+            continue;
+        }
+        let id = it.get("call_id").map(|x| x.to_string()).unwrap_or_default();
+        if !items[i + 1..].iter().any(|o| kind(o) == "function_call_output" && o.get("call_id").map(|x| x.to_string()).as_deref() == Some(id.as_str())) {
+            return err(400, &format!("No tool output found for function call {}.", id), "input");
+        }
+        if !matches!(it.get("arguments"), Some(Value::String(_))) {
+            return err(400, &format!("Invalid type for 'input[{}].arguments': expected a string.", i), "input");
+        }
+    }
+    for it in &items {
+        if kind(it) == "function_call_output" {
+            let id = it.get("call_id").map(|x| x.to_string()).unwrap_or_default();
+            if !items.iter().any(|c| kind(c) == "function_call" && c.get("call_id").map(|x| x.to_string()).as_deref() == Some(id.as_str())) {
+                return err(400, &format!("No tool call found for function call output with call_id {}.", id), "input");
+            }
+        }
+    }
+    let text_of = |m: &Value| match m.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(a)) => a.iter().filter_map(|x| x.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join(""),
+        _ => String::new(),
+    };
+    let last = items.last().cloned().unwrap_or(Value::Null);
+    let mut output: Vec<Value> = Vec::new();
+    let message = |t: String| obj(vec![("type", "message".into()), ("id", "msg_test".into()), ("status", "completed".into()), ("role", "assistant".into()), ("content", Value::Array(vec![obj(vec![("type", "output_text".into()), ("text", t.into()), ("annotations", Value::Array(vec![]))])]))]);
+    if !tools.is_empty() && kind(&last) == "function_call_output" {
+        let results: Vec<String> = items.iter().rev().take_while(|m| kind(m) == "function_call_output").map(|m| m.get("output").map(|o| o.to_string()).unwrap_or_default()).collect::<Vec<_>>().into_iter().rev().collect();
+        output.push(message(format!("Done: {}", results.join(" | "))));
+    } else {
+        let calls = if !tools.is_empty() && kind(&last) == "message" { scripted_tool_calls(&text_of(&last)) } else { Vec::new() };
+        if calls.is_empty() {
+            let last_user = items.iter().rev().find(|m| kind(m) == "message" && m.get("role").map(|r| r.to_string()).as_deref() == Some("user")).map(text_of).unwrap_or_default();
+            let instructions = b.get("instructions").filter(|i| !i.is_null()).map(|i| format!(" [{}]", i)).unwrap_or_default();
+            output.push(message(format!("Echo: {}{}", last_user, instructions)));
+        }
+        for (i, (n, a)) in calls.iter().enumerate() {
+            output.push(obj(vec![
+                ("type", "function_call".into()),
+                ("id", format!("fc_{}", i + 1).into()),
+                ("call_id", format!("call_{}", i + 1).into()),
+                ("name", n.as_str().into()),
+                ("arguments", a.to_json().into()),
+                ("status", "completed".into()),
+            ]));
+        }
+    }
+    let response = obj(vec![
+        ("id", "resp_test".into()),
+        ("object", "response".into()),
+        ("status", "completed".into()),
+        ("model", model.into()),
+        ("output", Value::Array(output.clone())),
+        ("usage", obj(vec![("input_tokens", Value::Int(12)), ("output_tokens", Value::Int(4)), ("total_tokens", Value::Int(16))])),
+    ]);
+    if !b.get("stream").map(|s| s.is_truthy()).unwrap_or(false) {
+        return json(200, &response);
+    }
+    let ev = |t: &str, mut fields: Vec<(&str, Value)>| {
+        fields.insert(0, ("type", t.into()));
+        (Some(t.to_string()), obj(fields).to_json())
+    };
+    let mut events = vec![ev("response.created", vec![("response", obj(vec![("id", "resp_test".into()), ("status", "in_progress".into()), ("output", Value::Array(vec![]))]))])];
+    for (i, item) in output.iter().enumerate() {
+        if kind(item) == "message" {
+            for w in word_deltas(&text_of(item)) {
+                events.push(ev("response.output_text.delta", vec![("output_index", Value::Int(i as i64)), ("content_index", Value::Int(0)), ("delta", w.into())]));
+            }
+        }
+        events.push(ev("response.output_item.done", vec![("output_index", Value::Int(i as i64)), ("item", item.clone())]));
+    }
+    events.push(ev("response.completed", vec![("response", response)]));
+    let refs: Vec<(Option<&str>, String)> = events.iter().map(|(e, d)| (e.as_deref(), d.clone())).collect();
+    event_stream(&refs)
+}
+
+/// Ollama native API mock (`POST /api/chat`, no API key, base url `url()`). Requests need
+/// `model` and `"stream": false`; tool call arguments must be JSON objects, as in Ollama's Go
+/// types. A text answer is `Echo: <last user message>`; with `tools`, a user message
+/// `call NAME {json}` (see [`scripted_tool_calls`]) gets `tool_calls` (without ids, as Ollama
+/// sends them) and tool messages get `Done: <results>`.
+pub struct OllamaMock {
+    pub server: MockServer,
+}
+
+impl OllamaMock {
+    pub fn start() -> OllamaMock {
+        let server = MockServer::start(move |r| {
+            let err = |status: u16, m: &str| json(status, &obj(vec![("error", m.into())]));
+            if r.path != "/api/chat" {
+                return HttpResponse::text(404, "404 page not found");
+            }
+            let b = r.json();
+            let Some(model) = b.get("model").map(|m| m.to_string()).filter(|m| !m.is_empty()) else {
+                return err(400, "model is required");
+            };
+            if b.get("stream").map(|s| s.is_truthy()).unwrap_or(true) {
+                return err(400, "the mock only answers \"stream\": false");
+            }
+            let msgs = b.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+            if msgs.is_empty() {
+                return err(400, "messages are required");
+            }
+            let role = |m: &Value| m.get("role").map(|r| r.to_string()).unwrap_or_default();
+            for m in &msgs {
+                for c in m.get("tool_calls").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
+                    if !matches!(c.get("function").and_then(|f| f.get("arguments")), Some(Value::Object(_))) {
+                        return err(400, "json: cannot unmarshal string into Go struct field ToolCallFunction.messages.tool_calls.function.arguments of type api.ToolCallFunctionArguments");
+                    }
+                }
+                if role(m) == "tool" && m.get("tool_name").is_none() {
+                    return err(400, "a tool message needs tool_name");
+                }
+            }
+            let has_tools = b.get("tools").and_then(|t| t.as_array()).map(|t| !t.is_empty()).unwrap_or(false);
+            let last = msgs.last().cloned().unwrap_or(Value::Null);
+            let content_of = |m: &Value| m.get("content").map(|c| c.to_string()).unwrap_or_default();
+            let mut message = vec![("role", Value::from("assistant"))];
+            if has_tools && role(&last) == "tool" {
+                let results: Vec<String> = msgs.iter().rev().take_while(|m| role(m) == "tool").map(content_of).collect::<Vec<_>>().into_iter().rev().collect();
+                message.push(("content", format!("Done: {}", results.join(" | ")).into()));
+            } else {
+                let calls = if has_tools && role(&last) == "user" { scripted_tool_calls(&content_of(&last)) } else { Vec::new() };
+                if calls.is_empty() {
+                    let last_user = msgs.iter().rev().find(|m| role(m) == "user").map(content_of).unwrap_or_default();
+                    let system = msgs.iter().find(|m| role(m) == "system").map(|m| format!(" [{}]", content_of(m))).unwrap_or_default();
+                    message.push(("content", format!("Echo: {}{}", last_user, system).into()));
+                } else {
+                    message.push(("content", "".into()));
+                    message.push(("tool_calls", Value::Array(calls.iter().map(|(n, a)| obj(vec![("function", obj(vec![("name", n.as_str().into()), ("arguments", a.clone())]))])).collect())));
+                }
+            }
+            json(
+                200,
+                &obj(vec![
+                    ("model", model.into()),
+                    ("created_at", "2026-11-06T00:00:00Z".into()),
+                    ("message", obj(message)),
+                    ("done", Value::Bool(true)),
+                    ("done_reason", "stop".into()),
+                    ("prompt_eval_count", Value::Int(12)),
+                    ("eval_count", Value::Int(4)),
+                ]),
+            )
+        });
+        OllamaMock { server }
+    }
+
+    /// Base url to use as `baseUrl` (`http://127.0.0.1:port`).
+    pub fn base_url(&self) -> String {
+        self.server.url()
     }
 }
 

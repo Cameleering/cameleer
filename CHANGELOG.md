@@ -35,6 +35,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   `anthropic` component take Camel's `tags`, `autoToolExecution`, `maxToolIterations`,
   `maxAgenticTokens` and related options and run your `ai-tool` routes for the model.
 - **`anthropic` component** for the Anthropic Messages API.
+- **`openai`/`llm`: streaming, the Responses API and Ollama's native API**: `streaming=true`
+  streams plain chats and every turn of the tool loop, passing text deltas to a
+  `streamingChunkProcessor` bean while the body stays the whole answer; `openai:responses`
+  uses OpenAI's Responses API; `apiFormat=ollama` calls Ollama's `/api/chat`. All three work
+  with `tags`, the agent step and record/replay.
 - **`cameleer test`** runs YAML test files: send messages, call tools, approve, compensate, and
   check bodies, headers, deduplication and mock endpoints, with models replayed from
   recordings.
