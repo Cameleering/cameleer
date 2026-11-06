@@ -356,6 +356,50 @@ fn client_api_create_topics_and_offsets() {
 }
 
 #[test]
+fn concurrent_keyed_sends_across_partitions_land_at_their_reported_offsets() {
+    let broker = KafkaBroker::start_with_partitions(4).unwrap();
+    let ctx = context();
+    ctx.start().unwrap();
+    let uri = format!("kafka:spread-batched?brokers={}", broker.bootstrap());
+    let t = ctx.create_producer_template();
+    let senders: Vec<_> = (0..12)
+        .map(|s| {
+            let (t, uri) = (t.clone(), uri.clone());
+            std::thread::spawn(move || {
+                (0..40)
+                    .map(|i| {
+                        let body = format!("k{s}-{i}");
+                        let ex = t.send_with(&uri, ExchangePattern::InOnly, |ex: &mut Exchange| {
+                            ex.set_body(body.clone());
+                            ex.set_header("kafka.KEY", format!("key-{s}"));
+                        });
+                        assert!(ex.exception.is_none(), "{:?}", ex.exception);
+                        (body, int(&ex, "kafka.PARTITION"), int(&ex, "kafka.OFFSET"))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let mut used = BTreeSet::new();
+    for (s, h) in senders.into_iter().enumerate() {
+        let sent = h.join().unwrap();
+        // one key always maps to one partition, records keep the sender's order
+        let expected = partition_for_key(format!("key-{s}").as_bytes(), 4) as i64;
+        assert!(sent.iter().all(|(_, p, _)| *p == expected));
+        assert!(sent.windows(2).all(|w| w[0].2 < w[1].2));
+        for (body, p, offset) in &sent {
+            let recs = broker.records("spread-batched", *p as i32);
+            assert_eq!(recs[*offset as usize].value.as_deref(), Some(body.as_bytes()));
+        }
+        used.insert(expected);
+    }
+    assert!(used.len() > 1, "the keys should cover several partitions");
+    let total: usize = (0..4).map(|p| broker.records("spread-batched", p).len()).sum();
+    assert_eq!(total, 12 * 40);
+    ctx.stop().unwrap();
+}
+
+#[test]
 fn concurrent_sends_share_produce_requests_and_keep_their_offsets() {
     let broker = KafkaBroker::start_with_partitions(1).unwrap();
     let ctx = context();

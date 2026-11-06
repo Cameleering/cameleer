@@ -64,7 +64,7 @@ server() {
   fetch "https://github.com/graalvm/mandrel/releases/download/mandrel-$MANDREL_VERSION/$MANDREL_FILE" "/root/$MANDREL_FILE" sha256 "$MANDREL_SHA256"
   [ -x /opt/mandrel/bin/native-image ] || { mkdir -p /opt/mandrel && tar -xzf "/root/$MANDREL_FILE" -C /opt/mandrel --strip-components=1; }
   local tools=/root/.cache/cameleer-bench
-  JAVA_HOME="$(ls -d $tools/jdk-*)" "$(ls -d $tools/apache-maven-*)/bin/mvn" -C -B -q -f benchmarks/camel-quarkus/pom.xml package -Dnative \
+  JAVA_HOME="$(ls -d $tools/jdk-*/ | head -1)" "$(ls -d $tools/apache-maven-*/ | head -1)bin/mvn" -C -B -q -f benchmarks/camel-quarkus/pom.xml package -Dnative \
     -Dquarkus.native.graalvm-home=/opt/mandrel -Dquarkus.native.native-image-xmx=6g >/root/native.log 2>&1 || { tail -40 /root/native.log; exit 1; }
   ls -la target/release/cameleer-bench benchmarks/java-camel/target/classes/bench/Bench.class benchmarks/camel-quarkus/target/*-runner >&2
 }

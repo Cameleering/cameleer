@@ -492,32 +492,56 @@ impl KafkaProducer {
                 }
             }
         }
-        for ((topic, partition), members) in groups {
-            let records: Vec<Record> = members.iter().flat_map(|&i| sends[i].records.iter().cloned()).collect();
-            let result = (|| -> Result<(i64, i64)> {
-                if client.is_none() {
-                    *client = Some(KafkaClient::new(self.cfg.client_config("")?));
+        // one call per topic, covering all its partitions (one request per leader broker)
+        let mut topics: Vec<String> = Vec::new();
+        for ((t, _), _) in &groups {
+            if !topics.contains(t) {
+                topics.push(t.clone());
+            }
+        }
+        for topic in topics {
+            let members_of: Vec<(i32, &Vec<usize>)> = groups.iter().filter(|((t, _), _)| *t == topic).map(|((_, p), m)| (*p, m)).collect();
+            let batches: Vec<(i32, Vec<Record>)> =
+                members_of.iter().map(|(p, m)| (*p, m.iter().flat_map(|&i| sends[i].records.iter().cloned()).collect())).collect();
+            let connected = match client {
+                Some(_) => Ok(()),
+                None => self.cfg.client_config("").map(|cfg| *client = Some(KafkaClient::new(cfg))),
+            };
+            let results: Vec<Result<(i64, i64)>> = match connected {
+                Err(e) => batches.iter().map(|_| Err(e.clone())).collect(),
+                Ok(()) => {
+                    self.requests.fetch_add(1, Ordering::Relaxed);
+                    client.as_mut().unwrap().produce_partitions(
+                        &topic,
+                        &batches,
+                        self.cfg.request_required_acks,
+                        self.cfg.request_timeout.as_millis() as i32,
+                    )
                 }
-                self.requests.fetch_add(1, Ordering::Relaxed);
-                client.as_mut().unwrap().produce(&topic, partition, &records, self.cfg.request_required_acks, self.cfg.request_timeout.as_millis() as i32)
-            })();
-            match result {
-                Ok((base, append_time)) => {
-                    let mut next = base;
-                    for &i in &members {
-                        *sends[i].slot.lock().unwrap() = Some(Ok((partition, next, append_time)));
-                        if next >= 0 {
-                            next += sends[i].records.len() as i64;
+            };
+            let mut failed = false;
+            for ((partition, members), result) in members_of.iter().zip(results) {
+                match result {
+                    Ok((base, append_time)) => {
+                        let mut next = base;
+                        for &i in members.iter() {
+                            *sends[i].slot.lock().unwrap() = Some(Ok((*partition, next, append_time)));
+                            if next >= 0 {
+                                next += sends[i].records.len() as i64;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        failed = true;
+                        for &i in members.iter() {
+                            *sends[i].slot.lock().unwrap() = Some(Err(e.clone()));
                         }
                     }
                 }
-                Err(e) => {
-                    if let Some(mut c) = client.take() {
-                        c.close();
-                    }
-                    for &i in &members {
-                        *sends[i].slot.lock().unwrap() = Some(Err(e.clone()));
-                    }
+            }
+            if failed {
+                if let Some(mut c) = client.take() {
+                    c.close();
                 }
             }
         }

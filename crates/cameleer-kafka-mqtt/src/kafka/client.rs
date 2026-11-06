@@ -444,6 +444,66 @@ impl KafkaClient {
         Err(last.unwrap_or_else(|| CamelError::new(KAFKA_EXCEPTION, "Produce failed")))
     }
 
+    /// Produce to several partitions of one topic: one request per leader broker instead of one
+    /// per partition. Returns a result per entry of `batches`, in order. A partition the combined
+    /// request could not write (a transport error or a broker error) is retried on its own with
+    /// [`produce`](Self::produce), which refreshes metadata and backs off.
+    pub fn produce_partitions(&mut self, topic: &str, batches: &[(i32, Vec<Record>)], acks: i16, timeout_ms: i32) -> Vec<Result<(i64, i64)>> {
+        let mut results: Vec<Option<Result<(i64, i64)>>> = (0..batches.len()).map(|_| None).collect();
+        let leaders = match self.leaders(topic) {
+            Ok(l) => l,
+            Err(e) => return (0..batches.len()).map(|_| Err(e.clone())).collect(),
+        };
+        let mut by_leader: Vec<(i32, Vec<usize>)> = Vec::new();
+        for (i, (partition, _)) in batches.iter().enumerate() {
+            match leaders.get(partition) {
+                Some(&l) => match by_leader.iter_mut().find(|(n, _)| *n == l) {
+                    Some((_, members)) => members.push(i),
+                    None => by_leader.push((l, vec![i])),
+                },
+                None => results[i] = Some(Err(CamelError::new(KAFKA_EXCEPTION, format!("Unknown partition {}-{}", topic, partition)))),
+            }
+        }
+        for (leader, members) in by_leader {
+            let encoded: Result<Vec<(i32, Vec<u8>)>> =
+                members.iter().map(|&i| Ok((batches[i].0, encode_record_batch_with(0, &batches[i].1, self.cfg.compression)?))).collect();
+            let encoded = match encoded {
+                Ok(e) => e,
+                Err(e) => {
+                    for &i in &members {
+                        results[i] = Some(Err(e.clone()));
+                    }
+                    continue;
+                }
+            };
+            let body = ProduceRequest { transactional_id: None, acks, timeout_ms, topics: vec![(topic.to_string(), encoded)] }.encode();
+            if acks == 0 {
+                let r = self.send_no_response(Node::Id(leader), api::PRODUCE, &body);
+                for &i in &members {
+                    results[i] = Some(r.clone().map(|_| (-1, -1)));
+                }
+                continue;
+            }
+            let resp = self
+                .send(Node::Id(leader), api::PRODUCE, &body, Duration::from_millis(timeout_ms.max(0) as u64))
+                .and_then(|b| ProduceResponse::decode(&b));
+            if let Ok(resp) = resp {
+                for &i in &members {
+                    let p = resp.topics.iter().find(|(t, _)| t == topic).and_then(|(_, ps)| ps.iter().find(|p| p.partition == batches[i].0));
+                    if let Some(p) = p.filter(|p| p.error_code == errors::NONE) {
+                        results[i] = Some(Ok((p.base_offset, p.log_append_time_ms)));
+                    }
+                }
+            }
+        }
+        // whatever the combined requests did not write goes through the retrying single path
+        results
+            .into_iter()
+            .enumerate()
+            .map(|(i, r)| r.unwrap_or_else(|| self.produce(topic, batches[i].0, &batches[i].1, acks, timeout_ms)))
+            .collect()
+    }
+
     /// Send a fetch request to a broker.
     pub fn fetch(&mut self, node: i32, req: &FetchRequest) -> Result<FetchResponse> {
         let body = self.send(Node::Id(node), api::FETCH, &req.encode(), Duration::from_millis(req.max_wait_ms.max(0) as u64))?;
