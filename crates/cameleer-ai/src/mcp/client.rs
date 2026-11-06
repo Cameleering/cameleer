@@ -37,7 +37,7 @@ use cameleer_core::message::Exchange;
 use cameleer_core::value::{ObjectMap, Value};
 
 use super::{base64url, glob_match, MODERN_VERSION};
-use crate::registry::{AiRegistry, ApprovalRule, ToolEntry, ToolPolicy};
+use crate::registry::{AiRegistry, ToolEntry};
 use crate::tool::{Hints, ToolDefinition};
 
 const LEGACY_VERSION: &str = "2025-11-25";
@@ -64,7 +64,34 @@ pub struct McpClientConfig {
     pub include: Vec<String>,
     pub exclude: Vec<String>,
     pub refresh_interval: Option<Duration>,
+    /// Envelope options for the imported tools, as on `ai-tool` (`rateLimit`,
+    /// `circuitBreakerThreshold`, `approval`, `redact`, `authorize`, `cacheTtl`, ...): for every
+    /// tool of the server (`camel.ai.mcp.NAME.rateLimit`), then per tool
+    /// (`camel.ai.mcp.NAME.tools.TOOL.rateLimit`, the remote tool's name).
+    pub policy: std::collections::BTreeMap<String, String>,
+    pub tool_policy: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
 }
+
+/// The `ai-tool` envelope options an MCP client applies to imported tools.
+pub const POLICY_OPTIONS: &[&str] = &[
+    "idempotency",
+    "idempotencyWindow",
+    "idempotentRepository",
+    "approval",
+    "approvalEndpoint",
+    "approvalTimeout",
+    "rateLimit",
+    "rateLimitPeriod",
+    "circuitBreakerThreshold",
+    "circuitBreakerDelay",
+    "circuitBreakerFallback",
+    "compensation",
+    "audit",
+    "authorize",
+    "redact",
+    "cacheTtl",
+    "authorizationPolicy",
+];
 
 impl McpClientConfig {
     pub fn http(name: &str, url: &str) -> McpClientConfig {
@@ -84,6 +111,8 @@ impl McpClientConfig {
             include: Vec::new(),
             exclude: Vec::new(),
             refresh_interval: None,
+            policy: Default::default(),
+            tool_policy: Default::default(),
         }
     }
 
@@ -134,6 +163,21 @@ impl McpClientConfig {
             c.exclude = csv("exclude");
             if let Some(r) = get("refreshInterval") {
                 c.refresh_interval = Some(cameleer_core::util::parse_duration(&r)?);
+            }
+            for o in POLICY_OPTIONS {
+                if let Some(v) = get(o) {
+                    c.policy.insert(o.to_string(), v);
+                }
+            }
+            let tp = format!("camel.ai.mcp.{}.tools.", n);
+            for (k, v) in props {
+                if let Some((tool, o)) = k.strip_prefix(&tp).and_then(|r| r.rsplit_once('.')) {
+                    if POLICY_OPTIONS.contains(&o) {
+                        c.tool_policy.entry(tool.to_string()).or_default().insert(o.to_string(), v.trim().to_string());
+                    } else {
+                        return Err(CamelError::illegal_argument(format!("{}: unknown tool option {} ({})", k, o, POLICY_OPTIONS.join(", "))));
+                    }
+                }
             }
             out.push(c);
         }
@@ -689,7 +733,9 @@ pub const MCP_ERROR: &str = "org.apache.camel.component.mcp.McpException";
 #[derive(Default)]
 pub struct McpClients {
     clients: Mutex<HashMap<String, Arc<McpClient>>>,
-    imported: Mutex<HashMap<String, Vec<String>>>,
+    /// Per server: the imported tools' local names and a fingerprint of their definition and
+    /// options, so a re-sync keeps unchanged tools (and their rate-limit, breaker and cache state).
+    imported: Mutex<HashMap<String, Vec<(String, String)>>>,
 }
 
 impl McpClients {
@@ -762,10 +808,7 @@ impl McpClients {
         let reg = AiRegistry::of(ctx)?;
         let remote = client.list_tools()?;
         let old = self.imported.lock().unwrap_or_else(|p| p.into_inner()).remove(server).unwrap_or_default();
-        for n in &old {
-            reg.unregister_tool(n);
-        }
-        let mut names = Vec::new();
+        let mut names: Vec<(String, String)> = Vec::new();
         for t in remote.into_iter().filter(|t| client.config.wants(&t.name)) {
             let local = format!("{}{}", client.config.tool_prefix, t.name);
             let mut tags = vec!["mcp".to_string(), format!("mcp:{}", server)];
@@ -782,13 +825,27 @@ impl McpClients {
                 searchable: true,
                 return_direct: false,
             };
-            let policy = ToolPolicy {
-                idempotency: def.hints.has_side_effects(),
-                approval: if def.hints.destructive == Some(true) { ApprovalRule::Always } else { ApprovalRule::Never },
-                timeout: client.config.timeout,
-                arguments_as_body: true,
-                ..Default::default()
+            // the server-wide options, then the tool's own; defaults as on ai-tool (approval for
+            // destructive tools, deduplication of tools with side effects)
+            let mut opts = client.config.policy.clone();
+            if let Some(own) = client.config.tool_policy.get(&t.name) {
+                opts.extend(own.clone());
+            }
+            let fingerprint = format!("{:?}{:?}", def, opts);
+            if old.iter().any(|(n, f)| *n == local && *f == fingerprint) && reg.tool(&local).is_some() {
+                names.push((local, fingerprint));
+                continue;
+            }
+            reg.unregister_tool(&local);
+            let mut params = cameleer_core::util::Parameters::new(opts);
+            let mut policy = match crate::component::tool_policy(ctx, &mut params, &def.hints, client.config.timeout) {
+                Ok(p) => p,
+                Err(e) => {
+                    cameleer_core::camel_warn!("mcp-client", "Tool {} of MCP server {} not imported: {}", t.name, server, e.message);
+                    continue;
+                }
             };
+            policy.arguments_as_body = true;
             let c2 = client.clone();
             let remote_name = t.name.clone();
             let processor = Arc::new(move |ex: &mut Exchange| -> Result<()> {
@@ -810,8 +867,13 @@ impl McpClients {
                 Ok(())
             });
             match reg.register_tool(ToolEntry::new(def, policy, processor, ctx)) {
-                Ok(()) => names.push(local),
+                Ok(()) => names.push((local, fingerprint)),
                 Err(e) => cameleer_core::camel_warn!("mcp-client", "Tool {} of MCP server {} not imported: {}", t.name, server, e.message),
+            }
+        }
+        for (n, _) in &old {
+            if !names.iter().any(|(k, _)| k == n) {
+                reg.unregister_tool(n);
             }
         }
         let n = names.len();
@@ -824,7 +886,7 @@ impl McpClients {
         let reg = AiRegistry::of(ctx).ok();
         for (_, names) in self.imported.lock().unwrap_or_else(|p| p.into_inner()).drain() {
             if let Some(r) = &reg {
-                for n in names {
+                for (n, _) in names {
                     r.unregister_tool(&n);
                 }
             }

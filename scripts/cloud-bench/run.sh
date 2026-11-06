@@ -6,6 +6,7 @@
 #   scripts/cloud-bench/run.sh prefill    fill the Kafka input topic of the stream scenario
 #   scripts/cloud-bench/run.sh bench      run every scenario, both sides, on both servers
 #   scripts/cloud-bench/run.sh test       run the hermetic test suite on a server droplet
+#   scripts/cloud-bench/run.sh sync       ship HEAD again and rebuild incrementally
 #   scripts/cloud-bench/run.sh sizes      binary size, cold start and memory of the cameleer CLI, this commit vs BENCH_BASE
 #   scripts/cloud-bench/run.sh all        setup, prefill, bench
 #
@@ -145,6 +146,29 @@ suite() {
   grep -E "^test .* FAILED|panicked" "$OUT/test-linux.log" | head -20 || true
 }
 
+sync() { # ship HEAD again and rebuild incrementally (keeps target/ and the other sides)
+  log "syncing the source at $(git -C "$ROOT" rev-parse --short HEAD)"
+  git -C "$ROOT" archive --format=tar.gz -o "$OUT/src.tar.gz" HEAD
+  for h in "$A_PUB" "$B_PUB" "$L_PUB"; do
+    scp -q "${SSH_OPTS[@]}" "$OUT/src.tar.gz" "root@$h:/root/src.tar.gz"
+    on "$h" 'tar -xzf /root/src.tar.gz -C /root/cameleer && cd /root/cameleer && PATH=/root/.cargo/bin:$PATH cargo build -q --release -p cameleer-bench' >"$OUT/sync-$h.log" 2>&1 &
+  done
+  local failed=0
+  for j in $(jobs -p); do wait "$j" || failed=1; done
+  [ "$failed" = 0 ] || { echo "sync failed, see $OUT/sync-*.log" >&2; exit 1; }
+}
+
+ceiling() { # what a do-nothing Rust HTTP server reaches with this load generator (not a result)
+  local secs=$((WARMUP + ITER * ITERS + 5))
+  for model in threads poll; do
+    log "HTTP ceiling on server a: raw-http $model"
+    on "$A_PUB" "pkill -f 'cameleer-bench raw-http' || true; nohup timeout $secs /root/cameleer/target/release/cameleer-bench raw-http $PORT $model >/root/raw.out 2>&1 &"
+    sleep 1
+    on "$L_PUB" "/root/cameleer/target/release/cameleer-bench loadgen-remote $A_PRIV $PORT http $CONNS $WARMUP $ITER $ITERS"       | sed "s/^RESULT /RESULT ceiling=raw-$model /" | tee -a "$OUT/ceiling.txt"
+    on "$A_PUB" "pkill -f 'cameleer-bench raw-http' || true"
+  done
+}
+
 sizes() {
   [ -n "$BASE" ] || { echo "sizes needs BENCH_BASE" >&2; exit 1; }
   log "cameleer CLI: size, cold start and memory on server a, this commit vs $BASE (log in $OUT/sizes.log)"
@@ -157,6 +181,8 @@ case "${1:-all}" in
   bench) bench ;;
   test) suite ;;
   sizes) sizes ;;
+  sync) sync ;;
+  ceiling) ceiling ;;
   all) setup; prefill; bench ;;
   *) echo "usage: $0 setup|prefill|bench|test|all" >&2; exit 1 ;;
 esac

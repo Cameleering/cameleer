@@ -200,3 +200,43 @@ fn the_mcp_component_calls_remote_tools_from_routes() {
     McpClients::of(&ctx).close_all(&ctx);
     up.stop().unwrap();
 }
+
+#[test]
+fn imported_tools_take_the_envelope_options_of_ai_tool() {
+    let (up, h) = upstream();
+    let ctx = downstream();
+    let mut props = std::collections::BTreeMap::new();
+    props.insert("camel.ai.mcp.remote.url".to_string(), url(&h));
+    // for every tool of the server, then for one tool
+    props.insert("camel.ai.mcp.remote.rateLimit".to_string(), "2".to_string());
+    props.insert("camel.ai.mcp.remote.redact".to_string(), "regex:city=Oslo".to_string());
+    props.insert("camel.ai.mcp.remote.tools.wipe.approval".to_string(), "never".to_string());
+    props.insert("camel.ai.mcp.remote.tools.wipe.authorize".to_string(), "${header.CamelAiToolPrincipal} == 'admin'".to_string());
+    let cfg = McpClientConfig::from_properties(&props).unwrap().remove(0);
+    assert_eq!(cfg.policy.get("rateLimit").map(String::as_str), Some("2"));
+    McpClients::of(&ctx).add(&ctx, cfg).unwrap();
+    let reg = AiRegistry::of(&ctx).unwrap();
+    let call = |name: &str, args: &str, who: &str| {
+        let mut c = ToolCall::new(name, json(args));
+        c.principal = Some(who.to_string());
+        reg.call(c)
+    };
+    // the remote answer is redacted before the model sees it
+    assert_eq!(call("remote_weather", r#"{"city":"Oslo"}"#, "ann").text, "[REDACTED:city]: 21 degrees");
+    assert!(!call("remote_weather", r#"{"city":"Rome"}"#, "ann").is_error);
+    // the third call of ann in the period is refused locally, nothing is sent upstream
+    let limited = call("remote_weather", r#"{"city":"Bern"}"#, "ann");
+    assert!(limited.is_error && limited.text.to_lowercase().contains("rate"), "{}", limited.text);
+    // the destructive tool: no approval (overridden), but only for admin
+    let denied = call("remote_wipe", "{}", "ann");
+    assert!(denied.is_error && denied.text.contains("Not authorized"), "{}", denied.text);
+    assert_eq!(up.mock_endpoint("mock:wiped").unwrap().received_counter(), 0);
+    // admin passes the local checks; the upstream server still enforces its own approval
+    let upstream_rule = call("remote_wipe", "{}", "admin");
+    assert!(upstream_rule.text.contains("-32021") && upstream_rule.text.contains("needs approval"), "{:?}", upstream_rule);
+    assert_eq!(up.mock_endpoint("mock:wiped").unwrap().received_counter(), 0);
+    // an unknown per-tool option is refused
+    let mut bad = props.clone();
+    bad.insert("camel.ai.mcp.remote.tools.wipe.colour".to_string(), "red".to_string());
+    assert!(McpClientConfig::from_properties(&bad).is_err());
+}

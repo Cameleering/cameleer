@@ -13,7 +13,7 @@ fn complete_requests(buf: &[u8]) -> usize {
 
 /// Thread per connection, blocking reads (the model of cameleer-http's server).
 pub fn threads(port: u16) -> std::io::Result<()> {
-    let l = TcpListener::bind(("127.0.0.1", port))?;
+    let l = TcpListener::bind(("0.0.0.0", port))?;
     for s in l.incoming() {
         let mut s = s?;
         std::thread::spawn(move || {
@@ -95,7 +95,7 @@ mod sys {
 /// One thread, non-blocking sockets and `poll`: no thread wakes up per request while
 /// requests keep arriving.
 pub fn poll(port: u16) -> std::io::Result<()> {
-    let l = TcpListener::bind(("127.0.0.1", port))?;
+    let l = TcpListener::bind(("0.0.0.0", port))?;
     l.set_nonblocking(true)?;
     let mut conns: Vec<(TcpStream, Vec<u8>)> = Vec::new();
     let mut buf = vec![0u8; 8192];

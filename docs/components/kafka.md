@@ -106,6 +106,7 @@ pub fn routes(ctx: &CamelContext) -> Result<()> {
 | `key` | | Producer: record key. |
 | `partitionKey` | | Producer: target partition. |
 | `requestRequiredAcks` | `all` | Producer acks: `all` / `-1`, `1` or `0`. |
+| `maxInFlightRequest` | `5` | Producer: produce requests in flight at once. Concurrent sends are batched into one request per partition, and up to this many requests run in parallel on their own connections (opened only under contention), so a send waits behind at most one request. |
 | `compressionCodec` | `none` | Producer batch compression: `none`, `gzip`, `snappy`, `lz4` (`zstd` is not supported). |
 | `recordMetadata` | `true` | Producer: set `kafka.RECORD_META` after the send. |
 | `securityProtocol` | `PLAINTEXT` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT` or `SASL_SSL`. |

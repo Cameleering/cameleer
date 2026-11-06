@@ -48,6 +48,8 @@ until it succeeds. Until then, that server's tools are not in the registry.
 | `camel.ai.mcp.NAME.timeout` | `30s` | How long one request may take; also the imported tools' `timeout` |
 | `camel.ai.mcp.NAME.protocol` | `auto` | `auto`, `2026-07-28` or `2025-11-25` |
 | `camel.ai.mcp.NAME.refreshInterval` | | Re-list the tools this often, in addition to `list_changed` |
+| `camel.ai.mcp.NAME.OPTION` | as on `ai-tool` | An envelope option for every imported tool of the server: `rateLimit`, `rateLimitPeriod`, `circuitBreakerThreshold`, `circuitBreakerDelay`, `circuitBreakerFallback`, `approval`, `approvalEndpoint`, `approvalTimeout`, `idempotency`, `idempotencyWindow`, `idempotentRepository`, `compensation`, `audit`, `authorize`, `redact`, `cacheTtl`, `authorizationPolicy` ([ai-tool](../components/ai-tool.md)) |
+| `camel.ai.mcp.NAME.tools.TOOL.OPTION` | | The same options for one tool (`TOOL` is the remote server's name for it); they override the server-wide ones |
 
 Use `{{env:...}}` placeholders for tokens. A stdio program's standard error is discarded.
 
@@ -84,8 +86,19 @@ to the remote server:
   with the same call id, or the same principal and arguments, returns the recorded result.
 - The call is cancelled after the server's `timeout`.
 - The kill switch and the audit log work as for local tools:
-  `cameleer tool disable github_create_issue` withdraws an imported tool too. Imported tools
-  have no rate limit or circuit breaker; there are no properties for them yet.
+  `cameleer tool disable github_create_issue` withdraws an imported tool too.
+- Every other envelope option of `ai-tool` can be set for all the server's tools or for one
+  tool: a rate limit per principal, a circuit breaker, an `authorize` rule, `redact` on what
+  comes back, a result cache. For example:
+
+  ```properties
+  camel.ai.mcp.github.rateLimit=30
+  camel.ai.mcp.github.redact=secret,email
+  camel.ai.mcp.github.tools.delete_repository.authorize=${header.CamelAiToolPrincipal} == 'admin'
+  ```
+
+  A re-sync (`list_changed`, a reconnect, `refreshInterval`) keeps tools whose definition and
+  options didn't change, so their rate-limit counters, breaker state and cache survive it.
 
 A remote result with `isError` is a failed call. A structured result (`structuredContent`)
 stays structured; content blocks other than text (images, audio, resources) are passed on as
@@ -177,7 +190,8 @@ What that gives you:
 - **One audit log.** Every call, local or remote, gets a hash-chained audit record with the
   principal of the client.
 - **Your rules on their tools.** Destructive remote tools need approval; the kill switch,
-  deduplication, schema checks and timeouts apply. Clients in either protocol era can use servers of either
+  deduplication, schema checks and timeouts apply, and you can add rate limits, circuit
+  breakers, `authorize` rules and redaction per server or per tool. Clients in either protocol era can use servers of either
   era.
 - **Pinned definitions.** A third-party server can't change a tool under your clients.
 

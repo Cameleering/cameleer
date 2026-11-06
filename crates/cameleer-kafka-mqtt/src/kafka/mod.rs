@@ -12,9 +12,10 @@
 //!   send, `kafka.RECORD_META` holds an array of `{topic, partition, offset, timestamp}`
 //!   objects and `kafka.PARTITION` / `kafka.OFFSET` the location of the (last) record.
 //!   Each exchange waits for its records to be acknowledged (`requestRequiredAcks`). Records
-//!   sent while another send is in flight are batched into one produce request per partition
-//!   (as Kafka's own producer does), so concurrent senders don't wait in line one record at
-//!   a time; order within a partition is the order of the sends.
+//!   sent while other sends are in flight are batched into one produce request per partition
+//!   (as Kafka's own producer does), and up to `maxInFlightRequest` (default 5) requests are in
+//!   flight at once on their own connections, opened only when senders would otherwise wait,
+//!   so a send waits behind at most one request; the sends of one thread keep their order.
 //! - **Consumer**: `consumersCount` threads, each a member of consumer group `groupId`
 //!   (range assignor, heartbeats, rebalancing, committed offsets). Without a `groupId`
 //!   every thread reads all partitions without committing. Message headers:
@@ -49,8 +50,8 @@ pub mod protocol;
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use cameleer_core::context::{CamelContext, WeakContext};
@@ -142,6 +143,9 @@ pub struct KafkaConfig {
     pub sasl: Option<SaslConfig>,
     /// Producer record batch compression (`compressionCodec`).
     pub compression: protocol::Compression,
+    /// Produce requests in flight at once (Camel's `maxInFlightRequest`, default 5): the
+    /// producer opens up to this many connections, only when senders would otherwise wait.
+    pub max_in_flight: usize,
 }
 
 impl KafkaConfig {
@@ -269,7 +273,6 @@ const IGNORED: &[&str] = &[
     "deliveryTimeoutMs",
     "interceptorClasses",
     "maxBlockMs",
-    "maxInFlightRequest",
     "partitioner",
     "partitionerIgnoreKeys",
     "pollOnError",
@@ -363,6 +366,7 @@ impl Component for KafkaComponent {
             tls,
             sasl,
             compression,
+            max_in_flight: params.take_usize("maxInFlightRequest", 5)?.clamp(1, 64),
             topic,
         };
         for k in IGNORED {
@@ -395,7 +399,8 @@ impl Endpoint for KafkaEndpoint {
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
         Ok(Arc::new(KafkaProducer {
             cfg: self.cfg.clone(),
-            client: Mutex::new(None),
+            clients: (0..self.cfg.max_in_flight).map(|_| Mutex::new(None)).collect(),
+            released: AtomicU64::new(0),
             queue: Mutex::new(Vec::new()),
             round_robin: AtomicUsize::new(0),
             requests: AtomicUsize::new(0),
@@ -439,8 +444,9 @@ fn value_bytes(v: &Value) -> Option<Vec<u8>> {
     }
 }
 
-/// Where a send's result is left for its exchange: `(partition, base offset, append time)`.
-type SendSlot = Arc<Mutex<Option<Result<(i32, i64, i64)>>>>;
+/// Where a send's result is left for its exchange: `(partition, base offset, append time)`; the
+/// condvar wakes the exchange's thread when the result is there or a connection was released.
+type SendSlot = Arc<(Mutex<Option<Result<(i32, i64, i64)>>>, Condvar)>;
 
 /// One exchange's records, waiting to be sent.
 struct PendingSend {
@@ -453,8 +459,12 @@ struct PendingSend {
 
 struct KafkaProducer {
     cfg: KafkaConfig,
-    client: Mutex<Option<KafkaClient>>,
-    /// Sends queued while the client is busy; the next sender to get the client sends them all.
+    /// Up to `maxInFlightRequest` connections; a sender takes a free one and sends everything
+    /// queued, so concurrent sends share requests and no send waits behind more than one.
+    clients: Vec<Mutex<Option<KafkaClient>>>,
+    /// Counts releases of a connection, so a sender about to wait sees one it missed.
+    released: AtomicU64,
+    /// Sends queued while every connection is busy.
     queue: Mutex<Vec<PendingSend>>,
     round_robin: AtomicUsize,
     /// Produce requests sent (for tests).
@@ -462,6 +472,45 @@ struct KafkaProducer {
 }
 
 impl KafkaProducer {
+    /// Wait for a queued send's result: take a free connection and send everything queued
+    /// (usually including this send), or wait until another sender has sent it or a
+    /// connection is free again.
+    fn await_send(&self, slot: &SendSlot) -> Result<(i32, i64, i64)> {
+        loop {
+            if let Some(r) = slot.0.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                return r;
+            }
+            let seen = self.released.load(Ordering::Acquire);
+            let mut took = false;
+            for c in &self.clients {
+                let Ok(mut guard) = c.try_lock() else { continue };
+                took = true;
+                let sends = std::mem::take(&mut *self.queue.lock().unwrap_or_else(|p| p.into_inner()));
+                if !sends.is_empty() {
+                    self.send_queued(&mut guard, sends);
+                }
+                drop(guard);
+                self.released.fetch_add(1, Ordering::AcqRel);
+                // a send queued meanwhile: wake its thread, a connection is free now
+                let next = self.queue.lock().unwrap_or_else(|p| p.into_inner()).first().map(|p| p.slot.clone());
+                if let Some(n) = next {
+                    let _g = n.0.lock().unwrap_or_else(|p| p.into_inner());
+                    n.1.notify_all();
+                }
+                break;
+            }
+            if took {
+                continue;
+            }
+            // every connection is busy: wait for the result or a release (a release since
+            // `seen` means a connection may be free, so try again instead of waiting)
+            let g = slot.0.lock().unwrap_or_else(|p| p.into_inner());
+            if g.is_none() && self.released.load(Ordering::Acquire) == seen {
+                let _ = slot.1.wait_timeout(g, Duration::from_millis(50));
+            }
+        }
+    }
+
     /// Send every queued record: one produce request per partition, records in queue order.
     /// Each send's slot gets its partition and offsets, or the error of its request.
     fn send_queued(&self, client: &mut Option<KafkaClient>, sends: Vec<PendingSend>) {
@@ -488,7 +537,7 @@ impl KafkaProducer {
                     if let Some(mut c) = client.take() {
                         c.close();
                     }
-                    *s.slot.lock().unwrap() = Some(Err(e));
+                    fill(&s.slot, Err(e));
                 }
             }
         }
@@ -525,7 +574,7 @@ impl KafkaProducer {
                     Ok((base, append_time)) => {
                         let mut next = base;
                         for &i in members.iter() {
-                            *sends[i].slot.lock().unwrap() = Some(Ok((*partition, next, append_time)));
+                            fill(&sends[i].slot, Ok((*partition, next, append_time)));
                             if next >= 0 {
                                 next += sends[i].records.len() as i64;
                             }
@@ -534,7 +583,7 @@ impl KafkaProducer {
                     Err(e) => {
                         failed = true;
                         for &i in members.iter() {
-                            *sends[i].slot.lock().unwrap() = Some(Err(e.clone()));
+                            fill(&sends[i].slot, Err(e.clone()));
                         }
                     }
                 }
@@ -548,10 +597,17 @@ impl KafkaProducer {
     }
 }
 
+fn fill(slot: &SendSlot, r: Result<(i32, i64, i64)>) {
+    *slot.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(r);
+    slot.1.notify_all();
+}
+
 impl Service for KafkaProducer {
     fn stop(&self) -> Result<()> {
-        if let Some(mut c) = self.client.lock().unwrap().take() {
-            c.close();
+        for c in &self.clients {
+            if let Some(mut c) = c.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                c.close();
+            }
         }
         Ok(())
     }
@@ -599,15 +655,9 @@ impl Processor for KafkaProducer {
         // queue the records, then take the client: whoever holds it sends everything queued, so
         // a send that waited for the client usually finds its result already there
         let count = records.len();
-        let slot: SendSlot = Arc::new(Mutex::new(None));
+        let slot: SendSlot = Arc::new((Mutex::new(None), Condvar::new()));
         self.queue.lock().unwrap().push(PendingSend { topic: topic.clone(), key, explicit_partition, records, slot: slot.clone() });
-        let mut guard = self.client.lock().unwrap();
-        if slot.lock().unwrap().is_none() {
-            let sends = std::mem::take(&mut *self.queue.lock().unwrap());
-            self.send_queued(&mut guard, sends);
-        }
-        drop(guard);
-        let result = slot.lock().unwrap().take().unwrap_or_else(|| Err(CamelError::new(protocol::KAFKA_EXCEPTION, "Kafka send was not attempted")));
+        let result = self.await_send(&slot);
         let (partition, base, append_time) = result?;
         let ts = if append_time >= 0 { append_time } else { timestamp };
         if self.cfg.record_metadata {

@@ -401,10 +401,17 @@ fn concurrent_keyed_sends_across_partitions_land_at_their_reported_offsets() {
 
 #[test]
 fn concurrent_sends_share_produce_requests_and_keep_their_offsets() {
+    // with requests in flight on several connections (the default) and on one
+    for in_flight in ["", "&maxInFlightRequest=1"] {
+        concurrent_sends(in_flight);
+    }
+}
+
+fn concurrent_sends(in_flight: &str) {
     let broker = KafkaBroker::start_with_partitions(1).unwrap();
     let ctx = context();
     ctx.start().unwrap();
-    let uri = format!("kafka:batched?brokers={}", broker.bootstrap());
+    let uri = format!("kafka:batched?brokers={}{}", broker.bootstrap(), in_flight);
     let t = ctx.create_producer_template();
     t.send_body(&uri, "warm").unwrap();
     const SENDERS: usize = 16;

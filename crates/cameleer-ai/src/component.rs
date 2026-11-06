@@ -169,7 +169,22 @@ fn tool_spec(ctx: &CamelContext, name: &str, params: &mut Parameters) -> Result<
         return_direct: params.take_bool("returnDirect", false)?,
     };
 
-    let mut policy = ToolPolicy { arguments_as_body: params.take_bool("argumentsAsBody", false)?, ..Default::default() };
+    let arguments_as_body = params.take_bool("argumentsAsBody", false)?;
+    // Camel's camel.server.mcp-tool-timeout is the default for tools that set no timeout
+    let default_timeout = match ctx.properties().get("camel.server.mcp-tool-timeout").or_else(|| ctx.properties().get("camel.server.mcpToolTimeout")) {
+        Some(t) => cameleer_core::util::parse_duration(t.trim())?,
+        None => Duration::from_secs(20),
+    };
+    let mut policy = tool_policy(ctx, params, &hints, default_timeout)?;
+    policy.arguments_as_body = arguments_as_body;
+    Ok(ToolSpec { definition, policy })
+}
+
+/// The envelope options of a tool (`idempotency`, `approval`, `timeout`, `rateLimit`,
+/// `circuitBreaker*`, `compensation`, `audit`, `authorize`, `redact`, `cacheTtl`, `pin`,
+/// `authorizationPolicy`), shared by `ai-tool` routes and tools imported from MCP servers.
+pub fn tool_policy(ctx: &CamelContext, params: &mut Parameters, hints: &crate::tool::Hints, default_timeout: Duration) -> Result<ToolPolicy> {
+    let mut policy = ToolPolicy::default();
     policy.idempotency = match params.take_string("idempotency", "auto").trim().to_ascii_lowercase().as_str() {
         "auto" => hints.has_side_effects(),
         "true" | "on" => true,
@@ -203,11 +218,6 @@ fn tool_spec(ctx: &CamelContext, name: &str, params: &mut Parameters) -> Result<
     };
     policy.approval_endpoint = params.take("approvalEndpoint");
     policy.approval_timeout = params.take_duration("approvalTimeout", Duration::from_secs(3600))?;
-    // Camel's camel.server.mcp-tool-timeout is the default for tools that set no timeout
-    let default_timeout = match ctx.properties().get("camel.server.mcp-tool-timeout").or_else(|| ctx.properties().get("camel.server.mcpToolTimeout")) {
-        Some(t) => cameleer_core::util::parse_duration(t.trim())?,
-        None => Duration::from_secs(20),
-    };
     policy.timeout = params.take_duration("timeout", default_timeout)?;
     let limit = params.take_usize("rateLimit", 0)?;
     let period = params.take_duration("rateLimitPeriod", Duration::from_secs(60))?;
@@ -238,7 +248,7 @@ fn tool_spec(ctx: &CamelContext, name: &str, params: &mut Parameters) -> Result<
             .ok_or_else(|| CamelError::no_such_bean(bean))?;
         policy.authorization = Some((*p).clone());
     }
-    Ok(ToolSpec { definition, policy })
+    Ok(policy)
 }
 
 struct ResourceSpec {
