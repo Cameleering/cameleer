@@ -146,6 +146,23 @@ impl OpenAiService {
 }
 
 impl CloudService for OpenAiService {
+    fn supports_chat(&self) -> bool {
+        true
+    }
+    fn system_message(&self) -> Option<String> {
+        self.system_message.clone()
+    }
+    fn chat(&self, request: &cameleer_core::ai::ChatRequest) -> Result<cameleer_core::ai::ChatResponse> {
+        let mut body = cameleer_core::ai::wire::to_openai(None, request);
+        if let Some(m) = body.as_object_mut() {
+            for (k, v) in [("temperature", self.temperature.map(Value::Float)), ("max_tokens", self.max_tokens.map(Value::Int)), ("top_p", self.top_p.map(Value::Float))] {
+                if let Some(v) = v {
+                    m.entry(k.to_string()).or_insert(v);
+                }
+            }
+        }
+        cameleer_core::ai::wire::from_openai(&self.post("chat/completions", &body)?)
+    }
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = operation(ex, headers::OPERATION, &self.operation, "chatCompletion");
         let streaming = op == "chatCompletionStream" || ex.header(headers::STREAMING).map(|v| v.is_truthy()).unwrap_or(self.streaming && op == "chatCompletion");

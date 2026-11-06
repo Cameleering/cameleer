@@ -11,6 +11,7 @@
 //! `cameleer ps/get/cmd/log/trace/stop` commands.
 
 pub mod cli;
+pub mod testing;
 pub mod config;
 pub mod console;
 pub mod features;

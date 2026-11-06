@@ -623,6 +623,7 @@ OpenSearch, PostgreSQL with pgvector, or any store with an HTTP API).
 - [AI agent tool calls: direct vs through Cameleer](agent-tool-calls.md): a multi-step tool with a saga, compared with letting the model call each API
 - [AI components](ai-components.md), [openai component](../components/openai.md)
 - [ai-tool](../components/ai-tool.md), [ai-resource](../components/ai-resource.md), [ai-prompt](../components/ai-prompt.md)
+- [The agent step and tool calling](agent-step.md): a model and its tools in a loop, with memory, approvals and `cameleer test`
 - [EIPs](eips.md), [error handling](error-handling.md), [edge cookbook](edge.md)
 - [Roadmap: agent tool server and agent loop](../ROADMAP.md)
 

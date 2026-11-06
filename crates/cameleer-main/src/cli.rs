@@ -57,6 +57,7 @@ pub fn usage() -> &'static str {
   cameleer log [name] [--follow] [--tail N]
   cameleer trace [name] [--disable]
   cameleer catalog [components|languages|kamelets]
+  cameleer test <test-file>...
   cameleer validate <file-or-dir>... [--format text|json] [--strict] [--properties FILE] [--prop key=value]
   cameleer schema
   cameleer version
@@ -98,6 +99,7 @@ pub fn run(args: &[String], out: &mut dyn Write) -> CliResult {
             _ => Err("validation failed".into()),
         },
         "schema" => schema_cmd(rest, out),
+        "test" => test_cmd(rest, out),
         other => Err(format!("Unknown command: {}\n{}", other, usage())),
     }
 }
@@ -122,6 +124,22 @@ pub fn run_status(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> 
             1
         }
     }
+}
+
+/// `cameleer test`: run YAML test files (see [`crate::testing`]); fails when a test fails.
+fn test_cmd(args: &[String], out: &mut dyn Write) -> CliResult {
+    let a = Args::parse(args, &[])?;
+    a.check(&[])?;
+    if a.positional.is_empty() {
+        return Err(format!("cameleer test requires at least one test file
+{}", usage()));
+    }
+    let files: Vec<PathBuf> = a.positional.iter().map(PathBuf::from).collect();
+    let (_, failed) = crate::testing::run_files(&files, out)?;
+    if failed > 0 {
+        return Err(format!("{} test(s) failed", failed));
+    }
+    Ok(())
 }
 
 fn w(out: &mut dyn Write, s: &str) -> CliResult {
@@ -346,7 +364,7 @@ fn run_cmd(args: &[String]) -> CliResult {
         // like Camel JBang: run the route files of the current directory
         for f in crate::glob_files("*").unwrap_or_default() {
             let n = f.to_string_lossy().to_string();
-            if [".yaml", ".yml", ".xml"].iter().any(|e| n.ends_with(e)) && !n.contains("application") {
+            if [".yaml", ".yml", ".xml"].iter().any(|e| n.ends_with(e)) && !n.contains("application") && !n.ends_with(".test.yaml") && !n.ends_with(".test.yml") {
                 files.push(n);
             }
         }

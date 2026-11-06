@@ -792,6 +792,33 @@ fn vertex(st: &Shared, req: &ServerRequest, model_verb: &str) -> Response {
     let last_user = contents.iter().rev().find(|c| c.get("role").map(|r| r.to_string()).as_deref() != Some("model")).cloned().unwrap_or_default();
     let (text, media) = parts_text(last_user.get("parts"));
     let all_words: usize = contents.iter().map(|c| parts_text(c.get("parts")).0.split_whitespace().count()).sum();
+    let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|t| !t.is_empty());
+    if has_tools && verb == "generateContent" {
+        // a function call must be sent back with its thought signature (Gemini 3)
+        for c in &contents {
+            for p in c.get("parts").and_then(|p| p.as_array()).cloned().unwrap_or_default() {
+                if p.get("functionCall").is_some() && p.get("thoughtSignature").map(|s| s.to_string()).filter(|s| s.starts_with("sig-")).is_none() {
+                    return gerror(400, "INVALID_ARGUMENT", "Function call is missing a thought_signature in functionCall parts.");
+                }
+            }
+        }
+        let last = contents.last().cloned().unwrap_or_default();
+        let responses: Vec<String> = last
+            .get("parts")
+            .and_then(|p| p.as_array())
+            .map(|ps| ps.iter().filter_map(|p| p.get("functionResponse")).map(|r| r.get("response").and_then(|x| x.get("content").or_else(|| x.get("error"))).map(|x| x.to_string()).unwrap_or_default()).collect())
+            .unwrap_or_default();
+        let usage = obj([("promptTokenCount", Value::Int(8)), ("candidatesTokenCount", Value::Int(2)), ("totalTokenCount", Value::Int(10))]);
+        if !responses.is_empty() {
+            let part = obj([("text", Value::from(format!("Done: {}", responses.join(" | "))))]);
+            return ok(obj([("candidates", Value::Array(vec![obj([("content", obj([("role", Value::from("model")), ("parts", Value::Array(vec![part]))])), ("finishReason", Value::from("STOP"))])])), ("usageMetadata", usage)]));
+        }
+        let scripted = crate::testing::scripted_tool_calls(&text);
+        if !scripted.is_empty() {
+            let parts: Vec<Value> = scripted.iter().enumerate().map(|(i, (n, a))| obj([("functionCall", obj([("name", Value::from(n.as_str())), ("args", a.clone())])), ("thoughtSignature", Value::from(format!("sig-{}", i + 1)))])).collect();
+            return ok(obj([("candidates", Value::Array(vec![obj([("content", obj([("role", Value::from("model")), ("parts", Value::Array(parts))])), ("finishReason", Value::from("STOP"))])])), ("usageMetadata", usage)]));
+        }
+    }
     match verb {
         "countTokens" => ok(obj([("totalTokens", Value::Int(all_words as i64)), ("totalBillableCharacters", Value::Int(text.len() as i64))])),
         "generateContent" | "streamGenerateContent" => {

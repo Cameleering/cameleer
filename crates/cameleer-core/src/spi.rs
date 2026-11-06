@@ -161,6 +161,11 @@ pub trait Endpoint: Send + Sync + Any {
             format!("Endpoint {} does not support consumers", self.uri()),
         ))
     }
+    /// The chat model behind this endpoint, for model components that support tool calling
+    /// (used by the `agent` step).
+    fn chat_model(&self) -> Option<Arc<dyn crate::ai::ChatModel>> {
+        None
+    }
     /// Create a polling consumer (used by pollEnrich and ConsumerTemplate).
     fn create_polling_consumer(&self) -> Result<Arc<dyn PollingConsumer>> {
         Err(CamelError::new(

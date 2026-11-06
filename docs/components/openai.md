@@ -1,8 +1,8 @@
 # OpenAI component
 
-> The `openai` component calls any OpenAI-compatible API (OpenAI, Ollama, vLLM, LM Studio, LiteLLM and other gateways) for chat completions and embeddings.
+> The `openai` component calls any OpenAI-compatible API (OpenAI, Ollama, vLLM, LM Studio, LiteLLM and other gateways) for chat completions, with tool calling, and embeddings.
 
-**Scheme:** `openai:` · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
+**Scheme:** `openai:` · **Also:** `llm:` (Camel 4.23's name, same component) · **Crate:** `cameleer-saas` · **Cargo feature:** [`saas`](../guides/build-features.md) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** no direct equivalent; closest are [LangChain4j Chat](https://camel.apache.org/components/next/langchain4j-chat-component.html) and [LangChain4j Embeddings](https://camel.apache.org/components/next/langchain4j-embeddings-component.html)
 
 ## When to use it
@@ -93,6 +93,7 @@ ctx.add_routes(|b| {
 | `topP` | | Chat: `top_p`. |
 | `user` | | Chat: end-user id sent as `user`. |
 | `outputType` | | `full` keeps the whole JSON response as the body instead of the answer text (or the vectors). |
+| `tags`, `autoToolExecution`, `maxToolIterations`, `maxAgenticTokens`, `parallelToolExecution`, `hallucinatedToolNameStrategy`, `record`, `replay` | | Tool calling: offer the `ai-tool` routes with these tags and run the loop ([the options](../guides/agent-step.md#tool-calling-in-the-model-components)). |
 | `timeout` | `120s` | HTTP timeout. |
 
 Values in a request-map body win over the options (an option is only added when the key is
@@ -107,7 +108,10 @@ missing).
 | `CamelOpenAIResponseId` | out | Chat: response id. |
 | `CamelOpenAIResponseModel` | out | Chat: model that answered. |
 | `CamelOpenAIFinishReason` | out | Chat: `stop`, `length`, `tool_calls`, ... |
-| `CamelOpenAIPromptTokens`, `CamelOpenAICompletionTokens`, `CamelOpenAITotalTokens` | out | Chat: token usage. |
+| `CamelOpenAIPromptTokens`, `CamelOpenAICompletionTokens`, `CamelOpenAITotalTokens` | out | Chat: token usage (all turns of a tool loop). |
+| `CamelOpenAIToolIterations` | out | Tool loop: model calls made. |
+| `CamelOpenAIToolStopReason` | out | Tool loop: `answer`, `max-turns`, `max-tokens`, ... |
+| `CamelOpenAIToolCalls` | out | Tool loop: the calls made (`[{id, name, arguments, isError}]`); with `autoToolExecution=false`, the calls the model asked for. |
 
 Chat bodies: a text body is one user message (after the system message); a list body is the
 message list; a map body is sent as the whole request (`model` and the options are added when
@@ -137,10 +141,12 @@ seconds). For streaming, use [azure-openai](azure-openai.md) (`streaming=true`),
 
 ### Does it support tool calls (function calling)?
 
-Not natively: there is no tool option, no tool-call header and no agent loop. You can send a
-request map with `tools` and `outputType=full`, then read `choices[0].message.tool_calls` from
-the response yourself. The [AI components guide](../guides/ai-components.md) shows this and
-the components with built-in tool-call support.
+Yes. `tags=support` offers the [ai-tool](ai-tool.md) routes tagged `support`; the component runs
+the tools the model asks for (through the `ai-tool` envelope) and loops until the model answers
+(`maxToolIterations`, default 50). `autoToolExecution=false` makes one call and returns the
+requested calls in `CamelOpenAIToolCalls`. The endpoint is also a model for the
+[agent step](../guides/agent-step.md), which adds memory and approvals. Missing call ids (some
+Ollama versions) are generated.
 
 ### How do I get JSON output?
 

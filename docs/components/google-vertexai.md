@@ -108,9 +108,8 @@ Credentials are shared by all Google components: see [credentials](google-storag
 
 ### What is not supported
 
-- No automatic function-calling loop: you can send `tools` in a map body, but the body is only
-  the text parts of the answer. Read `functionCall` parts from the raw response in the
-  `CamelGoogleVertexAIResponse` header and call the tool yourself.
+- Function calling runs for Gemini models with `tags` (see below); partner models through
+  `rawPredict` get no tool loop.
 - No Live API (bidirectional audio / video), no context caching, no batch prediction jobs.
 
 ## Message headers
@@ -142,6 +141,14 @@ docker run --rm -v "$PWD:/routes:ro" -v "$PWD/tickets:/in" -v "$PWD/summaries:/o
 ```
 
 ## Common questions
+
+### How do I let Gemini call tools?
+
+Set `tags`: Gemini gets the [ai-tool](ai-tool.md) routes with those tags as `functionDeclarations`,
+and the component runs each `functionCall` (through the `ai-tool` envelope), sends back the
+`functionResponse` and the call's `thoughtSignature`, and loops until Gemini answers. Gemini has no
+call ids, so they are generated. The endpoint is also a model for the
+[agent step](../guides/agent-step.md).
 
 ### How do I send a chat history to Gemini?
 Send a list of `{role, content}` maps with `operation=generateChat`; use roles `user` and

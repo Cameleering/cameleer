@@ -97,9 +97,11 @@ docker run --rm -e AZURE_STORAGE_ACCOUNT -e AZURE_STORAGE_KEY -e AZURE_OPENAI_RE
 
 ### How do I let the model call tools?
 
-Send a map body with `messages` and `tools` (OpenAI function definitions). When the model calls a tool,
-`CamelAzureOpenAIFinishReason` is `tool_calls` and `CamelAzureOpenAIToolCalls` lists the calls; run
-them in the route and send the next request with the tool results.
+Set `tags`: the model gets the [ai-tool](ai-tool.md) routes with those tags, and the component runs
+the calls (through the `ai-tool` envelope) and loops until the model answers. The endpoint is also
+a model for the [agent step](../guides/agent-step.md). To handle the calls yourself, send a map
+body with `messages` and `tools`: `CamelAzureOpenAIFinishReason` is `tool_calls` and
+`CamelAzureOpenAIToolCalls` lists the calls.
 
 ### Can I use OpenAI or a local model instead?
 

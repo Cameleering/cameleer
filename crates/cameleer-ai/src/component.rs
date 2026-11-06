@@ -69,19 +69,29 @@ impl Component for AiComponent {
             Kind::Prompt => Spec::Prompt(prompt_spec(&name, params)),
         };
         let throw_on_error = params.take_bool("throwOnError", false)?;
-        let notify_updated = match params.take_string("operation", "read").as_str() {
-            "read" => false,
+        let operation = params.take_string("operation", "read");
+        let approval_op = match operation.as_str() {
+            "approve" | "deny" if self.kind == Kind::Tool => Some(operation.clone()),
+            _ => None,
+        };
+        let notify_updated = match operation.as_str() {
+            "read" | "call" => false,
+            "approve" | "deny" if self.kind == Kind::Tool => false,
             "updated" if self.kind == Kind::Resource => true,
             other => {
                 return Err(CamelError::illegal_argument(format!(
-                    "Unknown operation {} for {} (use read{})",
+                    "Unknown operation {} for {} (use {})",
                     other,
                     scheme(self.kind),
-                    if self.kind == Kind::Resource { " or updated" } else { "" }
+                    match self.kind {
+                        Kind::Resource => "read or updated",
+                        Kind::Tool => "call, approve or deny",
+                        Kind::Prompt => "read",
+                    }
                 )))
             }
         };
-        Ok(Arc::new(AiEndpoint { uri: uri.to_string(), name, spec, throw_on_error, notify_updated, ctx: ctx.clone() }))
+        Ok(Arc::new(AiEndpoint { uri: uri.to_string(), name, spec, throw_on_error, notify_updated, approval_op, ctx: ctx.clone() }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -292,6 +302,7 @@ pub struct AiEndpoint {
     spec: Spec,
     throw_on_error: bool,
     notify_updated: bool,
+    approval_op: Option<String>,
     ctx: CamelContext,
 }
 
@@ -325,6 +336,7 @@ impl Endpoint for AiEndpoint {
             resource_uri: uri,
             throw_on_error: self.throw_on_error,
             notify_updated: self.notify_updated,
+            approval_op: self.approval_op.clone(),
             ctx: self.ctx.clone(),
         }))
     }
@@ -449,6 +461,7 @@ struct AiProducer {
     resource_uri: Option<String>,
     throw_on_error: bool,
     notify_updated: bool,
+    approval_op: Option<String>,
     ctx: CamelContext,
 }
 
@@ -458,6 +471,26 @@ impl Processor for AiProducer {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         let reg = AiRegistry::of(&self.ctx)?;
         match self.kind {
+            Kind::Tool if self.approval_op.is_some() => {
+                // resolve a parked call: header CamelAiToolApprovalHandle, approver in CamelAiToolApprovedBy
+                let handle = ex
+                    .header(headers::APPROVAL_HANDLE)
+                    .or_else(|| ex.header("CamelAiApprovalHandle"))
+                    .filter(|v| !v.is_null())
+                    .map(|v| v.to_string())
+                    .ok_or_else(|| CamelError::illegal_argument("ai-tool approve/deny needs the CamelAiToolApprovalHandle header"))?;
+                let approver = ex.header(headers::APPROVED_BY).filter(|v| !v.is_null()).map(|v| v.to_string()).unwrap_or_else(|| "route".into());
+                let r = if self.approval_op.as_deref() == Some("approve") {
+                    reg.approve(&handle, &approver)
+                } else {
+                    let reason = ex.body().to_string();
+                    reg.deny(&handle, &approver, if ex.body().is_null() { "" } else { reason.as_str() })
+                };
+                ex.set_header(headers::STATUS, r.status.as_str());
+                ex.set_header(headers::IS_ERROR, r.is_error);
+                ex.set_body(r.text);
+                Ok(())
+            }
             Kind::Tool => {
                 let text_header = |ex: &Exchange, k: &str| ex.header(k).filter(|v| !v.is_null()).map(|v| v.to_string());
                 let call = ToolCall {

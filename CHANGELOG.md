@@ -26,6 +26,18 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   and audience checks. Tool routes can return images, audio and embedded resources
   (`CamelAiToolContent`). Checked with the official conformance suite
   (`scripts/mcp-conformance.sh`). See the [MCP server guide](docs/guides/mcp-server.md).
+- **The `agent` step** (Cameleer extension): a model and its tools in a loop, as one step of a
+  route, with turn, token and time limits, conversation memory, approvals that pause the
+  conversation until a person decides, and record/replay of model responses. See
+  [the agent step](docs/guides/agent-step.md).
+- **Tool calling in every model component**: `openai` (and its Camel 4.23 name `llm`),
+  `azure-openai`, `aws-bedrock` (Converse), `google-vertexai` (Gemini) and the new
+  `anthropic` component take Camel's `tags`, `autoToolExecution`, `maxToolIterations`,
+  `maxAgenticTokens` and related options and run your `ai-tool` routes for the model.
+- **`anthropic` component** for the Anthropic Messages API.
+- **`cameleer test`** runs YAML test files: send messages, call tools, approve, compensate, and
+  check bodies, headers, deduplication and mock endpoints, with models replayed from
+  recordings.
 - **`json-validator`: JSON Schema 2020-12 keywords** `prefixItems`, `minContains`,
   `maxContains`, `dependentSchemas`, `unevaluatedProperties` and `unevaluatedItems`.
 - **Cooperative cancellation of an exchange** (`Exchange::set_cancel_token`): once the token is

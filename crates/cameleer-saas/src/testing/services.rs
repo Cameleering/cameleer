@@ -971,8 +971,27 @@ impl JiraMock {
 // OpenAI
 // ---------------------------------------------------------------------------
 
+/// The scripted tool calls in a user message: `call NAME {json}`, several separated by `;`
+/// (the model mocks call these tools when tools are offered).
+pub fn scripted_tool_calls(text: &str) -> Vec<(String, Value)> {
+    let mut out = Vec::new();
+    for part in text.split(';') {
+        let part = part.trim();
+        let Some(rest) = part.strip_prefix("call ") else { continue };
+        let (name, args) = match rest.find(' ') {
+            Some(i) => (&rest[..i], rest[i..].trim()),
+            None => (rest, "{}"),
+        };
+        let args = cameleer_core::json::parse(args).unwrap_or(Value::Object(ObjectMap::new()));
+        out.push((name.trim().to_string(), args));
+    }
+    out
+}
+
 /// OpenAI-compatible API mock (API key [`OpenAiMock::API_KEY`], base url `url() + "/v1"`).
-/// Chat completions answer `Echo: <last user message>`.
+/// Chat completions answer `Echo: <last user message>`. With `tools`, a last user message
+/// `call NAME {json}` (see [`scripted_tool_calls`]) gets tool calls, and tool results get
+/// `Done: <results>`. Tool messages must answer every call id, as on the real API.
 pub struct OpenAiMock {
     pub server: MockServer,
 }
@@ -998,8 +1017,67 @@ impl OpenAiMock {
                     let Some(msgs) = b.get("messages").and_then(|m| m.as_array()).filter(|m| !m.is_empty()) else {
                         return err(400, "'messages' must contain at least one message", "invalid_request_error");
                     };
-                    if msgs.iter().any(|m| m.get("role").is_none() || m.get("content").is_none()) {
+                    if msgs.iter().any(|m| m.get("role").is_none() || (m.get("content").is_none() && m.get("tool_calls").is_none())) {
                         return err(400, "each message requires 'role' and 'content'", "invalid_request_error");
+                    }
+                    // every tool call is answered by a tool message right after it
+                    for (i, m) in msgs.iter().enumerate() {
+                        let Some(Value::Array(calls)) = m.get("tool_calls") else { continue };
+                        let answered: Vec<String> = msgs[i + 1..]
+                            .iter()
+                            .take_while(|n| n.get("role").map(|r| r.to_string() == "tool").unwrap_or(false))
+                            .filter_map(|n| n.get("tool_call_id").map(|x| x.to_string()))
+                            .collect();
+                        for c in calls {
+                            let id = c.get("id").map(|x| x.to_string()).unwrap_or_default();
+                            if !answered.contains(&id) {
+                                return err(400, &format!("An assistant message with 'tool_calls' must be followed by tool messages responding to each 'tool_call_id'. The following tool_call_ids did not have response messages: {}", id), "invalid_request_error");
+                            }
+                        }
+                    }
+                    let has_tools = b.get("tools").and_then(|t| t.as_array()).map(|t| !t.is_empty()).unwrap_or(false);
+                    let last = msgs.last().cloned().unwrap_or(Value::Null);
+                    let usage = obj(vec![("prompt_tokens", Value::Int(12)), ("completion_tokens", Value::Int(4)), ("total_tokens", Value::Int(16))]);
+                    let reply = |message: Value, finish: &str| {
+                        json(
+                            200,
+                            &obj(vec![
+                                ("id", "chatcmpl-test".into()),
+                                ("object", "chat.completion".into()),
+                                ("model", model.clone().into()),
+                                ("choices", Value::Array(vec![obj(vec![("index", Value::Int(0)), ("message", message), ("finish_reason", finish.into())])])),
+                                ("usage", usage.clone()),
+                            ]),
+                        )
+                    };
+                    if has_tools && last.get("role").map(|r| r.to_string() == "tool").unwrap_or(false) {
+                        let results: Vec<String> = msgs
+                            .iter()
+                            .rev()
+                            .take_while(|m| m.get("role").map(|r| r.to_string() == "tool").unwrap_or(false))
+                            .map(|m| m.get("content").map(|c| c.to_string()).unwrap_or_default())
+                            .collect::<Vec<_>>()
+                            .into_iter()
+                            .rev()
+                            .collect();
+                        return reply(obj(vec![("role", "assistant".into()), ("content", format!("Done: {}", results.join(" | ")).into())]), "stop");
+                    }
+                    if has_tools && last.get("role").map(|r| r.to_string() == "user").unwrap_or(false) {
+                        let calls = scripted_tool_calls(&last.get("content").map(|c| c.to_string()).unwrap_or_default());
+                        if !calls.is_empty() {
+                            let tool_calls: Vec<Value> = calls
+                                .iter()
+                                .enumerate()
+                                .map(|(i, (n, a))| {
+                                    obj(vec![
+                                        ("id", format!("call_{}", i + 1).into()),
+                                        ("type", "function".into()),
+                                        ("function", obj(vec![("name", n.as_str().into()), ("arguments", a.to_json().into())])),
+                                    ])
+                                })
+                                .collect();
+                            return reply(obj(vec![("role", "assistant".into()), ("content", Value::Null), ("tool_calls", Value::Array(tool_calls))]), "tool_calls");
+                        }
                     }
                     let last_user = msgs.iter().rev().find(|m| m.get("role").map(|r| r.to_string() == "user").unwrap_or(false)).and_then(|m| m.get("content")).map(|c| c.to_string()).unwrap_or_default();
                     let system = msgs.iter().find(|m| m.get("role").map(|r| r.to_string() == "system").unwrap_or(false)).and_then(|m| m.get("content")).map(|c| format!(" [{}]", c)).unwrap_or_default();
@@ -1042,6 +1120,102 @@ impl OpenAiMock {
     /// Base url to use as `baseUrl` (`http://127.0.0.1:port/v1`).
     pub fn base_url(&self) -> String {
         format!("{}/v1", self.server.url())
+    }
+}
+
+/// Anthropic Messages API mock (`x-api-key` [`AnthropicMock::API_KEY`], `anthropic-version`
+/// required, base url `url()`). A text answer is `Echo: <last user text>`; with `tools`, a user
+/// message `call NAME {json}` (see [`scripted_tool_calls`]) gets `tool_use` blocks and tool
+/// results get `Done: <results>`. Every `tool_use` must be answered by a `tool_result` in the
+/// next message, as on the real API.
+pub struct AnthropicMock {
+    pub server: MockServer,
+}
+
+impl AnthropicMock {
+    pub const API_KEY: &'static str = "sk-ant-test-key";
+
+    pub fn start() -> AnthropicMock {
+        let server = MockServer::start(move |r| {
+            let err = |status: u16, t: &str, m: &str| json(status, &obj(vec![("type", "error".into()), ("error", obj(vec![("type", t.into()), ("message", m.into())]))]));
+            if r.header("x-api-key") != Some(Self::API_KEY) {
+                return err(401, "authentication_error", "invalid x-api-key");
+            }
+            if r.header("anthropic-version").is_none() {
+                return err(400, "invalid_request_error", "anthropic-version: header is required");
+            }
+            if r.path != "/v1/messages" {
+                return err(404, "not_found_error", "Not found");
+            }
+            let b = r.json();
+            if b.get("model").is_none() || b.get("max_tokens").is_none() {
+                return err(400, "invalid_request_error", "model and max_tokens are required");
+            }
+            let msgs = b.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+            if msgs.is_empty() || msgs[0].get("role").map(|x| x.to_string()).as_deref() != Some("user") {
+                return err(400, "invalid_request_error", "messages: the first message must use the user role");
+            }
+            let blocks = |m: &Value| m.get("content").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+            for (i, m) in msgs.iter().enumerate() {
+                let uses: Vec<String> = blocks(m).iter().filter(|x| x.get("type").map(|t| t.to_string()).as_deref() == Some("tool_use")).map(|x| x.get("id").map(|v| v.to_string()).unwrap_or_default()).collect();
+                if uses.is_empty() {
+                    continue;
+                }
+                let answered: Vec<String> = msgs.get(i + 1).map(|n| blocks(n).iter().filter(|x| x.get("type").map(|t| t.to_string()).as_deref() == Some("tool_result")).map(|x| x.get("tool_use_id").map(|v| v.to_string()).unwrap_or_default()).collect()).unwrap_or_default();
+                if let Some(missing) = uses.iter().find(|u| !answered.contains(u)) {
+                    return err(400, "invalid_request_error", &format!("messages.{}: `tool_use` ids were found without `tool_result` blocks immediately after: {}", i, missing));
+                }
+            }
+            let last = msgs.last().cloned().unwrap_or_default();
+            let text_of = |m: &Value| match m.get("content") {
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Array(a)) => a.iter().filter_map(|x| x.get("text").map(|t| t.to_string())).collect::<Vec<_>>().join(""),
+                _ => String::new(),
+            };
+            let reply = |content: Vec<Value>, stop: &str| {
+                json(
+                    200,
+                    &obj(vec![
+                        ("id", "msg_test".into()),
+                        ("type", "message".into()),
+                        ("role", "assistant".into()),
+                        ("model", b.get("model").cloned().unwrap_or(Value::Null)),
+                        ("content", Value::Array(content)),
+                        ("stop_reason", stop.into()),
+                        ("usage", obj(vec![("input_tokens", Value::Int(11)), ("output_tokens", Value::Int(5))])),
+                    ]),
+                )
+            };
+            let text_block = |t: String| obj(vec![("type", "text".into()), ("text", t.into())]);
+            let has_tools = b.get("tools").and_then(|t| t.as_array()).map(|t| !t.is_empty()).unwrap_or(false);
+            let results: Vec<String> = blocks(&last)
+                .iter()
+                .filter(|x| x.get("type").map(|t| t.to_string()).as_deref() == Some("tool_result"))
+                .map(|x| x.get("content").map(|c| c.to_string()).unwrap_or_default())
+                .collect();
+            if has_tools && !results.is_empty() {
+                return reply(vec![text_block(format!("Done: {}", results.join(" | ")))], "end_turn");
+            }
+            if has_tools {
+                let calls = scripted_tool_calls(&text_of(&last));
+                if !calls.is_empty() {
+                    let uses: Vec<Value> = calls
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (n, a))| obj(vec![("type", "tool_use".into()), ("id", format!("toolu_{}", i + 1).into()), ("name", n.as_str().into()), ("input", a.clone())]))
+                        .collect();
+                    return reply(uses, "tool_use");
+                }
+            }
+            let system = b.get("system").map(|s| format!(" [{}]", s)).unwrap_or_default();
+            reply(vec![text_block(format!("Echo: {}{}", text_of(&last), system))], "end_turn")
+        });
+        AnthropicMock { server }
+    }
+
+    /// Base url to use as `baseUrl`.
+    pub fn base_url(&self) -> String {
+        self.server.url()
     }
 }
 

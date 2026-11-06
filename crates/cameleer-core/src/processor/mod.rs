@@ -1,5 +1,6 @@
 //! Runtime processors and their model definitions.
 
+pub mod agent;
 pub mod basic;
 pub mod errors;
 pub mod pipeline;

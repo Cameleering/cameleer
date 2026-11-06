@@ -212,6 +212,29 @@ of 5 is done: the tool model and the reliability envelope.
   pages planned for this phase (tagline, `/use-cases/mcp-tool-server/`, "Cameleer vs Camel MCP
   server").
 
+## Action layer for AI agents, phase 3: tool calling and the agent step (2026-11-06, branch `agent-action-layer`)
+
+- **Core** (`cameleer_core::ai`): the neutral model (`ChatMessage`, `Part`, `ToolSpec`,
+  `ChatRequest`/`ChatResponse`), `ChatModel` (`Endpoint::chat_model`), `ToolProvider`
+  (bound by cameleer-ai as `cameleer.ai.tools`), `run_agent`/`resume_agent`, `ToolLoopOptions`
+  and `chat_exchange`, `ReplayModel`/`RecordingModel`, and `ai::wire` converters for OpenAI Chat
+  Completions, Bedrock Converse, Gemini (keeps `thoughtSignature`) and Anthropic Messages.
+- **The `agent` step**: `cameleer_core::processor::agent::AgentDefinition`, Rust DSL `.agent(..)`,
+  YAML `agent:` (model table in `cameleer-yaml/src/model.rs`); memory in an
+  `AggregationRepository`; approvals pause the conversation (state in memory) and resume from
+  `AiRegistry::approval_result`; `ai-tool:x?operation=approve|deny`.
+- **Providers**: `openai`/`llm` (Camel headers `CamelOpenAITool*`), `anthropic` (new,
+  `cameleer-saas`), and `azure-openai`, `aws-bedrock`, `google-vertexai` through
+  `CloudService::chat` in the generic cloud endpoint (`CamelAiAgent*` headers). Every mock
+  scripts tool calls from `call NAME {json}` and enforces its provider's call/result pairing.
+- **`cameleer test`** (`crates/cameleer-main/src/testing.rs`): YAML test files (`*.test.yaml`,
+  skipped by `run` and `validate`); example `examples/agents/support-agent.camel.yaml` with
+  `tests/support-agent.test.yaml` and `tests/refund.jsonl`.
+- **Tests**: hermetic suite 2793 passed, 0 failed on Windows 11, zero warnings; `crates/cameleer-main/tests/agent.rs` (every provider, the approval pause and resume,
+  YAML with record and replay), `cameleer_test.rs`, unit tests in `ai.rs` and `ai/wire.rs`.
+- **Not done**: streaming with the tool loop, the Responses API, Ollama `/api/chat`, MCP tools
+  in `tools` (phase 4, the MCP client), the website pages for the action layer.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

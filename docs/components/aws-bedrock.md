@@ -106,7 +106,10 @@ docker run --rm -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e B
 
 ### How do I give the model tools (function calling)?
 
-Set `CamelAwsBedrockConverseToolConfig` to a map with `tools` (each a `toolSpec` with name,
+Use `operation=converse` with `tags`: the model gets the [ai-tool](ai-tool.md) routes with those
+tags, and the component runs the calls (through the `ai-tool` envelope, as `toolUse` and
+`toolResult` blocks) and loops until the model answers. The endpoint is also a model for the
+[agent step](../guides/agent-step.md). To handle the calls yourself, set `CamelAwsBedrockConverseToolConfig` to a map with `tools` (each a `toolSpec` with name,
 description and JSON schema). When the model wants a tool, the stop reason is `tool_use` and
 `CamelAwsBedrockConverseOutputMessage` holds the tool use block; run the tool in the route and send
 the next turn with `CamelAwsBedrockConverseMessages`.

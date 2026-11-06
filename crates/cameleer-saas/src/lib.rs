@@ -18,6 +18,7 @@
 //! `jiraUrl`, `webhookUrl`...) and an embedded mock server in [`testing`], so tests never
 //! reach the internet. `weather` is not provided.
 
+pub mod anthropic;
 pub mod feed;
 pub mod github;
 pub mod graphql;
@@ -45,6 +46,9 @@ pub fn register(ctx: &CamelContext) {
     ctx.add_component_factory("twilio", || Arc::new(twilio::TwilioComponent));
     ctx.add_component_factory("jira", || Arc::new(jira::JiraComponent));
     ctx.add_component_factory("openai", || Arc::new(openai::OpenAiComponent));
+    // Camel 4.23 renamed openai to llm; both names work
+    ctx.add_component_factory("llm", || Arc::new(openai::OpenAiComponent));
+    ctx.add_component_factory("anthropic", || Arc::new(anthropic::AnthropicComponent));
     ctx.add_component_factory("webhook", || Arc::new(webhook::WebhookComponent));
     ctx.add_component_factory("graphql", || Arc::new(graphql::GraphqlComponent));
     ctx.add_component_factory("rss", || Arc::new(feed::FeedComponent::rss()));

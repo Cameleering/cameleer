@@ -791,6 +791,44 @@ fn bedrock(st: &Shared, req: &ServerRequest) -> Response {
                     if msgs.as_array().is_none_or(|a| a.is_empty()) {
                         return rest_err(400, "ValidationException", "A conversation must start with a user message.");
                     }
+                    let arr = msgs.as_array().cloned().unwrap_or_default();
+                    // every toolUse must be answered by a toolResult in the next message
+                    for (i, m) in arr.iter().enumerate() {
+                        let uses: Vec<String> = m.get("content").and_then(|c| c.as_array()).map(|c| c.iter().filter_map(|b| b.get("toolUse").map(|u| s_(u, "toolUseId"))).collect()).unwrap_or_default();
+                        if uses.is_empty() {
+                            continue;
+                        }
+                        let answered: Vec<String> = arr.get(i + 1).and_then(|n| n.get("content")).and_then(|c| c.as_array()).map(|c| c.iter().filter_map(|b| b.get("toolResult").map(|r| s_(r, "toolUseId"))).collect()).unwrap_or_default();
+                        if let Some(missing) = uses.iter().find(|u| !answered.contains(u)) {
+                            return rest_err(400, "ValidationException", &format!("Expected toolResult blocks at messages.{}.content for the following Ids: {}", i + 1, missing));
+                        }
+                    }
+                    if b.get("toolConfig").is_some() {
+                        let last = arr.last().cloned().unwrap_or_default();
+                        let blocks = last.get("content").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+                        let results: Vec<String> = blocks
+                            .iter()
+                            .filter_map(|b| b.get("toolResult"))
+                            .map(|r| r.get("content").and_then(|c| c.as_array()).map(|c| c.iter().map(|x| s_(x, "text")).collect::<Vec<_>>().join("")).unwrap_or_default())
+                            .collect();
+                        let usage = obj([("inputTokens", Value::Int(9)), ("outputTokens", Value::Int(3)), ("totalTokens", Value::Int(12))]);
+                        if !results.is_empty() {
+                            return ok(obj([
+                                ("output", obj([("message", obj([("role", Value::from("assistant")), ("content", Value::Array(vec![obj([("text", Value::from(format!("Done: {}", results.join(" | "))))])]))]))])),
+                                ("stopReason", Value::from("end_turn")),
+                                ("usage", usage),
+                            ]));
+                        }
+                        let scripted = crate::testing::scripted_tool_calls(&last_user_text(&msgs));
+                        if !scripted.is_empty() {
+                            let uses: Vec<Value> = scripted.iter().enumerate().map(|(i, (n, a))| obj([("toolUse", obj([("toolUseId", Value::from(format!("tooluse_{}", i + 1))), ("name", Value::from(n.as_str())), ("input", a.clone())]))])).collect();
+                            return ok(obj([
+                                ("output", obj([("message", obj([("role", Value::from("assistant")), ("content", Value::Array(uses))]))])),
+                                ("stopReason", Value::from("tool_use")),
+                                ("usage", usage),
+                            ]));
+                        }
+                    }
                     let text = last_user_text(&msgs);
                     let system = b.get("system").and_then(|s| s.as_array()).and_then(|a| a.first().cloned()).map(|x| s_(&x, "text")).filter(|x| !x.is_empty());
                     let reply = match system {

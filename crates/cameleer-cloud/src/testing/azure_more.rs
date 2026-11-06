@@ -284,7 +284,31 @@ fn openai(st: &Shared, req: &ServerRequest, deployment: &str, op: &str) -> Respo
             let system = msgs.iter().find(|m| m.get("role").map(|r| r.to_string()).as_deref() == Some("system")).and_then(|m| m.get("content")).map(|c| c.to_string());
             let mut message = ObjectMap::new();
             message.insert("role".into(), Value::from("assistant"));
-            let finish = if let Some(tool) = body.get("tools").and_then(|t| t.as_array()).and_then(|t| t.first().cloned()) {
+            let last_msg = msgs.last().cloned().unwrap_or_default();
+            let scripted = crate::testing::scripted_tool_calls(&last);
+            let has_tools = body.get("tools").and_then(|t| t.as_array()).is_some_and(|t| !t.is_empty());
+            let finish = if has_tools && last_msg.get("role").map(|r| r.to_string()).as_deref() == Some("tool") {
+                let results: Vec<String> = msgs
+                    .iter()
+                    .rev()
+                    .take_while(|m| m.get("role").map(|r| r.to_string()).as_deref() == Some("tool"))
+                    .map(|m| m.get("content").map(|c| c.to_string()).unwrap_or_default())
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                message.insert("content".into(), Value::from(format!("Done: {}", results.join(" | "))));
+                "stop"
+            } else if has_tools && last_msg.get("role").map(|r| r.to_string()).as_deref() == Some("user") && !scripted.is_empty() {
+                let calls: Vec<Value> = scripted
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (n, a))| obj([("id", Value::from(format!("call_{}", i + 1))), ("type", Value::from("function")), ("function", obj([("name", Value::from(n.as_str())), ("arguments", Value::from(a.to_json()))]))]))
+                    .collect();
+                message.insert("content".into(), Value::Null);
+                message.insert("tool_calls".into(), Value::Array(calls));
+                "tool_calls"
+            } else if let Some(tool) = body.get("tools").and_then(|t| t.as_array()).and_then(|t| t.first().cloned()) {
                 let fname = tool.get("function").and_then(|f| f.get("name")).cloned().unwrap_or_default();
                 message.insert("content".into(), Value::Null);
                 message.insert("tool_calls".into(), Value::Array(vec![obj([("id", Value::from("call_1")), ("type", Value::from("function")), ("function", obj([("name", fname), ("arguments", Value::from("{}"))]))])]));

@@ -221,7 +221,8 @@ fn json_str(s: &str) -> String {
 /// Whether a file name is a route file (`*.yaml`, `*.yml`, `*.xml`; not `application*`).
 pub fn is_route_file(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
-    !name.starts_with("application") && [".yaml", ".yml", ".xml"].iter().any(|e| name.ends_with(e))
+    // `*.test.yaml` files are `cameleer test` files, not routes
+    !name.starts_with("application") && !name.ends_with(".test.yaml") && !name.ends_with(".test.yml") && [".yaml", ".yml", ".xml"].iter().any(|e| name.ends_with(e))
 }
 
 /// The route files of a directory, recursively (hidden directories and `target` skipped), sorted.

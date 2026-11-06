@@ -136,8 +136,8 @@ Apps or Knative work as before.
 | Item | Why | Status |
 |---|---|---|
 | **MCP server**: routes as MCP tools, resources and prompts ([ai-tool](components/ai-tool.md), [MCP server guide](guides/mcp-server.md)) | the standard way agents discover and call tools, with the reliability envelope on every call | ✅ (unreleased, branch `agent-action-layer`) |
-| **Tool calls in `openai` and `aws-bedrock`**: pass tool definitions and return tool calls (as `azure-openai` already does) | removes the main gap for the agent loop in 1.2 | 🚧 |
-| **An agent EIP / DSL step**: model call → tool dispatch → loop, with turn and token limits | packages 1.2 so it's one step in a route | 🚧 |
+| **Tool calling in every model component** (`openai`/`llm`, `anthropic`, `azure-openai`, `aws-bedrock`, `google-vertexai`) | removes the main gap for the agent loop in 1.2 | ✅ (unreleased, branch `agent-action-layer`) |
+| **The `agent` step**: model call → tool dispatch → loop, with turn, token and time limits, memory and approvals ([guide](guides/agent-step.md)) | packages 1.2 so it's one step in a route | ✅ (unreleased, branch `agent-action-layer`) |
 | **Vector store components**: pgvector, Qdrant, OpenSearch k-NN, Pinecone | first-class retrieval instead of SQL/REST in 1.3 | 🚧 |
 | **Streaming in `openai`** | parity with the Bedrock, Azure and Vertex components | 🚧 |
 | **Prompt templates and response caching** | cut cost and latency for repeated prompts; reuse the templating languages | 🚧 |

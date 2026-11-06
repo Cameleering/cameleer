@@ -767,6 +767,40 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
         Ok(())
     });
 
+    // --- agents (Cameleer extension) ---
+    r.register("agent", |ctx, cfg| {
+        let model = ctx.required_str(cfg, &["model"])?;
+        let mut d = cameleer_core::processor::agent::AgentDefinition::new(model);
+        if let Some(t) = ctx.opt_str(cfg, "tools") {
+            d = d.tools(&t);
+        }
+        d.system_message = ctx.opt_str(cfg, "systemMessage");
+        if let Some(n) = ctx.opt_usize(cfg, "maxTurns")? {
+            d.max_turns = n;
+        }
+        d.max_tokens = ctx.opt_i64(cfg, "maxTokens")?;
+        d.deadline = ctx.opt_duration(cfg, "deadline")?;
+        d.memory = ctx.opt_str(cfg, "memory");
+        if let Some(n) = ctx.opt_usize(cfg, "maxHistoryMessages")? {
+            d.max_history_messages = n;
+        }
+        d.on_approval = ctx.opt_str(cfg, "onApproval");
+        if let Some(n) = ctx.opt_usize(cfg, "parallelToolCalls")? {
+            d.parallel_tool_calls = n;
+        }
+        if let Some(n) = ctx.opt_usize(cfg, "maxResultChars")? {
+            d.max_result_chars = n;
+        }
+        if let Some(b) = ctx.opt_bool(cfg, "failOnUnknownTool")? {
+            d.fail_on_unknown_tool = b;
+        }
+        d.record = ctx.opt_str(cfg, "record");
+        d.replay = ctx.opt_str(cfg, "replay");
+        d.id = ctx.opt_str(cfg, "id");
+        ctx.add(Box::new(d));
+        Ok(())
+    });
+
     // --- error handling ---
     r.register("doTry", |ctx, cfg| {
         ctx.push_block(Box::new(DoTryDefinition::default()));

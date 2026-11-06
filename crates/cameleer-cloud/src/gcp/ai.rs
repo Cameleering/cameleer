@@ -373,6 +373,27 @@ impl VertexAiService {
 }
 
 impl CloudService for VertexAiService {
+    fn supports_chat(&self) -> bool {
+        self.publisher == "google"
+    }
+    fn system_message(&self) -> Option<String> {
+        self.system_instruction.clone()
+    }
+    /// Gemini `generateContent` with function declarations.
+    fn chat(&self, request: &cameleer_core::ai::ChatRequest) -> Result<cameleer_core::ai::ChatResponse> {
+        let mut req = cameleer_core::ai::wire::to_gemini(request);
+        if let Some(m) = req.as_object_mut() {
+            if !self.generation.is_empty() {
+                let mut g = m.get("generationConfig").and_then(|g| g.as_object()).cloned().unwrap_or_default();
+                for (k, v) in self.generation.iter() {
+                    g.entry(k.clone()).or_insert(v.clone());
+                }
+                m.insert("generationConfig".into(), Value::Object(g));
+            }
+        }
+        let r = self.gcp.json("POST", &self.url("generateContent"), Some(&req), kinds::GOOGLE_API)?;
+        cameleer_core::ai::wire::from_gemini(&r)
+    }
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = operation(ex, vertex_headers::OPERATION, &self.operation, "generateText");
         match op.as_str() {

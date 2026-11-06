@@ -1,0 +1,56 @@
+# A support agent: a model with two tools, in one route step.
+#   - lookup_order is read-only;
+#   - refund is destructive: the agent pauses until a person approves it (direct:approvals is
+#     told), then the conversation resumes; the refund runs once.
+#
+# Run with a real model:
+#   export OPENAI_API_KEY=sk-...
+#   cameleer run support-agent.camel.yaml
+# Test without a model (replays tests/refund.jsonl):
+#   cameleer test tests/support-agent.test.yaml
+- route:
+    id: support-lookup-order
+    from:
+      uri: ai-tool:lookup_order
+      parameters:
+        description: Look up an order by id
+        tags: support
+        parameter.orderId: string
+        parameter.orderId.required: true
+        readOnlyHint: true
+      steps:
+        - setBody:
+            simple: '{"orderId": "${header.orderId}", "status": "delivered damaged"}'
+- route:
+    id: support-refund
+    from:
+      uri: ai-tool:refund
+      parameters:
+        description: Refund an order in full
+        tags: support
+        parameter.orderId: string
+        parameter.orderId.required: true
+        destructiveHint: true
+      steps:
+        - to: "{{payments.endpoint:log:payments}}"
+        - setBody:
+            simple: "refunded order ${header.orderId}"
+- route:
+    id: support-agent
+    from:
+      uri: direct:support
+      steps:
+        - agent:
+            model: "openai:chat-completion?model={{agent.model:gpt-5.4-mini}}"
+            tools: support
+            systemMessage: You are a support agent. Look orders up before you refund them.
+            maxTurns: 8
+            memory: memory
+            onApproval: direct:approvals
+            replay: "{{agent.replay:}}"
+- route:
+    id: support-approvals
+    from:
+      uri: direct:approvals
+      steps:
+        - log: "approval needed for ${header.CamelAiToolName}: ${body} (handle ${header.CamelAiApprovalHandle})"

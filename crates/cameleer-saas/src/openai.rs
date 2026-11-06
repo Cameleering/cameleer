@@ -25,6 +25,7 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
 
+use cameleer_core::ai::{self as ai, ChatModel, ChatRequest, ChatResponse, Usage};
 use cameleer_core::context::CamelContext;
 use cameleer_core::error::{kinds, CamelError, Result};
 use cameleer_core::message::Exchange;
@@ -42,6 +43,13 @@ pub const FINISH_REASON: &str = "CamelOpenAIFinishReason";
 pub const PROMPT_TOKENS: &str = "CamelOpenAIPromptTokens";
 pub const COMPLETION_TOKENS: &str = "CamelOpenAICompletionTokens";
 pub const TOTAL_TOKENS: &str = "CamelOpenAITotalTokens";
+/// Model turns of an automatic tool loop.
+pub const TOOL_ITERATIONS: &str = "CamelOpenAIToolIterations";
+/// The tool calls: with `autoToolExecution=false`, the calls the model asked for
+/// (`[{id, name, arguments}]`); with the loop, the calls it made.
+pub const TOOL_CALLS: &str = "CamelOpenAIToolCalls";
+/// Why an automatic tool loop stopped (`answer`, `max-turns`, `max-tokens`, ...).
+pub const TOOL_STOP_REASON: &str = "CamelOpenAIToolStopReason";
 
 /// The `openai` component.
 #[derive(Default)]
@@ -60,6 +68,15 @@ struct Config {
     top_p: Option<f64>,
     user: Option<String>,
     full: bool,
+    /// `ai-tool` tags offered to the model (Camel `tags`).
+    tags: Vec<String>,
+    auto_tool_execution: bool,
+    max_tool_iterations: usize,
+    max_agentic_tokens: Option<i64>,
+    parallel_tool_execution: bool,
+    fail_on_unknown_tool: bool,
+    record: Option<String>,
+    replay: Option<String>,
 }
 
 impl Component for OpenAiComponent {
@@ -88,6 +105,21 @@ impl Component for OpenAiComponent {
             top_p: num(params, "topP")?,
             user: params.take("user"),
             full: params.take("outputType").map(|o| o.eq_ignore_ascii_case("full")).unwrap_or(false),
+            tags: params.take("tags").map(|t| t.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default(),
+            auto_tool_execution: params.take_bool("autoToolExecution", true)?,
+            max_tool_iterations: params.take_usize("maxToolIterations", 50)?,
+            max_agentic_tokens: match params.take("maxAgenticTokens") {
+                Some(v) => Some(v.trim().parse().map_err(|_| CamelError::illegal_argument("openai: maxAgenticTokens must be a number"))?),
+                None => None,
+            },
+            parallel_tool_execution: params.take_bool("parallelToolExecution", true)?,
+            fail_on_unknown_tool: match params.take_string("hallucinatedToolNameStrategy", "report").to_ascii_lowercase().as_str() {
+                "report" | "inform" | "continue" => false,
+                "fail" | "throw" | "exception" => true,
+                other => return Err(CamelError::illegal_argument(format!("openai: hallucinatedToolNameStrategy must be report or fail, got {}", other))),
+            },
+            record: params.take("record"),
+            replay: params.take("replay"),
         };
         let timeout = params.take_duration("timeout", Duration::from_secs(120))?;
         params.take("lazyStartProducer");
@@ -111,6 +143,13 @@ impl Endpoint for OpenAiEndpoint {
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
         Ok(Arc::new(OpenAiProducer { cfg: self.cfg.clone(), rest: self.rest.clone() }))
+    }
+    fn chat_model(&self) -> Option<Arc<dyn ChatModel>> {
+        if self.cfg.operation != "chat-completion" {
+            return None;
+        }
+        let base: Arc<dyn ChatModel> = Arc::new(OpenAiChatModel { cfg: self.cfg.clone(), rest: self.rest.clone() });
+        cameleer_core::ai::with_recording(Some(base), self.cfg.record.as_deref(), self.cfg.replay.as_deref()).ok().flatten()
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -148,6 +187,9 @@ impl OpenAiProducer {
 
 impl Processor for OpenAiProducer {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
+        if self.cfg.operation == "chat-completion" && (!self.cfg.tags.is_empty() || self.cfg.replay.is_some()) && !matches!(ex.body(), Value::Object(_)) {
+            return self.tool_chat(ex);
+        }
         let model = header_str(ex, MODEL).or_else(|| self.cfg.model.clone());
         if self.cfg.operation == "embeddings" {
             let input = match &ex.message.body {
@@ -226,5 +268,97 @@ impl Processor for OpenAiProducer {
         }
         ex.message.body = if self.cfg.full { resp } else { choice.get("message").and_then(|m| m.get("content")).cloned().unwrap_or(Value::Null) };
         Ok(())
+    }
+}
+
+impl OpenAiProducer {
+    /// Chat with the `tags` tools: the automatic tool loop (Camel `autoToolExecution`), or one
+    /// turn whose tool calls are returned in `CamelOpenAIToolCalls`.
+    fn tool_chat(&self, ex: &mut Exchange) -> Result<()> {
+        let mut cfg = self.cfg.clone();
+        if let Some(m) = header_str(ex, MODEL) {
+            cfg.model = Some(m);
+        }
+        let base: Arc<dyn ChatModel> = Arc::new(OpenAiChatModel { cfg: cfg.clone(), rest: self.rest.clone() });
+        let model = ai::with_recording(Some(base), cfg.record.as_deref(), cfg.replay.as_deref())?.expect("model");
+        let ctx = ex.context()?.clone();
+        let provider = ai::tool_provider(&ctx);
+        if !cfg.tags.is_empty() && provider.is_none() {
+            return Err(CamelError::illegal_state("openai: tags need the ai feature (cameleer-ai registered on the context)"));
+        }
+        let tools = provider.as_ref().map(|p| p.tools(&cfg.tags)).unwrap_or_default();
+        let system = header_str(ex, SYSTEM_MESSAGE).or_else(|| cfg.system_message.clone());
+        let messages = ai::exchange_messages(ex)?;
+        if messages.is_empty() {
+            return Err(CamelError::illegal_argument("openai: chat-completion requires a body"));
+        }
+        let request = ChatRequest { system, messages, tools, max_tokens: cfg.max_tokens };
+        if !cfg.auto_tool_execution {
+            let resp = model.chat(&request)?;
+            let calls: Vec<Value> = resp
+                .message
+                .tool_uses()
+                .into_iter()
+                .map(|(id, name, args)| Value::object([("id", Value::from(id)), ("name", Value::from(name)), ("arguments", args.clone())]))
+                .collect();
+            set_usage(ex, resp.usage);
+            ex.message.headers.set(FINISH_REASON, Value::from(resp.stop_reason.as_str()));
+            if !calls.is_empty() {
+                ex.message.headers.set(TOOL_CALLS, Value::Array(calls));
+            }
+            ex.message.body = Value::from(resp.message.text());
+            return Ok(());
+        }
+        let limits = ai::AgentLimits {
+            max_turns: cfg.max_tool_iterations.max(1),
+            max_tokens: cfg.max_agentic_tokens,
+            parallel: if cfg.parallel_tool_execution { 4 } else { 1 },
+            hallucinated: if cfg.fail_on_unknown_tool { ai::HallucinatedTool::Fail } else { ai::HallucinatedTool::Report },
+            ..Default::default()
+        };
+        let base_call = ai::ToolInvocation {
+            conversation_id: ex.header(ai::headers::CONVERSATION_ID).map(|v| v.to_string()),
+            properties: ex.properties.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+            ..Default::default()
+        };
+        let run = ai::run_agent(model.as_ref(), provider.as_deref(), request, &limits, &base_call)?;
+        set_usage(ex, run.usage);
+        let calls: Vec<Value> = run
+            .tool_calls
+            .iter()
+            .map(|c| Value::object([("id", Value::from(c.id.as_str())), ("name", Value::from(c.name.as_str())), ("arguments", c.arguments.clone()), ("isError", Value::Bool(c.is_error))]))
+            .collect();
+        let h = &mut ex.message.headers;
+        h.set(TOOL_ITERATIONS, Value::Int(run.turns as i64));
+        h.set(TOOL_STOP_REASON, Value::from(run.stop.as_str()));
+        h.set(TOOL_CALLS, Value::Array(calls));
+        ex.message.body = Value::from(run.answer);
+        Ok(())
+    }
+}
+
+fn set_usage(ex: &mut Exchange, u: Usage) {
+    let h = &mut ex.message.headers;
+    h.set(PROMPT_TOKENS, Value::Int(u.input));
+    h.set(COMPLETION_TOKENS, Value::Int(u.output));
+    h.set(TOTAL_TOKENS, Value::Int(u.input + u.output));
+}
+
+/// The Chat Completions API as a [`ChatModel`] (also Ollama, vLLM and other compatible
+/// servers; missing call ids are generated).
+pub struct OpenAiChatModel {
+    cfg: Config,
+    rest: Rest,
+}
+
+impl ChatModel for OpenAiChatModel {
+    fn chat(&self, req: &ChatRequest) -> Result<ChatResponse> {
+        let mut body = ai::wire::to_openai(self.cfg.model.as_deref(), req);
+        if let (Some(t), Some(o)) = (self.cfg.temperature, body.as_object_mut()) {
+            o.insert("temperature".into(), Value::Float(t));
+        }
+        let producer = OpenAiProducer { cfg: self.cfg.clone(), rest: self.rest.clone() };
+        let resp = producer.call("/chat/completions", &body)?;
+        ai::wire::from_openai(&resp)
     }
 }

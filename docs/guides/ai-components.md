@@ -27,18 +27,19 @@ each component page for the exact option and header names.
 
 Be aware of these limits before you design around them:
 
-- **No agent loop.** No component executes tools for you: when a model asks for a tool, your
-  route must call the tool and send the result back in a new request. Server-side agents are the
-  exception: Bedrock Agents (`aws-bedrock-agent-runtime`, `invokeAgent`) and Azure OpenAI
-  Assistants (`runAssistant`) run the loop in the cloud service.
-- **`openai` has no streaming and no tool-call options.** It waits for the complete answer.
+- **Tool calling and the agent loop** work in `openai`/`llm`, `anthropic`, `azure-openai`,
+  `aws-bedrock` (Converse) and `google-vertexai` (Gemini): with `tags` they run your
+  [`ai-tool`](../components/ai-tool.md) routes for the model, and the
+  [agent step](agent-step.md) adds memory, approvals and limits. Server-side agents also work:
+  Bedrock Agents (`aws-bedrock-agent-runtime`) and Azure OpenAI Assistants (`runAssistant`).
+- **`openai` has no streaming.** It waits for the complete answer, also in a tool loop.
 - **No vector store component.** Embeddings are lists of numbers in the body; store and search
   them with the data store you already run ([mongodb](../components/mongodb.md),
   [elasticsearch](../components/elasticsearch.md), [spring-redis](../components/spring-redis.md),
   files).
 - **No LangChain4j components** (`langchain4j-chat`, `langchain4j-embeddings`, ...), no MCP
-  client yet, and no direct Anthropic or Gemini API component: use Claude through Bedrock or
-  Vertex AI, and Gemini through Vertex AI. Routes are published as tools, resources and prompts
+  client yet, and no direct Gemini API component (use Vertex AI). Claude is available directly
+  with [`anthropic`](../components/anthropic.md), or through Bedrock and Vertex AI. Routes are published as tools, resources and prompts
   with [`ai-tool`](../components/ai-tool.md), [`ai-resource`](../components/ai-resource.md) and
   [`ai-prompt`](../components/ai-prompt.md), and the [MCP server](mcp-server.md) serves them.
 - **No native Ollama API.** Ollama, vLLM and LM Studio are used through their OpenAI-compatible

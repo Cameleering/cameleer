@@ -326,6 +326,20 @@ impl BedrockService {
 }
 
 impl CloudService for BedrockService {
+    fn supports_chat(&self) -> bool {
+        true
+    }
+    /// The Converse API (any model that supports tool use on Bedrock).
+    fn chat(&self, request: &cameleer_core::ai::ChatRequest) -> Result<cameleer_core::ai::ChatResponse> {
+        let model = self.model_id.clone().ok_or_else(|| CamelError::illegal_argument("aws-bedrock: the agent step and tags need the modelId option"))?;
+        let mut req = cameleer_core::ai::wire::to_converse(request);
+        if let (Some((id, version)), Some(m)) = (self.guardrail_identifier.clone().map(|i| (i, self.guardrail_version.clone().unwrap_or_else(|| "DRAFT".into()))), req.as_object_mut()) {
+            let trace = if self.guardrail_trace { "enabled" } else { "disabled" };
+            m.insert("guardrailConfig".into(), obj([("guardrailIdentifier", Value::from(id)), ("guardrailVersion", Value::from(version)), ("trace", Value::from(trace))]));
+        }
+        let r = self.aws.rest_json("POST", "bedrock-runtime", &format!("/model/{}/converse", uri_encode(&model, false)), &[], Some(&req), "bedrock", kinds::BEDROCK)?;
+        cameleer_core::ai::wire::from_converse(&r)
+    }
     fn produce(&self, ex: &mut Exchange) -> Result<()> {
         let op = operation(ex, headers::OPERATION, &self.operation, "invokeTextModel");
         match op.as_str() {

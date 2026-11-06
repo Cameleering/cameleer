@@ -1,0 +1,3 @@
+{"response":{"message":{"role":"assistant","parts":[{"type":"tool_use","id":"call_1","name":"lookup_order","arguments":{"orderId":"A1"}}]},"stopReason":"tool_calls","usage":{"input":40,"output":12}}}
+{"response":{"message":{"role":"assistant","parts":[{"type":"tool_use","id":"call_2","name":"refund","arguments":{"orderId":"A1"}}]},"stopReason":"tool_calls","usage":{"input":60,"output":10}}}
+{"response":{"message":{"role":"assistant","parts":[{"type":"text","text":"Order A1 arrived damaged, so I refunded it in full."}]},"stopReason":"stop","usage":{"input":80,"output":14}}}

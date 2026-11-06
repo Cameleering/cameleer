@@ -424,6 +424,8 @@ pub struct AiRegistry {
     idem: Mutex<HashMap<String, Idem>>,
     idem_cv: Condvar,
     approvals: Mutex<HashMap<String, Pending>>,
+    /// Results of resolved approvals, by handle (a paused agent resumes from them).
+    resolved: Mutex<HashMap<String, (Instant, ToolResult)>>,
     sagas: Mutex<HashMap<String, Vec<Compensation>>>,
     listeners: Mutex<Vec<(u64, Listener)>>,
     seq: AtomicU64,
@@ -467,6 +469,7 @@ impl AiRegistry {
             idem: Mutex::default(),
             idem_cv: Condvar::new(),
             approvals: Mutex::default(),
+            resolved: Mutex::default(),
             sagas: Mutex::default(),
             listeners: Mutex::default(),
             seq: AtomicU64::new(0),
@@ -1118,9 +1121,24 @@ impl AiRegistry {
         self.expire_approvals();
         let pending = self.approvals.lock().unwrap_or_else(|p| p.into_inner()).remove(handle);
         match pending {
-            Some(p) => self.call(p.call.approved_by(approver)),
+            Some(p) => {
+                let r = self.call(p.call.approved_by(approver));
+                self.remember(handle, &r);
+                r
+            }
             None => ToolResult::error(format!("No call is waiting for approval with handle {} (it may have expired)", handle)),
         }
+    }
+
+    fn remember(&self, handle: &str, r: &ToolResult) {
+        let mut m = self.resolved.lock().unwrap_or_else(|p| p.into_inner());
+        m.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(24 * 3600));
+        m.insert(handle.to_string(), (Instant::now(), r.clone()));
+    }
+
+    /// The result of a resolved approval (approved and run, or rejected), kept for a day.
+    pub fn approval_result(&self, handle: &str) -> Option<ToolResult> {
+        self.resolved.lock().unwrap_or_else(|p| p.into_inner()).get(handle).map(|(_, r)| r.clone())
     }
 
     /// Reject a parked call: it never runs.
@@ -1148,7 +1166,9 @@ impl AiRegistry {
         } else {
             format!("The call to {} was rejected by {}: {}", p.request.tool, approver, reason)
         };
-        ToolResult { text, structured: None, is_error: true, status: ToolStatus::Denied, duplicate: false, return_direct: false, content: None }
+        let r = ToolResult { text, structured: None, is_error: true, status: ToolStatus::Denied, duplicate: false, return_direct: false, content: None };
+        self.remember(handle, &r);
+        r
     }
 
     // --- compensation ---
@@ -1580,5 +1600,60 @@ mod tests {
         assert_eq!(fmt_duration(Duration::from_secs(120)), "2 min");
         assert_eq!(fmt_duration(Duration::from_secs(20)), "20 s");
         assert_eq!(fmt_duration(Duration::from_millis(150)), "150 ms");
+    }
+}
+
+/// The registry as the context's [`cameleer_core::ai::ToolProvider`]: the `agent` step and the
+/// model components' tool loops call tools through the envelope.
+pub struct RegistryTools {
+    pub(crate) ctx: WeakContext,
+}
+
+impl RegistryTools {
+    fn registry(&self) -> Option<Arc<AiRegistry>> {
+        self.ctx.upgrade().and_then(|c| AiRegistry::of(&c).ok())
+    }
+}
+
+fn outcome(r: ToolResult) -> cameleer_core::ai::ToolOutcome {
+    use cameleer_core::ai::{ToolOutcome, ToolOutcomeStatus};
+    let status = match &r.status {
+        ToolStatus::Completed => ToolOutcomeStatus::Completed,
+        ToolStatus::Error => ToolOutcomeStatus::Error,
+        ToolStatus::ApprovalRequired { handle } => ToolOutcomeStatus::ApprovalRequired(handle.clone()),
+        ToolStatus::Denied => ToolOutcomeStatus::Denied,
+    };
+    ToolOutcome { text: r.text, is_error: r.is_error, status }
+}
+
+impl cameleer_core::ai::ToolProvider for RegistryTools {
+    fn tools(&self, tags: &[String]) -> Vec<cameleer_core::ai::ToolSpec> {
+        let Some(reg) = self.registry() else { return Vec::new() };
+        let all = tags.iter().any(|t| t == "*");
+        let wanted: Vec<&str> = tags.iter().map(|t| t.as_str()).collect();
+        if tags.is_empty() {
+            return Vec::new();
+        }
+        reg.tools(if all { &[] } else { &wanted })
+            .into_iter()
+            .map(|d| cameleer_core::ai::ToolSpec { name: d.name, description: d.description, input_schema: d.input_schema })
+            .collect()
+    }
+    fn call(&self, inv: cameleer_core::ai::ToolInvocation) -> cameleer_core::ai::ToolOutcome {
+        let Some(reg) = self.registry() else { return outcome(ToolResult::error("The tool registry is gone")) };
+        let call = ToolCall {
+            name: inv.name,
+            arguments: inv.arguments,
+            call_id: if inv.id.is_empty() { None } else { Some(inv.id) },
+            conversation_id: inv.conversation_id,
+            principal: inv.principal,
+            approved_by: None,
+            properties: inv.properties,
+            headers: Vec::new(),
+        };
+        outcome(reg.call(call))
+    }
+    fn approval_outcome(&self, handle: &str) -> Option<cameleer_core::ai::ToolOutcome> {
+        self.registry().and_then(|r| r.approval_result(handle)).map(outcome)
     }
 }

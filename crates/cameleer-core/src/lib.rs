@@ -4,6 +4,7 @@
 //! messages, endpoints, components, routes, Enterprise Integration Patterns,
 //! expression languages and a fluent route DSL.
 
+pub mod ai;
 pub mod alloc;
 pub mod async_delay;
 pub mod builder;

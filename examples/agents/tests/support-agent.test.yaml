@@ -1,0 +1,32 @@
+# cameleer test examples/agents/tests/support-agent.test.yaml
+- test:
+    name: a refund waits for approval, runs once, and the agent answers
+    routes: [../support-agent.camel.yaml]
+    properties:
+      agent.replay: file:refund.jsonl
+      payments.endpoint: mock:payments
+    steps:
+      - send:
+          to: direct:support
+          body: My order A1 arrived broken. Please refund it.
+          headers: {CamelAiConversationId: case-1}
+        expect:
+          headers: {CamelAiAgentStopReason: approval-required, CamelAiAgentToolCalls: 2}
+          bodyContains: needs approval
+          mocks: {"mock:payments": 0}
+      - approve: {tool: refund, by: alice}
+        expect:
+          body: refunded order A1
+          mocks: {"mock:payments": 1}
+      - send:
+          to: direct:support
+          body: continue
+          headers: {CamelAiConversationId: case-1}
+        expect:
+          headers: {CamelAiAgentStopReason: answer}
+          body: Order A1 arrived damaged, so I refunded it in full.
+          mocks: {"mock:payments": 1}
+      - callTool: {name: refund, arguments: {orderId: B7}, callId: retry-1, approvedBy: alice}
+        expect: {body: refunded order B7, duplicate: false}
+      - callTool: {name: refund, arguments: {orderId: B7}, callId: retry-1, approvedBy: alice}
+        expect: {duplicate: true, mocks: {"mock:payments": 2}}

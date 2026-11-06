@@ -547,6 +547,17 @@ pub static STEPS: &[Model] = &[
         ..STEP
     },
     Model {
+        name: "agent",
+        doc: "Run a model and its tools in a loop (Cameleer extension): the body is the user's message, the answer becomes the body",
+        keys: keys! {
+            "model": Scalar, "tools": Scalar, "systemMessage": Scalar, "maxTurns": Int, "maxTokens": Int, "deadline": Duration,
+            "memory": Scalar, "maxHistoryMessages": Int, "onApproval": Scalar, "parallelToolCalls": Int, "maxResultChars": Int,
+            "failOnUnknownTool": Bool, "record": Scalar, "replay": Scalar,
+        },
+        required: &[&["model"]],
+        ..STEP
+    },
+    Model {
         name: "claimCheck",
         doc: "Store or retrieve message data (Set, Get, GetAndRemove, Push, Pop)",
         keys: keys! {"operation": Scalar, "key": Scalar, "filter": Scalar, "aggregationStrategy": Scalar, "aggregationStrategyMethodName": Scalar},

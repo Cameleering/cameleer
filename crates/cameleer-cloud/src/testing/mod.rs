@@ -40,6 +40,24 @@ use crate::http::{read_request, write_response, Response, ServerRequest};
 const ENTRA_TOKEN_KEY: &[u8] = b"cameleer-cloud-testing-entra-token-key";
 
 /// Issue an emulated Entra ID access token `header.payload.signature` (HMAC) for `scope`.
+/// The scripted tool calls in a user message: `call NAME {json}`, several separated by `;`.
+/// The model mocks (Azure OpenAI, Bedrock Converse, Vertex AI) call these tools when tools are
+/// offered, and answer `Done: <results>` once the results come back.
+pub fn scripted_tool_calls(text: &str) -> Vec<(String, cameleer_core::value::Value)> {
+    let mut out = Vec::new();
+    for part in text.split(';') {
+        let part = part.trim();
+        let Some(rest) = part.strip_prefix("call ") else { continue };
+        let (name, args) = match rest.find(' ') {
+            Some(i) => (&rest[..i], rest[i..].trim()),
+            None => (rest, "{}"),
+        };
+        let args = cameleer_core::json::parse(args).unwrap_or(cameleer_core::value::Value::Object(cameleer_core::value::ObjectMap::new()));
+        out.push((name.trim().to_string(), args));
+    }
+    out
+}
+
 pub fn issue_entra_token(scope: &str, subject: &str, ttl_secs: i64) -> String {
     let payload = format!("{}|{}|{}|{}", scope, subject, crate::util::now_secs() + ttl_secs, crate::util::random_hex(8));
     let body = format!("eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.{}", crate::util::base64url_encode(payload.as_bytes()));

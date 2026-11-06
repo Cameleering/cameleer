@@ -77,4 +77,7 @@ pub fn register(ctx: &CamelContext) {
     ctx.add_component_factory("ai-tool", || Arc::new(component::AiComponent::tool()));
     ctx.add_component_factory("ai-resource", || Arc::new(component::AiComponent::resource()));
     ctx.add_component_factory("ai-prompt", || Arc::new(component::AiComponent::prompt()));
+    // the agent step and the model components' tool loops call tools through the registry
+    let tools: Arc<dyn cameleer_core::ai::ToolProvider> = Arc::new(registry::RegistryTools { ctx: ctx.downgrade() });
+    ctx.registry().bind(cameleer_core::ai::TOOL_PROVIDER_BEAN, tools);
 }
