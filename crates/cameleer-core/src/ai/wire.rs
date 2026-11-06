@@ -404,3 +404,243 @@ mod tests {
         assert_eq!((r.message.tool_uses()[0].0, r.stop_reason.as_str(), r.usage.input), ("toolu_1", "tool_use", 7));
     }
 }
+
+// --- OpenAI Responses API ---
+
+/// The Responses API request body (`POST /responses`): the system message is `instructions`,
+/// the conversation is `input` items (messages, `function_call` and `function_call_output`).
+pub fn to_responses(model: Option<&str>, req: &ChatRequest) -> Value {
+    let mut input: Vec<Value> = Vec::new();
+    for m in &req.messages {
+        match m.role {
+            Role::User => {
+                for p in &m.parts {
+                    if let Part::ToolResult { id, content, .. } = p {
+                        input.push(obj([("type", Value::from("function_call_output")), ("call_id", Value::from(id.as_str())), ("output", Value::from(content.as_str()))]));
+                    }
+                }
+                let text = m.text();
+                if !text.is_empty() || m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
+                    input.push(obj([("type", Value::from("message")), ("role", Value::from("user")), ("content", Value::from(text))]));
+                }
+            }
+            Role::Assistant => {
+                let text = m.text();
+                if !text.is_empty() {
+                    input.push(obj([("type", Value::from("message")), ("role", Value::from("assistant")), ("content", Value::from(text))]));
+                }
+                for (id, name, args) in m.tool_uses() {
+                    input.push(obj([
+                        ("type", Value::from("function_call")),
+                        ("call_id", Value::from(id)),
+                        ("name", Value::from(name)),
+                        ("arguments", Value::from(args_object(args).to_json())),
+                    ]));
+                }
+            }
+        }
+    }
+    let mut body = ObjectMap::new();
+    if let Some(m) = model {
+        body.insert("model".into(), Value::from(m));
+    }
+    if let Some(s) = &req.system {
+        body.insert("instructions".into(), Value::from(s.as_str()));
+    }
+    body.insert("input".into(), Value::Array(input));
+    if !req.tools.is_empty() {
+        let tools: Vec<Value> = req
+            .tools
+            .iter()
+            .map(|t| obj([("type", Value::from("function")), ("name", Value::from(t.name.as_str())), ("description", Value::from(t.description.as_str())), ("parameters", t.input_schema.clone())]))
+            .collect();
+        body.insert("tools".into(), Value::Array(tools));
+    }
+    if let Some(m) = req.max_tokens {
+        body.insert("max_output_tokens".into(), Value::Int(m));
+    }
+    Value::Object(body)
+}
+
+/// A Responses API response: `output_text` content of `message` items and `function_call`
+/// items (their `call_id` is the call id); the stop reason is `status` (`completed`, or
+/// `incomplete: <reason>`).
+pub fn from_responses(resp: &Value) -> Result<ChatResponse> {
+    if let Some(e) = resp.get("error").filter(|e| !e.is_null()) {
+        return Err(CamelError::illegal_state(format!("the response failed: {}", e.get("message").map(|m| m.to_string()).unwrap_or_else(|| e.to_json()))));
+    }
+    let output = resp.get("output").and_then(|o| o.as_array()).cloned().ok_or_else(|| CamelError::illegal_state("the Responses API response has no output"))?;
+    let mut parts = Vec::new();
+    let mut calls = 0;
+    for item in output {
+        match item.get("type").and_then(|t| t.as_str()) {
+            Some("message") => {
+                let text: String = match item.get("content") {
+                    Some(Value::Array(content)) => content
+                        .iter()
+                        .filter(|c| matches!(c.get("type").and_then(|t| t.as_str()), Some("output_text") | Some("text")))
+                        .filter_map(|c| c.get("text").map(|t| t.to_string()))
+                        .collect(),
+                    Some(Value::String(s)) => s.clone(),
+                    _ => String::new(),
+                };
+                if !text.is_empty() {
+                    parts.push(Part::Text(text));
+                }
+            }
+            Some("function_call") => {
+                calls += 1;
+                let id = item.get("call_id").or_else(|| item.get("id")).map(|v| v.to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| format!("call_{}", calls));
+                parts.push(Part::ToolUse { id, name: item.get("name").map(|v| v.to_string()).unwrap_or_default(), arguments: parse_args(item.get("arguments")), meta: None });
+            }
+            _ => {}
+        }
+    }
+    let status = resp.get("status").map(|s| s.to_string()).unwrap_or_default();
+    let stop_reason = match resp.get("incomplete_details").and_then(|d| d.get("reason")).filter(|r| !r.is_null()) {
+        Some(r) if status == "incomplete" => format!("incomplete: {}", r),
+        _ => status,
+    };
+    let usage = resp.get("usage");
+    Ok(ChatResponse {
+        message: ChatMessage { role: Role::Assistant, parts },
+        stop_reason,
+        usage: Usage { input: n(usage.and_then(|u| u.get("input_tokens"))), output: n(usage.and_then(|u| u.get("output_tokens"))) },
+    })
+}
+
+// --- Ollama native chat API ---
+
+/// Ollama's `POST /api/chat` body (not streamed): tool call arguments are objects, tool
+/// results are `tool` messages with `tool_name`, `max_tokens` is `options.num_predict`.
+pub fn to_ollama(model: Option<&str>, req: &ChatRequest) -> Value {
+    let mut msgs: Vec<Value> = Vec::new();
+    if let Some(s) = &req.system {
+        msgs.push(obj([("role", Value::from("system")), ("content", Value::from(s.as_str()))]));
+    }
+    for m in &req.messages {
+        match m.role {
+            Role::User => {
+                for p in &m.parts {
+                    if let Part::ToolResult { name, content, .. } = p {
+                        msgs.push(obj([("role", Value::from("tool")), ("content", Value::from(content.as_str())), ("tool_name", Value::from(name.as_str()))]));
+                    }
+                }
+                let text = m.text();
+                if !text.is_empty() || m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
+                    msgs.push(obj([("role", Value::from("user")), ("content", Value::from(text))]));
+                }
+            }
+            Role::Assistant => {
+                let calls: Vec<Value> = m.tool_uses().into_iter().map(|(_, name, args)| obj([("function", obj([("name", Value::from(name)), ("arguments", args_object(args))]))])).collect();
+                let mut a = ObjectMap::new();
+                a.insert("role".into(), Value::from("assistant"));
+                a.insert("content".into(), Value::from(m.text()));
+                if !calls.is_empty() {
+                    a.insert("tool_calls".into(), Value::Array(calls));
+                }
+                msgs.push(Value::Object(a));
+            }
+        }
+    }
+    let mut body = ObjectMap::new();
+    if let Some(m) = model {
+        body.insert("model".into(), Value::from(m));
+    }
+    body.insert("messages".into(), Value::Array(msgs));
+    if !req.tools.is_empty() {
+        let tools: Vec<Value> = req
+            .tools
+            .iter()
+            .map(|t| obj([("type", Value::from("function")), ("function", obj([("name", Value::from(t.name.as_str())), ("description", Value::from(t.description.as_str())), ("parameters", t.input_schema.clone())]))]))
+            .collect();
+        body.insert("tools".into(), Value::Array(tools));
+    }
+    body.insert("stream".into(), Value::Bool(false));
+    if let Some(m) = req.max_tokens {
+        body.insert("options".into(), obj([("num_predict", Value::Int(m))]));
+    }
+    Value::Object(body)
+}
+
+/// An Ollama `/api/chat` response. Ollama has no call ids, so they are generated (`call_N`);
+/// usage is `prompt_eval_count` / `eval_count`, the stop reason `done_reason`.
+pub fn from_ollama(resp: &Value) -> Result<ChatResponse> {
+    if let Some(e) = resp.get("error").filter(|e| !e.is_null()) {
+        return Err(CamelError::illegal_state(format!("Ollama failed: {}", e)));
+    }
+    let m = resp.get("message").filter(|m| m.as_object().is_some()).ok_or_else(|| CamelError::illegal_state("the Ollama response has no message"))?;
+    let mut parts = Vec::new();
+    if let Some(t) = m.get("content").filter(|c| !c.is_null()).map(|c| c.to_string()).filter(|t| !t.is_empty()) {
+        parts.push(Part::Text(t));
+    }
+    if let Some(Value::Array(calls)) = m.get("tool_calls") {
+        for (i, c) in calls.iter().enumerate() {
+            let f = c.get("function").cloned().unwrap_or(Value::Null);
+            let id = c.get("id").map(|v| v.to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| format!("call_{}", i + 1));
+            parts.push(Part::ToolUse { id, name: f.get("name").map(|v| v.to_string()).unwrap_or_default(), arguments: parse_args(f.get("arguments")), meta: None });
+        }
+    }
+    Ok(ChatResponse {
+        message: ChatMessage { role: Role::Assistant, parts },
+        stop_reason: resp.get("done_reason").map(|f| f.to_string()).unwrap_or_default(),
+        usage: Usage { input: n(resp.get("prompt_eval_count")), output: n(resp.get("eval_count")) },
+    })
+}
+
+#[cfg(test)]
+mod responses_and_ollama_tests {
+    use super::*;
+    use crate::ai::ToolSpec;
+
+    fn conversation() -> ChatRequest {
+        ChatRequest {
+            system: Some("be brief".into()),
+            messages: vec![
+                ChatMessage::user("weather in Oslo?"),
+                ChatMessage { role: Role::Assistant, parts: vec![Part::ToolUse { id: "t1".into(), name: "weather".into(), arguments: Value::object([("city", Value::from("Oslo"))]), meta: None }] },
+                ChatMessage { role: Role::User, parts: vec![Part::ToolResult { id: "t1".into(), name: "weather".into(), content: "21C".into(), is_error: false }] },
+            ],
+            tools: vec![ToolSpec { name: "weather".into(), description: "Weather".into(), input_schema: Value::object([("type", Value::from("object"))]) }],
+            max_tokens: Some(100),
+        }
+    }
+
+    #[test]
+    fn responses_shapes() {
+        let b = to_responses(Some("m"), &conversation());
+        assert_eq!(
+            b.to_json(),
+            r#"{"model":"m","instructions":"be brief","input":[{"type":"message","role":"user","content":"weather in Oslo?"},{"type":"function_call","call_id":"t1","name":"weather","arguments":"{\"city\":\"Oslo\"}"},{"type":"function_call_output","call_id":"t1","output":"21C"}],"tools":[{"type":"function","name":"weather","description":"Weather","parameters":{"type":"object"}}],"max_output_tokens":100}"#
+        );
+        let r = from_responses(
+            &crate::json::parse(r#"{"id":"resp_1","status":"completed","output":[{"type":"reasoning","summary":[]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Let me "},{"type":"output_text","text":"check."}]},{"type":"function_call","id":"fc_1","call_id":"call_a","name":"weather","arguments":"{\"city\":\"Oslo\"}"}],"usage":{"input_tokens":9,"output_tokens":3}}"#).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(r.message.text(), "Let me check.");
+        let city = Value::object([("city", Value::from("Oslo"))]);
+        assert_eq!(r.message.tool_uses(), vec![("call_a", "weather", &city)]);
+        assert_eq!((r.stop_reason.as_str(), r.usage), ("completed", Usage { input: 9, output: 3 }));
+        let r = from_responses(&crate::json::parse(r#"{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}"#).unwrap()).unwrap();
+        assert_eq!(r.stop_reason, "incomplete: max_output_tokens");
+        assert!(from_responses(&crate::json::parse(r#"{"status":"failed","error":{"message":"boom"},"output":[]}"#).unwrap()).is_err());
+        assert!(from_responses(&crate::json::parse(r#"{"status":"completed"}"#).unwrap()).is_err());
+    }
+
+    #[test]
+    fn ollama_shapes() {
+        let b = to_ollama(Some("llama3.2"), &conversation());
+        assert_eq!(
+            b.to_json(),
+            r#"{"model":"llama3.2","messages":[{"role":"system","content":"be brief"},{"role":"user","content":"weather in Oslo?"},{"role":"assistant","content":"","tool_calls":[{"function":{"name":"weather","arguments":{"city":"Oslo"}}}]},{"role":"tool","content":"21C","tool_name":"weather"}],"tools":[{"type":"function","function":{"name":"weather","description":"Weather","parameters":{"type":"object"}}}],"stream":false,"options":{"num_predict":100}}"#
+        );
+        let r = from_ollama(&crate::json::parse(r#"{"model":"llama3.2","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"a","arguments":{"x":1}}},{"function":{"name":"b","arguments":{}}}]},"done":true,"done_reason":"stop","prompt_eval_count":20,"eval_count":7}"#).unwrap()).unwrap();
+        let ids: Vec<&str> = r.message.tool_uses().iter().map(|(i, _, _)| *i).collect();
+        assert_eq!(ids, vec!["call_1", "call_2"]);
+        assert_eq!((r.stop_reason.as_str(), r.usage), ("stop", Usage { input: 20, output: 7 }));
+        assert!(r.message.text().is_empty());
+        let r = from_ollama(&crate::json::parse(r#"{"message":{"role":"assistant","content":"hi"},"done_reason":"stop"}"#).unwrap()).unwrap();
+        assert_eq!(r.message.text(), "hi");
+        assert!(from_ollama(&crate::json::parse(r#"{"error":"model not found"}"#).unwrap()).is_err());
+    }
+}
