@@ -1,20 +1,37 @@
 # Cameleer
 
-> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. It starts its routes in about 1 ms on Linux, uses about 10 MB of memory, is its own AWS Lambda runtime and is 2.5-8x faster than Apache Camel 4.23 on Java 21 in the published benchmarks. Cameleer is the integration layer for AI agents: it feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, rate limits, fallbacks and an audit log. It is also aimed at serverless and edge deployments. It is an independent project, not affiliated with the Apache Software Foundation.
+> Cameleer is Apache Camel rewritten in Rust: the same routes, Enterprise Integration Patterns, endpoint URIs, Simple expressions and YAML DSL, as a single native binary with no third-party dependencies. Tagline: "Camel routes in Rust. Reliable actions for AI agents." With the same routes it starts in 3 ms (Apache Camel 4.23 on Java 21: 1.1 s; Camel on Quarkus native: 30 ms), uses up to 54x less memory (8 MB vs 399 MB on the same route) and handles 1.7-8.7x the throughput across routing, REST APIs, Kafka, PostgreSQL and CSV batches (comparison: https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/), and it is its own AWS Lambda runtime. For AI agents it is the action layer: the model decides what, a tested route decides how. It feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with JSON-schema validation, idempotency, retries, sagas, human approval, rate limits, fallbacks and an audit log. It is an independent project, not affiliated with the Apache Software Foundation.
 
 Key facts:
 
 - Language: Rust, standard library only (TLS, HTTP/2, gRPC, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch).
-- About 230 components, languages and data formats; all Camel EIPs; Rust, YAML and XML DSLs; REST DSL; Kamelets; a Camel-JBang-style CLI, `cameleer`.
-- Formerly named rust-camel (up to v0.1.0).
-- AI integrations: OpenAI-compatible chat and embeddings, AWS Bedrock (Converse, streaming, guardrails, Agent Runtime), Azure OpenAI (tool calls, Assistants), Google Vertex AI (Gemini, partner models).
-- Not yet packaged: MCP server, native AWS Lambda runtime, vector store components (build-it-yourself patterns are documented).
+- About 230 components (157), languages (26) and data formats (29); all Camel EIPs; Rust, YAML and XML DSLs; REST DSL with OpenAPI 3; Kamelets and route templates; a Camel-JBang-style CLI, `cameleer` (run, init, validate, schema, export, ps, stop, get, trace, catalog).
+- Formerly named rust-camel (up to v0.1.0). Current version: 0.4.0.
+- Comparisons: Apache Camel vs Cameleer (https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/), Apache Camel alternatives incl. Camel Quarkus native, Spring Integration, Kafka Connect, Redpanda Connect, NiFi, n8n, iPaaS (https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/), AI agent tool calls direct vs through Cameleer (https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/).
+- AI integrations: OpenAI-compatible chat and embeddings (`openai`, also Ollama, vLLM, LM Studio, LiteLLM), AWS Bedrock (Converse, streaming, guardrails, Agent Runtime), Azure OpenAI (tool calls, Assistants), Google Vertex AI (Gemini, partner models).
+- Agent tools today: a tool is a REST route (`rest` or `platform-http`) with `json-validator` schema checks, `idempotentConsumer`, redelivery, `saga`, a human-approval route and a `wireTap` audit log; eight tested routes in `examples/agents/`.
+- Serverless: `cameleer` is its own AWS Lambda custom runtime (`provided.al2023`, `scripts/package-lambda.sh`): API Gateway, function URL and ALB events reach `platform-http` routes, other events a handler route (`direct:lambda`); the image runs as is on Cloud Run, Knative, Azure Container Apps, Fly.io and Kubernetes.
+- Edge: MQTT 3.1.1 and 5.0 (`paho`, `paho-mqtt5`), `syslog`, HL7 v2 over `mllp` with `hl7terser` and the `hl7` data format, `fhir` (R4, R4B, R5, DSTU3); about 10 MB of memory per running route; linux/arm64 image; five tested routes in `examples/edge/`.
+- Files: `file`, `ftp`, `ftps`, `sftp` (own SSH-2, tested against OpenSSH), CSV, Bindy fixed-width, zip, PGP; CDC from DynamoDB Streams, MongoDB change streams and the Cosmos DB change feed; scheduling with `cron`, `quartz`, `scheduler`, `timer`.
+- Planned, not shipped (do not claim them): an MCP tool server, tool calls in `openai` and `aws-bedrock` (only `azure-openai` returns tool calls), an agent loop EIP, vector store components (use pgvector through `sql`, OpenSearch/Elasticsearch, or a vector DB's REST API through `http`), Debezium-style CDC for PostgreSQL. Roadmap: https://github.com/pmsudhi/cameleer/blob/main/docs/ROADMAP.md
 - License: Apache-2.0.
+
+## Use cases
+
+Each has a tested route in the repository and a page: https://pmsudhi.github.io/cameleer/use-cases/
+
+- [Tools for AI agents](https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/): one tool call, a saga across four systems, idempotent retries, 400 on bad arguments, pending approval over a limit.
+- [HL7 v2 over MLLP and FHIR](https://pmsudhi.github.io/cameleer/use-cases/hl7-mllp-healthcare-integration/): hospital gateway, acknowledgement after delivery.
+- [MQTT and IoT edge gateways](https://pmsudhi.github.io/cameleer/use-cases/mqtt-iot-edge-gateway/): sensor rollups, store and forward, syslog to Kafka, last will.
+- [Serverless on AWS Lambda and Cloud Run](https://pmsudhi.github.io/cameleer/use-cases/serverless-aws-lambda/): the built-in Lambda runtime, function builds of 7.5-11.8 MB.
+- [File, FTP and SFTP pipelines](https://pmsudhi.github.io/cameleer/use-cases/file-sftp-pipelines/): folder and server polling, CSV batches at 2.1x Apache Camel's throughput, S3 and PostgreSQL targets.
+- [Migrating from Apache Camel](https://pmsudhi.github.io/cameleer/docs/guides/migrating-from-apache-camel.html): what carries over unchanged, what differs.
 
 ## Quick start
 
 - Docker (linux/amd64, linux/arm64; Docker Hub `pmsudhi/cameleer`, also `ghcr.io/pmsudhi/cameleer`; deployment guide: https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md): `docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml`
 - CLI from crates.io: `cargo install cameleer-main`, then `cameleer run my-route.camel.yaml`
+- Every build includes every component by default. For a smaller binary or image, pick component families with cargo features (a list replaces the default): `cargo install cameleer-main --no-default-features --features cloud,jq` or `docker build --build-arg FEATURES=cloud,jq .`; each component page names its feature, and a missing one fails at startup with the feature to add. Guide: https://pmsudhi.github.io/cameleer/docs/guides/build-features.html
 - Rust crates: `cameleer-core` (engine, EIPs, Rust DSL) plus one crate per area, for example `cameleer-http` (HTTP and REST DSL), `cameleer-kafka-mqtt`, `cameleer-cloud` (AWS, Azure, GCP), `cameleer-saas` (OpenAI, Slack, ...); `cameleer-main` bundles all of them and runs YAML routes via `cameleer_main::new_main()`.
 - Routes written for Apache Camel's YAML DSL run unchanged; environment values use `{{env:NAME:default}}` placeholders.
 
@@ -34,6 +51,39 @@ Each example runs end to end in the test suite (https://github.com/pmsudhi/camel
 
 - Docs MCP server: https://gitmcp.io/pmsudhi/cameleer (Claude Code: `claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer`)
 - Also indexed by Context7 (https://context7.com) and DeepWiki (https://deepwiki.com/pmsudhi/cameleer).
+
+## Documentation
+
+The full documentation as one plain-markdown file: https://pmsudhi.github.io/cameleer/llms-full.txt. Every page is also served as markdown next to its HTML (same path, `.md`).
+
+- [Docs home](https://pmsudhi.github.io/cameleer/docs/): what is where
+- [Guides](https://pmsudhi.github.io/cameleer/docs/guides/): Step-by-step guides for building, running and operating Cameleer routes. (20 pages)
+- [Components](https://pmsudhi.github.io/cameleer/docs/components/): Every Cameleer component: the endpoint schemes you use in from and to, grouped by category. (157 pages)
+- [Languages](https://pmsudhi.github.io/cameleer/docs/languages/): The expression and predicate languages you can use in Cameleer routes, such as Simple, JSONPath and XPath. (22 pages)
+- [Data formats](https://pmsudhi.github.io/cameleer/docs/dataformats/): The data formats that marshal and unmarshal message bodies in Cameleer routes, such as JSON, CSV and Avro. (29 pages)
+
+Guides:
+
+- [Getting started with Cameleer](https://pmsudhi.github.io/cameleer/docs/guides/getting-started.html): Install Cameleer (Docker image, cargo install or Rust crates), run a first route and a first REST API, and configure them with properties and environment variables, in about ten minutes.
+- [Cameleer concepts](https://pmsudhi.github.io/cameleer/docs/guides/concepts.html): Cameleer uses Apache Camel's model: a CamelContext runs routes; each route takes exchanges from an endpoint, passes their messages (body and headers) through processors and EIPs, and sends them to other endpoints created by components.
+- [YAML DSL reference](https://pmsudhi.github.io/cameleer/docs/guides/yaml-dsl.html): The YAML DSL describes Cameleer routes in *.camel.yaml files: one input (from), a list of steps (EIPs), endpoints written as URIs, and expressions in Simple or another language, with the same names as the Apache Camel YAML DSL.
+- [Enterprise Integration Patterns in Cameleer](https://pmsudhi.github.io/cameleer/docs/guides/eips.html): Cameleer implements Apache Camel's Enterprise Integration Patterns (EIPs) with the same names, options and semantics; this page lists every one and links to a tested YAML example and its Rust DSL equivalent.
+- [Error handling](https://pmsudhi.github.io/cameleer/docs/guides/error-handling.html): Cameleer handles failures the way Apache Camel does: an error handler retries failed steps with a redelivery policy and then gives up or moves the message to a dead letter channel, onException reacts to specific exception types, and doTry/doCatch/doFinally handle errors inline.
+- [AI agent tool calls: direct vs through Cameleer](https://pmsudhi.github.io/cameleer/docs/guides/agent-tool-calls.html): Direct tool calls leave retries, duplicates, half-done work and business rules to the model; routing them through Cameleer makes each tool a tested route that validates, runs once, rolls back, retries and audits, so the model only decides what to do.
+- [AI components](https://pmsudhi.github.io/cameleer/docs/guides/ai-components.html): Cameleer calls large language models from routes with four components: openai (OpenAI and any OpenAI-compatible server such as Ollama or vLLM), azure-openai, aws-bedrock and google-vertexai; they cover chat, embeddings and, depending on the provider, streaming, tool calls and images.
+- [Build features: choose what goes into your build](https://pmsudhi.github.io/cameleer/docs/guides/build-features.html): Cameleer's default build, image and cargo install include every component. Cargo features let you build a smaller binary that contains only the component families your routes use, for a serverless function, an edge device or a smaller container image.
+- [Cameleer at the edge](https://pmsudhi.github.io/cameleer/docs/guides/edge.html): Cameleer runs integration routes on gateways and small devices: a single native binary of about 10 MB of memory that ingests MQTT, syslog and HL7 locally, filters and aggregates on site, buffers when the uplink is down, and forwards to Kafka or HTTP in the cloud.
+- [Cameleer FAQ](https://pmsudhi.github.io/cameleer/docs/guides/faq.html): Short, factual answers to the questions people ask about Cameleer: what it is, how it relates to Apache Camel, how fast it is, where it runs, and how to use it with Kafka, LLMs and edge devices.
+- [Cameleer for AI agents](https://pmsudhi.github.io/cameleer/docs/guides/agents.html): Cameleer is the action layer for AI agents: the model decides what, a tested route decides how. It feeds events to models, routes on their answers, and turns agent tool calls into reliable actions with validation, idempotency, retries, sagas, human approval, rate limits, fallbacks and an audit log.
+- [Cloud credentials, regions and endpoints](https://pmsudhi.github.io/cameleer/docs/guides/cloud-credentials.html): How Cameleer's AWS and Azure components find credentials (keys, profiles, instance and container roles, web identity, managed identity, SAS tokens), choose a region, and talk to emulators such as LocalStack and Azurite.
+- [Flow control and resilience patterns](https://pmsudhi.github.io/cameleer/docs/guides/eips/flow-control.html): Flow control and resilience patterns protect routes and the systems they call: drop duplicates (idempotent consumer), limit the rate (throttle, sample, delay), stop calling a failing service (circuit breaker), check messages (validate) and process in parallel (threads).
+- [Interceptors, completions, sagas and reusable routes](https://pmsudhi.github.io/cameleer/docs/guides/eips/system.html): These patterns act around routes rather than on one message: interceptors that see every send or every input, onCompletion callbacks, sagas with compensation, route templates and Kamelets for reuse, the poll and stop EIPs.
+- [Message transformation patterns](https://pmsudhi.github.io/cameleer/docs/guides/eips/transformation.html): Transformation patterns change what a message contains: its body and headers (message translator), its format (marshal and unmarshal), extra data fetched from elsewhere (content enricher), or a large payload parked aside (claim check).
+- [Migrating from Apache Camel](https://pmsudhi.github.io/cameleer/docs/guides/migrating-from-apache-camel.html): Camel YAML and XML routes, endpoint URIs, EIPs, the Simple language, headers and error handling carry over to Cameleer unchanged; Java code (processors, beans, custom components) must be rewritten in Rust, and a few behaviours differ, listed on this page.
+- [Routing patterns](https://pmsudhi.github.io/cameleer/docs/guides/eips/routing.html): Routing patterns decide where a message goes next: to one endpoint, to several, to a list computed at run time, or around a loop, using the same EIP names and options as Apache Camel.
+- [Splitting and aggregating messages](https://pmsudhi.github.io/cameleer/docs/guides/eips/split-aggregate.html): The splitter breaks one message into many, the aggregator combines many messages into one, and the resequencer and sort EIPs put messages and lists back in order.
+- [Validate routes with cameleer validate](https://pmsudhi.github.io/cameleer/docs/guides/validate.html): cameleer validate checks YAML and XML route files for syntax, structure, endpoint options, expressions, placeholders and route ids without starting any route or connecting to anything, and reports each problem with its line, column and a hint.
+- [YAML routes for coding agents](https://pmsudhi.github.io/cameleer/docs/guides/yaml-for-coding-agents.html): How an AI coding assistant should write Cameleer YAML routes: start from a tested skeleton, follow a short list of rules, look up component options instead of guessing, and run cameleer validate until the file is clean before running it.
 
 ## Docs
 
