@@ -65,3 +65,7 @@ path = "src/bin/cameleer.rs"
 name = "embed_yaml"
 required-features = ["full"]
 
+
+[[example]]
+name = "idle_threads"
+required-features = ["xml"]
