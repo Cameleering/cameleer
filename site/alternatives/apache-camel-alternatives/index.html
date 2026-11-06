@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Apache Camel Alternatives: When to Choose Cameleer, Camel Quarkus, Spring Integration or Kafka Connect | Cameleer</title>
-<meta name="description" content="Looking for an Apache Camel alternative? Compare Cameleer, Camel on Quarkus, Spring Integration, Kafka Connect, Apache NiFi and managed iPaaS: what each is for, and when to stay on Camel.">
+<title>Apache Camel Alternatives: Which One Fits Your Integration? | Cameleer</title>
+<meta name="description" content="Apache Camel alternatives compared: Cameleer, Camel on Quarkus native, Spring Integration, Kafka Connect, Redpanda Connect (Benthos), Apache NiFi, n8n and iPaaS. What each is for, and when to stay on Camel.">
 <link rel="canonical" href="https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,7 +23,7 @@
 <link rel="stylesheet" href="../../assets/compare.css">
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Apache Camel alternatives: when to choose Cameleer, Camel Quarkus, Spring Integration or Kafka Connect",
+ "headline": "Apache Camel alternatives: Cameleer, Camel Quarkus, Spring Integration, Kafka Connect, Redpanda Connect, NiFi, n8n, iPaaS",
  "description": "What each Apache Camel alternative is for, and when to stay on Camel.",
  "url": "https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/",
  "inLanguage": "en", "image": "https://pmsudhi.github.io/cameleer/og.png",
@@ -40,15 +40,18 @@
  {"@type": "Question", "name": "What is the best alternative to Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "It depends on why you are leaving. To keep Camel routes but drop the JVM's startup time and memory, use Cameleer or Camel on Quarkus native. For Spring-centric applications, Spring Integration. For moving data between Kafka and other systems without routing logic, Kafka Connect. For a visual, managed platform, an iPaaS such as MuleSoft or a cloud provider's integration service."}},
  {"@type": "Question", "name": "Is there an Apache Camel alternative without the JVM?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Cameleer runs Apache Camel's routes, EIPs and YAML DSL as a native Rust binary with no JVM, and Camel on Quarkus can be compiled to a native executable with GraalVM or Mandrel."}},
  {"@type": "Question", "name": "Can I keep my Camel YAML routes if I switch?", "acceptedAnswer": {"@type": "Answer", "text": "With Cameleer and Camel on Quarkus, yes: both run Camel's YAML DSL, endpoint URIs and Simple expressions. Spring Integration, Kafka Connect and iPaaS products need the integrations rewritten."}},
- {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When you depend on a component, data format or Java library Cameleer does not cover, run inside a Java application server or Spring Boot, or have a team and operations built around the JVM."}}]}
+ {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When you depend on a component, data format or Java library Cameleer does not cover, run inside a Java application server or Spring Boot, or have a team and operations built around the JVM."}},
+ {"@type": "Question", "name": "How does Redpanda Connect (Benthos) compare with Apache Camel and Cameleer?", "acceptedAnswer": {"@type": "Answer", "text": "Redpanda Connect is a single Go binary configured in YAML with Bloblang for transformations, built around stream pipelines: inputs, processors, outputs. It is a good fit for moving and reshaping event streams. Camel and Cameleer add the Enterprise Integration Patterns on top: request-reply, sagas, aggregation with completion rules, idempotent consumers, circuit breakers, and protocol endpoints such as MLLP, AMQP and SFTP. Cameleer keeps Camel's model and matches Redpanda Connect's single-binary footprint."}},
+ {"@type": "Question", "name": "Can n8n or Zapier replace Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "For SaaS automations built by non-developers, often yes. For integration that must handle hundreds of thousands of messages per second, speak MQTT, Kafka, AMQP or MLLP, or live in Git with tests, they are the wrong tool; Camel or Cameleer is."}}]}
 </script>
 </head>
 <body>
 <header class="top" id="top">
   <div class="wrap">
-    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
     <nav aria-label="Main">
       <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
       <a href="../../compare/">Compare</a>
       <a href="../../compare/apache-camel-vs-cameleer/">vs Apache Camel</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
@@ -62,7 +65,7 @@
     <p class="crumbs"><a href="../../">Cameleer</a> / Apache Camel alternatives</p>
     <p class="kicker">Apache Camel alternatives</p>
     <h1>Apache Camel alternatives: which one fits your integration?</h1>
-    <p class="lede">Most teams look for an alternative to Apache Camel for one of four reasons: JVM startup and memory, the Java toolchain, a framework that matches the rest of their stack, or a managed platform. Each reason points to a different answer, and sometimes the answer is to stay on Camel.</p>
+    <p class="lede">Most teams look for an alternative to Apache Camel for one of five reasons: JVM startup and memory, the Java toolchain, a framework that matches the rest of their stack, a simpler stream-pipeline tool, or a managed platform. Each reason points to a different answer, and sometimes the answer is to stay on Camel.</p>
   </div>
 </section>
 
@@ -73,11 +76,13 @@
     <div class="c-table-wrap"><table class="c-table">
       <thead><tr><th>option</th><th>what it is</th><th>keeps Camel routes</th><th>best when</th><th>trade-offs</th></tr></thead>
       <tbody>
-        <tr><td><strong>Cameleer</strong></td><td>Apache Camel's routing engine, EIPs and about 230 components rewritten in Rust; one native binary</td><td class="win">yes (YAML, XML, URIs, Simple)</td><td>startup time, memory and cost matter: serverless, edge, sidecars, many small services, AI agent tools</td><td>younger project; components follow Camel's names but not every Camel component exists; no Java beans or Java DSL</td></tr>
+        <tr><td><strong>Cameleer</strong></td><td>Apache Camel's routing engine, EIPs and about 230 components rewritten in Rust; one native binary</td><td class="win">yes (YAML, XML, URIs, Simple)</td><td>startup time, memory and cost matter: serverless, edge, sidecars, many small services, AI agent tools</td><td>younger project; components follow Camel's names but not every Camel component exists; no Java beans or Java DSL; no MCP server yet (<a href="../../docs/ROADMAP.html">planned</a>)</td></tr>
         <tr><td><strong>Apache Camel on Quarkus (native)</strong></td><td>Camel compiled ahead of time with GraalVM or Mandrel</td><td class="win">yes</td><td>you want Camel itself with faster startup and less memory, and can accept native-image build times and restrictions</td><td>long native builds; reflection and dynamic features need configuration; no JIT, so peak throughput can be lower than on the JVM</td></tr>
         <tr><td><strong>Spring Integration</strong></td><td>the EIPs as part of the Spring ecosystem</td><td>no</td><td>the application is already Spring Boot and the integrations live inside it</td><td>rewrite of routes; the JVM's startup and memory remain</td></tr>
         <tr><td><strong>Kafka Connect</strong></td><td>source and sink connectors that move data in and out of Kafka</td><td>no</td><td>the job is moving data between Kafka and other systems with little routing logic</td><td>Kafka-centric; content-based routing, enrichment and request-reply are not its model</td></tr>
+        <tr><td><strong>Redpanda Connect</strong> (Benthos)</td><td>a single Go binary: YAML pipelines of inputs, processors and outputs, with Bloblang for transformations</td><td>no</td><td>moving and reshaping event streams with a small footprint, mostly around Kafka or Redpanda</td><td>a pipeline model, not the EIPs: no request-reply, sagas, aggregation with completion rules or circuit breakers; fewer protocol endpoints (no MLLP, AMQP 1.0, SFTP server-side patterns)</td></tr>
         <tr><td><strong>Apache NiFi</strong></td><td>visual dataflow tool with a web UI</td><td>no</td><td>operators want to build and watch data flows in a browser</td><td>a heavyweight server; flows live in NiFi rather than in code and Git</td></tr>
+        <tr><td><strong>n8n, Zapier, Make</strong></td><td>visual workflow automation with SaaS triggers and, lately, AI agent nodes</td><td>no</td><td>business automations between SaaS apps, built by non-developers</td><td>not built for hundreds of thousands of messages per second, MQTT, AMQP or MLLP, or routes in Git with tests</td></tr>
         <tr><td><strong>Managed iPaaS</strong> (MuleSoft, cloud integration services)</td><td>hosted integration platforms with connectors and visual designers</td><td>no</td><td>you prefer buying a platform and support over running a framework</td><td>licence or usage cost, vendor lock-in, less control over runtime and data</td></tr>
       </tbody>
     </table></div>
@@ -97,6 +102,7 @@
     <div class="cta" style="margin-top:28px">
       <a class="btn primary" href="../../compare/apache-camel-vs-cameleer/">See the full comparison</a>
       <a class="btn" href="../../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a>
+      <a class="btn" href="../../use-cases/">Use cases</a>
     </div>
   </div>
 </section>
@@ -134,6 +140,8 @@
     <details><summary>Is there an Apache Camel alternative without the JVM?</summary><p>Yes. Cameleer runs Apache Camel's routes, EIPs and YAML DSL as a native Rust binary with no JVM, and Camel on Quarkus can be compiled to a native executable with GraalVM or Mandrel.</p></details>
     <details><summary>Can I keep my Camel YAML routes if I switch?</summary><p>With Cameleer and Camel on Quarkus, yes: both run Camel's YAML DSL, endpoint URIs and Simple expressions. Spring Integration, Kafka Connect and iPaaS products need the integrations rewritten.</p></details>
     <details><summary>When should I stay on Apache Camel?</summary><p>When you depend on a component, data format or Java library Cameleer does not cover, run inside a Java application server or Spring Boot, or have a team and operations built around the JVM.</p></details>
+    <details><summary>How does Redpanda Connect (Benthos) compare with Apache Camel and Cameleer?</summary><p>Redpanda Connect is a single Go binary configured in YAML with Bloblang for transformations, built around stream pipelines: inputs, processors, outputs. It is a good fit for moving and reshaping event streams. Camel and Cameleer add the Enterprise Integration Patterns on top: request-reply, sagas, aggregation with completion rules, idempotent consumers, circuit breakers, and protocol endpoints such as MLLP, AMQP and SFTP. Cameleer keeps Camel's model and matches Redpanda Connect's single-binary footprint.</p></details>
+    <details><summary>Can n8n or Zapier replace Apache Camel?</summary><p>For SaaS automations built by non-developers, often yes. For integration that must handle hundreds of thousands of messages per second, speak MQTT, Kafka, AMQP or MLLP, or live in Git with tests, they are the wrong tool; Camel or Cameleer is.</p></details>
   </div>
 </section>
 </main>
