@@ -117,7 +117,8 @@ Linux), old and new builds alternately on Windows 11 and WSL2 Ubuntu 24.04:
   after a recovery).
 - **Local status file:** written only when the content changes (10 → 1 writes in 5 s idle);
   readers refresh uptimes from `updated`, and liveness comes from the operating system.
-- **Tests:** TESTS_PLACEHOLDER
+- **Tests:** hermetic suite 2712 passed, 0 failed, zero warnings, twice on Windows 11 and once on
+  WSL2 Ubuntu 24.04 (Linux caught a unix-only compile error in the first build).
 
 ## Pending / todo
 
@@ -218,7 +219,7 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect 2697 passing
+1. `git checkout main && cargo test --workspace`. Expect 2712 passing
    on Windows and on Linux.
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
