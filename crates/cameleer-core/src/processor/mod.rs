@@ -1,5 +1,6 @@
 //! Runtime processors and their model definitions.
 
+#[cfg(feature = "agent")]
 pub mod agent;
 pub mod basic;
 pub mod errors;

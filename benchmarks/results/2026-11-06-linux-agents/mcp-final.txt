@@ -1,0 +1,10 @@
+# MCP scenarios at commit 7ea0b91 (session expiry no longer on every request), same droplets and plan
+# (64 connections, warmup 15 s, 5 x 5 s), Cameleer only; one run per server
+RESULT node=a side=rust scenario=mcp-session msgs=1047257 secs=25.000 tput=41889 tput_min=41488 tput_max=42266 mean_us=1527.60 p50_us=1122.30 p99_us=5931.01 max_us=17108.66
+PROC node=a side=rust scenario=mcp-session peak_rss_kb=52480 cpu_pct=297% user_s=85.69 sys_s=63.23
+RESULT node=a side=rust scenario=mcp msgs=1297022 secs=25.000 tput=51880 tput_min=51637 tput_max=52125 mean_us=1233.43 p50_us=700.42 p99_us=5734.40 max_us=18323.66 connects=2113
+PROC node=a side=rust scenario=mcp peak_rss_kb=25856 cpu_pct=307% user_s=91.85 sys_s=62.16
+RESULT node=b side=rust scenario=mcp-session msgs=1033781 secs=25.000 tput=41351 tput_min=40962 tput_max=41572 mean_us=1547.51 p50_us=1171.46 p99_us=5865.47 max_us=17322.70
+PROC node=b side=rust scenario=mcp-session peak_rss_kb=54016 cpu_pct=298% user_s=85.83 sys_s=63.44
+RESULT node=b side=rust scenario=mcp msgs=1288090 secs=25.000 tput=51523 tput_min=51193 tput_max=51710 mean_us=1241.97 p50_us=741.38 p99_us=5668.86 max_us=16687.94 connects=2091
+PROC node=b side=rust scenario=mcp peak_rss_kb=26112 cpu_pct=309% user_s=92.32 sys_s=62.37

@@ -30,7 +30,7 @@ cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.4.0", opti
 cameleer-sql = { path = "../cameleer-sql", version = "0.4.0", optional = true }
 cameleer-ssh = { path = "../cameleer-ssh", version = "0.4.0", optional = true }
 cameleer-xml = { path = "../cameleer-xml", version = "0.4.0", optional = true }
-cameleer-yaml = { path = "../cameleer-yaml", version = "0.4.0" }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.4.0", default-features = false }
 
 # Component families. The default build has all of them; a FaaS or edge build picks only
 # what its routes use, e.g.
@@ -55,16 +55,16 @@ jq = ["cameleer-core/jq"]
 xpath = ["cameleer-core/xpath"]
 http2 = ["cameleer-http/http2"]
 validate = []
-ai = ["dep:cameleer-ai"]
+ai = ["dep:cameleer-ai", "cameleer-yaml/agent"]
 amqp = ["dep:cameleer-amqp"]
 amqp10 = ["dep:cameleer-amqp10"]
-cloud = ["dep:cameleer-cloud"]
+cloud = ["dep:cameleer-cloud", "cameleer-yaml/agent"]
 dataformats = ["dep:cameleer-dataformats"]
 datastores = ["dep:cameleer-datastores"]
 grpc = ["dep:cameleer-grpc"]
 kafka-mqtt = ["dep:cameleer-kafka-mqtt"]
 protocols = ["dep:cameleer-protocols"]
-saas = ["dep:cameleer-saas"]
+saas = ["dep:cameleer-saas", "cameleer-yaml/agent"]
 script = ["dep:cameleer-script"]
 soap = ["dep:cameleer-soap"]
 sql = ["dep:cameleer-sql"]

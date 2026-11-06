@@ -163,6 +163,7 @@ pub trait Endpoint: Send + Sync + Any {
     }
     /// The chat model behind this endpoint, for model components that support tool calling
     /// (used by the `agent` step).
+    #[cfg(feature = "agent")]
     fn chat_model(&self) -> Option<Arc<dyn crate::ai::ChatModel>> {
         None
     }

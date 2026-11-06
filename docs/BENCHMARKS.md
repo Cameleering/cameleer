@@ -174,6 +174,69 @@ numbers above were taken. Each fix has a regression test.
   connections. It is now a hard maximum, like HikariCP's, with callers waiting up to
   `poolTimeout`.
 
+## Action layer and MCP (2026-11-06, second run)
+
+Same three droplets and plan (64 HTTP connections, 15 s warmup, 5 × 5 s, servers swap roles),
+with three new sides: Apache Camel 4.23.0's own `camel-mcp-server` on the JVM, a hand-written
+MCP server on the official TypeScript SDK 1.32.2 (Node.js 22.23.4, written as the SDK's
+documentation shows), and Cameleer's `main` branch as a baseline for regressions. Raw records:
+[benchmarks/results/2026-11-06-linux-agents](../benchmarks/results/2026-11-06-linux-agents/).
+
+### MCP tool calls over the network
+
+One tool, `lookup_order`, answers a JSON document; every side exposes it the same way. The
+session flow is what Claude Desktop and agent frameworks do: `initialize`, then `tools/call`
+with `Mcp-Session-Id`.
+
+| scenario | Cameleer | Apache Camel `camel-mcp-server` (JVM) | MCP TypeScript SDK (Node.js) |
+|---|---:|---:|---:|
+| `tools/call` in a session (2025-06-18), throughput | **41,620 calls/s** | 22,458 calls/s | 1,536 calls/s |
+| p99 latency | 5.9 ms | 5.2 ms | 79 ms |
+| peak memory | **53 MB** | 317 MB | 214 MB |
+| stateless `tools/call` (2026-07-28), throughput | **51,700 calls/s** | not offered | not offered |
+| stateless, p99 / peak memory | 5.7 ms / 26 MB | | |
+
+Cameleer serves 1.85x Camel's MCP throughput in a sixth of the memory, and 27x the TypeScript
+SDK. Every Cameleer call goes through the whole tool envelope (argument schema check, rate-limit
+and breaker bookkeeping, a hash-chained audit record); Camel checks required arguments only and
+the SDK server checks the schema.
+
+### The tool envelope
+
+| scenario (in process) | throughput | p99 |
+|---|---:|---:|
+| a tool call through the envelope (`AiRegistry::call`) | 151,446 calls/s | 7.7 µs |
+| the same route called with `direct:` | 1,343,450 calls/s | 0.8 µs |
+
+So the envelope costs about 6 µs per call on this Xeon (3 µs on a Ryzen 5 5600X, which has SHA
+instructions). The first build measured 59 µs here: it started a thread per call to enforce the
+timeout and built every audit record as a JSON object. Tools whose calls finish well within their
+timeout now run on the caller's thread with a deadline on the exchange (the route still stops at
+its next step once the timeout passes); others run on pooled workers.
+
+### Integration routes against `main`
+
+No scenario got slower than `main`. Two got faster, from the Kafka producer's requests in flight
+on several connections (`maxInFlightRequest`, default 5):
+
+| scenario | this branch | `main` | Apache Camel (JVM) |
+|---|---:|---:|---:|
+| HTTP into Kafka | **48,800 req/s**, p99 2.4 ms | 21,658 req/s, p99 7.2 ms | 9,800 req/s, p99 7.9 ms |
+| Kafka stream processing | **17,881 records/s** | 10,072 records/s | 620 records/s |
+
+HTTP into Kafka went from 1.7x Camel's throughput with a worse p99 to 5.0x with a third of its
+p99. The other scenarios are within noise of the first run (direct 3.2x, seda request-reply 5.3x,
+content-based router 3.1x, split and aggregate 2.7x, CSV 2.3x, REST with JSON 2.2x, HTTP into
+PostgreSQL 2.3x Camel on the JVM).
+
+### The HTTP ceiling
+
+A do-nothing HTTP server without Camel (`cameleer-bench raw-http`, one thread per connection, one
+`recv` and one `send` per request) reaches 166,374 req/s on these machines with the same load
+generator; Cameleer's fixed-reply route reaches 112,910 req/s (68% of that ceiling), Camel 67,682.
+The difference is spread over the request path (allocation, header parsing, the exchange) and
+kernel scheduling of 64 threads; an event-driven server core is the next step for this scenario.
+
 ## FaaS cold start and size
 
 Startup and size of the `cameleer` command itself, measured with `cameleer-bench coldstart`

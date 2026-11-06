@@ -170,6 +170,7 @@ impl RouteDefinition {
     /// Invoke a custom processor (closure or `impl Processor`).
     /// The `agent` step: a model and its tools in a loop (see
     /// [`crate::processor::agent::AgentDefinition`]).
+    #[cfg(feature = "agent")]
     pub fn agent(&mut self, def: crate::processor::agent::AgentDefinition) -> &mut Self {
         self.add(Box::new(def))
     }

@@ -95,7 +95,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/freemarker.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/ftp.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/ftps.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/gemini.html</loc></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/gemini.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/github.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/google-bigquery-sql.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/google-bigquery.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -129,7 +129,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/kamelet.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/language.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/log.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/mcp.html</loc></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/mcp.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/mllp.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/mock.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/mongodb-gridfs.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -233,10 +233,10 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/faq.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/getting-started.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/mcp-client.html</loc></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/mcp-client.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/mcp-server.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/migrating-from-apache-camel.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/model-providers.html</loc></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/model-providers.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/yaml-for-coding-agents.html</loc><lastmod>2026-11-05</lastmod></url>

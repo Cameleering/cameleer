@@ -249,7 +249,7 @@ camel.server.mcp-resource-url=https://tools.example.com/mcp</pre>
       <li>Hermetic tests drive both eras over real HTTP and stdio connections, including approvals, subscriptions, authentication, the gateway and a tool that changes upstream.</li>
       <li>An end-to-end test starts the real <code>cameleer</code> binary as a stdio MCP server and has an agent step call one of its tools.</li>
     </ul>
-    <p class="note">Startup, memory and throughput figures for Cameleer were measured on integration routes (<a href="../../compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a>); the MCP server and the <code>ai</code> feature have not been benchmarked separately yet.</p>
+    <p class="note">Measured on three identical cloud machines: 41,620 tool calls per second in MCP sessions in 53 MB, against 22,458 in 317 MB for Apache Camel's MCP server and 1,536 for a server written on the official TypeScript SDK; a tool call through the envelope costs 3 to 6 µs (<a href="../../compare/camel-mcp-server-vs-cameleer/">the comparison</a>).</p>
   </div>
 </section>
 

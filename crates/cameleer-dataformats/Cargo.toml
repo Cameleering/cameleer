@@ -15,7 +15,7 @@ description = "Cameleer data formats: Avro, Bindy, YAML, Tar, Zip, Crypto, PGP, 
 [dependencies]
 cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
 cameleer-tls = { path = "../cameleer-tls", version = "0.4.0" }
-cameleer-yaml = { path = "../cameleer-yaml", version = "0.4.0" }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.4.0", default-features = false }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not

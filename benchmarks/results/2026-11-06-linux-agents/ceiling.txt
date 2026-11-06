@@ -1,0 +1,2 @@
+RESULT ceiling=raw-threads scenario=http msgs=4159451 secs=25.001 tput=166374 tput_min=166062 tput_max=166757 mean_us=383.66 p50_us=150.53 p99_us=473.09 max_us=239474.62 connects=64
+RESULT ceiling=raw-poll scenario=http msgs=3114371 secs=25.001 tput=124572 tput_min=121160 tput_max=128192 mean_us=513.55 p50_us=428.03 p99_us=1286.14 max_us=6439.79 connects=64

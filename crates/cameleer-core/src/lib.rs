@@ -4,6 +4,7 @@
 //! messages, endpoints, components, routes, Enterprise Integration Patterns,
 //! expression languages and a fluent route DSL.
 
+#[cfg(feature = "agent")]
 pub mod ai;
 pub mod alloc;
 pub mod async_delay;

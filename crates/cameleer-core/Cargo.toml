@@ -18,7 +18,10 @@ description = "Core of Cameleer: exchanges, routes, EIPs, DSL, languages, core c
 # (`cameleer-main --no-default-features --features core`) leaves them out; a route that uses one
 # then fails with the feature to enable.
 [features]
-default = ["templates", "jq", "xpath"]
+default = ["templates", "jq", "xpath", "agent"]
+# the AI core: the neutral chat model, tool calling, the `agent` step, the provider wire formats
+# and the model call options (enabled by cameleer-main's `ai`, `saas` and `cloud`)
+agent = []
 # the mustache, velocity, freemarker and string-template components
 templates = []
 # the jq language (and Simple's `${jq(...)}`)

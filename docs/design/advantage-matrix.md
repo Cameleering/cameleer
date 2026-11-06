@@ -20,11 +20,11 @@ otherwise; rows marked *(droplet run 2)* are filled from the run in `target/clou
 |---|---|---|---|
 | Routing and EIPs in process (direct, seda, cbr, split/aggregate) | 3.1–6.1x throughput, a third of the latency, up to 54x less memory | the same EIP semantics hand-written are hundreds of lines per pattern; per-message cost is about 1 µs | significant / significant (productivity) |
 | Startup | 3 ms vs 1.1 s (JVM), 30 ms (Quarkus native) | same order as a hand-written Rust service | significant / parity |
-| HTTP, fixed reply | **1.7x** throughput, p99 2.9 vs 3.8 ms | about 70% of a do-nothing Rust server | **incremental** / incremental |
+| HTTP, fixed reply | **1.67x** throughput (112,910 vs 67,682 req/s), 16x less memory (17 vs 276 MB) | 68% of a do-nothing Rust server (166,374 req/s on the same droplets) | **incremental** on throughput, significant on memory / gap: 1.5x headroom |
 | REST API with JSON | 2.1x throughput, p99 2.6 vs 6.3 ms | | significant (latency) / productivity |
-| HTTP into Kafka | **1.7x** throughput, **p99 8.6 vs 7.8 ms (worse)** | | **incremental, latency gap** |
+| HTTP into Kafka | **5.0x** throughput (48,800 vs 9,800 req/s), p99 2.4 vs 7.9 ms (was 1.7x with a worse p99; fixed by requests in flight on several connections) | | significant |
 | HTTP into PostgreSQL | 2.3x throughput, p99 halved | | significant |
-| Kafka stream processing | 8.7x throughput | | significant |
+| Kafka stream processing | 29x throughput (17,881 vs 620 records/s); 1.8x `main` | | significant |
 | CSV and file batches | 2.1x | | incremental–significant |
 | Serverless (AWS Lambda) | run-once job done in 1.4 ms vs 1.1 s JVM; 12.5 MB image | a hand-written Rust Lambda is similar; Cameleer adds 230 components and Camel's DSLs | significant / productivity |
 | Edge and IoT (MQTT, HL7/MLLP, syslog) | 4.2 MB RSS (static musl, core) vs 100+ MB JVM | | significant / productivity |
@@ -35,10 +35,10 @@ otherwise; rows marked *(droplet run 2)* are filled from the run in `target/clou
 | feature / use case | vs Apache Camel 4.23 (`camel-ai-tool`, `camel-mcp-server`) | vs by hand (MCP SDKs, agent frameworks) | verdict |
 |---|---|---|---|
 | Tool envelope (schema checks, deduplication, approvals, rate limits, breakers, timeouts that cancel, compensation, hash-chained audit, pinning, kill switch, redaction) | Camel: required-argument checks, advisory hints, timeouts that don't stop the route, denial events; no deduplication, approvals, rate limits, compensation or audit log | each guarantee is code the author writes and tests; the SDKs give none of them | significant / significant |
-| Envelope cost | | 3.0 µs per call with every check, audit record and hash on (was 90 µs: a thread per call, JSON-object audit records, software SHA-256); hand-written checks of the same kind cost the same order, Python/TypeScript validators more | significant (the envelope is affordable on every call) |
+| Envelope cost | | 6 µs per call on a Xeon 8280 without SHA instructions, 3.0 µs on a Ryzen 5 5600X with every check, audit record and hash on (was 90 µs: a thread per call, JSON-object audit records, software SHA-256); hand-written checks of the same kind cost the same order, Python/TypeScript validators more | significant (the envelope is affordable on every call) |
 | MCP server: protocol | both eras on one endpoint (2026-07-28 stateless and 2025-11-25 sessions), stdio with resources, progress, logs, elicitation, sampling; Camel: sessions only, stdio tools only | the SDKs implement the protocol; the envelope is still missing | significant / significant |
 | MCP server: auth | API keys, JWT (JWKS, HMAC), introspection, RFC 9728/8707 built in; Camel: platform-http basic or JWT, OAuth through camel-oauth | hand-written per server | significant / significant |
-| MCP server: throughput, latency, memory | *(droplet run 2: `mcp-session` against `camel-mcp-server`)* | *(droplet run 2: against the official TypeScript SDK)* | to measure |
+| MCP server: throughput, latency, memory | session calls 41,620/s vs 22,458/s (1.85x), p99 5.9 vs 5.2 ms, 53 vs 317 MB (6x less); stateless calls 51,700/s (Camel has no stateless mode) | 27x the official TypeScript SDK (1,536/s, p99 79 ms, 214 MB) | significant on memory, throughput and vs by hand; p99 at parity with Camel |
 | MCP server: horizontal scale | stateless 2026-07-28 calls need no sticky sessions; Camel keeps sessions in memory | | significant |
 | MCP conformance | official suite 39/39 (2025-11-25), 26/26 (2025-06-18) | | evidence |
 | MCP client and gateway | Camel has no MCP client | one endpoint, one auth, one audit log, per-server and per-tool rate limits, breakers, authorize and redaction, rug-pull protection; separate gateway products add a network hop | significant / significant |
@@ -52,12 +52,14 @@ otherwise; rows marked *(droplet run 2)* are filled from the run in `target/clou
 
 ## Gaps and work
 
-1. **HTTP fixed reply, 1.7x.** Thread-per-connection server. Options: an event-driven server
+1. **HTTP fixed reply, 1.67x.** Measured on the droplets: one `recv` and one `send` per request
+   already; a do-nothing thread-per-connection server reaches 166k req/s, Cameleer 113k, so the
+   rest is the request path and scheduling 64 threads. Next: an event-driven core. Thread-per-connection server. Options: an event-driven server
    (epoll on Linux, IOCP on Windows), zero-copy response writes, fewer allocations per request.
    Measured before: the server is at about 70% of a do-nothing server on Windows; the ceiling on
    the droplets is not known. Measure the do-nothing ceiling on the droplets first
    (`cameleer-bench raw-http`).
-2. **HTTP into Kafka, p99 worse than Camel.** Find what dominates the tail (waiting for a
+2. **Done: HTTP into Kafka** is 5.0x with a third of Camel's p99. Was: **p99 worse than Camel.** Find what dominates the tail (waiting for a
    batch, the broker round trip, or one connection per broker shared by every sender) and fix
    it so p99 drops below Camel's while throughput stays ahead.
 3. **Envelope cost: done.** 90 µs → 3.0 µs per call (Windows, Ryzen 5 5600X): pooled workers and,

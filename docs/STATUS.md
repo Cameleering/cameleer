@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-06. Branch `main`. The verified head before this file
+_Last updated: 2026-11-07. Branch `main`. The verified head before this file
 was added is `7de6166`._
 
 ## Name, packaging and release (2026-11-05)
@@ -206,9 +206,9 @@ of 5 is done: the tool model and the reliability envelope.
   2025-11-25 and 22/26 for 2025-06-18; the gaps are log and progress notifications during a
   call, sampling, and elicitation other than approvals. The suite predates 2026-07-28, so that
   era is covered only by the hermetic tests.
-- **Not done**: progress and log notifications, sampling, the website
-  pages planned for this phase (tagline, `/use-cases/mcp-tool-server/`, "Cameleer vs Camel MCP
-  server").
+- **Done since**: progress and log notifications, sampling and elicitation (conformance now
+  39/39 and 26/26), the website pages (`/use-cases/mcp-tool-server/`,
+  `/compare/camel-mcp-server-vs-cameleer/`, `/use-cases/llm-gateway-in-process/`).
 
 ## Action layer for AI agents, phase 3: tool calling and the agent step (2026-11-06, branch `agent-action-layer`)
 
@@ -230,8 +230,8 @@ of 5 is done: the tool model and the reliability envelope.
   `tests/support-agent.test.yaml` and `tests/refund.jsonl`.
 - **Tests**: hermetic suite 2793 passed, 0 failed on Windows 11, zero warnings; `crates/cameleer-main/tests/agent.rs` (every provider, the approval pause and resume,
   YAML with record and replay), `cameleer_test.rs`, unit tests in `ai.rs` and `ai/wire.rs`.
-- **Not done**: streaming with the tool loop, the Responses API, Ollama `/api/chat`, MCP tools
-  in `tools` (phase 4, the MCP client), the website pages for the action layer.
+- **Done since** (see the 2026-11-06/07 section below): streaming with the tool loop, the
+  Responses API, Ollama `/api/chat`, MCP tools in `tools` (the MCP client), the website pages.
 
 ## Action layer: kill switch and approvals for operators (2026-11-06)
 
@@ -245,6 +245,54 @@ of 5 is done: the tool model and the reliability envelope.
 - **Tests**: `crates/cameleer-main/tests/tool_cli.rs` (the real binary: list, disable, enable,
   an approval parked by a timer route, approve; the console in-process), unit tests in
   `tools.rs`, and `features.rs` `tool_commands_name_the_ai_feature` for builds without `ai`.
+
+## Action layer: MCP client, providers, call options, and a measured advantage per feature (2026-11-06/07, branch `agent-action-layer`)
+
+The owner's bar for this round: every feature needs a significant, measured reason to choose
+Cameleer over Apache Camel and over doing it by hand. Per-feature verdicts and the open gaps are
+in `docs/design/advantage-matrix.md` (internal).
+
+- **Finished from the earlier phases:** streaming in the tool loop, the OpenAI Responses API and
+  Ollama's `/api/chat` (merged branch); the MCP client and gateway (`camel.ai.mcp.NAME.*`, both
+  eras, HTTP and stdio, `list_changed` re-sync, rug-pull protection, `ai-tool` envelope options
+  per server and per tool, re-sync keeps unchanged tools); the `mcp:` component; progress, logs,
+  elicitation and sampling from tool routes; guardrails (`redact`, `authorize`, `cacheTtl`);
+  official MCP conformance 39/39 (2025-11-25) and 26/26 (2025-06-18), checked again on
+  2026-11-06.
+- **Model providers:** `gemini` component (Gemini API keys, thought signatures, `GeminiMock`);
+  `provider=` presets for 19 OpenAI-compatible services; `max_completion_tokens` for o-series and
+  GPT-5; `reasoning_content` sent back. Guide `docs/guides/model-providers.md`.
+- **Call options on every model component** (`cameleer_core::ai::reliable`): `maxRetries`,
+  `retryDelay`, `fallbackModels`, `responseCache=exact`, `coalesce`; prompt caching (`anthropic`
+  `cache_control` by default, `aws-bedrock` `cachePoint` with `promptCaching=true`); cache-token
+  usage for every provider (`CamelAiCacheReadTokens`, `CamelAiCacheWriteTokens`).
+- **Camel parity:** `hallucinatedToolNameStrategy` takes `failExchange`/`repromptModel`,
+  `maxAgenticTokens=0` is unlimited, `parallelToolExecution` defaults to `false`.
+- **Performance work found by the measurements:**
+  - tool envelope 90 → 3 µs per call (pooled workers; fast tools on the caller's thread with a
+    deadline on the exchange, `Exchange::set_deadline`; audit records written as canonical JSON
+    directly; SHA-256 with the x86 SHA instructions; JSON escaping by runs; the kill-switch
+    property cached through `PropertiesComponent::generation`);
+  - MCP session calls 9k → 41.6k/s on the droplets (no thread per call, idle-session sweep at
+    most once a second);
+  - Kafka producer: up to `maxInFlightRequest` (5) requests in flight on their own connections;
+    HTTP into Kafka 21.7k → 48.8k req/s, p99 7.2 → 2.4 ms.
+- **Measured on DigitalOcean** (3 × c-4, `scripts/cloud-bench`, new sides: Camel's
+  `camel-mcp-server`, the official MCP TypeScript SDK, and `main` as a baseline; results in
+  `docs/BENCHMARKS.md` "Action layer and MCP" and
+  `benchmarks/results/2026-11-06-linux-agents/`): MCP session calls 41,620/s vs Camel 22,458/s
+  and the TypeScript SDK 1,536/s, at 53 MB vs 317 MB and 214 MB; no integration scenario slower
+  than `main`.
+- **Tests:** hermetic suite on Windows 11: 2833 passed, 0 failed, zero warnings (plus the new
+  deadline and inline-timeout tests). On Linux (the droplet, Ubuntu 24.04): zero warnings, 2832
+  passed, 1 failed: `cameleer-cloud` `aws_gaps::kinesis_enhanced_fan_out_over_http2` fails 5 of 5
+  there, and **fails the same way on `main`** on that machine (not caused by this branch): after
+  the first subscription expires, the mock's HTTP/2 server resets every new connection. The
+  client opens a new connection per subscription, so production is not affected; the mock needs
+  fixing before a push.
+- **Open gaps (see the matrix):** plain HTTP is 1.67x Camel and 68% of a do-nothing server on the
+  same machines (an event-driven server core is the next step); MCP per-request CPU is about twice
+  a plain HTTP request; on CPUs without SHA instructions the envelope costs 6 µs.
 
 ## Pending / todo
 

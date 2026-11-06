@@ -768,6 +768,13 @@ pub(super) fn register_eip_steps(r: &mut StepRegistry) {
     });
 
     // --- agents (Cameleer extension) ---
+    #[cfg(not(feature = "agent"))]
+    r.register("agent", |_ctx, _cfg| {
+        Err(cameleer_core::error::CamelError::illegal_argument(
+            "The agent step is not in this build: enable the ai, saas or cloud feature of cameleer-main",
+        ))
+    });
+    #[cfg(feature = "agent")]
     r.register("agent", |ctx, cfg| {
         let model = ctx.required_str(cfg, &["model"])?;
         let mut d = cameleer_core::processor::agent::AgentDefinition::new(model);

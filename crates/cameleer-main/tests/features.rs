@@ -266,3 +266,12 @@ fn reference_pages_name_their_cargo_feature() {
     assert!(checked > 200, "only {checked} pages checked");
     assert!(wrong.is_empty(), "reference pages with a wrong cargo feature:\n{}", wrong.join("\n"));
 }
+
+#[cfg(not(any(feature = "ai", feature = "saas", feature = "cloud")))]
+#[test]
+fn the_agent_step_names_its_features() {
+    let ctx = cameleer_core::context::CamelContext::new();
+    let yaml = "- route:\n    from:\n      uri: direct:a\n      steps:\n        - agent:\n            model: openai:chat-completion?model=m\n";
+    let err = cameleer_yaml::add_routes_from_yaml(&ctx, yaml).err().expect("refused");
+    assert!(err.message.contains("ai, saas or cloud feature"), "{}", err.message);
+}
