@@ -12,7 +12,7 @@ What it writes (under --out, default site/):
   docs/index.html       docs home (docs/README.md, or generated)
   docs/{components,languages,dataformats,guides}/index.html   generated section indexes
   docs/** (other files) images and other assets copied from the docs tree
-  sitemap.xml           the home page, llms.txt, the designed pages under cameleering/, compare/,
+  sitemap.xml           the home page, llms.txt, the designed pages under cameleering/, mcp/, compare/,
                         alternatives/ and use-cases/, and every docs page
                         (except a page whose canonical URL is elsewhere)
   llms.txt              the site's llms.txt with a generated "## Documentation" section
@@ -1142,9 +1142,9 @@ class Site:
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
 
     def designed_pages(self):
-        """Hand-written landing pages: <out>/cameleering/**, <out>/compare/**, <out>/alternatives/** and <out>/use-cases/** (index.html)."""
+        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/** and <out>/use-cases/** (index.html)."""
         found = []
-        for d, _, files in (w for top in ("cameleering", "compare", "alternatives", "use-cases") for w in os.walk(os.path.join(self.out, top))):
+        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases") for w in os.walk(os.path.join(self.out, top))):
             if "index.html" in files:
                 found.append(os.path.relpath(os.path.join(d, "index.html"), self.out).replace("\\", "/"))
         return sorted(found)

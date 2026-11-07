@@ -13,6 +13,7 @@ same. Start with a guide, then look up the components your route uses.
 | send or receive messages with Kafka, HTTP, S3, Slack, SQL, ... | [Components](components/), one page per endpoint scheme, grouped by category |
 | write expressions and predicates (`${header.x}`, JSONPath, XPath) | [Languages](languages/) |
 | convert message bodies (JSON, CSV, XML, Avro, ...) | [Data formats](dataformats/) |
+| give AI agents tools: an MCP server with approvals, audit and a gateway, with ten tested use cases | [Cameleer MCP](guides/mcp.md) |
 | run Cameleer in Docker, Kubernetes, Cloud Run or AWS Lambda | [Deployment](DEPLOYMENT.md) |
 | build a smaller binary or image with only the components you use | [Build features](guides/build-features.md) |
 | check which Camel features are implemented, with their options | [Feature matrix](FEATURES.md) |

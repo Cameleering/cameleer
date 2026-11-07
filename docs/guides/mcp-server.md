@@ -2,7 +2,7 @@
 
 > Cameleer serves your `ai-tool`, `ai-resource` and `ai-prompt` routes to MCP clients (Claude Desktop, VS Code, Cursor and agent frameworks) over Streamable HTTP or stdio, in both protocol eras: 2026-07-28 and 2025-11-25. Every call goes through the same envelope: argument checks, deduplication, approvals, timeouts that cancel and an audit log.
 
-**Cargo feature:** [`ai`](build-features.md) · **Apache Camel:** [MCP Server](https://camel.apache.org/components/next/others/mcp-server.html) (same `camel.server.mcp-*` property names)
+**Overview and use cases:** [Cameleer MCP](mcp.md) · **Cargo feature:** [`ai`](build-features.md) · **Apache Camel:** [MCP Server](https://camel.apache.org/components/next/others/mcp-server.html) (same `camel.server.mcp-*` property names)
 
 ## Start it
 

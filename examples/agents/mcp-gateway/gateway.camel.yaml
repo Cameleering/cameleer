@@ -1,0 +1,23 @@
+# An MCP gateway: one Cameleer MCP server in front of another MCP server. It imports the
+# read-only tools of the Acme Outdoor shop (examples/agents/mcp-shop, started over stdio) with
+# the prefix shop_, puts its own rules on them (a rate limit, a cache, an audit record per call)
+# and serves them next to a local tool. Clients configure one endpoint and never see the shop's
+# process or credentials.
+#
+# From this directory:
+#   cameleer run gateway.camel.yaml --properties application.properties
+# MCP endpoint: http://127.0.0.1:18191/mcp (tools: shop_search_customers, shop_get_order,
+# shop_track_shipment, ..., support_hours). The shop's refunds, cancellations and other
+# changes are not imported.
+- route:
+    id: support-hours
+    from:
+      uri: ai-tool:support_hours
+      parameters:
+        title: Support opening hours
+        description: When the support team answers phone calls and email, in UK time
+        tags: support
+        readOnlyHint: true
+      steps:
+        - setBody:
+            constant: '{"phone": "Mon-Fri 08:00-18:00", "email": "every day, answered within one working day", "timeZone": "Europe/London"}'

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cameleer MCP Server: Reliable Tools for AI Agents | Cameleer</title>
+<meta name="description" content="Integration routes as MCP tools: checked, run once, approved when risky, audited. 41,620 calls/s in 53 MB; 196 of 200 real requests right with Claude.">
+<link rel="canonical" href="https://cameleer.ing/mcp/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Cameleer MCP: integration routes as reliable tools for AI agents">
+<meta property="og:description" content="How it works, where it runs, how it compares with Apache Camel's MCP server and the official SDKs, and ten use cases tested with real requests through Claude.">
+<meta property="og:url" content="https://cameleer.ing/mcp/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "Cameleer MCP: integration routes as reliable tools for AI agents",
+ "description": "What Cameleer's MCP server is and how it works, the environments it runs in, how it compares with Apache Camel's camel-mcp-server, the official MCP SDKs and direct tool calls, and ten use cases tested with real requests through Claude.",
+ "url": "https://cameleer.ing/mcp/",
+ "inLanguage": "en", "image": "https://cameleer.ing/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
+ "about": [{"@type": "Thing", "name": "Model Context Protocol"}, {"@type": "Thing", "name": "AI agents"}, {"@type": "Thing", "name": "Apache Camel"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/"},
+ {"@type": "ListItem", "position": 2, "name": "MCP"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "What is Cameleer's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "It serves Cameleer routes (ai-tool, ai-resource and ai-prompt endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record."}},
+ {"@type": "Question", "name": "How fast is it compared with Apache Camel's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, Cameleer served 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel 4.23's camel-mcp-server on the JVM and 1,536 calls per second in 214 MB for a server on the official MCP TypeScript SDK. Camel's p99 latency was lower (5.2 ms against 5.9 ms)."}},
+ {"@type": "Question", "name": "Does it work with Claude?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. In a field test, 40 requests a shop's staff would type ran through Claude and the official MCP client against Cameleer's shop example: Claude Opus 5.5 completed 157 of 160 runs correctly in 2025-11-25 sessions and 39 of 40 in the stateless 2026-07-28 era, with 2.9 turns and 3.3 tool calls per request on average."}},
+ {"@type": "Question", "name": "Where can it run?", "acceptedAnswer": {"@type": "Answer", "text": "As a subprocess of a desktop client over stdio, as a server, in Docker, Docker Compose and Kubernetes, on Cloud Run, Knative and Azure Container Apps, on AWS Lambda through a function URL, and on an edge gateway next to the devices its tools control."}},
+ {"@type": "Question", "name": "Can it sit in front of other MCP servers?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Cameleer imports the tools of other MCP servers over HTTP or stdio, lets you choose which to expose, puts the same envelope on them (rate limits, caching, approvals, audit, pinned definitions) and serves them through one endpoint."}}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleer home"><img src="../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../docs/">Docs</a>
+      <a class="keep" href="../use-cases/">Use cases</a>
+      <a href="./">MCP</a>
+      <a href="../compare/">Compare</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleer</a> / MCP</p>
+    <p class="kicker">Model Context Protocol</p>
+    <h1>Your integration routes, as reliable tools for AI agents</h1>
+    <p class="lede">Cameleer serves routes as MCP tools to Claude, IDE assistants and agent frameworks. Every call is checked against a schema, runs once, waits for a person when it is risky, is cancelled when it is slow and lands in an audit log, whatever the model decides. Over stdio or Streamable HTTP, in both protocol eras, from a laptop to a serverless function or an edge gateway.</p>
+    <div class="stats">
+      <div class="stat"><b>41,620</b><span>MCP tool calls per second in sessions</span><small>Camel's MCP server: 22,458</small></div>
+      <div class="stat"><b>53 MB</b><span>peak memory in that run</span><small>Camel: 317 MB, TypeScript SDK: 214 MB</small></div>
+      <div class="stat"><b>196/200</b><span>real requests handled right with Claude Opus 5.5</span><small>field test, 40 requests</small></div>
+      <div class="stat"><b>39/39</b><span>official MCP conformance scenarios (2025-11-25)</span><small>26/26 for 2025-06-18</small></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="intro">A tool is a route. The route does the work with any of Cameleer's about 230 components; the server does the rest on every call.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>A tool, served</h3>
+        <pre class="cmd">- route:
+    from:
+      uri: ai-tool:lookup_order
+      parameters:
+        description: Look up an order by id
+        parameter.orderId: string
+        parameter.orderId.required: true
+        readOnlyHint: true
+      steps:
+        - setBody:
+            simple: '{"orderId": "${header.orderId}", "status": "shipped"}'</pre>
+        <pre class="cmd">cameleer run tools.camel.yaml --mcp          # http://localhost:8080/mcp
+cameleer run tools.camel.yaml --mcp-stdio    # Claude Desktop starts it</pre>
+      </div>
+      <div class="pane">
+        <h3>On every call</h3>
+        <ul>
+          <li><strong>Checked:</strong> JSON Schema 2020-12 on the arguments; unknown and <code>camel*</code> arguments dropped.</li>
+          <li><strong>Run once:</strong> a retried call in the same conversation returns the first result.</li>
+          <li><strong>Approved:</strong> destructive tools show the user a form, or wait for an operator.</li>
+          <li><strong>Bounded:</strong> rate limits, circuit breakers, and a timeout that cancels the route.</li>
+          <li><strong>Recorded:</strong> redaction of personal data, then a hash-chained audit record.</li>
+          <li><strong>Pinned:</strong> a tool definition cannot change under your clients; a kill switch withdraws a tool.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">Apache Camel's <code>ai-tool</code>, <code>ai-resource</code> and <code>camel.server.mcp-*</code> names work unchanged. Cameleer also imports other MCP servers' tools and serves them again, so one endpoint can front many. Reference: <a href="../docs/guides/mcp.html">Cameleer MCP guide</a>, <a href="../docs/guides/mcp-server.html">MCP server</a>, <a href="../docs/guides/mcp-client.html">MCP client and gateway</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="use-cases">
+  <div class="wrap">
+    <h2>Use cases, with the requests people typed</h2>
+    <p class="intro">Each page shows real requests from the field test against the <a href="../docs/guides/mcp-shop-example.html">shop example</a> (a whole back office in one YAML file), the tool calls Claude made, the answer, and the tested route behind it.</p>
+    <div class="cards">
+      <a class="card" href="../docs/guides/mcp/customer-service-lookups.html"><h3>Customer-service lookups</h3><p>"Where is order 1007?" One read-only call, the facts, an answer. 32 of 32 runs.</p></a>
+      <a class="card" href="../docs/guides/mcp/multi-step-questions.html"><h3>Questions that take several steps</h3><p>"Which out-of-stock products have open orders waiting on them?" Nine calls, chained by the model. 21 of 24.</p></a>
+      <a class="card" href="../docs/guides/mcp/approvals.html"><h3>Actions guarded by approvals</h3><p>"Cancel order 1021." The user approves in the client before anything runs. 32 of 32.</p></a>
+      <a class="card" href="../docs/guides/mcp/refunds-with-business-rules.html"><h3>Refunds with the rules in the route</h3><p>"Refund $900 on order 1020." Over the limit: refused in code, explained by the model. 20 of 20.</p></a>
+      <a class="card" href="../docs/guides/mcp/manager-approval.html"><h3>A manager in the loop</h3><p>Goodwill credit waits for a manager outside the chat; asking again gets the decision.</p></a>
+      <a class="card" href="../docs/guides/mcp/the-tool-asks-the-user.html"><h3>The tool asks the user</h3><p>"Swap the jacket for a different size." The route asks which size, mid-call.</p></a>
+      <a class="card" href="../docs/guides/mcp/safety.html"><h3>Safety</h3><p>Prompt injection in a ticket, a redacted card number, a request to delete data. 28 of 28.</p></a>
+      <a class="card" href="../docs/guides/mcp/prompts-and-resources.html"><h3>Prompts and resources</h3><p>Policies as documents the model reads; prompts the user picks. 8 of 8 in sessions.</p></a>
+      <a class="card" href="../docs/guides/mcp/gateway.html"><h3>One gateway for several servers</h3><p>Import another MCP server's read-only tools, add your rules, serve one endpoint.</p></a>
+      <a class="card" href="../docs/guides/mcp/deployment.html"><h3>Where to run it</h3><p>Desktop, server, Docker and Kubernetes, Cloud Run, AWS Lambda, an edge gateway.</p></a>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="where">
+  <div class="wrap">
+    <h2>Where it runs, and why each matters</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>environment</th><th>transport</th><th>why</th></tr></thead>
+      <tbody>
+        <tr><td>Claude Desktop and other desktop clients</td><td>stdio</td><td>the client starts the server: nothing to host, data stays on the machine</td></tr>
+        <tr><td>a server or VM</td><td>Streamable HTTP</td><td>one endpoint for a team, with API keys, JWT or OAuth token checks</td></tr>
+        <tr><td>Docker, Compose, Kubernetes</td><td>either</td><td>the same image as every other route, health checks, several replicas</td></tr>
+        <tr><td>Cloud Run, Knative, Container Apps</td><td>Streamable HTTP</td><td>routes run about 3 ms after start, so scaling to zero costs clients little</td></tr>
+        <tr><td>AWS Lambda</td><td>a function URL</td><td>the binary is its own Lambda runtime; stateless 2026-07-28 requests fit it</td></tr>
+        <tr><td>an edge gateway</td><td>either</td><td>tools next to the machines, data on site, arm64 and amd64 images</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Commands for each, all run against an image built from the source: <a href="../docs/guides/mcp/deployment.html">Where to run it</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="compare">
+  <div class="wrap">
+    <h2>How it compares</h2>
+    <p class="intro">One tool answering a JSON document, on three identical cloud machines (4 dedicated vCPUs each, 64 client connections).</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th></th><th class="num">Cameleer</th><th class="num">Apache Camel <code>camel-mcp-server</code> (JVM)</th><th class="num">MCP TypeScript SDK (Node.js)</th></tr></thead>
+      <tbody>
+        <tr><td><code>tools/call</code> in sessions</td><td class="num"><span class="win">41,620/s</span></td><td class="num">22,458/s</td><td class="num">1,536/s</td></tr>
+        <tr><td>p99 latency</td><td class="num">5.9 ms</td><td class="num"><span class="win">5.2 ms</span></td><td class="num">79 ms</td></tr>
+        <tr><td>peak memory</td><td class="num"><span class="win">53 MB</span></td><td class="num">317 MB</td><td class="num">214 MB</td></tr>
+        <tr><td>stateless <code>tools/call</code> (2026-07-28)</td><td class="num">51,700/s in 26 MB</td><td class="num">not offered</td><td class="num">not offered</td></tr>
+      </tbody>
+    </table></div>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th></th><th>Cameleer</th><th>Apache Camel <code>camel-mcp-server</code></th><th>an official MCP SDK</th><th>direct tool calls</th></tr></thead>
+      <tbody>
+        <tr><td>argument checks</td><td>JSON Schema 2020-12</td><td>required arguments</td><td>the schema</td><td>yours to write</td></tr>
+        <tr><td>duplicate calls</td><td>run once per conversation</td><td>not built in</td><td>yours to write</td><td>yours to write</td></tr>
+        <tr><td>risky calls</td><td>approval form or operator</td><td>hints are advisory</td><td>yours to write</td><td>yours to write</td></tr>
+        <tr><td>slow calls</td><td>the timeout cancels the route</td><td>the route keeps running</td><td>yours to write</td><td>yours to write</td></tr>
+        <tr><td>audit</td><td>hash-chained record per call</td><td>events and metrics</td><td>yours to write</td><td>yours to write</td></tr>
+        <tr><td>other MCP servers</td><td>imported and served again</td><td>client options in some AI producers</td><td>a client library</td><td>n/a</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Every Cameleer call in the benchmark went through the whole envelope, which costs about 6 µs per call on those machines. Camel has the larger ecosystem and its own strengths: <a href="../compare/camel-mcp-server-vs-cameleer/">Apache Camel's MCP server vs Cameleer</a>. A hand-wired agent against a route on a four-system refund: <a href="../compare/ai-agent-tool-calls-direct-vs-cameleer/">direct tool calls vs Cameleer</a>. Raw data: <a href="../docs/BENCHMARKS.html">benchmarks</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="field-test">
+  <div class="wrap">
+    <h2>Tested with real requests through Claude</h2>
+    <p class="intro">40 requests a shop's staff would type ran through Claude and the official MCP Python client against the shop example. Each run was graded on the tool calls made, the database afterwards and a separate judge of the answer.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>model</th><th class="num">runs</th><th class="num">correct</th><th class="num">tool calls per request</th><th class="num">cost per request</th></tr></thead>
+      <tbody>
+        <tr><td>Claude Opus 5.5, 2025-11-25 sessions</td><td class="num">160</td><td class="num">157</td><td class="num">3.3</td><td class="num">about $0.026</td></tr>
+        <tr><td>Claude Opus 5.5, 2026-07-28 stateless</td><td class="num">40</td><td class="num">39</td><td class="num">3.3</td><td class="num">about $0.025</td></tr>
+        <tr><td>Claude Haiku 5.5, 2025-11-25 sessions</td><td class="num">120</td><td class="num">104</td><td class="num">2.9</td><td class="num">about $0.0007</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">The four Opus misses were slips in the answer, not wrong actions. The first run passed 25 of 36 requests; every failure led to a fix in Cameleer or in the example: <a href="../docs/guides/mcp-shop-example.html">Ask Claude about your business</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>What is Cameleer's MCP server?</summary><p>It serves Cameleer routes (<code>ai-tool</code>, <code>ai-resource</code> and <code>ai-prompt</code> endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record.</p></details>
+    <details><summary>How fast is it compared with Apache Camel's MCP server?</summary><p>On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, Cameleer served 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel 4.23's <code>camel-mcp-server</code> on the JVM and 1,536 calls per second in 214 MB for a server on the official MCP TypeScript SDK. Camel's p99 latency was lower (5.2 ms against 5.9 ms).</p></details>
+    <details><summary>Does it work with Claude?</summary><p>Yes. In a field test, 40 requests a shop's staff would type ran through Claude and the official MCP client against Cameleer's shop example: Claude Opus 5.5 completed 157 of 160 runs correctly in 2025-11-25 sessions and 39 of 40 in the stateless 2026-07-28 era, with 2.9 turns and 3.3 tool calls per request on average.</p></details>
+    <details><summary>Where can it run?</summary><p>As a subprocess of a desktop client over stdio, as a server, in Docker, Docker Compose and Kubernetes, on Cloud Run, Knative and Azure Container Apps, on AWS Lambda through a function URL, and on an edge gateway next to the devices its tools control.</p></details>
+    <details><summary>Can it sit in front of other MCP servers?</summary><p>Yes. Cameleer imports the tools of other MCP servers over HTTP or stdio, lets you choose which to expose, puts the same envelope on them (rate limits, caching, approvals, audit, pinned definitions) and serves them through one endpoint. See <a href="../docs/guides/mcp/gateway.html">the gateway use case</a>.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Try the shop in Claude Desktop</h2>
+    <p class="intro">The shop example is 19 tools, three policies and two prompts in one YAML file. Run it over HTTP, or let Claude Desktop start it (configuration in the example's README).</p>
+    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples/agents/mcp-shop
+cameleer run shop.camel.yaml --properties application.properties
+# or, with nothing installed but Docker:
+docker run --rm -p 18190:18190 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/shop.camel.yaml \
+  --properties /routes/application.properties --prop acme.dir=/routes --prop camel.server.host=0.0.0.0</pre>
+    <div class="cta">
+      <a class="btn primary" href="../docs/guides/mcp.html">Cameleer MCP guide</a>
+      <a class="btn" href="../docs/guides/mcp-shop-example.html">The shop example</a>
+      <a class="btn" href="../use-cases/mcp-tool-server/">Routes as MCP tools</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. Claude and other product names are trademarks of their owners.</p>
+    </div>
+    <div>
+      <h4>MCP</h4>
+      <ul>
+        <li><a href="../docs/guides/mcp.html">MCP guide</a></li>
+        <li><a href="../docs/guides/mcp-server.html">MCP server reference</a></li>
+        <li><a href="../compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a></li>
+        <li><a href="../use-cases/mcp-tool-server/">Routes as MCP tools</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../docs/">Documentation</a></li>
+        <li><a href="../cameleering/">What is cameleering?</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

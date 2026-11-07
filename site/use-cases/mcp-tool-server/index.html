@@ -69,7 +69,7 @@
     <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / MCP tool server</p>
     <p class="kicker">Model Context Protocol</p>
     <h1>Integration routes as MCP tools</h1>
-    <p class="lede">Write a route that looks up an order, issues a refund or opens a ticket, and Cameleer serves it to Claude Desktop, VS Code, Cursor or your agent framework as an MCP tool. The model decides what to call; the route decides how it runs: arguments checked against a schema, a retried call run once, risky calls held for a person, slow calls cancelled, every call in the audit log.</p>
+    <p class="lede">Write a route that looks up an order, issues a refund or opens a ticket, and Cameleer serves it to Claude Desktop, VS Code, Cursor or your agent framework as an MCP tool. The model decides what to call; the route decides how it runs: arguments checked against a schema, a retried call run once, risky calls held for a person, slow calls cancelled, every call in the audit log. Ten use cases with recorded requests through Claude are on the <a href="../../mcp/">Cameleer MCP</a> page.</p>
     <div class="stats">
       <div class="stat"><b>1 command</b><span><code>cameleer run tools.camel.yaml --mcp</code>, or <code>--mcp-stdio</code> for clients that start the server</span></div>
       <div class="stat"><b>2 eras</b><span>MCP 2026-07-28 and 2025-11-25 (also 06-18 and 03-26), on one endpoint</span></div>
@@ -320,7 +320,8 @@ cameleer run mcp-server.camel.yaml --mcp
 # or, without installing anything:
 docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
     <div class="cta">
-      <a class="btn primary" href="../../docs/guides/mcp-server.html">MCP server guide</a>
+      <a class="btn primary" href="../../mcp/">Cameleer MCP: all use cases</a>
+      <a class="btn" href="../../docs/guides/mcp-server.html">MCP server guide</a>
       <a class="btn" href="../../docs/components/ai-tool.html">ai-tool reference</a>
       <a class="btn" href="../../compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a>
       <a class="btn" href="../llm-gateway-in-process/">Model calls without a gateway</a>

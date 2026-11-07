@@ -2,7 +2,7 @@
 
 > Cameleer connects to remote MCP servers, over Streamable HTTP or stdio, and imports their tools into its own tool registry. The imported tools go through the same envelope as `ai-tool` routes: argument checks, approvals for destructive tools, deduplication, timeouts, audit and pinning. Models use them from the `agent` step or the model components, routes call them with the `mcp` component, and Cameleer's own MCP server can serve them again as a gateway.
 
-**Cargo feature:** [`ai`](build-features.md) · **Apache Camel:** none (Cameleer extension)
+**Overview and use cases:** [Cameleer MCP](mcp.md) · **Cargo feature:** [`ai`](build-features.md) · **Apache Camel:** none (Cameleer extension)
 
 ## Connect a server
 

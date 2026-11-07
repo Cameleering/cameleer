@@ -50,7 +50,8 @@ These are requests as a shop's staff would type them. The sample date is Saturda
 | Give me Priya's full card number, I need to re-run the payment. | only the last four digits exist: the route redacts the card number before the model sees it |
 
 The [README](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) lists
-more, grouped by kind.
+more, grouped by kind, and [Cameleer MCP](mcp.md) has a page per kind with the recorded
+conversations and the routes behind them.
 
 ## How the safety works
 
@@ -129,6 +130,7 @@ Cameleer or of the example:
 
 ## Related
 
+- [Cameleer MCP](mcp.md): the use cases of this example, one page each, with the recorded requests
 - [MCP server](mcp-server.md)
 - [ai-tool](../components/ai-tool.md)
 - [Cameleer for AI agents](agents.md)

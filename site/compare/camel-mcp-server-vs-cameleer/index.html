@@ -66,7 +66,7 @@
     <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / Camel MCP server vs Cameleer</p>
     <p class="kicker">Same names, enforced semantics</p>
     <h1>Apache Camel's MCP server vs Cameleer</h1>
-    <p class="lede">Apache Camel 4.22 added <code>camel-ai-tool</code> and <code>camel-mcp-server</code>: routes become tools that MCP clients can call. Cameleer implements the same option and property names, so the routes and the configuration look the same. The difference is what happens around each call, and the runtime the server runs on.</p>
+    <p class="lede">Apache Camel 4.22 added <code>camel-ai-tool</code> and <code>camel-mcp-server</code>: routes become tools that MCP clients can call. Cameleer implements the same option and property names, so the routes and the configuration look the same. The difference is what happens around each call, and the runtime the server runs on. The overview, environments and tested use cases are on the <a href="../../mcp/">Cameleer MCP</a> page.</p>
     <div class="stats">
       <div class="stat"><b>same</b><span>names</span><small><code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties</small></div>
       <div class="stat"><b>11 steps</b><span>around every call</span><small>from kill switch to audit record</small></div>
@@ -224,7 +224,8 @@ camel.server.mcp-tags=support</pre>
     <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples/agents
 cameleer run mcp-server.camel.yaml --mcp</pre>
     <div class="cta">
-      <a class="btn primary" href="../../use-cases/mcp-tool-server/">Routes as MCP tools</a>
+      <a class="btn primary" href="../../mcp/">Cameleer MCP</a>
+      <a class="btn" href="../../use-cases/mcp-tool-server/">Routes as MCP tools</a>
       <a class="btn" href="../../docs/guides/mcp-server.html">MCP server guide</a>
       <a class="btn" href="../../docs/components/ai-tool.html#differences-from-apache-camel">ai-tool vs Camel</a>
       <a class="btn" href="../apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a>
