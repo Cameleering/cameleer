@@ -1158,8 +1158,11 @@ impl McpServer {
             agreed.insert("resourceSubscriptions".into(), Value::Array(uris.iter().map(|u| Value::from(u.as_str())).collect()));
         }
         let meta = Value::object([(META_SUBSCRIPTION, id.clone())]);
-        send(&notification("notifications/subscriptions/acknowledged", Value::object([("_meta", meta.clone()), ("notifications", Value::Object(agreed))])));
-        self.registry.subscribe(move |change| {
+        // subscribe before acknowledging: a client may act on the acknowledgement at once, and a
+        // change made right after it must not be missed
+        let ack = notification("notifications/subscriptions/acknowledged", Value::object([("_meta", meta.clone()), ("notifications", Value::Object(agreed))]));
+        let send2 = send.clone();
+        let listener = self.registry.subscribe(move |change| {
             let (method, extra) = match change {
                 Change::Tools if tools => ("notifications/tools/list_changed", None),
                 Change::Prompts if prompts => ("notifications/prompts/list_changed", None),
@@ -1172,8 +1175,10 @@ impl McpServer {
             if let Some(u) = extra {
                 p.insert("uri".into(), Value::from(u));
             }
-            send(&notification(method, Value::Object(p)));
-        })
+            send2(&notification(method, Value::Object(p)));
+        });
+        send(&ack);
+        listener
     }
 
     pub fn end_listen(&self, listener: u64) {
