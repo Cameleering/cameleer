@@ -52,6 +52,9 @@
 .pane h3 { margin-top: 0; }
 .pane ul { margin: 0; padding-left: 20px; }
 .pane li { margin: 6px 0; }
+/* grid items may shrink below their content (long code lines scroll inside pre, inline code wraps) */
+.stats > *, .two > *, .cards > * { min-width: 0; }
+.c-sec p code, .c-sec li code, .c-sec td code, .pane code, .stat span, .stat small { overflow-wrap: anywhere; }
 
 .faq details { border-bottom: 1px solid var(--line); padding: 16px 0; }
 .faq summary { cursor: pointer; font-weight: 700; font-size: 17px; }

@@ -149,6 +149,29 @@
   </div>
 </section>
 
+<section class="c-sec" id="mcp">
+  <div class="wrap">
+    <h2>Let an AI agent work with the plant, through MCP tools on the gateway</h2>
+    <p class="intro">The gateway can serve MCP tools next to the devices: a technician asks Claude Desktop which sensors run hot and turns a fan down, or an agent in the cloud adjusts setpoints overnight. Readings stay on site, and the agent reaches only what the tools expose.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>The tested example</h3>
+        <ul>
+          <li><code>latest_readings</code> returns the last MQTT reading of every sensor, kept in the embedded in-memory SQL database.</li>
+          <li><code>set_setpoint</code> publishes to <code>devices/&lt;device&gt;/setpoint</code>; only known devices pass the schema, and a setpoint above 30 °C waits for an operator.</li>
+          <li><a href="../../docs/guides/edge.html#mcp-tools-on-the-gateway-let-an-agent-read-sensors-and-change-setpoints">The route and its test</a></li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Run it on the gateway</h3>
+        <pre class="cmd">docker run -d --name gw --network host --read-only --tmpfs /tmp   -e CAMEL_LOCAL_STATUS=true -e MQTT_BROKER -e GATEWAY_ID   -v "$PWD:/routes:ro" pmsudhi/cameleer   run /routes/mcp-gateway-tools.camel.yaml --mcp
+docker exec gw cameleer tool approve &lt;handle&gt;   # a parked setpoint</pre>
+        <p>Agents connect to <code>http://&lt;gateway&gt;:8080/mcp</code>. Add API-key or JWT checks before the port is reachable beyond the plant network (<a href="../mcp-tool-server/">routes as MCP tools</a>).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="c-sec faq" id="faq">
   <div class="wrap">
     <h2>Common questions</h2>

@@ -254,6 +254,112 @@ connected under its own client id. The broker sends the will only on an abnormal
 a clean stop of the route does not mark the gateway offline, so publish `offline` from an
 `onCompletion` or a shutdown route if you need that too.
 
+## MCP tools on the gateway: let an agent read sensors and change setpoints
+
+An AI agent can work with the plant directly when the gateway serves MCP tools: a technician
+asks Claude Desktop "which sensors are above 25 °C, and turn fan-1 to 22", or an agent in the
+cloud adjusts setpoints overnight. The tools run on the gateway, against the local MQTT broker,
+so readings never leave the site and the agent reaches only what the tools expose.
+[examples/edge/mcp-gateway-tools.camel.yaml](../../examples/edge/mcp-gateway-tools.camel.yaml):
+
+- `latest_readings` (read only) returns the last reading of every sensor, kept in the embedded
+  in-memory SQL database as readings arrive over MQTT;
+- `set_setpoint` publishes a setpoint to `devices/<device>/setpoint`. The schema accepts only the
+  devices listed in `parameter.device.enum`, and `approval` makes any setpoint above 30 °C wait
+  for a person: the call is parked with a handle, `approvalEndpoint` is told (a log here; Slack,
+  e-mail or a ticket queue in practice), and an operator decides with
+  `cameleer tool approve <handle>` or `cameleer tool deny <handle>`. Without `approvalEndpoint`,
+  the MCP client's own user is asked instead ([approvals](mcp-server.md#approvals)).
+
+<!-- example: edge-mcp-gateway-tools -->
+```yaml
+- route:
+    id: create-readings-table
+    from:
+      uri: timer:create-readings?repeatCount=1&delay=0
+      steps:
+        - to: "sql:create table if not exists readings (sensor text, celsius double precision, at text)?dataSource=jdbc:rustsql:mem:gateway"
+- route:
+    id: remember-latest-reading
+    from:
+      uri: "paho:sensors/+/temperature?brokerUrl={{env:MQTT_BROKER:tcp://localhost:1883}}&qos=1&clientId={{env:GATEWAY_ID:gateway-1}}-readings"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - filter:
+            simple: "${body} regex '-?[0-9]+(\\.[0-9]+)?'"
+            steps:
+              - setHeader:
+                  name: sensor
+                  simple: "${header.CamelMqttTopic.split('/')[1]}"
+              - setHeader:
+                  name: celsius
+                  simple: "${bodyAs(Double)}"
+              - setHeader:
+                  name: at
+                  simple: "${date:now:yyyy-MM-dd'T'HH:mm:ss'Z'}"
+              - to: "sql:delete from readings where sensor = :#sensor?dataSource=jdbc:rustsql:mem:gateway"
+              - to: "sql:insert into readings (sensor, celsius, at) values (:#sensor, :#celsius, :#at)?dataSource=jdbc:rustsql:mem:gateway"
+- route:
+    id: latest-readings
+    from:
+      uri: ai-tool:latest_readings
+      parameters:
+        description: The latest temperature reading of every sensor on this gateway
+        tags: plant
+        readOnlyHint: true
+      steps:
+        - to: "sql:select sensor, celsius, at from readings order by sensor?dataSource=jdbc:rustsql:mem:gateway"
+        - marshal:
+            json: {}
+- route:
+    id: set-setpoint
+    from:
+      uri: ai-tool:set_setpoint
+      parameters:
+        description: Set a device's temperature setpoint in °C; above 30 °C a person approves first
+        tags: plant
+        parameter.device: string
+        parameter.device.description: The device id
+        parameter.device.required: true
+        parameter.device.enum: fan-1,fan-2,heater-1
+        parameter.celsius: number
+        parameter.celsius.description: The new setpoint in °C
+        parameter.celsius.required: true
+        approval: "${header.celsius} > 30"
+        approvalEndpoint: log:setpoint-approvals
+      steps:
+        - setBody:
+            simple: '{"setpoint": ${header.celsius}, "gateway": "{{env:GATEWAY_ID:gateway-1}}"}'
+        - toD: "paho:devices/${header.device}/setpoint?brokerUrl={{env:MQTT_BROKER:tcp://localhost:1883}}&qos=1&clientId={{env:GATEWAY_ID:gateway-1}}-setpoints"
+        - setBody:
+            simple: '{"device": "${header.device}", "setpoint": ${header.celsius}, "sent": true}'
+```
+
+Serve the tools over HTTP on the gateway (an agent elsewhere connects to
+`http://<gateway>:8080/mcp`; add API-key or JWT checks from the
+[MCP server guide](mcp-server.md#authentication) before you open the port beyond the plant
+network):
+
+```bash
+docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true   -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" pmsudhi/cameleer   run /routes/mcp-gateway-tools.camel.yaml --mcp
+```
+
+`CAMEL_LOCAL_STATUS=true` (off by default in the image) and a writable `/tmp` let the operator
+commands reach the running process:
+
+```bash
+docker exec gw cameleer tool approvals            # the calls that wait, with their handles
+docker exec gw cameleer tool approve <handle>     # runs the call: the setpoint is published
+docker exec gw cameleer tool deny <handle>        # runs nothing
+```
+
+The test publishes readings over the embedded MQTT broker (one malformed), reads them back
+through `tools/call`, sets `fan-1` to 22 °C (published to `devices/fan-1/setpoint`), and checks
+that 45 °C for `heater-1` waits for approval and that an unknown device is refused, with
+nothing published for either. The same steps, plus `cameleer tool approve` publishing the parked
+setpoint, were run in the container against Mosquitto 2.
+
 ## Small footprint deployment
 
 The Docker image `pmsudhi/cameleer` is one native binary on a distroless base, for `linux/amd64`

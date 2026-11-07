@@ -40,6 +40,7 @@
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "Can I run the MCP server in Docker, on AWS Lambda or at the edge?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. In Docker over HTTP (docker run -p 8080:8080 ... --mcp) or over stdio (docker run -i ... --mcp-stdio as the client's command); on AWS Lambda, where function URL and API Gateway requests for /mcp reach the MCP server in process; on Cloud Run, Knative and Kubernetes as a container; and on an edge gateway, next to the devices its tools control."}},
  {"@type": "Question", "name": "Which MCP clients work with it?", "acceptedAnswer": {"@type": "Answer", "text": "Any client of the Model Context Protocol: Claude Desktop, VS Code, Cursor and agent frameworks. Clients that start the server themselves use stdio (cameleer run tools.camel.yaml --mcp-stdio); others connect over Streamable HTTP at http://localhost:8080/mcp. Both the 2026-07-28 era and the 2025-11-25, 2025-06-18 and 2025-03-26 versions are served on the same endpoint."}},
  {"@type": "Question", "name": "What happens when an agent retries a tool call?", "acceptedAnswer": {"@type": "Answer", "text": "A tool with side effects is deduplicated: a repeated call with the same call id (or, without one, the same principal and arguments within idempotencyWindow) returns the recorded result and the route does not run again. A repeat that arrives while the first call is still running waits for it."}},
  {"@type": "Question", "name": "How does a person approve a risky call?", "acceptedAnswer": {"@type": "Answer", "text": "A destructiveHint tool, or one with an approval rule such as ${header.amount} > 500, does not run until someone says yes. With an approvalEndpoint the call is parked and resolved out of band, for example with cameleer tool approve <handle>. Without one, the client's user is asked: an input_required result with a sealed requestState in 2026-07-28, an elicitation/create request in legacy sessions."}},
@@ -153,6 +154,50 @@
   </div>
 </section>
 
+<section class="c-sec" id="anywhere">
+  <div class="wrap">
+    <h2>Docker, serverless, the edge: the same tools wherever they run</h2>
+    <p class="intro">One route file serves MCP from the binary, the container, your own Rust program, a serverless platform or a gateway next to the machines. Every command below is in the <a href="../../docs/guides/mcp-server.html#run-it-anywhere">MCP server guide</a>.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>Docker, over HTTP</h3>
+        <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro"   pmsudhi/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
+        <p>Clients connect to <code>http://localhost:8080/mcp</code>. Add <code>--prop camel.server.mcp-tags=support</code> to expose only some tools. The same service runs under Docker Compose and Kubernetes.</p>
+      </div>
+      <div class="pane">
+        <h3>Docker, over stdio</h3>
+        <pre class="cmd">{
+  "mcpServers": {
+    "orders": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-v", "/path/to/tools:/routes:ro",
+               "pmsudhi/cameleer", "run", "/routes/mcp-server.camel.yaml",
+               "--mcp-stdio"]
+    }
+  }
+}</pre>
+        <p>The client starts the container. Logs go to stderr, so stdout carries only protocol messages.</p>
+      </div>
+      <div class="pane">
+        <h3>AWS Lambda and Cloud Run</h3>
+        <ul>
+          <li><strong>Lambda:</strong> the binary is its own runtime; function URL and API Gateway requests for <code>/mcp</code> reach the MCP server in process. Stateless 2026-07-28 clients suit it best.</li>
+          <li><strong>Cloud Run, Knative, Container Apps:</strong> the image with <code>--mcp</code>; routes are running about 3 ms after the container starts, so scaling to zero costs clients little.</li>
+          <li>Several instances share approvals through one <code>camel.server.mcp-request-state-key</code>.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>An edge gateway</h3>
+        <ul>
+          <li>Tools next to the devices: read the latest MQTT sensor readings, change a setpoint, with setpoints above a limit waiting for a person.</li>
+          <li>Readings stay on site; the agent reaches only what the tools expose. arm64 and amd64 images.</li>
+          <li><a href="../../docs/guides/edge.html#mcp-tools-on-the-gateway-let-an-agent-read-sensors-and-change-setpoints">The tested gateway example</a> · <a href="../mqtt-iot-edge-gateway/">MQTT edge gateways</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="c-sec" id="envelope">
   <div class="wrap">
     <h2>What happens on every call</h2>
@@ -257,6 +302,7 @@ camel.server.mcp-resource-url=https://tools.example.com/mcp</pre>
   <div class="wrap">
     <h2>Common questions</h2>
     <details><summary>Which MCP clients work with it?</summary><p>Any client of the Model Context Protocol: Claude Desktop, VS Code, Cursor and agent frameworks. Clients that start the server themselves use stdio (<code>cameleer run tools.camel.yaml --mcp-stdio</code>); others connect over Streamable HTTP at <code>http://localhost:8080/mcp</code>. Both the 2026-07-28 era and the 2025-11-25, 2025-06-18 and 2025-03-26 versions are served on the same endpoint.</p></details>
+    <details><summary>Can I run the MCP server in Docker, on AWS Lambda or at the edge?</summary><p>Yes. In Docker over HTTP (<code>docker run -p 8080:8080 ... --mcp</code>) or over stdio (<code>docker run -i ... --mcp-stdio</code> as the client's command); on AWS Lambda, where function URL and API Gateway requests for <code>/mcp</code> reach the MCP server in process; on Cloud Run, Knative and Kubernetes as a container; and on an edge gateway, next to the devices its tools control.</p></details>
     <details><summary>What happens when an agent retries a tool call?</summary><p>A tool with side effects is deduplicated: a repeated call with the same call id (or, without one, the same principal and arguments within <code>idempotencyWindow</code>) returns the recorded result and the route does not run again. A repeat that arrives while the first call is still running waits for it.</p></details>
     <details><summary>How does a person approve a risky call?</summary><p>A <code>destructiveHint</code> tool, or one with an approval rule such as <code>${header.amount} &gt; 500</code>, does not run until someone says yes. With an <code>approvalEndpoint</code> the call is parked and resolved out of band, for example with <code>cameleer tool approve &lt;handle&gt;</code>. Without one, the client's user is asked: an <code>input_required</code> result with a sealed <code>requestState</code> in 2026-07-28, an <code>elicitation/create</code> request in legacy sessions.</p></details>
     <details><summary>How do I withdraw a tool in production?</summary><p><code>cameleer tool disable &lt;name&gt;</code> against the running integration (or <code>POST /q/dev/tools/{name}/disable</code> on the dev console). The tool disappears from every list, its calls are refused, and connected clients get <code>notifications/tools/list_changed</code>.</p></details>
@@ -270,7 +316,9 @@ camel.server.mcp-resource-url=https://tools.example.com/mcp</pre>
     <h2>Run it</h2>
     <p class="intro">Clone the examples, then point an MCP client at the endpoint or the stdio command.</p>
     <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples/agents
-cameleer run mcp-server.camel.yaml --mcp</pre>
+cameleer run mcp-server.camel.yaml --mcp
+# or, without installing anything:
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
     <div class="cta">
       <a class="btn primary" href="../../docs/guides/mcp-server.html">MCP server guide</a>
       <a class="btn" href="../../docs/components/ai-tool.html">ai-tool reference</a>

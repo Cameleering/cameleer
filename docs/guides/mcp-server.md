@@ -59,6 +59,170 @@ camel.server.mcp-enabled=true
 camel.server.mcp-tags=support
 ```
 
+## Run it anywhere
+
+The same route file serves MCP in every way Cameleer runs. Pick the column for how the client
+reaches the server: **HTTP** when the server runs on its own (a container, a gateway, a function)
+and clients connect to `http://<host>:8080/mcp`; **stdio** when the client starts the server as a
+subprocess on the same machine.
+
+| where it runs | HTTP | stdio |
+|---|---|---|
+| the `cameleer` binary | `cameleer run tools.camel.yaml --mcp` | `cameleer run tools.camel.yaml --mcp-stdio` |
+| Docker | [`docker run -p 8080:8080 ... --mcp`](#docker) | [`docker run -i ... --mcp-stdio`](#docker) |
+| Docker Compose, Kubernetes | [a service with `--mcp`](#docker-compose-and-kubernetes) | |
+| your own Rust program | [`camel.server.mcp-enabled=true`](#in-your-own-rust-program) | `camel.server.mcp-transport=stdio` |
+| Cloud Run, Knative, Azure Container Apps | [the image with `--mcp`](#cloud-run-and-other-serverless-containers) | |
+| AWS Lambda | [a function URL or API Gateway](#on-aws-lambda) | |
+| an edge gateway | [tools next to the devices](edge.md#mcp-tools-on-the-gateway-let-an-agent-read-sensors-and-change-setpoints) | for a laptop on site |
+
+### Docker
+
+The image runs `cameleer`; mount the folder with your route files at `/routes`. Over HTTP:
+
+```bash
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer \
+  run /routes/mcp-server.camel.yaml --mcp
+```
+
+Over stdio, the client starts the container itself. Pass `-i` (stdin open) and no `-t`; logs go
+to stderr, so stdout carries only protocol messages. In a client configuration, use an absolute
+path for the folder (`C:/Users/me/tools` on Windows):
+
+```json
+{
+  "mcpServers": {
+    "orders": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-v", "/path/to/tools:/routes:ro",
+               "pmsudhi/cameleer", "run", "/routes/mcp-server.camel.yaml", "--mcp-stdio"]
+    }
+  }
+}
+```
+
+To expose only some tools, add `--prop camel.server.mcp-tags=support` after `--mcp` or
+`--mcp-stdio`. Environment variables reach routes through `-e NAME` and `{{env:NAME}}`.
+
+### Connect a client
+
+| client | HTTP (server already running) | stdio (client starts the server) |
+|---|---|---|
+| Claude Code | `claude mcp add --transport http orders http://localhost:8080/mcp` | `claude mcp add orders -- cameleer run /path/to/mcp-server.camel.yaml --mcp-stdio` |
+| VS Code (`.vscode/mcp.json`) | `{"servers": {"orders": {"type": "http", "url": "http://localhost:8080/mcp"}}}` | `{"servers": {"orders": {"type": "stdio", "command": "cameleer", "args": ["run", "/path/to/mcp-server.camel.yaml", "--mcp-stdio"]}}}` |
+| Cursor (`~/.cursor/mcp.json`) | `{"mcpServers": {"orders": {"url": "http://localhost:8080/mcp"}}}` | `{"mcpServers": {"orders": {"command": "cameleer", "args": ["run", "/path/to/mcp-server.camel.yaml", "--mcp-stdio"]}}}` |
+| Claude Desktop (`claude_desktop_config.json`) | | the configuration in [Start it](#start-it), or the Docker one above |
+
+Any stdio entry works with Docker too: replace `cameleer` and its arguments with the `docker run -i`
+command above.
+
+### Docker Compose and Kubernetes
+
+A service that serves the tools next to what they use (here PostgreSQL), with the tags chosen and
+the health endpoint on:
+
+<!-- not-camel -->
+```yaml
+services:
+  tools:
+    image: pmsudhi/cameleer
+    command: ["run", "/routes/tools.camel.yaml", "--mcp",
+              "--prop", "camel.server.mcp-tags=support",
+              "--prop", "camel.server.enabled=true",
+              "--prop", "camel.server.healthCheckEnabled=true"]
+    ports: ["8080:8080"]
+    volumes: ["./routes:/routes:ro"]
+    environment:
+      DB_URL: postgresql://app:secret@db:5432/shop
+    read_only: true
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: shop
+```
+
+On Kubernetes the container takes the same `args`; probe `/q/health/live` and `/q/health/ready`
+([deployment guide](../DEPLOYMENT.md)). With more than one replica:
+
+- clients on 2026-07-28 are stateless, so any replica answers any request;
+- legacy sessions (2025-11-25 and older) live in the replica that created them: route each
+  `Mcp-Session-Id` to the same replica (session affinity), or run one replica;
+- set `camel.server.mcp-request-state-key` to the same 64-hex-digit key on every replica, so an
+  approval started on one replica can finish on another. The environment variable
+  `CAMEL_SERVER_MCP_REQUEST_STATE_KEY` (from a Secret) sets it without a properties file.
+
+### In your own Rust program
+
+Depend on `cameleer-main` (default features, or `ai` in a [reduced build](build-features.md)),
+then turn the server on with properties, as `cameleer run --mcp` does:
+
+```rust
+fn main() -> cameleer_core::Result<()> {
+    let mut main = cameleer_main::new_main();
+    main.add_route_file("tools.camel.yaml");
+    main.set_property("camel.server.mcp-enabled", "true");
+    main.set_property("camel.server.mcp-tags", "support");
+    main.set_property("camel.server.port", "8080");
+    main.run()
+}
+```
+
+`camel.server.mcp-transport=stdio` serves stdio instead. Tools can also be Rust routes:
+`b.from("ai-tool:lookup_order?parameter.orderId=string&parameter.orderId.required=true")`.
+
+### Cloud Run and other serverless containers
+
+Build a small image with the route files in it, then deploy it like any container:
+
+```dockerfile
+FROM pmsudhi/cameleer
+COPY tools.camel.yaml /routes/
+CMD ["run", "/routes/tools.camel.yaml", "--mcp", "--prop", "camel.server.mcp-tags=support"]
+```
+
+```bash
+gcloud run deploy orders-tools --source . --port 8080 --no-allow-unauthenticated
+```
+
+Routes are running about 3 ms after the container starts, so scaling to zero costs the client
+little. Requests on 2026-07-28 are stateless and suit autoscaling; for legacy sessions turn on
+session affinity (`--session-affinity`), and set `camel.server.mcp-request-state-key` as for
+Kubernetes. Protect the endpoint with the platform's own authentication or with
+[Cameleer's](#authentication).
+
+### On AWS Lambda
+
+`cameleer` is its own Lambda runtime, and function URL or API Gateway requests for
+`camel.server.mcp-path` reach the MCP server in process. Put the routes and an
+`application.properties` in the function:
+
+```properties
+camel.server.mcp-enabled=true
+camel.server.mcp-tags=support
+```
+
+```bash
+scripts/package-lambda.sh --arch arm64 --features ai --out tools.zip \
+  mcp-server.camel.yaml application.properties
+aws lambda create-function --function-name orders-tools --runtime provided.al2023 \
+  --architectures arm64 --handler direct:lambda --zip-file fileb://tools.zip \
+  --role arn:aws:iam::<account>:role/<role> \
+  --environment "Variables={CAMEL_SERVER_MCP_REQUEST_STATE_KEY=$(openssl rand -hex 32)}"
+aws lambda create-function-url-config --function-name orders-tools --auth-type AWS_IAM
+```
+
+The environment variable sets `camel.server.mcp-request-state-key` (any `CAMEL_*` variable
+overrides the matching property), so every sandbox seals approval state with the same key and
+an approval can finish in another sandbox.
+
+Clients then use `https://<url-id>.lambda-url.<region>.on.aws/mcp`. Lambda returns each response
+whole, so use clients on 2026-07-28 (stateless JSON requests); legacy sessions and streamed
+events need one sandbox at a time (reserved concurrency 1) and are better served from a
+container. `--features` must include `ai` plus the component families the tools use (HTTP is
+always in the build).
+
 ## Configuration
 
 | property | default | description |
@@ -139,7 +303,10 @@ A tool that needs approval (`destructiveHint=true`, or an `approval` rule, see
 
 Out-of-band approvals can also be resolved from the command line: `cameleer tool approvals`
 lists the waiting calls of a running integration, and `cameleer tool approve <handle>` or
-`cameleer tool deny <handle>` decides one. `cameleer tool disable <name>` (or
+`cameleer tool deny <handle>` decides one. These commands reach the process through its local
+status files, which the container image turns off: run the container with
+`-e CAMEL_LOCAL_STATUS=true` (and `--tmpfs /tmp` with `--read-only`), then
+`docker exec <container> cameleer tool approve <handle>`. `cameleer tool disable <name>` (or
 `POST /q/dev/tools/{name}/disable` on the dev console) withdraws a tool while the server runs:
 connected clients get `notifications/tools/list_changed` and the tool's calls are refused. See
 [ai-tool: kill switch](../components/ai-tool.md#kill-switch).

@@ -127,6 +127,55 @@ fn http_events_are_served_by_platform_http_routes() {
     server.stop();
 }
 
+/// An MCP server on Lambda: function URL events for `/mcp` reach the MCP endpoint in process
+/// (docs/guides/mcp-server.md, "On AWS Lambda"). Stateless 2026-07-28 requests, as a client
+/// sends them to a function that may run in several sandboxes.
+#[cfg(feature = "ai")]
+#[test]
+fn mcp_requests_in_http_events_are_served_by_the_mcp_server() {
+    fn event(method: &str, name: Option<&str>, params: &str) -> String {
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"{}","params":{{"_meta":{{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{{}}}}{}}}}}"#,
+            method, params
+        );
+        let name_header = name.map(|n| format!(r#","mcp-name":"{}""#, n)).unwrap_or_default();
+        format!(
+            r#"{{"version":"2.0","routeKey":"$default","rawPath":"/mcp","rawQueryString":"",
+            "headers":{{"content-type":"application/json","accept":"application/json, text/event-stream","mcp-protocol-version":"2026-07-28","mcp-method":"{}"{}}},
+            "requestContext":{{"http":{{"method":"POST","path":"/mcp"}}}},"body":{},"isBase64Encoded":false}}"#,
+            method,
+            name_header,
+            Value::String(body).to_json()
+        )
+    }
+    let (api, server) = start_api(&[
+        ("mcp-1", &event("tools/list", None, "")),
+        ("mcp-2", &event("tools/call", Some("lookup_order"), r#","name":"lookup_order","arguments":{"orderId":"EU-4411"}"#)),
+    ]);
+    // the routes and properties a function zip holds (bootstrap runs `cameleer run`)
+    let mut main = cameleer_main::new_main();
+    main.set_lambda_runtime_api(Some(format!("127.0.0.1:{}", server.port())));
+    main.set_property("camel.main.duration-max-messages", "2");
+    let taken = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    main.set_property("camel.server.port", taken.local_addr().unwrap().port().to_string());
+    main.set_property("camel.server.mcp-enabled", "true");
+    main.set_property("camel.server.mcp-tags", "support");
+    let routes = std::fs::read_to_string(format!("{}/../../examples/agents/mcp-server.camel.yaml", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    main.add_route_source("mcp-server.camel.yaml", routes);
+    main.run().unwrap();
+    let posts = api.posts.lock().unwrap().clone();
+    assert_eq!(posts.len(), 2, "{posts:?}");
+    let body = |i: usize| {
+        let resp = cameleer_core::json::parse(&posts[i].2).unwrap();
+        assert_eq!(resp.get("statusCode"), Some(&Value::Int(200)), "{}", posts[i].2);
+        resp.get("body").and_then(|b| b.as_str()).unwrap().to_string()
+    };
+    assert_eq!(posts[0].0, "/2018-06-01/runtime/invocation/mcp-1/response");
+    assert!(body(0).contains("\"lookup_order\""), "{}", body(0));
+    assert!(body(1).contains("EU-4411") && body(1).contains("shipped"), "{}", body(1));
+    server.stop();
+}
+
 #[test]
 fn a_startup_failure_is_reported_to_the_init_error_endpoint() {
     let (api, server) = start_api(&[]);

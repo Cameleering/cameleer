@@ -148,7 +148,7 @@ aws lambda create-function --function-name orders --runtime provided.al2023 \
         <h3>What to set</h3>
         <ul>
           <li>Cloud Run sends requests to <code>PORT</code>, 8080 by default; if you change it, add <code>--prop camel.server.port={{env:PORT:8080}}</code>.</li>
-          <li>Health: <code>/q/health/live</code> and <code>/q/health/ready</code> with <code>camel.server.healthCheckEnabled=true</code>.</li>
+          <li>Health: <code>/q/health/live</code> and <code>/q/health/ready</code> with <code>camel.server.enabled=true</code> and <code>camel.server.healthCheckEnabled=true</code>.</li>
           <li>Images run with <code>CAMEL_LOCAL_STATUS=false</code>, so no status files are written.</li>
         </ul>
       </div>
@@ -161,6 +161,19 @@ aws lambda create-function --function-name orders --runtime provided.al2023 \
         </ul>
       </div>
     </div>
+  </div>
+</section>
+
+<section class="c-sec" id="mcp">
+  <div class="wrap">
+    <h2>MCP tools as a function</h2>
+    <p class="intro">Tools for AI agents can scale to zero too. On Lambda, function URL and API Gateway requests for <code>/mcp</code> reach Cameleer's MCP server in process; on Cloud Run or Knative the image serves it with <code>--mcp</code>.</p>
+    <pre class="cmd"># application.properties, zipped with the routes
+camel.server.mcp-enabled=true
+camel.server.mcp-tags=support</pre>
+    <pre class="cmd">scripts/package-lambda.sh --arch arm64 --features ai --out tools.zip mcp-server.camel.yaml application.properties
+aws lambda create-function-url-config --function-name orders-tools --auth-type AWS_IAM</pre>
+    <p class="note">Lambda returns each response whole, so stateless 2026-07-28 clients suit it best; set <code>CAMEL_SERVER_MCP_REQUEST_STATE_KEY</code> so approvals work across sandboxes. A test runs MCP requests through the Lambda runtime. Details: <a href="../../docs/guides/mcp-server.html#on-aws-lambda">MCP on AWS Lambda</a> and <a href="../mcp-tool-server/">routes as MCP tools</a>.</p>
   </div>
 </section>
 

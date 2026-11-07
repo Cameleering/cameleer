@@ -3,19 +3,19 @@
   <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/cameleering/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/compare/apache-camel-vs-cameleer/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/apache-camel-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/compare/</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/use-cases/file-sftp-pipelines/</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/use-cases/hl7-mllp-healthcare-integration/</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/use-cases/</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/use-cases/llm-gateway-in-process/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/file-sftp-pipelines/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/hl7-mllp-healthcare-integration/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/llm-gateway-in-process/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/mcp-tool-server/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/use-cases/mqtt-iot-edge-gateway/</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/use-cases/serverless-aws-lambda/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/mqtt-iot-edge-gateway/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/serverless-aws-lambda/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/BENCHMARKS.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/DEPLOYMENT.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/FEATURES.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -217,7 +217,7 @@
   <url><loc>https://cameleer.ing/docs/dataformats/zip-deflater.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/zipfile.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/agent-step.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/agent-tool-calls.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/agent-tool-calls.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/agents.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/ai-components.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/build-features.html</loc><lastmod>2026-11-07</lastmod></url>
@@ -241,7 +241,7 @@
   <url><loc>https://cameleer.ing/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-for-coding-agents.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/bean.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/constant.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/csimple.html</loc><lastmod>2026-11-06</lastmod></url>

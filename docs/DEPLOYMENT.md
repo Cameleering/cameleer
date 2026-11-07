@@ -220,6 +220,15 @@ makes the zip and the cold start smaller. Measured init times are in
 `camel.main.duration-max-messages` stops after that many invocations (useful in tests). Lambda
 sends SIGTERM before it shuts a sandbox down; routes are stopped gracefully then.
 
+### An MCP server on Lambda
+
+Function URL and API Gateway requests for `/mcp` reach Cameleer's MCP server in process: zip
+the tool routes with an `application.properties` that sets `camel.server.mcp-enabled=true` and
+`camel.server.mcp-tags`, and build with `--features ai`. See
+[MCP server: on AWS Lambda](guides/mcp-server.md#on-aws-lambda), and
+[run it anywhere](guides/mcp-server.md#run-it-anywhere) for Docker, Compose, Kubernetes and
+Cloud Run.
+
 ## Smaller builds
 
 The default build and image contain every component family. A function, an edge device or a

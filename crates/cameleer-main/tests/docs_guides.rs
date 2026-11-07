@@ -1733,6 +1733,84 @@ fn edge_sensor_rollup() {
     main.stop().unwrap();
 }
 
+/// A stateless (2026-07-28) MCP request to `url`; returns the JSON-RPC response.
+fn mcp_call(url: &str, method: &str, name: Option<&str>, params: &str) -> Value {
+    let body = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"{}","params":{{"_meta":{{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{{}}}}{}}}}}"#,
+        method, params
+    );
+    let mut h = vec![("Content-Type", "application/json"), ("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", method)];
+    if let Some(n) = name {
+        h.push(("Mcp-Name", n));
+    }
+    let r = cameleer_http::client::HttpClient::new().request("POST", url, &h, Some(body.as_bytes()), Some(Duration::from_secs(10))).unwrap();
+    cameleer_core::json::parse(&r.body_text()).unwrap_or_else(|e| panic!("{}: {}", e, r.body_text()))
+}
+
+#[test]
+fn edge_mcp_gateway_tools() {
+    assert_guide_shows_file(EDGE, "edge-mcp-gateway-tools", "edge/mcp-gateway-tools.camel.yaml");
+    let mqtt = cameleer_kafka_mqtt::testing::MqttBroker::start().unwrap();
+    let text = subst(&example_file("edge/mcp-gateway-tools.camel.yaml"), &[("MQTT_BROKER", &mqtt.url()), ("GATEWAY_ID", "plant-7")]);
+    resolve_all("mcp-gateway-tools", &text);
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut main = cameleer_main::new_main();
+    main.add_route_source("mcp-gateway-tools.camel.yaml", text);
+    // what `cameleer run ... --mcp` sets
+    main.set_property("camel.server.mcp-enabled", "true");
+    main.set_property("camel.server.mcp-tags", "*,untagged");
+    main.set_property("camel.server.host", "127.0.0.1");
+    main.set_property("camel.server.port", port.to_string());
+    let broker = mqtt.url();
+    main.configure(move |ctx| {
+        ctx.add_routes(move |b| {
+            b.from(format!("paho:devices/+/setpoint?brokerUrl={}&qos=1&clientId=test-devices", broker)).to("mock:setpoints");
+        })
+    });
+    main.start().unwrap();
+    let ctx = main.context().clone();
+    let url = format!("http://127.0.0.1:{}/mcp", port);
+    let t = template(&ctx);
+    let publish = |sensor: &str, v: &str| t.send_body(&format!("paho:sensors/{}/temperature?brokerUrl={}&qos=1", sensor, mqtt.url()), v.to_string()).unwrap();
+
+    let tools = mcp_call(&url, "tools/list", None, "").to_json();
+    assert!(tools.contains("\"latest_readings\"") && tools.contains("\"set_setpoint\""), "{}", tools);
+
+    // readings: the latest per sensor, malformed ones dropped
+    for (s, v) in [("t1", "20"), ("t1", "garbage"), ("t2", "5.5"), ("t1", "21.5")] {
+        publish(s, v);
+    }
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let readings = loop {
+        let r = mcp_call(&url, "tools/call", Some("latest_readings"), r#","name":"latest_readings","arguments":{}"#).to_json();
+        if r.contains("21.5") && r.contains("5.5") {
+            break r;
+        }
+        assert!(Instant::now() < deadline, "readings never arrived: {}", r);
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(!readings.contains("garbage") && !readings.contains(r#"\"celsius\":20"#), "{}", readings);
+
+    // a setpoint within the limit goes straight to the device
+    let r = mcp_call(&url, "tools/call", Some("set_setpoint"), r#","name":"set_setpoint","arguments":{"device":"fan-1","celsius":22}"#).to_json();
+    assert!(r.contains(r#"\"sent\": true"#) || r.contains(r#"\"sent\":true"#), "{}", r);
+    let sent = wait_bodies(&ctx, "mock:setpoints", 1);
+    assert!(sent[0].contains("\"setpoint\": 22") && sent[0].contains("plant-7"), "{}", sent[0]);
+    assert_eq!(header_of(&mock(&ctx, "mock:setpoints").received_exchanges()[0], "CamelMqttTopic"), "devices/fan-1/setpoint");
+
+    // above 30 °C the call is parked for an operator (approvalEndpoint): nothing is published
+    let r = mcp_call(&url, "tools/call", Some("set_setpoint"), r#","name":"set_setpoint","arguments":{"device":"heater-1","celsius":45}"#).to_json();
+    assert!(r.contains("needs approval") && r.contains("handle is approval-"), "{}", r);
+    let reg = cameleer_ai::AiRegistry::of(&ctx).unwrap();
+    assert_eq!(reg.pending_approvals().len(), 1, "one call waits for an operator");
+    // an unknown device is refused by the schema before the route runs
+    let r = mcp_call(&url, "tools/call", Some("set_setpoint"), r#","name":"set_setpoint","arguments":{"device":"valve-9","celsius":20}"#).to_json();
+    assert!(r.contains("isError") || r.contains("\"error\""), "{}", r);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(bodies(&ctx, "mock:setpoints").len(), 1, "only the approved-free setpoint reached a device");
+    main.stop().unwrap();
+}
+
 #[test]
 fn edge_store_and_forward() {
     assert_guide_shows_file(EDGE, "edge-store-and-forward", "edge/store-and-forward.camel.yaml");

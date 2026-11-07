@@ -1,0 +1,79 @@
+# MCP tools on an edge gateway: an AI agent (Claude Desktop on a technician's laptop, or an
+# agent in the cloud) reads the latest sensor readings and changes a device setpoint over the
+# plant's local MQTT broker. Readings stay on the gateway (embedded in-memory SQL); a setpoint
+# above 30 °C waits for a person to approve it, and only known devices are accepted.
+#
+# Needs: an MQTT broker (Mosquitto, EMQX, HiveMQ, ...).
+#   export MQTT_BROKER=tcp://localhost:1883 GATEWAY_ID=plant-7
+#
+# Run with Docker (arm64 and amd64; Linux), serving MCP on http://<gateway>:8080/mcp:
+#   docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true \
+#     -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" pmsudhi/cameleer \
+#     run /routes/mcp-gateway-tools.camel.yaml --mcp
+# Approve a parked setpoint (CAMEL_LOCAL_STATUS lets the operator commands reach the process):
+#   docker exec gw cameleer tool approvals
+#   docker exec gw cameleer tool approve <handle>
+# Try:
+#   mosquitto_pub -t sensors/t1/temperature -m 21.5
+#   mosquitto_sub -t 'devices/+/setpoint' -v
+- route:
+    id: create-readings-table
+    from:
+      uri: timer:create-readings?repeatCount=1&delay=0
+      steps:
+        - to: "sql:create table if not exists readings (sensor text, celsius double precision, at text)?dataSource=jdbc:rustsql:mem:gateway"
+- route:
+    id: remember-latest-reading
+    from:
+      uri: "paho:sensors/+/temperature?brokerUrl={{env:MQTT_BROKER:tcp://localhost:1883}}&qos=1&clientId={{env:GATEWAY_ID:gateway-1}}-readings"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - filter:
+            simple: "${body} regex '-?[0-9]+(\\.[0-9]+)?'"
+            steps:
+              - setHeader:
+                  name: sensor
+                  simple: "${header.CamelMqttTopic.split('/')[1]}"
+              - setHeader:
+                  name: celsius
+                  simple: "${bodyAs(Double)}"
+              - setHeader:
+                  name: at
+                  simple: "${date:now:yyyy-MM-dd'T'HH:mm:ss'Z'}"
+              - to: "sql:delete from readings where sensor = :#sensor?dataSource=jdbc:rustsql:mem:gateway"
+              - to: "sql:insert into readings (sensor, celsius, at) values (:#sensor, :#celsius, :#at)?dataSource=jdbc:rustsql:mem:gateway"
+- route:
+    id: latest-readings
+    from:
+      uri: ai-tool:latest_readings
+      parameters:
+        description: The latest temperature reading of every sensor on this gateway
+        tags: plant
+        readOnlyHint: true
+      steps:
+        - to: "sql:select sensor, celsius, at from readings order by sensor?dataSource=jdbc:rustsql:mem:gateway"
+        - marshal:
+            json: {}
+- route:
+    id: set-setpoint
+    from:
+      uri: ai-tool:set_setpoint
+      parameters:
+        description: Set a device's temperature setpoint in °C; above 30 °C a person approves first
+        tags: plant
+        parameter.device: string
+        parameter.device.description: The device id
+        parameter.device.required: true
+        parameter.device.enum: fan-1,fan-2,heater-1
+        parameter.celsius: number
+        parameter.celsius.description: The new setpoint in °C
+        parameter.celsius.required: true
+        approval: "${header.celsius} > 30"
+        approvalEndpoint: log:setpoint-approvals
+      steps:
+        - setBody:
+            simple: '{"setpoint": ${header.celsius}, "gateway": "{{env:GATEWAY_ID:gateway-1}}"}'
+        - toD: "paho:devices/${header.device}/setpoint?brokerUrl={{env:MQTT_BROKER:tcp://localhost:1883}}&qos=1&clientId={{env:GATEWAY_ID:gateway-1}}-setpoints"
+        - setBody:
+            simple: '{"device": "${header.device}", "setpoint": ${header.celsius}, "sent": true}'

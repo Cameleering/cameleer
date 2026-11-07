@@ -160,6 +160,17 @@ h2 { font-size: clamp(32px, 4vw, 48px); line-height: 1.05; letter-spacing: -.035
 .all-cases a:hover { text-decoration: underline; }
 .agents-plan { margin: 16px 0 0; font-size: 14px; color: #8a93ab; }
 .agents-plan a { color: #c9cfdf; }
+.vs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 48px 0 0; }
+.vs-col { border: 1px solid #3b4566; border-radius: 12px; padding: 24px 26px; }
+.vs-col.good { border-color: var(--sand); background: rgba(255, 255, 255, .04); }
+.vs-col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #a9b1c7; margin: 0 0 8px; font-weight: 600; }
+.vs-n { display: block; font-size: clamp(22px, 2.4vw, 28px); font-weight: 800; letter-spacing: -.02em; color: #fff; margin: 0 0 14px; }
+.vs-col ul { margin: 0; padding-left: 18px; color: #c9cfdf; font-size: 15px; }
+.vs-col li { margin: 6px 0; }
+.vs-proof { margin: 20px 0 0; font-size: 14px; color: #a9b1c7; max-width: 60em; }
+.vs-proof code { color: #fff; }
+.vs-proof a { color: #fff; }
+@media (max-width: 900px) { .vs { grid-template-columns: 1fr; } }
 .ill .s { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .ill .f { fill: var(--signal-soft); stroke: var(--signal); stroke-width: 1.5; }
 .ill .d { fill: var(--sand); }
@@ -388,6 +399,29 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <li><b>Route on the answer</b><span>content-based routing on a fixed label set, JSON schema checks on the output, a re-ask on failure</span></li>
       <li><b>Reliable actions</b><span>MCP or REST tools with schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts that cancel, compensation, audit log</span></li>
     </ol>
+    <div class="vs" role="group" aria-label="One refund across four systems: direct tool calls compared with a Cameleer route">
+      <div class="vs-col">
+        <h3>Direct tool calls</h3>
+        <b class="vs-n">4 tool calls, 5 model turns</b>
+        <ul>
+          <li>A retried call refunds the customer twice</li>
+          <li>A failed step leaves half-done work for the model to undo</li>
+          <li>The model chooses the refund amount</li>
+          <li>The agent holds every API key</li>
+        </ul>
+      </div>
+      <div class="vs-col good">
+        <h3>Through a Cameleer route</h3>
+        <b class="vs-n">1 tool call, 2 model turns</b>
+        <ul>
+          <li>Each request runs once; a repeat gets <code>duplicate</code></li>
+          <li>A saga cancels the refund when a later step fails</li>
+          <li>The amount comes from the order, not the prompt</li>
+          <li>Keys stay in the route; every call lands in the audit log</li>
+        </ul>
+      </div>
+    </div>
+    <p class="vs-proof">Tested on a damaged-order refund across orders, payments, shipping and email: <code>200</code> resolved · <code>200</code> duplicate, nothing run twice · <code>400</code> every bad argument named · <code>409</code> not delivered yet · <code>202</code> over the limit, waits for a person · <code>502</code> carrier down, refund rolled back. <a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">The route and the walkthrough</a></p>
     <p class="agents-more"><a href="use-cases/mcp-tool-server/">Routes as MCP tools</a> · <a href="compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a> · <a href="use-cases/llm-gateway-in-process/">Model calls without a gateway</a> · <a href="docs/guides/agents.html">Agent cookbook</a> · <a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">Direct tool calls vs Cameleer</a> · <a href="docs/guides/ai-components.html">AI components</a> · <a href="docs/guides/yaml-for-coding-agents.html">Let a coding agent write the routes</a>, checked with <code>cameleer validate</code></p>
     <p class="agents-plan"><code>cameleer run tools.camel.yaml --mcp</code> serves the tools to Claude Desktop, VS Code, Cursor and agent frameworks, in both MCP protocol eras; as a gateway it puts the same rules on other MCP servers' tools. The <a href="docs/guides/agent-step.html">agent step</a> runs a model and its tools in a loop inside a route.</p>
   </div>
