@@ -1,0 +1,260 @@
+{
+  "date": "2026-11-07",
+  "repo": {
+    "forks": 2,
+    "open_issues": 14,
+    "stars": 2,
+    "watchers": 0
+  },
+  "views": {
+    "count": 106,
+    "uniques": 9,
+    "views": [
+      {
+        "timestamp": "2026-10-24T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-25T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-26T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-27T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-28T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-29T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-30T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-31T00:00:00Z",
+        "count": 1,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-11-01T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-11-02T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-11-03T00:00:00Z",
+        "count": 5,
+        "uniques": 1
+      },
+      {
+        "timestamp": "2026-11-04T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-11-05T00:00:00Z",
+        "count": 68,
+        "uniques": 6
+      },
+      {
+        "timestamp": "2026-11-06T00:00:00Z",
+        "count": 32,
+        "uniques": 4
+      }
+    ]
+  },
+  "clones": {
+    "count": 1603,
+    "uniques": 326,
+    "clones": [
+      {
+        "timestamp": "2026-10-24T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-25T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-26T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-27T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-28T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-29T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-30T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-10-31T00:00:00Z",
+        "count": 132,
+        "uniques": 42
+      },
+      {
+        "timestamp": "2026-11-01T00:00:00Z",
+        "count": 60,
+        "uniques": 22
+      },
+      {
+        "timestamp": "2026-11-02T00:00:00Z",
+        "count": 543,
+        "uniques": 99
+      },
+      {
+        "timestamp": "2026-11-03T00:00:00Z",
+        "count": 86,
+        "uniques": 20
+      },
+      {
+        "timestamp": "2026-11-04T00:00:00Z",
+        "count": 8,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-11-05T00:00:00Z",
+        "count": 390,
+        "uniques": 96
+      },
+      {
+        "timestamp": "2026-11-06T00:00:00Z",
+        "count": 384,
+        "uniques": 79
+      }
+    ]
+  },
+  "referrers": [
+    {
+      "referrer": "github.com",
+      "count": 11,
+      "uniques": 3
+    },
+    {
+      "referrer": "Bing",
+      "count": 3,
+      "uniques": 1
+    },
+    {
+      "referrer": "cameleer.ing",
+      "count": 3,
+      "uniques": 1
+    },
+    {
+      "referrer": "DuckDuckGo",
+      "count": 1,
+      "uniques": 1
+    },
+    {
+      "referrer": "pmsudhi.github.io",
+      "count": 1,
+      "uniques": 1
+    }
+  ],
+  "paths": [
+    {
+      "path": "/pmsudhi/cameleer",
+      "title": "Overview",
+      "count": 27,
+      "uniques": 6
+    },
+    {
+      "path": "/pmsudhi/Rust-camel",
+      "title": "Overview",
+      "count": 10,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer/actions/runs/41993810192/job/127132061858",
+      "title": "/actions/runs/41993810192/job/127132061858",
+      "count": 7,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer/actions/runs/41993810192/job/127132061472",
+      "title": "/actions/runs/41993810192/job/127132061472",
+      "count": 5,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer/pulls",
+      "title": "/pulls",
+      "count": 5,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer/pull/16/checks",
+      "title": "/pull/16/checks",
+      "count": 4,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer/pull/16",
+      "title": "/pull/16",
+      "count": 3,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer/issues/5",
+      "title": "/issues/5",
+      "count": 2,
+      "uniques": 2
+    },
+    {
+      "path": "/pmsudhi/Rust-camel/branches",
+      "title": "/branches",
+      "count": 2,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/Rust-camel/tree/claude/rust-camel-impl",
+      "title": "/tree/claude/rust-camel-impl",
+      "count": 2,
+      "uniques": 1
+    }
+  ],
+  "crates_io": {
+    "crate": "cameleer-main",
+    "downloads": 43,
+    "recent_downloads": 43,
+    "max_version": "0.4.0"
+  },
+  "docker_hub": {
+    "pull_count": 447,
+    "star_count": 0
+  }
+}
