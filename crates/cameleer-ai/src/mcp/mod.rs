@@ -152,6 +152,10 @@ pub struct McpConfig {
     /// Send route exceptions to MCP clients as they are (default: a generic message, the cause
     /// is logged), as `camel.server.mcp-expose-errors`.
     pub expose_errors: bool,
+    /// `camel.server.mcp-resource-tool`: also list a read-only tool of this name that reads any
+    /// exposed resource by URI (`true` names it `read_document`). Most MCP clients only attach
+    /// resources when the user picks one; the tool lets the model read them when it needs to.
+    pub resource_tool: Option<String>,
     pub keep_alive: Duration,
     pub session_idle_ttl: Duration,
     pub resource_timeout: Duration,
@@ -180,6 +184,7 @@ impl Default for McpConfig {
             server_icons: None,
             server_name_set: false,
             expose_errors: false,
+            resource_tool: None,
             server_version: env!("CARGO_PKG_VERSION").into(),
             instructions: None,
             keep_alive: Duration::from_secs(30),
@@ -245,6 +250,12 @@ impl McpConfig {
             c.server_icons = Some(cameleer_core::json::parse(&icons).map_err(|e| CamelError::illegal_argument(format!("camel.server.mcp-server-icons must be a JSON array: {}", e.message)))?);
         }
         c.expose_errors = flag("camel.server.mcp-expose-errors").unwrap_or(false);
+        c.resource_tool = match get("camel.server.mcp-resource-tool").map(|v| v.trim().to_string()) {
+            None => None,
+            Some(v) if v.is_empty() || v.eq_ignore_ascii_case("false") => None,
+            Some(v) if v.eq_ignore_ascii_case("true") => Some("read_document".into()),
+            Some(v) => Some(v),
+        };
         c.keep_alive = dur("camel.server.mcp-session-keep-alive-interval", c.keep_alive)?;
         c.session_idle_ttl = dur("camel.server.mcp-session-idle-ttl", c.session_idle_ttl)?;
         c.resource_timeout = dur("camel.server.mcp-resource-timeout", c.resource_timeout)?;
@@ -798,7 +809,13 @@ impl McpServer {
 
     fn list(&self, params: &ObjectMap, rc: &RequestContext, kind: ListKind) -> std::result::Result<Value, RpcError> {
         let items: Vec<Value> = match kind {
-            ListKind::Tools => self.registry.tools(&[]).into_iter().filter(|t| self.config.exposes(&t.tags)).map(|t| t.to_value()).collect(),
+            ListKind::Tools => {
+                let mut tools: Vec<Value> = self.registry.tools(&[]).into_iter().filter(|t| self.config.exposes(&t.tags)).map(|t| t.to_value()).collect();
+                if let Some(t) = self.resource_tool_definition() {
+                    tools.push(t);
+                }
+                tools
+            }
             ListKind::Resources | ListKind::Templates => {
                 let want_templates = kind == ListKind::Templates;
                 self.registry
@@ -889,6 +906,11 @@ impl McpServer {
     }
 
     fn call_tool(&self, params: &ObjectMap, rc: &RequestContext) -> std::result::Result<Value, RpcError> {
+        if let (Some(tool), Some(name)) = (&self.config.resource_tool, params.get("name").and_then(|n| n.as_str())) {
+            if tool == name && !self.registry.tools(&[]).iter().any(|t| t.name == name) {
+                return Ok(self.call_resource_tool(params, rc));
+            }
+        }
         let mut call = self.tool_call_for(params, rc)?;
         let mut responses = ObjectMap::new();
         // 2026-07-28 retry of a call that waited for approval or for the client's answers
@@ -977,8 +999,8 @@ impl McpServer {
         });
         match accepted {
             Some(true) => self.registry.approve(handle, &approver),
-            Some(false) => self.registry.deny(handle, &approver, "declined in the client"),
-            None => self.registry.deny(handle, &approver, "no answer from the client"),
+            Some(false) => self.registry.deny(handle, &approver, "the user declined it in the approval form"),
+            None => self.registry.deny(handle, &approver, "the user gave no answer to the approval form"),
         }
     }
 
@@ -1041,6 +1063,59 @@ impl McpServer {
             return Err("the arguments changed");
         }
         Ok(s("h"))
+    }
+
+    /// The read-only tool that reads exposed resources (`camel.server.mcp-resource-tool`); its
+    /// description lists them so the model knows what it can read.
+    fn resource_tool_definition(&self) -> Option<Value> {
+        let name = self.config.resource_tool.as_ref()?;
+        let entries: Vec<_> = self.registry.resource_entries().into_iter().filter(|r| self.config.exposes(&r.tags)).collect();
+        if entries.is_empty() {
+            return None;
+        }
+        let mut list = String::new();
+        for r in &entries {
+            let label = r.title.clone().unwrap_or_else(|| r.name.clone());
+            let desc = r.description.as_deref().map(|d| format!(": {}", d)).unwrap_or_default();
+            if r.is_template() {
+                list.push_str(&format!("\n- {} (fill in the braces) - {}{}", r.uri, label, desc));
+            } else {
+                list.push_str(&format!("\n- {} - {}{}", r.uri, label, desc));
+            }
+        }
+        let description = format!("Read one of the server's documents by its URI and return its content. Available:{}", list);
+        let schema = Value::object([
+            ("type", Value::from("object")),
+            ("properties", Value::object([("uri", Value::object([("type", Value::from("string")), ("description", Value::from("The document's URI from the list"))]))])),
+            ("required", Value::Array(vec![Value::from("uri")])),
+        ]);
+        Some(Value::object([
+            ("name", Value::from(name.as_str())),
+            ("title", Value::from("Read a document")),
+            ("description", Value::from(description)),
+            ("inputSchema", schema),
+            ("annotations", Value::object([("readOnlyHint", Value::Bool(true)), ("idempotentHint", Value::Bool(true)), ("openWorldHint", Value::Bool(false))])),
+        ]))
+    }
+
+    fn call_resource_tool(&self, params: &ObjectMap, rc: &RequestContext) -> Value {
+        let uri = params.get("arguments").and_then(|a| a.as_object()).and_then(|a| a.get("uri")).map(|u| u.to_string()).unwrap_or_default();
+        let mut p = ObjectMap::new();
+        p.insert("uri".into(), Value::from(uri.as_str()));
+        match self.read_resource(&p, rc) {
+            Ok(v) => {
+                let text: Vec<String> = v
+                    .get("contents")
+                    .and_then(|c| c.as_array())
+                    .map(|c| c.iter().filter_map(|x| x.get("text").map(|t| t.to_string())).collect())
+                    .unwrap_or_default();
+                tool_result(&ToolResult::ok(text.join("\n"), None))
+            }
+            Err(e) => {
+                let available: Vec<String> = self.registry.resource_entries().into_iter().filter(|r| self.config.exposes(&r.tags)).map(|r| r.uri.clone()).collect();
+                tool_result(&ToolResult::error(format!("{}. Available documents: {}", e.message, available.join(", "))))
+            }
+        }
     }
 
     fn read_resource(&self, params: &ObjectMap, rc: &RequestContext) -> std::result::Result<Value, RpcError> {

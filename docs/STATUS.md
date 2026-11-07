@@ -293,6 +293,27 @@ in `docs/design/advantage-matrix.md` (internal).
   same machines (an event-driven server core is the next step); MCP per-request CPU is about twice
   a plain HTTP request; on CPUs without SHA instructions the envelope costs 6 µs.
 
+## MCP field test with Claude (2026-11-07, branch `agent-action-layer`)
+
+Plan in `docs/design/mcp-field-test/plan.md`. An online shop's back office as an MCP server
+(`examples/agents/mcp-shop`, 19 tools, policies, prompts) and a harness (`scripts/mcp-fieldtest`,
+the official MCP Python SDK plus Claude, admin routes in `admin.camel.yaml`) that runs 40 real
+requests, answers approval forms and size questions as a user, decides manager approvals between
+turns, and grades each run by tool calls, database state and a Claude judge.
+
+- **Results:** Claude Opus 5.5 157/160 in 2025-11-25 sessions and 39/40 stateless (2026-07-28),
+  about 2.9 turns and 3.3 tool calls per request, about $0.026 per request; Claude Haiku 5.5
+  104/120 before the wording fixes, 25/33 on reruns of its failed cases after them. Records in
+  `target/mcp-fieldtest/results/` (not committed).
+- **Fixed from the findings:** `camel.server.mcp-resource-tool`; `CamelAiToolIsError` refusals;
+  Accept approves; sanitized errors after approval; out-of-band approvals answered by calling
+  again; deduplication scoped to the conversation; `CamelAiToolApprovedBy`; rejection text says
+  nothing ran; SQL date arithmetic.
+- **Showcase:** `docs/guides/mcp-shop-example.md` and the example's README.
+- **Open:** a hands-on pass in Claude Desktop (the config is written locally, pointing at a copy
+  of the release binary in `target/mcp-fieldtest/bin`); Haiku's remaining misses are weekday and
+  sum arithmetic.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

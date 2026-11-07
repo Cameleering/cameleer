@@ -649,3 +649,75 @@ fn guardrails_redact_authorize_and_cache() {
     assert_eq!(reg.tool("customer").unwrap().description, "customer");
     ctx.stop().unwrap();
 }
+
+#[test]
+fn an_out_of_band_approval_is_found_by_calling_again() {
+    // Found by the MCP field test: a user who comes back after a manager decided must get the
+    // decision by making the same call again, not a second request for approval.
+    let ctx = context();
+    ctx.add_routes(|b| {
+        b.from("ai-tool:store_credit?parameter.customer=integer&parameter.amount=number&approval=always&approvalEndpoint=mock:manager")
+            .set_body(simple("credited ${header.amount} to ${header.customer} by ${header.CamelAiToolApprovedBy}"));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let reg = AiRegistry::of(&ctx).unwrap();
+    let call = |args: &str, conv: &str| {
+        let mut c = ToolCall::new("store_credit", json(args));
+        c.principal = Some("ann".into());
+        c.conversation_id = Some(conv.into());
+        reg.call(c)
+    };
+    let first = call(r#"{"customer":2,"amount":20}"#, "c1");
+    let ToolStatus::ApprovalRequired { handle } = first.status.clone() else { panic!("{:?}", first) };
+    // asked again while waiting: the same handle, no second request to the manager
+    let again = call(r#"{"customer":2,"amount":20}"#, "c1");
+    assert!(matches!(&again.status, ToolStatus::ApprovalRequired { handle: h } if *h == handle), "{:?}", again);
+    assert!(again.text.contains("still waiting"), "{}", again.text);
+    assert_eq!(ctx.mock_endpoint("mock:manager").unwrap().received_counter(), 1);
+    // the manager approves; the same call now returns the outcome without running again
+    assert_eq!(reg.approve(&handle, "jo").text, "credited 20 to 2 by jo");
+    let done = call(r#"{"customer":2,"amount":20}"#, "c1");
+    assert_eq!(done.text, "credited 20 to 2 by jo");
+    assert!(done.duplicate);
+    // a rejection is returned the same way, with the reason
+    let other = call(r#"{"customer":8,"amount":50}"#, "c1");
+    let ToolStatus::ApprovalRequired { handle } = other.status.clone() else { panic!("{:?}", other) };
+    reg.deny(&handle, "jo", "not justified");
+    let refused = call(r#"{"customer":8,"amount":50}"#, "c1");
+    assert!(refused.is_error && refused.text.contains("rejected by jo: not justified. It did not run, and nothing was changed."), "{}", refused.text);
+    // another conversation asking the same thing is a new request
+    let fresh = call(r#"{"customer":8,"amount":50}"#, "c2");
+    assert!(matches!(fresh.status, ToolStatus::ApprovalRequired { .. }), "{:?}", fresh);
+    ctx.stop().unwrap();
+}
+
+#[test]
+fn deduplication_without_a_call_id_is_scoped_to_the_conversation() {
+    let ctx = context();
+    let runs = counter();
+    let r2 = runs.clone();
+    ctx.add_routes(move |b| {
+        let r2 = r2.clone();
+        b.from("ai-tool:restock?parameter.sku=string").process(move |ex: &mut Exchange| {
+            let n = r2.fetch_add(1, Ordering::SeqCst) + 1;
+            ex.set_body(format!("request {}", n));
+            Ok(())
+        });
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let reg = AiRegistry::of(&ctx).unwrap();
+    let call = |conv: &str| {
+        let mut c = ToolCall::new("restock", json(r#"{"sku":"BTL-1L"}"#));
+        c.principal = Some("ann".into());
+        c.conversation_id = Some(conv.into());
+        reg.call(c)
+    };
+    assert_eq!(call("c1").text, "request 1");
+    let retry = call("c1");
+    assert_eq!((retry.text.as_str(), retry.duplicate), ("request 1", true), "a retry in the same conversation runs once");
+    assert_eq!(call("c2").text, "request 2", "another conversation asking the same thing runs");
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+    ctx.stop().unwrap();
+}

@@ -486,6 +486,9 @@ pub struct AiRegistry {
     interactions: Mutex<HashMap<u64, Arc<dyn CallInteraction>>>,
     /// Results of resolved approvals, by handle (a paused agent resumes from them).
     resolved: Mutex<HashMap<String, (Instant, ToolResult)>>,
+    /// Out-of-band approvals by call key (tool, conversation, principal, arguments): the same
+    /// call made again while it waits gets the same handle, and after the decision its result.
+    approval_keys: Mutex<HashMap<String, String>>,
     sagas: Mutex<HashMap<String, Vec<Compensation>>>,
     listeners: Mutex<Vec<(u64, Listener)>>,
     seq: AtomicU64,
@@ -532,6 +535,7 @@ impl AiRegistry {
             idem_cv: Condvar::new(),
             approvals: Mutex::default(),
             resolved: Mutex::default(),
+            approval_keys: Mutex::default(),
             interactions: Mutex::default(),
             sagas: Mutex::default(),
             listeners: Mutex::default(),
@@ -934,6 +938,39 @@ impl AiRegistry {
             match needs_approval(entry, &args, call) {
                 Ok(Some(reason)) => {
                     self.release_trial(entry);
+                    // out of band, the caller learns the outcome by making the same call again
+                    if entry.policy.approval_endpoint.is_some() {
+                        let key = format!("{}\u{0}{}", def.name, idempotency_key(def, &args, call));
+                        let known = self.approval_keys.lock().unwrap_or_else(|p| p.into_inner()).get(&key).cloned();
+                        if let Some(handle) = known {
+                            self.expire_approvals();
+                            if self.approvals.lock().unwrap_or_else(|p| p.into_inner()).contains_key(&handle) {
+                                audit.decision = "approval-required".into();
+                                audit.outcome = "pending".into();
+                                audit.detail = Some(format!("{} (still waiting)", handle));
+                                return ToolResult {
+                                    text: format!("This call to {} is still waiting for an approver ({}); its handle is {}. Try again later with the same arguments to get the outcome.", def.name, reason, handle),
+                                    status: ToolStatus::ApprovalRequired { handle },
+                                    ..ToolResult::ok("", None)
+                                };
+                            }
+                            if let Some(r) = self.approval_result(&handle) {
+                                audit.decision = "decided".into();
+                                audit.outcome = if r.is_error { "error" } else { "ok" }.into();
+                                audit.detail = Some(format!("{} (decided earlier)", handle));
+                                return ToolResult { duplicate: true, ..r };
+                            }
+                        }
+                        let r = self.park(entry, call, args, reason, audit);
+                        if let ToolStatus::ApprovalRequired { handle } = &r.status {
+                            let mut keys = self.approval_keys.lock().unwrap_or_else(|p| p.into_inner());
+                            if keys.len() > 10_000 {
+                                keys.clear();
+                            }
+                            keys.insert(key, handle.clone());
+                        }
+                        return r;
+                    }
                     return self.park(entry, call, args, reason, audit);
                 }
                 Ok(None) => {}
@@ -1122,6 +1159,10 @@ impl AiRegistry {
         }
         if let Some(p) = &call.principal {
             ex.set_header(headers::PRINCIPAL, p.as_str());
+        }
+        // who approved the call, for the route (and its own records)
+        if let Some(a) = &call.approved_by {
+            ex.set_header(headers::APPROVED_BY, a.as_str());
         }
         for (k, v) in &call.headers {
             ex.set_header(k.as_str(), v.clone());
@@ -1346,9 +1387,9 @@ impl AiRegistry {
         };
         self.audit.append(&audit);
         let text = if reason.is_empty() {
-            format!("The call to {} was rejected by {}", p.request.tool, approver)
+            format!("The call to {} was rejected by {}. It did not run, and nothing was changed.", p.request.tool, approver)
         } else {
-            format!("The call to {} was rejected by {}: {}", p.request.tool, approver, reason)
+            format!("The call to {} was rejected by {}: {}. It did not run, and nothing was changed.", p.request.tool, approver, reason.trim_end_matches('.'))
         };
         let r = ToolResult { text, structured: None, is_error: true, status: ToolStatus::Denied, duplicate: false, return_direct: false, content: None, route_error: false };
         self.remember(handle, &r);
@@ -1659,7 +1700,7 @@ fn needs_approval(entry: &ToolEntry, args: &ObjectMap, call: &ToolCall) -> Resul
 }
 
 /// The key a call is deduplicated on: the declared `idempotency_key` argument, else the call
-/// id, else a digest of the principal and arguments.
+/// id, else a digest of the principal, the conversation and the arguments.
 fn idempotency_key(def: &ToolDefinition, args: &ObjectMap, call: &ToolCall) -> String {
     if def.declared_arguments().iter().any(|a| a == "idempotency_key") {
         if let Some(v) = args.get("idempotency_key").filter(|v| !v.is_null()) {
@@ -1669,7 +1710,11 @@ fn idempotency_key(def: &ToolDefinition, args: &ObjectMap, call: &ToolCall) -> S
     if let Some(id) = &call.call_id {
         return format!("call:{}", id);
     }
-    let digest = sha256_hex(format!("{}\u{0}{}", call.principal.as_deref().unwrap_or(""), canonical_json(&Value::Object(args.clone()))).as_bytes());
+    // scoped to the conversation (the MCP session, or `io.cameleer/conversationId`), so a retry
+    // in the same conversation is caught and two conversations that ask the same thing are not
+    let digest = sha256_hex(
+        format!("{}\u{0}{}\u{0}{}", call.principal.as_deref().unwrap_or(""), call.conversation_id.as_deref().unwrap_or(""), canonical_json(&Value::Object(args.clone()))).as_bytes(),
+    );
     format!("args:{}", digest)
 }
 

@@ -11,7 +11,7 @@ commercial or open source; this test is how we find out where we are not yet.
 
 | layer | how |
 |---|---|
-| Hosting | `cameleer run scripts/mcp-fieldtest/acme.camel.yaml` with `camel.server.mcp-*` properties: Streamable HTTP on localhost, as a user deploys it. Claude Desktop uses the same file with `--mcp-stdio`. |
+| Hosting | `cameleer run examples/agents/mcp-shop/shop.camel.yaml scripts/mcp-fieldtest/admin.camel.yaml` with `camel.server.mcp-*` properties: Streamable HTTP on localhost, as a user deploys it. Claude Desktop uses the same file with `--mcp-stdio`. |
 | Protocol client | the official MCP Python SDK (`mcp`, `ClientSession` over Streamable HTTP, protocol 2025-11-25), the SDK family Claude Desktop and most agent frameworks use. It declares the `elicitation` capability like Claude Desktop, and the harness answers approval forms as the user would. |
 | Model | Claude through the Anthropic API (official `anthropic` SDK). Headline runs: Claude Opus 5.5 (the default Claude model). Robustness run: Claude Haiku 5.5, because a small model shows weak descriptions first. |
 | Tools | everything the server lists: names, descriptions, input and output schemas, annotations, exactly as Claude Desktop passes them to the model (no hand-written hints in the harness) |

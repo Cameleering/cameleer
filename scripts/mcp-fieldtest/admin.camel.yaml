@@ -1,0 +1,55 @@
+# Admin routes for the MCP field test (not MCP tools, not part of the example): POST
+# /admin/reset re-seeds the database, POST /admin/query runs the SQL in the body and answers JSON
+# rows, POST /admin/approve and /admin/deny decide a parked store-credit approval (body: handle).
+# Run next to examples/agents/mcp-shop/shop.camel.yaml.
+- route:
+    id: admin-reset
+    from:
+      uri: "platform-http:/admin/reset?httpMethodRestrict=POST"
+      steps:
+        - to: direct:reset
+- route:
+    id: admin-query
+    from:
+      uri: "platform-http:/admin/query?httpMethodRestrict=POST"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - to: "sql:x?dataSource=jdbc:rustsql:mem:acme&useMessageBodyForSql=true"
+        - marshal:
+            json: {}
+
+- route:
+    id: admin-approve
+    from:
+      uri: "platform-http:/admin/approve?httpMethodRestrict=POST"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setHeader:
+            name: CamelAiToolApprovalHandle
+            simple: "${body.trim()}"
+        - setHeader:
+            name: CamelAiToolApprovedBy
+            constant: manager.jo
+        - to: "ai-tool:issue_store_credit?operation=approve"
+        - setBody:
+            simple: '{"status": "${header.CamelAiToolStatus}"}'
+- route:
+    id: admin-deny
+    from:
+      uri: "platform-http:/admin/deny?httpMethodRestrict=POST"
+      steps:
+        - convertBodyTo:
+            type: java.lang.String
+        - setHeader:
+            name: CamelAiToolApprovalHandle
+            simple: "${body.trim()}"
+        - setHeader:
+            name: CamelAiToolApprovedBy
+            constant: manager.jo
+        - setBody:
+            constant: "Goodwill credit is not justified for this order."
+        - to: "ai-tool:issue_store_credit?operation=deny"
+        - setBody:
+            simple: '{"status": "${header.CamelAiToolStatus}"}'

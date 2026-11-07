@@ -1,15 +1,16 @@
-# Acme Outdoor's back office as an MCP server: customers, orders, shipments, inventory, support
-# tickets, refunds and policies, all Cameleer routes over an embedded SQL database seeded from
-# seed.sql. Used by the MCP field test (harness.py) and as an example of a business MCP server.
+# Acme Outdoor's back office as an MCP server: customers, orders, shipments, stock, support
+# tickets, refunds, store credit, exchanges and policies, all Cameleer routes over an embedded SQL
+# database seeded from seed.sql. README.md lists requests to try in Claude Desktop or any MCP
+# client. The MCP field test (scripts/mcp-fieldtest) runs 40 such requests against this file.
 #
-#   cameleer run acme.camel.yaml --properties application.properties      (Streamable HTTP, /mcp)
-#   cameleer run acme.camel.yaml --mcp-stdio                               (Claude Desktop)
+#   cameleer run shop.camel.yaml --properties application.properties      (Streamable HTTP, /mcp)
+#   cameleer run shop.camel.yaml --properties application.properties --mcp-stdio   (Claude Desktop)
 #
-# Admin routes for the test harness (not MCP): POST /admin/reset re-seeds the database,
-# POST /admin/query runs the SQL in the body and answers JSON rows.
+# Goodwill store credit waits for a manager: `cameleer tool approvals`, then
+# `cameleer tool approve <handle> --by <name>` or `cameleer tool deny <handle> --reason <text>`.
 
 # ---------------------------------------------------------------------------------------------
-# data: seed at start-up and on /admin/reset
+# data: seed at start-up
 # ---------------------------------------------------------------------------------------------
 - route:
     id: seed-on-start
@@ -36,22 +37,6 @@
                     - to: "sql:x?dataSource=jdbc:rustsql:mem:acme&useMessageBodyForSql=true"
         - setBody:
             constant: '{"status": "seeded"}'
-- route:
-    id: admin-reset
-    from:
-      uri: "platform-http:/admin/reset?httpMethodRestrict=POST"
-      steps:
-        - to: direct:reset
-- route:
-    id: admin-query
-    from:
-      uri: "platform-http:/admin/query?httpMethodRestrict=POST"
-      steps:
-        - convertBodyTo:
-            type: java.lang.String
-        - to: "sql:x?dataSource=jdbc:rustsql:mem:acme&useMessageBodyForSql=true"
-        - marshal:
-            json: {}
 
 # ---------------------------------------------------------------------------------------------
 # customers
@@ -177,7 +162,9 @@
         title: Get order details
         description: >-
           One order by number: customer, status, dates (created, shipped, delivered), shipping
-          address, items with SKU, quantity and price, total and amount already refunded.
+          address, items with SKU, quantity and price, total and amount already refunded, and the
+          shipment (carrier, tracking number, delivery status, expected date) once it has shipped.
+          track_shipment adds the tracking events.
         tags: acme
         parameter.orderId: integer
         parameter.orderId.description: The order number, such as 1007
@@ -203,8 +190,14 @@
                     simple: "${bodyAs(String)}"
                 - marshal:
                     json: {}
+                - setHeader:
+                    name: items
+                    simple: "${bodyAs(String)}"
+                - to: "sql:select carrier, tracking, status, eta from shipments where order_id = :#orderId?dataSource=jdbc:rustsql:mem:acme"
+                - marshal:
+                    json: {}
                 - setBody:
-                    simple: '{"order": ${header.order}, "items": ${body}}'
+                    simple: '{"order": ${header.order}, "items": ${header.items}, "shipment": ${body}}'
 - route:
     id: load-order
     from:
@@ -338,7 +331,7 @@
         description: >-
           Find products by part of the name, SKU or category (tents, sleep, cooking, hydration,
           apparel, footwear, lighting, packs, accessories, furniture). Returns SKU, name,
-          category, price and stock.
+          category, price, stock and incoming stock with its date.
         tags: acme
         parameter.query: string
         parameter.query.description: Part of a product name, SKU or category, such as "tent", "bottle" or "LAMP-HD"
@@ -349,7 +342,7 @@
         - setHeader:
             name: pattern
             simple: "%${header.query}%"
-        - to: "sql:select sku, name, category, price, stock from products where name ilike :#pattern or sku ilike :#pattern or category ilike :#pattern order by name?dataSource=jdbc:rustsql:mem:acme"
+        - to: "sql:select sku, name, category, price, stock, incoming_qty as incoming, incoming_date as incomingDate from products where name ilike :#pattern or sku ilike :#pattern or category ilike :#pattern order by name?dataSource=jdbc:rustsql:mem:acme"
         - marshal:
             json: {}
 - route:
@@ -619,12 +612,9 @@
                     name: pr
                     simple: "${header.priority ?: ${body[priority]}}"
                 - setHeader:
-                    name: notes
-                    simple: "${body[notes]}"
-                - setHeader:
-                    name: notes
-                    simple: "${header.notes}${header.note != null ? '[{{acme.today}}] ' + ${header.note} + '\n' : ''}"
-                - to: "sql:update tickets set status = :#st, priority = :#pr, notes = :#notes where id = :#ticketId?dataSource=jdbc:rustsql:mem:acme"
+                    name: noteText
+                    simple: "${header.note ?: ''}"
+                - to: "sql:update tickets set status = :#st, priority = :#pr, notes = case when :#noteText = '' then notes else notes || '[{{acme.today}}] ' || :#noteText || ' ' end where id = :#ticketId?dataSource=jdbc:rustsql:mem:acme"
                 - setBody:
                     simple: '{"ticketId": "${header.ticketId}", "status": "${header.st}", "priority": "${header.pr}", "updated": true}'
 - route:
@@ -790,7 +780,7 @@
                       name: CamelAiToolIsError
                       constant: true
                   - setBody:
-                      simple: "Order ${header.orderId} was delivered ${header.daysSince} days ago, outside the 30-day refund window. Only damaged or defective items can be refunded after 30 days (policy://refunds); otherwise offer store credit or a repair."
+                      simple: "Order ${header.orderId} was delivered ${header.daysSince} days ago, outside the 30-day refund window. Only damaged or defective items can be refunded after 30 days (policy://refunds); otherwise offer store credit (issue_store_credit, needs a manager) or a repair."
             otherwise:
               steps:
                 - to: "sql:insert into refunds (order_id, amount, reason, created) values (:#orderId, :#amt, :#reason, '{{acme.today}}') returning id?dataSource=jdbc:rustsql:mem:acme&outputType=SelectOne"
@@ -885,3 +875,120 @@
       steps:
         - setBody:
             simple: "Write this week's operations summary for the store manager, for the 7 days up to {{acme.today}}: revenue and the top products, orders still waiting to ship, shipments that are delayed, low or out-of-stock products, and open urgent or high-priority tickets. Use the tools for every number."
+
+# ---------------------------------------------------------------------------------------------
+# human in the loop: a manager approves store credit out of band; a tool asks the user mid-call
+# ---------------------------------------------------------------------------------------------
+- route:
+    id: issue-store-credit
+    from:
+      uri: ai-tool:issue_store_credit
+      parameters:
+        title: Give store credit
+        description: >-
+          Give a customer store credit (a goodwill gesture, or instead of a refund outside the
+          policy). Every credit needs a manager's approval: the call waits until a manager approves
+          or rejects it in the back office, which can take a while. If it is still waiting, call
+          again later with exactly the same arguments to get the outcome.
+        tags: acme
+        parameter.customerId: integer
+        parameter.customerId.description: The customer id from search_customers
+        parameter.customerId.required: true
+        parameter.amount: number
+        parameter.amount.description: Amount of credit, at most 200
+        parameter.amount.required: true
+        parameter.reason: string
+        parameter.reason.description: Why the credit is given
+        parameter.reason.required: true
+        approval: always
+        approvalEndpoint: direct:manager-queue
+        approvalTimeout: 1h
+      steps:
+        - choice:
+            when:
+              - simple: "${header.amount} <= 0 || ${header.amount} > 200"
+                steps:
+                  - setHeader:
+                      name: CamelAiToolIsError
+                      constant: true
+                  - setBody:
+                      constant: "Store credit must be more than 0 and at most 200."
+            otherwise:
+              steps:
+                - to: "sql:insert into store_credits (customer_id, amount, reason, approved_by, created) values (:#customerId, :#amount, :#reason, :#CamelAiToolApprovedBy, '{{acme.today}}') returning id?dataSource=jdbc:rustsql:mem:acme&outputType=SelectOne"
+                - setBody:
+                    simple: '{"storeCredit": "SC-${body}", "customerId": ${header.customerId}, "amount": ${header.amount}, "approvedBy": "${header.CamelAiToolApprovedBy}", "status": "credited"}'
+- route:
+    id: manager-queue
+    from:
+      uri: direct:manager-queue
+      steps:
+        - to: "sql:insert into manager_queue values (:#CamelAiToolApprovalHandle, :#CamelAiToolName, :#customerId, :#amount, :#reason, '{{acme.today}}')?dataSource=jdbc:rustsql:mem:acme"
+- route:
+    id: exchange-item
+    from:
+      uri: ai-tool:exchange_item
+      parameters:
+        title: Exchange an item
+        description: >-
+          Exchange one item of a delivered order for another size, within 30 days of delivery. The
+          tool asks the user which size to send; the customer returns the original with a prepaid
+          label.
+        tags: acme
+        parameter.orderId: integer
+        parameter.orderId.description: The order number
+        parameter.orderId.required: true
+        parameter.sku: string
+        parameter.sku.description: The SKU of the item to exchange (get_order lists them)
+        parameter.sku.required: true
+      steps:
+        - to: direct:load-order
+        - to: "sql:select count(*) from order_lines where order_id = :#orderId and sku = :#sku?dataSource=jdbc:rustsql:mem:acme&outputType=SelectOne"
+        - setHeader:
+            name: hasLine
+            simple: "${body}"
+        - choice:
+            when:
+              - simple: "${header.order} == null"
+                steps:
+                  - setHeader:
+                      name: CamelAiToolIsError
+                      constant: true
+                  - setBody:
+                      simple: "Order ${header.orderId} does not exist."
+              - simple: "${header.orderStatus} != 'delivered'"
+                steps:
+                  - setHeader:
+                      name: CamelAiToolIsError
+                      constant: true
+                  - setBody:
+                      simple: "Order ${header.orderId} is ${header.orderStatus}; only delivered items can be exchanged."
+              - simple: "${header.hasLine} == 0"
+                steps:
+                  - setHeader:
+                      name: CamelAiToolIsError
+                      constant: true
+                  - setBody:
+                      simple: "Order ${header.orderId} has no item ${header.sku}; get_order lists its SKUs."
+            otherwise:
+              steps:
+                - setHeader:
+                    name: CamelAiToolElicitSchema
+                    constant: '{"type": "object", "properties": {"size": {"type": "string", "title": "New size", "enum": ["XS", "S", "M", "L", "XL", "XXL"]}}, "required": ["size"]}'
+                - setBody:
+                    simple: "Which size should we send for ${header.sku} on order ${header.orderId}?"
+                - to: ai-tool:current?operation=elicit
+                - choice:
+                    when:
+                      - simple: "${header.CamelAiToolElicitAction} != 'accept'"
+                        steps:
+                          - setBody:
+                              simple: '{"orderId": ${header.orderId}, "status": "not exchanged", "note": "The user did not choose a size (${header.CamelAiToolElicitAction}); nothing was changed."}'
+                    otherwise:
+                      steps:
+                        - setHeader:
+                            name: size
+                            simple: "${body[size]}"
+                        - to: "sql:insert into exchanges (order_id, sku, size, created) values (:#orderId, :#sku, :#size, '{{acme.today}}') returning id?dataSource=jdbc:rustsql:mem:acme&outputType=SelectOne"
+                        - setBody:
+                            simple: '{"exchange": "EX-${body}", "orderId": ${header.orderId}, "sku": "${header.sku}", "newSize": "${header.size}", "note": "The tool asked the user which size to send, and the user chose ${header.size}.", "status": "replacement ships when the original is scanned at the post office; prepaid return label emailed"}'

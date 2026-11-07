@@ -182,11 +182,18 @@ goes through.
 8. **Approval.** A call that needs approval doesn't run. It is parked with a handle and the
    result says so (`CamelAiToolStatus=approval-required`). An approver resolves it with
    `AiRegistry::approve(handle, approver)`, which runs it and returns its result, or
-   `AiRegistry::deny(handle, approver, reason)`, which runs nothing. Over MCP, a tool without
-   an approval endpoint asks the client's user instead (see
+   `AiRegistry::deny(handle, approver, reason)`, which runs nothing. The approved call's route
+   sees the approver in `CamelAiToolApprovedBy`. With an `approvalEndpoint` (approval out of
+   band, by a person who decides later), the caller learns the outcome by making the same call
+   again: while it waits it gets the same handle ("still waiting"), after the decision the
+   result (or the rejection with its reason), without a second request to the approver. Over
+   MCP, a tool without an approval endpoint asks the client's user instead (see
    [MCP server: approvals](../guides/mcp-server.md#approvals)).
 9. **Idempotency.** The key is the `idempotency_key` argument if the schema declares one, else
-   the call id, else a digest of the principal and the arguments. A repeated call returns the
+   the call id, else a digest of the principal, the conversation (`CamelAiToolConversationId`;
+   over MCP the session, or `io.cameleer/conversationId`) and the arguments, so a retry in the
+   same conversation is caught and two conversations that ask for the same thing both run. A
+   repeated call returns the
    recorded result with `CamelAiToolDuplicate=true`. A repeat that arrives while the first is
    running waits for it. A failed call is not recorded, so a retry runs it.
 10. **Compensation.** The undo step is registered, see [Compensation](#compensation).
