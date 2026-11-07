@@ -9,7 +9,7 @@ was added is `7de6166`._
   uses the same name and owns `camel-core` and most `camel-*` names on crates.io; "CAMEL" is also
   the CAMEL-AI agent framework. Crates are now `cameleer-*` (module paths `cameleer_*`), the repo
   is `pmsudhi/cameleer` (GitHub redirects the old URL), the site is
-  https://pmsudhi.github.io/cameleer/. The CLI is `cameleer` (no `camel` binary: that is Apache Camel's CLI name).
+  https://cameleer.ing/. The CLI is `cameleer` (no `camel` binary: that is Apache Camel's CLI name).
 - **Container image:** `pmsudhi/cameleer` on Docker Hub and `ghcr.io/pmsudhi/cameleer`
   (linux/amd64, linux/arm64), a glibc binary on distroless/cc (static musl measured 3-17% slower:
   direct -3%, seda InOut -10%, cbr -8%, splitagg -17%, same container, 2 rounds), built by `.github/workflows/container.yml` on `v*` tags (manual runs publish

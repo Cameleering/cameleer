@@ -20,7 +20,7 @@ Integration Patterns, endpoint URIs and YAML DSL, executed by one native Rust bi
 the JVM. Routes start in about 3 ms and run in megabytes, so Camel-style integration fits on edge
 devices, in serverless functions and behind AI agents. The word comes from *cameleer*, a camel
 driver; the project's short domain is cameleer.ing. See
-[what is cameleering?](https://pmsudhi.github.io/cameleer/cameleering/).
+[what is cameleering?](https://cameleer.ing/cameleering/).
 
 ### Is Cameleer compatible with Apache Camel?
 
@@ -51,7 +51,7 @@ With the same routes, Cameleer handles 1.7 to 8.7 times the throughput of Apache
 Java 21 in every scenario measured: 2.1x on a REST API with JSON, 2.3x writing to PostgreSQL,
 1.7x publishing to Kafka, 8.7x on Kafka stream processing and 3.0x on a content-based router.
 Every scenario, the method and the raw data are on the
-[Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/)
+[Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)
 page and in [BENCHMARKS.md](../BENCHMARKS.md).
 
 ### How much memory does it use?

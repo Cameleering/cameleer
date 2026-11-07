@@ -4,12 +4,12 @@
 
 **Apache Camel routes, rebuilt in Rust.** If you know [Apache Camel](https://camel.apache.org/), you already know Cameleer: the same YAML DSL, endpoint URIs, Enterprise Integration Patterns and Simple expressions, in a single native binary.
 
-- **450x faster startup** than Apache Camel (3 ms vs 1.1 s), **up to 54x less memory**, **1.7–8.7x** the throughput in every scenario ([comparison](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/))
+- **450x faster startup** than Apache Camel (3 ms vs 1.1 s), **up to 54x less memory**, **1.7–8.7x** the throughput in every scenario ([comparison](https://cameleer.ing/compare/apache-camel-vs-cameleer/))
 - About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
 - Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, about 20 MB to download
 
-Website: https://pmsudhi.github.io/cameleer/ · Source: https://github.com/pmsudhi/cameleer
+Website: https://cameleer.ing/ · Source: https://github.com/pmsudhi/cameleer
 
 ## Quick start
 
@@ -90,7 +90,7 @@ docker build --build-arg FEATURES=cloud,jq -t my-cameleer .
 ```
 
 A feature list replaces the default, so name every family you use (`templates`, `jq`, `xpath`,
-`http2` and `validate` are features too). The [build features guide](https://pmsudhi.github.io/cameleer/docs/guides/build-features.html)
+`http2` and `validate` are features too). The [build features guide](https://cameleer.ing/docs/guides/build-features.html)
 lists them and what each adds.
 
 ## Rust crates and CLI

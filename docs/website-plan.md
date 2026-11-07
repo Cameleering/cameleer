@@ -285,10 +285,15 @@ The word *cameleer* (a camel driver) already explains the name to anyone who kno
   `cameleer.ing/docs`, `/agents`, `/compare`, `/lambda` as 301 redirects, in talks, READMEs of
   examples and social cards. The .ing TLD is young; some corporate link filters flag unfamiliar
   TLDs, so the GitHub Pages URL stays canonical until the domain has history.
-- **State on 2026-11-07:** DNS is set up and `cameleer.ing` is the GitHub Pages custom domain;
-  `pmsudhi.github.io/cameleer/` now answers 301 to `http://cameleer.ing/`, and HTTPS is not
-  enforced yet. Step 3 below (canonicals, sitemap, `SITE_URL`, `og:url`, JSON-LD, `llms.txt`)
-  has not been done, so canonicals still point at the redirecting address.
+- **Done on 2026-11-07:** DNS is set up, `cameleer.ing` is the GitHub Pages custom domain and
+  `pmsudhi.github.io/cameleer/` answers 301 to it. Step 3 below was done in one commit: canonicals,
+  `og:url`, JSON-LD, the sitemap (`SITE_URL` in `scripts/build-docs.py`), `robots.txt`,
+  `llms.txt`, the IndexNow host, README, crate `homepage`/`documentation`, the image label, the
+  Docker Hub overview and `CITATION.cff` all name `https://cameleer.ing/`. `CHANGELOG.md` keeps
+  the old links of released versions (they redirect). Left for the owner: enforce HTTPS in the
+  Pages settings, add `cameleer.ing` to Search Console (the existing verification meta tag also
+  verifies a URL-prefix property; a DNS Domain property is better), submit the sitemap, and use
+  the change-of-address tool from the old property. Do not change page titles for a few weeks.
 - **Migration plan:**
   1. Serve the site at `cameleer.ing` with HTTPS and the same paths; keep `pmsudhi.github.io/
      cameleer/` canonical for at least one indexing cycle while the new host builds history.
@@ -386,8 +391,8 @@ page adds "Quick start". Docs pages keep their own header (Docs · Guides · Com
 
 ## 7. What is not changed, and why
 
-- **Canonical URLs, `CNAME`, links**: stay on `pmsudhi.github.io/cameleer/` (DNS for
-  `cameleer.ing` is not set up; moving canonicals early would split signals). Plan in 3.4.
+- **Canonical URLs, `CNAME`, links** (superseded 2026-11-07, see 3.4): stayed on the old address
+  until DNS for `cameleer.ing` was set up; moving canonicals early would have split signals.
 - **Benchmark numbers, `docs/BENCHMARKS.md`, `CHANGELOG.md`, Rust code**: untouched.
 - **The visual language** (`site.css`, `compare.css`, the type pair, the signal blue): it is
   distinctive and consistent; the new pages reuse the compare stylesheet.

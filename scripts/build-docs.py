@@ -43,7 +43,7 @@ INTERNAL = {"website-plan.md"}
 # Directories of working documents (design notes for planned work), also repository only.
 INTERNAL_DIRS = {"design"}
 
-SITE_URL = "https://pmsudhi.github.io/cameleer/"
+SITE_URL = "https://cameleer.ing/"
 REPO_URL = "https://github.com/pmsudhi/cameleer"
 SITE_NAME = "Cameleer"
 

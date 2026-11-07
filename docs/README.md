@@ -16,9 +16,9 @@ same. Start with a guide, then look up the components your route uses.
 | run Cameleer in Docker, Kubernetes, Cloud Run or AWS Lambda | [Deployment](DEPLOYMENT.md) |
 | build a smaller binary or image with only the components you use | [Build features](guides/build-features.md) |
 | check which Camel features are implemented, with their options | [Feature matrix](FEATURES.md) |
-| see what people run on it: AI agent tools, HL7 over MLLP, MQTT edge gateways, serverless, file and SFTP pipelines | [Use cases](https://pmsudhi.github.io/cameleer/use-cases/), the [agent cookbook](guides/agents.md) and the [edge cookbook](guides/edge.md) |
-| compare Cameleer with Apache Camel: throughput, memory, startup | [Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/) and the [benchmark report](BENCHMARKS.md) |
-| choose between Apache Camel alternatives | [Apache Camel alternatives](https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/) |
+| see what people run on it: AI agent tools, HL7 over MLLP, MQTT edge gateways, serverless, file and SFTP pipelines | [Use cases](https://cameleer.ing/use-cases/), the [agent cookbook](guides/agents.md) and the [edge cookbook](guides/edge.md) |
+| compare Cameleer with Apache Camel: throughput, memory, startup | [Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/) and the [benchmark report](BENCHMARKS.md) |
+| choose between Apache Camel alternatives | [Apache Camel alternatives](https://cameleer.ing/alternatives/apache-camel-alternatives/) |
 | see what was verified against real servers and clients | [Interop](INTEROP.md) |
 | see what is planned | [Roadmap](ROADMAP.md) |
 
@@ -41,8 +41,8 @@ writes routes from the documentation instead of guessing. The docs MCP server is
 
 The docs are also indexed by [Context7](https://context7.com) (ask your assistant to "use
 context7" for Cameleer) and [DeepWiki](https://deepwiki.com/pmsudhi/cameleer). Agents that read
-files directly can start from [llms.txt](https://pmsudhi.github.io/cameleer/llms.txt) or
-[llms-full.txt](https://pmsudhi.github.io/cameleer/llms-full.txt).
+files directly can start from [llms.txt](https://cameleer.ing/llms.txt) or
+[llms-full.txt](https://cameleer.ing/llms-full.txt).
 
 ## How the pages are organized
 

@@ -5,7 +5,7 @@
 > per second on the same CPUs, in routing, REST APIs, Kafka, PostgreSQL and batch jobs.
 
 This is the full report behind the
-[Apache Camel vs Cameleer comparison](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/).
+[Apache Camel vs Cameleer comparison](https://cameleer.ing/compare/apache-camel-vs-cameleer/).
 It compares three runtimes on the same routes:
 
 - **Cameleer** 0.4.0, the native Rust binary;

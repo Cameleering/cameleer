@@ -25,15 +25,15 @@ formats, ported one by one and verified against the real systems.
   habits come with you ([migrating from Apache Camel](docs/guides/migrating-from-apache-camel.md)).
 - **Run anywhere.** One native binary that starts in **3 ms**, runs in **megabytes**, is its own AWS
   Lambda runtime, and moves **1.7–8.7x the messages** of Apache Camel on the same CPUs, in every
-  scenario we measured ([Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/)).
+  scenario we measured ([Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)).
 
 **Cameleering** is running Apache Camel routes this way: the same patterns, URIs and YAML, driven
 by one native binary instead of the JVM, at the edge, in serverless functions and behind AI agents
-([what is cameleering?](https://pmsudhi.github.io/cameleer/cameleering/)).
+([what is cameleering?](https://cameleer.ing/cameleering/)).
 
-[Website](https://pmsudhi.github.io/cameleer/) · [Docs](https://pmsudhi.github.io/cameleer/docs/) · [Use cases](https://pmsudhi.github.io/cameleer/use-cases/) ·
+[Website](https://cameleer.ing/) · [Docs](https://cameleer.ing/docs/) · [Use cases](https://cameleer.ing/use-cases/) ·
 [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
-[Agents](#the-action-layer-for-ai-agents) · [MCP tools](https://pmsudhi.github.io/cameleer/use-cases/mcp-tool-server/) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
+[Agents](#the-action-layer-for-ai-agents) · [MCP tools](https://cameleer.ing/use-cases/mcp-tool-server/) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
 
 _Cameleer was called rust-camel up to v0.1.0._
@@ -94,7 +94,7 @@ Content-based router                                    higher is better
 | Content-based router | **1.14M msg/s** | 376k msg/s | 120k msg/s |
 | In-memory request-reply (`seda`) | **719k msg/s** | 118k msg/s | 73k msg/s |
 
-Every scenario, the method and the raw data: [Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/)
+Every scenario, the method and the raw data: [Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)
 and the full report, [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Run it yourself with
 [`scripts/cloud-bench`](scripts/cloud-bench/) for about a dollar of cloud time.
 
@@ -230,7 +230,7 @@ $ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the serv
   rug-pull protection, and serve them again.
 - **Measured:** 41,620 MCP tool calls per second in sessions against 22,458 for Apache Camel's
   `camel-mcp-server` on the same machines, in 53 MB against 317 MB (p99 5.9 ms against 5.2 ms)
-  ([Apache Camel's MCP server vs Cameleer](https://pmsudhi.github.io/cameleer/compare/camel-mcp-server-vs-cameleer/),
+  ([Apache Camel's MCP server vs Cameleer](https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/),
   [MCP server guide](docs/guides/mcp-server.md)).
 
 An agent decides; something still has to *do* it:
@@ -327,7 +327,7 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 | **File exchange** | partner files on `sftp` | unmarshal CSV, XML or EDI → validate → `split` | rows in PostgreSQL, rejects back to the partner |
 
 Every component named here ships today; each row is a pattern you assemble from them. The
-[use-case pages](https://pmsudhi.github.io/cameleer/use-cases/) walk through the tested routes
+[use-case pages](https://cameleer.ing/use-cases/) walk through the tested routes
 for AI agent tools, HL7 over MLLP, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
 
 ---
@@ -447,10 +447,10 @@ its feature, and a route that needs a missing one fails at startup with the feat
 ### Documentation
 
 Every component, language, data format and EIP has a page with tested examples:
-[pmsudhi.github.io/cameleer/docs](https://pmsudhi.github.io/cameleer/docs/) (source in [docs/](docs/README.md)).
+[cameleer.ing/docs](https://cameleer.ing/docs/) (source in [docs/](docs/README.md)).
 Start with [getting started](docs/guides/getting-started.md), [build features](docs/guides/build-features.md), the
 [agent cookbook](docs/guides/agents.md), the [edge cookbook](docs/guides/edge.md) or the
-[component index](https://pmsudhi.github.io/cameleer/docs/components/).
+[component index](https://cameleer.ing/docs/components/).
 
 ### Connect your coding agent
 
@@ -468,8 +468,8 @@ writes routes from the documentation instead of guessing. The docs MCP server is
 
 The docs are also indexed by [Context7](https://context7.com) (ask your assistant to "use
 context7" for Cameleer) and [DeepWiki](https://deepwiki.com/pmsudhi/cameleer). Agents that read
-files directly can start from [llms.txt](https://pmsudhi.github.io/cameleer/llms.txt) or
-[llms-full.txt](https://pmsudhi.github.io/cameleer/llms-full.txt).
+files directly can start from [llms.txt](https://cameleer.ing/llms.txt) or
+[llms-full.txt](https://cameleer.ing/llms-full.txt).
 
 ### Real use cases, ready to run
 

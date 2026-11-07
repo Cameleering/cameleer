@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://pmsudhi.github.io/cameleer/sitemap.xml
+Sitemap: https://cameleer.ing/sitemap.xml

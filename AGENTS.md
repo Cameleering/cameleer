@@ -60,4 +60,4 @@ a pull request.
 The docs are served as an MCP server at `https://gitmcp.io/pmsudhi/cameleer` (Claude Code:
 `claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer`; other tools:
 see the README's "Connect your coding agent" table). They are also indexed by Context7 and
-DeepWiki, and the full text is in https://pmsudhi.github.io/cameleer/llms-full.txt.
+DeepWiki, and the full text is in https://cameleer.ing/llms-full.txt.
