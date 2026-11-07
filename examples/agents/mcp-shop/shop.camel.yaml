@@ -1,15 +1,16 @@
-# Acme Outdoor's back office as an MCP server: customers, orders, shipments, inventory, support
-# tickets, refunds and policies, all Cameleer routes over an embedded SQL database seeded from
-# seed.sql. Used by the MCP field test (harness.py) and as an example of a business MCP server.
+# Acme Outdoor's back office as an MCP server: customers, orders, shipments, stock, support
+# tickets, refunds, store credit, exchanges and policies, all Cameleer routes over an embedded SQL
+# database seeded from seed.sql. README.md lists requests to try in Claude Desktop or any MCP
+# client. The MCP field test (scripts/mcp-fieldtest) runs 40 such requests against this file.
 #
-#   cameleer run acme.camel.yaml --properties application.properties      (Streamable HTTP, /mcp)
-#   cameleer run acme.camel.yaml --mcp-stdio                               (Claude Desktop)
+#   cameleer run shop.camel.yaml --properties application.properties      (Streamable HTTP, /mcp)
+#   cameleer run shop.camel.yaml --properties application.properties --mcp-stdio   (Claude Desktop)
 #
-# Admin routes for the test harness (not MCP): POST /admin/reset re-seeds the database,
-# POST /admin/query runs the SQL in the body and answers JSON rows.
+# Goodwill store credit waits for a manager: `cameleer tool approvals`, then
+# `cameleer tool approve <handle> --by <name>` or `cameleer tool deny <handle> --reason <text>`.
 
 # ---------------------------------------------------------------------------------------------
-# data: seed at start-up and on /admin/reset
+# data: seed at start-up
 # ---------------------------------------------------------------------------------------------
 - route:
     id: seed-on-start
@@ -36,22 +37,6 @@
                     - to: "sql:x?dataSource=jdbc:rustsql:mem:acme&useMessageBodyForSql=true"
         - setBody:
             constant: '{"status": "seeded"}'
-- route:
-    id: admin-reset
-    from:
-      uri: "platform-http:/admin/reset?httpMethodRestrict=POST"
-      steps:
-        - to: direct:reset
-- route:
-    id: admin-query
-    from:
-      uri: "platform-http:/admin/query?httpMethodRestrict=POST"
-      steps:
-        - convertBodyTo:
-            type: java.lang.String
-        - to: "sql:x?dataSource=jdbc:rustsql:mem:acme&useMessageBodyForSql=true"
-        - marshal:
-            json: {}
 
 # ---------------------------------------------------------------------------------------------
 # customers
@@ -939,40 +924,6 @@
       uri: direct:manager-queue
       steps:
         - to: "sql:insert into manager_queue values (:#CamelAiToolApprovalHandle, :#CamelAiToolName, :#customerId, :#amount, :#reason, '{{acme.today}}')?dataSource=jdbc:rustsql:mem:acme"
-- route:
-    id: admin-approve
-    from:
-      uri: "platform-http:/admin/approve?httpMethodRestrict=POST"
-      steps:
-        - convertBodyTo:
-            type: java.lang.String
-        - setHeader:
-            name: CamelAiToolApprovalHandle
-            simple: "${body.trim()}"
-        - setHeader:
-            name: CamelAiToolApprovedBy
-            constant: manager.jo
-        - to: "ai-tool:issue_store_credit?operation=approve"
-        - setBody:
-            simple: '{"status": "${header.CamelAiToolStatus}"}'
-- route:
-    id: admin-deny
-    from:
-      uri: "platform-http:/admin/deny?httpMethodRestrict=POST"
-      steps:
-        - convertBodyTo:
-            type: java.lang.String
-        - setHeader:
-            name: CamelAiToolApprovalHandle
-            simple: "${body.trim()}"
-        - setHeader:
-            name: CamelAiToolApprovedBy
-            constant: manager.jo
-        - setBody:
-            constant: "Goodwill credit is not justified for this order."
-        - to: "ai-tool:issue_store_credit?operation=deny"
-        - setBody:
-            simple: '{"status": "${header.CamelAiToolStatus}"}'
 - route:
     id: exchange-item
     from:

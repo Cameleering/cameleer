@@ -4,7 +4,8 @@ the way Claude Desktop does, for the use cases in cases.json. See docs/design/mc
     python harness.py [--model claude-opus-5-5] [--runs 1] [--mode legacy|auto] [--cases 1,2,15]
                       [--url http://127.0.0.1:18190/mcp] [--out ../../target/mcp-fieldtest/results]
 
-The server must be running (cameleer run acme.camel.yaml --properties application.properties).
+The server must be running, from scripts/mcp-fieldtest:
+  cameleer run ../../examples/agents/mcp-shop/shop.camel.yaml admin.camel.yaml \n    --properties ../../examples/agents/mcp-shop/application.properties --prop acme.dir=../../examples/agents/mcp-shop
 The Anthropic API key is read from ANTHROPIC_API_KEY, or from the file named by ANTHROPIC_KEY_FILE;
 it is never printed.
 """

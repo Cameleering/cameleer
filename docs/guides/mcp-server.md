@@ -247,6 +247,8 @@ same arguments may legitimately repeat.
 - [MCP client and gateway](mcp-client.md): using the tools of other MCP servers, and serving
   them again from this server
 - [Cameleer for AI agents](agents.md)
+- [Ask Claude about your business](mcp-shop-example.md): a shop's back office as an MCP
+  server, with 40 tested requests
 
 ## Found a problem?
 

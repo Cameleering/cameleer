@@ -80,6 +80,10 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   requests, all in process. Prompt caching: `anthropic` adds `cache_control` breakpoints by
   default and `aws-bedrock` adds Converse `cachePoint`s with `promptCaching=true`;
   `CamelAiCacheReadTokens` and `CamelAiCacheWriteTokens` report cached input.
+- **Example `examples/agents/mcp-shop`**: an online shop's back office as an MCP server (19
+  tools, policies, prompts, approvals, a manager in the loop, a size question), with the requests
+  that the field test ran and the guide "Ask Claude about your business"
+  (`docs/guides/mcp-shop-example.md`).
 - **What a field test with Claude and the official MCP client found** (`scripts/mcp-fieldtest`,
   40 real requests against an online shop's back office served by Cameleer):
   `camel.server.mcp-resource-tool` lets the model read resources through a tool;
