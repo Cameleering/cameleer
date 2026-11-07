@@ -83,13 +83,19 @@ class Run:
     turns: int = 0
     tool_calls: list = field(default_factory=list)  # {name, input, is_error, ms, text}
     approvals: list = field(default_factory=list)  # {message, action}
+    elicitations: list = field(default_factory=list)  # questions from tools: {message, action, schema}
+    manager: list = field(default_factory=list)  # out-of-band decisions taken between turns
+    replays: list = field(default_factory=list)  # a tool call sent again by the client
     answer: str = ""
+    answers: list = field(default_factory=list)  # answers before each follow-up
     usage: dict = field(default_factory=lambda: {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0})
     model_ms: float = 0.0
     tool_ms: float = 0.0
     error: str | None = None
     checks: list = field(default_factory=list)  # {check, ok, detail}
     judge: dict | None = None
+    context: str = ""  # what the model was told: system prompt, server instructions, tool descriptions
+    conversation: str = ""
 
     def cost(self) -> float:
         p = PRICES.get(self.model, PRICES["claude-opus-5-5"])
@@ -118,8 +124,7 @@ def result_text(r: Any) -> tuple[str, bool]:
     return (str(r), True)
 
 
-async def converse(claude: anthropic.AsyncAnthropic, client: Client, run: Run, tools: list[dict], system: str, user_content: Any) -> None:
-    messages: list[dict] = [{"role": "user", "content": user_content}]
+async def converse(claude: anthropic.AsyncAnthropic, client: Client, run: Run, tools: list[dict], system: str, messages: list[dict]) -> None:
     for _ in range(25):
         t0 = time.perf_counter()
         resp = await claude.messages.create(
@@ -144,7 +149,7 @@ async def converse(claude: anthropic.AsyncAnthropic, client: Client, run: Run, t
         for b in uses:
             t1 = time.perf_counter()
             try:
-                r = await client.call_tool(b.name, b.input)
+                r = await client.call_tool(b.name, b.input, meta=types.RequestParamsMeta(**{"io.cameleer/conversationId": run.conversation}))
                 text, is_err = result_text(r)
             except Exception as e:  # protocol-level error: what a desktop client would show
                 text, is_err = f"Error: {e}", True
@@ -156,9 +161,18 @@ async def converse(claude: anthropic.AsyncAnthropic, client: Client, run: Run, t
     run.error = "too many turns"
 
 
-def make_elicitation(run: Run, action: str):
+def make_elicitation(run: Run, action: str, case: dict):
     async def on_elicit(_ctx, params):
         message = getattr(params, "message", "")
+        schema = getattr(params, "requested_schema", None)
+        props = (schema.model_dump(by_alias=True) if hasattr(schema, "model_dump") else (schema or {})).get("properties", {})
+        if "approve" not in props:
+            # the tool asks the user a question: answer as the case says
+            ans = case.get("elicit_action", "accept")
+            run.elicitations.append({"message": message, "action": ans, "schema": list(props)})
+            if ans == "accept":
+                return types.ElicitResult(action="accept", content=case.get("elicit_answer", {}))
+            return types.ElicitResult(action=ans)
         run.approvals.append({"message": message, "action": action})
         if action == "accept":
             schema = getattr(params, "requested_schema", None)
@@ -174,23 +188,41 @@ def make_elicitation(run: Run, action: str):
 
 async def run_case(case: dict, model: str, mode: str, url: str, admin_base: str, claude: anthropic.AsyncAnthropic) -> Run:
     run = Run(case=case, model=model, mode=mode)
+    run.conversation = f"fieldtest-{case['id']}-{time.time_ns()}"
     admin(admin_base, "/admin/reset")
     repeats = case.get("repeat", 1)
     try:
         for _ in range(repeats):
-            async with Client(url, mode=mode, elicitation_callback=make_elicitation(run, case.get("approve", "accept")),
+            async with Client(url, mode=mode, elicitation_callback=make_elicitation(run, case.get("approve", "accept"), case),
                               client_info=types.Implementation(name="mcp-fieldtest", version="1.0")) as client:
                 listed = await client.list_tools()
                 tools = mcp_tools_to_claude(listed.tools)
                 system = SYSTEM
                 if client.instructions:
                     system += "\n\nInstructions from the acme-outdoor MCP server:\n" + client.instructions
+                run.context = system + "\n\nTools (descriptions and parameters):\n" + "\n".join(f"- {t['name']}: {t['description']} Parameters: {json.dumps(t['input_schema'].get('properties', {}))}" for t in tools)
                 if case.get("prompt"):
                     p = await client.get_prompt(case["prompt"]["name"], case["prompt"].get("arguments", {}))
                     content = "\n\n".join(m.content.text for m in p.messages if getattr(m.content, "type", "") == "text")
-                    await converse(claude, client, run, tools, system, content)
+                    messages = [{"role": "user", "content": content}]
                 else:
-                    await converse(claude, client, run, tools, system, case["request"])
+                    messages = [{"role": "user", "content": case["request"]}]
+                await converse(claude, client, run, tools, system, messages)
+                if case.get("replay_tool"):
+                    first = next((t for t in run.tool_calls if t["name"] == case["replay_tool"]), None)
+                    if first:
+                        r = await client.call_tool(first["name"], first["input"], meta=types.RequestParamsMeta(**{"io.cameleer/conversationId": run.conversation}))
+                        text, is_err = result_text(r)
+                        run.replays.append({"name": first["name"], "first": first["text"], "replay": text})
+                for fu in case.get("followups", []):
+                    if fu.get("manager"):
+                        rows = admin(admin_base, "/admin/query", "select handle from manager_queue order by created desc, handle")
+                        for r in rows:
+                            out = admin(admin_base, "/admin/" + fu["manager"], r["handle"])
+                            run.manager.append({"decision": fu["manager"], "result": out})
+                    run.answers.append(run.answer)
+                    messages.append({"role": "user", "content": fu["request"]})
+                    await converse(claude, client, run, tools, system, messages)
     except Exception as e:
         inner = e
         while isinstance(inner, BaseExceptionGroup) and inner.exceptions:
@@ -212,6 +244,16 @@ def grade(run: Run, admin_base: str) -> None:
     if "approval" in c:
         want = c["approval"]
         run.checks.append({"check": f"approval asked: {want}", "ok": (len(run.approvals) > 0) == want, "detail": f"{len(run.approvals)} asked"})
+    if c.get("replay_tool"):
+        same = bool(run.replays) and all(r["first"] == r["replay"] or json.loads(r["first"]).get("ticketId") == json.loads(r["replay"]).get("ticketId") for r in run.replays)
+        run.checks.append({"check": "a retried call returned the first result", "ok": same, "detail": json.dumps(run.replays)[:300]})
+    if "elicited" in c:
+        run.checks.append({"check": f"tool asked the user: {c['elicited']}", "ok": (len(run.elicitations) > 0) == c["elicited"], "detail": f"{len(run.elicitations)} asked"})
+    if "manager_asked" in c:
+        run.checks.append({"check": f"manager was asked: {c['manager_asked']}", "ok": (len(run.manager) > 0) == c["manager_asked"], "detail": f"{run.manager}"})
+    for group in c.get("first_answer_any", []):
+        first = (run.answers[0] if run.answers else run.answer).lower()
+        run.checks.append({"check": f"first answer mentions one of {group}", "ok": any(g.lower() in first for g in group), "detail": ""})
     for group in c.get("answer_any", []):
         run.checks.append({"check": f"answer mentions one of {group}", "ok": any(g.lower() in ans for g in group), "detail": ""})
     for bad in c.get("answer_none", []):
@@ -238,12 +280,18 @@ async def judge(claude: anthropic.AsyncAnthropic, run: Run) -> None:
     c = run.case
     trace = "\n".join(f"- {t['name']}({json.dumps(t['input'])}) -> {'ERROR ' if t['is_error'] else ''}{t['text'][:600]}" for t in run.tool_calls)
     approvals = "\n".join(f"- {a['action']}: {a['message'][:300]}" for a in run.approvals) or "- none"
+    approvals += "\nQuestions the tools asked the user:\n" + ("\n".join(f"- answered {e['action']}: {e['message'][:200]}" for e in run.elicitations) or "- none")
+    if run.manager:
+        approvals += "\nManager decisions taken out of band between turns: " + ", ".join(m["decision"] for m in run.manager)
+    earlier = "".join(f"Earlier answer: {a}\nThen the user wrote: {f['request']}\n" for a, f in zip(run.answers, c.get("followups", [])))
     prompt = (
         "You grade one run of an AI assistant that used a shop's back-office tools for a staff member.\n\n"
+        f"What the assistant was told before the conversation (system prompt, server instructions, tool descriptions):\n{run.context}\n\n"
         f"Request: {c.get('request') or c.get('prompt')}\n\nWhat success means: {c['success']}\n\n"
         f"Tool calls made, in order:\n{trace or '- none'}\n\nApproval forms shown to the user:\n{approvals}\n\n"
-        f"Final answer to the user:\n{run.answer or '(none)'}\n\n"
-        "Pass only if the final answer and the actions meet what success means. Facts in the answer must match the tool results. "
+        f"{earlier}Final answer to the user:\n{run.answer or '(none)'}\n\n"
+        "Pass only if the final answer and the actions meet what success means. Facts in the answer must match the tool results "
+        "or what the assistant was told above; reasonable inferences (the currency from UK addresses, 'today' from the date) are fine. "
         "Do not fail for style or length. Answer with pass and a one-sentence reason."
     )
     resp = await claude.messages.create(
@@ -261,7 +309,7 @@ def to_record(run: Run) -> dict:
     return {
         "id": run.case["id"], "model": run.model, "mode": run.mode, "passed": run.passed(), "error": run.error,
         "turns": run.turns, "tool_calls": len(run.tool_calls), "tool_errors": sum(1 for t in run.tool_calls if t["is_error"]),
-        "approvals": len(run.approvals), "usage": run.usage, "cost_usd": round(run.cost(), 5),
+        "approvals": len(run.approvals), "elicitations": run.elicitations, "manager": run.manager, "answers": run.answers, "replays": run.replays, "usage": run.usage, "cost_usd": round(run.cost(), 5),
         "model_ms": round(run.model_ms), "tool_ms": round(run.tool_ms, 1),
         "checks": run.checks, "judge": run.judge, "answer": run.answer, "trace": run.tool_calls, "approval_forms": run.approvals,
     }

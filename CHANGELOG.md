@@ -80,6 +80,13 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   requests, all in process. Prompt caching: `anthropic` adds `cache_control` breakpoints by
   default and `aws-bedrock` adds Converse `cachePoint`s with `promptCaching=true`;
   `CamelAiCacheReadTokens` and `CamelAiCacheWriteTokens` report cached input.
+- **What a field test with Claude and the official MCP client found** (`scripts/mcp-fieldtest`,
+  40 real requests against an online shop's back office served by Cameleer):
+  `camel.server.mcp-resource-tool` lets the model read resources through a tool;
+  a tool route can refuse with `CamelAiToolIsError=true` and its own words; an approval
+  form's Accept approves; the route of an approved call sees `CamelAiToolApprovedBy`; with an
+  `approvalEndpoint`, calling again returns "still waiting" or the decision instead of a second
+  request; date arithmetic (`date - date`, `date ± n`) in the embedded SQL engine.
 - **Keep-alive connection pools** for the REST clients of the SaaS components and the cloud
   clients: model and API calls after the first skip the TCP and TLS handshakes.
 
@@ -97,6 +104,13 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   `camel.server.mcp-server-title`, `-server-description`, `-server-website-url` and
   `-server-icons`.
 - `ai-tool`: `description` defaults to the tool's name, as in Camel.
+- `ai-tool` deduplication without a call id now includes the conversation (over MCP the
+  session or `io.cameleer/conversationId`): retries are still caught, two conversations asking
+  for the same thing no longer get each other's result.
+- MCP: errors in a tool's route after an approval are sanitized like other route errors.
+- A rejected or declined approval now tells the model that the call did not run and nothing was
+  changed, and a decline in the client says the user declined it in the approval form (smaller
+  models read "declined in the client" as the system refusing).
 
 ## 0.4.0 (2026-11-06)
 

@@ -74,6 +74,7 @@ camel.server.mcp-tags=support
 | `camel.server.mcp-server-icons` | | `serverInfo.icons`, a JSON array such as `[{"src": "https://example.com/icon.png", "mimeType": "image/png"}]` |
 | `camel.server.mcp-instructions` | | Instructions for the model, sent in `server/discover` and `initialize` |
 | `camel.server.mcp-tool-timeout` | `20s` | The default `timeout` of tools that set none |
+| `camel.server.mcp-resource-tool` | | A tool name (or `true` for `read_document`): also list a read-only tool that reads any exposed resource by URI; its description lists them. Most clients attach resources only when the user picks one, so without it the model cannot read your policies or documents by itself |
 | `camel.server.mcp-expose-errors` | `false` | Send route exceptions to clients as they are. By default a client gets `Tool NAME failed (error ID). The cause is in the server log.` and the cause is logged with the same id |
 | `camel.server.mcp-resource-timeout` | `20s` | How long a resource read or a prompt may take |
 | `camel.server.mcp-page-size` | `100` | Items per page of the lists |
@@ -221,8 +222,10 @@ approvals use the same principal. Over stdio the principal is `stdio`.
 | `io.cameleer/conversationId` | `CamelAiToolConversationId`, for compensation (legacy sessions use the session id) |
 | `traceparent`, `tracestate`, `baggage` | headers of the tool's exchange |
 
-Without a call id, a tool with side effects is deduplicated on its principal and arguments for
-`idempotencyWindow`. Declare an `idempotency_key` argument, or set `idempotency=false`, when the
+Without a call id, a tool with side effects is deduplicated on its principal, the conversation
+(the session in 2025-11-25 and earlier, `io.cameleer/conversationId` in 2026-07-28) and its
+arguments for `idempotencyWindow`: a client's retry runs nothing twice, and two conversations
+that ask for the same thing both run. Declare an `idempotency_key` argument, or set `idempotency=false`, when the
 same arguments may legitimately repeat.
 
 ## Verification

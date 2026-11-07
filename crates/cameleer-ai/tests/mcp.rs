@@ -777,3 +777,33 @@ fn accept_approves_and_errors_stay_sanitized_after_approval() {
     assert_eq!(get(&done, "result.content.0.text").to_string(), "Order 7 has shipped, so it can no longer be changed.");
     ctx.stop().unwrap();
 }
+
+#[test]
+fn resources_can_be_read_through_a_tool() {
+    // Found by the MCP field test: desktop clients only attach resources the user picks, so the
+    // model could not read the refund policy; camel.server.mcp-resource-tool lists a tool for it.
+    let ctx = context();
+    let server = McpServer::new(&ctx, McpConfig { transport: "stdio".into(), resource_tool: Some("read_document".into()), ..config() }).unwrap();
+    let (reader, writer) = std::io::pipe().unwrap();
+    let (tx, rx) = channel();
+    std::thread::spawn(move || cameleer_ai::mcp::stdio::serve(server, BufReader::new(reader), ChannelWriter(tx, Vec::new())));
+    let mut io = Stdio { input: writer, output: rx };
+    io.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{}}}"#);
+    io.recv();
+    io.send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#);
+    let list = io.recv();
+    let tools = get(&list, "result.tools").as_array().unwrap().clone();
+    let doc = tools.iter().find(|t| get(t, "name").to_string() == "read_document").expect("read_document listed");
+    let desc = get(doc, "description").to_string();
+    assert!(desc.contains("docs://handbook") && desc.contains("orders://{id}"), "{}", desc);
+    assert_eq!(get(doc, "annotations.readOnlyHint"), &Value::Bool(true));
+    io.send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_document","arguments":{"uri":"docs://handbook"}}}"#);
+    assert_eq!(get(&io.recv(), "result.content.0.text").to_string(), "# Handbook");
+    io.send(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"read_document","arguments":{"uri":"orders://42"}}}"#);
+    assert_eq!(get(&io.recv(), "result.content.0.text").to_string(), "order 42");
+    io.send(r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"read_document","arguments":{"uri":"docs://nope"}}}"#);
+    let missing = io.recv();
+    assert_eq!(get(&missing, "result.isError"), &Value::Bool(true));
+    assert!(get(&missing, "result.content.0.text").to_string().contains("Available documents: docs://handbook"), "{}", missing.to_json());
+    ctx.stop().unwrap();
+}
