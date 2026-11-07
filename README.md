@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="site/brand/cameleer-logo.png" alt="Cameleer: Camel routes in Rust, reliable actions for AI agents" width="520">
+  <img src="site/brand/cameleer-logo.png" alt="Cameleer: Camel routes in Rust, the reliable action layer for AI agents" width="520">
 </p>
 
 # Cameleer
@@ -10,25 +10,30 @@
 [![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)
 [![Apache Camel compatible](https://img.shields.io/badge/follows-Apache%20Camel%204.x-d4523f.svg)](https://camel.apache.org/)
 
-### Camel routes in Rust. Reliable actions for AI agents.
+### Camel routes in Rust. The reliable action layer for AI agents.
 
 Cameleer is Apache Camel's integration model, rebuilt in Rust: **if you know Apache Camel, you
 already know Cameleer.** The same endpoint URIs, Enterprise Integration Patterns, Simple
 expressions, YAML routes, headers and error handling. About 230 components, languages and data
 formats, ported one by one and verified against the real systems.
 
-- **Act reliably.** An agent decides; a route does it. Every tool call is validated against a
-  JSON schema, runs once, retries with back-off, rolls back with a saga, waits for a person when
-  the stakes are high, and lands in an audit log ([the action layer for agents](#the-action-layer-for-ai-agents)).
+- **Act reliably.** An agent decides; a route does it. Serve routes as MCP tools with one
+  command (`cameleer run tools.camel.yaml --mcp`), and every call is validated against a JSON
+  schema, runs once, waits for a person when the stakes are high, cancels on timeout, rolls back
+  and lands in a hash-chained audit log ([the action layer for agents](#the-action-layer-for-ai-agents)).
 - **Keep your routes.** Camel YAML and XML routes run unchanged; your team's Camel designs and
   habits come with you ([migrating from Apache Camel](docs/guides/migrating-from-apache-camel.md)).
 - **Run anywhere.** One native binary that starts in **3 ms**, runs in **megabytes**, is its own AWS
   Lambda runtime, and moves **1.7–8.7x the messages** of Apache Camel on the same CPUs, in every
   scenario we measured ([Apache Camel vs Cameleer](https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/)).
 
+**Cameleering** is running Apache Camel routes this way: the same patterns, URIs and YAML, driven
+by one native binary instead of the JVM, at the edge, in serverless functions and behind AI agents
+([what is cameleering?](https://pmsudhi.github.io/cameleer/cameleering/)).
+
 [Website](https://pmsudhi.github.io/cameleer/) · [Docs](https://pmsudhi.github.io/cameleer/docs/) · [Use cases](https://pmsudhi.github.io/cameleer/use-cases/) ·
 [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
-[Agents](#the-action-layer-for-ai-agents) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
+[Agents](#the-action-layer-for-ai-agents) · [MCP tools](https://pmsudhi.github.io/cameleer/use-cases/mcp-tool-server/) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
 
 _Cameleer was called rust-camel up to v0.1.0._
@@ -173,7 +178,9 @@ $ cameleer run big-orders.camel.yaml        # the Camel JBang workflow, as one n
 - `onException` and the dead letter channel;
 - the YAML and XML DSLs, the REST DSL, Kamelets and route templates;
 - health checks, metrics, tracing;
-- a Camel JBang-style CLI, `cameleer` (`run`, `init`, `export`, `get`, `trace`).
+- Camel's `ai-tool` and `ai-resource` endpoints and its `camel.server.mcp-*` properties;
+- a Camel JBang-style CLI, `cameleer` (`run`, `init`, `export`, `get`, `trace`), plus `validate`,
+  `test` and `tool`.
 
 Your team's Camel experience, designs and routes come with you.
 
@@ -183,9 +190,48 @@ Your team's Camel experience, designs and routes come with you.
 
 **The model decides *what*; a tested route decides *how*.** Cameleer feeds events to models,
 routes on their answers, and turns agent tool calls into reliable actions with validation,
-idempotency, retries, sagas, human approval, rate limits, fallbacks and an audit log. Today a
-tool is an HTTP endpoint, which every framework with function calling supports; an MCP tool
-server is 🚧 [planned](docs/ROADMAP.md#21-agents-and-ai).
+idempotency, retries, sagas, human approval, rate limits, fallbacks and an audit log. Routes are
+served as MCP tools to Claude Desktop, VS Code, Cursor and agent frameworks, called by models in
+an `agent` step, or exposed as plain HTTP endpoints.
+
+**🔌 Serve routes as MCP tools.** An `ai-tool` route (Apache Camel's endpoint and option names)
+is a tool; one flag serves it:
+
+<!-- example: readme-mcp-tool -->
+```yaml
+- route:
+    id: lookup-order
+    from:
+      uri: ai-tool:lookup_order
+      parameters:
+        description: Look up an order by id
+        parameter.orderId: string
+        parameter.orderId.required: true
+        readOnlyHint: true
+      steps:
+        - setBody:
+            simple: '{"orderId": "${header.orderId}", "status": "shipped"}'
+```
+
+```text
+$ cameleer run tools.camel.yaml --mcp          # Streamable HTTP on http://localhost:8080/mcp
+$ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the server themselves
+```
+
+- **Every call goes through the same envelope:** kill switch, authorization, JSON Schema 2020-12
+  argument checks, rate limit, circuit breaker, approval, idempotency, compensation, a timeout
+  that cancels the route, output checks and redaction, and a hash-chained audit record. Tool
+  definitions are pinned, and `cameleer tool disable|approve|deny` acts on a running process.
+- **Both MCP protocol eras on one endpoint** (2026-07-28 and 2025-11-25/06-18/03-26), over
+  Streamable HTTP and stdio, with API-key, JWT and OAuth token checks. Approvals use the
+  protocol's own `input_required` results or `elicitation/create`. The official MCP conformance
+  suite passes 39/39 (2025-11-25) and 26/26 (2025-06-18).
+- **An MCP client and gateway:** import other MCP servers' tools into the same envelope, with
+  rug-pull protection, and serve them again.
+- **Measured:** 41,620 MCP tool calls per second in sessions against 22,458 for Apache Camel's
+  `camel-mcp-server` on the same machines, in 53 MB against 317 MB (p99 5.9 ms against 5.2 ms)
+  ([Apache Camel's MCP server vs Cameleer](https://pmsudhi.github.io/cameleer/compare/camel-mcp-server-vs-cameleer/),
+  [MCP server guide](docs/guides/mcp-server.md)).
 
 An agent decides; something still has to *do* it:
 - read from Kafka, call the model, write to Postgres;
@@ -224,9 +270,20 @@ route keeps the index fresh.
 > `circuitBreaker` → `aws-bedrock` (primary) → on failure `azure-openai` (fallback) → `wireTap` to
 > `kafka:llm-audit`.
 
-**Models today:** OpenAI and any OpenAI-compatible server (`openai`), AWS Bedrock with Converse,
-streaming, guardrails and knowledge bases (`aws-bedrock`), Azure OpenAI with tool calls and
-Assistants (`azure-openai`), and Google Vertex AI with Gemini plus Anthropic and Meta models
+Every model component also takes `maxRetries`, `fallbackModels`, `responseCache=exact` and
+`coalesce`, plus prompt caching (`anthropic` by default, `aws-bedrock` with `promptCaching=true`),
+in the same process as the route, so there is no gateway hop
+([model providers](docs/guides/model-providers.md)).
+
+**🔁 Run the agent loop in a route.** The `agent` step runs a model and its tools until the model
+answers or a turn, token or time limit is hit; tool calls go through the envelope above, a risky
+call pauses the conversation for approval, and `cameleer test` replays recorded model responses so
+an agent route is tested without a model ([the agent step](docs/guides/agent-step.md)).
+
+**Models today:** 23 providers, with tool calling in all of them: OpenAI and any OpenAI-compatible
+server, including the Responses API, Ollama and `provider=` presets for 19 services (`openai`,
+also `llm`), Anthropic (`anthropic`), Gemini (`gemini`), Azure OpenAI (`azure-openai`), AWS Bedrock
+with Converse, streaming, guardrails and knowledge bases (`aws-bedrock`), and Google Vertex AI
 (`google-vertexai`).
 
 ---
@@ -244,7 +301,7 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
   turns YAML routes into a standalone Rust project.
 - **Ship only what the routes use.** Every build includes everything by default; with
   [build features](docs/guides/build-features.md) a function keeps only its component families
-  (`--features cloud,jq`), down to a 5.8 MB binary with `core`.
+  (`--features cloud,jq`), down to a 5.9 MB binary with `core`.
 
 | Run it as | Status |
 |---|---|
@@ -279,12 +336,10 @@ for AI agent tools, HL7 over MLLP, MQTT edge gateways, AWS Lambda and file/SFTP 
 
 | You want | Build it from today's parts | Packaged version |
 |---|---|---|
-| an agent tool server (MCP-style) | `platform-http` + `toD` to one `direct:` route per tool | 🚧 MCP component |
-| a tool-calling agent loop | `loop` + `azure-openai` tool calls + `recipientList` to tool routes | 🚧 agent EIP |
 | vector search for RAG | embeddings → pgvector through `sql`, OpenSearch k-NN, or Qdrant and Pinecone through `http` | 🚧 vector components |
 | token streaming to users | model streaming chunks → `websocket` or a server-sent-events endpoint | ✅ parts ship |
 | per-tenant token budgets | model usage headers → counters in `spring-redis` → `filter` before the call | ✅ parts ship |
-| human approval of risky actions | `slack` or `mail` link → `platform-http` callback → resume the parked action | ✅ parts ship |
+| human approval outside an agent tool | `slack` or `mail` link → `platform-http` callback → resume the parked action | ✅ parts ship (tools have [approvals](docs/guides/mcp-server.md#approvals) built in) |
 
 Sketches for each, plus the planned improvements to agents, serverless, performance, operations and
 verification, are in **[docs/ROADMAP.md](docs/ROADMAP.md)**.
@@ -486,6 +541,12 @@ Google Cloud components, but not the long tail of vendor connectors.
 No. It calls models and moves embeddings into the stores you already run. It isn't a model runtime
 or a vector database.
 
+**Does it have an MCP server?**
+Yes. `ai-tool`, `ai-resource` and `ai-prompt` routes are served over Streamable HTTP or stdio
+with `cameleer run --mcp` or `--mcp-stdio`, using Apache Camel's `camel.server.mcp-*` property
+names, and every call goes through the reliability envelope
+([MCP server guide](docs/guides/mcp-server.md)).
+
 **Do I need a JVM or Maven?**
 No. You need Rust to build it, and nothing at run time.
 
@@ -495,7 +556,8 @@ so by default it keeps route and context counters and makes per-step timing opt-
 (`ManagementStatisticsLevel::Default`, or `camel.main.jmxManagementStatisticsLevel=Default`).
 
 **How is it verified?**
-- 2,600+ hermetic tests against embedded servers;
+- 2,800+ hermetic tests against embedded servers;
+- the official MCP conformance suite: 39/39 (2025-11-25) and 26/26 (2025-06-18);
 - live suites against real PostgreSQL, Redis, RabbitMQ, ActiveMQ, Mosquitto, vsftpd,
   Postfix/Dovecot and nginx;
 - official clients: librdkafka, pymongo, the DataStax driver, boto3, the Azure SDK, gcloud and
@@ -524,7 +586,8 @@ See [docs/INTEROP.md](docs/INTEROP.md).
 | `cameleer-grpc` | HTTP/2 + HPACK, protobuf, grpc component and protobuf data format |
 | `cameleer-datastores` | spring-redis, mongodb, elasticsearch/opensearch, cql (Cassandra), couchdb (with embedded test servers) |
 | `cameleer-xml` | XML 1.0 parser + DOM, XPath 1.0, XSLT 1.0, XML Schema validation, `xj`, `xmlsecurity-sign`/`-verify` |
-| `cameleer-saas` | openai, slack, telegram, github, twilio, jira, webhook, graphql, rss/atom (with embedded mock servers) |
+| `cameleer-ai` | `ai-tool`, `ai-resource`, `ai-prompt`, the tool registry and reliability envelope, the MCP server, client and gateway, the `mcp` component |
+| `cameleer-saas` | openai/llm, anthropic, gemini, slack, telegram, github, twilio, jira, webhook, graphql, rss/atom (with embedded mock servers) |
 | `cameleer-main` | `Main` runner (application.properties, route discovery) and the `cameleer` CLI; each family crate above is one of its [cargo features](docs/guides/build-features.md) |
 | `cameleer-bench` | benchmark harness, sampling profiler and HTTP load generator |
 

@@ -13,6 +13,15 @@ Enterprise Integration Patterns, endpoint URIs, Simple language and YAML DSL, sh
 native binary with no dependencies outside the Rust standard library. See the
 [README](../../README.md) and [concepts](concepts.md).
 
+### What is cameleering?
+
+Cameleering is running Apache Camel integration routes on Cameleer: the same Enterprise
+Integration Patterns, endpoint URIs and YAML DSL, executed by one native Rust binary instead of
+the JVM. Routes start in about 3 ms and run in megabytes, so Camel-style integration fits on edge
+devices, in serverless functions and behind AI agents. The word comes from *cameleer*, a camel
+driver; the project's short domain is cameleer.ing. See
+[what is cameleering?](https://pmsudhi.github.io/cameleer/cameleering/).
+
 ### Is Cameleer compatible with Apache Camel?
 
 It follows Camel 4's names and semantics: Camel YAML and XML routes, URIs, options, EIPs, Simple

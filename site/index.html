@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cameleer: Apache Camel in Rust, MCP tools for AI agents</title>
 <meta name="description" content="Apache Camel routes as one native Rust binary: 3 ms startup, up to 54x less memory. Routes become MCP tools for AI agents: validated, run once, audited.">
-<meta name="keywords" content="Apache Camel, Rust, Apache Camel alternative, integration framework, enterprise integration patterns, EIP, AI agents, MCP server, MCP tools, agent tool calls, LLM gateway, serverless, AWS Lambda, edge, MQTT, HL7, Kafka, YAML DSL">
+<meta name="keywords" content="Apache Camel, Rust, cameleering, Apache Camel alternative, integration framework, enterprise integration patterns, EIP, AI agents, MCP server, MCP tools, agent tool calls, LLM gateway, serverless, AWS Lambda, edge, MQTT, HL7, Kafka, YAML DSL">
 <link rel="canonical" href="https://pmsudhi.github.io/cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta name="google-site-verification" content="MvbqVebLUL_zfBeTqUJFrMzVbzt3An6QuIhFIasAcMA">
@@ -307,6 +307,21 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
   </div>
 </section>
 
+<section id="cameleering" aria-labelledby="cam-h">
+  <div class="wrap">
+    <h2 id="cam-h">Cameleering: Camel routes, driven without the JVM.</h2>
+    <p class="sub"><strong>Cameleering</strong> is running Apache Camel integration routes on Cameleer: the same patterns, endpoint URIs and YAML, executed by one native Rust binary that starts in 3 ms and runs in megabytes. It takes Camel-style integration where a JVM does not fit.</p>
+    <div class="more-cases">
+      <ul class="cases">
+        <li><a href="use-cases/mqtt-iot-edge-gateway/"><b>At the edge</b><span>MQTT, syslog and HL7 routing on gateways and small devices, buffering when the uplink is down; arm64 image.</span></a></li>
+        <li><a href="use-cases/serverless-aws-lambda/"><b>In serverless functions</b><span>Its own AWS Lambda runtime; the same route on Cloud Run and Knative, with no JVM cold start.</span></a></li>
+        <li><a href="use-cases/mcp-tool-server/"><b>Behind AI agents</b><span>Routes as MCP tools that are validated, run once, approved when risky and audited.</span></a></li>
+      </ul>
+      <p class="all-cases"><a href="cameleering/">What is cameleering?</a></p>
+    </div>
+  </div>
+</section>
+
 <section id="same" aria-labelledby="same-h">
   <div class="wrap">
     <h2 id="same-h">Keep your routes. Change the runtime.</h2>
@@ -411,7 +426,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
           <circle class="d" cx="130" cy="76" r="6"/>
         </svg>
         <h3><a href="use-cases/mqtt-iot-edge-gateway/">Gateways at the edge</a></h3>
-        <p>Run MQTT, syslog and HTTP routing on small devices, filter and aggregate on site, and buffer when the uplink is down, with one binary and no runtime to install, down to 5.8 MB with <a href="docs/guides/build-features.html">build features</a>.</p>
+        <p>Run MQTT, syslog and HTTP routing on small devices, filter and aggregate on site, and buffer when the uplink is down, with one binary and no runtime to install, down to 5.9 MB with <a href="docs/guides/build-features.html">build features</a>.</p>
       </article>
     </div>
     <div class="more-cases">
@@ -673,6 +688,7 @@ $ cameleer --help
       <h4>Docs</h4>
       <ul>
         <li><a href="docs/">Documentation</a></li>
+        <li><a href="cameleering/">What is cameleering?</a></li>
         <li><a href="use-cases/">Use cases</a></li>
         <li><a href="docs/guides/agents.html">Cameleer for AI agents</a></li>
         <li><a href="docs/components/">All components</a></li>

@@ -265,6 +265,16 @@ switch is a copy change, not a restructure.
 The word *cameleer* (a camel driver) already explains the name to anyone who knows Camel, and
 `cameleer.ing` turns it into a verb for free. Assessment:
 
+- **Update 2026-11-07 (owner's decision): cameleering is part of the positioning.** It has its
+  own definitional page, `/cameleering/` ("What is cameleering?", `DefinedTerm` + `FAQPage`
+  schema), a band on the home page right after the hero, a line under the README pillars, a
+  paragraph in `llms.txt` and an entry in the docs FAQ. The definition is fixed so every surface
+  and every answer engine repeats the same sentence: *"Cameleering is running Apache Camel
+  integration routes on Cameleer: the same Enterprise Integration Patterns, endpoint URIs and YAML
+  DSL, executed by one native Rust binary instead of the JVM."* The coined term has no search
+  volume yet; the point is that a brand-owned term gets defined by its owner before anyone else
+  does, and that answer engines asked "what is cameleering?" find one consistent answer. The
+  original advice below still applies to titles of other pages and to reference docs.
 - **Use it, lightly.** One verb phrase per surface is memorable; more is cute. Recommended uses:
   the quick-start heading ("Start cameleering"), the footer line, talk slides and the Docker Hub
   overview. Never in `<title>` tags or H1s (zero search volume) and not in reference docs.
@@ -275,7 +285,11 @@ The word *cameleer* (a camel driver) already explains the name to anyone who kno
   `cameleer.ing/docs`, `/agents`, `/compare`, `/lambda` as 301 redirects, in talks, READMEs of
   examples and social cards. The .ing TLD is young; some corporate link filters flag unfamiliar
   TLDs, so the GitHub Pages URL stays canonical until the domain has history.
-- **Migration plan (not done now; DNS is not set up):**
+- **State on 2026-11-07:** DNS is set up and `cameleer.ing` is the GitHub Pages custom domain;
+  `pmsudhi.github.io/cameleer/` now answers 301 to `http://cameleer.ing/`, and HTTPS is not
+  enforced yet. Step 3 below (canonicals, sitemap, `SITE_URL`, `og:url`, JSON-LD, `llms.txt`)
+  has not been done, so canonicals still point at the redirecting address.
+- **Migration plan:**
   1. Serve the site at `cameleer.ing` with HTTPS and the same paths; keep `pmsudhi.github.io/
      cameleer/` canonical for at least one indexing cycle while the new host builds history.
   2. Add `cameleer.ing` to Search Console; verify both properties.

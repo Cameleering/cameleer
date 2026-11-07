@@ -4,6 +4,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/llms.txt</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/llms-full.txt</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/cameleering/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/compare/apache-camel-vs-cameleer/</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/compare/camel-mcp-server-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
@@ -18,13 +19,13 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/BENCHMARKS.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/DEPLOYMENT.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/FEATURES.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/INTEROP.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/INTEROP.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/ROADMAP.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/STATUS.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/activemq.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/ai-prompt.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/ai-resource.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/ai-tool.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/ai-tool.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/amqp-stomp.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/amqp.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/anthropic.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -119,7 +120,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/grpc.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/http.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/imap.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/components/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/jdbc.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/jetty.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/components/jira.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -234,7 +235,7 @@
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/getting-started.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/mcp-client.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/mcp-server.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/mcp-server.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/migrating-from-apache-camel.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/model-providers.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://pmsudhi.github.io/cameleer/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
