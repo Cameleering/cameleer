@@ -17,7 +17,8 @@ KEY_NAME=cameleer-bench-key
 REGION="${DO_REGION:-blr1}"
 SIZE="${DO_SIZE:-c-4}"
 IMAGE=ubuntu-24-04-x64
-NAMES=(cameleer-bench-a cameleer-bench-b cameleer-bench-load)
+# DO_NAMES: the droplets to create (default the three of the benchmark)
+read -r -a NAMES <<< "${DO_NAMES:-cameleer-bench-a cameleer-bench-b cameleer-bench-load}"
 SSH_PUB="${DO_SSH_PUB:-$HOME/.ssh/id_ed25519.pub}"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 STATE="${BENCH_STATE:-$ROOT/target/cloud-bench/droplets.txt}"

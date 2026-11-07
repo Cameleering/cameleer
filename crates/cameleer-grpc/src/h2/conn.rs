@@ -445,8 +445,11 @@ impl Shared {
                 break;
             }
         }
-        // fail all streams
+        // fail all streams, and stop the writer: it holds the socket, and its channel never
+        // disconnects on its own (the writer keeps the shared state that owns the sender), so
+        // without this every connection the peer closed would keep a thread and its descriptors
         self.cond.notify_all();
+        let _ = self.lock_out().tx.send(Out::Close);
     }
 
     fn is_idle(&self, st: &ConnState, id: u32) -> bool {

@@ -290,3 +290,28 @@ fn serve_externally_accepted_transport() {
     let r = conn.request(&H2Request::get("/x"), T).unwrap();
     assert_eq!(r.body, b"handed over /x");
 }
+
+#[test]
+fn the_server_closes_a_connection_the_peer_closed() {
+    // A peer that closes its side gets the server's side closed too: the server's writer used
+    // to keep the socket (and a thread) forever, which ran a busy server out of descriptors.
+    let server = echo_server(H2Config::default(), None);
+    for _ in 0..20 {
+        let mut s = TcpStream::connect(server.local_addr()).unwrap();
+        s.write_all(PREFACE).unwrap();
+        s.write_all(&Frame::settings(&[]).to_bytes()).unwrap();
+        s.shutdown(std::net::Shutdown::Write).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut buf = [0u8; 4096];
+        let closed = loop {
+            match s.read(&mut buf) {
+                Ok(0) => break true,
+                Ok(_) => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => break true,
+                Err(_) => break false,
+            }
+        };
+        assert!(closed, "the server kept a connection open after the peer closed it");
+    }
+    server.stop();
+}
