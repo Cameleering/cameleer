@@ -285,11 +285,10 @@ in `docs/design/advantage-matrix.md` (internal).
   than `main`.
 - **Tests:** hermetic suite on Windows 11: 2833 passed, 0 failed, zero warnings (plus the new
   deadline and inline-timeout tests). On Linux (the droplet, Ubuntu 24.04): zero warnings, 2832
-  passed, 1 failed: `cameleer-cloud` `aws_gaps::kinesis_enhanced_fan_out_over_http2` fails 5 of 5
-  there, and **fails the same way on `main`** on that machine (not caused by this branch): after
-  the first subscription expires, the mock's HTTP/2 server resets every new connection. The
-  client opens a new connection per subscription, so production is not affected; the mock needs
-  fixing before a push.
+  passed, 1 failed at first: `aws_gaps::kinesis_enhanced_fan_out_over_http2`, also on `main`.
+  The cause was a real HTTP/2 bug, not the mock: a connection the peer closed kept its writer
+  thread and socket, so every closed connection leaked a thread and two descriptors until the
+  process ran out (`docs/INTEROP.md` bug 19, fixed in `cameleer-grpc` with a regression test).
 - **Open gaps (see the matrix):** plain HTTP is 1.67x Camel and 68% of a do-nothing server on the
   same machines (an event-driven server core is the next step); MCP per-request CPU is about twice
   a plain HTTP request; on CPUs without SHA instructions the envelope costs 6 µs.
