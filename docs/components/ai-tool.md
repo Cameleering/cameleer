@@ -138,7 +138,7 @@ goes through.
 | `CamelAiToolPrincipal` | in | Who the call is made for |
 | `CamelAiToolApprovedBy` | in (producer) | Marks the call as approved by this approver |
 | `CamelAiToolStatus` | out (producer) | `completed`, `error`, `approval-required` or `denied` |
-| `CamelAiToolIsError` | out (producer) | `true` when the call failed or was refused |
+| `CamelAiToolIsError` | out (producer); in (tool route) | Producer: `true` when the call failed or was refused. In a tool route: set it to `true` to refuse the call yourself; the body becomes the error text the model reads (MCP `isError`), shown word for word, unlike an exception, whose cause is hidden from MCP clients. Use it for business refusals the model should act on, such as "order 1007 has shipped, so its address can no longer be changed" |
 | `CamelAiToolDuplicate` | out (producer) | `true` when the recorded result of an earlier call was returned |
 | `CamelAiToolApprovalHandle` | out (producer) | The handle of a call that waits for approval |
 | `CamelAiToolReturnDirect` | out (producer) | The tool's `returnDirect` flag |

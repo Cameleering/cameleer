@@ -189,9 +189,51 @@ pub fn group_key(row: &[Value]) -> String {
     s
 }
 
+/// Days since 1970-01-01 of a `YYYY-MM-DD` date (a timestamp's date part is not a date here).
+fn date_days(v: &Value) -> Option<i64> {
+    let Value::String(s) = v else { return None };
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let (y, m, d): (i64, i64, i64) = (s[0..4].parse().ok()?, s[5..7].parse().ok()?, s[8..10].parse().ok()?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    // days from civil (proleptic Gregorian)
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (m + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some(era * 146_097 + doe - 719_468)
+}
+
+fn date_of_days(z: i64) -> Value {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + if m <= 2 { 1 } else { 0 };
+    Value::String(format!("{:04}-{:02}-{:02}", y, m, d))
+}
+
 fn arith(op: BinOp, a: &Value, b: &Value) -> SqlResult<Value> {
     if a.is_null() || b.is_null() {
         return Ok(Value::Null);
+    }
+    // PostgreSQL date arithmetic: date - date is days, date +/- integer is a date
+    match (op, date_days(a), date_days(b), b, a) {
+        (BinOp::Sub, Some(x), Some(y), _, _) => return Ok(Value::Int(x - y)),
+        (BinOp::Add, Some(x), None, Value::Int(n), _) => return Ok(date_of_days(x + n)),
+        (BinOp::Sub, Some(x), None, Value::Int(n), _) => return Ok(date_of_days(x - n)),
+        (BinOp::Add, None, Some(y), _, Value::Int(n)) => return Ok(date_of_days(y + n)),
+        _ => {}
     }
     let (x, y) = match (num_of(a), num_of(b)) {
         (Some(x), Some(y)) => (x, y),
@@ -978,5 +1020,23 @@ mod tests {
         assert_eq!(coerce(Value::from("2024-01-02T03:04:05Z"), &DataType::Timestamp).unwrap(), Value::from("2024-01-02 03:04:05"));
         assert_eq!(coerce(Value::Float(1.234), &DataType::Decimal(Some(5), Some(2))).unwrap(), Value::Float(1.23));
         assert!(coerce(Value::Int(1 << 40), &DataType::Integer).is_err());
+    }
+}
+
+#[cfg(test)]
+mod date_arith_tests {
+    use super::*;
+
+    #[test]
+    fn dates_subtract_to_days_and_shift_by_integers() {
+        let d = |s: &str| Value::String(s.to_string());
+        assert_eq!(arith(BinOp::Sub, &d("2026-11-07"), &d("2026-09-23")).unwrap(), Value::Int(45));
+        assert_eq!(arith(BinOp::Sub, &d("2024-03-01"), &d("2024-02-28")).unwrap(), Value::Int(2));
+        assert_eq!(arith(BinOp::Add, &d("2026-12-30"), &Value::Int(3)).unwrap(), d("2027-01-02"));
+        assert_eq!(arith(BinOp::Sub, &d("2026-03-01"), &Value::Int(1)).unwrap(), d("2026-02-28"));
+        assert_eq!(arith(BinOp::Add, &Value::Int(7), &d("2026-11-07")).unwrap(), d("2026-11-14"));
+        assert_eq!(arith(BinOp::Sub, &d("1970-01-01"), &d("1969-12-31")).unwrap(), Value::Int(1));
+        // numbers still subtract as numbers
+        assert_eq!(arith(BinOp::Sub, &Value::Int(5), &Value::Int(2)).unwrap(), Value::Int(3));
     }
 }

@@ -132,6 +132,8 @@ A tool that needs approval (`destructiveHint=true`, or an `approval` rule, see
   principal, the tool, a digest of the arguments and an expiry. The client retries with the
   answer. A tampered state, changed arguments or a replay run nothing. In legacy sessions the
   server sends `elicitation/create` on the call's response stream (HTTP) or on stdout (stdio).
+  The form has one field, `approve`, ticked by default: pressing Accept approves, Decline (or
+  unticking the box) refuses.
 - A client that didn't declare the `elicitation` capability gets `-32021` and the call doesn't
   run.
 

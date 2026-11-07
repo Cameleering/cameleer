@@ -919,14 +919,20 @@ impl McpServer {
         }
         match &result.status {
             ToolStatus::ApprovalRequired { handle } => self.ask_approval(handle, &call, &result, rc),
-            _ if result.route_error && !self.config.expose_errors => {
-                // like Camel: the client gets a generic message, the cause stays in the log
-                let id = cameleer_core::language::support::to_hex(&cameleer_tls::crypto::rng::random_bytes(4));
-                cameleer_core::camel_warn!("mcp", "Tool {} failed (error {}): {}", call.name, id, result.text);
-                Ok(tool_result(&ToolResult::error(format!("Tool {} failed (error {}). The cause is in the server log.", call.name, id))))
-            }
-            _ => Ok(tool_result(&result)),
+            _ => Ok(self.client_result(&call.name, &result)),
         }
+    }
+
+    /// A finished call as the client sees it: an exception in the tool's route becomes a
+    /// generic message with an error id (the cause stays in the log, as in Camel) unless
+    /// `camel.server.mcp-expose-errors`; refusals the route reports itself are shown as they are.
+    fn client_result(&self, tool: &str, result: &ToolResult) -> Value {
+        if result.route_error && !self.config.expose_errors {
+            let id = cameleer_core::language::support::to_hex(&cameleer_tls::crypto::rng::random_bytes(4));
+            cameleer_core::camel_warn!("mcp", "Tool {} failed (error {}): {}", tool, id, result.text);
+            return tool_result(&ToolResult::error(format!("Tool {} failed (error {}). The cause is in the server log.", tool, id)));
+        }
+        tool_result(result)
     }
 
     /// A call that needs approval: out of band when the tool has an approval endpoint, else
@@ -957,7 +963,7 @@ impl McpServer {
                     return Ok(tool_result(&ToolResult::error(format!("Tool {} needs approval, and this connection cannot ask for it", call.name))));
                 };
                 let answer = client.request("elicitation/create", approval_form(&message, version.as_str() >= "2025-11-25"), Duration::from_secs(600));
-                Ok(tool_result(&self.settle_approval(handle, answer.and_then(|r| r.ok()), rc)))
+                Ok(self.client_result(&call.name, &self.settle_approval(handle, answer.and_then(|r| r.ok()), rc)))
             }
         }
     }
@@ -966,7 +972,8 @@ impl McpServer {
         let approver = format!("mcp-client:{}", rc.principal.name);
         let accepted = answer.as_ref().and_then(|a| a.as_object()).map(|a| {
             a.get("action").and_then(|x| x.as_str()) == Some("accept")
-                && a.get("content").and_then(|c| c.as_object()).and_then(|c| c.get("approve")).map(|v| v.is_truthy()).unwrap_or(false)
+                // "Accept" is the approval; only an explicit `approve: false` in the form declines
+                && !a.get("content").and_then(|c| c.as_object()).and_then(|c| c.get("approve")).is_some_and(|v| !v.is_truthy())
         });
         match accepted {
             Some(true) => self.registry.approve(handle, &approver),
@@ -987,7 +994,7 @@ impl McpServer {
             m.insert("requestState".into(), state.clone());
             return Ok(Value::Object(m));
         }
-        Ok(tool_result(&self.settle_approval(&handle, answer, rc)))
+        Ok(self.client_result(&call.name, &self.settle_approval(&handle, answer, rc)))
     }
 
     /// `requestState`: AES-256-GCM over {handle, principal, method, tool, argument digest,
@@ -1235,8 +1242,7 @@ fn approval_form(message: &str, with_mode: bool) -> Value {
         "requestedSchema".into(),
         Value::object([
             ("type", Value::from("object")),
-            ("properties", Value::object([("approve", Value::object([("type", Value::from("boolean")), ("title", Value::from("Approve")), ("description", Value::from("Run this tool call"))]))])),
-            ("required", Value::Array(vec![Value::from("approve")])),
+            ("properties", Value::object([("approve", Value::object([("type", Value::from("boolean")), ("title", Value::from("Approve")), ("description", Value::from("Run this tool call")), ("default", Value::Bool(true))]))])),
         ]),
     );
     Value::Object(p)

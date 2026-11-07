@@ -729,3 +729,51 @@ fn star_exposes_tagged_items_only_and_route_errors_stay_in_the_log() {
     assert!(get(&r, "result.content.0.text").to_string().contains("rejected"));
     ctx.stop().unwrap();
 }
+
+#[test]
+fn accept_approves_and_errors_stay_sanitized_after_approval() {
+    // Found by the MCP field test with a real client: pressing Accept on an approval form must
+    // approve (the "approve" box defaults to true); an exception after approval must not leak
+    // its cause; a refusal the route reports itself reaches the model word for word.
+    let ctx = CamelContext::new();
+    cameleer_ai::register(&ctx);
+    ctx.add_routes(|b| {
+        b.from("ai-tool:delete_account?tags=public&parameter.user=string&destructiveHint=true").set_body(simple("deleted ${header.user}"));
+        b.from("ai-tool:wipe?tags=public&destructiveHint=true").process(|_ex: &mut Exchange| Err(CamelError::illegal_state("secret table customers_v2 is locked")));
+        b.from("ai-tool:ship_check?tags=public&parameter.order=integer&readOnlyHint=true")
+            .set_header("CamelAiToolIsError", constant(true))
+            .set_body(simple("Order ${header.order} has shipped, so it can no longer be changed."));
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let mut io = Stdio::start(&ctx);
+    io.send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{}}}}"#);
+    io.recv();
+    io.send(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
+    // Accept without ticking anything approves
+    io.send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"delete_account","arguments":{"user":"zed"}}}"#);
+    let ask = io.recv();
+    assert_eq!(get(&ask, "params.requestedSchema.properties.approve.default"), &Value::Bool(true));
+    io.send(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"action":"accept","content":{{}}}}}}"#, get(&ask, "id").to_json()));
+    let done = io.recv();
+    assert_eq!(get(&done, "result.content.0.text").to_string(), "deleted zed", "{}", done.to_json());
+    // an explicit approve=false still declines
+    io.send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"delete_account","arguments":{"user":"amy"}}}"#);
+    let ask = io.recv();
+    io.send(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"action":"accept","content":{{"approve":false}}}}}}"#, get(&ask, "id").to_json()));
+    let done = io.recv();
+    assert_eq!(get(&done, "result.isError"), &Value::Bool(true));
+    // an exception after approval is sanitized like any other
+    io.send(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"wipe","arguments":{}}}"#);
+    let ask = io.recv();
+    io.send(&format!(r#"{{"jsonrpc":"2.0","id":{},"result":{{"action":"accept","content":{{"approve":true}}}}}}"#, get(&ask, "id").to_json()));
+    let done = io.recv();
+    let text = get(&done, "result.content.0.text").to_string();
+    assert!(text.contains("The cause is in the server log") && !text.contains("customers_v2"), "{}", text);
+    // a refusal the route reports itself is shown as it is
+    io.send(r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"ship_check","arguments":{"order":7}}}"#);
+    let done = io.recv();
+    assert_eq!(get(&done, "result.isError"), &Value::Bool(true));
+    assert_eq!(get(&done, "result.content.0.text").to_string(), "Order 7 has shipped, so it can no longer be changed.");
+    ctx.stop().unwrap();
+}

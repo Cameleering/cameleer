@@ -1543,6 +1543,18 @@ fn run_route(entry: &ToolEntry, ex: &mut Exchange) -> ToolResult {
     if let Some(e) = &ex.exception {
         return failed(e);
     }
+    // a refusal the route reports itself (`CamelAiToolIsError=true`): the body is the reason,
+    // shown to the model as a tool error it can act on (MCP `isError`), not hidden like an
+    // exception
+    if ex.message.headers.remove(headers::IS_ERROR).is_some_and(|v| v.is_truthy() && v.to_string() != "false") {
+        let text = match std::mem::take(&mut ex.message.body) {
+            Value::Null => format!("Tool {} refused the call", entry.definition.name),
+            v @ (Value::Object(_) | Value::Array(_)) => v.to_json(),
+            Value::Bytes(b) => String::from_utf8_lossy(&b).into_owned(),
+            v => v.to_string(),
+        };
+        return ToolResult::error(text);
+    }
     let blocks = match ex.message.headers.remove(headers::CONTENT) {
         Some(Value::Array(a)) => Some(a),
         Some(v @ Value::Object(_)) => Some(vec![v]),
