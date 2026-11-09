@@ -100,7 +100,8 @@ pub fn routes(ctx: &CamelContext) -> Result<()> {
 | `CamelRabbitmqDeliveryTag`, `CamelRabbitmqRedeliveryTag` | out | Consumer delivery information. |
 | `CamelRabbitmqRequeue` | in | With `autoAck=false`: requeue a failed message. |
 | `CamelRabbitmqRequestTimeout` | in | Producer: reply timeout for this message. |
-| `CamelRabbitmqContentType`, `CamelRabbitmqCorrelationId`, `CamelRabbitmqMessageId`, `CamelRabbitmqPriority`, `CamelRabbitmqDeliveryMode`, `CamelRabbitmqExpiration`, `CamelRabbitmqTimestamp`, `CamelRabbitmqType`, `CamelRabbitmqUserId`, `CamelRabbitmqAppId`, `CamelRabbitmqReplyTo` | in/out | AMQP message properties. |
+| `CamelRabbitmqContentType`, `CamelRabbitmqCorrelationId`, `CamelRabbitmqMessageId`, `CamelRabbitmqPriority`, `CamelRabbitmqDeliveryMode`, `CamelRabbitmqExpiration`, `CamelRabbitmqTimestamp`, `CamelRabbitmqType`, `CamelRabbitmqUserId`, `CamelRabbitmqAppId`, `CamelRabbitmqReplyTo`, `CamelRabbitmqContentEncoding`, `CamelRabbitmqClusterId` | in/out | AMQP message properties. |
+| `CamelRabbitmqMandatory` | in | Producer: publish this message as mandatory (as the `mandatory` option). |
 
 ## Run it with Docker
 

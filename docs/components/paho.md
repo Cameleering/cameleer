@@ -119,7 +119,7 @@ Use a fixed `clientId`, `cleanSession=false` and `qos=1` or `2`. The broker queu
 ### How do I connect to AWS IoT Core or another TLS broker?
 
 Use `brokerUrl=ssl://endpoint:8883`. Trust comes from `sslContextParameters=#bean`,
-`useGlobalSslContextParameters=true`, the global `camel.ssl.*` parameters, or else the system trust store.
+`useGlobalSslContextParameters=true`, the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`), or else the system trust store.
 
 ## Related
 

@@ -367,6 +367,19 @@ operations, association pooling; WADO frames/rendered/thumbnail, UPS-RS; pixel c
 JPEG-LS, JPEG 2000, RLE) and with them Clean Pixel Data; Encrypted Attributes Sequence;
 `fhirDeidentify`; PS3.15 A.5 (ATNA) audit messages; a PS3.2 conformance statement; fuzzing of the
 Part 10, PDU and multipart parsers; throughput benchmarks against dcm4che, DCMTK and Orthanc.
+## Unreleased since 0.5.1 (2026-11-09, `main`)
+
+- **`--mcp-expose`** (`camel.server.mcp-expose-routes`): existing routes served as MCP tools with no
+  route edits; REST operations become typed tools from their documented parameters. Code in
+  `crates/cameleer-ai/src/expose.rs`, tests in `crates/cameleer-main/tests/mcp_expose.rs`.
+- **Attestation, phase 1** (`crates/cameleer-attest`, feature `attest`): evidence from configfs-tsm
+  and dstack bound to nonce, TLS key and manifest; `/q/attestation`; MCP `_meta` and tool. Design
+  and later phases (sealed secrets, verification of remote servers) in
+  `docs/design/attestation/research.md`. Tests use a fake configfs-tsm directory and a fake dstack
+  agent; nothing has run on real TEE hardware yet (a `CAMEL_REAL_TEE=1` tier waits for the owner's
+  choice of cloud).
+- **Healthcare research**: `docs/design/medical/dicom-and-healthcare.md` (DICOM, DICOMweb,
+  de-identification, Mirth alternatives, positioning); not started.
 
 ## Pending / todo
 

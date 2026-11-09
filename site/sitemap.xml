@@ -3,18 +3,23 @@
   <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-09</lastmod></url>
-  <url><loc>https://cameleer.ing/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/alternatives/mulesoft-alternatives/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/cameleering/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/compare/apache-camel-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/compare/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/mcp/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/enterprise-mcp-platforms/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/mulesoft-vs-apache-camel-vs-cameleer/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/wso2-vs-apache-camel-vs-cameleer/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/mcp/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/trust/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/file-sftp-pipelines/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/hl7-mllp-healthcare-integration/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/llm-gateway-in-process/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/use-cases/mcp-tool-server/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/mcp-tool-server/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/mqtt-iot-edge-gateway/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/serverless-aws-lambda/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/BENCHMARKS.html</loc><lastmod>2026-11-07</lastmod></url>
@@ -22,7 +27,6 @@
   <url><loc>https://cameleer.ing/docs/FEATURES.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/INTEROP.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/ROADMAP.html</loc><lastmod>2026-11-09</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/STATUS.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/activemq.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ai-prompt.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ai-resource.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -72,7 +76,7 @@
   <url><loc>https://cameleer.ing/docs/components/azure-key-vault.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/azure-openai.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/azure-schema-registry.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/azure-servicebus.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/azure-servicebus.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/azure-storage-blob.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/azure-storage-datalake.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/azure-storage-files.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -81,7 +85,7 @@
   <url><loc>https://cameleer.ing/docs/components/browse.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/class.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/controlbus.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/couchdb.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/couchdb.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/cql.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/cron.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/cxf.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -90,13 +94,13 @@
   <url><loc>https://cameleer.ing/docs/components/dataset-test.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/dataset.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/direct.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/elasticsearch.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/elasticsearch.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/exec.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/fhir.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/file.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/freemarker.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ftp.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/ftps.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/ftps.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/gemini.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/github.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/google-bigquery-sql.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -119,20 +123,20 @@
   <url><loc>https://cameleer.ing/docs/components/google-vertexai.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/graphql.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/grpc.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/http.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/imap.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/http.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/imap.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/jdbc.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/jetty.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/jira.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/jms.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/json-validator.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/kafka.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/kafka.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/kamelet.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/language.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/log.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mcp.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/mllp.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/mllp.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mock.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mongodb-gridfs.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mongodb.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -141,13 +145,13 @@
   <url><loc>https://cameleer.ing/docs/components/netty-http.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/netty.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/openai.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/opensearch.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/paho-mqtt5.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/paho.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/platform-http.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/pop3.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/opensearch.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/paho-mqtt5.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/paho.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/platform-http.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/pop3.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/quartz.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/rabbitmq.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/rabbitmq.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ref.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/rest.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/rss.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -156,7 +160,7 @@
   <url><loc>https://cameleer.ing/docs/components/seda.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/sftp.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/slack.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/smtp.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/smtp.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/spring-rabbitmq.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/spring-redis.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/spring-ws.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -167,7 +171,7 @@
   <url><loc>https://cameleer.ing/docs/components/stream.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/string-template.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/stub.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/syslog.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/syslog.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/telegram.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/test.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/thrift.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -176,11 +180,11 @@
   <url><loc>https://cameleer.ing/docs/components/undertow.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/validator.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/velocity.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/vertx-websocket.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/vertx-websocket.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/vm.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/webhook.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/websocket.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/ws.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/websocket.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/ws.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/xj.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/xmlsecurity-sign.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/xmlsecurity-verify.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -221,9 +225,12 @@
   <url><loc>https://cameleer.ing/docs/guides/agent-tool-calls.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/agents.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/ai-components.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/attestation.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/build-features.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/cli.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/cloud-credentials.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/concepts.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/concepts.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/configuration.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/edge.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/eips.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/eips/flow-control.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -236,9 +243,9 @@
   <url><loc>https://cameleer.ing/docs/guides/getting-started.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-client.html</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp-server.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp-server.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-shop-example.html</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/approvals.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/customer-service-lookups.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/deployment.html</loc><lastmod>2026-11-07</lastmod></url>
@@ -251,10 +258,13 @@
   <url><loc>https://cameleer.ing/docs/guides/mcp/the-tool-asks-the-user.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/migrating-from-apache-camel.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/model-providers.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/observability.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/testing.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/tls-and-security.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-for-coding-agents.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/bean.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/constant.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/csimple.html</loc><lastmod>2026-11-06</lastmod></url>

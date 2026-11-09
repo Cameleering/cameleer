@@ -64,7 +64,7 @@ fn hub_commands_route(b: &mut RouteBuilder, hub: &str) {
 | `maxTextMessageSize`, `maxBinaryMessageSize`, `maxMessageSize` | 64 MiB | Largest incoming message. |
 | `maxFrameSize` | 65536 | Fragment outgoing messages into frames of this size. |
 | `sslContextParameters` | | `wss`: `#bean` with the trust store (and a key store for client certificates). |
-| `useGlobalSslContextParameters` | `false` | `wss`: use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | `wss`: use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 Options of Apache Camel's AHC client (`clientOptions`, `reconnectMaxAttempts`, ...) are accepted
 and ignored.

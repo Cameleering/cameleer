@@ -108,13 +108,13 @@ Operation names are case-insensitive; `BulkIndex` is accepted for `Bulk`.
 | `enableDocumentOnlyMode` | `false` | return `_source` documents instead of response objects |
 | `user`, `password` | | basic authentication |
 | `apiKey` | | sent as `Authorization: ApiKey <value>` |
-| `enableSSL` | `false` | HTTPS; trust from `sslContextParameters=#bean`, the global `camel.ssl.*` parameters or the system store |
+| `enableSSL` | `false` | HTTPS; trust from `sslContextParameters=#bean`, the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`) or the system store |
 | `connectionTimeout` | `30s` | connect timeout |
 | `socketTimeout` | `30s` | read timeout |
 | `useScroll` | `false` | run `Search` as a scroll search and return all hits |
 | `scrollKeepAliveMs` | `60000` | scroll context keep-alive |
 | `enableSniffing` | `false` | replace `hostAddresses` with the nodes from `GET /_nodes/http` |
-| `sniffInterval` | `300000` | milliseconds between sniffs |
+| `sniffInterval` (also `snifferInterval`) | `300000` | milliseconds between sniffs |
 | `sniffAfterFailureDelay` | `60000` | milliseconds before sniffing again after a connection failure |
 | `documentClass` | | map `_source` documents to declared fields: an inline spec such as `title:string,year:int,price:double`, or a `#bean` |
 

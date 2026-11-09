@@ -80,7 +80,7 @@ fn agent_presence_route(b: &mut RouteBuilder, port: u16) {
 | `maxTextMessageSize`, `maxBinaryMessageSize`, `maxMessageSize` | 64 MiB | Largest incoming message. |
 | `maxFrameSize` | 65536 | Outgoing frame size. |
 | `sslContextParameters` | | `#bean` with a key store: serve `wss`. |
-| `useGlobalSslContextParameters` | `false` | Serve `wss` with the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Serve `wss` with the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 `router`, `serverOptions`, `clientOptions` and `handshakeHeaders` are accepted and ignored.
 

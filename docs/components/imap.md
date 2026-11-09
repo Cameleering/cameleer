@@ -85,7 +85,7 @@ fn mail_triage_routes(b: &mut RouteBuilder, imap: &str, invoice_dir: &str) {
 | `connectionTimeout` | `30s` | Connect timeout. |
 | `mail.imap.starttls.enable`, `mail.imap.starttls.required` | `false` | STARTTLS on `imap:`. |
 | `sslContextParameters` | | `#bean` with trust material for TLS. |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 `peek`, `closeFolder`, `disconnect`, `skipFailedMessage`, `searchTerm.*` and other `mail.*`
 options are accepted and ignored.

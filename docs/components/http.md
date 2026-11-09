@@ -111,10 +111,11 @@ fn ask_llm_route(b: &mut RouteBuilder, base_url: &str, api_key: &str) {
 | `connectionsPerRoute` | `20` | Pooled connections per host and port. |
 | `disableStreamCache` | `false` | Return the response body as a stream handle instead of bytes. |
 | `proxyHost`, `proxyPort` | | HTTP proxy (CONNECT tunnelling for `https`). Aliases `proxyAuthHost`, `proxyAuthPort`. |
-| `proxyAuthUsername`, `proxyAuthPassword` | | Proxy credentials. |
+| `proxyAuthUsername`, `proxyAuthPassword` | | Proxy credentials (sent as HTTP Basic). |
+| `proxyAuthScheme`, `proxyAuthMethod` | | Accepted for compatibility with Camel and ignored: the proxy is always reached with Basic credentials. |
 | `useSystemProperties` | `false` | Take the proxy from `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY`. |
 | `sslContextParameters` | | `#bean` with trust and key material for `https` (client certificates come from its key store). |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 Certificates and host names are always verified for `https`. Several Apache Camel options
 (`headerFilterStrategy`, `httpClientConfigurer`, `cookieHandler`, `maxTotalConnections` and

@@ -154,3 +154,79 @@ fn an_agent_uses_tools_of_a_stdio_mcp_server() {
     assert_eq!(out.body().to_string(), "Done: Hello Ann");
     main.stop().unwrap();
 }
+
+/// An existing route becomes an MCP tool by changing its first line
+/// (`examples/agents/route-to-mcp-tool.camel.yaml`, the MCP pages): the file differs from the
+/// original `direct:` route in exactly one line, it serves the tool as `cameleer run --mcp`
+/// does, and the same change in the Rust DSL does the same.
+#[test]
+fn an_existing_route_becomes_a_tool_by_changing_one_line() {
+    let path = format!("{}/../../examples/agents/route-to-mcp-tool.camel.yaml", env!("CARGO_MANIFEST_DIR"));
+    let after = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+    let tool_line = after.lines().find(|l| l.trim_start().starts_with("uri: \"ai-tool:")).expect("the ai-tool line").to_string();
+    let before = after.replace(&tool_line, "      uri: direct:lookup-order");
+    let changed: Vec<_> = before.lines().zip(after.lines()).filter(|(a, b)| a != b).collect();
+    assert_eq!(changed.len(), 1, "one changed line: {:?}", changed);
+    assert_eq!(before.lines().count(), after.lines().count());
+
+    // the original route, called by another route
+    let mut main = cameleer_main::new_main();
+    main.add_route_source("before.camel.yaml", before);
+    main.start().unwrap();
+    let out = main.context().create_producer_template().send(
+        "direct:lookup-order",
+        cameleer_core::message::Exchange::with_body(Some(main.context().clone()), ""),
+    );
+    assert!(out.exception.is_none(), "{:?}", out.exception);
+    main.stop().unwrap();
+
+    // the changed file, as `cameleer run route-to-mcp-tool.camel.yaml --mcp` serves it
+    let call = |port: u16, args: &str| {
+        let body = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"_meta":{{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{{}}}},"name":"lookup_order","arguments":{}}}}}"#,
+            args
+        );
+        let h = [("Content-Type", "application/json"), ("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", "tools/call"), ("Mcp-Name", "lookup_order")];
+        let url = format!("http://127.0.0.1:{}/mcp", port);
+        json(&HttpClient::new().request("POST", &url, &h, Some(body.as_bytes()), Some(Duration::from_secs(10))).unwrap().body_text())
+    };
+    let free = || std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let port = free();
+    let mut main = cameleer_main::new_main();
+    main.add_route_file(&path);
+    main.set_property("camel.server.mcp-enabled", "true");
+    main.set_property("camel.server.mcp-tags", "*,untagged");
+    main.set_property("camel.server.host", "127.0.0.1");
+    main.set_property("camel.server.port", port.to_string());
+    main.start().unwrap();
+    let r = call(port, r#"{"orderId":"EU-4411"}"#).to_json();
+    assert!(r.contains("EU-4411") && r.contains("shipped"), "{}", r);
+    let list = {
+        let body = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}"#;
+        let h = [("Content-Type", "application/json"), ("MCP-Protocol-Version", "2026-07-28"), ("Mcp-Method", "tools/list")];
+        HttpClient::new().request("POST", &format!("http://127.0.0.1:{}/mcp", port), &h, Some(body.as_bytes()), Some(Duration::from_secs(10))).unwrap().body_text()
+    };
+    assert!(list.contains("Look up an order by id") && list.contains("\"readOnlyHint\":true"), "{}", list);
+    // the declared parameter is checked before the route runs
+    let r = call(port, "{}").to_json();
+    assert!(r.contains("isError") && r.contains("orderId"), "{}", r);
+    main.stop().unwrap();
+
+    // the same one-line change in the Rust DSL
+    let port = free();
+    let mut main = cameleer_main::new_main();
+    main.set_property("camel.server.mcp-enabled", "true");
+    main.set_property("camel.server.mcp-tags", "*,untagged");
+    main.set_property("camel.server.host", "127.0.0.1");
+    main.set_property("camel.server.port", port.to_string());
+    main.configure(|ctx| {
+        ctx.add_routes(|b| {
+            b.from("ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true")
+                .set_body(cameleer_core::prelude::simple(r#"{"orderId": "${header.orderId}", "status": "shipped"}"#));
+        })
+    });
+    main.start().unwrap();
+    let r = call(port, r#"{"orderId":"EU-4411"}"#).to_json();
+    assert!(r.contains("EU-4411") && r.contains("shipped"), "{}", r);
+    main.stop().unwrap();
+}

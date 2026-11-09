@@ -9,6 +9,7 @@
 /// (feature, compiled in) for every optional family and part.
 pub const FEATURES: &[(&str, bool)] = &[
     ("ai", cfg!(feature = "ai")),
+    ("attest", cfg!(feature = "attest")),
     ("amqp", cfg!(feature = "amqp")),
     ("amqp10", cfg!(feature = "amqp10")),
     ("cloud", cfg!(feature = "cloud")),

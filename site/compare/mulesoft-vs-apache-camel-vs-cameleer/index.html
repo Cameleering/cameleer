@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MuleSoft vs Apache Camel vs Cameleer | Cameleer</title>
+<meta name="description" content="MuleSoft Anypoint, Apache Camel and Cameleer compared: cost model, runtime, connectors, API management, MCP, and how Mule flows map to routes.">
+<link rel="canonical" href="https://cameleer.ing/compare/mulesoft-vs-apache-camel-vs-cameleer/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="MuleSoft vs Apache Camel vs Cameleer">
+<meta property="og:description" content="A commercial integration platform, the open-source integration framework, and Camel's routes as one native binary. What each is best at, and how Mule flows map to routes.">
+<meta property="og:url" content="https://cameleer.ing/compare/mulesoft-vs-apache-camel-vs-cameleer/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "MuleSoft vs Apache Camel vs Cameleer",
+ "description": "MuleSoft Anypoint, Apache Camel and Cameleer compared: licence and cost model, runtime, how integrations are built, connectors, API management, MCP and AI agents, hosting, support, and how Mule flows map to Camel routes.",
+ "url": "https://cameleer.ing/compare/mulesoft-vs-apache-camel-vs-cameleer/",
+ "dateModified": "2026-11-09",
+ "inLanguage": "en", "image": "https://cameleer.ing/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
+ "about": [{"@type": "SoftwareApplication", "name": "MuleSoft Anypoint Platform"}, {"@type": "SoftwareApplication", "name": "Apache Camel"}, {"@type": "SoftwareApplication", "name": "Cameleer"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/"},
+ {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://cameleer.ing/compare/"},
+ {"@type": "ListItem", "position": 3, "name": "MuleSoft vs Apache Camel vs Cameleer"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "What is the difference between MuleSoft and Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "MuleSoft Anypoint is a commercial platform: the Mule runtime with a visual designer, DataWeave for transformations, API management, Anypoint Exchange for connectors, CloudHub hosting and Salesforce support, priced by quote. Apache Camel is an open-source framework: routes in Java, YAML or XML using the Enterprise Integration Patterns, about 300 components, run in your own Java applications, with community and vendor support."}},
+ {"@type": "Question", "name": "Is Apache Camel a free alternative to MuleSoft?", "acceptedAnswer": {"@type": "Answer", "text": "For the integration runtime, yes: Camel and Cameleer are Apache-2.0 open source and cover the same integration patterns. They do not replace MuleSoft's API management, Exchange, CloudHub hosting or support; you run and operate them yourself, and you add an API gateway if you need one."}},
+ {"@type": "Question", "name": "Can I migrate Mule flows to Apache Camel or Cameleer?", "acceptedAnswer": {"@type": "Answer", "text": "There is no automatic conversion; flows are rewritten as routes. Most Mule components have a direct equivalent: HTTP Listener to platform-http or the REST DSL, Choice to choice, For Each to split, Scatter-Gather to multicast with aggregation, Until Successful to redelivery, Try and On Error to doTry and onException. DataWeave scripts are rewritten, for example in DataSonnet, jq, Simple or a template."}},
+ {"@type": "Question", "name": "Does MuleSoft support MCP?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. MuleSoft's MCP Connector lets Mule apps act as MCP servers and clients over Streamable HTTP (its release notes list protocol 2025-06-18, on Mule 4.9.6 and later), and Agent Fabric adds a registry, a broker, governance and a visualizer for agents. Cameleer serves routes as MCP tools in the 2026-07-28 and 2025-11-25 eras and enforces schema checks, run-once, approvals, cancelling timeouts and audit on every call."}}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
+      <a href="../../mcp/">MCP</a>
+      <a href="../">Compare</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / MuleSoft vs Apache Camel vs Cameleer</p>
+    <p class="kicker">Platform or runtime</p>
+    <h1>MuleSoft vs Apache Camel vs Cameleer</h1>
+    <p class="lede">MuleSoft sells a platform: designer, transformations, API management, connectors, hosting and support, in one contract. Apache Camel is the open-source framework for the same integration patterns, which you program and run yourself. Cameleer runs Camel's routes as one native binary, from a laptop to AWS Lambda or an edge gateway, with safety rules for AI agent tools built in.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="glance">
+  <div class="wrap">
+    <h2>At a glance</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th></th><th>MuleSoft Anypoint</th><th>Apache Camel</th><th>Cameleer</th></tr></thead>
+      <tbody>
+        <tr><td>what it is</td><td>a commercial integration and API platform (Salesforce)</td><td>an open-source integration framework</td><td>Apache Camel's routes, EIPs and about 230 components, rewritten in Rust</td></tr>
+        <tr><td>licence and cost</td><td>subscription, by quote; the Mule runtime's community edition is CPAL, the enterprise edition proprietary</td><td>Apache-2.0, no licence fee</td><td>Apache-2.0, no licence fee</td></tr>
+        <tr><td>runtime</td><td>Mule runtime on the JVM</td><td>JVM, or native with Quarkus</td><td>one native binary, Rust standard library only</td></tr>
+        <tr><td>how you build</td><td class="win">Anypoint Studio and Code Builder: visual flows plus XML; DataWeave for transformations</td><td>Java, YAML or XML DSL; Kaoto as a visual editor</td><td>Camel's YAML and XML DSLs unchanged, or the Rust DSL; <code>cameleer validate</code> for coding agents</td></tr>
+        <tr><td>connectors</td><td class="win">Anypoint Exchange: MuleSoft, partner and community connectors and templates</td><td>about 300 components</td><td>about 230 components, languages and data formats, each with a tested docs page</td></tr>
+        <tr><td>API management</td><td class="win">API Manager, Flex Gateway, developer portal</td><td>REST DSL; no API management</td><td>REST DSL with OpenAPI; no API management</td></tr>
+        <tr><td>AI agents and MCP</td><td>MCP Connector (servers and clients), Agent Fabric (registry, broker, governance)</td><td><code>camel-ai-tool</code>, <code>camel-mcp-server</code> (Preview)</td><td>MCP server in both protocol eras, MCP client and gateway, an agent step; schema, run-once, approval, cancelling timeout and audit on every call</td></tr>
+        <tr><td>Evidence of the running integration (TEE attestation)</td><td>not found in its documentation (searched 2026-11)</td><td>not found in its documentation (searched 2026-11)</td><td>next release: in a confidential VM, hardware evidence of the routes, configuration and tools, bound to the TLS key (<a href="../../trust/">trust</a>)</td></tr>
+        <tr><td>where it runs</td><td>CloudHub, Runtime Fabric, customer-hosted Mule runtimes</td><td>anywhere a JVM runs</td><td>anywhere one binary runs, including its own AWS Lambda runtime and arm64 gateways</td></tr>
+        <tr><td>startup and memory</td><td>not measured by us</td><td>1.1 s, 399 MB peak on a simple route (measured)</td><td class="win">2.5 ms, 7 MB peak on the same route (measured)</td></tr>
+        <tr><td>support</td><td class="win">Salesforce support plans</td><td>community; commercial builds from vendors</td><td>community</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">MuleSoft's features as described in <a href="https://docs.mulesoft.com/mcp-connector/latest/">its documentation</a> and on <a href="https://www.mulesoft.com/ai/agent-fabric">its Agent Fabric page</a>, checked on 9 November 2026. MuleSoft does not publish list prices; third-party buyer reports (for example <a href="https://www.vendr.com/marketplace/mulesoft">Vendr</a>) put typical contracts in the tens of thousands of dollars a year and up. The Camel and Cameleer figures come from <a href="../apache-camel-vs-cameleer/">the same routes on identical cloud machines</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="choose">
+  <div class="wrap">
+    <h2>When to choose which</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>MuleSoft, when you</h3>
+        <ul>
+          <li>want integration, API management, a connector marketplace and hosting from one vendor, under one contract;</li>
+          <li>have teams that build flows visually and transform data in DataWeave;</li>
+          <li>run Salesforce and want Agentforce and Agent Fabric on the same platform;</li>
+          <li>need a vendor support plan for the whole stack.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Apache Camel or Cameleer, when you</h3>
+        <ul>
+          <li>want the integration patterns without a licence per core or per flow;</li>
+          <li>keep integrations as code in Git, with tests, reviewed like other code;</li>
+          <li>(Cameleer) need integrations to start in milliseconds and run in megabytes: functions, sidecars, edge gateways, many small services;</li>
+          <li>(Cameleer) want AI agent tools where the server, not each flow, enforces approvals, run-once and audit.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="move">
+  <div class="wrap">
+    <h2>How Mule flows map to routes</h2>
+    <p class="intro">There is no automatic converter; flows are rewritten. The patterns are the same, so most components have a direct equivalent in Camel and Cameleer:</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>Mule</th><th>Camel and Cameleer</th></tr></thead>
+      <tbody>
+        <tr><td>HTTP Listener, APIkit router</td><td><code>platform-http</code>, the REST DSL with OpenAPI</td></tr>
+        <tr><td>Choice</td><td><code>choice</code></td></tr>
+        <tr><td>For Each, Batch Job</td><td><code>split</code> (with <code>aggregate</code> for batches)</td></tr>
+        <tr><td>Scatter-Gather</td><td><code>multicast</code> with an aggregation strategy</td></tr>
+        <tr><td>Until Successful</td><td>redelivery in the error handler</td></tr>
+        <tr><td>Try, On Error Continue, On Error Propagate</td><td><code>doTry</code>, <code>onException</code> (handled or not), the dead letter channel</td></tr>
+        <tr><td>Transform Message (DataWeave)</td><td><code>setBody</code> with DataSonnet, jq, Simple, JSONPath, XSLT or a template</td></tr>
+        <tr><td>Set Variable, Set Payload</td><td><code>setVariable</code>, <code>setProperty</code>, <code>setBody</code></td></tr>
+        <tr><td>Flow Reference</td><td><code>to: direct:...</code></td></tr>
+        <tr><td>Object Store, idempotent filter</td><td><code>idempotentConsumer</code> with a repository</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Connectors map to components by system: databases, Kafka, JMS and AMQP, SFTP, S3, HTTP, Slack, Jira and more. Not every MuleSoft connector has a Cameleer component (there is no Salesforce component, for example), so check the <a href="../../docs/components/">component index</a> for each system a flow uses before planning a move.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>What is the difference between MuleSoft and Apache Camel?</summary><p>MuleSoft Anypoint is a commercial platform: the Mule runtime with a visual designer, DataWeave for transformations, API management, Anypoint Exchange for connectors, CloudHub hosting and Salesforce support, priced by quote. Apache Camel is an open-source framework: routes in Java, YAML or XML using the Enterprise Integration Patterns, about 300 components, run in your own Java applications, with community and vendor support.</p></details>
+    <details><summary>Is Apache Camel a free alternative to MuleSoft?</summary><p>For the integration runtime, yes: Camel and Cameleer are Apache-2.0 open source and cover the same integration patterns. They do not replace MuleSoft's API management, Exchange, CloudHub hosting or support; you run and operate them yourself, and you add an API gateway if you need one.</p></details>
+    <details><summary>Can I migrate Mule flows to Apache Camel or Cameleer?</summary><p>There is no automatic conversion; flows are rewritten as routes. Most Mule components have a direct equivalent: HTTP Listener to <code>platform-http</code> or the REST DSL, Choice to <code>choice</code>, For Each to <code>split</code>, Scatter-Gather to <code>multicast</code> with aggregation, Until Successful to redelivery, Try and On Error to <code>doTry</code> and <code>onException</code>. DataWeave scripts are rewritten, for example in DataSonnet, jq, Simple or a template.</p></details>
+    <details><summary>Does MuleSoft support MCP?</summary><p>Yes. MuleSoft's MCP Connector lets Mule apps act as MCP servers and clients over Streamable HTTP (its release notes list protocol 2025-06-18, on Mule 4.9.6 and later), and Agent Fabric adds a registry, a broker, governance and a visualizer for agents. Cameleer serves routes as MCP tools in the 2026-07-28 and 2025-11-25 eras and enforces schema checks, run-once, approvals, cancelling timeouts and audit on every call (<a href="../enterprise-mcp-platforms/">enterprise MCP platforms compared</a>).</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Try Cameleer in a minute</h2>
+    <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml</pre>
+    <div class="cta">
+      <a class="btn primary" href="../../alternatives/mulesoft-alternatives/">MuleSoft alternatives</a>
+      <a class="btn" href="../apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a>
+      <a class="btn" href="../../mcp/">Cameleer MCP</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent open-source project, not affiliated with or endorsed by Salesforce, MuleSoft or the Apache Software Foundation. MuleSoft, Anypoint, Apache, Apache Camel and Camel are trademarks of their owners and are used only to identify them. MuleSoft's features are from its public documentation on the date shown; corrections are welcome as GitHub issues.</p>
+    </div>
+    <div>
+      <h4>Compare</h4>
+      <ul>
+        <li><a href="../">All comparisons</a></li>
+        <li><a href="../wso2-vs-apache-camel-vs-cameleer/">WSO2 vs Camel vs Cameleer</a></li>
+        <li><a href="../enterprise-mcp-platforms/">Enterprise MCP platforms</a></li>
+        <li><a href="../../alternatives/mulesoft-alternatives/">MuleSoft alternatives</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../docs/">Documentation</a></li>
+        <li><a href="../../docs/components/">Component index</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

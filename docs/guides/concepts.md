@@ -238,8 +238,8 @@ The REST DSL (`rest:` in YAML, `b.rest(...)` in Rust) declares HTTP APIs in all 
 | exception classes | error kinds (`"IOException"`) with a parent hierarchy | `java.io.IOException` in YAML maps to `IOException` |
 | Java beans, `bean:` with parameter binding | processor beans and named bean methods in the registry | no reflection |
 | Camel Main, Spring Boot, Quarkus | `cameleer-main` (`application.properties`, profiles, `server.port`) | |
-| Camel JBang (`cameleer run`) | `cameleer run` / `cameleer run` | the same commands |
-| Maven dependencies per component | every component built in | |
+| Camel JBang (`camel run`, `camel ps`, `camel stop`) | `cameleer run`, `cameleer ps`, `cameleer stop` | the same workflow ([getting started](getting-started.md#useful-commands)) |
+| Maven dependencies per component | every component built in by default | a smaller build keeps only the families you name ([build features](build-features.md)) |
 
 ## Common questions
 

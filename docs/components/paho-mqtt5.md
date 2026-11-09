@@ -66,7 +66,8 @@ The options of [paho](paho.md#options), with these differences:
 ## Message headers
 
 The headers of [paho](paho.md#message-headers). In addition, MQTT 5 user properties of received messages
-become headers, and the producer also reads `CamelPahoMqtt5OverrideTopic`.
+become headers, the MQTT 5 content type of a received message is in `CamelPahoMqtt5ContentType`, and
+the producer also reads `CamelPahoMqtt5OverrideTopic`.
 
 ## Run it with Docker
 

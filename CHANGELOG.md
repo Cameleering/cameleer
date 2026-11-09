@@ -30,6 +30,14 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   adds `${prefix.rest}` functions (used by `${dicom.*}`).
 - **`cameleer_core::multipart`**: a shared, binary-safe MIME multipart parser and builder (the
   `mimeMultipart` data format and DICOMweb use it).
+- **Attestation in confidential VMs** (new crate `cameleer-attest`, feature `attest`, in the default
+  build): with `camel.attestation.enabled=true` in an Intel TDX or AMD SEV-SNP guest (Linux
+  configfs-tsm) or a dstack CVM, Cameleer serves hardware evidence at `/q/attestation`, bound to the
+  client's nonce, the embedded server's TLS key and a manifest of the routes, configuration (secrets
+  left out) and tools, with a hash-chained log of later changes. The MCP server adds it to
+  `server/discover` and `initialize` (`_meta["ing.cameleer/attestation"]`, the full report inline
+  when the client sends a nonce) and, with `camel.attestation.mcp-tool=true`, as a tool. Start-up
+  fails when attestation is on and no evidence can be produced. Guide: `docs/guides/attestation.md`.
 - **Existing routes as MCP tools, with no route edits**: `cameleer run --mcp-expose rest:*`
   (property `camel.server.mcp-expose-routes`). REST DSL operations become tools with typed
   arguments from their documented parameters; other routes (`direct:*`, `route:<id>`) take a
@@ -37,6 +45,22 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   call goes through the tool envelope, and per-route overrides
   (`camel.server.mcp-expose-routes.<routeId>.<option>`) take every `ai-tool` option. The REST DSL
   now keeps its operations on the context (`cameleer_http::rest::rest_operations`).
+
+### Fixed
+
+- **HTTPS routes and the management endpoints on one port**: with `camel.server.sslEnabled=true`,
+  `/q/*`, `/q/attestation` and the MCP endpoint now speak HTTPS on `camel.server.port` next to the
+  HTTPS routes; start-up used to fail with "already used by an https server". Camel's separate
+  management server is supported too: `camel.management.enabled=true` serves `/q/*` on
+  `camel.management.port` (default `9876`) and `camel.management.host`, plain HTTP.
+- The management endpoints no longer fix every route's worker pool at 8 when they register on the
+  shared port first; they use the default.
+- `/q/metrics` sends one `Content-Type` (`text/plain; version=0.0.4; charset=utf-8`), not two.
+- Readiness: a suspended route's consumer is `DOWN` in the check's details too, matching its status.
+- Route configurations (a top-level `interceptSendToEndpoint`, `intercept`, `onException`, or a
+  `routeConfiguration` without id) apply to every YAML route whatever the order of the files, as in
+  Camel, and a `routeConfigurationId` may name a configuration from a later file; an unknown id still
+  fails at start. Before, they applied only to routes in files loaded after them.
 
 ## 0.5.1 (2026-11-09)
 

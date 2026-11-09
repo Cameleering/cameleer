@@ -1,11 +1,38 @@
-# Cameleer MCP: integration routes as reliable tools for AI agents
+# Cameleer MCP: the action layer for AI agents
 
-> Cameleer turns integration routes into MCP tools that Claude, IDE assistants and agent frameworks can call. Every call is checked, deduplicated, approved when it is risky, cancelled when it is slow and written to an audit log, in both MCP protocol eras, over stdio or Streamable HTTP, from a desktop to a serverless function or an edge gateway. In a field test with 40 real requests, Claude Opus 5.5 completed 196 of 200 runs correctly.
+> The model decides what; a tested route decides how. Cameleer sits between AI agents and your systems: agents call it over MCP from Claude, IDE assistants and agent frameworks, each action runs as a route, and the server enforces what a model can't be trusted with: arguments checked, retries run once, risky actions approved by a person, slow calls cancelled, every call audited. In a field test with 40 real requests, Claude Opus 5.5 completed 196 of 200 runs correctly, and none ran an action twice, broke a rule or ran a risky call without a yes.
 
 **Cargo feature:** [`ai`](build-features.md) · **Examples:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop), [`examples/agents/mcp-gateway`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-gateway)
 
-This page is the map: what the MCP server does, where it runs, how it compares, and one page
-per use case with the requests people typed, what happened, and the tested route behind it.
+This page is the map: why agents need an action layer, how Cameleer's MCP server works, where it
+runs, how it compares, and one page per use case with the requests people typed, what happened,
+and the tested route behind it.
+
+## Why agents need an action layer
+
+Agents are good at deciding and bad at doing things exactly once, within the rules, with a
+record of who allowed what. Cameleer enforces those parts on every call, whatever the model does:
+
+| when the model... | without an action layer | with Cameleer | shown by |
+|---|---|---|---|
+| sends the same call twice | the action runs twice: two refunds, two emails | it runs once per conversation; the repeat gets the first result | field test: a resent ticket made one ticket |
+| invents or mangles arguments | they reach your API | rejected by the tool's JSON Schema, every error named; nothing runs | hermetic tests |
+| picks a risky action | it runs | it waits for the user's yes in the client, or for an operator | [approvals](mcp/approvals.md), [a manager in the loop](mcp/manager-approval.md) |
+| ignores a business rule | it runs if the prompt didn't stop it | the route refuses and says why; the model passes the reason on | [refunds](mcp/refunds-with-business-rules.md): a £900 refund refused, not split |
+| reads instructions planted in data | it may act on them | data comes back as data; destructive tools still need a person's yes | [safety](mcp/safety.md): an injected "refund order 1020" reported, not acted on |
+| waits on a slow system | the call times out but the work carries on | the timeout cancels the route before its next step | hermetic tests |
+| is shown personal data | it sees everything the API returns | redacted before it leaves the server | [safety](mcp/safety.md): no full card number |
+| is asked what it did | whatever the framework logged | a hash-chained record per call: caller, argument digest, decision, approver | a test detects an edited record |
+
+On a refund across four systems, an agent calling each API directly needs 4 tool calls and 5
+model turns and can refund twice, leave half-done work or choose the amount; through one
+Cameleer route it is 1 tool call and 2 model turns, run once, rolled back on failure, with the
+amount taken from the order ([direct tool calls vs Cameleer](agent-tool-calls.md)).
+
+MCP is how agents reach this layer. Around it, Cameleer also feeds events to models (Kafka, MQTT,
+webhooks, files), calls 23 model providers with retries and fallbacks
+([model providers](model-providers.md)), routes on the model's answer, and runs agents itself
+with the [agent step](agent-step.md).
 
 ## In one minute
 
@@ -32,10 +59,48 @@ cameleer run tools.camel.yaml --mcp          # Streamable HTTP on http://localho
 cameleer run tools.camel.yaml --mcp-stdio    # for a client that starts the server itself
 ```
 
-Already have routes? Serve them as they are, with no edits: `cameleer run orders.camel.yaml
---mcp-expose rest:*` turns every REST DSL operation into a typed tool, and `direct:*` patterns
-select other routes. Writes need approval by default
+**Existing routes become tools without editing them.** `cameleer run orders.camel.yaml
+--mcp-expose rest:*` serves every REST DSL operation as a tool with typed arguments taken from its
+documented parameters; `direct:*` and `route:*` patterns select other routes. Reads (GET, HEAD)
+are read-only tools, and every other exposed tool needs approval by default
 ([how](mcp-server.md#expose-existing-routes-without-editing-them)).
+
+**Or make a route a tool by changing one line**, when you want to name the tool and its arguments
+yourself. Keep its steps and replace the line
+it starts from with an `ai-tool` URI that names the tool and its arguments
+([examples/agents/route-to-mcp-tool.camel.yaml](../../examples/agents/route-to-mcp-tool.camel.yaml)):
+
+```diff
+ - route:
+     id: order-lookup
+     from:
+-      uri: direct:lookup-order
++      uri: "ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true&readOnlyHint=true"
+       steps:
+```
+
+Then one command serves it, from the CLI, Docker or your own Rust program:
+
+```bash
+cameleer run orders.camel.yaml --mcp
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml --mcp
+```
+
+```rust
+main.set_property("camel.server.mcp-enabled", "true");
+b.from("ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true&readOnlyHint=true")
+    .set_body(simple(r#"{"orderId": "${header.orderId}"}"#));
+```
+
+A test (`an_existing_route_becomes_a_tool_by_changing_one_line` in
+`crates/cameleer-main/tests/mcp_main.rs`) checks that the example differs from the original route
+in that one line and serves the tool, from YAML and from the Rust DSL. A route that other routes
+or a REST endpoint also call keeps its `direct:` start, with a three-line `ai-tool` route in front
+of it that does `to: direct:lookup-order`.
+
+**Cameleer is both an MCP server and an MCP client.** It serves your routes to agents, and it
+imports other MCP servers' tools for routes and models to use, or serves them again as a
+[gateway](mcp/gateway.md) with the same checks.
 
 In a real tool the `setBody` is a query, an API call, a queue: any of Cameleer's about 230
 components, with the route's own error handling and retries. The fastest way to see what that

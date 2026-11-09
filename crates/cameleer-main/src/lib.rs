@@ -10,6 +10,8 @@
 //! files are reloaded when they change; [`local`] publishes the status files used by the
 //! `cameleer ps/get/cmd/log/trace/stop` commands.
 
+#[cfg(feature = "attest")]
+pub mod attest;
 pub mod cli;
 pub mod testing;
 pub mod config;
@@ -66,6 +68,9 @@ pub struct Main {
     console: Option<console::DevConsoleServer>,
     /// The MCP server's HTTP endpoint (`camel.server.mcp-enabled`), stopped when dropped.
     mcp: std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>,
+    /// The attestation endpoint (`camel.attestation.enabled`), stopped when dropped.
+    #[cfg_attr(not(feature = "attest"), allow(dead_code))]
+    attestation: std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>,
     /// Properties set in code / on the command line (highest precedence).
     explicit: BTreeMap<String, String>,
     /// Defaults set in code / on the command line (lowest precedence).
@@ -153,6 +158,7 @@ impl Main {
             configurers: Vec::new(),
             console: None,
             mcp: std::sync::Mutex::new(None),
+            attestation: std::sync::Mutex::new(None),
             defaults: BTreeMap::new(),
             explicit: BTreeMap::new(),
             profile_docs: Vec::new(),
@@ -595,6 +601,9 @@ impl Main {
                 cameleer_core::camel_info!("mcp", "Exposed {} routes as tools: {}", exposed.len(), exposed.join(", "));
             }
         }
+        // attestation sees the routes and tools as served, the exposed ones included, and is
+        // in the registry before the MCP server starts (its handshake carries it)
+        self.start_attestation()?;
         let mut cfg = McpConfig::from_properties(&self.properties)?;
         if !cfg.enabled {
             return Ok(());
@@ -623,8 +632,30 @@ impl Main {
         Ok(())
     }
 
+    /// Attestation in a hardware TEE (`camel.attestation.enabled=true`, the `attest` feature).
+    #[cfg(feature = "attest")]
+    fn start_attestation(&self) -> Result<()> {
+        if self.attestation.lock().unwrap().is_some() {
+            return Ok(());
+        }
+        let files: Vec<PathBuf> = self.loaded_files.iter().map(|(f, _)| f.clone()).collect();
+        if let Some(h) = attest::start(&self.ctx, &self.properties, &files)? {
+            *self.attestation.lock().unwrap() = Some(Box::new(h));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "attest"))]
+    fn start_attestation(&self) -> Result<()> {
+        if console::prop(&self.properties, "camel.attestation.enabled").map(|v| v.trim().eq_ignore_ascii_case("true")).unwrap_or(false) {
+            return Err(CamelError::illegal_argument("camel.attestation.enabled=true needs the attest feature: rebuild with --features attest"));
+        }
+        Ok(())
+    }
+
     #[cfg(not(feature = "ai"))]
     fn start_mcp(&self) -> Result<()> {
+        self.start_attestation()?;
         let on = console::prop(&self.properties, "camel.server.mcp-enabled").map(|v| v.trim().eq_ignore_ascii_case("true")).unwrap_or(false);
         if on {
             return Err(CamelError::illegal_argument("camel.server.mcp-enabled=true needs the ai feature: rebuild with --features ai"));

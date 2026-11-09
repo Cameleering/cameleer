@@ -6,6 +6,7 @@
 
 #[cfg(feature = "agent")]
 pub mod ai;
+pub mod attest;
 pub mod alloc;
 pub mod async_delay;
 pub mod builder;

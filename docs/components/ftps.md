@@ -40,7 +40,7 @@ per site, and moves each file to `.sent` locally afterwards.
 ```
 
 The server certificate is checked against the system trust store, or against the global
-`camel.ssl.*` parameters (for example `camel.ssl.trustStore=/routes/ca.pem`) or an
+`camel.ssl.*` parameters (for example `camel.ssl.enabled=true` and `camel.ssl.trustStore=/routes/ca.pem`; without `camel.ssl.enabled=true` they are ignored) or an
 `sslContextParameters` bean.
 
 ## Rust DSL
@@ -66,7 +66,7 @@ All [ftp options](ftp.md#options), plus:
 | `disableSecureDataChannelDefaults` | `false` | Send `PBSZ` / `PROT` only when set explicitly. |
 | `securityProtocol` | | `TLSv1.2`, `TLSv1.3` or `TLS`. |
 | `sslContextParameters` | | `#bean` with trust and key material. |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 Data connections resume the control connection's TLS session, which servers configured like
 vsftpd `require_ssl_reuse=YES` demand. The `ftpClient.trustStore.*` / `ftpClient.keyStore.*`
@@ -92,7 +92,7 @@ Most servers use explicit FTPS on port 21 (the default). Use `isImplicit=true` f
 expect TLS immediately, usually on port 990.
 
 ### The server uses a private CA. How do I trust it?
-Set `camel.ssl.trustStore` to the CA's PEM file, or bind an `SSLContextParameters` bean and add
+Set `camel.ssl.enabled=true` and `camel.ssl.trustStore` to the CA's PEM file, or bind an `SSLContextParameters` bean and add
 `sslContextParameters=#myTls`. Certificate checks cannot be turned off per endpoint.
 
 ### Is FTPS the same as SFTP?

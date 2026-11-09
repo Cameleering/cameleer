@@ -67,7 +67,7 @@ pub fn routes(ctx: &CamelContext) -> Result<()> {
 | `tcpNoDelay` | `true` | Disable Nagle's algorithm. |
 | `maxBufferSize` | 1 GiB | Largest accepted frame. |
 | `sslContextParameters` | | `#bean`: the consumer accepts TLS (needs key material) and the producer connects with TLS. |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters for TLS. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`) for TLS. |
 
 ## Message headers
 

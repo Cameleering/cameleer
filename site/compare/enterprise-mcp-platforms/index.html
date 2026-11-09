@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enterprise MCP Platforms Compared | Cameleer</title>
+<meta name="description" content="MuleSoft, Boomi, Workato, WSO2, TIBCO, IBM, Azure Logic Apps, Apache Camel and Cameleer as MCP servers for AI agents: what each offers and what to ask.">
+<link rel="canonical" href="https://cameleer.ing/compare/enterprise-mcp-platforms/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Enterprise MCP platforms compared: integration platforms as tools for AI agents">
+<meta property="og:description" content="Every major integration platform now offers MCP. The differences are what happens on each call, where it runs and how it is priced.">
+<meta property="og:url" content="https://cameleer.ing/compare/enterprise-mcp-platforms/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "Enterprise MCP platforms compared: MuleSoft, Boomi, Workato, WSO2, TIBCO Flogo, IBM, Azure Logic Apps, Apache Camel and Cameleer",
+ "description": "How the major integration platforms expose business systems to AI agents over the Model Context Protocol: features as each vendor documents them, where they run, how they are priced, the questions to ask, and Cameleer's measured answers.",
+ "url": "https://cameleer.ing/compare/enterprise-mcp-platforms/",
+ "dateModified": "2026-11-09",
+ "inLanguage": "en", "image": "https://cameleer.ing/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
+ "about": [{"@type": "Thing", "name": "Model Context Protocol"}, {"@type": "Thing", "name": "Integration platform as a service"}, {"@type": "Thing", "name": "AI agents"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/"},
+ {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://cameleer.ing/compare/"},
+ {"@type": "ListItem", "position": 3, "name": "Enterprise MCP platforms"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "Which integration platforms support MCP?", "acceptedAnswer": {"@type": "Answer", "text": "As of November 2026: MuleSoft (MCP Connector for servers and clients, Agent Fabric), Boomi (governed MCP servers), Workato (Enterprise MCP), WSO2 Integrator (MCP servers from APIs, agents), TIBCO Flogo (MCP connector), IBM webMethods Hybrid Integration (MCP Gateway), Azure Logic Apps (workflows as MCP servers) and Apache Camel 4.22 and later (camel-mcp-server, Preview). Cameleer serves its routes as MCP tools and imports other MCP servers as a gateway."}},
+ {"@type": "Question", "name": "What should I ask an MCP platform before giving agents access to business systems?", "acceptedAnswer": {"@type": "Answer", "text": "Whether a retried call runs twice, who approves a destructive call and how, whether a call that times out stops the work, how arguments are validated, whether every call is audited in a way that shows tampering, which MCP protocol versions are supported, and where the server runs and what it costs per call or per core."}},
+ {"@type": "Question", "name": "Is Cameleer an alternative to MuleSoft or Boomi for MCP?", "acceptedAnswer": {"@type": "Answer", "text": "For self-hosted MCP tools built on your own integrations, yes: it is open source, one binary, and enforces schema checks, run-once, approvals, cancelling timeouts and a hash-chained audit on every call. It does not offer a hosted service, a visual designer, an agent registry across vendors or a catalogue of thousands of SaaS connectors."}},
+ {"@type": "Question", "name": "How fast is Cameleer's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel's camel-mcp-server and 1,536 in 214 MB for a server on the official MCP TypeScript SDK. The commercial platforms were not measured."}}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
+      <a href="../../mcp/">MCP</a>
+      <a href="../">Compare</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / Enterprise MCP platforms</p>
+    <p class="kicker">AI agents and the Model Context Protocol</p>
+    <h1>Enterprise MCP platforms compared</h1>
+    <p class="lede">Every major integration platform now lets AI agents call business systems over MCP. Having an MCP server no longer separates them. What does: what happens on each call when the model retries, picks a risky action or waits too long; where the server runs; and how it is priced.</p>
+    <div class="stats">
+      <div class="stat"><b>9</b><span>platforms on this page with MCP support</span><small>checked 9 November 2026</small></div>
+      <div class="stat"><b>41,620/s</b><span>Cameleer MCP tool calls in sessions</span><small>Apache Camel's MCP server: 22,458/s</small></div>
+      <div class="stat"><b>53 MB</b><span>Cameleer's memory in that run</span><small>Camel: 317 MB</small></div>
+      <div class="stat"><b>196/200</b><span>real requests right with Claude Opus 5.5</span><small>Cameleer field test</small></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="platforms">
+  <div class="wrap">
+    <h2>What each platform offers</h2>
+    <p class="intro">As each vendor documents it, checked on 9 November 2026. We have not tested the commercial platforms; follow the links for the vendor's own words.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>platform</th><th>MCP and agent features</th><th>where it runs</th><th>how it is priced</th></tr></thead>
+      <tbody>
+        <tr><td><strong>MuleSoft</strong></td><td><a href="https://docs.mulesoft.com/mcp-connector/latest/">MCP Connector</a> for Mule apps as MCP servers and clients (Streamable HTTP; release notes list protocol 2025-06-18); <a href="https://www.mulesoft.com/ai/agent-fabric">Agent Fabric</a>: registry, broker, governance, visualizer</td><td>CloudHub, Runtime Fabric, customer-hosted Mule runtime (Java)</td><td>by quote</td></tr>
+        <tr><td><strong>Boomi</strong></td><td><a href="https://boomi.com/platform/ai-agents/">governed MCP servers</a> to its connected applications; Boomi agents</td><td>Boomi cloud and Boomi runtimes</td><td>pay-as-you-go entry tier; enterprise by quote</td></tr>
+        <tr><td><strong>Workato</strong></td><td>Enterprise MCP on its recipes and connectors</td><td>Workato's cloud</td><td>credit-based; enterprise by quote</td></tr>
+        <tr><td><strong>WSO2 Integrator</strong></td><td><a href="https://wso2.com/integration-platform/integrator/mi/">MCP servers</a> from APIs and integrations, MCP clients, agents with memory and RAG</td><td>self-hosted (Java) or WSO2's cloud</td><td>open source (Apache-2.0); paid subscription for support</td></tr>
+        <tr><td><strong>TIBCO Flogo</strong></td><td><a href="https://www.tibco.com/blog/2025/08/07/introducing-tibco-flogo-connector-for-model-context-protocol-mcp-developer-preview/">MCP connector</a> (developer preview in 2025) exposing flows as tools</td><td>a Go binary: edge, serverless, containers</td><td>Flogo Enterprise is commercial; Project Flogo core is open source</td></tr>
+        <tr><td><strong>IBM webMethods Hybrid Integration</strong></td><td><a href="https://www.ibm.com/products/webmethods-hybrid-integration/agentic-enterprise">MCP Gateway and AI Gateway</a>, an Integration Agent that builds flows from natural language</td><td>IBM's hybrid control plane with cloud and self-managed runtimes</td><td>commercial</td></tr>
+        <tr><td><strong>Azure Logic Apps</strong></td><td><a href="https://techcommunity.microsoft.com/blog/integrationsonazureblog/stop-writing-plumbing-use-the-new-logic-apps-mcp-server-wizard/4496702">workflows as MCP servers</a> (Standard plan), for Microsoft Foundry, Copilot Studio and other clients</td><td>Azure</td><td>Azure consumption</td></tr>
+        <tr><td><strong>Apache Camel</strong> 4.22+</td><td><code>camel-ai-tool</code> and <a href="https://camel.apache.org/components/next/others/mcp-server.html"><code>camel-mcp-server</code></a> (Preview); MCP client options in some AI producers</td><td>JVM: Camel Main, Quarkus, Spring Boot</td><td>open source (Apache-2.0)</td></tr>
+        <tr><td><strong>Cameleer</strong></td><td>routes as MCP tools, resources and prompts in both protocol eras (2026-07-28 and 2025-11-25); an MCP client and gateway; the envelope below on every call</td><td>one binary: desktop, server, Docker, Kubernetes, Cloud Run, AWS Lambda, edge</td><td>open source (Apache-2.0)</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="questions">
+  <div class="wrap">
+    <h2>Seven questions to ask any MCP platform</h2>
+    <p class="intro">These decide whether an agent's mistake costs you anything. The Cameleer column is what the code does today, with the test or measurement behind it; ask each vendor for theirs.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>question</th><th>Cameleer's answer</th><th>evidence</th></tr></thead>
+      <tbody>
+        <tr><td>If the client or model sends the same call twice, does it run twice?</td><td class="win">No: calls are deduplicated per conversation (or by call id) and the repeat gets the first result</td><td>field test: a resent ticket creation made one ticket; hermetic tests</td></tr>
+        <tr><td>Who approves a destructive call, and how?</td><td class="win">The user, in an approval form in the client, before it runs; or an operator out of band, with a handle; or a rule such as <code>${header.amount} &gt; 500</code></td><td>field test: cancellations and refunds approved and declined; <a href="../../docs/guides/mcp/approvals.html">approvals</a></td></tr>
+        <tr><td>Does a call that times out stop the work?</td><td class="win">Yes: the route is cancelled before its next step and the exchange is released</td><td><code>crates/cameleer-ai/tests/tools.rs</code></td></tr>
+        <tr><td>How are arguments checked?</td><td>Against the tool's full JSON Schema 2020-12 before the route runs; undeclared and <code>camel*</code> arguments dropped</td><td><a href="../../docs/components/ai-tool.html">ai-tool</a></td></tr>
+        <tr><td>Is every call audited, and would you notice an edited record?</td><td>A hash-chained record per call with the caller, arguments digest, decision and approver</td><td>a test detects an edited record</td></tr>
+        <tr><td>Can the client check which server and tools it is talking to?</td><td>Next release: in a confidential VM, a hardware-signed report of the routes, configuration and tools, bound to the client's nonce and the TLS connection; the client verifies the hardware signature with the platform's verifier</td><td><a href="../../trust/">trust</a>, <a href="../../docs/guides/attestation.html">attestation guide</a></td></tr>
+        <tr><td>Which MCP protocol versions?</td><td>2026-07-28 (stateless) and 2025-11-25, 2025-06-18, 2025-03-26 on one endpoint; Streamable HTTP and stdio</td><td>official conformance suite: 39/39 (2025-11-25), 26/26 (2025-06-18)</td></tr>
+        <tr><td>Where does it run, and what does each call cost?</td><td>Anywhere one binary runs, from a laptop to Lambda or an edge gateway; no licence per core, call or credit</td><td>41,620 calls/s in 53 MB on 4 vCPUs (<a href="../../docs/BENCHMARKS.html">benchmarks</a>)</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="choose">
+  <div class="wrap">
+    <h2>When to choose which</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>A commercial platform fits better when you</h3>
+        <ul>
+          <li>already run MuleSoft, Boomi, Workato, IBM or Azure integration and want agents on the same flows and governance;</li>
+          <li>need a catalogue of hundreds or thousands of SaaS connectors with managed OAuth;</li>
+          <li>want a registry and governance console across agents from many vendors (MuleSoft Agent Fabric, IBM's gateways);</li>
+          <li>want a visual designer, a natural-language builder, managed hosting or a support contract.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Cameleer fits better when you</h3>
+        <ul>
+          <li>want the safety rules enforced by the server on every call, not left to each flow;</li>
+          <li>want tools self-hosted next to your systems: on a laptop over stdio, in your cluster, on Lambda or on an edge gateway;</li>
+          <li>already have Apache Camel routes, or want integration code in Git with tests;</li>
+          <li>don't want a per-core, per-call or per-credit bill for agent traffic.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">You can also use both: Cameleer's MCP client imports another server's tools and serves them again with its own rules (<a href="../../docs/guides/mcp/gateway.html">gateway</a>).</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Which integration platforms support MCP?</summary><p>As of November 2026: MuleSoft (MCP Connector for servers and clients, Agent Fabric), Boomi (governed MCP servers), Workato (Enterprise MCP), WSO2 Integrator (MCP servers from APIs, agents), TIBCO Flogo (MCP connector), IBM webMethods Hybrid Integration (MCP Gateway), Azure Logic Apps (workflows as MCP servers) and Apache Camel 4.22 and later (<code>camel-mcp-server</code>, Preview). Cameleer serves its routes as MCP tools and imports other MCP servers as a gateway.</p></details>
+    <details><summary>What should I ask an MCP platform before giving agents access to business systems?</summary><p>Whether a retried call runs twice, who approves a destructive call and how, whether a call that times out stops the work, how arguments are validated, whether every call is audited in a way that shows tampering, which MCP protocol versions are supported, and where the server runs and what it costs per call or per core.</p></details>
+    <details><summary>Is Cameleer an alternative to MuleSoft or Boomi for MCP?</summary><p>For self-hosted MCP tools built on your own integrations, yes: it is open source, one binary, and enforces schema checks, run-once, approvals, cancelling timeouts and a hash-chained audit on every call. It does not offer a hosted service, a visual designer, an agent registry across vendors or a catalogue of thousands of SaaS connectors.</p></details>
+    <details><summary>How fast is Cameleer's MCP server?</summary><p>On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel's <code>camel-mcp-server</code> and 1,536 in 214 MB for a server on the official MCP TypeScript SDK. The commercial platforms were not measured.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>See it with real requests</h2>
+    <p class="intro">A shop's back office as an MCP server, tested with 40 requests through Claude: ten use cases with the recorded conversations and the routes behind them.</p>
+    <div class="cta">
+      <a class="btn primary" href="../../mcp/">Cameleer MCP</a>
+      <a class="btn" href="../camel-mcp-server-vs-cameleer/">Apache Camel's MCP server vs Cameleer</a>
+      <a class="btn" href="../ai-agent-tool-calls-direct-vs-cameleer/">Direct tool calls vs Cameleer</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent open-source project, not affiliated with or endorsed by the Apache Software Foundation or any vendor named on this page. Product names are trademarks of their owners and are used only to identify them. Vendor features are summarised from each vendor's public documentation on the date shown; corrections are welcome as GitHub issues.</p>
+    </div>
+    <div>
+      <h4>Compare</h4>
+      <ul>
+        <li><a href="../">All comparisons</a></li>
+        <li><a href="../mulesoft-vs-apache-camel-vs-cameleer/">MuleSoft vs Camel vs Cameleer</a></li>
+        <li><a href="../wso2-vs-apache-camel-vs-cameleer/">WSO2 vs Camel vs Cameleer</a></li>
+        <li><a href="../../alternatives/apache-camel-alternatives/">Apache Camel alternatives</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>MCP</h4>
+      <ul>
+        <li><a href="../../mcp/">Cameleer MCP</a></li>
+        <li><a href="../../docs/guides/mcp-server.html">MCP server reference</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

@@ -359,16 +359,18 @@ fn quoted_loader_errors_are_real() {
             "- routeTemplate:\n    id: sensor\n    parameters:\n      - name: room\n    from:\n      uri: \"direct:{{room}}\"\n- templatedRoute:\n    routeTemplateRef: sensor\n",
             "Route template sensor the following mandatory parameters are missing: room",
         ),
-        (
-            "- route:\n    routeConfigurationId: nope\n    from:\n      uri: direct:a\n",
-            "Cannot find routeConfiguration with id 'nope'",
-        ),
     ];
     for (yaml, expected) in cases {
         let main = cameleer_main::new_main();
         let err = cameleer_yaml::add_routes_from_yaml(main.context(), yaml).expect_err(expected);
         assert!(err.message.contains(expected), "expected {:?} in: {}", expected, err.message);
     }
+    // an unknown routeConfigurationId: a later file may still define it, so it is an error when
+    // the context starts (as in Camel), not while loading
+    let main = cameleer_main::new_main();
+    cameleer_yaml::add_routes_from_yaml(main.context(), "- route:\n    routeConfigurationId: nope\n    from:\n      uri: direct:a\n").unwrap();
+    let err = main.context().start().unwrap_err();
+    assert!(err.message.contains("Cannot find routeConfiguration with id 'nope'"), "{}", err.message);
     // line and column in error locations
     let main = cameleer_main::new_main();
     let err = cameleer_yaml::load_routes(main.context(), "- route:\n    from:\n      uri: direct:a\n      steps:\n        - to: mock:a\n        - setbody: x\n").unwrap_err();

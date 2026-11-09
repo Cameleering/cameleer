@@ -29,6 +29,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "cameleer-attest"
+version = "0.5.1"
+dependencies = [
+ "cameleer-core",
+ "cameleer-tls",
+]
+
+[[package]]
 name = "cameleer-bench"
 version = "0.5.1"
 dependencies = [
@@ -115,6 +123,7 @@ dependencies = [
  "cameleer-ai",
  "cameleer-amqp",
  "cameleer-amqp10",
+ "cameleer-attest",
  "cameleer-cloud",
  "cameleer-core",
  "cameleer-dataformats",
@@ -129,6 +138,7 @@ dependencies = [
  "cameleer-soap",
  "cameleer-sql",
  "cameleer-ssh",
+ "cameleer-tls",
  "cameleer-xml",
  "cameleer-yaml",
 ]
