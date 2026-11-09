@@ -320,7 +320,7 @@ Phase 0:
   - (b) a neutral family crate in its own repository;
   - (c) keep the duplicates and rely on the alarm.
   Recommended: (b), named in the family's style, created when Phase 4 starts.
-- **D2, agreed by both sessions (2026-11-09), name pending:** option (b), a neutral std-only
+- **D2, decided (2026-11-09): saltire.** Agreed by both sessions, and the owner chose the name **saltire** (`saltire` and `saltire-pki`, repository `<family-org>/saltire`): option (b), a neutral std-only
   crypto family in its own repository under the family org, in two crates:
   - **primitives** (`<name>`): hashes, HMAC, HKDF and PBKDF2; AES-CBC, CTR and GCM;
     ChaCha20-Poly1305; X25519, P-256 and P-384, Ed25519, RSA PKCS#1 v1.5, PSS and OAEP; bigint;
@@ -347,7 +347,7 @@ Phase 0:
   PGP and XML-DSig.
 
   Sequence:
-  1. The owner picks the name.
+  1. ~~The owner picks the name~~: saltire.
   2. After simoom's second campaign, the repository is created; simoom's faster primitives and
      its PKI move first.
   3. Cameleer's breadth is added (OAEP, the legacy primitives, keystores; simoom's agents already
