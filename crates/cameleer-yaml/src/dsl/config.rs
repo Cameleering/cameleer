@@ -299,7 +299,7 @@ impl YamlLoader {
         self.link_route_configurations(ctx, routes, !deferred)
     }
 
-    fn link_route_configurations(&self, ctx: &CamelContext, routes: &mut [RouteDefinition], strict: bool) -> Result<()> {
+    pub(super) fn link_route_configurations(&self, ctx: &CamelContext, routes: &mut [RouteDefinition], strict: bool) -> Result<()> {
         let configs = collect_configurations(ctx);
         let mut cache: BTreeMap<Vec<usize>, BuilderScopeHandle> = BTreeMap::new();
         for r in routes.iter_mut() {

@@ -582,3 +582,24 @@ fn schema_accepts_every_example_and_doc_route_and_rejects_bad_ones() {
         assert!(!schema_ok(&root, &root, &Value::Array(vec![item.clone()])), "bad route #{} passes the schema", i);
     }
 }
+
+#[test]
+fn route_configuration_ids_are_checked_across_files() {
+    let dir = std::env::temp_dir().join(format!("cameleer-validate-rc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let route = "- route:\n    routeConfigurationId: audit\n    from:\n      uri: direct:a\n      steps:\n        - to: mock:a\n";
+    let config = "- routeConfiguration:\n    id: audit\n    intercept:\n      - intercept:\n          steps:\n            - to: mock:audited\n";
+    let a = dir.join("a-route.camel.yaml");
+    let b = dir.join("b-config.camel.yaml");
+    std::fs::write(&a, route).unwrap();
+    std::fs::write(&b, config).unwrap();
+    // the configuration is in a later file: fine, as at start-up
+    let report = validate::validate_paths(&[a.display().to_string(), b.display().to_string()], BTreeMap::new()).unwrap();
+    let errors: Vec<String> = report.files.iter().flat_map(|f| f.findings.iter().filter(|x| x.severity == Severity::Error).map(|x| x.message.clone())).collect();
+    assert!(errors.is_empty(), "{:?}", errors);
+    // without it, the unknown id is an error on the file that names it
+    let report = validate::validate_paths(&[a.display().to_string()], BTreeMap::new()).unwrap();
+    let msgs: Vec<String> = report.files[0].findings.iter().map(|x| x.message.clone()).collect();
+    assert!(msgs.iter().any(|m| m.contains("Cannot find routeConfiguration with id 'audit'")), "{:?}", msgs);
+}

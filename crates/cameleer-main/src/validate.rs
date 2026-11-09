@@ -312,6 +312,9 @@ pub struct Validator {
     files: Vec<FileReport>,
     channels: Vec<Channel>,
     route_ids: Vec<RouteId>,
+    /// YAML routes as loaded, by file: their route configurations are checked across all files
+    /// at the end (a later file may define a configuration an earlier one names).
+    loaded: std::cell::RefCell<Vec<(usize, Vec<cameleer_core::model::RouteDefinition>)>>,
 }
 
 impl Validator {
@@ -320,7 +323,7 @@ impl Validator {
         for (k, v) in &properties {
             main.context().properties().set(k.clone(), v.clone());
         }
-        Validator { main, properties, files: Vec::new(), channels: Vec::new(), route_ids: Vec::new() }
+        Validator { main, properties, files: Vec::new(), channels: Vec::new(), route_ids: Vec::new(), loaded: std::cell::RefCell::new(Vec::new()) }
     }
 
     fn ctx(&self) -> &CamelContext {
@@ -383,14 +386,17 @@ impl Validator {
                     let loader = cameleer_yaml::YamlLoader::new();
                     let mut r = Ok(());
                     for (_, src) in &it.sources {
-                        if let Err(e) = loader.load_routes(ctx, src) {
-                            r = Err(e);
-                            break;
+                        match loader.load_routes(ctx, src) {
+                            Ok(defs) => self.loaded.borrow_mut().push((self.files.len(), defs)),
+                            Err(e) => {
+                                r = Err(e);
+                                break;
+                            }
                         }
                     }
                     r
                 }
-                Ok(None) => cameleer_yaml::load_routes(ctx, text).map(|_| ()),
+                Ok(None) => cameleer_yaml::load_routes(ctx, text).map(|defs| self.loaded.borrow_mut().push((self.files.len(), defs))),
                 Err(e) => Err(e),
             }
         };
@@ -413,6 +419,16 @@ impl Validator {
 
     /// Run the cross-file checks and return the report.
     pub fn finish(mut self) -> Report {
+        // route configurations, with every file's configurations known (as at start-up)
+        let loader = cameleer_yaml::YamlLoader::new();
+        let loaded = std::mem::take(&mut *self.loaded.borrow_mut());
+        for (file, mut defs) in loaded {
+            if let Err(e) = loader.check_route_configurations(self.main.context(), &mut defs) {
+                if let Some(report) = self.files.get_mut(file) {
+                    report.findings.push(Finding { severity: Severity::Error, code: codes::DSL_STRUCTURE, message: one_line(&e.message), line: None, column: None, hint: None });
+                }
+            }
+        }
         // duplicate route ids
         let mut first: BTreeMap<String, &RouteId> = BTreeMap::new();
         let mut dups: Vec<(usize, Finding)> = Vec::new();

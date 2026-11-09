@@ -1353,6 +1353,13 @@ impl YamlLoader {
         Ok(routes)
     }
 
+    /// Link `routes` to every `routeConfiguration` loaded into `ctx` so far, and fail on a
+    /// `routeConfigurationId` that names none, as starting the context would (for checks that
+    /// load several files without starting, such as `cameleer validate`).
+    pub fn check_route_configurations(&self, ctx: &CamelContext, routes: &mut [RouteDefinition]) -> Result<()> {
+        self.link_route_configurations(ctx, routes, true)
+    }
+
     /// Link route definitions built outside of [`YamlLoader::load_routes`] (e.g. with
     /// [`YamlLoader::build_route`]) to the `routeConfiguration`s loaded into `ctx`.
     pub fn apply_route_configurations_to(&self, ctx: &CamelContext, routes: &mut [RouteDefinition]) -> Result<()> {
