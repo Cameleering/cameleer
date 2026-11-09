@@ -5,10 +5,23 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+### Changed
+
+- **Breaking: `mllp`, `hl7`, `hl7terser`, `fhir`, `fhirJson` and `fhirXml` moved to the health pack.**
+  The default build and image no longer have them: use `pmsudhi/cameleer:health` or build with
+  `--features health`. In Rust, `cameleer_protocols::{hl7, mllp}` are now
+  `cameleer_health::hl7::{self, mllp}` and `cameleer_soap::fhir` is `cameleer_health::fhir`, with no
+  aliases. The socket helpers of `cameleer-protocols` are in `cameleer_tls::net`, the SOAP producer
+  client is `cameleer_http::client::EndpointClient`, `now_utc` is in `cameleer_core::util_time`.
+
 ### Added
 
-- **DICOM** (new crate `cameleer-dicom`, cargo feature `dicom`, in `full`; Apache Camel has no
-  DICOM component, so these are Cameleer extensions):
+- **Packs, and the health pack** (`cameleer-health` 0.6.0, cargo feature `health` of
+  `cameleer-main`, **not** in `full`; image tags `pmsudhi/cameleer:health` and
+  `:<version>-health`; archive `cameleer-health-<version>-<target>`). A pack is an optional,
+  industry-specific set of components with its own version (`docs/packs/index.md`). The health
+  pack holds HL7 v2 and MLLP, FHIR R4 and the new DICOM support (Apache Camel has no DICOM
+  component, so these are Cameleer extensions):
   - the `dicom` component: DIMSE over TCP and TLS, the consumer an SCP (C-ECHO, and C-STORE,
     C-FIND, C-MOVE and C-GET answered by routes) and the producer an SCU
     (`operation=echo|store|find|move|get`), with `CamelDicom*` headers;
@@ -22,10 +35,15 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   - `${dicom.PatientID}` and sequence paths in Simple, and the `dicom` language;
   - the PS3.6 dictionary and PS3.15 Table E.1-1 generated from the 2026d standard
     (`scripts/update-dicom-dict.py`, pinned digests);
-  - examples in `examples/medical/` (modality to cloud, AI inference loop, de-identification
-    pipeline), the guide `docs/guides/dicom.md` and component, data format and language pages;
+  - examples in `examples/medical/`, the guide `docs/packs/health/guides/dicom.md`;
   - verified live against DCMTK 3.6.7 and Orthanc 1.12.2 with its DICOMweb plugin
     (`scripts/dicom-interop.sh`, `CAMEL_DICOM_INTEROP=1`), and on 33 public test files.
+- **The pack extension point**: `cameleer_core::pack` (`PackInfo`, `Pack`,
+  `CamelContext::add_pack`, `pack::install`), `Main::add_pack`; pack languages are YAML and XML
+  DSL keys; `cameleer version` lists the packs; a route that names a pack component in a build
+  without the pack fails with a message naming the pack, image and feature.
+- **`cameleer_core::audit`**: the hash-chained audit log moved from `cameleer-ai` into core, one
+  log per context (`AuditLog::of`), shared by AI tool calls and the health pack.
 - **Simple functions from other crates**: `cameleer_core::language::simple::register_function`
   adds `${prefix.rest}` functions (used by `${dicom.*}`).
 - **`cameleer_core::multipart`**: a shared, binary-safe MIME multipart parser and builder (the

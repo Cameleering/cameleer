@@ -320,11 +320,56 @@ turns, and grades each run by tool calls, database state and a Claude judge.
   of the release binary in `target/mcp-fieldtest/bin`); Haiku's remaining misses are weekday and
   sum arithmetic.
 
-## DICOM (2026-11-09, branch `dicom`)
+## Packs and the health pack (2026-11-09, branch `dicom`)
+
+The owner chose a health pack instead of merging DICOM into `full`, with no backward
+compatibility (design: `docs/design/packs/domain-packs.md` section 8). Done on this branch:
+
+- **Core:** `cameleer_core::pack` (`PackInfo`, `Pack`, `CamelContext::add_pack`, `pack::install`),
+  `Main::add_pack`; pack languages are YAML/XML DSL keys (cameleer-yaml asks the pack registry),
+  `cameleer version` lists packs; the audit log moved to `cameleer_core::audit` (one per context);
+  `util_time::now_utc`; socket helpers in `cameleer_tls::net`; `cameleer_http::client::EndpointClient`.
+- **`cameleer-health` 0.6.0** (own version): `hl7` (hl7, hl7terser, mllp from cameleer-protocols),
+  `fhir` (from cameleer-soap), `dicom` (this branch's DICOM work); depends on core, http, tls and
+  (fhir) xml only. No aliases or re-exports left in the old crates.
+- **cameleer-main:** feature `health`, not in `full`; `features::PACKS` names the pack's parts so a
+  build without it says "`mllp` is in the health pack ...".
+- **Distribution (prepared, nothing published):** `container.yml` matrix with a health variant
+  (`FEATURES=full,health`, tags `health`, `<version>-health`, `edge-health`), Dockerfile note,
+  `scripts/package-archive.sh` and `.github/workflows/archives.yml` (artifacts
+  `cameleer-<version>-<target>` and `cameleer-health-<version>-<target>` with SHA-256, not
+  attached to a release, not signed yet).
+- **Docs:** the health pages are under `docs/packs/health/` with a `**Pack:**` header segment;
+  `docs/packs/index.md`, `docs/packs/health/index.md`, `crates/cameleer-health/CHANGELOG.md`. The
+  site navigation for packs (`scripts/build-docs.py` builds the pages but has no packs section)
+  and llms.txt are left to the SEO session.
+- **Binary size** (Linux, WSL2 Ubuntu 24.04, `--profile dist`, measured 2026-11-09):
+
+  | build | bytes | MB |
+  |---|---|---|
+  | `--no-default-features` (core) | 6,970,672 | 6.97 |
+  | `--no-default-features --features health` | 9,135,408 | 9.14 (+2.16) |
+  | default (`full`) | 28,989,856 | 28.99 |
+  | `--features full,health` | 30,913,032 | 30.91 (+1.92) |
+
+  `full` no longer contains HL7, MLLP and FHIR, so it is not comparable with earlier `full`
+  figures in this file; the pack costs about 2 MB.
+
+**Test run after the pack move (Windows 11, 2026-11-09):** `cargo build --workspace` 0 warnings;
+`cargo build -p cameleer-main --no-default-features` and `--no-default-features --features health`
+build; `cargo build -p cameleer-health --no-default-features --features hl7` (and `fhir`, `dicom`,
+none) build; `cargo test --workspace` **2952 passed, 0 failed**. The live DICOM tier was not rerun
+after the move (code moved unchanged; last run 7/7).
+
+Not done from the design: SBOM generation per pack, cosign signing of archives, a DICOM
+Conformance Statement, `/q/info` listing packs, CODEOWNERS, the `CAMEL_HEALTH_INTEROP` umbrella
+tier (the DICOM tier is still `CAMEL_DICOM_INTEROP=1`).
+
+### DICOM in the health pack
 
 Built from `docs/design/medical/dicom-and-healthcare.md` (phases 1 to 5 of its plan; the owner
-approved leading with edge imaging gateways and AI inference routing, no PACS). New crate
-`cameleer-health`, cargo feature `dicom` in `full`. Guide: `docs/guides/dicom.md`.
+approved leading with edge imaging gateways and AI inference routing, no PACS). Now
+`cameleer-health/src/dicom` (crate feature `dicom`). Guide: `docs/packs/health/guides/dicom.md`.
 
 - **Phase 1, data:** Part 10 and data set codec (explicit/implicit/deflated little endian and
   explicit big endian, read and write; sequences; UN sequences; encapsulated pixel data as

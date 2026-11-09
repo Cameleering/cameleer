@@ -1,3 +1,6 @@
+# Needs the health pack: the image pmsudhi/cameleer:health, or cameleer-main built with
+# `--features health` (docs/packs/health/index.md).
+#
 # Edge imaging gateway: modalities send studies over DIMSE (C-STORE) to this gateway, which
 # keeps CT and MR, stamps the institution, and forwards them to a cloud DICOM store over
 # DICOMweb (STOW-RS), for example Azure Health Data Services, Google Cloud Healthcare or Orthanc.
@@ -10,7 +13,7 @@
 #
 # Run with Docker (Linux):
 #   docker run --rm --network host -e DICOMWEB_URL -e DICOMWEB_TOKEN \
-#     -v "$PWD:/routes:ro" -v "$PWD/parked:/parked" pmsudhi/cameleer run /routes/modality-to-cloud.camel.yaml
+#     -v "$PWD:/routes:ro" -v "$PWD/parked:/parked" pmsudhi/cameleer:health run /routes/modality-to-cloud.camel.yaml
 # Send a study from DCMTK:
 #   storescu -aec GATEWAY localhost 11112 *.dcm
 - route:

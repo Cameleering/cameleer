@@ -1,0 +1,44 @@
+name: Archives
+
+# Builds the release archives of both distributions (docs/packs/index.md) with
+# scripts/package-archive.sh:
+#   cameleer-<version>-<target>.tar.gz / .zip         (general, the default build)
+#   cameleer-health-<version>-<target>.tar.gz / .zip  (general plus the health pack)
+# each with a .sha256 file. They are kept as workflow artifacts only: attaching them to a GitHub
+# release (and signing them with cosign sign-blob) is a separate, manual decision.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    strategy:
+      fail-fast: false
+      matrix:
+        dist: [general, health]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Toolchain
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+      - name: Build and package
+        shell: bash
+        run: scripts/package-archive.sh ${{ matrix.dist }} ${{ matrix.target }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.dist }}-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error

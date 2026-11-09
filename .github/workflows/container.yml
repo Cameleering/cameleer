@@ -1,10 +1,13 @@
 name: Container
 
-# Publishes the Cameleer image for linux/amd64 and linux/arm64 to
+# Publishes the Cameleer images for linux/amd64 and linux/arm64 to
 #   docker.io/pmsudhi/cameleer   (when the DOCKERHUB_TOKEN secret is set)
 #   ghcr.io/pmsudhi/cameleer
-# Release tags (v1.2.3) publish 1.2.3, 1.2 and latest (pre-releases skip latest); a manual
-# run publishes edge. Each platform is built and tested before anything is pushed. The push
+# in two distributions (docs/packs/index.md):
+#   general: release tags (v1.2.3) publish 1.2.3, 1.2 and latest (pre-releases skip latest);
+#            a manual run publishes edge
+#   health:  the same build plus the health pack (FEATURES=full,health): 1.2.3-health,
+#            1.2-health and health; a manual run publishes edge-health Each platform is built and tested before anything is pushed. The push
 # carries an SBOM, max-mode provenance and a GitHub build attestation.
 on:
   push:
@@ -28,7 +31,19 @@ env:
 jobs:
   image:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - dist: general
+            features: ""
+            suffix: ""
+            latest: auto
+          - dist: health
+            features: full,health
+            suffix: "-health"
+            latest: "false"
     env:
       DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
     steps:
@@ -60,10 +75,14 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ steps.images.outputs.list }}
+          flavor: |
+            latest=${{ matrix.latest }}
+            suffix=${{ matrix.suffix }},onlatest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=health,suffix=,enable=${{ matrix.dist == 'health' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
             type=sha
           labels: |
             org.opencontainers.image.title=Cameleer
@@ -79,8 +98,9 @@ jobs:
         run: |
           for p in linux/amd64 linux/arm64; do
             echo "::group::$p"
-            docker buildx build --platform "$p" --build-arg SOURCE_DATE_EPOCH --cache-from type=gha --load -t cameleer:test .
+            docker buildx build --platform "$p" --build-arg SOURCE_DATE_EPOCH --build-arg FEATURES="${{ matrix.features }}" --cache-from type=gha --load -t cameleer:test .
             docker run --rm --platform "$p" cameleer:test version
+            if [ "${{ matrix.dist }}" = health ]; then docker run --rm --platform "$p" cameleer:test version | grep -q "+ health "; fi
             # read-only root filesystem, an arbitrary non-root user, a read-only route mount
             docker run -d --name smoke --platform "$p" --read-only --user 1000:1000 -p 18080:8080 \
               -v "$PWD/examples:/routes:ro" cameleer:test run /routes/hello-api.camel.yaml
@@ -99,7 +119,9 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          build-args: SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+          build-args: |
+            SOURCE_DATE_EPOCH=${{ env.SOURCE_DATE_EPOCH }}
+            FEATURES=${{ matrix.features }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

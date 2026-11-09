@@ -1,3 +1,6 @@
+# Needs the health pack: the image pmsudhi/cameleer:health, or cameleer-main built with
+# `--features health` (docs/packs/health/index.md).
+#
 # AI inference routing: a study arrives over DIMSE, the gateway keeps the series the model is
 # for (axial CT of the head), de-identifies them before they leave the hospital, sends each
 # instance to an inference service, and returns the finding as a FHIR DiagnosticReport that
@@ -15,7 +18,7 @@
 #
 # Run with Docker (Linux):
 #   docker run --rm --network host -e INFERENCE_URL -e FHIR_URL -e DEID_KEY \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-inference-loop.camel.yaml
+#     -v "$PWD:/routes:ro" pmsudhi/cameleer:health run /routes/ai-inference-loop.camel.yaml
 - route:
     id: ai-inference-loop
     from:

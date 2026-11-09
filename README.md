@@ -589,7 +589,8 @@ See [docs/INTEROP.md](docs/INTEROP.md).
 | `cameleer-core` | `CamelContext`, `Exchange`/`Message`/`Value`, routes and the Rust DSL, EIPs, error handling, languages, data formats, core components |
 | `cameleer-http` | HTTP/1.1 server and client, `platform-http`, `http`, REST DSL with OpenAPI, `netty` TCP/UDP |
 | `cameleer-yaml` | YAML parser, Camel YAML DSL, XML DSL, route templates |
-| `cameleer-protocols` | ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog (with embedded test servers) |
+| `cameleer-protocols` | ftp, smtp/pop3/imap, websocket, syslog (with embedded test servers) |
+| `cameleer-health` | the health pack, not in the default build: HL7 v2 and MLLP, FHIR R4, DICOM (DIMSE, DICOMweb), de-identification |
 | `cameleer-tls` | from-scratch TLS 1.3/1.2, X.509, `SslContextParameters` (used by all network components) |
 | `cameleer-kafka-mqtt` | kafka, paho / paho-mqtt5 (with embedded test brokers) |
 | `cameleer-amqp` | spring-rabbitmq / rabbitmq (AMQP 0-9-1), stomp, jms / activemq / amqp-stomp (with embedded test brokers) |

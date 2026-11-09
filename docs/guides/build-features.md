@@ -40,13 +40,12 @@ names its feature in its header line (**Cargo feature:**).
 | `cloud` | every `aws*`, `azure-*` and `google-*` component except the two above (62 components: S3, SQS, SNS, DynamoDB, Lambda, Bedrock, Blob, Cosmos DB, Azure OpenAI, Pub/Sub, BigQuery, Vertex AI, ...) and the `{{aws:...}}`, `{{azure:...}}` and `{{gcp:...}}` secret placeholders | `cameleer-cloud` |
 | `dataformats` | the data formats `asn1`, `avro`, `barcode`, `bindy`, `cbor`, `crypto`, `fory`, `ical`, `mime-multipart`, `pgp`, `tarfile`, `thrift`, `univocity`, `yaml`, `zipfile`, and the `thrift` component | `cameleer-dataformats` |
 | `datastores` | `spring-redis`, `mongodb`, `mongodb-gridfs`, `elasticsearch`, `opensearch`, `cql` (Cassandra), `couchdb` | `cameleer-datastores` |
-| `dicom` | `dicom` (DIMSE: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET as SCP and SCU, over TCP and TLS), `dicomweb` (QIDO-RS, WADO-RS, STOW-RS client and server); the `dicom` language and `${dicom.*}` in Simple; the `dicom`, `dicomJson` and `dicomDeidentify` (PS3.15 Annex E) data formats. Pulls in `cameleer-ai` for the audit log | `cameleer-health` |
 | `grpc` | the `grpc` component and the `protobuf` data format | `cameleer-grpc` |
 | `kafka-mqtt` | `kafka`, `paho`, `paho-mqtt5` | `cameleer-kafka-mqtt` |
-| `protocols` | `ftp`, `ftps`, `smtp`/`smtps`, `pop3`/`pop3s`, `imap`/`imaps`, `mllp`, `syslog`, `websocket`/`ws`/`wss`, `vertx-websocket`; the `hl7terser` language; the `hl7` and `syslog` data formats | `cameleer-protocols` |
+| `protocols` | `ftp`, `ftps`, `smtp`/`smtps`, `pop3`/`pop3s`, `imap`/`imaps`, `syslog`, `websocket`/`ws`/`wss`, `vertx-websocket`; the `syslog` data format | `cameleer-protocols` |
 | `saas` | `openai`, `llm`, `anthropic`, `gemini`, `slack`, `telegram`, `github`, `twilio`, `jira`, `webhook`, `graphql`, `rss`, `atom` | `cameleer-saas` |
 | `script` | the languages `js`/`javascript`, `groovy`, `python`, `java`/`joor`, `csimple`, `mvel`, `ognl`, `spel`, `datasonnet`, and the `mvel` component | `cameleer-script` |
-| `soap` | `cxf`, `cxfrs`, `spring-ws`, `fhir`; the `jaxb` and `fhir` data formats | `cameleer-soap` |
+| `soap` | `cxf`, `cxfrs`, `spring-ws`; the `jaxb` data format | `cameleer-soap` |
 | `sql` | `sql`, `sql-stored`, `jdbc` (embedded SQL engine and PostgreSQL client) | `cameleer-sql` |
 | `ssh` | `sftp`, `ssh` | `cameleer-ssh` |
 | `xml` | `xslt`, `xslt-saxon`, `xquery`, full XML Schema validation for `validator`, `xj`, `xmlsecurity-sign`, `xmlsecurity-verify`; the `xquery` language and XPath 1.0 in full | `cameleer-xml` |
@@ -60,6 +59,25 @@ Two names cover sets of features:
 
 - `full`, the default, is every feature above.
 - `core` is none of them: only what is always included.
+
+## Packs
+
+Packs are industry-specific sets of components that are **not** in `full`
+([what a pack is](../packs/index.md)). Each one is a feature of `cameleer-main` and its own
+distribution:
+
+| feature | adds | crate | distribution |
+|---|---|---|---|
+| `health` | `mllp`, `fhir`, `dicom`, `dicomweb`; the `hl7`, `fhirJson`, `fhirXml`, `dicom`, `dicomJson` and `dicomDeidentify` data formats; the `hl7terser` and `dicom` languages and `${dicom.*}` in Simple | `cameleer-health` | image `pmsudhi/cameleer:health`, archive `cameleer-health-<version>-<target>` |
+
+```sh
+cargo install cameleer-main --features health                      # everything plus the health pack
+cargo build --profile dist -p cameleer-main --no-default-features --features "health,http2"   # a small healthcare edge build
+docker build --build-arg FEATURES=full,health -t cameleer:health .
+```
+
+A route that uses a pack component in a build without the pack fails at start-up with a message
+naming the pack, the image and the feature.
 
 ## Choose features for your routes
 
