@@ -82,21 +82,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "cameleer-dicom"
-version = "0.5.1"
-dependencies = [
- "cameleer-ai",
- "cameleer-core",
- "cameleer-http",
- "cameleer-tls",
-]
-
-[[package]]
 name = "cameleer-grpc"
 version = "0.5.1"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
+]
+
+[[package]]
+name = "cameleer-health"
+version = "0.6.0"
+dependencies = [
+ "cameleer-core",
+ "cameleer-http",
+ "cameleer-tls",
+ "cameleer-xml",
 ]
 
 [[package]]
@@ -128,8 +128,8 @@ dependencies = [
  "cameleer-core",
  "cameleer-dataformats",
  "cameleer-datastores",
- "cameleer-dicom",
  "cameleer-grpc",
+ "cameleer-health",
  "cameleer-http",
  "cameleer-kafka-mqtt",
  "cameleer-protocols",
