@@ -582,9 +582,26 @@ impl Main {
                 }
             }
         }
-        let cfg = McpConfig::from_properties(&self.properties)?;
+        // existing routes as tools, with no route edits (camel.server.mcp-expose-routes,
+        // `cameleer run --mcp-expose`); they carry the tag `exposed`
+        let patterns: Vec<String> = console::prop(&self.properties, cameleer_ai::expose::PROPERTY)
+            .map(|v| v.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+            .unwrap_or_default();
+        let exposed = cameleer_ai::expose::expose_routes(&self.ctx, &patterns, &self.properties)?;
+        if !patterns.is_empty() {
+            if exposed.is_empty() {
+                cameleer_core::camel_warn!("mcp", "{}={} matches no route", cameleer_ai::expose::PROPERTY, patterns.join(","));
+            } else {
+                cameleer_core::camel_info!("mcp", "Exposed {} routes as tools: {}", exposed.len(), exposed.join(", "));
+            }
+        }
+        let mut cfg = McpConfig::from_properties(&self.properties)?;
         if !cfg.enabled {
             return Ok(());
+        }
+        // asking for exposed routes means serving them, whatever the tag filter says otherwise
+        if !exposed.is_empty() && !cfg.tags.iter().any(|t| t == "*" || t == cameleer_ai::expose::EXPOSED_TAG) {
+            cfg.tags.push(cameleer_ai::expose::EXPOSED_TAG.to_string());
         }
         let server = McpServer::new(&self.ctx, cfg.clone())?;
         if cfg.transport == "stdio" {

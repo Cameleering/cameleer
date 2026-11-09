@@ -32,6 +32,11 @@ cameleer run tools.camel.yaml --mcp          # Streamable HTTP on http://localho
 cameleer run tools.camel.yaml --mcp-stdio    # for a client that starts the server itself
 ```
 
+Already have routes? Serve them as they are, with no edits: `cameleer run orders.camel.yaml
+--mcp-expose rest:*` turns every REST DSL operation into a typed tool, and `direct:*` patterns
+select other routes. Writes need approval by default
+([how](mcp-server.md#expose-existing-routes-without-editing-them)).
+
 In a real tool the `setBody` is a query, an API call, a queue: any of Cameleer's about 230
 components, with the route's own error handling and retries. The fastest way to see what that
 means is the [shop example](mcp-shop-example.md): a whole back office in one YAML file that you
