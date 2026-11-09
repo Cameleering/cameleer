@@ -212,6 +212,13 @@ and verifies XML documents.
 **The container.** The image runs as a non-root user on a distroless base with no shell, and works
 with a read-only root filesystem (`--read-only`, Kubernetes `readOnlyRootFilesystem: true`).
 
+## Evidence of what runs (confidential VMs)
+
+In an Intel TDX or AMD SEV-SNP confidential VM, or a dstack CVM, Cameleer can prove to a client
+what it is running: a hardware report bound to the client's nonce, to the server's TLS key and to a
+manifest of the routes, configuration and MCP tools. It is on `main` for the next release; see
+[Attestation in confidential VMs](attestation.md), including what it does not prove yet.
+
 ## Trust in the implementation
 
 Cameleer's TLS, X.509, SSH and cryptography are written from scratch in Rust with no third-party
@@ -260,6 +267,7 @@ pass the value through the environment or the secret store.
 - [kafka](../components/kafka.md) (SSL and SASL), [http](../components/http.md),
   [platform-http](../components/platform-http.md)
 - [FAQ: which CA certificates does Cameleer trust?](faq.md#which-ca-certificates-does-cameleer-trust)
+- [Attestation in confidential VMs](attestation.md): hardware evidence bound to the server's TLS key
 
 ## Found a problem?
 

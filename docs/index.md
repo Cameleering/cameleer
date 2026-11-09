@@ -15,6 +15,7 @@ guides/cli
 guides/testing
 guides/observability
 guides/tls-and-security
+guides/attestation
 guides/build-features
 guides/concepts
 guides/yaml-dsl

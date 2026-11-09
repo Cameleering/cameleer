@@ -62,7 +62,7 @@ SECTION_DIRS = [s[0] for s in SECTIONS]
 # Guides listed first, in this order (paths under guides/, without .md); the rest follow
 # alphabetically by title. Paths, not file stems: guides/mcp/deployment.md is not "deployment".
 GUIDE_ORDER = ["getting-started", "configuration", "cli", "concepts", "yaml-dsl", "yaml-for-coding-agents", "validate",
-               "eips", "error-handling", "testing", "observability", "tls-and-security", "build-features", "migrating-from-apache-camel",
+               "eips", "error-handling", "testing", "observability", "tls-and-security", "attestation", "build-features", "migrating-from-apache-camel",
                "cloud-credentials", "agents", "agent-tool-calls", "mcp", "mcp-server", "mcp-client",
                "agent-step", "model-providers", "ai-components", "mcp-shop-example", "edge", "faq"]
 

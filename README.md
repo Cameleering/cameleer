@@ -237,6 +237,11 @@ $ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the serv
   suite passes 39/39 (2025-11-25) and 26/26 (2025-06-18).
 - **An MCP client and gateway:** import other MCP servers' tools into the same envelope, with
   rug-pull protection, and serve them again.
+- **Prove what runs** (next release, on `main`): inside an Intel TDX or AMD SEV-SNP confidential
+  VM, or a dstack CVM, Cameleer returns hardware evidence of its routes, configuration and MCP
+  tools, bound to the client's nonce and its own TLS key, over HTTP and in the MCP handshake. It
+  does not verify the hardware signature itself yet and has not run on real TEE hardware
+  ([attestation](docs/guides/attestation.md)).
 - **Measured:** 41,620 MCP tool calls per second in sessions against 22,458 for Apache Camel's
   `camel-mcp-server` on the same machines, in 53 MB against 317 MB (p99 5.9 ms against 5.2 ms)
   ([Apache Camel's MCP server vs Cameleer](https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/),

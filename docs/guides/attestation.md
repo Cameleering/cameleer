@@ -2,7 +2,11 @@
 
 > When Cameleer runs inside a hardware TEE (an Intel TDX or AMD SEV-SNP confidential VM, or a dstack CVM such as Phala Cloud or dstack on Google Cloud TDX), it can prove to a client what is running: a signed hardware report, bound to the client's nonce, to the server's TLS key and to a manifest of the exact routes, configuration and tools. Clients get it over HTTP at `/q/attestation` and over MCP, in the handshake or as a tool.
 
-**Cargo feature:** `attest` (in the default build) · **Apache Camel:** none (Cameleer extension)
+**Cargo feature:** `attest` (in the default build) · **Apache Camel:** none (Cameleer extension) ·
+**Status:** on `main`, in the next release (not in 0.5.1)
+
+This is confidential computing applied to the integration engine itself: the evidence covers what
+Cameleer runs (its routes, configuration and MCP tools), not only the virtual machine it runs in.
 
 ## Turn it on
 
@@ -105,11 +109,55 @@ inside the TEE and never write it out, or the binding proves less.
 - **AWS Nitro Enclaves, Azure vTPM attestation and Google Confidential Space** are not sources yet.
 - **Physical attacks.** TEEs trust the cloud's physical security as well as the CPU vendor: memory
   bus interposers (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.
+- **Not yet run on real TEE hardware.** The tests use a simulated configfs-tsm directory and a
+  simulated dstack agent; the report formats follow the kernel ABI and dstack's API.
+- **One protocol per port.** `/q/attestation` registers on the shared HTTP server, which cannot
+  serve plain HTTP and HTTPS on one port: with HTTPS routes (`camel.server.sslEnabled=true`) on the
+  same port, start-up fails ([TLS and security](tls-and-security.md#https-for-your-routes)).
+- **No reproducible builds yet.** Pin the image by digest (`pmsudhi/cameleer@sha256:...`) so the
+  platform measurement identifies the build you reviewed.
 - **Runtime changes are recorded, not prevented.** The log shows a route added or a tool disabled
   after start-up; a policy that refuses them is a verifier's decision.
 
+## Common questions
+
+### Can an MCP client check what a Cameleer server is running?
+
+Yes, inside a confidential VM: the client sends a nonce in `server/discover` or `initialize` and
+gets a hardware report bound to that nonce, to the server's TLS key and to a manifest of the routes,
+configuration and tools. The client checks the binding (`cameleer_attest::check_binding` in Rust)
+and verifies the hardware signature with the platform's verifier.
+
+### Does Cameleer verify the hardware evidence itself?
+
+Not yet. It produces the evidence and the binding; verifying Intel's or AMD's signature chain is
+done by a verifier such as Intel Trust Authority, Microsoft Azure Attestation, Google's verifier or
+dstack's. Verification inside Cameleer, for remote MCP servers, is the next phase.
+
+### Is it enough for a model to call the `cameleer_attestation` tool?
+
+No. A model that shows evidence is not checking it. Only a program that checks the binding and the
+signature chain gets the guarantee; the tool exists so that clients which only speak tools can
+fetch the report for such a program.
+
+### Which clouds work?
+
+Any Intel TDX or AMD SEV-SNP confidential VM whose Linux kernel (6.7 or later) exposes configfs-tsm,
+and dstack CVMs such as Phala Cloud or dstack on Google Cloud TDX. AWS Nitro Enclaves, Azure vTPM
+attestation and Google Confidential Space are not supported yet.
+
+### What happens if attestation is on but the machine is not a TEE?
+
+Start-up fails. A process that was asked to be attested never runs looking attested when it isn't.
+
+### Does it protect against someone with physical access to the server?
+
+No. TEEs trust the cloud's physical security as well as the CPU vendor; memory-bus interposer
+attacks (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.
+
 ## Related
 
+- [TLS and security](tls-and-security.md): the server certificate the binding uses
 - [MCP server](mcp-server.md)
 - [Deployment](../DEPLOYMENT.md)
 - [ai-tool](../components/ai-tool.md): the tool envelope and its hash-chained audit log

@@ -214,7 +214,8 @@ published crate (`cameleer-main = "0.5"`).
 
 - [Configuration](configuration.md): every source, profile, environment variable and key.
 - [The cameleer command line](cli.md): every command and flag.
-- [Testing](testing.md), [observability](observability.md) and [TLS and security](tls-and-security.md).
+- [Testing](testing.md), [observability](observability.md), [TLS and security](tls-and-security.md)
+  and [attestation in confidential VMs](attestation.md) (next release).
 - [Concepts](concepts.md): routes, endpoints, exchanges, messages, components and the DSLs.
 - [Build features](build-features.md): a smaller build with only the components you use.
 - [Enterprise Integration Patterns](eips.md): every EIP with a YAML and a Rust example.

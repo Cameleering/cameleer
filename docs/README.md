@@ -15,6 +15,7 @@ same. Start with a guide, then look up the components your route uses.
 | test routes with `cameleer validate`, `cameleer test` or Rust tests | [Testing](guides/testing.md) |
 | add health checks, Prometheus metrics, logs and tracing | [Observability](guides/observability.md) |
 | set up HTTPS, mutual TLS, trust stores and secrets | [TLS and security](guides/tls-and-security.md) |
+| prove to a client what runs, inside a confidential VM (next release) | [Attestation](guides/attestation.md) |
 | send or receive messages with Kafka, HTTP, S3, Slack, SQL, ... | [Components](components/), one page per endpoint scheme, grouped by category |
 | write expressions and predicates (`${header.x}`, JSONPath, XPath) | [Languages](languages/) |
 | convert message bodies (JSON, CSV, XML, Avro, ...) | [Data formats](dataformats/) |
