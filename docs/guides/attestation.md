@@ -97,8 +97,9 @@ verifying it: only a program that checks the binding and the signature chain get
 | `camel.attestation.mcp-tool` | `false` | `true` for the tool `cameleer_attestation`, or a tool name |
 | `camel.attestation.exe-digest` | `true` | Put the SHA-384 of the running executable in the manifest (self-reported; the platform measurement is what counts) |
 
-The TLS key comes from the embedded server's certificate (`camel.server.ssl.*`). Generate the key
-inside the TEE and never write it out, or the binding proves less.
+The TLS key comes from the embedded server's certificate (`camel.server.ssl.*`); with
+`camel.server.sslEnabled=true`, `/q/attestation` is served over HTTPS on the same port as the HTTPS
+routes. Generate the key inside the TEE and never write it out, or the binding proves less.
 
 ## Limits
 

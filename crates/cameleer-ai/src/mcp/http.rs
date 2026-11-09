@@ -27,8 +27,10 @@ impl McpHttpServer {
     /// Serve `server` on `camel.server.host:port` at `camel.server.mcp-path`.
     pub fn start(server: Arc<McpServer>) -> Result<McpHttpServer> {
         let cfg = server.config.clone();
+        let tls = server.server_tls();
         let endpoint = Arc::new(Endpoint { auth: Authenticator::new(cfg.auth.clone()), server });
-        let server_config = ServerConfig { name: "camel-mcp".into(), ..Default::default() };
+        // the shared port speaks HTTPS with camel.server.sslEnabled, so the endpoint does too
+        let server_config = ServerConfig { name: "camel-mcp".into(), tls, ..Default::default() };
         let e2 = endpoint.clone();
         let handler: RouteHandler = Arc::new(move |req: &mut HttpRequest, _p: Vec<(String, String)>| e2.handle(req));
         let reg = registry().register(&cfg.host, cfg.port, &server_config, HttpRouteSpec { path: cfg.path.clone(), ..Default::default() }, handler)?;

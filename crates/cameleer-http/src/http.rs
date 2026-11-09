@@ -209,8 +209,14 @@ impl HttpResponse {
         r.body = json.into().into_bytes();
         r
     }
+    /// Add a header (a repeated name adds another value).
     pub fn with_header(mut self, name: &str, value: &str) -> Self {
         self.headers.add(name, value);
+        self
+    }
+    /// Set the `Content-Type`, replacing the one `text`/`json` put there.
+    pub fn with_content_type(mut self, value: &str) -> Self {
+        self.headers.set("Content-Type", value);
         self
     }
     pub fn with_body(mut self, body: impl Into<Vec<u8>>) -> Self {

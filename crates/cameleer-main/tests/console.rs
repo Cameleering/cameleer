@@ -70,7 +70,8 @@ fn management_endpoints_over_http() {
     // metrics
     let r = c.get(&format!("{}/q/metrics", base)).unwrap();
     assert_eq!(r.status, 200);
-    assert!(r.content_type().unwrap().starts_with("text/plain"));
+    // exactly one Content-Type, the Prometheus text format's
+    assert_eq!(r.headers.get_all("Content-Type"), vec!["text/plain; version=0.0.4; charset=utf-8"]);
     let text = r.body_text();
     assert!(text.contains(&format!("camel_exchanges_total{{camelContext=\"{}\",routeId=\"hello\"}} 2", ctx.name())), "{}", text);
 

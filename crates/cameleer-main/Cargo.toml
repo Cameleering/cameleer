@@ -86,3 +86,7 @@ required-features = ["full"]
 [[example]]
 name = "idle_threads"
 required-features = ["xml"]
+
+[dev-dependencies]
+# test certificates (cameleer_tls::testing) for the HTTPS tests
+cameleer-tls = { path = "../cameleer-tls" }
