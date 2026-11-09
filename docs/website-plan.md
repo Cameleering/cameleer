@@ -524,6 +524,11 @@ names only to identify; no logos.
 
 The `/compare/` hub groups the pages by the three searchers in 10.1.
 
+**Done 2026-11-09:** all P1 pages (the refreshed alternatives page, `/compare/enterprise-mcp-platforms/`,
+`/compare/wso2-vs-apache-camel-vs-cameleer/`, `/compare/mulesoft-vs-apache-camel-vs-cameleer/`,
+`/alternatives/mulesoft-alternatives/`) and the regrouped `/compare/` hub. Vendor claims on them
+are dated 9 November 2026; re-check them by February 2027.
+
 ### 10.5 Off-site (owner's accounts)
 
 - **List Cameleer on G2** (a free vendor profile) in the category Camel is in, with the website,

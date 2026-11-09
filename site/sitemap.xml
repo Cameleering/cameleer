@@ -1,14 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/alternatives/mulesoft-alternatives/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/cameleering/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/compare/apache-camel-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/enterprise-mcp-platforms/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/compare/</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/mulesoft-vs-apache-camel-vs-cameleer/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/compare/wso2-vs-apache-camel-vs-cameleer/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/mcp/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/file-sftp-pipelines/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/hl7-mllp-healthcare-integration/</loc><lastmod>2026-11-07</lastmod></url>
@@ -235,20 +239,20 @@
   <url><loc>https://cameleer.ing/docs/guides/faq.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/getting-started.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp-client.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp-client.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-server.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-shop-example.html</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/approvals.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/customer-service-lookups.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/deployment.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/gateway.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/manager-approval.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/multi-step-questions.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/prompts-and-resources.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/refunds-with-business-rules.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/safety.html</loc></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp/the-tool-asks-the-user.html</loc></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/approvals.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/customer-service-lookups.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/deployment.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/gateway.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/manager-approval.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/multi-step-questions.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/prompts-and-resources.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/refunds-with-business-rules.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/safety.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp/the-tool-asks-the-user.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/migrating-from-apache-camel.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/model-providers.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
