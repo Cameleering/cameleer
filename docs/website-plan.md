@@ -654,14 +654,14 @@ One idea, said two ways for two searchers:
 
 Don't make attestation the headline of the home page or the README. Cameleer's lead stays "Apache
 Camel in Rust" and "the reliable action layer for AI agents". Attestation is the proof point under
-the second, and gets a section once it is released and has run on real hardware once.
+the second, and gets a section when it is released.
 
 ### 11.4 Pages
 
 | page | change | when |
 |---|---|---|
 | `docs/guides/attestation.md` (written by the code session) | review the wording against 11.1; add to `GUIDE_ORDER`, the RTD toctree, docs/README, getting started's "next" list, and cross-links from TLS and security, MCP server and observability; the answer-first opening and a "Common questions" block (what it proves, what it doesn't, which TEEs, does a model verify it) | when it is on `main`, marked "next release" |
-| new **`/trust/`** hub: "Attested integrations and MCP servers" | what is in the evidence (a diagram of nonce + TLS key + manifest + change log → REPORTDATA); the three ways to fetch it; the binding check; supported TEEs; a prominent "What it does not prove" box (11.1); how to try it on dstack or a TDX/SEV-SNP VM; FAQ with FAQPage schema | after the release, and after one run on real TEE hardware (otherwise the page claims something we haven't seen work) |
+| new **`/trust/`** hub: "Attested integrations and MCP servers" | what is in the evidence (a diagram of nonce + TLS key + manifest + change log → REPORTDATA); the three ways to fetch it; the binding check; supported TEEs; a prominent "What it does not prove" box (11.1); how to try it on dstack or a TDX/SEV-SNP VM; FAQ with FAQPage schema | at the release (owner's decision); until a run on real TEE hardware, the page states that the tests use a simulated configfs-tsm and dstack agent |
 | `/mcp/` hub | a section "Prove which server and tools an agent is talking to" after the guarantees, linking `/trust/`; one FAQ | with `/trust/` |
 | comparisons (`apache-camel-vs-cameleer`, `mulesoft-vs-…`, `wso2-vs-…`, `enterprise-mcp-platforms`) | one table row, "Evidence of the running integration (TEE attestation)": Cameleer "yes, in a confidential VM (phase 1)"; the others "not found in their documentation (searched 2026-11)", which is never written as "no" | with `/trust/` |
 | `use-cases/hl7-mllp-healthcare-integration` | a short "in a confidential VM" paragraph linking `/trust/` | with `/trust/` |
@@ -685,7 +685,9 @@ the second, and gets a section once it is released and has run on real hardware 
 - Read the final `docs/guides/attestation.md` and the config keys on `main`, and quote nothing that
   isn't there.
 - Owner decisions:
-  1. publish `/trust/` at the release, or wait for a real-hardware run (recommended: wait);
+  1. ~~publish `/trust/` at the release, or wait for a real-hardware run~~ **Decided 2026-11-09 by
+     the owner: at the release.** Until a real-hardware run, the page says plainly that the tests use
+     a simulated configfs-tsm and dstack agent;
   2. whether to bring the `_meta` design to the MCP Security Interest Group (it would make "a
      concrete, spec-compatible proposal" a claim we can link to);
   3. the page name: `/trust/`, or `/confidential/`, which matches the buyer's word better but is
