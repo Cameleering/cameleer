@@ -13,8 +13,8 @@ categories = ["network-programming", "cryptography"]
 description = "Cameleer std-only SSH-2 client/server, SFTP v3 and the sftp / ssh components"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.5.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.5.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not

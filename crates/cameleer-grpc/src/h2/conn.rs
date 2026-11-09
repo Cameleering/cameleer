@@ -1012,6 +1012,13 @@ impl H2Stream {
         self.shared.local_addr
     }
 
+    /// The peer sent its complete response and then RST_STREAM(NO_ERROR): it wants nothing more
+    /// from us (RFC 9113 section 8.1). The response stays readable, and whatever we still had to
+    /// send is dropped without an error.
+    fn peer_finished(&self, st: &ConnState) -> bool {
+        st.streams.get(&self.id).is_some_and(|s| s.remote_end && s.reset == Some(ErrorCode::NO_ERROR))
+    }
+
     fn check(&self, st: &ConnState) -> Result<(), H2Error> {
         if let Some(s) = st.streams.get(&self.id) {
             if let Some(c) = s.reset {
@@ -1032,6 +1039,9 @@ impl H2Stream {
         let mut out = sh.lock_out();
         {
             let mut st = sh.lock();
+            if self.peer_finished(&st) {
+                return Ok(());
+            }
             self.check(&st)?;
             let s = st.streams.get_mut(&self.id).expect("checked");
             if s.local_end {
@@ -1068,6 +1078,9 @@ impl H2Stream {
         if data.is_empty() {
             {
                 let mut st = sh.lock();
+                if self.peer_finished(&st) {
+                    return Ok(());
+                }
                 self.check(&st)?;
                 let s = st.streams.get_mut(&self.id).expect("checked");
                 if s.local_end {
@@ -1088,6 +1101,9 @@ impl H2Stream {
             let n = {
                 let mut st = sh.lock();
                 loop {
+                    if self.peer_finished(&st) {
+                        return Ok(());
+                    }
                     self.check(&st)?;
                     let s = st.streams.get(&self.id).expect("checked");
                     if s.local_end {
@@ -1133,6 +1149,9 @@ impl H2Stream {
                 return Ok(Some(h));
             }
             if let Some(c) = s.reset {
+                if c == ErrorCode::NO_ERROR && s.remote_end {
+                    return Ok(None);
+                }
                 return Err(H2Error::StreamReset(c));
             }
             if s.remote_end {
@@ -1153,7 +1172,10 @@ impl H2Stream {
         loop {
             let s = st.streams.get_mut(&self.id).ok_or(H2Error::StreamReset(ErrorCode::STREAM_CLOSED))?;
             if let Some(c) = s.reset {
-                return Err(H2Error::StreamReset(c));
+                // a complete response followed by RST_STREAM(NO_ERROR) is still read to the end
+                if !(c == ErrorCode::NO_ERROR && s.remote_end) {
+                    return Err(H2Error::StreamReset(c));
+                }
             }
             if let Some(chunk) = s.data.pop_front() {
                 let n = chunk.len() as u32;
