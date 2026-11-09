@@ -1099,6 +1099,8 @@ struct StateInner {
     beans: Vec<BeanDefinition>,
     templates: BTreeMap<String, RouteTemplateDefinition>,
     configurations: Vec<(String, Value)>,
+    /// The start customizer that links route configurations to every YAML route is registered.
+    start_customizer: bool,
 }
 
 /// Per-context state of the YAML loader: declared beans, route templates and raw
@@ -1124,6 +1126,12 @@ pub fn yaml_state(ctx: &CamelContext) -> Arc<YamlState> {
 }
 
 impl YamlState {
+    /// Note that the start customizer is registered; true when it already was.
+    pub(crate) fn mark_start_customizer(&self) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        std::mem::replace(&mut inner.start_customizer, true)
+    }
+
     /// All declared beans.
     pub fn beans(&self) -> Vec<BeanDefinition> {
         self.inner.lock().unwrap().beans.clone()
@@ -1343,6 +1351,13 @@ impl YamlLoader {
         let mut routes = self.load_document(ctx, &Source::synthetic(value))?;
         self.apply_route_configurations(ctx, &mut routes)?;
         Ok(routes)
+    }
+
+    /// Link `routes` to every `routeConfiguration` loaded into `ctx` so far, and fail on a
+    /// `routeConfigurationId` that names none, as starting the context would (for checks that
+    /// load several files without starting, such as `cameleer validate`).
+    pub fn check_route_configurations(&self, ctx: &CamelContext, routes: &mut [RouteDefinition]) -> Result<()> {
+        self.link_route_configurations(ctx, routes, true)
     }
 
     /// Link route definitions built outside of [`YamlLoader::load_routes`] (e.g. with

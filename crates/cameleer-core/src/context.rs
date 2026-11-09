@@ -386,6 +386,9 @@ impl RouteStats {
     }
 }
 
+/// A function over the pending route definitions, run when the context starts.
+pub type PendingRoutesCustomizer = Arc<dyn Fn(&CamelContext, &mut Vec<RouteDefinition>) -> Result<()> + Send + Sync>;
+
 /// A runtime route.
 pub struct Route {
     pub id: String,
@@ -563,6 +566,9 @@ pub(crate) struct ContextInner {
     properties: PropertiesComponent,
     languages: RwLock<HashMap<String, Arc<dyn Language>>>,
     pending_routes: Mutex<Vec<RouteDefinition>>,
+    /// Called with every pending route definition when the context starts, before the routes
+    /// are created (see [`CamelContext::add_pending_routes_customizer`]).
+    pending_customizers: Mutex<Vec<PendingRoutesCustomizer>>,
     routes: RwLock<Vec<Arc<Route>>>,
     status: RwLock<ServiceStatus>,
     notifiers: RwLock<Vec<Arc<dyn EventNotifier>>>,
@@ -663,6 +669,7 @@ impl CamelContext {
                 properties: PropertiesComponent::default(),
                 languages: RwLock::new(HashMap::new()),
                 pending_routes: Mutex::new(Vec::new()),
+                pending_customizers: Mutex::new(Vec::new()),
                 routes: RwLock::new(Vec::new()),
                 status: RwLock::new(ServiceStatus::Initialized),
                 notifiers: RwLock::new(Vec::new()),
@@ -1136,6 +1143,13 @@ impl CamelContext {
 
     /// Add a single route definition. If the context is started the route is created
     /// and started immediately; otherwise it is created on `start()`.
+    /// Run `customizer` over all pending route definitions when the context starts, before the
+    /// routes are created. Route loaders use it for settings that span files, such as route
+    /// configurations that apply to every route regardless of the file they came from.
+    pub fn add_pending_routes_customizer(&self, customizer: PendingRoutesCustomizer) {
+        self.inner.pending_customizers.lock().unwrap().push(customizer);
+    }
+
     pub fn add_route_definition(&self, mut def: RouteDefinition) -> Result<()> {
         def.finish()?;
         if self.is_started() {
@@ -1319,7 +1333,13 @@ impl CamelContext {
                 }
                 Ok(())
             })?;
-            let pending: Vec<RouteDefinition> = std::mem::take(&mut *self.inner.pending_routes.lock().unwrap());
+            let mut pending: Vec<RouteDefinition> = std::mem::take(&mut *self.inner.pending_routes.lock().unwrap());
+            // loaders that bind settings across files (route configurations) see every route
+            // here, whatever order the files came in
+            let customizers: Vec<PendingRoutesCustomizer> = self.inner.pending_customizers.lock().unwrap().clone();
+            for c in customizers {
+                c(self, &mut pending)?;
+            }
             crate::startup::step("routes", "create", || -> Result<()> {
                 for def in pending {
                     let name = def.id.clone().unwrap_or_default();

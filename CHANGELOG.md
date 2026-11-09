@@ -23,6 +23,22 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   (`camel.server.mcp-expose-routes.<routeId>.<option>`) take every `ai-tool` option. The REST DSL
   now keeps its operations on the context (`cameleer_http::rest::rest_operations`).
 
+### Fixed
+
+- **HTTPS routes and the management endpoints on one port**: with `camel.server.sslEnabled=true`,
+  `/q/*`, `/q/attestation` and the MCP endpoint now speak HTTPS on `camel.server.port` next to the
+  HTTPS routes; start-up used to fail with "already used by an https server". Camel's separate
+  management server is supported too: `camel.management.enabled=true` serves `/q/*` on
+  `camel.management.port` (default `9876`) and `camel.management.host`, plain HTTP.
+- The management endpoints no longer fix every route's worker pool at 8 when they register on the
+  shared port first; they use the default.
+- `/q/metrics` sends one `Content-Type` (`text/plain; version=0.0.4; charset=utf-8`), not two.
+- Readiness: a suspended route's consumer is `DOWN` in the check's details too, matching its status.
+- Route configurations (a top-level `interceptSendToEndpoint`, `intercept`, `onException`, or a
+  `routeConfiguration` without id) apply to every YAML route whatever the order of the files, as in
+  Camel, and a `routeConfigurationId` may name a configuration from a later file; an unknown id still
+  fails at start. Before, they applied only to routes in files loaded after them.
+
 ## 0.5.1 (2026-11-09)
 
 ### Fixed

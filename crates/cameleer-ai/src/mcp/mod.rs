@@ -518,6 +518,8 @@ pub struct McpServer {
     seq: AtomicU64,
     /// The process's attestation service, when it runs attested (`camel.attestation.enabled`).
     attestation: Option<Arc<dyn cameleer_core::attest::AttestationService>>,
+    /// The embedded server's TLS (`camel.server.sslEnabled`): the HTTP endpoint shares its port.
+    server_tls: Option<Arc<cameleer_tls::TlsServerConfig>>,
 }
 
 impl McpServer {
@@ -531,6 +533,7 @@ impl McpServer {
             );
         }
         let server_name = if config.server_name_set { config.server_name.clone() } else { ctx.name().to_string() };
+        let server_tls = if config.transport == "http" && config.enabled { cameleer_http::platform::embedded_server_tls(ctx)? } else { None };
         Ok(Arc::new(McpServer {
             server_name,
             config,
@@ -541,11 +544,17 @@ impl McpServer {
             pending: Mutex::default(),
             seq: AtomicU64::new(0),
             attestation: cameleer_core::attest::service(ctx),
+            server_tls,
         }))
     }
 
     pub fn registry(&self) -> &Arc<AiRegistry> {
         &self.registry
+    }
+
+    /// The TLS the HTTP endpoint uses: the embedded server's, so it speaks what the port speaks.
+    pub fn server_tls(&self) -> Option<Arc<cameleer_tls::TlsServerConfig>> {
+        self.server_tls.clone()
     }
 
     fn server_info(&self) -> Value {

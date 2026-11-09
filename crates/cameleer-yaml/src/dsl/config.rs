@@ -278,16 +278,39 @@ impl YamlLoader {
     }
 
     /// Link routes to the route configurations that apply to them (see the module docs).
+    ///
+    /// Before the context starts, a later file may still add configurations (Camel applies them
+    /// to every route whatever the file order), so the routes are marked and linked again, to
+    /// the full set, when the context starts; an id that names no configuration yet is only an
+    /// error then. Once started, the configurations known now are final.
     pub(super) fn apply_route_configurations(&self, ctx: &CamelContext, routes: &mut [RouteDefinition]) -> Result<()> {
-        let configs = collect_configurations(ctx);
         if routes.is_empty() {
             return Ok(());
         }
+        let deferred = !ctx.is_started();
+        if deferred {
+            register_start_customizer(ctx);
+            for r in routes.iter_mut() {
+                if !r.extensions.contains_key(BUILDER_SCOPE) || r.extensions.contains_key(YAML_LINKED) {
+                    r.extensions.insert(YAML_LINKED.to_string(), Box::new(true));
+                }
+            }
+        }
+        self.link_route_configurations(ctx, routes, !deferred)
+    }
+
+    pub(super) fn link_route_configurations(&self, ctx: &CamelContext, routes: &mut [RouteDefinition], strict: bool) -> Result<()> {
+        let configs = collect_configurations(ctx);
         let mut cache: BTreeMap<Vec<usize>, BuilderScopeHandle> = BTreeMap::new();
         for r in routes.iter_mut() {
-            if r.extensions.contains_key(BUILDER_SCOPE) {
+            // - marked by this loader before the context started: link (again) to the full set;
+            // - added to a started context: link unless something else set a scope;
+            // - anything else (another loader's routes, at start): leave alone
+            let marked = r.extensions.contains_key(YAML_LINKED);
+            if !marked && (!ctx.is_started() || r.extensions.contains_key(BUILDER_SCOPE)) {
                 continue;
             }
+            r.extensions.remove(BUILDER_SCOPE);
             let ids: Vec<String> = r
                 .properties
                 .get("routeConfigurationId")
@@ -305,6 +328,10 @@ impl YamlLoader {
                         .map(|(i, _)| i)
                         .collect();
                     if matching.is_empty() {
+                        if !strict {
+                            // a later file may define it; checked when the context starts
+                            continue;
+                        }
                         return Err(dsl_error(format!(
                             "Cannot find routeConfiguration with id '{}' (referenced by route {})",
                             id,
@@ -344,4 +371,20 @@ impl YamlLoader {
         }
         Ok(())
     }
+}
+
+/// Marks a route definition whose route configurations this loader links (again at start).
+const YAML_LINKED: &str = "cameleer-yaml.routeConfigurationsLinked";
+
+/// Once per context: when it starts, link every route the YAML loader produced to the full set
+/// of route configurations, so their file order does not matter.
+fn register_start_customizer(ctx: &CamelContext) {
+    let state = yaml_state(ctx);
+    if state.mark_start_customizer() {
+        return;
+    }
+    ctx.add_pending_routes_customizer(Arc::new(|ctx: &CamelContext, defs: &mut Vec<RouteDefinition>| {
+        // in place, so the routes keep their order (and their generated ids)
+        YamlLoader::new().link_route_configurations(ctx, defs, true)
+    }));
 }

@@ -127,6 +127,7 @@ dependencies = [
  "cameleer-soap",
  "cameleer-sql",
  "cameleer-ssh",
+ "cameleer-tls",
  "cameleer-xml",
  "cameleer-yaml",
 ]

@@ -117,7 +117,9 @@ pub fn start(ctx: &CamelContext, props: &BTreeMap<String, String>, route_files: 
     let svc = service.clone();
     let handler: RouteHandler = Arc::new(move |req: &mut HttpRequest, _params: Vec<(String, String)>| handle(&svc, req));
     let spec = HttpRouteSpec { path: path.clone(), ..Default::default() };
-    let registration = registry().register(&host, port, &ServerConfig { name: "camel-attestation".into(), ..Default::default() }, spec, handler)?;
+    // the same port as the routes, speaking what it speaks (HTTPS with camel.server.sslEnabled)
+    let tls = cameleer_http::platform::embedded_server_tls(ctx)?;
+    let registration = registry().register(&host, port, &ServerConfig { name: "camel-attestation".into(), tls, ..Default::default() }, spec, handler)?;
     cameleer_core::camel_info!("Main", "Attestation enabled ({}): reports at {} on port {}", platform, path, registration.port);
     Ok(Some(AttestationHandle { registration: Some(registration) }))
 }

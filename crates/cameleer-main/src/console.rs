@@ -10,6 +10,13 @@
 //! | `camel.server.healthCheckEnabled` | `false` | `/q/health`, `/q/health/ready`, `/q/health/live` |
 //! | `camel.server.metricsEnabled` | `false` | `/q/metrics` (Prometheus text) |
 //!
+//! On `camel.server.port` the endpoints speak what the port speaks: with
+//! `camel.server.sslEnabled=true` they are HTTPS, next to the HTTPS routes. Camel's separate
+//! management server is supported too: `camel.management.enabled=true` serves them on
+//! `camel.management.port` (default `9876`) and `camel.management.host`, plain HTTP, with the
+//! `camel.management.devConsoleEnabled`, `healthCheckEnabled` and `metricsEnabled` switches (the
+//! `camel.server.*` switches count as well).
+//!
 //! Endpoints:
 //!
 //! - `GET /q/health`, `/q/health/ready`, `/q/health/live`: JSON, `200` when UP, `503` when DOWN
@@ -40,18 +47,20 @@ pub struct ConsoleConfig {
     pub dev_console: bool,
     pub health: bool,
     pub metrics: bool,
+    /// On the separate management port (`camel.management.*`) rather than `camel.server.port`.
+    pub management_port: bool,
 }
 
 impl Default for ConsoleConfig {
     fn default() -> Self {
-        ConsoleConfig { enabled: false, host: "0.0.0.0".into(), port: 8080, dev_console: false, health: false, metrics: false }
+        ConsoleConfig { enabled: false, host: "0.0.0.0".into(), port: 8080, dev_console: false, health: false, metrics: false, management_port: false }
     }
 }
 
 impl ConsoleConfig {
     /// Everything enabled on `port` (as `cameleer run --console --port N`).
     pub fn all(port: u16) -> Self {
-        ConsoleConfig { enabled: true, host: "0.0.0.0".into(), port, dev_console: true, health: true, metrics: true }
+        ConsoleConfig { enabled: true, host: "0.0.0.0".into(), port, dev_console: true, health: true, metrics: true, management_port: false }
     }
 
     /// Read the `camel.server.*` options (dashed or camelCase keys).
@@ -70,6 +79,19 @@ impl ConsoleConfig {
         }
         if let Some(p) = get("camel.server.port") {
             c.port = p.trim().parse().map_err(|_| CamelError::illegal_argument(format!("Invalid camel.server.port: {}", p)))?;
+        }
+        // Camel's separate management server
+        if flag("camel.management.enabled") {
+            c.enabled = true;
+            c.management_port = true;
+            c.dev_console |= flag("camel.management.dev-console-enabled");
+            c.health |= flag("camel.management.health-check-enabled");
+            c.metrics |= flag("camel.management.metrics-enabled");
+            c.host = get("camel.management.host").unwrap_or(c.host);
+            c.port = match get("camel.management.port") {
+                Some(p) => p.trim().parse().map_err(|_| CamelError::illegal_argument(format!("Invalid camel.management.port: {}", p)))?,
+                None => 9876,
+            };
         }
         Ok(c)
     }
@@ -113,10 +135,15 @@ impl DevConsoleServer {
             None => HttpResponse::text(503, "CamelContext is gone"),
         });
         let spec = HttpRouteSpec { path: "/q/*".into(), ..Default::default() };
-        let server_config = ServerConfig { name: "camel-console".into(), pool_size: 8, ..Default::default() };
+        // on the shared port the endpoints speak what the port speaks (HTTPS with
+        // camel.server.sslEnabled); the default pool size, because the first registration on a
+        // port decides it for every route there
+        let tls = if config.management_port { None } else { cameleer_http::platform::embedded_server_tls(ctx)? };
+        let server_config = ServerConfig { name: "camel-console".into(), tls, ..Default::default() };
         let reg = registry().register(&config.host, config.port, &server_config, spec, handler)?;
         let port = reg.port;
-        cameleer_core::camel_info!("Main", "Management HTTP server listening on http://{}:{}/q (dev console: {}, health: {}, metrics: {})", config.host, port, config.dev_console, config.health, config.metrics);
+        let scheme = if server_config.tls.is_some() { "https" } else { "http" };
+        cameleer_core::camel_info!("Main", "Management HTTP server listening on {}://{}:{}/q (dev console: {}, health: {}, metrics: {})", scheme, config.host, port, config.dev_console, config.health, config.metrics);
         Ok(DevConsoleServer { registration: Mutex::new(Some(reg)), port })
     }
 
@@ -175,7 +202,7 @@ pub fn handle_request(ctx: &CamelContext, cfg: &ConsoleConfig, req: &HttpRequest
         ["q", "health", "ready"] if cfg.health && get => health_response(ctx.health_readiness()),
         ["q", "health", "live"] if cfg.health && get => health_response(ctx.health_liveness()),
         ["q", "metrics"] if cfg.metrics && get => {
-            HttpResponse::text(200, ctx.managed_context().prometheus()).with_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            HttpResponse::text(200, ctx.managed_context().prometheus()).with_content_type("text/plain; version=0.0.4; charset=utf-8")
         }
         ["q", "dev", rest @ ..] if cfg.dev_console => dev_console(ctx, method, rest),
         _ => error(404, format!("No management endpoint for {} {}", method, req.path)),

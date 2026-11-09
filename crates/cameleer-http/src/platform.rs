@@ -351,3 +351,14 @@ impl Drop for HttpConsumer {
         }
     }
 }
+
+/// The TLS configuration of the embedded server (`camel.server.sslEnabled=true` with
+/// `camel.server.ssl.*` or the global `camel.ssl.*`), or `None` when it serves plain HTTP.
+/// Endpoints that register on `camel.server.port` next to `platform-http` routes (the
+/// management endpoints, attestation, MCP) use it, so they speak what the port speaks.
+pub fn embedded_server_tls(ctx: &CamelContext) -> Result<Option<Arc<cameleer_tls::TlsServerConfig>>> {
+    if !cameleer_tls::camel_support::server_ssl_enabled(ctx) {
+        return Ok(None);
+    }
+    Ok(Some(Arc::new(cameleer_tls::camel_support::server_config(ctx, None, "camel.server")?)))
+}

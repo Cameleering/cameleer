@@ -48,6 +48,28 @@ fn builtin_checks_follow_lifecycle() {
 }
 
 #[test]
+fn a_suspended_consumer_is_down_in_status_and_details() {
+    let ctx = CamelContext::new();
+    ctx.add_routes(|b| {
+        b.from("seda:ticks").route_id("ticks").to("mock:t");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let c = ctx.health_readiness().check("consumers").unwrap().clone();
+    assert_eq!(c.state, HealthState::Up);
+    assert_eq!(c.details.get("consumer.ticks").unwrap().as_str(), Some("UP"));
+    ctx.suspend_route("ticks").unwrap();
+    let c = ctx.health_readiness().check("consumers").unwrap().clone();
+    assert_eq!(c.state, HealthState::Down);
+    // the detail agrees with the status (it used to say UP: the consumer object still exists)
+    let d = c.details.get("consumer.ticks").unwrap().as_str().unwrap().to_string();
+    assert!(d.starts_with("DOWN"), "{}", d);
+    ctx.resume_route("ticks").unwrap();
+    assert_eq!(ctx.health_readiness().check("consumers").unwrap().details.get("consumer.ticks").unwrap().as_str(), Some("UP"));
+    ctx.stop().unwrap();
+}
+
+#[test]
 fn custom_checks_and_registry() {
     let ctx = CamelContext::new();
     ctx.start().unwrap();
