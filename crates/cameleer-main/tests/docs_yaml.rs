@@ -154,7 +154,7 @@ fn resolve_all(name: &str, yaml: &str, props: &[(&str, &str)]) -> usize {
     for d in &docs {
         collect_uris(d, &mut raw);
     }
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let ctx = main.context();
     for (k, v) in props {
         ctx.properties().set(*k, *v);
@@ -220,7 +220,7 @@ fn template(ctx: &CamelContext) -> ProducerTemplate {
 /// every component. `configure` can set properties before the start.
 fn start_with(id: &str, yaml: &str, extra: &[(&str, String)], configure: impl FnOnce(&mut cameleer_main::Main)) -> cameleer_main::Main {
     assert!(resolve_all(id, yaml, &[]) > 0, "{}: no endpoint URI found", id);
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     configure(&mut main);
     main.add_route_source(format!("{}.camel.yaml", id), yaml.to_string());
     for (name, text) in extra {
@@ -361,22 +361,22 @@ fn quoted_loader_errors_are_real() {
         ),
     ];
     for (yaml, expected) in cases {
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         let err = cameleer_yaml::add_routes_from_yaml(main.context(), yaml).expect_err(expected);
         assert!(err.message.contains(expected), "expected {:?} in: {}", expected, err.message);
     }
     // an unknown routeConfigurationId: a later file may still define it, so it is an error when
     // the context starts (as in Camel), not while loading
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     cameleer_yaml::add_routes_from_yaml(main.context(), "- route:\n    routeConfigurationId: nope\n    from:\n      uri: direct:a\n").unwrap();
     let err = main.context().start().unwrap_err();
     assert!(err.message.contains("Cannot find routeConfiguration with id 'nope'"), "{}", err.message);
     // line and column in error locations
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let err = cameleer_yaml::load_routes(main.context(), "- route:\n    from:\n      uri: direct:a\n      steps:\n        - to: mock:a\n        - setbody: x\n").unwrap_err();
     assert!(err.message.contains("line 6"), "{}", err.message);
     // `disabled: yes` is a string, not a boolean: the step is not disabled
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let routes = cameleer_yaml::load_routes(
         main.context(),
         "- route:\n    from:\n      uri: direct:a\n      steps:\n        - to:\n            uri: mock:a\n            disabled: yes\n        - to:\n            uri: mock:b\n            disabled: true\n",
@@ -501,7 +501,7 @@ fn yaml_kamelet_source() {
 fn yaml_kamelet_resource() {
     let kamelet = not_camel(YAML_DSL, "kind: Kamelet");
     let route = "- route:\n    from:\n      uri: kamelet:greeting-source?message=Hi&period=50\n      steps:\n        - to: mock:greeting\n";
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("greeting-source.kamelet.yaml", kamelet);
     main.add_route_source("use-greeting.camel.yaml", route);
     main.start().unwrap();
@@ -512,7 +512,7 @@ fn yaml_kamelet_resource() {
 #[test]
 fn yaml_pipe_resource() {
     let pipe = not_camel(YAML_DSL, "kind: Pipe");
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("greetings.pipe.yaml", pipe);
     main.start().unwrap();
     let ctx = main.context();
@@ -814,7 +814,7 @@ fn agent_worked_example() {
     assert_eq!(written.get("total"), Some(&Value::Int(30)));
     main.stop().unwrap();
     // the draft's option is rejected the way the validator reports it; the fix resolves
-    let ctx = cameleer_main::new_main();
+    let ctx = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let err = match ctx.context().get_endpoint("seda:orders?concurrentConsumer=4") {
         Ok(_) => panic!("concurrentConsumer is not a seda option"),
         Err(e) => e,

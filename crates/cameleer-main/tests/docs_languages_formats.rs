@@ -5,7 +5,7 @@
 //! The pages carry their own test data in HTML comments, so what a reader sees is what runs:
 //!
 //! - `<!-- example: id -->` above a ```yaml block: a route. It is loaded with
-//!   `cameleer_main::new_main()`, every endpoint URI in it is resolved with `get_endpoint`
+//!   `{ let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m }`, every endpoint URI in it is resolved with `get_endpoint`
 //!   (unknown options fail), and the route is started.
 //! - `<!-- input: id -->` / `<!-- output: id -->` above a fenced block: the body sent to the
 //!   route's `direct:` endpoint and the expected result body. Further cases of one route use
@@ -54,7 +54,7 @@ fn repo() -> PathBuf {
 /// The pages owned by this test.
 fn pages() -> Vec<PathBuf> {
     let mut v = Vec::new();
-    for dir in ["docs/languages", "docs/dataformats"] {
+    for dir in ["docs/languages", "docs/dataformats", "docs/packs/health/languages", "docs/packs/health/dataformats"] {
         if let Ok(rd) = std::fs::read_dir(repo().join(dir)) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -272,7 +272,7 @@ fn from_direct(yaml: &str) -> Option<String> {
 
 fn start(id: &str, yaml: &str, configure: Option<fn(&CamelContext)>) -> cameleer_main::Main {
     setup();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source(format!("{}.camel.yaml", id), yaml.to_string());
     if let Some(f) = configure {
         main.configure(move |ctx| {
@@ -382,7 +382,7 @@ fn fixture_exchange(ctx: &CamelContext, fixture: &Value) -> Exchange {
 /// Evaluate every row of every eval table; returns the number of rows checked.
 fn run_eval_tables(marked: &[Marked]) -> usize {
     setup();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.set_property("app.greeting", "Hi");
     main.start().unwrap();
     let ctx = main.context().clone();
@@ -639,7 +639,7 @@ fn every_page_has_answer_line_and_example() {
 /// Start a context with the routes of `f` and return (main, request helper data).
 fn rust_main(f: fn(&mut RouteBuilder)) -> cameleer_main::Main {
     setup();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.configure(move |ctx| ctx.add_routes(move |b| f(b)));
     main.start().unwrap();
     main
@@ -796,7 +796,7 @@ fn rust_routes_languages_core(b: &mut RouteBuilder) {
 #[test]
 fn rust_dsl_languages_core() {
     setup();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.configure(|ctx| {
         bind_ref_examples(ctx);
         bind_bean_examples(ctx);
@@ -1149,7 +1149,7 @@ fn scratch() {
 #[test]
 fn scratch_eval() {
     let Ok(file) = std::env::var("DOCS_EVAL") else { return };
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.set_property("app.greeting", "Hi");
     main.start().unwrap();
     let ctx = main.context().clone();
@@ -1171,13 +1171,13 @@ fn scratch_eval() {
 
 // --- DICOM pages: their Rust snippets are whole functions ---
 
-/// docs/dataformats/dicom.md (copied verbatim)
+/// docs/packs/health/dataformats/dicom.md (copied verbatim)
 mod dicom_format {
     use cameleer_core::dataformat::DataFormatDefinition;
     use cameleer_core::prelude::*;
 
     pub fn routes(ctx: &CamelContext) -> Result<()> {
-        cameleer_dicom::register(ctx);
+        ctx.add_pack(&cameleer_health::HEALTH);
         ctx.add_routes(|b| {
             b.from("direct:to-implicit")
                 .marshal(DataFormatDefinition::new("dicom").option("transferSyntax", "1.2.840.10008.1.2"));
@@ -1185,26 +1185,26 @@ mod dicom_format {
     }
 }
 
-/// docs/dataformats/dicomJson.md (copied verbatim)
+/// docs/packs/health/dataformats/dicomJson.md (copied verbatim)
 mod dicom_json {
     use cameleer_core::dataformat::DataFormatDefinition;
     use cameleer_core::prelude::*;
 
     pub fn routes(ctx: &CamelContext) -> Result<()> {
-        cameleer_dicom::register(ctx);
+        ctx.add_pack(&cameleer_health::HEALTH);
         ctx.add_routes(|b| {
             b.from("direct:json").marshal(DataFormatDefinition::new("dicomJson").option("array", true));
         })
     }
 }
 
-/// docs/dataformats/dicomDeidentify.md (copied verbatim)
+/// docs/packs/health/dataformats/dicomDeidentify.md (copied verbatim)
 mod dicom_deidentify {
     use cameleer_core::prelude::*;
-    use cameleer_dicom::deid::{Deidentifier, DeidentifyProcessor, Options};
+    use cameleer_health::dicom::deid::{Deidentifier, DeidentifyProcessor, Options};
 
     pub fn routes(ctx: &CamelContext) -> Result<()> {
-        cameleer_dicom::register(ctx);
+        ctx.add_pack(&cameleer_health::HEALTH);
         let mut d = Deidentifier::new(b"secret-from-a-vault", Options::parse("retainLongitudinalModifiedDates")?);
         d.pseudonymous_patient = true;
         ctx.add_routes(move |b| {
@@ -1213,12 +1213,12 @@ mod dicom_deidentify {
     }
 }
 
-/// docs/languages/dicom.md (copied verbatim)
+/// docs/packs/health/languages/dicom.md (copied verbatim)
 mod dicom_language {
     use cameleer_core::prelude::*;
 
     pub fn routes(ctx: &CamelContext) -> Result<()> {
-        cameleer_dicom::register(ctx);
+        ctx.add_pack(&cameleer_health::HEALTH);
         ctx.add_routes(|b| {
             b.from("dicom:ROUTER@0.0.0.0:11112")
                 .set_header("StudyUid", language("dicom", "StudyInstanceUID"))

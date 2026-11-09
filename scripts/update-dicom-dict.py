@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Regenerate the DICOM data dictionary, UID registry and de-identification tables of
-crates/cameleer-dicom from the DICOM standard's DocBook XML.
+crates/cameleer-health from the DICOM standard's DocBook XML.
 
 Sources (DICOM standard, NEMA, edition pinned below):
   PS3.6  Data Dictionary   Tables 6-1, 7-1, 8-1, 9-1 (data elements) and A-1 (UIDs)
@@ -12,13 +12,13 @@ SHA-256 matches the pinned digest. Any mismatch aborts without writing.
 
 To update to a new edition: set EDITION, run `python3 scripts/update-dicom-dict.py
 --print-digest`, put the printed digests in DIGESTS, run the script again, then run
-`cargo test -p cameleer-dicom`. NEMA serves the current edition under /current/ and earlier
+`cargo test -p cameleer-health`. NEMA serves the current edition under /current/ and earlier
 editions under /<edition>/; set BASE to the archived URL once the edition is archived.
 `--source DIR` reads part06.xml, part07.xml and part15.xml from DIR instead of downloading.
 
 Output (committed; never edit by hand):
-  crates/cameleer-dicom/src/dict_data.rs   - data elements and UIDs (module `dict::data`)
-  crates/cameleer-dicom/src/deid_table.rs  - PS3.15 Table E.1-1 (module `dict::deid`)
+  crates/cameleer-health/src/dicom/dict_data.rs   - data elements and UIDs (module `dict::data`)
+  crates/cameleer-health/src/dicom/deid_table.rs  - PS3.15 Table E.1-1 (module `dict::deid`)
 Standard library only.
 """
 
@@ -38,7 +38,7 @@ DIGESTS = {
 }
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "crates", "cameleer-dicom", "src")
+OUT = os.path.join(ROOT, "crates", "cameleer-health", "src", "dicom")
 D = "{http://docbook.org/ns/docbook}"
 XML_ID = "{http://www.w3.org/XML/1998/namespace}id"
 

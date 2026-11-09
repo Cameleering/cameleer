@@ -964,10 +964,14 @@ fn new_main_inner() -> Main {
     cameleer_saas::register(main.context()); // slack, telegram, github, twilio, jira, openai, webhook, graphql, rss, atom
     #[cfg(feature = "soap")]
     cameleer_soap::register(main.context()); // cxf, cxfrs, spring-ws, fhir + jaxb, fhirJson, fhirXml data formats
-    #[cfg(feature = "dicom")]
-    cameleer_dicom::register(main.context()); // dicom + dicomJson data formats, dicom language, ${dicom.*}
     #[cfg(feature = "dataformats")]
     cameleer_dataformats::register(main.context()); // avro, bindy, yaml, tarFile, zipFile, crypto, pgp, cbor, thrift, asn1, iCal, mimeMultipart, univocity
+    // packs (not in `full`): one line each to install them; then every installed pack is added
+    #[cfg(feature = "health")]
+    cameleer_core::pack::install(&cameleer_health::HEALTH);
+    for p in cameleer_core::pack::installed_packs() {
+        main.add_pack(p);
+    }
     // REST DSL elements (`rest`, `restConfiguration`) in YAML/XML route files
     yaml_rest::register();
     for ext in ["yaml", "yml"] {

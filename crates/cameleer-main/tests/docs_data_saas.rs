@@ -169,7 +169,7 @@ mod h {
     /// component, after placeholder substitution. Returns the resolved URIs.
     pub fn resolve(yaml: &str, env: &[(&str, &str)]) -> Vec<String> {
         let yaml = env_subst(yaml, env);
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         let ctx = main.context();
         // `jdbc:` endpoints look their data source up in the registry (as `camel.datasource.url`
         // binds it at runtime)
@@ -186,7 +186,7 @@ mod h {
 
     /// Start the YAML text with `new_main` (plus optional extra Rust routes).
     pub fn start_yaml(name: &str, yaml: String, configure: Option<Box<dyn FnOnce(&cameleer_core::prelude::CamelContext) -> cameleer_core::prelude::Result<()>>>) -> cameleer_main::Main {
-        let mut main = cameleer_main::new_main();
+        let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         main.add_route_source(format!("{}.camel.yaml", name), yaml);
         if let Some(f) = configure {
             main.configure(f);
@@ -288,7 +288,7 @@ impl GcpEnv {
         p.to_string_lossy().replace('\\', "/")
     }
     fn start(&self, name: &str, yaml: String) -> cameleer_main::Main {
-        let mut main = cameleer_main::new_main();
+        let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         self.configure(main.context());
         main.add_route_source(format!("{}.camel.yaml", name), yaml);
         main.start().unwrap_or_else(|e| panic!("{} does not start: {}", name, e));
@@ -385,7 +385,7 @@ impl GcpEnv {
     /// Start with an HTTP server port (for `platform-http` examples).
     fn start_http(&self, name: &str, yaml: String) -> (cameleer_main::Main, u16) {
         let port = free_port();
-        let mut main = cameleer_main::new_main();
+        let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         main.set_property("camel.server.port", port.to_string());
         self.configure(main.context());
         main.add_route_source(format!("{}.camel.yaml", name), yaml);
@@ -803,7 +803,7 @@ fn gcp_rust_dsl_snippets() {
         rust_dsl_google_vertexai,
     ];
     for f in snippets {
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         f(main.context()).unwrap();
     }
     // the snippets are the ones on the pages
@@ -883,7 +883,7 @@ fn ws_http(port: u16, method: &str, path: &str, json: Option<&str>) -> (u16, Str
 
 /// Start YAML text with `new_main` on an HTTP port.
 fn ws_start(name: &str, yaml: String, port: Option<u16>) -> cameleer_main::Main {
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     if let Some(p) = port {
         main.set_property("camel.server.port", p.to_string());
     }
@@ -1131,7 +1131,7 @@ fn ws_drive_upload_and_watch() {
     let watch = env_subst(&subst(&watch, &[("delay=60000", &format!("delay=50&initialDelay=0&{}", env.opts())), ("log:drive-changes", "mock:drive-changes")]), &vars);
     // a file in another folder is not reported
     env.mock.put_drive_file("other.txt", "text/plain", b"x");
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("upload.camel.yaml", upload);
     main.add_route_source("watch.camel.yaml", watch);
     main.start().unwrap();
@@ -1177,7 +1177,7 @@ fn ws_rust_dsl_snippets() {
         ("google-drive", rust_dsl_google_drive),
     ];
     for (name, f) in fns {
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         f(main.context()).unwrap_or_else(|e| panic!("{}: {}", name, e));
     }
 }
@@ -1196,7 +1196,7 @@ fn st_unique(prefix: &str) -> String {
 
 /// Start a YAML example with `new_main` and extra properties.
 fn st_start(name: &str, yaml: String, props: &[(&str, &str)]) -> cameleer_main::Main {
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     for (k, v) in props {
         main.set_property(*k, *v);
     }
@@ -1666,7 +1666,7 @@ fn rust_dsl_spring_redis(ctx: &CamelContext) -> Result<()> {
 fn st_rust_dsl_snippets() {
     let fns: &[(&str, fn(&CamelContext) -> Result<()>)] = &[("sql", rust_dsl_sql), ("sql-stored", rust_dsl_sql_stored), ("jdbc", rust_dsl_jdbc), ("cql", rust_dsl_cql), ("mongodb", rust_dsl_mongodb), ("mongodb-gridfs", rust_dsl_mongodb_gridfs), ("couchdb", rust_dsl_couchdb), ("elasticsearch", rust_dsl_elasticsearch), ("opensearch", rust_dsl_opensearch), ("spring-redis", rust_dsl_spring_redis)];
     for (name, f) in fns {
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         let ctx = main.context();
         cameleer_sql::bind_datasource(ctx, "dataSource", cameleer_sql::datasource_from_url("jdbc:rustsql:mem:st_dsl").unwrap());
         f(ctx).unwrap_or_else(|e| panic!("{}: {}", name, e));
@@ -1880,7 +1880,7 @@ fn twilio_send_sms_example() {
 fn twilio_read_messages_example() {
     let tw = TwilioMock::start();
     let env = saas_twilio_env(&tw);
-    let m0 = cameleer_main::new_main();
+    let m0 = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let t0 = m0.context().create_producer_template();
     let send = format!("twilio:message/create?from=%2B15005550006&to=%2B15005550001&username={}&password={}&serverUrl={}", TwilioMock::ACCOUNT_SID, TwilioMock::AUTH_TOKEN, tw.url());
     t0.request_body(&send, "first").unwrap();
@@ -2184,7 +2184,7 @@ fn saas_rust_dsl_snippets_build() {
         ("ai guide", rust_dsl_ai_guide),
     ];
     for (name, f) in snippets {
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         f(main.context()).unwrap_or_else(|e| panic!("{}: {}", name, e));
     }
 }

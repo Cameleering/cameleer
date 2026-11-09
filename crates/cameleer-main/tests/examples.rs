@@ -67,7 +67,7 @@ fn wait_for(what: &str, f: impl Fn() -> bool) {
 #[test]
 fn rest_api_example() {
     let port = free_port().to_string();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("rest-api.camel.yaml", example("rest-api.camel.yaml", &[("port: 8080", &format!("port: {}", port))]));
     main.start().unwrap();
     let port: u16 = port.parse().unwrap();
@@ -99,7 +99,7 @@ fn ai_ticket_triage_example() {
         let end = start + text[start..].find('"').unwrap();
         format!("{}direct:model{}", &text[..start], &text[end..])
     };
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("ai-ticket-triage.camel.yaml", text);
     let b2 = bootstrap.clone();
     main.configure(move |ctx| {
@@ -136,7 +136,7 @@ fn alerts_to_slack_example() {
     let slack = cameleer_saas::testing::SlackMock::start();
     let webhook = format!("{}{}", slack.server.url(), cameleer_saas::testing::SlackMock::WEBHOOK_PATH);
     let port = free_port();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.set_property("camel.server.port", port.to_string());
     main.add_route_source("alerts-to-slack.camel.yaml", example("alerts-to-slack.camel.yaml", &[("{{env:SLACK_WEBHOOK_URL}}", &webhook)]));
     main.start().unwrap();
@@ -169,7 +169,7 @@ fn files_to_s3_example() {
             ("region={{env:AWS_REGION:us-east-1}}&useDefaultCredentialsProvider=true", &mock_opts),
         ],
     );
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("files-to-s3.camel.yaml", text);
     main.start().unwrap();
     let t = main.context().create_producer_template();
@@ -218,7 +218,7 @@ fn ai_ticket_triage_example_openai_request() {
 #[test]
 fn hello_api_example() {
     let port = free_port();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.set_property("camel.server.port", port.to_string());
     main.add_route_source("hello-api.camel.yaml", example("hello-api.camel.yaml", &[]));
     main.start().unwrap();

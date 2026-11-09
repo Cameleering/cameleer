@@ -10,7 +10,7 @@
 #   scripts/dicom-interop.sh env       # print the variables the tests need (eval "$(... env)")
 #   scripts/dicom-interop.sh all       # install + setup + start
 #
-# Then: eval "$(scripts/dicom-interop.sh env)" && CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-dicom --test live_dicom
+# Then: eval "$(scripts/dicom-interop.sh env)" && CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-health --test live_dicom
 #
 # Install: as root the packages come from apt (`apt-get install`). Without root they are
 # downloaded with `apt-get download` (apt checks each file against the signed archive index),

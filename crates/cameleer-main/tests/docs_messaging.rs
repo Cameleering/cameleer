@@ -1,6 +1,6 @@
 //! The examples on the messaging, streaming, core and edge-protocol component pages
 //! (`docs/components/*.md`) are tested here. Each YAML example is read from its page (by its
-//! `<!-- example: id -->` marker), loaded with `cameleer_main::new_main()`, every endpoint URI it
+//! `<!-- example: id -->` marker), loaded with `{ let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m }`, every endpoint URI it
 //! uses is resolved with `ctx.get_endpoint` (unknown options fail, as in Apache Camel), and the
 //! route runs end to end against the embedded brokers and servers. `{{env:NAME:default}}`
 //! placeholders are pointed at those servers by setting the property `env:NAME`. Where an example
@@ -27,7 +27,7 @@ const PAGES: &[&str] = &[
 ];
 
 fn page(name: &str) -> String {
-    let path = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), name);
+    let path = { let p = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), name); if std::path::Path::new(&p).exists() { p } else { format!("{}/../../docs/packs/health/components/{}.md", env!("CARGO_MANIFEST_DIR"), name) } };
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {}", path, e)).replace("\r\n", "\n")
 }
 
@@ -129,7 +129,7 @@ impl Drop for Running {
 
 /// Load a YAML example (plus optional Rust setup), start it and resolve its endpoints.
 fn start(id: &str, yaml: &str, props: &[(&str, String)], setup: impl FnOnce(&CamelContext) -> Result<()> + 'static) -> Running {
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     for (k, v) in props {
         main.set_property(*k, v.clone());
     }
@@ -743,7 +743,7 @@ fn rust_dsl_snippets_build() {
     ];
     let mut covered = BTreeMap::new();
     for (name, f) in all {
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         f(main.context()).unwrap_or_else(|e| panic!("{} snippet: {}", name, e));
         assert!(!main.context().route_ids().is_empty(), "{} snippet adds no route", name);
         covered.insert(name, ());

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the DICOM character set tables in crates/cameleer-dicom/src/charset/.
+"""Generate the DICOM character set tables in crates/cameleer-health/src/dicom/charset/.
 
 The mappings come from CPython's codecs (standard library, PSF licence); those codecs
 were built from the Unicode Consortium mapping files and the national standards
@@ -25,7 +25,7 @@ import struct
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT = os.path.join(ROOT, "crates", "cameleer-dicom", "src", "charset")
+OUT = os.path.join(ROOT, "crates", "cameleer-health", "src", "dicom", "charset")
 
 SINGLE = ["iso8859_1", "iso8859_2", "iso8859_3", "iso8859_4", "iso8859_5", "iso8859_6",
           "iso8859_7", "iso8859_8", "iso8859_9", "iso8859_15", "tis_620"]

@@ -1,5 +1,5 @@
 //! End-to-end TLS tests for cameleer-protocols: ftps (explicit + implicit, PROT P),
-//! smtps/pop3s/imaps, STARTTLS for smtp/pop3/imap, wss, mllp and syslog over TLS,
+//! smtps/pop3s/imaps, STARTTLS for smtp/pop3/imap, wss and syslog over TLS,
 //! each against an embedded TLS server with a self-signed certificate trusted via
 //! `SslContextParameters`, plus negative tests (untrusted / wrong host name).
 
@@ -327,34 +327,7 @@ fn wss_server_and_client() {
     ctx.stop().unwrap();
 }
 
-// ------------------------------------------------------------------ mllp / syslog
-
-const ADT: &str = "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20240102120000||ADT^A01^ADT_A01|MSG00001|P|2.5\rPID|1||12345^^^MRN||Doe^John\r";
-
-#[test]
-fn mllp_over_tls() {
-    let ctx = context();
-    let uri = "mllp://127.0.0.1:0?sslContextParameters=#ssl";
-    ctx.add_routes(|b| {
-        b.from(uri).to("mock:hl7");
-    })
-    .unwrap();
-    ctx.start().unwrap();
-    let port = cameleer_protocols::local_port(&ctx, uri).unwrap();
-    let mock = ctx.mock_endpoint("mock:hl7").unwrap();
-    mock.expected_bodies_received(vec![ADT, ADT]);
-    let t = ctx.create_producer_template();
-    let producer = format!("mllp://localhost:{}?sslContextParameters=#ssl", port);
-    for _ in 0..2 {
-        let ex = t.request(&producer, |ex| ex.set_body(ADT)).unwrap();
-        assert!(ex.exception.is_none(), "{:?}", ex.exception);
-        assert_eq!(ex.header("CamelMllpAcknowledgementType").unwrap().to_string(), "AA");
-    }
-    mock.assert_is_satisfied().unwrap();
-    let err = t.request_body(&format!("mllp://localhost:{}?sslContextParameters=#sslUntrusted", port), ADT).unwrap_err();
-    assert!(ssl_kind(&err), "{:?}", err);
-    ctx.stop().unwrap();
-}
+// ------------------------------------------------------------------ syslog
 
 #[test]
 fn syslog_over_tls() {

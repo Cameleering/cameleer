@@ -441,7 +441,7 @@ gateway.
 - [Error handling](error-handling.md), [deployment guide](../DEPLOYMENT.md),
   [benchmarks](../BENCHMARKS.md)
 - Components: [paho](../components/paho.md), [kafka](../components/kafka.md),
-  [syslog](../components/syslog.md), [mllp](../components/mllp.md), [file](../components/file.md)
+  [syslog](../components/syslog.md), [mllp](../packs/health/components/mllp.md), [file](../components/file.md)
 
 ## Found a problem?
 

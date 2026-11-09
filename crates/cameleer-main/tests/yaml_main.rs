@@ -94,7 +94,7 @@ const APP: &str = r#"
 #[test]
 fn main_runs_yaml_with_rest_and_route_configuration() {
     let file = temp_file("app.camel.yaml", APP);
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_file(&file);
     main.start().unwrap();
     let ctx = main.context().clone();
@@ -156,7 +156,7 @@ fn main_runs_xml_rest_with_configuration_from_earlier_file() {
   </route>
 </routes>"#,
     );
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.set_property("test.port", "0");
     main.add_route_file(&cfg);
     main.add_route_file(&xml);
@@ -174,7 +174,7 @@ fn main_runs_xml_rest_with_configuration_from_earlier_file() {
 #[test]
 fn invalid_rest_reports_location() {
     let file = temp_file("bad.camel.yaml", "- rest:\n    path: /x\n    get:\n      - path: /y\n        bindingMode: weird\n        to: direct:y\n");
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_file(&file);
     let e = main.start().unwrap_err();
     assert!(e.message.contains("Unsupported rest binding mode: weird"), "{}", e);
@@ -209,7 +209,7 @@ fn rest_configuration_in_a_later_file_applies() {
     apiDocs: false
 "#,
     );
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_file(&routes);
     main.add_route_file(&cfg);
     main.start().unwrap();

@@ -110,7 +110,7 @@ Yes. RFC 3164 lines are parsed too; `format` tells you which kind arrived.
 
 ## Related
 
-- [netty](netty.md), [mllp](mllp.md), [kafka](kafka.md), [stream](stream.md)
+- [netty](netty.md), [mllp](../packs/health/components/mllp.md), [kafka](kafka.md), [stream](stream.md)
 - [Apache Camel Syslog data format](https://camel.apache.org/components/next/dataformats/syslog-dataformat.html)
 
 ## Found a problem?

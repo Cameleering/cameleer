@@ -400,7 +400,7 @@ stays green, and `official_kafka.rs` (librdkafka, now joining groups with JoinGr
 `scripts/dicom-interop.sh` installs DCMTK 3.6.7 and Orthanc 1.12.2 with the DICOMweb plugin 1.16
 (Ubuntu 24.04 packages: `apt-get install` as root, or `apt-get download` plus pinned SHA-256 and
 `dpkg -x` into a user directory without root) and starts DCMTK `storescp` (plain and TLS, BCP 195
-non-downgrading profile) and Orthanc. `CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-dicom --test
+non-downgrading profile) and Orthanc. `CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-health --test
 live_dicom` then runs **7/7** (Ubuntu 24.04 under WSL2, 2026-11-09):
 
 | test | what runs against what |
@@ -414,12 +414,12 @@ live_dicom` then runs **7/7** (Ubuntu 24.04 under WSL2, 2026-11-09):
 | `live_orthanc_dicomweb_client_to_cameleer_server` | Orthanc's DICOMweb client against a `dicomweb` consumer: STOW-RS, QIDO-RS, WADO-RS |
 
 The parser is also checked on 33 public pydicom test files (`scripts/fetch-dicom-testdata.sh`,
-`tests/corpus.rs`): every file reads and writes back byte for byte.
+`tests/dicom_corpus.rs`): every file reads and writes back byte for byte.
 
 Bug found and fixed: a deflated data set of odd length was sent as an odd-length PDV fragment,
 and DCMTK aborted the association ("Odd Fragment Length"). Deflated data sets are now padded to
 an even length (PS3.5 A.5) and PDV fragments are always even
-(`crates/cameleer-dicom/src/codec.rs` `dataset_to_bytes`, `assoc.rs` `max_fragment`; regression
+(`crates/cameleer-health/src/dicom/codec.rs` `dataset_to_bytes`, `assoc.rs` `max_fragment`; regression
 test `codec::tests::deflated_data_sets_have_even_length`).
 
 Not verified yet: dcm4che, real modalities, and the cloud DICOM services (Azure Health Data

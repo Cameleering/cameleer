@@ -57,7 +57,7 @@ fn configuration_guide_worked_example() {
         let dir = temp_dir(&format!("cfg{}", i));
         std::fs::write(dir.join("application.properties"), &app).unwrap();
         std::fs::write(dir.join("application-prod.properties"), &prod).unwrap();
-        let mut main = cameleer_main::new_main();
+        let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         // the process environment of the row, nothing else
         let env: BTreeMap<String, String> = row.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         // {{env:PORT}} is resolved through the process environment by the placeholder resolver

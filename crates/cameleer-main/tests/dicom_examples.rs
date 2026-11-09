@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cameleer_core::prelude::*;
-use cameleer_dicom::scu::{self, ScuConfig};
-use cameleer_dicom::tag::tags;
-use cameleer_dicom::testing::{Instance, MemoryArchive};
-use cameleer_dicom::{DicomFile, ReadOptions};
+use cameleer_health::dicom::scu::{self, ScuConfig};
+use cameleer_health::dicom::tag::tags;
+use cameleer_health::dicom::testing::{Instance, MemoryArchive};
+use cameleer_health::dicom::{DicomFile, ReadOptions};
 
 fn example(name: &str, replace: &[(&str, &str)]) -> String {
     let path = format!("{}/../../examples/medical/{}", env!("CARGO_MANIFEST_DIR"), name);
@@ -38,7 +38,7 @@ fn wait_for(what: &str, f: impl Fn() -> bool) {
 }
 
 fn temp_dir(name: &str) -> String {
-    let d = std::env::temp_dir().join(format!("cameleer-dicom-example-{}-{}", name, std::process::id()));
+    let d = std::env::temp_dir().join(format!("cameleer-health-example-{}-{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d.to_string_lossy().replace('\\', "/")
@@ -48,7 +48,7 @@ fn temp_dir(name: &str) -> String {
 fn cloud(port: u16, archive: Arc<MemoryArchive>) -> CamelContext {
     let ctx = CamelContext::new();
     cameleer_http::register(&ctx);
-    cameleer_dicom::register(&ctx);
+    ctx.add_pack(&cameleer_health::HEALTH);
     let uri = format!("dicomweb:/dicom-web?port={}", port);
     ctx.add_routes(move |b| {
         b.from(uri.as_str()).process(move |ex: &mut Exchange| {
@@ -71,7 +71,7 @@ fn modality_to_cloud_example() {
     let url = format!("http://127.0.0.1:{}/dicom-web", web_port);
     let archive = MemoryArchive::new();
     let cloud_ctx = cloud(web_port, archive.clone());
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source(
         "modality-to-cloud.camel.yaml",
         example(
@@ -142,7 +142,7 @@ fn ai_inference_loop_example() {
         })
         .unwrap();
     mocks.start().unwrap();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source(
         "ai-inference-loop.camel.yaml",
         example(
@@ -183,7 +183,7 @@ fn deid_pipeline_example() {
     let input = temp_dir("in");
     let output = temp_dir("out");
     let audit = format!("{}/audit.jsonl", temp_dir("audit"));
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.load_properties_text(&format!("camel.ai.audit.file={}\n", audit), false).unwrap();
     main.add_route_source(
         "deid-pipeline.camel.yaml",
@@ -229,15 +229,15 @@ fn doc_example(page: &str, id: &str) -> String {
 /// Value tree, and routing with the dicom language.
 #[test]
 fn docs_examples_coerce_and_route() {
-    let pacs = cameleer_dicom::testing::TestPacs::start("PACS");
-    let stroke = cameleer_dicom::testing::TestPacs::start("STROKE_AI");
+    let pacs = cameleer_health::dicom::testing::TestPacs::start("PACS");
+    let stroke = cameleer_health::dicom::testing::TestPacs::start("STROKE_AI");
     let p1 = free_port();
     let p2 = free_port();
-    let mut main = cameleer_main::new_main();
-    let coerce = doc_example("dataformats/dicom.md", "dicom-df-coerce")
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
+    let coerce = doc_example("packs/health/dataformats/dicom.md", "dicom-df-coerce")
         .replace("{{env:DICOM_PORT:11112}}", &p1.to_string())
         .replace("{{env:PACS_HOST:pacs.local}}:104", &format!("127.0.0.1:{}", pacs.port()));
-    let route = doc_example("languages/dicom.md", "dicom-language-route")
+    let route = doc_example("packs/health/languages/dicom.md", "dicom-language-route")
         .replace("{{env:DICOM_PORT:11112}}", &p2.to_string())
         .replace("{{env:AI_HOST:ai.local}}:104", &format!("127.0.0.1:{}", stroke.port()))
         .replace("{{env:PACS_HOST:pacs.local}}:104", &format!("127.0.0.1:{}", pacs.port()));
@@ -251,12 +251,12 @@ fn docs_examples_coerce_and_route() {
     let got = DicomFile::parse(&pacs.archive.all()[0], ReadOptions::default()).unwrap();
     assert_eq!(got.dataset.string(0x0008_0080).unwrap(), "Example Imaging Centre");
     let mut expected = inst.dataset();
-    expected.insert(cameleer_dicom::Element::string(0x0008_0080, cameleer_dicom::vr::Vr::LO, "Example Imaging Centre"));
+    expected.insert(cameleer_health::dicom::Element::string(0x0008_0080, cameleer_health::dicom::vr::Vr::LO, "Example Imaging Centre"));
     assert_eq!(got.dataset, expected);
     // routing: a head CT goes to the stroke AI, the rest to the PACS
     let mut head = Instance::ct("P8", 71, 1, 1).dataset();
-    head.insert(cameleer_dicom::Element::string(0x0018_0015, cameleer_dicom::vr::Vr::CS, "HEAD"));
-    let head = DicomFile::new(head, cameleer_dicom::ts::EXPLICIT_VR_LITTLE_ENDIAN).to_bytes().unwrap();
+    head.insert(cameleer_health::dicom::Element::string(0x0018_0015, cameleer_health::dicom::vr::Vr::CS, "HEAD"));
+    let head = DicomFile::new(head, cameleer_health::dicom::ts::EXPLICIT_VR_LITTLE_ENDIAN).to_bytes().unwrap();
     let c = ScuConfig::new("CT01", "ROUTER", "127.0.0.1", p2);
     scu::store(&c, &[head, Instance::ct("P8", 71, 2, 1).part10()], &[]).unwrap();
     assert_eq!(stroke.archive.len(), 1);

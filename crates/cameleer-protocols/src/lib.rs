@@ -8,11 +8,10 @@
 //! | `smtp`, `smtps` | [`mail`] | send mail (STARTTLS / implicit TLS) |
 //! | `pop3`, `imap`, `pop3s`, `imaps` | [`mail`] | polling mail consumers (STARTTLS / implicit TLS) |
 //! | `websocket`, `vertx-websocket`, `ws`, `wss` | [`websocket`] | RFC 6455 server and client (optionally TLS) |
-//! | `mllp` | [`mllp`] | HL7 v2 over MLLP with auto acknowledgement (optionally TLS) |
 //! | `syslog` | [`syslog`] | syslog over UDP/TCP/TLS (RFC 5424 / 3164 / 5425) |
 //!
-//! Data formats bound in the registry by [`register`]: `hl7` ([`hl7::Hl7DataFormat`]) and
-//! `syslog` ([`syslog::SyslogDataFormat`]); language `hl7terser`.
+//! Data format bound in the registry by [`register`]: `syslog` ([`syslog::SyslogDataFormat`]).
+//! HL7 v2 and MLLP are in the health pack (`cameleer-health`).
 //! Embedded FTP, SMTP, POP3 and IMAP servers for tests live in [`testing`].
 //!
 //! ```no_run
@@ -30,9 +29,7 @@
 //! ```
 
 pub mod ftp;
-pub mod hl7;
 pub mod mail;
-pub mod mllp;
 pub mod syslog;
 pub mod testing;
 pub mod websocket;
@@ -82,8 +79,7 @@ fn add(ctx: &CamelContext, scheme: &'static str, f: impl Fn() -> Arc<dyn Compone
 
 /// Register all components of this crate on a context (lazily created): `ftp`, `ftps`,
 /// `sftp` (errors), `smtp`, `pop3`, `imap`, `smtps`, `pop3s`, `imaps`,
-/// `websocket`, `vertx-websocket`, `ws`, `wss`, `mllp`, `syslog`; binds the
-/// `hl7` and `syslog` data formats and adds the `hl7terser` language. Schemes that
+/// `websocket`, `vertx-websocket`, `ws`, `wss`, `syslog`; binds the `syslog` data format. Schemes that
 /// already have a component are left untouched.
 pub fn register(ctx: &CamelContext) {
     use websocket::{Flavor, WebSocketComponent};
@@ -100,28 +96,18 @@ pub fn register(ctx: &CamelContext) {
     add(ctx, "vertx-websocket", || Arc::new(WebSocketComponent::new(Flavor::Vertx)));
     add(ctx, "ws", || Arc::new(WebSocketComponent::new(Flavor::Client)));
     add(ctx, "wss", || Arc::new(WebSocketComponent::secure_client()));
-    add(ctx, "mllp", || Arc::new(mllp::MllpComponent));
     add(ctx, "syslog", || Arc::new(syslog::SyslogComponent));
-    if lookup_data_format(ctx.registry(), "hl7").is_none() {
-        bind_data_format(ctx.registry(), "hl7", hl7::Hl7DataFormat::new());
-    }
     if lookup_data_format(ctx.registry(), "syslog").is_none() {
         bind_data_format(ctx.registry(), "syslog", syslog::SyslogDataFormat);
-    }
-    if ctx.resolve_language("hl7terser").is_err() {
-        ctx.add_language(hl7::Hl7TerserLanguage);
     }
 }
 
 /// The actual listening port of a started server endpoint of this crate
-/// (`websocket`/`vertx-websocket`, `mllp`, `syslog`) — useful with port 0.
+/// (`websocket`/`vertx-websocket`, `syslog`) — useful with port 0.
 pub fn local_port(ctx: &CamelContext, uri: &str) -> Option<u16> {
     let ep = ctx.get_endpoint(uri).ok()?;
     let any = ep.as_any();
     if let Some(e) = any.downcast_ref::<websocket::WebSocketEndpoint>() {
-        return e.local_port();
-    }
-    if let Some(e) = any.downcast_ref::<mllp::MllpEndpoint>() {
         return e.local_port();
     }
     if let Some(e) = any.downcast_ref::<syslog::SyslogEndpoint>() {

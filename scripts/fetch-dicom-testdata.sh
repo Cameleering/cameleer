@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Download the public DICOM test files used by the corpus test
-# (crates/cameleer-dicom/tests/corpus.rs) into target/dicom-testdata (not committed).
+# (crates/cameleer-health/tests/dicom_corpus.rs) into target/dicom-testdata (not committed).
 #
 # Source: the pydicom repository at tag v3.0.1 (https://github.com/pydicom/pydicom), MIT
 # licence; its test_files/README.txt records where each file came from (NEMA WG-04 sample
 # images, David Clunie's character set and compression samples, the DCMTK SR example) and that
 # the files were downsized and binary-edited to remove anything resembling a patient name. The
-# files and their provenance are listed in crates/cameleer-dicom/TESTDATA.md.
+# files and their provenance are listed in crates/cameleer-health/TESTDATA.md.
 #
 # Every file is checked against its pinned SHA-256; a mismatch aborts.
 #
 #   scripts/fetch-dicom-testdata.sh            # download into target/dicom-testdata
-#   CAMEL_DICOM_TESTDATA=target/dicom-testdata cargo test -p cameleer-dicom --test corpus
+#   CAMEL_DICOM_TESTDATA=target/dicom-testdata cargo test -p cameleer-health --test corpus
 set -euo pipefail
 
 TAG=v3.0.1

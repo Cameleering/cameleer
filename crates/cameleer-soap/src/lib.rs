@@ -16,7 +16,6 @@
 //! | [`cxfrs`] | the `cxfrs:` component (JAX-RS style REST consumer / producer) |
 //! | [`springws`] | the `spring-ws:` component (consumer by root QName / SOAP action / URI / XPath result, producer) |
 //! | [`jaxb`] | the `jaxb` data format (schema-typed, structural fallback) |
-//! | [`fhir`] | FHIR R4: `fhirJson` / `fhirXml` data formats, JSON ⇄ XML conversion, the `fhir:` component, mock server |
 //!
 //! ```no_run
 //! use cameleer_core::prelude::*;
@@ -34,7 +33,6 @@ pub mod codefirst;
 pub mod cxf;
 pub mod cxfrs;
 pub mod envelope;
-pub mod fhir;
 pub mod jaxb;
 pub mod mtom;
 pub mod pojo;
@@ -60,22 +58,17 @@ pub(crate) fn register_kinds() {
     envelope::register_kinds();
     jaxb::register_kinds();
     springws::register_kinds();
-    fhir::register_kinds();
 }
 
-/// Register the components `cxf`, `cxfrs`, `spring-ws`, `fhir` and the data formats
-/// `jaxb`, `fhirJson`, `fhirXml` on a context.
+/// Register the components `cxf`, `cxfrs`, `spring-ws` and the `jaxb` data format on a context.
 pub fn register(ctx: &CamelContext) {
     register_kinds();
     ctx.add_component_factory("cxf", || Arc::new(cxf::CxfComponent));
     ctx.add_component_factory("cxfrs", || Arc::new(cxfrs::CxfRsComponent));
     ctx.add_component_factory("spring-ws", || Arc::new(springws::SpringWsComponent));
-    ctx.add_component_factory("fhir", || Arc::new(fhir::component::FhirComponent));
     let reg = ctx.registry();
     let weak = ctx.downgrade();
     register_data_format_factory(reg, "jaxb", move |o| Ok(Arc::new(jaxb::JaxbDataFormat::from_options_ctx(o, weak.upgrade().as_ref())?) as Arc<dyn cameleer_core::dataformat::DataFormat>));
-    register_data_format_factory(reg, "fhirJson", fhir::dataformat::json_factory);
-    register_data_format_factory(reg, "fhirXml", fhir::dataformat::xml_factory);
 }
 
 /// The actual port of a started `cxf:`, `cxfrs:` or `spring-ws:` consumer (useful with port 0).

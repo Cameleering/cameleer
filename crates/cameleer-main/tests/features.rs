@@ -34,7 +34,6 @@ fn table_covers_every_registered_component() {
         ("saas", added(cameleer_saas::register)),
         ("soap", added(cameleer_soap::register)),
         ("dataformats", added(cameleer_dataformats::register)),
-        ("dicom", added(cameleer_dicom::register)),
         // protocols registers a placeholder `sftp` that the ssh family replaces
         ("protocols", added(cameleer_protocols::register).into_iter().filter(|s| s != "sftp").collect()),
     ];
@@ -53,7 +52,6 @@ fn table_covers_every_registered_language() {
     for (family, register) in [
         ("script", cameleer_script::register as fn(&CamelContext)),
         ("protocols", cameleer_protocols::register),
-        ("dicom", cameleer_dicom::register),
     ] {
         let ctx = CamelContext::new();
         register(&ctx);
@@ -230,7 +228,7 @@ fn reference_pages_name_their_cargo_feature() {
         Some(rest[a..b].trim_end_matches(':').to_string())
     }
     let family = |crate_name: &str| -> Option<&'static str> {
-        ["ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "dicom", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
+        ["ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
             .into_iter()
             .find(|f| crate_name == format!("cameleer-{f}"))
     };
@@ -265,6 +263,23 @@ fn reference_pages_name_their_cargo_feature() {
             checked += 1;
         }
     }
+    // pack pages: the `health` feature, the pack crate and a **Pack:** segment
+    for dir in ["components", "languages", "dataformats"] {
+        for entry in std::fs::read_dir(docs.join("packs/health").join(dir)).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let page = format!("packs/health/{dir}/{}", path.file_name().unwrap().to_string_lossy());
+            let listed = named(&text).unwrap_or_default();
+            let crate_name = first_code(&text, "**Crate:**").unwrap_or_default();
+            if !listed.contains(&"health".to_string()) || crate_name != "cameleer-health" || !text.contains("**Pack:** [health]") {
+                wrong.push(format!("{page}: a health pack page must name crate cameleer-health, the health pack and feature `health` (lists {listed:?}, crate {crate_name})"));
+            }
+            checked += 1;
+        }
+    }
     assert!(checked > 200, "only {checked} pages checked");
     assert!(wrong.is_empty(), "reference pages with a wrong cargo feature:\n{}", wrong.join("\n"));
 }
@@ -276,4 +291,27 @@ fn the_agent_step_names_its_features() {
     let yaml = "- route:\n    from:\n      uri: direct:a\n      steps:\n        - agent:\n            model: openai:chat-completion?model=m\n";
     let err = cameleer_yaml::add_routes_from_yaml(&ctx, yaml).err().expect("refused");
     assert!(err.message.contains("ai, saas or cloud feature"), "{}", err.message);
+}
+
+/// The health pack is not part of `full`, and the PACKS name table matches what the pack
+/// describes and registers.
+#[test]
+fn the_health_pack_is_separate_and_its_table_matches() {
+    let toml = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap();
+    let full = toml.split("full = [").nth(1).and_then(|r| r.split(']').next()).unwrap();
+    assert!(!full.contains("health"), "full must not enable the health pack: {full}");
+    let (_, comps, formats, langs) = features::PACKS.iter().find(|(p, ..)| *p == "health").unwrap();
+    let info = &cameleer_health::PACK;
+    assert_eq!(info.components, *comps);
+    assert_eq!(info.data_formats, *formats);
+    assert_eq!(info.languages, *langs);
+    let ctx = CamelContext::new();
+    ctx.add_pack(&cameleer_health::HEALTH);
+    for c in info.components {
+        assert!(ctx.component_names().iter().any(|n| n == c), "{c}");
+    }
+    // no family claims a pack component
+    for c in info.components {
+        assert_eq!(features::feature_for("component", c), None, "{c}");
+    }
 }

@@ -85,11 +85,12 @@ pub fn run(args: &[String], out: &mut dyn Write) -> CliResult {
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
     match cmd {
         "version" | "--version" | "-v" => {
+            let packs: String = crate::features::compiled_packs().iter().map(|p| format!(" + {}", p.display())).collect();
             if crate::features::is_full() {
-                w(out, &format!("Cameleer {}", env!("CARGO_PKG_VERSION")))
+                w(out, &format!("Cameleer {}{}", env!("CARGO_PKG_VERSION"), packs))
             } else {
                 // a reduced build says which component families it has
-                w(out, &format!("Cameleer {} (components: core, http, yaml{}{})", env!("CARGO_PKG_VERSION"), if crate::features::enabled().is_empty() { "" } else { ", " }, crate::features::enabled().join(", ")))
+                w(out, &format!("Cameleer {} (components: core, http, yaml{}{}){}", env!("CARGO_PKG_VERSION"), if crate::features::enabled().is_empty() { "" } else { ", " }, crate::features::enabled().join(", "), packs))
             }
         }
         "help" | "--help" | "-h" => w(out, usage()),

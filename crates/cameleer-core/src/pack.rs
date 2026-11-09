@@ -72,6 +72,28 @@ pub fn announce(info: &'static PackInfo) {
     }
 }
 
+fn installed() -> &'static RwLock<Vec<&'static dyn Pack>> {
+    static I: OnceLock<RwLock<Vec<&'static dyn Pack>>> = OnceLock::new();
+    I.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Install a pack for the whole process: every runner created afterwards (`cameleer_main::new_main`,
+/// and with it `cameleer validate` and `cameleer schema`) adds it to its context. A binary built
+/// with a pack's feature installs it at start-up.
+pub fn install(pack: &'static dyn Pack) {
+    let mut g = installed().write().unwrap_or_else(|e| e.into_inner());
+    if !g.iter().any(|p| p.info().name == pack.info().name) {
+        g.push(pack);
+    }
+    drop(g);
+    announce(pack.info());
+}
+
+/// The packs installed with [`install`].
+pub fn installed_packs() -> Vec<&'static dyn Pack> {
+    installed().read().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 impl CamelContext {
     /// Register a pack on this context and record its description. Adding the same pack twice
     /// registers it once.
@@ -140,5 +162,9 @@ mod tests {
         assert!(is_pack_language("tplang") && !is_pack_language("nope"));
         assert_eq!(INFO.display(), format!("testpack 1.2.3 (core {})", env!("CARGO_PKG_VERSION")));
         assert!(known_packs().contains(&&INFO));
+        static P: TestPack = TestPack(std::sync::atomic::AtomicUsize::new(0));
+        install(&P);
+        install(&P);
+        assert_eq!(installed_packs().iter().filter(|p| p.info().name == "testpack").count(), 1);
     }
 }

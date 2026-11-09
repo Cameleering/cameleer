@@ -4,6 +4,9 @@
 //! messages, endpoints, components, routes, Enterprise Integration Patterns,
 //! expression languages and a fluent route DSL.
 
+/// This crate's version (packs record the core version they were built against).
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[cfg(feature = "agent")]
 pub mod ai;
 pub mod attest;

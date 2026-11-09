@@ -324,13 +324,13 @@ turns, and grades each run by tool calls, database state and a Claude judge.
 
 Built from `docs/design/medical/dicom-and-healthcare.md` (phases 1 to 5 of its plan; the owner
 approved leading with edge imaging gateways and AI inference routing, no PACS). New crate
-`cameleer-dicom`, cargo feature `dicom` in `full`. Guide: `docs/guides/dicom.md`.
+`cameleer-health`, cargo feature `dicom` in `full`. Guide: `docs/guides/dicom.md`.
 
 - **Phase 1, data:** Part 10 and data set codec (explicit/implicit/deflated little endian and
   explicit big endian, read and write; sequences; UN sequences; encapsulated pixel data as
   fragments; files without preamble or meta); the PS3.6/PS3.7 dictionary, UID registry and PS3.15
   Table E.1-1 generated from the 2026d DocBook (`scripts/update-dicom-dict.py`, pinned SHA-256,
-  `crates/cameleer-dicom/DICTIONARY.md`); specific character sets
+  `crates/cameleer-health/DICTIONARY.md`); specific character sets
   (`scripts/gen-dicom-charsets.py`, tables from CPython's codecs, `CHARSETS.md`); the Value
   tree (DICOM JSON shape, byte-exact), `dicom` and `dicomJson` data formats; `${dicom.*}` through
   a new core hook `simple::register_function`, and the `dicom` language (also a YAML DSL key).
@@ -346,11 +346,11 @@ approved leading with edge imaging gateways and AI inference routing, no PACS). 
   formats and the language, FEATURES rows, INTEROP section.
 
 **Verified:**
-- hermetic: `cargo test -p cameleer-dicom` (codec, model, charsets against PS3.5 Annex H-K bytes,
+- hermetic: `cargo test -p cameleer-health` (codec, model, charsets against PS3.5 Annex H-K bytes,
   DIMSE SCU/SCP incl. TLS and rejections, component routes, DICOMweb client/server, Table E.1-1
   attribute by attribute for six option sets) and the examples and docs examples in cameleer-main;
 - corpus: 33 pydicom test files byte-exact (`scripts/fetch-dicom-testdata.sh`, files kept out of
-  git, provenance in `crates/cameleer-dicom/TESTDATA.md`);
+  git, provenance in `crates/cameleer-health/TESTDATA.md`);
 - live (`scripts/dicom-interop.sh`, `CAMEL_DICOM_INTEROP=1`, WSL2 Ubuntu 24.04): 7/7 against
   DCMTK 3.6.7 (both roles, with and without TLS) and Orthanc 1.12.2 (PACS, DICOMweb server and
   DICOMweb client). One bug found and fixed (odd deflated PDV, `docs/INTEROP.md`).
