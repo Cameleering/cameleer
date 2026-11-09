@@ -155,3 +155,181 @@ fn cli_guide_worked_example() {
     let all = format!("{}{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
     assert_eq!(all.matches("Hello Camel from route1").count(), 2, "{}", all);
 }
+
+/// docs/guides/testing.md, "A worked example" and the intercept file: `cameleer test` with the
+/// page's route and test files, then the same orders with the intercept file listed first.
+#[test]
+fn testing_guide_worked_example() {
+    let text = page("testing.md");
+    let dir = temp_dir("testing");
+    for f in ["orders.camel.yaml", "orders.test.yaml", "intercept-kafka.camel.yaml"] {
+        std::fs::write(dir.join(f), block_after(&text, &format!("<!-- file: {} -->", f))).unwrap();
+    }
+    let out = cameleer(&dir, &["test", "orders.test.yaml"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{}{}", stdout, String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("PASS a high-priority order takes the express lane"), "{}", stdout);
+    assert!(stdout.contains("1 passed, 0 failed"), "{}", stdout);
+    // the intercept file instead of the properties: nothing connects to a broker
+    std::fs::write(
+        dir.join("intercept.test.yaml"),
+        "- test:\n    name: intercepted\n    routes: [intercept-kafka.camel.yaml, orders.camel.yaml]\n    steps:\n      - send:\n          to: direct:orders\n          body: {id: A3, priority: high}\n        expect:\n          body: accepted A3\n          mocks: {\"mock:kafka\": 1}\n",
+    )
+    .unwrap();
+    let out = cameleer(&dir, &["test", "intercept.test.yaml"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    // a failing expectation fails the command
+    std::fs::write(dir.join("orders.test.yaml"), block_after(&text, "<!-- file: orders.test.yaml -->").replace("body: accepted A1", "body: accepted A9")).unwrap();
+    let out = cameleer(&dir, &["test", "orders.test.yaml"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("FAIL"));
+}
+
+// page: testing.md begin
+use cameleer_core::prelude::*;
+
+#[test]
+fn high_priority_orders_take_the_express_lane() -> Result<()> {
+    let ctx = CamelContext::new();
+    ctx.add_routes(|b| {
+        b.from("direct:orders")
+            .choice()
+            .when(header("priority").is_equal_to("high"))
+            .to("mock:express")
+            .otherwise()
+            .to("mock:standard")
+            .end();
+    })?;
+    ctx.start()?;
+
+    let express = ctx.mock_endpoint("mock:express")?;
+    express.expected_message_count(1);
+    express.expected_bodies_received(vec!["A1"]);
+
+    let template = ctx.create_producer_template();
+    template.send_body_and_header("direct:orders", "A1", "priority", "high")?;
+    template.send_body_and_header("direct:orders", "A2", "priority", "low")?;
+
+    express.assert_is_satisfied()?;
+    assert_eq!(ctx.mock_endpoint("mock:standard")?.received_counter(), 1);
+    ctx.stop()
+}
+// page: testing.md end
+
+/// docs/guides/testing.md, "Rust tests": the page shows the test above, as it is.
+#[test]
+fn testing_guide_rust_example() {
+    let src = std::fs::read_to_string(repo().join("crates/cameleer-main/tests/docs_reference.rs")).unwrap().replace("\r\n", "\n");
+    let start = src.find("// page: testing.md begin\n").unwrap() + "// page: testing.md begin\n".len();
+    let end = src.find("// page: testing.md end").unwrap();
+    let text = page("testing.md");
+    let i = text.find("```rust\nuse cameleer_core::prelude::*;").unwrap() + "```rust\n".len();
+    let j = i + text[i..].find("```").unwrap();
+    assert_eq!(&text[i..j], &src[start..end], "the Rust example on testing.md differs from the test");
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+}
+
+fn http(method: &str, url: &str) -> (u16, String) {
+    let client = cameleer_http::HttpClient { connect_timeout: std::time::Duration::from_secs(5), ..Default::default() };
+    let r = match method {
+        "POST" => client.post(url, "text/plain", b""),
+        _ => client.get(url),
+    }
+    .unwrap();
+    (r.status, r.body_text())
+}
+
+/// docs/guides/observability.md, "A worked example": the real binary with the page's route;
+/// the management server is turned on with the environment variables shown on the page.
+#[test]
+fn observability_guide_worked_example() {
+    let text = page("observability.md");
+    let dir = temp_dir("obs");
+    std::fs::write(dir.join("ticks.camel.yaml"), block_after(&text, "<!-- example: observability-ticks -->")).unwrap();
+    let port = free_port();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_cameleer"))
+        .args(["run", "ticks.camel.yaml", "--port", &port.to_string(), "--max-seconds", "30"])
+        .current_dir(&dir)
+        .env("CAMEL_LOCAL_STATUS", "false")
+        .env("CAMEL_SERVER_ENABLED", "true")
+        .env("CAMEL_SERVER_HEALTH_CHECK_ENABLED", "true")
+        .env("CAMEL_SERVER_METRICS_ENABLED", "true")
+        .env("CAMEL_SERVER_DEV_CONSOLE_ENABLED", "true")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{}", port);
+    let result = std::panic::catch_unwind(|| {
+        // ready once the route has run a few times
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let ok = cameleer_http::HttpClient::default().get(&format!("{}/q/metrics", base)).map(|r| r.body_text().contains("routeId=\"ticks\"} 2")).unwrap_or(false);
+            if ok || std::time::Instant::now() > deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let (s, body) = http("GET", &format!("{}/q/health/ready", base));
+        assert_eq!(s, 200, "{}", body);
+        for check in ["\"name\":\"context\"", "\"name\":\"routes\"", "\"name\":\"consumers\""] {
+            assert!(body.contains(check), "{}", body);
+        }
+        let (_, metrics) = http("GET", &format!("{}/q/metrics", base));
+        for m in ["camel_exchanges_total{camelContext=", "camel_route_policy_seconds_count{", "camel_routes_running_routes{", "camel_context_uptime_seconds{"] {
+            assert!(metrics.contains(m), "{} missing from {}", m, metrics);
+            assert!(text.contains(m.trim_end_matches('{').trim_end_matches("{camelContext=")), "{} not on the page", m);
+        }
+        let (s, body) = http("POST", &format!("{}/q/dev/route/ticks/suspend", base));
+        assert_eq!(s, 200, "{}", body);
+        assert!(body.contains("\"state\":\"Suspended\""), "{}", body);
+        let (s, body) = http("GET", &format!("{}/q/health/ready", base));
+        assert_eq!(s, 503, "{}", body);
+        assert!(body.contains("Routes not started: ticks"), "{}", body);
+        assert_eq!(http("GET", &format!("{}/q/health/live", base)).0, 200);
+    });
+    let _ = child.kill();
+    let _ = child.wait();
+    if let Err(e) = result {
+        std::panic::resume_unwind(e);
+    }
+}
+
+/// docs/guides/tls-and-security.md, "A worked example": the page's server route over HTTPS with
+/// `camel.server.ssl.*`, and the page's client test file run by `cameleer test`. The certificate is
+/// the repository's long-lived test certificate (`cameleer-tls/testdata/rsa_selfsigned.pem`, valid
+/// for 127.0.0.1), so the client calls 127.0.0.1 instead of localhost.
+#[test]
+fn tls_guide_worked_example() {
+    let text = page("tls-and-security.md");
+    let dir = temp_dir("tls");
+    let testdata = repo().join("crates/cameleer-tls/testdata");
+    std::fs::copy(testdata.join("rsa_selfsigned.pem"), dir.join("server.crt")).unwrap();
+    std::fs::copy(testdata.join("rsa2048.pkcs8.pem"), dir.join("server.key")).unwrap();
+    std::fs::write(dir.join("server.camel.yaml"), block_after(&text, "<!-- file: server.camel.yaml -->")).unwrap();
+    std::fs::write(dir.join("client.camel.yaml"), block_after(&text, "<!-- file: client.camel.yaml -->").replace("https://localhost:", "https://127.0.0.1:")).unwrap();
+    let port = free_port();
+    std::fs::write(dir.join("client.test.yaml"), block_after(&text, "<!-- file: client.test.yaml -->").replace("server.port: 8443", &format!("server.port: {}", port))).unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_cameleer"))
+        .args(["run", "server.camel.yaml", "--port", &port.to_string(), "--max-seconds", "60"])
+        .args(["--prop", "camel.server.sslEnabled=true", "--prop", "camel.server.ssl.certFile=server.crt", "--prop", "camel.server.ssl.keyFile=server.key"])
+        .current_dir(&dir)
+        .env("CAMEL_LOCAL_STATUS", "false")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let out = cameleer(&dir, &["test", "client.test.yaml"]);
+    let _ = child.kill();
+    let _ = child.wait();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{}", stdout);
+    assert!(stdout.contains("2 passed, 0 failed"), "{}", stdout);
+}

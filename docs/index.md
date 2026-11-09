@@ -12,6 +12,9 @@
 guides/getting-started
 guides/configuration
 guides/cli
+guides/testing
+guides/observability
+guides/tls-and-security
 guides/build-features
 guides/concepts
 guides/yaml-dsl

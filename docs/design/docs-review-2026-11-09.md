@@ -53,6 +53,14 @@ MCP server table does list `mcp-server-description` and `mcp-server-website-url`
 their worked examples and the CLI command and flag list checked by
 `crates/cameleer-main/tests/docs_reference.rs`; linked from the docs index, getting started, the
 Read the Docs toctree and llms.txt.
+Items 3, 4 and 5 done the same day: `guides/testing.md`, `guides/observability.md`,
+`guides/tls-and-security.md`, each with a worked example run by the same test file (the TLS one
+with Cameleer as both HTTPS server and client). Code findings from writing them, not fixed here:
+`/q/metrics` sends two `Content-Type` headers; the readiness `consumers` check says DOWN while
+its data says `consumer.<id>: UP` for a suspended route; the management server cannot share a
+port with HTTPS routes (`camel.server.sslEnabled=true` plus `--console` fails with "Port is
+already used by an https server"), and there is no separate management port; a `routeConfiguration`
+or top-level intercept applies only to route files loaded after it (Camel applies them to all).
 
 1. **`guides/configuration.md`**: sources and precedence; relaxed binding; `CAMEL_*` env mapping
    and `CAMEL_COMPONENT_<SCHEME>_*`; profiles (`--profile`, `%dev.key`, YAML on-profile); the

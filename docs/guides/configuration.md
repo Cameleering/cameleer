@@ -319,6 +319,8 @@ Any endpoint option, as `camel.component.<scheme>.<option>`; the options are lis
 
 - [CLI reference](cli.md), [Deployment](../DEPLOYMENT.md), [Cloud credentials](cloud-credentials.md)
 - [MCP server configuration](mcp-server.md#configuration)
+- [TLS and security](tls-and-security.md) for every `camel.ssl.*` and `camel.server.ssl.*` key,
+  [observability](observability.md) for the management server
 
 ## Found a problem?
 

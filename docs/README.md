@@ -12,6 +12,9 @@ same. Start with a guide, then look up the components your route uses.
 | write and run your first route | [Guides](guides/) |
 | configure routes with properties, profiles and environment variables | [Configuration](guides/configuration.md) |
 | look up a `cameleer` command or flag | [The cameleer command line](guides/cli.md) |
+| test routes with `cameleer validate`, `cameleer test` or Rust tests | [Testing](guides/testing.md) |
+| add health checks, Prometheus metrics, logs and tracing | [Observability](guides/observability.md) |
+| set up HTTPS, mutual TLS, trust stores and secrets | [TLS and security](guides/tls-and-security.md) |
 | send or receive messages with Kafka, HTTP, S3, Slack, SQL, ... | [Components](components/), one page per endpoint scheme, grouped by category |
 | write expressions and predicates (`${header.x}`, JSONPath, XPath) | [Languages](languages/) |
 | convert message bodies (JSON, CSV, XML, Avro, ...) | [Data formats](dataformats/) |
