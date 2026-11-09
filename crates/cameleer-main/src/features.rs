@@ -62,7 +62,7 @@ pub const COMPONENTS: &[(&str, &[&str])] = &[
     ("saas", &["anthropic", "atom", "gemini", "github", "graphql", "jira", "llm", "openai", "rss", "slack", "telegram", "twilio", "webhook"]),
     ("soap", &["cxf", "cxfrs", "fhir", "spring-ws"]),
     ("dataformats", &["thrift"]),
-    ("dicom", &["dicom"]),
+    ("dicom", &["dicom", "dicomweb"]),
     ("templates", &["freemarker", "mustache", "string-template", "velocity"]),
 ];
 

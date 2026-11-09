@@ -55,7 +55,11 @@ fn temp(name: &str) -> PathBuf {
 }
 
 fn unique_study() -> u32 {
-    (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() % 1_000_000_000) as u32
+    // seconds since the epoch modulo 10^6, then a per-process counter: unique across parallel
+    // tests and across runs against the same Orthanc database
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() % 1_000_000;
+    secs as u32 * 1000 + N.fetch_add(1, std::sync::atomic::Ordering::SeqCst) % 1000
 }
 
 fn scu_to(ae: &str, port: u16) -> ScuConfig {
@@ -287,5 +291,124 @@ fn live_orthanc_as_pacs() {
     let ops = scu::move_(&c, sop::STUDY_ROOT_MOVE, &query("STUDY", &[(tags::STUDY_INSTANCE_UID, Vr::UI, &study_uid)]), "CAMELEER").unwrap();
     assert_eq!((ops.status, ops.completed), (0, 3), "{ops:?}");
     assert_eq!(archive.len(), 3);
+    ctx.stop().unwrap();
+}
+
+/// Orthanc's DICOMweb plugin: STOW-RS, QIDO-RS, WADO-RS and metadata through the dicomweb:
+/// producer.
+#[test]
+fn live_orthanc_dicomweb() {
+    if !enabled() {
+        return;
+    }
+    let ctx = CamelContext::new();
+    cameleer_http::register(&ctx);
+    cameleer_dicom::register(&ctx);
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    let base = "dicomweb:http://127.0.0.1:18042/dicom-web";
+    let study = unique_study();
+    let insts: Vec<Instance> = (1..=2).map(|i| Instance::ct("LIVEWEB", study, 1, i)).collect();
+    let mut ex = ctx.create_exchange();
+    ex.set_body(Value::Array(insts.iter().map(|i| Value::Bytes(i.part10())).collect()));
+    let ex = t.send(base, ex);
+    assert!(ex.exception.is_none(), "{:?}", ex.exception);
+    assert_eq!(ex.header("CamelDicomCompleted"), Some(&Value::Int(2)));
+    let mut q = cameleer_core::value::ObjectMap::new();
+    q.insert("StudyInstanceUID".into(), Value::from(insts[0].study_uid.clone()));
+    q.insert("PatientID".into(), Value::from(""));
+    let found = t.request_body(&format!("{}?operation=qido", base), Value::Object(q)).unwrap();
+    let found = found.as_array().unwrap();
+    assert_eq!(found.len(), 1);
+    let pid = found[0].get("00100020").and_then(|e| e.get("Value")).and_then(|v| v.as_array()).unwrap()[0].clone();
+    assert_eq!(pid, Value::from("LIVEWEB"));
+    let mut ex = ctx.create_exchange();
+    ex.set_header("CamelDicomStudyInstanceUid", insts[0].study_uid.clone());
+    ex.set_header("CamelDicomSeriesInstanceUid", insts[0].series_uid.clone());
+    ex.set_header("CamelDicomSopInstanceUid", insts[0].instance_uid.clone());
+    let ex = t.send(&format!("{}?operation=wado", base), ex);
+    assert!(ex.exception.is_none(), "{:?}", ex.exception);
+    let files = ex.body().as_array().unwrap().clone();
+    assert_eq!(files.len(), 1);
+    let Value::Bytes(b) = &files[0] else { panic!() };
+    let f = DicomFile::parse(b, ReadOptions::default()).unwrap();
+    assert_eq!(f.dataset, insts[0].dataset());
+    let mut ex = ctx.create_exchange();
+    ex.set_header("CamelDicomStudyInstanceUid", insts[0].study_uid.clone());
+    let ex = t.send(&format!("{}?operation=metadata", base), ex);
+    assert!(ex.exception.is_none(), "{:?}", ex.exception);
+    assert_eq!(ex.body().as_array().unwrap().len(), 2);
+    ctx.stop().unwrap();
+}
+
+/// Orthanc's DICOMweb client against a Cameleer DICOMweb server (port 18090): Orthanc sends a
+/// study with STOW-RS, searches it with QIDO-RS and retrieves it with WADO-RS.
+#[test]
+fn live_orthanc_dicomweb_client_to_cameleer_server() {
+    if !enabled() {
+        return;
+    }
+    let orthanc = "http://127.0.0.1:18042";
+    let http = cameleer_http::client::HttpClient::new();
+    // put a study into Orthanc first
+    let study = unique_study();
+    let insts: Vec<Instance> = (1..=2).map(|i| Instance::ct("LIVEWS", study, 1, i)).collect();
+    assert!(scu::store(&scu_to("ORTHANC", 14242), &insts.iter().map(|i| i.part10()).collect::<Vec<_>>(), &[]).unwrap().iter().all(|(_, o)| o.status == 0));
+    let r = http.post(&format!("{}/tools/lookup", orthanc), "text/plain", insts[0].study_uid.as_bytes()).unwrap();
+    let ids = cameleer_core::json::parse(&String::from_utf8_lossy(&r.body)).unwrap();
+    let orthanc_id = ids.as_array().unwrap()[0].get("ID").unwrap().to_string();
+    // the Cameleer DICOMweb server
+    let archive = MemoryArchive::new();
+    let ctx = CamelContext::new();
+    cameleer_http::register(&ctx);
+    cameleer_dicom::register(&ctx);
+    let (a1, a2, a3) = (archive.clone(), archive.clone(), archive.clone());
+    ctx.add_routes(move |b| {
+        b.from("dicomweb:/dicom-web?port=18090")
+            .choice()
+            .when(header("CamelDicomWebOperation").is_equal_to("stow"))
+            .process(move |ex: &mut Exchange| {
+                if let Value::Bytes(b) = ex.body() {
+                    a1.add(b.clone());
+                }
+                Ok(())
+            })
+            .when(header("CamelDicomWebOperation").is_equal_to("qido"))
+            .process(move |ex: &mut Exchange| {
+                let ident = cameleer_dicom::model::value_to_dataset(ex.body(), &Default::default())?;
+                ex.set_body(Value::Array(a2.find(&ident).iter().map(|d| cameleer_dicom::model::dataset_to_value(d, &Default::default())).collect()));
+                Ok(())
+            })
+            .otherwise()
+            .process(move |ex: &mut Exchange| {
+                let ident = cameleer_dicom::model::value_to_dataset(ex.body(), &Default::default())?;
+                ex.set_body(Value::Array(a3.matching(&ident).into_iter().map(|(_, b)| Value::Bytes(b)).collect()));
+                Ok(())
+            })
+            .end();
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    // STOW-RS from Orthanc
+    let body = format!("{{\"Resources\": [\"{}\"], \"Synchronous\": true}}", orthanc_id);
+    let r = http.post(&format!("{}/dicom-web/servers/cameleer/stow", orthanc), "application/json", body.as_bytes()).unwrap();
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    assert_eq!(archive.len(), 2);
+    let got = DicomFile::parse(&archive.all()[0], ReadOptions::default()).unwrap();
+    assert!(got.dataset == insts[0].dataset() || got.dataset == insts[1].dataset());
+    // QIDO-RS from Orthanc
+    let body = format!("{{\"Uri\": \"/studies\", \"Arguments\": {{\"StudyInstanceUID\": \"{}\"}}}}", insts[0].study_uid);
+    let r = http.post(&format!("{}/dicom-web/servers/cameleer/qido", orthanc), "application/json", body.as_bytes()).unwrap();
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let text = String::from_utf8_lossy(&r.body).to_string();
+    assert!(text.contains(&insts[0].study_uid), "{text}");
+    // WADO-RS from Orthanc: delete the study in Orthanc, then retrieve it back from Cameleer
+    let r = http.request("DELETE", &format!("{}/studies/{}", orthanc, orthanc_id), &[], None, None).unwrap();
+    assert_eq!(r.status, 200);
+    let body = format!("{{\"Resources\": [{{\"Study\": \"{}\"}}]}}", insts[0].study_uid);
+    let r = http.post(&format!("{}/dicom-web/servers/cameleer/retrieve", orthanc), "application/json", body.as_bytes()).unwrap();
+    assert_eq!(r.status, 200, "{}", String::from_utf8_lossy(&r.body));
+    let r = http.post(&format!("{}/tools/lookup", orthanc), "text/plain", insts[0].study_uid.as_bytes()).unwrap();
+    assert!(String::from_utf8_lossy(&r.body).contains("Study"), "Orthanc did not get the study back");
     ctx.stop().unwrap();
 }

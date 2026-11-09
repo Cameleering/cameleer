@@ -25,6 +25,7 @@ pub mod log;
 pub mod management;
 pub mod message;
 pub mod model;
+pub mod multipart;
 pub mod processor;
 pub mod regex;
 pub mod spi;

@@ -27,6 +27,8 @@
 #   (tests)          11140  where the tests run a Cameleer SCP, AE CAMELEER: Orthanc's C-MOVE
 #                           destination `CAMELEER`, and the target of the DCMTK SCU tools
 #                    11141  the same over TLS
+#                    18090  where the tests run a Cameleer DICOMweb server: Orthanc's DICOMweb
+#                           client knows it as server `cameleer`
 set -euo pipefail
 
 DIR="${CAMEL_DICOM_INTEROP_DIR:-$HOME/camel-dicom-interop}"
@@ -139,7 +141,11 @@ cmd_setup() {
   "DicomAlwaysAllowGet": true,
   "DicomAlwaysAllowEcho": true,
   "UnknownSopClassAccepted": true,
-  "DicomWeb": { "Enable": true, "Root": "/dicom-web/", "EnableWado": true, "Ssl": false, "StudiesMetadata": "Full", "SeriesMetadata": "Full" }
+  "DicomWeb": {
+    "Enable": true, "Root": "/dicom-web/", "EnableWado": true, "Ssl": false,
+    "StudiesMetadata": "Full", "SeriesMetadata": "Full",
+    "Servers": { "cameleer": ["http://127.0.0.1:18090/dicom-web/"] }
+  }
 }
 EOF
   log "configuration in $DIR/orthanc.json"
@@ -180,7 +186,10 @@ cmd_start() {
 cmd_stop() {
   for f in "$RUN"/*.pid; do
     [ -f "$f" ] || continue
-    kill "$(cat "$f")" 2>/dev/null || true
+    pid="$(cat "$f")"
+    kill "$pid" 2>/dev/null || true
+    # wait for it to exit, so a following start does not see its ports still open
+    for _ in $(seq 1 100); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
     rm -f "$f"
   done
   log "stopped"

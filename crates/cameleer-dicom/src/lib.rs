@@ -8,6 +8,7 @@
 //! - [`path`]: tag paths for `${dicom.PatientID}` in Simple and the `dicom` language.
 //! - [`ul`], [`assoc`], [`dimse`], [`scu`], [`scp`]: DIMSE networking (PS3.7, PS3.8).
 //! - [`component`]: the `dicom:` component (SCP consumer, SCU producer).
+//! - [`dicomweb`]: the `dicomweb:` component (QIDO-RS, WADO-RS, STOW-RS client and server).
 //!
 //! [`register`] adds all of it to a context.
 
@@ -26,6 +27,7 @@ pub mod charset;
 pub mod codec;
 pub mod component;
 pub mod dataformat;
+pub mod dicomweb;
 pub mod dict;
 pub mod dimse;
 pub mod headers;
@@ -75,6 +77,7 @@ fn register_simple() {
 pub fn register(ctx: &CamelContext) {
     register_simple();
     ctx.add_component_factory("dicom", || Arc::new(component::DicomComponent));
+    ctx.add_component_factory("dicomweb", || Arc::new(dicomweb::DicomWebComponent));
     let reg = ctx.registry();
     register_data_format_factory(reg, "dicom", |o| Ok(Arc::new(dataformat::DicomDataFormat::from_options(o)?) as Arc<dyn DataFormat>));
     register_data_format_factory(reg, "dicomJson", |o| Ok(Arc::new(dataformat::DicomJsonDataFormat::from_options(o)?) as Arc<dyn DataFormat>));
