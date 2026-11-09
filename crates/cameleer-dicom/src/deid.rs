@@ -545,7 +545,7 @@ pub fn audit(ctx: Option<&CamelContext>, d: &Deidentifier, input: &[u8], output:
         detail.insert("sopInstanceUid".into(), Value::from(u.clone()));
     }
     detail.insert("keyDigest".into(), Value::from(sha256_hex(&d.key)[..16].to_string()));
-    let entry = cameleer_ai::audit::AuditEntry {
+    let entry = cameleer_core::audit::AuditEntry {
         tool: "dicom-deidentify".into(),
         arguments_digest: sha256_hex(input),
         decision: "allowed".into(),

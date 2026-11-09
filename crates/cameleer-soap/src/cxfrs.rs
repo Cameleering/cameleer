@@ -45,7 +45,8 @@ use cameleer_core::value::Value;
 use cameleer_http::registry::{PathTemplate, RouteHandler};
 use cameleer_http::{HttpRequest, HttpResponse};
 
-use crate::transport::{http_failed, Binding, Client, ListenAddress};
+use crate::transport::{http_failed, Binding, ListenAddress};
+use cameleer_http::client::EndpointClient as Client;
 
 /// The `cxfrs` component.
 #[derive(Default)]

@@ -231,6 +231,13 @@ impl Main {
         Main { ctx, ..Self::new() }
     }
 
+    /// Add a pack (for example `cameleer_health::HEALTH`): its components, data formats and
+    /// languages are registered on the context.
+    pub fn add_pack(&mut self, pack: &'static dyn cameleer_core::pack::Pack) -> &mut Self {
+        self.context().add_pack(pack);
+        self
+    }
+
     pub fn context(&self) -> &CamelContext {
         &self.ctx
     }

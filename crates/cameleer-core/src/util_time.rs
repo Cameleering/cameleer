@@ -195,3 +195,14 @@ mod tests {
         assert_eq!(format_millis_utc(t, "HH:mm z X"), "06:30 UTC Z");
     }
 }
+
+/// Current UTC time as `xsd:dateTime` with milliseconds (`2024-01-02T03:04:05.678Z`).
+pub fn now_utc() -> String {
+    format_utc_millis(now_millis())
+}
+
+/// Format epoch milliseconds as `xsd:dateTime` (UTC).
+pub fn format_utc_millis(ms: i64) -> String {
+    let (y, mo, d, h, mi, s) = civil_from_epoch(ms.div_euclid(1000));
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", y, mo, d, h, mi, s, ms.rem_euclid(1000))
+}

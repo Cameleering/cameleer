@@ -18,6 +18,10 @@
 //! BufReader::new(s).read_line(&mut line).unwrap();
 //! ```
 
+
+mod endpoint;
+pub use endpoint::*;
+
 use crate::tls::config::{TlsClientConfig, TlsServerConfig};
 use crate::tls::stream::{TlsReadHalf, TlsStream, TlsWriteHalf};
 use crate::tls::{CipherSuite, TlsError, TlsVersion};

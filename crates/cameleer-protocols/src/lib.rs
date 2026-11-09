@@ -29,7 +29,6 @@
 //! ctx.start().unwrap();
 //! ```
 
-pub mod common;
 pub mod ftp;
 pub mod hl7;
 pub mod mail;

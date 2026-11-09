@@ -27,7 +27,7 @@ use std::time::Duration;
 use cameleer_core::dataformat::base64;
 use cameleer_core::error::Result;
 
-use crate::common::{read_line, TcpServer};
+use cameleer_tls::net::{read_line, TcpServer};
 use crate::mail::mime::{dot_stuff, parse_address_list, read_dot_terminated};
 
 /// A message stored in the mailbox.

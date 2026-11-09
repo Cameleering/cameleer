@@ -256,6 +256,6 @@ fn data_format_in_a_route_writes_audit_records() {
     let text = Value::Array(records.clone()).to_json();
     assert!(!text.contains("AUDIT-1") && !text.contains("Hospital"));
     assert!(text.contains("retainLongitudinalModifiedDates"));
-    assert_eq!(cameleer_ai::audit::verify_records(&records).unwrap().0, records.len(), "the chain verifies");
+    assert_eq!(cameleer_core::audit::verify_records(&records).unwrap().0, records.len(), "the chain verifies");
     ctx.stop().unwrap();
 }

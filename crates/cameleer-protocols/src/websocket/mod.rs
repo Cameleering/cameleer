@@ -57,7 +57,7 @@ use cameleer_core::value::Value;
 
 pub use protocol::{accept_key, WsConnection, WsMessage};
 
-use crate::common::{split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
+use cameleer_tls::net::{split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
 
 /// Header: connection key (camel-websocket).
 pub const CONNECTION_KEY: &str = "CamelWebsocketConnectionKey";

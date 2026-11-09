@@ -48,7 +48,7 @@ use super::dataformat::{body_tree_v, check_version};
 use super::model::FhirVersion;
 use super::json::{self, J};
 use super::*;
-use crate::transport::Client;
+use cameleer_http::client::EndpointClient as Client;
 
 /// Prefix of parameter headers.
 pub const HEADER_PREFIX: &str = "CamelFhir.";

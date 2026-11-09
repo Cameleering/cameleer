@@ -25,7 +25,7 @@ use cameleer_core::dataformat::base64;
 use cameleer_core::error::{kinds, CamelError, Result};
 
 use super::sha1::sha1;
-use crate::common::{connect_stream, io_error, random_bytes, read_line};
+use cameleer_tls::net::{connect_stream, io_error, random_bytes, read_line};
 
 /// The GUID appended to the client key (RFC 6455 section 1.3).
 pub const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";

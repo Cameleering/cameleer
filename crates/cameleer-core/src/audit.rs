@@ -1,5 +1,6 @@
-//! The audit log: one record per tool call, hash-chained so an edited, removed or reordered
-//! record shows.
+//! The audit log: hash-chained records (one per AI tool call, per de-identified instance...),
+//! so an edited, removed or reordered record shows. One log per context
+//! ([`AuditLog::of`]) is shared by everything that audits: the AI action layer and the packs.
 //!
 //! Each record is a JSON object written on one line. Its `hash` is the SHA-256 of the previous
 //! record's hash followed by the record's canonical JSON without the `hash` field; the first
@@ -17,10 +18,21 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use cameleer_core::error::{CamelError, Result};
-use cameleer_core::value::Value;
+use std::sync::Arc;
 
-use crate::tool::{canonical_json, sha256_hex};
+use crate::context::CamelContext;
+use crate::error::{CamelError, Result};
+use crate::json::canonical_json;
+use crate::value::Value;
+
+fn sha256_hex(data: &[u8]) -> String {
+    crate::language::support::to_hex(&crate::language::support::sha256(data))
+}
+
+/// The registry bean that holds the context's shared [`AuditLog`].
+pub const AUDIT_LOG_BEAN: &str = "cameleer.audit.log";
+
+static CREATE: Mutex<()> = Mutex::new(());
 
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -79,10 +91,29 @@ impl AuditLog {
         if let Some(path) = &file {
             match OpenOptions::new().create(true).append(true).open(path) {
                 Ok(f) => state.out = Some(f),
-                Err(err) => cameleer_core::camel_warn!("ai-audit", "Cannot open the audit file {}: {}", path.display(), err),
+                Err(err) => crate::camel_warn!("audit", "Cannot open the audit file {}: {}", path.display(), err),
             }
         }
         Ok(AuditLog { enabled, file, max: max.max(1), state: Mutex::new(state) })
+    }
+
+    /// The context's shared log, created on first use from `camel.ai.audit.enabled`,
+    /// `camel.ai.audit.file` and `camel.ai.audit.maxRecords`.
+    pub fn of(ctx: &CamelContext) -> Result<Arc<AuditLog>> {
+        if let Some(l) = ctx.registry().lookup::<AuditLog>(AUDIT_LOG_BEAN) {
+            return Ok(l);
+        }
+        let _g = CREATE.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(l) = ctx.registry().lookup::<AuditLog>(AUDIT_LOG_BEAN) {
+            return Ok(l);
+        }
+        let props = ctx.properties();
+        let enabled = props.get("camel.ai.audit.enabled").map(|v| !v.trim().eq_ignore_ascii_case("false")).unwrap_or(true);
+        let file = props.get("camel.ai.audit.file").filter(|f| !f.trim().is_empty()).map(|f| PathBuf::from(f.trim()));
+        let max = props.get("camel.ai.audit.maxRecords").and_then(|m| m.trim().parse().ok()).unwrap_or(1000);
+        let log = Arc::new(AuditLog::new(enabled, file, max)?);
+        ctx.registry().bind_arc(AUDIT_LOG_BEAN, log.clone());
+        Ok(log)
     }
 
     /// A log kept in memory only.
@@ -108,12 +139,12 @@ impl AuditLog {
         let mut body = String::with_capacity(512);
         let s = |out: &mut String, k: &str, v: &str| {
             out.push_str(k);
-            cameleer_core::value::json_escape(v, out);
+            crate::value::json_escape(v, out);
         };
         let o = |out: &mut String, k: &str, v: &Option<String>| {
             out.push_str(k);
             match v {
-                Some(v) => cameleer_core::value::json_escape(v, out),
+                Some(v) => crate::value::json_escape(v, out),
                 None => out.push_str("null"),
             }
         };
@@ -154,7 +185,7 @@ impl AuditLog {
             line.push('\n');
             if let Err(err) = f.write_all(line.as_bytes()) {
                 let path = self.file.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-                cameleer_core::camel_warn!("ai-audit", "Cannot append to the audit file {}: {}", path, err);
+                crate::camel_warn!("audit", "Cannot append to the audit file {}: {}", path, err);
             }
         }
         st.last_hash = hash;
@@ -168,7 +199,7 @@ impl AuditLog {
     /// The records kept in memory, oldest first.
     pub fn records(&self) -> Vec<Value> {
         let st = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        st.records.iter().filter_map(|r| cameleer_core::json::parse(r).ok()).collect()
+        st.records.iter().filter_map(|r| crate::json::parse(r).ok()).collect()
     }
 
     /// The hash of the latest record (64 zeros before the first one).
@@ -220,7 +251,7 @@ pub fn verify_file(path: &Path) -> Result<(usize, Option<String>)> {
         if line.trim().is_empty() {
             continue;
         }
-        let v = cameleer_core::json::parse(line)
+        let v = crate::json::parse(line)
             .map_err(|e| CamelError::illegal_state(format!("audit record {} is not valid JSON: {}", i + 1, e.message)))?;
         records.push(v);
     }
@@ -228,7 +259,7 @@ pub fn verify_file(path: &Path) -> Result<(usize, Option<String>)> {
 }
 
 fn now_iso() -> String {
-    let now = cameleer_core::clock::now_system_time();
+    let now = crate::clock::now_system_time();
     let d = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
     let secs = d.as_secs() as i64;
     let (days, rem) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));

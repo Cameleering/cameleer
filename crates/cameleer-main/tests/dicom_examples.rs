@@ -209,7 +209,7 @@ fn deid_pipeline_example() {
     assert_eq!(files[0].dataset.string(0x0010_0040).unwrap(), "O", "patient characteristics are retained");
     // the audit file has one chained record per instance
     main.stop().unwrap();
-    let (n, _) = cameleer_ai::audit::verify_file(std::path::Path::new(&audit)).unwrap();
+    let (n, _) = cameleer_core::audit::verify_file(std::path::Path::new(&audit)).unwrap();
     assert_eq!(n, 2);
 }
 

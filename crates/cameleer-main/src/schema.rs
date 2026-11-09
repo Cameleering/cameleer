@@ -150,7 +150,7 @@ fn model_schema(m: &Model) -> String {
     }
     if m.expression != Expr::No {
         for l in model::languages() {
-            if !keys.iter().any(|k| k.name == *l) {
+            if !keys.iter().any(|k| k.name == l) {
                 props.push(format!("{}:{{\"$ref\":\"#/$defs/languageValue\"}}", q(l)));
             }
         }
@@ -170,7 +170,7 @@ fn model_schema(m: &Model) -> String {
         all_of.push(format!("{{\"anyOf\":[{}]}}", any.join(",")));
     }
     if m.expression == Expr::Required {
-        let mut names: Vec<&str> = model::languages().to_vec();
+        let mut names: Vec<&str> = model::languages();
         names.push("expression");
         names.extend(m.expression_alternatives.iter().copied());
         let any: Vec<String> = names.iter().map(|a| format!("{{\"required\":[{}]}}", q(a))).collect();

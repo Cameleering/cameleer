@@ -47,7 +47,8 @@ use cameleer_xml::dom::Document;
 use crate::cxf::{fault_response, payload_fragments, payload_value, security_policy, soap_response, WsSecClient};
 use crate::envelope::{build_envelope, parse_envelope, parse_envelope_doc, request_action, SoapFault, SoapVersion};
 use crate::support::{parse_clark, split_fragments, Key};
-use crate::transport::{http_failed, Binding, Client, ListenAddress};
+use crate::transport::{http_failed, Binding, ListenAddress};
+use cameleer_http::client::EndpointClient as Client;
 use crate::wssec::{self, SecurityPolicy};
 
 /// Header: SOAP action.

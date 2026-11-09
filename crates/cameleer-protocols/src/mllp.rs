@@ -44,7 +44,7 @@ use cameleer_core::value::Value;
 use cameleer_tls::camel_support::{endpoint_tls, EndpointTls};
 use cameleer_tls::net::NetStream;
 
-use crate::common::{connect_stream, io_error, split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
+use cameleer_tls::net::{connect_stream, io_error, split_host_port, take_ignored, TcpServer, COMMON_IGNORED};
 use crate::hl7::Hl7Message;
 
 /// Start of block (VT).

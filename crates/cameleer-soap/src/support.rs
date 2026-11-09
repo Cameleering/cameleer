@@ -126,17 +126,6 @@ pub fn resolve_qname(doc: &Document, el: NodeId, v: &str) -> Key {
     }
 }
 
-/// Current UTC time as `xsd:dateTime` with milliseconds (`2024-01-02T03:04:05.678Z`).
-pub fn now_utc() -> String {
-    format_utc_millis(cameleer_core::util_time::now_millis())
-}
-
-/// Format epoch milliseconds as `xsd:dateTime` (UTC).
-pub fn format_utc_millis(ms: i64) -> String {
-    let (y, mo, d, h, mi, s) = cameleer_core::util_time::civil_from_epoch(ms.div_euclid(1000));
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z", y, mo, d, h, mi, s, ms.rem_euclid(1000))
-}
-
 /// Parse an `xsd:dateTime` (`Z` or `±hh:mm` offset; none = UTC) to epoch milliseconds.
 pub fn parse_datetime_millis(s: &str) -> Option<i64> {
     let s = s.trim();
@@ -212,7 +201,7 @@ mod tests {
         assert_eq!(parse_clark("{urn:a}B"), ("urn:a".to_string(), "B".to_string()));
         assert_eq!(clark(&("urn:a".into(), "B".into())), "{urn:a}B");
         let ms = parse_datetime_millis("2024-02-29T12:34:56.789Z").unwrap();
-        assert_eq!(format_utc_millis(ms), "2024-02-29T12:34:56.789Z");
+        assert_eq!(cameleer_core::util_time::format_utc_millis(ms), "2024-02-29T12:34:56.789Z");
         assert_eq!(parse_datetime_millis("2024-02-29T14:34:56.789+02:00"), Some(ms));
         assert_eq!(split_fragments("<a/><b x='1'/>").unwrap(), vec!["<a/>".to_string(), "<b x=\"1\"/>".to_string()]);
     }

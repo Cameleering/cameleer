@@ -47,7 +47,7 @@ use cameleer_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Ser
 use cameleer_core::util::Parameters;
 use cameleer_core::value::{ObjectMap, Value};
 
-use crate::common::{take_ignored, Authority, COMMON_IGNORED};
+use cameleer_tls::net::{take_ignored, Authority, COMMON_IGNORED};
 use cameleer_tls::camel_support::{endpoint_tls, EndpointTls};
 
 /// STARTTLS policy of a plain mail endpoint.

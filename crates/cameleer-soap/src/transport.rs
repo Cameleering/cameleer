@@ -2,14 +2,13 @@
 //! cameleer-http's shared server registry, and a client for producers.
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use cameleer_core::context::CamelContext;
 use cameleer_core::error::{kinds, CamelError, Result};
 use cameleer_core::util::Parameters;
 use cameleer_http::client::parse_authority;
 use cameleer_http::registry::{registry, HttpRouteSpec, Registration, RouteHandler};
-use cameleer_http::{HttpClient, HttpHeaders, HttpResponse, ServerConfig};
+use cameleer_http::{HttpResponse, ServerConfig};
 
 /// Where a consumer listens.
 #[derive(Clone)]
@@ -98,47 +97,6 @@ impl Binding {
 impl Drop for Binding {
     fn drop(&mut self) {
         self.stop();
-    }
-}
-
-/// An HTTP client for producers (TLS from `sslContextParameters`, timeouts, basic auth).
-#[derive(Clone)]
-pub struct Client {
-    pub http: HttpClient,
-    pub basic: Option<(String, String)>,
-    pub timeout: Duration,
-}
-
-impl Client {
-    /// Build from endpoint options: `sslContextParameters`, `receiveTimeout` /
-    /// `connectionTimeout` (ms), `username` / `password` (HTTP basic auth).
-    pub fn from_params(ctx: &CamelContext, scheme: &str, params: &mut Parameters) -> Result<Client> {
-        let ssl = cameleer_tls::camel_support::take_endpoint_ssl(ctx, params, scheme)?;
-        let mut http = HttpClient::new();
-        if ssl.is_some() {
-            http = http.with_tls(cameleer_tls::camel_support::client_config(ctx, ssl.as_ref())?);
-        }
-        let timeout = Duration::from_millis(params.take_u64("receiveTimeout", 60_000)?);
-        http.connect_timeout = Duration::from_millis(params.take_u64("connectionTimeout", 30_000)?);
-        http.read_timeout = timeout;
-        let basic = match (params.take("username"), params.take("password")) {
-            (Some(u), p) => Some((u, p.unwrap_or_default())),
-            _ => None,
-        };
-        Ok(Client { http, basic, timeout })
-    }
-
-    /// Send a request.
-    pub fn send(&self, method: &str, url: &str, headers: &[(String, String)], body: Option<&[u8]>) -> Result<HttpResponse> {
-        let u = cameleer_http::Url::parse(url)?;
-        let mut h = HttpHeaders::new();
-        for (k, v) in headers {
-            h.set(k.clone(), v.clone());
-        }
-        if let Some((user, pw)) = &self.basic {
-            h.set("Authorization", format!("Basic {}", cameleer_tls::pem::base64_encode(format!("{}:{}", user, pw).as_bytes())));
-        }
-        self.http.execute(method, &u, &h, body, Some(self.timeout))
     }
 }
 

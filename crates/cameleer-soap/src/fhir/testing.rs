@@ -24,7 +24,7 @@ use cameleer_http::{HttpRequest, HttpResponse, HttpServer, ServerConfig};
 
 use super::convert::{parse_json, tree_to_xml, xml_to_tree};
 use super::json::{self, J};
-use crate::support::now_utc;
+use cameleer_core::util_time::now_utc;
 
 #[derive(Clone)]
 enum Auth {
