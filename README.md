@@ -390,8 +390,8 @@ same way. Kubernetes, Docker Compose and Cloud Run setups are in the
 
 ```toml
 [dependencies]
-cameleer-core = "0.4"
-cameleer-http = "0.4"
+cameleer-core = "0.5"
+cameleer-http = "0.5"
 ```
 
 ```rust

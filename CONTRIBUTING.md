@@ -24,7 +24,7 @@ performance work, docs and examples.
 
 ```text
 git clone https://github.com/pmsudhi/cameleer.git
-cd Cameleer
+cd cameleer
 cargo build
 cargo test --workspace
 ```

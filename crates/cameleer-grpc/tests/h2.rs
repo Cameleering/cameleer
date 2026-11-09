@@ -128,6 +128,37 @@ fn stream_reset_and_streaming_responses() {
 }
 
 #[test]
+fn a_complete_response_survives_rst_stream_no_error() {
+    // RFC 9113 section 8.1: a server may answer before the request is complete and then send
+    // RST_STREAM(NO_ERROR); the client must not discard the response. Our server does exactly
+    // that when its handler returns before the client ended its side.
+    let server = H2Server::bind("127.0.0.1:0", H2Config::default(), None, |_req: ServerRequest, stream: H2Stream| {
+        stream.send_headers(&[(":status".into(), "200".into())], false).unwrap();
+        stream.send_data(b"early answer", true).unwrap();
+    })
+    .unwrap();
+    let conn = H2Connection::connect(&server.local_addr().to_string(), H2Config::default()).unwrap();
+    let headers = conn.request_headers(&H2Request::post("/early", Vec::new()));
+    let s = conn.open_stream(&headers, false).unwrap();
+    // wait until the server's response and its RST_STREAM(NO_ERROR) have arrived
+    let until = std::time::Instant::now() + Duration::from_secs(20);
+    while s.reset_code() != Some(ErrorCode::NO_ERROR) {
+        assert!(std::time::Instant::now() < until, "no RST_STREAM(NO_ERROR) from the server");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // the rest of the request is dropped without an error
+    s.send_data(b"late request body", false).unwrap();
+    s.send_data(b"", true).unwrap();
+    // and the complete response is still there
+    assert!(s.recv_headers(T).unwrap().unwrap().contains(&(":status".to_string(), "200".to_string())));
+    assert_eq!(s.read_body(T).unwrap(), b"early answer");
+    assert_eq!(s.recv_headers(T).unwrap(), None);
+    // a real reset is still an error
+    assert!(conn.ping(Duration::from_secs(5)).is_ok());
+    server.stop();
+}
+
+#[test]
 fn goaway_on_server_stop_and_timeout() {
     let server = H2Server::bind("127.0.0.1:0", H2Config::default(), None, |_req: ServerRequest, stream: H2Stream| {
         std::thread::sleep(Duration::from_millis(300));

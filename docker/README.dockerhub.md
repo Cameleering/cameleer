@@ -6,6 +6,7 @@
 
 - **450x faster startup** than Apache Camel (3 ms vs 1.1 s), **up to 54x less memory**, **1.7–8.7x** the throughput in every scenario ([comparison](https://cameleer.ing/compare/apache-camel-vs-cameleer/))
 - About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
+- **Routes as MCP tools** for AI agents (`--mcp`, or `--mcp-stdio` for Claude Desktop): schema checks, approvals, run-once, timeouts and audit on every call; official MCP conformance 39/39 and 26/26 ([MCP](https://cameleer.ing/mcp/))
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
 - Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, about 20 MB to download
 
@@ -59,7 +60,7 @@ docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
 | tag | meaning |
 |---|---|
 | `latest` | the latest release |
-| `0.4.0`, `0.4` | a release, and the latest patch of a minor version |
+| `0.5.1`, `0.5` | a release, and the latest patch of a minor version |
 | `edge` | a manual build from `main` |
 | `sha-<commit>` | the image of one commit |
 
@@ -69,7 +70,7 @@ The same image is published to `ghcr.io/pmsudhi/cameleer`. Every push carries an
 
 | | |
 |---|---|
-| Entrypoint | `cameleer` (the CLI; `run`, `version`, `get`, `--help`) |
+| Entrypoint | `cameleer` (the CLI; `run`, `run --mcp`, `version`, `get`, `tool`, `--help`) |
 | Working directory | `/routes`: mount your route files here, read-only is fine |
 | Port | `8080` (REST DSL and `platform-http`; `camel.server.port`) |
 | User | `65532` (nonroot); any `--user` works |

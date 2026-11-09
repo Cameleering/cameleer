@@ -78,7 +78,7 @@ CATEGORIES = {
     "Network protocols": "netty mllp syslog grpc thrift",
     "Mail": "mail smtp smtps imap imaps pop3 pop3s",
     "Databases and search": "sql sql-stored jdbc mongodb mongodb-gridfs spring-redis redis cql cassandra couchdb elasticsearch opensearch",
-    "AI and LLMs": "openai aws-bedrock aws-bedrock-agent-runtime aws2-bedrock azure-openai google-vertexai",
+    "AI and LLMs": "openai anthropic gemini ai-tool ai-resource ai-prompt mcp aws-bedrock aws-bedrock-agent-runtime aws2-bedrock azure-openai google-vertexai",
     "Chat and SaaS": "slack telegram github jira twilio",
     "Templating": "mustache velocity freemarker string-template mvel",
     "XML, JSON and validation": "xslt xslt-saxon xquery xj validator json-validator xmlsecurity-sign xmlsecurity-verify xmlsecurity",

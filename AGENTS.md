@@ -28,6 +28,11 @@ docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes
 `cameleer validate` never starts routes or connects to anything. Codes, output formats and
 exit codes: [docs/guides/validate.md](docs/guides/validate.md).
 
+To give an AI agent tools, make routes `ai-tool` endpoints and serve them with
+`cameleer run --mcp` (or `--mcp-stdio` for a desktop client); test them with
+`cameleer test` ([docs/guides/mcp.md](docs/guides/mcp.md),
+[examples/agents/mcp-shop](examples/agents/mcp-shop/README.md)).
+
 The image and `cargo install cameleer-main` include every component. If a run fails with
 ``this cameleer binary was built without the `x` feature``, the binary is a reduced build: use the
 full image or rebuild with that feature added

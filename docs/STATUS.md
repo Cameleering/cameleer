@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-07. Branch `main`. The verified head before this file
+_Last updated: 2026-11-09 (release 0.5.0). Branch `main`. The verified head before this file
 was added is `7de6166`._
 
 ## Name, packaging and release (2026-11-05)
@@ -36,6 +36,12 @@ was added is `7de6166`._
   `CHANGELOG.md`. Feature docs: `docs/guides/build-features.md`, and every component, language
   and data format page names its feature in its header (`**Cargo feature:**`, checked by
   `crates/cameleer-main/tests/features.rs` `reference_pages_name_their_cargo_feature`).
+- **0.5.0: the action layer for AI agents** (2026-11-09). `ai-tool`, `ai-resource`, `ai-prompt`
+  with the reliability envelope; the MCP server (both eras) and the MCP client and gateway; the
+  `agent` step and tool calling in every model component; `anthropic` and `gemini`; provider
+  presets and call options; `cameleer test` and `cameleer tool`; the MCP field test and the
+  `examples/agents/mcp-shop` example. Release notes in `CHANGELOG.md`; the sections below give
+  the details round by round.
 - **Open findings from the documentation pass** are GitHub issues #2-#15 (Simple numeric string
   comparison, http producer overwriting the message on failure, S3 bucket header, webhook
   signatures, vault env vars, YAML `dataFormats`, `cameleer run <directory>`, ...).
@@ -424,8 +430,8 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect 2712 passing
-   on Windows and on Linux.
+1. `git checkout main && cargo test --workspace`. Expect 2844 passing
+   (Windows 11, 2026-11-09).
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
 4. Update this file, and `docs/INTEROP.md` or `docs/FEATURES.md` where relevant, as part of

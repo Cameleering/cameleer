@@ -13,9 +13,9 @@ categories = ["web-programming::http-server", "web-programming::http-client", "n
 description = "Cameleer HTTP/1.1 server and client, http/platform-http components, REST DSL and netty (tcp/udp)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.4.0" }
-cameleer-grpc = { path = "../cameleer-grpc", version = "0.4.0", default-features = false, optional = true }
+cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
+cameleer-grpc = { path = "../cameleer-grpc", version = "0.5.1", default-features = false, optional = true }
 
 # `http2`: the http producer's `httpVersion=HTTP/2` (cameleer-grpc's HTTP/2 client). On by
 # default and in cameleer-main's `full`; without it that option fails with the feature to enable.

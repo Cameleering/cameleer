@@ -3,7 +3,26 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
-## Unreleased
+## 0.5.1 (2026-11-09)
+
+### Fixed
+
+- HTTP/2 client (gRPC): a complete response followed by RST_STREAM(NO_ERROR) is no longer
+  reported as `stream reset: NO_ERROR`, as RFC 9113 section 8.1 requires (INTEROP bug 20).
+
+## 0.5.0 (2026-11-09)
+
+Cameleer becomes an action layer for AI agents: any route can be a tool that agents call through
+a reliability envelope (schema checks, deduplication, approvals, rate limits, timeouts that
+cancel, compensation, a hash-chained audit log). Cameleer serves those tools as an MCP server
+(both protocol eras, Streamable HTTP and stdio; official conformance 39/39 and 26/26), imports
+other MCP servers' tools as a client and gateway, and runs tool-calling agents as a route step
+with seven model components and 23 providers. Measured on the same cloud machines, its MCP
+server handles 41,620 tool calls per second against 22,458 for Apache Camel's
+`camel-mcp-server` and 1,536 for the official TypeScript SDK, in 53 MB against 317 MB and 214 MB
+([report](docs/BENCHMARKS.md)). In a field test of 40 real requests through Claude and the
+official MCP client, Claude Opus 5.5 completed 157 of 160 runs correctly
+([guide](https://cameleer.ing/docs/guides/mcp-shop-example.html)).
 
 ### Added
 
