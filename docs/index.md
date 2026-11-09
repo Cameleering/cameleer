@@ -10,6 +10,8 @@
 :maxdepth: 1
 
 guides/getting-started
+guides/configuration
+guides/cli
 guides/build-features
 guides/concepts
 guides/yaml-dsl

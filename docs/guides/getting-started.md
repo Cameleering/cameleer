@@ -158,7 +158,8 @@ SITE_NAME=plant-7 cameleer run configured.camel.yaml --prop greeting=Hi
 The first command logs `Good morning from the lab`. Settings are applied in this order, the last
 one winning: the properties file, `CAMEL_*` environment variables (`CAMEL_SERVER_PORT=9090`
 sets `camel.server.port`), then `--prop`. Spring Boot and Quarkus names
-(`server.port`, `spring.profiles.active`) and profiles (`application-dev.properties`) work too.
+(`server.port`, `spring.profiles.active`) and profiles (`application-dev.properties`) work too;
+[Configuration](configuration.md) lists every source and key.
 Never put secrets in route files: use `{{env:...}}` or a secrets vault
 (`{{aws:...}}`, `{{azure:...}}`, `{{gcp:...}}`).
 
@@ -201,6 +202,8 @@ and use `cameleer_main::new_main()`, then `add_route_file("routes/hello.camel.ya
 | `cameleer export --directory my-service` | turn routes into a standalone Rust project |
 | `cameleer catalog components` | list the components |
 
+Every command and flag is in [the cameleer command line](cli.md).
+
 The project `cameleer export` writes depends on a Cameleer source checkout: its `Cargo.toml`
 has `cameleer-main = { path = "<camel-path>/cameleer-main" }`, where `--camel-path` defaults to
 the source tree the CLI was built from. With the Docker image or a `cargo install` build, pass
@@ -209,6 +212,8 @@ published crate (`cameleer-main = "0.5"`).
 
 ## Where to go next
 
+- [Configuration](configuration.md): every source, profile, environment variable and key.
+- [The cameleer command line](cli.md): every command and flag.
 - [Concepts](concepts.md): routes, endpoints, exchanges, messages, components and the DSLs.
 - [Build features](build-features.md): a smaller build with only the components you use.
 - [Enterprise Integration Patterns](eips.md): every EIP with a YAML and a Rust example.

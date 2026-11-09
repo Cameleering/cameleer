@@ -49,6 +49,11 @@ MCP server table does list `mcp-server-description` and `mcp-server-website-url`
 
 ## 2. Missing cross-cutting guides (biggest gain for people, agents and LLMs)
 
+**Done 2026-11-09:** items 1 and 2, `docs/guides/configuration.md` and `docs/guides/cli.md`, with
+their worked examples and the CLI command and flag list checked by
+`crates/cameleer-main/tests/docs_reference.rs`; linked from the docs index, getting started, the
+Read the Docs toctree and llms.txt.
+
 1. **`guides/configuration.md`**: sources and precedence; relaxed binding; `CAMEL_*` env mapping
    and `CAMEL_COMPONENT_<SCHEME>_*`; profiles (`--profile`, `%dev.key`, YAML on-profile); the
    Spring Boot and Quarkus aliases; every `camel.main.*` key (`name`, `log-level`,

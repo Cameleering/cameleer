@@ -10,6 +10,8 @@ same. Start with a guide, then look up the components your route uses.
 | you want to | go to |
 |---|---|
 | write and run your first route | [Guides](guides/) |
+| configure routes with properties, profiles and environment variables | [Configuration](guides/configuration.md) |
+| look up a `cameleer` command or flag | [The cameleer command line](guides/cli.md) |
 | send or receive messages with Kafka, HTTP, S3, Slack, SQL, ... | [Components](components/), one page per endpoint scheme, grouped by category |
 | write expressions and predicates (`${header.x}`, JSONPath, XPath) | [Languages](languages/) |
 | convert message bodies (JSON, CSV, XML, Avro, ...) | [Data formats](dataformats/) |
