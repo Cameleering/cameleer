@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cameleer MCP Server: Reliable Tools for AI Agents | Cameleer</title>
-<meta name="description" content="Integration routes as MCP tools: checked, run once, approved when risky, audited. 41,620 calls/s in 53 MB; 196 of 200 real requests right with Claude.">
+<title>The Action Layer for AI Agents, over MCP | Cameleer</title>
+<meta name="description" content="The model decides what; a tested route decides how. Cameleer checks, deduplicates, approves and audits every agent action over MCP, whatever the model does.">
 <link rel="canonical" href="https://cameleer.ing/mcp/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="Cameleer">
-<meta property="og:title" content="Cameleer MCP: integration routes as reliable tools for AI agents">
-<meta property="og:description" content="How it works, where it runs, how it compares with Apache Camel's MCP server and the official SDKs, and ten use cases tested with real requests through Claude.">
+<meta property="og:title" content="Cameleer: the action layer for AI agents, over MCP">
+<meta property="og:description" content="Agents decide; Cameleer makes the action safe: arguments checked, retries run once, risky actions approved by a person, slow calls stopped, every call audited. Tested with real requests through Claude.">
 <meta property="og:url" content="https://cameleer.ing/mcp/">
 <meta property="og:image" content="https://cameleer.ing/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -24,7 +24,7 @@
 <link rel="stylesheet" href="../assets/compare.css">
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Cameleer MCP: integration routes as reliable tools for AI agents",
+ "headline": "Cameleer: the action layer for AI agents, over MCP",
  "description": "What Cameleer's MCP server is and how it works, the environments it runs in, how it compares with Apache Camel's camel-mcp-server, the official MCP SDKs and direct tool calls, and ten use cases tested with real requests through Claude.",
  "url": "https://cameleer.ing/mcp/",
  "inLanguage": "en", "image": "https://cameleer.ing/og.png",
@@ -39,6 +39,7 @@
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "What is the action layer for AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "The layer between an AI agent's decisions and your systems. The model decides what should happen; a tested Cameleer route decides how, and the server enforces what a model cannot be trusted with: arguments are checked against a schema, a retried call runs once, risky actions wait for a person, business rules are checked in code, slow calls are cancelled, personal data is redacted and every call is audited. Agents reach it over MCP or from Cameleer's own agent step."}},
  {"@type": "Question", "name": "What is Cameleer's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "It serves Cameleer routes (ai-tool, ai-resource and ai-prompt endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record."}},
  {"@type": "Question", "name": "How fast is it compared with Apache Camel's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, Cameleer served 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel 4.23's camel-mcp-server on the JVM and 1,536 calls per second in 214 MB for a server on the official MCP TypeScript SDK. Camel's p99 latency was lower (5.2 ms against 5.9 ms)."}},
  {"@type": "Question", "name": "Does it work with Claude?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. In a field test, 40 requests a shop's staff would type ran through Claude and the official MCP client against Cameleer's shop example: Claude Opus 5.5 completed 157 of 160 runs correctly in 2025-11-25 sessions and 39 of 40 in the stateless 2026-07-28 era, with 2.9 turns and 3.3 tool calls per request on average."}},
@@ -64,21 +65,86 @@
 <section class="c-hero">
   <div class="wrap">
     <p class="crumbs"><a href="../">Cameleer</a> / MCP</p>
-    <p class="kicker">Model Context Protocol</p>
-    <h1>Your integration routes, as reliable tools for AI agents</h1>
-    <p class="lede">Cameleer serves routes as MCP tools to Claude, IDE assistants and agent frameworks. Every call is checked against a schema, runs once, waits for a person when it is risky, is cancelled when it is slow and lands in an audit log, whatever the model decides. Over stdio or Streamable HTTP, in both protocol eras, from a laptop to a serverless function or an edge gateway.</p>
+    <p class="kicker">The action layer for AI agents</p>
+    <h1>The model decides what. A tested route decides how.</h1>
+    <p class="lede">Agents are good at deciding and bad at doing things exactly once, within the rules, with a record of who allowed what. Cameleer sits between them and your systems: agents call it over MCP from Claude, IDE assistants and agent frameworks, each action runs as a tested route, and the server enforces what the model can't be trusted with. Arguments are checked, retries run once, risky actions wait for a person, slow calls are stopped and every call is audited, whatever the model does.</p>
     <div class="stats">
-      <div class="stat"><b>41,620</b><span>MCP tool calls per second in sessions</span><small>Camel's MCP server: 22,458</small></div>
+      <div class="stat"><b>196/200</b><span>real requests handled right with Claude Opus 5.5</span><small>field test, 40 requests, graded on the database afterwards</small></div>
+      <div class="stat"><b>0</b><span>wrong actions in those runs: none run twice, no rule broken, no risky call without a yes</span><small>the four misses were wording</small></div>
+      <div class="stat"><b>41,620/s</b><span>MCP tool calls in sessions, every one through the checks</span><small>Apache Camel's MCP server: 22,458/s</small></div>
       <div class="stat"><b>53 MB</b><span>peak memory in that run</span><small>Camel: 317 MB, TypeScript SDK: 214 MB</small></div>
-      <div class="stat"><b>196/200</b><span>real requests handled right with Claude Opus 5.5</span><small>field test, 40 requests</small></div>
-      <div class="stat"><b>39/39</b><span>official MCP conformance scenarios (2025-11-25)</span><small>26/26 for 2025-06-18</small></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="why">
+  <div class="wrap">
+    <h2>Why agents need an action layer</h2>
+    <p class="intro">The same refund across orders, payments, shipping and email, with the agent calling each API itself, or calling one Cameleer route.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>Direct tool calls</h3>
+        <p class="vs-n">4 tool calls, 5 model turns</p>
+        <ul>
+          <li>A retried call refunds the customer twice</li>
+          <li>A failed step leaves half-done work for the model to undo</li>
+          <li>The model chooses the refund amount</li>
+          <li>The agent holds every API key</li>
+          <li>Nothing records what happened, or who allowed it</li>
+        </ul>
+      </div>
+      <div class="pane good">
+        <h3>Through Cameleer</h3>
+        <p class="vs-n">1 tool call, 2 model turns</p>
+        <ul>
+          <li>Each request runs once; a repeat gets the first result</li>
+          <li>A saga cancels the refund when a later step fails</li>
+          <li>The amount comes from the order, not the prompt</li>
+          <li>Keys stay in the route; the agent can only call the tool</li>
+          <li>Every call lands in a hash-chained audit log, with the approver</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">Tested end to end: resolved (<code>200</code>), the same call again runs nothing (<code>200</code> duplicate), bad arguments named (<code>400</code>), not delivered yet (<code>409</code>), over the limit waits for a person (<code>202</code>), carrier down and the refund rolled back (<code>502</code>). <a href="../compare/ai-agent-tool-calls-direct-vs-cameleer/">The route and the walkthrough</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="guarantees">
+  <div class="wrap">
+    <h2>What Cameleer guarantees, whatever the model does</h2>
+    <p class="intro">Each row is enforced by the server on every call, not left to a prompt or to each tool's author, and each is backed by a test or by the field test with Claude.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>when the model...</th><th>without an action layer</th><th>with Cameleer</th><th>shown by</th></tr></thead>
+      <tbody>
+        <tr><td>sends the same call twice</td><td>the action runs twice: two refunds, two emails</td><td class="win">it runs once per conversation; the repeat gets the first result</td><td>field test: a resent ticket made one ticket</td></tr>
+        <tr><td>invents or mangles arguments</td><td>they reach your API</td><td class="win">rejected by the tool's JSON Schema, every error named; nothing runs</td><td>hermetic tests</td></tr>
+        <tr><td>picks a risky action</td><td>it runs</td><td class="win">it waits for the user's yes in the client, or for an operator</td><td>field test: cancellations and refunds approved and declined</td></tr>
+        <tr><td>ignores a business rule</td><td>it runs if the prompt didn't stop it</td><td class="win">the route refuses and says why; the model passes the reason on</td><td>field test: a £900 refund refused, and not split to get under the limit</td></tr>
+        <tr><td>reads instructions planted in data</td><td>it may act on them</td><td class="win">data comes back as data, and destructive tools still need a person's yes</td><td>field test: an injected "refund order 1020" reported, not acted on</td></tr>
+        <tr><td>waits on a slow system</td><td>the call times out but the work carries on</td><td class="win">the timeout cancels the route before its next step</td><td>hermetic tests</td></tr>
+        <tr><td>is shown personal data</td><td>it sees everything the API returns</td><td class="win">redacted before it leaves the server (card numbers, emails, secrets)</td><td>field test: no full card number, ever</td></tr>
+        <tr><td>is asked what it did</td><td>whatever the framework happened to log</td><td class="win">a hash-chained record per call: caller, argument digest, decision, approver</td><td>a test detects an edited record</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="layer">
+  <div class="wrap">
+    <h2>More than an MCP server</h2>
+    <p class="intro">MCP is how agents reach the action layer. Around it, Cameleer does the rest of the work an agent needs, in the same process.</p>
+    <div class="cards four">
+      <div class="card"><h3>1. Events in</h3><p>Kafka, MQTT, webhooks, files, mailboxes, queues and databases trigger the agent, filtered and enriched first so you pay for fewer tokens.</p></div>
+      <div class="card"><h3>2. The model</h3><p>23 providers (OpenAI, Anthropic, Gemini, Bedrock, Azure OpenAI, Vertex AI, Ollama and OpenAI-compatible services) with retries, fallback models and caching, or any agent over MCP.</p></div>
+      <div class="card"><h3>3. Route on the answer</h3><p>Content-based routing on the model's answer, schema checks on its output, a re-ask on failure; the <a href="../docs/guides/agent-step.html">agent step</a> runs a model and its tools in a loop inside a route.</p></div>
+      <div class="card"><h3>4. Reliable actions</h3><p>MCP or REST tools behind the guarantees above, plus rate limits, circuit breakers and compensation; a <a href="../docs/guides/mcp/gateway.html">gateway</a> puts the same rules on other MCP servers' tools.</p></div>
     </div>
   </div>
 </section>
 
 <section class="c-sec" id="how">
   <div class="wrap">
-    <h2>How it works</h2>
+    <h2>How it works: a tool is a route</h2>
     <p class="intro">A tool is a route. The route does the work with any of Cameleer's about 230 components; the server does the rest on every call.</p>
     <div class="two">
       <div class="pane">

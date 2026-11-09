@@ -41,6 +41,7 @@
 .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
 
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.cards.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .card { border: 1px solid var(--line); border-radius: 14px; padding: 22px; background: #fff; }
 .card h3 { margin: 0 0 8px; font-size: 18px; }
 .card p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
@@ -52,6 +53,8 @@
 .pane h3 { margin-top: 0; }
 .pane ul { margin: 0; padding-left: 20px; }
 .pane li { margin: 6px 0; }
+.pane.good { border-color: var(--signal); background: var(--signal-soft); }
+.vs-n { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin: 0 0 10px; }
 /* grid items may shrink below their content (long code lines scroll inside pre, inline code wraps) */
 .stats > *, .two > *, .cards > * { min-width: 0; }
 .c-sec p code, .c-sec li code, .c-sec td code, .pane code, .stat span, .stat small { overflow-wrap: anywhere; }
@@ -73,7 +76,7 @@ pre.cmd { background: #0f1424; color: #e8ecf6; padding: 16px 18px; border-radius
 
 @media (max-width: 900px) {
   .stats { grid-template-columns: 1fr 1fr; }
-  .cards, .two, .hub-list { grid-template-columns: 1fr; }
+  .cards, .cards.four, .two, .hub-list { grid-template-columns: 1fr; }
   .bar { grid-template-columns: 1fr 140px; }
   .bar .track { grid-column: 1 / -1; order: 3; }
 }

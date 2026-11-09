@@ -1,11 +1,38 @@
-# Cameleer MCP: integration routes as reliable tools for AI agents
+# Cameleer MCP: the action layer for AI agents
 
-> Cameleer turns integration routes into MCP tools that Claude, IDE assistants and agent frameworks can call. Every call is checked, deduplicated, approved when it is risky, cancelled when it is slow and written to an audit log, in both MCP protocol eras, over stdio or Streamable HTTP, from a desktop to a serverless function or an edge gateway. In a field test with 40 real requests, Claude Opus 5.5 completed 196 of 200 runs correctly.
+> The model decides what; a tested route decides how. Cameleer sits between AI agents and your systems: agents call it over MCP from Claude, IDE assistants and agent frameworks, each action runs as a route, and the server enforces what a model can't be trusted with: arguments checked, retries run once, risky actions approved by a person, slow calls cancelled, every call audited. In a field test with 40 real requests, Claude Opus 5.5 completed 196 of 200 runs correctly, and none ran an action twice, broke a rule or ran a risky call without a yes.
 
 **Cargo feature:** [`ai`](build-features.md) · **Examples:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop), [`examples/agents/mcp-gateway`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-gateway)
 
-This page is the map: what the MCP server does, where it runs, how it compares, and one page
-per use case with the requests people typed, what happened, and the tested route behind it.
+This page is the map: why agents need an action layer, how Cameleer's MCP server works, where it
+runs, how it compares, and one page per use case with the requests people typed, what happened,
+and the tested route behind it.
+
+## Why agents need an action layer
+
+Agents are good at deciding and bad at doing things exactly once, within the rules, with a
+record of who allowed what. Cameleer enforces those parts on every call, whatever the model does:
+
+| when the model... | without an action layer | with Cameleer | shown by |
+|---|---|---|---|
+| sends the same call twice | the action runs twice: two refunds, two emails | it runs once per conversation; the repeat gets the first result | field test: a resent ticket made one ticket |
+| invents or mangles arguments | they reach your API | rejected by the tool's JSON Schema, every error named; nothing runs | hermetic tests |
+| picks a risky action | it runs | it waits for the user's yes in the client, or for an operator | [approvals](mcp/approvals.md), [a manager in the loop](mcp/manager-approval.md) |
+| ignores a business rule | it runs if the prompt didn't stop it | the route refuses and says why; the model passes the reason on | [refunds](mcp/refunds-with-business-rules.md): a £900 refund refused, not split |
+| reads instructions planted in data | it may act on them | data comes back as data; destructive tools still need a person's yes | [safety](mcp/safety.md): an injected "refund order 1020" reported, not acted on |
+| waits on a slow system | the call times out but the work carries on | the timeout cancels the route before its next step | hermetic tests |
+| is shown personal data | it sees everything the API returns | redacted before it leaves the server | [safety](mcp/safety.md): no full card number |
+| is asked what it did | whatever the framework logged | a hash-chained record per call: caller, argument digest, decision, approver | a test detects an edited record |
+
+On a refund across four systems, an agent calling each API directly needs 4 tool calls and 5
+model turns and can refund twice, leave half-done work or choose the amount; through one
+Cameleer route it is 1 tool call and 2 model turns, run once, rolled back on failure, with the
+amount taken from the order ([direct tool calls vs Cameleer](agent-tool-calls.md)).
+
+MCP is how agents reach this layer. Around it, Cameleer also feeds events to models (Kafka, MQTT,
+webhooks, files), calls 23 model providers with retries and fallbacks
+([model providers](model-providers.md)), routes on the model's answer, and runs agents itself
+with the [agent step](agent-step.md).
 
 ## In one minute
 
