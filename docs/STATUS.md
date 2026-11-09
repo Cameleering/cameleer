@@ -320,6 +320,20 @@ turns, and grades each run by tool calls, database state and a Claude judge.
   of the release binary in `target/mcp-fieldtest/bin`); Haiku's remaining misses are weekday and
   sum arithmetic.
 
+## Unreleased since 0.5.1 (2026-11-09, `main`)
+
+- **`--mcp-expose`** (`camel.server.mcp-expose-routes`): existing routes served as MCP tools with no
+  route edits; REST operations become typed tools from their documented parameters. Code in
+  `crates/cameleer-ai/src/expose.rs`, tests in `crates/cameleer-main/tests/mcp_expose.rs`.
+- **Attestation, phase 1** (`crates/cameleer-attest`, feature `attest`): evidence from configfs-tsm
+  and dstack bound to nonce, TLS key and manifest; `/q/attestation`; MCP `_meta` and tool. Design
+  and later phases (sealed secrets, verification of remote servers) in
+  `docs/design/attestation/research.md`. Tests use a fake configfs-tsm directory and a fake dstack
+  agent; nothing has run on real TEE hardware yet (a `CAMEL_REAL_TEE=1` tier waits for the owner's
+  choice of cloud).
+- **Healthcare research**: `docs/design/medical/dicom-and-healthcare.md` (DICOM, DICOMweb,
+  de-identification, Mirth alternatives, positioning); not started.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

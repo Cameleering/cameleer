@@ -15,6 +15,7 @@ description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel 
 [dependencies]
 cameleer-ai = { path = "../cameleer-ai", version = "0.5.1", optional = true }
 cameleer-amqp = { path = "../cameleer-amqp", version = "0.5.1", optional = true }
+cameleer-attest = { path = "../cameleer-attest", version = "0.5.1", optional = true }
 cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.5.1", optional = true }
 cameleer-cloud = { path = "../cameleer-cloud", version = "0.5.1", optional = true }
 cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
@@ -47,7 +48,7 @@ default = ["full"]
 # nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
 core = []
 full = [
-    "ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "ai", "attest", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
     "templates", "jq", "xpath", "http2", "validate",
 ]
 templates = ["cameleer-core/templates"]
@@ -56,6 +57,8 @@ xpath = ["cameleer-core/xpath"]
 http2 = ["cameleer-http/http2"]
 validate = []
 ai = ["dep:cameleer-ai", "cameleer-yaml/agent"]
+# attestation in hardware TEEs (camel.attestation.*): configfs-tsm and dstack evidence
+attest = ["dep:cameleer-attest"]
 amqp = ["dep:cameleer-amqp"]
 amqp10 = ["dep:cameleer-amqp10"]
 cloud = ["dep:cameleer-cloud", "cameleer-yaml/agent"]

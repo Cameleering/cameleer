@@ -1,0 +1,17 @@
+[package]
+name = "cameleer-attest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords = ["camel", "attestation", "tee", "confidential-computing", "tdx"]
+categories = ["cryptography", "network-programming"]
+description = "Cameleer attestation (std only): evidence from Linux configfs-tsm (Intel TDX, AMD SEV-SNP) and the dstack guest agent, bound to the running routes, configuration and TLS key"
+
+[dependencies]
+cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }

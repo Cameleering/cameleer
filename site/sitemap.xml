@@ -221,6 +221,7 @@
   <url><loc>https://cameleer.ing/docs/guides/agent-tool-calls.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/agents.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/ai-components.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/attestation.html</loc></url>
   <url><loc>https://cameleer.ing/docs/guides/build-features.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/cloud-credentials.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/concepts.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -236,9 +237,9 @@
   <url><loc>https://cameleer.ing/docs/guides/getting-started.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-client.html</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp-server.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp-server.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-shop-example.html</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/mcp.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/mcp.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/approvals.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/customer-service-lookups.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/deployment.html</loc><lastmod>2026-11-07</lastmod></url>
