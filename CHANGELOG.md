@@ -7,6 +7,14 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ### Added
 
+- **Attestation in confidential VMs** (new crate `cameleer-attest`, feature `attest`, in the default
+  build): with `camel.attestation.enabled=true` in an Intel TDX or AMD SEV-SNP guest (Linux
+  configfs-tsm) or a dstack CVM, Cameleer serves hardware evidence at `/q/attestation`, bound to the
+  client's nonce, the embedded server's TLS key and a manifest of the routes, configuration (secrets
+  left out) and tools, with a hash-chained log of later changes. The MCP server adds it to
+  `server/discover` and `initialize` (`_meta["ing.cameleer/attestation"]`, the full report inline
+  when the client sends a nonce) and, with `camel.attestation.mcp-tool=true`, as a tool. Start-up
+  fails when attestation is on and no evidence can be produced. Guide: `docs/guides/attestation.md`.
 - **Existing routes as MCP tools, with no route edits**: `cameleer run --mcp-expose rest:*`
   (property `camel.server.mcp-expose-routes`). REST DSL operations become tools with typed
   arguments from their documented parameters; other routes (`direct:*`, `route:<id>`) take a

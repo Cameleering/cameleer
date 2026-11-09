@@ -42,6 +42,8 @@ pub const LEGACY_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26"]
 const META_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_CAPS: &str = "io.modelcontextprotocol/clientCapabilities";
 const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+/// Cameleer's attestation entry in `_meta` (reverse-DNS of cameleer.ing).
+pub const META_ATTESTATION: &str = "ing.cameleer/attestation";
 const META_SUBSCRIPTION: &str = "io.modelcontextprotocol/subscriptionId";
 /// Cameleer `_meta` keys a client may send on `tools/call`.
 pub const META_TOOL_CALL_ID: &str = "io.cameleer/toolCallId";
@@ -156,6 +158,9 @@ pub struct McpConfig {
     /// exposed resource by URI (`true` names it `read_document`). Most MCP clients only attach
     /// resources when the user picks one; the tool lets the model read them when it needs to.
     pub resource_tool: Option<String>,
+    /// `camel.attestation.mcp-tool`: a tool that returns attestation evidence (when the process
+    /// is attested).
+    pub attestation_tool: Option<String>,
     pub keep_alive: Duration,
     pub session_idle_ttl: Duration,
     pub resource_timeout: Duration,
@@ -185,6 +190,7 @@ impl Default for McpConfig {
             server_name_set: false,
             expose_errors: false,
             resource_tool: None,
+            attestation_tool: None,
             server_version: env!("CARGO_PKG_VERSION").into(),
             instructions: None,
             keep_alive: Duration::from_secs(30),
@@ -254,6 +260,12 @@ impl McpConfig {
             None => None,
             Some(v) if v.is_empty() || v.eq_ignore_ascii_case("false") => None,
             Some(v) if v.eq_ignore_ascii_case("true") => Some("read_document".into()),
+            Some(v) => Some(v),
+        };
+        c.attestation_tool = match get("camel.attestation.mcp-tool").map(|v| v.trim().to_string()) {
+            None => None,
+            Some(v) if v.is_empty() || v.eq_ignore_ascii_case("false") => None,
+            Some(v) if v.eq_ignore_ascii_case("true") => Some("cameleer_attestation".into()),
             Some(v) => Some(v),
         };
         c.keep_alive = dur("camel.server.mcp-session-keep-alive-interval", c.keep_alive)?;
@@ -504,6 +516,8 @@ pub struct McpServer {
     /// Legacy server-to-client requests waiting for the client's answer, by request id.
     pending: Mutex<HashMap<String, Sender<std::result::Result<Value, Value>>>>,
     seq: AtomicU64,
+    /// The process's attestation service, when it runs attested (`camel.attestation.enabled`).
+    attestation: Option<Arc<dyn cameleer_core::attest::AttestationService>>,
 }
 
 impl McpServer {
@@ -526,6 +540,7 @@ impl McpServer {
             last_expiry: Mutex::new(std::time::Instant::now()),
             pending: Mutex::default(),
             seq: AtomicU64::new(0),
+            attestation: cameleer_core::attest::service(ctx),
         }))
     }
 
@@ -648,6 +663,9 @@ impl McpServer {
         if let Some(i) = &self.config.instructions {
             r.insert("instructions".into(), Value::from(i.as_str()));
         }
+        if let Some(a) = self.attestation_meta(params) {
+            r.insert("_meta".into(), Value::object([(META_ATTESTATION, a)]));
+        }
         (session, Value::Object(r))
     }
 
@@ -750,7 +768,7 @@ impl McpServer {
     pub fn dispatch(&self, method: &str, params: &ObjectMap, rc: &RequestContext) -> std::result::Result<Value, RpcError> {
         let modern = rc.era == Era::Modern;
         let result = match method {
-            "server/discover" if modern => self.discover(),
+            "server/discover" if modern => self.discover(params),
             "ping" if !modern => Ok(Value::Object(ObjectMap::new())),
             // legacy clients choose the level of the log notifications tool routes send
             "logging/setLevel" if !modern => {
@@ -791,17 +809,85 @@ impl McpServer {
         Value::Object(m)
     }
 
+    /// The attestation summary for the handshake; with
+    /// `params._meta["ing.cameleer/attestation"] = {"nonce": "<base64>"}` the evidence comes
+    /// inline (`report`), bound to that nonce, in the same round trip.
+    fn attestation_meta(&self, params: &ObjectMap) -> Option<Value> {
+        let svc = self.attestation.as_ref()?;
+        let Value::Object(mut out) = svc.summary() else { return None };
+        let nonce = params.get("_meta").and_then(|m| m.get(META_ATTESTATION)).and_then(|a| a.get("nonce")).map(|n| n.to_string());
+        if let Some(n) = nonce {
+            match decode_nonce(&n) {
+                Some(bytes) => match svc.report(Some(&bytes)) {
+                    Ok(r) => {
+                        out.insert("report".into(), r);
+                    }
+                    Err(e) => {
+                        out.insert("error".into(), Value::from(e.message));
+                    }
+                },
+                None => {
+                    out.insert("error".into(), Value::from("The nonce must be base64 or base64url"));
+                }
+            }
+        }
+        Some(Value::Object(out))
+    }
+
+    fn attestation_tool_definition(&self) -> Option<Value> {
+        self.attestation.as_ref()?;
+        let name = self.config.attestation_tool.as_ref()?;
+        let schema = Value::object([
+            ("type", Value::from("object")),
+            (
+                "properties",
+                Value::object([("nonce", Value::object([("type", Value::from("string")), ("description", Value::from("16 to 64 random bytes, base64, chosen by the verifier"))]))]),
+            ),
+        ]);
+        Some(Value::object([
+            ("name", Value::from(name.as_str())),
+            ("title", Value::from("Attestation evidence")),
+            (
+                "description",
+                Value::from(
+                    "Return hardware attestation evidence for this server: the TEE's signed report, bound to the given nonce, the server's TLS key and the manifest of what runs here. Showing this evidence is not verifying it: a program must check the report's signature chain and its binding.",
+                ),
+            ),
+            ("inputSchema", schema),
+            ("annotations", Value::object([("readOnlyHint", Value::Bool(true)), ("openWorldHint", Value::Bool(false))])),
+        ]))
+    }
+
+    fn call_attestation_tool(&self, params: &ObjectMap) -> Value {
+        let Some(svc) = self.attestation.as_ref() else {
+            return tool_result(&ToolResult::error("This server is not attested"));
+        };
+        let nonce = params.get("arguments").and_then(|a| a.as_object()).and_then(|a| a.get("nonce")).map(|n| n.to_string());
+        let bytes = match nonce.as_deref().map(decode_nonce) {
+            None => None,
+            Some(Some(b)) => Some(b),
+            Some(None) => return tool_result(&ToolResult::error("The nonce must be base64 or base64url")),
+        };
+        match svc.report(bytes.as_deref()) {
+            Ok(r) => tool_result(&ToolResult::ok(r.to_json(), Some(r))),
+            Err(e) => tool_result(&ToolResult::error(format!("No evidence: {}", e.message))),
+        }
+    }
+
     fn cache_hints(&self, m: &mut ObjectMap) {
         m.insert("ttlMs".into(), Value::Int(self.config.cache_ttl.as_millis() as i64));
         m.insert("cacheScope".into(), Value::from(self.cache_scope()));
     }
 
-    fn discover(&self) -> std::result::Result<Value, RpcError> {
+    fn discover(&self, params: &ObjectMap) -> std::result::Result<Value, RpcError> {
         let mut m = ObjectMap::new();
         m.insert("supportedVersions".into(), Value::Array(vec![Value::from(MODERN_VERSION)]));
         m.insert("capabilities".into(), self.capabilities());
         if let Some(i) = &self.config.instructions {
             m.insert("instructions".into(), Value::from(i.as_str()));
+        }
+        if let Some(a) = self.attestation_meta(params) {
+            m.insert("_meta".into(), Value::object([(META_ATTESTATION, a)]));
         }
         self.cache_hints(&mut m);
         Ok(Value::Object(m))
@@ -812,6 +898,9 @@ impl McpServer {
             ListKind::Tools => {
                 let mut tools: Vec<Value> = self.registry.tools(&[]).into_iter().filter(|t| self.config.exposes(&t.tags)).map(|t| t.to_value()).collect();
                 if let Some(t) = self.resource_tool_definition() {
+                    tools.push(t);
+                }
+                if let Some(t) = self.attestation_tool_definition() {
                     tools.push(t);
                 }
                 tools
@@ -906,6 +995,11 @@ impl McpServer {
     }
 
     fn call_tool(&self, params: &ObjectMap, rc: &RequestContext) -> std::result::Result<Value, RpcError> {
+        if let (Some(tool), Some(name)) = (&self.config.attestation_tool, params.get("name").and_then(|n| n.as_str())) {
+            if tool == name && self.attestation.is_some() && !self.registry.tools(&[]).iter().any(|t| t.name == name) {
+                return Ok(self.call_attestation_tool(params));
+            }
+        }
         if let (Some(tool), Some(name)) = (&self.config.resource_tool, params.get("name").and_then(|n| n.as_str())) {
             if tool == name && !self.registry.tools(&[]).iter().any(|t| t.name == name) {
                 return Ok(self.call_resource_tool(params, rc));
@@ -1277,6 +1371,23 @@ enum ListKind {
 }
 
 /// A tool result as MCP sends it.
+/// A nonce in base64 or base64url, padded or not.
+fn decode_nonce(s: &str) -> Option<Vec<u8>> {
+    let mut t: String = s
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '-' => '+',
+            '_' => '/',
+            c => c,
+        })
+        .collect();
+    while t.len() % 4 != 0 {
+        t.push('=');
+    }
+    cameleer_tls::pem::base64_decode(&t)
+}
+
 pub fn tool_result(r: &ToolResult) -> Value {
     let mut m = ObjectMap::new();
     let content = match &r.content {
