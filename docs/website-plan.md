@@ -439,3 +439,114 @@ page adds "Quick start". Docs pages keep their own header (Docs · Guides · Com
 
 Most of these are vendor-written; they were used for positioning language and feature claims,
 not for independent performance figures.
+
+## 10. Competitive placement: what G2 shows for "Apache Camel alternatives" (2026-11-09)
+
+### 10.1 What the searcher sees
+
+G2's [Apache Camel alternatives](https://www.g2.com/products/apache-camel/competitors/alternatives)
+page (G2 blocks automated readers; the list below is from search results and G2's comparison
+pages) is not a list of developer frameworks. It is enterprise integration software:
+IBM App Connect, Azure Service Bus, TIBCO Integration (BusinessWorks and Flogo), IBM webMethods
+Hybrid Integration, WSO2 Integration Platform, MuleSoft Anypoint, Boomi, Workato, SAP Integration
+Suite, CData Arc, NServiceBus, elastic.io, Apache Synapse and Apache ServiceMix. G2 also has
+"Apache Camel vs X" pages for most of them. Camel itself has about 20 G2 reviews, 4.2/5; reviewers
+on G2 and TrustRadius praise its cost and testing support and complain about documentation, a
+learning curve and the lack of a visual designer.
+
+So "Apache Camel alternative" has three different searchers:
+
+| searcher | wants | today they land on | Cameleer's opening |
+|---|---|---|---|
+| a developer running Camel on the JVM | the same model, lighter and faster | directory lists, Quarkus native | the only runtime that runs Camel routes unchanged; measured 1.7-8.7x throughput, 3 ms start |
+| an enterprise buyer comparing integration platforms | governance, connectors, support, AI agents | G2, vendor listicles (MuleSoft, Boomi, Workato, WSO2) | open source with no per-core licence; runs where an iPaaS can't (edge, Lambda, sidecar); routes in Git |
+| an agent builder | connect agents to business systems safely | MCP platforms of the same vendors, Composio, Arcade | reliability enforced on every call, both MCP eras, tested with Claude, self-hosted |
+
+The current alternatives page serves the first searcher only: it compares Camel on Quarkus,
+Spring Integration, Kafka Connect, Redpanda Connect, NiFi and n8n, and names MuleSoft in
+passing. None of G2's other names (IBM, TIBCO, WSO2, Boomi, Workato, Azure, SAP) appear.
+
+### 10.2 Everyone has MCP now
+
+Every vendor on that list announced MCP or agent features in 2025-26, so "has an MCP server" is
+table stakes, not a differentiator:
+
+| vendor | agent and MCP features (vendor claims, checked 2026-11-09) | model | where Cameleer differs |
+|---|---|---|---|
+| MuleSoft (Salesforce) | MCP server and connector, Agent Fabric, Agentforce | quote-only; third parties report vCore and usage-based contracts from tens to hundreds of thousands of dollars a year | open source, one binary, enforced envelope; no API management suite, no Exchange, no DataWeave |
+| Boomi | governed MCP servers to 1000+ applications, Boomi agents | from about $99/month pay-as-you-go per third parties; enterprise by quote | self-hosted, no per-connection pricing; far fewer SaaS connectors, no visual designer |
+| Workato | Enterprise MCP, agent recipes | credits; enterprise by quote | as for Boomi |
+| WSO2 Integrator (BI, MI, SI) | MCP servers from APIs, agents with memory and RAG, durable agentic workflows; Apache-2.0 | open source plus subscription | the closest open-source peer; WSO2 runs on the JVM and has a visual designer and API management; Cameleer is Camel-compatible, 3 ms, megabytes |
+| TIBCO Flogo | Go engine, single binary for edge, serverless and IoT; MCP connector (preview 2025) with elicitation and sampling; Project Flogo core is BSD | Flogo Enterprise is commercial | the closest lightweight peer; its claims (about 5 MB, about 1 s start, 2017 vendor slides) are not measured by us: benchmark before publishing numbers |
+| IBM webMethods Hybrid Integration, App Connect | Integration Agent (natural language to flows), AI Gateway, MCP Gateway | commercial | a self-hosted single binary against a control plane; no natural-language builder (a coding agent writes YAML checked by `cameleer validate`) |
+| Azure Logic Apps (Standard) | workflows as MCP servers, GA June 2026 per Azure Updates | Azure consumption | runs anywhere, not only on Azure; connects to Azure Service Bus, Event Hubs and Cosmos DB |
+| Apache Camel 4.22+ | `camel-ai-tool`, `camel-mcp-server` (Preview) | Apache-2.0 | the existing compare page |
+
+Category mismatches on G2's list: Azure Service Bus and NServiceBus are messaging (Cameleer
+connects to Service Bus; it is not a broker); CData Arc is B2B/EDI file exchange; Synapse and
+ServiceMix are older Apache ESBs (migration candidates).
+
+### 10.3 Placement
+
+Lead with what no competitor can say, in this order:
+
+1. **Runs Camel routes unchanged, without the JVM** (only Cameleer; measured against Camel).
+2. **Agent actions that are safe by construction**: schema, run-once, approval, a timeout that
+   cancels, compensation and audit, enforced by the server on every MCP or model call. Vendors
+   describe governance; Camel documents its hints as advisory. Backed by the field test.
+3. **One binary that goes where platforms can't**: 3 ms, megabytes, Lambda, edge, sidecar, a
+   std-only supply chain.
+4. **Open source with no per-core or per-credit licence.**
+
+Do not compete on connector count, visual designers, API management suites, managed hosting or
+commercial support. Say so on every comparison page ("when to choose them"): it is what makes the
+rest credible, and buyers on G2 weigh exactly those things.
+
+### 10.4 Pages
+
+Template for every comparison page: an answer line; a glance table; when to choose them; when to
+choose Cameleer; how to move (or how to use both); numbers only where we measured them; vendor
+claims cited to the vendor with a "checked on" date; FAQ (FAQPage); a trademark line. Vendor
+names only to identify; no logos.
+
+| priority | page | target searches | why |
+|---|---|---|---|
+| P1 | refresh `/alternatives/apache-camel-alternatives/` | apache camel alternatives | it must name what G2 names (MuleSoft, IBM, TIBCO, WSO2, Boomi, Workato, Azure, SAP), grouped by searcher |
+| P1 | `/compare/enterprise-mcp-platforms/` | mulesoft mcp, boomi mcp server, workato mcp, wso2 mcp, logic apps mcp | one honest table of the MCP offerings in 10.2 against Cameleer: the agent pillar's comparison page |
+| P1 | `/compare/wso2-vs-apache-camel-vs-cameleer/` | apache camel vs wso2, wso2 alternative | G2 has a Camel vs WSO2 page; a three-way page answers that search and adds Cameleer |
+| P1 | `/compare/mulesoft-vs-apache-camel-vs-cameleer/` and `/alternatives/mulesoft-alternatives/` | mulesoft alternative, mulesoft vs camel | the largest-volume query in the space, crowded by listicles; the angle is open source plus Camel-compatible plus agents |
+| P2 | `/compare/tibco-flogo-vs-cameleer/` | flogo alternative, lightweight integration engine | the direct lightweight competitor; needs a measured run (Project Flogo on the droplets) first |
+| P2 | `/compare/redpanda-connect-vs-cameleer/`, `/compare/spring-integration-vs-cameleer/` | benthos alternative, spring integration vs camel | developer intent, already in the earlier plan |
+| P2 | `/compare/boomi-vs-cameleer/`, `/compare/workato-vs-cameleer/` | boomi alternative open source, workato alternative | iPaaS buyers who want self-hosting or agent safety |
+| P3 | `/compare/ibm-webmethods-vs-cameleer/`, `/compare/azure-logic-apps-vs-cameleer/` | webmethods alternative, logic apps alternative | lower volume; the Azure page doubles as "runs outside Azure" |
+| P3 | "works with" pages: Azure Service Bus, Event Hubs | azure service bus integration | the right answer to a category mismatch is "Cameleer works with it", with a tested route |
+| P3 | migration notes from Synapse and ServiceMix | apache servicemix replacement | small, but nobody else answers it |
+
+The `/compare/` hub groups the pages by the three searchers in 10.1.
+
+### 10.5 Off-site (owner's accounts)
+
+- **List Cameleer on G2** (a free vendor profile) in the category Camel is in, with the website,
+  repository and screenshots. G2's alternatives pages draw from the same category and rank by
+  reviews, so ask real users for reviews; never pay for or write them.
+- The same on SourceForge and Slashdot (they already list Camel alternatives), AlternativeTo,
+  StackShare, SaaSHub and OpenAlternative (as an open-source alternative to MuleSoft and Boomi).
+- Re-check the vendor claims in 10.2 every quarter and date-stamp them on the pages.
+
+### 10.6 Sources (checked 2026-11-09)
+
+- G2: https://www.g2.com/products/apache-camel/competitors/alternatives and comparison pages
+  such as https://www.g2.com/compare/apache-camel-vs-wso2-integration-platform
+- TrustRadius reviews: https://www.trustradius.com/products/apache-camel/reviews
+- MuleSoft pricing reports (third party, unverified): https://www.vendr.com/marketplace/mulesoft,
+  https://unmule.com/blog/mulesoft-pricing-2026
+- WSO2 Integrator: https://wso2.com/integration-platform/integrator/,
+  https://wso2.com/integration-platform/integrator/mi/,
+  https://github.com/wso2/product-integrator/releases/tag/v5.1.0
+- TIBCO Flogo: https://docs.tibco.com/products/tibco-flogo-latest,
+  https://www.tibco.com/blog/2025/08/07/introducing-tibco-flogo-connector-for-model-context-protocol-mcp-developer-preview/,
+  https://www.tibco.com/blogs/2026-04/tibco-vision-agentic-enterprise-solutions
+- Boomi AI agents: https://boomi.com/platform/ai-agents/; Workato MCP (third party):
+  https://eseospace.com/blog/workato-mcp/
+- IBM: https://www.ibm.com/products/webmethods-hybrid-integration/agentic-enterprise
+- Azure Logic Apps MCP: https://techcommunity.microsoft.com/blog/integrationsonazureblog/stop-writing-plumbing-use-the-new-logic-apps-mcp-server-wizard/4496702
