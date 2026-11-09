@@ -34,6 +34,7 @@ fn table_covers_every_registered_component() {
         ("saas", added(cameleer_saas::register)),
         ("soap", added(cameleer_soap::register)),
         ("dataformats", added(cameleer_dataformats::register)),
+        ("dicom", added(cameleer_dicom::register)),
         // protocols registers a placeholder `sftp` that the ssh family replaces
         ("protocols", added(cameleer_protocols::register).into_iter().filter(|s| s != "sftp").collect()),
     ];

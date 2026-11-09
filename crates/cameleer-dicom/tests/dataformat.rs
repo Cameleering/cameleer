@@ -32,7 +32,7 @@ fn unmarshal_marshal_is_byte_exact_and_sets_headers() {
     ex.set_body(Value::Bytes(Instance::ct("P1", 1, 2, 3).part10()));
     let ex = t.send("direct:tree", ex);
     assert!(ex.exception.is_none());
-    assert_eq!(ex.header("CamelDicomSopInstanceUid").unwrap().to_string(), "1.2.826.0.1.3680043.10.1234.1.2.3");
+    assert_eq!(ex.header("CamelDicomSopInstanceUid").unwrap().to_string(), "2.25.144682546011839860307890821118846661177.1.2.3");
     assert_eq!(ex.header("CamelDicomTransferSyntaxUid").unwrap().to_string(), ts::EXPLICIT_VR_LITTLE_ENDIAN);
     assert_eq!(ex.body().get("00100020").unwrap().get("Value").unwrap().as_array().unwrap()[0], Value::from("P1"));
     // transcoding between native syntaxes
@@ -75,7 +75,7 @@ fn simple_and_dicom_language_route_on_tags() {
     vip.assert_is_satisfied().unwrap();
     routine.assert_is_satisfied().unwrap();
     let text = t.request_body("direct:text", Value::Bytes(Instance::ct("P9", 4, 1, 1).part10())).unwrap();
-    assert_eq!(text.to_string(), "Test^P9 AXIAL 1.2.826.0.1.3680043.10.1234.4");
+    assert_eq!(text.to_string(), "Test^P9 AXIAL 2.25.144682546011839860307890821118846661177.4");
     let text = t.request_body("direct:tree", Value::Bytes(Instance::ct("P9", 4, 1, 1).part10())).unwrap();
     assert_eq!(text.to_string(), format!("P9/{}", ts::EXPLICIT_VR_LITTLE_ENDIAN));
     // a body that is not DICOM

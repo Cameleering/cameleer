@@ -388,6 +388,10 @@ pub fn dataset_to_bytes(ds: &DataSet, ts: &TransferSyntax) -> Result<Vec<u8>> {
     write_dataset(&mut out, ds, ts.encoding)?;
     if ts.deflated {
         out = cameleer_core::dataformat::compress::deflate(&out, 6);
+        // an odd-length deflated bitstream gets a trailing zero byte (PS3.5 A.5)
+        if out.len() % 2 == 1 {
+            out.push(0);
+        }
     }
     Ok(out)
 }
@@ -396,7 +400,8 @@ pub fn dataset_to_bytes(ds: &DataSet, ts: &TransferSyntax) -> Result<Vec<u8>> {
 // Part 10
 
 /// The Implementation Class UID written in the file meta information of new files.
-pub const IMPLEMENTATION_CLASS_UID: &str = "1.3.6.1.4.1.65535.1.1";
+/// A UUID-derived UID (ISO/IEC 9834-8, root `2.25`), fixed for Cameleer.
+pub const IMPLEMENTATION_CLASS_UID: &str = "2.25.201273755793964741390560873578799652301";
 /// The Implementation Version Name written with it.
 pub const IMPLEMENTATION_VERSION_NAME: &str = concat!("CAMELEER_", env!("CARGO_PKG_VERSION_MAJOR"), env!("CARGO_PKG_VERSION_MINOR"), env!("CARGO_PKG_VERSION_PATCH"));
 
@@ -543,6 +548,49 @@ impl DicomFile {
     }
 }
 
+impl DicomFile {
+    /// The preamble, `DICM` and the file meta information, without the data set (empty for a
+    /// bare data set).
+    pub fn header_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        if !self.meta.is_empty() {
+            let mut p = self.preamble.clone().unwrap_or_default();
+            if self.preamble.is_some() {
+                p.resize(128, 0);
+                out.extend_from_slice(&p);
+            }
+            out.extend_from_slice(b"DICM");
+            write_dataset(&mut out, &self.meta, Encoding::EXPLICIT_LE)?;
+        }
+        Ok(out)
+    }
+}
+
+/// Read only the file meta information: the meta group and the offset where the data set
+/// starts (`None` for a bare data set without meta information).
+pub fn split_part10(bytes: &[u8]) -> Result<(DataSet, Option<usize>)> {
+    let start = if bytes.len() >= 132 && &bytes[128..132] == b"DICM" {
+        132
+    } else if bytes.len() >= 4 && &bytes[..4] == b"DICM" {
+        4
+    } else if bytes.len() >= 8 && bytes[0] == 2 && bytes[1] == 0 && Vr::from_bytes(&bytes[4..6]).is_some() {
+        0
+    } else {
+        return Ok((DataSet::new(), None));
+    };
+    let mut r = Reader { buf: bytes, pos: start, opts: ReadOptions::default() };
+    let mut meta = DataSet::new();
+    while r.pos + 6 <= bytes.len() {
+        let g = u16::from_le_bytes([bytes[r.pos], bytes[r.pos + 1]]);
+        if g != 0x0002 {
+            break;
+        }
+        let t = r.tag(Encoding::EXPLICIT_LE)?;
+        meta.push(r.element(t, Encoding::EXPLICIT_LE)?);
+    }
+    Ok((meta, Some(r.pos)))
+}
+
 /// Whether the bytes look like DICOM (a Part 10 file or `DICM` without preamble).
 pub fn is_part10(bytes: &[u8]) -> bool {
     (bytes.len() >= 132 && &bytes[128..132] == b"DICM") || (bytes.len() >= 4 && &bytes[..4] == b"DICM")
@@ -583,6 +631,19 @@ mod tests {
             assert_eq!(seq.len(), 2);
             assert_eq!(seq[0].dataset.string(tags::REFERENCED_SOP_INSTANCE_UID).unwrap(), "9.8.7");
             assert_eq!(back.dataset.get(tags::PIXEL_DATA).unwrap().raw().unwrap(), &[1, 0, 2, 0, 3, 0, 4, 0]);
+        }
+    }
+
+    #[test]
+    fn deflated_data_sets_have_even_length() {
+        // found against DCMTK: an odd deflated stream makes an odd PDV, which DCMTK aborts on
+        let tsx = TransferSyntax::from_uid(ts::DEFLATED_EXPLICIT_VR_LITTLE_ENDIAN);
+        for n in 0..12 {
+            let mut ds = sample();
+            ds.insert(Element::string(0x0008_1030, Vr::LO, &"x".repeat(n * 7)));
+            let b = dataset_to_bytes(&ds, &tsx).unwrap();
+            assert_eq!(b.len() % 2, 0);
+            assert_eq!(read_dataset_ts(&b, &tsx, ReadOptions::default()).unwrap(), ds);
         }
     }
 

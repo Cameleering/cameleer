@@ -6,6 +6,8 @@
 //! - [`model`]: data sets as Value trees (the DICOM JSON model) and back, byte-exact.
 //! - [`dataformat`]: the `dicom` and `dicomJson` data formats.
 //! - [`path`]: tag paths for `${dicom.PatientID}` in Simple and the `dicom` language.
+//! - [`ul`], [`assoc`], [`dimse`], [`scu`], [`scp`]: DIMSE networking (PS3.7, PS3.8).
+//! - [`component`]: the `dicom:` component (SCP consumer, SCU producer).
 //!
 //! [`register`] adds all of it to a context.
 
@@ -19,17 +21,23 @@ use cameleer_core::message::Exchange;
 use cameleer_core::spi::{Expression, Language};
 use cameleer_core::value::Value;
 
+pub mod assoc;
 pub mod charset;
 pub mod codec;
+pub mod component;
 pub mod dataformat;
 pub mod dict;
+pub mod dimse;
 pub mod headers;
 pub mod model;
 pub mod object;
 pub mod path;
+pub mod scp;
+pub mod scu;
 pub mod tag;
 pub mod testing;
 pub mod ts;
+pub mod ul;
 pub mod vr;
 
 pub use codec::{DicomFile, ReadOptions};
@@ -62,10 +70,11 @@ fn register_simple() {
     });
 }
 
-/// Register the `dicom` and `dicomJson` data formats, the `dicom` language and the
-/// `${dicom.<path>}` Simple function.
+/// Register the `dicom` component, the `dicom` and `dicomJson` data formats, the `dicom`
+/// language and the `${dicom.<path>}` Simple function.
 pub fn register(ctx: &CamelContext) {
     register_simple();
+    ctx.add_component_factory("dicom", || Arc::new(component::DicomComponent));
     let reg = ctx.registry();
     register_data_format_factory(reg, "dicom", |o| Ok(Arc::new(dataformat::DicomDataFormat::from_options(o)?) as Arc<dyn DataFormat>));
     register_data_format_factory(reg, "dicomJson", |o| Ok(Arc::new(dataformat::DicomJsonDataFormat::from_options(o)?) as Arc<dyn DataFormat>));
