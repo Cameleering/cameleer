@@ -9,6 +9,7 @@
 //! - [`ul`], [`assoc`], [`dimse`], [`scu`], [`scp`]: DIMSE networking (PS3.7, PS3.8).
 //! - [`component`]: the `dicom:` component (SCP consumer, SCU producer).
 //! - [`dicomweb`]: the `dicomweb:` component (QIDO-RS, WADO-RS, STOW-RS client and server).
+//! - [`deid`]: PS3.15 Annex E de-identification (processor and `dicomDeidentify` data format).
 //!
 //! [`register`] adds all of it to a context.
 
@@ -27,6 +28,7 @@ pub mod charset;
 pub mod codec;
 pub mod component;
 pub mod dataformat;
+pub mod deid;
 pub mod dicomweb;
 pub mod dict;
 pub mod dimse;
@@ -81,6 +83,7 @@ pub fn register(ctx: &CamelContext) {
     let reg = ctx.registry();
     register_data_format_factory(reg, "dicom", |o| Ok(Arc::new(dataformat::DicomDataFormat::from_options(o)?) as Arc<dyn DataFormat>));
     register_data_format_factory(reg, "dicomJson", |o| Ok(Arc::new(dataformat::DicomJsonDataFormat::from_options(o)?) as Arc<dyn DataFormat>));
+    register_data_format_factory(reg, "dicomDeidentify", |o| Ok(Arc::new(deid::DeidentifyDataFormat(Arc::new(deid::Deidentifier::from_options(o)?))) as Arc<dyn DataFormat>));
     if ctx.resolve_language("dicom").is_err() {
         ctx.add_language(DicomLanguage);
     }
