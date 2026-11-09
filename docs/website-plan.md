@@ -717,3 +717,128 @@ the second, and gets a section when it is released.
   https://cheqd.io/blog/pioneering-trust-in-the-age-of-ai-introducing-cheqds-mcp-enabled-agentic-trust-solution/
 - Red Hat on attestation models: https://www.redhat.com/en/blog/attestation-confidential-computing
 - The code session's research with full sources: `docs/design/attestation/research.md` (internal)
+
+## 12. DICOM and healthcare imaging: positioning, pages and placement (2026-11-09, proposal)
+
+DICOM is built on branch `dicom` (commits `0f98611` to `78907e9`) and is **not on `main`**. Pages
+are drafted on a local branch and are **not published** until the owner merges `dicom` into
+`main`; then they ship marked "next release", as `--mcp-expose` and attestation did.
+
+### 12.1 What may be claimed (from the branch's CHANGELOG, STATUS, INTEROP and guide)
+
+- **Components and formats:**
+  - the `dicom` component: DIMSE over TCP and TLS; the consumer is an SCP and the producer an
+    SCU; C-ECHO, C-STORE, C-FIND, C-MOVE and C-GET;
+  - the `dicomweb` component: STOW-RS, QIDO-RS, WADO-RS and metadata, as a client, plus a
+    DICOMweb server on the shared HTTP server;
+  - the `dicom` data format (Part 10 to and from a Value tree in the DICOM JSON shape, byte for
+    byte) and `dicomJson` (PS3.18 Annex F);
+  - `dicomDeidentify`: the PS3.15 Annex E basic profile and options, except the pixel options.
+    It is HMAC-keyed and deterministic, and writes records to the hash-chained audit log.
+- **Routing on tags:** `${dicom.PatientID}` and sequence paths in Simple, and the `dicom`
+  language.
+- **The standard:** the PS3.6 dictionary and Table E.1-1 are generated from the 2026d edition.
+- **Coverage:**
+  - Transfer syntaxes: implicit, explicit, deflated and big endian are read, written and
+    converted; every compressed syntax passes through unchanged, with no transcoding.
+  - Character sets: most specific character sets, including the ISO 2022 forms, GB18030 and
+    UTF-8.
+  - Query/Retrieve: Patient Root and Study Root, plus Modality Worklist FIND, as SCU and SCP.
+  - Security: TLS 1.2 and 1.3 (BCP 195 profiles) and mutual TLS.
+- **Verified (2026-11-09):**
+  - live, 7/7 against DCMTK 3.6.7 (both roles, with and without TLS) and Orthanc 1.12.2 (as a
+    PACS, as a DICOMweb server and as a DICOMweb client);
+  - 33 public pydicom test files, byte for byte;
+  - hermetic tests (2,914 on the branch, per the DICOM session; I didn't rerun them);
+  - one interoperability bug found and fixed (an odd-length deflated PDV).
+- **Examples, each running end to end in a test:** modality to cloud (store-and-forward), the AI
+  inference loop (de-identify, infer, FHIR DiagnosticReport back) and a de-identification
+  pipeline.
+- **Apache Camel has no DICOM component** (Camel component index; the research note checked it).
+
+**May not claim:**
+
+- that it works with Azure Health Data Services, the Google Cloud Healthcare API or AWS
+  HealthImaging (not tested; AWS needs SigV4 in `dicomweb`);
+- dcm4che, real modalities, Storage Commitment, MPPS, C-CANCEL, asynchronous operations;
+- frames, rendered or thumbnail retrieval, UPS-RS, transcoding or pixel de-identification;
+- ATNA (PS3.15 A.5) audit messages, a DICOM Conformance Statement in the PS3.2 template (only a
+  short form exists), or IHE profiles;
+- HIPAA or FDA "compliance" (Cameleer is software you run; say what controls exist);
+- a footprint or speed number for DICOM, since none has been measured yet;
+- that it is a PACS, a viewer or a hospital-wide interface engine.
+
+### 12.2 Search and competitors (searched 2026-11-09; volumes not measured)
+
+- **The Mirth change is the biggest healthcare-integration search topic.** NextGen made Mirth
+  Connect commercial from 4.6 (announced 2025-03-19). The open-source forks are:
+  - Open Integration Engine (MPL 2.0; vendor blogs say it entered Eclipse incubation in September
+    2026, which is unverified);
+  - BridgeLink (MPL 2.0, Innovar Healthcare).
+
+  The results for "Mirth Connect alternatives" are vendor and consultancy listicles (Saga IT,
+  Nirmitee, OpenShare, 4mednet). That is the same shape as the G2 "Apache Camel alternatives"
+  space, and the same play works: an honest comparison page.
+- **DICOM routers and gateways:**
+  - DICOM-RST (UMEssen; written in Rust, a DICOMweb gateway with a DIMSE backend);
+  - Google's open-source DICOM adapter (DIMSE to DICOMweb for its Healthcare API);
+  - dicomweb-proxy (Node.js; last published about two years ago);
+  - Orthanc (lightweight PACS);
+  - MONAI Deploy Informatics Gateway and mercure (AI orchestration stacks with Docker, a bus and a
+    database);
+  - Qvera's DICOM Router (commercial).
+
+  None of them is a general integration engine with HL7, FHIR, 230 components, MCP tools and
+  attestation in one binary. That is the honest difference. "The only DICOM gateway in Rust" is
+  false (DICOM-RST is Rust).
+- **Personas and searches** (from the research note §3.2):
+  - imaging startups: "DICOM router open source", "DIMSE to DICOMweb", "STOW-RS proxy", "DICOM
+    gateway docker";
+  - AI platform leads: "DICOM de-identification PS3.15", "AI orchestration DICOM", "MONAI deploy
+    alternative";
+  - integration analysts: "Mirth Connect alternative", "HL7 interface engine open source".
+
+### 12.3 Positioning
+
+> **A DICOM router that is also an integration engine.** Receive images from modalities over
+> DIMSE, route on tags, de-identify with the PS3.15 profile, and forward to a PACS, a DICOMweb
+> store or an AI model, with HL7 v2, FHIR and 230 other components in the same small binary.
+
+- **Lead:** the edge imaging gateway (modality to PACS or cloud) and AI inference routing
+  (research note §3.1, items 1 and 2).
+- **Proof point for trust:** de-identification inside a confidential VM. The `/trust/` page gets
+  a healthcare section, and the evidence covers the de-identification profile and its options
+  (the manifest includes the configuration).
+- **Content track:** Mirth alternatives, entered on openness (Apache-2.0, no licence change
+  possible for the engine), footprint and Camel's model. Be honest that there is no channel
+  importer, no JavaScript transformer compatibility and no message browser yet.
+- **Not pitched:** a PACS, a viewer, a hospital-wide engine.
+
+### 12.4 Pages
+
+| page | content | status |
+|---|---|---|
+| docs: `guides/dicom.md`, `components/dicom.md`, `components/dicomweb.md`, `dataformats/dicom*.md`, `languages/dicom.md` | written by the DICOM session; add `dicom` to `GUIDE_ORDER` and the RTD toctree, and check the opening line answers "how do I ... DICOM ... in Camel" | publish with the merge |
+| new `use-cases/dicom-imaging-gateway/` | "DICOM router and imaging gateway": modality to PACS or cloud, AI inference loop, de-identification; the three examples; the conformance short form; verified against DCMTK and Orthanc; the limits; FAQ | drafted locally |
+| `use-cases/` index, home use-case list, footer | a card "Medical imaging: DICOM" | drafted locally |
+| `use-cases/hl7-mllp-healthcare-integration/` | a link to the DICOM page (the same binary does HL7, FHIR and DICOM) | drafted locally |
+| `/trust/` | a "Healthcare: attested de-identification" section, linking the DICOM page | drafted locally |
+| new `alternatives/mirth-connect-alternatives/` | Mirth 4.6+, Open Integration Engine, BridgeLink, Rhapsody, Iguana, Cloverleaf and Cameleer: when each fits, what Cameleer lacks (no UI, no channel importer, no message browser) | planned; after the DICOM pages |
+| comparisons (`apache-camel-vs-cameleer`) | a row: "DICOM (DIMSE, DICOMweb, de-identification)": Camel "no component"; Cameleer "yes (next release)" | drafted locally |
+| README, llms.txt | a bullet and a key-facts line with the limits | drafted locally |
+
+### 12.5 Before publishing
+
+- `dicom` merged into `main` by the owner, and the full suite run on the merge.
+- Re-read the merged guide and pages; quote nothing that isn't there.
+- Re-check that the Camel component index still has no DICOM component, and the Mirth fork facts.
+
+### 12.6 Sources
+
+- Mirth and forks: https://saga-it.com/blog/oie-vs-bridgelink-vs-mirth-connect,
+  https://saga-it.com/blog/mirth-connect-alternatives,
+  https://nirmitee.io/blog/bridgelink-open-source-mirth-connect-fork-migration-guide/,
+  https://openshare.health/mirth-options-2026, https://en.wikipedia.org/wiki/Mirth_Connect
+- DICOM gateways: https://github.com/UMEssen/DICOM-RST, https://github.com/knopkem/dicomweb-proxy,
+  https://docs.cloud.google.com/healthcare-api/docs/concepts/dicom, https://www.qvera.com/dicom-router/
+- The research note with its own sources: `docs/design/medical/dicom-and-healthcare.md` (internal)
