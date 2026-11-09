@@ -10,6 +10,29 @@ _Internal plan, 2026-11-09. Inputs, in this folder:_
 _Rules it builds on: [../family-crates-std-only.md](../family-crates-std-only.md). Not started:
 the owner asked to wait for simoom's second DigitalOcean campaign before any code moves._
 
+> **Update, 2026-11-09 (later the same day).** The owner widened simoom's first release to a
+> complete replacement for Cameleer's HTTP stack, so that Cameleer can delete its own code after
+> verification. Now in simoom's scope (its plan.md §0 item 0, BUGS.md C1-C11):
+> - TLS 1.2 client and server;
+> - PKCS#12, JKS and JCEKS keystores with an `SSLContextParameters`-equivalent configuration;
+> - CRL, OCSP checking and OCSP stapling;
+> - a `simoom-client` crate: HTTP/1.1, HTTP/2 and HTTP/3, pooling, proxies, decompression, and a
+>   WebSocket client;
+> - WebSocket over HTTP/2, HTTP/2 PING keepalive, gzip/deflate compression and gRPC parity;
+> - a blocking TLS stream adapter for Cameleer's non-HTTP protocols.
+>
+> simoom will keep parity tables (Cameleer feature → simoom → test) in
+> `docs/parity/{tls,client,server-extras}.md`.
+>
+> Consequences for this plan:
+> - the "clients stay" non-goal below becomes a later phase: Cameleer's HTTP, cloud, SaaS, MCP and
+>   HTTP/2 clients move to `simoom-client` behind the same kind of flag, after the server phases;
+> - decision D3 (TLS 1.2) is settled in favour of simoom-tls;
+> - Phase 4 shrinks to moving cameleer-tls onto simoom-tls through the blocking adapter, keeping
+>   only the Camel configuration layer, with the crypto-core question (D2) still open for SSH, PGP
+>   and XML signatures;
+> - simoom's parity tables become the checklist for each deletion in Cameleer.
+
 ## 1. Goal and non-goals
 
 **Goal.** Cameleer's servers run on simoom's event-driven engine, so that:
