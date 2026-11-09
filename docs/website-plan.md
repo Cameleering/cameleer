@@ -690,8 +690,10 @@ the second, and gets a section when it is released.
      a simulated configfs-tsm and dstack agent;
   2. whether to bring the `_meta` design to the MCP Security Interest Group (it would make "a
      concrete, spec-compatible proposal" a claim we can link to);
-  3. the page name: `/trust/`, or `/confidential/`, which matches the buyer's word better but is
-     narrower.
+  3. ~~the page name~~ **Decided 2026-11-09 by the owner: `/trust/`**, with "confidential" in the
+     title, the description, the H1 or first paragraph and the headings, so the page ranks for
+     "confidential computing" and "confidential integration" while the URL can cover later trust
+     work (sealed secrets, verifying remote servers).
 
 ### 11.7 Sources
 
