@@ -189,6 +189,32 @@ b.from("ai-tool:lookup_order?description=Look up an order by id&amp;parameter.or
   </div>
 </section>
 
+<section class="c-sec" id="expose">
+  <div class="wrap">
+    <h2>Or serve existing routes with no edits at all</h2>
+    <p class="intro"><code>--mcp-expose</code> serves routes you already run as MCP tools without touching the route files. It is on the main branch now and ships in the next release.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>One flag</h3>
+        <pre class="cmd">cameleer run orders.camel.yaml --mcp-expose rest:*
+cameleer run orders.camel.yaml --mcp-expose direct:lookup-*
+cameleer run orders.camel.yaml --mcp-stdio --mcp-expose rest:*,route:billing-*</pre>
+        <p>Patterns select REST DSL operations by path (<code>rest:/orders*</code>), routes by consumer URI (<code>direct:lookup-*</code>) or by id (<code>route:billing-*</code>). The property is <code>camel.server.mcp-expose-routes</code>.</p>
+      </div>
+      <div class="pane good">
+        <h3>What the model gets</h3>
+        <ul>
+          <li><strong>Typed tools from REST:</strong> path, query and header parameters with their types, descriptions, defaults and allowed values become the tool's JSON Schema; <code>body</code> for POST, PUT and PATCH.</li>
+          <li><strong>Readable errors:</strong> a 4xx or 5xx reply comes back as a tool error the model can read; JSON replies are structured content.</li>
+          <li><strong>Safe by default:</strong> nothing is exposed without a pattern; GET and HEAD are read-only, every other exposed tool needs approval.</li>
+          <li><strong>The same envelope:</strong> schema checks, deduplication, timeout and audit on every call; per-route overrides take every <code>ai-tool</code> option.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">Five tests in <code>crates/cameleer-main/tests/mcp_expose.rs</code> cover it, including the real binary over stdio. Routes added after start-up (dev reload) are not picked up yet. Reference: <a href="../docs/guides/mcp-server.html#expose-existing-routes-without-editing-them">Expose existing routes without editing them</a>.</p>
+  </div>
+</section>
+
 <section class="c-sec" id="server-and-client">
   <div class="wrap">
     <h2>Both an MCP server and an MCP client</h2>

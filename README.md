@@ -201,7 +201,10 @@ an `agent` step, or exposed as plain HTTP endpoints.
 `cameleer run orders.camel.yaml --mcp`, the same in Docker
 (`docker run ... pmsudhi/cameleer run /routes/orders.camel.yaml --mcp`), or
 `camel.server.mcp-enabled=true` in the Rust crate. Cameleer is both an MCP server and an MCP
-client. Written with Camel's `parameters` map, a tool route looks like this:
+client. Coming in the next release (on `main` now): `cameleer run orders.camel.yaml
+--mcp-expose rest:*` serves existing routes as tools with no edits, REST operations with typed
+arguments, and writes need approval by default
+([how](docs/guides/mcp-server.md#expose-existing-routes-without-editing-them)). Written with Camel's `parameters` map, a tool route looks like this:
 
 <!-- example: readme-mcp-tool -->
 ```yaml

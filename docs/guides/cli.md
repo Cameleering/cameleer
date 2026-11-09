@@ -42,6 +42,7 @@ the same. An unknown option is an error that prints the usage.
 cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
              [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop key=value]
              [--log-level LEVEL] [--console] [--port N] [--trace] [--mcp | --mcp-stdio]
+             [--mcp-expose PATTERNS]
 ```
 
 Runs route files: Camel YAML (`.yaml`, `.yml`), Camel XML (`.xml`), Kamelets, Pipes and Camel K
@@ -67,9 +68,12 @@ stopped (Ctrl+C, `SIGTERM`, `cameleer stop`) or a limit set with `--max-seconds`
 | `--trace` | trace every message through the routes | `camel.main.tracing=true` |
 | `--mcp` | serve `ai-tool` routes as an MCP server over Streamable HTTP at `/mcp` | `camel.server.mcp-enabled=true` |
 | `--mcp-stdio` | serve them over standard input and output (for Claude Desktop and other local clients); not with `--background` | `camel.server.mcp-transport=stdio` |
+| `--mcp-expose PATTERNS` | serve existing routes as MCP tools without editing them: `rest:*`, `rest:/orders*`, `direct:lookup-*`, `route:billing-*`, comma separated; turns on the MCP server (HTTP, or stdio with `--mcp-stdio`) | `camel.server.mcp-expose-routes` |
 
 `--mcp` and `--mcp-stdio` expose every tool (`camel.server.mcp-tags=*,untagged`) unless you set
-`camel.server.mcp-tags` yourself. A `--prop` given on the command line wins over the flags above
+`camel.server.mcp-tags` yourself. With `--mcp-expose`, REST operations become tools with typed
+arguments, GET and HEAD are read-only and every other exposed tool needs approval
+([Expose existing routes](mcp-server.md#expose-existing-routes-without-editing-them)). A `--prop` given on the command line wins over the flags above
 and over every file. The full order and every key are in [Configuration](configuration.md).
 
 ```sh
@@ -77,6 +81,7 @@ cameleer run orders.camel.yaml --profile prod --port 9090
 cameleer run --dev                                  # every route file here, reloaded on change
 cameleer run job.camel.yaml --max-messages 1        # a run-once job
 cameleer run tools.camel.yaml --mcp-stdio           # an MCP server for a desktop client
+cameleer run orders.camel.yaml --mcp-expose rest:*  # its REST API as MCP tools, no route edits
 docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml --console
 ```
 
