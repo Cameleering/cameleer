@@ -720,6 +720,13 @@ the second, and gets a section when it is released.
 
 ## 12. DICOM and healthcare imaging: positioning, pages and placement (2026-11-09, proposal)
 
+**Paused (2026-11-09):** the owner is weighing a separate "medical pack" (an optional healthcare
+pack or distribution) instead of merging DICOM into the core; the packaging study goes to
+`docs/design/packs/domain-packs.md`. The page structure and names below (12.4) wait for that
+decision: they may become a "Cameleer for Healthcare" page with its own install path. The claims
+(12.1), search findings (12.2) and positioning (12.3) don't depend on the packaging. The drafts on
+the local branch `site-dicom-draft` stay unpushed.
+
 DICOM is built on branch `dicom` (commits `0f98611` to `78907e9`) and is **not on `main`**. Pages
 are drafted on a local branch and are **not published** until the owner merges `dicom` into
 `main`; then they ship marked "next release", as `--mcp-expose` and attestation did.
