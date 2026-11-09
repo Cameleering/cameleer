@@ -565,15 +565,70 @@ fn cors_headers(cfg: &RestConfiguration) -> BTreeMap<String, String> {
     h
 }
 
+/// One REST operation as generated: its method, full path and documented parameters. Kept on
+/// the context so tools can describe REST routes (`rest_operations`), for example to expose
+/// them as MCP tools with typed arguments.
+#[derive(Clone, Debug)]
+pub struct RestOperation {
+    pub method: String,
+    /// The full path, context path included, with `{name}` placeholders.
+    pub path: String,
+    pub route_id: Option<String>,
+    pub description: Option<String>,
+    pub consumes: Option<String>,
+    pub produces: Option<String>,
+    pub params: Vec<RestParam>,
+    pub type_name: Option<String>,
+    pub deprecated: bool,
+}
+
+const OPERATIONS_BEAN: &str = "cameleer.rest.operations";
+
+/// The REST operations generated in this context, in definition order.
+pub fn rest_operations(ctx: &CamelContext) -> Vec<RestOperation> {
+    ctx.registry().lookup::<Mutex<Vec<RestOperation>>>(OPERATIONS_BEAN).map(|m| m.lock().unwrap().clone()).unwrap_or_default()
+}
+
+fn record_operations(ctx: &CamelContext, ops: Vec<RestOperation>) {
+    let store = match ctx.registry().lookup::<Mutex<Vec<RestOperation>>>(OPERATIONS_BEAN) {
+        Some(s) => s,
+        None => {
+            ctx.registry().bind(OPERATIONS_BEAN, Mutex::new(Vec::<RestOperation>::new()));
+            match ctx.registry().lookup::<Mutex<Vec<RestOperation>>>(OPERATIONS_BEAN) {
+                Some(s) => s,
+                None => return,
+            }
+        }
+    };
+    let mut all = store.lock().unwrap();
+    for op in ops {
+        // a reload generates the same operation again: replace it
+        all.retain(|o| !(o.method == op.method && o.path == op.path));
+        all.push(op);
+    }
+}
+
 /// Generate the routes backing a REST DSL.
-pub fn generate_routes(_ctx: &CamelContext, dsl: &RestDsl) -> Result<Vec<RouteDefinition>> {
+pub fn generate_routes(ctx: &CamelContext, dsl: &RestDsl) -> Result<Vec<RouteDefinition>> {
     let cfg = &dsl.configuration;
     let mut routes = Vec::new();
     let cors = if cfg.enable_cors { Some(cors_headers(cfg)) } else { None };
     let mut options_paths: Vec<String> = Vec::new();
+    let mut ops = Vec::new();
     for rest in &dsl.rests {
         for verb in &rest.verbs {
             let path = join_paths(&[&cfg.context_path, &rest.path, &verb.path]);
+            ops.push(RestOperation {
+                method: verb.method.to_ascii_uppercase(),
+                path: path.clone(),
+                route_id: verb.route_id.clone(),
+                description: verb.description.clone().or_else(|| rest.description.clone()),
+                consumes: verb.consumes.clone().or_else(|| rest.consumes.clone()),
+                produces: verb.produces.clone().or_else(|| rest.produces.clone()),
+                params: verb.params.clone(),
+                type_name: verb.type_name.clone(),
+                deprecated: verb.deprecated,
+            });
             let to = verb.to.clone().ok_or_else(|| {
                 CamelError::new(cameleer_core::error::kinds::FAILED_TO_CREATE_ROUTE, format!("Rest {} {} has no to() endpoint", verb.method, path))
             })?;
@@ -601,6 +656,7 @@ pub fn generate_routes(_ctx: &CamelContext, dsl: &RestDsl) -> Result<Vec<RouteDe
             }
         }
     }
+    record_operations(ctx, ops);
     if let Some(c) = &cors {
         for path in options_paths {
             let mut def = RouteDefinition::new(consumer_uri(cfg, &path, Some("OPTIONS"), None, None));

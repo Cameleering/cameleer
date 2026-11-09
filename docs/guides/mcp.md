@@ -59,7 +59,14 @@ cameleer run tools.camel.yaml --mcp          # Streamable HTTP on http://localho
 cameleer run tools.camel.yaml --mcp-stdio    # for a client that starts the server itself
 ```
 
-**An existing route becomes a tool by changing one line.** Keep its steps and replace the line
+**Existing routes become tools without editing them.** `cameleer run orders.camel.yaml
+--mcp-expose rest:*` serves every REST DSL operation as a tool with typed arguments taken from its
+documented parameters; `direct:*` and `route:*` patterns select other routes. Reads (GET, HEAD)
+are read-only tools, and every other exposed tool needs approval by default
+([how](mcp-server.md#expose-existing-routes-without-editing-them)).
+
+**Or make a route a tool by changing one line**, when you want to name the tool and its arguments
+yourself. Keep its steps and replace the line
 it starts from with an `ai-tool` URI that names the tool and its arguments
 ([examples/agents/route-to-mcp-tool.camel.yaml](../../examples/agents/route-to-mcp-tool.camel.yaml)):
 

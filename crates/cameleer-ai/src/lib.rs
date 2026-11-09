@@ -20,6 +20,7 @@
 
 pub mod audit;
 pub mod component;
+pub mod expose;
 pub mod guard;
 pub mod mcp;
 pub mod registry;

@@ -3,6 +3,18 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+### Added
+
+- **Existing routes as MCP tools, with no route edits**: `cameleer run --mcp-expose rest:*`
+  (property `camel.server.mcp-expose-routes`). REST DSL operations become tools with typed
+  arguments from their documented parameters; other routes (`direct:*`, `route:<id>`) take a
+  body and headers. Writes are destructive and need approval by default, GET is read-only, every
+  call goes through the tool envelope, and per-route overrides
+  (`camel.server.mcp-expose-routes.<routeId>.<option>`) take every `ai-tool` option. The REST DSL
+  now keeps its operations on the context (`cameleer_http::rest::rest_operations`).
+
 ## 0.5.1 (2026-11-09)
 
 ### Fixed
