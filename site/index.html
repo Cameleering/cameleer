@@ -38,7 +38,7 @@
   "image": "https://cameleer.ing/og.png",
   "logo": "https://cameleer.ing/brand/cameleer-mark.png",
   "license": "https://www.apache.org/licenses/LICENSE-2.0",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": {"@type": "Person", "name": "Sudheesh PM"},
   "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7",
   "isBasedOn": {"@type": "SoftwareSourceCode", "name": "Apache Camel", "url": "https://camel.apache.org/", "codeRepository": "https://github.com/apache/camel"}
@@ -484,12 +484,12 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
     <div class="catalog-head">
       <div>
         <h2 id="in-h">Everything you need to connect, built in.</h2>
-        <p class="sub">157 components, 26 languages and 29 data formats, each with its own page and tested examples. No third-party crates: every protocol is written on the Rust standard library and checked against real servers and official clients.</p>
+        <p class="sub">163 components, 26 languages and 29 data formats, each with its own page and tested examples. No third-party crates: every protocol is written on the Rust standard library and checked against real servers and official clients.</p>
       </div>
       <dl class="catalog-stats">
         <div><dt>230</dt><dd>components, languages, formats</dd></div>
         <div><dt>0</dt><dd>dependencies</dd></div>
-        <div><dt>2,600+</dt><dd>tests</dd></div>
+        <div><dt>2,800+</dt><dd>tests</dd></div>
       </dl>
     </div>
     <div class="cats">
@@ -501,9 +501,9 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       </article>
       <article class="cat">
         <h3>AI and LLMs</h3>
-        <p class="cat-n"><b>5</b> components</p>
-        <ul><li><a href="docs/components/openai.html">OpenAI and compatible</a></li><li><a href="docs/components/aws-bedrock.html">AWS Bedrock</a></li><li><a href="docs/components/aws-bedrock-agent-runtime.html">Bedrock Agents</a></li><li><a href="docs/components/azure-openai.html">Azure OpenAI</a></li><li><a href="docs/components/google-vertexai.html">Vertex AI</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=AI+and+LLMs">See all 5</a>
+        <p class="cat-n"><b>11</b> components</p>
+        <ul><li><a href="docs/components/ai-tool.html">Routes as tools</a></li><li><a href="docs/components/mcp.html">MCP</a></li><li><a href="docs/components/openai.html">OpenAI and compatible</a></li><li><a href="docs/components/anthropic.html">Anthropic</a></li><li><a href="docs/components/gemini.html">Gemini</a></li><li><a href="docs/components/aws-bedrock.html">AWS Bedrock</a></li></ul>
+        <a class="cat-more" href="docs/components/?q=AI+and+LLMs">See all 11</a>
       </article>
       <article class="cat">
         <h3>HTTP, REST and web services</h3>
@@ -613,8 +613,8 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <div class="qs">
         <ol class="steps">
           <li><div>Add the crates to <code class="in">Cargo.toml</code><pre class="cmd"><code>[dependencies]
-cameleer-core = "0.4"
-cameleer-http = "0.4"</code></pre></div></li>
+cameleer-core = "0.5"
+cameleer-http = "0.5"</code></pre></div></li>
           <li><div>Write routes in the Rust DSL (right)</div></li>
           <li><div>Run and call it<pre class="cmd"><code>cargo run --release
 curl localhost:8080/api/greet/Ada</code></pre></div></li>
@@ -653,7 +653,7 @@ cameleer stop hello-api</code></pre></div></li>
           <header><span>One binary, Camel JBang's subcommands</span></header>
 <pre><code>$ cameleer run hello-api.camel.yaml
 <span class="tk-c">INFO  HTTP server started on 0.0.0.0:8080</span>
-<span class="tk-c">INFO  Cameleer 0.4.0 (camel-1) started (3 routes, 3 started)</span>
+<span class="tk-c">INFO  Cameleer 0.5.0 (camel-1) started (3 routes, 3 started)</span>
 
 $ cameleer validate hello-api.camel.yaml   <span class="tk-c"># before it runs</span>
 $ cameleer --help
@@ -750,7 +750,7 @@ $ cameleer --help
 
   // runtime toggle
   var data = {
-    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.4.0</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
+    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.5.0</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
     java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (Java 21)</span>', '<span class="ok">Started route triage in 1.1 s</span>'], start: ['1.1 s', 100], mem: ['399 MB', 100], size: ['JDK + jars', 100] },
     native: { lines: ['$ ./triage-runner', '<span class="dim">Apache Camel 4.22 on Quarkus, native (Mandrel)</span>', '<span class="ok">Started route triage in 30 ms</span>'], start: ['30 ms', 3], mem: ['113 MB', 28], size: ['one binary, long native build', 40] }
   };

@@ -14,11 +14,11 @@ description = "Benchmark harness comparing Cameleer with Apache Camel (std-only,
 publish = false
 
 [dependencies]
-cameleer-ai = { path = "../cameleer-ai", version = "0.4.0" }
-cameleer-core = { path = "../cameleer-core", version = "0.4.0" }
-cameleer-http = { path = "../cameleer-http", version = "0.4.0" }
-cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.4.0" }
-cameleer-sql = { path = "../cameleer-sql", version = "0.4.0" }
+cameleer-ai = { path = "../cameleer-ai", version = "0.5.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.5.0" }
+cameleer-http = { path = "../cameleer-http", version = "0.5.0" }
+cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.5.0" }
+cameleer-sql = { path = "../cameleer-sql", version = "0.5.0" }
 
 [[bin]]
 name = "cameleer-bench"

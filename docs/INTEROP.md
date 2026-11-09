@@ -392,6 +392,17 @@ stays green, and `official_kafka.rs` (librdkafka, now joining groups with JoinGr
 | Azure Cosmos DB emulator, Service Bus emulator | Windows-only / Docker-only. |
 | gcloud Pub/Sub, Firestore and Datastore emulators | `gcloud components install` needs dl.google.com (blocked), the Firebase emulator jars come from storage.googleapis.com (blocked, > 10 MB). pstest replaces the Pub/Sub emulator for the gRPC consumer; Firestore has no offline alternative. |
 
+## MCP
+
+The MCP server is checked with the official conformance suite, `@modelcontextprotocol/conformance`
+0.1.16 (pinned and checksum-verified), by `scripts/mcp-conformance.sh` against
+`cameleer run --mcp` serving `scripts/mcp-conformance/fixtures.camel.yaml`: **39/39** scenarios
+for protocol 2025-11-25 and **26/26** for 2025-06-18 (2026-11-06). The suite predates 2026-07-28,
+so that era is covered by the hermetic tests in `crates/cameleer-ai/tests/mcp.rs`. A field test
+with Claude and the official MCP Python SDK (`scripts/mcp-fieldtest`, 40 requests against
+`examples/agents/mcp-shop`) is described in
+[Ask Claude about your business](guides/mcp-shop-example.md).
+
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building

@@ -164,16 +164,20 @@ parameters, JSON binding and CORS, and generates an OpenAPI 3 document.
 
 ### How do I use Cameleer with an LLM?
 
-Send the prompt as the message body to `openai:chat-completion?model=...` (OpenAI or any
-OpenAI-compatible server such as Ollama or vLLM), `aws-bedrock`, `azure-openai` or
-`google-vertexai`; the answer becomes the body, and you route on it with `choice`. See
-[Cameleer for AI agents](agents.md).
+Send the prompt as the message body to a model component: `openai:chat-completion?model=...`
+(OpenAI or any OpenAI-compatible server such as Ollama or vLLM, with presets for 19 services),
+`anthropic`, `gemini`, `aws-bedrock`, `azure-openai` or `google-vertexai`. The answer becomes
+the body, and you route on it with `choice`. Give the component `tags` and it calls your tool
+routes itself; the [`agent` step](agent-step.md) runs a whole tool-calling conversation as one
+step. See [Cameleer for AI agents](agents.md) and [model providers](model-providers.md).
 
 ### Can an AI agent call Cameleer routes as tools?
 
-Yes. Expose a route over REST and add JSON schema validation, an idempotent consumer, retries
-and an audit log, as in the [tool API pattern](agents.md#expose-a-tool-to-an-agent-over-rest).
-A packaged MCP server is planned ([roadmap](../ROADMAP.md)).
+Yes. Make the route an [`ai-tool`](../components/ai-tool.md) and serve it with the
+[MCP server](mcp-server.md) (`cameleer run --mcp`, or `--mcp-stdio` for Claude Desktop): every
+call gets schema checks, approvals, deduplication, timeouts and an audit record. Start with
+[MCP](mcp.md). For agents that call plain HTTP, the
+[tool API pattern](agents.md#expose-a-tool-to-an-agent-over-rest) does the same over REST.
 
 ### Does Cameleer run models or store embeddings?
 
@@ -184,14 +188,14 @@ OpenSearch or PostgreSQL with pgvector. See [RAG ingestion](agents.md#rag-ingest
 
 ### Is Cameleer production ready?
 
-The feature list is complete against its 228-row parity table, with 2,300+ hermetic tests and
+The feature list is complete against its parity table (every row ✅), with 2,800+ hermetic tests and
 verification against real servers, official clients and emulators ([INTEROP.md](../INTEROP.md)).
-Two caveats: it is young (version 0.2), and its from-scratch TLS and crypto code has not had an
+Two caveats: it is young (version 0.5), and its from-scratch TLS and crypto code has not had an
 independent security audit yet ([STATUS.md](../STATUS.md)). Evaluate it on your own workload.
 
 ### How is it tested?
 
-With 2,300+ hermetic tests against embedded servers, live suites against real PostgreSQL, Redis,
+With 2,800+ hermetic tests against embedded servers, live suites against real PostgreSQL, Redis,
 RabbitMQ, ActiveMQ, Mosquitto, vsftpd, Postfix/Dovecot and nginx, official clients (librdkafka,
 pymongo, the DataStax driver, boto3, the Azure SDK, gcloud, grpcio) and emulators (moto, Azurite,
 fake-gcs-server, FerretDB). Every example in these guides runs in the test suite.
