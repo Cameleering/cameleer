@@ -14,6 +14,7 @@ pub const FEATURES: &[(&str, bool)] = &[
     ("cloud", cfg!(feature = "cloud")),
     ("dataformats", cfg!(feature = "dataformats")),
     ("datastores", cfg!(feature = "datastores")),
+    ("dicom", cfg!(feature = "dicom")),
     ("grpc", cfg!(feature = "grpc")),
     ("kafka-mqtt", cfg!(feature = "kafka-mqtt")),
     ("protocols", cfg!(feature = "protocols")),
@@ -69,6 +70,7 @@ pub const LANGUAGES: &[(&str, &[&str])] = &[
     ("script", &["js", "javascript", "javaScript", "groovy", "python", "ognl", "mvel", "spel", "datasonnet", "joor", "java", "csimple"]),
     ("xml", &["xquery"]),
     ("protocols", &["hl7terser"]),
+    ("dicom", &["dicom"]),
     ("jq", &["jq"]),
     // the `xml` family registers the full XPath too, so this hint only shows when both are out
     ("xpath", &["xpath"]),

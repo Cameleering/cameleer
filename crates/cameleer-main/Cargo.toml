@@ -20,6 +20,7 @@ cameleer-cloud = { path = "../cameleer-cloud", version = "0.5.1", optional = tru
 cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
 cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.5.1", optional = true }
 cameleer-datastores = { path = "../cameleer-datastores", version = "0.5.1", optional = true }
+cameleer-dicom = { path = "../cameleer-dicom", version = "0.5.1", optional = true }
 cameleer-grpc = { path = "../cameleer-grpc", version = "0.5.1", optional = true }
 cameleer-http = { path = "../cameleer-http", version = "0.5.1", default-features = false }
 cameleer-protocols = { path = "../cameleer-protocols", version = "0.5.1", optional = true }
@@ -47,7 +48,7 @@ default = ["full"]
 # nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
 core = []
 full = [
-    "ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "dicom", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
     "templates", "jq", "xpath", "http2", "validate",
 ]
 templates = ["cameleer-core/templates"]
@@ -61,6 +62,7 @@ amqp10 = ["dep:cameleer-amqp10"]
 cloud = ["dep:cameleer-cloud", "cameleer-yaml/agent"]
 dataformats = ["dep:cameleer-dataformats"]
 datastores = ["dep:cameleer-datastores"]
+dicom = ["dep:cameleer-dicom"]
 grpc = ["dep:cameleer-grpc"]
 kafka-mqtt = ["dep:cameleer-kafka-mqtt"]
 protocols = ["dep:cameleer-protocols"]

@@ -52,6 +52,7 @@ fn table_covers_every_registered_language() {
     for (family, register) in [
         ("script", cameleer_script::register as fn(&CamelContext)),
         ("protocols", cameleer_protocols::register),
+        ("dicom", cameleer_dicom::register),
     ] {
         let ctx = CamelContext::new();
         register(&ctx);
@@ -228,7 +229,7 @@ fn reference_pages_name_their_cargo_feature() {
         Some(rest[a..b].trim_end_matches(':').to_string())
     }
     let family = |crate_name: &str| -> Option<&'static str> {
-        ["ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
+        ["ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "dicom", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml"]
             .into_iter()
             .find(|f| crate_name == format!("cameleer-{f}"))
     };
