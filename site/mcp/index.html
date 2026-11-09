@@ -41,6 +41,7 @@
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
  {"@type": "Question", "name": "What is the action layer for AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "The layer between an AI agent's decisions and your systems. The model decides what should happen; a tested Cameleer route decides how, and the server enforces what a model cannot be trusted with: arguments are checked against a schema, a retried call runs once, risky actions wait for a person, business rules are checked in code, slow calls are cancelled, personal data is redacted and every call is audited. Agents reach it over MCP or from Cameleer's own agent step."}},
  {"@type": "Question", "name": "How do I turn an existing route into an MCP tool?", "acceptedAnswer": {"@type": "Answer", "text": "Change the line the route starts from to an ai-tool URI that names the tool and its arguments, for example uri: \"ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true\", and run it with cameleer run orders.camel.yaml --mcp (or --mcp-stdio for Claude Desktop, or the same command in the pmsudhi/cameleer Docker image). The route's steps stay as they are. In a Rust program, start the route with b.from(\"ai-tool:...\") and set camel.server.mcp-enabled=true."}},
+ {"@type": "Question", "name": "Can a client check what a Cameleer MCP server is running?", "acceptedAnswer": {"@type": "Answer", "text": "In the next release, yes, when Cameleer runs in a confidential VM: the client sends a nonce in server/discover or initialize and gets a hardware-signed report bound to that nonce, to the server's TLS key and to a manifest of its routes, configuration and tools. Cameleer does not verify the hardware signature itself; the client uses the platform's verifier."}},
  {"@type": "Question", "name": "Is Cameleer an MCP server or an MCP client?", "acceptedAnswer": {"@type": "Answer", "text": "Both. It serves routes as MCP tools, resources and prompts, and it imports the tools of other MCP servers for routes and models to use, or to serve again as a gateway with its own checks."}},
  {"@type": "Question", "name": "What is Cameleer's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "It serves Cameleer routes (ai-tool, ai-resource and ai-prompt endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record."}},
  {"@type": "Question", "name": "How fast is it compared with Apache Camel's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, Cameleer served 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel 4.23's camel-mcp-server on the JVM and 1,536 calls per second in 214 MB for a server on the official MCP TypeScript SDK. Camel's p99 latency was lower (5.2 ms against 5.9 ms)."}},
@@ -128,6 +129,13 @@
         <tr><td>is asked what it did</td><td>whatever the framework happened to log</td><td class="win">a hash-chained record per call: caller, argument digest, decision, approver</td><td>a test detects an edited record</td></tr>
       </tbody>
     </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="trust">
+  <div class="wrap">
+    <h2>Prove which server and tools an agent is talking to</h2>
+    <p class="intro">Next release: run Cameleer in a confidential VM (Intel TDX, AMD SEV-SNP or a dstack CVM) and an MCP client can ask, in the handshake, for hardware evidence of the exact routes, configuration and tools the server runs, bound to the client's nonce and to the session's TLS connection. A model showing that evidence is not checking it; the client program checks the binding and the hardware signature. <a href="../trust/">How it works, and what it does not prove yet</a>.</p>
   </div>
 </section>
 
@@ -325,6 +333,7 @@ cameleer run orders.camel.yaml --mcp-stdio --mcp-expose rest:*,route:billing-*</
   <div class="wrap">
     <h2>Common questions</h2>
     <details><summary>How do I turn an existing route into an MCP tool?</summary><p>Change the line the route starts from to an <code>ai-tool</code> URI that names the tool and its arguments, for example <code>uri: "ai-tool:lookup_order?description=Look up an order by id&amp;parameter.orderId=string&amp;parameter.orderId.required=true"</code>, and run it with <code>cameleer run orders.camel.yaml --mcp</code> (or <code>--mcp-stdio</code> for Claude Desktop, or the same command in the <code>pmsudhi/cameleer</code> Docker image). The route's steps stay as they are. In a Rust program, start the route with <code>b.from("ai-tool:...")</code> and set <code>camel.server.mcp-enabled=true</code>.</p></details>
+    <details><summary>Can a client check what a Cameleer MCP server is running?</summary><p>In the next release, yes, when Cameleer runs in a confidential VM: the client sends a nonce in <code>server/discover</code> or <code>initialize</code> and gets a hardware-signed report bound to that nonce, to the server's TLS key and to a manifest of its routes, configuration and tools. Cameleer does not verify the hardware signature itself; the client uses the platform's verifier. See <a href="../trust/">trust</a>.</p></details>
     <details><summary>Is Cameleer an MCP server or an MCP client?</summary><p>Both. It serves routes as MCP tools, resources and prompts, and it imports the tools of other MCP servers for routes and models to use, or to serve again as a gateway with its own checks.</p></details>
     <details><summary>What is Cameleer's MCP server?</summary><p>It serves Cameleer routes (<code>ai-tool</code>, <code>ai-resource</code> and <code>ai-prompt</code> endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record.</p></details>
     <details><summary>How fast is it compared with Apache Camel's MCP server?</summary><p>On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, Cameleer served 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel 4.23's <code>camel-mcp-server</code> on the JVM and 1,536 calls per second in 214 MB for a server on the official MCP TypeScript SDK. Camel's p99 latency was lower (5.2 ms against 5.9 ms).</p></details>
@@ -365,6 +374,7 @@ docker run --rm -p 18190:18190 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes
         <li><a href="../docs/guides/mcp-server.html">MCP server reference</a></li>
         <li><a href="../compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a></li>
         <li><a href="../use-cases/mcp-tool-server/">Routes as MCP tools</a></li>
+        <li><a href="../trust/">Attested MCP servers</a></li>
       </ul>
     </div>
     <div>

@@ -1146,9 +1146,9 @@ class Site:
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
 
     def designed_pages(self):
-        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/** and <out>/use-cases/** (index.html)."""
+        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/**, <out>/use-cases/** and <out>/trust/** (index.html)."""
         found = []
-        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases") for w in os.walk(os.path.join(self.out, top))):
+        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases", "trust") for w in os.walk(os.path.join(self.out, top))):
             if "index.html" in files:
                 found.append(os.path.relpath(os.path.join(d, "index.html"), self.out).replace("\\", "/"))
         return sorted(found)
