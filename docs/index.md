@@ -18,6 +18,14 @@ guides/validate
 guides/eips
 guides/error-handling
 guides/agents
+guides/agent-tool-calls
+guides/agent-step
+guides/mcp
+guides/mcp/*
+guides/mcp-server
+guides/mcp-client
+guides/mcp-shop-example
+guides/model-providers
 guides/edge
 guides/ai-components
 guides/cloud-credentials
@@ -71,5 +79,4 @@ FEATURES
 BENCHMARKS
 INTEROP
 ROADMAP
-STATUS
 ```

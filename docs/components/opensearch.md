@@ -64,7 +64,7 @@ is on the [elasticsearch](elasticsearch.md#options) page.
 | `enableDocumentOnlyMode` | `false` | return `_source` documents instead of response objects |
 | `user`, `password` | | basic authentication |
 | `apiKey` | | sent as `Authorization: ApiKey <value>` |
-| `enableSSL` | `false` | HTTPS; trust from `sslContextParameters=#bean`, the global `camel.ssl.*` parameters or the system store |
+| `enableSSL` | `false` | HTTPS; trust from `sslContextParameters=#bean`, the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`) or the system store |
 | `useScroll` | `false` | run `Search` as a scroll search and return all hits |
 
 ## Message headers

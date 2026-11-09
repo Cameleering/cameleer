@@ -21,6 +21,16 @@ observability 2/7, testing 2/5, migration 3/7, Rust embedding 2/7**.
 
 ## 1. Wrong or misleading (fix first)
 
+**Done 2026-11-09** (after merging `main` with 0.5.0 and 0.5.1): Kafka TLS options and a mutual
+TLS FAQ; `camel.ssl.enabled=true` on every global-TLS mention; the `cameleer export` caveat in
+getting-started; the trust store and `SSL_CERT_FILE` in the FAQ (and `trustAllCertificates`);
+`concepts.md` rows; a note on INTEROP's dated counts; the missing headers and options on five
+component pages; `STATUS.md` no longer published (links now go to the roadmap and GitHub); the
+Read the Docs canonical points at `https://cameleer.ing/docs/` and its toctree lists every guide;
+guides ordered by path; `llms.txt` with one documentation section, a project-pages section on
+the site, the full CLI list, the counts and the page URL pattern. Not a finding after all: the
+MCP server table does list `mcp-server-description` and `mcp-server-website-url`.
+
 | where | says | true (evidence) |
 |---|---|---|
 | `docs/components/kafka.md:115,120` | Java keystores and client certificates are not supported | **verified**: PKCS12, JKS and PEM key and trust stores are accepted (`crates/cameleer-kafka-mqtt/src/kafka/mod.rs:175-187`); `sslKeystoreLocation`, `sslKeystorePassword`, `sslKeyPassword`, `sslKeystoreType`, `sslTruststorePassword`, `sslTruststoreType`, `sslEndpointAlgorithm`, `sslEnabledProtocols` undocumented; module comment at mod.rs:39 is stale too |

@@ -187,7 +187,7 @@ Current results: [BENCHMARKS.md](BENCHMARKS.md); analysis: [../benchmarks/analys
 | **Docker-based real servers** (Kafka, Elasticsearch, Cassandra, CouchDB, MongoDB, Artemis) | beyond the protocol emulators | 🚧 |
 | **Independent security audit and fuzzing** of the from-scratch TLS, SSH, XML security and protocol parsers | the price of having no dependencies is owning that code | 🚧 |
 
-The verification and operations items are also tracked in [STATUS.md](STATUS.md).
+The verification and operations items are also tracked in the repository's [status notes](https://github.com/pmsudhi/cameleer/blob/main/docs/STATUS.md).
 
 ## Found a problem?
 

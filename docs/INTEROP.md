@@ -27,6 +27,8 @@ script). Every account uses the password `camelpw` (system users `camelftp` and 
 
 ## Results
 
+The sections below record the runs of 2026-11-01. The latest full run, in one container session, passed 74 live, 58 official-client and 35 simulator tests with no failures.
+
 Run on 2026-11-01. All 72 live tests pass (`CAMEL_LIVE_INTEROP=1 cargo test --workspace live_`), including
 27 against Apache ActiveMQ 5.17 (12 STOMP, 5 MQTT and 10 AMQP 1.0, the latter with the
 `activemq-amqp` module added, see below).

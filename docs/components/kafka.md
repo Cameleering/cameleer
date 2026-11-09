@@ -112,12 +112,15 @@ pub fn routes(ctx: &CamelContext) -> Result<()> {
 | `securityProtocol` | `PLAINTEXT` | `PLAINTEXT`, `SSL`, `SASL_PLAINTEXT` or `SASL_SSL`. |
 | `saslMechanism` | `PLAIN` | `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512` (and `AWS_MSK_IAM` with `cameleer-cloud`). |
 | `saslJaasConfig` | | Credentials: `... required username="u" password="p";`. |
-| `sslTruststoreLocation` | | PEM file with trusted CA certificates (Java keystores are not supported). |
-| `sslEndpointIdentificationAlgorithm` | `https` | Empty value disables host name verification. |
-| `sslProtocol` | | Restrict the TLS version. |
-| `sslContextParameters`, `useGlobalSslContextParameters` | | TLS settings from a bean or the global `camel.ssl.*` parameters. |
+| `sslTruststoreLocation` | | Trusted CA certificates: a PEM file, a PKCS12 file or a Java keystore (JKS). |
+| `sslTruststorePassword`, `sslTruststoreType` | | Password and type (`PEM`, `PKCS12`, `JKS`) of the trust store; the type is detected when absent. |
+| `sslKeystoreLocation` | | Client certificate for mutual TLS: a PKCS12 file, a Java keystore (JKS) or a PEM file with the certificate chain and key. |
+| `sslKeystorePassword`, `sslKeyPassword`, `sslKeystoreType` | | Password of the key store, of the key inside it, and its type (`PEM`, `PKCS12`, `JKS`); detected when absent. |
+| `sslEndpointIdentificationAlgorithm` (also `sslEndpointAlgorithm`) | `https` | Empty value disables host name verification. |
+| `sslProtocol` (also `sslEnabledProtocols`) | | Restrict the TLS version. |
+| `sslContextParameters`, `useGlobalSslContextParameters` | | TLS settings from a bean or the global `camel.ssl.*` parameters (which apply only with `camel.ssl.enabled=true`). |
 
-GSSAPI (Kerberos), OAUTHBEARER and client certificates (`sslKeystoreLocation`) are not supported. Other
+GSSAPI (Kerberos) and OAUTHBEARER are not supported. Other
 Camel Kafka tuning options are accepted and ignored.
 
 ## Message headers
@@ -157,6 +160,14 @@ Send a list body: an array body sends one record per element.
 ### How do I connect to Confluent Cloud or another SASL_SSL cluster?
 
 `securityProtocol=SASL_SSL&saslMechanism=PLAIN&saslJaasConfig=RAW(org.apache.kafka.common.security.plain.PlainLoginModule required username="{{env:KAFKA_KEY}}" password="{{env:KAFKA_SECRET}}";)`.
+
+### How do I connect with a client certificate (mutual TLS)?
+
+Use `securityProtocol=SSL` with a trust store for the broker's CA and a key store holding the
+client certificate and key:
+`securityProtocol=SSL&sslTruststoreLocation=/certs/ca.pem&sslKeystoreLocation=/certs/client.p12&sslKeystorePassword={{env:KAFKA_KEYSTORE_PASSWORD}}`.
+PKCS12, Java keystores (JKS) and PEM files work for both stores; set `sslKeystoreType` or
+`sslTruststoreType` (`PKCS12`, `JKS`, `PEM`) if the type is not detected from the file.
 
 ### How do I commit offsets only after my processing succeeded?
 

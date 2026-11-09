@@ -60,7 +60,7 @@ fn archive_mail_route(b: &mut RouteBuilder, pop3: &str, archive_dir: &str) {
 | `connectionTimeout` | `30s` | Connect timeout. |
 | `mail.pop3.starttls.enable`, `mail.pop3.starttls.required` | `false` | STLS on `pop3:`. |
 | `sslContextParameters` | | `#bean` with trust material for TLS. |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 ## Message headers
 

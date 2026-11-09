@@ -21,7 +21,7 @@ couchdb:https://host[:port]/database[?options]
 ```
 
 The port defaults to 5984. `https` uses TLS with the system trust store, the global
-`camel.ssl.*` parameters or `sslContextParameters=#bean`.
+`camel.ssl.*` parameters (with `camel.ssl.enabled=true`) or `sslContextParameters=#bean`.
 
 **Producer.** Without a `CouchDbMethod` header the body (a map or JSON text) is saved:
 `PUT /db/{_id}` when it has an `_id`, else `POST /db`. A body with `_rev` updates that

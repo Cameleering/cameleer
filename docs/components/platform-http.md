@@ -94,7 +94,7 @@ fn device_readings_routes(b: &mut RouteBuilder) {
 | `disableStreamCache` | `false` | Pass the request body as a stream handle read lazily from the connection. |
 | `ssl` | `false` | Serve HTTPS (certificate from `camel.server.ssl.*` or `sslContextParameters`). |
 | `sslContextParameters` | | `#bean` with the server key store; also enables HTTPS. |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 | `needClientAuth` | `false` | Require a client certificate (mutual TLS). `clientAuth=NONE\|WANT\|REQUIRE` is the long form. |
 
 `camel.server.sslEnabled=true` turns on HTTPS for every `platform-http` endpoint. Apache Camel

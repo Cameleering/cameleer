@@ -39,7 +39,7 @@ import time
 # Files that exist only for the Read the Docs build (docs/conf.py), skipped here.
 SPHINX_ONLY = {"index.md", "conf.py", "requirements.txt"}
 # Working documents for the project (plans and strategy) that stay in the repository only.
-INTERNAL = {"website-plan.md"}
+INTERNAL = {"website-plan.md", "STATUS.md"}
 # Directories of working documents (design notes for planned work), also repository only.
 INTERNAL_DIRS = {"design"}
 
@@ -59,9 +59,12 @@ SECTIONS = [  # (directory, nav title, index title, index answer)
 ]
 SECTION_DIRS = [s[0] for s in SECTIONS]
 
-# Guides listed first, in this order; the rest follow alphabetically by title.
-GUIDE_ORDER = ["getting-started", "quickstart", "quick-start", "concepts", "yaml-dsl", "rust-dsl",
-               "eips", "error-handling", "rest-dsl", "kamelets", "testing", "deployment"]
+# Guides listed first, in this order (paths under guides/, without .md); the rest follow
+# alphabetically by title. Paths, not file stems: guides/mcp/deployment.md is not "deployment".
+GUIDE_ORDER = ["getting-started", "concepts", "yaml-dsl", "yaml-for-coding-agents", "validate",
+               "eips", "error-handling", "build-features", "migrating-from-apache-camel",
+               "cloud-credentials", "agents", "agent-tool-calls", "mcp", "mcp-server", "mcp-client",
+               "agent-step", "model-providers", "ai-components", "mcp-shop-example", "edge", "faq"]
 
 CATEGORY_ORDER = [
     "Core and routing", "Scheduling", "Files, shell and streams", "HTTP, REST and web services",
@@ -913,7 +916,8 @@ class Site:
         ps = [p for p in self.pages.values() if p.section == section and p.out != section + "/index.html"]
         if section == "guides":
             def key(p):
-                return (GUIDE_ORDER.index(p.stem) if p.stem in GUIDE_ORDER else len(GUIDE_ORDER), p.title.lower())
+                name = p.out[len("guides/"):-len(".html")] if p.out.startswith("guides/") else p.stem
+                return (GUIDE_ORDER.index(name) if name in GUIDE_ORDER else len(GUIDE_ORDER), p.title.lower())
         else:
             def key(p):
                 return nav_title(p).lower()

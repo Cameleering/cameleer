@@ -104,7 +104,22 @@ is its own custom runtime for `provided.al2023`: API Gateway and function URL ev
 ### Does it run on Windows and macOS?
 
 Yes. The CLI builds and runs on Linux, macOS and Windows (the test suite passes on Windows 11);
-the Docker image is Linux (amd64 and arm64).
+the Docker image is Linux (amd64 and arm64). On Windows, set `SSL_CERT_FILE` to a PEM bundle of
+CA certificates before calling HTTPS or TLS services on the internet: Cameleer does not read the
+Windows certificate store (see the next question).
+
+### Which CA certificates does Cameleer trust?
+
+Unless an endpoint names its own trust store (`sslContextParameters`, `trustStore`, the global
+`camel.ssl.*` parameters with `camel.ssl.enabled=true`), Cameleer uses the system trust store:
+the file named by the `SSL_CERT_FILE` environment variable, else the first bundle found at
+`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`,
+`/etc/ssl/ca-bundle.pem`, `/etc/ssl/cert.pem` or
+`/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`. The Docker image and most Linux
+distributions have one of these, and macOS has `/etc/ssl/cert.pem`. Windows has none, so set
+`SSL_CERT_FILE` there (for example to a `cacert.pem` bundle). Certificates are always checked
+unless you set Camel's `trustAllCertificates=true` (in `camel.ssl.*` or an `SSLContextParameters`
+bean), which is meant for tests only.
 
 ### Can it run with a read-only filesystem?
 
@@ -191,7 +206,7 @@ OpenSearch or PostgreSQL with pgvector. See [RAG ingestion](agents.md#rag-ingest
 The feature list is complete against its parity table (every row ✅), with 2,800+ hermetic tests and
 verification against real servers, official clients and emulators ([INTEROP.md](../INTEROP.md)).
 Two caveats: it is young (version 0.5), and its from-scratch TLS and crypto code has not had an
-independent security audit yet ([STATUS.md](../STATUS.md)). Evaluate it on your own workload.
+independent security audit yet (it is on the [roadmap](../ROADMAP.md#25-verification-and-trust)). Evaluate it on your own workload.
 
 ### How is it tested?
 

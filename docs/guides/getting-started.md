@@ -201,6 +201,12 @@ and use `cameleer_main::new_main()`, then `add_route_file("routes/hello.camel.ya
 | `cameleer export --directory my-service` | turn routes into a standalone Rust project |
 | `cameleer catalog components` | list the components |
 
+The project `cameleer export` writes depends on a Cameleer source checkout: its `Cargo.toml`
+has `cameleer-main = { path = "<camel-path>/cameleer-main" }`, where `--camel-path` defaults to
+the source tree the CLI was built from. With the Docker image or a `cargo install` build, pass
+`--camel-path` to a clone of the repository's `crates` folder, or replace that line with the
+published crate (`cameleer-main = "0.5"`).
+
 ## Where to go next
 
 - [Concepts](concepts.md): routes, endpoints, exchanges, messages, components and the DSLs.

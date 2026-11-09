@@ -40,7 +40,9 @@ github_url = "https://github.com/pmsudhi/cameleer"
 
 html_theme = "furo"
 html_title = f"Cameleer {release}"
-html_baseurl = os.environ.get("READTHEDOCS_CANONICAL_URL", "https://cameleer.readthedocs.io/en/latest/")
+# Canonical URLs point at the project website, which publishes the same pages at the same paths
+# under /docs/, so search engines index one copy (Read the Docs is a mirror).
+html_baseurl = "https://cameleer.ing/docs/"
 html_theme_options = {
     "source_repository": "https://github.com/pmsudhi/cameleer/",
     "source_branch": "main",

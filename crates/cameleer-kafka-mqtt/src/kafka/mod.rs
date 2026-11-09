@@ -36,13 +36,14 @@
 //! **Security**: `securityProtocol` `PLAINTEXT` (default), `SSL`, `SASL_PLAINTEXT` or
 //! `SASL_SSL` (custom one-step SASL mechanisms such as `AWS_MSK_IAM`, registered by
 //! `cameleer-cloud`, plug in through [`client::register_sasl_mechanism`]). TLS trust comes from `sslContextParameters=#bean`,
-//! `useGlobalSslContextParameters=true`, `sslTruststoreLocation` (a PEM CA file - Java
-//! keystores are not supported), the global `camel.ssl.*` parameters, else the system
+//! `useGlobalSslContextParameters=true`, `sslTruststoreLocation` (PEM, PKCS12 or JKS, with
+//! `sslTruststorePassword`/`sslTruststoreType`), the global `camel.ssl.*` parameters, else the system
 //! trust store; `sslEndpointIdentificationAlgorithm=` (empty) disables host name
 //! verification, `sslProtocol` restricts the TLS version. SASL: `saslMechanism` `PLAIN`
 //! (default), `SCRAM-SHA-256` or `SCRAM-SHA-512` with credentials from `saslJaasConfig`
-//! (`... required username="u" password="p";`). GSSAPI/OAUTHBEARER and client
-//! certificates (`sslKeystoreLocation`) are not supported.
+//! (`... required username="u" password="p";`). Client certificates: `sslKeystoreLocation`
+//! (PKCS12, JKS or PEM) with `sslKeystorePassword`/`sslKeyPassword`/`sslKeystoreType`.
+//! GSSAPI and OAUTHBEARER are not supported.
 
 pub mod client;
 mod consumer;

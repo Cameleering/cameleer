@@ -69,7 +69,7 @@ pub fn routes(ctx: &CamelContext) -> Result<()> {
 | `unmarshal` | `true` | Consumer: the body is the parsed message (a map). `false` keeps the raw text. |
 | `ssl` | `false` | Use TLS with `syslog:tcp://` (RFC 5425). |
 | `sslContextParameters` | | `#bean` with TLS settings; the consumer needs key material. |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 | `charset`, `sync`, `textline`, `delimiter`, `receiveBufferSize`, `sendBufferSize` | | Accepted and ignored. |
 
 The parsed body has the fields `format` (`RFC5424` / `RFC3164`), `priority`, `facility` (name such as

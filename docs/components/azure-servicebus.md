@@ -97,6 +97,7 @@ ctx.add_routes(|b| {
 | `CamelAzureServiceBusApplicationProperties` | in/out | Application properties (map). |
 | `CamelAzureServiceBusReplyToSessionId` | out | Reply-to session. |
 | `CamelAzureServiceBusEnqueuedTime`, `CamelAzureServiceBusLockedUntil`, `CamelAzureServiceBusExpiresAt` | out | Times (epoch millis). |
+| `CamelAzureServiceBusSessionState` | out | `getSessionState`: the session state (also the body). |
 | `CamelAzureServiceBusSequenceNumber` | in/out | Sequence number (set by `scheduleMessages`, input of `receiveDeferredMessages`). |
 | `CamelAzureServiceBusDeliveryCount`, `CamelAzureServiceBusLockToken` | out | Delivery count and lock token. |
 | `CamelAzureServiceBusDeadLetterReason`, `CamelAzureServiceBusDeadLetterErrorDescription`, `CamelAzureServiceBusDeadLetterSource` | out | Dead-letter details. |
