@@ -59,6 +59,42 @@ cameleer run tools.camel.yaml --mcp          # Streamable HTTP on http://localho
 cameleer run tools.camel.yaml --mcp-stdio    # for a client that starts the server itself
 ```
 
+**An existing route becomes a tool by changing one line.** Keep its steps and replace the line
+it starts from with an `ai-tool` URI that names the tool and its arguments
+([examples/agents/route-to-mcp-tool.camel.yaml](../../examples/agents/route-to-mcp-tool.camel.yaml)):
+
+```diff
+ - route:
+     id: order-lookup
+     from:
+-      uri: direct:lookup-order
++      uri: "ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true&readOnlyHint=true"
+       steps:
+```
+
+Then one command serves it, from the CLI, Docker or your own Rust program:
+
+```bash
+cameleer run orders.camel.yaml --mcp
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml --mcp
+```
+
+```rust
+main.set_property("camel.server.mcp-enabled", "true");
+b.from("ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true&readOnlyHint=true")
+    .set_body(simple(r#"{"orderId": "${header.orderId}"}"#));
+```
+
+A test (`an_existing_route_becomes_a_tool_by_changing_one_line` in
+`crates/cameleer-main/tests/mcp_main.rs`) checks that the example differs from the original route
+in that one line and serves the tool, from YAML and from the Rust DSL. A route that other routes
+or a REST endpoint also call keeps its `direct:` start, with a three-line `ai-tool` route in front
+of it that does `to: direct:lookup-order`.
+
+**Cameleer is both an MCP server and an MCP client.** It serves your routes to agents, and it
+imports other MCP servers' tools for routes and models to use, or serves them again as a
+[gateway](mcp/gateway.md) with the same checks.
+
 In a real tool the `setBody` is a query, an API call, a queue: any of Cameleer's about 230
 components, with the route's own error handling and retries. The fastest way to see what that
 means is the [shop example](mcp-shop-example.md): a whole back office in one YAML file that you

@@ -1,0 +1,22 @@
+# An existing route turned into an MCP tool by changing one line. Before, the route started with
+#
+#     uri: direct:lookup-order
+#
+# and other routes called it. Now its first line is an ai-tool URI, so AI agents can call it
+# over MCP, with the arguments checked against the declared parameters, retries run once and
+# every call audited. The steps are unchanged.
+#
+#   cameleer run route-to-mcp-tool.camel.yaml --mcp          (http://localhost:8080/mcp)
+#   cameleer run route-to-mcp-tool.camel.yaml --mcp-stdio    (Claude Desktop starts it)
+#   docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer \
+#     run /routes/route-to-mcp-tool.camel.yaml --mcp
+- route:
+    id: order-lookup
+    from:
+      uri: "ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true&readOnlyHint=true"
+      steps:
+        - setHeader:
+            name: Content-Type
+            constant: application/json
+        - setBody:
+            simple: '{"orderId": "${header.orderId}", "status": "shipped", "carrier": "DPD"}'

@@ -40,6 +40,8 @@
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
  {"@type": "Question", "name": "What is the action layer for AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "The layer between an AI agent's decisions and your systems. The model decides what should happen; a tested Cameleer route decides how, and the server enforces what a model cannot be trusted with: arguments are checked against a schema, a retried call runs once, risky actions wait for a person, business rules are checked in code, slow calls are cancelled, personal data is redacted and every call is audited. Agents reach it over MCP or from Cameleer's own agent step."}},
+ {"@type": "Question", "name": "How do I turn an existing route into an MCP tool?", "acceptedAnswer": {"@type": "Answer", "text": "Change the line the route starts from to an ai-tool URI that names the tool and its arguments, for example uri: \"ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true\", and run it with cameleer run orders.camel.yaml --mcp (or --mcp-stdio for Claude Desktop, or the same command in the pmsudhi/cameleer Docker image). The route's steps stay as they are. In a Rust program, start the route with b.from(\"ai-tool:...\") and set camel.server.mcp-enabled=true."}},
+ {"@type": "Question", "name": "Is Cameleer an MCP server or an MCP client?", "acceptedAnswer": {"@type": "Answer", "text": "Both. It serves routes as MCP tools, resources and prompts, and it imports the tools of other MCP servers for routes and models to use, or to serve again as a gateway with its own checks."}},
  {"@type": "Question", "name": "What is Cameleer's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "It serves Cameleer routes (ai-tool, ai-resource and ai-prompt endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record."}},
  {"@type": "Question", "name": "How fast is it compared with Apache Camel's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, Cameleer served 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel 4.23's camel-mcp-server on the JVM and 1,536 calls per second in 214 MB for a server on the official MCP TypeScript SDK. Camel's p99 latency was lower (5.2 ms against 5.9 ms)."}},
  {"@type": "Question", "name": "Does it work with Claude?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. In a field test, 40 requests a shop's staff would type ran through Claude and the official MCP client against Cameleer's shop example: Claude Opus 5.5 completed 157 of 160 runs correctly in 2025-11-25 sessions and 39 of 40 in the stateless 2026-07-28 era, with 2.9 turns and 3.3 tool calls per request on average."}},
@@ -67,7 +69,7 @@
     <p class="crumbs"><a href="../">Cameleer</a> / MCP</p>
     <p class="kicker">The action layer for AI agents</p>
     <h1>The model decides what. A tested route decides how.</h1>
-    <p class="lede">Agents are good at deciding and bad at doing things exactly once, within the rules, with a record of who allowed what. Cameleer sits between them and your systems: agents call it over MCP from Claude, IDE assistants and agent frameworks, each action runs as a tested route, and the server enforces what the model can't be trusted with. Arguments are checked, retries run once, risky actions wait for a person, slow calls are stopped and every call is audited, whatever the model does.</p>
+    <p class="lede">Agents are good at deciding and bad at doing things exactly once, within the rules, with a record of who allowed what. Cameleer sits between them and your systems: agents call it over MCP from Claude, IDE assistants and agent frameworks, each action runs as a tested route (an existing route becomes a tool by changing one line), and the server enforces what the model can't be trusted with. Arguments are checked, retries run once, risky actions wait for a person, slow calls are stopped and every call is audited, whatever the model does. Cameleer is both an MCP server and an MCP client, so the same rules also cover the other MCP servers your agents use.</p>
     <div class="stats">
       <div class="stat"><b>196/200</b><span>real requests handled right with Claude Opus 5.5</span><small>field test, 40 requests, graded on the database afterwards</small></div>
       <div class="stat"><b>0</b><span>wrong actions in those runs: none run twice, no rule broken, no risky call without a yes</span><small>the four misses were wording</small></div>
@@ -144,38 +146,71 @@
 
 <section class="c-sec" id="how">
   <div class="wrap">
-    <h2>How it works: a tool is a route</h2>
-    <p class="intro">A tool is a route. The route does the work with any of Cameleer's about 230 components; the server does the rest on every call.</p>
-    <div class="two">
+    <h2>An existing route becomes an MCP tool by changing one line</h2>
+    <p class="intro">Keep the route's steps. Replace the line it starts from with an <code>ai-tool</code> URI that names the tool and its arguments, then run it with <code>--mcp</code>. The route still does the work with any of Cameleer's about 230 components; the server adds the checks on every call.</p>
+    <div class="stack">
       <div class="pane">
-        <h3>A tool, served</h3>
+        <h3>The one changed line</h3>
         <pre class="cmd">- route:
+    id: order-lookup
     from:
-      uri: ai-tool:lookup_order
-      parameters:
-        description: Look up an order by id
-        parameter.orderId: string
-        parameter.orderId.required: true
-        readOnlyHint: true
+<span style="color:#ff9b9b">-     uri: direct:lookup-order</span>
+<span style="color:#9be2a8">+     uri: "ai-tool:lookup_order?description=Look up an order by id&amp;parameter.orderId=string&amp;parameter.orderId.required=true&amp;readOnlyHint=true"</span>
       steps:
         - setBody:
             simple: '{"orderId": "${header.orderId}", "status": "shipped"}'</pre>
-        <pre class="cmd">cameleer run tools.camel.yaml --mcp          # http://localhost:8080/mcp
-cameleer run tools.camel.yaml --mcp-stdio    # Claude Desktop starts it</pre>
+        <p>The file is <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/agents/route-to-mcp-tool.camel.yaml">examples/agents/route-to-mcp-tool.camel.yaml</a>; a test checks that it differs from the original route in that one line and serves the tool.</p>
       </div>
       <div class="pane">
-        <h3>On every call</h3>
+        <h3>Then serve it with one command</h3>
+        <pre class="cmd"># the CLI
+cameleer run orders.camel.yaml --mcp          # http://localhost:8080/mcp
+cameleer run orders.camel.yaml --mcp-stdio    # for Claude Desktop
+
+# Docker
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" \
+  pmsudhi/cameleer run /routes/orders.camel.yaml --mcp
+
+# the Rust crate (cameleer-main)
+main.set_property("camel.server.mcp-enabled", "true");
+b.from("ai-tool:lookup_order?description=Look up an order by id&amp;parameter.orderId=string&amp;parameter.orderId.required=true&amp;readOnlyHint=true")
+    .set_body(simple(r#"{"orderId": "${header.orderId}"}"#));</pre>
+        <h3>And on every call</h3>
         <ul>
           <li><strong>Checked:</strong> JSON Schema 2020-12 on the arguments; unknown and <code>camel*</code> arguments dropped.</li>
           <li><strong>Run once:</strong> a retried call in the same conversation returns the first result.</li>
           <li><strong>Approved:</strong> destructive tools show the user a form, or wait for an operator.</li>
           <li><strong>Bounded:</strong> rate limits, circuit breakers, and a timeout that cancels the route.</li>
           <li><strong>Recorded:</strong> redaction of personal data, then a hash-chained audit record.</li>
-          <li><strong>Pinned:</strong> a tool definition cannot change under your clients; a kill switch withdraws a tool.</li>
         </ul>
       </div>
     </div>
-    <p class="note">Apache Camel's <code>ai-tool</code>, <code>ai-resource</code> and <code>camel.server.mcp-*</code> names work unchanged. Cameleer also imports other MCP servers' tools and serves them again, so one endpoint can front many. Reference: <a href="../docs/guides/mcp.html">Cameleer MCP guide</a>, <a href="../docs/guides/mcp-server.html">MCP server</a>, <a href="../docs/guides/mcp-client.html">MCP client and gateway</a>.</p>
+    <p class="note">A route that other routes or a REST endpoint also call keeps its <code>direct:</code> start; add a three-line <code>ai-tool</code> route in front of it that does <code>to: direct:lookup-order</code>. Apache Camel's <code>ai-tool</code>, <code>ai-resource</code> and <code>camel.server.mcp-*</code> names work unchanged. Reference: <a href="../docs/guides/mcp.html">Cameleer MCP guide</a>, <a href="../docs/guides/mcp-server.html">MCP server</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="server-and-client">
+  <div class="wrap">
+    <h2>Both an MCP server and an MCP client</h2>
+    <p class="intro">Most products are one or the other. Cameleer is both, with the same checks on both sides, so it can serve your tools, use other servers' tools, and stand between your agents and every server they use.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>As a server</h3>
+        <ul>
+          <li>serves routes as tools, resources and prompts to Claude Desktop, VS Code, Cursor, Claude Code and agent frameworks;</li>
+          <li>the 2026-07-28 and 2025-11-25 protocol eras on one endpoint, over Streamable HTTP and stdio;</li>
+          <li>official conformance suite: 39/39 (2025-11-25) and 26/26 (2025-06-18).</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>As a client</h3>
+        <ul>
+          <li>imports the tools of other MCP servers (HTTP or stdio, either era) with <code>camel.ai.mcp.NAME.*</code>;</li>
+          <li>routes call them with the <code>mcp:</code> component, and models use them from the agent step or a model component;</li>
+          <li>as a gateway, it serves them again next to your own, with its approvals, rate limits, audit and pinned definitions (<a href="../docs/guides/mcp/gateway.html">gateway</a>).</li>
+        </ul>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -263,6 +298,8 @@ cameleer run tools.camel.yaml --mcp-stdio    # Claude Desktop starts it</pre>
 <section class="c-sec faq" id="faq">
   <div class="wrap">
     <h2>Common questions</h2>
+    <details><summary>How do I turn an existing route into an MCP tool?</summary><p>Change the line the route starts from to an <code>ai-tool</code> URI that names the tool and its arguments, for example <code>uri: "ai-tool:lookup_order?description=Look up an order by id&amp;parameter.orderId=string&amp;parameter.orderId.required=true"</code>, and run it with <code>cameleer run orders.camel.yaml --mcp</code> (or <code>--mcp-stdio</code> for Claude Desktop, or the same command in the <code>pmsudhi/cameleer</code> Docker image). The route's steps stay as they are. In a Rust program, start the route with <code>b.from("ai-tool:...")</code> and set <code>camel.server.mcp-enabled=true</code>.</p></details>
+    <details><summary>Is Cameleer an MCP server or an MCP client?</summary><p>Both. It serves routes as MCP tools, resources and prompts, and it imports the tools of other MCP servers for routes and models to use, or to serve again as a gateway with its own checks.</p></details>
     <details><summary>What is Cameleer's MCP server?</summary><p>It serves Cameleer routes (<code>ai-tool</code>, <code>ai-resource</code> and <code>ai-prompt</code> endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record.</p></details>
     <details><summary>How fast is it compared with Apache Camel's MCP server?</summary><p>On three identical cloud machines with 4 dedicated vCPUs each and 64 connections, Cameleer served 41,620 tool calls per second in MCP sessions in 53 MB of memory, against 22,458 calls per second in 317 MB for Apache Camel 4.23's <code>camel-mcp-server</code> on the JVM and 1,536 calls per second in 214 MB for a server on the official MCP TypeScript SDK. Camel's p99 latency was lower (5.2 ms against 5.9 ms).</p></details>
     <details><summary>Does it work with Claude?</summary><p>Yes. In a field test, 40 requests a shop's staff would type ran through Claude and the official MCP client against Cameleer's shop example: Claude Opus 5.5 completed 157 of 160 runs correctly in 2025-11-25 sessions and 39 of 40 in the stateless 2026-07-28 era, with 2.9 turns and 3.3 tool calls per request on average.</p></details>

@@ -194,8 +194,14 @@ idempotency, retries, sagas, human approval, rate limits, fallbacks and an audit
 served as MCP tools to Claude Desktop, VS Code, Cursor and agent frameworks, called by models in
 an `agent` step, or exposed as plain HTTP endpoints.
 
-**🔌 Serve routes as MCP tools.** An `ai-tool` route (Apache Camel's endpoint and option names)
-is a tool; one flag serves it:
+**🔌 Serve routes as MCP tools.** An existing route becomes a tool by changing one line: its
+`from` URI becomes an `ai-tool` URI that names the tool and its arguments
+(`uri: "ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string"`,
+[example](examples/agents/route-to-mcp-tool.camel.yaml)). Then one command serves it:
+`cameleer run orders.camel.yaml --mcp`, the same in Docker
+(`docker run ... pmsudhi/cameleer run /routes/orders.camel.yaml --mcp`), or
+`camel.server.mcp-enabled=true` in the Rust crate. Cameleer is both an MCP server and an MCP
+client. Written with Camel's `parameters` map, a tool route looks like this:
 
 <!-- example: readme-mcp-tool -->
 ```yaml
