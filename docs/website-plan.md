@@ -555,3 +555,161 @@ are dated 9 November 2026; re-check them by February 2027.
   https://eseospace.com/blog/workato-mcp/
 - IBM: https://www.ibm.com/products/webmethods-hybrid-integration/agentic-enterprise
 - Azure Logic Apps MCP: https://techcommunity.microsoft.com/blog/integrationsonazureblog/stop-writing-plumbing-use-the-new-logic-apps-mcp-server-wizard/4496702
+
+## 11. Attestation: positioning, pages and placement (2026-11-09, proposal)
+
+The owner asked how to position, document and place the attestation work (phase 1, built by
+the code session, landing on `main` and shipping in the next release). This section is a proposal;
+nothing below is published yet.
+
+### 11.1 What may be claimed, and what may not
+
+**May claim (phase 1):**
+
+- Inside a hardware TEE, Cameleer proves to a client what is running. The TEEs supported are an
+  Intel TDX or AMD SEV-SNP confidential VM through Linux configfs-tsm (kernel 6.7 or later), and a
+  dstack CVM (Phala Cloud, dstack on GCP TDX).
+- The signed hardware report is bound to four things:
+  - the client's nonce;
+  - the SHA-256 of Cameleer's own TLS public key, so a proxy that terminates TLS breaks the check;
+  - a manifest of the version and features, the route files (SHA-256), the routes, the
+    configuration (secrets shown as `<secret>`) and the published tools (fingerprints);
+  - a hash-chained log of every change after start-up.
+- Where clients get it:
+  - `GET /q/attestation?nonce=...`;
+  - over MCP, `_meta["ing.cameleer/attestation"]` in `server/discover` and `initialize`, with the
+    report inline when the client sends a nonce;
+  - the opt-in tool `cameleer_attestation`.
+- If attestation is on and there is no evidence, start-up fails.
+- `cameleer_attest::check_binding` verifies the binding.
+- It is in the default build (cargo feature `attest`).
+
+**May not claim:**
+
+- that Cameleer verifies Intel or AMD signature chains (it doesn't yet; phase 3);
+- sealed secrets (phase 2);
+- AWS Nitro, Azure vTPM or Google Confidential Space;
+- that it has run on real TEE hardware (the tests use a fake configfs-tsm and a fake dstack
+  agent);
+- "this exact release" unless the image is pinned by digest, because reproducible builds aren't
+  published yet;
+- protection against physical attacks (TEE.fail, 2025);
+- that it is released.
+
+**Words:**
+
+- Use "attested", "evidence", "proves what is running", and "verifiable by your client" with the
+  note that the hardware signature is checked by a verifier such as Intel Trust Authority or a DCAP
+  library.
+- Never use "verified", "trustless", "zero trust", "tamper-proof" or "proof of execution". The last
+  one is a blockchain and ZK term, and the claim it implies is wider than phase 1.
+
+### 11.2 What the market and search data show
+
+There is no keyword-volume tool in this environment, so the evidence is which words appear across
+standards pages, vendors and the top search results (searched 2026-11-09).
+
+| phrase | who uses it | state |
+|---|---|---|
+| "confidential computing" | Confidential Computing Consortium, Azure, Google, Intel, Red Hat | established category; the buyer's own word in regulated industries |
+| "confidential AI" / "confidential agentic AI" | NVIDIA, Fortanix, Opaque, Phala, CCC blog posts (Jan and May 2026), the arXiv survey 2605.03213 | the 2026 growth term; NVIDIA, Microsoft, Cisco, Fortanix and HPE shipped agent-focused features in spring 2026 (one roundup) |
+| "attestable / attested MCP server" | `attestable-mcp-server` (SGX, RA-TLS), Glama's "attested" filter, Phala and Oasis posts | small, developer-level; the projects are prototypes or 2025-era |
+| "verifiable MCP" / "verifiable tool results" | MCP issue #3354 (closed 2026-09-22), a zk-tokyo course proposal | proposal stage, ZK-flavoured |
+| "MCP trust layer" | vendors of credentials, registries and signed receipts (cheqd, Mnemom, AegisZK, ArkForge) | crowded and vague; none of these is hardware evidence |
+
+**Competitors:**
+
+- **Integration engines and iPaaS.** No integration engine or iPaaS advertising attestation turned
+  up, in the code session's research or in a fresh search for MuleSoft, Boomi and Camel. That is
+  absence of evidence, so the site says "we found none", never "the only".
+- **MCP.** Phala's attestation is a platform check: a dashboard button, and mutual quotes between
+  its gateway and the CVM. Its MCP tutorial shows the check after the client is configured, not as a
+  gate before connecting. The SGX `attestable-mcp-server` binds the evidence to an enclave key over
+  RA-TLS. Neither covers routes, configuration and the tool surface the way Cameleer's manifest does.
+- **Standards.** The MCP spec has no accepted attestation mechanism. SEP-2809 (ATSA, which is not
+  hardware attestation) was closed on 2026-11-08, and the MCP Security Interest Group lists
+  "server identity, attestation, and admission" in its scope. The arXiv survey calls client
+  verification of an attested MCP server an open problem.
+- **Healthcare.** Microsoft publishes a confidential healthcare inference reference architecture
+  (AKS confidential nodes with Azure Attestation). For imaging, the search found only one vendor's
+  blog post on TDX-sealed radiology inference, and nothing about DICOM routing or de-identification
+  inside a confidential VM. That is an open space, but it needs the DICOM work first.
+- **The main barrier.** In a CCC-affiliated survey, 85% of respondents named validating
+  attestation chains of trust as their top challenge (vendor-affiliated, so cite it with care).
+  The message that answers it: the evidence covers the routes and tools, not just the VM, and the
+  binding check is one function.
+
+### 11.3 Positioning
+
+One idea, said two ways for two searchers:
+
+> **Cameleer can prove what it runs.** Inside a confidential VM, an agent or a client can ask a
+> Cameleer server for hardware evidence of the exact routes, configuration and MCP tools it is
+> running, bound to the TLS connection the client is using.
+
+| searcher | angle | page title idea | why |
+|---|---|---|---|
+| agent builders and MCP platform teams | **an MCP server that can prove what it runs** ("attested MCP server") | "Attested MCP server: prove which tools an agent is talking to" | extends the action layer we already lead with ("the model decides what, a tested route decides how") to "and the client can check which routes those are"; the category is nearly empty and has no standard yet |
+| regulated integration (healthcare, finance, public sector) | **confidential integration**: the integration engine itself attests inside a confidential VM | "Confidential integration: run Camel routes in a confidential VM and prove it" | matches the buyer's own words ("confidential computing"); no integration engine says it; the healthcare showcase (DICOM de-identification inside a CVM) lands here later |
+
+Don't make attestation the headline of the home page or the README. Cameleer's lead stays "Apache
+Camel in Rust" and "the reliable action layer for AI agents". Attestation is the proof point under
+the second, and gets a section once it is released and has run on real hardware once.
+
+### 11.4 Pages
+
+| page | change | when |
+|---|---|---|
+| `docs/guides/attestation.md` (written by the code session) | review the wording against 11.1; add to `GUIDE_ORDER`, the RTD toctree, docs/README, getting started's "next" list, and cross-links from TLS and security, MCP server and observability; the answer-first opening and a "Common questions" block (what it proves, what it doesn't, which TEEs, does a model verify it) | when it is on `main`, marked "next release" |
+| new **`/trust/`** hub: "Attested integrations and MCP servers" | what is in the evidence (a diagram of nonce + TLS key + manifest + change log → REPORTDATA); the three ways to fetch it; the binding check; supported TEEs; a prominent "What it does not prove" box (11.1); how to try it on dstack or a TDX/SEV-SNP VM; FAQ with FAQPage schema | after the release, and after one run on real TEE hardware (otherwise the page claims something we haven't seen work) |
+| `/mcp/` hub | a section "Prove which server and tools an agent is talking to" after the guarantees, linking `/trust/`; one FAQ | with `/trust/` |
+| comparisons (`apache-camel-vs-cameleer`, `mulesoft-vs-…`, `wso2-vs-…`, `enterprise-mcp-platforms`) | one table row, "Evidence of the running integration (TEE attestation)": Cameleer "yes, in a confidential VM (phase 1)"; the others "not found in their documentation (searched 2026-11)", which is never written as "no" | with `/trust/` |
+| `use-cases/hl7-mllp-healthcare-integration` | a short "in a confidential VM" paragraph linking `/trust/` | with `/trust/` |
+| new **`use-cases/confidential-dicom-de-identification/`** | the showcase: DICOM de-identification inside a confidential VM, with evidence for what ran | when DICOM is built (the owner will send a separate brief) |
+| home page | one sentence in the agent section, no hero change | with `/trust/` |
+| `/compare/attested-mcp-servers/` (Phala, Oasis, Cameleer) | not now: low volume, and the comparison would rest on features we haven't run on hardware | revisit after phase 3 |
+
+### 11.5 README, llms.txt, GitHub About, Docker Hub
+
+| place | proposal | when |
+|---|---|---|
+| README | one bullet in the AI section: "**Prove what runs** (next release): inside an Intel TDX or AMD SEV-SNP confidential VM, Cameleer returns hardware evidence of its routes, configuration and MCP tools, bound to its TLS key ([attestation](docs/guides/attestation.md))." | when on `main` |
+| llms.txt | one key-facts line with the limits in the same line (unreleased; doesn't verify vendor chains; TDX/SEV-SNP via configfs-tsm and dstack only); a Q&A pair "Can an MCP client verify what a Cameleer server runs?" in llms-full through the guide's FAQ | when on `main` |
+| GitHub About | keep the description (it's at about 260 of 350 characters, and the lead is right); after the release add ", and proves what it runs inside confidential VMs" if it fits. Topics are at GitHub's maximum of 20, so swap: drop `camel` (duplicates `apache-camel`) and `messaging`, add `confidential-computing` and `attestation` | after the release |
+| Docker Hub overview | one line under the features, plus the note that evidence means "this image" only when pinned by digest (`pmsudhi/cameleer@sha256:…`) | after the release |
+
+### 11.6 Before publishing
+
+- Re-check the competitor statements on the day: each vendor's docs for "attestation", "trusted
+  execution" or "confidential", the MCP SEP list and the Security IG page.
+- Read the final `docs/guides/attestation.md` and the config keys on `main`, and quote nothing that
+  isn't there.
+- Owner decisions:
+  1. publish `/trust/` at the release, or wait for a real-hardware run (recommended: wait);
+  2. whether to bring the `_meta` design to the MCP Security Interest Group (it would make "a
+     concrete, spec-compatible proposal" a claim we can link to);
+  3. the page name: `/trust/`, or `/confidential/`, which matches the buyer's word better but is
+     narrower.
+
+### 11.7 Sources
+
+- MCP issue #3354 (verifiable tool results): https://github.com/modelcontextprotocol/modelcontextprotocol/issues/3354
+- MCP Security Interest Group: https://modelcontextprotocol.io/community/interest-groups/security;
+  SEP-2809: https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2809
+- Attestable MCP server (SGX, RA-TLS): https://glama.ai/mcp/servers/kontext-security/attestable-mcp-server,
+  https://creati.ai/mcp/attestable-mcp-server/
+- Phala MCP hosting and checks: https://phala.com/posts/mcp-got-you-worried-build-securely-with-phala-clouds-teepowered-hosting,
+  https://phala.com/posts/deploy-an-MCP-server-on-phala-cloud-a-step-by-step-guide,
+  https://docs.phala.com/phala-cloud/networking/security.md
+- tee.fyi on MCP servers: https://tee.fyi/docs/tee-applications/mcp-servers
+- Confidential agentic AI: https://confidentialcomputing.io/2026/01/20/protecting-agentic-ai-workloads-with-confidential-computing/,
+  https://confidentialcomputing.io/2026/05/20/your-ai-agents-are-already-in-production-your-security-architecture-isnt-ready/,
+  https://www.supercomputing.news/ai/confidential-computing-arrives-for-ai-agents,
+  https://arxiv.org/html/2605.03213v1
+- Healthcare: https://learn.microsoft.com/en-au/azure/architecture/example-scenario/confidential/healthcare-inference,
+  https://learn.microsoft.com/en-sg/azure/confidential-computing/use-cases-scenarios,
+  https://dev.to/voltagegpu/medical-imaging-ai-without-a-baa-nightmare-tdx-sealed-inference-for-radiology-28kn
+- MCP trust-layer vendors: https://arkforge.tech/en/blog/trust-layer-mcp-fragmentation/,
+  https://cheqd.io/blog/pioneering-trust-in-the-age-of-ai-introducing-cheqds-mcp-enabled-agentic-trust-solution/
+- Red Hat on attestation models: https://www.redhat.com/en/blog/attestation-confidential-computing
+- The code session's research with full sources: `docs/design/attestation/research.md` (internal)
