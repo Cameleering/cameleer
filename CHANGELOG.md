@@ -7,6 +7,29 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ### Added
 
+- **DICOM** (new crate `cameleer-dicom`, cargo feature `dicom`, in `full`; Apache Camel has no
+  DICOM component, so these are Cameleer extensions):
+  - the `dicom` component: DIMSE over TCP and TLS, the consumer an SCP (C-ECHO, and C-STORE,
+    C-FIND, C-MOVE and C-GET answered by routes) and the producer an SCU
+    (`operation=echo|store|find|move|get`), with `CamelDicom*` headers;
+  - the `dicomweb` component: STOW-RS, QIDO-RS, WADO-RS and metadata as a client, and a
+    DICOMweb server on the shared HTTP server;
+  - the `dicom` data format (Part 10 to a Value tree in the DICOM JSON shape and back, byte for
+    byte; explicit, implicit, deflated and big endian; encapsulated pixel data as fragments;
+    specific character sets including ISO 2022 Japanese, Korean and Chinese, GB18030 and UTF-8),
+    `dicomJson` (PS3.18 Annex F) and `dicomDeidentify` (PS3.15 Annex E basic profile and options,
+    HMAC-keyed and deterministic, with audit records in the hash-chained log);
+  - `${dicom.PatientID}` and sequence paths in Simple, and the `dicom` language;
+  - the PS3.6 dictionary and PS3.15 Table E.1-1 generated from the 2026d standard
+    (`scripts/update-dicom-dict.py`, pinned digests);
+  - examples in `examples/medical/` (modality to cloud, AI inference loop, de-identification
+    pipeline), the guide `docs/guides/dicom.md` and component, data format and language pages;
+  - verified live against DCMTK 3.6.7 and Orthanc 1.12.2 with its DICOMweb plugin
+    (`scripts/dicom-interop.sh`, `CAMEL_DICOM_INTEROP=1`), and on 33 public test files.
+- **Simple functions from other crates**: `cameleer_core::language::simple::register_function`
+  adds `${prefix.rest}` functions (used by `${dicom.*}`).
+- **`cameleer_core::multipart`**: a shared, binary-safe MIME multipart parser and builder (the
+  `mimeMultipart` data format and DICOMweb use it).
 - **Existing routes as MCP tools, with no route edits**: `cameleer run --mcp-expose rest:*`
   (property `camel.server.mcp-expose-routes`). REST DSL operations become tools with typed
   arguments from their documented parameters; other routes (`direct:*`, `route:<id>`) take a

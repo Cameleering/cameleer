@@ -39,6 +39,7 @@ names its feature in its header line (**Cargo feature:**).
 | `cloud` | every `aws*`, `azure-*` and `google-*` component except the two above (62 components: S3, SQS, SNS, DynamoDB, Lambda, Bedrock, Blob, Cosmos DB, Azure OpenAI, Pub/Sub, BigQuery, Vertex AI, ...) and the `{{aws:...}}`, `{{azure:...}}` and `{{gcp:...}}` secret placeholders | `cameleer-cloud` |
 | `dataformats` | the data formats `asn1`, `avro`, `barcode`, `bindy`, `cbor`, `crypto`, `fory`, `ical`, `mime-multipart`, `pgp`, `tarfile`, `thrift`, `univocity`, `yaml`, `zipfile`, and the `thrift` component | `cameleer-dataformats` |
 | `datastores` | `spring-redis`, `mongodb`, `mongodb-gridfs`, `elasticsearch`, `opensearch`, `cql` (Cassandra), `couchdb` | `cameleer-datastores` |
+| `dicom` | `dicom` (DIMSE: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET as SCP and SCU, over TCP and TLS), `dicomweb` (QIDO-RS, WADO-RS, STOW-RS client and server); the `dicom` language and `${dicom.*}` in Simple; the `dicom`, `dicomJson` and `dicomDeidentify` (PS3.15 Annex E) data formats. Pulls in `cameleer-ai` for the audit log | `cameleer-dicom` |
 | `grpc` | the `grpc` component and the `protobuf` data format | `cameleer-grpc` |
 | `kafka-mqtt` | `kafka`, `paho`, `paho-mqtt5` | `cameleer-kafka-mqtt` |
 | `protocols` | `ftp`, `ftps`, `smtp`/`smtps`, `pop3`/`pop3s`, `imap`/`imaps`, `mllp`, `syslog`, `websocket`/`ws`/`wss`, `vertx-websocket`; the `hl7terser` language; the `hl7` and `syslog` data formats | `cameleer-protocols` |

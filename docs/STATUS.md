@@ -320,6 +320,54 @@ turns, and grades each run by tool calls, database state and a Claude judge.
   of the release binary in `target/mcp-fieldtest/bin`); Haiku's remaining misses are weekday and
   sum arithmetic.
 
+## DICOM (2026-11-09, branch `dicom`)
+
+Built from `docs/design/medical/dicom-and-healthcare.md` (phases 1 to 5 of its plan; the owner
+approved leading with edge imaging gateways and AI inference routing, no PACS). New crate
+`cameleer-dicom`, cargo feature `dicom` in `full`. Guide: `docs/guides/dicom.md`.
+
+- **Phase 1, data:** Part 10 and data set codec (explicit/implicit/deflated little endian and
+  explicit big endian, read and write; sequences; UN sequences; encapsulated pixel data as
+  fragments; files without preamble or meta); the PS3.6/PS3.7 dictionary, UID registry and PS3.15
+  Table E.1-1 generated from the 2026d DocBook (`scripts/update-dicom-dict.py`, pinned SHA-256,
+  `crates/cameleer-dicom/DICTIONARY.md`); specific character sets
+  (`scripts/gen-dicom-charsets.py`, tables from CPython's codecs, `CHARSETS.md`); the Value
+  tree (DICOM JSON shape, byte-exact), `dicom` and `dicomJson` data formats; `${dicom.*}` through
+  a new core hook `simple::register_function`, and the `dicom` language (also a YAML DSL key).
+- **Phase 2, DIMSE:** PDUs, associations, SCU and SCP for C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET,
+  the `dicom:` component, `testing::TestPacs`.
+- **Phase 3, DICOMweb:** the `dicomweb:` component (client and server on the platform-http
+  registry); the multipart parser moved to `cameleer_core::multipart` and shared with
+  `mimeMultipart`.
+- **Phase 4, de-identification:** `deid` (processor and `dicomDeidentify` data format), audit
+  records in `cameleer-ai`'s hash-chained log.
+- **Phase 5:** `examples/medical/` (three examples, run end to end in
+  `crates/cameleer-main/tests/dicom_examples.rs`), pages for `dicom`, `dicomweb`, the three data
+  formats and the language, FEATURES rows, INTEROP section.
+
+**Verified:**
+- hermetic: `cargo test -p cameleer-dicom` (codec, model, charsets against PS3.5 Annex H-K bytes,
+  DIMSE SCU/SCP incl. TLS and rejections, component routes, DICOMweb client/server, Table E.1-1
+  attribute by attribute for six option sets) and the examples and docs examples in cameleer-main;
+- corpus: 33 pydicom test files byte-exact (`scripts/fetch-dicom-testdata.sh`, files kept out of
+  git, provenance in `crates/cameleer-dicom/TESTDATA.md`);
+- live (`scripts/dicom-interop.sh`, `CAMEL_DICOM_INTEROP=1`, WSL2 Ubuntu 24.04): 7/7 against
+  DCMTK 3.6.7 (both roles, with and without TLS) and Orthanc 1.12.2 (PACS, DICOMweb server and
+  DICOMweb client). One bug found and fixed (odd deflated PDV, `docs/INTEROP.md`).
+
+**Test run (Windows 11, 2026-11-09):** `cargo build --workspace` 0 warnings;
+`cargo build -p cameleer-main --no-default-features` builds; `cargo test --workspace`
+2914 passed, 3 failed: two `docs_languages_formats` checks for the new pages (fixed afterwards,
+14/14 on rerun) and `cameleer-bench` `short_run_reports_throughput_and_latency` (a 50 ms run that
+saw no messages under the full parallel load; 3/3 alone, crate untouched by this work).
+
+**Not verified / not built:** real cloud DICOM services (Azure, Google, AWS; AWS needs SigV4 in
+`dicomweb`), dcm4che, real modalities; Storage Commitment, MPPS, C-CANCEL in progress, async
+operations, association pooling; WADO frames/rendered/thumbnail, UPS-RS; pixel codecs (JPEG,
+JPEG-LS, JPEG 2000, RLE) and with them Clean Pixel Data; Encrypted Attributes Sequence;
+`fhirDeidentify`; PS3.15 A.5 (ATNA) audit messages; a PS3.2 conformance statement; fuzzing of the
+Part 10, PDU and multipart parsers; throughput benchmarks against dcm4che, DCMTK and Orthanc.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

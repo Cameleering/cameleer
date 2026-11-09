@@ -124,6 +124,7 @@ pub const LANGUAGES: &[&str] = &[
     "joor",
     "java",
     "hl7terser",
+    "dicom",
     "xquery",
     "ref",
     "wasm",

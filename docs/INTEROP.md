@@ -393,6 +393,36 @@ stays green, and `official_kafka.rs` (librdkafka, now joining groups with JoinGr
 | Azure Cosmos DB emulator, Service Bus emulator | Windows-only / Docker-only. |
 | gcloud Pub/Sub, Firestore and Datastore emulators | `gcloud components install` needs dl.google.com (blocked), the Firebase emulator jars come from storage.googleapis.com (blocked, > 10 MB). pstest replaces the Pub/Sub emulator for the gRPC consumer; Firestore has no offline alternative. |
 
+## DICOM
+
+`scripts/dicom-interop.sh` installs DCMTK 3.6.7 and Orthanc 1.12.2 with the DICOMweb plugin 1.16
+(Ubuntu 24.04 packages: `apt-get install` as root, or `apt-get download` plus pinned SHA-256 and
+`dpkg -x` into a user directory without root) and starts DCMTK `storescp` (plain and TLS, BCP 195
+non-downgrading profile) and Orthanc. `CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-dicom --test
+live_dicom` then runs **7/7** (Ubuntu 24.04 under WSL2, 2026-11-09):
+
+| test | what runs against what |
+|---|---|
+| `live_cameleer_scu_to_dcmtk_storescp` | Cameleer SCU: C-ECHO, C-STORE in Explicit, Implicit and Deflated syntaxes to `storescp`; the files `storescp` wrote parse to the same data sets; `dcmdump` reads a Cameleer-written deflated file |
+| `live_cameleer_scu_tls_to_dcmtk` | Cameleer SCU over TLS to `storescp +tls` |
+| `live_dcmtk_tools_to_cameleer_scp` | `echoscu`, `storescu`, `findscu -X`, `getscu` and `movescu` (to `storescp`) against a Cameleer SCP route |
+| `live_dcmtk_tls_to_cameleer_scp` | `storescu +tls` against a Cameleer SCP with TLS |
+| `live_orthanc_as_pacs` | Cameleer SCU: C-ECHO, C-STORE, C-FIND (study and image level), C-GET and C-MOVE from Orthanc to a Cameleer SCP |
+| `live_orthanc_dicomweb` | the `dicomweb` producer against Orthanc's DICOMweb plugin: STOW-RS, QIDO-RS, WADO-RS, metadata |
+| `live_orthanc_dicomweb_client_to_cameleer_server` | Orthanc's DICOMweb client against a `dicomweb` consumer: STOW-RS, QIDO-RS, WADO-RS |
+
+The parser is also checked on 33 public pydicom test files (`scripts/fetch-dicom-testdata.sh`,
+`tests/corpus.rs`): every file reads and writes back byte for byte.
+
+Bug found and fixed: a deflated data set of odd length was sent as an odd-length PDV fragment,
+and DCMTK aborted the association ("Odd Fragment Length"). Deflated data sets are now padded to
+an even length (PS3.5 A.5) and PDV fragments are always even
+(`crates/cameleer-dicom/src/codec.rs` `dataset_to_bytes`, `assoc.rs` `max_fragment`; regression
+test `codec::tests::deflated_data_sets_have_even_length`).
+
+Not verified yet: dcm4che, real modalities, and the cloud DICOM services (Azure Health Data
+Services, Google Cloud Healthcare API, AWS HealthImaging), which need accounts from the owner.
+
 ## MCP
 
 The MCP server is checked with the official conformance suite, `@modelcontextprotocol/conformance`

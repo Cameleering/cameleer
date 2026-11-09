@@ -485,6 +485,11 @@ fn bind_bean_examples(ctx: &CamelContext) {
 fn custom_languages(case: &str) -> Option<Check> {
     match case {
         "__none__" => Some(|_, _| {}),
+        "dicom-language-route" => Some(|ctx, _| {
+            // the route runs a DICOM SCP; what it does with real instances is asserted in
+            // tests/dicom_examples.rs (docs_examples_coerce_and_route and the examples there)
+            assert!(!ctx.route_ids().is_empty());
+        }),
         _ => None,
     }
 }
@@ -517,6 +522,11 @@ fn configure_formats_b(id: &str) -> Option<fn(&CamelContext)> {
 fn custom_formats_b(case: &str) -> Option<Check> {
     match case {
         "__none__" => Some(|_, _| {}),
+        "dicom-df-coerce" | "dicom-deidentify" | "dicom-json-index" => Some(|ctx, _| {
+            // the route runs a DICOM SCP; what it does with real instances is asserted in
+            // tests/dicom_examples.rs (docs_examples_coerce_and_route and the examples there)
+            assert!(!ctx.route_ids().is_empty());
+        }),
         _ => None,
     }
 }
@@ -1157,4 +1167,73 @@ fn scratch_eval() {
         }
     }
     main.stop().unwrap();
+}
+
+// --- DICOM pages: their Rust snippets are whole functions ---
+
+/// docs/dataformats/dicom.md (copied verbatim)
+mod dicom_format {
+    use cameleer_core::dataformat::DataFormatDefinition;
+    use cameleer_core::prelude::*;
+
+    pub fn routes(ctx: &CamelContext) -> Result<()> {
+        cameleer_dicom::register(ctx);
+        ctx.add_routes(|b| {
+            b.from("direct:to-implicit")
+                .marshal(DataFormatDefinition::new("dicom").option("transferSyntax", "1.2.840.10008.1.2"));
+        })
+    }
+}
+
+/// docs/dataformats/dicomJson.md (copied verbatim)
+mod dicom_json {
+    use cameleer_core::dataformat::DataFormatDefinition;
+    use cameleer_core::prelude::*;
+
+    pub fn routes(ctx: &CamelContext) -> Result<()> {
+        cameleer_dicom::register(ctx);
+        ctx.add_routes(|b| {
+            b.from("direct:json").marshal(DataFormatDefinition::new("dicomJson").option("array", true));
+        })
+    }
+}
+
+/// docs/dataformats/dicomDeidentify.md (copied verbatim)
+mod dicom_deidentify {
+    use cameleer_core::prelude::*;
+    use cameleer_dicom::deid::{Deidentifier, DeidentifyProcessor, Options};
+
+    pub fn routes(ctx: &CamelContext) -> Result<()> {
+        cameleer_dicom::register(ctx);
+        let mut d = Deidentifier::new(b"secret-from-a-vault", Options::parse("retainLongitudinalModifiedDates")?);
+        d.pseudonymous_patient = true;
+        ctx.add_routes(move |b| {
+            b.from("direct:deid").process(DeidentifyProcessor::new(d.clone())).to("mock:out");
+        })
+    }
+}
+
+/// docs/languages/dicom.md (copied verbatim)
+mod dicom_language {
+    use cameleer_core::prelude::*;
+
+    pub fn routes(ctx: &CamelContext) -> Result<()> {
+        cameleer_dicom::register(ctx);
+        ctx.add_routes(|b| {
+            b.from("dicom:ROUTER@0.0.0.0:11112")
+                .set_header("StudyUid", language("dicom", "StudyInstanceUID"))
+                .filter(simple("${dicom.Modality} == 'CT'"))
+                .to("dicom:PACS@pacs.local:104");
+        })
+    }
+}
+
+#[test]
+fn dicom_rust_snippets_run() {
+    for f in [dicom_format::routes, dicom_json::routes, dicom_deidentify::routes, dicom_language::routes] {
+        let ctx = CamelContext::new();
+        // adding the routes resolves every endpoint and expression (not started: the language
+        // snippet's SCP would take a fixed port that doc_examples_run also uses)
+        f(&ctx).unwrap();
+    }
 }
