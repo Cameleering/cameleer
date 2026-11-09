@@ -320,6 +320,45 @@ Phase 0:
   - (b) a neutral family crate in its own repository;
   - (c) keep the duplicates and rely on the alarm.
   Recommended: (b), named in the family's style, created when Phase 4 starts.
+- **D2, agreed by both sessions (2026-11-09), name pending:** option (b), a neutral std-only
+  crypto family in its own repository under the family org, in two crates:
+  - **primitives** (`<name>`): hashes, HMAC, HKDF and PBKDF2; AES-CBC, CTR and GCM;
+    ChaCha20-Poly1305; X25519, P-256 and P-384, Ed25519, RSA PKCS#1 v1.5, PSS and OAEP; bigint;
+    OS random; base64 and hex for PEM. The legacy algorithms (MD5, SHA-1 HMAC for old protocols,
+    DES and 3DES, RC2, PBE) sit behind a `legacy` feature, off by default;
+  - **PKI** (`<name>-pki`): ASN.1 and DER, PEM, PKCS#8, X.509 parsing and path validation, CRL,
+    OCSP, and PKCS#12, JKS and JCEKS decoding.
+
+  The API is concrete types and free functions: streaming and one-shot hashes, in-place AEAD
+  with caller-owned buffers, keys cleared on drop, and a minimal `Digest` trait only for
+  HMAC/HKDF/PBKDF2. Errors are small enums, with no panics on attacker input. Cameleer keeps its
+  free-function style as thin wrappers during the move.
+
+  All `unsafe` (the hardware intrinsics and OS random, today in `simoom-sys/src/arch.rs`) goes into
+  one `arch` module or crate, under SAFETY comments and an unsafe counter in CI. simoom's rule
+  becomes "unsafe only in -sys/-arch".
+
+  Protocol engines stay with their products: TLS 1.3/1.2 and QUIC in simoom-tls; SSH, OpenPGP,
+  XML-DSig and Camel's `SslContextParameters` layer in Cameleer.
+
+  The crate owns the constant-time (dudect-style) tests, the Wycheproof-style vectors, the fuzz
+  harnesses and the speed comparison against OpenSSL. No FIPS claim, only "follows the FIPS
+  test vectors". One external audit covers the crypto crates, simoom-tls, and Cameleer's SSH,
+  PGP and XML-DSig.
+
+  Sequence:
+  1. The owner picks the name.
+  2. After simoom's second campaign, the repository is created; simoom's faster primitives and
+     its PKI move first.
+  3. Cameleer's breadth is added (OAEP, the legacy primitives, keystores; simoom's agents already
+     port Cameleer's tested code into self-contained modules for this).
+  4. simoom switches.
+  5. Cameleer switches and deletes `cameleer-tls/src/crypto` and the stray SHA, HMAC and base64
+     copies in core, cloud, ai, sql, protocols and ssh.
+
+  Name candidates, free on crates.io on 2026-11-09: **saltire** (and `saltire-pki`), carnelian,
+  adamant. The GitHub user name `saltire` is taken, so the repository would be
+  `<family-org>/saltire`.
 - **D3. TLS 1.2 on servers:** keep it on Cameleer's own TLS (cameleer-tls stays the 1.2 engine
   under the simoom engine), or add TLS 1.2 to simoom-tls. Recommended: keep it in cameleer-tls
   until simoom has a reason of its own to add it; most Camel deployments still need 1.2 for
