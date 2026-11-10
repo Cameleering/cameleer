@@ -45,6 +45,8 @@ images carry their SBOM and build provenance as OCI attestations.
 All three crate features are on by default; a Rust embedder can take only one
 (`cameleer-health = { version = "0.6", default-features = false, features = ["dicom"] }`).
 
+The [DICOM Conformance Statement](conformance/dicom-conformance-statement-0.6.0.md) (PS3.2 form,
+its tables generated from the code) lists the services, policies and profiles of this release.
 The [DICOM guide](guides/dicom.md) explains the imaging parts end to end, with the conformance
 summary and what has been verified. The examples are in `examples/medical/` and
 `examples/edge/hl7-mllp-to-http.camel.yaml`; they need the pack.

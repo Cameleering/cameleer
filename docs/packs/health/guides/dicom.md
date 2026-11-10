@@ -58,8 +58,8 @@ identifiable data before they send it.
 
 ## Conformance summary
 
-A full DICOM Conformance Statement in the PS3.2 template is still to be written; this is the
-short form.
+The full statement is the [DICOM Conformance Statement](../conformance/dicom-conformance-statement-0.6.0.md)
+(PS3.2 form); this is the short form.
 
 | area | supported |
 |---|---|
