@@ -158,6 +158,7 @@ server.
 | `camel.server.enabled` | `false` | start the management endpoints below (needed with any of the next three) |
 | `camel.server.healthCheckEnabled` | `false` | `GET /q/health`, `/q/health/ready`, `/q/health/live` (`200` when up, `503` when down) |
 | `camel.server.metricsEnabled` | `false` | `GET /q/metrics` in Prometheus text format |
+| `camel.server.infoEnabled` | `false` | `GET /q/info`: the Cameleer version, the compiled-in feature families and the [packs](../packs/index.md) with their versions (also on with `devConsoleEnabled`, and as `/q/dev/packs`) |
 | `camel.server.devConsoleEnabled` | `false` | `GET /q/dev/*` consoles and `POST /q/dev/route/{id}/start\|stop\|suspend\|resume\|reset-stats` |
 | `camel.server.sslEnabled` | `false` | serve every `platform-http` endpoint over HTTPS |
 | `camel.server.ssl.keyStore`, `.certFile` and `.keyFile`, `.keystorePassword`, ... | | the server certificate (the same keys as `camel.ssl.*` below) |

@@ -8,6 +8,7 @@
 |---|---|
 | liveness and readiness probes | `/q/health/live`, `/q/health/ready` (200 when UP, 503 when DOWN) |
 | metrics in Prometheus or Grafana | `/q/metrics`, Prometheus text format |
+| which version, features and packs a running instance has | `/q/info` (`camel.server.infoEnabled=true`, or with the dev console) |
 | route state, statistics, endpoints | `/q/dev/routes`, `/q/dev/endpoints`, or `cameleer get routes` |
 | to start, stop or suspend a route at run time | `POST /q/dev/route/{id}/suspend`, or `cameleer cmd suspend-route` |
 | logs | standard output; `CAMEL_LOG_LEVEL`, `--log-level` |
