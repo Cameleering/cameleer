@@ -358,8 +358,10 @@ compatibility (design: `docs/design/packs/domain-packs.md` section 8). Done on t
 **Test run after the pack move (Windows 11, 2026-11-09):** `cargo build --workspace` 0 warnings;
 `cargo build -p cameleer-main --no-default-features` and `--no-default-features --features health`
 build; `cargo build -p cameleer-health --no-default-features --features hl7` (and `fhir`, `dicom`,
-none) build; `cargo test --workspace` **2952 passed, 0 failed**. The live DICOM tier was not rerun
-after the move (code moved unchanged; last run 7/7).
+none) build; `cargo test --workspace` **2952 passed, 0 failed**. After the move, on WSL2 Ubuntu
+24.04 (2026-11-10): `cargo test -p cameleer-health` all passed with zero warnings, and the live
+tier `CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-health --test live_dicom` **7/7** against DCMTK
+3.6.7 and Orthanc 1.12.2.
 
 Not done from the design: SBOM generation per pack, cosign signing of archives, a DICOM
 Conformance Statement, `/q/info` listing packs, CODEOWNERS, the `CAMEL_HEALTH_INTEROP` umbrella

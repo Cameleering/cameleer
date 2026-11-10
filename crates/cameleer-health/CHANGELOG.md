@@ -19,5 +19,5 @@ First release of the pack.
 - Crate features `hl7`, `fhir`, `dicom` (all default). Depends on cameleer-core, cameleer-http,
   cameleer-tls and (for `fhir`) cameleer-xml.
 - Verified: hermetic tests; 33 public DICOM test files byte-exact; live against DCMTK 3.6.7 and
-  Orthanc 1.12.2 with its DICOMweb plugin (7/7). Not verified: cloud DICOM services, dcm4che,
+  Orthanc 1.12.2 with its DICOMweb plugin (7/7, rerun after the move into the pack). Not verified: cloud DICOM services, dcm4che,
   real modalities.
