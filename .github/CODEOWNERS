@@ -1,0 +1,22 @@
+# Code owners. Every pack has a named owner (docs/design/packs/domain-packs.md section 8.10);
+# a change to a pack's code, docs, examples or test tier asks that owner for review.
+# The last matching line wins.
+
+# Default
+*                                   @pmsudhi
+
+# The health pack: HL7 v2 and MLLP, FHIR, DICOM
+/crates/cameleer-health/            @pmsudhi
+/docs/packs/health/                 @pmsudhi
+/examples/medical/                  @pmsudhi
+/examples/edge/hl7-mllp-to-http.camel.yaml  @pmsudhi
+/scripts/health-interop.sh          @pmsudhi
+/scripts/dicom-interop.sh           @pmsudhi
+/scripts/update-dicom-dict.py       @pmsudhi
+/scripts/gen-dicom-charsets.py      @pmsudhi
+/scripts/fetch-dicom-testdata.sh    @pmsudhi
+
+# The pack extension point and the release tooling shared by packs
+/crates/cameleer-core/src/pack.rs   @pmsudhi
+/scripts/sbom.py                    @pmsudhi
+/scripts/package-archive.sh         @pmsudhi

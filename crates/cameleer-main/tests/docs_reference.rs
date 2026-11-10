@@ -2,6 +2,9 @@
 //! commands shown on the pages are taken from the markdown, run, and checked against what the
 //! pages say they do.
 
+// the examples use components of several families (the default features)
+#![cfg(feature = "full")]
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 

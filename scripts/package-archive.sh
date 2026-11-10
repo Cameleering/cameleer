@@ -7,7 +7,8 @@
 #
 # general = the default build (`full`); health = `full` plus the health pack
 # (docs/packs/index.md). Windows targets get a .zip, the others a .tar.gz. The archive holds
-# the binary (always named `cameleer`), LICENSE and README.md. Nothing is uploaded.
+# the binary (always named `cameleer`), LICENSE and README.md. Next to it: a SHA-256 sum and a
+# CycloneDX SBOM of exactly the crates compiled in (scripts/sbom.py). Nothing is uploaded.
 set -euo pipefail
 
 dist="${1:?distribution: general or health}"
@@ -17,19 +18,19 @@ cd "$root"
 
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 case "$dist" in
-  general) features=(); name="cameleer-$version-$target" ;;
-  health)  features=(--features "full,health"); name="cameleer-health-$version-$target" ;;
+  general) features=(); sbom=(); name="cameleer-$version-$target" ;;
+  health)  features=(--features "full,health"); sbom=(--features "full,health"); name="cameleer-health-$version-$target" ;;
   *) echo "unknown distribution: $dist (general or health)" >&2; exit 2 ;;
 esac
 
-cargo build --profile dist --locked -p cameleer-main --target "$target" "${features[@]}"
+cargo build --profile dist --locked -p cameleer-main --target "$target" ${features[@]+"${features[@]}"}
 
 exe=cameleer
 case "$target" in *windows*) exe=cameleer.exe ;; esac
 stage="$root/dist/$name"
 rm -rf "$stage"
 mkdir -p "$stage"
-cp "target/$target/dist/$exe" "$stage/"
+cp "${CARGO_TARGET_DIR:-target}/$target/dist/$exe" "$stage/"
 cp LICENSE README.md "$stage/" 2>/dev/null || true
 
 cd "$root/dist"
@@ -39,4 +40,7 @@ case "$target" in
 esac
 if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive" > "$archive.sha256"; else shasum -a 256 "$archive" > "$archive.sha256"; fi
 rm -rf "$name"
+cd "$root"
+python3 scripts/sbom.py --package cameleer-main ${sbom[@]+"${sbom[@]}"} --target "$target" --name "${name%-$version-$target}" --out "dist/$name.cdx.json" >/dev/null
+python3 scripts/sbom.py --check "dist/$name.cdx.json"
 echo "dist/$archive"

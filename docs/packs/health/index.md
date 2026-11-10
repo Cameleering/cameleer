@@ -18,6 +18,22 @@
 without it, a route that names `mllp`, `fhir`, `dicom` or `dicomweb` fails at start-up with a
 message naming the pack.
 
+## Verify a download
+
+Every release archive comes with a SHA-256 file, a CycloneDX SBOM (`.cdx.json`) and, for
+releases, a Sigstore bundle (`.sigstore.json`) per file, signed by the release workflow:
+
+```sh
+sha256sum -c cameleer-health-<version>-<target>.tar.gz.sha256
+cosign verify-blob   --bundle cameleer-health-<version>-<target>.tar.gz.sigstore.json   --certificate-identity-regexp '^https://github.com/pmsudhi/cameleer/\.github/workflows/archives\.yml@refs/tags/v'   --certificate-oidc-issuer https://token.actions.githubusercontent.com   cameleer-health-<version>-<target>.tar.gz
+```
+
+The SBOM lists exactly the crates compiled into that binary: the `cameleer-*` crates and the
+Rust standard library, and no third-party crates. `scripts/sbom.py` writes it from `cargo tree`
+for any feature set, for example a pack-only edge build
+(`--no-default-features --features health`) or the `cameleer-health` crate on its own. The
+images carry their SBOM and build provenance as OCI attestations.
+
 ## What it contains
 
 | crate feature | components | data formats | languages |

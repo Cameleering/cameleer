@@ -300,18 +300,18 @@ fn the_health_pack_is_separate_and_its_table_matches() {
     let toml = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).unwrap();
     let full = toml.split("full = [").nth(1).and_then(|r| r.split(']').next()).unwrap();
     assert!(!full.contains("health"), "full must not enable the health pack: {full}");
-    let (_, comps, formats, langs) = features::PACKS.iter().find(|(p, ..)| *p == "health").unwrap();
+    let (_, comps, formats, langs) = cameleer_main::features::PACKS.iter().find(|(p, ..)| *p == "health").unwrap();
     let info = &cameleer_health::PACK;
     assert_eq!(info.components, *comps);
     assert_eq!(info.data_formats, *formats);
     assert_eq!(info.languages, *langs);
-    let ctx = CamelContext::new();
+    let ctx = cameleer_core::context::CamelContext::new();
     ctx.add_pack(&cameleer_health::HEALTH);
     for c in info.components {
         assert!(ctx.component_names().iter().any(|n| n == c), "{c}");
     }
     // no family claims a pack component
     for c in info.components {
-        assert_eq!(features::feature_for("component", c), None, "{c}");
+        assert_eq!(cameleer_main::features::feature_for("component", c), None, "{c}");
     }
 }

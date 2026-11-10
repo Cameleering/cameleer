@@ -11,6 +11,9 @@ standards lives in a pack instead. A pack:
   **not** part of `full`;
 - has its own distribution: the image tag `pmsudhi/cameleer:<pack>` and the archive
   `cameleer-<pack>-<version>-<target>`, with the same `cameleer` command inside;
+- ships, for each release, an SBOM of exactly what is compiled in (`scripts/sbom.py`), SHA-256
+  sums and Sigstore signatures of its archives, and its own change log
+  (`crates/cameleer-<pack>/CHANGELOG.md`);
 - describes itself (`cameleer version` prints `health 0.6.0 (core 0.5.1)`), so validation, the
   YAML DSL and error messages know its components without central tables.
 
