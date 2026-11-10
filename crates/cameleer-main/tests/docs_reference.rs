@@ -157,7 +157,7 @@ fn cli_guide_worked_example() {
 }
 
 /// docs/guides/testing.md, "A worked example" and the intercept file: `cameleer test` with the
-/// page's route and test files, then the same orders with the intercept file listed first.
+/// page's route and test files, then the same orders with the intercept file listed after them.
 #[test]
 fn testing_guide_worked_example() {
     let text = page("testing.md");
@@ -173,7 +173,7 @@ fn testing_guide_worked_example() {
     // the intercept file instead of the properties: nothing connects to a broker
     std::fs::write(
         dir.join("intercept.test.yaml"),
-        "- test:\n    name: intercepted\n    routes: [intercept-kafka.camel.yaml, orders.camel.yaml]\n    steps:\n      - send:\n          to: direct:orders\n          body: {id: A3, priority: high}\n        expect:\n          body: accepted A3\n          mocks: {\"mock:kafka\": 1}\n",
+        "- test:\n    name: intercepted\n    routes: [orders.camel.yaml, intercept-kafka.camel.yaml]\n    steps:\n      - send:\n          to: direct:orders\n          body: {id: A3, priority: high}\n        expect:\n          body: accepted A3\n          mocks: {\"mock:kafka\": 1}\n",
     )
     .unwrap();
     let out = cameleer(&dir, &["test", "intercept.test.yaml"]);
@@ -332,4 +332,39 @@ fn tls_guide_worked_example() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{}", stdout);
     assert!(stdout.contains("2 passed, 0 failed"), "{}", stdout);
+}
+
+/// docs/guides/observability.md, "A separate management port": the page's properties, with a
+/// free port, serve health and metrics on the management port.
+#[test]
+fn observability_guide_management_port() {
+    let text = page("observability.md");
+    let i = text.find("## A separate management port").unwrap();
+    let props = block_after(&text[i..], "## A separate management port");
+    let mgmt = free_port();
+    let props = props.replace("camel.management.port = 9876", &format!("camel.management.port = {}", mgmt));
+    assert!(props.contains(&format!("camel.management.port = {}", mgmt)), "{}", props);
+    let dir = temp_dir("mgmt");
+    std::fs::write(dir.join("application.properties"), props.lines().map(|l| l.split('#').next().unwrap().trim_end()).collect::<Vec<_>>().join("\n")).unwrap();
+    std::fs::write(dir.join("ticks.camel.yaml"), block_after(&text, "<!-- example: observability-ticks -->")).unwrap();
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_cameleer"))
+        .args(["run", "ticks.camel.yaml", "--max-seconds", "30"])
+        .current_dir(&dir)
+        .env("CAMEL_LOCAL_STATUS", "false")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{}", mgmt);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while std::net::TcpStream::connect(("127.0.0.1", mgmt)).is_err() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let health = http("GET", &format!("{}/q/health", base));
+    let metrics = http("GET", &format!("{}/q/metrics", base));
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!(health.0, 200, "{}", health.1);
+    assert_eq!(metrics.0, 200, "{}", metrics.1);
+    assert!(metrics.1.contains("camel_routes_running_routes"), "{}", metrics.1);
 }

@@ -37,8 +37,37 @@ docker run --rm -p 8080:8080 -e CAMEL_SERVER_ENABLED=true -e CAMEL_SERVER_HEALTH
 ```
 
 The management endpoints have no authentication. `/q/dev` can stop and suspend routes, so keep
-the port on a private network, or bind it to the loopback interface with
-`camel.server.host=127.0.0.1` when only local tools need it.
+the port on a private network, or move the endpoints to a separate management port bound to the
+loopback interface (below).
+
+On `camel.server.port` the endpoints speak what the port speaks: with
+`camel.server.sslEnabled=true` they are HTTPS, next to your HTTPS routes
+([TLS and security](tls-and-security.md#https-for-your-routes)).
+
+## A separate management port
+
+Camel's separate management server is supported too. With `camel.management.enabled=true` the
+`/q/*` endpoints move off the routes' port to their own plain-HTTP port, so probes and scrapers
+don't share a port (or TLS) with your API:
+
+```properties
+camel.management.enabled = true
+camel.management.port = 9876             # the default
+camel.management.host = 127.0.0.1        # default: camel.server.host (0.0.0.0)
+camel.management.healthCheckEnabled = true
+camel.management.metricsEnabled = true
+camel.management.devConsoleEnabled = true
+```
+
+| key | default | effect |
+|---|---|---|
+| `camel.management.enabled` | `false` | serve the management endpoints on their own port instead of `camel.server.port` |
+| `camel.management.port` | `9876` | the management port |
+| `camel.management.host` | `camel.server.host` | the bind address; `127.0.0.1` keeps `/q/dev` local |
+| `camel.management.healthCheckEnabled`, `metricsEnabled`, `devConsoleEnabled` | `false` | which endpoints; the `camel.server.*` switches count as well, so `--console` works here too |
+
+The management port is always plain HTTP. `/q/attestation` and the MCP server stay on
+`camel.server.port`.
 
 ## Health checks
 
