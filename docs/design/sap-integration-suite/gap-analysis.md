@@ -241,7 +241,7 @@ These are rough estimates, not commitments.
 | # | Blocker | Why it blocks | Effort |
 |---|---|---|---|
 | 1 | **Independent security audit** of `cameleer-tls`, `cameleer-ssh`, xmlsecurity and the crypto data formats, plus fuzzing of every parser (STATUS todo 5) | SAP's product security review will reject unaudited home-grown TLS and crypto for customer traffic | External audit plus M of fixes |
-| 2 | **iFlow importer:** read the `.iflw` BPMN bundle, its parameters and its resources into the route model | Without it no SAP content runs. The format is not publicly specified; exported bundles can be studied, but SAP's cooperation would de-risk it | L |
+| 2 | **iFlow importer:** read the `.iflw` BPMN bundle, its parameters and its resources into the route model | Without it no SAP content runs. The format is not publicly specified, but a study of 419 real exports ([iflow-format.md](iflow-format.md)) found it regular and declarative: 15 step kinds cover 89% of elements, and message mappings are interpretable XML, not Java. SAP's cooperation would still help with defaults per version and rare steps | L |
 | 3 | **SAP Script API** for Groovy and JavaScript (`Message`, `ITApiFactory` services, `messageLogFactory`), plus a script-coverage run over a corpus of real customer scripts | Most real iFlows contain scripts | M to L |
 | 4 | **OData V2 and V4** client and server, with EDMX, $batch and CSRF | S/4HANA, SuccessFactors and most standard content | L |
 | 5 | **IDoc-over-SOAP and XI 3.0** adapters, **SOAP SAP RM** with EO/EOIO | ECC and S/4HANA on-premise, and PI/PO coexistence | L |
