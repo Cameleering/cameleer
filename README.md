@@ -194,8 +194,17 @@ idempotency, retries, sagas, human approval, rate limits, fallbacks and an audit
 served as MCP tools to Claude Desktop, VS Code, Cursor and agent frameworks, called by models in
 an `agent` step, or exposed as plain HTTP endpoints.
 
-**🔌 Serve routes as MCP tools.** An `ai-tool` route (Apache Camel's endpoint and option names)
-is a tool; one flag serves it:
+**🔌 Serve routes as MCP tools.** An existing route becomes a tool by changing one line: its
+`from` URI becomes an `ai-tool` URI that names the tool and its arguments
+(`uri: "ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string"`,
+[example](examples/agents/route-to-mcp-tool.camel.yaml)). Then one command serves it:
+`cameleer run orders.camel.yaml --mcp`, the same in Docker
+(`docker run ... pmsudhi/cameleer run /routes/orders.camel.yaml --mcp`), or
+`camel.server.mcp-enabled=true` in the Rust crate. Cameleer is both an MCP server and an MCP
+client. Coming in the next release (on `main` now): `cameleer run orders.camel.yaml
+--mcp-expose rest:*` serves existing routes as tools with no edits, REST operations with typed
+arguments, and writes need approval by default
+([how](docs/guides/mcp-server.md#expose-existing-routes-without-editing-them)). Written with Camel's `parameters` map, a tool route looks like this:
 
 <!-- example: readme-mcp-tool -->
 ```yaml
@@ -228,6 +237,11 @@ $ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the serv
   suite passes 39/39 (2025-11-25) and 26/26 (2025-06-18).
 - **An MCP client and gateway:** import other MCP servers' tools into the same envelope, with
   rug-pull protection, and serve them again.
+- **Prove what runs** (next release, on `main`): inside an Intel TDX or AMD SEV-SNP confidential
+  VM, or a dstack CVM, Cameleer returns hardware evidence of its routes, configuration and MCP
+  tools, bound to the client's nonce and its own TLS key, over HTTP and in the MCP handshake. It
+  does not verify the hardware signature itself yet and has not run on real TEE hardware
+  ([attestation](docs/guides/attestation.md)).
 - **Measured:** 41,620 MCP tool calls per second in sessions against 22,458 for Apache Camel's
   `camel-mcp-server` on the same machines, in 53 MB against 317 MB (p99 5.9 ms against 5.2 ms)
   ([Apache Camel's MCP server vs Cameleer](https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/),
@@ -384,8 +398,8 @@ same way. Kubernetes, Docker Compose and Cloud Run setups are in the
 
 ```toml
 [dependencies]
-cameleer-core = "0.4"
-cameleer-http = "0.4"
+cameleer-core = "0.5"
+cameleer-http = "0.5"
 ```
 
 ```rust
@@ -614,6 +628,12 @@ Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately as described in
 [SECURITY.md](SECURITY.md). To cite Cameleer, use the "Cite this repository" button
 ([CITATION.cff](CITATION.cff)).
+
+## Supported by
+
+Cameleer is supported by [DataHQ](https://datahq.ai).
+
+<a href="https://datahq.ai"><img src="site/brand/datahq-logo.png" alt="DataHQ" width="200"></a>
 
 ## License and credits
 

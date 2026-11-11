@@ -1,7 +1,8 @@
 # Roadmap: what you can build today, and what comes next
 
-Cameleer ships an integration engine: routes, about 230 connectors, the Enterprise Integration
-Patterns and the languages. Some things agent and serverless teams want don't exist as packaged
+Cameleer ships an integration engine (routes, about 230 connectors, the Enterprise Integration
+Patterns and the languages) and, since 0.5.0, an action layer for AI agents (tools, the MCP server
+and client, the `agent` step). Some things agent and serverless teams want don't exist as packaged
 components yet. This page covers two things:
 
 1. **[Build it on the engine today](#1-build-it-on-the-engine-today):** how to assemble each missing
@@ -16,16 +17,18 @@ Status labels: ✅ available · 🧩 build it from existing components (pattern 
 
 ## 1. Build it on the engine today
 
-### 1.1 Agent tool server (MCP-style) 🧩
+### 1.1 Agent tool server ✅
 
-**Goal:** an agent calls named tools over HTTP, and each tool is a route with retries, timeouts
-and idempotency.
+**Goal:** an agent calls named tools, and each tool is a route with retries, timeouts and
+idempotency.
 
-**How:** one `platform-http` route receives tool calls and dispatches them by name to a `direct:`
-route per tool with `toD`. Each tool route is ordinary Camel: error handling, idempotent consumer,
-circuit breaker. A second endpoint returns the tool list (a static JSON body, or one built from route
-descriptions). The packaged version is the [MCP server](guides/mcp-server.md) with
-[`ai-tool`](components/ai-tool.md) routes ([2.1](#21-agents-and-ai)).
+**Shipped in 0.5.0:** the [MCP server](guides/mcp-server.md) serves
+[`ai-tool`](components/ai-tool.md) routes to any MCP client, with schema checks, approvals,
+deduplication, timeouts and audit on every call. Start with [MCP](guides/mcp.md).
+
+**Without MCP:** for agents that call plain HTTP, one `platform-http` route receives tool calls
+and dispatches them by name to a `direct:` route per tool with `toD`. Each tool route is ordinary
+Camel: error handling, idempotent consumer, circuit breaker.
 
 <!-- example: roadmap-agent-tools -->
 ```yaml
@@ -52,18 +55,14 @@ descriptions). The packaged version is the [MCP server](guides/mcp-server.md) wi
               - to: "http://payments.internal/refunds?httpMethod=POST"
 ```
 
-### 1.2 Tool-calling agent loop 🧩
+### 1.2 Tool-calling agent loop ✅
 
 **Goal:** let the model choose tools until it has an answer.
 
-**How:**
-- `azure-openai` returns the model's tool calls in headers.
-- A `loop` (with `doWhile`) calls the model, uses `choice` to stop when there are no more tool calls,
-  and runs the requested tools with `recipientList` or `toD` to their `direct:` routes.
-- An aggregation strategy appends each tool result to the message list for the next turn.
-
-Keep the turn count bounded with the loop's count limit, and the cost bounded with `throttle`. The
-`openai` and `aws-bedrock` components don't pass tool definitions yet ([2.1](#21-agents-and-ai)).
+**Shipped in 0.5.0:** every model component (`openai`/`llm`, `anthropic`, `gemini`,
+`azure-openai`, `aws-bedrock`, `google-vertexai`) runs the tool loop itself when given `tags`,
+and the [`agent` step](guides/agent-step.md) makes the loop one step of a route, with turn,
+token and time limits, memory and approvals.
 
 ### 1.3 Vector store ingestion and retrieval 🧩
 
@@ -100,6 +99,8 @@ Apps or Knative work as before.
 **Goal:** forward tokens to a browser or client as they arrive.
 
 **How:**
+- `openai`/`llm` streams with `streaming=true` and a `streamingChunkProcessor` called per delta,
+  also inside the tool loop.
 - `aws-bedrock`, `azure-openai` and `google-vertexai` support streaming with
   `streamOutputMode=chunks` and a `streamingChunkProcessor` called per chunk.
 - In that processor, send each chunk to a `websocket` endpoint, or write it to a seda queue that a
@@ -116,11 +117,16 @@ Apps or Knative work as before.
   budget is spent.
 - Use `throttle` for a hard requests-per-second cap.
 
-### 1.7 Human in the loop 🧩
+### 1.7 Human in the loop ✅ / 🧩
 
 **Goal:** an agent's risky action waits for a person.
 
-**How:**
+**Built in since 0.5.0:** an `ai-tool` with `approval` parks the call until someone approves it
+(`cameleer tool approve`, `ai-tool:x?operation=approve`, or the MCP client's approval form), and
+a tool route can ask the user a question with `ai-tool:current?operation=elicit`. See
+[MCP: manager approval](guides/mcp/manager-approval.md).
+
+**Your own flow:**
 - Route the proposed action to `slack`, `telegram` or `mail` with an approval link that hits a
   `platform-http` route.
 - Park the pending action in a repository (`sql` or `spring-redis`) keyed by an id.
@@ -135,21 +141,22 @@ Apps or Knative work as before.
 
 | Item | Why | Status |
 |---|---|---|
-| **MCP server**: routes as MCP tools, resources and prompts ([ai-tool](components/ai-tool.md), [MCP server guide](guides/mcp-server.md)) | the standard way agents discover and call tools, with the reliability envelope on every call | ✅ (unreleased, branch `agent-action-layer`) |
-| **Tool calling in every model component** (`openai`/`llm`, `anthropic`, `azure-openai`, `aws-bedrock`, `google-vertexai`) | removes the main gap for the agent loop in 1.2 | ✅ (unreleased, branch `agent-action-layer`) |
-| **The `agent` step**: model call → tool dispatch → loop, with turn, token and time limits, memory and approvals ([guide](guides/agent-step.md)) | packages 1.2 so it's one step in a route | ✅ (unreleased, branch `agent-action-layer`) |
+| **MCP server**: routes as MCP tools, resources and prompts ([ai-tool](components/ai-tool.md), [MCP server guide](guides/mcp-server.md)) | the standard way agents discover and call tools, with the reliability envelope on every call | ✅ 0.5.0 |
+| **Tool calling in every model component** (`openai`/`llm`, `anthropic`, `gemini`, `azure-openai`, `aws-bedrock`, `google-vertexai`) | removes the main gap for the agent loop in 1.2 | ✅ 0.5.0 |
+| **The `agent` step**: model call → tool dispatch → loop, with turn, token and time limits, memory and approvals ([guide](guides/agent-step.md)) | packages 1.2 so it's one step in a route | ✅ 0.5.0 |
 | **Vector store components**: pgvector, Qdrant, OpenSearch k-NN, Pinecone | first-class retrieval instead of SQL/REST in 1.3 | 🚧 |
-| **Streaming in `openai`** | parity with the Bedrock, Azure and Vertex components | 🚧 |
-| **Prompt templates and response caching** | cut cost and latency for repeated prompts; reuse the templating languages | 🚧 |
-| **Anthropic API component** | direct access without Bedrock or Vertex | 🚧 (reachable today through `aws-bedrock` and `google-vertexai`) |
+| **MCP client and gateway**: other MCP servers' tools behind the same envelope ([guide](guides/mcp-client.md)) | one place to govern every tool an agent can call | ✅ 0.5.0 |
+| **Streaming in `openai`** | parity with the Bedrock, Azure and Vertex components | ✅ 0.5.0, also in the tool loop |
+| **Prompt templates and response caching** | cut cost and latency for repeated prompts | ✅ 0.5.0: `ai-prompt`, `responseCache=exact`, `coalesce`, provider prompt caching ([model providers](guides/model-providers.md)) |
+| **Anthropic and Gemini API components** | direct access without Bedrock or Vertex | ✅ 0.5.0: `anthropic`, `gemini`, and 19 OpenAI-compatible presets |
 
 ### 2.2 Serverless and edge
 
 | Item | Why | Status |
 |---|---|---|
 | **AWS Lambda runtime adapter**: route as a Lambda handler, with events mapped to exchanges | packages 1.4; Lambda is the largest serverless platform | ✅ built into `cameleer run` ([AWS Lambda](DEPLOYMENT.md#aws-lambda)) |
-| **Published container images and deployment examples** (Cloud Run, Fargate, Azure Container Apps, Knative) | shows scale-to-zero end to end | 🚧 |
-| **Static and ARM64 builds tested** (musl, aarch64 Linux) | edge gateways and Graviton or Ampere hosts; today the hermetic suite runs on Windows and Linux x86-64 | 🚧 |
+| **Published container images and deployment examples** | shows scale-to-zero end to end | ✅ images on Docker Hub and ghcr (amd64, arm64); [deployment guide](DEPLOYMENT.md) for Docker, Compose, Kubernetes, Cloud Run and AWS Lambda. 🚧 worked examples for Fargate, Azure Container Apps and Knative |
+| **Static and ARM64 builds tested** (musl, aarch64 Linux) | edge gateways and Graviton or Ampere hosts | ✅ partly: the arm64 image is published and static musl is measured (3–22% slower than glibc, [benchmarks](BENCHMARKS.md#faas-cold-start-and-size)); 🚧 the hermetic suite on aarch64 |
 | **Binary size budget and feature flags per crate** | smaller images for functions that need only a few connectors | ✅ a feature per component family, plus `templates`, `jq`, `xpath`, `http2` and `validate` ([build features](guides/build-features.md)) |
 
 ### 2.3 Performance
@@ -158,18 +165,18 @@ Current results: [BENCHMARKS.md](BENCHMARKS.md); analysis: [../benchmarks/analys
 
 | Item | Why | Status |
 |---|---|---|
-| **HTTP benchmark with the load generator on a second machine** | on one machine even a do-nothing server tops out near 400k req/s (3.6x Java), so 4x can't be shown there | 🚧 |
-| **Event-driven HTTP server** (IOCP on Windows, epoll on Linux), opt-in, with the blocking server as fallback | scalability with many idle connections; on one machine it measured no faster than threads | 🚧 decision pending |
-| **Shared JSON object keys** (`ObjectMap` API change) | JSON parsing is the largest cost in split/aggregate (3.18x today) | 🚧 |
+| **HTTP benchmark with the load generator on a second machine** | a fair HTTP comparison | ✅ `scripts/cloud-bench`: Cameleer 1.7x Camel on a fixed reply, 68% of a do-nothing server ([the HTTP ceiling](BENCHMARKS.md#the-http-ceiling)) |
+| **Event-driven HTTP server core** | plain HTTP is the one scenario under 2x Camel; the request path, not the work, is the cost | 🚧 next step |
+| **Shared JSON object keys** (`ObjectMap` API change) | JSON parsing is the largest cost in split/aggregate (2.6x Camel today) | 🚧 |
 | **A smaller `Exchange`** (box `exception`, group `from_*`) | fewer bytes copied per split part and per seda hand-off | 🚧 |
-| **Kafka benchmark scenario** | needs a real broker on both sides | 🚧 |
+| **Kafka benchmark scenario** | a real broker on both sides | ✅ Kafka 4.3.2 in `scripts/cloud-bench`: 8.7x Camel on stream processing ([benchmarks](BENCHMARKS.md)) |
 
 ### 2.4 Operations
 
 | Item | Why | Status |
 |---|---|---|
 | **OpenTelemetry tracing export** | trace a request across agents, routes and services; today there are Prometheus metrics, tracing and message history | 🚧 |
-| **Windows default time zone** (CLDR `windowsZones` map) | `TimeZone::local` is UTC on Windows unless `TZ` is set | 🚧 |
+| **Windows default time zone** (CLDR `windowsZones` map) | `TimeZone::local` is UTC on Windows unless `TZ` is set | 🚧 [#15](https://github.com/pmsudhi/cameleer/issues/15) |
 | **Graceful stop for the remaining direct `TcpStream::shutdown` calls** | so `stop()` never hangs on idle peers on Windows | 🚧 |
 
 ### 2.5 Verification and trust
@@ -180,7 +187,7 @@ Current results: [BENCHMARKS.md](BENCHMARKS.md); analysis: [../benchmarks/analys
 | **Docker-based real servers** (Kafka, Elasticsearch, Cassandra, CouchDB, MongoDB, Artemis) | beyond the protocol emulators | 🚧 |
 | **Independent security audit and fuzzing** of the from-scratch TLS, SSH, XML security and protocol parsers | the price of having no dependencies is owning that code | 🚧 |
 
-The verification and operations items are also tracked in [STATUS.md](STATUS.md).
+The verification and operations items are also tracked in the repository's [status notes](https://github.com/pmsudhi/cameleer/blob/main/docs/STATUS.md).
 
 ## Found a problem?
 

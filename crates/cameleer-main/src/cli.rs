@@ -52,7 +52,7 @@ pub fn usage() -> &'static str {
   cameleer init <file> [--directory DIR]
   cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
             [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop key=value]
-            [--log-level LEVEL] [--console] [--port N] [--trace] [--mcp | --mcp-stdio]
+            [--log-level LEVEL] [--console] [--port N] [--trace] [--mcp | --mcp-stdio] [--mcp-expose PATTERNS]
   cameleer export [files...] --directory DIR [--name N] [--camel-path PATH]
   cameleer bind <name> --source S --sink S [--step S]... [--property source.k=v]...
              [--error-handler log|none|sink:URI] [--output FILE]
@@ -339,7 +339,7 @@ fn run_cmd(args: &[String]) -> CliResult {
     let a = Args::parse(args, &["dev", "console", "trace", "background", "mcp", "mcp-stdio"])?;
     a.check(&[
         "properties", "profile", "dev", "name", "background", "max-seconds", "max-messages", "max-idle-seconds", "prop", "log-level", "console",
-        "port", "trace", "mcp", "mcp-stdio",
+        "port", "trace", "mcp", "mcp-stdio", "mcp-expose",
     ])?;
     if a.flag("mcp-stdio") && a.flag("background") {
         return Err("--mcp-stdio talks over stdin and stdout; it can't run in the background".into());
@@ -410,7 +410,11 @@ fn run_cmd(args: &[String]) -> CliResult {
         main.set_property("camel.main.tracing", "true");
     }
     // the MCP server; on the command line it exposes every tool unless camel.server.mcp-tags says otherwise
-    if a.flag("mcp") || a.flag("mcp-stdio") {
+    // existing routes as MCP tools, no route edits: `--mcp-expose direct:*,rest:*` (implies --mcp)
+    if let Some(p) = a.get("mcp-expose") {
+        main.set_property("camel.server.mcp-expose-routes", p);
+    }
+    if a.flag("mcp") || a.flag("mcp-stdio") || a.get("mcp-expose").is_some() {
         main.set_property("camel.server.mcp-enabled", "true");
         main.set_property("camel.server.mcp-transport", if a.flag("mcp-stdio") { "stdio" } else { "http" });
         main.set_default_property("camel.server.mcp-tags", "*,untagged");

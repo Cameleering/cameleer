@@ -13,9 +13,9 @@ categories = ["encoding", "parser-implementations"]
 description = "Cameleer data formats: Avro, Bindy, YAML, Tar, Zip, Crypto, PGP, CBOR, Thrift, ASN.1, iCal, MIME multipart, Fory (xlang), Barcode (QR, Data Matrix, Code 128/39, EAN-13, UPC-A)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.4.0" }
-cameleer-yaml = { path = "../cameleer-yaml", version = "0.4.0", default-features = false }
+cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.5.1", default-features = false }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not

@@ -13,8 +13,8 @@ categories = ["network-programming"]
 description = "Cameleer messaging components (std only): AMQP 0-9-1 (rabbitmq, spring-rabbitmq), STOMP 1.2 (stomp) and JMS-style jms/activemq/amqp over STOMP"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.4.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not

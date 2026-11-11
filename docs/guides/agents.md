@@ -337,8 +337,8 @@ that rolls back half-done work, see
 [AI agent tool calls: direct vs through Cameleer](agent-tool-calls.md).
 
 For one endpoint per tool without one route per tool, use `toD: direct:tool-${header.name}` on
-a path parameter, with a fixed set of `direct:` routes behind it. A packaged MCP server is on the
-[roadmap](../ROADMAP.md).
+a path parameter, with a fixed set of `direct:` routes behind it. For MCP clients, serve
+[`ai-tool`](../components/ai-tool.md) routes with the [MCP server](mcp-server.md) instead.
 
 ## Human-in-the-loop approval
 

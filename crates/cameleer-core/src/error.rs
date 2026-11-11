@@ -58,11 +58,13 @@ fn builtin_parent(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "Throwable" => return None,
         EXCEPTION => "Throwable",
-        RUNTIME | IO | TIMEOUT | INTERRUPTED | PARSE => EXCEPTION,
+        // CamelExchangeException extends CamelException extends Exception: checked, so
+        // Exception catches it and RuntimeException does not
+        RUNTIME | IO | TIMEOUT | INTERRUPTED | PARSE | CAMEL_EXCHANGE => EXCEPTION,
         FILE_NOT_FOUND | CONNECT | SOCKET_TIMEOUT => IO,
         NUMBER_FORMAT => ILLEGAL_ARGUMENT,
         ILLEGAL_ARGUMENT | ILLEGAL_STATE | NULL_POINTER | UNSUPPORTED_OPERATION | REJECTED_EXECUTION => RUNTIME,
-        CAMEL_EXCHANGE | NO_SUCH_ENDPOINT | RESOLVE_ENDPOINT_FAILED | ROLLBACK_EXCHANGE | CAMEL_AUTHORIZATION
+        NO_SUCH_ENDPOINT | RESOLVE_ENDPOINT_FAILED | ROLLBACK_EXCHANGE | CAMEL_AUTHORIZATION
         | NO_MESSAGE_ID | DIRECT_CONSUMER_NOT_AVAILABLE | HTTP_OPERATION_FAILED => CAMEL_EXCHANGE,
         CAMEL_EXECUTION | NO_SUCH_LANGUAGE | NO_SUCH_BEAN | NO_TYPE_CONVERSION_AVAILABLE | TYPE_CONVERSION
         | EXPRESSION_EVALUATION | FAILED_TO_CREATE_ROUTE | FAILED_TO_START_ROUTE | CALL_NOT_PERMITTED => RUNTIME,
@@ -267,5 +269,28 @@ mod tests {
         register_kind_parent("MyIoError", "IOException");
         assert!(kind_is_a("MyIoError", "IOException"));
         assert_eq!(kind_distance("FileNotFoundException", "Exception"), Some(2));
+    }
+
+    /// CamelExchangeException used to be its own parent, so nothing under it was an Exception:
+    /// onException/doCatch for Exception missed HttpOperationFailedException and the rest.
+    #[test]
+    fn camel_exchange_kinds_are_exceptions_not_runtime_exceptions() {
+        for k in [
+            "CamelExchangeException",
+            "HttpOperationFailedException",
+            "DirectConsumerNotAvailableException",
+            "ResolveEndpointFailedException",
+            "NoSuchEndpointException",
+            "ValidationException",
+            "PredicateValidationException",
+            "ExchangeTimedOutException",
+        ] {
+            assert!(kind_is_a(k, "Exception"), "{} should be an Exception", k);
+            assert!(kind_is_a(k, "Throwable"), "{} should be a Throwable", k);
+            assert!(!kind_is_a(k, "RuntimeException"), "{} is checked in Camel, not a RuntimeException", k);
+        }
+        assert!(kind_is_a("HttpOperationFailedException", "CamelExchangeException"));
+        assert_eq!(kind_distance("CamelExchangeException", "Exception"), Some(1));
+        assert_eq!(kind_distance("ValidationException", "Exception"), Some(2));
     }
 }

@@ -8,29 +8,30 @@ homepage.workspace = true
 documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
-keywords = ["camel", "integration", "cli", "yaml", "serverless"]
+keywords = ["camel", "integration", "cli", "mcp", "serverless"]
 categories = ["command-line-utilities", "network-programming"]
-description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel JBang)"
+description = "Cameleer main runner and `cameleer` CLI (like Camel Main / Camel JBang): runs Camel YAML, XML and Rust routes, serves routes as MCP tools (--mcp, --mcp-stdio), validates, tests, and runs as an AWS Lambda custom runtime"
 
 [dependencies]
-cameleer-ai = { path = "../cameleer-ai", version = "0.4.0", optional = true }
-cameleer-amqp = { path = "../cameleer-amqp", version = "0.4.0", optional = true }
-cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.4.0", optional = true }
-cameleer-cloud = { path = "../cameleer-cloud", version = "0.4.0", optional = true }
-cameleer-core = { path = "../cameleer-core", version = "0.4.0", default-features = false }
-cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.4.0", optional = true }
-cameleer-datastores = { path = "../cameleer-datastores", version = "0.4.0", optional = true }
-cameleer-grpc = { path = "../cameleer-grpc", version = "0.4.0", optional = true }
-cameleer-http = { path = "../cameleer-http", version = "0.4.0", default-features = false }
-cameleer-protocols = { path = "../cameleer-protocols", version = "0.4.0", optional = true }
-cameleer-script = { path = "../cameleer-script", version = "0.4.0", optional = true }
-cameleer-soap = { path = "../cameleer-soap", version = "0.4.0", optional = true }
-cameleer-saas = { path = "../cameleer-saas", version = "0.4.0", optional = true }
-cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.4.0", optional = true }
-cameleer-sql = { path = "../cameleer-sql", version = "0.4.0", optional = true }
-cameleer-ssh = { path = "../cameleer-ssh", version = "0.4.0", optional = true }
-cameleer-xml = { path = "../cameleer-xml", version = "0.4.0", optional = true }
-cameleer-yaml = { path = "../cameleer-yaml", version = "0.4.0", default-features = false }
+cameleer-ai = { path = "../cameleer-ai", version = "0.5.1", optional = true }
+cameleer-amqp = { path = "../cameleer-amqp", version = "0.5.1", optional = true }
+cameleer-attest = { path = "../cameleer-attest", version = "0.5.1", optional = true }
+cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.5.1", optional = true }
+cameleer-cloud = { path = "../cameleer-cloud", version = "0.5.1", optional = true }
+cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
+cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.5.1", optional = true }
+cameleer-datastores = { path = "../cameleer-datastores", version = "0.5.1", optional = true }
+cameleer-grpc = { path = "../cameleer-grpc", version = "0.5.1", optional = true }
+cameleer-http = { path = "../cameleer-http", version = "0.5.1", default-features = false }
+cameleer-protocols = { path = "../cameleer-protocols", version = "0.5.1", optional = true }
+cameleer-script = { path = "../cameleer-script", version = "0.5.1", optional = true }
+cameleer-soap = { path = "../cameleer-soap", version = "0.5.1", optional = true }
+cameleer-saas = { path = "../cameleer-saas", version = "0.5.1", optional = true }
+cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.5.1", optional = true }
+cameleer-sql = { path = "../cameleer-sql", version = "0.5.1", optional = true }
+cameleer-ssh = { path = "../cameleer-ssh", version = "0.5.1", optional = true }
+cameleer-xml = { path = "../cameleer-xml", version = "0.5.1", optional = true }
+cameleer-yaml = { path = "../cameleer-yaml", version = "0.5.1", default-features = false }
 
 # Component families. The default build has all of them; a FaaS or edge build picks only
 # what its routes use, e.g.
@@ -47,7 +48,7 @@ default = ["full"]
 # nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
 core = []
 full = [
-    "ai", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "ai", "attest", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
     "templates", "jq", "xpath", "http2", "validate",
 ]
 templates = ["cameleer-core/templates"]
@@ -56,6 +57,8 @@ xpath = ["cameleer-core/xpath"]
 http2 = ["cameleer-http/http2"]
 validate = []
 ai = ["dep:cameleer-ai", "cameleer-yaml/agent"]
+# attestation in hardware TEEs (camel.attestation.*): configfs-tsm and dstack evidence
+attest = ["dep:cameleer-attest"]
 amqp = ["dep:cameleer-amqp"]
 amqp10 = ["dep:cameleer-amqp10"]
 cloud = ["dep:cameleer-cloud", "cameleer-yaml/agent"]
@@ -83,3 +86,7 @@ required-features = ["full"]
 [[example]]
 name = "idle_threads"
 required-features = ["xml"]
+
+[dev-dependencies]
+# test certificates (cameleer_tls::testing) for the HTTPS tests
+cameleer-tls = { path = "../cameleer-tls" }

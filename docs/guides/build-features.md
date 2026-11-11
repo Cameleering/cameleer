@@ -34,6 +34,7 @@ names its feature in its header line (**Cargo feature:**).
 | feature | adds | crate |
 |---|---|---|
 | `ai` | `ai-tool`, `ai-resource`, `ai-prompt`: routes as tools, resources and prompts for AI agents, with the reliability envelope; the MCP server and client and the `mcp` component | `cameleer-ai` |
+| `attest` | attestation in confidential VMs (`camel.attestation.*`): evidence from configfs-tsm and dstack, bound to the routes, configuration and TLS key, at `/q/attestation` and over MCP ([attestation](attestation.md)) | `cameleer-attest` |
 | `amqp` | `activemq`, `amqp-stomp`, `jms`, `rabbitmq`, `spring-rabbitmq`, `stomp` (AMQP 0-9-1, STOMP and JMS) | `cameleer-amqp` |
 | `amqp10` | `amqp` (AMQP 1.0, JMS over AMQP), `azure-servicebus`, `azure-eventhubs` | `cameleer-amqp10` |
 | `cloud` | every `aws*`, `azure-*` and `google-*` component except the two above (62 components: S3, SQS, SNS, DynamoDB, Lambda, Bedrock, Blob, Cosmos DB, Azure OpenAI, Pub/Sub, BigQuery, Vertex AI, ...) and the `{{aws:...}}`, `{{azure:...}}` and `{{gcp:...}}` secret placeholders | `cameleer-cloud` |
@@ -118,16 +119,16 @@ too; turn them off to drop the parts you don't use:
 
 ```toml
 [dependencies]
-cameleer-core = { version = "0.4", default-features = false, features = ["jq"] }
-cameleer-http = { version = "0.4", default-features = false }   # HTTP/1.1 only, no gRPC crate
-cameleer-cloud = "0.4"
+cameleer-core = { version = "0.5", default-features = false, features = ["jq"] }
+cameleer-http = { version = "0.5", default-features = false }   # HTTP/1.1 only, no gRPC crate
+cameleer-cloud = "0.5"
 ```
 
 To run YAML routes from Rust with a reduced set of components, depend on `cameleer-main` with
 the same feature list as the command above:
 
 ```toml
-cameleer-main = { version = "0.4", default-features = false, features = ["cloud", "jq"] }
+cameleer-main = { version = "0.5", default-features = false, features = ["cloud", "jq"] }
 ```
 
 ## Check what a binary contains
@@ -136,7 +137,7 @@ cameleer-main = { version = "0.4", default-features = false, features = ["cloud"
 
 ```text
 $ cameleer version
-Cameleer 0.4.0 (components: core, http, yaml, cloud, sql, jq)
+Cameleer 0.5.1 (components: core, http, yaml, cloud, sql, jq)
 ```
 
 A full build lists every feature.

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Compare Cameleer: Apache Camel, Alternatives and AI Agent Tool Calls | Cameleer</title>
-<meta name="description" content="Side-by-side comparisons: Apache Camel vs Cameleer with measured throughput, memory and startup; the alternatives to Apache Camel; and AI agent tool calls made directly or through Cameleer.">
+<title>Compare Cameleer: Camel, MuleSoft, WSO2, MCP | Cameleer</title>
+<meta name="description" content="Comparisons by why you are looking: Apache Camel without the JVM, MuleSoft and WSO2, enterprise MCP platforms for AI agents, and direct tool calls.">
 <link rel="canonical" href="https://cameleer.ing/compare/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
@@ -27,7 +27,12 @@
  "hasPart": [
   {"@type": "TechArticle", "headline": "Apache Camel vs Cameleer", "url": "https://cameleer.ing/compare/apache-camel-vs-cameleer/"},
   {"@type": "TechArticle", "headline": "Apache Camel alternatives", "url": "https://cameleer.ing/alternatives/apache-camel-alternatives/"},
-  {"@type": "TechArticle", "headline": "AI agent tool calls: direct function calling vs Cameleer", "url": "https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/"}]}
+  {"@type": "TechArticle", "headline": "AI agent tool calls: direct function calling vs Cameleer", "url": "https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/"},
+  {"@type": "TechArticle", "headline": "Apache Camel's MCP server vs Cameleer", "url": "https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/"},
+  {"@type": "TechArticle", "headline": "Enterprise MCP platforms compared", "url": "https://cameleer.ing/compare/enterprise-mcp-platforms/"},
+  {"@type": "TechArticle", "headline": "MuleSoft vs Apache Camel vs Cameleer", "url": "https://cameleer.ing/compare/mulesoft-vs-apache-camel-vs-cameleer/"},
+  {"@type": "TechArticle", "headline": "WSO2 vs Apache Camel vs Cameleer", "url": "https://cameleer.ing/compare/wso2-vs-apache-camel-vs-cameleer/"},
+  {"@type": "TechArticle", "headline": "MuleSoft alternatives", "url": "https://cameleer.ing/alternatives/mulesoft-alternatives/"}]}
 </script>
 </head>
 <body>
@@ -37,7 +42,7 @@
     <nav aria-label="Main">
       <a class="keep" href="../docs/">Docs</a>
       <a class="keep" href="../use-cases/">Use cases</a>
-      <a href="../docs/guides/agents.html">Agents</a>
+      <a href="../mcp/">MCP</a>
       <a href="apache-camel-vs-cameleer/">vs Apache Camel</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
     </nav>
@@ -48,19 +53,38 @@
   <div class="wrap">
     <p class="crumbs"><a href="../">Cameleer</a> / Compare</p>
     <h1>Compare Cameleer</h1>
-    <p class="lede">Measured comparisons and honest guides: how Cameleer stacks up against Apache Camel, what the alternatives are, and what changes when AI agents call your systems through it.</p>
+    <p class="lede">Measured comparisons and honest guides, grouped by why you are looking: Apache Camel without the JVM, an integration platform, or a safe way for AI agents to act on your systems. Each page says where the other product is the better choice.</p>
   </div>
 </section>
-<section class="c-sec">
+<section class="c-sec" id="camel">
   <div class="wrap">
+    <h2>You run Apache Camel and want it lighter</h2>
     <div class="hub-list">
-      <a class="card" href="apache-camel-vs-cameleer/"><h3>Apache Camel vs Cameleer</h3><p>The same routes on both: throughput, latency, memory and startup across routing, REST, Kafka, PostgreSQL and batch use cases, including Camel on Quarkus native.</p></a>
-      <a class="card" href="../alternatives/apache-camel-alternatives/"><h3>Apache Camel alternatives</h3><p>Cameleer, Camel on Quarkus, Spring Integration, Kafka Connect, NiFi and iPaaS: what each is for, and when to stay on Camel.</p></a>
-      <a class="card" href="camel-mcp-server-vs-cameleer/"><h3>Apache Camel's MCP server vs Cameleer</h3><p>The same <code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties: what Cameleer adds around each call, what Camel has that Cameleer does not, and when to choose which.</p></a>
-      <a class="card" href="ai-agent-tool-calls-direct-vs-cameleer/"><h3>AI agent tool calls: direct vs Cameleer</h3><p>What goes wrong when the model runs a multi-step job tool call by tool call, and how routing each tool through Cameleer fixes it: validation, idempotency, sagas, audit.</p></a>
-      <a class="card" href="../use-cases/"><h3>Use cases</h3><p>What people run on Cameleer, each with a tested route: tools for AI agents, HL7 over MLLP, MQTT edge gateways, AWS Lambda and Cloud Run, file and SFTP pipelines.</p></a>
+      <a class="card" href="apache-camel-vs-cameleer/"><h3>Apache Camel vs Cameleer</h3><p>The same routes on both: throughput, latency, memory and startup across routing, REST, Kafka, PostgreSQL and batch, including Camel on Quarkus native.</p></a>
+      <a class="card" href="../alternatives/apache-camel-alternatives/"><h3>Apache Camel alternatives</h3><p>Lighter runtimes, other frameworks, the integration platforms review sites list, and when to stay on Camel.</p></a>
     </div>
-    <p class="note" style="margin-top:28px">Covered in these pages: Apache Camel on the JVM and on Quarkus native, Camel K and Camel JBang, Apache Camel's MCP server and AI tools, Spring Integration, Kafka Connect, Redpanda Connect (Benthos), Apache NiFi, MuleSoft and other iPaaS, n8n and Zapier-style automation, hosted agent tool platforms and direct function calling.</p>
+  </div>
+</section>
+<section class="c-sec" id="platforms">
+  <div class="wrap">
+    <h2>You are choosing an integration platform</h2>
+    <div class="hub-list">
+      <a class="card" href="mulesoft-vs-apache-camel-vs-cameleer/"><h3>MuleSoft vs Apache Camel vs Cameleer</h3><p>A commercial platform, the open-source framework and Camel's routes as one binary: cost model, connectors, API management, MCP, and how Mule flows map to routes.</p></a>
+      <a class="card" href="wso2-vs-apache-camel-vs-cameleer/"><h3>WSO2 vs Apache Camel vs Cameleer</h3><p>Three open-source integration runtimes: designer and API management, startup and memory, MCP, and how Synapse mediators map to routes.</p></a>
+      <a class="card" href="../alternatives/mulesoft-alternatives/"><h3>MuleSoft alternatives</h3><p>Replace the part you need to: the runtime, the platform, API management or the agent layer.</p></a>
+    </div>
+  </div>
+</section>
+<section class="c-sec" id="agents">
+  <div class="wrap">
+    <h2>You want AI agents to act on your systems</h2>
+    <div class="hub-list">
+      <a class="card" href="enterprise-mcp-platforms/"><h3>Enterprise MCP platforms compared</h3><p>MuleSoft, Boomi, Workato, WSO2, TIBCO, IBM, Azure Logic Apps, Apache Camel and Cameleer as MCP servers, and seven questions to ask any of them.</p></a>
+      <a class="card" href="camel-mcp-server-vs-cameleer/"><h3>Apache Camel's MCP server vs Cameleer</h3><p>The same <code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties: what Cameleer adds around each call, and the measured difference.</p></a>
+      <a class="card" href="ai-agent-tool-calls-direct-vs-cameleer/"><h3>AI agent tool calls: direct vs Cameleer</h3><p>A refund across four systems, tool call by tool call or as one route: validation, run-once, sagas, approval, audit.</p></a>
+      <a class="card" href="../mcp/"><h3>Cameleer MCP</h3><p>How it works, where it runs, and ten use cases tested with real requests through Claude.</p></a>
+    </div>
+    <p class="note" style="margin-top:28px">Covered in these pages: Apache Camel on the JVM and on Quarkus native, Camel K and Camel JBang, Apache Camel's MCP server, MuleSoft Anypoint and Agent Fabric, WSO2 Integrator, Boomi, Workato, IBM webMethods and App Connect, TIBCO BusinessWorks and Flogo, SAP Integration Suite, Azure Logic Apps and Service Bus, Spring Integration, Kafka Connect, Redpanda Connect (Benthos), Apache NiFi, n8n and Zapier-style automation, hosted agent tool platforms and direct function calling.</p>
   </div>
 </section>
 </main>
@@ -68,7 +92,7 @@
   <div class="wrap">
     <div class="credit">
       <h4>Cameleer</h4>
-      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation or any vendor named on these pages. Product names are trademarks of their owners and are used only to identify them.</p>
     </div>
     <div><h4>Docs</h4><ul><li><a href="../docs/">Documentation</a></li><li><a href="../docs/BENCHMARKS.html">Benchmarks</a></li></ul></div>
     <div><h4>Project</h4><ul><li><a href="https://github.com/pmsudhi/cameleer">Source on GitHub</a></li><li><a href="../llms.txt">llms.txt</a></li></ul></div>

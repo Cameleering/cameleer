@@ -734,6 +734,45 @@ fn sort_and_claim_check() {
 // doTry / throwException / validate / rollback
 // ---------------------------------------------------------------------------
 
+/// `doCatch: [Exception]` catches Camel's own exchange failures (a send to a `direct:` endpoint
+/// with no consumer is a `DirectConsumerNotAvailableException`, a `CamelExchangeException`);
+/// `RuntimeException` does not, as in Camel. CamelExchangeException used to be its own parent,
+/// so `Exception` missed it.
+#[test]
+fn exception_catches_camel_exchange_failures_and_runtime_exception_does_not() {
+    let ctx = started(
+        r##"
+- from:
+    uri: direct:catchAll
+    steps:
+      - doTry:
+          steps:
+            - to: direct:nowhere
+          doCatch:
+            - exception:
+                - java.lang.Exception
+              steps:
+                - to: mock:caught
+- from:
+    uri: direct:catchRuntime
+    steps:
+      - doTry:
+          steps:
+            - to: direct:nowhere
+          doCatch:
+            - exception:
+                - java.lang.RuntimeException
+              steps:
+                - to: mock:runtime
+"##,
+    );
+    let t = ctx.create_producer_template();
+    t.send_body("direct:catchAll", "x").unwrap();
+    assert_eq!(mock(&ctx, "mock:caught").received_counter(), 1);
+    assert!(t.send_body("direct:catchRuntime", "x").is_err(), "RuntimeException does not catch a CamelExchangeException");
+    assert_eq!(mock(&ctx, "mock:runtime").received_counter(), 0);
+}
+
 #[test]
 fn do_try_catch_on_when_and_finally() {
     let ctx = started(

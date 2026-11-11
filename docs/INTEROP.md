@@ -27,6 +27,8 @@ script). Every account uses the password `camelpw` (system users `camelftp` and 
 
 ## Results
 
+The sections below record the runs of 2026-11-01. The latest full run, in one container session, passed 74 live, 58 official-client and 35 simulator tests with no failures.
+
 Run on 2026-11-01. All 72 live tests pass (`CAMEL_LIVE_INTEROP=1 cargo test --workspace live_`), including
 27 against Apache ActiveMQ 5.17 (12 STOMP, 5 MQTT and 10 AMQP 1.0, the latter with the
 `activemq-amqp` module added, see below).
@@ -82,6 +84,7 @@ Every fix has a regression test in the hermetic suite as well.
 | 17 | `amqp` | `subscriptionShared=true` on ActiveMQ 5: the `shared` capability is ignored, so every member would receive every message (ActiveMQ 5.17) | refused at route start with `UnsupportedOperationException` naming virtual topics when the broker announces `product=ActiveMQ`, `version=5.x` (as with bug 15) | same; live `live_activemq_amqp_shared_subscriptions_refused` |
 | 18 | `cameleer-tls` servers (`NetStream::server`, gRPC/HTTP2, the cloud mock servers) | a rejected TLS 1.3 client certificate could reach the client as "connection reset" instead of the alert (`certificate_required`, `unknown_ca`): the client writes application data right after its Finished, the server dropped the socket right after sending the alert, the late data drew a TCP reset, and on Windows a reset discards the unread alert in the receive buffer (Linux returns it first). Seen as a rare flake (1 in 300 under CPU load) of `mutual_tls_rejects_missing_and_untrusted_certificates` on Windows 11 | after a fatal alert the server closes gracefully: FIN after the alert, then it reads and discards until the peer closes (at most 2 s or 256 KiB), like a lingering HTTP close (`crates/cameleer-tls/src/net.rs` `lingering_close`, `accept_tls`, used by `NetStream::server`) | `mtls_resumption.rs` `alert_survives_a_client_that_reads_late` (the client waits 300 ms before reading; it saw `ConnectionReset` before the fix) |
 | 19 | HTTP/2 (`cameleer-grpc` `h2`: the gRPC server, `H2Server`, the cloud mock servers, the Kinesis enhanced fan-out client) | when a peer closed its connection, the reader thread stopped but the writer thread kept the socket and waited for frames forever: every closed connection leaked a thread and two descriptors. On a 4-vCPU Linux droplet (descriptor limit 1024) the Kinesis enhanced fan-out test reached 512 threads and 1018 descriptors in half a second; the mock then refused connections, which the client saw as "connection reset" (found on DigitalOcean, Ubuntu 24.04; it never showed on Windows or WSL2, where the test finished before the limit) | the reader tells the writer to close when it ends, so the socket is shut down on our side too | `cameleer-grpc` `tests/h2.rs` `the_server_closes_a_connection_the_peer_closed`; `cameleer-cloud` `aws_gaps::kinesis_enhanced_fan_out_over_http2` (18 descriptors and 16 threads during the test on the same droplet) |
+| 20 | HTTP/2 client (`cameleer-grpc` `h2`: gRPC, `H2Connection`) | RFC 9113 section 8.1 lets a server answer before the request is complete and then send RST_STREAM(NO_ERROR); the client must keep the response. Ours reported `stream reset: NO_ERROR` and dropped the complete response, and a send after the reset failed. Our own server does this when a handler returns before the client ended its side, so `h2c_upgrade_and_route_controlled_stream_observer` failed now and then on Linux CI (GitHub Actions, 2026-11-09) | a complete response followed by RST_STREAM(NO_ERROR) is read to the end, and the rest of the request is dropped without an error; any other reset code is still an error | `cameleer-grpc` `tests/h2.rs` `a_complete_response_survives_rst_stream_no_error` |
 
 The embedded STOMP broker gained a RabbitMQ flavour (`StompBrokerBuilder::rabbitmq()`) that
 reproduces the conventions behind bugs 3-7, and the embedded AMQP 1.0 broker can run without
@@ -391,6 +394,17 @@ stays green, and `official_kafka.rs` (librdkafka, now joining groups with JoinGr
 | LocalStack | needs Docker (host mode was removed in LocalStack 2). |
 | Azure Cosmos DB emulator, Service Bus emulator | Windows-only / Docker-only. |
 | gcloud Pub/Sub, Firestore and Datastore emulators | `gcloud components install` needs dl.google.com (blocked), the Firebase emulator jars come from storage.googleapis.com (blocked, > 10 MB). pstest replaces the Pub/Sub emulator for the gRPC consumer; Firestore has no offline alternative. |
+
+## MCP
+
+The MCP server is checked with the official conformance suite, `@modelcontextprotocol/conformance`
+0.1.16 (pinned and checksum-verified), by `scripts/mcp-conformance.sh` against
+`cameleer run --mcp` serving `scripts/mcp-conformance/fixtures.camel.yaml`: **39/39** scenarios
+for protocol 2025-11-25 and **26/26** for 2025-06-18 (2026-11-06). The suite predates 2026-07-28,
+so that era is covered by the hermetic tests in `crates/cameleer-ai/tests/mcp.rs`. A field test
+with Claude and the official MCP Python SDK (`scripts/mcp-fieldtest`, 40 requests against
+`examples/agents/mcp-shop`) is described in
+[Ask Claude about your business](guides/mcp-shop-example.md).
 
 ## Found a problem?
 

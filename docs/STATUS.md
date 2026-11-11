@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-07. Branch `main`. The verified head before this file
+_Last updated: 2026-11-09 (release 0.5.0). Branch `main`. The verified head before this file
 was added is `7de6166`._
 
 ## Name, packaging and release (2026-11-05)
@@ -36,6 +36,12 @@ was added is `7de6166`._
   `CHANGELOG.md`. Feature docs: `docs/guides/build-features.md`, and every component, language
   and data format page names its feature in its header (`**Cargo feature:**`, checked by
   `crates/cameleer-main/tests/features.rs` `reference_pages_name_their_cargo_feature`).
+- **0.5.0: the action layer for AI agents** (2026-11-09). `ai-tool`, `ai-resource`, `ai-prompt`
+  with the reliability envelope; the MCP server (both eras) and the MCP client and gateway; the
+  `agent` step and tool calling in every model component; `anthropic` and `gemini`; provider
+  presets and call options; `cameleer test` and `cameleer tool`; the MCP field test and the
+  `examples/agents/mcp-shop` example. Release notes in `CHANGELOG.md`; the sections below give
+  the details round by round.
 - **Open findings from the documentation pass** are GitHub issues #2-#15 (Simple numeric string
   comparison, http producer overwriting the message on failure, S3 bucket header, webhook
   signatures, vault env vars, YAML `dataFormats`, `cameleer run <directory>`, ...).
@@ -314,6 +320,20 @@ turns, and grades each run by tool calls, database state and a Claude judge.
   of the release binary in `target/mcp-fieldtest/bin`); Haiku's remaining misses are weekday and
   sum arithmetic.
 
+## Unreleased since 0.5.1 (2026-11-09, `main`)
+
+- **`--mcp-expose`** (`camel.server.mcp-expose-routes`): existing routes served as MCP tools with no
+  route edits; REST operations become typed tools from their documented parameters. Code in
+  `crates/cameleer-ai/src/expose.rs`, tests in `crates/cameleer-main/tests/mcp_expose.rs`.
+- **Attestation, phase 1** (`crates/cameleer-attest`, feature `attest`): evidence from configfs-tsm
+  and dstack bound to nonce, TLS key and manifest; `/q/attestation`; MCP `_meta` and tool. Design
+  and later phases (sealed secrets, verification of remote servers) in
+  `docs/design/attestation/research.md`. Tests use a fake configfs-tsm directory and a fake dstack
+  agent; nothing has run on real TEE hardware yet (a `CAMEL_REAL_TEE=1` tier waits for the owner's
+  choice of cloud).
+- **Healthcare research**: `docs/design/medical/dicom-and-healthcare.md` (DICOM, DICOMweb,
+  de-identification, Mirth alternatives, positioning); not started.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it
@@ -424,8 +444,8 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect 2712 passing
-   on Windows and on Linux.
+1. `git checkout main && cargo test --workspace`. Expect 2844 passing
+   (Windows 11, 2026-11-09).
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
 4. Update this file, and `docs/INTEROP.md` or `docs/FEATURES.md` where relevant, as part of

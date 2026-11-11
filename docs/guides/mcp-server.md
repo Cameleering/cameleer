@@ -59,6 +59,78 @@ camel.server.mcp-enabled=true
 camel.server.mcp-tags=support
 ```
 
+## Expose existing routes without editing them
+
+An integration you already run can serve its routes as tools as they are, with no change to
+the route files:
+
+```bash
+cameleer run orders.camel.yaml --mcp-expose rest:*            # every REST DSL operation
+cameleer run orders.camel.yaml --mcp-expose direct:lookup-*   # direct routes by name
+cameleer run orders.camel.yaml --mcp-stdio --mcp-expose rest:*,route:billing-*
+```
+
+`--mcp-expose` sets `camel.server.mcp-expose-routes` and turns on the MCP server (over HTTP,
+unless `--mcp-stdio` is given). A pattern selects routes by their consumer, with `*` as a
+wildcard:
+
+| pattern | selects |
+|---|---|
+| `rest:*`, `rest:/orders*` | REST DSL operations, by their full path |
+| `direct:*`, `seda:orders-*` | routes by their consumer endpoint URI (options ignored) |
+| `route:billing-*` | routes by id |
+
+Routes that are tools, resources or prompts already (`ai-tool:`, `ai-resource:`,
+`ai-prompt:`, `mcp:`) are never exposed twice. The OpenAPI document route and CORS preflight
+routes of the REST DSL are skipped.
+
+**What a model sees.**
+
+- **A REST operation** becomes a tool whose arguments are its documented parameters: path,
+  query and header parameters with their `dataType`, `description`, `defaultValue` and
+  `allowableValues` as JSON Schema, and `body` for a body parameter, POST, PUT and PATCH. A
+  path placeholder without a `param` is a required string. The tool's name is the operation's
+  route id when you set one (`id:`), else the method and path (`get_orders_id`); its
+  description is the operation's `description`.
+- **Any other route** takes `body` (the message body: text or any JSON value) and `headers`
+  (message headers by name). Its name is the route id, or the `direct:` name when the id was
+  generated; its description is the route's `description`.
+
+A call runs the route as its consumer would have delivered the message. A REST tool gets the
+method, the path with its placeholders filled in, the query and the parameters as headers,
+and the body as JSON. A reply with a status of 400 or more comes back as a tool error the model
+can read (`HTTP 404: no such order`); a JSON reply is structured content. Every call goes
+through the same reliability envelope as an `ai-tool` route: argument schema checks,
+deduplication, timeout, audit.
+
+**Safe by default.** Exposing code that was never written as a tool deserves care, so:
+
+- nothing is exposed unless you name a pattern;
+- GET and HEAD operations are read-only (`readOnlyHint`); every other exposed tool is
+  destructive (`destructiveHint`), so each call needs approval, and over MCP the client asks its
+  user first ([Approvals](#approvals));
+- exposed tools carry the tag `exposed`. The server always serves the tools you asked to
+  expose; `camel.server.mcp-tags` keeps deciding about every other tool.
+
+**Overrides, still without touching the routes.** Properties keyed by the route id change
+what a tool looks like and how it is guarded. They take `name`, `title`, `description`,
+`inputSchema`, the hints, and every [`ai-tool`](../components/ai-tool.md) envelope option
+(`approval`, `timeout`, `rateLimit`, `idempotency`, `redact`, `authorize`, `cacheTtl`, ...). A
+misspelt option stops start-up with its name.
+
+```properties
+camel.server.mcp-expose-routes=rest:*,direct:lookup-customer
+camel.server.mcp-expose-routes.lookup-customer.name=find_customer
+camel.server.mcp-expose-routes.lookup-customer.readOnlyHint=true
+camel.server.mcp-expose-routes.lookup-customer.approval=never
+camel.server.mcp-expose-routes.lookup-customer.inputSchema={"type":"object","properties":{"body":{"type":"string","description":"The customer's email address"}},"required":["body"]}
+```
+
+Exposed tools are also available to the [`agent` step](agent-step.md) and the model
+components, as `tags: exposed`. For a tool with a hand-written schema, output schema,
+elicitation or compensation, change the route's `from` to `ai-tool:` instead
+([Start it](#start-it)): one line, and the rest of the route stays.
+
 ## Run it anywhere
 
 The same route file serves MCP in every way Cameleer runs. Pick the column for how the client
@@ -238,6 +310,7 @@ always in the build).
 | `camel.server.mcp-server-icons` | | `serverInfo.icons`, a JSON array such as `[{"src": "https://example.com/icon.png", "mimeType": "image/png"}]` |
 | `camel.server.mcp-instructions` | | Instructions for the model, sent in `server/discover` and `initialize` |
 | `camel.server.mcp-tool-timeout` | `20s` | The default `timeout` of tools that set none |
+| `camel.server.mcp-expose-routes` | | Patterns of existing routes to serve as tools with no route edits: `rest:*`, `direct:lookup-*`, `route:billing-*` (comma separated); `--mcp-expose` on the command line. Overrides per route: `camel.server.mcp-expose-routes.<routeId>.<option>`. See [Expose existing routes](#expose-existing-routes-without-editing-them) |
 | `camel.server.mcp-resource-tool` | | A tool name (or `true` for `read_document`): also list a read-only tool that reads any exposed resource by URI; its description lists them. Most clients attach resources only when the user picks one, so without it the model cannot read your policies or documents by itself |
 | `camel.server.mcp-expose-errors` | `false` | Send route exceptions to clients as they are. By default a client gets `Tool NAME failed (error ID). The cause is in the server log.` and the cause is logged with the same id |
 | `camel.server.mcp-resource-timeout` | `20s` | How long a resource read or a prompt may take |
@@ -414,6 +487,8 @@ same arguments may legitimately repeat.
 - [MCP client and gateway](mcp-client.md): using the tools of other MCP servers, and serving
   them again from this server
 - [Cameleer for AI agents](agents.md)
+- [Attestation in confidential VMs](attestation.md): prove to a client which routes and tools
+  this server runs (next release)
 - [Ask Claude about your business](mcp-shop-example.md): a shop's back office as an MCP
   server, with 40 tested requests
 

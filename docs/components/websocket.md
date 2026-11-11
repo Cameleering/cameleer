@@ -68,7 +68,7 @@ fn ops_hub_route(b: &mut RouteBuilder, port: u16) {
 | `allowedOrigins` | any | Comma-separated `Origin` values accepted at the handshake (`*` = any). Alias `allowedOriginPattern`. |
 | `subProtocol` | | Comma-separated subprotocols to accept. Aliases `subProtocols`, `clientSubProtocols`. |
 | `sslContextParameters` | | `#bean` with the server key store: serves `wss`. |
-| `useGlobalSslContextParameters` | `false` | Serve `wss` with the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Serve `wss` with the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 The first endpoint that binds a host and port decides whether it serves TLS. Jetty options such
 as `staticResources`, `sessionSupport`, `minThreads` and `maxThreads` are accepted and ignored.

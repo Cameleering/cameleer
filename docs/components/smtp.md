@@ -72,7 +72,7 @@ fn mail_reports_route(b: &mut RouteBuilder, reports_dir: &str, smtp: &str) {
 | `mail.smtp.starttls.enable` | `false` | Upgrade with STARTTLS when offered. |
 | `mail.smtp.starttls.required` | `false` | Fail when STARTTLS is not offered. |
 | `sslContextParameters` | | `#bean` with trust material for TLS. |
-| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters. |
+| `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 
 Other `mail.*` properties are accepted and ignored, as are `debugMode`, `peek` and similar
 Apache Camel options.

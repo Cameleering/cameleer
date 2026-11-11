@@ -439,3 +439,413 @@ page adds "Quick start". Docs pages keep their own header (Docs · Guides · Com
 
 Most of these are vendor-written; they were used for positioning language and feature claims,
 not for independent performance figures.
+
+## 10. Competitive placement: what G2 shows for "Apache Camel alternatives" (2026-11-09)
+
+### 10.1 What the searcher sees
+
+G2's [Apache Camel alternatives](https://www.g2.com/products/apache-camel/competitors/alternatives)
+page (G2 blocks automated readers; the list below is from search results and G2's comparison
+pages) is not a list of developer frameworks. It is enterprise integration software:
+IBM App Connect, Azure Service Bus, TIBCO Integration (BusinessWorks and Flogo), IBM webMethods
+Hybrid Integration, WSO2 Integration Platform, MuleSoft Anypoint, Boomi, Workato, SAP Integration
+Suite, CData Arc, NServiceBus, elastic.io, Apache Synapse and Apache ServiceMix. G2 also has
+"Apache Camel vs X" pages for most of them. Camel itself has about 20 G2 reviews, 4.2/5; reviewers
+on G2 and TrustRadius praise its cost and testing support and complain about documentation, a
+learning curve and the lack of a visual designer.
+
+So "Apache Camel alternative" has three different searchers:
+
+| searcher | wants | today they land on | Cameleer's opening |
+|---|---|---|---|
+| a developer running Camel on the JVM | the same model, lighter and faster | directory lists, Quarkus native | the only runtime that runs Camel routes unchanged; measured 1.7-8.7x throughput, 3 ms start |
+| an enterprise buyer comparing integration platforms | governance, connectors, support, AI agents | G2, vendor listicles (MuleSoft, Boomi, Workato, WSO2) | open source with no per-core licence; runs where an iPaaS can't (edge, Lambda, sidecar); routes in Git |
+| an agent builder | connect agents to business systems safely | MCP platforms of the same vendors, Composio, Arcade | reliability enforced on every call, both MCP eras, tested with Claude, self-hosted |
+
+The current alternatives page serves the first searcher only: it compares Camel on Quarkus,
+Spring Integration, Kafka Connect, Redpanda Connect, NiFi and n8n, and names MuleSoft in
+passing. None of G2's other names (IBM, TIBCO, WSO2, Boomi, Workato, Azure, SAP) appear.
+
+### 10.2 Everyone has MCP now
+
+Every vendor on that list announced MCP or agent features in 2025-26, so "has an MCP server" is
+table stakes, not a differentiator:
+
+| vendor | agent and MCP features (vendor claims, checked 2026-11-09) | model | where Cameleer differs |
+|---|---|---|---|
+| MuleSoft (Salesforce) | MCP server and connector, Agent Fabric, Agentforce | quote-only; third parties report vCore and usage-based contracts from tens to hundreds of thousands of dollars a year | open source, one binary, enforced envelope; no API management suite, no Exchange, no DataWeave |
+| Boomi | governed MCP servers to 1000+ applications, Boomi agents | from about $99/month pay-as-you-go per third parties; enterprise by quote | self-hosted, no per-connection pricing; far fewer SaaS connectors, no visual designer |
+| Workato | Enterprise MCP, agent recipes | credits; enterprise by quote | as for Boomi |
+| WSO2 Integrator (BI, MI, SI) | MCP servers from APIs, agents with memory and RAG, durable agentic workflows; Apache-2.0 | open source plus subscription | the closest open-source peer; WSO2 runs on the JVM and has a visual designer and API management; Cameleer is Camel-compatible, 3 ms, megabytes |
+| TIBCO Flogo | Go engine, single binary for edge, serverless and IoT; MCP connector (preview 2025) with elicitation and sampling; Project Flogo core is BSD | Flogo Enterprise is commercial | the closest lightweight peer; its claims (about 5 MB, about 1 s start, 2017 vendor slides) are not measured by us: benchmark before publishing numbers |
+| IBM webMethods Hybrid Integration, App Connect | Integration Agent (natural language to flows), AI Gateway, MCP Gateway | commercial | a self-hosted single binary against a control plane; no natural-language builder (a coding agent writes YAML checked by `cameleer validate`) |
+| Azure Logic Apps (Standard) | workflows as MCP servers, GA June 2026 per Azure Updates | Azure consumption | runs anywhere, not only on Azure; connects to Azure Service Bus, Event Hubs and Cosmos DB |
+| Apache Camel 4.22+ | `camel-ai-tool`, `camel-mcp-server` (Preview) | Apache-2.0 | the existing compare page |
+
+Category mismatches on G2's list: Azure Service Bus and NServiceBus are messaging (Cameleer
+connects to Service Bus; it is not a broker); CData Arc is B2B/EDI file exchange; Synapse and
+ServiceMix are older Apache ESBs (migration candidates).
+
+### 10.3 Placement
+
+Lead with what no competitor can say, in this order:
+
+1. **Runs Camel routes unchanged, without the JVM** (only Cameleer; measured against Camel).
+2. **Agent actions that are safe by construction**: schema, run-once, approval, a timeout that
+   cancels, compensation and audit, enforced by the server on every MCP or model call. Vendors
+   describe governance; Camel documents its hints as advisory. Backed by the field test.
+3. **One binary that goes where platforms can't**: 3 ms, megabytes, Lambda, edge, sidecar, a
+   std-only supply chain.
+4. **Open source with no per-core or per-credit licence.**
+
+Do not compete on connector count, visual designers, API management suites, managed hosting or
+commercial support. Say so on every comparison page ("when to choose them"): it is what makes the
+rest credible, and buyers on G2 weigh exactly those things.
+
+### 10.4 Pages
+
+Template for every comparison page: an answer line; a glance table; when to choose them; when to
+choose Cameleer; how to move (or how to use both); numbers only where we measured them; vendor
+claims cited to the vendor with a "checked on" date; FAQ (FAQPage); a trademark line. Vendor
+names only to identify; no logos.
+
+| priority | page | target searches | why |
+|---|---|---|---|
+| P1 | refresh `/alternatives/apache-camel-alternatives/` | apache camel alternatives | it must name what G2 names (MuleSoft, IBM, TIBCO, WSO2, Boomi, Workato, Azure, SAP), grouped by searcher |
+| P1 | `/compare/enterprise-mcp-platforms/` | mulesoft mcp, boomi mcp server, workato mcp, wso2 mcp, logic apps mcp | one honest table of the MCP offerings in 10.2 against Cameleer: the agent pillar's comparison page |
+| P1 | `/compare/wso2-vs-apache-camel-vs-cameleer/` | apache camel vs wso2, wso2 alternative | G2 has a Camel vs WSO2 page; a three-way page answers that search and adds Cameleer |
+| P1 | `/compare/mulesoft-vs-apache-camel-vs-cameleer/` and `/alternatives/mulesoft-alternatives/` | mulesoft alternative, mulesoft vs camel | the largest-volume query in the space, crowded by listicles; the angle is open source plus Camel-compatible plus agents |
+| P2 | `/compare/tibco-flogo-vs-cameleer/` | flogo alternative, lightweight integration engine | the direct lightweight competitor; needs a measured run (Project Flogo on the droplets) first |
+| P2 | `/compare/redpanda-connect-vs-cameleer/`, `/compare/spring-integration-vs-cameleer/` | benthos alternative, spring integration vs camel | developer intent, already in the earlier plan |
+| P2 | `/compare/boomi-vs-cameleer/`, `/compare/workato-vs-cameleer/` | boomi alternative open source, workato alternative | iPaaS buyers who want self-hosting or agent safety |
+| P3 | `/compare/ibm-webmethods-vs-cameleer/`, `/compare/azure-logic-apps-vs-cameleer/` | webmethods alternative, logic apps alternative | lower volume; the Azure page doubles as "runs outside Azure" |
+| P3 | "works with" pages: Azure Service Bus, Event Hubs | azure service bus integration | the right answer to a category mismatch is "Cameleer works with it", with a tested route |
+| P3 | migration notes from Synapse and ServiceMix | apache servicemix replacement | small, but nobody else answers it |
+
+The `/compare/` hub groups the pages by the three searchers in 10.1.
+
+**Done 2026-11-09:** all P1 pages (the refreshed alternatives page, `/compare/enterprise-mcp-platforms/`,
+`/compare/wso2-vs-apache-camel-vs-cameleer/`, `/compare/mulesoft-vs-apache-camel-vs-cameleer/`,
+`/alternatives/mulesoft-alternatives/`) and the regrouped `/compare/` hub. Vendor claims on them
+are dated 9 November 2026; re-check them by February 2027.
+
+### 10.5 Off-site (owner's accounts)
+
+- **List Cameleer on G2** (a free vendor profile) in the category Camel is in, with the website,
+  repository and screenshots. G2's alternatives pages draw from the same category and rank by
+  reviews, so ask real users for reviews; never pay for or write them.
+- The same on SourceForge and Slashdot (they already list Camel alternatives), AlternativeTo,
+  StackShare, SaaSHub and OpenAlternative (as an open-source alternative to MuleSoft and Boomi).
+- Re-check the vendor claims in 10.2 every quarter and date-stamp them on the pages.
+
+### 10.6 Sources (checked 2026-11-09)
+
+- G2: https://www.g2.com/products/apache-camel/competitors/alternatives and comparison pages
+  such as https://www.g2.com/compare/apache-camel-vs-wso2-integration-platform
+- TrustRadius reviews: https://www.trustradius.com/products/apache-camel/reviews
+- MuleSoft pricing reports (third party, unverified): https://www.vendr.com/marketplace/mulesoft,
+  https://unmule.com/blog/mulesoft-pricing-2026
+- WSO2 Integrator: https://wso2.com/integration-platform/integrator/,
+  https://wso2.com/integration-platform/integrator/mi/,
+  https://github.com/wso2/product-integrator/releases/tag/v5.1.0
+- TIBCO Flogo: https://docs.tibco.com/products/tibco-flogo-latest,
+  https://www.tibco.com/blog/2025/08/07/introducing-tibco-flogo-connector-for-model-context-protocol-mcp-developer-preview/,
+  https://www.tibco.com/blogs/2026-04/tibco-vision-agentic-enterprise-solutions
+- Boomi AI agents: https://boomi.com/platform/ai-agents/; Workato MCP (third party):
+  https://eseospace.com/blog/workato-mcp/
+- IBM: https://www.ibm.com/products/webmethods-hybrid-integration/agentic-enterprise
+- Azure Logic Apps MCP: https://techcommunity.microsoft.com/blog/integrationsonazureblog/stop-writing-plumbing-use-the-new-logic-apps-mcp-server-wizard/4496702
+
+## 11. Attestation: positioning, pages and placement (2026-11-09, proposal)
+
+The owner asked how to position, document and place the attestation work (phase 1, built by
+the code session, landing on `main` and shipping in the next release). This section is a proposal;
+nothing below is published yet.
+
+### 11.1 What may be claimed, and what may not
+
+**May claim (phase 1):**
+
+- Inside a hardware TEE, Cameleer proves to a client what is running. The TEEs supported are an
+  Intel TDX or AMD SEV-SNP confidential VM through Linux configfs-tsm (kernel 6.7 or later), and a
+  dstack CVM (Phala Cloud, dstack on GCP TDX).
+- The signed hardware report is bound to four things:
+  - the client's nonce;
+  - the SHA-256 of Cameleer's own TLS public key, so a proxy that terminates TLS breaks the check;
+  - a manifest of the version and features, the route files (SHA-256), the routes, the
+    configuration (secrets shown as `<secret>`) and the published tools (fingerprints);
+  - a hash-chained log of every change after start-up.
+- Where clients get it:
+  - `GET /q/attestation?nonce=...`;
+  - over MCP, `_meta["ing.cameleer/attestation"]` in `server/discover` and `initialize`, with the
+    report inline when the client sends a nonce;
+  - the opt-in tool `cameleer_attestation`.
+- If attestation is on and there is no evidence, start-up fails.
+- `cameleer_attest::check_binding` verifies the binding.
+- It is in the default build (cargo feature `attest`).
+
+**May not claim:**
+
+- that Cameleer verifies Intel or AMD signature chains (it doesn't yet; phase 3);
+- sealed secrets (phase 2);
+- AWS Nitro, Azure vTPM or Google Confidential Space;
+- that it has run on real TEE hardware (the tests use a fake configfs-tsm and a fake dstack
+  agent);
+- "this exact release" unless the image is pinned by digest, because reproducible builds aren't
+  published yet;
+- protection against physical attacks (TEE.fail, 2025);
+- that it is released.
+
+**Words:**
+
+- Use "attested", "evidence", "proves what is running", and "verifiable by your client" with the
+  note that the hardware signature is checked by a verifier such as Intel Trust Authority or a DCAP
+  library.
+- Never use "verified", "trustless", "zero trust", "tamper-proof" or "proof of execution". The last
+  one is a blockchain and ZK term, and the claim it implies is wider than phase 1.
+
+### 11.2 What the market and search data show
+
+There is no keyword-volume tool in this environment, so the evidence is which words appear across
+standards pages, vendors and the top search results (searched 2026-11-09).
+
+| phrase | who uses it | state |
+|---|---|---|
+| "confidential computing" | Confidential Computing Consortium, Azure, Google, Intel, Red Hat | established category; the buyer's own word in regulated industries |
+| "confidential AI" / "confidential agentic AI" | NVIDIA, Fortanix, Opaque, Phala, CCC blog posts (Jan and May 2026), the arXiv survey 2605.03213 | the 2026 growth term; NVIDIA, Microsoft, Cisco, Fortanix and HPE shipped agent-focused features in spring 2026 (one roundup) |
+| "attestable / attested MCP server" | `attestable-mcp-server` (SGX, RA-TLS), Glama's "attested" filter, Phala and Oasis posts | small, developer-level; the projects are prototypes or 2025-era |
+| "verifiable MCP" / "verifiable tool results" | MCP issue #3354 (closed 2026-09-22), a zk-tokyo course proposal | proposal stage, ZK-flavoured |
+| "MCP trust layer" | vendors of credentials, registries and signed receipts (cheqd, Mnemom, AegisZK, ArkForge) | crowded and vague; none of these is hardware evidence |
+
+**Competitors:**
+
+- **Integration engines and iPaaS.** No integration engine or iPaaS advertising attestation turned
+  up, in the code session's research or in a fresh search for MuleSoft, Boomi and Camel. That is
+  absence of evidence, so the site says "we found none", never "the only".
+- **MCP.** Phala's attestation is a platform check: a dashboard button, and mutual quotes between
+  its gateway and the CVM. Its MCP tutorial shows the check after the client is configured, not as a
+  gate before connecting. The SGX `attestable-mcp-server` binds the evidence to an enclave key over
+  RA-TLS. Neither covers routes, configuration and the tool surface the way Cameleer's manifest does.
+- **Standards.** The MCP spec has no accepted attestation mechanism. SEP-2809 (ATSA, which is not
+  hardware attestation) was closed on 2026-11-08, and the MCP Security Interest Group lists
+  "server identity, attestation, and admission" in its scope. The arXiv survey calls client
+  verification of an attested MCP server an open problem.
+- **Healthcare.** Microsoft publishes a confidential healthcare inference reference architecture
+  (AKS confidential nodes with Azure Attestation). For imaging, the search found only one vendor's
+  blog post on TDX-sealed radiology inference, and nothing about DICOM routing or de-identification
+  inside a confidential VM. That is an open space, but it needs the DICOM work first.
+- **The main barrier.** In a CCC-affiliated survey, 85% of respondents named validating
+  attestation chains of trust as their top challenge (vendor-affiliated, so cite it with care).
+  The message that answers it: the evidence covers the routes and tools, not just the VM, and the
+  binding check is one function.
+
+### 11.3 Positioning
+
+One idea, said two ways for two searchers:
+
+> **Cameleer can prove what it runs.** Inside a confidential VM, an agent or a client can ask a
+> Cameleer server for hardware evidence of the exact routes, configuration and MCP tools it is
+> running, bound to the TLS connection the client is using.
+
+| searcher | angle | page title idea | why |
+|---|---|---|---|
+| agent builders and MCP platform teams | **an MCP server that can prove what it runs** ("attested MCP server") | "Attested MCP server: prove which tools an agent is talking to" | extends the action layer we already lead with ("the model decides what, a tested route decides how") to "and the client can check which routes those are"; the category is nearly empty and has no standard yet |
+| regulated integration (healthcare, finance, public sector) | **confidential integration**: the integration engine itself attests inside a confidential VM | "Confidential integration: run Camel routes in a confidential VM and prove it" | matches the buyer's own words ("confidential computing"); no integration engine says it; the healthcare showcase (DICOM de-identification inside a CVM) lands here later |
+
+Don't make attestation the headline of the home page or the README. Cameleer's lead stays "Apache
+Camel in Rust" and "the reliable action layer for AI agents". Attestation is the proof point under
+the second, and gets a section when it is released.
+
+### 11.4 Pages
+
+| page | change | when |
+|---|---|---|
+| `docs/guides/attestation.md` (written by the code session) | review the wording against 11.1; add to `GUIDE_ORDER`, the RTD toctree, docs/README, getting started's "next" list, and cross-links from TLS and security, MCP server and observability; the answer-first opening and a "Common questions" block (what it proves, what it doesn't, which TEEs, does a model verify it) | when it is on `main`, marked "next release" |
+| new **`/trust/`** hub: "Attested integrations and MCP servers" | what is in the evidence (a diagram of nonce + TLS key + manifest + change log → REPORTDATA); the three ways to fetch it; the binding check; supported TEEs; a prominent "What it does not prove" box (11.1); how to try it on dstack or a TDX/SEV-SNP VM; FAQ with FAQPage schema | at the release (owner's decision); until a run on real TEE hardware, the page states that the tests use a simulated configfs-tsm and dstack agent |
+| `/mcp/` hub | a section "Prove which server and tools an agent is talking to" after the guarantees, linking `/trust/`; one FAQ | with `/trust/` |
+| comparisons (`apache-camel-vs-cameleer`, `mulesoft-vs-…`, `wso2-vs-…`, `enterprise-mcp-platforms`) | one table row, "Evidence of the running integration (TEE attestation)": Cameleer "yes, in a confidential VM (phase 1)"; the others "not found in their documentation (searched 2026-11)", which is never written as "no" | with `/trust/` |
+| `use-cases/hl7-mllp-healthcare-integration` | a short "in a confidential VM" paragraph linking `/trust/` | with `/trust/` |
+| new **`use-cases/confidential-dicom-de-identification/`** | the showcase: DICOM de-identification inside a confidential VM, with evidence for what ran | when DICOM is built (the owner will send a separate brief) |
+| home page | one sentence in the agent section, no hero change | with `/trust/` |
+| `/compare/attested-mcp-servers/` (Phala, Oasis, Cameleer) | not now: low volume, and the comparison would rest on features we haven't run on hardware | revisit after phase 3 |
+
+### 11.5 README, llms.txt, GitHub About, Docker Hub
+
+| place | proposal | when |
+|---|---|---|
+| README | one bullet in the AI section: "**Prove what runs** (next release): inside an Intel TDX or AMD SEV-SNP confidential VM, Cameleer returns hardware evidence of its routes, configuration and MCP tools, bound to its TLS key ([attestation](docs/guides/attestation.md))." | when on `main` |
+| llms.txt | one key-facts line with the limits in the same line (unreleased; doesn't verify vendor chains; TDX/SEV-SNP via configfs-tsm and dstack only); a Q&A pair "Can an MCP client verify what a Cameleer server runs?" in llms-full through the guide's FAQ | when on `main` |
+| GitHub About | keep the description (it's at about 260 of 350 characters, and the lead is right); after the release add ", and proves what it runs inside confidential VMs" if it fits. Topics are at GitHub's maximum of 20, so swap: drop `camel` (duplicates `apache-camel`) and `messaging`, add `confidential-computing` and `attestation` | after the release |
+| Docker Hub overview | one line under the features, plus the note that evidence means "this image" only when pinned by digest (`pmsudhi/cameleer@sha256:…`) | after the release |
+
+### 11.6 Before publishing
+
+- Re-check the competitor statements on the day: each vendor's docs for "attestation", "trusted
+  execution" or "confidential", the MCP SEP list and the Security IG page.
+- Read the final `docs/guides/attestation.md` and the config keys on `main`, and quote nothing that
+  isn't there.
+- Owner decisions:
+  1. ~~publish `/trust/` at the release, or wait for a real-hardware run~~ **Decided 2026-11-09 by
+     the owner: at the release.** Until a real-hardware run, the page says plainly that the tests use
+     a simulated configfs-tsm and dstack agent;
+  2. whether to bring the `_meta` design to the MCP Security Interest Group (it would make "a
+     concrete, spec-compatible proposal" a claim we can link to);
+  3. ~~the page name~~ **Decided 2026-11-09 by the owner: `/trust/`**, with "confidential" in the
+     title, the description, the H1 or first paragraph and the headings, so the page ranks for
+     "confidential computing" and "confidential integration" while the URL can cover later trust
+     work (sealed secrets, verifying remote servers).
+
+### 11.7 Sources
+
+- MCP issue #3354 (verifiable tool results): https://github.com/modelcontextprotocol/modelcontextprotocol/issues/3354
+- MCP Security Interest Group: https://modelcontextprotocol.io/community/interest-groups/security;
+  SEP-2809: https://github.com/modelcontextprotocol/modelcontextprotocol/pull/2809
+- Attestable MCP server (SGX, RA-TLS): https://glama.ai/mcp/servers/kontext-security/attestable-mcp-server,
+  https://creati.ai/mcp/attestable-mcp-server/
+- Phala MCP hosting and checks: https://phala.com/posts/mcp-got-you-worried-build-securely-with-phala-clouds-teepowered-hosting,
+  https://phala.com/posts/deploy-an-MCP-server-on-phala-cloud-a-step-by-step-guide,
+  https://docs.phala.com/phala-cloud/networking/security.md
+- tee.fyi on MCP servers: https://tee.fyi/docs/tee-applications/mcp-servers
+- Confidential agentic AI: https://confidentialcomputing.io/2026/01/20/protecting-agentic-ai-workloads-with-confidential-computing/,
+  https://confidentialcomputing.io/2026/05/20/your-ai-agents-are-already-in-production-your-security-architecture-isnt-ready/,
+  https://www.supercomputing.news/ai/confidential-computing-arrives-for-ai-agents,
+  https://arxiv.org/html/2605.03213v1
+- Healthcare: https://learn.microsoft.com/en-au/azure/architecture/example-scenario/confidential/healthcare-inference,
+  https://learn.microsoft.com/en-sg/azure/confidential-computing/use-cases-scenarios,
+  https://dev.to/voltagegpu/medical-imaging-ai-without-a-baa-nightmare-tdx-sealed-inference-for-radiology-28kn
+- MCP trust-layer vendors: https://arkforge.tech/en/blog/trust-layer-mcp-fragmentation/,
+  https://cheqd.io/blog/pioneering-trust-in-the-age-of-ai-introducing-cheqds-mcp-enabled-agentic-trust-solution/
+- Red Hat on attestation models: https://www.redhat.com/en/blog/attestation-confidential-computing
+- The code session's research with full sources: `docs/design/attestation/research.md` (internal)
+
+## 12. DICOM and healthcare imaging: positioning, pages and placement (2026-11-09, proposal)
+
+**Paused (2026-11-09):** the owner is weighing a separate "medical pack" (an optional healthcare
+pack or distribution) instead of merging DICOM into the core; the packaging study goes to
+`docs/design/packs/domain-packs.md`. The page structure and names below (12.4) wait for that
+decision: they may become a "Cameleer for Healthcare" page with its own install path. The claims
+(12.1), search findings (12.2) and positioning (12.3) don't depend on the packaging. The drafts on
+the local branch `site-dicom-draft` stay unpushed.
+
+DICOM is built on branch `dicom` (commits `0f98611` to `78907e9`) and is **not on `main`**. Pages
+are drafted on a local branch and are **not published** until the owner merges `dicom` into
+`main`; then they ship marked "next release", as `--mcp-expose` and attestation did.
+
+### 12.1 What may be claimed (from the branch's CHANGELOG, STATUS, INTEROP and guide)
+
+- **Components and formats:**
+  - the `dicom` component: DIMSE over TCP and TLS; the consumer is an SCP and the producer an
+    SCU; C-ECHO, C-STORE, C-FIND, C-MOVE and C-GET;
+  - the `dicomweb` component: STOW-RS, QIDO-RS, WADO-RS and metadata, as a client, plus a
+    DICOMweb server on the shared HTTP server;
+  - the `dicom` data format (Part 10 to and from a Value tree in the DICOM JSON shape, byte for
+    byte) and `dicomJson` (PS3.18 Annex F);
+  - `dicomDeidentify`: the PS3.15 Annex E basic profile and options, except the pixel options.
+    It is HMAC-keyed and deterministic, and writes records to the hash-chained audit log.
+- **Routing on tags:** `${dicom.PatientID}` and sequence paths in Simple, and the `dicom`
+  language.
+- **The standard:** the PS3.6 dictionary and Table E.1-1 are generated from the 2026d edition.
+- **Coverage:**
+  - Transfer syntaxes: implicit, explicit, deflated and big endian are read, written and
+    converted; every compressed syntax passes through unchanged, with no transcoding.
+  - Character sets: most specific character sets, including the ISO 2022 forms, GB18030 and
+    UTF-8.
+  - Query/Retrieve: Patient Root and Study Root, plus Modality Worklist FIND, as SCU and SCP.
+  - Security: TLS 1.2 and 1.3 (BCP 195 profiles) and mutual TLS.
+- **Verified (2026-11-09):**
+  - live, 7/7 against DCMTK 3.6.7 (both roles, with and without TLS) and Orthanc 1.12.2 (as a
+    PACS, as a DICOMweb server and as a DICOMweb client);
+  - 33 public pydicom test files, byte for byte;
+  - hermetic tests (2,914 on the branch, per the DICOM session; I didn't rerun them);
+  - one interoperability bug found and fixed (an odd-length deflated PDV).
+- **Examples, each running end to end in a test:** modality to cloud (store-and-forward), the AI
+  inference loop (de-identify, infer, FHIR DiagnosticReport back) and a de-identification
+  pipeline.
+- **Apache Camel has no DICOM component** (Camel component index; the research note checked it).
+
+**May not claim:**
+
+- that it works with Azure Health Data Services, the Google Cloud Healthcare API or AWS
+  HealthImaging (not tested; AWS needs SigV4 in `dicomweb`);
+- dcm4che, real modalities, Storage Commitment, MPPS, C-CANCEL, asynchronous operations;
+- frames, rendered or thumbnail retrieval, UPS-RS, transcoding or pixel de-identification;
+- ATNA (PS3.15 A.5) audit messages, a DICOM Conformance Statement in the PS3.2 template (only a
+  short form exists), or IHE profiles;
+- HIPAA or FDA "compliance" (Cameleer is software you run; say what controls exist);
+- a footprint or speed number for DICOM, since none has been measured yet;
+- that it is a PACS, a viewer or a hospital-wide interface engine.
+
+### 12.2 Search and competitors (searched 2026-11-09; volumes not measured)
+
+- **The Mirth change is the biggest healthcare-integration search topic.** NextGen made Mirth
+  Connect commercial from 4.6 (announced 2025-03-19). The open-source forks are:
+  - Open Integration Engine (MPL 2.0; vendor blogs say it entered Eclipse incubation in September
+    2026, which is unverified);
+  - BridgeLink (MPL 2.0, Innovar Healthcare).
+
+  The results for "Mirth Connect alternatives" are vendor and consultancy listicles (Saga IT,
+  Nirmitee, OpenShare, 4mednet). That is the same shape as the G2 "Apache Camel alternatives"
+  space, and the same play works: an honest comparison page.
+- **DICOM routers and gateways:**
+  - DICOM-RST (UMEssen; written in Rust, a DICOMweb gateway with a DIMSE backend);
+  - Google's open-source DICOM adapter (DIMSE to DICOMweb for its Healthcare API);
+  - dicomweb-proxy (Node.js; last published about two years ago);
+  - Orthanc (lightweight PACS);
+  - MONAI Deploy Informatics Gateway and mercure (AI orchestration stacks with Docker, a bus and a
+    database);
+  - Qvera's DICOM Router (commercial).
+
+  None of them is a general integration engine with HL7, FHIR, 230 components, MCP tools and
+  attestation in one binary. That is the honest difference. "The only DICOM gateway in Rust" is
+  false (DICOM-RST is Rust).
+- **Personas and searches** (from the research note §3.2):
+  - imaging startups: "DICOM router open source", "DIMSE to DICOMweb", "STOW-RS proxy", "DICOM
+    gateway docker";
+  - AI platform leads: "DICOM de-identification PS3.15", "AI orchestration DICOM", "MONAI deploy
+    alternative";
+  - integration analysts: "Mirth Connect alternative", "HL7 interface engine open source".
+
+### 12.3 Positioning
+
+> **A DICOM router that is also an integration engine.** Receive images from modalities over
+> DIMSE, route on tags, de-identify with the PS3.15 profile, and forward to a PACS, a DICOMweb
+> store or an AI model, with HL7 v2, FHIR and 230 other components in the same small binary.
+
+- **Lead:** the edge imaging gateway (modality to PACS or cloud) and AI inference routing
+  (research note §3.1, items 1 and 2).
+- **Proof point for trust:** de-identification inside a confidential VM. The `/trust/` page gets
+  a healthcare section, and the evidence covers the de-identification profile and its options
+  (the manifest includes the configuration).
+- **Content track:** Mirth alternatives, entered on openness (Apache-2.0, no licence change
+  possible for the engine), footprint and Camel's model. Be honest that there is no channel
+  importer, no JavaScript transformer compatibility and no message browser yet.
+- **Not pitched:** a PACS, a viewer, a hospital-wide engine.
+
+### 12.4 Pages
+
+| page | content | status |
+|---|---|---|
+| docs: `guides/dicom.md`, `components/dicom.md`, `components/dicomweb.md`, `dataformats/dicom*.md`, `languages/dicom.md` | written by the DICOM session; add `dicom` to `GUIDE_ORDER` and the RTD toctree, and check the opening line answers "how do I ... DICOM ... in Camel" | publish with the merge |
+| new `use-cases/dicom-imaging-gateway/` | "DICOM router and imaging gateway": modality to PACS or cloud, AI inference loop, de-identification; the three examples; the conformance short form; verified against DCMTK and Orthanc; the limits; FAQ | drafted locally |
+| `use-cases/` index, home use-case list, footer | a card "Medical imaging: DICOM" | drafted locally |
+| `use-cases/hl7-mllp-healthcare-integration/` | a link to the DICOM page (the same binary does HL7, FHIR and DICOM) | drafted locally |
+| `/trust/` | a "Healthcare: attested de-identification" section, linking the DICOM page | drafted locally |
+| new `alternatives/mirth-connect-alternatives/` | Mirth 4.6+, Open Integration Engine, BridgeLink, Rhapsody, Iguana, Cloverleaf and Cameleer: when each fits, what Cameleer lacks (no UI, no channel importer, no message browser) | planned; after the DICOM pages |
+| comparisons (`apache-camel-vs-cameleer`) | a row: "DICOM (DIMSE, DICOMweb, de-identification)": Camel "no component"; Cameleer "yes (next release)" | drafted locally |
+| README, llms.txt | a bullet and a key-facts line with the limits | drafted locally |
+
+### 12.5 Before publishing
+
+- `dicom` merged into `main` by the owner, and the full suite run on the merge.
+- Re-read the merged guide and pages; quote nothing that isn't there.
+- Re-check that the Camel component index still has no DICOM component, and the Mirth fork facts.
+
+### 12.6 Sources
+
+- Mirth and forks: https://saga-it.com/blog/oie-vs-bridgelink-vs-mirth-connect,
+  https://saga-it.com/blog/mirth-connect-alternatives,
+  https://nirmitee.io/blog/bridgelink-open-source-mirth-connect-fork-migration-guide/,
+  https://openshare.health/mirth-options-2026, https://en.wikipedia.org/wiki/Mirth_Connect
+- DICOM gateways: https://github.com/UMEssen/DICOM-RST, https://github.com/knopkem/dicomweb-proxy,
+  https://docs.cloud.google.com/healthcare-api/docs/concepts/dicom, https://www.qvera.com/dicom-router/
+- The research note with its own sources: `docs/design/medical/dicom-and-healthcare.md` (internal)

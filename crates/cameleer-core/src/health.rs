@@ -379,8 +379,19 @@ impl HealthCheck for ConsumersHealthCheck {
         let mut details = ObjectMap::new();
         for r in ctx.routes() {
             let running = r.has_consumer();
-            details.insert(format!("consumer.{}", r.id), Value::from(if running { "UP" } else { "DOWN" }));
-            if (r.status() == ServiceStatus::Started && !running) || (r.auto_startup && r.status() != ServiceStatus::Started) {
+            let status = r.status();
+            let is_down = (status == ServiceStatus::Started && !running) || (r.auto_startup && status != ServiceStatus::Started);
+            // the detail says the same as the status: a suspended route keeps its consumer object
+            // but takes no messages, so it is DOWN here too
+            let detail = if !is_down {
+                "UP".to_string()
+            } else if status != ServiceStatus::Started {
+                format!("DOWN ({})", status)
+            } else {
+                "DOWN".to_string()
+            };
+            details.insert(format!("consumer.{}", r.id), Value::from(detail));
+            if is_down {
                 down.push(r.id.clone());
             }
         }

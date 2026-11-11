@@ -7,6 +7,66 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ### Added
 
+- **Attestation in confidential VMs** (new crate `cameleer-attest`, feature `attest`, in the default
+  build): with `camel.attestation.enabled=true` in an Intel TDX or AMD SEV-SNP guest (Linux
+  configfs-tsm) or a dstack CVM, Cameleer serves hardware evidence at `/q/attestation`, bound to the
+  client's nonce, the embedded server's TLS key and a manifest of the routes, configuration (secrets
+  left out) and tools, with a hash-chained log of later changes. The MCP server adds it to
+  `server/discover` and `initialize` (`_meta["ing.cameleer/attestation"]`, the full report inline
+  when the client sends a nonce) and, with `camel.attestation.mcp-tool=true`, as a tool. Start-up
+  fails when attestation is on and no evidence can be produced. Guide: `docs/guides/attestation.md`.
+- **Existing routes as MCP tools, with no route edits**: `cameleer run --mcp-expose rest:*`
+  (property `camel.server.mcp-expose-routes`). REST DSL operations become tools with typed
+  arguments from their documented parameters; other routes (`direct:*`, `route:<id>`) take a
+  body and headers. Writes are destructive and need approval by default, GET is read-only, every
+  call goes through the tool envelope, and per-route overrides
+  (`camel.server.mcp-expose-routes.<routeId>.<option>`) take every `ai-tool` option. The REST DSL
+  now keeps its operations on the context (`cameleer_http::rest::rest_operations`).
+
+### Fixed
+
+- **`onException` and `doCatch` for `Exception` now catch Camel's exchange failures**:
+  `CamelExchangeException` was listed as its own parent, so `HttpOperationFailedException`,
+  `DirectConsumerNotAvailableException`, `ResolveEndpointFailedException`, `ValidationException`
+  and the other kinds under it never matched `Exception` (or `Throwable`). Their parent is now
+  `Exception`, as in Camel; `RuntimeException` still does not catch them, also as in Camel.
+- **HTTPS routes and the management endpoints on one port**: with `camel.server.sslEnabled=true`,
+  `/q/*`, `/q/attestation` and the MCP endpoint now speak HTTPS on `camel.server.port` next to the
+  HTTPS routes; start-up used to fail with "already used by an https server". Camel's separate
+  management server is supported too: `camel.management.enabled=true` serves `/q/*` on
+  `camel.management.port` (default `9876`) and `camel.management.host`, plain HTTP.
+- The management endpoints no longer fix every route's worker pool at 8 when they register on the
+  shared port first; they use the default.
+- `/q/metrics` sends one `Content-Type` (`text/plain; version=0.0.4; charset=utf-8`), not two.
+- Readiness: a suspended route's consumer is `DOWN` in the check's details too, matching its status.
+- Route configurations (a top-level `interceptSendToEndpoint`, `intercept`, `onException`, or a
+  `routeConfiguration` without id) apply to every YAML route whatever the order of the files, as in
+  Camel, and a `routeConfigurationId` may name a configuration from a later file; an unknown id still
+  fails at start. Before, they applied only to routes in files loaded after them.
+
+## 0.5.1 (2026-11-09)
+
+### Fixed
+
+- HTTP/2 client (gRPC): a complete response followed by RST_STREAM(NO_ERROR) is no longer
+  reported as `stream reset: NO_ERROR`, as RFC 9113 section 8.1 requires (INTEROP bug 20).
+
+## 0.5.0 (2026-11-09)
+
+Cameleer becomes an action layer for AI agents: any route can be a tool that agents call through
+a reliability envelope (schema checks, deduplication, approvals, rate limits, timeouts that
+cancel, compensation, a hash-chained audit log). Cameleer serves those tools as an MCP server
+(both protocol eras, Streamable HTTP and stdio; official conformance 39/39 and 26/26), imports
+other MCP servers' tools as a client and gateway, and runs tool-calling agents as a route step
+with seven model components and 23 providers. Measured on the same cloud machines, its MCP
+server handles 41,620 tool calls per second against 22,458 for Apache Camel's
+`camel-mcp-server` and 1,536 for the official TypeScript SDK, in 53 MB against 317 MB and 214 MB
+([report](docs/BENCHMARKS.md)). In a field test of 40 real requests through Claude and the
+official MCP client, Claude Opus 5.5 completed 157 of 160 runs correctly
+([guide](https://cameleer.ing/docs/guides/mcp-shop-example.html)).
+
+### Added
+
 - **Routes as tools for AI agents** (new crate `cameleer-ai`, new `ai` feature, in `full`):
   `ai-tool`, `ai-resource` and `ai-prompt` with Camel's option names and semantics, and a tool
   registry. Every call goes through a reliability envelope: JSON Schema 2020-12 checks of the
