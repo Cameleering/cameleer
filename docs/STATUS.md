@@ -320,7 +320,7 @@ turns, and grades each run by tool calls, database state and a Claude judge.
   of the release binary in `target/mcp-fieldtest/bin`); Haiku's remaining misses are weekday and
   sum arithmetic.
 
-## Packs and the health pack (2026-11-09, branch `dicom`)
+## Packs and the health pack (2026-11-09 to 11, merged into `main` 2026-11-11)
 
 The owner chose a health pack instead of merging DICOM into `full`, with no backward
 compatibility (design: `docs/design/packs/domain-packs.md` section 8). Done on this branch:
@@ -386,6 +386,11 @@ Built afterwards (2026-11-10), from the same design:
   its MLLP client against a Cameleer consumer), FHIR 1/1 (HAPI FHIR JPA server 8.12.0: create,
   read JSON and XML, update, search, history, delete). No Cameleer bug found; one test asserted the
   AR case the wrong way round (the producer template returns the error) and was fixed.
+
+**Merged into `main` (2026-11-11)** after merging the latest `main` into the branch: `cargo build
+--workspace` 0 warnings; `cargo build -p cameleer-main --no-default-features` and
+`--no-default-features --features health` build; `cargo test --workspace` **2960 passed, 0 failed**
+(Windows 11); the health live tier 10/10 (WSL2).
 
 Still open: the first real run of `archives.yml` and the
 health image build in `container.yml`; IHE ATNA audit messages (PS3.15 A.5); an independent review
