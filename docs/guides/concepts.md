@@ -183,8 +183,8 @@ In YAML the language is the key (`simple: ...`, `jsonpath: ...`); in Rust it is 
 ## Data formats and type conversion
 
 A **data format** converts between bytes and structured data: `unmarshal` parses, `marshal`
-serializes. JSON, CSV, XML, YAML, Avro, Protobuf, CBOR, Base64, GZip, Zip, PGP, HL7 and others are
-built in.
+serializes. JSON, CSV, XML, YAML, Avro, Protobuf, CBOR, Base64, GZip, Zip, PGP and others are
+built in; HL7, FHIR and DICOM come with the [health pack](../packs/index.md).
 
 The **type converter** changes a value's type when a step needs it: `convertBodyTo` with Camel's
 Java type names (`java.lang.String`, `java.lang.Integer`, `byte[]`), or implicitly when Simple

@@ -15,6 +15,7 @@
   <url><loc>https://cameleer.ing/compare/wso2-vs-apache-camel-vs-cameleer/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/mcp/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/trust/</loc><lastmod>2026-11-10</lastmod></url>
+  <url><loc>https://cameleer.ing/use-cases/dicom-imaging-gateway/</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/file-sftp-pipelines/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/hl7-mllp-healthcare-integration/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/</loc><lastmod>2026-11-07</lastmod></url>
@@ -24,8 +25,8 @@
   <url><loc>https://cameleer.ing/use-cases/serverless-aws-lambda/</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/BENCHMARKS.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/DEPLOYMENT.html</loc><lastmod>2026-11-09</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/FEATURES.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/INTEROP.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/FEATURES.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/INTEROP.html</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/ROADMAP.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/activemq.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ai-prompt.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -96,7 +97,6 @@
   <url><loc>https://cameleer.ing/docs/components/direct.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/elasticsearch.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/exec.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/fhir.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/file.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/freemarker.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ftp.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -136,14 +136,13 @@
   <url><loc>https://cameleer.ing/docs/components/language.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/log.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mcp.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/mllp.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mock.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mongodb-gridfs.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mongodb.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mustache.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mvel.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/netty-http.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/netty.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/netty.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/openai.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/opensearch.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/paho-mqtt5.html</loc><lastmod>2026-11-09</lastmod></url>
@@ -199,11 +198,9 @@
   <url><loc>https://cameleer.ing/docs/dataformats/cbor.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/crypto.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/csv.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/dataformats/fhir.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/fory.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/gzip.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/hex.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/dataformats/hl7.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/ical.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/dataformats/jacksonxml.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -231,7 +228,7 @@
   <url><loc>https://cameleer.ing/docs/guides/cloud-credentials.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/concepts.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/configuration.html</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/edge.html</loc><lastmod>2026-11-07</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/edge.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/eips.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/eips/flow-control.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/eips/routing.html</loc><lastmod>2026-11-05</lastmod></url>
@@ -265,7 +262,7 @@
   <url><loc>https://cameleer.ing/docs/guides/tls-and-security.html</loc><lastmod>2026-11-10</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/troubleshooting.html</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-for-coding-agents.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/bean.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -275,7 +272,6 @@
   <url><loc>https://cameleer.ing/docs/languages/exchangeProperty.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/groovy.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/header.html</loc><lastmod>2026-11-06</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/languages/hl7terser.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/java.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/jq.html</loc><lastmod>2026-11-06</lastmod></url>
@@ -291,4 +287,19 @@
   <url><loc>https://cameleer.ing/docs/languages/variable.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/xpath.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/xquery.html</loc><lastmod>2026-11-06</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/components/dicom.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/components/dicomweb.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/components/fhir.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/components/mllp.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/conformance/dicom-conformance-statement-0.6.0.html</loc><lastmod>2026-11-10</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/dataformats/dicom.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/dataformats/dicomDeidentify.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/dataformats/dicomJson.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/dataformats/fhir.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/dataformats/hl7.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/guides/dicom.html</loc><lastmod>2026-11-10</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/</loc><lastmod>2026-11-10</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/languages/dicom.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/languages/hl7terser.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/</loc><lastmod>2026-11-10</lastmod></url>
 </urlset>

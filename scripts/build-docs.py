@@ -67,6 +67,15 @@ GUIDE_ORDER = ["getting-started", "configuration", "cli", "concepts", "yaml-dsl"
                "cloud-credentials", "agents", "agent-tool-calls", "mcp", "mcp-server", "mcp-client",
                "agent-step", "model-providers", "ai-components", "mcp-shop-example", "edge", "faq"]
 
+# Pages that moved (old output path -> new output path): the old URL gets a redirect page.
+MOVED = {
+    "components/mllp.html": "packs/health/components/mllp.html",
+    "components/fhir.html": "packs/health/components/fhir.html",
+    "dataformats/hl7.html": "packs/health/dataformats/hl7.html",
+    "dataformats/fhir.html": "packs/health/dataformats/fhir.html",
+    "languages/hl7terser.html": "packs/health/languages/hl7terser.html",
+}
+
 CATEGORY_ORDER = [
     "Core and routing", "Scheduling", "Files, shell and streams", "HTTP, REST and web services",
     "Messaging and streaming", "Network protocols", "Mail", "Databases and search",
@@ -764,13 +773,20 @@ class Page:
         self.category = category_for(stem, self.fields.get("category")) if self.section == "components" else None
 
 
+def pack_kind(p):
+    """For a page under packs/<pack>/<kind>/: the kind (components, dataformats, ...), else ''."""
+    parts = p.dir.split("/")
+    return parts[2] if p.section == "packs" and len(parts) > 2 else ""
+
+
 def nav_title(p):
     t = p.title
-    if p.section == "components":
+    kind = pack_kind(p) or p.section
+    if kind == "components":
         t = re.sub(r"\s+component$", "", t, flags=re.I)
-    elif p.section == "languages":
+    elif kind == "languages":
         t = re.sub(r"\s+language$", "", t, flags=re.I)
-    elif p.section == "dataformats":
+    elif kind == "dataformats":
         t = re.sub(r"\s+data format$", "", t, flags=re.I)
     return t
 
@@ -928,7 +944,29 @@ class Site:
         return sorted([p for p in self.pages.values() if not p.dir and p.out != "index.html"], key=lambda p: p.title.lower())
 
     def other_pages(self):
-        return sorted([p for p in self.pages.values() if p.dir and p.section not in SECTION_DIRS and not p.out.endswith("index.html")], key=lambda p: p.rel)
+        return sorted([p for p in self.pages.values() if p.dir and p.section not in SECTION_DIRS and p.section != "packs"
+                       and not p.out.endswith("index.html")], key=lambda p: p.rel)
+
+    def pack_nav(self, cur, link):
+        """The Packs group of the navigation: the packs index, then each pack with its pages."""
+        pages = [p for p in self.pages.values() if p.section == "packs"]
+        if not pages:
+            return ""
+        kinds = ["guides", "components", "dataformats", "languages", "conformance"]
+        body = [link("packs/index.html", "All packs")] if "packs/index.html" in self.by_out else []
+        packs = sorted(set(p.dir.split("/")[1] for p in pages if "/" in p.dir))
+        for name in packs:
+            home = "packs/%s/index.html" % name
+            own = [p for p in pages if (p.dir + "/").startswith("packs/%s/" % name) and p.out != home]
+            own.sort(key=lambda p: (kinds.index(pack_kind(p)) if pack_kind(p) in kinds else len(kinds), nav_title(p).lower()))
+            title = self.by_out[home].title if home in self.by_out else name
+            items = ([link(home, "Overview")] if home in self.by_out else []) + [link(p.out, p.title) for p in own]
+            open_pack = cur.startswith("packs/%s/" % name)
+            body.append('<li><details%s><summary>%s <span class="n">%d</span></summary><ul>%s</ul></details></li>'
+                        % (" open" if open_pack else "", esc(title), len(own), "".join(items)))
+        is_open = cur.startswith("packs/")
+        return ('<details class="nav-group"%s><summary>Packs <span class="n">%d</span></summary><ul>%s</ul></details>'
+                % (" open" if is_open else "", len(pages), "".join(body)))
 
     def all_outs(self):
         outs = set(self.by_out) | set(self.generated)
@@ -961,9 +999,12 @@ class Site:
                 body.extend(link(p.out, nav_title(p)) for p in pages)
             h.append('<details class="nav-group"%s><summary>%s <span class="n">%d</span></summary><ul>%s</ul></details>'
                      % (" open" if is_open else "", esc(title), len(pages), "".join(body)))
+        packs = self.pack_nav(cur, link)
+        if packs:
+            h.append(packs)
         proj = self.project_pages() + self.other_pages()
         if proj:
-            is_open = cur_page is not None and (not cur_page.dir or cur_page.section not in SECTION_DIRS) and cur != "index.html"
+            is_open = cur_page is not None and (not cur_page.dir or cur_page.section not in SECTION_DIRS + ["packs"]) and cur != "index.html"
             h.append('<details class="nav-group"%s><summary>Project <span class="n">%d</span></summary><ul>%s</ul></details>'
                      % (" open" if is_open else "", len(proj), "".join(link(p.out, p.title) for p in proj)))
         return "\n".join(h)
@@ -972,7 +1013,7 @@ class Site:
         crumbs = [("Docs", "index.html")]
         sec = out.split("/")[0] if "/" in out else ""
         if sec:
-            st = dict((s[0], s[1]) for s in SECTIONS).get(sec, sec)
+            st = dict([(s[0], s[1]) for s in SECTIONS] + [("packs", "Packs")]).get(sec, sec)
             if out != sec + "/index.html":
                 crumbs.append((st, sec + "/index.html" if (sec + "/index.html") in self.generated or (sec + "/index.html") in self.by_out else None))
         if out != "index.html":
@@ -1124,6 +1165,7 @@ class Site:
             dst = os.path.join(docs_out, a)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(os.path.join(self.docs, a), dst)
+        self.write_moved(docs_out)
         self.write_sitemap()
         self.write_llms()
         return len(rendered), time.time() - t0
@@ -1183,6 +1225,24 @@ class Site:
             out.append(re.sub(r"(\]\()([^)\s]+)\)", rep, l))
         return "\n".join(out)
 
+    def write_moved(self, docs_out):
+        """Pages that moved keep their old URL as a redirect, so links and search results still work."""
+        for old, new in MOVED.items():
+            if old in self.by_out:
+                raise BuildError("%s is in MOVED but a page renders there" % old)
+            if new not in self.by_out:
+                raise BuildError("MOVED %s -> %s: no page renders to %s" % (old, new, new))
+            rel = relurl(old, new)
+            url = abs_url(new)
+            title = self.by_out[new].title
+            write(os.path.join(docs_out, old), (
+                '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
+                '<title>%s (moved) | %s</title>\n'
+                '<link rel="canonical" href="%s">\n<meta name="robots" content="noindex">\n'
+                '<meta http-equiv="refresh" content="0; url=%s">\n</head>\n'
+                '<body><p>This page moved to <a href="%s">%s</a>.</p></body></html>\n')
+                % (esc(title), SITE_NAME, esc(url), esc(rel), esc(rel), esc(title)))
+
     def write_llms(self):
         u = abs_url
         sec = ["## Documentation", "",
@@ -1191,6 +1251,14 @@ class Site:
         for d, t, _, a in SECTIONS:
             n = len(self.ordered(d))
             sec.append("- [%s](%s): %s (%d pages)" % (t, u(d + "/index.html"), a, n))
+        packs = sorted((p for p in self.pages.values() if p.section == "packs"),
+                       key=lambda p: (p.out.count("/"), p.out))
+        if packs:
+            sec.append("")
+            sec.append("Packs (optional, not in the default build or image):")
+            sec.append("")
+            for p in packs:
+                sec.append("- [%s](%s): %s" % (p.title, u(p.out), p.answer))
         guides = self.ordered("guides")
         if guides:
             sec.append("")

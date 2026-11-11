@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DICOM Router and Imaging Gateway: DIMSE to DICOMweb | Cameleer</title>
+<meta name="description" content="An open-source DICOM router in one small binary: receive images over DIMSE, route on tags, de-identify with the PS3.15 profile, forward to a PACS, a DICOMweb store or an AI model, with HL7 and FHIR in the same engine: the Cameleer health pack (next release).">
+<link rel="canonical" href="https://cameleer.ing/use-cases/dicom-imaging-gateway/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="A DICOM router that is also an integration engine">
+<meta property="og:description" content="DIMSE in, DICOMweb or DIMSE out, PS3.15 de-identification and AI results as FHIR, in Camel YAML routes run by one native binary, the Cameleer health pack. Verified against DCMTK and Orthanc.">
+<meta property="og:url" content="https://cameleer.ing/use-cases/dicom-imaging-gateway/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "A DICOM router and imaging gateway with Cameleer",
+ "description": "How Cameleer receives DICOM over DIMSE, routes on tags, de-identifies with the PS3.15 Annex E profile and forwards to a PACS, a DICOMweb store or an AI model, with three tested examples, the conformance summary and the limits.",
+ "url": "https://cameleer.ing/use-cases/dicom-imaging-gateway/",
+ "inLanguage": "en", "image": "https://cameleer.ing/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
+ "about": [{"@type": "Thing", "name": "DICOM"}, {"@type": "Thing", "name": "DICOMweb"}, {"@type": "Thing", "name": "Medical imaging"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/"},
+ {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://cameleer.ing/use-cases/"},
+ {"@type": "ListItem", "position": 3, "name": "DICOM imaging gateway"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "Does Apache Camel have a DICOM component?", "acceptedAnswer": {"@type": "Answer", "text": "No. Apache Camel has HL7 (mllp, hl7) and FHIR components but no DICOM component. Cameleer's health pack adds dicom (DIMSE), dicomweb (DICOMweb) and the dicom, dicomJson and dicomDeidentify data formats, named to read like Camel."}},
+ {"@type": "Question", "name": "How do I forward DICOM from a modality to a DICOMweb store?", "acceptedAnswer": {"@type": "Answer", "text": "Start a route from dicom:GATEWAY@0.0.0.0:11112 (a Storage SCP), filter on tags such as ${dicom.Modality}, and send to dicomweb:https://host/dicom-web?operation=stow. Cameleer's modality-to-cloud example also parks an instance in a folder when the upload fails and retries it later."}},
+ {"@type": "Question", "name": "Which de-identification profile does Cameleer apply?", "acceptedAnswer": {"@type": "Answer", "text": "The PS3.15 Annex E basic profile (Table E.1-1, edition 2026d) and its options except the pixel options. Replacement UIDs, pseudonyms and date shifts are HMAC-SHA256 values under one key, so the output is deterministic across batches and gateways, and each instance writes a record to a hash-chained audit log."}},
+ {"@type": "Question", "name": "Has it been tested with real DICOM software?", "acceptedAnswer": {"@type": "Answer", "text": "Yes: the health pack's live tests pass 10 of 10 against DCMTK 3.6.7 (as SCU and SCP, with and without TLS), Orthanc 1.12.2 (as a PACS, and its DICOMweb plugin as server and client), python-hl7 and HAPI FHIR, and 33 public pydicom test files are read and written back byte for byte. The cloud DICOM services of Azure, Google and AWS have not been tested yet."}},
+ {"@type": "Question", "name": "Which Cameleer build has DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, from the next release: the image pmsudhi/cameleer:health, or cargo install cameleer-main --features health. It is not in the default image or the full build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR."}},
+ {"@type": "Question", "name": "Is Cameleer a PACS or a viewer?", "acceptedAnswer": {"@type": "Answer", "text": "No. It routes, filters, transforms and de-identifies images between modalities, PACS, cloud stores and AI services. It does not store an archive, render images or transcode compressed pixel data."}}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <nav aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../">Use cases</a>
+      <a href="../../mcp/">MCP</a>
+      <a href="../../compare/">Compare</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / DICOM imaging gateway</p>
+    <p class="kicker">Medical imaging · health pack · next release</p>
+    <h1>A DICOM router that is also an integration engine</h1>
+    <p class="lede">Receive images from modalities and PACS over DIMSE, route on tags, de-identify with the PS3.15 profile, and forward to a PACS, a DICOMweb store or an AI model. HL7 v2, FHIR and about 230 other components run in the same small binary, so the result of an AI model can go back to the EHR as FHIR in the same route. Apache Camel has no DICOM component; Cameleer's <a href="../../docs/packs/health/">health pack</a> adds one with Camel-style names.</p>
+    <div class="stats">
+      <div class="stat"><b>10/10</b><span>live tests against DCMTK 3.6.7, Orthanc 1.12.2, python-hl7 and HAPI FHIR</span><small>DIMSE both roles, with and without TLS, and DICOMweb both ways</small></div>
+      <div class="stat"><b>33</b><span>public pydicom test files read and written byte for byte</span></div>
+      <div class="stat"><b>PS3.15</b><span>Annex E basic profile and options, deterministic under a key, audited</span><small>pixel options not included</small></div>
+      <div class="stat"><b>5</b><span>DIMSE services as SCU and SCP: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET</span></div>
+    </div>
+    <p class="note"><strong>Status:</strong> in the next release, as the health pack: the image <code>pmsudhi/cameleer:health</code> or <code>cargo install cameleer-main --features health</code> (not in the default image). Not yet tested against the cloud DICOM services of Azure, Google or AWS. <a href="#limits">What is not supported</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="route">
+  <div class="wrap">
+    <h2>Modality to cloud, without losing an image</h2>
+    <p class="intro">From <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/modality-to-cloud.camel.yaml"><code>examples/medical/modality-to-cloud.camel.yaml</code></a>, which the test suite runs end to end (shortened here). The gateway is a Storage SCP for named modalities, keeps CT and MR, and uploads with STOW-RS. When the store is down, the instance is parked in a folder and a second route uploads it later, so the modality is told "stored" only for an image that was uploaded or parked.</p>
+    <pre class="cmd">- route:
+    id: modality-to-cloud
+    from:
+      uri: "dicom:GATEWAY@0.0.0.0:{{env:DICOM_PORT:11112}}?acceptedCallingAets={{env:MODALITIES:CT01,MR01}}"
+      steps:
+        - filter:
+            simple: "${dicom.Modality} in 'CT,MR'"
+            steps:
+              - doTry:
+                  steps:
+                    - to: "dicomweb:{{env:DICOMWEB_URL}}?operation=stow&amp;bearerToken={{env:DICOMWEB_TOKEN:}}&amp;timeout=120s"
+                  doCatch:
+                    - exception: [java.lang.Exception]
+                      steps:
+                        - to: "file:{{env:PARK_DIR:parked}}?fileName=${header.CamelDicomSopInstanceUid}.dcm"</pre>
+    <pre class="cmd">docker run --rm --network host -e DICOMWEB_URL -e DICOMWEB_TOKEN \
+  -v "$PWD:/routes:ro" -v "$PWD/parked:/parked" pmsudhi/cameleer:health run /routes/modality-to-cloud.camel.yaml
+storescu -aec GATEWAY localhost 11112 *.dcm      # send a study from DCMTK</pre>
+  </div>
+</section>
+
+<section class="c-sec" id="examples">
+  <div class="wrap">
+    <h2>Three tested examples</h2>
+    <div class="cards">
+      <div class="card"><h3>Edge imaging gateway</h3><p>Modality to PACS or to a DICOMweb store, with store-and-forward. <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/modality-to-cloud.camel.yaml">modality-to-cloud</a></p></div>
+      <div class="card"><h3>AI inference loop</h3><p>Keep the series a model is for, de-identify it, send it to the inference service, and post the finding as a FHIR DiagnosticReport that points at the original study. The model never sees the identity. <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/ai-inference-loop.camel.yaml">ai-inference-loop</a></p></div>
+      <div class="card"><h3>De-identification pipeline</h3><p>A folder in, a folder out, with pseudonyms, shifted dates and an audit record per instance. <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/deid-pipeline.camel.yaml">deid-pipeline</a></p></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="blocks">
+  <div class="wrap">
+    <h2>The building blocks</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>you want to</th><th>use</th></tr></thead>
+      <tbody>
+        <tr><td>receive images from a modality (Storage SCP)</td><td><code>from: dicom:MYAE@0.0.0.0:11112</code></td></tr>
+        <tr><td>send images to a PACS (Storage SCU)</td><td><code>to: dicom:PACS@host:104</code></td></tr>
+        <tr><td>store over DICOMweb (STOW-RS)</td><td><code>to: dicomweb:https://host/dicom-web?operation=stow</code></td></tr>
+        <tr><td>query and retrieve from a PACS</td><td><code>dicom:...?operation=find</code>, <code>move</code>, <code>get</code></td></tr>
+        <tr><td>answer queries and retrieves yourself</td><td>a <code>dicom:</code> consumer route that returns matches or instances</td></tr>
+        <tr><td>serve DICOMweb</td><td><code>from: dicomweb:/dicom-web</code></td></tr>
+        <tr><td>route on tags</td><td><code>${dicom.Modality}</code>, <code>${dicom.(0018,0015)}</code>, sequence paths</td></tr>
+        <tr><td>change tags</td><td><code>unmarshal: dicom</code>, edit the value tree, <code>marshal: dicom</code></td></tr>
+        <tr><td>de-identify</td><td><code>marshal: {dicomDeidentify: {uidKey: ..., options: ...}}</code></td></tr>
+        <tr><td>index metadata as JSON</td><td><code>marshal: dicomJson</code> (PS3.18 Annex F)</td></tr>
+        <tr><td>send results to the EHR</td><td>the <a href="../../docs/packs/health/components/fhir.html"><code>fhir</code></a> component, or <a href="../hl7-mllp-healthcare-integration/">HL7 v2 over MLLP</a></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Reference: <a href="../../docs/packs/health/guides/dicom.html">DICOM guide</a>, <a href="../../docs/packs/health/components/dicom.html"><code>dicom</code></a> and <a href="../../docs/packs/health/components/dicomweb.html"><code>dicomweb</code></a> components, <a href="../../docs/packs/health/dataformats/dicomDeidentify.html"><code>dicomDeidentify</code></a>, the <a href="../../docs/packs/health/conformance/dicom-conformance-statement-0.6.0.html">DICOM Conformance Statement</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="deid">
+  <div class="wrap">
+    <h2>De-identification you can check</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>The profile</h3>
+        <p><code>dicomDeidentify</code> applies Table E.1-1 of PS3.15 (edition 2026d) with its options, except the pixel options. Replacement UIDs, pseudonyms and date shifts are HMAC-SHA256 values under one secret key: two gateways with the same key produce the same identifiers, and a study split across batches stays together. Each instance writes a record to the hash-chained audit log: digests of the input and output, the profile and its options, no identity.</p>
+      </div>
+      <div class="pane good">
+        <h3>In a confidential VM</h3>
+        <p>Run the de-identifier in an Intel TDX or AMD SEV-SNP confidential VM with Cameleer's attestation, and a data owner can ask for hardware evidence of which routes and configuration (including the de-identification options) handle the identifiable images before sending them. <a href="../../trust/">How attestation works and what it does not prove yet</a>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="conformance">
+  <div class="wrap">
+    <h2>What is supported</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>area</th><th>supported</th></tr></thead>
+      <tbody>
+        <tr><td>Verification</td><td>SCU and SCP</td></tr>
+        <tr><td>Storage</td><td>SCU and SCP for every Storage SOP class of PS3.4 (private SOP classes too)</td></tr>
+        <tr><td>Query/Retrieve</td><td>Patient Root and Study Root FIND, MOVE and GET as SCU and SCP; Modality Worklist FIND as SCU and SCP</td></tr>
+        <tr><td>Transfer syntaxes</td><td>implicit and explicit VR little endian, deflated, explicit big endian (read, write, convert); compressed syntaxes passed through unchanged</td></tr>
+        <tr><td>Character sets</td><td>ISO_IR 6, 100, 101, 109, 110, 126, 127, 138, 144, 148, 166, 13 and 192, GB18030, GBK, and their ISO 2022 forms (Japanese, Korean, Chinese)</td></tr>
+        <tr><td>Security</td><td>TLS 1.2 and 1.3, mutual TLS, User Identity (username, username and passcode); hash-chained audit records</td></tr>
+        <tr><td>DICOMweb</td><td>STOW-RS, QIDO-RS (all levels, <code>limit</code>, <code>offset</code>, <code>includefield</code>), WADO-RS (instances, metadata, bulk data), as client and server</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="limits">
+  <div class="wrap">
+    <h2>What it is not, and what is not supported yet</h2>
+    <ul>
+      <li><strong>Not a PACS or a viewer.</strong> It routes, filters, transforms and de-identifies; it does not keep an archive or render images.</li>
+      <li><strong>Cloud DICOM services not tested yet:</strong> Azure Health Data Services, the Google Cloud Healthcare API, AWS HealthImaging (which also needs SigV4 signing in <code>dicomweb</code>). The DICOMweb tests ran against Orthanc.</li>
+      <li><strong>Not tested with</strong> dcm4che or real modalities yet.</li>
+      <li><strong>Not supported:</strong> Storage Commitment, MPPS, C-CANCEL during a request, asynchronous operations; WADO frames, rendered and thumbnail retrieval, UPS-RS; transcoding compressed pixel data, and with it the pixel de-identification options.</li>
+      <li><strong>Audit format:</strong> hash-chained records, not yet IHE ATNA (PS3.15 A.5) messages. The <a href="../../docs/packs/health/conformance/dicom-conformance-statement-0.6.0.html">DICOM Conformance Statement</a> (PS3.2 form) lists every service and policy.</li>
+      <li><strong>Not measured yet:</strong> throughput against dcm4che, DCMTK, Orthanc or Mirth.</li>
+      <li><strong>Compliance:</strong> Cameleer is software you run; it provides controls (TLS, de-identification, audit), not a HIPAA certification.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Does Apache Camel have a DICOM component?</summary><p>No. Apache Camel has HL7 (<code>mllp</code>, <code>hl7</code>) and FHIR components but no DICOM component. Cameleer's health pack adds <code>dicom</code> (DIMSE), <code>dicomweb</code> (DICOMweb) and the <code>dicom</code>, <code>dicomJson</code> and <code>dicomDeidentify</code> data formats, named to read like Camel.</p></details>
+    <details><summary>How do I forward DICOM from a modality to a DICOMweb store?</summary><p>Start a route from <code>dicom:GATEWAY@0.0.0.0:11112</code> (a Storage SCP), filter on tags such as <code>${dicom.Modality}</code>, and send to <code>dicomweb:https://host/dicom-web?operation=stow</code>. The modality-to-cloud example also parks an instance in a folder when the upload fails and retries it later.</p></details>
+    <details><summary>Which de-identification profile does Cameleer apply?</summary><p>The PS3.15 Annex E basic profile (Table E.1-1, edition 2026d) and its options except the pixel options. Replacement UIDs, pseudonyms and date shifts are HMAC-SHA256 values under one key, so the output is deterministic across batches and gateways, and each instance writes a record to a hash-chained audit log.</p></details>
+    <details><summary>Has it been tested with real DICOM software?</summary><p>Yes: the health pack's live tests pass 10 of 10 against DCMTK 3.6.7 (as SCU and SCP, with and without TLS), Orthanc 1.12.2 (as a PACS, and its DICOMweb plugin as server and client), python-hl7 and HAPI FHIR, and 33 public pydicom test files are read and written back byte for byte. The cloud DICOM services of Azure, Google and AWS have not been tested yet.</p></details>
+    <details><summary>Which Cameleer build has DICOM?</summary><p>The health pack, from the next release: the image <code>pmsudhi/cameleer:health</code>, or <code>cargo install cameleer-main --features health</code>. It is not in the default image or the <code>full</code> build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR. <a href="../../docs/packs/health/">The health pack</a>.</p></details>
+    <details><summary>Is Cameleer a PACS or a viewer?</summary><p>No. It routes, filters, transforms and de-identifies images between modalities, PACS, cloud stores and AI services. It does not store an archive, render images or transcode compressed pixel data.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleer</h4>
+      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. DICOM is the registered trademark of NEMA for its standards publications relating to digital communications of medical information. Other product names are trademarks of their owners.</p>
+    </div>
+    <div>
+      <h4>Healthcare</h4>
+      <ul>
+        <li><a href="../../docs/packs/health/">Health pack</a></li>
+        <li><a href="../../docs/packs/health/guides/dicom.html">DICOM guide</a></li>
+        <li><a href="../hl7-mllp-healthcare-integration/">HL7 v2 over MLLP</a></li>
+        <li><a href="../../trust/">Confidential integrations</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../docs/">Documentation</a></li>
+        <li><a href="../../cameleering/">What is cameleering?</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cameleer: Apache Camel in Rust, MCP tools for AI agents</title>
 <meta name="description" content="Apache Camel routes as one native Rust binary: 3 ms startup, up to 54x less memory. Routes become MCP tools for AI agents: validated, run once, audited.">
-<meta name="keywords" content="Apache Camel, Rust, cameleering, Apache Camel alternative, integration framework, enterprise integration patterns, EIP, AI agents, MCP server, MCP tools, agent tool calls, LLM gateway, serverless, AWS Lambda, edge, MQTT, HL7, Kafka, YAML DSL">
+<meta name="keywords" content="Apache Camel, Rust, cameleering, Apache Camel alternative, integration framework, enterprise integration patterns, EIP, AI agents, MCP server, MCP tools, agent tool calls, LLM gateway, serverless, AWS Lambda, edge, MQTT, HL7, DICOM, Kafka, YAML DSL">
 <link rel="canonical" href="https://cameleer.ing/">
 <meta name="theme-color" content="#ffffff">
 <meta name="google-site-verification" content="MvbqVebLUL_zfBeTqUJFrMzVbzt3An6QuIhFIasAcMA">
@@ -40,7 +40,7 @@
   "license": "https://www.apache.org/licenses/LICENSE-2.0",
   "version": "0.5.1",
   "author": {"@type": "Person", "name": "Sudheesh PM"},
-  "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7",
+  "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7, DICOM",
   "isBasedOn": {"@type": "SoftwareSourceCode", "name": "Apache Camel", "url": "https://camel.apache.org/", "codeRepository": "https://github.com/apache/camel"}
 }
 </script>
@@ -467,7 +467,8 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <ul class="cases">
         <li><a href="use-cases/mcp-tool-server/"><b>Routes as MCP tools</b><span>Serve tools, resources and prompts to MCP clients with one command; gateway in front of other MCP servers.</span></a></li>
         <li><a href="use-cases/llm-gateway-in-process/"><b>Model calls without a gateway</b><span>23 providers with retries, fallback models, prompt caching and a response cache in process.</span></a></li>
-        <li><a href="use-cases/hl7-mllp-healthcare-integration/"><b>Healthcare: HL7 v2 over MLLP</b><span>Receive ADT and lab messages, acknowledge after delivery, post to the EHR or a FHIR server.</span></a></li>
+        <li><a href="use-cases/hl7-mllp-healthcare-integration/"><b>Healthcare: HL7 v2 over MLLP</b><span>Receive ADT and lab messages, acknowledge after delivery, post to the EHR or a FHIR server (health pack).</span></a></li>
+        <li><a href="use-cases/dicom-imaging-gateway/"><b>Medical imaging: DICOM</b><span>DIMSE in, DICOMweb or a PACS out, PS3.15 de-identification and AI results as FHIR (health pack, next release).</span></a></li>
         <li><a href="use-cases/file-sftp-pipelines/"><b>File, FTP and SFTP pipelines</b><span>Poll folders and servers, parse CSV and fixed-width files, split, validate and load.</span></a></li>
         <li><a href="docs/guides/migrating-from-apache-camel.html"><b>Camel routes off the JVM</b><span>Move YAML and XML routes as they are; a checklist for the parts that differ.</span></a></li>
         <li><a href="docs/guides/agents.html#rag-ingestion-chunk-embed-and-store"><b>LLM pipelines and RAG ingestion</b><span>Chunk, embed and index documents; summarize; classify and route; guard model output.</span></a></li>
@@ -538,7 +539,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <article class="cat">
         <h3>Files, protocols and mail</h3>
         <p class="cat-n"><b>15</b> components</p>
-        <ul><li><a href="docs/components/file.html">Files</a></li><li><a href="docs/components/sftp.html">SFTP</a></li><li><a href="docs/components/ftp.html">FTP / FTPS</a></li><li><a href="docs/components/smtp.html">Email (SMTP, IMAP)</a></li><li><a href="docs/components/grpc.html">gRPC</a></li><li><a href="docs/components/mllp.html">HL7 over MLLP</a></li></ul>
+        <ul><li><a href="docs/components/file.html">Files</a></li><li><a href="docs/components/sftp.html">SFTP</a></li><li><a href="docs/components/ftp.html">FTP / FTPS</a></li><li><a href="docs/components/smtp.html">Email (SMTP, IMAP)</a></li><li><a href="docs/components/grpc.html">gRPC</a></li><li><a href="docs/packs/health/">HL7, FHIR and DICOM (health pack)</a></li></ul>
         <a class="cat-more" href="docs/components/">See all 15</a>
       </article>
       <article class="cat">

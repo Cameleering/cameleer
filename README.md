@@ -333,7 +333,7 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 | | Trigger | Route | Outcome |
 |---|---|---|---|
 | **Payments** | payment events on `kafka` | idempotent consumer → enrich from `sql` → model risk score → `choice` | duplicates dropped, risky payments held, the rest settled |
-| **Healthcare** | HL7 v2 over `mllp` | parse → transform → `http` to the EHR, with redelivery | results delivered exactly once, failures to a dead letter queue |
+| **Healthcare** (health pack) | HL7 v2 over `mllp` | parse → transform → `http` to the EHR, with redelivery | results delivered exactly once, failures to a dead letter queue |
 | **Support** | `aws2-sqs`, `mail` or `telegram` | filter → `aws-bedrock` classifies and drafts → `choice` | urgent issues paged, routine ones answered with a draft |
 | **E-commerce** | order webhooks on `platform-http` | `split` line items → route per warehouse → `aggregate` | one fulfilment message per warehouse, stock in `aws2-ddb` |
 | **IoT and the edge** | sensor readings on `paho-mqtt5` | `throttle` → `aggregate` per device per minute | rollups to `aws2-timestream`, raw data stays on site |
@@ -342,7 +342,19 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 
 Every component named here ships today; each row is a pattern you assemble from them. The
 [use-case pages](https://cameleer.ing/use-cases/) walk through the tested routes
-for AI agent tools, HL7 over MLLP, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
+for AI agent tools, HL7 over MLLP, DICOM imaging, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
+
+**Healthcare is a pack (next release).** HL7 v2 and MLLP, FHIR and DICOM live in the
+[health pack](docs/packs/health/index.md) (`cameleer-health`), not in the default build or image:
+use `pmsudhi/cameleer:health` or `cargo install cameleer-main --features health`. Up to 0.5.1,
+`mllp`, `hl7` and `fhir` are in the default image. The pack adds DICOM, which Apache Camel does not
+have: `dicom` (DIMSE as SCU and SCP: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET, over TCP or TLS),
+`dicomweb` (STOW-RS, QIDO-RS, WADO-RS, client and server), `${dicom.Modality}` in Simple, and
+`dicomDeidentify` (the PS3.15 Annex E basic profile and options, without the pixel options). Its
+live tests pass 10/10 against DCMTK 3.6.7, Orthanc 1.12.2, python-hl7 and HAPI FHIR; the cloud
+DICOM services are not tested yet
+([DICOM imaging gateway](https://cameleer.ing/use-cases/dicom-imaging-gateway/),
+[DICOM Conformance Statement](docs/packs/health/conformance/dicom-conformance-statement-0.6.0.md)).
 
 ---
 
@@ -446,8 +458,8 @@ Camel JBang habits carry over: `cameleer run`, `cameleer ps`, `cameleer stop`.
 
 ### A smaller build
 
-The image, `cargo install` and the default build include every component, so any route runs
-without setup. For a function or an edge device, keep only the families your routes use:
+The image, `cargo install` and the default build include every component except the
+[packs](docs/packs/index.md), so any route runs without setup. For a function or an edge device, keep only the families your routes use:
 
 ```sh
 cargo install cameleer-main --no-default-features --features cloud,jq,sql

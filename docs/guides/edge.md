@@ -1,7 +1,7 @@
 # Cameleer at the edge
 
 > Cameleer runs integration routes on gateways and small devices: a single native binary of
-> about 10 MB of memory that ingests MQTT, syslog and HL7 locally, filters and aggregates on
+> about 10 MB of memory that ingests MQTT, syslog and (with the health pack) HL7 locally, filters and aggregates on
 > site, buffers when the uplink is down, and forwards to Kafka or HTTP in the cloud.
 
 Edge gateways sit between machines and the cloud. They need to speak local protocols, keep
@@ -16,7 +16,7 @@ brokers and HTTP mocks.
 | [Sensor rollups](#filter-and-aggregate-mqtt-sensor-readings) | `mqtt-sensor-rollup.camel.yaml` | MQTT in, validation, per-sensor aggregation, Kafka out |
 | [Store and forward](#store-and-forward-when-the-uplink-is-down) | `store-and-forward.camel.yaml` | retries, a local file buffer and replay when the uplink is down |
 | [Syslog to Kafka](#syslog-to-kafka) | `syslog-to-kafka.camel.yaml` | protocol bridging with severity filtering |
-| [HL7 over MLLP](#hl7-v2-over-mllp-to-an-http-api) | `hl7-mllp-to-http.camel.yaml` | healthcare messages with acknowledgements after delivery |
+| [HL7 over MLLP](#hl7-v2-over-mllp-to-an-http-api) | `hl7-mllp-to-http.camel.yaml` | healthcare messages with acknowledgements after delivery ([health pack](../packs/health/index.md)) |
 | [Gateway presence](#gateway-presence-with-retained-messages-and-a-last-will) | `gateway-heartbeat.camel.yaml` | retained status and MQTT last will |
 
 ## Filter and aggregate MQTT sensor readings
@@ -432,8 +432,9 @@ transports and shared subscriptions are not supported.
 
 ### Which industrial and healthcare protocols are supported?
 
-MQTT, syslog, HL7 v2 over MLLP, TCP and UDP (`netty`), HTTP, WebSocket, FTP and SFTP, Kafka, AMQP
-and STOMP. There are no OPC UA, Modbus or PLC4X components; reach those through an MQTT or HTTP
+MQTT, syslog, TCP and UDP (`netty`), HTTP, WebSocket, FTP and SFTP, Kafka, AMQP and STOMP in the
+default build; HL7 v2 over MLLP, FHIR and DICOM in the [health pack](../packs/health/index.md)
+(image `pmsudhi/cameleer:health`). There are no OPC UA, Modbus or PLC4X components; reach those through an MQTT or HTTP
 gateway.
 
 ## Related

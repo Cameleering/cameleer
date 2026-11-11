@@ -50,7 +50,7 @@
  {"@type": "Question", "name": "Where does the word come from?", "acceptedAnswer": {"@type": "Answer", "text": "A cameleer is a person who drives camels. Cameleer drives Apache Camel's routes; cameleering is the act of doing so. The project's short domain is cameleer.ing."}},
  {"@type": "Question", "name": "Do I have to rewrite my Camel routes?", "acceptedAnswer": {"@type": "Answer", "text": "No for YAML and XML routes: they run unchanged with cameleer run. Routes written in the Java DSL are rewritten in the Rust DSL, which uses the same method names in snake_case. Java beans, processors and custom components are not supported; they are written in Rust."}},
  {"@type": "Question", "name": "Is cameleering an Apache Software Foundation project?", "acceptedAnswer": {"@type": "Answer", "text": "No. Cameleer is an independent open-source project under the Apache License 2.0. It follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF."}},
- {"@type": "Question", "name": "Which edge protocols does it speak?", "acceptedAnswer": {"@type": "Answer", "text": "MQTT 3.1.1 and 5.0, syslog, HL7 v2 over MLLP, HTTP, WebSocket, TCP and UDP, Kafka and AMQP, with a linux/arm64 image for 64-bit gateways. Modbus and OPC UA are not supported."}},
+ {"@type": "Question", "name": "Which edge protocols does it speak?", "acceptedAnswer": {"@type": "Answer", "text": "MQTT 3.1.1 and 5.0, syslog, HL7 v2 over MLLP (health pack), HTTP, WebSocket, TCP and UDP, Kafka and AMQP, with a linux/arm64 image for 64-bit gateways. Modbus and OPC UA are not supported."}},
  {"@type": "Question", "name": "How is Cameleer faster than Apache Camel on the JVM?", "acceptedAnswer": {"@type": "Answer", "text": "There is no virtual machine to start, no JIT warm-up and no garbage collector; the binary is compiled ahead of time and memory is freed deterministically. On three identical cloud machines with the same routes, Cameleer started in 2.5 ms against 1106 ms, peaked at 7 MB against 399 MB on the same route, and handled 1.7 to 8.7 times the throughput of Apache Camel 4.23 on Java 21."}}]}
 </script>
 </head>
@@ -92,7 +92,7 @@
       <div class="pane">
         <h3>At the edge</h3>
         <ul>
-          <li>MQTT 3.1.1 and 5.0, syslog and HL7 v2 over MLLP on a gateway, with a <code>linux/arm64</code> image.</li>
+          <li>MQTT 3.1.1 and 5.0, syslog and, with the health pack, HL7 v2 over MLLP on a gateway, with a <code>linux/arm64</code> image.</li>
           <li>Filter and aggregate on site, buffer to disk when the uplink is down, forward to Kafka or HTTP later.</li>
           <li><a href="../use-cases/mqtt-iot-edge-gateway/">MQTT edge gateways</a> · <a href="../use-cases/hl7-mllp-healthcare-integration/">HL7 over MLLP</a></li>
         </ul>
@@ -177,7 +177,7 @@
     <details><summary>Where does the word come from?</summary><p>A cameleer is a person who drives camels. Cameleer drives Apache Camel's routes; cameleering is the act of doing so. The project's short domain is cameleer.ing.</p></details>
     <details><summary>Do I have to rewrite my Camel routes?</summary><p>No for YAML and XML routes: they run unchanged with <code>cameleer run</code>. Routes written in the Java DSL are rewritten in the Rust DSL, which uses the same method names in snake_case. Java beans, processors and custom components are not supported; they are written in Rust. See <a href="../docs/guides/migrating-from-apache-camel.html">migrating from Apache Camel</a>.</p></details>
     <details><summary>Is cameleering an Apache Software Foundation project?</summary><p>No. Cameleer is an independent open-source project under the Apache License 2.0. It follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF.</p></details>
-    <details><summary>Which edge protocols does it speak?</summary><p>MQTT 3.1.1 and 5.0, syslog, HL7 v2 over MLLP, HTTP, WebSocket, TCP and UDP, Kafka and AMQP, with a <code>linux/arm64</code> image for 64-bit gateways. Modbus and OPC UA are not supported.</p></details>
+    <details><summary>Which edge protocols does it speak?</summary><p>MQTT 3.1.1 and 5.0, syslog, HL7 v2 over MLLP (health pack), HTTP, WebSocket, TCP and UDP, Kafka and AMQP, with a <code>linux/arm64</code> image for 64-bit gateways. Modbus and OPC UA are not supported.</p></details>
     <details><summary>How is Cameleer faster than Apache Camel on the JVM?</summary><p>There is no virtual machine to start, no JIT warm-up and no garbage collector; the binary is compiled ahead of time and memory is freed deterministically. On three identical cloud machines with the same routes, Cameleer started in 2.5 ms against 1106 ms, peaked at 7 MB against 399 MB on the same route, and handled 1.7 to 8.7 times the throughput of Apache Camel 4.23 on Java 21.</p></details>
   </div>
 </section>
