@@ -28,9 +28,52 @@
 //!   unary `${header.n}++` / `${header.n}--`
 //! - predicates: `== != > >= < <= =~ !=~ contains !contains ~~ !~~ regex !regex in !in
 //!   is !is range !range startsWith endsWith` combined with `&&`/`||` (`and`/`or`)
+//! - functions contributed by other crates with [`register_function`], such as
+//!   `${dicom.PatientID}` from cameleer-dicom
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
+
+/// A Simple function contributed by another crate: called with the exchange and the text after
+/// `prefix.` (or `prefix:`).
+pub type SimpleFunction = Arc<dyn Fn(&Exchange, &str) -> Result<Value> + Send + Sync>;
+
+fn functions() -> &'static RwLock<Vec<(String, SimpleFunction)>> {
+    static F: OnceLock<RwLock<Vec<(String, SimpleFunction)>>> = OnceLock::new();
+    F.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Register a Simple function for `${prefix.rest}` and `${prefix:rest}` (process-wide, like
+/// the languages Camel finds on the classpath). Built-in functions take precedence; a second
+/// registration of the same prefix replaces the first. Expressions parsed before the call do
+/// not see it.
+pub fn register_function(prefix: &str, f: SimpleFunction) {
+    let mut v = functions().write().unwrap_or_else(|e| e.into_inner());
+    v.retain(|(p, _)| p != prefix);
+    v.push((prefix.to_string(), f));
+}
+
+fn find_function(f: &str) -> Option<(SimpleFunction, String)> {
+    let v = functions().read().unwrap_or_else(|e| e.into_inner());
+    for (p, func) in v.iter() {
+        if let Some(rest) = f.strip_prefix(p.as_str()) {
+            if let Some(r) = rest.strip_prefix('.').or_else(|| rest.strip_prefix(':')) {
+                return Some((func.clone(), r.to_string()));
+            }
+        }
+    }
+    None
+}
+
+/// A contributed function in the AST.
+#[derive(Clone)]
+struct ExtFn(SimpleFunction, String);
+
+impl std::fmt::Debug for ExtFn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ExtFn({:?})", self.1)
+    }
+}
 
 use crate::error::{kinds, CamelError, Result};
 use crate::message::Exchange;
@@ -208,6 +251,8 @@ enum Func {
     Iif(Pred, Expr, Expr),
     Not(Pred),
     Call(String, Vec<Expr>, Vec<Nav>),
+    /// A function registered with [`register_function`].
+    Ext(ExtFn),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1052,6 +1097,9 @@ impl<'a> P<'a> {
         if f.starts_with("type:") {
             return Err(self.err(format!("The type: function is not supported in Cameleer: {}", f), pos));
         }
+        if let Some((func, rest)) = find_function(f) {
+            return Ok(Func::Ext(ExtFn(func, rest)));
+        }
         Err(self.err(format!("Unknown function: {}", f), pos))
     }
 
@@ -1741,6 +1789,7 @@ impl Func {
             }),
             Func::Null => Ok(Value::Null),
             Func::Ref(n) => support::lookup_ref_value(ex.context()?, n, ex),
+            Func::Ext(ExtFn(f, rest)) => f(ex, rest),
             Func::Bean(n, m) => support::invoke_bean(ex.context()?, n, m.as_deref(), ex),
             Func::Iif(p, a, b) => {
                 if p.eval(ex)? {

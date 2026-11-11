@@ -21,6 +21,8 @@ cameleer-cloud = { path = "../cameleer-cloud", version = "0.5.1", optional = tru
 cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
 cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.5.1", optional = true }
 cameleer-datastores = { path = "../cameleer-datastores", version = "0.5.1", optional = true }
+# packs: optional, not in `full` (docs/design/packs/domain-packs.md)
+cameleer-health = { path = "../cameleer-health", version = "0.6.0", optional = true }
 cameleer-grpc = { path = "../cameleer-grpc", version = "0.5.1", optional = true }
 cameleer-http = { path = "../cameleer-http", version = "0.5.1", default-features = false }
 cameleer-protocols = { path = "../cameleer-protocols", version = "0.5.1", optional = true }
@@ -48,7 +50,7 @@ default = ["full"]
 # nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
 core = []
 full = [
-    "ai", "attest", "amqp", "amqp10", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "ai", "amqp", "amqp10", "attest", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
     "templates", "jq", "xpath", "http2", "validate",
 ]
 templates = ["cameleer-core/templates"]
@@ -56,6 +58,8 @@ jq = ["cameleer-core/jq"]
 xpath = ["cameleer-core/xpath"]
 http2 = ["cameleer-http/http2"]
 validate = []
+# The health pack (HL7 v2 and MLLP, FHIR, DICOM): `--features health`; deliberately not in `full`.
+health = ["dep:cameleer-health"]
 ai = ["dep:cameleer-ai", "cameleer-yaml/agent"]
 # attestation in hardware TEEs (camel.attestation.*): configfs-tsm and dstack evidence
 attest = ["dep:cameleer-attest"]
@@ -88,5 +92,7 @@ name = "idle_threads"
 required-features = ["xml"]
 
 [dev-dependencies]
+# the tests check the pack tables and run the health pages and examples with the pack added
+cameleer-health = { path = "../cameleer-health" }
 # test certificates (cameleer_tls::testing) for the HTTPS tests
 cameleer-tls = { path = "../cameleer-tls" }

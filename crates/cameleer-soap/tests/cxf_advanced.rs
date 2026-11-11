@@ -76,7 +76,7 @@ fn code_first_bean_endpoint_headers_mtom_and_attachments() {
     let back = ex.property("CamelAttachments").and_then(|v| v.as_object()).cloned().unwrap();
     assert_eq!(back.get("reply"), Some(&Value::Bytes(b"pong".to_vec())));
     // the generated WSDL is served
-    let resp = cameleer_soap::transport::Client::from_params(&ctx, "cxf", &mut cameleer_core::util::Parameters::default()).unwrap().send("GET", &format!("http://127.0.0.1:{}/files?wsdl", port), &[], None).unwrap();
+    let resp = cameleer_http::client::EndpointClient::from_params(&ctx, "cxf", &mut cameleer_core::util::Parameters::default()).unwrap().send("GET", &format!("http://127.0.0.1:{}/files?wsdl", port), &[], None).unwrap();
     let w = resp.body_text();
     assert!(w.contains("<wsdl:definitions") && w.contains("name=\"upload\"") && w.contains(&format!("127.0.0.1:{}", port)), "{}", w);
     ctx.stop().unwrap();

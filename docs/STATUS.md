@@ -320,6 +320,129 @@ turns, and grades each run by tool calls, database state and a Claude judge.
   of the release binary in `target/mcp-fieldtest/bin`); Haiku's remaining misses are weekday and
   sum arithmetic.
 
+## Packs and the health pack (2026-11-09 to 11, merged into `main` 2026-11-11)
+
+The owner chose a health pack instead of merging DICOM into `full`, with no backward
+compatibility (design: `docs/design/packs/domain-packs.md` section 8). Done on this branch:
+
+- **Core:** `cameleer_core::pack` (`PackInfo`, `Pack`, `CamelContext::add_pack`, `pack::install`),
+  `Main::add_pack`; pack languages are YAML/XML DSL keys (cameleer-yaml asks the pack registry),
+  `cameleer version` lists packs; the audit log moved to `cameleer_core::audit` (one per context);
+  `util_time::now_utc`; socket helpers in `cameleer_tls::net`; `cameleer_http::client::EndpointClient`.
+- **`cameleer-health` 0.6.0** (own version): `hl7` (hl7, hl7terser, mllp from cameleer-protocols),
+  `fhir` (from cameleer-soap), `dicom` (this branch's DICOM work); depends on core, http, tls and
+  (fhir) xml only. No aliases or re-exports left in the old crates.
+- **cameleer-main:** feature `health`, not in `full`; `features::PACKS` names the pack's parts so a
+  build without it says "`mllp` is in the health pack ...".
+- **Distribution (prepared, nothing published):** `container.yml` matrix with a health variant
+  (`FEATURES=full,health`, tags `health`, `<version>-health`, `edge-health`), Dockerfile note,
+  `scripts/package-archive.sh` and `.github/workflows/archives.yml` (artifacts
+  `cameleer-<version>-<target>` and `cameleer-health-<version>-<target>` with SHA-256, not
+  attached to a release, not signed yet).
+- **Docs:** the health pages are under `docs/packs/health/` with a `**Pack:**` header segment;
+  `docs/packs/index.md`, `docs/packs/health/index.md`, `crates/cameleer-health/CHANGELOG.md`. The
+  site navigation for packs (`scripts/build-docs.py` builds the pages but has no packs section)
+  and llms.txt are left to the SEO session.
+- **Binary size** (Linux, WSL2 Ubuntu 24.04, `--profile dist`, measured 2026-11-09):
+
+  | build | bytes | MB |
+  |---|---|---|
+  | `--no-default-features` (core) | 6,970,672 | 6.97 |
+  | `--no-default-features --features health` | 9,135,408 | 9.14 (+2.16) |
+  | default (`full`) | 28,989,856 | 28.99 |
+  | `--features full,health` | 30,913,032 | 30.91 (+1.92) |
+
+  `full` no longer contains HL7, MLLP and FHIR, so it is not comparable with earlier `full`
+  figures in this file; the pack costs about 2 MB.
+
+**Test run after the pack move (Windows 11, 2026-11-09):** `cargo build --workspace` 0 warnings;
+`cargo build -p cameleer-main --no-default-features` and `--no-default-features --features health`
+build; `cargo build -p cameleer-health --no-default-features --features hl7` (and `fhir`, `dicom`,
+none) build; `cargo test --workspace` **2952 passed, 0 failed**. After the move, on WSL2 Ubuntu
+24.04 (2026-11-10): `cargo test -p cameleer-health` all passed with zero warnings, and the live
+tier `CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-health --test live_dicom` **7/7** against DCMTK
+3.6.7 and Orthanc 1.12.2.
+
+Built afterwards (2026-11-10), from the same design:
+- `/q/info` and `/q/dev/packs` (`camel.server.infoEnabled`, also on with the dev console): the
+  version, the compiled-in families and the packs.
+- `.github/CODEOWNERS` with an owner for the pack's code, docs, examples and tooling.
+- `scripts/sbom.py`: CycloneDX 1.5 SBOMs of exactly what a build compiles in (from `cargo tree -p`,
+  so a DICOM-only pack build lists core, http and tls), reproducible; written next to every
+  archive by `package-archive.sh`, plus one for the `cameleer-health` crate; checked in CI.
+- `archives.yml` signs every archive, checksum and SBOM with keyless cosign on release tags only.
+  `package-archive.sh health x86_64-unknown-linux-gnu` was run end to end on Linux (13.2 MB
+  archive, the checksum verifies, the binary reports the pack); the workflow itself has not run on
+  GitHub yet.
+- CI pack gate: `cameleer-main --no-default-features --features health` tests and each crate
+  feature of `cameleer-health` alone. It found that `tests/docs_reference.rs` (from main) failed in
+  every reduced build; it is now gated on `full`.
+- The DICOM Conformance Statement, `docs/packs/health/conformance/dicom-conformance-statement-0.6.0.md`
+  (PS3.2 form), its SOP class, identification and character set tables generated from the code
+  and checked by `tests/dicom_conformance_statement.rs`.
+- The `CAMEL_HEALTH_INTEROP=1` tier (`scripts/health-interop.sh`): **10/10** on WSL2 Ubuntu 24.04
+  (2026-11-11, run with the owner's approval): DICOM 7/7 (DCMTK 3.6.7, Orthanc 1.12.2 with
+  DICOMweb 1.16), HL7 2/2 (python-hl7 0.4.5 as MLLP receiver with AA and AR acknowledgements, and
+  its MLLP client against a Cameleer consumer), FHIR 1/1 (HAPI FHIR JPA server 8.12.0: create,
+  read JSON and XML, update, search, history, delete). No Cameleer bug found; one test asserted the
+  AR case the wrong way round (the producer template returns the error) and was fixed.
+
+**Merged into `main` (2026-11-11)** after merging the latest `main` into the branch: `cargo build
+--workspace` 0 warnings; `cargo build -p cameleer-main --no-default-features` and
+`--no-default-features --features health` build; `cargo test --workspace` **2960 passed, 0 failed**
+(Windows 11); the health live tier 10/10 (WSL2).
+
+Still open: the first real run of `archives.yml` and the
+health image build in `container.yml`; IHE ATNA audit messages (PS3.15 A.5); an independent review
+of the TLS code before claiming the BCP 195 profiles.
+
+### DICOM in the health pack
+
+Built from `docs/design/medical/dicom-and-healthcare.md` (phases 1 to 5 of its plan; the owner
+approved leading with edge imaging gateways and AI inference routing, no PACS). Now
+`cameleer-health/src/dicom` (crate feature `dicom`). Guide: `docs/packs/health/guides/dicom.md`.
+
+- **Phase 1, data:** Part 10 and data set codec (explicit/implicit/deflated little endian and
+  explicit big endian, read and write; sequences; UN sequences; encapsulated pixel data as
+  fragments; files without preamble or meta); the PS3.6/PS3.7 dictionary, UID registry and PS3.15
+  Table E.1-1 generated from the 2026d DocBook (`scripts/update-dicom-dict.py`, pinned SHA-256,
+  `crates/cameleer-health/DICTIONARY.md`); specific character sets
+  (`scripts/gen-dicom-charsets.py`, tables from CPython's codecs, `CHARSETS.md`); the Value
+  tree (DICOM JSON shape, byte-exact), `dicom` and `dicomJson` data formats; `${dicom.*}` through
+  a new core hook `simple::register_function`, and the `dicom` language (also a YAML DSL key).
+- **Phase 2, DIMSE:** PDUs, associations, SCU and SCP for C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET,
+  the `dicom:` component, `testing::TestPacs`.
+- **Phase 3, DICOMweb:** the `dicomweb:` component (client and server on the platform-http
+  registry); the multipart parser moved to `cameleer_core::multipart` and shared with
+  `mimeMultipart`.
+- **Phase 4, de-identification:** `deid` (processor and `dicomDeidentify` data format), audit
+  records in `cameleer-ai`'s hash-chained log.
+- **Phase 5:** `examples/medical/` (three examples, run end to end in
+  `crates/cameleer-main/tests/dicom_examples.rs`), pages for `dicom`, `dicomweb`, the three data
+  formats and the language, FEATURES rows, INTEROP section.
+
+**Verified:**
+- hermetic: `cargo test -p cameleer-health` (codec, model, charsets against PS3.5 Annex H-K bytes,
+  DIMSE SCU/SCP incl. TLS and rejections, component routes, DICOMweb client/server, Table E.1-1
+  attribute by attribute for six option sets) and the examples and docs examples in cameleer-main;
+- corpus: 33 pydicom test files byte-exact (`scripts/fetch-dicom-testdata.sh`, files kept out of
+  git, provenance in `crates/cameleer-health/TESTDATA.md`);
+- live (`scripts/dicom-interop.sh`, `CAMEL_DICOM_INTEROP=1`, WSL2 Ubuntu 24.04): 7/7 against
+  DCMTK 3.6.7 (both roles, with and without TLS) and Orthanc 1.12.2 (PACS, DICOMweb server and
+  DICOMweb client). One bug found and fixed (odd deflated PDV, `docs/INTEROP.md`).
+
+**Test run (Windows 11, 2026-11-09):** `cargo build --workspace` 0 warnings;
+`cargo build -p cameleer-main --no-default-features` builds; `cargo test --workspace`
+2914 passed, 3 failed: two `docs_languages_formats` checks for the new pages (fixed afterwards,
+14/14 on rerun) and `cameleer-bench` `short_run_reports_throughput_and_latency` (a 50 ms run that
+saw no messages under the full parallel load; 3/3 alone, crate untouched by this work).
+
+**Not verified / not built:** real cloud DICOM services (Azure, Google, AWS; AWS needs SigV4 in
+`dicomweb`), dcm4che, real modalities; Storage Commitment, MPPS, C-CANCEL in progress, async
+operations, association pooling; WADO frames/rendered/thumbnail, UPS-RS; pixel codecs (JPEG,
+JPEG-LS, JPEG 2000, RLE) and with them Clean Pixel Data; Encrypted Attributes Sequence;
+`fhirDeidentify`; PS3.15 A.5 (ATNA) audit messages; a PS3.2 conformance statement; fuzzing of the
+Part 10, PDU and multipart parsers; throughput benchmarks against dcm4che, DCMTK and Orthanc.
 ## Unreleased since 0.5.1 (2026-11-09, `main`)
 
 - **`--mcp-expose`** (`camel.server.mcp-expose-routes`): existing routes served as MCP tools with no
@@ -331,6 +454,10 @@ turns, and grades each run by tool calls, database state and a Claude judge.
   `docs/design/attestation/research.md`. Tests use a fake configfs-tsm directory and a fake dstack
   agent; nothing has run on real TEE hardware yet (a `CAMEL_REAL_TEE=1` tier waits for the owner's
   choice of cloud).
+- **SAP Integration Suite gap analysis** (2026-11-11): `docs/design/sap-integration-suite/gap-analysis.md`
+  maps every Cloud Integration flow step, adapter and runtime service to Cameleer, ranks the
+  blockers for replacing the Camel runtime under CPI and Edge Integration Cell, and proposes
+  phases. Research only; nothing built.
 - **Healthcare research**: `docs/design/medical/dicom-and-healthcare.md` (DICOM, DICOMweb,
   de-identification, Mirth alternatives, positioning); not started.
 

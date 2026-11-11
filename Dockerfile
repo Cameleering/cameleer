@@ -46,6 +46,8 @@ ARG SOURCE_DATE_EPOCH
 # A smaller image for one integration, e.g. --build-arg FEATURES=cloud (core, HTTP/1.1 and YAML
 # are always in; FEATURES=core is only those). The template components, jq, the core XPath,
 # HTTP/2 and `cameleer validate` are features too: FEATURES=cloud,jq,http2 adds them back.
+# Packs are not in the default build: FEATURES=full,health is the health distribution
+# (pmsudhi/cameleer:health), FEATURES=health,http2 a small healthcare edge image.
 ARG FEATURES=
 RUN --mount=type=cache,target=/src/target,id=cameleer-target-$TARGETARCH \
     target=$(cat /target) \

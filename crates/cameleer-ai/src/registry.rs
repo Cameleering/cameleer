@@ -32,7 +32,7 @@ use cameleer_core::processor::errors::idempotent::IdempotentRepository;
 use cameleer_core::spi::{Predicate, Processor};
 use cameleer_core::value::{ObjectMap, Value};
 
-use crate::audit::{AuditEntry, AuditLog};
+use cameleer_core::audit::{AuditEntry, AuditLog};
 use crate::headers;
 use crate::tool::{canonical_json, example_for, sha256_hex, ToolDefinition};
 
@@ -478,7 +478,7 @@ pub struct AiRegistry {
     disabled: RwLock<HashSet<String>>,
     pins: Mutex<BTreeMap<String, (String, String)>>,
     manifest: Option<PathBuf>,
-    audit: AuditLog,
+    audit: Arc<AuditLog>,
     idem: Mutex<HashMap<String, Idem>>,
     idem_cv: Condvar,
     approvals: Mutex<HashMap<String, Pending>>,
@@ -510,10 +510,7 @@ impl AiRegistry {
             return Ok(r);
         }
         let props = ctx.properties();
-        let enabled = props.get("camel.ai.audit.enabled").map(|v| !v.trim().eq_ignore_ascii_case("false")).unwrap_or(true);
-        let file = props.get("camel.ai.audit.file").filter(|f| !f.trim().is_empty()).map(|f| PathBuf::from(f.trim()));
-        let max = props.get("camel.ai.audit.maxRecords").and_then(|m| m.trim().parse().ok()).unwrap_or(1000);
-        let audit = AuditLog::new(enabled, file, max)?;
+        let audit = AuditLog::of(ctx)?;
         let manifest = props.get("camel.ai.manifest").filter(|f| !f.trim().is_empty()).map(|f| PathBuf::from(f.trim()));
         let pins = match &manifest {
             Some(path) if path.exists() => load_manifest(path)?,

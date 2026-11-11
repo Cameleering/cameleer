@@ -176,3 +176,37 @@ fn statistics_level_property() {
     main.set_property("camel.main.jmx-management-statistics-level", "nonsense");
     assert!(main.start().is_err());
 }
+
+#[test]
+fn info_lists_version_features_and_packs() {
+    let ctx = CamelContext::new();
+    let get = |cfg: &ConsoleConfig, path: &str| handle_request(&ctx, cfg, &cameleer_http::HttpRequest::new("GET", path));
+    let info_only = ConsoleConfig { enabled: true, info: true, ..Default::default() };
+    // without the pack
+    let r = get(&info_only, "/q/info");
+    assert_eq!(r.status, 200);
+    let v = json::parse(&r.body_text()).unwrap();
+    assert_eq!(v.get("cameleer").and_then(|c| c.get("version")), Some(&Value::from(env!("CARGO_PKG_VERSION"))));
+    assert!(v.get("features").unwrap().as_array().unwrap().contains(&Value::from("ai")));
+    assert!(v.get("packs").unwrap().as_array().unwrap().is_empty());
+    // with the pack
+    ctx.add_pack(&cameleer_health::HEALTH);
+    let v = json::parse(&get(&info_only, "/q/info").body_text()).unwrap();
+    let packs = v.get("packs").unwrap().as_array().unwrap().clone();
+    assert_eq!(packs.len(), 1);
+    assert_eq!(packs[0].get("name"), Some(&Value::from("health")));
+    assert_eq!(packs[0].get("version"), Some(&Value::from(cameleer_health::PACK.version)));
+    assert!(packs[0].get("components").unwrap().as_array().unwrap().contains(&Value::from("dicom")));
+    // off by default, on with the dev console, and /q/dev/packs there
+    assert_eq!(get(&ConsoleConfig { enabled: true, health: true, ..Default::default() }, "/q/info").status, 404);
+    let dev = ConsoleConfig { enabled: true, dev_console: true, ..Default::default() };
+    assert_eq!(get(&dev, "/q/info").status, 200);
+    let p = json::parse(&get(&dev, "/q/dev/packs").body_text()).unwrap();
+    assert_eq!(p.as_array().unwrap().len(), 1);
+    // the property
+    let mut props = std::collections::BTreeMap::new();
+    props.insert("camel.server.enabled".to_string(), "true".to_string());
+    props.insert("camel.server.infoEnabled".to_string(), "true".to_string());
+    let cfg = ConsoleConfig::from_properties(&props).unwrap();
+    assert!(cfg.info && cfg.is_active());
+}

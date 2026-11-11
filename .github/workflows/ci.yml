@@ -43,6 +43,22 @@ jobs:
           cargo build -p cameleer-main --no-default-features --features cloud
         env:
           RUSTFLAGS: -D warnings
+      - name: Pack gate (the health pack on its own, its crate features, and out of full)
+        shell: bash
+        run: |
+          cargo test -p cameleer-main --no-default-features --features health --no-fail-fast
+          for f in hl7 fhir dicom; do cargo build -p cameleer-health --no-default-features --features "$f"; done
+          cargo build -p cameleer-health --no-default-features
+        env:
+          RUSTFLAGS: -D warnings
+      - name: SBOMs (general, health distribution, health crate)
+        shell: bash
+        run: |
+          python3 scripts/sbom.py --out target/sbom/general.cdx.json && python3 scripts/sbom.py --check target/sbom/general.cdx.json
+          python3 scripts/sbom.py --features full,health --out target/sbom/health.cdx.json && python3 scripts/sbom.py --check target/sbom/health.cdx.json
+          python3 scripts/sbom.py --package cameleer-health --out target/sbom/crate.cdx.json && python3 scripts/sbom.py --check target/sbom/crate.cdx.json
+          # std-only: no third-party crate may appear
+          python3 -c "import json,sys; b=json.load(open('target/sbom/health.cdx.json')); v=[p['value'] for p in b['metadata']['properties'] if p['name']=='cameleer:third-party-crates'][0]; sys.exit(0 if v=='0' else 'third-party crates: '+v)"
 
   image:
     name: container image (build and smoke test, no push)

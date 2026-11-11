@@ -228,42 +228,7 @@ pub fn check_schema_bounds(option: &str, v: &Value) -> Result<()> {
     walk(v, 0, &mut 0, option)
 }
 
-/// JSON with object keys sorted, no whitespace: the form that hashes and digests use.
-pub fn canonical_json(v: &Value) -> String {
-    let mut out = String::new();
-    write_canonical(v, &mut out);
-    out
-}
-
-fn write_canonical(v: &Value, out: &mut String) {
-    match v {
-        Value::Object(m) => {
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
-            out.push('{');
-            for (i, k) in keys.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                out.push_str(&Value::from(k.as_str()).to_json());
-                out.push(':');
-                write_canonical(m.get(k).unwrap_or(&Value::Null), out);
-            }
-            out.push('}');
-        }
-        Value::Array(a) => {
-            out.push('[');
-            for (i, x) in a.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_canonical(x, out);
-            }
-            out.push(']');
-        }
-        other => out.push_str(&other.to_json()),
-    }
-}
+pub use cameleer_core::json::canonical_json;
 
 /// Lower-case hex SHA-256.
 pub fn sha256_hex(data: &[u8]) -> String {

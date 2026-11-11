@@ -377,6 +377,8 @@ fn schema_is_json_and_covers_the_model() {
 
 #[test]
 fn every_example_route_file_is_valid() {
+    // the health examples and pages need the health pack (a `--features health` binary has it)
+    cameleer_core::pack::install(&cameleer_health::HEALTH);
     let dir = repo_root().join("examples");
     let report = validate::validate_paths(&[dir.display().to_string()], BTreeMap::new()).unwrap();
     assert!(report.files.len() >= 19, "{}", report.files.len());
@@ -441,6 +443,8 @@ const KNOWN_MISSING_FILES: &[&str] = &["cxf-json-to-soap", "grpc-inventory-servi
 
 #[test]
 fn every_doc_example_validates_without_errors() {
+    // the health examples and pages need the health pack (a `--features health` binary has it)
+    cameleer_core::pack::install(&cameleer_health::HEALTH);
     let examples = doc_examples();
     assert!(examples.len() > 300, "found only {} doc examples", examples.len());
     let mut errors = Vec::new();
@@ -553,6 +557,8 @@ fn schema_ok(root: &Value, s: &Value, v: &Value) -> bool {
 
 #[test]
 fn schema_accepts_every_example_and_doc_route_and_rejects_bad_ones() {
+    // the health examples and pages need the health pack (a `--features health` binary has it)
+    cameleer_core::pack::install(&cameleer_health::HEALTH);
     let root = cameleer_core::json::parse(&cameleer_main::schema::json_schema()).unwrap();
     let mut docs: Vec<(String, String)> = doc_examples().into_iter().map(|(at, id, c)| (format!("{} [{}]", at, id), c)).collect();
     for f in validate::route_files(&repo_root().join("examples")) {

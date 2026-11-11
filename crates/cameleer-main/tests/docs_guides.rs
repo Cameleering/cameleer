@@ -134,7 +134,7 @@ fn uris(yaml: &str) -> Vec<String> {
 
 /// Resolve every endpoint of a YAML route with all components registered.
 fn resolve_all(name: &str, yaml: &str) {
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     for u in uris(yaml) {
         // route template parameters ({{name}}) are not properties: skip those URIs
         let Ok(resolved) = main.context().resolve_placeholders(&u) else { continue };
@@ -184,7 +184,7 @@ fn template(ctx: &CamelContext) -> ProducerTemplate {
 /// Start a YAML route (after resolving its endpoints) with every component.
 fn start_yaml(name: &str, yaml: &str, configure: impl FnOnce(&mut cameleer_main::Main)) -> cameleer_main::Main {
     resolve_all(name, yaml);
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     configure(&mut main);
     main.add_route_source(format!("{}.camel.yaml", name.replace('/', "-")), yaml.to_string());
     main.start().unwrap_or_else(|e| panic!("{}: {}", name, e));
@@ -214,7 +214,7 @@ fn run_both_ctx(
     check(main.context());
     main.stop().unwrap();
 
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.configure(rust);
     main.start().unwrap_or_else(|e| panic!("{} (Rust DSL): {}", id, e));
     check(main.context());
@@ -1200,7 +1200,7 @@ fn run_both_setup(
     check(main.context());
     main.stop().unwrap();
 
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     setup(main.context());
     main.configure(move |ctx| ctx.add_routes(rust));
     main.start().unwrap_or_else(|e| panic!("{} (Rust DSL): {}", id, e));
@@ -1418,7 +1418,7 @@ fn agents_classify_route() {
     let port = free_port();
     let text = agent_route("agents/llm-classify-route.camel.yaml", &[("KAFKA_BROKERS", &bootstrap), ("OPENAI_BASE_URL", &base)]);
     resolve_all("llm-classify-route", &text);
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.set_property("camel.server.port", port.to_string());
     main.add_route_source("llm-classify-route.camel.yaml", text);
     let b2 = bootstrap.clone();
@@ -1707,7 +1707,7 @@ fn edge_sensor_rollup() {
         &[("MQTT_BROKER", &mqtt.url()), ("KAFKA_BROKERS", &bootstrap), ("GATEWAY_ID", "plant-7")],
     );
     resolve_all("mqtt-sensor-rollup", &text);
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("mqtt-sensor-rollup.camel.yaml", text);
     kafka_mock_route(&mut main, "sensor-rollups", &bootstrap);
     main.start().unwrap();
@@ -1754,7 +1754,7 @@ fn edge_mcp_gateway_tools() {
     let text = subst(&example_file("edge/mcp-gateway-tools.camel.yaml"), &[("MQTT_BROKER", &mqtt.url()), ("GATEWAY_ID", "plant-7")]);
     resolve_all("mcp-gateway-tools", &text);
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("mcp-gateway-tools.camel.yaml", text);
     // what `cameleer run ... --mcp` sets
     main.set_property("camel.server.mcp-enabled", "true");
@@ -1872,7 +1872,7 @@ fn edge_syslog_to_kafka() {
         &[("KAFKA_BROKERS", &bootstrap), ("SYSLOG_HOST", "127.0.0.1"), ("SYSLOG_PORT", &port)],
     );
     resolve_all("syslog-to-kafka", &text);
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("syslog-to-kafka.camel.yaml", text);
     kafka_mock_route(&mut main, "syslog-alerts", &bootstrap);
     main.start().unwrap();
@@ -2080,7 +2080,7 @@ fn concepts_route() {
 #[test]
 fn concepts_xml_dsl() {
     let xml = first_block(CONCEPTS, "xml");
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.add_route_source("order-intake.xml", xml);
     main.start().unwrap();
     let ctx = main.context().clone();

@@ -26,7 +26,7 @@ use cameleer_core::util_time::{civil_from_epoch, now_millis};
 use cameleer_tls::net::NetStream;
 use cameleer_tls::TlsServerConfig;
 
-use crate::common::{read_line, TcpServer};
+use cameleer_tls::net::{read_line, TcpServer};
 use crate::ftp::client::{from_net_ascii, to_net_ascii};
 use crate::ftp::join_path;
 use crate::ftp::listing::{format_mdtm, month_name};

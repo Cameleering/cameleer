@@ -2,6 +2,9 @@
 //! commands shown on the pages are taken from the markdown, run, and checked against what the
 //! pages say they do.
 
+// the examples use components of several families (the default features)
+#![cfg(feature = "full")]
+
 mod rust_guide;
 
 use std::collections::BTreeMap;
@@ -59,7 +62,7 @@ fn configuration_guide_worked_example() {
         let dir = temp_dir(&format!("cfg{}", i));
         std::fs::write(dir.join("application.properties"), &app).unwrap();
         std::fs::write(dir.join("application-prod.properties"), &prod).unwrap();
-        let mut main = cameleer_main::new_main();
+        let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         // the process environment of the row, nothing else
         let env: BTreeMap<String, String> = row.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         // {{env:PORT}} is resolved through the process environment by the placeholder resolver

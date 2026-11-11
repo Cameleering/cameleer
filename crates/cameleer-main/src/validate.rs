@@ -1031,7 +1031,7 @@ impl<'a> Walker<'a> {
     fn unknown_key(&mut self, m: &'static Model, k: &str, path: &[PathSegment]) {
         let mut candidates: Vec<&'static str> = model::key_names(m);
         if m.expression != Expr::No {
-            candidates.extend(model::languages().iter().copied());
+            candidates.extend(model::languages());
             candidates.push("expression");
         }
         let hint = if model::step(k).is_some() && model::key(m, "steps").is_some() {

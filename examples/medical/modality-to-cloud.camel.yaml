@@ -1,0 +1,48 @@
+# Needs the health pack: the image pmsudhi/cameleer:health, or cameleer-main built with
+# `--features health` (docs/packs/health/index.md).
+#
+# Edge imaging gateway: modalities send studies over DIMSE (C-STORE) to this gateway, which
+# keeps CT and MR, stamps the institution, and forwards them to a cloud DICOM store over
+# DICOMweb (STOW-RS), for example Azure Health Data Services, Google Cloud Healthcare or Orthanc.
+# A failed upload is retried, then parked in a folder so nothing is lost; the modality gets a
+# success status only after the upload or the parking worked.
+#
+# Needs: a DICOMweb server and, for a cloud store, an OAuth access token.
+#   export DICOMWEB_URL=https://<workspace>-<service>.dicom.azurehealthcareapis.com/v2
+#   export DICOMWEB_TOKEN=$(az account get-access-token --resource https://dicom.healthcareapis.azure.com --query accessToken -o tsv)
+#
+# Run with Docker (Linux):
+#   docker run --rm --network host -e DICOMWEB_URL -e DICOMWEB_TOKEN \
+#     -v "$PWD:/routes:ro" -v "$PWD/parked:/parked" pmsudhi/cameleer:health run /routes/modality-to-cloud.camel.yaml
+# Send a study from DCMTK:
+#   storescu -aec GATEWAY localhost 11112 *.dcm
+- route:
+    id: modality-to-cloud
+    from:
+      uri: "dicom:GATEWAY@0.0.0.0:{{env:DICOM_PORT:11112}}?acceptedCallingAets={{env:MODALITIES:CT01,MR01}}"
+      steps:
+        - log: "C-STORE from ${header.CamelDicomCallingAet}: ${dicom.Modality} ${dicom.SOPInstanceUID}"
+        - filter:
+            simple: "${dicom.Modality} in 'CT,MR'"
+            steps:
+              - doTry:
+                  steps:
+                    - to: "dicomweb:{{env:DICOMWEB_URL:http://localhost:8042/dicom-web}}?operation=stow&bearerToken={{env:DICOMWEB_TOKEN:}}&timeout=120s"
+                    - log: "Stored ${header.CamelDicomSopInstanceUid} in the cloud (HTTP ${header.CamelDicomHttpStatus})"
+                  doCatch:
+                    - exception:
+                        - java.lang.Exception
+                      steps:
+                        - log:
+                            message: "Upload failed (${exception.message}); parking the instance"
+                            loggingLevel: WARN
+                        - to: "file:{{env:PARK_DIR:parked}}?fileName=${header.CamelDicomSopInstanceUid}.dcm"
+- route:
+    id: retry-parked
+    from:
+      uri: "file:{{env:PARK_DIR:parked}}?include=.*\\.dcm&delay=60000&moveFailed=.failed"
+      steps:
+        - convertBodyTo:
+            type: byte[]
+        - to: "dicomweb:{{env:DICOMWEB_URL:http://localhost:8042/dicom-web}}?operation=stow&bearerToken={{env:DICOMWEB_TOKEN:}}&timeout=120s"
+        - log: "Uploaded parked instance ${header.CamelFileName}"

@@ -90,6 +90,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cameleer-health"
+version = "0.6.0"
+dependencies = [
+ "cameleer-core",
+ "cameleer-http",
+ "cameleer-tls",
+ "cameleer-xml",
+]
+
+[[package]]
 name = "cameleer-http"
 version = "0.5.1"
 dependencies = [
@@ -119,6 +129,7 @@ dependencies = [
  "cameleer-dataformats",
  "cameleer-datastores",
  "cameleer-grpc",
+ "cameleer-health",
  "cameleer-http",
  "cameleer-kafka-mqtt",
  "cameleer-protocols",

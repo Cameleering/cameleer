@@ -412,7 +412,7 @@ fn check_examples(root: &Path, files: &[PathBuf]) -> ExampleReport {
                 }
             }
             // the real loader, into a context that is not started
-            let main = cameleer_main::new_main();
+            let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
             let ctx = main.context().clone();
             if let Err(e) = cameleer_yaml::add_routes_from_yaml(&ctx, &b.content) {
                 // a processor or strategy the example binds from Rust (its page's own test runs it)
@@ -594,11 +594,18 @@ fn docs_relative_links_exist() {
 #[test]
 fn docs_catalog_complete() {
     let root = repo_root();
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let components = main.context().component_names();
     let languages = main.context().language_names();
-    let mc = missing_pages(&root.join("docs/components"), &components);
-    let ml = missing_pages(&root.join("docs/languages"), &languages);
+    // pages of pack components and languages live under docs/packs/<pack>/
+    let pack_components: Vec<String> = cameleer_health::PACK.components.iter().map(|s| s.to_string()).collect();
+    let pack_languages: Vec<String> = cameleer_health::PACK.languages.iter().map(|s| s.to_string()).collect();
+    let general: Vec<String> = components.iter().filter(|c| !pack_components.contains(c)).cloned().collect();
+    let general_langs: Vec<String> = languages.iter().filter(|l| !pack_languages.contains(l)).cloned().collect();
+    let mut mc = missing_pages(&root.join("docs/components"), &general);
+    mc.extend(missing_pages(&root.join("docs/packs/health/components"), &pack_components));
+    let mut ml = missing_pages(&root.join("docs/languages"), &general_langs);
+    ml.extend(missing_pages(&root.join("docs/packs/health/languages"), &pack_languages));
     println!(
         "components: {} in the catalog, {} without a page; languages: {} in the catalog, {} without a page",
         components.len(),

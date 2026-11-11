@@ -120,7 +120,7 @@ fn aws_options(ctx: &CamelContext, aws: &AwsMock, yaml: &str) {
 
 /// A Main with the example loaded and resolved (not started).
 fn main_for(id: &str, yaml: &str, configure: impl Fn(&CamelContext)) -> cameleer_main::Main {
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     configure(main.context());
     resolve_all(main.context(), id, yaml);
     main.add_route_source(format!("{}.camel.yaml", id), yaml.to_string());
@@ -526,7 +526,7 @@ fn aws2_ec2_stop_dev_instances() {
 #[test]
 fn aws2_ecs_and_eks_list_clusters() {
     let aws = AwsMock::start().unwrap();
-    let setup = cameleer_main::new_main();
+    let setup = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     aws_call(&setup, &aws, "aws2-ecs://setup?operation=createCluster", "", vec![("CamelAwsECSClusterName", Value::from("edge-workers"))]);
     let main = run_aws(&aws, &page("aws2-ecs"), "aws2-ecs-list-clusters", &[], &[("log:ecs-clusters", "mock:ecs-clusters")]);
     mock_bodies(&main, "ecs-clusters", 1);
@@ -562,7 +562,7 @@ fn aws2_iam_onboard_users() {
 #[test]
 fn aws2_kms_encrypt_to_s3() {
     let aws = AwsMock::start().unwrap();
-    let setup = cameleer_main::new_main();
+    let setup = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let key = aws_call(&setup, &aws, "aws2-kms://setup?operation=createKey", "", vec![("CamelAwsKMSDescription", Value::from("customer data"))]).header("CamelAwsKMSKeyId").unwrap().to_string();
     aws.create_queue("customer-records");
     aws.send_sqs("customer-records", r#"{"name":"Ada","iban":"NO9386011117947"}"#);
@@ -579,7 +579,7 @@ fn aws2_kms_encrypt_to_s3() {
 #[test]
 fn aws2_mq_list_brokers() {
     let aws = AwsMock::start().unwrap();
-    let setup = cameleer_main::new_main();
+    let setup = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     aws_call(&setup, &aws, "aws2-mq://setup?operation=createBroker", "", vec![("CamelAwsMQBrokerName", Value::from("orders-broker")), ("CamelAwsMQBrokerInstanceType", Value::from("mq.t3.micro"))]);
     let main = run_aws(&aws, &page("aws2-mq"), "aws2-mq-list-brokers", &[], &[("log:brokers", "mock:brokers")]);
     mock_bodies(&main, "brokers", 1);
@@ -591,7 +591,7 @@ fn aws2_mq_list_brokers() {
 #[test]
 fn aws2_msk_bootstrap_brokers() {
     let aws = AwsMock::start().unwrap();
-    let setup = cameleer_main::new_main();
+    let setup = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let mut group = cameleer_core::value::ObjectMap::new();
     group.insert("instanceType".into(), Value::from("kafka.m5.large"));
     group.insert("clientSubnets".into(), Value::Array(vec![Value::from("subnet-1"), Value::from("subnet-2")]));
@@ -645,7 +645,7 @@ fn aws2_ses_mail_alerts() {
 #[test]
 fn aws2_step_functions_start_orders() {
     let aws = AwsMock::start().unwrap();
-    let setup = cameleer_main::new_main();
+    let setup = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let arn = aws_call(
         &setup,
         &aws,
@@ -676,7 +676,7 @@ fn aws2_sts_caller_identity() {
 #[test]
 fn aws2_timestream_write_readings() {
     let aws = AwsMock::start().unwrap();
-    let setup = cameleer_main::new_main();
+    let setup = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     aws_call(&setup, &aws, "aws2-timestream://write:setup?operation=createDatabase", "", vec![("CamelAwsTimestreamDatabaseName", Value::from("iot"))]);
     aws_call(&setup, &aws, "aws2-timestream://write:setup?operation=createTable", "", vec![("CamelAwsTimestreamDatabaseName", Value::from("iot")), ("CamelAwsTimestreamTableName", Value::from("readings"))]);
     aws.create_queue("sensor-readings");
@@ -724,7 +724,7 @@ fn cloud_credentials_component_defaults() {
     let yaml = block(GUIDE, id);
 
     let aws = AwsMock::start().unwrap();
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let env: std::collections::BTreeMap<String, String> = [
         ("CAMEL_COMPONENT_AWS2_SQS_REGION", "us-east-1".to_string()),
         ("CAMEL_COMPONENT_AWS2_SQS_ACCESS_KEY", AwsMock::ACCESS_KEY.to_string()),
@@ -747,7 +747,7 @@ fn cloud_credentials_component_defaults() {
     let after = &text[text.find(&format!("<!-- example: {} -->", id)).unwrap()..];
     let start = after.find("```properties\n").unwrap() + 14;
     let props = after[start..start + after[start..].find("```").unwrap()].replace("eu-west-1", "us-east-1").replace("http://localhost:4566", &aws.url());
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     main.set_environment(Default::default());
     main.load_properties_text(&format!("{}camel.component.aws2-sqs.accessKey={}\ncamel.component.aws2-sqs.secretKey={}\n", props, AwsMock::ACCESS_KEY, AwsMock::SECRET_KEY), false).unwrap();
     main.add_route_source(format!("{}.camel.yaml", id), yaml.clone());
@@ -759,7 +759,7 @@ fn cloud_credentials_component_defaults() {
 /// Placeholder defaults may contain `:` (model ids, ARNs, connection strings).
 #[test]
 fn env_placeholder_defaults_keep_colons() {
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let p = main.context().properties();
     assert_eq!(p.resolve("{{env:CAMELEER_DOCS_UNSET_A:anthropic.claude-3-haiku-20240307-v1:0}}").unwrap(), "anthropic.claude-3-haiku-20240307-v1:0");
     assert_eq!(p.resolve("{{env:CAMELEER_DOCS_UNSET_B:arn:aws:kafka:us-east-1:123456789012:cluster/events/abcd}}").unwrap(), "arn:aws:kafka:us-east-1:123456789012:cluster/events/abcd");
@@ -793,7 +793,7 @@ fn all_examples_marked_parsed_and_resolved() {
             let id = prev.strip_prefix("<!-- example: ").and_then(|r| r.strip_suffix(" -->")).unwrap_or_else(|| panic!("{} line {}: yaml block without an example marker", p, i + 1));
             assert!(ids.insert(id.to_string()), "duplicate example id {}", id);
             let yaml = env_subst(&block(p, id), &env);
-            let main = cameleer_main::new_main();
+            let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
             let routes = cameleer_yaml::load_routes(main.context(), &yaml).unwrap_or_else(|e| panic!("{}: {} does not parse: {}", p, id, e));
             assert!(!routes.is_empty(), "{}: no routes", id);
             resolve_all(main.context(), id, &yaml);
@@ -1560,7 +1560,7 @@ fn rust_dsl_snippets_build() {
     ];
     let source = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/docs_cloud_aws_azure.rs")).unwrap().replace("\r\n", "\n");
     for (name, f) in snippets {
-        let main = cameleer_main::new_main();
+        let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         f(main.context()).unwrap_or_else(|e| panic!("Rust DSL of {}: {}", name, e));
         // the page's ```rust block is copied verbatim (indented by four spaces) into this file
         let text = std::fs::read_to_string(docs_dir().join(page(name))).unwrap().replace("\r\n", "\n");

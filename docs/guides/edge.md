@@ -192,6 +192,8 @@ The test sends a `local4.notice` message (dropped) and an `auth.crit` message (f
 
 ### HL7 v2 over MLLP to an HTTP API
 
+This route needs the [health pack](../packs/health/index.md) (image `pmsudhi/cameleer:health`).
+
 Hospital systems exchange HL7 v2 over MLLP. The `mllp` component frames and acknowledges
 messages and sets `CamelMllp*` headers (message type, event, control id, sending application);
 the `hl7terser` language reads fields by path (`PID-3-1` is the patient id). The acknowledgement
@@ -441,7 +443,7 @@ gateway.
 - [Error handling](error-handling.md), [deployment guide](../DEPLOYMENT.md),
   [benchmarks](../BENCHMARKS.md)
 - Components: [paho](../components/paho.md), [kafka](../components/kafka.md),
-  [syslog](../components/syslog.md), [mllp](../components/mllp.md), [file](../components/file.md)
+  [syslog](../components/syslog.md), [mllp](../packs/health/components/mllp.md), [file](../components/file.md)
 
 ## Found a problem?
 

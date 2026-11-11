@@ -25,7 +25,7 @@ use cameleer_core::error::kinds;
 use cameleer_core::model::RouteDefinition;
 use cameleer_core::{CamelContext, CamelError, Result, Value, value::ObjectMap};
 
-use crate::dsl::{StepRegistry, YamlLoader, LANGUAGES};
+use crate::dsl::{is_language, StepRegistry, YamlLoader};
 
 /// Child elements that are always converted to lists.
 const ARRAY_KEYS: &[&str] = &["when", "doCatch", "exception", "onWhen"];
@@ -341,7 +341,7 @@ fn convert_body(el: &Element, steps: &StepRegistry) -> Value {
     let mut repeated = BTreeSet::new();
     for child in elements {
         let name = child.name.as_str();
-        if LANGUAGES.contains(&name) {
+        if is_language(name) {
             let body = child.text().trim().to_string();
             let v = if child.attributes.is_empty() {
                 Value::String(body)

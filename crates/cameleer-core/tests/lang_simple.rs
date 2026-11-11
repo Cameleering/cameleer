@@ -505,3 +505,19 @@ fn simple_predicate_via_language_resolution() {
     let v = simple("{{app.name}}-${header.foo}").def.resolve_expression(&ctx).unwrap().evaluate(&ex).unwrap();
     assert_eq!(v, Value::from("demo-abc"));
 }
+
+#[test]
+fn functions_registered_by_other_crates() {
+    use cameleer_core::language::simple::register_function;
+    use std::sync::Arc;
+    let ctx = ctx();
+    let ex = exchange(&ctx);
+    assert!(SimpleExpression::parse("${testext.upper}").is_err());
+    register_function("testext", Arc::new(|ex: &Exchange, rest: &str| Ok(Value::String(format!("{}:{}", rest, ex.body())))));
+    assert_eq!(eval(&ex, "${testext.a.b[0]}"), Value::from("a.b[0]:Hello World"));
+    assert_eq!(eval(&ex, "${testext:x} and ${header.foo}"), Value::from("x:Hello World and abc"));
+    assert!(SimplePredicate::parse("${testext.k} == 'k:Hello World'").unwrap().matches(&ex).unwrap());
+    // built-ins win over a registered prefix of the same name
+    register_function("header", Arc::new(|_: &Exchange, _: &str| Ok(Value::from("ext"))));
+    assert_eq!(eval(&ex, "${header.foo}"), Value::from("abc"));
+}

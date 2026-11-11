@@ -395,6 +395,52 @@ stays green, and `official_kafka.rs` (librdkafka, now joining groups with JoinGr
 | Azure Cosmos DB emulator, Service Bus emulator | Windows-only / Docker-only. |
 | gcloud Pub/Sub, Firestore and Datastore emulators | `gcloud components install` needs dl.google.com (blocked), the Firebase emulator jars come from storage.googleapis.com (blocked, > 10 MB). pstest replaces the Pub/Sub emulator for the gRPC consumer; Firestore has no offline alternative. |
 
+## DICOM
+
+`scripts/dicom-interop.sh` installs DCMTK 3.6.7 and Orthanc 1.12.2 with the DICOMweb plugin 1.16
+(Ubuntu 24.04 packages: `apt-get install` as root, or `apt-get download` plus pinned SHA-256 and
+`dpkg -x` into a user directory without root) and starts DCMTK `storescp` (plain and TLS, BCP 195
+non-downgrading profile) and Orthanc. `CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-health --test
+live_dicom` then runs **7/7** (Ubuntu 24.04 under WSL2, 2026-11-09):
+
+| test | what runs against what |
+|---|---|
+| `live_cameleer_scu_to_dcmtk_storescp` | Cameleer SCU: C-ECHO, C-STORE in Explicit, Implicit and Deflated syntaxes to `storescp`; the files `storescp` wrote parse to the same data sets; `dcmdump` reads a Cameleer-written deflated file |
+| `live_cameleer_scu_tls_to_dcmtk` | Cameleer SCU over TLS to `storescp +tls` |
+| `live_dcmtk_tools_to_cameleer_scp` | `echoscu`, `storescu`, `findscu -X`, `getscu` and `movescu` (to `storescp`) against a Cameleer SCP route |
+| `live_dcmtk_tls_to_cameleer_scp` | `storescu +tls` against a Cameleer SCP with TLS |
+| `live_orthanc_as_pacs` | Cameleer SCU: C-ECHO, C-STORE, C-FIND (study and image level), C-GET and C-MOVE from Orthanc to a Cameleer SCP |
+| `live_orthanc_dicomweb` | the `dicomweb` producer against Orthanc's DICOMweb plugin: STOW-RS, QIDO-RS, WADO-RS, metadata |
+| `live_orthanc_dicomweb_client_to_cameleer_server` | Orthanc's DICOMweb client against a `dicomweb` consumer: STOW-RS, QIDO-RS, WADO-RS |
+
+The parser is also checked on 33 public pydicom test files (`scripts/fetch-dicom-testdata.sh`,
+`tests/dicom_corpus.rs`): every file reads and writes back byte for byte.
+
+Bug found and fixed: a deflated data set of odd length was sent as an odd-length PDV fragment,
+and DCMTK aborted the association ("Odd Fragment Length"). Deflated data sets are now padded to
+an even length (PS3.5 A.5) and PDV fragments are always even
+(`crates/cameleer-health/src/dicom/codec.rs` `dataset_to_bytes`, `assoc.rs` `max_fragment`; regression
+test `codec::tests::deflated_data_sets_have_even_length`).
+
+Not verified yet: dcm4che, real modalities, and the cloud DICOM services (Azure Health Data
+Services, Google Cloud Healthcare API, AWS HealthImaging), which need accounts from the owner.
+
+## Health pack tier
+
+`scripts/health-interop.sh` is the umbrella for the health pack (`CAMEL_HEALTH_INTEROP=1 cargo
+test -p cameleer-health --test 'live_*'`): it runs the DICOM peers above and adds
+- **HL7 v2 / MLLP:** python-hl7 0.4.5 (PyPI wheel pinned by SHA-256, imported from the wheel file)
+  as an MLLP receiver that acknowledges with its own ACK, and its MLLP client against a Cameleer
+  consumer (`tests/live_health_hl7.rs`);
+- **FHIR R4:** the HAPI FHIR JPA server 8.12.0 (Docker image pinned by digest): create, read
+  (JSON and XML), update, search, history, delete, and fhirXml on HAPI's resources
+  (`tests/live_health_fhir.rs`).
+
+Status (2026-11-11, WSL2 Ubuntu 24.04): **10/10** under `CAMEL_HEALTH_INTEROP=1`: DICOM 7/7, HL7
+2/2 (python-hl7 0.4.5 receiver acknowledging AA and AR; its client against a Cameleer `mllp`
+consumer read with `hl7terser`), FHIR 1/1 (HAPI FHIR 8.12.0, image pinned by digest). No Cameleer
+bug found. Without the flag the tests compile and skip.
+
 ## MCP
 
 The MCP server is checked with the official conformance suite, `@modelcontextprotocol/conformance`

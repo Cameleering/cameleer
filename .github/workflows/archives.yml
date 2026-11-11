@@ -1,0 +1,74 @@
+name: Archives
+
+# Builds the release archives of both distributions (docs/packs/index.md) with
+# scripts/package-archive.sh:
+#   cameleer-<version>-<target>.tar.gz / .zip         (general, the default build)
+#   cameleer-health-<version>-<target>.tar.gz / .zip  (general plus the health pack)
+# each with a .sha256 file and a CycloneDX SBOM (.cdx.json, scripts/sbom.py), plus an SBOM of
+# the cameleer-health crate itself.
+#
+# On a release tag (v*) every file is signed with keyless cosign (sign-blob, a .sigstore.json
+# bundle per file; the signature is recorded in the public Rekor log). A manual run builds and
+# keeps the files as workflow artifacts only: nothing is signed or published. Attaching the files
+# to a GitHub release is a separate, manual step.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  archive:
+    strategy:
+      fail-fast: false
+      matrix:
+        dist: [general, health]
+        target: [x86_64-unknown-linux-gnu, x86_64-pc-windows-msvc, aarch64-apple-darwin]
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reproducible timestamps from the commit
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+      - name: Toolchain
+        shell: bash
+        run: rustup target add ${{ matrix.target }}
+      - name: Build, package, checksum and SBOM
+        shell: bash
+        run: scripts/package-archive.sh ${{ matrix.dist }} ${{ matrix.target }}
+      - name: SBOM of the cameleer-health crate
+        if: matrix.dist == 'health' && matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          v="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/cameleer-health/Cargo.toml | head -1)"
+          python3 scripts/sbom.py --package cameleer-health --out "dist/cameleer-health-crate-$v.cdx.json"
+          python3 scripts/sbom.py --check "dist/cameleer-health-crate-$v.cdx.json"
+      - if: env.SIGN == 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Sign every file (release tags only)
+        if: env.SIGN == 'true'
+        shell: bash
+        run: |
+          cd dist
+          for f in *; do
+            case "$f" in *.sigstore.json) continue ;; esac
+            cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.dist }}-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error

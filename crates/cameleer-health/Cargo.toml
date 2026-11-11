@@ -1,0 +1,30 @@
+[package]
+name = "cameleer-health"
+# The pack has its own version (docs/design/packs/domain-packs.md section 8.5).
+version = "0.6.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords = ["camel", "healthcare", "hl7", "fhir", "dicom"]
+categories = ["network-programming", "encoding"]
+description = "The Cameleer health pack (std only): HL7 v2 (hl7 data format, hl7terser language, mllp component), FHIR R4 (fhir component, fhirJson and fhirXml data formats), and DICOM (Part 10, the dicom component for DIMSE SCU/SCP, the dicomweb component, dicom and dicomJson data formats, PS3.15 de-identification, ${dicom.*} in Simple)"
+
+[features]
+default = ["hl7", "fhir", "dicom"]
+hl7 = []
+fhir = ["dep:cameleer-xml"]
+dicom = []
+
+[dependencies]
+cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
+cameleer-http = { path = "../cameleer-http", version = "0.5.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
+cameleer-xml = { path = "../cameleer-xml", version = "0.5.1", optional = true }
+
+[dev-dependencies]
+cameleer-core = { path = "../cameleer-core" }
+cameleer-http = { path = "../cameleer-http" }

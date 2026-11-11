@@ -114,7 +114,7 @@ No. TLS works with TCP only.
 
 ## Related
 
-- [mllp](mllp.md), [syslog](syslog.md)
+- [mllp](../packs/health/components/mllp.md), [syslog](syslog.md)
 - [Apache Camel Netty component](https://camel.apache.org/components/next/netty-component.html)
 
 ## Found a problem?

@@ -12,7 +12,6 @@
 //! that Apache Camel accepts is not reported. The tests at the bottom check that every
 //! registered step has a model and that every key a handler reads is listed.
 
-use crate::dsl::LANGUAGES;
 
 /// What a key holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1056,9 +1055,10 @@ pub const NESTED_ONLY: &[(&str, &str)] = &[
     ("restConfiguration", "a top-level element"),
 ];
 
-/// The expression languages recognised as keys (`simple: ...`).
-pub fn languages() -> &'static [&'static str] {
-    LANGUAGES
+/// The expression languages recognised as keys (`simple: ...`), including those of the packs
+/// added in this process.
+pub fn languages() -> Vec<&'static str> {
+    crate::dsl::language_keys()
 }
 
 /// The model of a step.

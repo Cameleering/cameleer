@@ -9,3 +9,6 @@ __pycache__/
 # maintainer-only notes (launch and setup guides)
 /.local/
 scripts/cloud-bench/mcp-ts/node_modules/
+
+# release archives and SBOMs from scripts/package-archive.sh
+/dist/

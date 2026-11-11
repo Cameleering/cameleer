@@ -742,7 +742,7 @@ language.
 | `method` | [Bean method](../languages/bean.md) | a bean in the registry |
 | `ref` | [Ref](../languages/ref.md) | an expression bound in the registry |
 | `groovy`, `js`/`javaScript`, `python`, `mvel`, `ognl`, `spel`, `datasonnet`, `csimple`, `joor`/`java` | script languages, for example [groovy](../languages/groovy.md) and [python](../languages/python.md) | interpreters from `cameleer-script` |
-| `hl7terser` | [HL7 terser](../languages/hl7terser.md) | |
+| `hl7terser` | [HL7 terser](../packs/health/languages/hl7terser.md) | |
 | `language` | any | `language: {language: <name>, expression: ...}` |
 
 `cameleer catalog languages` lists the languages of your build. The loader also accepts the

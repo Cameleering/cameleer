@@ -742,3 +742,45 @@ mod tests {
         assert_eq!(err.kind, kinds::CONNECT);
     }
 }
+
+/// An HTTP client configured from endpoint options, for producers of components that call
+/// HTTP APIs (FHIR, SOAP, REST): TLS from `sslContextParameters`, timeouts, basic auth.
+#[derive(Clone)]
+pub struct EndpointClient {
+    pub http: HttpClient,
+    pub basic: Option<(String, String)>,
+    pub timeout: Duration,
+}
+
+impl EndpointClient {
+    /// Build from endpoint options: `sslContextParameters`, `receiveTimeout` /
+    /// `connectionTimeout` (ms), `username` / `password` (HTTP basic auth).
+    pub fn from_params(ctx: &cameleer_core::context::CamelContext, scheme: &str, params: &mut cameleer_core::util::Parameters) -> Result<EndpointClient> {
+        let ssl = cameleer_tls::camel_support::take_endpoint_ssl(ctx, params, scheme)?;
+        let mut http = HttpClient::new();
+        if ssl.is_some() {
+            http = http.with_tls(cameleer_tls::camel_support::client_config(ctx, ssl.as_ref())?);
+        }
+        let timeout = Duration::from_millis(params.take_u64("receiveTimeout", 60_000)?);
+        http.connect_timeout = Duration::from_millis(params.take_u64("connectionTimeout", 30_000)?);
+        http.read_timeout = timeout;
+        let basic = match (params.take("username"), params.take("password")) {
+            (Some(u), p) => Some((u, p.unwrap_or_default())),
+            _ => None,
+        };
+        Ok(EndpointClient { http, basic, timeout })
+    }
+
+    /// Send a request.
+    pub fn send(&self, method: &str, url: &str, headers: &[(String, String)], body: Option<&[u8]>) -> Result<HttpResponse> {
+        let u = Url::parse(url)?;
+        let mut h = HttpHeaders::new();
+        for (k, v) in headers {
+            h.set(k.clone(), v.clone());
+        }
+        if let Some((user, pw)) = &self.basic {
+            h.set("Authorization", format!("Basic {}", cameleer_tls::pem::base64_encode(format!("{}:{}", user, pw).as_bytes())));
+        }
+        self.http.execute(method, &u, &h, body, Some(self.timeout))
+    }
+}

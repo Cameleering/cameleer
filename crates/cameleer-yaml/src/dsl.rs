@@ -123,12 +123,25 @@ pub const LANGUAGES: &[&str] = &[
     "csimple",
     "joor",
     "java",
-    "hl7terser",
     "xquery",
     "ref",
     "wasm",
     "language",
 ];
+
+/// Whether `name` is an expression language key: a built-in one, or one a pack added.
+pub fn is_language(name: &str) -> bool {
+    LANGUAGES.contains(&name) || cameleer_core::pack::is_pack_language(name)
+}
+
+/// The expression language keys: the built-in ones, then those of the packs added.
+pub fn language_keys() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = LANGUAGES.to_vec();
+    for p in cameleer_core::pack::known_packs() {
+        v.extend(p.languages.iter().copied().filter(|l| !LANGUAGES.contains(l)));
+    }
+    v
+}
 
 fn dsl_error(message: impl Into<String>) -> CamelError {
     static INIT: OnceLock<()> = OnceLock::new();
@@ -649,7 +662,7 @@ pub fn find_expression(cfg: &Value) -> Result<Option<ExpressionDefinition>> {
         Value::Object(m) => m,
         _ => return Ok(None),
     };
-    let langs: Vec<&String> = map.keys().filter(|k| LANGUAGES.contains(&k.as_str())).collect();
+    let langs: Vec<&String> = map.keys().filter(|k| is_language(k.as_str())).collect();
     if langs.len() > 1 {
         return Err(dsl_error(format!(
             "only one expression language may be specified but found: {}",
@@ -676,7 +689,7 @@ pub fn parse_expression(cfg: &Value) -> Result<ExpressionDefinition> {
         Value::String(s) => Ok(ExpressionDefinition::language("simple", s.clone())),
         Value::Int(_) | Value::Float(_) | Value::Bool(_) => Ok(ExpressionDefinition::language("constant", cfg.to_string())),
         _ => find_expression(cfg)?.ok_or_else(|| {
-            dsl_error(format!("missing expression: expected one of {} or 'expression'", LANGUAGES.join(", ")))
+            dsl_error(format!("missing expression: expected one of {} or 'expression'", language_keys().join(", ")))
         }),
     }
 }
