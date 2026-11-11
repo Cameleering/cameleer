@@ -449,6 +449,10 @@ Part 10, PDU and multipart parsers; throughput benchmarks against dcm4che, DCMTK
   `docs/design/attestation/research.md`. Tests use a fake configfs-tsm directory and a fake dstack
   agent; nothing has run on real TEE hardware yet (a `CAMEL_REAL_TEE=1` tier waits for the owner's
   choice of cloud).
+- **SAP Integration Suite gap analysis** (2026-11-11): `docs/design/sap-integration-suite/gap-analysis.md`
+  maps every Cloud Integration flow step, adapter and runtime service to Cameleer, ranks the
+  blockers for replacing the Camel runtime under CPI and Edge Integration Cell, and proposes
+  phases. Research only; nothing built.
 - **Healthcare research**: `docs/design/medical/dicom-and-healthcare.md` (DICOM, DICOMweb,
   de-identification, Mirth alternatives, positioning); not started.
 

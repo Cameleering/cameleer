@@ -136,7 +136,7 @@ Two ways, neither edits the route under test:
 - **Placeholders**, as above: write the endpoint as `{{orders.express:kafka:...}}` and set
   `orders.express: mock:express` in the test's `properties`. Clear and explicit, and it also
   makes the endpoint configurable per environment.
-- **An intercept file** listed in the test's `routes` before the routes it applies to. Camel's
+- **An intercept file** listed in the test's `routes`. Camel's
   `interceptSendToEndpoint` with `skipSendToOriginalEndpoint` catches every message sent to the
   matching endpoints and sends it to a mock instead:
 
@@ -150,9 +150,9 @@ Two ways, neither edits the route under test:
       - to: mock:kafka
 ```
 
-  With `routes: [intercept-kafka.camel.yaml, orders.camel.yaml]`, the orders above reach
-  `mock:kafka` and nothing connects to a broker. The intercept applies only to route files
-  loaded after it, so list it first.
+  With `routes: [orders.camel.yaml, intercept-kafka.camel.yaml]`, the orders above reach
+  `mock:kafka` and nothing connects to a broker. The intercept applies to every route file the
+  test loads, in any order, as in Camel.
 
 ## Rust tests
 

@@ -630,6 +630,12 @@ Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [SECURITY.md](SECURITY.md). To cite Cameleer, use the "Cite this repository" button
 ([CITATION.cff](CITATION.cff)).
 
+## Supported by
+
+Cameleer is supported by [DataHQ](https://datahq.ai).
+
+<a href="https://datahq.ai"><img src="site/brand/datahq-logo.png" alt="DataHQ" width="200"></a>
+
 ## License and credits
 
 Cameleer is licensed under the [Apache License 2.0](LICENSE); see [NOTICE](NOTICE).

@@ -112,9 +112,6 @@ routes. Generate the key inside the TEE and never write it out, or the binding p
   bus interposers (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.
 - **Not yet run on real TEE hardware.** The tests use a simulated configfs-tsm directory and a
   simulated dstack agent; the report formats follow the kernel ABI and dstack's API.
-- **One protocol per port.** `/q/attestation` registers on the shared HTTP server, which cannot
-  serve plain HTTP and HTTPS on one port: with HTTPS routes (`camel.server.sslEnabled=true`) on the
-  same port, start-up fails ([TLS and security](tls-and-security.md#https-for-your-routes)).
 - **No reproducible builds yet.** Pin the image by digest (`pmsudhi/cameleer@sha256:...`) so the
   platform measurement identifies the build you reviewed.
 - **Runtime changes are recorded, not prevented.** The log shows a route added or a tool disabled

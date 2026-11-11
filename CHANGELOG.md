@@ -73,6 +73,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ### Fixed
 
+- **`onException` and `doCatch` for `Exception` now catch Camel's exchange failures**:
+  `CamelExchangeException` was listed as its own parent, so `HttpOperationFailedException`,
+  `DirectConsumerNotAvailableException`, `ResolveEndpointFailedException`, `ValidationException`
+  and the other kinds under it never matched `Exception` (or `Throwable`). Their parent is now
+  `Exception`, as in Camel; `RuntimeException` still does not catch them, also as in Camel.
 - **HTTPS routes and the management endpoints on one port**: with `camel.server.sslEnabled=true`,
   `/q/*`, `/q/attestation` and the MCP endpoint now speak HTTPS on `camel.server.port` next to the
   HTTPS routes; start-up used to fail with "already used by an https server". Camel's separate

@@ -39,10 +39,12 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
   -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 ```
 
-The server keeps one protocol per port. The management endpoints (`/q/health`, `/q/metrics`,
-`/q/dev`) are plain HTTP, so they cannot share a port with HTTPS routes; with
-`camel.server.sslEnabled=true`, leave the management server off, or terminate TLS in front of
-Cameleer (a load balancer, an ingress or a sidecar proxy).
+Everything on `camel.server.port` speaks what the port speaks: with `camel.server.sslEnabled=true`,
+the management endpoints (`/q/health`, `/q/metrics`, `/q/dev`), `/q/attestation` and the MCP
+server are HTTPS too, next to the HTTPS routes. To keep health probes and metrics on plain HTTP
+(for example for a Kubernetes probe or a Prometheus scraper inside the cluster), move them to
+Camel's separate management port with `camel.management.enabled=true` (port 9876 by default,
+see [Observability](observability.md#a-separate-management-port)).
 
 ## TLS for client endpoints
 
@@ -203,7 +205,7 @@ restart routes when a secret changes. Cameleer does not decrypt Jasypt `ENC(...)
 | REST and `platform-http` routes | TLS and mutual TLS; no user authentication | check a header or token in the route (`choice` on `${header.Authorization}`, or a call to your identity provider), or put an API gateway or proxy in front |
 | the MCP server | API keys, JWT (JWKS or HMAC), OAuth token introspection, protected resource metadata, audience checks, `Origin` checks | `camel.server.mcp-*` options: see [MCP server authentication](mcp-server.md#authentication) |
 | AI tools | authorization policies, approvals, rate limits, redaction, an audit log | [`ai-tool`](../components/ai-tool.md) options |
-| management endpoints (`/q/*`) | none | keep them on a private network, or bind to loopback with `camel.server.host=127.0.0.1`; `/q/dev` can stop routes |
+| management endpoints (`/q/*`) | none | keep them on a private network, or move them to the management port bound to loopback (`camel.management.enabled=true`, `camel.management.host=127.0.0.1`); `/q/dev` can stop routes |
 
 **Messages.** The [crypto](../dataformats/crypto.md) and [PGP](../dataformats/pgp.md) data
 formats encrypt and sign payloads, and [XML Security](../components/xmlsecurity-sign.md) signs

@@ -166,7 +166,19 @@ server.
 | `camel.server.mcp-*` | | the MCP server: see [MCP server configuration](mcp-server.md#configuration) |
 
 `cameleer run --console` turns on `camel.server.enabled`, health, metrics and the dev console in
-one flag.
+one flag. With `camel.server.sslEnabled=true` the management endpoints, `/q/attestation` and the
+MCP server are HTTPS on the same port as the routes.
+
+### `camel.management.*`: a separate management port
+
+| key | default | effect |
+|---|---|---|
+| `camel.management.enabled` | `false` | serve `/q/health`, `/q/metrics` and `/q/dev` on their own plain-HTTP port instead of `camel.server.port` |
+| `camel.management.port` | `9876` | the management port |
+| `camel.management.host` | `camel.server.host` | the bind address |
+| `camel.management.healthCheckEnabled`, `metricsEnabled`, `devConsoleEnabled` | `false` | which endpoints (the `camel.server.*` switches count as well) |
+
+See [Observability](observability.md#a-separate-management-port).
 
 ### `camel.ssl.*`: global TLS
 

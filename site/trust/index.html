@@ -162,7 +162,6 @@ camel.attestation.mcp-tool=true</pre>
       <li><strong>"This exact release" needs a pinned image.</strong> Reproducible builds aren't published yet, so pin the image by digest (<code>pmsudhi/cameleer@sha256:...</code>) and let the platform measurement identify the build you reviewed.</li>
       <li><strong>Physical attacks.</strong> TEEs trust the cloud's physical security as well as the CPU vendor; memory-bus interposers (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.</li>
       <li><strong>Runtime changes are recorded, not prevented.</strong> The log shows a route added after start-up; refusing it is the verifier's decision.</li>
-      <li><strong>One protocol per port.</strong> <code>/q/attestation</code> can't share a port with HTTPS routes yet: with <code>camel.server.sslEnabled=true</code> on the same port, start-up fails.</li>
       <li><strong>A model showing evidence is not checking it.</strong> Only a program that checks the binding and the signature gets the guarantee.</li>
     </ul>
     <p class="note">The full reference, with every property: <a href="../docs/guides/attestation.html">Attestation in confidential VMs</a>. Security of the TLS stack itself: <a href="../docs/guides/tls-and-security.html">TLS and security</a>.</p>
