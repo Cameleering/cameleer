@@ -58,6 +58,32 @@ fn main() -> Result<()> {
 }
 ```
 
+The same route in YAML runs with the CLI or the container image, with no Rust toolchain:
+
+<!-- example: rust-orders-yaml -->
+```yaml
+- route:
+    id: orders
+    from:
+      uri: timer:orders?period=1000
+      steps:
+        - setBody:
+            constant: '{"id": 1, "priority": "high"}'
+        - choice:
+            when:
+              - simple: "${body} contains 'high'"
+                steps:
+                  - to: log:express
+            otherwise:
+              steps:
+                - to: log:standard
+```
+
+```bash
+cameleer run orders.camel.yaml
+docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml
+```
+
 Every EIP has a Rust method with Camel's name in snake case (`split`, `aggregate`,
 `recipient_list`, `circuit_breaker`, `on_exception`, ...); [the EIP pages](eips.md) show each one
 in YAML and in Rust, and [Error handling](error-handling.md) shows `error_handler` and
@@ -68,8 +94,8 @@ for any other language.
 ## A worked example: a component, a processor and a strategy used from YAML
 
 This program adds a `greet:` component, binds a processor named `upper` and an aggregation
-strategy named `joinLines`, adds one route in the Rust DSL, and loads YAML route files that use
-all of them by name:
+strategy named `joinLines`, adds two routes in the Rust DSL, and loads YAML route files that use
+the processor by name:
 
 ```rust
 use std::any::Any;
@@ -123,8 +149,8 @@ impl Processor for GreetProducer {
     }
 }
 
-/// Every built-in component, plus `greet:`, the `upper` processor and the `joinLines`
-/// aggregation strategy that the YAML routes in `routes` refer to by name.
+/// Every built-in component, plus `greet:`, the `upper` processor that the YAML routes in
+/// `routes` refer to by name, and the `joinLines` aggregation strategy.
 fn start(routes: &Path) -> Result<cameleer_main::Main> {
     let mut main = cameleer_main::new_main();
     let ctx = main.context().clone();
@@ -141,8 +167,14 @@ fn start(routes: &Path) -> Result<cameleer_main::Main> {
         }
         Ok(new)
     });
-    // a Rust DSL route next to the YAML ones
+    // Rust DSL routes next to the YAML ones: split a list, send each item to the YAML route
+    // `greet-one`, and join the replies with `joinLines`
     ctx.add_routes(|b| {
+        b.from("direct:greetings")
+            .split(simple("${body}"))
+            .aggregation_strategy_ref("joinLines")
+            .to("direct:greet-one")
+            .end();
         b.from("direct:hello").to("greet:hello?punctuation=!");
     })?;
     main.add_route_file(routes);
@@ -151,24 +183,30 @@ fn start(routes: &Path) -> Result<cameleer_main::Main> {
 }
 ```
 
-The YAML route splits a list, runs `upper` on each item, sends it through the Rust route to
-`greet:` and joins the replies with `joinLines`:
+The Rust route `direct:greetings` splits a list and sends each item to the YAML route, which runs
+`upper` on it and sends it through the second Rust route to `greet:`; `joinLines` joins the
+replies:
 
 <!-- example: rust-greetings -->
 ```yaml
 - route:
-    id: greetings
+    id: greet-one
     from:
-      uri: direct:greetings
+      uri: direct:greet-one
       steps:
-        - split:
-            simple: "${body}"
-            aggregationStrategy: joinLines
-            steps:
-              - process:
-                  ref: upper
-              - to: direct:hello
+        - process:
+            ref: upper
+        - to: direct:hello
 ```
+
+A YAML route can name a Rust aggregation strategy too (`aggregationStrategy: joinLines` on a
+`split`), but `cameleer validate` reports a strategy that is not bound as an error, and it
+cannot see one bound in code; a processor reference (`process: {ref: ...}`) passes.
+
+This example needs a Rust program: the `cameleer` binary and the container image cannot load a
+component, processor or strategy written in Rust. To ship routes that need them as one binary
+or image, `cameleer export` writes a Rust project around your route files
+([`cameleer export`](cli.md#cameleer-export)), and you add the code there.
 
 `start(Path::new("greetings.camel.yaml"))`, then
 `request_body("direct:greetings", vec!["ann", "bob"])` on a producer template returns

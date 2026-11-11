@@ -53,8 +53,8 @@ impl Processor for GreetProducer {
     }
 }
 
-/// Every built-in component, plus `greet:`, the `upper` processor and the `joinLines`
-/// aggregation strategy that the YAML routes in `routes` refer to by name.
+/// Every built-in component, plus `greet:`, the `upper` processor that the YAML routes in
+/// `routes` refer to by name, and the `joinLines` aggregation strategy.
 fn start(routes: &Path) -> Result<cameleer_main::Main> {
     let mut main = cameleer_main::new_main();
     let ctx = main.context().clone();
@@ -71,8 +71,14 @@ fn start(routes: &Path) -> Result<cameleer_main::Main> {
         }
         Ok(new)
     });
-    // a Rust DSL route next to the YAML ones
+    // Rust DSL routes next to the YAML ones: split a list, send each item to the YAML route
+    // `greet-one`, and join the replies with `joinLines`
     ctx.add_routes(|b| {
+        b.from("direct:greetings")
+            .split(simple("${body}"))
+            .aggregation_strategy_ref("joinLines")
+            .to("direct:greet-one")
+            .end();
         b.from("direct:hello").to("greet:hello?punctuation=!");
     })?;
     main.add_route_file(routes);

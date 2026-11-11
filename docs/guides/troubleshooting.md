@@ -18,6 +18,19 @@
    count, `cameleer get health` the health checks, and `cameleer log --follow` its log
    ([the cameleer command line](cli.md#managing-running-integrations)).
 
+The same commands with the container image, from the folder that holds the route files:
+
+```bash
+cameleer validate routes/
+cameleer run routes/orders.camel.yaml --log-level DEBUG --trace
+
+docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes/routes
+docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/routes/orders.camel.yaml --log-level DEBUG --trace
+```
+
+A program that embeds Cameleer gets the same errors as `Err(CamelError)` from `start()` or
+`add_routes`, with the same kind and message; the [Rust developer guide](rust.md) shows the API.
+
 ## Routes that fail to load or start
 
 ### Unknown step
@@ -87,7 +100,8 @@ bound under that name. Beans come from Rust code (`ctx.registry().bind_processor
 `camel.beans.*` with a registered bean factory, or, for data sources, from
 `camel.datasource.*`. A route file run by the plain `cameleer` binary cannot use Java classes or
 beans; use a script step (`js`, `groovy`, `python`) or a built-in EIP instead. `cameleer
-validate` does not report missing beans, since they can come from code.
+validate` does not report a missing processor or endpoint bean, since those can come from code;
+it does report an `aggregationStrategy` name that is neither built in nor bound.
 
 ### Invalid expression
 
@@ -231,7 +245,7 @@ against the code by `troubleshooting_kinds_match_the_code` in
 
 ### `cameleer validate` says the routes are valid, but `cameleer run` fails. Why?
 
-Validate starts nothing, so it cannot see what only exists at run time: beans bound from Rust,
+Validate starts nothing, so it cannot see what only exists at run time: processors bound from Rust,
 ports already in use, a broker that is down, certificates. Missing placeholders are warnings
 there; pass the same properties with `--properties` and use `--strict` to fail on them.
 

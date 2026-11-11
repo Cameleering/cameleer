@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-10</lastmod></url>
+  <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/alternatives/mulesoft-alternatives/</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/cameleering/</loc><lastmod>2026-11-07</lastmod></url>
@@ -238,11 +238,11 @@
   <url><loc>https://cameleer.ing/docs/guides/eips/split-aggregate.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/eips/system.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/eips/transformation.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/error-handling.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/faq.html</loc><lastmod>2026-11-09</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/getting-started.html</loc><lastmod>2026-11-09</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/limitations.html</loc></url>
+  <url><loc>https://cameleer.ing/docs/guides/error-handling.html</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/faq.html</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/getting-started.html</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/limitations.html</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-client.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-server.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp-shop-example.html</loc><lastmod>2026-11-07</lastmod></url>
@@ -257,17 +257,17 @@
   <url><loc>https://cameleer.ing/docs/guides/mcp/refunds-with-business-rules.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/safety.html</loc><lastmod>2026-11-07</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/mcp/the-tool-asks-the-user.html</loc><lastmod>2026-11-07</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/migrating-from-apache-camel.html</loc><lastmod>2026-11-05</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/migrating-from-apache-camel.html</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/model-providers.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/observability.html</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/rust.html</loc></url>
+  <url><loc>https://cameleer.ing/docs/guides/rust.html</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/testing.html</loc><lastmod>2026-11-10</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/tls-and-security.html</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/troubleshooting.html</loc></url>
+  <url><loc>https://cameleer.ing/docs/guides/troubleshooting.html</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/validate.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-05</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-for-coding-agents.html</loc><lastmod>2026-11-05</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-11</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/bean.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/constant.html</loc><lastmod>2026-11-06</lastmod></url>
   <url><loc>https://cameleer.ing/docs/languages/csimple.html</loc><lastmod>2026-11-06</lastmod></url>
