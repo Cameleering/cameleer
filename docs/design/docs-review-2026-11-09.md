@@ -53,6 +53,15 @@ MCP server table does list `mcp-server-description` and `mcp-server-website-url`
 their worked examples and the CLI command and flag list checked by
 `crates/cameleer-main/tests/docs_reference.rs`; linked from the docs index, getting started, the
 Read the Docs toctree and llms.txt.
+**Done 2026-11-11:** items 6, 7 and 8, `guides/rust.md` (worked example: a custom component, a
+processor and an aggregation strategy used from YAML, run and compared with the page by
+`tests/rust_guide/mod.rs`), `guides/troubleshooting.md` (every quoted message checked against the
+binary, the kind table against `error.rs`) and `guides/limitations.md` (the missing-component
+table checked against the build). The docs harness now skips examples whose loader error is a
+bean bound from Rust. Code finding, not fixed here: `builtin_parent` gives
+`CamelExchangeException` itself as its parent, so `onException`/`doCatch` for `Exception` or
+`RuntimeException` miss `HttpOperationFailedException`, `DirectConsumerNotAvailableException` and
+every other kind under it (`troubleshooting_kinds_match_the_code` fails until it is fixed).
 Items 3, 4 and 5 done the same day: `guides/testing.md`, `guides/observability.md`,
 `guides/tls-and-security.md`, each with a worked example run by the same test file (the TLS one
 with Cameleer as both HTTPS server and client). Code findings from writing them, not fixed here:

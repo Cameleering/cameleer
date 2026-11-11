@@ -17,6 +17,9 @@ guides/observability
 guides/tls-and-security
 guides/attestation
 guides/build-features
+guides/rust
+guides/troubleshooting
+guides/limitations
 guides/concepts
 guides/yaml-dsl
 guides/yaml-for-coding-agents

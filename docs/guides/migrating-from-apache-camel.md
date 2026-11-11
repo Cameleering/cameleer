@@ -167,6 +167,7 @@ The Rust DSL mirrors it method by method (`from`, `filter`, `split`, `aggregate`
 ## Related
 
 - [Concepts](concepts.md), [FAQ](faq.md), [feature list](../FEATURES.md)
+- [What Cameleer does not do](limitations.md), [Rust developer guide](rust.md)
 - Apache Camel: [YAML DSL](https://camel.apache.org/components/next/others/yaml-dsl.html),
   [Camel 4 migration guide](https://camel.apache.org/manual/camel-4-migration-guide.html)
 

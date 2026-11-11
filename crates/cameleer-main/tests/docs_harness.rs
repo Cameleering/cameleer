@@ -249,7 +249,7 @@ fn rel(root: &Path, p: &Path) -> String {
 /// non-empty dummy (`cGxhY2Vob2xkZXI=`, valid base64).
 /// Resolution errors caused by a missing file or registry bean rather than by the URI.
 fn needs_environment(e: &str) -> bool {
-    ["NoSuchBeanException", "NoSuchEndpointException", "os error 2", "FileNotFoundException", "Cannot read"].iter().any(|m| e.contains(m))
+    ["NoSuchBeanException", "NoSuchEndpointException", "os error 2", "FileNotFoundException", "Cannot read", "found in the registry"].iter().any(|m| e.contains(m))
 }
 
 fn substitute_env(s: &str) -> String {
@@ -415,6 +415,10 @@ fn check_examples(root: &Path, files: &[PathBuf]) -> ExampleReport {
             let main = cameleer_main::new_main();
             let ctx = main.context().clone();
             if let Err(e) = cameleer_yaml::add_routes_from_yaml(&ctx, &b.content) {
+                // a processor or strategy the example binds from Rust (its page's own test runs it)
+                if needs_environment(&e.to_string()) {
+                    continue;
+                }
                 r.errors.push(format!("{} [{}]: the YAML DSL loader rejects it: {}", at, id, e));
                 continue;
             }

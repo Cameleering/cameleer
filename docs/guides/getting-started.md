@@ -251,6 +251,8 @@ To standard output. Set the level with the `CAMEL_LOG_LEVEL` environment variabl
 ## Related
 
 - [README](../../README.md), [deployment guide](../DEPLOYMENT.md), [feature list](../FEATURES.md)
+- [Rust developer guide](rust.md), [Troubleshooting](troubleshooting.md),
+  [What Cameleer does not do](limitations.md)
 - Apache Camel: [Camel JBang](https://camel.apache.org/manual/camel-jbang.html),
   [YAML DSL](https://camel.apache.org/components/next/others/yaml-dsl.html)
 

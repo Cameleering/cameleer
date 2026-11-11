@@ -22,6 +22,9 @@ same. Start with a guide, then look up the components your route uses.
 | give AI agents tools: an MCP server with approvals, audit and a gateway, with ten tested use cases | [Cameleer MCP](guides/mcp.md) |
 | run Cameleer in Docker, Kubernetes, Cloud Run or AWS Lambda | [Deployment](DEPLOYMENT.md) |
 | build a smaller binary or image with only the components you use | [Build features](guides/build-features.md) |
+| embed Cameleer in a Rust program, write processors and components | [Rust developer guide](guides/rust.md) |
+| understand an error message or a TLS failure | [Troubleshooting](guides/troubleshooting.md) |
+| check whether something is supported before you rely on it | [What Cameleer does not do](guides/limitations.md) |
 | check which Camel features are implemented, with their options | [Feature matrix](FEATURES.md) |
 | see what people run on it: AI agent tools, HL7 over MLLP, MQTT edge gateways, serverless, file and SFTP pipelines | [Use cases](https://cameleer.ing/use-cases/), the [agent cookbook](guides/agents.md) and the [edge cookbook](guides/edge.md) |
 | compare Cameleer with Apache Camel: throughput, memory, startup | [Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/) and the [benchmark report](BENCHMARKS.md) |

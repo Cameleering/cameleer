@@ -230,7 +230,8 @@ pass through `mock:parse-attempts` and continue to `mock:parsed`.
 
 - Exceptions are string kinds with a parent hierarchy, not Java classes. Custom kinds are
   registered with `register_kind_parent("MyException", "IOException")` so `onException` for
-  `IOException` catches them.
+  `IOException` catches them. Every built-in kind and its parent is listed in
+  [Troubleshooting](troubleshooting.md#exception-kinds).
 - With `asyncDelayedRedelivery`, the waiting exchange is handed to a released thread and a new
   consumer thread takes over, instead of a scheduler continuation. The effect for the route is
   the same.

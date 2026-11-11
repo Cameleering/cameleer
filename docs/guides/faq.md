@@ -229,7 +229,8 @@ vulnerabilities privately as described in [SECURITY.md](../../SECURITY.md).
 ## Related
 
 - [Getting started](getting-started.md), [concepts](concepts.md), [EIPs](eips.md)
-- [Migrating from Apache Camel](migrating-from-apache-camel.md)
+- [Migrating from Apache Camel](migrating-from-apache-camel.md),
+  [What Cameleer does not do](limitations.md), [Troubleshooting](troubleshooting.md)
 - [Benchmarks](../BENCHMARKS.md), [features](../FEATURES.md), [roadmap](../ROADMAP.md)
 
 ## Found a problem?
