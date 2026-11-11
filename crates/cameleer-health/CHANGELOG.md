@@ -16,6 +16,11 @@ First release of the pack.
   `dicom` component (DIMSE SCU and SCP: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET, TLS), the
   `dicomweb` component (STOW-RS, QIDO-RS, WADO-RS client and server), PS3.15 Annex E
   de-identification with audit records.
+- The DICOM Conformance Statement for 0.6.0 (`docs/packs/health/conformance/`), with tables
+  generated from the code.
+- Release artifacts: SBOMs (`scripts/sbom.py`), checksums and cosign signatures of the archives.
+- The `CAMEL_HEALTH_INTEROP=1` live tier (`scripts/health-interop.sh`): 10/10 against DCMTK
+  3.6.7, Orthanc 1.12.2 (with DICOMweb), python-hl7 0.4.5 and HAPI FHIR 8.12.0.
 - Crate features `hl7`, `fhir`, `dicom` (all default). Depends on cameleer-core, cameleer-http,
   cameleer-tls and (for `fhir`) cameleer-xml.
 - Verified: hermetic tests; 33 public DICOM test files byte-exact; live against DCMTK 3.6.7 and

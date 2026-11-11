@@ -363,9 +363,33 @@ none) build; `cargo test --workspace` **2952 passed, 0 failed**. After the move,
 tier `CAMEL_DICOM_INTEROP=1 cargo test -p cameleer-health --test live_dicom` **7/7** against DCMTK
 3.6.7 and Orthanc 1.12.2.
 
-Not done from the design: SBOM generation per pack, cosign signing of archives, a DICOM
-Conformance Statement, `/q/info` listing packs, CODEOWNERS, the `CAMEL_HEALTH_INTEROP` umbrella
-tier (the DICOM tier is still `CAMEL_DICOM_INTEROP=1`).
+Built afterwards (2026-11-10), from the same design:
+- `/q/info` and `/q/dev/packs` (`camel.server.infoEnabled`, also on with the dev console): the
+  version, the compiled-in families and the packs.
+- `.github/CODEOWNERS` with an owner for the pack's code, docs, examples and tooling.
+- `scripts/sbom.py`: CycloneDX 1.5 SBOMs of exactly what a build compiles in (from `cargo tree -p`,
+  so a DICOM-only pack build lists core, http and tls), reproducible; written next to every
+  archive by `package-archive.sh`, plus one for the `cameleer-health` crate; checked in CI.
+- `archives.yml` signs every archive, checksum and SBOM with keyless cosign on release tags only.
+  `package-archive.sh health x86_64-unknown-linux-gnu` was run end to end on Linux (13.2 MB
+  archive, the checksum verifies, the binary reports the pack); the workflow itself has not run on
+  GitHub yet.
+- CI pack gate: `cameleer-main --no-default-features --features health` tests and each crate
+  feature of `cameleer-health` alone. It found that `tests/docs_reference.rs` (from main) failed in
+  every reduced build; it is now gated on `full`.
+- The DICOM Conformance Statement, `docs/packs/health/conformance/dicom-conformance-statement-0.6.0.md`
+  (PS3.2 form), its SOP class, identification and character set tables generated from the code
+  and checked by `tests/dicom_conformance_statement.rs`.
+- The `CAMEL_HEALTH_INTEROP=1` tier (`scripts/health-interop.sh`): **10/10** on WSL2 Ubuntu 24.04
+  (2026-11-11, run with the owner's approval): DICOM 7/7 (DCMTK 3.6.7, Orthanc 1.12.2 with
+  DICOMweb 1.16), HL7 2/2 (python-hl7 0.4.5 as MLLP receiver with AA and AR acknowledgements, and
+  its MLLP client against a Cameleer consumer), FHIR 1/1 (HAPI FHIR JPA server 8.12.0: create,
+  read JSON and XML, update, search, history, delete). No Cameleer bug found; one test asserted the
+  AR case the wrong way round (the producer template returns the error) and was fixed.
+
+Still open: the first real run of `archives.yml` and the
+health image build in `container.yml`; IHE ATNA audit messages (PS3.15 A.5); an independent review
+of the TLS code before claiming the BCP 195 profiles.
 
 ### DICOM in the health pack
 

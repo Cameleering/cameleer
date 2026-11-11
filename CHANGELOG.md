@@ -42,6 +42,13 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   `CamelContext::add_pack`, `pack::install`), `Main::add_pack`; pack languages are YAML and XML
   DSL keys; `cameleer version` lists the packs; a route that names a pack component in a build
   without the pack fails with a message naming the pack, image and feature.
+- **Pack release artifacts**: CycloneDX SBOMs of exactly what each build compiles in
+  (`scripts/sbom.py`), SHA-256 sums and keyless cosign signatures of the release archives, a DICOM
+  Conformance Statement generated in part from the code, CODEOWNERS, and the
+  `CAMEL_HEALTH_INTEROP=1` live tier (`scripts/health-interop.sh`: DCMTK, Orthanc, python-hl7,
+  HAPI FHIR).
+- **`/q/info`** (`camel.server.infoEnabled`, and with the dev console): the version, the compiled-in
+  feature families and the packs of a running instance; also `/q/dev/packs`.
 - **`cameleer_core::audit`**: the hash-chained audit log moved from `cameleer-ai` into core, one
   log per context (`AuditLog::of`), shared by AI tool calls and the health pack.
 - **Simple functions from other crates**: `cameleer_core::language::simple::register_function`

@@ -24,7 +24,9 @@ use cameleer_tls::params::SslContextParameters;
 static SCP_PORT: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn enabled() -> bool {
-    let on = std::env::var("CAMEL_DICOM_INTEROP").map(|v| v == "1").unwrap_or(false);
+    // the DICOM part of the health tier: CAMEL_HEALTH_INTEROP=1 runs it too
+    let flag = |k: &str| std::env::var(k).map(|v| v == "1").unwrap_or(false);
+    let on = flag("CAMEL_DICOM_INTEROP") || flag("CAMEL_HEALTH_INTEROP");
     if !on {
         eprintln!("skipped: set CAMEL_DICOM_INTEROP=1 after `scripts/dicom-interop.sh all`");
     }

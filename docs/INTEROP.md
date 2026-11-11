@@ -425,6 +425,22 @@ test `codec::tests::deflated_data_sets_have_even_length`).
 Not verified yet: dcm4che, real modalities, and the cloud DICOM services (Azure Health Data
 Services, Google Cloud Healthcare API, AWS HealthImaging), which need accounts from the owner.
 
+## Health pack tier
+
+`scripts/health-interop.sh` is the umbrella for the health pack (`CAMEL_HEALTH_INTEROP=1 cargo
+test -p cameleer-health --test 'live_*'`): it runs the DICOM peers above and adds
+- **HL7 v2 / MLLP:** python-hl7 0.4.5 (PyPI wheel pinned by SHA-256, imported from the wheel file)
+  as an MLLP receiver that acknowledges with its own ACK, and its MLLP client against a Cameleer
+  consumer (`tests/live_health_hl7.rs`);
+- **FHIR R4:** the HAPI FHIR JPA server 8.12.0 (Docker image pinned by digest): create, read
+  (JSON and XML), update, search, history, delete, and fhirXml on HAPI's resources
+  (`tests/live_health_fhir.rs`).
+
+Status (2026-11-11, WSL2 Ubuntu 24.04): **10/10** under `CAMEL_HEALTH_INTEROP=1`: DICOM 7/7, HL7
+2/2 (python-hl7 0.4.5 receiver acknowledging AA and AR; its client against a Cameleer `mllp`
+consumer read with `hl7terser`), FHIR 1/1 (HAPI FHIR 8.12.0, image pinned by digest). No Cameleer
+bug found. Without the flag the tests compile and skip.
+
 ## MCP
 
 The MCP server is checked with the official conformance suite, `@modelcontextprotocol/conformance`
