@@ -42,7 +42,7 @@ every repo and session; it is not published on the site._
 
 - **Category:** efficiency engineering. Cameleering is the named method inside it.
 - **First audience:** platform and infrastructure teams running heavyweight JVM integration.
-  Then edge and serverless builders (once simoom is measured), then CTOs under cloud-cost pressure
+  Then edge and serverless builders (simoom is measured since 2026-11-12), then CTOs under cloud-cost pressure
   (through FinOps).
 - **Versus FinOps or buying more cloud:** it fixes the software.
 - **Versus "rewrite it in Rust":** every claim is measured against the original.

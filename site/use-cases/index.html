@@ -60,7 +60,14 @@
     <a class="brand" href="../" aria-label="Cameleer home"><img src="../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
     <nav id="main-nav" aria-label="Main">
-      <a href="../cameleering/">Cameleering</a>
+      <div class="nav-menu">
+        <a href="../cameleering/" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../cameleering/"><b>The practice</b><span>Carry more on less, measured</span></a>
+          <a href="../cameleering/ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
       <a class="keep" href="../docs/">Docs</a>
       <a class="keep" aria-current="page" href="../use-cases/">Use cases</a>
       <a href="../mcp/">MCP</a>
