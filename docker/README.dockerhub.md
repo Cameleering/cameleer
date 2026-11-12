@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/pmsudhi/cameleer/main/site/brand/cameleer-logo.png" alt="Cameleer" width="480"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/cameleering/cameleer/main/site/brand/cameleer-logo.png" alt="Cameleer" width="480"></p>
 
 # Cameleer
 
@@ -10,7 +10,7 @@
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
 - Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, about 20 MB to download
 
-Website: https://cameleer.ing/ · Source: https://github.com/pmsudhi/cameleer
+Website: https://cameleer.ing/ · Source: https://github.com/cameleering/cameleer
 
 ## Quick start
 
@@ -33,7 +33,7 @@ Save a route as `hello-api.camel.yaml`:
 Run it and call it:
 
 ```sh
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/hello-api.camel.yaml
 curl localhost:8080/orders/42        # {"id": "42", "status": "shipped"}
 ```
 
@@ -45,14 +45,14 @@ Each of these runs end to end in the project's test suite. Each file's header li
 
 | route | what it does |
 |---|---|
-| [ai-ticket-triage.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml) | Kafka in. An LLM (OpenAI, Ollama, vLLM, Azure OpenAI) classifies each ticket, and urgent ones go to their own topic. |
-| [alerts-to-slack.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/alerts-to-slack.camel.yaml) | An HTTP webhook takes monitoring alerts and posts the critical ones to Slack. |
-| [files-to-s3.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml) | Watches a folder and uploads each new CSV file to S3. |
-| [rest-api.camel.yaml](https://github.com/pmsudhi/cameleer/blob/main/examples/rest-api.camel.yaml) | JSON REST API with validation, a content-based router and error handling. |
+| [ai-ticket-triage.camel.yaml](https://github.com/cameleering/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml) | Kafka in. An LLM (OpenAI, Ollama, vLLM, Azure OpenAI) classifies each ticket, and urgent ones go to their own topic. |
+| [alerts-to-slack.camel.yaml](https://github.com/cameleering/cameleer/blob/main/examples/alerts-to-slack.camel.yaml) | An HTTP webhook takes monitoring alerts and posts the critical ones to Slack. |
+| [files-to-s3.camel.yaml](https://github.com/cameleering/cameleer/blob/main/examples/files-to-s3.camel.yaml) | Watches a folder and uploads each new CSV file to S3. |
+| [rest-api.camel.yaml](https://github.com/cameleering/cameleer/blob/main/examples/rest-api.camel.yaml) | JSON REST API with validation, a content-based router and error handling. |
 
 ```sh
 docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
+  -v "$PWD:/routes:ro" cameleering/cameleer run /routes/ai-ticket-triage.camel.yaml
 ```
 
 ## Tags
@@ -63,9 +63,9 @@ docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
 | `0.5.1`, `0.5` | a release, and the latest patch of a minor version |
 | `edge` | a manual build from `main` |
 | `sha-<commit>` | the image of one commit |
-| `health`, `0.5.1-health`, `0.5-health`, `edge-health` | the same, plus the [health pack](https://github.com/pmsudhi/cameleer/blob/main/docs/packs/health/index.md): HL7 v2 and MLLP, FHIR R4, DICOM (DIMSE and DICOMweb), de-identification |
+| `health`, `0.5.1-health`, `0.5-health`, `edge-health` | the same, plus the [health pack](https://github.com/cameleering/cameleer/blob/main/docs/packs/health/index.md): HL7 v2 and MLLP, FHIR R4, DICOM (DIMSE and DICOMweb), de-identification |
 
-The same image is published to `ghcr.io/pmsudhi/cameleer`. Every push carries an SBOM, build provenance and a GitHub attestation: `gh attestation verify oci://ghcr.io/pmsudhi/cameleer:latest --owner pmsudhi`.
+The same image is published to `ghcr.io/cameleering/cameleer`. Every push carries an SBOM, build provenance and a GitHub attestation: `gh attestation verify oci://ghcr.io/cameleering/cameleer:latest --owner cameleering`.
 
 ## Configuration
 
@@ -80,7 +80,7 @@ The same image is published to `ghcr.io/pmsudhi/cameleer`. Every push carries an
 | Stop | `SIGTERM` stops the routes gracefully |
 | Health | with `--prop camel.server.healthCheckEnabled=true`: `/q/health/live` and `/q/health/ready` on port 8080 |
 
-Kubernetes, Docker Compose and Cloud Run setups are in the [deployment guide](https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md).
+Kubernetes, Docker Compose and Cloud Run setups are in the [deployment guide](https://github.com/cameleering/cameleer/blob/main/docs/DEPLOYMENT.md).
 
 ## A smaller image
 

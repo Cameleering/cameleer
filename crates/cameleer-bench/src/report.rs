@@ -226,9 +226,9 @@ Raw records are in `target/bench/results.txt`; the analysis section comes from `
 const FOUND_A_PROBLEM: &str = "\n## Found a problem?\n\n\
 If something on this page doesn't match what Cameleer does, or you hit a bug while building\n\
 with it, please help fix it, whether you are a person or a coding agent:\n\
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,\n\
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,\n\
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open\n\
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)\n\
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)\n\
 explains the ground rules.\n";
 
 #[cfg(test)]

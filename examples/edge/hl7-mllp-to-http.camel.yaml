@@ -1,4 +1,4 @@
-# Needs the health pack: the image pmsudhi/cameleer:health, or cameleer-main built with
+# Needs the health pack: the image cameleering/cameleer:health, or cameleer-main built with
 # `--features health` (docs/packs/health/index.md).
 #
 # HL7 v2 over MLLP to an HTTP API: a hospital edge gateway receives ADT messages from the
@@ -12,7 +12,7 @@
 #
 # Run with Docker:
 #   docker run --rm -p 2575:2575 --read-only -e EHR_URL \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer:health run /routes/hl7-mllp-to-http.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer:health run /routes/hl7-mllp-to-http.camel.yaml
 - route:
     id: hl7-to-ehr
     errorHandler:

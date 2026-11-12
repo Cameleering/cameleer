@@ -124,7 +124,7 @@ answers 500 with the exception text; a handled exception answers 200 with the ha
 ## Run it with Docker
 
 ```sh
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/device-readings.camel.yaml
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/device-readings.camel.yaml
 curl -XPOST -d '{"temp": 21.5}' localhost:8080/devices/sensor-7/readings
 ```
 
@@ -156,7 +156,7 @@ Yes: `platform-http:/files?matchOnUriPrefix=true`; `CamelHttpPath` holds the ful
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

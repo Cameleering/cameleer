@@ -11,7 +11,7 @@
 # Run with Docker (audit log written to ./audit):
 #   mkdir -p audit
 #   docker run --rm -p 8080:8080 -e PAYMENTS_URL -e AUDIT_DIR=/routes/audit \
-#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" pmsudhi/cameleer run /routes/agent-tool-api.camel.yaml
+#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" cameleering/cameleer run /routes/agent-tool-api.camel.yaml
 # Try:
 #   curl -XPOST localhost:8080/tools/refund -H 'Content-Type: application/json' \
 #     -d '{"requestId":"call-0001","orderId":"EU-4411","amount":25.5,"reason":"damaged"}'

@@ -6,7 +6,7 @@
 #
 # Run with Docker:
 #   docker run --rm -p 8080:8080 -e SLACK_WEBHOOK_URL \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/alerts-to-slack.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/alerts-to-slack.camel.yaml
 # Run from source:
 #   cargo run --release -p cameleer-main --bin cameleer -- run examples/alerts-to-slack.camel.yaml
 # Try:

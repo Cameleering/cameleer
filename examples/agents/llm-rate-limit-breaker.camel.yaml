@@ -8,7 +8,7 @@
 #
 # Run with Docker:
 #   docker run --rm -p 8080:8080 -e OPENAI_API_KEY -v "$PWD:/routes:ro" \
-#     pmsudhi/cameleer run /routes/llm-rate-limit-breaker.camel.yaml
+#     cameleering/cameleer run /routes/llm-rate-limit-breaker.camel.yaml
 # Try:
 #   curl -XPOST localhost:8080/ask -d 'What is an idempotent consumer?'
 - route:

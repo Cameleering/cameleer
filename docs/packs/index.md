@@ -9,7 +9,7 @@ standards lives in a pack instead. A pack:
 - is one crate (`cameleer-<pack>`) with its own version, change log and test tier;
 - is added to a build with one cargo feature of `cameleer-main` (`--features <pack>`), which is
   **not** part of `full`;
-- has its own distribution: the image tag `pmsudhi/cameleer:<pack>` and the archive
+- has its own distribution: the image tag `cameleering/cameleer:<pack>` and the archive
   `cameleer-<pack>-<version>-<target>`, with the same `cameleer` command inside;
 - ships, for each release, an SBOM of exactly what is compiled in (`scripts/sbom.py`), SHA-256
   sums and Sigstore signatures of its archives, and its own change log
@@ -58,7 +58,7 @@ every runner the process creates.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

@@ -2,7 +2,7 @@
 
 > The refund policy (30 days for any reason, damaged items at any time, a £500 limit, never more than was paid) is enforced by the `issue_refund` route, not by the prompt. When a rule says no, the route refuses in plain words and Claude passes the reason on; it did not split a £900 refund to get under the limit. In the field test, all 20 refund runs were correct.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -155,5 +155,5 @@ limit, one line of an order, a full refund, and a second refund of the same orde
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

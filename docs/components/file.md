@@ -127,7 +127,7 @@ The body of a consumed file is its bytes. File errors raise `GenericFileOperatio
 mkdir -p inbox outbox
 docker run --rm --user "$(id -u):$(id -g)" -e INBOX=/data/inbox -e OUTBOX=/data/outbox \
   -v "$PWD:/data" -v "$PWD/drop-folder.camel.yaml:/routes/drop-folder.camel.yaml:ro" \
-  pmsudhi/cameleer run /routes/drop-folder.camel.yaml
+  cameleering/cameleer run /routes/drop-folder.camel.yaml
 ```
 
 The data folder is mounted writable; the route file stays read-only.
@@ -158,7 +158,7 @@ that.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

@@ -138,7 +138,7 @@ Bodies: `putObject` returns the object metadata map, `getObject` the content byt
 docker run --rm -v "$PWD:/routes:ro" -v "$PWD/inbox:/inbox" \
   -v "$HOME/keys/sa.json:/keys/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json \
   -e GCS_BUCKET=my-bucket -e INBOX_DIR=/inbox \
-  pmsudhi/cameleer run /routes/files-to-gcs.camel.yaml
+  cameleering/cameleer run /routes/files-to-gcs.camel.yaml
 ```
 
 ## Common questions
@@ -170,7 +170,7 @@ accepted but ignored.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

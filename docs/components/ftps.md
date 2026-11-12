@@ -82,7 +82,7 @@ The same as [ftp](ftp.md#message-headers).
 docker run --rm --user "$(id -u):$(id -g)" -e FTPS_HOST=ftp.example.com -e FTPS_USER -e FTPS_PASSWORD \
   -e SITE_ID=site-7 -e OUTBOX=/data/outbox -v "$PWD:/data" \
   -v "$PWD/upload-reports.camel.yaml:/routes/upload-reports.camel.yaml:ro" \
-  pmsudhi/cameleer run /routes/upload-reports.camel.yaml
+  cameleering/cameleer run /routes/upload-reports.camel.yaml
 ```
 
 ## Common questions
@@ -108,7 +108,7 @@ servers.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

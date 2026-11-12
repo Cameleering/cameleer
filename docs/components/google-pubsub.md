@@ -113,7 +113,7 @@ data as bytes.
 docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" \
   -v "$HOME/keys/sa.json:/keys/sa.json:ro" -e GOOGLE_APPLICATION_CREDENTIALS=/keys/sa.json \
   -e GCP_PROJECT=my-project -e PUBSUB_TOPIC=events \
-  pmsudhi/cameleer run /routes/webhook-to-pubsub.camel.yaml
+  cameleering/cameleer run /routes/webhook-to-pubsub.camel.yaml
 ```
 
 ## Common questions
@@ -143,7 +143,7 @@ Use the error handler or a dead-letter policy to stop endless retries.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

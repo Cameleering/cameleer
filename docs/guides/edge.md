@@ -192,7 +192,7 @@ The test sends a `local4.notice` message (dropped) and an `auth.crit` message (f
 
 ### HL7 v2 over MLLP to an HTTP API
 
-This route needs the [health pack](../packs/health/index.md) (image `pmsudhi/cameleer:health`).
+This route needs the [health pack](../packs/health/index.md) (image `cameleering/cameleer:health`).
 
 Hospital systems exchange HL7 v2 over MLLP. The `mllp` component frames and acknowledges
 messages and sets `CamelMllp*` headers (message type, event, control id, sending application);
@@ -344,7 +344,7 @@ Serve the tools over HTTP on the gateway (an agent elsewhere connects to
 network):
 
 ```bash
-docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true   -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" pmsudhi/cameleer   run /routes/mcp-gateway-tools.camel.yaml --mcp
+docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true   -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" cameleering/cameleer   run /routes/mcp-gateway-tools.camel.yaml --mcp
 ```
 
 `CAMEL_LOCAL_STATUS=true` (off by default in the image) and a writable `/tmp` let the operator
@@ -364,7 +364,7 @@ setpoint, were run in the container against Mosquitto 2.
 
 ## Small footprint deployment
 
-The Docker image `pmsudhi/cameleer` is one native binary on a distroless base, for `linux/amd64`
+The Docker image `cameleering/cameleer` is one native binary on a distroless base, for `linux/amd64`
 and `linux/arm64`, about 20 MB to download (12.5 MB built with `FEATURES=core`). A running route uses about 10 MB of memory (8 MB at startup in the
 [benchmarks](../BENCHMARKS.md)) and starts its routes in milliseconds. Nothing is written to
 the filesystem unless a route writes files, so the container runs with a read-only root:
@@ -375,7 +375,7 @@ docker run -d --name edge-routes --restart unless-stopped \
   --network host \
   -e MQTT_BROKER=tcp://localhost:1883 -e KAFKA_BROKERS -e GATEWAY_ID=plant-7 \
   -v "$PWD/routes:/routes:ro" \
-  pmsudhi/cameleer run /routes/mqtt-sensor-rollup.camel.yaml
+  cameleering/cameleer run /routes/mqtt-sensor-rollup.camel.yaml
 ```
 
 - **arm64 boards:** the same image runs on 64-bit Raspberry Pi OS (Pi 3, 4 and 5), NVIDIA
@@ -408,7 +408,7 @@ docker run -d --name edge-routes --restart unless-stopped \
 
 ### Can Cameleer run on a Raspberry Pi?
 
-Yes, on a 64-bit OS: the `pmsudhi/cameleer` image is published for `linux/arm64`, and a route
+Yes, on a 64-bit OS: the `cameleering/cameleer` image is published for `linux/arm64`, and a route
 uses about 10 MB of memory. 32-bit ARM images are not published.
 
 ### How do I bridge MQTT to Kafka?
@@ -434,7 +434,7 @@ transports and shared subscriptions are not supported.
 
 MQTT, syslog, TCP and UDP (`netty`), HTTP, WebSocket, FTP and SFTP, Kafka, AMQP and STOMP in the
 default build; HL7 v2 over MLLP, FHIR and DICOM in the [health pack](../packs/health/index.md)
-(image `pmsudhi/cameleer:health`). There are no OPC UA, Modbus or PLC4X components; reach those through an MQTT or HTTP
+(image `cameleering/cameleer:health`). There are no OPC UA, Modbus or PLC4X components; reach those through an MQTT or HTTP
 gateway.
 
 ## Related
@@ -450,7 +450,7 @@ gateway.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

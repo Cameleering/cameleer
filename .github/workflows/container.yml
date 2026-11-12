@@ -1,8 +1,8 @@
 name: Container
 
 # Publishes the Cameleer images for linux/amd64 and linux/arm64 to
-#   docker.io/pmsudhi/cameleer   (when the DOCKERHUB_TOKEN secret is set)
-#   ghcr.io/pmsudhi/cameleer
+#   docker.io/cameleering/cameleer   (when the DOCKERHUB_TOKEN secret is set)
+#   ghcr.io/cameleering/cameleer
 # in two distributions (docs/packs/index.md):
 #   general: release tags (v1.2.3) publish 1.2.3, 1.2 and latest (pre-releases skip latest);
 #            a manual run publishes edge
@@ -25,7 +25,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DOCKERHUB_USERNAME: pmsudhi
+  # Image namespaces are explicit rather than taken from the repository owner, so a
+  # repository transfer never moves them silently. DOCKERHUB_USERNAME is the account that
+  # logs in (a repository variable, defaulting to the namespace's own account).
+  GHCR_NAMESPACE: cameleering
+  DOCKERHUB_NAMESPACE: cameleering
+  DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME || 'cameleering' }}
   HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
 
 jobs:
@@ -67,8 +72,8 @@ jobs:
         run: |
           {
             echo "list<<EOF"
-            if [ "$HAS_DOCKERHUB" = "true" ]; then echo "docker.io/${DOCKERHUB_USERNAME}/cameleer"; fi
-            echo "ghcr.io/${{ github.repository_owner }}/cameleer"
+            if [ "$HAS_DOCKERHUB" = "true" ]; then echo "docker.io/${DOCKERHUB_NAMESPACE}/cameleer"; fi
+            echo "ghcr.io/${GHCR_NAMESPACE}/cameleer"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
       - id: meta
@@ -88,7 +93,7 @@ jobs:
             org.opencontainers.image.title=Cameleer
             org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, about 1 ms startup, about 10 MB of memory.
             org.opencontainers.image.url=https://cameleer.ing/
-            org.opencontainers.image.documentation=https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md
+            org.opencontainers.image.documentation=https://github.com/cameleering/cameleer/blob/main/docs/DEPLOYMENT.md
             org.opencontainers.image.licenses=Apache-2.0
           annotations: |
             org.opencontainers.image.title=Cameleer
@@ -133,12 +138,12 @@ jobs:
           cache-to: type=gha,mode=max
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/cameleer
+          subject-name: ghcr.io/${{ env.GHCR_NAMESPACE }}/cameleer
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
       - if: env.HAS_DOCKERHUB == 'true'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: index.docker.io/${{ env.DOCKERHUB_USERNAME }}/cameleer
+          subject-name: index.docker.io/${{ env.DOCKERHUB_NAMESPACE }}/cameleer
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true

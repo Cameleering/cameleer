@@ -7,7 +7,7 @@
 #
 # Run with Docker (Linux):
 #   docker run --rm --network host --read-only -e KAFKA_BROKERS \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/syslog-to-kafka.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/syslog-to-kafka.camel.yaml
 # Try:
 #   logger -n 127.0.0.1 -P 5514 -d -p user.err "disk almost full"
 - route:

@@ -88,7 +88,7 @@ Camel; unmarshal it with `json` to read fields.
 
 ```sh
 docker run --rm -e GRAPHQL_URL=https://api.example.com/graphql -e GRAPHQL_TOKEN \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/book-lookup.camel.yaml
+  -v "$PWD:/routes:ro" cameleering/cameleer run /routes/book-lookup.camel.yaml
 ```
 
 The example starts from `direct:book`; in practice, put a REST endpoint, a Kafka consumer or a
@@ -116,7 +116,7 @@ Only HTTP errors do. A `200` response with an `errors` array is returned as is; 
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

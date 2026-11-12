@@ -2,7 +2,7 @@
 
 > Besides tools, an MCP server offers resources (documents the model can read) and prompts (ready-made requests the user picks). The shop serves its refund, shipping and support policies and every order as resources, two prompts for an apology email and a weekly summary, and a `read_document` tool so the model can read the policies on its own. In the field test all 8 runs of the two prompts were correct in sessions; the weekly summary missed once in the stateless run.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -113,5 +113,5 @@ prompts, lists and reads the resources and reads documents through `read_documen
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

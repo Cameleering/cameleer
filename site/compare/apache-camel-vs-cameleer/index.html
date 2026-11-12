@@ -30,8 +30,8 @@
  "author": {"@type": "Person", "name": "Sudheesh PM"},
  "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
  "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"},
-           {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/pmsudhi/cameleer"}],
- "isBasedOn": {"@type": "Dataset", "name": "Cameleer and Apache Camel benchmark results", "url": "https://github.com/pmsudhi/cameleer/tree/main/benchmarks/results"}}
+           {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}],
+ "isBasedOn": {"@type": "Dataset", "name": "Cameleer and Apache Camel benchmark results", "url": "https://github.com/cameleering/cameleer/tree/main/benchmarks/results"}}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
@@ -67,7 +67,7 @@
       </div>
       <a href="../../trust/">Trust</a>
       <a href="../../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -265,12 +265,12 @@
       </div>
     </div>
     <h3>Run it yourself</h3>
-    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer
 export DO_TOKEN_FILE=~/do-token.txt
 scripts/cloud-bench/droplets.sh up
 scripts/cloud-bench/run.sh all
 scripts/cloud-bench/droplets.sh down</pre>
-    <p class="note">The routes are in <a href="https://github.com/pmsudhi/cameleer/tree/main/crates/cameleer-bench/src">crates/cameleer-bench</a>, <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/java-camel">benchmarks/java-camel</a> and <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/camel-quarkus">benchmarks/camel-quarkus</a>. Raw results: <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/results">benchmarks/results</a>. The full report with every caveat: <a href="../../docs/BENCHMARKS.html">BENCHMARKS</a>.</p>
+    <p class="note">The routes are in <a href="https://github.com/cameleering/cameleer/tree/main/crates/cameleer-bench/src">crates/cameleer-bench</a>, <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/java-camel">benchmarks/java-camel</a> and <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/camel-quarkus">benchmarks/camel-quarkus</a>. Raw results: <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results">benchmarks/results</a>. The full report with every caveat: <a href="../../docs/BENCHMARKS.html">BENCHMARKS</a>.</p>
   </div>
 </section>
 
@@ -289,7 +289,7 @@ scripts/cloud-bench/droplets.sh down</pre>
   <div class="wrap">
     <h2>Run your Camel routes on Cameleer</h2>
     <p class="intro">Mount a Camel YAML route and run it. No JVM, no build.</p>
-    <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml</pre>
+    <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/hello-api.camel.yaml</pre>
     <div class="cta">
       <a class="btn primary" href="../../docs/guides/getting-started.html">Get started</a>
       <a class="btn" href="../../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a>

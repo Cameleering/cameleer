@@ -23,7 +23,7 @@ performance work, docs and examples.
 ## Getting started
 
 ```text
-git clone https://github.com/pmsudhi/cameleer.git
+git clone https://github.com/cameleering/cameleer.git
 cd cameleer
 cargo build
 cargo test --workspace

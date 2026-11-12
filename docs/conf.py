@@ -36,7 +36,7 @@ myst_substitutions = {}
 suppress_warnings = ["myst.header", "myst.xref_missing", "myst.substitution"]
 
 # links that leave docs/ (README, examples/, crates/) point to GitHub
-github_url = "https://github.com/pmsudhi/cameleer"
+github_url = "https://github.com/cameleering/cameleer"
 
 html_theme = "furo"
 html_title = f"Cameleer {release}"
@@ -44,7 +44,7 @@ html_title = f"Cameleer {release}"
 # under /docs/, so search engines index one copy (Read the Docs is a mirror).
 html_baseurl = "https://cameleer.ing/docs/"
 html_theme_options = {
-    "source_repository": "https://github.com/pmsudhi/cameleer/",
+    "source_repository": "https://github.com/cameleering/cameleer/",
     "source_branch": "main",
     "source_directory": "docs/",
 }

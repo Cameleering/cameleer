@@ -91,7 +91,7 @@ The test sets the two placeholders to mock endpoints and sends two orders:
 
 ```bash
 cameleer test orders.test.yaml
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer test /routes/orders.test.yaml
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer test /routes/orders.test.yaml
 ```
 
 It prints `PASS a high-priority order takes the express lane` and `1 passed, 0 failed`, and
@@ -234,13 +234,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate route files
-        run: docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes/routes
+        run: docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer validate /routes/routes
       - name: Run route tests
-        run: docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer test /routes/routes/orders.test.yaml
+        run: docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer test /routes/routes/orders.test.yaml
 ```
 
 Both commands exit with a non-zero code on failure, which fails the job. Pin the image to a
-version tag (`pmsudhi/cameleer:0.5.1`) for repeatable builds.
+version tag (`cameleering/cameleer:0.5.1`) for repeatable builds.
 
 ## Common questions
 
@@ -286,7 +286,7 @@ coding agent can read its `--format json` output and fix what it reports.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

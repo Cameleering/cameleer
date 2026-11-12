@@ -153,7 +153,7 @@ subprocess on the same machine.
 The image runs `cameleer`; mount the folder with your route files at `/routes`. Over HTTP:
 
 ```bash
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer \
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer \
   run /routes/mcp-server.camel.yaml --mcp
 ```
 
@@ -167,7 +167,7 @@ path for the folder (`C:/Users/me/tools` on Windows):
     "orders": {
       "command": "docker",
       "args": ["run", "-i", "--rm", "-v", "/path/to/tools:/routes:ro",
-               "pmsudhi/cameleer", "run", "/routes/mcp-server.camel.yaml", "--mcp-stdio"]
+               "cameleering/cameleer", "run", "/routes/mcp-server.camel.yaml", "--mcp-stdio"]
     }
   }
 }
@@ -197,7 +197,7 @@ the health endpoint on:
 ```yaml
 services:
   tools:
-    image: pmsudhi/cameleer
+    image: cameleering/cameleer
     command: ["run", "/routes/tools.camel.yaml", "--mcp",
               "--prop", "camel.server.mcp-tags=support",
               "--prop", "camel.server.enabled=true",
@@ -249,7 +249,7 @@ fn main() -> cameleer_core::Result<()> {
 Build a small image with the route files in it, then deploy it like any container:
 
 ```dockerfile
-FROM pmsudhi/cameleer
+FROM cameleering/cameleer
 COPY tools.camel.yaml /routes/
 CMD ["run", "/routes/tools.camel.yaml", "--mcp", "--prop", "camel.server.mcp-tags=support"]
 ```
@@ -495,5 +495,5 @@ same arguments may legitimately repeat.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

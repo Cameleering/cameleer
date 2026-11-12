@@ -129,7 +129,7 @@ pub fn unavailable_hint(kind: &str, name: &str) -> Option<String> {
     if let Some(p) = pack_for(kind, name) {
         let on = PACK_FEATURES.iter().any(|(n, on)| *n == p && *on);
         return (!on).then(|| {
-            format!("`{name}` is in the {p} pack, which this cameleer binary does not include; use the `cameleer-{p}` distribution (image pmsudhi/cameleer:{p}) or rebuild cameleer-main with `--features {p}`")
+            format!("`{name}` is in the {p} pack, which this cameleer binary does not include; use the `cameleer-{p}` distribution (image cameleering/cameleer:{p}) or rebuild cameleer-main with `--features {p}`")
         });
     }
     let f = feature_for(kind, name)?;

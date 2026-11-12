@@ -44,7 +44,7 @@
  {"@type": "Question", "name": "How do I forward DICOM from a modality to a DICOMweb store?", "acceptedAnswer": {"@type": "Answer", "text": "Start a route from dicom:GATEWAY@0.0.0.0:11112 (a Storage SCP), filter on tags such as ${dicom.Modality}, and send to dicomweb:https://host/dicom-web?operation=stow. Cameleer's modality-to-cloud example also parks an instance in a folder when the upload fails and retries it later."}},
  {"@type": "Question", "name": "Which de-identification profile does Cameleer apply?", "acceptedAnswer": {"@type": "Answer", "text": "The PS3.15 Annex E basic profile (Table E.1-1, edition 2026d) and its options except the pixel options. Replacement UIDs, pseudonyms and date shifts are HMAC-SHA256 values under one key, so the output is deterministic across batches and gateways, and each instance writes a record to a hash-chained audit log."}},
  {"@type": "Question", "name": "Has it been tested with real DICOM software?", "acceptedAnswer": {"@type": "Answer", "text": "Yes: the health pack's live tests pass 10 of 10 against DCMTK 3.6.7 (as SCU and SCP, with and without TLS), Orthanc 1.12.2 (as a PACS, and its DICOMweb plugin as server and client), python-hl7 and HAPI FHIR, and 33 public pydicom test files are read and written back byte for byte. The cloud DICOM services of Azure, Google and AWS have not been tested yet."}},
- {"@type": "Question", "name": "Which Cameleer build has DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, from the next release: the image pmsudhi/cameleer:health, or cargo install cameleer-main --features health. It is not in the default image or the full build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR."}},
+ {"@type": "Question", "name": "Which Cameleer build has DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, from the next release: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. It is not in the default image or the full build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR."}},
  {"@type": "Question", "name": "Is Cameleer a PACS or a viewer?", "acceptedAnswer": {"@type": "Answer", "text": "No. It routes, filters, transforms and de-identifies images between modalities, PACS, cloud stores and AI services. It does not store an archive, render images or transcode compressed pixel data."}}]}
 </script>
 </head>
@@ -67,7 +67,7 @@
       </div>
       <a href="../../trust/">Trust</a>
       <a href="../../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -85,14 +85,14 @@
       <div class="stat"><b>PS3.15</b><span>Annex E basic profile and options, deterministic under a key, audited</span><small>pixel options not included</small></div>
       <div class="stat"><b>5</b><span>DIMSE services as SCU and SCP: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET</span></div>
     </div>
-    <p class="note"><strong>Status:</strong> in the next release, as the health pack: the image <code>pmsudhi/cameleer:health</code> or <code>cargo install cameleer-main --features health</code> (not in the default image). Not yet tested against the cloud DICOM services of Azure, Google or AWS. <a href="#limits">What is not supported</a>.</p>
+    <p class="note"><strong>Status:</strong> in the next release, as the health pack: the image <code>cameleering/cameleer:health</code> or <code>cargo install cameleer-main --features health</code> (not in the default image). Not yet tested against the cloud DICOM services of Azure, Google or AWS. <a href="#limits">What is not supported</a>.</p>
   </div>
 </section>
 
 <section class="c-sec" id="route">
   <div class="wrap">
     <h2>Modality to cloud, without losing an image</h2>
-    <p class="intro">From <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/modality-to-cloud.camel.yaml"><code>examples/medical/modality-to-cloud.camel.yaml</code></a>, which the test suite runs end to end (shortened here). The gateway is a Storage SCP for named modalities, keeps CT and MR, and uploads with STOW-RS. When the store is down, the instance is parked in a folder and a second route uploads it later, so the modality is told "stored" only for an image that was uploaded or parked.</p>
+    <p class="intro">From <a href="https://github.com/cameleering/cameleer/blob/main/examples/medical/modality-to-cloud.camel.yaml"><code>examples/medical/modality-to-cloud.camel.yaml</code></a>, which the test suite runs end to end (shortened here). The gateway is a Storage SCP for named modalities, keeps CT and MR, and uploads with STOW-RS. When the store is down, the instance is parked in a folder and a second route uploads it later, so the modality is told "stored" only for an image that was uploaded or parked.</p>
     <pre class="cmd">- route:
     id: modality-to-cloud
     from:
@@ -109,7 +109,7 @@
                       steps:
                         - to: "file:{{env:PARK_DIR:parked}}?fileName=${header.CamelDicomSopInstanceUid}.dcm"</pre>
     <pre class="cmd">docker run --rm --network host -e DICOMWEB_URL -e DICOMWEB_TOKEN \
-  -v "$PWD:/routes:ro" -v "$PWD/parked:/parked" pmsudhi/cameleer:health run /routes/modality-to-cloud.camel.yaml
+  -v "$PWD:/routes:ro" -v "$PWD/parked:/parked" cameleering/cameleer:health run /routes/modality-to-cloud.camel.yaml
 storescu -aec GATEWAY localhost 11112 *.dcm      # send a study from DCMTK</pre>
   </div>
 </section>
@@ -118,9 +118,9 @@ storescu -aec GATEWAY localhost 11112 *.dcm      # send a study from DCMTK</pre>
   <div class="wrap">
     <h2>Three tested examples</h2>
     <div class="cards">
-      <div class="card"><h3>Edge imaging gateway</h3><p>Modality to PACS or to a DICOMweb store, with store-and-forward. <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/modality-to-cloud.camel.yaml">modality-to-cloud</a></p></div>
-      <div class="card"><h3>AI inference loop</h3><p>Keep the series a model is for, de-identify it, send it to the inference service, and post the finding as a FHIR DiagnosticReport that points at the original study. The model never sees the identity. <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/ai-inference-loop.camel.yaml">ai-inference-loop</a></p></div>
-      <div class="card"><h3>De-identification pipeline</h3><p>A folder in, a folder out, with pseudonyms, shifted dates and an audit record per instance. <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/medical/deid-pipeline.camel.yaml">deid-pipeline</a></p></div>
+      <div class="card"><h3>Edge imaging gateway</h3><p>Modality to PACS or to a DICOMweb store, with store-and-forward. <a href="https://github.com/cameleering/cameleer/blob/main/examples/medical/modality-to-cloud.camel.yaml">modality-to-cloud</a></p></div>
+      <div class="card"><h3>AI inference loop</h3><p>Keep the series a model is for, de-identify it, send it to the inference service, and post the finding as a FHIR DiagnosticReport that points at the original study. The model never sees the identity. <a href="https://github.com/cameleering/cameleer/blob/main/examples/medical/ai-inference-loop.camel.yaml">ai-inference-loop</a></p></div>
+      <div class="card"><h3>De-identification pipeline</h3><p>A folder in, a folder out, with pseudonyms, shifted dates and an audit record per instance. <a href="https://github.com/cameleering/cameleer/blob/main/examples/medical/deid-pipeline.camel.yaml">deid-pipeline</a></p></div>
     </div>
   </div>
 </section>
@@ -223,10 +223,10 @@ storescu -aec GATEWAY localhost 11112 *.dcm      # send a study from DCMTK</pre>
       </div>
     </div>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/pmsudhi/cameleer/issues/new?template=feature_request.md&amp;title=Health+pack%3A+">Request a feature</a>
-      <a class="btn" href="https://github.com/pmsudhi/cameleer/issues?q=is%3Aissue+DICOM">See existing requests</a>
+      <a class="btn primary" href="https://github.com/cameleering/cameleer/issues/new?template=feature_request.md&amp;title=Health+pack%3A+">Request a feature</a>
+      <a class="btn" href="https://github.com/cameleering/cameleer/issues?q=is%3Aissue+DICOM">See existing requests</a>
     </div>
-    <p class="note">Found a bug instead? <a href="https://github.com/pmsudhi/cameleer/issues/new?template=bug_report.md">Report it here</a>. Please never attach images that identify a patient.</p>
+    <p class="note">Found a bug instead? <a href="https://github.com/cameleering/cameleer/issues/new?template=bug_report.md">Report it here</a>. Please never attach images that identify a patient.</p>
   </div>
 </section>
 
@@ -237,7 +237,7 @@ storescu -aec GATEWAY localhost 11112 *.dcm      # send a study from DCMTK</pre>
     <details><summary>How do I forward DICOM from a modality to a DICOMweb store?</summary><p>Start a route from <code>dicom:GATEWAY@0.0.0.0:11112</code> (a Storage SCP), filter on tags such as <code>${dicom.Modality}</code>, and send to <code>dicomweb:https://host/dicom-web?operation=stow</code>. The modality-to-cloud example also parks an instance in a folder when the upload fails and retries it later.</p></details>
     <details><summary>Which de-identification profile does Cameleer apply?</summary><p>The PS3.15 Annex E basic profile (Table E.1-1, edition 2026d) and its options except the pixel options. Replacement UIDs, pseudonyms and date shifts are HMAC-SHA256 values under one key, so the output is deterministic across batches and gateways, and each instance writes a record to a hash-chained audit log.</p></details>
     <details><summary>Has it been tested with real DICOM software?</summary><p>Yes: the health pack's live tests pass 10 of 10 against DCMTK 3.6.7 (as SCU and SCP, with and without TLS), Orthanc 1.12.2 (as a PACS, and its DICOMweb plugin as server and client), python-hl7 and HAPI FHIR, and 33 public pydicom test files are read and written back byte for byte. The cloud DICOM services of Azure, Google and AWS have not been tested yet.</p></details>
-    <details><summary>Which Cameleer build has DICOM?</summary><p>The health pack, from the next release: the image <code>pmsudhi/cameleer:health</code>, or <code>cargo install cameleer-main --features health</code>. It is not in the default image or the <code>full</code> build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR. <a href="../../docs/packs/health/">The health pack</a>.</p></details>
+    <details><summary>Which Cameleer build has DICOM?</summary><p>The health pack, from the next release: the image <code>cameleering/cameleer:health</code>, or <code>cargo install cameleer-main --features health</code>. It is not in the default image or the <code>full</code> build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR. <a href="../../docs/packs/health/">The health pack</a>.</p></details>
     <details><summary>Is Cameleer a PACS or a viewer?</summary><p>No. It routes, filters, transforms and de-identifies images between modalities, PACS, cloud stores and AI services. It does not store an archive, render images or transcode compressed pixel data.</p></details>
   </div>
 </section>

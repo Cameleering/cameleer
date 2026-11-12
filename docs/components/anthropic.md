@@ -87,5 +87,5 @@ write the responses by hand; `cameleer test` runs the route against them
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

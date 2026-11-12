@@ -8,7 +8,7 @@
 #
 #   cameleer run route-to-mcp-tool.camel.yaml --mcp          (http://localhost:8080/mcp)
 #   cameleer run route-to-mcp-tool.camel.yaml --mcp-stdio    (Claude Desktop starts it)
-#   docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer \
+#   docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer \
 #     run /routes/route-to-mcp-tool.camel.yaml --mcp
 - route:
     id: order-lookup

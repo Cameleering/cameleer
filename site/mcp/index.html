@@ -40,7 +40,7 @@
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
  {"@type": "Question", "name": "What is the action layer for AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "The layer between an AI agent's decisions and your systems. The model decides what should happen; a tested Cameleer route decides how, and the server enforces what a model cannot be trusted with: arguments are checked against a schema, a retried call runs once, risky actions wait for a person, business rules are checked in code, slow calls are cancelled, personal data is redacted and every call is audited. Agents reach it over MCP or from Cameleer's own agent step."}},
- {"@type": "Question", "name": "How do I turn an existing route into an MCP tool?", "acceptedAnswer": {"@type": "Answer", "text": "Change the line the route starts from to an ai-tool URI that names the tool and its arguments, for example uri: \"ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true\", and run it with cameleer run orders.camel.yaml --mcp (or --mcp-stdio for Claude Desktop, or the same command in the pmsudhi/cameleer Docker image). The route's steps stay as they are. In a Rust program, start the route with b.from(\"ai-tool:...\") and set camel.server.mcp-enabled=true."}},
+ {"@type": "Question", "name": "How do I turn an existing route into an MCP tool?", "acceptedAnswer": {"@type": "Answer", "text": "Change the line the route starts from to an ai-tool URI that names the tool and its arguments, for example uri: \"ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string&parameter.orderId.required=true\", and run it with cameleer run orders.camel.yaml --mcp (or --mcp-stdio for Claude Desktop, or the same command in the cameleering/cameleer Docker image). The route's steps stay as they are. In a Rust program, start the route with b.from(\"ai-tool:...\") and set camel.server.mcp-enabled=true."}},
  {"@type": "Question", "name": "Can a client check what a Cameleer MCP server is running?", "acceptedAnswer": {"@type": "Answer", "text": "In the next release, yes, when Cameleer runs in a confidential VM: the client sends a nonce in server/discover or initialize and gets a hardware-signed report bound to that nonce, to the server's TLS key and to a manifest of its routes, configuration and tools. Cameleer does not verify the hardware signature itself; the client uses the platform's verifier."}},
  {"@type": "Question", "name": "Is Cameleer an MCP server or an MCP client?", "acceptedAnswer": {"@type": "Answer", "text": "Both. It serves routes as MCP tools, resources and prompts, and it imports the tools of other MCP servers for routes and models to use, or to serve again as a gateway with its own checks."}},
  {"@type": "Question", "name": "What is Cameleer's MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "It serves Cameleer routes (ai-tool, ai-resource and ai-prompt endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record."}},
@@ -69,7 +69,7 @@
       </div>
       <a href="../trust/">Trust</a>
       <a href="../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -177,7 +177,7 @@
       steps:
         - setBody:
             simple: '{"orderId": "${header.orderId}", "status": "shipped"}'</pre>
-        <p>The file is <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/agents/route-to-mcp-tool.camel.yaml">examples/agents/route-to-mcp-tool.camel.yaml</a>; a test checks that it differs from the original route in that one line and serves the tool.</p>
+        <p>The file is <a href="https://github.com/cameleering/cameleer/blob/main/examples/agents/route-to-mcp-tool.camel.yaml">examples/agents/route-to-mcp-tool.camel.yaml</a>; a test checks that it differs from the original route in that one line and serves the tool.</p>
       </div>
       <div class="pane">
         <h3>Then serve it with one command</h3>
@@ -187,7 +187,7 @@ cameleer run orders.camel.yaml --mcp-stdio    # for Claude Desktop
 
 # Docker
 docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" \
-  pmsudhi/cameleer run /routes/orders.camel.yaml --mcp
+  cameleering/cameleer run /routes/orders.camel.yaml --mcp
 
 # the Rust crate (cameleer-main)
 main.set_property("camel.server.mcp-enabled", "true");
@@ -342,7 +342,7 @@ cameleer run orders.camel.yaml --mcp-stdio --mcp-expose rest:*,route:billing-*</
 <section class="c-sec faq" id="faq">
   <div class="wrap">
     <h2>Common questions</h2>
-    <details><summary>How do I turn an existing route into an MCP tool?</summary><p>Change the line the route starts from to an <code>ai-tool</code> URI that names the tool and its arguments, for example <code>uri: "ai-tool:lookup_order?description=Look up an order by id&amp;parameter.orderId=string&amp;parameter.orderId.required=true"</code>, and run it with <code>cameleer run orders.camel.yaml --mcp</code> (or <code>--mcp-stdio</code> for Claude Desktop, or the same command in the <code>pmsudhi/cameleer</code> Docker image). The route's steps stay as they are. In a Rust program, start the route with <code>b.from("ai-tool:...")</code> and set <code>camel.server.mcp-enabled=true</code>.</p></details>
+    <details><summary>How do I turn an existing route into an MCP tool?</summary><p>Change the line the route starts from to an <code>ai-tool</code> URI that names the tool and its arguments, for example <code>uri: "ai-tool:lookup_order?description=Look up an order by id&amp;parameter.orderId=string&amp;parameter.orderId.required=true"</code>, and run it with <code>cameleer run orders.camel.yaml --mcp</code> (or <code>--mcp-stdio</code> for Claude Desktop, or the same command in the <code>cameleering/cameleer</code> Docker image). The route's steps stay as they are. In a Rust program, start the route with <code>b.from("ai-tool:...")</code> and set <code>camel.server.mcp-enabled=true</code>.</p></details>
     <details><summary>Can a client check what a Cameleer MCP server is running?</summary><p>In the next release, yes, when Cameleer runs in a confidential VM: the client sends a nonce in <code>server/discover</code> or <code>initialize</code> and gets a hardware-signed report bound to that nonce, to the server's TLS key and to a manifest of its routes, configuration and tools. Cameleer does not verify the hardware signature itself; the client uses the platform's verifier. See <a href="../trust/">trust</a>.</p></details>
     <details><summary>Is Cameleer an MCP server or an MCP client?</summary><p>Both. It serves routes as MCP tools, resources and prompts, and it imports the tools of other MCP servers for routes and models to use, or to serve again as a gateway with its own checks.</p></details>
     <details><summary>What is Cameleer's MCP server?</summary><p>It serves Cameleer routes (<code>ai-tool</code>, <code>ai-resource</code> and <code>ai-prompt</code> endpoints, with Apache Camel's option names) to MCP clients such as Claude Desktop, VS Code, Cursor and agent frameworks, over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras. Every call goes through an envelope: schema checks, deduplication, approvals, rate limits, circuit breakers, a timeout that cancels the route, redaction and a hash-chained audit record.</p></details>
@@ -357,10 +357,10 @@ cameleer run orders.camel.yaml --mcp-stdio --mcp-expose rest:*,route:billing-*</
   <div class="wrap">
     <h2>Try the shop in Claude Desktop</h2>
     <p class="intro">The shop example is 19 tools, three policies and two prompts in one YAML file. Run it over HTTP, or let Claude Desktop start it (configuration in the example's README).</p>
-    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples/agents/mcp-shop
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples/agents/mcp-shop
 cameleer run shop.camel.yaml --properties application.properties
 # or, with nothing installed but Docker:
-docker run --rm -p 18190:18190 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/shop.camel.yaml \
+docker run --rm -p 18190:18190 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/shop.camel.yaml \
   --properties /routes/application.properties --prop acme.dir=/routes --prop camel.server.host=0.0.0.0</pre>
     <div class="cta">
       <a class="btn primary" href="../docs/guides/mcp.html">Cameleer MCP guide</a>
