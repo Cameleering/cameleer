@@ -182,6 +182,12 @@ MCP server on the official TypeScript SDK 1.32.2 (Node.js 22.23.4, written as th
 documentation shows), and Cameleer's `main` branch as a baseline for regressions. Raw records:
 [benchmarks/results/2026-11-06-linux-agents](../benchmarks/results/2026-11-06-linux-agents/).
 
+The MCP rows below come from a rerun on 2026-11-12 (Cameleer 0.5.1 at `306a5df`, the same droplet
+type and plan, Apache Camel, Cameleer and the TypeScript SDK in one session, the servers swapping
+roles halfway; each figure is the mean of the two phases). Raw records:
+[benchmarks/results/2026-11-12-linux-mcp](../benchmarks/results/2026-11-12-linux-mcp/). The first
+run's figures, and why the TypeScript number changed, are under the table.
+
 ### MCP tool calls over the network
 
 One tool, `lookup_order`, answers a JSON document; every side exposes it the same way. The
@@ -190,16 +196,40 @@ with `Mcp-Session-Id`.
 
 | scenario | Cameleer | Apache Camel `camel-mcp-server` (JVM) | MCP TypeScript SDK (Node.js) |
 |---|---:|---:|---:|
-| `tools/call` in a session (2025-06-18), throughput | **41,620 calls/s** | 22,458 calls/s | 1,536 calls/s |
-| p99 latency | 5.9 ms | 5.2 ms | 79 ms |
-| peak memory | **53 MB** | 317 MB | 214 MB |
-| stateless `tools/call` (2026-07-28), throughput | **51,700 calls/s** | not offered | not offered |
-| stateless, p99 / peak memory | 5.7 ms / 26 MB | | |
+| `tools/call` in a session (2025-06-18), throughput | **39,922 calls/s** | 22,604 calls/s | 2,257 calls/s |
+| p99 latency | 6.3 ms | 5.2 ms | 55 ms |
+| peak memory | **56 MB** | 289 MB | 197 MB |
+| stateless `tools/call` (2026-07-28), throughput | **50,514 calls/s** | not offered | not offered |
+| stateless, p99 / peak memory | 6.0 ms / 26 MB | | |
 
-Cameleer serves 1.85x Camel's MCP throughput in a sixth of the memory, and 27x the TypeScript
-SDK. Every Cameleer call goes through the whole tool envelope (argument schema check, rate-limit
+Cameleer serves 1.77x Camel's MCP throughput in a fifth of the memory, and 17.7x the TypeScript
+SDK; Camel's p99 is lower (5.2 ms against 6.3 ms). Every Cameleer call goes through the whole tool envelope (argument schema check, rate-limit
 and breaker bookkeeping, a hash-chained audit record); Camel checks required arguments only and
 the SDK server checks the schema.
+
+### The first run, and why the TypeScript number changed
+
+The first run (2026-11-06) measured Cameleer at 41,620 calls/s, p99 5.9 ms and 53 MB, Camel at
+22,458 calls/s, 5.2 ms and 317 MB, the TypeScript SDK at 1,536 calls/s, 79 ms and 214 MB, and
+stateless calls at 51,700 calls/s, 5.7 ms and 26 MB. Cameleer and Camel moved by 4% and 1%, which
+is within the difference between the two machines of one run (Cameleer ran 41,210 and 38,634
+calls/s on them).
+
+The TypeScript number moved by 47%, and that is not noise. The baseline server pinned `zod`
+3.25.76, and the SDK's schema check is faster with zod 4. Run on one droplet, alternating three
+rounds each, with the other settings the same:
+
+| | zod 3.25.76 | zod 4.6.7 |
+|---|---:|---:|
+| throughput, three rounds | 1,557 / 1,572 / 1,636 calls/s | 2,537 / 2,578 / 2,598 calls/s |
+| mean | 1,588 calls/s | 2,571 calls/s (1.62x) |
+| p99 | 73 to 74 ms | 47 to 49 ms |
+| peak memory | about 212 MB | about 197 MB |
+
+The zod 3 build reproduces the first run's 1,536 calls/s, so the machines were not the difference.
+The baseline now uses zod 4 (`scripts/cloud-bench/mcp-ts`), which is what the SDK's current
+documentation installs, and the first run's 27x became 17.7x. Raw records:
+[zod-ab](../benchmarks/results/2026-11-12-linux-mcp/zod-ab/).
 
 ### The tool envelope
 
