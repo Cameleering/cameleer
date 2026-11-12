@@ -2,11 +2,11 @@
 
 > `cameleer` is Cameleer's command line, a native counterpart of Apache Camel's Camel JBang: `cameleer run` runs route files, `init` writes a starter route, `validate` checks routes without running them, `test` runs route tests, `export` turns routes into a Rust project, and `ps`, `get`, `cmd`, `log`, `trace`, `stop` and `tool` manage integrations that are already running. This page lists every command and every flag.
 
-**Applies to:** the `cameleer` binary (`cargo install cameleer-main`, the Docker image `pmsudhi/cameleer`) · **Apache Camel:** [Camel JBang](https://camel.apache.org/manual/camel-jbang.html)
+**Applies to:** the `cameleer` binary (`cargo install cameleer-main`, the Docker image `cameleering/cameleer`) · **Apache Camel:** [Camel JBang](https://camel.apache.org/manual/camel-jbang.html)
 
 The commands follow Camel JBang's names. Camel JBang's own command is `camel`; Cameleer's is
 `cameleer`, so both can be installed side by side. In Docker the image's entry point is the
-binary, so `docker run pmsudhi/cameleer <command> ...` runs the same commands.
+binary, so `docker run cameleering/cameleer <command> ...` runs the same commands.
 
 ## Commands at a glance
 
@@ -82,7 +82,7 @@ cameleer run --dev                                  # every route file here, rel
 cameleer run job.camel.yaml --max-messages 1        # a run-once job
 cameleer run tools.camel.yaml --mcp-stdio           # an MCP server for a desktop client
 cameleer run orders.camel.yaml --mcp-expose rest:*  # its REST API as MCP tools, no route edits
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml --console
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/orders.camel.yaml --console
 ```
 
 Each running integration writes status and log files to `$CAMEL_HOME` (default `~/.camel`); the
@@ -299,7 +299,7 @@ JBang. The subcommands have the same names.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

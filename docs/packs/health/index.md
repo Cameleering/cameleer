@@ -2,7 +2,7 @@
 
 > The health pack (`cameleer-health`) makes Cameleer an open-source healthcare integration engine: HL7 v2 over MLLP, FHIR R4, DICOM over DIMSE and DICOMweb, and PS3.15 de-identification, as Apache Camel routes in the same single `cameleer` binary.
 
-**Crate:** `cameleer-health` 0.6.0 · **Cargo feature:** [`health`](../../guides/build-features.md) (not in `full`) · **Image:** `pmsudhi/cameleer:health`
+**Crate:** `cameleer-health` 0.6.0 · **Cargo feature:** [`health`](../../guides/build-features.md) (not in `full`) · **Image:** `cameleering/cameleer:health`
 
 For an overview of what healthcare teams build with it, how it compares with an interface engine
 such as Mirth Connect, and what it does not do yet, see
@@ -12,7 +12,7 @@ such as Mirth Connect, and what it does not do yet, see
 
 | you use | command |
 |---|---|
-| Docker | `docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer:health run /routes/route.camel.yaml` (also `:<version>-health`, and on ghcr.io) |
+| Docker | `docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer:health run /routes/route.camel.yaml` (also `:<version>-health`, and on ghcr.io) |
 | cargo | `cargo install cameleer-main --features health` |
 | a small edge build | `cargo build --profile dist -p cameleer-main --no-default-features --features "health,http2"` |
 | a release archive | `cameleer-health-<version>-<target>.tar.gz` (or `.zip`) |
@@ -29,7 +29,7 @@ releases, a Sigstore bundle (`.sigstore.json`) per file, signed by the release w
 
 ```sh
 sha256sum -c cameleer-health-<version>-<target>.tar.gz.sha256
-cosign verify-blob   --bundle cameleer-health-<version>-<target>.tar.gz.sigstore.json   --certificate-identity-regexp '^https://github.com/pmsudhi/cameleer/\.github/workflows/archives\.yml@refs/tags/v'   --certificate-oidc-issuer https://token.actions.githubusercontent.com   cameleer-health-<version>-<target>.tar.gz
+cosign verify-blob   --bundle cameleer-health-<version>-<target>.tar.gz.sigstore.json   --certificate-identity-regexp '^https://github.com/cameleering/cameleer/\.github/workflows/archives\.yml@refs/tags/v'   --certificate-oidc-issuer https://token.actions.githubusercontent.com   cameleer-health-<version>-<target>.tar.gz
 ```
 
 The SBOM lists exactly the crates compiled into that binary: the `cameleer-*` crates and the
@@ -88,7 +88,7 @@ no importer for Mirth channels, and Mirth's JavaScript transformers do not run.
 
 ### Which image has HL7 and FHIR now?
 
-The health pack image `pmsudhi/cameleer:health` (next release), or a build with
+The health pack image `cameleering/cameleer:health` (next release), or a build with
 `--features health`. The default image and `full` no longer include `mllp`, `hl7`, `hl7terser`,
 `fhir`, `fhirJson` and `fhirXml`; up to 0.5.1 they are in the default image.
 
@@ -106,7 +106,7 @@ cleared by the FDA.
 
 ### How do I ask for a missing feature?
 
-[Open a feature request](https://github.com/pmsudhi/cameleer/issues/new?template=feature_request.md&title=Health+pack%3A+)
+[Open a feature request](https://github.com/cameleering/cameleer/issues/new?template=feature_request.md&title=Health+pack%3A+)
 with your workflow, the systems involved and what you use today; it is answered and worked on in
 the issue.
 
@@ -114,7 +114,7 @@ the issue.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

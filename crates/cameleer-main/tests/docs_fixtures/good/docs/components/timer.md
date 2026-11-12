@@ -58,7 +58,7 @@ The same kind of route with the endpoint options as a `parameters` map:
 ## Run it with Docker
 
 ```sh
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/heartbeat.camel.yaml
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer run /routes/heartbeat.camel.yaml
 ```
 
 A Compose file is not a route, so it is marked `not-camel`:
@@ -67,7 +67,7 @@ A Compose file is not a route, so it is marked `not-camel`:
 ```yaml
 services:
   heartbeat:
-    image: pmsudhi/cameleer
+    image: cameleering/cameleer
 ```
 
 ## Common questions

@@ -14,11 +14,11 @@ Pick one of three ways. They run the same routes.
 
 ### Docker
 
-The image `pmsudhi/cameleer` on Docker Hub is a single binary on a distroless base, for
+The image `cameleering/cameleer` on Docker Hub is a single binary on a distroless base, for
 `linux/amd64` and `linux/arm64`, about 20 MB to download. Mount your route files and run them:
 
 ```sh
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello.camel.yaml
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/hello.camel.yaml
 ```
 
 It runs as a non-root user, works with `--read-only`, and stops gracefully on `SIGTERM`. The
@@ -36,7 +36,7 @@ cameleer run hello.camel.yaml
 This installs the `cameleer` command with every component. Its subcommands follow Camel JBang (`run`, `init`, `ps`, `stop`, `log`, ...). To build from source:
 
 ```sh
-git clone https://github.com/pmsudhi/cameleer && cd cameleer
+git clone https://github.com/cameleering/cameleer && cd cameleer
 cargo build --release -p cameleer-main
 target/release/cameleer run examples/hello-api.camel.yaml
 ```
@@ -113,7 +113,7 @@ The REST DSL declares HTTP endpoints and hands each request to a route. Save thi
 ```
 
 ```sh
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/hello-api.camel.yaml
 curl localhost:8080/hello/Ada      # {"greeting": "Hello, Ada!"}
 ```
 
@@ -260,7 +260,7 @@ To standard output. Set the level with the `CAMEL_LOG_LEVEL` environment variabl
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

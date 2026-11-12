@@ -689,7 +689,7 @@ fn docs_pages_invite_fixes() {
             continue;
         }
         let text = std::fs::read_to_string(&f).unwrap();
-        let ok = text.contains("## Found a problem?") && text.contains("https://github.com/pmsudhi/cameleer/issues/new") && text.contains("pull request");
+        let ok = text.contains("## Found a problem?") && text.contains("https://github.com/cameleering/cameleer/issues/new") && text.contains("pull request");
         if !ok {
             missing.push(rel(&root, &f));
         }

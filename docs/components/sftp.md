@@ -111,7 +111,7 @@ ssh-keyscan -p 22 site7.example.com > known_hosts
 docker run --rm --user "$(id -u):$(id -g)" -e SFTP_HOST=site7.example.com:22 -e SFTP_USER -e SFTP_PASSWORD \
   -e KNOWN_HOSTS=/routes/known_hosts -e LOCAL_DIR=/data/incoming -v "$PWD:/data" \
   -v "$PWD/site-pickup.camel.yaml:/routes/site-pickup.camel.yaml:ro" -v "$PWD/known_hosts:/routes/known_hosts:ro" \
-  pmsudhi/cameleer run /routes/site-pickup.camel.yaml
+  cameleering/cameleer run /routes/site-pickup.camel.yaml
 ```
 
 ## Common questions
@@ -142,7 +142,7 @@ file when it is complete, and match only the final names with `include`.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

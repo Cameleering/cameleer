@@ -24,7 +24,7 @@ Every fact is tagged:
 | Separate repository now? | **No.** Same workspace, separate crate, separate distribution. Move it out only when the criteria in section 6 say so [judgment] |
 | Runtime-loadable packs (dylib or WASM)? | **No.** Rust has no stable ABI, and a std-only WASM runtime is a large project. Third-party extensions out of process use the MCP client that already exists [judgment] |
 | Is the pack in `full`? | **No.** `full` means "the general integration engine". The pack is the cargo feature `health`, and the distribution is `cameleer-health` [judgment] |
-| What does a user install? | `cargo install cameleer-main --features health`, or the image `pmsudhi/cameleer:health` (and `ghcr.io/.../cameleer:<version>-health`), or the `cameleer-health-<version>-<target>` archive [judgment] |
+| What does a user install? | `cargo install cameleer-main --features health`, or the image `cameleering/cameleer:health` (and `ghcr.io/.../cameleer:<version>-health`), or the `cameleer-health-<version>-<target>` archive [judgment] |
 | Extension point in core | A small `Pack` trait plus `PackInfo` metadata in `cameleer_core::pack`. The metadata replaces three hard-coded tables (section 4.3) [judgment] |
 | Versioning | The pack crate has its own version (starting `0.6.0`), depends on `cameleer-core = "0.6"`, and can ship patch releases on its own [judgment] |
 | Per pack release | CycloneDX SBOM, cosign signature, DICOM Conformance Statement, test report [judgment] |
@@ -181,7 +181,7 @@ things are missing, and each one is a place where adding a domain edits core fil
   (see `docs/design/medical/dicom-and-healthcare.md` section 4) [verified in that document]. The
   release archives also need signing (`cosign sign-blob`) and a published checksum.
 - **OCI artifacts.** Packs are compiled in, so the OCI unit is the distribution image
-  (`pmsudhi/cameleer:health`). OCI artifacts for pack files would only matter for runtime packs,
+  (`cameleering/cameleer:health`). OCI artifacts for pack files would only matter for runtime packs,
   which are rejected.
 - **SemVer ranges.** In Cargo, `"0.6"` means `>=0.6.0, <0.7.0`: on 0.x a minor bump is breaking. A
   pack built against `cameleer-core 0.6` works with every 0.6.y [docs, Cargo book].
@@ -293,7 +293,7 @@ separate repository under a different licence (section 5 criterion 3) [judgment]
 | crate | **`cameleer-health`** (module path `cameleer_health`) |
 | cargo feature in `cameleer-main` | **`health`** (not in `full`) |
 | crate features inside `cameleer-health` | `hl7`, `fhir`, `dicom`, all on by default |
-| distribution | **`cameleer-health`**: archive `cameleer-health-<version>-<target>.tar.gz`/`.zip`, image tags `pmsudhi/cameleer:health` and `:<version>-health`, same on ghcr.io |
+| distribution | **`cameleer-health`**: archive `cameleer-health-<version>-<target>.tar.gz`/`.zip`, image tags `cameleering/cameleer:health` and `:<version>-health`, same on ghcr.io |
 | binary inside the distribution | still `cameleer` (same CLI, more components), so docs and scripts are the same |
 | future packs | `cameleer-finance` (SWIFT MT, ISO 20022, FIX), `cameleer-industrial` (OPC UA, Modbus, Sparkplug B), `cameleer-energy` (IEC 61850, DNP3) [judgment: examples only] |
 
@@ -396,8 +396,8 @@ crates and is fragile; one explicit line per pack is enough.
 
 | user | command |
 |---|---|
-| general integration | `cargo install cameleer-main`, image `pmsudhi/cameleer:latest` (no health code) |
-| healthcare | `cargo install cameleer-main --features health`, image `pmsudhi/cameleer:health`, archive `cameleer-health-<version>-<target>` |
+| general integration | `cargo install cameleer-main`, image `cameleering/cameleer:latest` (no health code) |
+| healthcare | `cargo install cameleer-main --features health`, image `cameleering/cameleer:health`, archive `cameleer-health-<version>-<target>` |
 | a small healthcare edge build | `cargo build --profile dist -p cameleer-main --no-default-features --features "health,http2"` |
 | a Rust embedder | `cameleer-core` + `cameleer-health` (crate features `dicom` only, say) and `ctx.add_pack(&cameleer_health::HEALTH)` |
 
@@ -475,7 +475,7 @@ For each `cameleer-health` release:
 
 | risk | mitigation |
 |---|---|
-| Users of `pmsudhi/cameleer:latest` with an MLLP or FHIR route break on upgrade | Owner says there are none; the startup error names the pack and image; release notes say so |
+| Users of `cameleering/cameleer:latest` with an MLLP or FHIR route break on upgrade | Owner says there are none; the startup error names the pack and image; release notes say so |
 | DICOM's size and the size argument are not measured | Measure `--no-default-features --features health` against `core`, and `full` against `full,health`, before writing size claims [unverified today] |
 | Pack and core drift apart | The pack is in the workspace, so `cargo test --workspace` builds both on every commit |
 | Helper moves widen the change | Do them first as a separate commit with no behaviour change; the existing protocols, amqp and soap tests cover them |

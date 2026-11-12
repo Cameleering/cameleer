@@ -2,7 +2,7 @@
 
 > "Which out-of-stock products have open orders waiting on them?" needs stock, orders and order lines. Claude chains the shop's read-only tools itself, 6.6 calls per request on average and up to 26, and answers in two to four turns. In the field test Claude Opus 5.5 got 21 of 24 such runs right; the three misses were a miscounted total and an unchecked aside, not wrong tool calls.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -158,5 +158,5 @@ paid orders over MCP.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

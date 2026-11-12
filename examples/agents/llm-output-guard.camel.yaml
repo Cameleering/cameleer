@@ -8,7 +8,7 @@
 #
 # Run with Docker (from the folder holding this file and schemas/):
 #   docker run --rm -p 8080:8080 -e OPENAI_API_KEY -v "$PWD:/routes:ro" \
-#     pmsudhi/cameleer run /routes/llm-output-guard.camel.yaml
+#     cameleering/cameleer run /routes/llm-output-guard.camel.yaml
 # Try:
 #   curl -XPOST localhost:8080/extract -d 'Invoice 2024-118 from ACME GmbH, total 120.50 EUR'
 - route:

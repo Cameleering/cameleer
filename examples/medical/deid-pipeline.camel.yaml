@@ -1,4 +1,4 @@
-# Needs the health pack: the image pmsudhi/cameleer:health, or cameleer-main built with
+# Needs the health pack: the image cameleering/cameleer:health, or cameleer-main built with
 # `--features health` (docs/packs/health/index.md).
 #
 # De-identification pipeline for AI training data: DICOM files dropped into a folder are
@@ -14,7 +14,7 @@
 #   export DEID_KEY=change-me    # keep it in a vault: {{vault:...}} placeholders work too
 #   mkdir -p in out
 #   docker run --rm -e DEID_KEY -v "$PWD:/routes:ro" -v "$PWD/in:/in" -v "$PWD/out:/out" \
-#     pmsudhi/cameleer:health run /routes/deid-pipeline.camel.yaml \
+#     cameleering/cameleer:health run /routes/deid-pipeline.camel.yaml \
 #     --property camel.ai.audit.file=/out/deid-audit.jsonl
 - route:
     id: deid-pipeline

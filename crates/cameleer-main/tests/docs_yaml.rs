@@ -312,7 +312,7 @@ fn pages_follow_the_docs_template() {
         assert!(text.contains("\n## Common questions\n"), "{}: Common questions", p);
         let found = text.find("\n## Found a problem?\n").unwrap_or_else(|| panic!("{}: Found a problem? section", p));
         assert!(!text[found + 5..].contains("\n## "), "{}: Found a problem? must be the last section", p);
-        assert!(text.contains("https://github.com/pmsudhi/cameleer/issues/new") && text.contains("pull request"), "{}", p);
+        assert!(text.contains("https://github.com/cameleering/cameleer/issues/new") && text.contains("pull request"), "{}", p);
     }
 }
 

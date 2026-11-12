@@ -2,7 +2,7 @@
 
 > The model decides what; a tested route decides how. Cameleer sits between AI agents and your systems: agents call it over MCP from Claude, IDE assistants and agent frameworks, each action runs as a route, and the server enforces what a model can't be trusted with: arguments checked, retries run once, risky actions approved by a person, slow calls cancelled, every call audited. In a field test with 40 real requests, Claude Opus 5.5 completed 196 of 200 runs correctly, and none ran an action twice, broke a rule or ran a risky call without a yes.
 
-**Cargo feature:** [`ai`](build-features.md) · **Examples:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop), [`examples/agents/mcp-gateway`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-gateway)
+**Cargo feature:** [`ai`](build-features.md) · **Examples:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop), [`examples/agents/mcp-gateway`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-gateway)
 
 This page is the map: why agents need an action layer, how Cameleer's MCP server works, where it
 runs, how it compares, and one page per use case with the requests people typed, what happened,
@@ -83,7 +83,7 @@ Then one command serves it, from the CLI, Docker or your own Rust program:
 
 ```bash
 cameleer run orders.camel.yaml --mcp
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml --mcp
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/orders.camel.yaml --mcp
 ```
 
 ```rust
@@ -133,7 +133,7 @@ The official MCP conformance suite passes all 39 scenarios for 2025-11-25 and al
 Each page shows requests a shop's staff typed into Claude, the tool calls Claude made, what
 came back, and the route that made it safe. The requests come from the
 [field test](mcp-shop-example.md#how-it-was-tested); the routes are the
-[shop example](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) and run
+[shop example](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) and run
 in Cameleer's test suite (`crates/cameleer-main/tests/mcp_shop.rs`).
 
 | use case | what it shows | field test (Opus 5.5) |
@@ -220,5 +220,5 @@ fixes it led to are in [what the test changed](mcp-shop-example.md#what-the-test
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

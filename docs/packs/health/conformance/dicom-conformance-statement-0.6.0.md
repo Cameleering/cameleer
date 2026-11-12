@@ -2,7 +2,7 @@
 
 > This statement describes the DICOM conformance of the Cameleer health pack 0.6.0 (`cameleer-health`): the DIMSE services it offers as SCU and SCP, its association and transfer syntax policies, DICOMweb, character sets, and its security and de-identification support, in the layout of DICOM PS3.2.
 
-**Pack:** [health](../index.md) (feature `health`) · **Product:** Cameleer (`cameleer` binary built with the health pack, or `pmsudhi/cameleer:health`) · **Date:** 2026-11-10
+**Pack:** [health](../index.md) (feature `health`) · **Product:** Cameleer (`cameleer` binary built with the health pack, or `cameleering/cameleer:health`) · **Date:** 2026-11-10
 
 The tables marked as generated are produced from the code by
 `crates/cameleer-health/tests/dicom_conformance_statement.rs`, which fails when this document no
@@ -500,7 +500,7 @@ None defined. Private Storage SOP classes of other products are accepted and for
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

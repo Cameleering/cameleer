@@ -223,7 +223,7 @@ fn pages_follow_the_template_and_snippets_are_verbatim() {
                 assert!(this_file.contains(normalized.trim()), "{}: Rust snippet not copied verbatim into docs_messaging.rs:\n{}", name, body);
             }
             if lang == "sh" {
-                assert!(body.contains("pmsudhi/cameleer") || !body.contains("docker"), "{}: docker image", name);
+                assert!(body.contains("cameleering/cameleer") || !body.contains("docker"), "{}: docker image", name);
             }
         }
         assert!(yaml_blocks >= 1, "{}: no example", name);

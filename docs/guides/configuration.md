@@ -27,7 +27,7 @@ In the Docker image the working directory is `/routes`, so an `application.prope
 mounted folder is read:
 
 ```bash
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/orders.camel.yaml
 ```
 
 ## application.properties and application.yaml
@@ -338,5 +338,5 @@ Any endpoint option, as `camel.component.<scheme>.<option>`; the options are lis
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

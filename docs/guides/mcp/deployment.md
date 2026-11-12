@@ -2,7 +2,7 @@
 
 > The same route file serves MCP from a desktop, a server, Docker or Kubernetes, Cloud Run, AWS Lambda or an edge gateway. Choose stdio when the client starts the server on the same machine and Streamable HTTP when clients connect to it; choose the 2026-07-28 era when requests may land on different instances. The server commands on this page were run; the client configurations were not checked inside the clients themselves.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Examples:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop), [`examples/edge/mcp-gateway-tools.camel.yaml`](https://github.com/pmsudhi/cameleer/blob/main/examples/edge/mcp-gateway-tools.camel.yaml) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Examples:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop), [`examples/edge/mcp-gateway-tools.camel.yaml`](https://github.com/cameleering/cameleer/blob/main/examples/edge/mcp-gateway-tools.camel.yaml) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## Choose an environment
 
@@ -41,7 +41,7 @@ so stdout carries only protocol messages):
   "mcpServers": {
     "acme-outdoor": {
       "command": "docker",
-      "args": ["run", "-i", "--rm", "-v", "/path/to/mcp-shop:/routes:ro", "pmsudhi/cameleer",
+      "args": ["run", "-i", "--rm", "-v", "/path/to/mcp-shop:/routes:ro", "cameleering/cameleer",
                "run", "/routes/shop.camel.yaml", "--properties", "/routes/application.properties",
                "--prop", "acme.dir=/routes", "--mcp-stdio"]
     }
@@ -63,7 +63,7 @@ cameleer run shop.camel.yaml --properties application.properties
 In a container, bind to all interfaces (the example's properties use `127.0.0.1`):
 
 ```bash
-docker run --rm -p 18190:18190 -v "$PWD:/routes:ro" pmsudhi/cameleer \
+docker run --rm -p 18190:18190 -v "$PWD:/routes:ro" cameleering/cameleer \
   run /routes/shop.camel.yaml --properties /routes/application.properties \
   --prop acme.dir=/routes --prop camel.server.host=0.0.0.0
 ```
@@ -92,7 +92,7 @@ above 30 °C waiting for an operator, run on the gateway itself:
 
 ```bash
 docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true \
-  -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" pmsudhi/cameleer \
+  -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" cameleering/cameleer \
   run /routes/mcp-gateway-tools.camel.yaml --mcp
 docker exec gw cameleer tool approve <handle>
 ```
@@ -118,5 +118,5 @@ The route and its test are in the
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

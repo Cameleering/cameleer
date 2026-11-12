@@ -117,7 +117,7 @@ Attachments travel in the `CamelAttachments` exchange property.
 
 ```sh
 docker run --rm -p 8080:8080 -e CALC_ADDRESS=soap.example.com:9000 -e CALC_WSDL=/routes/calculator.wsdl \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/calc-json-bridge.camel.yaml
+  -v "$PWD:/routes:ro" cameleering/cameleer run /routes/calc-json-bridge.camel.yaml
 curl -XPOST -H 'Content-Type: application/json' -d '{"a": 2, "b": 3}' localhost:8080/calc/add
 ```
 
@@ -150,7 +150,7 @@ Yes: `dataFormat=PAYLOAD` gives the body element XML; `dataFormat=RAW` gives the
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

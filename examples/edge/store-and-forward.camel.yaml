@@ -10,7 +10,7 @@
 # Run with Docker (the buffer is the only thing written, on its own volume):
 #   docker run --rm --network host --read-only -e MQTT_BROKER -e UPLINK_URL -e GATEWAY_ID \
 #     -e BUFFER_DIR=/buffer -v cameleer-buffer:/buffer -v "$PWD:/routes:ro" \
-#     pmsudhi/cameleer run /routes/store-and-forward.camel.yaml
+#     cameleering/cameleer run /routes/store-and-forward.camel.yaml
 - route:
     id: telemetry-in
     from:

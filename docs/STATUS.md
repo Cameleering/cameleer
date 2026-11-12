@@ -8,16 +8,16 @@ was added is `7de6166`._
 - **Renamed rust-camel to Cameleer** after v0.1.0. Another active project, kennycallado/rust-camel,
   uses the same name and owns `camel-core` and most `camel-*` names on crates.io; "CAMEL" is also
   the CAMEL-AI agent framework. Crates are now `cameleer-*` (module paths `cameleer_*`), the repo
-  is `pmsudhi/cameleer` (GitHub redirects the old URL), the site is
+  is `cameleering/cameleer` (GitHub redirects the old URL), the site is
   https://cameleer.ing/. The CLI is `cameleer` (no `camel` binary: that is Apache Camel's CLI name).
-- **Container image:** `pmsudhi/cameleer` on Docker Hub and `ghcr.io/pmsudhi/cameleer`
+- **Container image:** `cameleering/cameleer` on Docker Hub and `ghcr.io/cameleering/cameleer`
   (linux/amd64, linux/arm64), a glibc binary on distroless/cc (static musl measured 3-17% slower:
   direct -3%, seda InOut -10%, cbr -8%, splitagg -17%, same container, 2 rounds), built by `.github/workflows/container.yml` on `v*` tags (manual runs publish
   `edge`).
 - **crates.io:** 19 `cameleer-*` crates, published with `scripts/publish-crates.sh` (dependency
   order, skips versions already there, waits out crates.io's new-crate rate limit of about one
   per 10 minutes). `cameleer-bench` is `publish = false`. The account needs a verified email.
-- **Docker Hub:** `pmsudhi/cameleer`. CI pushes there when the `DOCKERHUB_TOKEN` secret is set;
+- **Docker Hub:** `cameleering/cameleer`. CI pushes there when the `DOCKERHUB_TOKEN` secret is set;
   `.github/workflows/dockerhub-description.yml` syncs `docker/README.dockerhub.md` as the overview.
 - **Deployment guide:** `docs/DEPLOYMENT.md` (Docker, Compose, Kubernetes, Cloud Run, AWS Lambda,
   smaller builds). Images run
@@ -443,6 +443,19 @@ operations, association pooling; WADO frames/rendered/thumbnail, UPS-RS; pixel c
 JPEG-LS, JPEG 2000, RLE) and with them Clean Pixel Data; Encrypted Attributes Sequence;
 `fhirDeidentify`; PS3.15 A.5 (ATNA) audit messages; a PS3.2 conformance statement; fuzzing of the
 Part 10, PDU and multipart parsers; throughput benchmarks against dcm4che, DCMTK and Orthanc.
+## Move to the `cameleering` organization (2026-11-12, branch `org-move`)
+
+Plan in `docs/design/cameleering-org-move.md` (approved; supersedes
+`docs/design/github-organization.md`): the repository, simoom and karez move to the GitHub org
+`cameleering`, the images to `docker.io/cameleering/cameleer` and `ghcr.io/cameleering/cameleer`,
+crates.io gets the team `github:cameleering:release`; then 0.6.0 is released from the org.
+Branch `org-move` has the rewritten references (`scripts/org-move-rewrite.py`, history in
+`CHANGELOG.md` and `benchmarks/results/` left as recorded) and explicit image namespaces in
+`container.yml` (`GHCR_NAMESPACE`, `DOCKERHUB_NAMESPACE`, login account from the
+`DOCKERHUB_USERNAME` repository variable). It is merged on transfer day, after the owner has
+created the org, its teams, the org-level verification of cameleer.ing and the Docker Hub
+namespace and token. Nothing on GitHub, Docker Hub or crates.io has changed yet.
+
 ## Unreleased since 0.5.1 (2026-11-09, `main`)
 
 - **`--mcp-expose`** (`camel.server.mcp-expose-routes`): existing routes served as MCP tools with no
@@ -582,7 +595,7 @@ Docker, or the lack of real accounts.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

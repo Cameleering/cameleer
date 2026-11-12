@@ -315,7 +315,7 @@ summary: 31 tracked (29 ok, 1 port-the-fix, 1 divergence), 1 new clone, 2 remove
 
 A nightly workflow in Cameleer, `.github/workflows/duplicates.yml`:
 
-1. Check out `pmsudhi/cameleer` at `main`, and `pmsudhi/simoom` (public) at `main` into
+1. Check out `cameleering/cameleer` at `main`, and `cameleering/simoom` (public) at `main` into
    `simoom/`. Once Cameleer depends on simoom, also check the published version (`cargo fetch`,
    then point `--tree` at the registry sources).
 2. Run `python3 scripts/check-duplicates.py --tree cameleer=. --tree simoom=simoom --self`.

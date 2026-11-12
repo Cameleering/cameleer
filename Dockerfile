@@ -2,7 +2,7 @@
 #
 # Cameleer: Apache Camel routes, rebuilt in Rust, as one native binary on distroless.
 #
-#   docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/my-route.camel.yaml
+#   docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/my-route.camel.yaml
 #
 # Build: the builder runs on the build machine's own architecture and cross-compiles for each
 # target platform (linux/amd64, linux/arm64) with Debian's cross toolchain, so no emulation is
@@ -47,7 +47,7 @@ ARG SOURCE_DATE_EPOCH
 # are always in; FEATURES=core is only those). The template components, jq, the core XPath,
 # HTTP/2 and `cameleer validate` are features too: FEATURES=cloud,jq,http2 adds them back.
 # Packs are not in the default build: FEATURES=full,health is the health distribution
-# (pmsudhi/cameleer:health), FEATURES=health,http2 a small healthcare edge image.
+# (cameleering/cameleer:health), FEATURES=health,http2 a small healthcare edge image.
 ARG FEATURES=
 RUN --mount=type=cache,target=/src/target,id=cameleer-target-$TARGETARCH \
     target=$(cat /target) \
@@ -67,9 +67,9 @@ ENV CAMEL_LOCAL_STATUS=false \
     CAMEL_HOME=/tmp/cameleer
 LABEL org.opencontainers.image.title="Cameleer" \
       org.opencontainers.image.description="Apache Camel routes, rebuilt in Rust: one native binary, about 1 ms startup, about 10 MB of memory." \
-      org.opencontainers.image.source="https://github.com/pmsudhi/cameleer" \
+      org.opencontainers.image.source="https://github.com/cameleering/cameleer" \
       org.opencontainers.image.url="https://cameleer.ing/" \
-      org.opencontainers.image.documentation="https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md" \
+      org.opencontainers.image.documentation="https://github.com/cameleering/cameleer/blob/main/docs/DEPLOYMENT.md" \
       org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /routes
 EXPOSE 8080

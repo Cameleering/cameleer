@@ -39,18 +39,18 @@ The project overview, the quick start and the examples are in the
 
 Give Cursor, Claude, Windsurf, VS Code or any MCP-capable assistant Cameleer's real docs, so it
 writes routes from the documentation instead of guessing. The docs MCP server is
-`https://gitmcp.io/pmsudhi/cameleer` (it serves this repository's `llms.txt`, docs and README).
+`https://gitmcp.io/cameleering/cameleer` (it serves this repository's `llms.txt`, docs and README).
 
 | tool | add this |
 |---|---|
-| Claude Code | `claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer` |
-| Cursor (`~/.cursor/mcp.json`) | `{"mcpServers": {"cameleer-docs": {"url": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
-| Windsurf (`~/.codeium/windsurf/mcp_config.json`) | `{"mcpServers": {"cameleer-docs": {"serverUrl": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
-| VS Code (`.vscode/mcp.json`) | `{"servers": {"cameleer-docs": {"type": "http", "url": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
-| Claude Desktop (`claude_desktop_config.json`) | `{"mcpServers": {"cameleer-docs": {"command": "npx", "args": ["mcp-remote", "https://gitmcp.io/pmsudhi/cameleer"]}}}` |
+| Claude Code | `claude mcp add --transport http cameleer-docs https://gitmcp.io/cameleering/cameleer` |
+| Cursor (`~/.cursor/mcp.json`) | `{"mcpServers": {"cameleer-docs": {"url": "https://gitmcp.io/cameleering/cameleer"}}}` |
+| Windsurf (`~/.codeium/windsurf/mcp_config.json`) | `{"mcpServers": {"cameleer-docs": {"serverUrl": "https://gitmcp.io/cameleering/cameleer"}}}` |
+| VS Code (`.vscode/mcp.json`) | `{"servers": {"cameleer-docs": {"type": "http", "url": "https://gitmcp.io/cameleering/cameleer"}}}` |
+| Claude Desktop (`claude_desktop_config.json`) | `{"mcpServers": {"cameleer-docs": {"command": "npx", "args": ["mcp-remote", "https://gitmcp.io/cameleering/cameleer"]}}}` |
 
 The docs are also indexed by [Context7](https://context7.com) (ask your assistant to "use
-context7" for Cameleer) and [DeepWiki](https://deepwiki.com/pmsudhi/cameleer). Agents that read
+context7" for Cameleer) and [DeepWiki](https://deepwiki.com/cameleering/cameleer). Agents that read
 files directly can start from [llms.txt](https://cameleer.ing/llms.txt) or
 [llms-full.txt](https://cameleer.ing/llms-full.txt).
 
@@ -65,7 +65,7 @@ Every YAML example is a complete Camel YAML DSL file. Save it as `route.camel.ya
 with the Docker image:
 
 ```sh
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/route.camel.yaml
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer run /routes/route.camel.yaml
 ```
 
 Hosts and credentials in examples are written as `{{env:NAME:default}}` placeholders: set the
@@ -86,7 +86,7 @@ markdown), and every HTML page has its markdown source next to it under the same
 
 ### Where do I report a mistake in the docs?
 
-Open an issue or a pull request on [GitHub](https://github.com/pmsudhi/cameleer). Each page links
+Open an issue or a pull request on [GitHub](https://github.com/cameleering/cameleer). Each page links
 to its source file at the bottom.
 
 ## Writing documentation
@@ -114,7 +114,7 @@ python3 -m http.server -d site 8000  # then open http://localhost:8000/docs/
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

@@ -96,7 +96,7 @@ The body is the parsed JSON payload (GitHub) or the Telegram message.
 ```sh
 docker run --rm -p 8080:8080 -e GITHUB_OWNER -e GITHUB_REPO -e GITHUB_TOKEN \
   -e PUBLIC_URL=https://hooks.example.com -v "$PWD:/routes:ro" \
-  pmsudhi/cameleer run /routes/pr-intake.camel.yaml
+  cameleering/cameleer run /routes/pr-intake.camel.yaml
 ```
 
 `PUBLIC_URL` must reach port 8080 of the container (a reverse proxy or a tunnel).
@@ -123,7 +123,7 @@ The `platform-http` port, `camel.server.port` (default 8080).
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

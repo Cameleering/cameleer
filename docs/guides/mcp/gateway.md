@@ -2,7 +2,7 @@
 
 > Cameleer can import the tools of other MCP servers and serve them again, next to its own, through one endpoint. Clients configure one URL; the gateway chooses which remote tools to expose and puts the same envelope on them: schema checks, approvals, rate limits, a result cache, deduplication and the audit log. The example fronts the shop's MCP server and imports only its read-only tools.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-gateway`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-gateway) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-gateway`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-gateway) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What it is for
 
@@ -98,5 +98,5 @@ which are not, and calls `shop_track_shipment` and `support_hours` through the g
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

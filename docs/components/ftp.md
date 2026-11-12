@@ -110,7 +110,7 @@ As in Apache Camel, consumed files stay on the server unless `delete`, `move`, `
 docker run --rm --user "$(id -u):$(id -g)" -e FTP_HOST=ftp.partner.example -e FTP_USER -e FTP_PASSWORD \
   -e LOCAL_DIR=/data/received -v "$PWD:/data" \
   -v "$PWD/collect-orders.camel.yaml:/routes/collect-orders.camel.yaml:ro" \
-  pmsudhi/cameleer run /routes/collect-orders.camel.yaml
+  cameleering/cameleer run /routes/collect-orders.camel.yaml
 ```
 
 ## Common questions
@@ -140,7 +140,7 @@ file can be renamed.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

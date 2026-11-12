@@ -102,7 +102,7 @@ transaction policy every statement commits on its own.
 docker run --rm -p 8080:8080 \
   -e CAMEL_DATASOURCE_URL='jdbc:postgresql://db.example.com:5432/shop' \
   -e CAMEL_DATASOURCE_USERNAME=camel -e CAMEL_DATASOURCE_PASSWORD \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/products.camel.yaml
+  -v "$PWD:/routes:ro" cameleering/cameleer run /routes/products.camel.yaml
 ```
 
 ## Common questions
@@ -132,7 +132,7 @@ executes whatever the body contains.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

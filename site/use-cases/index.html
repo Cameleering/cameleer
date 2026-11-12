@@ -73,7 +73,7 @@
       </div>
       <a href="../trust/">Trust</a>
       <a href="../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -156,7 +156,7 @@
         <p>Classify and route on a model's answer with a fixed label set; map-reduce summaries; chunk, embed and index documents in Elasticsearch, OpenSearch or pgvector; validate model JSON against a schema and re-ask once; throttle, circuit-break and fail over between models.</p>
         <span class="who">openai · aws-bedrock · azure-openai · google-vertexai · json-validator</span>
       </a>
-      <a class="card" id="webhooks" href="https://github.com/pmsudhi/cameleer/blob/main/examples/alerts-to-slack.camel.yaml">
+      <a class="card" id="webhooks" href="https://github.com/cameleering/cameleer/blob/main/examples/alerts-to-slack.camel.yaml">
         <h3>SaaS webhooks to chat and tickets</h3>
         <p>An HTTP endpoint takes monitoring alerts and keeps the critical ones for Slack; the <code>webhook</code> component registers itself with GitHub or Telegram; <code>github</code> polls pull requests and issues; <code>jira</code>, <code>twilio</code> and <code>smtp</code> act on the result.</p>
         <span class="who">platform-http · webhook · slack · github · jira · telegram · twilio</span>
@@ -171,7 +171,7 @@
         <p>Start a route on a cron expression in a time zone, on Quartz trigger syntax, or with a scheduler that backs off when idle; stop after a run with <code>camel.main.duration-max-messages</code>, or run it as a Lambda on an EventBridge schedule.</p>
         <span class="who">cron · quartz · scheduler · timer</span>
       </a>
-      <a class="card" id="apis" href="https://github.com/pmsudhi/cameleer/blob/main/examples/rest-api.camel.yaml">
+      <a class="card" id="apis" href="https://github.com/cameleering/cameleer/blob/main/examples/rest-api.camel.yaml">
         <h3>REST APIs and backends for frontends</h3>
         <p>The REST DSL with JSON binding, path and query parameters, CORS and a generated OpenAPI 3 document; <code>enrich</code> and <code>multicast</code> to call several services and aggregate one answer; throttle and circuit breaker in front of slow dependencies. 80k requests per second with JSON on four cores.</p>
         <span class="who">rest · platform-http · http · json-validator</span>
@@ -189,12 +189,12 @@
   <div class="wrap">
     <h2>Run one</h2>
     <p class="intro">Every example file starts with the environment variables it needs and its Docker command. Validate first, then run.</p>
-    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml</pre>
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer validate /routes
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/hello-api.camel.yaml</pre>
     <div class="cta">
       <a class="btn primary" href="../docs/guides/getting-started.html">Getting started</a>
-      <a class="btn" href="https://github.com/pmsudhi/cameleer/tree/main/examples">All example routes</a>
+      <a class="btn" href="https://github.com/cameleering/cameleer/tree/main/examples">All example routes</a>
       <a class="btn" href="../docs/components/">All components</a>
     </div>
   </div>

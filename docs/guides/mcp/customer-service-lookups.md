@@ -2,7 +2,7 @@
 
 > Staff ask Claude "where is order 1007?" or "do we have the Trailblazer tent?" and get the facts from the back office in one or two read-only tool calls. In the field test, Claude Opus 5.5 answered all 32 lookup runs correctly, with 2.0 tool calls per request on average; the tools spent 4.4 ms per request in total, the rest of the time was the model.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -108,7 +108,7 @@ cameleer run shop.camel.yaml --properties application.properties
 
 Then connect Claude Desktop, the MCP Inspector or any MCP client to
 `http://127.0.0.1:18190/mcp`, or use stdio as the example's
-[README](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) shows. The
+[README](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) shows. The
 test `shop_use_cases` in `crates/cameleer-main/tests/mcp_shop.rs` makes these calls over MCP
 and checks the answers.
 
@@ -120,5 +120,5 @@ and checks the answers.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

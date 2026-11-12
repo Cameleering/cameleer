@@ -176,7 +176,7 @@ Current results: [BENCHMARKS.md](BENCHMARKS.md); analysis: [../benchmarks/analys
 | Item | Why | Status |
 |---|---|---|
 | **OpenTelemetry tracing export** | trace a request across agents, routes and services; today there are Prometheus metrics, tracing and message history | 🚧 |
-| **Windows default time zone** (CLDR `windowsZones` map) | `TimeZone::local` is UTC on Windows unless `TZ` is set | 🚧 [#15](https://github.com/pmsudhi/cameleer/issues/15) |
+| **Windows default time zone** (CLDR `windowsZones` map) | `TimeZone::local` is UTC on Windows unless `TZ` is set | 🚧 [#15](https://github.com/cameleering/cameleer/issues/15) |
 | **Graceful stop for the remaining direct `TcpStream::shutdown` calls** | so `stop()` never hangs on idle peers on Windows | 🚧 |
 
 ### 2.5 Verification and trust
@@ -187,13 +187,13 @@ Current results: [BENCHMARKS.md](BENCHMARKS.md); analysis: [../benchmarks/analys
 | **Docker-based real servers** (Kafka, Elasticsearch, Cassandra, CouchDB, MongoDB, Artemis) | beyond the protocol emulators | 🚧 |
 | **Independent security audit and fuzzing** of the from-scratch TLS, SSH, XML security and protocol parsers | the price of having no dependencies is owning that code | 🚧 |
 
-The verification and operations items are also tracked in the repository's [status notes](https://github.com/pmsudhi/cameleer/blob/main/docs/STATUS.md).
+The verification and operations items are also tracked in the repository's [status notes](https://github.com/cameleering/cameleer/blob/main/docs/STATUS.md).
 
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

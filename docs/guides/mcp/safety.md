@@ -2,7 +2,7 @@
 
 > A support ticket that tells the AI to refund an order, a request for a full card number, a request to delete data, an order that doesn't exist: in the field test Claude Opus 5.5 handled all 28 runs of these correctly, and the server made sure the worst cases could not happen at all. The card number is redacted before the model sees it, no tool deletes orders, and arguments outside the schema never reach a route.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -147,5 +147,5 @@ exposed, and that a value outside an enum is rejected.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

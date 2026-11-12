@@ -30,9 +30,9 @@
   "name": "Cameleer",
   "alternateName": "rust-camel",
   "description": "Apache Camel rewritten in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only. One native binary that starts in 3 ms and runs in megabytes, with a built-in AWS Lambda runtime. For AI agents it serves routes as MCP tools over Streamable HTTP and stdio and runs every tool call through JSON-schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts, compensation and a hash-chained audit log; it also has an agent step and tool calling in its model components.",
-  "codeRepository": "https://github.com/pmsudhi/cameleer",
+  "codeRepository": "https://github.com/cameleering/cameleer",
   "url": "https://cameleer.ing/",
-  "sameAs": ["https://github.com/pmsudhi/cameleer", "https://crates.io/crates/cameleer-main", "https://hub.docker.com/r/pmsudhi/cameleer"],
+  "sameAs": ["https://github.com/cameleering/cameleer", "https://crates.io/crates/cameleer-main", "https://hub.docker.com/r/cameleering/cameleer"],
   "programmingLanguage": "Rust",
   "runtimePlatform": "Linux, macOS, Windows, Docker, AWS Lambda",
   "image": "https://cameleer.ing/og.png",
@@ -254,7 +254,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       </div>
       <a href="trust/">Trust</a>
       <a href="compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">
+      <a class="gh" href="https://github.com/cameleering/cameleer">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
       </a>
@@ -596,13 +596,13 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <ol class="steps">
           <li><div>Save a Camel YAML route as <code class="in">hello-api.camel.yaml</code></div></li>
           <li><div>Run it in the container<pre class="cmd"><code>docker run --rm -p 8080:8080 \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer \
+  -v "$PWD:/routes:ro" cameleering/cameleer \
   run /routes/hello-api.camel.yaml</code></pre></div></li>
           <li><div>Call it<pre class="cmd"><code>curl localhost:8080/orders/42
 {"id": "42", "status": "shipped"}</code></pre></div></li>
         </ol>
         <div class="code">
-          <header><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/hello-api.camel.yaml">hello-api.camel.yaml</a><button class="copy" data-copy="qs-yaml">Copy</button></header>
+          <header><a href="https://github.com/cameleering/cameleer/blob/main/examples/hello-api.camel.yaml">hello-api.camel.yaml</a><button class="copy" data-copy="qs-yaml">Copy</button></header>
 <pre id="qs-yaml"><code><span class="tk-k">- rest:</span>
     <span class="tk-k">path:</span> /orders
     <span class="tk-k">get:</span>
@@ -616,7 +616,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
             <span class="tk-k">simple:</span> <span class="tk-s">'{"id": "${header.id}", "status": "shipped"}'</span></code></pre>
         </div>
       </div>
-      <p class="note">One native binary on distroless, for linux/amd64 and linux/arm64, non-root and fine with <code class="in">--read-only</code>. On <a href="https://hub.docker.com/r/pmsudhi/cameleer">Docker Hub</a> and as <code class="in">ghcr.io/pmsudhi/cameleer</code>. Routes written for Apache Camel's YAML DSL run unchanged. Kubernetes and Cloud Run: <a href="https://github.com/pmsudhi/cameleer/blob/main/docs/DEPLOYMENT.md">deployment guide</a>.</p>
+      <p class="note">One native binary on distroless, for linux/amd64 and linux/arm64, non-root and fine with <code class="in">--read-only</code>. On <a href="https://hub.docker.com/r/cameleering/cameleer">Docker Hub</a> and as <code class="in">ghcr.io/cameleering/cameleer</code>. Routes written for Apache Camel's YAML DSL run unchanged. Kubernetes and Cloud Run: <a href="https://github.com/cameleering/cameleer/blob/main/docs/DEPLOYMENT.md">deployment guide</a>.</p>
     </div>
 
     <div class="panel" role="tabpanel" id="panel-rust" aria-labelledby="tab-rust" hidden>
@@ -630,7 +630,7 @@ cameleer-http = "0.5"</code></pre></div></li>
 curl localhost:8080/api/greet/Ada</code></pre></div></li>
         </ol>
         <div class="code">
-          <header><a href="https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/rest_service.rs">src/main.rs</a><button class="copy" data-copy="qs-rs">Copy</button></header>
+          <header><a href="https://github.com/cameleering/cameleer/blob/main/crates/cameleer-main/examples/rest_service.rs">src/main.rs</a><button class="copy" data-copy="qs-rs">Copy</button></header>
 <pre id="qs-rs"><code><span class="tk-k">use</span> cameleer_core::prelude::*;
 <span class="tk-k">use</span> cameleer_http::rest::RestDslExt;
 
@@ -648,7 +648,7 @@ curl localhost:8080/api/greet/Ada</code></pre></div></li>
 }</code></pre>
         </div>
       </div>
-      <p class="note">To run YAML routes with every component from your own binary, depend on <code class="in">cameleer-main</code> and call <code class="in">cameleer_main::new_main()</code> (<a href="https://github.com/pmsudhi/cameleer/blob/main/crates/cameleer-main/examples/embed_yaml.rs">embed_yaml.rs</a>).</p>
+      <p class="note">To run YAML routes with every component from your own binary, depend on <code class="in">cameleer-main</code> and call <code class="in">cameleer_main::new_main()</code> (<a href="https://github.com/cameleering/cameleer/blob/main/crates/cameleer-main/examples/embed_yaml.rs">embed_yaml.rs</a>).</p>
     </div>
 
     <div class="panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
@@ -674,10 +674,10 @@ $ cameleer --help
 
     <h3 class="uc-h">Real use cases, ready to run</h3>
     <ul class="cases">
-      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml"><b>AI ticket triage</b><span>Kafka in. An LLM classifies each ticket P1 or P3, and urgent tickets go to their own topic. OpenAI or any compatible server: Ollama, vLLM, Azure OpenAI.</span></a></li>
-      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/alerts-to-slack.camel.yaml"><b>Alerts to Slack</b><span>An HTTP webhook takes monitoring alerts, keeps the critical ones and posts them to a Slack channel.</span></a></li>
-      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml"><b>Files to S3</b><span>Watches a folder, uploads each new CSV file to an S3 bucket, then moves it to <code class="in">.done</code>.</span></a></li>
-      <li><a href="https://github.com/pmsudhi/cameleer/blob/main/examples/rest-api.camel.yaml"><b>REST API</b><span>JSON endpoints with validation, a content-based router and error handling. Needs nothing else.</span></a></li>
+      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml"><b>AI ticket triage</b><span>Kafka in. An LLM classifies each ticket P1 or P3, and urgent tickets go to their own topic. OpenAI or any compatible server: Ollama, vLLM, Azure OpenAI.</span></a></li>
+      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/alerts-to-slack.camel.yaml"><b>Alerts to Slack</b><span>An HTTP webhook takes monitoring alerts, keeps the critical ones and posts them to a Slack channel.</span></a></li>
+      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/files-to-s3.camel.yaml"><b>Files to S3</b><span>Watches a folder, uploads each new CSV file to an S3 bucket, then moves it to <code class="in">.done</code>.</span></a></li>
+      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/rest-api.camel.yaml"><b>REST API</b><span>JSON endpoints with validation, a content-based router and error handling. Needs nothing else.</span></a></li>
     </ul>
 
     <details class="example">
@@ -706,7 +706,7 @@ $ cameleer --help
                 - <span class="tk-k">to:</span> <span class="tk-s">"kafka:tickets-routine?brokers={{env:KAFKA_BROKERS:localhost:9092}}"</span>
 
 <span class="tk-c"># docker run --rm --network host -e KAFKA_BROKERS=localhost:9092 -e OPENAI_API_KEY \</span>
-<span class="tk-c">#   -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml</span></code></pre>
+<span class="tk-c">#   -v "$PWD:/routes:ro" cameleering/cameleer run /routes/ai-ticket-triage.camel.yaml</span></code></pre>
     </details>
   </div>
 </section>
@@ -724,10 +724,10 @@ $ cameleer --help
     <div>
       <h4>Project</h4>
       <ul>
-        <li><a href="https://github.com/pmsudhi/cameleer">Source on GitHub</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer/releases">Releases</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/SECURITY.md">Security</a></li>
+        <li><a href="https://github.com/cameleering/cameleer">Source on GitHub</a></li>
+        <li><a href="https://github.com/cameleering/cameleer/releases">Releases</a></li>
+        <li><a href="https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        <li><a href="https://github.com/cameleering/cameleer/blob/main/SECURITY.md">Security</a></li>
       </ul>
     </div>
     <div>

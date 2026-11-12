@@ -12,7 +12,7 @@ provided by the from-scratch `cameleer-tls` crate and is wired into every networ
 (see "TLS / SSL context parameters" below).
 
 Rows marked **(health pack, `health` feature)** are in the [health pack](packs/health/index.md):
-they are not in the default build or image; use `pmsudhi/cameleer:health` or build with
+they are not in the default build or image; use `cameleering/cameleer:health` or build with
 `--features health` ([packs](packs/index.md)).
 
 ## Interop verified against real servers
@@ -355,7 +355,7 @@ These differences are kept on purpose (documented, not fixed):
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

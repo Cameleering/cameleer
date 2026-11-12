@@ -66,7 +66,7 @@
       </div>
       <a href="../../trust/">Trust</a>
       <a href="../../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -90,7 +90,7 @@
 <section class="c-sec" id="route">
   <div class="wrap">
     <h2>The tested route: files to S3</h2>
-    <p class="intro">From <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml"><code>examples/files-to-s3.camel.yaml</code></a>, which the test suite runs against a mock S3. Swap <code>file:</code> for <code>sftp:</code> and the route polls a partner's server instead.</p>
+    <p class="intro">From <a href="https://github.com/cameleering/cameleer/blob/main/examples/files-to-s3.camel.yaml"><code>examples/files-to-s3.camel.yaml</code></a>, which the test suite runs against a mock S3. Swap <code>file:</code> for <code>sftp:</code> and the route polls a partner's server instead.</p>
     <pre class="cmd">- route:
     id: files-to-s3
     from:
@@ -182,9 +182,9 @@
     <pre class="cmd">export S3_BUCKET=my-bucket AWS_REGION=eu-west-1 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
 docker run --rm -e S3_BUCKET -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
   -e INBOX_DIR=/routes/inbox --user "$(id -u):$(id -g)" -v "$PWD:/routes" \
-  pmsudhi/cameleer run /routes/files-to-s3.camel.yaml</pre>
+  cameleering/cameleer run /routes/files-to-s3.camel.yaml</pre>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml">See the route</a>
+      <a class="btn primary" href="https://github.com/cameleering/cameleer/blob/main/examples/files-to-s3.camel.yaml">See the route</a>
       <a class="btn" href="../../docs/components/sftp.html">The sftp component</a>
       <a class="btn" href="../../docs/dataformats/csv.html">The csv data format</a>
     </div>
