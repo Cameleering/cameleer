@@ -32,6 +32,15 @@ const ROUTES: &str = r#"
             constant: secret
 "#;
 
+/// Main's HTTP servers live in one registry per process, keyed by port. The tests pick a free port
+/// by binding port 0 and closing it, so two tests running in parallel could get the same port and
+/// then share one server and clash on `/mcp`. Tests that start an HTTP server take this lock.
+static HTTP_PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn http_port_lock() -> std::sync::MutexGuard<'static, ()> {
+    HTTP_PORTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn json(s: &str) -> Value {
     cameleer_core::json::parse(s).unwrap()
 }
@@ -46,6 +55,7 @@ fn routes_file(name: &str) -> std::path::PathBuf {
 
 #[test]
 fn main_serves_mcp_over_http_with_the_configured_tags() {
+    let _ports = http_port_lock();
     let f = routes_file("http");
     let port = {
         let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -161,6 +171,7 @@ fn an_agent_uses_tools_of_a_stdio_mcp_server() {
 /// does, and the same change in the Rust DSL does the same.
 #[test]
 fn an_existing_route_becomes_a_tool_by_changing_one_line() {
+    let _ports = http_port_lock();
     let path = format!("{}/../../examples/agents/route-to-mcp-tool.camel.yaml", env!("CARGO_MANIFEST_DIR"));
     let after = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
     let tool_line = after.lines().find(|l| l.trim_start().starts_with("uri: \"ai-tool:")).expect("the ai-tool line").to_string();
