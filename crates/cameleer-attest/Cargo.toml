@@ -13,5 +13,5 @@ categories = ["cryptography", "network-programming"]
 description = "Cameleer attestation (std only): evidence from Linux configfs-tsm (Intel TDX, AMD SEV-SNP) and the dstack guest agent, bound to the running routes, configuration and TLS key"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
