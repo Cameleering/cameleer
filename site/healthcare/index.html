@@ -60,7 +60,8 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../" aria-label="Cameleer home"><img src="../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
       <a class="keep" href="../docs/">Docs</a>
       <a class="keep" href="../use-cases/">Use cases</a>
       <a href="../mcp/">MCP</a>
@@ -179,6 +180,7 @@
 <section class="c-sec" id="mirth">
   <div class="wrap">
     <h2>Coming from Mirth Connect or another interface engine?</h2>
+    <p class="intro">The full comparison, with the open-source forks, the commercial engines and sources for every fact: <a href="../alternatives/mirth-connect-alternatives/">Mirth Connect alternatives</a>.</p>
     <div class="two">
       <div class="pane good">
         <h3>Why teams look at Cameleer</h3>
@@ -253,6 +255,7 @@
         <li><a href="../use-cases/hl7-mllp-healthcare-integration/">HL7 v2 over MLLP</a></li>
         <li><a href="../use-cases/dicom-imaging-gateway/">DICOM imaging gateway</a></li>
         <li><a href="../docs/packs/health/conformance/dicom-conformance-statement-0.6.0.html">DICOM Conformance Statement</a></li>
+        <li><a href="../alternatives/mirth-connect-alternatives/">Mirth Connect alternatives</a></li>
         <li><a href="../trust/">Confidential integrations</a></li>
       </ul>
     </div>

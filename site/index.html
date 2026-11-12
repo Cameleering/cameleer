@@ -239,7 +239,8 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <img src="brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">
       Cameleer
     </a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
       <a class="keep" href="docs/">Docs</a>
       <a class="keep" href="use-cases/">Use cases</a>
       <a href="mcp/">MCP</a>
@@ -738,6 +739,7 @@ $ cameleer --help
         <li><a href="docs/BENCHMARKS.html">Benchmarks</a></li>
         <li><a href="compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a></li>
         <li><a href="alternatives/apache-camel-alternatives/">Apache Camel alternatives</a></li>
+        <li><a href="alternatives/mirth-connect-alternatives/">Mirth Connect alternatives</a></li>
         <li><a href="compare/mulesoft-vs-apache-camel-vs-cameleer/">MuleSoft vs Apache Camel vs Cameleer</a></li>
         <li><a href="compare/enterprise-mcp-platforms/">Enterprise MCP platforms compared</a></li>
         <li><a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">AI agent tool calls compared</a></li>

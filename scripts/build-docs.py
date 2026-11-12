@@ -1344,7 +1344,8 @@ TEMPLATE = """<!doctype html>
       <img src="{site_root}brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">
       Cameleer
     </a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
       <a class="keep" href="{root}index.html">Docs</a>
       <a href="{root}guides/index.html">Guides</a>
       <a href="{root}components/index.html">Components</a>

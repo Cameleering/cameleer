@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-11</lastmod></url>
-  <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-11</lastmod></url>
-  <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/llms.txt</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/llms-full.txt</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/alternatives/apache-camel-alternatives/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/alternatives/mirth-connect-alternatives/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/alternatives/mulesoft-alternatives/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/cameleering/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/</loc><lastmod>2026-11-12</lastmod></url>
@@ -13,7 +14,7 @@
   <url><loc>https://cameleer.ing/compare/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/compare/mulesoft-vs-apache-camel-vs-cameleer/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/compare/wso2-vs-apache-camel-vs-cameleer/</loc><lastmod>2026-11-12</lastmod></url>
-  <url><loc>https://cameleer.ing/healthcare/</loc><lastmod>2026-11-11</lastmod></url>
+  <url><loc>https://cameleer.ing/healthcare/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/mcp/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/trust/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/use-cases/dicom-imaging-gateway/</loc><lastmod>2026-11-12</lastmod></url>
@@ -299,7 +300,7 @@
   <url><loc>https://cameleer.ing/docs/packs/health/dataformats/fhir.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/packs/health/dataformats/hl7.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/packs/health/guides/dicom.html</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/packs/health/</loc><lastmod>2026-11-10</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/packs/health/</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/packs/health/languages/dicom.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/packs/health/languages/hl7terser.html</loc><lastmod>2026-11-09</lastmod></url>
   <url><loc>https://cameleer.ing/docs/packs/</loc><lastmod>2026-11-10</lastmod></url>

@@ -52,7 +52,8 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
       <a class="keep" href="../../docs/">Docs</a>
       <a class="keep" href="../../use-cases/">Use cases</a>
       <a href="../../mcp/">MCP</a>
@@ -186,7 +187,7 @@
     <details><summary>Does Cameleer parse HL7 v2 messages?</summary><p>Yes. The <code>mllp</code> component frames and acknowledges messages, the <code>hl7</code> data format parses ER7 (pipe-delimited) text into a structured value and encodes it back, and the <code>hl7terser</code> language reads a field by path, such as <code>PID-3-1</code>.</p></details>
     <details><summary>Which FHIR versions does it support?</summary><p>The <code>fhir</code> component talks to FHIR servers for R4, R4B, R5 and DSTU3: create, read, update, delete, search, history, transactions, operations, patch and validation. The <code>fhirJson</code> and <code>fhirXml</code> data formats parse and serialize resources and convert between the two encodings.</p></details>
     <details><summary>When is the MLLP acknowledgement sent?</summary><p>After the route finishes. In the tested route the EHR call runs first, so the sender gets <code>AA</code> only when the message was delivered and <code>AE</code> when it still failed after the retries, and keeps the message to resend it. A route can set the acknowledgement type itself.</p></details>
-    <details><summary>Is it an interface engine like Mirth Connect?</summary><p>It is a routing engine with HL7 v2, MLLP and FHIR support: channels are routes in YAML files kept in Git, with Apache Camel's error handling, transformation and routing patterns. There is no visual channel editor or message browser.</p></details>
+    <details><summary>Is it an interface engine like Mirth Connect?</summary><p>It is a routing engine with HL7 v2, MLLP and FHIR support: channels are routes in YAML files kept in Git, with Apache Camel's error handling, transformation and routing patterns. There is no visual channel editor or message browser. <a href="../../alternatives/mirth-connect-alternatives/">Mirth Connect alternatives compared</a>.</p></details>
     <details><summary>Which Cameleer image has HL7 and FHIR?</summary><p>From the next release, <code>mllp</code>, <code>hl7</code>, <code>hl7terser</code> and <code>fhir</code> are in the <a href="../../docs/packs/health/">health pack</a>, with DICOM: the image <code>pmsudhi/cameleer:health</code>, or <code>cargo install cameleer-main --features health</code>. The default image and the <code>full</code> build no longer include them. Up to 0.5.1 they are in the default image <code>pmsudhi/cameleer</code>.</p></details>
     <details><summary>Does MLLP support TLS?</summary><p>Yes. The consumer accepts TLS connections and the producer connects with TLS when <code>sslContextParameters</code> or the global <code>camel.ssl.*</code> parameters are set.</p></details>
   </div>

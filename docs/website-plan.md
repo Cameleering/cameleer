@@ -735,7 +735,13 @@ MLLP and FHIR left the default build and image with it (breaking, next release).
 - The HL7 use case, the edge, file and cameleering pages, the edge and concepts guides, README and
   llms.txt say HL7, MLLP and FHIR need the health pack from the next release (0.5.1 images still
   have them).
-- Still open: `alternatives/mirth-connect-alternatives/` (12.4).
+- Done since (2026-11-12): the Packs menu (Healthcare as a submenu), `/healthcare/`, a collapsible
+  mobile menu on every page, and `alternatives/mirth-connect-alternatives/` with 13 numbered
+  sources. Facts checked at the source: NextGen's announcement (2025-03-19) and downloads page,
+  the GitHub repositories (OIE and BridgeLink are MPL-2.0, not Apache-2.0 as one blog says;
+  Mirth's last public tag is 4.5.2), the Eclipse project page (OIE incubating), and the Rhapsody,
+  Cloverleaf, InterSystems and Qvera product pages. Iguana's page returned 404, so Iguana is left
+  out until it can be checked.
 
 ### 12.1 What may be claimed (from the branch's CHANGELOG, STATUS, INTEROP and guide)
 
