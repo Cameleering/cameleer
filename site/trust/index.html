@@ -55,7 +55,13 @@
       <a class="keep" href="../docs/">Docs</a>
       <a class="keep" href="../use-cases/">Use cases</a>
       <a href="../mcp/">MCP</a>
-      <a href="../docs/packs/health/">Healthcare</a>
+      <div class="nav-menu">
+        <a href="../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
       <a aria-current="page" href="../trust/">Trust</a>
       <a href="../compare/">Compare</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
@@ -141,7 +147,7 @@ camel.attestation.mcp-tool=true</pre>
 <section class="c-sec" id="healthcare">
   <div class="wrap">
     <h2>Healthcare: attested de-identification</h2>
-    <p class="intro">Next release: run the health pack's DICOM de-identifier (the PS3.15 Annex E basic profile and options) in a confidential VM, and a data owner can ask for evidence of which routes and configuration, including the de-identification options, handle the identifiable images before sending them. Each de-identified instance also writes a record to the hash-chained audit log. <a href="../use-cases/dicom-imaging-gateway/">DICOM imaging gateway</a>.</p>
+    <p class="intro">Next release: run the health pack's DICOM de-identifier (the PS3.15 Annex E basic profile and options) in a confidential VM, and a data owner can ask for evidence of which routes and configuration, including the de-identification options, handle the identifiable images before sending them. Each de-identified instance also writes a record to the hash-chained audit log. <a href="../use-cases/dicom-imaging-gateway/">DICOM imaging gateway</a>, <a href="../healthcare/">healthcare integration</a>.</p>
   </div>
 </section>
 

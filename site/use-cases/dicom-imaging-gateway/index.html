@@ -56,7 +56,13 @@
       <a class="keep" href="../../docs/">Docs</a>
       <a class="keep" href="../../use-cases/">Use cases</a>
       <a href="../../mcp/">MCP</a>
-      <a href="../../docs/packs/health/">Healthcare</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
       <a href="../../trust/">Trust</a>
       <a href="../../compare/">Compare</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
@@ -70,7 +76,7 @@
     <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / DICOM imaging gateway</p>
     <p class="kicker">Medical imaging · health pack · next release</p>
     <h1>A DICOM router that is also an integration engine</h1>
-    <p class="lede">Receive images from modalities and PACS over DIMSE, route on tags, de-identify with the PS3.15 profile, and forward to a PACS, a DICOMweb store or an AI model. HL7 v2, FHIR and about 230 other components run in the same small binary, so the result of an AI model can go back to the EHR as FHIR in the same route. Apache Camel has no DICOM component; Cameleer's <a href="../../docs/packs/health/">health pack</a> adds one with Camel-style names.</p>
+    <p class="lede">Receive images from modalities and PACS over DIMSE, route on tags, de-identify with the PS3.15 profile, and forward to a PACS, a DICOMweb store or an AI model. HL7 v2, FHIR and about 230 other components run in the same small binary, so the result of an AI model can go back to the EHR as FHIR in the same route. Apache Camel has no DICOM component; Cameleer's <a href="../../healthcare/">health pack</a> adds one with Camel-style names.</p>
     <div class="stats">
       <div class="stat"><b>10/10</b><span>live tests against DCMTK 3.6.7, Orthanc 1.12.2, python-hl7 and HAPI FHIR</span><small>DIMSE both roles, with and without TLS, and DICOMweb both ways</small></div>
       <div class="stat"><b>33</b><span>public pydicom test files read and written byte for byte</span></div>
@@ -244,6 +250,7 @@ storescu -aec GATEWAY localhost 11112 *.dcm      # send a study from DCMTK</pre>
     <div>
       <h4>Healthcare</h4>
       <ul>
+        <li><a href="../../healthcare/">Healthcare integration with Cameleer</a></li>
         <li><a href="../../docs/packs/health/">Health pack</a></li>
         <li><a href="../../docs/packs/health/guides/dicom.html">DICOM guide</a></li>
         <li><a href="../hl7-mllp-healthcare-integration/">HL7 v2 over MLLP</a></li>

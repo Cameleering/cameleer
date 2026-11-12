@@ -344,7 +344,8 @@ Every component named here ships today; each row is a pattern you assemble from 
 [use-case pages](https://cameleer.ing/use-cases/) walk through the tested routes
 for AI agent tools, HL7 over MLLP, DICOM imaging, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
 
-**Healthcare is a pack (next release).** HL7 v2 and MLLP, FHIR and DICOM live in the
+**Healthcare is a pack (next release).** Cameleer is also an open-source healthcare integration
+engine ([overview](https://cameleer.ing/healthcare/)): HL7 v2 and MLLP, FHIR and DICOM live in the
 [health pack](docs/packs/health/index.md) (`cameleer-health`), not in the default build or image:
 use `pmsudhi/cameleer:health` or `cargo install cameleer-main --features health`. Up to 0.5.1,
 `mllp`, `hl7` and `fhir` are in the default image. The pack adds DICOM, which Apache Camel does not

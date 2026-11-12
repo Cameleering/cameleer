@@ -1189,9 +1189,9 @@ class Site:
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
 
     def designed_pages(self):
-        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/**, <out>/use-cases/** and <out>/trust/** (index.html)."""
+        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/**, <out>/use-cases/**, <out>/trust/** and <out>/healthcare/** (index.html)."""
         found = []
-        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases", "trust") for w in os.walk(os.path.join(self.out, top))):
+        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases", "trust", "healthcare") for w in os.walk(os.path.join(self.out, top))):
             if "index.html" in files:
                 found.append(os.path.relpath(os.path.join(d, "index.html"), self.out).replace("\\", "/"))
         return sorted(found)
@@ -1348,7 +1348,13 @@ TEMPLATE = """<!doctype html>
       <a class="keep" href="{root}index.html">Docs</a>
       <a href="{root}guides/index.html">Guides</a>
       <a href="{root}components/index.html">Components</a>
-      <a href="{root}packs/health/index.html">Healthcare</a>
+      <div class="nav-menu">
+        <a href="{root}packs/index.html" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="{site_root}healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="{root}packs/index.html"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
       <a href="{site_root}use-cases/">Use cases</a>
       <a href="{site_root}trust/">Trust</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">

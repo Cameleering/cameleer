@@ -1,8 +1,12 @@
 # Health pack
 
-> The health pack (`cameleer-health`) adds healthcare integration to Cameleer: HL7 v2 over MLLP, FHIR R4, DICOM over DIMSE and DICOMweb, and PS3.15 de-identification, in the same single `cameleer` binary.
+> The health pack (`cameleer-health`) makes Cameleer an open-source healthcare integration engine: HL7 v2 over MLLP, FHIR R4, DICOM over DIMSE and DICOMweb, and PS3.15 de-identification, as Apache Camel routes in the same single `cameleer` binary.
 
 **Crate:** `cameleer-health` 0.6.0 · **Cargo feature:** [`health`](../../guides/build-features.md) (not in `full`) · **Image:** `pmsudhi/cameleer:health`
+
+For an overview of what healthcare teams build with it, how it compares with an interface engine
+such as Mirth Connect, and what it does not do yet, see
+[healthcare integration with Cameleer](https://cameleer.ing/healthcare/).
 
 ## Get it
 
@@ -66,6 +70,45 @@ summary and what has been verified. The examples are in `examples/medical/` and
         - log: "ADT ${header.CamelMllpTriggerEvent} for patient ${header.PatientId}"
         - to: "log:adt"
 ```
+
+## Common questions
+
+### Is there an open-source integration engine for HL7, FHIR and DICOM?
+
+The health pack is one, under the Apache-2.0 licence: `mllp` with automatic acknowledgements, the
+`hl7` data format and `hl7terser` paths, the `fhir` component with `fhirJson` and `fhirXml`, the
+`dicom` (DIMSE) and `dicomweb` components, and `dicomDeidentify`. Interfaces are YAML routes with
+Apache Camel's names, error handling and routing patterns.
+
+### Can it replace Mirth Connect?
+
+For teams that keep interfaces as code, it can: channels become routes in Git, checked with
+`cameleer validate` and `cameleer test`. There is no visual channel editor, no message browser and
+no importer for Mirth channels, and Mirth's JavaScript transformers do not run.
+
+### Which image has HL7 and FHIR now?
+
+The health pack image `pmsudhi/cameleer:health` (next release), or a build with
+`--features health`. The default image and `full` no longer include `mllp`, `hl7`, `hl7terser`,
+`fhir`, `fhirJson` and `fhirXml`; up to 0.5.1 they are in the default image.
+
+### What has it been tested against?
+
+The live tier (`CAMEL_HEALTH_INTEROP=1`) passes 10 of 10 against DCMTK 3.6.7, Orthanc 1.12.2 with
+DICOMweb 1.16, python-hl7 0.4.5 and HAPI FHIR 8.12.0; 33 public pydicom test files read and write
+back byte for byte. Cloud healthcare services (Azure, Google, AWS) are not tested yet.
+
+### Is it HIPAA compliant?
+
+Compliance belongs to a deployment. The pack provides controls (TLS and mutual TLS, PS3.15
+de-identification with audit records, a hash-chained audit log); it is not certified for HIPAA or
+cleared by the FDA.
+
+### How do I ask for a missing feature?
+
+[Open a feature request](https://github.com/pmsudhi/cameleer/issues/new?template=feature_request.md&title=Health+pack%3A+)
+with your workflow, the systems involved and what you use today; it is answered and worked on in
+the issue.
 
 ## Found a problem?
 
