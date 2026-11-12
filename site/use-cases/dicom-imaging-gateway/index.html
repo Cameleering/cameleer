@@ -189,6 +189,39 @@ storescu -aec GATEWAY localhost 11112 *.dcm      # send a study from DCMTK</pre>
   </div>
 </section>
 
+<section class="c-sec" id="request">
+  <div class="wrap">
+    <h2>Missing something your imaging workflow needs? Tell us.</h2>
+    <p class="intro">The health pack is young, and what gets built next depends on what people running real imaging workflows need. If a service, a transfer syntax, a cloud store or a profile stands between you and a working gateway, open an issue. Say what you are trying to do, what talks to what, and what you use today. We read every request, reply on the issue, and work on it with you: we may ask for a sample file or a test against your system, and you can follow each change on the issue until it ships.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>Requests we would like to hear about</h3>
+        <ul>
+          <li>Your cloud DICOM store: Azure Health Data Services, Google Cloud Healthcare API, AWS HealthImaging.</li>
+          <li>Storage Commitment, MPPS, UPS-RS, or WADO frames and rendered images.</li>
+          <li>Compressed pixel data: JPEG, JPEG-LS, JPEG 2000, RLE, and pixel de-identification.</li>
+          <li>IHE ATNA audit messages, or another IHE profile.</li>
+          <li>A modality, PACS or AI platform you need Cameleer to work with.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>What helps us move fast</h3>
+        <ul>
+          <li>The workflow in a sentence or two: where images come from and where they go.</li>
+          <li>The systems and versions involved, and which side Cameleer plays (SCU, SCP, DICOMweb client or server).</li>
+          <li>A de-identified sample file or a log, if you can share one.</li>
+          <li>How you do it today, so we know what Cameleer has to replace.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/pmsudhi/cameleer/issues/new?template=feature_request.md&amp;title=Health+pack%3A+">Request a feature</a>
+      <a class="btn" href="https://github.com/pmsudhi/cameleer/issues?q=is%3Aissue+DICOM">See existing requests</a>
+    </div>
+    <p class="note">Found a bug instead? <a href="https://github.com/pmsudhi/cameleer/issues/new?template=bug_report.md">Report it here</a>. Please never attach images that identify a patient.</p>
+  </div>
+</section>
+
 <section class="c-sec faq" id="faq">
   <div class="wrap">
     <h2>Common questions</h2>
