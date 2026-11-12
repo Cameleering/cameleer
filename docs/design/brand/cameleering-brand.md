@@ -99,13 +99,15 @@ every repo and session; it is not published on the site._
 Current names:
 - **simoom:** a desert wind, used for the HTTP engine.
 - **karez:** an underground water channel, used for data connectivity.
-- **saltire:** to be renamed (owner decision 2026-11-12). Availability checked 2026-11-12:
+- **ksar:** a fortified granary that keeps stores safe, used for the cryptography family (primitives
+  and PKI). It replaces "saltire": the owner chose it on 2026-11-12. Availability checked
+  2026-11-12:
   - **ksar** (a fortified granary): the crate is free; the only clash is kSar, a Java tool that
     plots `sar` statistics.
   - **seif** (a sharp dune; also "sword"): the crate is free, but it sits close to PayPal's crypto
     library "seifnode".
   - **serai** (a caravanserai): the crate is taken, and serai-dex is a crypto project.
-  - The recommendation is **ksar**. The owner picks.
+  - The owner chose **ksar**.
 
 ## Voice
 
