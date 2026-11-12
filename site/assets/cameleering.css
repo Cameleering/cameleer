@@ -24,3 +24,4 @@ ol.sources li:target { background: var(--signal-soft); }
 .check li { counter-increment: c; padding-left: 34px; position: relative; }
 .check li::before { content: counter(c); position: absolute; left: 0; top: 1px; width: 24px; height: 24px; border-radius: 50%; background: var(--signal-soft); color: var(--signal); font: 600 13px/24px var(--mono); text-align: center; }
 @media (max-width: 700px) { .check { grid-template-columns: 1fr; } }
+.cam-mark { display: block; margin: 0 0 14px; }
