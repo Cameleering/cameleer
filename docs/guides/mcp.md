@@ -169,10 +169,10 @@ tool answering a JSON document ([benchmarks](../BENCHMARKS.md#action-layer-and-m
 
 | | Cameleer | Apache Camel `camel-mcp-server` (JVM) | MCP TypeScript SDK (Node.js) |
 |---|---:|---:|---:|
-| `tools/call` in sessions (2025-06-18) | **41,620 calls/s** | 22,458 calls/s | 1,536 calls/s |
-| p99 latency | 5.9 ms | 5.2 ms | 79 ms |
-| peak memory | **53 MB** | 317 MB | 214 MB |
-| stateless `tools/call` (2026-07-28) | 51,700 calls/s, 26 MB | not offered | not offered |
+| `tools/call` in sessions (2025-06-18) | **39,922 calls/s** | 22,604 calls/s | 2,257 calls/s |
+| p99 latency | 6.3 ms | 5.2 ms | 55 ms |
+| peak memory | **56 MB** | 289 MB | 197 MB |
+| stateless `tools/call` (2026-07-28) | 50,514 calls/s, 26 MB | not offered | not offered |
 
 Each Cameleer call in that run went through the whole envelope (schema check, rate-limit and
 breaker bookkeeping, an audit record); the envelope costs about 6 µs per call on that Xeon.

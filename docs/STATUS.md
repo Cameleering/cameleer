@@ -286,9 +286,16 @@ in `docs/design/advantage-matrix.md` (internal).
 - **Measured on DigitalOcean** (3 × c-4, `scripts/cloud-bench`, new sides: Camel's
   `camel-mcp-server`, the official MCP TypeScript SDK, and `main` as a baseline; results in
   `docs/BENCHMARKS.md` "Action layer and MCP" and
-  `benchmarks/results/2026-11-06-linux-agents/`): MCP session calls 41,620/s vs Camel 22,458/s
-  and the TypeScript SDK 1,536/s, at 53 MB vs 317 MB and 214 MB; no integration scenario slower
+  `benchmarks/results/2026-11-06-linux-agents/`): MCP session calls 39,922/s vs Camel 22,604/s
+  and the TypeScript SDK 2,257/s, at 56 MB vs 289 MB and 197 MB; no integration scenario slower
   than `main`.
+  **Rerun 2026-11-12** (Cameleer 0.5.1 at `306a5df`, `benchmarks/results/2026-11-12-linux-mcp/`):
+  the TypeScript baseline pinned zod 3.25.76, and zod 4 is 1.62x faster on one droplet (2,571 vs
+  1,588 calls/s, three alternating rounds each), so the baseline moved to zod 4 and the whole
+  comparison was rerun in one session: Cameleer 39,922/s, Camel 22,604/s, the TypeScript SDK
+  2,257/s (1.77x Camel, 17.7x the SDK, not 27x), at 56, 289 and 197 MB; Camel's p99 is lower
+  (5.2 vs 6.3 ms). The published figures in README, BENCHMARKS, the MCP guide and the site follow
+  this run.
 - **Tests:** hermetic suite on Windows 11: 2833 passed, 0 failed, zero warnings (plus the new
   deadline and inline-timeout tests). On Linux (the droplet, Ubuntu 24.04): zero warnings, 2832
   passed, 1 failed at first: `aws_gaps::kinesis_enhanced_fan_out_over_http2`, also on `main`.
