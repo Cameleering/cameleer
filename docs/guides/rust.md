@@ -25,9 +25,9 @@ Camel's Java extension points have Rust counterparts with the same names:
 
 | you want | depend on |
 |---|---|
-| the engine, every EIP, the Rust DSL, the core components (`direct`, `seda`, `timer`, `mock`, `log`, `file`, ...) and the core languages and data formats | `cameleer-core = "0.5"` |
+| the engine, every EIP, the Rust DSL, the core components (`direct`, `seda`, `timer`, `mock`, `log`, `file`, ...) and the core languages and data formats | `cameleer-core = "0.6"` |
 | a component family | its crate, then call its `register(&ctx)`: `cameleer-http` (`cameleer_http::register`), `cameleer-kafka-mqtt`, `cameleer-sql`, `cameleer-cloud`, ... |
-| YAML and XML route files, `application.properties`, every component, the management server: what the `cameleer` binary does | `cameleer-main = "0.5"` |
+| YAML and XML route files, `application.properties`, every component, the management server: what the `cameleer` binary does | `cameleer-main = "0.6"` |
 
 `cameleer-main` has a cargo feature per component family (`full` by default), so a program can
 leave out what it does not use: see [Build features](build-features.md). The API reference for

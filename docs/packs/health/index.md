@@ -18,14 +18,16 @@ such as Mirth Connect, and what it does not do yet, see
 | a release archive | `cameleer-health-<version>-<target>.tar.gz` (or `.zip`) |
 | Rust | depend on `cameleer-health` and call `ctx.add_pack(&cameleer_health::HEALTH)` |
 
-`cameleer version` shows the pack: `Cameleer 0.5.1 + health 0.6.0 (core 0.5.1)`. In a build
+`cameleer version` shows the pack: `Cameleer 0.6.0 + health 0.6.0 (core 0.6.0)`. In a build
 without it, a route that names `mllp`, `fhir`, `dicom` or `dicomweb` fails at start-up with a
 message naming the pack.
 
 ## Verify a download
 
-Every release archive comes with a SHA-256 file, a CycloneDX SBOM (`.cdx.json`) and, for
-releases, a Sigstore bundle (`.sigstore.json`) per file, signed by the release workflow:
+From the next release, release archives are published, each with a SHA-256 file, a CycloneDX SBOM
+(`.cdx.json`) and a Sigstore bundle (`.sigstore.json`) per file, signed by the release workflow.
+0.6.0 has no archives: use the image (`cameleering/cameleer:health`) or `cargo install`. To verify
+an archive once they are published:
 
 ```sh
 sha256sum -c cameleer-health-<version>-<target>.tar.gz.sha256
@@ -88,9 +90,9 @@ no importer for Mirth channels, and Mirth's JavaScript transformers do not run.
 
 ### Which image has HL7 and FHIR now?
 
-The health pack image `cameleering/cameleer:health` (next release), or a build with
+The health pack image `cameleering/cameleer:health` (or `:0.6.0-health`), or a build with
 `--features health`. The default image and `full` no longer include `mllp`, `hl7`, `hl7terser`,
-`fhir`, `fhirJson` and `fhirXml`; up to 0.5.1 they are in the default image.
+`fhir`, `fhirJson` and `fhirXml`; up to 0.5.1 they were in the default image.
 
 ### What has it been tested against?
 

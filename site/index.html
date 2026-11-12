@@ -38,7 +38,7 @@
   "image": "https://cameleer.ing/og.png",
   "logo": "https://cameleer.ing/brand/cameleer-mark.png",
   "license": "https://www.apache.org/licenses/LICENSE-2.0",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "author": {"@type": "Person", "name": "Sudheesh PM"},
   "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7, DICOM",
   "isBasedOn": {"@type": "SoftwareSourceCode", "name": "Apache Camel", "url": "https://camel.apache.org/", "codeRepository": "https://github.com/apache/camel"}
@@ -432,7 +432,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
     </div>
     <p class="vs-proof">Tested on a damaged-order refund across orders, payments, shipping and email: <code>200</code> resolved · <code>200</code> duplicate, nothing run twice · <code>400</code> every bad argument named · <code>409</code> not delivered yet · <code>202</code> over the limit, waits for a person · <code>502</code> carrier down, refund rolled back. <a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">The route and the walkthrough</a></p>
     <p class="agents-more"><a href="mcp/"><b>Cameleer MCP: how it works, where it runs, ten tested use cases</b></a> · <a href="use-cases/mcp-tool-server/">Routes as MCP tools</a> · <a href="compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a> · <a href="use-cases/llm-gateway-in-process/">Model calls without a gateway</a> · <a href="docs/guides/agents.html">Agent cookbook</a> · <a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">Direct tool calls vs Cameleer</a> · <a href="docs/guides/ai-components.html">AI components</a> · <a href="docs/guides/yaml-for-coding-agents.html">Let a coding agent write the routes</a>, checked with <code>cameleer validate</code></p>
-    <p class="agents-plan">An existing route becomes an MCP tool by changing one line, its <code>from</code> URI to <code>ai-tool:...</code>; then <code>cameleer run routes.camel.yaml --mcp</code> (or the same in Docker, or one property in the Rust crate) serves it to Claude Desktop, VS Code, Cursor and agent frameworks, in both MCP protocol eras. Cameleer is both an MCP server and an MCP client: as a gateway it puts the same rules on other MCP servers' tools. The <a href="docs/guides/agent-step.html">agent step</a> runs a model and its tools in a loop inside a route. Next release: in a confidential VM, Cameleer can <a href="trust/">prove to a client which routes and tools it runs</a>.</p>
+    <p class="agents-plan">An existing route becomes an MCP tool by changing one line, its <code>from</code> URI to <code>ai-tool:...</code>; then <code>cameleer run routes.camel.yaml --mcp</code> (or the same in Docker, or one property in the Rust crate) serves it to Claude Desktop, VS Code, Cursor and agent frameworks, in both MCP protocol eras. Cameleer is both an MCP server and an MCP client: as a gateway it puts the same rules on other MCP servers' tools. The <a href="docs/guides/agent-step.html">agent step</a> runs a model and its tools in a loop inside a route. Since 0.6.0, in a confidential VM, Cameleer can <a href="trust/">prove to a client which routes and tools it runs</a>.</p>
   </div>
 </section>
 
@@ -477,7 +477,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <li><a href="use-cases/mcp-tool-server/"><b>Routes as MCP tools</b><span>Serve tools, resources and prompts to MCP clients with one command; gateway in front of other MCP servers.</span></a></li>
         <li><a href="use-cases/llm-gateway-in-process/"><b>Model calls without a gateway</b><span>23 providers with retries, fallback models, prompt caching and a response cache in process.</span></a></li>
         <li><a href="use-cases/hl7-mllp-healthcare-integration/"><b>Healthcare: HL7 v2 over MLLP</b><span>Receive ADT and lab messages, acknowledge after delivery, post to the EHR or a FHIR server (health pack).</span></a></li>
-        <li><a href="use-cases/dicom-imaging-gateway/"><b>Medical imaging: DICOM</b><span>DIMSE in, DICOMweb or a PACS out, PS3.15 de-identification and AI results as FHIR (health pack, next release).</span></a></li>
+        <li><a href="use-cases/dicom-imaging-gateway/"><b>Medical imaging: DICOM</b><span>DIMSE in, DICOMweb or a PACS out, PS3.15 de-identification and AI results as FHIR (health pack, since 0.6.0).</span></a></li>
         <li><a href="use-cases/file-sftp-pipelines/"><b>File, FTP and SFTP pipelines</b><span>Poll folders and servers, parse CSV and fixed-width files, split, validate and load.</span></a></li>
         <li><a href="docs/guides/migrating-from-apache-camel.html"><b>Camel routes off the JVM</b><span>Move YAML and XML routes as they are; a checklist for the parts that differ.</span></a></li>
         <li><a href="docs/guides/agents.html#rag-ingestion-chunk-embed-and-store"><b>LLM pipelines and RAG ingestion</b><span>Chunk, embed and index documents; summarize; classify and route; guard model output.</span></a></li>
@@ -663,7 +663,7 @@ cameleer stop hello-api</code></pre></div></li>
           <header><span>One binary, Camel JBang's subcommands</span></header>
 <pre><code>$ cameleer run hello-api.camel.yaml
 <span class="tk-c">INFO  HTTP server started on 0.0.0.0:8080</span>
-<span class="tk-c">INFO  Cameleer 0.5.1 (camel-1) started (3 routes, 3 started)</span>
+<span class="tk-c">INFO  Cameleer 0.6.0 (camel-1) started (3 routes, 3 started)</span>
 
 $ cameleer validate hello-api.camel.yaml   <span class="tk-c"># before it runs</span>
 $ cameleer --help
@@ -769,7 +769,7 @@ $ cameleer --help
 
   // runtime toggle
   var data = {
-    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.5.1</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
+    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.6.0</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
     java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (Java 21)</span>', '<span class="ok">Started route triage in 1.1 s</span>'], start: ['1.1 s', 100], mem: ['399 MB', 100], size: ['JDK + jars', 100] },
     native: { lines: ['$ ./triage-runner', '<span class="dim">Apache Camel 4.22 on Quarkus, native (Mandrel)</span>', '<span class="ok">Started route triage in 30 ms</span>'], start: ['30 ms', 3], mem: ['113 MB', 28], size: ['one binary, long native build', 40] }
   };

@@ -218,7 +218,7 @@ with a read-only root filesystem (`--read-only`, Kubernetes `readOnlyRootFilesys
 
 In an Intel TDX or AMD SEV-SNP confidential VM, or a dstack CVM, Cameleer can prove to a client
 what it is running: a hardware report bound to the client's nonce, to the server's TLS key and to a
-manifest of the routes, configuration and MCP tools. It is on `main` for the next release; see
+manifest of the routes, configuration and MCP tools. It ships since 0.6.0; see
 [Attestation in confidential VMs](attestation.md), including what it does not prove yet.
 
 ## Trust in the implementation

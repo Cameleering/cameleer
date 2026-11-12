@@ -9,12 +9,13 @@ standards lives in a pack instead. A pack:
 - is one crate (`cameleer-<pack>`) with its own version, change log and test tier;
 - is added to a build with one cargo feature of `cameleer-main` (`--features <pack>`), which is
   **not** part of `full`;
-- has its own distribution: the image tag `cameleering/cameleer:<pack>` and the archive
-  `cameleer-<pack>-<version>-<target>`, with the same `cameleer` command inside;
-- ships, for each release, an SBOM of exactly what is compiled in (`scripts/sbom.py`), SHA-256
-  sums and Sigstore signatures of its archives, and its own change log
+- has its own distribution: the image tag `cameleering/cameleer:<pack>` and, from the next
+  release, the archive `cameleer-<pack>-<version>-<target>`, with the same `cameleer` command
+  inside;
+- ships an SBOM of exactly what is compiled in (`scripts/sbom.py`) and, from the next release,
+  SHA-256 sums and Sigstore signatures of its archives, and its own change log
   (`crates/cameleer-<pack>/CHANGELOG.md`);
-- describes itself (`cameleer version` prints `health 0.6.0 (core 0.5.1)`), so validation, the
+- describes itself (`cameleer version` prints `health 0.6.0 (core 0.6.0)`), so validation, the
   YAML DSL and error messages know its components without central tables.
 
 A route that names a pack's component in a build without the pack fails at start-up with a message

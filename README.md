@@ -202,7 +202,7 @@ an `agent` step, or exposed as plain HTTP endpoints.
 `cameleer run orders.camel.yaml --mcp`, the same in Docker
 (`docker run ... cameleering/cameleer run /routes/orders.camel.yaml --mcp`), or
 `camel.server.mcp-enabled=true` in the Rust crate. Cameleer is both an MCP server and an MCP
-client. Coming in the next release (on `main` now): `cameleer run orders.camel.yaml
+client. Since 0.6.0, `cameleer run orders.camel.yaml
 --mcp-expose rest:*` serves existing routes as tools with no edits, REST operations with typed
 arguments, and writes need approval by default
 ([how](docs/guides/mcp-server.md#expose-existing-routes-without-editing-them)). Written with Camel's `parameters` map, a tool route looks like this:
@@ -238,7 +238,7 @@ $ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the serv
   suite passes 39/39 (2025-11-25) and 26/26 (2025-06-18).
 - **An MCP client and gateway:** import other MCP servers' tools into the same envelope, with
   rug-pull protection, and serve them again.
-- **Prove what runs** (next release, on `main`): inside an Intel TDX or AMD SEV-SNP confidential
+- **Prove what runs** (since 0.6.0): inside an Intel TDX or AMD SEV-SNP confidential
   VM, or a dstack CVM, Cameleer returns hardware evidence of its routes, configuration and MCP
   tools, bound to the client's nonce and its own TLS key, over HTTP and in the MCP handshake. It
   does not verify the hardware signature itself yet and has not run on real TEE hardware
@@ -345,7 +345,7 @@ Every component named here ships today; each row is a pattern you assemble from 
 [use-case pages](https://cameleer.ing/use-cases/) walk through the tested routes
 for AI agent tools, HL7 over MLLP, DICOM imaging, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
 
-**Healthcare is a pack (next release).** Cameleer is also an open-source healthcare integration
+**Healthcare is a pack (since 0.6.0).** Cameleer is also an open-source healthcare integration
 engine ([overview](https://cameleer.ing/healthcare/)): HL7 v2 and MLLP, FHIR and DICOM live in the
 [health pack](docs/packs/health/index.md) (`cameleer-health`), not in the default build or image:
 use `cameleering/cameleer:health` or `cargo install cameleer-main --features health`. Up to 0.5.1,
@@ -412,8 +412,8 @@ same way. Kubernetes, Docker Compose and Cloud Run setups are in the
 
 ```toml
 [dependencies]
-cameleer-core = "0.5"
-cameleer-http = "0.5"
+cameleer-core = "0.6"
+cameleer-http = "0.6"
 ```
 
 ```rust

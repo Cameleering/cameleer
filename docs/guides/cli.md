@@ -159,7 +159,7 @@ directory are added. `--name` names the package (default: the first route file's
 The generated `Cargo.toml` depends on `cameleer-main` by path: `--camel-path` is the folder that
 holds the `cameleer-main` crate, and it defaults to the source tree the CLI was built from. With
 the Docker image or a `cargo install` build, pass `--camel-path` to the `crates` folder of a clone
-of the repository, or replace the line with the published crate (`cameleer-main = "0.5"`).
+of the repository, or replace the line with the published crate (`cameleer-main = "0.6"`).
 
 ## cameleer bind
 

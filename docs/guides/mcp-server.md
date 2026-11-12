@@ -488,7 +488,7 @@ same arguments may legitimately repeat.
   them again from this server
 - [Cameleer for AI agents](agents.md)
 - [Attestation in confidential VMs](attestation.md): prove to a client which routes and tools
-  this server runs (next release)
+  this server runs
 - [Ask Claude about your business](mcp-shop-example.md): a shop's back office as an MCP
   server, with 40 tested requests
 

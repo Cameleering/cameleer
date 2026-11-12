@@ -155,7 +155,7 @@
         <tr><td><code>--features core</code>, static musl</td><td class="num">7.5 MB</td><td class="num">0.69 ms</td><td class="num">4.2 MB</td></tr>
       </tbody>
     </table></div>
-    <p class="note">Measured on Linux x86-64 with <code>cameleer-bench coldstart</code>; method and the full table in <a href="../../docs/BENCHMARKS.html#faas-cold-start-and-size">BENCHMARKS</a>. The container image is about 20 MB to download with every component, 12.5 MB with <code>FEATURES=core</code>. For a gateway, <code>--features kafka-mqtt,protocols</code> keeps MQTT, syslog and the core, and adding <code>health</code> brings MLLP (next release); the <a href="../../docs/guides/build-features.html">build features guide</a> lists every family.</p>
+    <p class="note">Measured on Linux x86-64 with <code>cameleer-bench coldstart</code>; method and the full table in <a href="../../docs/BENCHMARKS.html#faas-cold-start-and-size">BENCHMARKS</a>. The container image is about 20 MB to download with every component, 12.5 MB with <code>FEATURES=core</code>. For a gateway, <code>--features kafka-mqtt,protocols</code> keeps MQTT, syslog and the core, and adding <code>health</code> brings MLLP (since 0.6.0); the <a href="../../docs/guides/build-features.html">build features guide</a> lists every family.</p>
   </div>
 </section>
 

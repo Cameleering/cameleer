@@ -138,16 +138,16 @@ too; turn them off to drop the parts you don't use:
 
 ```toml
 [dependencies]
-cameleer-core = { version = "0.5", default-features = false, features = ["jq"] }
-cameleer-http = { version = "0.5", default-features = false }   # HTTP/1.1 only, no gRPC crate
-cameleer-cloud = "0.5"
+cameleer-core = { version = "0.6", default-features = false, features = ["jq"] }
+cameleer-http = { version = "0.6", default-features = false }   # HTTP/1.1 only, no gRPC crate
+cameleer-cloud = "0.6"
 ```
 
 To run YAML routes from Rust with a reduced set of components, depend on `cameleer-main` with
 the same feature list as the command above:
 
 ```toml
-cameleer-main = { version = "0.5", default-features = false, features = ["cloud", "jq"] }
+cameleer-main = { version = "0.6", default-features = false, features = ["cloud", "jq"] }
 ```
 
 ## Check what a binary contains
@@ -156,7 +156,7 @@ cameleer-main = { version = "0.5", default-features = false, features = ["cloud"
 
 ```text
 $ cameleer version
-Cameleer 0.5.1 (components: core, http, yaml, cloud, sql, jq)
+Cameleer 0.6.0 (components: core, http, yaml, cloud, sql, jq)
 ```
 
 A full build lists every feature.

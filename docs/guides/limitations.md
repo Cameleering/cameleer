@@ -2,7 +2,7 @@
 
 > The parts of Apache Camel, and the integrations people ask about, that Cameleer does not have: Java code and beans, databases other than PostgreSQL, OpenTelemetry, change data capture, clustering and leader election, XA transactions, some Kafka and ActiveMQ options, Excel, and the Camel components people ask about most that are not ported. Each entry says what to use instead, where there is something.
 
-**Applies to:** Cameleer 0.5 · **Apache Camel:** [the component list](https://camel.apache.org/components/next/index.html) · Parity with Camel, row by row: [FEATURES.md](../FEATURES.md)
+**Applies to:** Cameleer 0.6 · **Apache Camel:** [the component list](https://camel.apache.org/components/next/index.html) · Parity with Camel, row by row: [FEATURES.md](../FEATURES.md)
 
 Cameleer reimplements Camel's routing engine, EIPs, YAML and XML DSLs and about 230 components,
 languages and data formats in Rust, with no JVM and no external crates. What it cannot do comes

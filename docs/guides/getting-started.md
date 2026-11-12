@@ -48,8 +48,8 @@ DSL) and the crates for the components you need:
 
 ```toml
 [dependencies]
-cameleer-core = "0.5"
-cameleer-http = "0.5"
+cameleer-core = "0.6"
+cameleer-http = "0.6"
 ```
 
 `cameleer-main` bundles every component and runs YAML routes from Rust; see
@@ -208,14 +208,14 @@ The project `cameleer export` writes depends on a Cameleer source checkout: its 
 has `cameleer-main = { path = "<camel-path>/cameleer-main" }`, where `--camel-path` defaults to
 the source tree the CLI was built from. With the Docker image or a `cargo install` build, pass
 `--camel-path` to a clone of the repository's `crates` folder, or replace that line with the
-published crate (`cameleer-main = "0.5"`).
+published crate (`cameleer-main = "0.6"`).
 
 ## Where to go next
 
 - [Configuration](configuration.md): every source, profile, environment variable and key.
 - [The cameleer command line](cli.md): every command and flag.
 - [Testing](testing.md), [observability](observability.md), [TLS and security](tls-and-security.md)
-  and [attestation in confidential VMs](attestation.md) (next release).
+  and [attestation in confidential VMs](attestation.md) (since 0.6.0).
 - [Concepts](concepts.md): routes, endpoints, exchanges, messages, components and the DSLs.
 - [Build features](build-features.md): a smaller build with only the components you use.
 - [Enterprise Integration Patterns](eips.md): every EIP with a YAML and a Rust example.
