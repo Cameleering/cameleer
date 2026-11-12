@@ -45,7 +45,7 @@ processing it keeps growing.
 | project | what it is | status |
 |---|---|---|
 | **[cameleer](https://github.com/cameleering/cameleer)** | Apache Camel routes in Rust, and the reliable action layer for AI agents: one std-only native binary, about 230 components | **measured** against Apache Camel 4.23.0 on Java 21, same machines: startup 3 ms vs 1.1 s, peak memory 4.8–54x less, throughput 1.7–8.7x, one p99 loss ([the ledger](https://cameleer.ing/cameleering/ledger/)) |
-| **simoom** | an embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, Cameleer's HTTP engine | **measured** against Cameleer's previous HTTP server: 1.7–1.8x throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections; against hyper 1.12.0 and may-minihttp 0.1.11 on the same machines: +8% to +23% plaintext throughput; losses listed ([the ledger](https://cameleer.ing/cameleering/ledger/#simoom)); not public yet |
+| **[simoom](https://github.com/cameleering/simoom)** | an embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, Cameleer's HTTP engine | **measured** against Cameleer's previous HTTP server: 1.7–1.8x throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections; against hyper 1.12.0 and may-minihttp 0.1.11 on the same machines: +8% to +23% plaintext throughput; losses listed ([the ledger](https://cameleer.ing/cameleering/ledger/#simoom)); not on crates.io yet |
 | **karez** | database connectivity for Rust shaped like JDBC, ODBC and ADBC, with Arrow results | design stage, not public yet, targets only |
 | **ksar** | cryptographic primitives and PKI | planned, no repository yet |
 

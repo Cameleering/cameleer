@@ -73,7 +73,7 @@
       <thead><tr><th>project</th><th>what it is</th><th>status</th><th>compared with</th><th>last measured</th></tr></thead>
       <tbody>
         <tr><td><strong><a href="../../">Cameleer</a></strong></td><td>integration engine in the style of Apache Camel, one std-only native binary</td><td><span class="st st-measured">measured</span></td><td>Apache Camel 4.23.0 on Java 21; Apache Camel 4.22.1 on Quarkus 3.40.0 native</td><td>2026-11-06</td></tr>
-        <tr><td><strong><a href="#simoom">simoom</a></strong></td><td>embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine, std-only Rust</td><td><span class="st st-measured">measured</span></td><td>Cameleer's previous HTTP server (cameleer-http); hyper 1.12.0, may-minihttp 0.1.11, h2o (commit f35c735), nginx 1.24.0, haproxy 2.8.30</td><td>2026-11-12</td></tr>
+        <tr><td><strong><a href="https://github.com/Cameleering/simoom/">simoom</a></strong></td><td>embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine, std-only Rust</td><td><span class="st st-measured">measured</span></td><td>Cameleer's previous HTTP server (cameleer-http); hyper 1.12.0, may-minihttp 0.1.11, h2o (commit f35c735), nginx 1.24.0, haproxy 2.8.30</td><td>2026-11-12</td></tr>
         <tr><td><strong>karez</strong></td><td>database connectivity shaped like JDBC, ODBC and ADBC, with Arrow results</td><td><span class="st st-design">design</span></td><td class="na">targets only</td><td class="na">—</td></tr>
         <tr><td><strong>ksar</strong></td><td>cryptographic primitives and PKI</td><td><span class="st st-planned">planned</span></td><td class="na">—</td><td class="na">—</td></tr>
       </tbody>
@@ -154,7 +154,7 @@
       <li>A new connection per request was split: ahead of hyper on one droplet (22.1k against 19.3k), behind xitca 0.7.1 on another (19.3k against 24.3k).</li>
       <li>Droplets of the same type differed by up to 7x for every server, so only figures from the same droplet are compared. Larger machines and multi-queue NICs are not measured yet.</li>
     </ul>
-    <p class="note">simoom's repository is not public yet; its raw results (<code>bench/results/2026-11-11-campaign3</code>, <code>2026-11-12-epoll</code>), the analyses and the scripts that produced them are published with it. Until then these rows rest on that unpublished data.</p>
+    <p class="note">Method, raw data and analyses: <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-12-epoll/analysis.md">bench/results/2026-11-12-epoll</a> (plaintext, handshakes), <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-11-campaign3/analysis.md">bench/results/2026-11-11-campaign3</a> (the other rows) and <a href="https://github.com/Cameleering/simoom/blob/main/docs/STATUS.md">docs/STATUS.md</a> (against cameleer-http); the scripts are in <a href="https://github.com/Cameleering/simoom/tree/main/bench/cloud">bench/cloud</a>. Source: <a href="https://github.com/Cameleering/simoom/">github.com/Cameleering/simoom</a>. The crates are not on crates.io yet.</p>
   </div>
 </section>
 
