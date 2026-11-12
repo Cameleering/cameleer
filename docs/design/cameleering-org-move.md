@@ -11,8 +11,8 @@ The earlier plan (`docs/design/github-organization.md`, 2026-11-09) recommended 
 `cameleer-rs`, with Docker Hub staying on `pmsudhi` because the `cameleer` namespace there is
 taken. Since then:
 
-- the family grew (health pack, attestation, a planned `cameleer-sap` pack, the saltire crypto
-  plan);
+- the family grew (health pack, attestation, a planned `cameleer-sap` pack, the crypto
+  family plan, first called saltire and renamed ksar on 2026-11-12);
 - the site adopted "cameleering" as its own term (`site/cameleering/`, "What is cameleering?").
 
 The owner proposes the org **Cameleering** for everything, and wants the plan re-checked
@@ -54,13 +54,13 @@ against today's facts.
   - `cameleering/cameleer`: the product and its workspace, including the packs (`cameleer-health`,
     later `cameleer-sap`);
   - `cameleering/simoom`, `cameleering/karez` (private until their readiness bar);
-  - later `cameleering/saltire`, created when the crypto move starts;
+  - later `cameleering/ksar`, created when the crypto move starts;
   - `cameleering/.github`: the org profile README and default community files.
 - **Containers:** `docker.io/cameleering/cameleer` and `ghcr.io/cameleering/cameleer`, with the
   tags `latest`, `<v>`, `health`, `<v>-health` and `edge`.
 - **crates.io:** the GitHub team `github:cameleering:release` co-owns every crate, `pmsudhi` stays
   a named owner, and trusted publishing runs from `cameleering/cameleer`.
-- **Unchanged:** product and crate names (`cameleer-*`, simoom, karez, saltire) and the domain
+- **Unchanged:** product and crate names (`cameleer-*`, simoom, karez, ksar) and the domain
   cameleer.ing.
 
 ## Plan
@@ -150,7 +150,7 @@ against today's facts.
 
 ### Later
 
-- Create `cameleering/saltire` when the crypto move starts.
+- Create `cameleering/ksar` when the crypto move starts.
 - Publish simoom and karez when they meet their readiness bar.
 - The family page on the site (SEO session).
 - Optionally claim the bare `cameleer` crate for the CLI, and consider a trademark: the only way to
