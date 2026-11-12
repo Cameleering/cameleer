@@ -885,12 +885,12 @@ Built:
   meaning.
 - The menu collapses below 1080 px, because the docs header has eight items.
 
-Next, in this order:
-- (a) "Apache Camel alternative in Rust: benchmarks";
-- (b) "Code efficiency as a FinOps lever";
-- (c) "When a rewrite pays off";
-- (d) "AI-generated code and performance: the evidence";
-- (e) "Wirth's law in 2026".
+The five content pages are done (2026-11-12), each with numbered sources checked that day:
+`/alternatives/apache-camel-in-rust/`, and under `/cameleering/`: `finops/`, `when-to-rewrite/`,
+`ai-code-performance/` and `wirths-law/`. They are linked from `/cameleering/` ("Read further"),
+the alternatives pages, the home footer and llms.txt. The research also found METR's February 2026
+follow-up, so `/cameleering/` and the org profile README now say the 2025 slowdown result may have
+changed.
 
 Phase 2 is triggered when a second project is measured: the root flips to Cameleering and Cameleer
 moves to `/cameleer/` with redirects.

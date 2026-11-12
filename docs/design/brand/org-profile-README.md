@@ -28,7 +28,10 @@ of the speed of the software. In one benchmark, code written by GPT-4 took on av
 long to run as human solutions to the same tasks
 ([EffiBench, NeurIPS 2024](https://arxiv.org/abs/2402.02037)). In a controlled study, experienced
 developers using AI tools were 19% slower while believing they were faster
-([METR, July 2025](https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/)).
+([METR, July 2025](https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/)); a 2026
+follow-up suggests that has since changed, but could not measure it cleanly
+([METR, February 2026](https://metr.org/blog/2026-02-24-uplift-update/)). Either way, those studies
+measure how fast people finish, not how fast the software runs.
 Code duplication in large codebases rose sharply in 2024
 ([GitClear](https://www.gitclear.com/ai_assistant_code_quality_2025_research)), though that study
 cannot say which lines AI wrote, and other research found small quality gains from AI adoption
