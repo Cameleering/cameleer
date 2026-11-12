@@ -48,7 +48,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
       - name: Build, package, checksum and SBOM
         shell: bash
-        run: scripts/package-archive.sh ${{ matrix.dist }} ${{ matrix.target }}
+        run: bash scripts/package-archive.sh ${{ matrix.dist }} ${{ matrix.target }}
       - name: SBOM of the cameleer-health crate
         if: matrix.dist == 'health' && matrix.target == 'x86_64-unknown-linux-gnu'
         shell: bash

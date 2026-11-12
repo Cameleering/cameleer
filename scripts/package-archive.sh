@@ -35,7 +35,13 @@ cp LICENSE README.md "$stage/" 2>/dev/null || true
 
 cd "$root/dist"
 case "$target" in
-  *windows*) archive="$name.zip"; (cd "$name" && zip -qr "../$archive" .) ;;
+  *windows*)
+    archive="$name.zip"
+    # Git Bash on the Windows runners has no `zip`; 7-Zip and PowerShell are always there
+    if command -v zip >/dev/null 2>&1; then (cd "$name" && zip -qr "../$archive" .)
+    elif command -v 7z >/dev/null 2>&1; then (cd "$name" && 7z a -tzip -bd -bso0 "../$archive" . >/dev/null)
+    else powershell -NoProfile -Command "Compress-Archive -Path '$name/*' -DestinationPath '$archive' -Force"
+    fi ;;
   *)         archive="$name.tar.gz"; tar -czf "$archive" "$name" ;;
 esac
 if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive" > "$archive.sha256"; else shasum -a 256 "$archive" > "$archive.sha256"; fi
