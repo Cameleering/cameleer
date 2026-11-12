@@ -60,8 +60,10 @@
     <a class="brand" href="../" aria-label="Cameleer home"><img src="../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
     <nav aria-label="Main">
       <a class="keep" href="../docs/">Docs</a>
-      <a class="keep" href="./">Use cases</a>
-      <a href="../docs/guides/agents.html">Agents</a>
+      <a class="keep" aria-current="page" href="../use-cases/">Use cases</a>
+      <a href="../mcp/">MCP</a>
+      <a href="../docs/packs/health/">Healthcare</a>
+      <a href="../trust/">Trust</a>
       <a href="../compare/">Compare</a>
       <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
     </nav>
@@ -106,6 +108,11 @@
         <h3>Medical imaging: a DICOM router</h3>
         <p>Receive images over DIMSE, route on tags, de-identify with the PS3.15 profile, and forward to a PACS, a DICOMweb store or an AI model, with results back to the EHR as FHIR. Health pack, next release.</p>
         <span class="who">dicom · dicomweb · dicomDeidentify · fhir</span>
+      </a>
+      <a class="card" href="../trust/">
+        <h3>Confidential integrations</h3>
+        <p>Run routes in an Intel TDX or AMD SEV-SNP confidential VM and show a client hardware evidence of the routes, configuration and tools that handle its data, bound to the TLS key. Next release.</p>
+        <span class="who">attestation · /q/attestation · MCP</span>
       </a>
       <a class="card" href="mqtt-iot-edge-gateway/">
         <h3>MQTT and IoT edge gateways</h3>
@@ -210,6 +217,8 @@ docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/h
       <ul>
         <li><a href="../docs/">Documentation</a></li>
         <li><a href="../compare/">Compare</a></li>
+        <li><a href="../trust/">Trust</a></li>
+        <li><a href="../docs/packs/health/">The health pack</a></li>
         <li><a href="../docs/ROADMAP.html">Roadmap</a></li>
         <li><a href="../llms.txt">llms.txt</a></li>
       </ul>

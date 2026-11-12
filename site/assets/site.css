@@ -35,6 +35,7 @@ code, pre { font-family: var(--mono); }
 .top nav { display: flex; gap: 28px; align-items: center; font-size: 15px; }
 .top nav a { text-decoration: none; color: var(--muted); }
 .top nav a:hover { color: var(--ink); }
+.top nav a[aria-current="page"] { color: var(--ink); font-weight: 600; }
 .top nav .gh { color: var(--ink); font-weight: 600; display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); padding: 7px 14px; border-radius: 999px; }
 .top nav .gh:hover { border-color: var(--ink); }
 
