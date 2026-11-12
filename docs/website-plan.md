@@ -861,3 +861,36 @@ MLLP and FHIR left the default build and image with it (breaking, next release).
 - DICOM gateways: https://github.com/UMEssen/DICOM-RST, https://github.com/knopkem/dicomweb-proxy,
   https://docs.cloud.google.com/healthcare-api/docs/concepts/dicom, https://www.qvera.com/dicom-router/
 - The research note with its own sources: `docs/design/medical/dicom-and-healthcare.md` (internal)
+
+## 13. Cameleering as the discipline and org (2026-11-12, done)
+
+The owner separated **Cameleering** (a way of engineering, and the GitHub org `Cameleering`) from
+**Cameleer** (the first Cameleering project). Decisions:
+- **Domain:** the root stays Cameleer's until a second project is measured.
+- **saltire:** rename it before launch. The checked shortlist is ksar (recommended), seif and serai;
+  serai is already taken.
+- **Responsibility framing:** prominent.
+- **Tagline:** "Carry more on less", with the house rule "No claim without a number".
+
+The guide is `docs/design/brand/cameleering-brand.md`. The org profile draft is
+`docs/design/brand/org-profile-README.md`.
+
+Built:
+- `/cameleering/` rewritten: definition, why now, responsibility, eight principles, process, ledger
+  summary, lineage, FAQ and sources.
+- New pages: `/cameleering/ledger/` and `/cameleering/method/`.
+- A Cameleering menu item on every page and in the docs header.
+- The footer endorsement line everywhere.
+- The home band, README, docs FAQ and llms.txt (a new Cameleering section) moved to the new
+  meaning.
+- The menu collapses below 1080 px, because the docs header has eight items.
+
+Next, in this order:
+- (a) "Apache Camel alternative in Rust: benchmarks";
+- (b) "Code efficiency as a FinOps lever";
+- (c) "When a rewrite pays off";
+- (d) "AI-generated code and performance: the evidence";
+- (e) "Wirth's law in 2026".
+
+Phase 2 is triggered when a second project is measured: the root flips to Cameleering and Cameleer
+moves to `/cameleer/` with redirects.

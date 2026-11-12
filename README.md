@@ -27,9 +27,10 @@ formats, ported one by one and verified against the real systems.
   Lambda runtime, and moves **1.7–8.7x the messages** of Apache Camel on the same CPUs, in every
   scenario we measured ([Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)).
 
-**Cameleering** is running Apache Camel routes this way: the same patterns, URIs and YAML, driven
-by one native binary instead of the JVM, at the edge, in serverless functions and behind AI agents
-([what is cameleering?](https://cameleer.ing/cameleering/)).
+**Cameleer is the first Cameleering project.** Cameleering is the practice of making software carry
+the same load on less (time, memory, size, dependencies) and proving every gain against the original,
+with the method published: no claim without a number
+([what is cameleering?](https://cameleer.ing/cameleering/), [the ledger](https://cameleer.ing/cameleering/ledger/)).
 
 [Website](https://cameleer.ing/) · [Docs](https://cameleer.ing/docs/) · [Use cases](https://cameleer.ing/use-cases/) ·
 [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·

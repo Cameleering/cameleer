@@ -62,9 +62,7 @@ footer a { text-decoration: none; }
 footer a:hover { color: var(--ink); text-decoration: underline; }
 footer .credit { max-width: 32em; }
 
-@media (max-width: 900px) {
-  footer .wrap { grid-template-columns: 1fr; }
-  .top nav { gap: 18px; }
+@media (max-width: 1080px) {
   /* the menu collapses behind a Menu button; .top.open shows it as a panel */
   .nav-toggle { display: inline-flex; align-items: center; gap: 8px; font: 600 15px var(--sans); color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px; cursor: pointer; }
   .nav-toggle .bars, .nav-toggle .bars::before, .nav-toggle .bars::after { display: block; width: 16px; height: 2px; background: currentColor; border-radius: 1px; position: relative; transition: transform .15s; }
@@ -81,6 +79,10 @@ footer .credit { max-width: 32em; }
   .top.open nav .nav-sub { display: flex; position: static; margin: 0; padding: 4px 0 8px 12px; min-width: 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; }
   .top.open nav .nav-sub::before { display: none; }
   .top.open nav .gh { align-self: flex-start; margin-top: 16px; }
+}
+@media (max-width: 900px) {
+  footer .wrap { grid-template-columns: 1fr; }
+  .top nav { gap: 18px; }
 }
 @media (max-width: 480px) {
   .wrap { padding: 0 16px; }

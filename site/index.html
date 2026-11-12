@@ -241,6 +241,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
     </a>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
     <nav id="main-nav" aria-label="Main">
+      <a href="cameleering/">Cameleering</a>
       <a class="keep" href="docs/">Docs</a>
       <a class="keep" href="use-cases/">Use cases</a>
       <a href="mcp/">MCP</a>
@@ -328,15 +329,15 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
 
 <section id="cameleering" aria-labelledby="cam-h">
   <div class="wrap">
-    <h2 id="cam-h">Cameleering: Camel routes, driven without the JVM.</h2>
-    <p class="sub"><strong>Cameleering</strong> is running Apache Camel integration routes on Cameleer: the same patterns, endpoint URIs and YAML, executed by one native Rust binary that starts in 3 ms and runs in megabytes. It takes Camel-style integration where a JVM does not fit.</p>
+    <h2 id="cam-h">The first Cameleering project: carry more on less.</h2>
+    <p class="sub"><strong>Cameleering</strong> is the practice of making software carry the same load on less, and proving every gain against the original. Cameleer is its first project: Apache Camel's patterns, endpoint URIs and YAML, run by one native Rust binary that starts in 3 ms and runs in megabytes, so Camel-style integration goes where a JVM does not fit.</p>
     <div class="more-cases">
       <ul class="cases">
         <li><a href="use-cases/mqtt-iot-edge-gateway/"><b>At the edge</b><span>MQTT, syslog and HL7 routing on gateways and small devices, buffering when the uplink is down; arm64 image.</span></a></li>
         <li><a href="use-cases/serverless-aws-lambda/"><b>In serverless functions</b><span>Its own AWS Lambda runtime; the same route on Cloud Run and Knative, with no JVM cold start.</span></a></li>
         <li><a href="use-cases/mcp-tool-server/"><b>Behind AI agents</b><span>Routes as MCP tools that are validated, run once, approved when risky and audited.</span></a></li>
       </ul>
-      <p class="all-cases"><a href="cameleering/">What is cameleering?</a></p>
+      <p class="all-cases"><a href="cameleering/">What is cameleering?</a> · <a href="cameleering/ledger/">The ledger</a></p>
     </div>
   </div>
 </section>
@@ -581,7 +582,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
 
 <section id="start" aria-labelledby="start-h">
   <div class="wrap">
-    <h2 id="start-h">Start cameleering: your first route in a minute.</h2>
+    <h2 id="start-h">Start with Cameleer: your first route in a minute.</h2>
     <p class="sub">Use the container, the Rust crates or the CLI. Every example here is a file in the repository, run end to end by the test suite.</p>
 
     <div class="tabs" role="tablist" aria-label="How to run Cameleer">
@@ -716,6 +717,7 @@ $ cameleer --help
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a> (<a href="https://github.com/apache/camel">source</a>), following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>Cameleer is a <a href="cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
       <p>Apache License 2.0.</p>
       <p>Supported by <a href="https://datahq.ai"><img src="brand/datahq-logo.png" alt="DataHQ" width="120" height="120" style="display:block;margin-top:8px"></a></p>
     </div>

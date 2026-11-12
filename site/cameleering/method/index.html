@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to Measure Software Efficiency Honestly | Cameleering</title>
+<meta name="description" content="The Cameleering method: what to measure (startup, memory, throughput, p99, CPU, size), what counts as a fair baseline, a ten-point release check and a one-page report format.">
+<link rel="canonical" href="https://cameleer.ing/cameleering/method/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="How to Measure Software Efficiency Honestly">
+<meta property="og:description" content="The Cameleering method: what to measure (startup, memory, throughput, p99, CPU, size), what counts as a fair baseline, a ten-point release check and a one-page report format.">
+<meta property="og:url" content="https://cameleer.ing/cameleering/method/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<link rel="stylesheet" href="../../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "How to Measure Software Efficiency Honestly", "description": "The Cameleering method: what to measure (startup, memory, throughput, p99, CPU, size), what counts as a fair baseline, a ten-point release check and a one-page report format.", "url": "https://cameleer.ing/cameleering/method/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@type": "Organization", "name": "Cameleering", "url": "https://cameleer.ing/cameleering/"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleering", "item": "https://cameleer.ing/cameleering/"}, {"@type": "ListItem", "position": 3, "name": "Method"}]}
+</script>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a aria-current="page" href="../../cameleering/">Cameleering</a>
+      <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
+      <a href="../../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a href="../../trust/">Trust</a>
+      <a href="../../compare/">Compare</a>
+      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Home</a> / <a href="../">Cameleering</a> / Method</p>
+    <p class="kicker">Cameleering · the method</p>
+    <h1>How to measure, so the numbers hold up</h1>
+    <p class="lede">What we measure, how we measure it, what counts as a fair baseline, a ten-point check to run before each release, and the one-page report every ledger row links to. Use it on any software, in any language.</p>
+    <p class="rule">No claim without a number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="metrics">
+  <div class="wrap">
+    <h2>What to measure</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>metric</th><th>how</th><th>why it matters</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Startup</strong></td><td>time from process start to the first unit of work being ready (a started context, a listening port answering a request); many runs, report the median</td><td>scale to zero, restarts, serverless cold starts</td></tr>
+        <tr><td><strong>Memory at startup</strong></td><td>resident set size once ready and idle</td><td>how many instances fit on a machine</td></tr>
+        <tr><td><strong>Peak memory under load</strong></td><td>maximum resident set size during the throughput run</td><td>what you must provision</td></tr>
+        <tr><td><strong>Throughput</strong></td><td>completed work per second at a fixed concurrency, after a warm-up, with the load generator on a separate machine</td><td>how much hardware the job needs</td></tr>
+        <tr><td><strong>Tail latency</strong></td><td>p99 (and p50) from the load generator, at the same load as the throughput run</td><td>what the slowest users wait</td></tr>
+        <tr><td><strong>CPU</strong></td><td>CPU time per unit of work, or CPU percentage at a fixed rate</td><td>the cost of each request</td></tr>
+        <tr><td><strong>Size</strong></td><td>binary or image size, compressed and uncompressed</td><td>deploy time, storage, attack surface</td></tr>
+        <tr><td><strong>Dependencies and idle threads</strong></td><td>count of third-party packages compiled in; threads alive when idle</td><td>supply chain, audit cost, idle overhead</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="baseline">
+  <div class="wrap">
+    <h2>What counts as a fair baseline</h2>
+    <div class="two">
+      <div class="pane good">
+        <h3>Do</h3>
+        <ul>
+          <li>Compare with the version most people run today, with the exact version, runtime and flags written down.</li>
+          <li>Include the strongest variant of the baseline too, not only the easy one. Cameleer is compared with Apache Camel on the JVM <em>and</em> on Quarkus native.</li>
+          <li>Run both sides on identical machines, swapping roles between them, with the load generator on its own machine.</li>
+          <li>Run each scenario more than once and say how the figures were combined.</li>
+          <li>Round against yourself: your times and memory up, your ratios down.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Don't</h3>
+        <ul>
+          <li>Compare a tuned build with a default one, or a warm run with a cold one.</li>
+          <li>Quote the best ratio without the worst ("up to 54x" without "4.8x").</li>
+          <li>Leave out the scenarios you lose.</li>
+          <li>Present a target in the same style as a result.</li>
+          <li>Borrow one project's numbers for another.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="water-check">
+  <div class="wrap">
+    <h2>The water check: ten questions before each release</h2>
+    <p class="intro">Do we know each number, and did any of them get worse? Keep the answers in the repository, where the team sees them.</p>
+    <ol class="check">
+      <li>Cold start time</li>
+      <li>Memory when idle</li>
+      <li>Peak memory under load</li>
+      <li>Binary or image size</li>
+      <li>Threads alive when idle</li>
+      <li>p99 latency at the expected load</li>
+      <li>CPU per request</li>
+      <li>Number of dependencies</li>
+      <li>Time a user waits behind a loader or spinner</li>
+      <li>Is each result written down, with the date and the machine?</li>
+    </ol>
+  </div>
+</section>
+
+<section class="c-sec" id="report">
+  <div class="wrap">
+    <h2>The crossing report: one page per ledger row</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>section</th><th>what it holds</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Load</strong></td><td>the workload: the routes, requests or queries, and why they are representative</td></tr>
+        <tr><td><strong>Baseline</strong></td><td>the software compared with, exact versions, runtime and flags</td></tr>
+        <tr><td><strong>Terrain</strong></td><td>hardware, operating system, kernel, build profile</td></tr>
+        <tr><td><strong>Water</strong></td><td>startup, idle and peak memory, size, CPU</td></tr>
+        <tr><td><strong>Distance</strong></td><td>throughput and p50/p99 latency</td></tr>
+        <tr><td><strong>Losses</strong></td><td>where the new version is slower or bigger, and why</td></tr>
+        <tr><td><strong>Repeat it</strong></td><td>the scripts, commands, checksums and raw results</td></tr>
+        <tr><td><strong>Date</strong></td><td>when it was measured; a result older than 12 months is stale</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Cameleer's report in this shape: <a href="../../docs/BENCHMARKS.html">BENCHMARKS</a>, produced by <code>scripts/cloud-bench</code> from the raw results.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="status">
+  <div class="wrap">
+    <h2>Measured or in progress: the two labels</h2>
+    <div class="two">
+      <div class="pane good">
+        <h3>"Cameleered"</h3>
+        <p>A project may say it has been cameleered when all of these hold:</p>
+        <ul>
+          <li>a before-and-after comparison against a named, current baseline version;</li>
+          <li>both sides on the same hardware;</li>
+          <li>a script anyone can rerun, and the raw results;</li>
+          <li>the losses disclosed;</li>
+          <li>measured within the last 12 months.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>"Cameleering"</h3>
+        <p>Work in progress: the baseline may be published and targets set, but nothing is measured yet. A cameleering project shows its targets as targets and no results.</p>
+        <p>The labels never carry another project's name or trademark, and they say nothing about the projects they are compared with beyond the measured numbers.</p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="credit">
+      <h4>Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects; Cameleer is the first Cameleering project. Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../../cameleering/">What is cameleering?</a></li>
+        <li><a href="../../cameleering/ledger/">The ledger</a></li>
+        <li><a href="../../cameleering/method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../../">Cameleer</a></li>
+        <li><a href="../../compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

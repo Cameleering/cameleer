@@ -1346,6 +1346,7 @@ TEMPLATE = """<!doctype html>
     </a>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
     <nav id="main-nav" aria-label="Main">
+      <a href="{site_root}cameleering/">Cameleering</a>
       <a class="keep" href="{root}index.html">Docs</a>
       <a href="{root}guides/index.html">Guides</a>
       <a href="{root}components/index.html">Components</a>
@@ -1389,6 +1390,7 @@ TEMPLATE = """<!doctype html>
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a> (<a href="https://github.com/apache/camel">source</a>), following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>Cameleer is a <a href="{site_root}cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
       <p>Apache License 2.0.</p>
     </div>
     <div>

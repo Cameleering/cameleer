@@ -15,12 +15,13 @@ native binary with no dependencies outside the Rust standard library. See the
 
 ### What is cameleering?
 
-Cameleering is running Apache Camel integration routes on Cameleer: the same Enterprise
-Integration Patterns, endpoint URIs and YAML DSL, executed by one native Rust binary instead of
-the JVM. Routes start in about 3 ms and run in megabytes, so Camel-style integration fits on edge
-devices, in serverless functions and behind AI agents. The word comes from *cameleer*, a camel
-driver; the project's short domain is cameleer.ing. See
-[what is cameleering?](https://cameleer.ing/cameleering/).
+Cameleering is the practice of making software carry the same load on less (less time, memory,
+size and dependencies) and proving every gain against the original, on the same hardware, with the
+method published. Its one hard rule is no claim without a number. Cameleer is the first Cameleering
+project: Apache Camel's routes run by one native Rust binary that starts in about 3 ms and runs in
+megabytes. The word comes from *cameleer*, the driver of a camel caravan. See
+[what is cameleering?](https://cameleer.ing/cameleering/) and
+[the ledger](https://cameleer.ing/cameleering/ledger/).
 
 ### Is Cameleer compatible with Apache Camel?
 
