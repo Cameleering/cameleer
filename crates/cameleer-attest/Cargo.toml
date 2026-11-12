@@ -8,7 +8,7 @@ homepage.workspace = true
 documentation.workspace = true
 authors.workspace = true
 readme.workspace = true
-keywords = ["camel", "attestation", "tee", "confidential-computing", "tdx"]
+keywords = ["camel", "attestation", "tee", "confidential", "tdx"]
 categories = ["cryptography", "network-programming"]
 description = "Cameleer attestation (std only): evidence from Linux configfs-tsm (Intel TDX, AMD SEV-SNP) and the dstack guest agent, bound to the running routes, configuration and TLS key"
 
