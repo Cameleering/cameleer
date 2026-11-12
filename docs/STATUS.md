@@ -443,7 +443,7 @@ operations, association pooling; WADO frames/rendered/thumbnail, UPS-RS; pixel c
 JPEG-LS, JPEG 2000, RLE) and with them Clean Pixel Data; Encrypted Attributes Sequence;
 `fhirDeidentify`; PS3.15 A.5 (ATNA) audit messages; a PS3.2 conformance statement; fuzzing of the
 Part 10, PDU and multipart parsers; throughput benchmarks against dcm4che, DCMTK and Orthanc.
-## Move to the `cameleering` organization (2026-11-12, branch `org-move`)
+## Move to the `cameleering` organization (2026-11-12)
 
 Plan in `docs/design/cameleering-org-move.md` (approved; supersedes
 `docs/design/github-organization.md`): the repository, simoom and karez move to the GitHub org
@@ -454,7 +454,15 @@ Branch `org-move` has the rewritten references (`scripts/org-move-rewrite.py`, h
 `container.yml` (`GHCR_NAMESPACE`, `DOCKERHUB_NAMESPACE`, login account from the
 `DOCKERHUB_USERNAME` repository variable). It is merged on transfer day, after the owner has
 created the org, its teams, the org-level verification of cameleer.ing and the Docker Hub
-namespace and token. Nothing on GitHub, Docker Hub or crates.io has changed yet.
+namespace and token.
+
+**Transferred on 2026-11-12.** The org exists (login `Cameleering`, Free plan, teams
+`maintainers` and `release`); cameleer.ing is verified for the org. Verifying it removed the
+custom domain from the repository while it was still `pmsudhi/cameleer` (an org-verified domain
+only serves the org's repositories), so cameleer.ing answered 404 for about 40 minutes until the
+transfer; the domain was set again on `Cameleering/cameleer`, HTTPS is enforced, and the old
+GitHub URLs redirect. Still open: the Docker Hub `cameleering` namespace and `DOCKERHUB_TOKEN`,
+a new `TRAFFIC_TOKEN`, the org profile README, the crates.io team and 0.6.0.
 
 ## Unreleased since 0.5.1 (2026-11-09, `main`)
 

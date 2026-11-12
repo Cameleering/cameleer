@@ -73,7 +73,10 @@ against today's facts.
    - a second owner, for continuity (GitHub's docs recommend at least two). Without one, give
      `pmsudhi` several 2FA methods (passkey or security key) and keep the recovery codes offline.
 2. **Teams:** `maintainers` and `release`.
-3. **Domain:** verify cameleer.ing at **org** level (DNS TXT). Never at user level.
+3. **Domain:** verify cameleer.ing at **org** level (DNS TXT). Never at user level. **Lesson
+   (2026-11-12):** an org-verified domain serves only the org's repositories, so verifying it
+   before the transfer removed the custom domain from `pmsudhi/cameleer` and the site answered
+   404 until the transfer. Verify right after the transfer instead, then set the domain again.
 4. **Docker Hub:** create the `cameleering` namespace. A Docker Hub organization may need a paid
    plan (check at signup). If it does, a free Docker account named `cameleering` works as the
    namespace. Create an access token for CI.

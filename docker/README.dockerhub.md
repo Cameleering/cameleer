@@ -65,7 +65,7 @@ docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
 | `sha-<commit>` | the image of one commit |
 | `health`, `0.5.1-health`, `0.5-health`, `edge-health` | the same, plus the [health pack](https://github.com/cameleering/cameleer/blob/main/docs/packs/health/index.md): HL7 v2 and MLLP, FHIR R4, DICOM (DIMSE and DICOMweb), de-identification |
 
-The same image is published to `ghcr.io/cameleering/cameleer`. Every push carries an SBOM, build provenance and a GitHub attestation: `gh attestation verify oci://ghcr.io/cameleering/cameleer:latest --owner pmsudhi`.
+The same image is published to `ghcr.io/cameleering/cameleer`. Every push carries an SBOM, build provenance and a GitHub attestation: `gh attestation verify oci://ghcr.io/cameleering/cameleer:latest --owner cameleering`.
 
 ## Configuration
 
