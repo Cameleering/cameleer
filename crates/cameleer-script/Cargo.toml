@@ -13,8 +13,8 @@ categories = ["development-tools", "parser-implementations"]
 description = "Cameleer scripting languages: JavaScript, Groovy, Python, OGNL, MVEL, SpEL, DataSonnet (tree-walking interpreters)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not

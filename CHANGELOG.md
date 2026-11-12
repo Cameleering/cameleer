@@ -3,7 +3,7 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
-## 0.6.0 (unreleased)
+## 0.6.0 (2026-11-12)
 
 Cameleer gets packs: optional, industry-specific sets of components with their own version. The
 first is the health pack (`cameleer-health` 0.6.0): HL7 v2, MLLP and FHIR R4, moved out of the

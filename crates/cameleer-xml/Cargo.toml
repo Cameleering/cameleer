@@ -13,8 +13,8 @@ categories = ["parser-implementations", "text-processing"]
 description = "Cameleer XML stack (std only): XML 1.0 parser + DOM, XPath 1.0, XQuery 1.0, XSLT 1.0 (xslt/xslt-saxon components), XML Schema validation (validator component), xj, xmlsecurity"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.5.1" }
+cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not
