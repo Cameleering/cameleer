@@ -67,10 +67,11 @@ against today's facts.
 
 ### Phase 0: owner steps, outside the repo (only the owner can do these)
 
-1. **Create the org** `cameleering` (Free plan) from `pmsudhi`:
-   - require 2FA;
-   - add the second owner;
-   - store the recovery codes offline.
+1. **Create the org** `cameleering` (Free plan) from `pmsudhi`. Done 2026-11-12 (login
+   `Cameleering`; name, URL and the teams set). Optional, not required by GitHub:
+   - require 2FA for members: only matters once others join (it removes members without 2FA);
+   - a second owner, for continuity (GitHub's docs recommend at least two). Without one, give
+     `pmsudhi` several 2FA methods (passkey or security key) and keep the recovery codes offline.
 2. **Teams:** `maintainers` and `release`.
 3. **Domain:** verify cameleer.ing at **org** level (DNS TXT). Never at user level.
 4. **Docker Hub:** create the `cameleering` namespace. A Docker Hub organization may need a paid
@@ -162,7 +163,7 @@ against today's facts.
 | Sessions push to the old remote | Update every worktree's remote, and message the linked sessions on transfer day. |
 | crates.io can't see the team | Grant crates.io org access first, and keep `pmsudhi` as a named owner. |
 | Docker Hub org needs a paid plan | Fall back to a free account named `cameleering`. |
-| A single owner locked out | Second owner, 2FA, offline recovery codes. |
+| A single owner locked out | A second owner if possible; otherwise several 2FA methods and offline recovery codes. |
 | Branch protection is lost on private repos in a Free org | Acceptable while they're private. |
 
 ## Critical files
