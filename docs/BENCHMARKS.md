@@ -273,5 +273,5 @@ detailed measurements, the Windows numbers and the tuning history are in
 ## Found a problem?
 
 If a number here doesn't match what you measure, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) with your setup and results, or
+[open an issue](https://github.com/cameleering/cameleer/issues/new) with your setup and results, or
 fork the repository, fix the harness, and open a pull request.

@@ -10,7 +10,7 @@ use cameleer_core::error::Result;
 
 use super::{auth_error, messaging_error};
 use super::{MailTls, StartTls};
-use crate::common::{connect_stream, io_error, upgrade_stream};
+use cameleer_tls::net::{connect_stream, io_error, upgrade_stream};
 
 /// An untagged response (`* ...`) with the literals it carried.
 #[derive(Clone, Debug, Default)]

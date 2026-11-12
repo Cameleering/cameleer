@@ -21,7 +21,8 @@ use cameleer_xml::dom::{Document, NodeId};
 use cameleer_xml::serialize::escape_text;
 
 use crate::envelope::{SoapFault, SoapVersion};
-use crate::support::{format_utc_millis, now_utc, parse_datetime_millis};
+use crate::support::parse_datetime_millis;
+use cameleer_core::util_time::{format_utc_millis, now_utc};
 
 /// The WS-Security extension namespace (`wsse`).
 pub const WSSE_NS: &str = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd";

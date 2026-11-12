@@ -75,7 +75,7 @@ Internal. A draft for the owner to post under their own name; nothing here has b
 > 4. Is there interest in a common evidence wrapper (for example IETF RATS CMW) so clients can
 >    verify TDX, SEV-SNP and Nitro the same way?
 >
-> Code, tests and the design: https://github.com/pmsudhi/cameleer (crate `cameleer-attest`, guide
+> Code, tests and the design: https://github.com/cameleering/cameleer (crate `cameleer-attest`, guide
 > `docs/guides/attestation.md`). Happy to present it in five minutes on a Forum call.
 
 ## Notes for the owner

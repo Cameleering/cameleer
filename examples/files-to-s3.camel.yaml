@@ -6,7 +6,7 @@
 #
 # Run with Docker:
 #   docker run --rm -e S3_BUCKET -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
-#     -e INBOX_DIR=/routes/inbox --user "$(id -u):$(id -g)" -v "$PWD:/routes" pmsudhi/cameleer run /routes/files-to-s3.camel.yaml
+#     -e INBOX_DIR=/routes/inbox --user "$(id -u):$(id -g)" -v "$PWD:/routes" cameleering/cameleer run /routes/files-to-s3.camel.yaml
 # Run from source:
 #   cargo run --release -p cameleer-main --bin cameleer -- run examples/files-to-s3.camel.yaml
 - route:

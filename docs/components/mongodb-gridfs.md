@@ -110,7 +110,7 @@ so after a restart the `TimeStamp` strategy only sees files uploaded after the n
 
 ```sh
 docker run --rm -e MONGODB_URI=mongodb://mongo.example.com:27017 -e INBOX_DIR=/inbox \
-  -v "$PWD/inbox:/inbox" -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/archive.camel.yaml
+  -v "$PWD/inbox:/inbox" -v "$PWD:/routes:ro" cameleering/cameleer run /routes/archive.camel.yaml
 ```
 
 The inbox is mounted read-write because `move=.done` moves processed files.
@@ -141,7 +141,7 @@ after it is routed, so it is not picked up again, even after a restart.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

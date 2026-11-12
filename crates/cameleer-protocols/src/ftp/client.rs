@@ -31,7 +31,7 @@ use cameleer_core::component::file::GENERIC_FILE_OPERATION_FAILED;
 use cameleer_core::error::{CamelError, Result};
 
 use super::listing::{parse_list_line, parse_mdtm, parse_mlsd_line, RemoteFile};
-use crate::common::{connect, io_error, read_line};
+use cameleer_tls::net::{connect, io_error, read_line};
 
 /// A reply from the server: a 3 digit code and the (possibly multi-line) text.
 #[derive(Clone, Debug, PartialEq, Eq)]

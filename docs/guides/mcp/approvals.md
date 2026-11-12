@@ -2,7 +2,7 @@
 
 > When Claude wants to cancel an order or issue a refund, the Cameleer MCP server stops and shows the user an approval form in the client. Nothing runs until they accept; a decline tells the model the call did not run and nothing changed. Rules such as "only unshipped orders can change address" are checked in the route either way. In the field test, all 32 runs of the change requests were correct.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -115,7 +115,7 @@ or with a rule such as `approval: "${header.amount} > 500"`.
 ## Try it
 
 Run the shop and connect Claude Desktop over stdio (the example's
-[README](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) has the
+[README](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) has the
 configuration), then ask it to cancel order 1021. `shop_use_cases` in
 `crates/cameleer-main/tests/mcp_shop.rs` accepts and declines the forms over MCP and checks that
 a declined refund writes nothing.
@@ -128,5 +128,5 @@ a declined refund writes nothing.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

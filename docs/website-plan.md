@@ -720,16 +720,28 @@ the second, and gets a section when it is released.
 
 ## 12. DICOM and healthcare imaging: positioning, pages and placement (2026-11-09, proposal)
 
-**Paused (2026-11-09):** the owner is weighing a separate "medical pack" (an optional healthcare
-pack or distribution) instead of merging DICOM into the core; the packaging study goes to
-`docs/design/packs/domain-packs.md`. The page structure and names below (12.4) wait for that
-decision: they may become a "Cameleer for Healthcare" page with its own install path. The claims
-(12.1), search findings (12.2) and positioning (12.3) don't depend on the packaging. The drafts on
-the local branch `site-dicom-draft` stay unpushed.
+**Done (2026-11-11): the health pack.** The owner chose a pack: `cameleer-health` 0.6.0, feature
+`health` (not in `full`), image `pmsudhi/cameleer:health`, merged into `main` at `f42b5f3`. HL7,
+MLLP and FHIR left the default build and image with it (breaking, next release). Site changes:
 
-DICOM is built on branch `dicom` (commits `0f98611` to `78907e9`) and is **not on `main`**. Pages
-are drafted on a local branch and are **not published** until the owner merges `dicom` into
-`main`; then they ship marked "next release", as `--mcp-expose` and attestation did.
+- Docs: a "Packs" group in the docs navigation and a "Packs" list in the generated llms.txt
+  section (`scripts/build-docs.py`); the five moved pages (`components/mllp`, `components/fhir`,
+  `dataformats/hl7`, `dataformats/fhir`, `languages/hl7terser`) keep their old URLs as
+  `noindex` redirects with a canonical to the new page (`MOVED` in the script).
+- `use-cases/dicom-imaging-gateway/` published from the draft, reworked for the pack (image
+  `:health`, live tier 10/10, the PS3.2 Conformance Statement, no BCP 195 claim, throughput not
+  measured), with cards on the home page and the use-case index, a row on the Camel comparison,
+  and a healthcare section on `/trust/`.
+- The HL7 use case, the edge, file and cameleering pages, the edge and concepts guides, README and
+  llms.txt say HL7, MLLP and FHIR need the health pack from the next release (0.5.1 images still
+  have them).
+- Done since (2026-11-12): the Packs menu (Healthcare as a submenu), `/healthcare/`, a collapsible
+  mobile menu on every page, and `alternatives/mirth-connect-alternatives/` with 13 numbered
+  sources. Facts checked at the source: NextGen's announcement (2025-03-19) and downloads page,
+  the GitHub repositories (OIE and BridgeLink are MPL-2.0, not Apache-2.0 as one blog says;
+  Mirth's last public tag is 4.5.2), the Eclipse project page (OIE incubating), and the Rhapsody,
+  Cloverleaf, InterSystems and Qvera product pages. Iguana's page returned 404, so Iguana is left
+  out until it can be checked.
 
 ### 12.1 What may be claimed (from the branch's CHANGELOG, STATUS, INTEROP and guide)
 
@@ -849,3 +861,36 @@ are drafted on a local branch and are **not published** until the owner merges `
 - DICOM gateways: https://github.com/UMEssen/DICOM-RST, https://github.com/knopkem/dicomweb-proxy,
   https://docs.cloud.google.com/healthcare-api/docs/concepts/dicom, https://www.qvera.com/dicom-router/
 - The research note with its own sources: `docs/design/medical/dicom-and-healthcare.md` (internal)
+
+## 13. Cameleering as the discipline and org (2026-11-12, done)
+
+The owner separated **Cameleering** (a way of engineering, and the GitHub org `Cameleering`) from
+**Cameleer** (the first Cameleering project). Decisions:
+- **Domain:** the root stays Cameleer's until a second project is measured.
+- **saltire:** rename it before launch. The checked shortlist is ksar (recommended), seif and serai;
+  serai is already taken.
+- **Responsibility framing:** prominent.
+- **Tagline:** "Carry more on less", with the house rule "No claim without a number".
+
+The guide is `docs/design/brand/cameleering-brand.md`. The org profile draft is
+`docs/design/brand/org-profile-README.md`.
+
+Built:
+- `/cameleering/` rewritten: definition, why now, responsibility, eight principles, process, ledger
+  summary, lineage, FAQ and sources.
+- New pages: `/cameleering/ledger/` and `/cameleering/method/`.
+- A Cameleering menu item on every page and in the docs header.
+- The footer endorsement line everywhere.
+- The home band, README, docs FAQ and llms.txt (a new Cameleering section) moved to the new
+  meaning.
+- The menu collapses below 1080 px, because the docs header has eight items.
+
+Next, in this order:
+- (a) "Apache Camel alternative in Rust: benchmarks";
+- (b) "Code efficiency as a FinOps lever";
+- (c) "When a rewrite pays off";
+- (d) "AI-generated code and performance: the evidence";
+- (e) "Wirth's law in 2026".
+
+Phase 2 is triggered when a second project is measured: the root flips to Cameleering and Cameleer
+moves to `/cameleer/` with redirects.

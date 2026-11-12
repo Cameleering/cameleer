@@ -80,7 +80,7 @@ pub use client::{ftp_error, FtpClient, FtpReply, FtpSecurity};
 use cameleer_tls::camel_support::{endpoint_tls, EndpointTls};
 pub use listing::RemoteFile;
 
-use crate::common::{take_ignored, Authority, COMMON_IGNORED};
+use cameleer_tls::net::{take_ignored, Authority, COMMON_IGNORED};
 
 /// Header: host of the remote file.
 pub const FILE_HOST: &str = "CamelFileHost";

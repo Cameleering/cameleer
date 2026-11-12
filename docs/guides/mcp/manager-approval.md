@@ -2,7 +2,7 @@
 
 > Some decisions belong to someone who is not in the chat. Goodwill store credit in the shop waits for a manager: the call is parked with a handle, the manager approves or rejects it from the command line, and when Claude asks again it gets the decision, never a second request. In the field test, all 8 runs of the two manager cases were correct, approvals and rejections alike.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -142,5 +142,5 @@ the next call returns.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

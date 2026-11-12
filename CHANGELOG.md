@@ -5,8 +5,56 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+### Changed
+
+- **Breaking: `mllp`, `hl7`, `hl7terser`, `fhir`, `fhirJson` and `fhirXml` moved to the health pack.**
+  The default build and image no longer have them: use `pmsudhi/cameleer:health` or build with
+  `--features health`. In Rust, `cameleer_protocols::{hl7, mllp}` are now
+  `cameleer_health::hl7::{self, mllp}` and `cameleer_soap::fhir` is `cameleer_health::fhir`, with no
+  aliases. The socket helpers of `cameleer-protocols` are in `cameleer_tls::net`, the SOAP producer
+  client is `cameleer_http::client::EndpointClient`, `now_utc` is in `cameleer_core::util_time`.
+
 ### Added
 
+- **Packs, and the health pack** (`cameleer-health` 0.6.0, cargo feature `health` of
+  `cameleer-main`, **not** in `full`; image tags `pmsudhi/cameleer:health` and
+  `:<version>-health`; archive `cameleer-health-<version>-<target>`). A pack is an optional,
+  industry-specific set of components with its own version (`docs/packs/index.md`). The health
+  pack holds HL7 v2 and MLLP, FHIR R4 and the new DICOM support (Apache Camel has no DICOM
+  component, so these are Cameleer extensions):
+  - the `dicom` component: DIMSE over TCP and TLS, the consumer an SCP (C-ECHO, and C-STORE,
+    C-FIND, C-MOVE and C-GET answered by routes) and the producer an SCU
+    (`operation=echo|store|find|move|get`), with `CamelDicom*` headers;
+  - the `dicomweb` component: STOW-RS, QIDO-RS, WADO-RS and metadata as a client, and a
+    DICOMweb server on the shared HTTP server;
+  - the `dicom` data format (Part 10 to a Value tree in the DICOM JSON shape and back, byte for
+    byte; explicit, implicit, deflated and big endian; encapsulated pixel data as fragments;
+    specific character sets including ISO 2022 Japanese, Korean and Chinese, GB18030 and UTF-8),
+    `dicomJson` (PS3.18 Annex F) and `dicomDeidentify` (PS3.15 Annex E basic profile and options,
+    HMAC-keyed and deterministic, with audit records in the hash-chained log);
+  - `${dicom.PatientID}` and sequence paths in Simple, and the `dicom` language;
+  - the PS3.6 dictionary and PS3.15 Table E.1-1 generated from the 2026d standard
+    (`scripts/update-dicom-dict.py`, pinned digests);
+  - examples in `examples/medical/`, the guide `docs/packs/health/guides/dicom.md`;
+  - verified live against DCMTK 3.6.7 and Orthanc 1.12.2 with its DICOMweb plugin
+    (`scripts/dicom-interop.sh`, `CAMEL_DICOM_INTEROP=1`), and on 33 public test files.
+- **The pack extension point**: `cameleer_core::pack` (`PackInfo`, `Pack`,
+  `CamelContext::add_pack`, `pack::install`), `Main::add_pack`; pack languages are YAML and XML
+  DSL keys; `cameleer version` lists the packs; a route that names a pack component in a build
+  without the pack fails with a message naming the pack, image and feature.
+- **Pack release artifacts**: CycloneDX SBOMs of exactly what each build compiles in
+  (`scripts/sbom.py`), SHA-256 sums and keyless cosign signatures of the release archives, a DICOM
+  Conformance Statement generated in part from the code, CODEOWNERS, and the
+  `CAMEL_HEALTH_INTEROP=1` live tier (`scripts/health-interop.sh`: DCMTK, Orthanc, python-hl7,
+  HAPI FHIR).
+- **`/q/info`** (`camel.server.infoEnabled`, and with the dev console): the version, the compiled-in
+  feature families and the packs of a running instance; also `/q/dev/packs`.
+- **`cameleer_core::audit`**: the hash-chained audit log moved from `cameleer-ai` into core, one
+  log per context (`AuditLog::of`), shared by AI tool calls and the health pack.
+- **Simple functions from other crates**: `cameleer_core::language::simple::register_function`
+  adds `${prefix.rest}` functions (used by `${dicom.*}`).
+- **`cameleer_core::multipart`**: a shared, binary-safe MIME multipart parser and builder (the
+  `mimeMultipart` data format and DICOMweb use it).
 - **Attestation in confidential VMs** (new crate `cameleer-attest`, feature `attest`, in the default
   build): with `camel.attestation.enabled=true` in an Intel TDX or AMD SEV-SNP guest (Linux
   configfs-tsm) or a dstack CVM, Cameleer serves hardware evidence at `/q/attestation`, bound to the

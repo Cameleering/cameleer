@@ -30,7 +30,7 @@
  "inLanguage": "en", "image": "https://cameleer.ing/og.png",
  "author": {"@type": "Person", "name": "Sudheesh PM"},
  "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
- "about": [{"@type": "Thing", "name": "Model Context Protocol"}, {"@type": "Thing", "name": "AI agent tools"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/pmsudhi/cameleer"}]}
+ "about": [{"@type": "Thing", "name": "Model Context Protocol"}, {"@type": "Thing", "name": "AI agent tools"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}]}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
@@ -53,12 +53,22 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="../../cameleering/">Cameleering</a>
       <a class="keep" href="../../docs/">Docs</a>
-      <a class="keep" href="../">Use cases</a>
-      <a href="../../docs/guides/agents.html">Agents</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
+      <a href="../../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a href="../../trust/">Trust</a>
       <a href="../../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -123,7 +133,7 @@
       steps:
         - setBody:
             simple: "Write a ${header.tone} reply to this customer question, citing our refund policy: ${header.question}"</pre>
-    <p class="note">The file is <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/agents/mcp-server.camel.yaml">examples/agents/mcp-server.camel.yaml</a>. In a real tool the <code>setBody</code> is a call to your order system, a database query or a queue: any of the about 230 components, with the route's own error handling and retries.</p>
+    <p class="note">The file is <a href="https://github.com/cameleering/cameleer/blob/main/examples/agents/mcp-server.camel.yaml">examples/agents/mcp-server.camel.yaml</a>. In a real tool the <code>setBody</code> is a call to your order system, a database query or a queue: any of the about 230 components, with the route's own error handling and retries.</p>
   </div>
 </section>
 
@@ -161,7 +171,7 @@
     <div class="two">
       <div class="pane">
         <h3>Docker, over HTTP</h3>
-        <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro"   pmsudhi/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
+        <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro"   cameleering/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
         <p>Clients connect to <code>http://localhost:8080/mcp</code>. Add <code>--prop camel.server.mcp-tags=support</code> to expose only some tools. The same service runs under Docker Compose and Kubernetes.</p>
       </div>
       <div class="pane">
@@ -171,7 +181,7 @@
     "orders": {
       "command": "docker",
       "args": ["run", "-i", "--rm", "-v", "/path/to/tools:/routes:ro",
-               "pmsudhi/cameleer", "run", "/routes/mcp-server.camel.yaml",
+               "cameleering/cameleer", "run", "/routes/mcp-server.camel.yaml",
                "--mcp-stdio"]
     }
   }
@@ -315,10 +325,10 @@ camel.server.mcp-resource-url=https://tools.example.com/mcp</pre>
   <div class="wrap">
     <h2>Run it</h2>
     <p class="intro">Clone the examples, then point an MCP client at the endpoint or the stdio command.</p>
-    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples/agents
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples/agents
 cameleer run mcp-server.camel.yaml --mcp
 # or, without installing anything:
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
     <div class="cta">
       <a class="btn primary" href="../../mcp/">Cameleer MCP: all use cases</a>
       <a class="btn" href="../../docs/guides/mcp-server.html">MCP server guide</a>
@@ -335,6 +345,7 @@ docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/m
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. Claude, VS Code, Cursor and other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
     </div>
     <div>
       <h4>Use cases</h4>

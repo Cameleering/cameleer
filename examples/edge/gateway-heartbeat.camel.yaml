@@ -8,7 +8,7 @@
 #
 # Run with Docker (Linux):
 #   docker run --rm --network host --read-only -e MQTT_BROKER -e GATEWAY_ID \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/gateway-heartbeat.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/gateway-heartbeat.camel.yaml
 # Watch:
 #   mosquitto_sub -v -t 'gateways/+/status'
 - route:

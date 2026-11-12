@@ -19,7 +19,7 @@
 #   mkdir -p audit pending
 #   docker run --rm -p 8080:8080 -e ORDERS_URL -e PAYMENTS_URL -e SHIPPING_URL -e EMAIL_URL \
 #     -e AUDIT_DIR=/routes/audit -e PENDING_DIR=/routes/pending -e SCHEMA_DIR=/routes/schemas \
-#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" pmsudhi/cameleer run /routes/damaged-order-tool.camel.yaml
+#     --user "$(id -u):$(id -g)" -v "$PWD:/routes" cameleering/cameleer run /routes/damaged-order-tool.camel.yaml
 # Try:
 #   curl -XPOST localhost:8080/tools/resolve-damaged-order -H 'Content-Type: application/json' \
 #     -d '{"requestId":"call-7f3a9c","orderId":"EU-4411","reason":"damaged"}'

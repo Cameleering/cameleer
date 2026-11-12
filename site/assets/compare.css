@@ -44,6 +44,8 @@
 .cards.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .card { border: 1px solid var(--line); border-radius: 14px; padding: 22px; background: #fff; }
 .card h3 { margin: 0 0 8px; font-size: 18px; }
+a.card { display: block; text-decoration: none; color: inherit; }
+a.card:hover { border-color: var(--ink); }
 .card p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
 .card .res { font: 700 22px var(--sans); color: var(--signal); letter-spacing: -.02em; }
 .card .res small { font: 400 14px var(--sans); color: var(--muted); }

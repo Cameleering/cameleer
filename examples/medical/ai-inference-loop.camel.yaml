@@ -1,0 +1,58 @@
+# Needs the health pack: the image cameleering/cameleer:health, or cameleer-main built with
+# `--features health` (docs/packs/health/index.md).
+#
+# AI inference routing: a study arrives over DIMSE, the gateway keeps the series the model is
+# for (axial CT of the head), de-identifies them before they leave the hospital, sends each
+# instance to an inference service, and returns the finding as a FHIR DiagnosticReport that
+# refers to the original study, so the EHR or PACS worklist can show it.
+#
+# The model gets only de-identified data; the original Study Instance UID stays at the gateway
+# (in a header) and goes only to the FHIR server inside the hospital. Each de-identified
+# instance writes a record to the hash-chained audit log (camel.ai.audit.file).
+#
+# Needs: an inference endpoint that accepts application/dicom and answers JSON such as
+#   {"finding": "No acute intracranial abnormality", "score": 0.03}
+# and a FHIR R4 server.
+#   export INFERENCE_URL=http://localhost:9000/infer FHIR_URL=http://localhost:8080/fhir
+#   export DEID_KEY=change-me    # the de-identification secret: keep it in a vault
+#
+# Run with Docker (Linux):
+#   docker run --rm --network host -e INFERENCE_URL -e FHIR_URL -e DEID_KEY \
+#     -v "$PWD:/routes:ro" cameleering/cameleer:health run /routes/ai-inference-loop.camel.yaml
+- route:
+    id: ai-inference-loop
+    from:
+      uri: "dicom:AI_GATEWAY@0.0.0.0:{{env:DICOM_PORT:11113}}"
+      steps:
+        - filter:
+            simple: "${dicom.Modality} == 'CT' && ${dicom.SeriesDescription} contains 'AX'"
+            steps:
+              # keep what the result must point back to, before de-identification
+              - setHeader:
+                  name: OriginalStudyUid
+                  simple: "${dicom.StudyInstanceUID}"
+              - setHeader:
+                  name: OriginalPatientId
+                  simple: "${dicom.PatientID}"
+              - marshal:
+                  dicomDeidentify:
+                    uidKey: "{{env:DEID_KEY:change-me}}"
+                    options: retainLongitudinalModifiedDates
+              - setHeader:
+                  name: Content-Type
+                  constant: application/dicom
+              - to: "{{env:INFERENCE_URL:http://localhost:9000/infer}}?httpMethod=POST"
+              - unmarshal:
+                  json: {}
+              - setBody:
+                  simple: >-
+                    {"resourceType": "DiagnosticReport", "status": "preliminary",
+                    "code": {"text": "AI head CT triage"},
+                    "subject": {"identifier": {"value": "${header.OriginalPatientId}"}},
+                    "imagingStudy": [{"identifier": {"system": "urn:dicom:uid", "value": "urn:oid:${header.OriginalStudyUid}"}}],
+                    "conclusion": "${body[finding]}"}
+              - setHeader:
+                  name: Content-Type
+                  constant: application/fhir+json
+              - to: "{{env:FHIR_URL:http://localhost:8080/fhir}}/DiagnosticReport?httpMethod=POST"
+              - log: "Result for study ${header.OriginalStudyUid} posted to FHIR"

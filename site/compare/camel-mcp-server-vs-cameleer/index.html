@@ -30,7 +30,7 @@
  "inLanguage": "en", "image": "https://cameleer.ing/og.png",
  "author": {"@type": "Person", "name": "Sudheesh PM"},
  "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
- "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/pmsudhi/cameleer"}, {"@type": "Thing", "name": "Model Context Protocol"}]}
+ "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}, {"@type": "Thing", "name": "Model Context Protocol"}]}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
@@ -50,12 +50,22 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="../../cameleering/">Cameleering</a>
       <a class="keep" href="../../docs/">Docs</a>
       <a class="keep" href="../../use-cases/">Use cases</a>
-      <a href="../../docs/guides/agents.html">Agents</a>
-      <a href="../">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a href="../../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a href="../../trust/">Trust</a>
+      <a href="../../compare/">Compare</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -167,7 +177,7 @@ camel.server.mcp-tags=support</pre>
         <tr><td>Stateless calls (2026-07-28)</td><td class="num">not offered</td><td class="num">not offered</td><td class="num"><span class="win">51,700/s in 26 MB</span></td></tr>
       </tbody>
     </table></div>
-    <p class="note">Every Cameleer call went through the whole tool envelope: schema check, rate-limit and breaker bookkeeping and a hash-chained audit record. Raw records and method: <a href="https://github.com/pmsudhi/cameleer/blob/main/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
+    <p class="note">Every Cameleer call went through the whole tool envelope: schema check, rate-limit and breaker bookkeeping and a hash-chained audit record. Raw records and method: <a href="https://github.com/cameleering/cameleer/blob/main/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
     <p class="intro">And the runtime underneath, measured on integration routes:</p>
     <div class="c-table-wrap"><table class="c-table">
       <thead><tr><th></th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th></tr></thead>
@@ -221,7 +231,7 @@ camel.server.mcp-tags=support</pre>
   <div class="wrap">
     <h2>Try it</h2>
     <p class="intro">Serve the example tools, resource and prompt, then connect a client.</p>
-    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples/agents
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples/agents
 cameleer run mcp-server.camel.yaml --mcp</pre>
     <div class="cta">
       <a class="btn primary" href="../../mcp/">Cameleer MCP</a>
@@ -240,6 +250,7 @@ cameleer run mcp-server.camel.yaml --mcp</pre>
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>Cameleer is a <a href="../../cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
     </div>
     <div>
       <h4>Compare</h4>

@@ -9,6 +9,7 @@
 //! | `camel.server.devConsoleEnabled` | `false` | `/q/dev/*` |
 //! | `camel.server.healthCheckEnabled` | `false` | `/q/health`, `/q/health/ready`, `/q/health/live` |
 //! | `camel.server.metricsEnabled` | `false` | `/q/metrics` (Prometheus text) |
+//! | `camel.server.infoEnabled` | `false` | `/q/info` (also on with the dev console) |
 //!
 //! On `camel.server.port` the endpoints speak what the port speaks: with
 //! `camel.server.sslEnabled=true` they are HTTPS, next to the HTTPS routes. Camel's separate
@@ -21,6 +22,8 @@
 //!
 //! - `GET /q/health`, `/q/health/ready`, `/q/health/live`: JSON, `200` when UP, `503` when DOWN
 //! - `GET /q/metrics`: Prometheus text exposition
+//! - `GET /q/info`: the Cameleer version, the compiled-in features and the packs with their
+//!   versions and what they add (also `/q/dev/packs`)
 //! - `GET /q/dev`: list of consoles; `/q/dev/context`, `/q/dev/routes`, `/q/dev/route/{id}`,
 //!   `/q/dev/endpoints`, `/q/dev/health`, `/q/dev/trace` (backlog tracer),
 //!   `/q/dev/route-controller`, `/q/dev/templates`, `/q/dev/tools` (AI tools, needs the `ai`
@@ -47,20 +50,22 @@ pub struct ConsoleConfig {
     pub dev_console: bool,
     pub health: bool,
     pub metrics: bool,
+    /// `/q/info` (on with the dev console too).
+    pub info: bool,
     /// On the separate management port (`camel.management.*`) rather than `camel.server.port`.
     pub management_port: bool,
 }
 
 impl Default for ConsoleConfig {
     fn default() -> Self {
-        ConsoleConfig { enabled: false, host: "0.0.0.0".into(), port: 8080, dev_console: false, health: false, metrics: false, management_port: false }
+        ConsoleConfig { enabled: false, host: "0.0.0.0".into(), port: 8080, dev_console: false, health: false, metrics: false, info: false, management_port: false }
     }
 }
 
 impl ConsoleConfig {
     /// Everything enabled on `port` (as `cameleer run --console --port N`).
     pub fn all(port: u16) -> Self {
-        ConsoleConfig { enabled: true, host: "0.0.0.0".into(), port, dev_console: true, health: true, metrics: true, management_port: false }
+        ConsoleConfig { enabled: true, host: "0.0.0.0".into(), port, dev_console: true, health: true, metrics: true, info: true, management_port: false }
     }
 
     /// Read the `camel.server.*` options (dashed or camelCase keys).
@@ -72,6 +77,7 @@ impl ConsoleConfig {
             dev_console: flag("camel.server.dev-console-enabled"),
             health: flag("camel.server.health-check-enabled"),
             metrics: flag("camel.server.metrics-enabled"),
+            info: flag("camel.server.info-enabled"),
             ..Default::default()
         };
         if let Some(h) = get("camel.server.host") {
@@ -87,18 +93,20 @@ impl ConsoleConfig {
             c.dev_console |= flag("camel.management.dev-console-enabled");
             c.health |= flag("camel.management.health-check-enabled");
             c.metrics |= flag("camel.management.metrics-enabled");
+            c.info |= flag("camel.management.info-enabled");
             c.host = get("camel.management.host").unwrap_or(c.host);
             c.port = match get("camel.management.port") {
                 Some(p) => p.trim().parse().map_err(|_| CamelError::illegal_argument(format!("Invalid camel.management.port: {}", p)))?,
                 None => 9876,
             };
         }
+        c.info |= c.dev_console;
         Ok(c)
     }
 
     /// Whether the server should be started.
     pub fn is_active(&self) -> bool {
-        self.enabled && (self.dev_console || self.health || self.metrics)
+        self.enabled && (self.dev_console || self.health || self.metrics || self.info)
     }
 }
 
@@ -167,6 +175,31 @@ impl Drop for DevConsoleServer {
     }
 }
 
+/// `/q/info`: the version, the compiled-in feature families and the packs of the context.
+pub fn info_value(ctx: &CamelContext) -> Value {
+    let strs = |v: &[&str]| Value::Array(v.iter().map(|s| Value::from(*s)).collect());
+    let packs: Vec<Value> = ctx
+        .packs()
+        .iter()
+        .map(|p| {
+            Value::object([
+                ("name", Value::from(p.name)),
+                ("version", Value::from(p.version)),
+                ("coreApi", Value::from(p.core_api)),
+                ("description", Value::from(p.description)),
+                ("components", strs(p.components)),
+                ("dataFormats", strs(p.data_formats)),
+                ("languages", strs(p.languages)),
+            ])
+        })
+        .collect();
+    Value::object([
+        ("cameleer", Value::object([("version", Value::from(env!("CARGO_PKG_VERSION"))), ("core", Value::from(cameleer_core::VERSION))])),
+        ("features", Value::Array(crate::features::enabled().into_iter().map(Value::from).collect())),
+        ("packs", Value::Array(packs)),
+    ])
+}
+
 fn json(status: u16, v: &Value) -> HttpResponse {
     HttpResponse::json(status, v.to_json())
 }
@@ -181,6 +214,7 @@ fn health_response(report: cameleer_core::health::HealthReport) -> HttpResponse 
 
 const CONSOLES: &[(&str, &str, &str)] = &[
     ("context", "CamelContext", "Overall information about the CamelContext"),
+    ("packs", "Packs", "The packs of this build (health...) with versions and what they add"),
     ("routes", "Routes", "Route information and statistics"),
     ("route", "Route", "One route: /q/dev/route/{id}"),
     ("endpoints", "Endpoints", "Endpoints used by the routes"),
@@ -204,6 +238,8 @@ pub fn handle_request(ctx: &CamelContext, cfg: &ConsoleConfig, req: &HttpRequest
         ["q", "metrics"] if cfg.metrics && get => {
             HttpResponse::text(200, ctx.managed_context().prometheus()).with_content_type("text/plain; version=0.0.4; charset=utf-8")
         }
+        ["q", "info"] if (cfg.info || cfg.dev_console) && get => json(200, &info_value(ctx)),
+        ["q", "dev", "packs"] if cfg.dev_console && get => json(200, &info_value(ctx).get("packs").cloned().unwrap_or(Value::Array(Vec::new()))),
         ["q", "dev", rest @ ..] if cfg.dev_console => dev_console(ctx, method, rest),
         _ => error(404, format!("No management endpoint for {} {}", method, req.path)),
     }

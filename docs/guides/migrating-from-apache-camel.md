@@ -167,6 +167,7 @@ The Rust DSL mirrors it method by method (`from`, `filter`, `split`, `aggregate`
 ## Related
 
 - [Concepts](concepts.md), [FAQ](faq.md), [feature list](../FEATURES.md)
+- [What Cameleer does not do](limitations.md), [Rust developer guide](rust.md)
 - Apache Camel: [YAML DSL](https://camel.apache.org/components/next/others/yaml-dsl.html),
   [Camel 4 migration guide](https://camel.apache.org/manual/camel-4-migration-guide.html)
 
@@ -174,7 +175,7 @@ The Rust DSL mirrors it method by method (`from`, `filter`, `split`, `aggregate`
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

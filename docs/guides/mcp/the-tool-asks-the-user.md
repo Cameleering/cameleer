@@ -2,7 +2,7 @@
 
 > A tool route can stop in the middle of a call and ask the person at the client a question, through MCP elicitation, then carry on with the answer. The shop's `exchange_item` asks which size to send; if the user closes the form, nothing changes and the result says so. In the field test, both elicitation cases passed in every run.
 
-**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/pmsudhi/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
+**Cargo feature:** [`ai`](../build-features.md) · **Example:** [`examples/agents/mcp-shop`](https://github.com/cameleering/cameleer/tree/main/examples/agents/mcp-shop) · **Part of:** [Cameleer MCP](../mcp.md)
 
 ## What people ask, and what happens
 
@@ -134,5 +134,5 @@ cancels it in a second call, over MCP.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

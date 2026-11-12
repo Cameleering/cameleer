@@ -8,7 +8,7 @@
 #
 # Run with Docker (arm64 and amd64; Linux):
 #   docker run --rm --network host --read-only -e MQTT_BROKER -e KAFKA_BROKERS -e GATEWAY_ID \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/mqtt-sensor-rollup.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/mqtt-sensor-rollup.camel.yaml
 # Try:
 #   mosquitto_pub -t sensors/t1/temperature -m 21.5
 - route:

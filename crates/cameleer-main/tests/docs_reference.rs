@@ -2,6 +2,11 @@
 //! commands shown on the pages are taken from the markdown, run, and checked against what the
 //! pages say they do.
 
+// the examples use components of several families (the default features)
+#![cfg(feature = "full")]
+
+mod rust_guide;
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -57,7 +62,7 @@ fn configuration_guide_worked_example() {
         let dir = temp_dir(&format!("cfg{}", i));
         std::fs::write(dir.join("application.properties"), &app).unwrap();
         std::fs::write(dir.join("application-prod.properties"), &prod).unwrap();
-        let mut main = cameleer_main::new_main();
+        let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
         // the process environment of the row, nothing else
         let env: BTreeMap<String, String> = row.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         // {{env:PORT}} is resolved through the process environment by the placeholder resolver
@@ -367,4 +372,145 @@ fn observability_guide_management_port() {
     assert_eq!(health.0, 200, "{}", health.1);
     assert_eq!(metrics.0, 200, "{}", metrics.1);
     assert!(metrics.1.contains("camel_routes_running_routes"), "{}", metrics.1);
+}
+
+/// docs/guides/troubleshooting.md, "Exception kinds": every row is a kind and its direct parent,
+/// and every kind the code defines (`cameleer_core::error::kinds`, the TLS kinds) has a row.
+#[test]
+fn troubleshooting_kinds_match_the_code() {
+    // registers the TLS kinds (SSLException and its children)
+    let _ = cameleer_tls::camel_support::tls_error(&cameleer_tls::TlsError::Closed, "x");
+    let text = page("troubleshooting.md");
+    let start = text.find("| kind | parent |").expect("kind table");
+    let mut rows = Vec::new();
+    for line in text[start..].lines().skip(2) {
+        if !line.starts_with('|') {
+            break;
+        }
+        let cells: Vec<&str> = line.split('|').map(|c| c.trim().trim_matches('`')).filter(|c| !c.is_empty()).collect();
+        rows.push((cells[0].to_string(), cells[1].to_string()));
+    }
+    assert!(rows.len() > 30, "{} rows", rows.len());
+    for (kind, parent) in &rows {
+        assert_eq!(cameleer_core::error::kind_distance(kind, parent), Some(1), "{} is not a direct child of {}", kind, parent);
+    }
+    let src = std::fs::read_to_string(repo().join("crates/cameleer-core/src/error.rs")).unwrap();
+    let defs = &src[src.find("pub mod kinds").unwrap()..src.find("fn builtin_parent").unwrap()];
+    let mut kinds: Vec<String> = defs.lines().filter(|l| l.contains("pub const")).filter_map(|l| l.split('"').nth(1).map(String::from)).collect();
+    kinds.extend(["SSLException", "SSLHandshakeException", "SSLPeerUnverifiedException"].map(String::from));
+    for k in kinds {
+        assert!(rows.iter().any(|(r, _)| *r == k), "the kind table on troubleshooting.md has no row for {}", k);
+    }
+}
+
+/// docs/guides/troubleshooting.md: each message the page quotes is what the binary prints for
+/// the broken route (and the fragment is on the page).
+#[test]
+fn troubleshooting_messages_match_the_binary() {
+    let text = page("troubleshooting.md");
+    let dir = temp_dir("troubleshooting");
+    let tls = repo().join("crates/cameleer-tls/testdata");
+    std::fs::copy(tls.join("rsa_selfsigned.pem"), dir.join("cert.pem")).unwrap();
+    std::fs::copy(tls.join("rsa2048.pkcs8.pem"), dir.join("key.pem")).unwrap();
+    let timer = |step: &str| format!("- route:\n    from:\n      uri: timer:t?repeatCount=1\n      steps:\n        - {}\n", step);
+    // a TLS server on `port` and a timer route calling `target` on it
+    let tls_pair = |target: &str| {
+        format!(
+            "- route:\n    from:\n      uri: platform-http:/hello\n      steps:\n        - setBody: {{constant: hi}}\n\
+             - route:\n    from:\n      uri: timer:a?repeatCount=1&delay=300\n      steps:\n        - to: {}\n",
+            target
+        )
+    };
+    let tls_props = ["--prop", "camel.server.sslEnabled=true", "--prop", "camel.server.ssl.certFile=cert.pem", "--prop", "camel.server.ssl.keyFile=key.pem"];
+    struct Case {
+        yaml: String,
+        fragment: &'static str,
+        port: Option<u16>,
+        tls: bool,
+        trust: bool,
+    }
+    let case = |yaml: String, fragment: &'static str| Case { yaml, fragment, port: None, tls: false, trust: false };
+    let (p1, p2, p3) = (free_port(), free_port(), free_port());
+    let cases = vec![
+        case(timer("sett: {constant: x}"), "Unknown step 'sett' at [0].route.from.steps[0].sett (line 5, column 11)"),
+        case("- route:\n    from:\n      uri: timer:t\n     steps:\n        - to: log:x\n".into(), "Invalid YAML: bad indentation of a mapping entry at line 4, column 6"),
+        case(timer("to: kafak:orders"), "Failed to resolve endpoint: kafak://orders due to: No component found with scheme: kafak"),
+        case("- route:\n    from:\n      uri: timer:t?perod=1000\n      steps:\n        - to: log:x\n".into(), "Unknown parameters=[perod]"),
+        case(timer("to: \"{{orders.target}}\""), "Property with key [orders.target] not found in properties from text: {{orders.target}}"),
+        case(timer("process:\n            ref: enrichOrder"), "No bean could be found in the registry for: enrichOrder"),
+        case(timer("setBody:\n            simple: \"${body\""), "setBody[simple{${body}] <<< because of expected symbol functionEnd but was eol at location 0"),
+        case(timer("to: direct:nowhere"), "DirectConsumerNotAvailableException: No consumers available on endpoint: direct://nowhere"),
+        case(timer("to: http://127.0.0.1:1/x"), "ConnectException: Connection refused: 127.0.0.1:1"),
+        Case { tls: true, ..case(tls_pair(&format!("https://127.0.0.1:{}/hello", p1)), "TLS certificate error: unable to find trusted issuer 'CN=") },
+        Case {
+            tls: true,
+            trust: true,
+            ..case(
+                tls_pair(&format!("https://localhost:{}/hello", p2)),
+                "TLS certificate error: certificate is not valid for 'localhost' (valid for: rsa.test, *.wild.test, 127.0.0.1)",
+            )
+        },
+        Case { tls: true, ..case(tls_pair(&format!("http://127.0.0.1:{}/hello", p3)), "IOException: Connection closed unexpectedly") },
+    ];
+    let mut cases = cases;
+    cases[9].port = Some(p1);
+    cases[10].port = Some(p2);
+    cases[11].port = Some(p3);
+    // the port in use: something else listens on it
+    let busy = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
+    let busy_port = busy.local_addr().unwrap().port();
+    cases.push(Case {
+        port: Some(busy_port),
+        ..case("- route:\n    from:\n      uri: platform-http:/hello\n      steps:\n        - setBody: {constant: hi}\n".into(), "Failed to bind HTTP server on 0.0.0.0:")
+    });
+    for (i, c) in cases.iter().enumerate() {
+        assert!(text.contains(c.fragment), "troubleshooting.md does not quote `{}`", c.fragment);
+        let file = format!("case{}.camel.yaml", i);
+        std::fs::write(dir.join(&file), &c.yaml).unwrap();
+        let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_cameleer"));
+        cmd.args(["run", &file, "--max-seconds", "3"]).current_dir(&dir).env("CAMEL_LOCAL_STATUS", "false");
+        if let Some(p) = c.port {
+            cmd.args(["--port", &p.to_string()]);
+        }
+        if c.tls {
+            cmd.args(tls_props);
+        }
+        if c.trust {
+            cmd.env("SSL_CERT_FILE", dir.join("cert.pem"));
+        }
+        let out = cmd.output().unwrap();
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(all.contains(c.fragment), "case {}: expected `{}` in:\n{}", i, c.fragment, all);
+    }
+    drop(busy);
+}
+
+/// docs/guides/limitations.md, "Camel components that Cameleer does not have": none of the
+/// schemes in the table is in the build, and each alternative the page names is.
+#[test]
+fn limitations_match_the_catalog() {
+    let text = page("limitations.md");
+    let start = text.find("| Camel component (scheme) | area |").expect("component table");
+    let main = cameleer_main::new_main();
+    let ctx = main.context();
+    let mut checked = 0;
+    for line in text[start..].lines().skip(2) {
+        if !line.starts_with('|') {
+            break;
+        }
+        let first = line.split('|').nth(1).unwrap();
+        for scheme in first.split('`').skip(1).step_by(2) {
+            assert!(!ctx.has_component(scheme), "limitations.md says `{}` is missing, but the build has it", scheme);
+            checked += 1;
+        }
+    }
+    assert!(checked > 20, "{} schemes", checked);
+    for present in ["sql", "jdbc", "mongodb", "aws2-ddbstream", "azure-cosmosdb", "couchdb", "activemq", "amqp", "kafka", "google-sheets", "azure-schema-registry", "ftps", "sftp"] {
+        assert!(ctx.has_component(present), "limitations.md names `{}` as the alternative, but the build has no such component", present);
+    }
+    for format in ["avro", "protobuf", "csv"] {
+        let known = cameleer_core::dataformat::lookup_data_format_factory(ctx.registry(), format).is_some()
+            || cameleer_core::dataformat::create_data_format(format, &BTreeMap::new()).is_ok();
+        assert!(known, "limitations.md names the `{}` data format, but the build has none", format);
+    }
 }

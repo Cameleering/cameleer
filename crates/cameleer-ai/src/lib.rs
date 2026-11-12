@@ -18,7 +18,6 @@
 //! approvals, timeouts that cancel the tool's route, rate limits, circuit breakers,
 //! compensation, a hash-chained audit log ([`audit`]), definition pinning and a kill switch.
 
-pub mod audit;
 pub mod component;
 pub mod expose;
 pub mod guard;

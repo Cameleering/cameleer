@@ -29,7 +29,7 @@
  "inLanguage": "en", "image": "https://cameleer.ing/og.png",
  "author": {"@type": "Person", "name": "Sudheesh PM"},
  "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
- "about": [{"@type": "Thing", "name": "LLM function calling"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/pmsudhi/cameleer"}]}
+ "about": [{"@type": "Thing", "name": "LLM function calling"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}]}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
@@ -53,12 +53,22 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="../../cameleering/">Cameleering</a>
       <a class="keep" href="../../docs/">Docs</a>
       <a class="keep" href="../../use-cases/">Use cases</a>
-      <a href="../">Compare</a>
-      <a href="../apache-camel-vs-cameleer/">vs Apache Camel</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a href="../../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a href="../../trust/">Trust</a>
+      <a href="../../compare/">Compare</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -185,11 +195,11 @@
   <div class="wrap">
     <h2>Try it</h2>
     <p class="intro">Get the tested tool route from the guide and check it with <code>cameleer validate</code>. Then set the URLs of your order, payment, shipping and email APIs, run it, and point your agent's tool definition at it.</p>
-    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer/examples/agents
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes/damaged-order-tool.camel.yaml</pre>
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples/agents
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer validate /routes/damaged-order-tool.camel.yaml</pre>
     <div class="cta">
       <a class="btn primary" href="../../docs/guides/agent-tool-calls.html">Read the full guide</a>
-      <a class="btn" href="https://github.com/pmsudhi/cameleer/blob/main/examples/agents/damaged-order-tool.camel.yaml">See the route</a>
+      <a class="btn" href="https://github.com/cameleering/cameleer/blob/main/examples/agents/damaged-order-tool.camel.yaml">See the route</a>
       <a class="btn" href="../../docs/guides/agents.html">Agent cookbook</a>
       <a class="btn" href="../../use-cases/">More use cases</a>
     </div>
@@ -202,6 +212,7 @@ docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes/damaged-o
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>Cameleer is a <a href="../../cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
     </div>
     <div>
       <h4>Compare</h4>

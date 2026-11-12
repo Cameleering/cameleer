@@ -76,7 +76,7 @@ MIME parts other than the body go to the `CamelAttachments` exchange property.
 docker run --rm --user "$(id -u):$(id -g)" -e POP3_HOST=pop.example.com -e POP3_USER -e POP3_PASSWORD \
   -e ARCHIVE_DIR=/data/mail-archive -v "$PWD:/data" \
   -v "$PWD/archive-mail.camel.yaml:/routes/archive-mail.camel.yaml:ro" \
-  pmsudhi/cameleer run /routes/archive-mail.camel.yaml
+  cameleering/cameleer run /routes/archive-mail.camel.yaml
 ```
 
 ## Common questions
@@ -97,7 +97,7 @@ Keep `mapMailMessage=true` (the default): the body is the first `text/plain` par
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

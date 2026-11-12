@@ -24,7 +24,7 @@ Do these in order for every route file you write or change:
 6. Validate: `cameleer validate <file> --format json`. Fix every finding with severity `error`,
    read every `warning`, and repeat until `"valid": true`.
 7. Run it: `cameleer run <file>` (add `--max-seconds 10` for a smoke test), or in Docker:
-   `docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/<file>`.
+   `docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer run /routes/<file>`.
 8. If you changed Cameleer itself rather than a route, run `cargo test --workspace`.
 
 ## Rules that prevent the usual mistakes
@@ -254,7 +254,7 @@ connecting to anything. It is safe to run on any file, any number of times.
 ```sh
 cameleer validate orders.camel.yaml --format json
 cameleer validate routes/ --format json --strict --properties application.properties
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer validate /routes
 ```
 
 The loop:
@@ -408,7 +408,7 @@ report it (see below).
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

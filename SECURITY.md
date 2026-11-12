@@ -7,7 +7,7 @@ the Rust standard library, so security reports are especially welcome.
 
 Please **don't open a public issue**. Report it privately through GitHub:
 **Security → Report a vulnerability** on
-[github.com/pmsudhi/cameleer](https://github.com/pmsudhi/cameleer/security/advisories/new).
+[github.com/cameleering/cameleer](https://github.com/cameleering/cameleer/security/advisories/new).
 
 Include the affected crate and version (or commit), steps or a route to reproduce, and the
 impact you expect. We aim to acknowledge reports within a few days, agree on a fix and a

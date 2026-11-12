@@ -30,8 +30,8 @@
  "author": {"@type": "Person", "name": "Sudheesh PM"},
  "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/"},
  "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"},
-           {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/pmsudhi/cameleer"}],
- "isBasedOn": {"@type": "Dataset", "name": "Cameleer and Apache Camel benchmark results", "url": "https://github.com/pmsudhi/cameleer/tree/main/benchmarks/results"}}
+           {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}],
+ "isBasedOn": {"@type": "Dataset", "name": "Cameleer and Apache Camel benchmark results", "url": "https://github.com/cameleering/cameleer/tree/main/benchmarks/results"}}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
@@ -52,13 +52,22 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="../../cameleering/">Cameleering</a>
       <a class="keep" href="../../docs/">Docs</a>
       <a class="keep" href="../../use-cases/">Use cases</a>
-      <a href="#results">Results</a>
-      <a href="#use-cases">Use cases</a>
-      <a href="#how">How we tested</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a href="../../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a href="../../trust/">Trust</a>
+      <a href="../../compare/">Compare</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -95,6 +104,7 @@
         <tr><td>Serverless</td><td>with Camel Quarkus native or a JVM snapshot</td><td class="win">built-in AWS Lambda runtime</td></tr>
         <tr><td>AI agents</td><td><code>langchain4j-agent</code>, the <code>ai-tool</code> abstraction and an MCP server (Camel 4.22)</td><td>the same <code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties, with an enforced envelope (schema validation, idempotency, approval, timeouts, audit); MCP client and gateway; an agent step; 23 model providers (<a href="../camel-mcp-server-vs-cameleer/">comparison</a>)</td></tr>
         <tr><td>Evidence of the running integration (TEE attestation)</td><td>not found in its documentation (searched 2026-11)</td><td>next release: in a confidential VM, hardware evidence of the routes, configuration and tools, bound to the TLS key (<a href="../../trust/">trust</a>)</td></tr>
+        <tr><td>Medical imaging (DICOM)</td><td>no DICOM component (HL7 and FHIR only)</td><td>next release, in the health pack: <code>dicom</code> (DIMSE SCU and SCP), <code>dicomweb</code> (STOW, QIDO, WADO), PS3.15 de-identification (<a href="../../use-cases/dicom-imaging-gateway/">DICOM gateway</a>)</td></tr>
         <tr><td>Ecosystem</td><td class="win">two decades, Java libraries, commercial support</td><td>younger project, Rust standard library only</td></tr>
       </tbody>
     </table></div>
@@ -255,12 +265,12 @@
       </div>
     </div>
     <h3>Run it yourself</h3>
-    <pre class="cmd">git clone https://github.com/pmsudhi/cameleer &amp;&amp; cd cameleer
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer
 export DO_TOKEN_FILE=~/do-token.txt
 scripts/cloud-bench/droplets.sh up
 scripts/cloud-bench/run.sh all
 scripts/cloud-bench/droplets.sh down</pre>
-    <p class="note">The routes are in <a href="https://github.com/pmsudhi/cameleer/tree/main/crates/cameleer-bench/src">crates/cameleer-bench</a>, <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/java-camel">benchmarks/java-camel</a> and <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/camel-quarkus">benchmarks/camel-quarkus</a>. Raw results: <a href="https://github.com/pmsudhi/cameleer/tree/main/benchmarks/results">benchmarks/results</a>. The full report with every caveat: <a href="../../docs/BENCHMARKS.html">BENCHMARKS</a>.</p>
+    <p class="note">The routes are in <a href="https://github.com/cameleering/cameleer/tree/main/crates/cameleer-bench/src">crates/cameleer-bench</a>, <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/java-camel">benchmarks/java-camel</a> and <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/camel-quarkus">benchmarks/camel-quarkus</a>. Raw results: <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results">benchmarks/results</a>. The full report with every caveat: <a href="../../docs/BENCHMARKS.html">BENCHMARKS</a>.</p>
   </div>
 </section>
 
@@ -279,7 +289,7 @@ scripts/cloud-bench/droplets.sh down</pre>
   <div class="wrap">
     <h2>Run your Camel routes on Cameleer</h2>
     <p class="intro">Mount a Camel YAML route and run it. No JVM, no build.</p>
-    <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml</pre>
+    <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/hello-api.camel.yaml</pre>
     <div class="cta">
       <a class="btn primary" href="../../docs/guides/getting-started.html">Get started</a>
       <a class="btn" href="../../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a>
@@ -295,6 +305,7 @@ scripts/cloud-bench/droplets.sh down</pre>
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>Cameleer is a <a href="../../cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
     </div>
     <div>
       <h4>Compare</h4>

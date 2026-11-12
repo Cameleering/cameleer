@@ -11,7 +11,7 @@ use cameleer_core::error::Result;
 use super::mime::read_dot_terminated;
 use super::{auth_error, messaging_error};
 use super::{MailTls, StartTls};
-use crate::common::{connect_stream, io_error, read_line, upgrade_stream};
+use cameleer_tls::net::{connect_stream, io_error, read_line, upgrade_stream};
 
 /// A connected POP3 session.
 pub struct Pop3Client {

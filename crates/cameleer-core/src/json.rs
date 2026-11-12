@@ -267,3 +267,40 @@ mod tests {
         assert!(parse("[1,2] x").is_err());
     }
 }
+
+/// JSON with object keys sorted, no whitespace: the form that hashes and digests use.
+pub fn canonical_json(v: &crate::value::Value) -> String {
+    let mut out = String::new();
+    write_canonical(v, &mut out);
+    out
+}
+
+fn write_canonical(v: &crate::value::Value, out: &mut String) {
+    match v {
+        crate::value::Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&crate::value::Value::from(k.as_str()).to_json());
+                out.push(':');
+                write_canonical(m.get(k).unwrap_or(&crate::value::Value::Null), out);
+            }
+            out.push('}');
+        }
+        crate::value::Value::Array(a) => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_canonical(x, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&other.to_json()),
+    }
+}

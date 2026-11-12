@@ -4,7 +4,7 @@
 
 # Cameleer
 
-[![CI](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/pmsudhi/cameleer/actions/workflows/ci.yml)
+[![CI](https://github.com/cameleering/cameleer/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/cameleering/cameleer/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
 [![Dependencies: none](https://img.shields.io/badge/dependencies-std%20only-brightgreen.svg)](Cargo.toml)
@@ -27,9 +27,10 @@ formats, ported one by one and verified against the real systems.
   Lambda runtime, and moves **1.7–8.7x the messages** of Apache Camel on the same CPUs, in every
   scenario we measured ([Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)).
 
-**Cameleering** is running Apache Camel routes this way: the same patterns, URIs and YAML, driven
-by one native binary instead of the JVM, at the edge, in serverless functions and behind AI agents
-([what is cameleering?](https://cameleer.ing/cameleering/)).
+**Cameleer is the first Cameleering project.** Cameleering is the practice of making software carry
+the same load on less (time, memory, size, dependencies) and proving every gain against the original,
+with the method published: no claim without a number
+([what is cameleering?](https://cameleer.ing/cameleering/), [the ledger](https://cameleer.ing/cameleering/ledger/)).
 
 [Website](https://cameleer.ing/) · [Docs](https://cameleer.ing/docs/) · [Use cases](https://cameleer.ing/use-cases/) ·
 [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
@@ -199,7 +200,7 @@ an `agent` step, or exposed as plain HTTP endpoints.
 (`uri: "ai-tool:lookup_order?description=Look up an order by id&parameter.orderId=string"`,
 [example](examples/agents/route-to-mcp-tool.camel.yaml)). Then one command serves it:
 `cameleer run orders.camel.yaml --mcp`, the same in Docker
-(`docker run ... pmsudhi/cameleer run /routes/orders.camel.yaml --mcp`), or
+(`docker run ... cameleering/cameleer run /routes/orders.camel.yaml --mcp`), or
 `camel.server.mcp-enabled=true` in the Rust crate. Cameleer is both an MCP server and an MCP
 client. Coming in the next release (on `main` now): `cameleer run orders.camel.yaml
 --mcp-expose rest:*` serves existing routes as tools with no edits, REST operations with typed
@@ -333,7 +334,7 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 | | Trigger | Route | Outcome |
 |---|---|---|---|
 | **Payments** | payment events on `kafka` | idempotent consumer → enrich from `sql` → model risk score → `choice` | duplicates dropped, risky payments held, the rest settled |
-| **Healthcare** | HL7 v2 over `mllp` | parse → transform → `http` to the EHR, with redelivery | results delivered exactly once, failures to a dead letter queue |
+| **Healthcare** (health pack) | HL7 v2 over `mllp` | parse → transform → `http` to the EHR, with redelivery | results delivered exactly once, failures to a dead letter queue |
 | **Support** | `aws2-sqs`, `mail` or `telegram` | filter → `aws-bedrock` classifies and drafts → `choice` | urgent issues paged, routine ones answered with a draft |
 | **E-commerce** | order webhooks on `platform-http` | `split` line items → route per warehouse → `aggregate` | one fulfilment message per warehouse, stock in `aws2-ddb` |
 | **IoT and the edge** | sensor readings on `paho-mqtt5` | `throttle` → `aggregate` per device per minute | rollups to `aws2-timestream`, raw data stays on site |
@@ -342,7 +343,20 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 
 Every component named here ships today; each row is a pattern you assemble from them. The
 [use-case pages](https://cameleer.ing/use-cases/) walk through the tested routes
-for AI agent tools, HL7 over MLLP, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
+for AI agent tools, HL7 over MLLP, DICOM imaging, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
+
+**Healthcare is a pack (next release).** Cameleer is also an open-source healthcare integration
+engine ([overview](https://cameleer.ing/healthcare/)): HL7 v2 and MLLP, FHIR and DICOM live in the
+[health pack](docs/packs/health/index.md) (`cameleer-health`), not in the default build or image:
+use `cameleering/cameleer:health` or `cargo install cameleer-main --features health`. Up to 0.5.1,
+`mllp`, `hl7` and `fhir` are in the default image. The pack adds DICOM, which Apache Camel does not
+have: `dicom` (DIMSE as SCU and SCP: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET, over TCP or TLS),
+`dicomweb` (STOW-RS, QIDO-RS, WADO-RS, client and server), `${dicom.Modality}` in Simple, and
+`dicomDeidentify` (the PS3.15 Annex E basic profile and options, without the pixel options). Its
+live tests pass 10/10 against DCMTK 3.6.7, Orthanc 1.12.2, python-hl7 and HAPI FHIR; the cloud
+DICOM services are not tested yet
+([DICOM imaging gateway](https://cameleer.ing/use-cases/dicom-imaging-gateway/),
+[DICOM Conformance Statement](docs/packs/health/conformance/dicom-conformance-statement-0.6.0.md)).
 
 ---
 
@@ -384,12 +398,12 @@ Save this as `hello-api.camel.yaml` (or take [examples/hello-api.camel.yaml](exa
 Run it and call it:
 
 ```sh
-docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hello-api.camel.yaml
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/hello-api.camel.yaml
 curl localhost:8080/orders/42      # {"id": "42", "status": "shipped"}
 ```
 
 The image is a single native binary on distroless, for linux/amd64 and linux/arm64, on
-[Docker Hub](https://hub.docker.com/r/pmsudhi/cameleer) and as `ghcr.io/pmsudhi/cameleer`. It runs
+[Docker Hub](https://hub.docker.com/r/cameleering/cameleer) and as `ghcr.io/cameleering/cameleer`. It runs
 as non-root and works with `--read-only`. Any route written for Apache Camel's YAML DSL runs the
 same way. Kubernetes, Docker Compose and Cloud Run setups are in the
 [deployment guide](docs/DEPLOYMENT.md).
@@ -437,7 +451,7 @@ cameleer run hello-api.camel.yaml
 Or from source:
 
 ```sh
-git clone https://github.com/pmsudhi/cameleer && cd cameleer
+git clone https://github.com/cameleering/cameleer && cd cameleer
 cargo build --release -p cameleer-main
 target/release/cameleer run examples/rest-api.camel.yaml
 ```
@@ -446,8 +460,8 @@ Camel JBang habits carry over: `cameleer run`, `cameleer ps`, `cameleer stop`.
 
 ### A smaller build
 
-The image, `cargo install` and the default build include every component, so any route runs
-without setup. For a function or an edge device, keep only the families your routes use:
+The image, `cargo install` and the default build include every component except the
+[packs](docs/packs/index.md), so any route runs without setup. For a function or an edge device, keep only the families your routes use:
 
 ```sh
 cargo install cameleer-main --no-default-features --features cloud,jq,sql
@@ -470,18 +484,18 @@ Start with [getting started](docs/guides/getting-started.md), [build features](d
 
 Give Cursor, Claude, Windsurf, VS Code or any MCP-capable assistant Cameleer's real docs, so it
 writes routes from the documentation instead of guessing. The docs MCP server is
-`https://gitmcp.io/pmsudhi/cameleer` (it serves this repository's `llms.txt`, docs and README).
+`https://gitmcp.io/cameleering/cameleer` (it serves this repository's `llms.txt`, docs and README).
 
 | tool | add this |
 |---|---|
-| Claude Code | `claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer` |
-| Cursor (`~/.cursor/mcp.json`) | `{"mcpServers": {"cameleer-docs": {"url": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
-| Windsurf (`~/.codeium/windsurf/mcp_config.json`) | `{"mcpServers": {"cameleer-docs": {"serverUrl": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
-| VS Code (`.vscode/mcp.json`) | `{"servers": {"cameleer-docs": {"type": "http", "url": "https://gitmcp.io/pmsudhi/cameleer"}}}` |
-| Claude Desktop (`claude_desktop_config.json`) | `{"mcpServers": {"cameleer-docs": {"command": "npx", "args": ["mcp-remote", "https://gitmcp.io/pmsudhi/cameleer"]}}}` |
+| Claude Code | `claude mcp add --transport http cameleer-docs https://gitmcp.io/cameleering/cameleer` |
+| Cursor (`~/.cursor/mcp.json`) | `{"mcpServers": {"cameleer-docs": {"url": "https://gitmcp.io/cameleering/cameleer"}}}` |
+| Windsurf (`~/.codeium/windsurf/mcp_config.json`) | `{"mcpServers": {"cameleer-docs": {"serverUrl": "https://gitmcp.io/cameleering/cameleer"}}}` |
+| VS Code (`.vscode/mcp.json`) | `{"servers": {"cameleer-docs": {"type": "http", "url": "https://gitmcp.io/cameleering/cameleer"}}}` |
+| Claude Desktop (`claude_desktop_config.json`) | `{"mcpServers": {"cameleer-docs": {"command": "npx", "args": ["mcp-remote", "https://gitmcp.io/cameleering/cameleer"]}}}` |
 
 The docs are also indexed by [Context7](https://context7.com) (ask your assistant to "use
-context7" for Cameleer) and [DeepWiki](https://deepwiki.com/pmsudhi/cameleer). Agents that read
+context7" for Cameleer) and [DeepWiki](https://deepwiki.com/cameleering/cameleer). Agents that read
 files directly can start from [llms.txt](https://cameleer.ing/llms.txt) or
 [llms-full.txt](https://cameleer.ing/llms-full.txt).
 
@@ -535,7 +549,7 @@ On Linux (with Docker Desktop, use `KAFKA_BROKERS=host.docker.internal:9092` ins
 
 ```sh
 docker run --rm --network host -e KAFKA_BROKERS=localhost:9092 -e OPENAI_API_KEY \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
+  -v "$PWD:/routes:ro" cameleering/cameleer run /routes/ai-ticket-triage.camel.yaml
 ```
 
 ---
@@ -589,7 +603,8 @@ See [docs/INTEROP.md](docs/INTEROP.md).
 | `cameleer-core` | `CamelContext`, `Exchange`/`Message`/`Value`, routes and the Rust DSL, EIPs, error handling, languages, data formats, core components |
 | `cameleer-http` | HTTP/1.1 server and client, `platform-http`, `http`, REST DSL with OpenAPI, `netty` TCP/UDP |
 | `cameleer-yaml` | YAML parser, Camel YAML DSL, XML DSL, route templates |
-| `cameleer-protocols` | ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog (with embedded test servers) |
+| `cameleer-protocols` | ftp, smtp/pop3/imap, websocket, syslog (with embedded test servers) |
+| `cameleer-health` | the health pack, not in the default build: HL7 v2 and MLLP, FHIR R4, DICOM (DIMSE, DICOMweb), de-identification |
 | `cameleer-tls` | from-scratch TLS 1.3/1.2, X.509, `SslContextParameters` (used by all network components) |
 | `cameleer-kafka-mqtt` | kafka, paho / paho-mqtt5 (with embedded test brokers) |
 | `cameleer-amqp` | spring-rabbitmq / rabbitmq (AMQP 0-9-1), stomp, jms / activemq / amqp-stomp (with embedded test brokers) |

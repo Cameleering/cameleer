@@ -4,7 +4,7 @@
 > you build a smaller binary that contains only the component families your routes use, for a
 > serverless function, an edge device or a smaller container image.
 
-**You don't need this page to get started.** The Docker image `pmsudhi/cameleer`, `cargo install
+**You don't need this page to get started.** The Docker image `cameleering/cameleer`, `cargo install
 cameleer-main` and `cargo build -p cameleer-main` all contain every component, language and data
 format. Every page in these docs works with them as is. Come back here when size or cold start
 matters.
@@ -42,10 +42,10 @@ names its feature in its header line (**Cargo feature:**).
 | `datastores` | `spring-redis`, `mongodb`, `mongodb-gridfs`, `elasticsearch`, `opensearch`, `cql` (Cassandra), `couchdb` | `cameleer-datastores` |
 | `grpc` | the `grpc` component and the `protobuf` data format | `cameleer-grpc` |
 | `kafka-mqtt` | `kafka`, `paho`, `paho-mqtt5` | `cameleer-kafka-mqtt` |
-| `protocols` | `ftp`, `ftps`, `smtp`/`smtps`, `pop3`/`pop3s`, `imap`/`imaps`, `mllp`, `syslog`, `websocket`/`ws`/`wss`, `vertx-websocket`; the `hl7terser` language; the `hl7` and `syslog` data formats | `cameleer-protocols` |
+| `protocols` | `ftp`, `ftps`, `smtp`/`smtps`, `pop3`/`pop3s`, `imap`/`imaps`, `syslog`, `websocket`/`ws`/`wss`, `vertx-websocket`; the `syslog` data format | `cameleer-protocols` |
 | `saas` | `openai`, `llm`, `anthropic`, `gemini`, `slack`, `telegram`, `github`, `twilio`, `jira`, `webhook`, `graphql`, `rss`, `atom` | `cameleer-saas` |
 | `script` | the languages `js`/`javascript`, `groovy`, `python`, `java`/`joor`, `csimple`, `mvel`, `ognl`, `spel`, `datasonnet`, and the `mvel` component | `cameleer-script` |
-| `soap` | `cxf`, `cxfrs`, `spring-ws`, `fhir`; the `jaxb` and `fhir` data formats | `cameleer-soap` |
+| `soap` | `cxf`, `cxfrs`, `spring-ws`; the `jaxb` data format | `cameleer-soap` |
 | `sql` | `sql`, `sql-stored`, `jdbc` (embedded SQL engine and PostgreSQL client) | `cameleer-sql` |
 | `ssh` | `sftp`, `ssh` | `cameleer-ssh` |
 | `xml` | `xslt`, `xslt-saxon`, `xquery`, full XML Schema validation for `validator`, `xj`, `xmlsecurity-sign`, `xmlsecurity-verify`; the `xquery` language and XPath 1.0 in full | `cameleer-xml` |
@@ -59,6 +59,25 @@ Two names cover sets of features:
 
 - `full`, the default, is every feature above.
 - `core` is none of them: only what is always included.
+
+## Packs
+
+Packs are industry-specific sets of components that are **not** in `full`
+([what a pack is](../packs/index.md)). Each one is a feature of `cameleer-main` and its own
+distribution:
+
+| feature | adds | crate | distribution |
+|---|---|---|---|
+| `health` | `mllp`, `fhir`, `dicom`, `dicomweb`; the `hl7`, `fhirJson`, `fhirXml`, `dicom`, `dicomJson` and `dicomDeidentify` data formats; the `hl7terser` and `dicom` languages and `${dicom.*}` in Simple | `cameleer-health` | image `cameleering/cameleer:health`, archive `cameleer-health-<version>-<target>` |
+
+```sh
+cargo install cameleer-main --features health                      # everything plus the health pack
+cargo build --profile dist -p cameleer-main --no-default-features --features "health,http2"   # a small healthcare edge build
+docker build --build-arg FEATURES=full,health -t cameleer:health .
+```
+
+A route that uses a pack component in a build without the pack fails at start-up with a message
+naming the pack, the image and the feature.
 
 ## Choose features for your routes
 
@@ -86,12 +105,12 @@ The same feature names work in every kind of build.
 ### Container image
 
 ```sh
-git clone https://github.com/pmsudhi/cameleer && cd cameleer
+git clone https://github.com/cameleering/cameleer && cd cameleer
 docker build --build-arg FEATURES=cloud,jq,sql -t my-cameleer .
 docker run --rm my-cameleer version
 ```
 
-Leave out `FEATURES` for the full image, which is what `pmsudhi/cameleer` on Docker Hub is.
+Leave out `FEATURES` for the full image, which is what `cameleering/cameleer` on Docker Hub is.
 `FEATURES=core` gives the smallest image.
 
 ### The `cameleer` command
@@ -219,5 +238,5 @@ No. Each component is the same code in every build; only which components exist 
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw, or
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw, or
 fork the repository, fix it, add or update a test, and open a pull request.

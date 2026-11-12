@@ -44,7 +44,7 @@ INTERNAL = {"website-plan.md", "STATUS.md"}
 INTERNAL_DIRS = {"design"}
 
 SITE_URL = "https://cameleer.ing/"
-REPO_URL = "https://github.com/pmsudhi/cameleer"
+REPO_URL = "https://github.com/cameleering/cameleer"
 SITE_NAME = "Cameleer"
 
 SECTIONS = [  # (directory, nav title, index title, index answer)
@@ -62,9 +62,19 @@ SECTION_DIRS = [s[0] for s in SECTIONS]
 # Guides listed first, in this order (paths under guides/, without .md); the rest follow
 # alphabetically by title. Paths, not file stems: guides/mcp/deployment.md is not "deployment".
 GUIDE_ORDER = ["getting-started", "configuration", "cli", "concepts", "yaml-dsl", "yaml-for-coding-agents", "validate",
-               "eips", "error-handling", "testing", "observability", "tls-and-security", "attestation", "build-features", "migrating-from-apache-camel",
+               "eips", "error-handling", "testing", "observability", "tls-and-security", "attestation", "build-features", "rust", "troubleshooting",
+               "migrating-from-apache-camel", "limitations",
                "cloud-credentials", "agents", "agent-tool-calls", "mcp", "mcp-server", "mcp-client",
                "agent-step", "model-providers", "ai-components", "mcp-shop-example", "edge", "faq"]
+
+# Pages that moved (old output path -> new output path): the old URL gets a redirect page.
+MOVED = {
+    "components/mllp.html": "packs/health/components/mllp.html",
+    "components/fhir.html": "packs/health/components/fhir.html",
+    "dataformats/hl7.html": "packs/health/dataformats/hl7.html",
+    "dataformats/fhir.html": "packs/health/dataformats/fhir.html",
+    "languages/hl7terser.html": "packs/health/languages/hl7terser.html",
+}
 
 CATEGORY_ORDER = [
     "Core and routing", "Scheduling", "Files, shell and streams", "HTTP, REST and web services",
@@ -763,13 +773,20 @@ class Page:
         self.category = category_for(stem, self.fields.get("category")) if self.section == "components" else None
 
 
+def pack_kind(p):
+    """For a page under packs/<pack>/<kind>/: the kind (components, dataformats, ...), else ''."""
+    parts = p.dir.split("/")
+    return parts[2] if p.section == "packs" and len(parts) > 2 else ""
+
+
 def nav_title(p):
     t = p.title
-    if p.section == "components":
+    kind = pack_kind(p) or p.section
+    if kind == "components":
         t = re.sub(r"\s+component$", "", t, flags=re.I)
-    elif p.section == "languages":
+    elif kind == "languages":
         t = re.sub(r"\s+language$", "", t, flags=re.I)
-    elif p.section == "dataformats":
+    elif kind == "dataformats":
         t = re.sub(r"\s+data format$", "", t, flags=re.I)
     return t
 
@@ -927,7 +944,29 @@ class Site:
         return sorted([p for p in self.pages.values() if not p.dir and p.out != "index.html"], key=lambda p: p.title.lower())
 
     def other_pages(self):
-        return sorted([p for p in self.pages.values() if p.dir and p.section not in SECTION_DIRS and not p.out.endswith("index.html")], key=lambda p: p.rel)
+        return sorted([p for p in self.pages.values() if p.dir and p.section not in SECTION_DIRS and p.section != "packs"
+                       and not p.out.endswith("index.html")], key=lambda p: p.rel)
+
+    def pack_nav(self, cur, link):
+        """The Packs group of the navigation: the packs index, then each pack with its pages."""
+        pages = [p for p in self.pages.values() if p.section == "packs"]
+        if not pages:
+            return ""
+        kinds = ["guides", "components", "dataformats", "languages", "conformance"]
+        body = [link("packs/index.html", "All packs")] if "packs/index.html" in self.by_out else []
+        packs = sorted(set(p.dir.split("/")[1] for p in pages if "/" in p.dir))
+        for name in packs:
+            home = "packs/%s/index.html" % name
+            own = [p for p in pages if (p.dir + "/").startswith("packs/%s/" % name) and p.out != home]
+            own.sort(key=lambda p: (kinds.index(pack_kind(p)) if pack_kind(p) in kinds else len(kinds), nav_title(p).lower()))
+            title = self.by_out[home].title if home in self.by_out else name
+            items = ([link(home, "Overview")] if home in self.by_out else []) + [link(p.out, p.title) for p in own]
+            open_pack = cur.startswith("packs/%s/" % name)
+            body.append('<li><details%s><summary>%s <span class="n">%d</span></summary><ul>%s</ul></details></li>'
+                        % (" open" if open_pack else "", esc(title), len(own), "".join(items)))
+        is_open = cur.startswith("packs/")
+        return ('<details class="nav-group"%s><summary>Packs <span class="n">%d</span></summary><ul>%s</ul></details>'
+                % (" open" if is_open else "", len(pages), "".join(body)))
 
     def all_outs(self):
         outs = set(self.by_out) | set(self.generated)
@@ -960,9 +999,12 @@ class Site:
                 body.extend(link(p.out, nav_title(p)) for p in pages)
             h.append('<details class="nav-group"%s><summary>%s <span class="n">%d</span></summary><ul>%s</ul></details>'
                      % (" open" if is_open else "", esc(title), len(pages), "".join(body)))
+        packs = self.pack_nav(cur, link)
+        if packs:
+            h.append(packs)
         proj = self.project_pages() + self.other_pages()
         if proj:
-            is_open = cur_page is not None and (not cur_page.dir or cur_page.section not in SECTION_DIRS) and cur != "index.html"
+            is_open = cur_page is not None and (not cur_page.dir or cur_page.section not in SECTION_DIRS + ["packs"]) and cur != "index.html"
             h.append('<details class="nav-group"%s><summary>Project <span class="n">%d</span></summary><ul>%s</ul></details>'
                      % (" open" if is_open else "", len(proj), "".join(link(p.out, p.title) for p in proj)))
         return "\n".join(h)
@@ -971,7 +1013,7 @@ class Site:
         crumbs = [("Docs", "index.html")]
         sec = out.split("/")[0] if "/" in out else ""
         if sec:
-            st = dict((s[0], s[1]) for s in SECTIONS).get(sec, sec)
+            st = dict([(s[0], s[1]) for s in SECTIONS] + [("packs", "Packs")]).get(sec, sec)
             if out != sec + "/index.html":
                 crumbs.append((st, sec + "/index.html" if (sec + "/index.html") in self.generated or (sec + "/index.html") in self.by_out else None))
         if out != "index.html":
@@ -1123,6 +1165,7 @@ class Site:
             dst = os.path.join(docs_out, a)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(os.path.join(self.docs, a), dst)
+        self.write_moved(docs_out)
         self.write_sitemap()
         self.write_llms()
         return len(rendered), time.time() - t0
@@ -1146,9 +1189,9 @@ class Site:
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
 
     def designed_pages(self):
-        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/**, <out>/use-cases/** and <out>/trust/** (index.html)."""
+        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/**, <out>/use-cases/**, <out>/trust/** and <out>/healthcare/** (index.html)."""
         found = []
-        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases", "trust") for w in os.walk(os.path.join(self.out, top))):
+        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases", "trust", "healthcare") for w in os.walk(os.path.join(self.out, top))):
             if "index.html" in files:
                 found.append(os.path.relpath(os.path.join(d, "index.html"), self.out).replace("\\", "/"))
         return sorted(found)
@@ -1182,6 +1225,24 @@ class Site:
             out.append(re.sub(r"(\]\()([^)\s]+)\)", rep, l))
         return "\n".join(out)
 
+    def write_moved(self, docs_out):
+        """Pages that moved keep their old URL as a redirect, so links and search results still work."""
+        for old, new in MOVED.items():
+            if old in self.by_out:
+                raise BuildError("%s is in MOVED but a page renders there" % old)
+            if new not in self.by_out:
+                raise BuildError("MOVED %s -> %s: no page renders to %s" % (old, new, new))
+            rel = relurl(old, new)
+            url = abs_url(new)
+            title = self.by_out[new].title
+            write(os.path.join(docs_out, old), (
+                '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
+                '<title>%s (moved) | %s</title>\n'
+                '<link rel="canonical" href="%s">\n<meta name="robots" content="noindex">\n'
+                '<meta http-equiv="refresh" content="0; url=%s">\n</head>\n'
+                '<body><p>This page moved to <a href="%s">%s</a>.</p></body></html>\n')
+                % (esc(title), SITE_NAME, esc(url), esc(rel), esc(rel), esc(title)))
+
     def write_llms(self):
         u = abs_url
         sec = ["## Documentation", "",
@@ -1190,6 +1251,14 @@ class Site:
         for d, t, _, a in SECTIONS:
             n = len(self.ordered(d))
             sec.append("- [%s](%s): %s (%d pages)" % (t, u(d + "/index.html"), a, n))
+        packs = sorted((p for p in self.pages.values() if p.section == "packs"),
+                       key=lambda p: (p.out.count("/"), p.out))
+        if packs:
+            sec.append("")
+            sec.append("Packs (optional, not in the default build or image):")
+            sec.append("")
+            for p in packs:
+                sec.append("- [%s](%s): %s" % (p.title, u(p.out), p.answer))
         guides = self.ordered("guides")
         if guides:
             sec.append("")
@@ -1275,12 +1344,22 @@ TEMPLATE = """<!doctype html>
       <img src="{site_root}brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">
       Cameleer
     </a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="{site_root}cameleering/">Cameleering</a>
       <a class="keep" href="{root}index.html">Docs</a>
       <a href="{root}guides/index.html">Guides</a>
       <a href="{root}components/index.html">Components</a>
+      <div class="nav-menu">
+        <a href="{root}packs/index.html" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="{site_root}healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="{root}packs/index.html"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
       <a href="{site_root}use-cases/">Use cases</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">
+      <a href="{site_root}trust/">Trust</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">
         <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
         GitHub
       </a>
@@ -1311,6 +1390,7 @@ TEMPLATE = """<!doctype html>
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a> (<a href="https://github.com/apache/camel">source</a>), following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
+      <p>Cameleer is a <a href="{site_root}cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
       <p>Apache License 2.0.</p>
     </div>
     <div>
@@ -1319,9 +1399,9 @@ TEMPLATE = """<!doctype html>
         <li><a href="{site_root}">Home</a></li>
         <li><a href="{site_root}use-cases/">Use cases</a></li>
         <li><a href="{site_root}compare/">Compare</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer">Source on GitHub</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer/releases">Releases</a></li>
-        <li><a href="https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>
+        <li><a href="https://github.com/cameleering/cameleer">Source on GitHub</a></li>
+        <li><a href="https://github.com/cameleering/cameleer/releases">Releases</a></li>
+        <li><a href="https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>
       </ul>
     </div>
     <div>

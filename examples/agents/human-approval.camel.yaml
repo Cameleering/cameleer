@@ -12,7 +12,7 @@
 #   mkdir -p pending
 #   docker run --rm -p 8080:8080 -e SLACK_WEBHOOK_URL -e PAYMENTS_URL -e PUBLIC_URL \
 #     -e PENDING_DIR=/routes/pending --user "$(id -u):$(id -g)" -v "$PWD:/routes" \
-#     pmsudhi/cameleer run /routes/human-approval.camel.yaml
+#     cameleering/cameleer run /routes/human-approval.camel.yaml
 # Try:
 #   curl -XPOST localhost:8080/actions -d '{"actionId":"a-17","orderId":"EU-4411","amount":350}'
 #   curl -XPOST localhost:8080/approvals/a-17

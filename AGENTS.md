@@ -22,7 +22,7 @@ routes, EIPs, endpoint URIs, Simple language and YAML DSL; one native binary, no
 ```sh
 cameleer validate route.camel.yaml --format json   # fix every finding, repeat until "valid": true
 cameleer run route.camel.yaml --max-seconds 10
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer validate /routes
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer validate /routes
 ```
 
 `cameleer validate` never starts routes or connects to anything. Codes, output formats and
@@ -56,13 +56,13 @@ feature in its header line.
 
 If Cameleer does not do what its docs say, or you hit a bug while building with it, please fix
 it rather than only working around it:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
 a pull request.
 
 ## Connect your coding agent to the docs
 
-The docs are served as an MCP server at `https://gitmcp.io/pmsudhi/cameleer` (Claude Code:
-`claude mcp add --transport http cameleer-docs https://gitmcp.io/pmsudhi/cameleer`; other tools:
+The docs are served as an MCP server at `https://gitmcp.io/cameleering/cameleer` (Claude Code:
+`claude mcp add --transport http cameleer-docs https://gitmcp.io/cameleering/cameleer`; other tools:
 see the README's "Connect your coding agent" table). They are also indexed by Context7 and
 DeepWiki, and the full text is in https://cameleer.ing/llms-full.txt.

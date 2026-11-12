@@ -11,7 +11,7 @@ framework. It is written **without any external crates** (std only, by design). 
 | `crates/cameleer-core` | Exchange/Message/Value, CamelContext, routes, Rust DSL, EIPs, languages, data formats, core components |
 | `crates/cameleer-http` | HTTP/1.1 server + client (std::net), `http`, `platform-http`, `rest` DSL, `netty` (tcp/udp) |
 | `crates/cameleer-yaml` | YAML 1.2 parser + Camel YAML DSL loader |
-| `crates/cameleer-protocols` | ftp, mail (smtp/pop3/imap), websocket, mllp/hl7, syslog — plus embedded test servers in `testing` |
+| `crates/cameleer-protocols` | ftp, mail (smtp/pop3/imap), websocket, syslog — plus embedded test servers in `testing` |
 | `crates/cameleer-datastores` | Redis (RESP2/3), MongoDB (BSON/OP_MSG), Elasticsearch/OpenSearch (REST), Cassandra (CQL v4), CouchDB connectors + embedded test servers |
 | `crates/cameleer-main` | `cameleer` CLI binary, application.properties, route loading, dev console |
 | `crates/cameleer-tls` | from-scratch TLS 1.3/1.2 client+server (`TlsStream<S: Read+Write>`, `split` into read/write halves), crypto primitives, X.509/PEM/PKCS#8/CRL, trust store, `keystore` (PKCS#12, JKS, JCEKS), mutual TLS (`ClientAuth`), session resumption (client `ClientSessionCache`, server tickets), certificate/CRL generator (`certgen`); `net::NetStream` (cloneable plain/TLS socket used by all network components), `SslContextParameters` + Camel glue in `camel_support` (`sslContextParameters=#bean`, `camel.ssl.*`, `camel.server.ssl.*`, `endpoint_tls`, error kinds), `sasl` (PLAIN, SCRAM-SHA-256/512), `ocsp` (OCSP responses, used for `status_request` stapling), TLS 1.3 0-RTT, `stream_body` (stream-handle message bodies shared by ftp `streamDownload` and the http streaming paths), `testing` (test PKI); depends on cameleer-core only |
@@ -27,8 +27,21 @@ framework. It is written **without any external crates** (std only, by design). 
 | `crates/cameleer-amqp` | AMQP 0-9-1 and STOMP: the `rabbitmq`, `spring-rabbitmq`, `stomp`, `amqp-stomp`, `jms` and `activemq` components, with embedded test brokers |
 | `crates/cameleer-sql` | PostgreSQL wire client and the embedded SQL engine (`jdbc:rustsql:mem:`), with the `sql`, `jdbc` and `sql-stored` components |
 | `crates/cameleer-bench` | benchmark harness and std-only sampling profiler (not published) |
-| `crates/cameleer-soap` | SOAP / web services and healthcare: WSDL 1.1 (`wsdl`), SOAP 1.1/1.2 envelopes and faults (`envelope`), WS-Security UsernameToken + envelope signatures (`wssec`), XSD-typed XML ⇄ `Value` binding (`xsdmodel`, `pojo`), components `cxf`, `cxfrs`, `spring-ws` (consumers on cameleer-http's server registry, `transport`), the `jaxb` data format, FHIR R4 (`fhir`: JSON ⇄ XML conversion with an embedded type registry, `fhirJson`/`fhirXml`, `fhir` component, `fhir::testing::FhirMock`); depends on cameleer-core, cameleer-http, cameleer-tls, cameleer-xml |
+| `crates/cameleer-soap` | SOAP / web services: WSDL 1.1 (`wsdl`), SOAP 1.1/1.2 envelopes and faults (`envelope`), WS-Security UsernameToken + envelope signatures (`wssec`), XSD-typed XML ⇄ `Value` binding (`xsdmodel`, `pojo`), components `cxf`, `cxfrs`, `spring-ws` (consumers on cameleer-http's server registry, `transport`), the `jaxb` data format; depends on cameleer-core, cameleer-http, cameleer-tls, cameleer-xml |
+| `crates/cameleer-health` | **the health pack** (own version, 0.6.0; feature `health` of cameleer-main, not in `full`; crate features `hl7`, `fhir`, `dicom`): `hl7` (the `hl7` data format, `hl7terser`, and `hl7::mllp`, the `mllp` component), `fhir` (FHIR R4 JSON/XML, `fhirJson`/`fhirXml`, the `fhir` component, `FhirMock`), `dicom` (Part 10 codec, the generated PS3.6/PS3.7 dictionary and PS3.15 Table E.1-1, character sets, the DICOM JSON Value tree, `dicom`/`dicomJson`/`dicomDeidentify` data formats, `${dicom.*}` and the `dicom` language, DIMSE `ul`/`assoc`/`scu`/`scp`, the `dicom` and `dicomweb` components, de-identification writing to `cameleer_core::audit`, `testing::TestPacs`); `HEALTH` implements `cameleer_core::pack::Pack`; depends on cameleer-core, cameleer-http, cameleer-tls, and cameleer-xml for `fhir` |
 | `crates/cameleer-dataformats` | data formats registered as factories: `avro` (schema, binary/JSON, container files), `bindy*` (descriptors), `yaml`, `tarFile`/`zipFile`, `crypto`, `pgp` (OpenPGP, GnuPG compatible), `cbor`, `thrift`, `asn1`, `iCal`, `mimeMultipart`, `univocity*`, `fory` (Apache Fory xlang), `barcode` (QR / Data Matrix / Aztec / PDF417 / Code 128 / Code 39 / EAN-13 / UPC-A encoders and decoders, PNG / GIF / JPEG codecs, Reed-Solomon in `barcode::rs`, GF(929) RS and the PDF417 cluster tables in `barcode::pdf417` / `pdf417_tables`); depends on cameleer-core, cameleer-tls (crypto) and cameleer-yaml |
+
+## Packs
+
+Industry-specific code lives in pack crates, not in `full` ([docs/packs/index.md](docs/packs/index.md)).
+A pack implements `cameleer_core::pack::Pack` and describes itself with a static `PackInfo`
+(components, data formats, languages, Simple prefixes); `CamelContext::add_pack` registers it,
+`Main::add_pack` and `cameleer_core::pack::install` do the same for runners. Pack languages are
+YAML/XML DSL expression keys through the pack registry, and `cameleer-main`'s `features::PACKS`
+keeps only the names, so a build without a pack can name it in errors. Shared needs of regulated
+packs sit in core: the hash-chained audit log (`cameleer_core::audit`), `util_time::now_utc`,
+multipart (`cameleer_core::multipart`); socket helpers are in `cameleer_tls::net`, the producer HTTP
+client in `cameleer_http::client::EndpointClient`.
 
 ## Key concepts (cameleer-core)
 

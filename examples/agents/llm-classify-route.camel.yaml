@@ -11,7 +11,7 @@
 #
 # Run with Docker (Linux; with Docker Desktop use KAFKA_BROKERS=host.docker.internal:9092):
 #   docker run --rm --network host -e KAFKA_BROKERS -e OPENAI_API_KEY \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/llm-classify-route.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/llm-classify-route.camel.yaml
 # Try:
 #   curl -XPOST localhost:8080/tickets -d 'I was charged twice for my invoice'
 - route:

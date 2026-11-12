@@ -15,12 +15,13 @@ native binary with no dependencies outside the Rust standard library. See the
 
 ### What is cameleering?
 
-Cameleering is running Apache Camel integration routes on Cameleer: the same Enterprise
-Integration Patterns, endpoint URIs and YAML DSL, executed by one native Rust binary instead of
-the JVM. Routes start in about 3 ms and run in megabytes, so Camel-style integration fits on edge
-devices, in serverless functions and behind AI agents. The word comes from *cameleer*, a camel
-driver; the project's short domain is cameleer.ing. See
-[what is cameleering?](https://cameleer.ing/cameleering/).
+Cameleering is the practice of making software carry the same load on less (less time, memory,
+size and dependencies) and proving every gain against the original, on the same hardware, with the
+method published. Its one hard rule is no claim without a number. Cameleer is the first Cameleering
+project: Apache Camel's routes run by one native Rust binary that starts in about 3 ms and runs in
+megabytes. The word comes from *cameleer*, the driver of a camel caravan. See
+[what is cameleering?](https://cameleer.ing/cameleering/) and
+[the ledger](https://cameleer.ing/cameleering/ledger/).
 
 ### Is Cameleer compatible with Apache Camel?
 
@@ -69,7 +70,7 @@ needs starts in under 1 ms. That makes scale-to-zero and serverless practical
 
 ### How big is the Docker image?
 
-The `pmsudhi/cameleer` image is about 20 MB to download: one native binary on a distroless base. Built with only the
+The `cameleering/cameleer` image is about 20 MB to download: one native binary on a distroless base. Built with only the
 component families you need it is smaller: 14.5 MB with `FEATURES=cloud`, 12.5 MB with
 `FEATURES=core`.
 See the [deployment guide](../DEPLOYMENT.md).
@@ -78,7 +79,7 @@ See the [deployment guide](../DEPLOYMENT.md).
 
 ### How do I install Cameleer?
 
-Run the Docker image `pmsudhi/cameleer`, install the CLI with `cargo install cameleer-main`, or add
+Run the Docker image `cameleering/cameleer`, install the CLI with `cargo install cameleer-main`, or add
 the `cameleer-core` crate (plus component crates) to a Rust project. See
 [getting started](getting-started.md).
 
@@ -223,20 +224,21 @@ scratch. There is no dependency tree to audit or patch, and builds need no downl
 
 ### How do I report a bug or a security issue?
 
-Open an issue on [GitHub](https://github.com/pmsudhi/cameleer/issues) for bugs; report
+Open an issue on [GitHub](https://github.com/cameleering/cameleer/issues) for bugs; report
 vulnerabilities privately as described in [SECURITY.md](../../SECURITY.md).
 
 ## Related
 
 - [Getting started](getting-started.md), [concepts](concepts.md), [EIPs](eips.md)
-- [Migrating from Apache Camel](migrating-from-apache-camel.md)
+- [Migrating from Apache Camel](migrating-from-apache-camel.md),
+  [What Cameleer does not do](limitations.md), [Troubleshooting](troubleshooting.md)
 - [Benchmarks](../BENCHMARKS.md), [features](../FEATURES.md), [roadmap](../ROADMAP.md)
 
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

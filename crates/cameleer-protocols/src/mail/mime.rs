@@ -331,7 +331,7 @@ pub fn build_message(headers: &[(String, String)], body: &[u8], content_type: &s
         out.push_str(&format!("Date: {}\r\n", rfc2822_date(now_millis())));
     }
     if !has("Message-ID") {
-        let id: String = crate::common::random_bytes(12).iter().map(|b| format!("{:02x}", b)).collect();
+        let id: String = cameleer_tls::net::random_bytes(12).iter().map(|b| format!("{:02x}", b)).collect();
         out.push_str(&format!("Message-ID: <{}.{}@cameleer>\r\n", id, now_millis()));
     }
     out.push_str("MIME-Version: 1.0\r\n");
@@ -345,7 +345,7 @@ pub fn build_message(headers: &[(String, String)], body: &[u8], content_type: &s
         let enc = transfer_encode(body, &mut b);
         out.push_str(&format!("Content-Type: {}\r\nContent-Transfer-Encoding: {}\r\n\r\n{}", ct, enc, b));
     } else {
-        let boundary = format!("----=_Part_{}", crate::common::random_bytes(8).iter().map(|b| format!("{:02x}", b)).collect::<String>());
+        let boundary = format!("----=_Part_{}", cameleer_tls::net::random_bytes(8).iter().map(|b| format!("{:02x}", b)).collect::<String>());
         out.push_str(&format!("Content-Type: multipart/mixed; boundary=\"{}\"\r\n\r\nThis is a multi-part message in MIME format.\r\n", boundary));
         let mut b = String::new();
         let enc = transfer_encode(body, &mut b);
@@ -387,7 +387,7 @@ pub fn dot_stuff(msg: &str) -> String {
 pub fn read_dot_terminated<R: std::io::BufRead>(r: &mut R, max: usize) -> std::io::Result<String> {
     let mut out = String::new();
     loop {
-        let Some(line) = crate::common::read_line(r, max)? else {
+        let Some(line) = cameleer_tls::net::read_line(r, max)? else {
             return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "connection closed in multi-line data"));
         };
         if line == "." {

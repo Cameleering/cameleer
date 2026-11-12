@@ -10,7 +10,7 @@
 #
 # Run with Docker (Linux; with Docker Desktop use host.docker.internal in FALLBACK_BASE_URL):
 #   docker run --rm --network host -e OPENAI_API_KEY -e FALLBACK_BASE_URL -e FALLBACK_MODEL \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/llm-multi-model-fallback.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/llm-multi-model-fallback.camel.yaml
 # Try:
 #   curl -XPOST localhost:8080/chat -d 'Explain the dead letter channel in one sentence.'
 - route:

@@ -119,7 +119,7 @@ compatibility but not used: authenticate with an API token or a personal access 
 ```sh
 export JIRA_URL=https://your-site.atlassian.net JIRA_USER=bot@example.com JIRA_API_TOKEN=... SLACK_WEBHOOK_URL=...
 docker run --rm -e JIRA_URL -e JIRA_USER -e JIRA_API_TOKEN -e SLACK_WEBHOOK_URL \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/new-issues-to-slack.camel.yaml
+  -v "$PWD:/routes:ro" cameleering/cameleer run /routes/new-issues-to-slack.camel.yaml
 ```
 
 ## Common questions
@@ -155,7 +155,7 @@ comments are plain text, not Atlassian Document Format.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

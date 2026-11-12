@@ -1,7 +1,7 @@
 # Cameleer at the edge
 
 > Cameleer runs integration routes on gateways and small devices: a single native binary of
-> about 10 MB of memory that ingests MQTT, syslog and HL7 locally, filters and aggregates on
+> about 10 MB of memory that ingests MQTT, syslog and (with the health pack) HL7 locally, filters and aggregates on
 > site, buffers when the uplink is down, and forwards to Kafka or HTTP in the cloud.
 
 Edge gateways sit between machines and the cloud. They need to speak local protocols, keep
@@ -16,7 +16,7 @@ brokers and HTTP mocks.
 | [Sensor rollups](#filter-and-aggregate-mqtt-sensor-readings) | `mqtt-sensor-rollup.camel.yaml` | MQTT in, validation, per-sensor aggregation, Kafka out |
 | [Store and forward](#store-and-forward-when-the-uplink-is-down) | `store-and-forward.camel.yaml` | retries, a local file buffer and replay when the uplink is down |
 | [Syslog to Kafka](#syslog-to-kafka) | `syslog-to-kafka.camel.yaml` | protocol bridging with severity filtering |
-| [HL7 over MLLP](#hl7-v2-over-mllp-to-an-http-api) | `hl7-mllp-to-http.camel.yaml` | healthcare messages with acknowledgements after delivery |
+| [HL7 over MLLP](#hl7-v2-over-mllp-to-an-http-api) | `hl7-mllp-to-http.camel.yaml` | healthcare messages with acknowledgements after delivery ([health pack](../packs/health/index.md)) |
 | [Gateway presence](#gateway-presence-with-retained-messages-and-a-last-will) | `gateway-heartbeat.camel.yaml` | retained status and MQTT last will |
 
 ## Filter and aggregate MQTT sensor readings
@@ -192,6 +192,8 @@ The test sends a `local4.notice` message (dropped) and an `auth.crit` message (f
 
 ### HL7 v2 over MLLP to an HTTP API
 
+This route needs the [health pack](../packs/health/index.md) (image `cameleering/cameleer:health`).
+
 Hospital systems exchange HL7 v2 over MLLP. The `mllp` component frames and acknowledges
 messages and sets `CamelMllp*` headers (message type, event, control id, sending application);
 the `hl7terser` language reads fields by path (`PID-3-1` is the patient id). The acknowledgement
@@ -342,7 +344,7 @@ Serve the tools over HTTP on the gateway (an agent elsewhere connects to
 network):
 
 ```bash
-docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true   -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" pmsudhi/cameleer   run /routes/mcp-gateway-tools.camel.yaml --mcp
+docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true   -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" cameleering/cameleer   run /routes/mcp-gateway-tools.camel.yaml --mcp
 ```
 
 `CAMEL_LOCAL_STATUS=true` (off by default in the image) and a writable `/tmp` let the operator
@@ -362,7 +364,7 @@ setpoint, were run in the container against Mosquitto 2.
 
 ## Small footprint deployment
 
-The Docker image `pmsudhi/cameleer` is one native binary on a distroless base, for `linux/amd64`
+The Docker image `cameleering/cameleer` is one native binary on a distroless base, for `linux/amd64`
 and `linux/arm64`, about 20 MB to download (12.5 MB built with `FEATURES=core`). A running route uses about 10 MB of memory (8 MB at startup in the
 [benchmarks](../BENCHMARKS.md)) and starts its routes in milliseconds. Nothing is written to
 the filesystem unless a route writes files, so the container runs with a read-only root:
@@ -373,7 +375,7 @@ docker run -d --name edge-routes --restart unless-stopped \
   --network host \
   -e MQTT_BROKER=tcp://localhost:1883 -e KAFKA_BROKERS -e GATEWAY_ID=plant-7 \
   -v "$PWD/routes:/routes:ro" \
-  pmsudhi/cameleer run /routes/mqtt-sensor-rollup.camel.yaml
+  cameleering/cameleer run /routes/mqtt-sensor-rollup.camel.yaml
 ```
 
 - **arm64 boards:** the same image runs on 64-bit Raspberry Pi OS (Pi 3, 4 and 5), NVIDIA
@@ -406,7 +408,7 @@ docker run -d --name edge-routes --restart unless-stopped \
 
 ### Can Cameleer run on a Raspberry Pi?
 
-Yes, on a 64-bit OS: the `pmsudhi/cameleer` image is published for `linux/arm64`, and a route
+Yes, on a 64-bit OS: the `cameleering/cameleer` image is published for `linux/arm64`, and a route
 uses about 10 MB of memory. 32-bit ARM images are not published.
 
 ### How do I bridge MQTT to Kafka?
@@ -430,8 +432,9 @@ transports and shared subscriptions are not supported.
 
 ### Which industrial and healthcare protocols are supported?
 
-MQTT, syslog, HL7 v2 over MLLP, TCP and UDP (`netty`), HTTP, WebSocket, FTP and SFTP, Kafka, AMQP
-and STOMP. There are no OPC UA, Modbus or PLC4X components; reach those through an MQTT or HTTP
+MQTT, syslog, TCP and UDP (`netty`), HTTP, WebSocket, FTP and SFTP, Kafka, AMQP and STOMP in the
+default build; HL7 v2 over MLLP, FHIR and DICOM in the [health pack](../packs/health/index.md)
+(image `cameleering/cameleer:health`). There are no OPC UA, Modbus or PLC4X components; reach those through an MQTT or HTTP
 gateway.
 
 ## Related
@@ -441,13 +444,13 @@ gateway.
 - [Error handling](error-handling.md), [deployment guide](../DEPLOYMENT.md),
   [benchmarks](../BENCHMARKS.md)
 - Components: [paho](../components/paho.md), [kafka](../components/kafka.md),
-  [syslog](../components/syslog.md), [mllp](../components/mllp.md), [file](../components/file.md)
+  [syslog](../components/syslog.md), [mllp](../packs/health/components/mllp.md), [file](../components/file.md)
 
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

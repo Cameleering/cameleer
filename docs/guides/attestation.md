@@ -112,7 +112,7 @@ routes. Generate the key inside the TEE and never write it out, or the binding p
   bus interposers (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.
 - **Not yet run on real TEE hardware.** The tests use a simulated configfs-tsm directory and a
   simulated dstack agent; the report formats follow the kernel ABI and dstack's API.
-- **No reproducible builds yet.** Pin the image by digest (`pmsudhi/cameleer@sha256:...`) so the
+- **No reproducible builds yet.** Pin the image by digest (`cameleering/cameleer@sha256:...`) so the
   platform measurement identifies the build you reviewed.
 - **Runtime changes are recorded, not prevented.** The log shows a route added or a tool disabled
   after start-up; a policy that refuses them is a verifier's decision.
@@ -163,5 +163,5 @@ attacks (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.
 ## Found a problem?
 
 If something on this page doesn't match what Cameleer does, please
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new), or fork the repository, fix
+[open an issue](https://github.com/cameleering/cameleer/issues/new), or fork the repository, fix
 it, add a test, run `cargo test --workspace` and open a pull request.

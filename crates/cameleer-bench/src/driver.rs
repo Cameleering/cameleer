@@ -139,10 +139,20 @@ mod tests {
 
     #[test]
     fn counts_calls_per_epoch_and_formats_result() {
-        let plan = Plan { warmup: Duration::from_millis(30), iteration: Duration::from_millis(40), iters: 2 };
-        let out = run(plan, 2, None, |_| || std::thread::sleep(Duration::from_micros(200)));
+        // A busy wait, not `thread::sleep`: on Windows CI runners a 200 us sleep can take 15 ms or
+        // more, and a loaded runner gave 4 calls in 80 ms. The test checks the counting, not speed.
+        // 300 us keeps the median clear of the 200 us check below (histogram buckets round down).
+        let plan = Plan { warmup: Duration::from_millis(30), iteration: Duration::from_millis(100), iters: 2 };
+        let out = run(plan, 2, None, |_| {
+            || {
+                let t = Instant::now();
+                while t.elapsed() < Duration::from_micros(300) {
+                    std::hint::spin_loop();
+                }
+            }
+        });
         assert_eq!(out.per_iter.len(), 2);
-        assert!(out.msgs > 10, "{out:?}");
+        assert!(out.msgs >= 2, "{out:?}");
         assert_eq!(out.msgs, out.latency.count());
         assert!(out.latency.percentile(50.0) >= 200_000);
         let line = out.result_line("x");

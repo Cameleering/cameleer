@@ -25,9 +25,9 @@ jobs:
       - if: env.HAS_DOCKERHUB == 'true'
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
         with:
-          username: pmsudhi
+          username: ${{ vars.DOCKERHUB_USERNAME || 'cameleering' }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: pmsudhi/cameleer
-          short-description: "Apache Camel routes, rebuilt in Rust: one native binary, ~1 ms startup, ~10 MB RAM, amd64/arm64"
+          repository: cameleering/cameleer
+          short-description: "Apache Camel routes in Rust: one native binary, 3 ms startup, up to 54x less memory, amd64/arm64"
           readme-filepath: docker/README.dockerhub.md
           enable-url-completion: true

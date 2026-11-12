@@ -82,88 +82,27 @@ impl MimeMultipartDataFormat {
     }
 }
 
-/// Parse `Name: value` header lines (with folding) until an empty line; returns headers and
-/// the offset of the content.
-fn parse_headers(d: &[u8]) -> (Vec<(String, String)>, usize) {
-    let mut headers: Vec<(String, String)> = Vec::new();
-    let mut i = 0;
-    while i < d.len() {
-        let end = d[i..].iter().position(|b| *b == b'\n').map(|p| i + p).unwrap_or(d.len());
-        let line = &d[i..end];
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        i = end + 1;
-        if line.is_empty() {
-            return (headers, i.min(d.len()));
-        }
-        let s = String::from_utf8_lossy(line).to_string();
-        if (s.starts_with(' ') || s.starts_with('\t')) && !headers.is_empty() {
-            let last = headers.last_mut().unwrap();
-            last.1.push(' ');
-            last.1.push_str(s.trim());
-        } else if let Some((k, v)) = s.split_once(':') {
-            headers.push((k.trim().to_string(), v.trim().to_string()));
-        }
-    }
-    (headers, d.len())
-}
+use cameleer_core::multipart::parse_headers;
 
 fn header<'a>(h: &'a [(String, String)], name: &str) -> Option<&'a str> {
     h.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
 }
 
-/// A parameter of a header value (`boundary`, `filename`, `name`).
-fn param(v: &str, name: &str) -> Option<String> {
-    for p in v.split(';').skip(1) {
-        if let Some((k, val)) = p.split_once('=') {
-            if k.trim().eq_ignore_ascii_case(name) {
-                return Some(val.trim().trim_matches('"').to_string());
-            }
-        }
-    }
-    None
-}
-
-fn find(h: &[u8], n: &[u8], from: usize) -> Option<usize> {
-    if n.is_empty() || h.len() < n.len() {
-        return None;
-    }
-    (from..=h.len() - n.len()).find(|&i| &h[i..i + n.len()] == n)
-}
+use cameleer_core::multipart::param;
 
 /// Split a multipart body into parts (headers, decoded content).
 pub fn parse_multipart(body: &[u8], boundary: &str) -> Result<Vec<(Vec<(String, String)>, Vec<u8>)>> {
-    let delim = format!("--{}", boundary).into_bytes();
-    let mut parts = Vec::new();
-    let mut pos = find(body, &delim, 0).ok_or_else(|| df_err("Multipart boundary not found"))?;
-    loop {
-        let after = pos + delim.len();
-        if body.get(after..after + 2) == Some(b"--") {
-            break;
-        }
-        let start = match find(body, b"\n", after) {
-            Some(p) => p + 1,
-            None => break,
+    let parts = cameleer_core::multipart::parse(body, boundary).map_err(|e| df_err(&e.message))?;
+    let mut out = Vec::with_capacity(parts.len());
+    for p in parts {
+        let data = match header(&p.headers, "Content-Transfer-Encoding").map(|e| e.to_ascii_lowercase()) {
+            Some(e) if e == "base64" => base64::decode(&String::from_utf8_lossy(&p.body).replace(['\r', '\n'], ""))?,
+            Some(e) if e == "quoted-printable" => decode_qp(&p.body),
+            _ => p.body,
         };
-        let next = find(body, &delim, start).ok_or_else(|| df_err("Unterminated multipart body"))?;
-        let mut end = next;
-        if end > start && body[end - 1] == b'\n' {
-            end -= 1;
-            if end > start && body[end - 1] == b'\r' {
-                end -= 1;
-            }
-        }
-        let raw = &body[start..end];
-        let (h, off) = parse_headers(raw);
-        let content = &raw[off..];
-        let data = match header(&h, "Content-Transfer-Encoding").map(|e| e.to_ascii_lowercase()) {
-            Some(e) if e == "base64" => base64::decode(&String::from_utf8_lossy(content).replace(['\r', '\n'], ""))?,
-            Some(e) if e == "quoted-printable" => decode_qp(content),
-            _ => content.to_vec(),
-        };
-        parts.push((h, data));
-        pos = next;
+        out.push((p.headers, data));
     }
-    Ok(parts)
+    Ok(out)
 }
 
 fn decode_qp(d: &[u8]) -> Vec<u8> {

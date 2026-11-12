@@ -7,7 +7,7 @@ covers the container image: Docker, Docker Compose, Kubernetes and serverless pl
 
 | | |
 |---|---|
-| Name | `pmsudhi/cameleer` on Docker Hub, also `ghcr.io/pmsudhi/cameleer` |
+| Name | `cameleering/cameleer` on Docker Hub, also `ghcr.io/cameleering/cameleer` |
 | Platforms | `linux/amd64`, `linux/arm64` |
 | Contents | one native binary (glibc) on `gcr.io/distroless/cc-debian12:nonroot`: CA certificates, tzdata, no shell |
 | Size | about 20 MB to download; under 12.5 MB built with `FEATURES=core` ([build features](guides/build-features.md)) |
@@ -23,7 +23,7 @@ covers the container image: Docker, Docker Compose, Kubernetes and serverless pl
 Verify an image's provenance:
 
 ```sh
-gh attestation verify oci://ghcr.io/pmsudhi/cameleer:latest --owner pmsudhi
+gh attestation verify oci://ghcr.io/cameleering/cameleer:latest --owner cameleering
 ```
 
 ## Configuration
@@ -57,7 +57,7 @@ and start routes.
 docker run --rm -p 8080:8080 --read-only \
   -v "$PWD/routes:/routes:ro" \
   -e OPENAI_API_KEY \
-  pmsudhi/cameleer run /routes/my-route.camel.yaml
+  cameleering/cameleer run /routes/my-route.camel.yaml
 ```
 
 - Mount route folders read-only (`:ro`) unless a route writes there. For a route that writes
@@ -72,7 +72,7 @@ docker run --rm -p 8080:8080 --read-only \
 For production, ship an image that contains the routes:
 
 ```dockerfile
-FROM pmsudhi/cameleer:0.5.1
+FROM cameleering/cameleer:0.5.1
 COPY routes/ /routes/
 CMD ["run", "/routes/my-route.camel.yaml", "--prop", "camel.server.enabled=true", "--prop", "camel.server.healthCheckEnabled=true"]
 ```
@@ -83,7 +83,7 @@ CMD ["run", "/routes/my-route.camel.yaml", "--prop", "camel.server.enabled=true"
 ```yaml
 services:
   orders:
-    image: pmsudhi/cameleer:0.5.1
+    image: cameleering/cameleer:0.5.1
     command: ["run", "/routes/rest-api.camel.yaml",
               "--prop", "camel.server.enabled=true", "--prop", "camel.server.healthCheckEnabled=true"]
     ports: ["8080:8080"]
@@ -126,7 +126,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: cameleer
-          image: pmsudhi/cameleer:0.5.1
+          image: cameleering/cameleer:0.5.1
           args: ["run", "/routes/rest-api.camel.yaml",
                  "--prop", "camel.server.enabled=true",
                  "--prop", "camel.server.healthCheckEnabled=true"]
@@ -268,7 +268,7 @@ Camel JBang habits carry over with the `cameleer` command: `cameleer ps`, `camel
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

@@ -1,8 +1,6 @@
 //! Test fixtures: a document/literal wrapped calculator WSDL (SOAP 1.1 and 1.2 ports), the
 //! classic rpc/literal stock quote WSDL (after the WSDL 1.1 specification example), sample
-//! envelopes, and the embedded FHIR mock server ([`crate::fhir::testing::FhirMock`]).
-
-pub use crate::fhir::testing::FhirMock;
+//! envelopes.
 
 /// Target namespace of [`CALCULATOR_WSDL`].
 pub const CALC_NS: &str = "http://example.org/calculator";

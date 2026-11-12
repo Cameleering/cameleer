@@ -68,7 +68,7 @@ cameleer run orders.camel.yaml billing.camel.yaml # several files, one context
 cameleer run routes/*.camel.yaml                  # a shell glob
 cameleer run                                      # every .yaml/.yml/.xml file of the current folder
 cameleer run --dev orders.camel.yaml              # reload when a file changes
-docker run --rm -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/orders.camel.yaml
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer run /routes/orders.camel.yaml
 ```
 
 - `cameleer run` with no file loads every `.yaml`, `.yml` and `.xml` file of the current
@@ -742,7 +742,7 @@ language.
 | `method` | [Bean method](../languages/bean.md) | a bean in the registry |
 | `ref` | [Ref](../languages/ref.md) | an expression bound in the registry |
 | `groovy`, `js`/`javaScript`, `python`, `mvel`, `ognl`, `spel`, `datasonnet`, `csimple`, `joor`/`java` | script languages, for example [groovy](../languages/groovy.md) and [python](../languages/python.md) | interpreters from `cameleer-script` |
-| `hl7terser` | [HL7 terser](../languages/hl7terser.md) | |
+| `hl7terser` | [HL7 terser](../packs/health/languages/hl7terser.md) | |
 | `language` | any | `language: {language: <name>, expression: ...}` |
 
 `cameleer catalog languages` lists the languages of your build. The loader also accepts the
@@ -1312,7 +1312,7 @@ such as endpoint options and expressions.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

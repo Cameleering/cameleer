@@ -10,7 +10,7 @@
 # KAFKA_BROKERS=host.docker.internal:9092 instead of --network host, and make the broker
 # advertise that address):
 #   docker run --rm --network host -e KAFKA_BROKERS -e OPENAI_API_KEY \
-#     -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/ai-ticket-triage.camel.yaml
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/ai-ticket-triage.camel.yaml
 # Run from source:
 #   cargo run --release -p cameleer-main --bin cameleer -- run examples/ai-ticket-triage.camel.yaml
 - route:

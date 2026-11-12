@@ -1,0 +1,32 @@
+# Needs the health pack: the image cameleering/cameleer:health, or cameleer-main built with
+# `--features health` (docs/packs/health/index.md).
+#
+# De-identification pipeline for AI training data: DICOM files dropped into a folder are
+# de-identified with the PS3.15 Annex E basic profile and written to an output folder, named by
+# their new SOP Instance UID. Replacement UIDs, pseudonyms and date shifts come from the secret
+# key, so the same input always gives the same output: studies stay together across batches and
+# across machines that share the key. Every instance writes a record to the hash-chained audit
+# log, which `cameleer` can verify later.
+#
+# Run it inside a confidential VM to let the data owner check, through attestation, which binary
+# and which policy saw the identifiable data (see docs/packs/health/guides/dicom.md).
+#
+#   export DEID_KEY=change-me    # keep it in a vault: {{vault:...}} placeholders work too
+#   mkdir -p in out
+#   docker run --rm -e DEID_KEY -v "$PWD:/routes:ro" -v "$PWD/in:/in" -v "$PWD/out:/out" \
+#     cameleering/cameleer:health run /routes/deid-pipeline.camel.yaml \
+#     --property camel.ai.audit.file=/out/deid-audit.jsonl
+- route:
+    id: deid-pipeline
+    from:
+      uri: "file:{{env:IN_DIR:in}}?include=.*\\.dcm&move=.done&moveFailed=.failed"
+      steps:
+        - convertBodyTo:
+            type: byte[]
+        - marshal:
+            dicomDeidentify:
+              uidKey: "{{env:DEID_KEY:change-me}}"
+              options: "retainLongitudinalModifiedDates,retainPatientCharacteristics,cleanDescriptors"
+              pseudonymousPatient: "true"
+        - to: "file:{{env:OUT_DIR:out}}?fileName=${header.CamelDicomSopInstanceUid}.dcm"
+        - log: "De-identified ${header.CamelFileName} as ${header.CamelDicomSopInstanceUid}"

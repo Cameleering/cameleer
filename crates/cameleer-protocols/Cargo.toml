@@ -10,7 +10,7 @@ authors.workspace = true
 readme.workspace = true
 keywords = ["camel", "ftp", "smtp", "mllp", "syslog"]
 categories = ["network-programming", "email"]
-description = "Cameleer network protocol components (std only): ftp, smtp/pop3/imap, websocket, mllp/hl7, syslog"
+description = "Cameleer network protocol components (std only): ftp, smtp/pop3/imap, websocket, syslog (MLLP and HL7 are in the health pack, cameleer-health)"
 
 [dependencies]
 cameleer-core = { path = "../cameleer-core", version = "0.5.1", default-features = false }

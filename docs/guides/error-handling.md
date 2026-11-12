@@ -230,7 +230,8 @@ pass through `mock:parse-attempts` and continue to `mock:parsed`.
 
 - Exceptions are string kinds with a parent hierarchy, not Java classes. Custom kinds are
   registered with `register_kind_parent("MyException", "IOException")` so `onException` for
-  `IOException` catches them.
+  `IOException` catches them. Every built-in kind and its parent is listed in
+  [Troubleshooting](troubleshooting.md#exception-kinds).
 - With `asyncDelayedRedelivery`, the waiting exchange is handed to a released thread and a new
   consumer thread takes over, instead of a scheduler continuation. The effect for the route is
   the same.
@@ -272,7 +273,7 @@ Throw `IllegalArgumentException` (or validate with `validate`), and handle it wi
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.

@@ -41,7 +41,7 @@
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
  {"@type": "Question", "name": "Which file protocols does Cameleer support?", "acceptedAnswer": {"@type": "Answer", "text": "Local folders (file), FTP and FTPS (explicit and implicit TLS, tested against vsftpd), and SFTP over Cameleer's own SSH-2 implementation, tested against OpenSSH, with password or OpenSSH and PEM key authentication and known_hosts checking. S3, Azure Blob and Data Lake, Google Cloud Storage and Google Drive cover object storage."}},
- {"@type": "Question", "name": "Which file formats can it parse?", "acceptedAnswer": {"@type": "Answer", "text": "CSV (csv and univocity), fixed-length and key-value records (bindyFixed, bindyKvp, bindyCsv), JSON, XML, YAML, Avro, Protobuf, zip, tar and gzip archives, Base64, PGP and symmetric crypto, HL7 v2 and more; 29 data formats in all."}},
+ {"@type": "Question", "name": "Which file formats can it parse?", "acceptedAnswer": {"@type": "Answer", "text": "CSV (csv and univocity), fixed-length and key-value records (bindyFixed, bindyKvp, bindyCsv), JSON, XML, YAML, Avro, Protobuf, zip, tar and gzip archives, Base64, PGP and symmetric crypto and more; 27 data formats in the default build, and HL7 v2, FHIR and DICOM in the health pack."}},
  {"@type": "Question", "name": "How are processed files handled?", "acceptedAnswer": {"@type": "Answer", "text": "As in Apache Camel: move to a done folder, moveFailed to a failed folder, or delete, with include and exclude patterns, read locks and idempotent repositories so a file is processed once."}},
  {"@type": "Question", "name": "How fast is a CSV batch?", "acceptedAnswer": {"@type": "Answer", "text": "In the cloud benchmark a route that splits a 1,000-row file, keeps the EU rows, reshapes them and aggregates batches of 100 processed 998 files per second on Cameleer against 468 on Apache Camel 4.23 (JVM) and 163 on Camel Quarkus native, with 8 MB of peak memory against 337 MB."}},
  {"@type": "Question", "name": "Does it parse EDI (EDIFACT, X12)?", "acceptedAnswer": {"@type": "Answer", "text": "There is no dedicated EDIFACT or X12 data format. Delimited and fixed-width partner files are handled with csv, univocity and bindy; segment-based EDI needs a tokenize split and your own mapping."}}]}
@@ -51,12 +51,22 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="../../cameleering/">Cameleering</a>
       <a class="keep" href="../../docs/">Docs</a>
-      <a class="keep" href="../">Use cases</a>
-      <a href="../../docs/guides/agents.html">Agents</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
+      <a href="../../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a href="../../trust/">Trust</a>
       <a href="../../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -72,7 +82,7 @@
       <div class="stat"><b>2.1x</b><span>Apache Camel's CSV batch throughput: 998 vs 468 files/s</span></div>
       <div class="stat"><b>8 MB</b><span>peak memory on that batch, against 337 MB on the JVM</span></div>
       <div class="stat"><b>SSH-2</b><span>and SFTP written from scratch, tested against OpenSSH; FTP and FTPS against vsftpd</span></div>
-      <div class="stat"><b>29</b><span>data formats: CSV, fixed-width, JSON, XML, Avro, zip, PGP, HL7 and more</span></div>
+      <div class="stat"><b>27</b><span>data formats: CSV, fixed-width, JSON, XML, Avro, zip, PGP and more; HL7 and DICOM in the health pack</span></div>
     </div>
   </div>
 </section>
@@ -80,7 +90,7 @@
 <section class="c-sec" id="route">
   <div class="wrap">
     <h2>The tested route: files to S3</h2>
-    <p class="intro">From <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml"><code>examples/files-to-s3.camel.yaml</code></a>, which the test suite runs against a mock S3. Swap <code>file:</code> for <code>sftp:</code> and the route polls a partner's server instead.</p>
+    <p class="intro">From <a href="https://github.com/cameleering/cameleer/blob/main/examples/files-to-s3.camel.yaml"><code>examples/files-to-s3.camel.yaml</code></a>, which the test suite runs against a mock S3. Swap <code>file:</code> for <code>sftp:</code> and the route polls a partner's server instead.</p>
     <pre class="cmd">- route:
     id: files-to-s3
     from:
@@ -158,7 +168,7 @@
   <div class="wrap">
     <h2>Common questions</h2>
     <details><summary>Which file protocols does Cameleer support?</summary><p>Local folders (<code>file</code>), FTP and FTPS (explicit and implicit TLS, tested against vsftpd), and SFTP over Cameleer's own SSH-2 implementation, tested against OpenSSH, with password or OpenSSH and PEM key authentication and <code>known_hosts</code> checking. S3, Azure Blob and Data Lake, Google Cloud Storage and Google Drive cover object storage.</p></details>
-    <details><summary>Which file formats can it parse?</summary><p>CSV (<code>csv</code> and <code>univocity</code>), fixed-length and key-value records (<code>bindyFixed</code>, <code>bindyKvp</code>, <code>bindyCsv</code>), JSON, XML, YAML, Avro, Protobuf, zip, tar and gzip archives, Base64, PGP and symmetric crypto, HL7 v2 and more; <a href="../../docs/dataformats/">29 data formats</a> in all.</p></details>
+    <details><summary>Which file formats can it parse?</summary><p>CSV (<code>csv</code> and <code>univocity</code>), fixed-length and key-value records (<code>bindyFixed</code>, <code>bindyKvp</code>, <code>bindyCsv</code>), JSON, XML, YAML, Avro, Protobuf, zip, tar and gzip archives, Base64, PGP and symmetric crypto and more; <a href="../../docs/dataformats/">27 data formats</a> in the default build, and HL7 v2, FHIR and DICOM in the <a href="../../docs/packs/health/">health pack</a>.</p></details>
     <details><summary>How are processed files handled?</summary><p>As in Apache Camel: <code>move</code> to a done folder, <code>moveFailed</code> to a failed folder, or <code>delete</code>, with <code>include</code> and <code>exclude</code> patterns, read locks and idempotent repositories so a file is processed once.</p></details>
     <details><summary>How fast is a CSV batch?</summary><p>In the cloud benchmark a route that splits a 1,000-row file, keeps the EU rows, reshapes them and aggregates batches of 100 processed 998 files per second on Cameleer against 468 on Apache Camel 4.23 (JVM) and 163 on Camel Quarkus native, with 8 MB of peak memory against 337 MB.</p></details>
     <details><summary>Does it parse EDI (EDIFACT, X12)?</summary><p>There is no dedicated EDIFACT or X12 data format. Delimited and fixed-width partner files are handled with <code>csv</code>, <code>univocity</code> and <code>bindy</code>; segment-based EDI needs a <code>tokenize</code> split and your own mapping.</p></details>
@@ -172,9 +182,9 @@
     <pre class="cmd">export S3_BUCKET=my-bucket AWS_REGION=eu-west-1 AWS_ACCESS_KEY_ID=... AWS_SECRET_ACCESS_KEY=...
 docker run --rm -e S3_BUCKET -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
   -e INBOX_DIR=/routes/inbox --user "$(id -u):$(id -g)" -v "$PWD:/routes" \
-  pmsudhi/cameleer run /routes/files-to-s3.camel.yaml</pre>
+  cameleering/cameleer run /routes/files-to-s3.camel.yaml</pre>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/pmsudhi/cameleer/blob/main/examples/files-to-s3.camel.yaml">See the route</a>
+      <a class="btn primary" href="https://github.com/cameleering/cameleer/blob/main/examples/files-to-s3.camel.yaml">See the route</a>
       <a class="btn" href="../../docs/components/sftp.html">The sftp component</a>
       <a class="btn" href="../../docs/dataformats/csv.html">The csv data format</a>
     </div>
@@ -187,6 +197,7 @@ docker run --rm -e S3_BUCKET -e AWS_REGION -e AWS_ACCESS_KEY_ID -e AWS_SECRET_AC
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. Other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
     </div>
     <div>
       <h4>Use cases</h4>

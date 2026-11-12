@@ -51,12 +51,22 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../" aria-label="Cameleer home"><img src="../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="../cameleering/">Cameleering</a>
       <a class="keep" href="../docs/">Docs</a>
       <a class="keep" href="../use-cases/">Use cases</a>
       <a href="../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a aria-current="page" href="../trust/">Trust</a>
       <a href="../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -136,6 +146,13 @@ camel.attestation.mcp-tool=true</pre>
   </div>
 </section>
 
+<section class="c-sec" id="healthcare">
+  <div class="wrap">
+    <h2>Healthcare: attested de-identification</h2>
+    <p class="intro">Next release: run the health pack's DICOM de-identifier (the PS3.15 Annex E basic profile and options) in a confidential VM, and a data owner can ask for evidence of which routes and configuration, including the de-identification options, handle the identifiable images before sending them. Each de-identified instance also writes a record to the hash-chained audit log. <a href="../use-cases/dicom-imaging-gateway/">DICOM imaging gateway</a>, <a href="../healthcare/">healthcare integration</a>.</p>
+  </div>
+</section>
+
 <section class="c-sec" id="platforms">
   <div class="wrap">
     <h2>Where it runs</h2>
@@ -159,7 +176,7 @@ camel.attestation.mcp-tool=true</pre>
       <li><strong>Cameleer doesn't verify hardware evidence.</strong> It produces the evidence and the binding; checking Intel's or AMD's signature chain is the client's verifier's job. A gateway that refuses tools from MCP servers that don't attest is planned.</li>
       <li><strong>No sealed secrets yet.</strong> Releasing secrets only to an attested process is planned.</li>
       <li><strong>Not yet run on real TEE hardware.</strong> The tests use a simulated configfs-tsm and a simulated dstack agent; the report formats follow the kernel ABI and dstack's API.</li>
-      <li><strong>"This exact release" needs a pinned image.</strong> Reproducible builds aren't published yet, so pin the image by digest (<code>pmsudhi/cameleer@sha256:...</code>) and let the platform measurement identify the build you reviewed.</li>
+      <li><strong>"This exact release" needs a pinned image.</strong> Reproducible builds aren't published yet, so pin the image by digest (<code>cameleering/cameleer@sha256:...</code>) and let the platform measurement identify the build you reviewed.</li>
       <li><strong>Physical attacks.</strong> TEEs trust the cloud's physical security as well as the CPU vendor; memory-bus interposers (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.</li>
       <li><strong>Runtime changes are recorded, not prevented.</strong> The log shows a route added after start-up; refusing it is the verifier's decision.</li>
       <li><strong>A model showing evidence is not checking it.</strong> Only a program that checks the binding and the signature gets the guarantee.</li>
@@ -186,6 +203,7 @@ camel.attestation.mcp-tool=true</pre>
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. Intel, AMD and other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
     </div>
     <div>
       <h4>Trust</h4>

@@ -467,7 +467,7 @@ fn the_audit_chain_records_every_call_and_detects_edits() {
     reg.call(ToolCall::new("note", json(r#"{"text":"a"}"#)).with_principal("agent-7").with_call_id("1"));
     reg.call(ToolCall::new("note", json(r#"{"text":5}"#)));
     ctx.stop().unwrap();
-    let (n, _) = cameleer_ai::audit::verify_file(&file).unwrap();
+    let (n, _) = cameleer_core::audit::verify_file(&file).unwrap();
     assert_eq!(n, 3);
     let lines: Vec<Value> = std::fs::read_to_string(&file).unwrap().lines().map(json).collect();
     let field = |i: usize, k: &str| lines[i].as_object().unwrap().get(k).unwrap().clone();
@@ -479,7 +479,7 @@ fn the_audit_chain_records_every_call_and_detects_edits() {
     assert!(!std::fs::read_to_string(&file).unwrap().contains("\"text\""));
     let edited = std::fs::read_to_string(&file).unwrap().replace("agent-7", "agent-8");
     std::fs::write(&file, edited).unwrap();
-    assert!(cameleer_ai::audit::verify_file(&file).is_err());
+    assert!(cameleer_core::audit::verify_file(&file).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

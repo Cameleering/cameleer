@@ -8,7 +8,7 @@
 #
 # Run with Docker (arm64 and amd64; Linux), serving MCP on http://<gateway>:8080/mcp:
 #   docker run -d --name gw --network host --read-only --tmpfs /tmp -e CAMEL_LOCAL_STATUS=true \
-#     -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" pmsudhi/cameleer \
+#     -e MQTT_BROKER -e GATEWAY_ID -v "$PWD:/routes:ro" cameleering/cameleer \
 #     run /routes/mcp-gateway-tools.camel.yaml --mcp
 # Approve a parked setpoint (CAMEL_LOCAL_STATUS lets the operator commands reach the process):
 #   docker exec gw cameleer tool approvals

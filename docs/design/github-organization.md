@@ -1,5 +1,10 @@
 # A GitHub organization for the Cameleer family
 
+> **Superseded (2026-11-12)** by [cameleering-org-move.md](cameleering-org-move.md): the org is
+> `cameleering` (free on GitHub, Docker Hub and crates.io alike), not `cameleer-rs`, and the Docker
+> image moves to `cameleering/cameleer` too. This page is kept as written; its references to
+> `pmsudhi` describe the state at the time.
+
 _Internal. Written 2026-11-09 in answer to the owner's question about moving cameleer, simoom and
 karez under one organization. Nothing on GitHub, crates.io, Docker Hub or DNS was changed._
 

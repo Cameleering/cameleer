@@ -23,7 +23,7 @@ use cameleer_core::prelude::*;
 
 /// The fenced block following `<!-- example: id -->` in `docs/components/<page>.md`.
 fn example(page: &str, id: &str) -> String {
-    let path = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), page);
+    let path = { let p = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), page); if std::path::Path::new(&p).exists() { p } else { format!("{}/../../docs/packs/health/components/{}.md", env!("CARGO_MANIFEST_DIR"), page) } };
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {}", path, e));
     let text = text.replace("\r\n", "\n");
     let marker = format!("<!-- example: {} -->", id);
@@ -78,7 +78,7 @@ fn endpoint_uris(yaml: &str) -> Vec<String> {
 
 /// Resolves every endpoint URI of the (substituted) YAML on a context with all components.
 fn resolve_all(yaml: &str) {
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let ctx = main.context().clone();
     let uris = endpoint_uris(yaml);
     assert!(!uris.is_empty(), "no endpoint uris in\n{}", yaml);
@@ -168,7 +168,7 @@ fn wait_for(what: &str, f: impl Fn() -> bool) {
 
 /// Starts a `Main` with the YAML route (and optional Rust routes / properties).
 fn start_yaml(name: &str, yaml: &str, props: &[(&str, String)], extra: impl FnOnce(&CamelContext) + Send + 'static) -> cameleer_main::Main {
-    let mut main = cameleer_main::new_main();
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     for (k, v) in props {
         main.set_property(*k, v.clone());
     }
@@ -674,7 +674,7 @@ fn graphql_book_lookup() {
 
 /// The first fenced block of the given language in a page (e.g. a `.proto` file).
 fn fenced(page: &str, lang: &str) -> String {
-    let path = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), page);
+    let path = { let p = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), page); if std::path::Path::new(&p).exists() { p } else { format!("{}/../../docs/packs/health/components/{}.md", env!("CARGO_MANIFEST_DIR"), page) } };
     let text = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
     let open = format!("```{}\n", lang);
     let at = text.find(&open).unwrap_or_else(|| panic!("{}: no {} block", page, lang)) + open.len();
@@ -937,7 +937,7 @@ fn bp_to_fhir_route(b: &mut RouteBuilder, server: &str) {
 
 #[test]
 fn fhir_device_observation() {
-    let fhir = cameleer_soap::testing::FhirMock::start();
+    let fhir = cameleer_health::fhir::testing::FhirMock::start();
     let url = fhir.url();
     let yaml = subst(&example("fhir", "fhir-device-observation"), &[("FHIR_SERVER", &url)]);
     resolve_all(&yaml);
@@ -954,7 +954,7 @@ fn fhir_device_observation() {
 
     let ctx = CamelContext::new();
     cameleer_http::register(&ctx);
-    cameleer_soap::register(&ctx);
+    ctx.add_pack(&cameleer_health::HEALTH);
     let p2 = free_port();
     ctx.properties().set("camel.server.port", &p2.to_string());
     ctx.add_routes(move |b| bp_to_fhir_route(b, &url)).unwrap();
@@ -1104,7 +1104,7 @@ fn ftps_upload_reports() {
     main.stop().unwrap();
 
     // the Rust DSL version builds and resolves its ftps endpoint
-    let ctx = cameleer_main::new_main().context().clone();
+    let ctx = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m }.context().clone();
     ctx.add_routes(move |b| upload_reports_route(b, &o, &format!("edge@{}", host), "secret")).unwrap();
     server.stop();
     let _ = std::fs::remove_dir_all(&dir);
@@ -1145,7 +1145,7 @@ fn sftp_site_pickup() {
     // a wrong host key is refused with strictHostKeyChecking=yes
     let other = SshServer::start(SshServerConfig::default().user("edge", "secret")).unwrap();
     std::fs::write(&kh, other.known_hosts_text("127.0.0.1").replace(&other.port().to_string(), &server.port().to_string())).unwrap();
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let t = main.context().create_producer_template();
     let up = format!("sftp://edge@{}/outbox?password=secret&knownHostsFile={}&strictHostKeyChecking=yes&maximumReconnectAttempts=0", host, khs);
     assert!(t.send_body_and_header(&up, "x", "CamelFileName", "x.json").is_err(), "changed host key must be rejected");
@@ -1200,7 +1200,7 @@ fn ssh_device_uptime() {
     main.stop().unwrap();
 
     // on demand: the body is the command
-    let main = cameleer_main::new_main();
+    let main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
     let t = main.context().create_producer_template();
     let ex = t.send_with(&format!("ssh://monitor@{}?password=secret&knownHostsFile={}&failOnUnknownHost=true", host, khs), ExchangePattern::InOut, |ex| {
         ex.set_body("reboot-now");
@@ -1506,7 +1506,7 @@ const TESTED: &[&str] = &[
 fn every_example_is_marked_unique_and_tested() {
     let mut ids = Vec::new();
     for page in PAGES {
-        let path = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), page);
+        let path = { let p = format!("{}/../../docs/components/{}.md", env!("CARGO_MANIFEST_DIR"), page); if std::path::Path::new(&p).exists() { p } else { format!("{}/../../docs/packs/health/components/{}.md", env!("CARGO_MANIFEST_DIR"), page) } };
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {}", path, e)).replace("\r\n", "\n");
         assert!(text.starts_with("# "), "{}: must start with the H1", page);
         let second = text.lines().nth(2).unwrap_or("");

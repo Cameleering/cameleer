@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HL7 v2 over MLLP and FHIR Integration Routes in Rust | Cameleer</title>
-<meta name="description" content="Receive HL7 v2 messages over MLLP, read fields with terser paths, post to an EHR or FHIR server and acknowledge after delivery: a tested Cameleer route for hospital gateways, in one 20 MB container.">
+<meta name="description" content="Receive HL7 v2 messages over MLLP, read fields with terser paths, post to an EHR or FHIR server and acknowledge after delivery: a tested Cameleer route for hospital gateways, in the Cameleer health pack.">
 <link rel="canonical" href="https://cameleer.ing/use-cases/hl7-mllp-healthcare-integration/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="Cameleer">
 <meta property="og:title" content="HL7 v2 over MLLP and FHIR integration routes, in Rust">
-<meta property="og:description" content="MLLP in, terser paths, HTTP or FHIR out, acknowledgement after delivery. A tested route that runs on a hospital gateway with about 10 MB of memory.">
+<meta property="og:description" content="MLLP in, terser paths, HTTP or FHIR out, acknowledgement after delivery. A tested route for a hospital gateway, in one native binary.">
 <meta property="og:url" content="https://cameleer.ing/use-cases/hl7-mllp-healthcare-integration/">
 <meta property="og:image" content="https://cameleer.ing/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -44,6 +44,7 @@
  {"@type": "Question", "name": "Which FHIR versions does it support?", "acceptedAnswer": {"@type": "Answer", "text": "The fhir component talks to FHIR servers for R4, R4B, R5 and DSTU3: create, read, update, delete, search, history, transactions, operations, patch and validation. The fhirJson and fhirXml data formats parse and serialize resources and convert between the two encodings."}},
  {"@type": "Question", "name": "When is the MLLP acknowledgement sent?", "acceptedAnswer": {"@type": "Answer", "text": "After the route finishes. In the tested route the EHR call runs first, so the sender gets AA only when the message was delivered and AE when it still failed after the retries, and keeps the message to resend it. A route can set the acknowledgement type itself."}},
  {"@type": "Question", "name": "Is it an interface engine like Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "It is a routing engine with HL7 v2, MLLP and FHIR support: channels are routes in YAML files kept in Git, with Apache Camel's error handling, transformation and routing patterns. There is no visual channel editor or message browser."}},
+ {"@type": "Question", "name": "Which Cameleer image has HL7 and FHIR?", "acceptedAnswer": {"@type": "Answer", "text": "From the next release, mllp, hl7, hl7terser and fhir are in the health pack, with DICOM: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. The default image and the full build no longer include them. Up to 0.5.1 they are in the default image cameleering/cameleer."}},
  {"@type": "Question", "name": "Does MLLP support TLS?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The consumer accepts TLS connections and the producer connects with TLS when sslContextParameters or the global camel.ssl.* parameters are set."}}]}
 </script>
 </head>
@@ -51,12 +52,22 @@
 <header class="top" id="top">
   <div class="wrap">
     <a class="brand" href="../../" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a>
-    <nav aria-label="Main">
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a href="../../cameleering/">Cameleering</a>
       <a class="keep" href="../../docs/">Docs</a>
-      <a class="keep" href="../">Use cases</a>
-      <a href="../../docs/guides/agents.html">Agents</a>
+      <a class="keep" href="../../use-cases/">Use cases</a>
+      <a href="../../mcp/">MCP</a>
+      <div class="nav-menu">
+        <a href="../../docs/packs/" aria-haspopup="true">Packs</a>
+        <div class="nav-sub">
+          <a href="../../healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
+          <a href="../../docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
+        </div>
+      </div>
+      <a href="../../trust/">Trust</a>
       <a href="../../compare/">Compare</a>
-      <a class="gh" href="https://github.com/pmsudhi/cameleer">GitHub</a>
+      <a class="gh" href="https://github.com/cameleering/cameleer">GitHub</a>
     </nav>
   </div>
 </header>
@@ -65,13 +76,14 @@
 <section class="c-hero">
   <div class="wrap">
     <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / HL7 over MLLP</p>
-    <p class="kicker">Healthcare integration</p>
+    <p class="kicker">Healthcare integration · health pack</p>
     <h1>HL7 v2 over MLLP, FHIR, and an acknowledgement that means it</h1>
     <p class="lede">A hospital gateway receives ADT and lab messages from the HIS over MLLP, reads the patient id with a terser path, posts the message to the EHR and acknowledges <em>after</em> delivery. The route is Camel YAML; the runtime is one native binary that fits next to the other software on the gateway.</p>
+    <p class="note"><strong>Next release:</strong> HL7 v2, MLLP and FHIR move to the <a href="../../healthcare/">health pack</a>, with DICOM: use the image <code>cameleering/cameleer:health</code> or <code>cargo install cameleer-main --features health</code>. The default image no longer includes them. Up to 0.5.1 they are in the default image.</p>
     <div class="stats">
       <div class="stat"><b>AA / AE</b><span>acknowledgement after the EHR accepted the message, not before</span></div>
       <div class="stat"><b>R4–R5</b><span>FHIR R4, R4B, R5 and DSTU3 through the <code>fhir</code> component</span></div>
-      <div class="stat"><b>~10 MB</b><span>of memory for a running route; a 20 MB container image</span></div>
+      <div class="stat"><b>+2 MB</b><span>what the health pack adds to the binary (HL7, MLLP, FHIR and DICOM)</span></div>
       <div class="stat"><b>5</b><span>redeliveries with a delay before the sender is told to resend</span></div>
     </div>
   </div>
@@ -80,7 +92,7 @@
 <section class="c-sec" id="route">
   <div class="wrap">
     <h2>The tested route</h2>
-    <p class="intro">From <a href="https://github.com/pmsudhi/cameleer/blob/main/examples/edge/hl7-mllp-to-http.camel.yaml"><code>examples/edge/hl7-mllp-to-http.camel.yaml</code></a>, which the test suite runs against an embedded EHR mock. ADT messages are forwarded; other types are acknowledged and dropped.</p>
+    <p class="intro">From <a href="https://github.com/cameleering/cameleer/blob/main/examples/edge/hl7-mllp-to-http.camel.yaml"><code>examples/edge/hl7-mllp-to-http.camel.yaml</code></a>, which the test suite runs against an embedded EHR mock. ADT messages are forwarded; other types are acknowledged and dropped.</p>
     <pre class="cmd">- route:
     id: hl7-to-ehr
     errorHandler:
@@ -117,10 +129,10 @@
       <div class="pane">
         <h3>Components and languages used</h3>
         <ul>
-          <li><a href="../../docs/components/mllp.html"><code>mllp</code></a>: MLLP framing, automatic HL7 acknowledgements, TLS, <code>CamelMllp*</code> headers.</li>
-          <li><a href="../../docs/languages/hl7terser.html"><code>hl7terser</code></a>: read a field by path (<code>PID-3-1</code>, <code>MSH-9-1</code>).</li>
-          <li><a href="../../docs/dataformats/hl7.html"><code>hl7</code></a> data format: ER7 text to a structured value and back.</li>
-          <li><a href="../../docs/components/fhir.html"><code>fhir</code></a> and the <a href="../../docs/dataformats/fhir.html"><code>fhirJson</code>/<code>fhirXml</code></a> formats for the FHIR side.</li>
+          <li><a href="../../docs/packs/health/components/mllp.html"><code>mllp</code></a>: MLLP framing, automatic HL7 acknowledgements, TLS, <code>CamelMllp*</code> headers.</li>
+          <li><a href="../../docs/packs/health/languages/hl7terser.html"><code>hl7terser</code></a>: read a field by path (<code>PID-3-1</code>, <code>MSH-9-1</code>).</li>
+          <li><a href="../../docs/packs/health/dataformats/hl7.html"><code>hl7</code></a> data format: ER7 text to a structured value and back.</li>
+          <li><a href="../../docs/packs/health/components/fhir.html"><code>fhir</code></a> and the <a href="../../docs/packs/health/dataformats/fhir.html"><code>fhirJson</code>/<code>fhirXml</code></a> formats for the FHIR side.</li>
           <li><a href="../../docs/components/http.html"><code>http</code></a>, <a href="../../docs/components/kafka.html"><code>kafka</code></a>, <a href="../../docs/components/sql.html"><code>sql</code></a> for where the message goes next.</li>
         </ul>
       </div>
@@ -152,7 +164,7 @@
       <div class="pane">
         <h3>What changes with one native binary</h3>
         <ul>
-          <li>About 10 MB of memory for a running route, against hundreds for a JVM; the gateway can be a small box or a VM shared with other software.</li>
+          <li>About 10 MB of memory for a running route in our measurements (0.5.1 default build), against hundreds for a JVM; the gateway can be a small box or a VM shared with other software.</li>
           <li>Starts in milliseconds, so a restart after a power cut or an update is invisible to the sending system's MLLP retry.</li>
           <li>Nothing to install: no JRE to patch. The image runs read-only, as non-root, on amd64 and arm64.</li>
           <li>Routes are files in Git; <code>cameleer validate</code> checks them before deployment.</li>
@@ -176,7 +188,8 @@
     <details><summary>Does Cameleer parse HL7 v2 messages?</summary><p>Yes. The <code>mllp</code> component frames and acknowledges messages, the <code>hl7</code> data format parses ER7 (pipe-delimited) text into a structured value and encodes it back, and the <code>hl7terser</code> language reads a field by path, such as <code>PID-3-1</code>.</p></details>
     <details><summary>Which FHIR versions does it support?</summary><p>The <code>fhir</code> component talks to FHIR servers for R4, R4B, R5 and DSTU3: create, read, update, delete, search, history, transactions, operations, patch and validation. The <code>fhirJson</code> and <code>fhirXml</code> data formats parse and serialize resources and convert between the two encodings.</p></details>
     <details><summary>When is the MLLP acknowledgement sent?</summary><p>After the route finishes. In the tested route the EHR call runs first, so the sender gets <code>AA</code> only when the message was delivered and <code>AE</code> when it still failed after the retries, and keeps the message to resend it. A route can set the acknowledgement type itself.</p></details>
-    <details><summary>Is it an interface engine like Mirth Connect?</summary><p>It is a routing engine with HL7 v2, MLLP and FHIR support: channels are routes in YAML files kept in Git, with Apache Camel's error handling, transformation and routing patterns. There is no visual channel editor or message browser.</p></details>
+    <details><summary>Is it an interface engine like Mirth Connect?</summary><p>It is a routing engine with HL7 v2, MLLP and FHIR support: channels are routes in YAML files kept in Git, with Apache Camel's error handling, transformation and routing patterns. There is no visual channel editor or message browser. <a href="../../alternatives/mirth-connect-alternatives/">Mirth Connect alternatives compared</a>.</p></details>
+    <details><summary>Which Cameleer image has HL7 and FHIR?</summary><p>From the next release, <code>mllp</code>, <code>hl7</code>, <code>hl7terser</code> and <code>fhir</code> are in the <a href="../../docs/packs/health/">health pack</a>, with DICOM: the image <code>cameleering/cameleer:health</code>, or <code>cargo install cameleer-main --features health</code>. The default image and the <code>full</code> build no longer include them. Up to 0.5.1 they are in the default image <code>cameleering/cameleer</code>.</p></details>
     <details><summary>Does MLLP support TLS?</summary><p>Yes. The consumer accepts TLS connections and the producer connects with TLS when <code>sslContextParameters</code> or the global <code>camel.ssl.*</code> parameters are set.</p></details>
   </div>
 </section>
@@ -184,20 +197,20 @@
 <section class="c-sec" id="confidential">
   <div class="wrap">
     <h2>In a confidential VM</h2>
-    <p class="intro">Next release: when the interface engine runs in an Intel TDX or AMD SEV-SNP confidential VM, Cameleer can show an auditor or a partner hardware evidence of the routes and configuration that handled the messages, with secret values left out. <a href="../../trust/">Confidential integration with Cameleer</a>.</p>
+    <p class="intro">Next release: when the interface engine runs in an Intel TDX or AMD SEV-SNP confidential VM, Cameleer can show an auditor or a partner hardware evidence of the routes and configuration that handled the messages, with secret values left out. <a href="../../trust/">Confidential integration with Cameleer</a>. The same health pack also routes medical images: <a href="../dicom-imaging-gateway/">DICOM imaging gateway</a>.</p>
   </div>
 </section>
 
 <section class="c-sec" id="start">
   <div class="wrap">
     <h2>Run it</h2>
-    <p class="intro">Set the EHR URL, start the container, and point the sending system at port 2575.</p>
+    <p class="intro">Set the EHR URL, start the container, and point the sending system at port 2575. The <code>:health</code> image comes with the next release; until then use <code>cameleering/cameleer:0.5.1</code>.</p>
     <pre class="cmd">export EHR_URL=https://ehr.example.org   # optional: MLLP_PORT (default 2575)
 docker run --rm -p 2575:2575 --read-only -e EHR_URL \
-  -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/hl7-mllp-to-http.camel.yaml</pre>
+  -v "$PWD:/routes:ro" cameleering/cameleer:health run /routes/hl7-mllp-to-http.camel.yaml</pre>
     <div class="cta">
-      <a class="btn primary" href="https://github.com/pmsudhi/cameleer/blob/main/examples/edge/hl7-mllp-to-http.camel.yaml">See the route</a>
-      <a class="btn" href="../../docs/components/mllp.html">The mllp component</a>
+      <a class="btn primary" href="https://github.com/cameleering/cameleer/blob/main/examples/edge/hl7-mllp-to-http.camel.yaml">See the route</a>
+      <a class="btn" href="../../docs/packs/health/components/mllp.html">The mllp component</a>
       <a class="btn" href="../../docs/guides/edge.html#hl7-v2-over-mllp-to-an-http-api">Edge cookbook</a>
     </div>
   </div>
@@ -209,11 +222,13 @@ docker run --rm -p 2575:2575 --read-only -e EHR_URL \
     <div class="credit">
       <h4>Cameleer</h4>
       <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a>. It is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF. HL7 and FHIR are trademarks of Health Level Seven International.</p>
+      <p>Cameleer is a <a href="../../cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
     </div>
     <div>
       <h4>Use cases</h4>
       <ul>
         <li><a href="../">All use cases</a></li>
+        <li><a href="../dicom-imaging-gateway/">DICOM imaging gateway</a></li>
         <li><a href="../mqtt-iot-edge-gateway/">MQTT edge gateways</a></li>
         <li><a href="../file-sftp-pipelines/">File and SFTP pipelines</a></li>
         <li><a href="../../compare/ai-agent-tool-calls-direct-vs-cameleer/">Tools for AI agents</a></li>
@@ -223,6 +238,7 @@ docker run --rm -p 2575:2575 --read-only -e EHR_URL \
       <h4>Docs</h4>
       <ul>
         <li><a href="../../docs/">Documentation</a></li>
+        <li><a href="../../healthcare/">Healthcare integration with Cameleer</a></li>
         <li><a href="../../docs/guides/edge.html">Cameleer at the edge</a></li>
         <li><a href="../../llms.txt">llms.txt</a></li>
       </ul>

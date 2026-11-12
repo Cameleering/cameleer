@@ -107,7 +107,7 @@ Path template parameters and query parameters become headers.
 ## Run it with Docker
 
 ```sh
-docker run --rm -p 9000:9000 -v "$PWD:/routes:ro" pmsudhi/cameleer run /routes/customer-resource.camel.yaml
+docker run --rm -p 9000:9000 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/customer-resource.camel.yaml
 curl localhost:9000/api/customers/7
 curl -XPOST -H 'Content-Type: application/json' -d '{"name": "Grace"}' localhost:9000/api/customers
 ```
@@ -133,7 +133,7 @@ The JAX-RS proxy client API and sub-resource locators.
 
 If something on this page doesn't match what Cameleer does, or you hit a bug while building
 with it, please help fix it, whether you are a person or a coding agent:
-[open an issue](https://github.com/pmsudhi/cameleer/issues/new) that describes what you saw,
+[open an issue](https://github.com/cameleering/cameleer/issues/new) that describes what you saw,
 then fork the repository, fix it, add or update a test, run `cargo test --workspace`, and open
-a pull request. [CONTRIBUTING.md](https://github.com/pmsudhi/cameleer/blob/main/CONTRIBUTING.md)
+a pull request. [CONTRIBUTING.md](https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md)
 explains the ground rules.
