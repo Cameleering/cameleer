@@ -79,8 +79,11 @@ against 6.3 ms) ([report](docs/BENCHMARKS.md)).
   `CAMEL_HEALTH_INTEROP=1` live tier (`scripts/health-interop.sh`: DCMTK, Orthanc, python-hl7,
   HAPI FHIR). Release archives `cameleer-<version>-<target>` and
   `cameleer-health-<version>-<target>` are built by `.github/workflows/archives.yml`, and the
-  container workflow builds a health image next to the general one. Both run for the first time
-  at this release; `scripts/package-archive.sh` was run end to end on Linux beforehand.
+  container workflow builds a health image next to the general one. The images are published with
+  0.6.0. The archive workflow failed on its first run, on the `v0.6.0` tag (a script without the
+  execute bit; no `zip` in Git Bash on the Windows runner), so 0.6.0 has no archives; both are
+  fixed and a test run built all six archives unsigned. Signed archives arrive with the next
+  release.
 - **`/q/info`** (`camel.server.infoEnabled`, and with the dev console): the version, the compiled-in
   feature families and the packs of a running instance; also `/q/dev/packs`.
 - **`cameleer_core::audit`**: the hash-chained audit log moved from `cameleer-ai` into core, one
