@@ -243,8 +243,8 @@ $ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the serv
   tools, bound to the client's nonce and its own TLS key, over HTTP and in the MCP handshake. It
   does not verify the hardware signature itself yet and has not run on real TEE hardware
   ([attestation](docs/guides/attestation.md)).
-- **Measured:** 41,620 MCP tool calls per second in sessions against 22,458 for Apache Camel's
-  `camel-mcp-server` on the same machines, in 53 MB against 317 MB (p99 5.9 ms against 5.2 ms)
+- **Measured:** 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's
+  `camel-mcp-server` on the same machines, in 56 MB against 289 MB (p99 6.3 ms against 5.2 ms)
   ([Apache Camel's MCP server vs Cameleer](https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/),
   [MCP server guide](docs/guides/mcp-server.md)).
 

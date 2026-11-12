@@ -1,0 +1,24 @@
+VERSION phase=1 node=a scenario=mcp-session side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=1 node=a side=java scenario=mcp-session msgs=509138 secs=25.000 tput=20365 tput_min=19819 tput_max=21022 mean_us=3142.45 p50_us=2670.59 p99_us=5799.94 max_us=12569.24 connects=64
+PROC phase=1 node=a side=java scenario=mcp-session peak_rss_kb=301564 cpu_pct=222% user_s=75.51 sys_s=39.52
+VERSION phase=1 node=b scenario=mcp side=rust impl=Cameleer camel=0.5.1
+RESULT phase=1 node=b side=rust scenario=mcp msgs=1312541 secs=25.000 tput=52501 tput_min=52165 tput_max=52729 mean_us=1218.78 p50_us=667.65 p99_us=5734.40 max_us=16619.24 connects=2138
+PROC phase=1 node=b side=rust scenario=mcp peak_rss_kb=26624 cpu_pct=308% user_s=91.60 sys_s=62.59
+VERSION phase=1 node=b scenario=mcp-session side=rust impl=Cameleer camel=0.5.1
+RESULT phase=1 node=b side=rust scenario=mcp-session msgs=1030267 secs=25.000 tput=41210 tput_min=40790 tput_max=41563 mean_us=1552.77 p50_us=1122.30 p99_us=6127.62 max_us=19111.74 connects=1678
+PROC phase=1 node=b side=rust scenario=mcp-session peak_rss_kb=54016 cpu_pct=298% user_s=86.71 sys_s=62.67
+VERSION phase=1 node=a scenario=mcp-session side=node impl=mcp-typescript-sdk sdk=1.32.2 node=v22.23.4
+RESULT phase=1 node=a side=node scenario=mcp-session msgs=53753 secs=25.000 tput=2150 tput_min=2117 tput_max=2166 mean_us=29766.53 p50_us=28966.91 p99_us=57409.54 max_us=83441.51 connects=64
+PROC phase=1 node=a side=node scenario=mcp-session peak_rss_kb=202424 cpu_pct=90% user_s=41.72 sys_s=3.72
+VERSION phase=2 node=a scenario=mcp side=rust impl=Cameleer camel=0.5.1
+RESULT phase=2 node=a side=rust scenario=mcp msgs=1213162 secs=25.000 tput=48526 tput_min=48266 tput_max=49008 mean_us=1318.62 p50_us=708.61 p99_us=6258.69 max_us=32582.28 connects=1978
+PROC phase=2 node=a side=rust scenario=mcp peak_rss_kb=26240 cpu_pct=306% user_s=92.35 sys_s=60.73
+VERSION phase=2 node=a scenario=mcp-session side=rust impl=Cameleer camel=0.5.1
+RESULT phase=2 node=a side=rust scenario=mcp-session msgs=965869 secs=25.000 tput=38634 tput_min=38334 tput_max=39047 mean_us=1656.25 p50_us=1220.61 p99_us=6520.83 max_us=25375.61 connects=1587
+PROC phase=2 node=a side=rust scenario=mcp-session peak_rss_kb=60160 cpu_pct=295% user_s=87.02 sys_s=60.67
+VERSION phase=2 node=b scenario=mcp-session side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+RESULT phase=2 node=b side=java scenario=mcp-session msgs=621066 secs=25.000 tput=24842 tput_min=24495 tput_max=25212 mean_us=2576.10 p50_us=2179.07 p99_us=4685.82 max_us=9558.26 connects=64
+PROC phase=2 node=b side=java scenario=mcp-session peak_rss_kb=289936 cpu_pct=243% user_s=79.83 sys_s=45.72
+VERSION phase=2 node=b scenario=mcp-session side=node impl=mcp-typescript-sdk sdk=1.32.2 node=v22.23.4
+RESULT phase=2 node=b side=node scenario=mcp-session msgs=59068 secs=25.000 tput=2363 tput_min=2328 tput_max=2421 mean_us=27089.27 p50_us=26083.33 p99_us=52166.66 max_us=74787.60 connects=64
+PROC phase=2 node=b side=node scenario=mcp-session peak_rss_kb=201872 cpu_pct=90% user_s=41.51 sys_s=3.91

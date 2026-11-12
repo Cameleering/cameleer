@@ -43,7 +43,7 @@
  {"@type": "Question", "name": "Do my Camel ai-tool routes and MCP properties carry over?", "acceptedAnswer": {"@type": "Answer", "text": "The ai-tool options (description, tags, parameter.*, argSchema, outputSchema, the four hints, returnDirect) and the camel.server.mcp-* properties use Camel's names and semantics, so YAML tool routes and their properties carry over. Java beans do not: an authorizationPolicy, for example, is a Rust implementation of ToolAuthorizationPolicy in Cameleer."}},
  {"@type": "Question", "name": "Is Camel's MCP server unreliable?", "acceptedAnswer": {"@type": "Answer", "text": "No. In Camel the tool hints are advisory and the reliability is yours to build in the route with Camel's EIPs: idempotent consumer, saga, throttle, circuit breaker. Cameleer makes those checks part of every call, so a tool cannot forget them."}},
  {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When the tools call Java libraries or beans, when you need a component Cameleer does not have, when the MCP server should live inside a Spring Boot or Quarkus application, or when you need commercial support."}},
- {"@type": "Question", "name": "Are there benchmarks of the MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 41,620 MCP tool calls per second in sessions against 22,458 for Apache Camel's camel-mcp-server on the JVM and 1,536 for a server written on the official TypeScript SDK, with 53 MB of memory against 317 MB and 214 MB. Stateless 2026-07-28 calls reached 51,700 per second in 26 MB. Every Cameleer call went through the full tool envelope."}}]}
+ {"@type": "Question", "name": "Are there benchmarks of the MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's camel-mcp-server on the JVM and 2,257 for a server written on the official TypeScript SDK, with 56 MB of memory against 289 MB and 197 MB. Stateless 2026-07-28 calls reached 50,514 per second in 26 MB. Every Cameleer call went through the full tool envelope."}}]}
 </script>
 </head>
 <body>
@@ -81,7 +81,7 @@
       <div class="stat"><b>same</b><span>names</span><small><code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties</small></div>
       <div class="stat"><b>11 steps</b><span>around every call</span><small>from kill switch to audit record</small></div>
       <div class="stat"><b>2 eras</b><span>of MCP on one endpoint</span><small>2026-07-28 and 2025-11-25</small></div>
-      <div class="stat"><b>1.85x</b><span>MCP calls per second</span><small>41,620 vs 22,458, in a sixth of the memory</small></div>
+      <div class="stat"><b>1.77x</b><span>MCP calls per second</span><small>39,922 vs 22,604, in a fifth of the memory</small></div>
     </div>
   </div>
 </section>
@@ -171,10 +171,10 @@ camel.server.mcp-tags=support</pre>
     <div class="c-table-wrap"><table class="c-table">
       <thead><tr><th></th><th class="num">Apache Camel <code>camel-mcp-server</code> (JVM)</th><th class="num">MCP TypeScript SDK</th><th class="num">Cameleer</th></tr></thead>
       <tbody>
-        <tr><td>Tool calls per second (sessions)</td><td class="num">22,458</td><td class="num">1,536</td><td class="num"><span class="win">41,620</span></td></tr>
+        <tr><td>Tool calls per second (sessions)</td><td class="num">22,604</td><td class="num">2,257</td><td class="num"><span class="win">39,922</span></td></tr>
         <tr><td>p99 latency</td><td class="num">5.2 ms</td><td class="num">79 ms</td><td class="num">5.9 ms</td></tr>
-        <tr><td>Peak memory</td><td class="num">317 MB</td><td class="num">214 MB</td><td class="num"><span class="win">53 MB</span></td></tr>
-        <tr><td>Stateless calls (2026-07-28)</td><td class="num">not offered</td><td class="num">not offered</td><td class="num"><span class="win">51,700/s in 26 MB</span></td></tr>
+        <tr><td>Peak memory</td><td class="num">289 MB</td><td class="num">197 MB</td><td class="num"><span class="win">56 MB</span></td></tr>
+        <tr><td>Stateless calls (2026-07-28)</td><td class="num">not offered</td><td class="num">not offered</td><td class="num"><span class="win">50,514/s in 26 MB</span></td></tr>
       </tbody>
     </table></div>
     <p class="note">Every Cameleer call went through the whole tool envelope: schema check, rate-limit and breaker bookkeeping and a hash-chained audit record. Raw records and method: <a href="https://github.com/cameleering/cameleer/blob/main/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
@@ -223,7 +223,7 @@ camel.server.mcp-tags=support</pre>
     <details><summary>Do my Camel ai-tool routes and MCP properties carry over?</summary><p>The <code>ai-tool</code> options (<code>description</code>, <code>tags</code>, <code>parameter.*</code>, <code>argSchema</code>, <code>outputSchema</code>, the four hints, <code>returnDirect</code>) and the <code>camel.server.mcp-*</code> properties use Camel's names and semantics, so YAML tool routes and their properties carry over. Java beans do not: an <code>authorizationPolicy</code>, for example, is a Rust implementation of <code>ToolAuthorizationPolicy</code> in Cameleer.</p></details>
     <details><summary>Is Camel's MCP server unreliable?</summary><p>No. In Camel the tool hints are advisory and the reliability is yours to build in the route with Camel's EIPs: idempotent consumer, saga, throttle, circuit breaker. Cameleer makes those checks part of every call, so a tool cannot forget them.</p></details>
     <details><summary>When should I stay on Apache Camel?</summary><p>When the tools call Java libraries or beans, when you need a component Cameleer does not have, when the MCP server should live inside a Spring Boot or Quarkus application, or when you need commercial support.</p></details>
-    <details><summary>Are there benchmarks of the MCP server?</summary><p>Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 41,620 MCP tool calls per second in sessions against 22,458 for Apache Camel's camel-mcp-server on the JVM and 1,536 for a server written on the official TypeScript SDK, with 53 MB of memory against 317 MB and 214 MB. Stateless 2026-07-28 calls reached 51,700 per second in 26 MB. Every Cameleer call went through the full tool envelope.</p></details>
+    <details><summary>Are there benchmarks of the MCP server?</summary><p>Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's camel-mcp-server on the JVM and 2,257 for a server written on the official TypeScript SDK, with 56 MB of memory against 289 MB and 197 MB. Stateless 2026-07-28 calls reached 50,514 per second in 26 MB. Every Cameleer call went through the full tool envelope.</p></details>
   </div>
 </section>
 
