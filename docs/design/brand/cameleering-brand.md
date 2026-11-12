@@ -124,3 +124,27 @@ Current names:
 - Cameleer numbers: `benchmarks/results/2026-11-06-linux/summary.json` (`mem_min_x` 4.87, rounded
   down to 4.8; `mem_max_x` 54.13; `tput` 1.75-8.72; startup 2.45 ms vs 1106 ms; Quarkus native
   30.4 ms).
+
+## Logo: the ledger tile (chosen 2026-11-12)
+
+- **The mark:** a camel's hump drawn as a measured curve (gold `#d99a22`) on three ruled ledger
+  lines (`#33406a`), ending in one plotted point (white), on an ink tile (`#18203a`, rounded
+  corners). It reads as the camel, and as a measurement written in a ledger.
+- **Small sizes:** at 32 px and below, use the simplified mark (no ruled lines, a thicker curve,
+  a bigger point).
+- **Files** in `site/brand/cameleering/`:
+  - `cameleering-mark.svg`, the master;
+  - `cameleering-mark-dark.svg`, for dark backgrounds (a white tile);
+  - `cameleering-mark-{512,192,64,32}.png` and `cameleering-apple-touch-icon.png`;
+  - `cameleering-avatar.svg` and `cameleering-avatar-512.png`, a full-bleed square for the GitHub
+    org avatar (GitHub rounds it);
+  - `cameleering-lockup.svg` and `cameleering-lockup-dark.svg`, the mark plus the wordmark in
+    Schibsted Grotesk 800, a web font, so a page using them must load it;
+  - `cameleering-og.png`, the 1280x640 social preview for the Cameleering pages.
+- **Rebuild:** `python scripts/brand/cameleering-logo.py <repo-root>` (needs Pillow and the Segoe UI
+  fonts on Windows).
+- **Rules:**
+  - Keep a clear space of a quarter of the tile around the mark.
+  - Don't recolour the curve or stretch the tile.
+  - Never combine the mark with Cameleer's "C" mark in one symbol. Cameleer keeps its own mark,
+    as a Cameleering project.
