@@ -2,19 +2,14 @@
   "date": "2026-11-12",
   "repo": {
     "forks": 2,
-    "open_issues": 17,
+    "open_issues": 14,
     "stars": 3,
     "watchers": 0
   },
   "views": {
-    "count": 135,
-    "uniques": 14,
+    "count": 150,
+    "uniques": 15,
     "views": [
-      {
-        "timestamp": "2026-10-28T00:00:00Z",
-        "count": 0,
-        "uniques": 0
-      },
       {
         "timestamp": "2026-10-29T00:00:00Z",
         "count": 0,
@@ -79,18 +74,18 @@
         "timestamp": "2026-11-10T00:00:00Z",
         "count": 6,
         "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-11T00:00:00Z",
+        "count": 15,
+        "uniques": 2
       }
     ]
   },
   "clones": {
-    "count": 2102,
-    "uniques": 417,
+    "count": 2218,
+    "uniques": 446,
     "clones": [
-      {
-        "timestamp": "2026-10-28T00:00:00Z",
-        "count": 0,
-        "uniques": 0
-      },
       {
         "timestamp": "2026-10-29T00:00:00Z",
         "count": 0,
@@ -155,24 +150,29 @@
         "timestamp": "2026-11-10T00:00:00Z",
         "count": 125,
         "uniques": 29
+      },
+      {
+        "timestamp": "2026-11-11T00:00:00Z",
+        "count": 116,
+        "uniques": 35
       }
     ]
   },
   "referrers": [
     {
       "referrer": "github.com",
-      "count": 17,
+      "count": 18,
       "uniques": 3
     },
     {
       "referrer": "cameleer.ing",
-      "count": 5,
+      "count": 6,
       "uniques": 1
     },
     {
       "referrer": "Bing",
-      "count": 3,
-      "uniques": 1
+      "count": 5,
+      "uniques": 2
     },
     {
       "referrer": "DuckDuckGo",
@@ -194,8 +194,8 @@
     {
       "path": "/pmsudhi/cameleer",
       "title": "Overview",
-      "count": 34,
-      "uniques": 7
+      "count": 39,
+      "uniques": 8
     },
     {
       "path": "/pmsudhi/Rust-camel",
@@ -210,14 +210,14 @@
       "uniques": 1
     },
     {
-      "path": "/pmsudhi/cameleer/actions/runs/41993810192/job/127132061472",
-      "title": "/actions/runs/41993810192/job/127132061472",
-      "count": 5,
+      "path": "/pmsudhi/cameleer/pulls",
+      "title": "/pulls",
+      "count": 6,
       "uniques": 1
     },
     {
-      "path": "/pmsudhi/cameleer/pulls",
-      "title": "/pulls",
+      "path": "/pmsudhi/cameleer/actions/runs/41993810192/job/127132061472",
+      "title": "/actions/runs/41993810192/job/127132061472",
       "count": 5,
       "uniques": 1
     },
@@ -226,6 +226,12 @@
       "title": "/blob/main/examples/alerts-to-slack.camel.yaml",
       "count": 4,
       "uniques": 3
+    },
+    {
+      "path": "/pmsudhi/cameleer/actions/workflows/ci.yml",
+      "title": "/actions/workflows/ci.yml",
+      "count": 4,
+      "uniques": 1
     },
     {
       "path": "/pmsudhi/cameleer/pull/16/checks",
@@ -244,12 +250,6 @@
       "title": "/issues/5",
       "count": 3,
       "uniques": 3
-    },
-    {
-      "path": "/pmsudhi/cameleer/pull/16",
-      "title": "/pull/16",
-      "count": 3,
-      "uniques": 1
     }
   ],
   "crates_io": {
