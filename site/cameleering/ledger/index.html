@@ -124,7 +124,7 @@
 <section class="c-sec" id="simoom">
   <div class="wrap">
     <h2>simoom, measured 2026-11-11 and 2026-11-12</h2>
-    <p class="intro">simoom 0.1.0, before its first release, the HTTP engine that replaces Cameleer's thread-per-connection server. Two comparisons: against that original server on one machine, and against other HTTP servers on the same DigitalOcean c-4 droplet (4 dedicated vCPUs), load from two separate nodes, open loop. Throughput is the highest rate whose p99 stays at or under 1 ms.</p>
+    <p class="intro">simoom 0.1.0, the HTTP engine that replaces Cameleer's thread-per-connection server. Two comparisons: against that original server on one machine, and against other HTTP servers on the same DigitalOcean c-4 droplet (4 dedicated vCPUs), load from two separate nodes, open loop. Throughput is the highest rate whose p99 stays at or under 1 ms.</p>
     <h3>Against the server it replaces: cameleer-http</h3>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>metric</th><th class="num">cameleer-http</th><th class="num">simoom</th><th class="num">result</th></tr></thead>
@@ -161,7 +161,7 @@
       <li>A new connection per request was split: ahead of hyper on one droplet (22.1k against 19.3k), behind xitca 0.7.1 on another (19.3k against 24.3k).</li>
       <li>Droplets of the same type differed by up to 7x for every server, so only figures from the same droplet are compared. Larger machines and multi-queue NICs are not measured yet.</li>
     </ul>
-    <p class="note">The full crossing report: <a href="../../simoom/benchmarks/">simoom benchmarks</a>. Method, raw data and analyses: <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-12-epoll/analysis.md">bench/results/2026-11-12-epoll</a> (plaintext, handshakes), <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-11-campaign3/analysis.md">bench/results/2026-11-11-campaign3</a> (the other rows) and <a href="https://github.com/Cameleering/simoom/blob/main/docs/STATUS.md">docs/STATUS.md</a> (against cameleer-http); the scripts are in <a href="https://github.com/Cameleering/simoom/tree/main/bench/cloud">bench/cloud</a>. Source: <a href="https://github.com/Cameleering/simoom/">github.com/Cameleering/simoom</a>. The crates are not on crates.io yet.</p>
+    <p class="note">The full crossing report: <a href="../../simoom/benchmarks/">simoom benchmarks</a>. Method, raw data and analyses: <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-12-epoll/analysis.md">bench/results/2026-11-12-epoll</a> (plaintext, handshakes), <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-11-campaign3/analysis.md">bench/results/2026-11-11-campaign3</a> (the other rows) and <a href="https://github.com/Cameleering/simoom/blob/main/docs/STATUS.md">docs/STATUS.md</a> (against cameleer-http); the scripts are in <a href="https://github.com/Cameleering/simoom/tree/main/bench/cloud">bench/cloud</a>. Source: <a href="https://github.com/Cameleering/simoom/">github.com/Cameleering/simoom</a>. Released as 0.1.0 on <a href="https://crates.io/crates/simoom">crates.io</a> (tag <code>v0.1.0</code>).</p>
   </div>
 </section>
 
