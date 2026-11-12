@@ -1183,6 +1183,17 @@ class Site:
             if p is not None and p.canonical:
                 continue
             urls.append((abs_url(out), self.date_of(out)))
+        # project microsites built in their own repositories (simoom: scripts/build-site.py there)
+        # keep their own sitemap; their URLs join this one so the root sitemap lists every page
+        seen = {u for u, _ in urls}
+        for project in ("simoom",):
+            sm = os.path.join(self.out, project, "sitemap.xml")
+            if os.path.exists(sm):
+                text = open(sm, encoding="utf-8").read()
+                for loc, mod in re.findall(r"<loc>([^<]+)</loc>(?:<lastmod>([^<]+)</lastmod>)?", text):
+                    if loc not in seen:
+                        seen.add(loc)
+                        urls.append((loc, mod or None))
         lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
         for u, d in urls:
             lines.append("  <url><loc>%s</loc>%s</url>" % (esc(u), "<lastmod>%s</lastmod>" % d if d else ""))
@@ -1347,7 +1358,14 @@ TEMPLATE = """<!doctype html>
     </a>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
     <nav id="main-nav" aria-label="Main">
-      <a href="{site_root}cameleering/">Cameleering</a>
+      <div class="nav-menu">
+        <a href="{site_root}cameleering/" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="{site_root}cameleering/"><b>The practice</b><span>Carry more on less, measured</span></a>
+          <a href="{site_root}cameleering/ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="{site_root}simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
       <a class="keep" href="{root}index.html">Docs</a>
       <a href="{root}guides/index.html">Guides</a>
       <a href="{root}components/index.html">Components</a>
