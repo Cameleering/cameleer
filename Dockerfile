@@ -12,7 +12,7 @@
 # Runtime: non-root (65532), no shell, works with a read-only root filesystem; logs go to
 # stdout; SIGTERM stops routes gracefully.
 
-FROM --platform=$BUILDPLATFORM rust:1.99.1-slim-bookworm@sha256:ed2c95ca377d6571b124b05e75e01207973ded639dce7d5542eb7bcd797e32aa AS build
+FROM --platform=$BUILDPLATFORM rust:1.99.1-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS build
 ARG TARGETARCH
 ARG BUILDARCH
 # the target's standard library and, when cross-compiling, its linker and glibc (signed Debian
