@@ -3,7 +3,7 @@
 > When Cameleer runs inside a hardware TEE (an Intel TDX or AMD SEV-SNP confidential VM, or a dstack CVM such as Phala Cloud or dstack on Google Cloud TDX), it can prove to a client what is running: a signed hardware report, bound to the client's nonce, to the server's TLS key and to a manifest of the exact routes, configuration and tools. Clients get it over HTTP at `/q/attestation` and over MCP, in the handshake or as a tool.
 
 **Cargo feature:** `attest` (in the default build) · **Apache Camel:** none (Cameleer extension) ·
-**Status:** on `main`, in the next release (not in 0.5.1)
+**Status:** released in 0.6.0
 
 This is confidential computing applied to the integration engine itself: the evidence covers what
 Cameleer runs (its routes, configuration and MCP tools), not only the virtual machine it runs in.

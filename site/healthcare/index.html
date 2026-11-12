@@ -50,9 +50,9 @@
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
  {"@type": "Question", "name": "Is there an open-source healthcare integration engine for HL7, FHIR and DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "Cameleer's health pack is one, under the Apache-2.0 licence: HL7 v2 over MLLP with acknowledgements, the hl7 data format and terser paths, the fhir component and FHIR JSON and XML, DICOM over DIMSE and DICOMweb, and PS3.15 de-identification. Integrations are Apache Camel YAML routes run by one native binary."}},
  {"@type": "Question", "name": "Is Cameleer an alternative to Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "For teams that keep integrations as code, yes: channels become routes in YAML files kept in Git, tested in CI, with Apache Camel's error handling and routing patterns, under the Apache-2.0 licence. It has no visual channel editor, no message browser and no importer for Mirth channels, and it does not run Mirth's JavaScript transformers."}},
- {"@type": "Question", "name": "Which image or build has the healthcare components?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, from the next release: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. The default image and the full build do not include it. Up to 0.5.1, mllp, hl7 and fhir are in the default image; DICOM is new in the pack."}},
+ {"@type": "Question", "name": "Which image or build has the healthcare components?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, since 0.6.0: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. The default image and the full build do not include it. Up to 0.5.1, mllp, hl7 and fhir were in the default image; DICOM is new in the pack."}},
  {"@type": "Question", "name": "How was it tested?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack's live tests pass 10 of 10 against DCMTK 3.6.7, Orthanc 1.12.2 with its DICOMweb plugin, python-hl7 0.4.5 (MLLP both ways, AA and AR acknowledgements) and the HAPI FHIR 8.12.0 server (create, read, update, search, history, delete, JSON and XML). 33 public pydicom test files are read and written back byte for byte."}},
- {"@type": "Question", "name": "Is Cameleer HIPAA compliant?", "acceptedAnswer": {"@type": "Answer", "text": "Compliance belongs to a deployment, not to a library. Cameleer gives you controls: TLS and mutual TLS on MLLP, DIMSE and HTTP, PS3.15 de-identification with audit records, a hash-chained audit log, and, from the next release, attestation in a confidential VM. It is not certified, cleared or audited for HIPAA or by the FDA."}},
+ {"@type": "Question", "name": "Is Cameleer HIPAA compliant?", "acceptedAnswer": {"@type": "Answer", "text": "Compliance belongs to a deployment, not to a library. Cameleer gives you controls: TLS and mutual TLS on MLLP, DIMSE and HTTP, PS3.15 de-identification with audit records, a hash-chained audit log, and, since 0.6.0, attestation in a confidential VM. It is not certified, cleared or audited for HIPAA or by the FDA."}},
  {"@type": "Question", "name": "Can I ask for a feature the health pack does not have?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Open a feature request on GitHub with your workflow, the systems involved and what you use today. Requests are read and answered on the issue, and worked on with the person who asked."}}]}
 </script>
 </head>
@@ -93,7 +93,7 @@
       <div class="stat"><b>+2 MB</b><span>what the pack adds to the binary</span><small>9.1 MB with the core alone</small></div>
       <div class="stat"><b>PS3.15</b><span>DICOM de-identification, deterministic under a key, with audit records</span></div>
     </div>
-    <p class="note"><strong>Status:</strong> the health pack ships with the next release, as the image <code>cameleering/cameleer:health</code> and the cargo feature <code>health</code>. HL7, MLLP and FHIR are in the default image up to 0.5.1; DICOM is new. <a href="#limits">What it does not do yet</a>.</p>
+    <p class="note"><strong>Status:</strong> the health pack is released in 0.6.0 (2026-11-12), as the image <code>cameleering/cameleer:health</code> (or <code>:0.6.0-health</code>) and the cargo feature <code>health</code>. HL7, MLLP and FHIR were in the default image up to 0.5.1; DICOM is new. <a href="#limits">What it does not do yet</a>.</p>
   </div>
 </section>
 
@@ -122,7 +122,7 @@
       <a class="card" href="../use-cases/dicom-imaging-gateway/#examples"><h3>AI inference routing</h3><p>De-identify the series a model needs, send it to the inference service, and post the finding back as a FHIR DiagnosticReport that points at the original study.</p></a>
       <a class="card" href="../docs/packs/health/dataformats/dicomDeidentify.html"><h3>De-identification for research</h3><p>A folder in, a folder out: pseudonyms that stay consistent across batches and sites, shifted dates, and an audit record per instance.</p></a>
       <a class="card" href="../use-cases/hl7-mllp-healthcare-integration/#patterns"><h3>HL7 v2 to FHIR</h3><p>Read segments with the terser, build the resource, post it with the <code>fhir</code> producer, and drop duplicates on the message control id.</p></a>
-      <a class="card" href="../trust/"><h3>Provable processing</h3><p>Next release: in a confidential VM, show a data owner hardware evidence of the routes and configuration that handle its data, including the de-identification options.</p></a>
+      <a class="card" href="../trust/"><h3>Provable processing</h3><p>Since 0.6.0: in a confidential VM, show a data owner hardware evidence of the routes and configuration that handle its data, including the de-identification options.</p></a>
     </div>
   </div>
 </section>
@@ -135,12 +135,12 @@
         <h3>Docker</h3>
         <pre class="cmd">docker run --rm -p 2575:2575 -v "$PWD:/routes:ro" \
   cameleering/cameleer:health run /routes/adt.camel.yaml</pre>
-        <p>The <code>:health</code> image (also <code>:&lt;version&gt;-health</code> and on <code>ghcr.io</code>) comes with the next release.</p>
+        <p>The <code>:health</code> image is also tagged <code>:0.6.0-health</code> and <code>:0.6-health</code> (and on <code>ghcr.io</code>), for linux/amd64 and linux/arm64.</p>
       </div>
       <div class="pane">
         <h3>Cargo, or your own Rust program</h3>
         <pre class="cmd">cargo install cameleer-main --features health</pre>
-        <p>A Rust program depends on <code>cameleer-health</code> and calls <code>ctx.add_pack(&amp;cameleer_health::HEALTH)</code>. Release archives come with SHA-256 sums, a CycloneDX SBOM and a Sigstore signature: <a href="../docs/packs/health/#verify-a-download">verify a download</a>.</p>
+        <p>A Rust program depends on <code>cameleer-health</code> and calls <code>ctx.add_pack(&amp;cameleer_health::HEALTH)</code>. From the next release, release archives come with SHA-256 sums, a CycloneDX SBOM and a Sigstore signature (<a href="../docs/packs/health/#verify-a-download">how to verify</a>); 0.6.0 ships as the image and the crates.</p>
       </div>
     </div>
     <pre class="cmd">- route:
@@ -235,9 +235,9 @@
     <h2>Common questions</h2>
     <details><summary>Is there an open-source healthcare integration engine for HL7, FHIR and DICOM?</summary><p>Cameleer's health pack is one, under the Apache-2.0 licence: HL7 v2 over MLLP with acknowledgements, the <code>hl7</code> data format and terser paths, the <code>fhir</code> component and FHIR JSON and XML, DICOM over DIMSE and DICOMweb, and PS3.15 de-identification. Integrations are Apache Camel YAML routes run by one native binary.</p></details>
     <details><summary>Is Cameleer an alternative to Mirth Connect?</summary><p>For teams that keep integrations as code, yes: channels become routes in YAML files kept in Git, tested in CI, with Apache Camel's error handling and routing patterns, under the Apache-2.0 licence. It has no visual channel editor, no message browser and no importer for Mirth channels, and it does not run Mirth's JavaScript transformers.</p></details>
-    <details><summary>Which image or build has the healthcare components?</summary><p>The health pack, from the next release: the image <code>cameleering/cameleer:health</code>, or <code>cargo install cameleer-main --features health</code>. The default image and the <code>full</code> build do not include it. Up to 0.5.1, <code>mllp</code>, <code>hl7</code> and <code>fhir</code> are in the default image; DICOM is new in the pack.</p></details>
+    <details><summary>Which image or build has the healthcare components?</summary><p>The health pack, since 0.6.0: the image <code>cameleering/cameleer:health</code>, or <code>cargo install cameleer-main --features health</code>. The default image and the <code>full</code> build do not include it. Up to 0.5.1, <code>mllp</code>, <code>hl7</code> and <code>fhir</code> were in the default image; DICOM is new in the pack.</p></details>
     <details><summary>How was it tested?</summary><p>The health pack's live tests pass 10 of 10 against DCMTK 3.6.7, Orthanc 1.12.2 with its DICOMweb plugin, python-hl7 0.4.5 (MLLP both ways, AA and AR acknowledgements) and the HAPI FHIR 8.12.0 server (create, read, update, search, history, delete, JSON and XML). 33 public pydicom test files are read and written back byte for byte.</p></details>
-    <details><summary>Is Cameleer HIPAA compliant?</summary><p>Compliance belongs to a deployment, not to a library. Cameleer gives you controls: TLS and mutual TLS on MLLP, DIMSE and HTTP, PS3.15 de-identification with audit records, a hash-chained audit log, and, from the next release, attestation in a confidential VM. It is not certified, cleared or audited for HIPAA or by the FDA.</p></details>
+    <details><summary>Is Cameleer HIPAA compliant?</summary><p>Compliance belongs to a deployment, not to a library. Cameleer gives you controls: TLS and mutual TLS on MLLP, DIMSE and HTTP, PS3.15 de-identification with audit records, a hash-chained audit log, and, since 0.6.0, attestation in a confidential VM. It is not certified, cleared or audited for HIPAA or by the FDA.</p></details>
     <details><summary>Can I ask for a feature the health pack does not have?</summary><p>Yes. Open a <a href="https://github.com/cameleering/cameleer/issues/new?template=feature_request.md&amp;title=Health+pack%3A+">feature request</a> on GitHub with your workflow, the systems involved and what you use today. Requests are read and answered on the issue, and worked on with the person who asked.</p></details>
   </div>
 </section>

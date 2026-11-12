@@ -17,7 +17,7 @@ covers the container image: Docker, Docker Compose, Kubernetes and serverless pl
 | User | `65532` (nonroot); any other `--user` works |
 | Filesystem | nothing is written: `CAMEL_LOCAL_STATUS=false`, logs go to stdout; works with a read-only root filesystem |
 | Stop | `SIGTERM` stops the routes gracefully (about half a second for a REST route) |
-| Tags | `latest`, `0.5.1`, `0.5`, `edge` (manual builds of `main`), `sha-<commit>` |
+| Tags | `latest`, `0.6.0`, `0.6`, `health`, `0.6.0-health`, `0.6-health`, `edge` (manual builds of `main`), `sha-<commit>` |
 | Supply chain | SBOM, max-mode build provenance and a GitHub attestation on every push |
 
 Verify an image's provenance:
@@ -72,7 +72,7 @@ docker run --rm -p 8080:8080 --read-only \
 For production, ship an image that contains the routes:
 
 ```dockerfile
-FROM cameleering/cameleer:0.5.1
+FROM cameleering/cameleer:0.6.0
 COPY routes/ /routes/
 CMD ["run", "/routes/my-route.camel.yaml", "--prop", "camel.server.enabled=true", "--prop", "camel.server.healthCheckEnabled=true"]
 ```
@@ -83,7 +83,7 @@ CMD ["run", "/routes/my-route.camel.yaml", "--prop", "camel.server.enabled=true"
 ```yaml
 services:
   orders:
-    image: cameleering/cameleer:0.5.1
+    image: cameleering/cameleer:0.6.0
     command: ["run", "/routes/rest-api.camel.yaml",
               "--prop", "camel.server.enabled=true", "--prop", "camel.server.healthCheckEnabled=true"]
     ports: ["8080:8080"]
@@ -126,7 +126,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: cameleer
-          image: cameleering/cameleer:0.5.1
+          image: cameleering/cameleer:0.6.0
           args: ["run", "/routes/rest-api.camel.yaml",
                  "--prop", "camel.server.enabled=true",
                  "--prop", "camel.server.healthCheckEnabled=true"]

@@ -206,7 +206,7 @@ OpenSearch or PostgreSQL with pgvector. See [RAG ingestion](agents.md#rag-ingest
 
 The feature list is complete against its parity table (every row ✅), with 2,800+ hermetic tests and
 verification against real servers, official clients and emulators ([INTEROP.md](../INTEROP.md)).
-Two caveats: it is young (version 0.5), and its from-scratch TLS and crypto code has not had an
+Two caveats: it is young (version 0.6), and its from-scratch TLS and crypto code has not had an
 independent security audit yet (it is on the [roadmap](../ROADMAP.md#25-verification-and-trust)). Evaluate it on your own workload.
 
 ### How is it tested?

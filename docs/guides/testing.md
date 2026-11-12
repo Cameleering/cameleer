@@ -240,7 +240,7 @@ jobs:
 ```
 
 Both commands exit with a non-zero code on failure, which fails the job. Pin the image to a
-version tag (`cameleering/cameleer:0.5.1`) for repeatable builds.
+version tag (`cameleering/cameleer:0.6.0`) for repeatable builds.
 
 ## Common questions
 

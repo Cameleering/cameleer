@@ -299,7 +299,6 @@ messages).
 - [Deployment](../DEPLOYMENT.md): Docker, Kubernetes, Cloud Run, AWS Lambda
 - [log](../components/log.md) component
 - [Attestation in confidential VMs](attestation.md): `/q/attestation`, evidence of what runs
-  (next release)
 
 ## Found a problem?
 
