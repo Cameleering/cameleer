@@ -223,7 +223,7 @@ fn markdown_files(dir: &Path) -> Vec<PathBuf> {
             // working documents that stay in the repository (scripts/build-docs.py INTERNAL)
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let parent = p.parent().and_then(|d| d.file_name()).and_then(|n| n.to_str()).unwrap_or("");
-            if parent == "docs" && (name == "design" || name == "website-plan.md") {
+            if parent == "docs" && (name == "design" || name == "release-notes" || name == "website-plan.md") {
                 continue;
             }
             if p.is_dir() {

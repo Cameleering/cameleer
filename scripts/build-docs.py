@@ -40,8 +40,9 @@ import time
 SPHINX_ONLY = {"index.md", "conf.py", "requirements.txt"}
 # Working documents for the project (plans and strategy) that stay in the repository only.
 INTERNAL = {"website-plan.md", "STATUS.md"}
-# Directories of working documents (design notes for planned work), also repository only.
-INTERNAL_DIRS = {"design"}
+# Directories of working documents (design notes for planned work, release-note drafts that become
+# GitHub Release bodies), also repository only.
+INTERNAL_DIRS = {"design", "release-notes"}
 
 SITE_URL = "https://cameleer.ing/"
 REPO_URL = "https://github.com/cameleering/cameleer"

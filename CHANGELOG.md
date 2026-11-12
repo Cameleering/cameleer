@@ -3,21 +3,52 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
-## Unreleased
+## 0.6.0 (unreleased)
+
+Cameleer gets packs: optional, industry-specific sets of components with their own version. The
+first is the health pack (`cameleer-health` 0.6.0): HL7 v2, MLLP and FHIR R4, moved out of the
+default build, and new DICOM support (DIMSE, DICOMweb, de-identification), which Apache Camel has
+no component for. It passed 10 of 10 live tests against DCMTK 3.6.7, Orthanc 1.12.2, python-hl7
+0.4.5 and HAPI FHIR 8.12.0, reads and writes 33 public DICOM test files byte for byte, and adds
+about 2 MB to the binary. Existing routes can now be served as MCP tools with no edits
+(`--mcp-expose`), and in a confidential VM Cameleer can serve hardware attestation evidence bound
+to the TLS key and a manifest of its routes and tools; the attestation code has run only against
+simulated evidence sources so far, not on real TEE hardware. The project moved to the GitHub
+organization `Cameleering`, and the images to `cameleering/cameleer` and
+`ghcr.io/cameleering/cameleer`. The MCP comparison was rerun in one session on 2026-11-12:
+39,922 tool calls per second against 22,604 for Apache Camel's `camel-mcp-server` and 2,257 for
+the official TypeScript SDK, in 56 MB against 289 MB and 197 MB; Camel's p99 is lower (5.2 ms
+against 6.3 ms) ([report](docs/BENCHMARKS.md)).
 
 ### Changed
 
 - **Breaking: `mllp`, `hl7`, `hl7terser`, `fhir`, `fhirJson` and `fhirXml` moved to the health pack.**
-  The default build and image no longer have them: use `pmsudhi/cameleer:health` or build with
-  `--features health`. In Rust, `cameleer_protocols::{hl7, mllp}` are now
+  The default build and image no longer have them: use `cameleering/cameleer:health` or build with
+  `--features health`. A route that names one of them in a build without the pack fails at start
+  with a message naming the pack, the image and the feature. In Rust, `cameleer_protocols::{hl7, mllp}` are now
   `cameleer_health::hl7::{self, mllp}` and `cameleer_soap::fhir` is `cameleer_health::fhir`, with no
   aliases. The socket helpers of `cameleer-protocols` are in `cameleer_tls::net`, the SOAP producer
   client is `cameleer_http::client::EndpointClient`, `now_utc` is in `cameleer_core::util_time`.
+- **`onException` and `doCatch` for `Exception` now catch Camel's exchange failures**:
+  `CamelExchangeException` was listed as its own parent, so `HttpOperationFailedException`,
+  `DirectConsumerNotAvailableException`, `ResolveEndpointFailedException`, `ValidationException`
+  and the other kinds under it never matched `Exception` (or `Throwable`). Their parent is now
+  `Exception`, as in Camel; `RuntimeException` still does not catch them, also as in Camel. Routes
+  whose `Exception` handler used to let these failures through now handle them.
+- **Route configurations apply whatever the file order**: a top-level `interceptSendToEndpoint`,
+  `intercept`, `onException`, or a `routeConfiguration` without id now applies to every YAML route,
+  as in Camel, and a `routeConfigurationId` may name a configuration from a later file; an unknown
+  id still fails at start. Before, they applied only to routes in files loaded after them.
+- **Moved to the `Cameleering` organization**: the repository is
+  [github.com/cameleering/cameleer](https://github.com/cameleering/cameleer) (the old GitHub URLs
+  redirect), the images are `cameleering/cameleer` on Docker Hub and `ghcr.io/cameleering/cameleer`,
+  and the crates' `repository` URLs point to the organization. The old image paths
+  (`pmsudhi/cameleer`, `ghcr.io/pmsudhi/cameleer`) stay at 0.5.1 and receive no new tags.
 
 ### Added
 
 - **Packs, and the health pack** (`cameleer-health` 0.6.0, cargo feature `health` of
-  `cameleer-main`, **not** in `full`; image tags `pmsudhi/cameleer:health` and
+  `cameleer-main`, **not** in `full`; image tags `cameleering/cameleer:health` and
   `:<version>-health`; archive `cameleer-health-<version>-<target>`). A pack is an optional,
   industry-specific set of components with its own version (`docs/packs/index.md`). The health
   pack holds HL7 v2 and MLLP, FHIR R4 and the new DICOM support (Apache Camel has no DICOM
@@ -46,7 +77,10 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   (`scripts/sbom.py`), SHA-256 sums and keyless cosign signatures of the release archives, a DICOM
   Conformance Statement generated in part from the code, CODEOWNERS, and the
   `CAMEL_HEALTH_INTEROP=1` live tier (`scripts/health-interop.sh`: DCMTK, Orthanc, python-hl7,
-  HAPI FHIR).
+  HAPI FHIR). Release archives `cameleer-<version>-<target>` and
+  `cameleer-health-<version>-<target>` are built by `.github/workflows/archives.yml`, and the
+  container workflow builds a health image next to the general one. Both run for the first time
+  at this release; `scripts/package-archive.sh` was run end to end on Linux beforehand.
 - **`/q/info`** (`camel.server.infoEnabled`, and with the dev console): the version, the compiled-in
   feature families and the packs of a running instance; also `/q/dev/packs`.
 - **`cameleer_core::audit`**: the hash-chained audit log moved from `cameleer-ai` into core, one
@@ -63,6 +97,9 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   `server/discover` and `initialize` (`_meta["ing.cameleer/attestation"]`, the full report inline
   when the client sends a nonce) and, with `camel.attestation.mcp-tool=true`, as a tool. Start-up
   fails when attestation is on and no evidence can be produced. Guide: `docs/guides/attestation.md`.
+  Limits: the tests use a simulated configfs-tsm directory and a simulated dstack agent, and the
+  code has not yet run on real TEE hardware; Cameleer produces the evidence and the binding but
+  does not verify Intel's or AMD's signature chain itself (a platform verifier does).
 - **Existing routes as MCP tools, with no route edits**: `cameleer run --mcp-expose rest:*`
   (property `camel.server.mcp-expose-routes`). REST DSL operations become tools with typed
   arguments from their documented parameters; other routes (`direct:*`, `route:<id>`) take a
@@ -73,11 +110,6 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ### Fixed
 
-- **`onException` and `doCatch` for `Exception` now catch Camel's exchange failures**:
-  `CamelExchangeException` was listed as its own parent, so `HttpOperationFailedException`,
-  `DirectConsumerNotAvailableException`, `ResolveEndpointFailedException`, `ValidationException`
-  and the other kinds under it never matched `Exception` (or `Throwable`). Their parent is now
-  `Exception`, as in Camel; `RuntimeException` still does not catch them, also as in Camel.
 - **HTTPS routes and the management endpoints on one port**: with `camel.server.sslEnabled=true`,
   `/q/*`, `/q/attestation` and the MCP endpoint now speak HTTPS on `camel.server.port` next to the
   HTTPS routes; start-up used to fail with "already used by an https server". Camel's separate
@@ -87,10 +119,8 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   shared port first; they use the default.
 - `/q/metrics` sends one `Content-Type` (`text/plain; version=0.0.4; charset=utf-8`), not two.
 - Readiness: a suspended route's consumer is `DOWN` in the check's details too, matching its status.
-- Route configurations (a top-level `interceptSendToEndpoint`, `intercept`, `onException`, or a
-  `routeConfiguration` without id) apply to every YAML route whatever the order of the files, as in
-  Camel, and a `routeConfigurationId` may name a configuration from a later file; an unknown id still
-  fails at start. Before, they applied only to routes in files loaded after them.
+- `cameleer validate` checks `routeConfigurationId` across all the files it validates: a
+  configuration from a later file is accepted, an unknown id is an error.
 
 ## 0.5.1 (2026-11-09)
 
