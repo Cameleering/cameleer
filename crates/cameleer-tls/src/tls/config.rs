@@ -156,6 +156,42 @@ impl TlsClientConfig {
     }
 }
 
+/// What another TLS engine needs to connect the way a [`TlsClientConfig`] does (used by the HTTP
+/// client, which runs on simoom's TLS).
+#[derive(Clone, Debug)]
+pub struct ClientExport {
+    /// The trust anchors, DER (the system bundle included when the configuration trusts it).
+    pub roots: Vec<Vec<u8>>,
+    /// Whether the certificate chain is verified at all (`insecure_skip_verify` turns this off).
+    pub verify: bool,
+    /// Whether the certificate is checked against the host name.
+    pub verify_hostname: bool,
+    /// The client certificate chain for mutual TLS, DER, leaf first (empty: none).
+    pub client_chain: Vec<Vec<u8>>,
+    /// The client certificate's private key, PKCS#8 DER (empty: none).
+    pub client_key_pkcs8: Vec<u8>,
+    /// Whether session resumption is on.
+    pub resumption: bool,
+}
+
+impl TlsClientConfig {
+    /// The trust anchors, client certificate and options, for an engine other than this crate's.
+    pub fn export(&self) -> ClientExport {
+        let (client_chain, client_key_pkcs8) = match &self.client_cert {
+            Some(c) => (c.chain.clone(), c.key.to_pkcs8()),
+            None => (Vec::new(), Vec::new()),
+        };
+        ClientExport {
+            roots: self.roots.certificates().map(|c| c.der.clone()).collect(),
+            verify: self.verify,
+            verify_hostname: self.verify_hostname,
+            client_chain,
+            client_key_pkcs8,
+            resumption: self.session_cache.is_some(),
+        }
+    }
+}
+
 /// Builder for [`TlsClientConfig`].
 pub struct TlsClientConfigBuilder {
     cfg: TlsClientConfig,

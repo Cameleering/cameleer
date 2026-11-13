@@ -504,7 +504,12 @@ Cameleer's own HTTP code or it is not used.
 - **Measured** (three rounds on DigitalOcean `c-4`, classic against simoom, same machines): `http`
   1.33x at 64 connections and 1.56x at 256, `rest-json` 1.31x, `mcp-session` 1.37x; p99 2 to 3x lower;
   CPU per request 40 to 47% lower; 4 threads instead of 67 to 202. Binary: `full` +1.7%.
-- **Still on the old code, in the next PRs:** the HTTP client and WebSocket (`simoom-client`), HTTP/2
+- **PR 2: the HTTP client** on `simoom-client` (`client_engine.rs`: one shared client per set of settings;
+  `HttpClient::execute_streaming` replaces `open_stream` for the event-stream readers of the MCP and SaaS
+  clients; `HttpConnection`, the producer's own pool and its HTTP/2 client are gone; the `http2` feature
+  is gone). `cameleer_tls::TlsClientConfig::export` is the bridge. Certificate verification cannot be
+  turned off in these clients.
+- **Still on the old code, in the next PRs:** WebSocket, HTTP/2
   and the gRPC server (`cameleer-grpc` h2 on `simoom-h2`), the cloud mocks that call
   `cameleer_grpc::h2`, and the deletion of the unused server helpers in `http.rs`.
 - **Not verified:** the live, official-client and simulator tiers (WSL2) on the new server; the

@@ -76,10 +76,11 @@ fn hostname_mismatch_is_rejected() {
     assert!(root.is_a("SSLException"), "{:?}", err);
     assert!(root.message.contains("wrong.example") || root.message.to_lowercase().contains("hostname"), "{}", root.message);
 
-    // with hostname verification off (chain still verified) the call succeeds
+    // the HTTP client never turns host name verification off: asking for it is a configuration error
+    // that says what to do instead (the next case)
     ctx.registry().bind("sslNoHost", testing::client_params().hostname_verification(false));
-    let out = t.request_body(&format!("https://localhost:{}/w?sslContextParameters=#sslNoHost", port), "y").unwrap();
-    assert_eq!(out.to_string(), "secure:y");
+    let err = t.request_body(&format!("https://localhost:{}/w?sslContextParameters=#sslNoHost", port), "y").unwrap_err();
+    assert!(err.root_cause().message.contains("always verifies"), "{:?}", err);
     // ... or with the SNI/verification name overridden to the certificate's name
     ctx.registry().bind("sslSni", testing::client_params().with_server_name("wrong.example"));
     let out = t.request_body(&format!("https://localhost:{}/w?sslContextParameters=#sslSni", port), "z").unwrap();

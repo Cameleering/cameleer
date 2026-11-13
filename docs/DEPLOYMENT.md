@@ -243,7 +243,7 @@ scripts/package-lambda.sh --features cloud,jq --out function.zip orders.camel.ya
 ```
 
 - A feature list **replaces** the default: name every family you use. The template engines,
-  `jq`, the core XPath subset, `http2` and `validate` (`cameleer validate`, `cameleer schema`)
+  `jq`, the core XPath subset and `validate` (`cameleer validate`, `cameleer schema`)
   are features too.
 - A route that uses something left out fails at startup with the feature to add, for example
   ``No component found with scheme: kafka (this cameleer binary was built without the

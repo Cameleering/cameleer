@@ -258,34 +258,20 @@ impl Rest {
     /// status, or a server that answered with plain JSON) is returned buffered in `body`; for
     /// an event stream `body` is empty.
     pub fn send_events(&self, req: Req, on_event: &mut dyn FnMut(&str) -> Result<()>) -> Result<Resp> {
-        use std::io::{Read, Write};
+        use std::io::Read;
         let url = cameleer_http::Url::parse(&req.url)?;
         let what = url.to_string();
         let io_err = |e: std::io::Error| CamelError::io(format!("I/O error talking to {}: {}", what, e));
-        let c = &self.client;
-        let proxy = c.proxy.as_ref().and_then(|p| p.proxy_for(&url));
-        let timeout = if c.read_timeout.is_zero() { None } else { Some(c.read_timeout) };
-        let (stream, absolute) = cameleer_http::client::open_stream(&url, c.tls.as_deref(), c.tls_server_name.as_deref(), proxy, c.connect_timeout, timeout)?;
         let mut h = HttpHeaders::new();
-        h.set("Host", url.host_header());
         h.set("User-Agent", "Cameleer");
         for (k, v) in &req.headers {
             h.set(k.clone(), v.clone());
         }
-        h.set("Connection", "close");
-        let target = if absolute {
-            if let Some(cred) = proxy.and_then(|p| p.credentials.as_ref()) {
-                h.set("Proxy-Authorization", format!("Basic {}", base64(cred.as_bytes())));
-            }
-            url.to_string()
-        } else {
-            url.request_target()
+        let request_body = match req.body.as_deref() {
+            Some(b) => cameleer_http::client::RequestBody::Bytes(b),
+            None => cameleer_http::client::RequestBody::None,
         };
-        let mut head = Vec::new();
-        cameleer_http::http::write_request(&mut head, &req.method, &target, &h, req.body.as_deref(), false).map_err(io_err)?;
-        (&stream).write_all(&head).map_err(io_err)?;
-        let reader = std::io::BufReader::new(&stream);
-        let (resp, mut body) = cameleer_http::http::read_response_streaming(reader, &req.method, &c.limits).map_err(|e| CamelError::io(format!("I/O error talking to {}: {}", what, e)))?;
+        let (resp, mut body) = self.client.execute_streaming(&req.method, &url, &h, request_body, None)?;
         let headers: Vec<(String, String)> = resp.headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let is_events = headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("Content-Type") && v.to_ascii_lowercase().starts_with("text/event-stream"));
         if !(200..300).contains(&resp.status) || !is_events {
@@ -303,7 +289,6 @@ impl Rest {
             decoder.push(&buf[..n], on_event)?;
         }
         decoder.finish(on_event)?;
-        let _ = stream.close_notify();
         Ok(Resp { status: resp.status, headers, body: Vec::new() })
     }
 }

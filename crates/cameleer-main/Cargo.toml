@@ -43,7 +43,7 @@ cameleer-yaml = { path = "../cameleer-yaml", version = "0.6.0", default-features
 # component or language left out of the build fails at startup with a message naming the feature
 # to enable. Besides the component families: `templates` (mustache, velocity, freemarker,
 # string-template), `jq`, `xpath` (the core XPath subset; the `xml` family has the full XPath),
-# `http2` (`httpVersion=HTTP/2` of the http producer) and `validate` (`cameleer validate` and
+# and `validate` (`cameleer validate` and
 # `cameleer schema`).
 [features]
 default = ["full"]
@@ -51,12 +51,11 @@ default = ["full"]
 core = []
 full = [
     "ai", "amqp", "amqp10", "attest", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
-    "templates", "jq", "xpath", "http2", "validate",
+    "templates", "jq", "xpath", "validate",
 ]
 templates = ["cameleer-core/templates"]
 jq = ["cameleer-core/jq"]
 xpath = ["cameleer-core/xpath"]
-http2 = ["cameleer-http/http2"]
 validate = []
 # The health pack (HL7 v2 and MLLP, FHIR, DICOM): `--features health`; deliberately not in `full`.
 health = ["dep:cameleer-health"]

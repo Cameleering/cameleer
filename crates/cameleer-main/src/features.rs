@@ -28,7 +28,6 @@ pub const FEATURES: &[(&str, bool)] = &[
     ("templates", cfg!(feature = "templates")),
     ("jq", cfg!(feature = "jq")),
     ("xpath", cfg!(feature = "xpath")),
-    ("http2", cfg!(feature = "http2")),
     ("validate", cfg!(feature = "validate")),
 ];
 
@@ -170,7 +169,7 @@ mod tests {
             } else if *f == "cloud" {
                 unavailable_hint("component", "aws2-s3")
             } else {
-                continue; // http2 and validate are not names of components or languages
+                continue; // validate is not the name of a component or a language
             };
             assert_eq!(hint.is_some(), !on, "{f}");
         }

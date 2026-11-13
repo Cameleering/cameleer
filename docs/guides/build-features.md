@@ -52,7 +52,6 @@ names its feature in its header line (**Cargo feature:**).
 | `templates` | `mustache`, `velocity`, `freemarker`, `string-template` | part of `cameleer-core` |
 | `jq` | the `jq` language and Simple's `${jq(...)}` | part of `cameleer-core` |
 | `xpath` | a smaller XPath 1.0 subset for the `xpath` language and Simple's `${xpath(...)}` when `xml` is left out | part of `cameleer-core` |
-| `http2` | `httpVersion=HTTP/2` on the `http` producer | part of `cameleer-http` |
 | `validate` | the `cameleer validate` and `cameleer schema` commands | part of `cameleer-main` |
 
 Two names cover sets of features:
@@ -72,7 +71,7 @@ distribution:
 
 ```sh
 cargo install cameleer-main --features health                      # everything plus the health pack
-cargo build --profile dist -p cameleer-main --no-default-features --features "health,http2"   # a small healthcare edge build
+cargo build --profile dist -p cameleer-main --no-default-features --features health   # a small healthcare edge build
 docker build --build-arg FEATURES=full,health -t cameleer:health .
 ```
 
@@ -87,8 +86,7 @@ naming the pack, the image and the feature.
    the data formats in `marshal` and `unmarshal` steps.
 3. Look each one up in the table above, or open its page under Components, Languages or
    Data formats. Anything that isn't in the table is always included.
-4. Add `validate` if you run `cameleer validate` with this binary, and `http2` if an `http`
-   endpoint sets `httpVersion=HTTP/2`.
+4. Add `validate` if you run `cameleer validate` with this binary.
 
 For example, a route that reads SQS messages, transforms them with jq and writes rows to
 PostgreSQL needs `cloud,jq,sql`. A webhook that calls Slack needs only `saas`, because the
@@ -172,7 +170,7 @@ feature; rebuild cameleer-main with `--features kafka-mqtt`)
 ```
 
 The same applies to the template components (`templates`), the `jq` language and Simple's
-`${jq(...)}` (`jq`), `${xpath(...)}` (`xpath` or `xml`), `httpVersion=HTTP/2` (`http2`) and the
+`${jq(...)}` (`jq`), `${xpath(...)}` (`xpath` or `xml`) and the
 `cameleer validate` and `cameleer schema` commands (`validate`). Rebuild with the feature added
 to your list; nothing else needs to change. The `agent` step and the tool loop of the model
 components come with any of `ai`, `saas` or `cloud` (they are `cameleer-core`'s `agent` feature,
@@ -196,8 +194,7 @@ Linux x86-64, `dist` profile, stripped:
 | `core` | 5.8 MB | 6.0 MB |
 | every feature (`full`) | 23.9 MB | 24.1 MB |
 
-What each part adds to `core`: `templates` 0.50 MB, `jq` 0.42 MB, `validate` 0.27 MB, `http2`
-0.26 MB, `xpath` 0.09 MB. A smaller binary starts a little faster and uses less memory; startup
+What each part adds to `core`: `templates` 0.50 MB, `jq` 0.42 MB, `validate` 0.27 MB and `xpath` 0.09 MB (HTTP/2 is part of `core` since 0.7). A smaller binary starts a little faster and uses less memory; startup
 is about 1 ms on Linux either way. Container image sizes, cold-start times and memory are in
 [BENCHMARKS.md](../BENCHMARKS.md#faas-cold-start-and-size).
 

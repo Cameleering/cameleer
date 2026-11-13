@@ -107,6 +107,7 @@ dependencies = [
  "cameleer-grpc",
  "cameleer-tls",
  "simoom",
+ "simoom-client",
  "simoom-tls",
 ]
 
@@ -230,6 +231,33 @@ dependencies = [
  "simoom-sys",
  "simoom-tls",
 ]
+
+[[package]]
+name = "simoom-client"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "427723b25a68074264d30e5b1cc39ea0f6656063163e8b49c8e5d071692897c9"
+dependencies = [
+ "simoom-h2",
+ "simoom-http1",
+ "simoom-sys",
+ "simoom-tls",
+]
+
+[[package]]
+name = "simoom-h2"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc60c3d6403beebb43ff7420eb6a4ad76b295fc8026866b124c8751fa5f869bb"
+dependencies = [
+ "simoom-hpack",
+]
+
+[[package]]
+name = "simoom-hpack"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aef415da9bd7ceca155dc3a5d3756636eb052fab70ef675df1f5905e6896874"
 
 [[package]]
 name = "simoom-http1"

@@ -21,9 +21,8 @@
 //! Connections: HTTP/1.1 keep-alive connections are pooled per producer and target
 //! (`connectionsPerRoute` idle connections, default 20; `connectionClose=true` disables
 //! pooling; stale pooled connections are retried once). `httpVersion=HTTP/2` (or `2`, `h2`)
-//! uses HTTP/2 through cameleer-grpc's client (`https`: TLS with ALPN `h2`; `http`: h2c prior
-//! knowledge), one multiplexed connection per target. HTTP/2 is the cargo feature `http2` (on by
-//! default); a build without it rejects `httpVersion=HTTP/2` with the feature to enable.
+//! uses HTTP/2 (`https`: TLS with ALPN `h2`; `http`: h2c prior knowledge), one multiplexed
+//! connection per target. The client is simoom-client's, in every build.
 //!
 //! Content coding: unless `contentCompressionDisabled=true`, requests advertise
 //! `Accept-Encoding: gzip, deflate` and `gzip` / `deflate` (zlib or raw) response bodies are
@@ -42,7 +41,7 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::time::Duration;
 
 use cameleer_core::context::CamelContext;
@@ -53,12 +52,7 @@ use cameleer_core::util::Parameters;
 use cameleer_core::value::{ObjectMap, Value};
 
 use crate::binding::{add_header_value, body_to_value, headers, value_to_body, write_message_headers};
-use crate::client::{HttpClient, HttpConnection, ProxyAddr, ProxyConfig, Url};
-use crate::http::HttpResponse;
-#[cfg(feature = "http2")]
-use cameleer_grpc::h2::{H2Config, H2Connection, H2Request};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use crate::client::{HttpClient, ProxyAddr, ProxyConfig, RequestBody, Url};
 use cameleer_tls::TlsClientConfig;
 use crate::http::{base64_encode, percent_encode, HttpHeaders};
 
@@ -185,13 +179,7 @@ impl Component for HttpComponent {
             http2: match params.take("httpVersion").or_else(|| params.take("protocolVersion")) {
                 None => false,
                 Some(v) => match v.trim().to_ascii_uppercase().trim_start_matches("HTTP/") {
-                    "2" | "2.0" | "H2" | "H2C" if cfg!(feature = "http2") => true,
-                    "2" | "2.0" | "H2" | "H2C" => {
-                        return Err(CamelError::illegal_argument(format!(
-                            "httpVersion={} needs HTTP/2, which this build left out: enable the `http2` feature of cameleer-http (cameleer-main: `--features http2`)",
-                            v
-                        )))
-                    }
+                    "2" | "2.0" | "H2" | "H2C" => true,
                     "1.1" | "1.0" | "1" => false,
                     other => return Err(CamelError::illegal_argument(format!("Unsupported httpVersion: {} (HTTP/1.1 or HTTP/2)", other))),
                 },
@@ -259,10 +247,21 @@ impl Endpoint for HttpEndpoint {
         &self.uri
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
-        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone(), pool: Mutex::new(HashMap::new()),
-            #[cfg(feature = "http2")]
-            h2: Mutex::new(HashMap::new()),
-        }))
+        let o = &self.opts;
+        let client = HttpClient {
+            connect_timeout: o.connect_timeout,
+            read_timeout: o.socket_timeout,
+            follow_redirects: o.follow_redirects,
+            chunked_requests: o.chunked,
+            tls: o.tls.clone(),
+            tls_server_name: o.tls_server_name.clone(),
+            proxy: o.proxy.clone(),
+            keep_alive: o.pooling,
+            http2: o.http2,
+            connections_per_route: o.connections_per_route.max(1),
+            ..HttpClient::default()
+        };
+        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone(), client }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -273,21 +272,11 @@ impl Endpoint for HttpEndpoint {
 pub struct HttpProducer {
     base: Url,
     opts: HttpProducerOptions,
-    pool: Mutex<HashMap<String, Vec<HttpConnection>>>,
-    #[cfg(feature = "http2")]
-    h2: Mutex<HashMap<String, H2Connection>>,
+    /// HTTP/1.1 keep-alive pooling or HTTP/2 multiplexing, per the endpoint options.
+    client: HttpClient,
 }
 
-impl Service for HttpProducer {
-    fn stop(&self) -> Result<()> {
-        self.pool.lock().unwrap().clear();
-        #[cfg(feature = "http2")]
-        for (_, c) in self.h2.lock().unwrap().drain() {
-            c.close();
-        }
-        Ok(())
-    }
-}
+impl Service for HttpProducer {}
 
 /// Decodes a `gzip` / `deflate` body (deflate: zlib, or raw DEFLATE as some servers send).
 pub fn decode_content(encoding: &str, body: &[u8]) -> Result<Vec<u8>> {
@@ -297,150 +286,6 @@ pub fn decode_content(encoding: &str, body: &[u8]) -> Result<Vec<u8>> {
         "deflate" => zlib_decompress(body).or_else(|_| inflate_raw(body).map(|(d, _)| d)),
         "identity" | "" => Ok(body.to_vec()),
         other => Err(CamelError::io(format!("Unsupported Content-Encoding: {}", other))),
-    }
-}
-
-impl HttpProducer {
-    fn client(&self) -> HttpClient {
-        HttpClient {
-            connect_timeout: self.opts.connect_timeout,
-            read_timeout: self.opts.socket_timeout,
-            follow_redirects: self.opts.follow_redirects,
-            chunked_requests: self.opts.chunked,
-            tls: self.opts.tls.clone(),
-            tls_server_name: self.opts.tls_server_name.clone(),
-            proxy: self.opts.proxy.clone(),
-            ..HttpClient::default()
-        }
-    }
-
-    fn send(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>) -> Result<HttpResponse> {
-        #[cfg(feature = "http2")]
-        if self.opts.http2 {
-            return self.send_h2(method, url, headers, body);
-        }
-        let proxied = self.opts.proxy.as_ref().and_then(|p| p.proxy_for(url)).is_some();
-        if !self.opts.pooling || proxied || self.opts.tls_server_name.is_some() || self.opts.follow_redirects || self.opts.chunked {
-            return self.client().execute(method, url, headers, body, None);
-        }
-        let key = format!("{}://{}", url.scheme, url.authority());
-        let mut h: Vec<(String, String)> = headers.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("Connection")).map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        if !headers.contains("Host") {
-            h.push(("Host".into(), url.host_header()));
-        }
-        let hr: Vec<(&str, &str)> = h.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        let target = url.request_target();
-        for attempt in 0..2 {
-            let pooled = if attempt == 0 { self.pool.lock().unwrap().get_mut(&key).and_then(|v| v.pop()) } else { None };
-            let reused = pooled.is_some();
-            let mut conn = match pooled {
-                Some(c) => c,
-                None => {
-                    let tls = if url.is_https() { Some(self.opts.tls.clone().unwrap_or_else(crate::client::default_tls_config)) } else { None };
-                    HttpConnection::connect_with(&url.host, url.port, tls.as_deref(), self.opts.socket_timeout.max(self.opts.connect_timeout))?
-                }
-            };
-            match conn.send(method, &target, &hr, body) {
-                Ok(resp) => {
-                    if !conn.is_closed() {
-                        let mut g = self.pool.lock().unwrap();
-                        let v = g.entry(key.clone()).or_default();
-                        if v.len() < self.opts.connections_per_route.max(1) {
-                            v.push(conn);
-                        }
-                    }
-                    return Ok(resp);
-                }
-                // a pooled connection the server closed meanwhile: retry on a new one
-                Err(_) if reused => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        Err(CamelError::io(format!("Cannot send request to {}", url)))
-    }
-
-    /// One request on a dedicated connection: a streamed (chunked) request body when `reader`
-    /// is given, and a lazy response body reader.
-    fn send_streaming(
-        &self,
-        method: &str,
-        url: &Url,
-        headers: &HttpHeaders,
-        reader: Option<Box<dyn std::io::Read + Send>>,
-        body: Option<&[u8]>,
-    ) -> Result<(HttpResponse, crate::http::BodyReader<std::io::BufReader<cameleer_tls::net::NetStream>>)> {
-        let what = url.to_string();
-        let proxy = self.opts.proxy.as_ref().and_then(|p| p.proxy_for(url));
-        let t = if self.opts.socket_timeout.is_zero() { None } else { Some(self.opts.socket_timeout) };
-        let (stream, absolute) = crate::client::open_stream(url, self.opts.tls.as_deref(), self.opts.tls_server_name.as_deref(), proxy, self.opts.connect_timeout, t)?;
-        let mut h = headers.clone();
-        if !h.contains("Host") {
-            h.set("Host", url.host_header());
-        }
-        h.set("Connection", "close");
-        let target = if absolute {
-            if let Some(c) = proxy.and_then(|p| p.credentials.as_ref()) {
-                h.set("Proxy-Authorization", format!("Basic {}", base64_encode(c.as_bytes())));
-            }
-            url.to_string()
-        } else {
-            url.request_target()
-        };
-        let mut w = stream.try_clone().map_err(|e| crate::client::map_io_error(e, &what))?;
-        match reader {
-            Some(mut r) => {
-                crate::http::write_request_head_chunked(&mut w, method, &target, &h).map_err(|e| crate::client::map_io_error(e, &what))?;
-                crate::http::write_chunked_stream(&mut w, &mut r).map_err(|e| crate::client::map_io_error(e, &what))?;
-            }
-            None => {
-                let mut buf = Vec::new();
-                crate::http::write_request(&mut buf, method, &target, &h, body, self.opts.chunked && body.is_some()).map_err(|e| crate::client::map_io_error(e, &what))?;
-                w.write_all(&buf).map_err(|e| crate::client::map_io_error(e, &what))?;
-            }
-        }
-        crate::http::read_response_streaming(std::io::BufReader::new(stream), method, &crate::http::Limits::default())
-            .map_err(|e| CamelError::io(format!("Invalid HTTP response from {}: {}", what, e)))
-    }
-
-    #[cfg(feature = "http2")]
-    fn send_h2(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>) -> Result<HttpResponse> {
-        let key = format!("{}://{}", url.scheme, url.authority());
-        let what = url.to_string();
-        let conn = {
-            let mut g = self.h2.lock().unwrap();
-            match g.get(&key).filter(|c| !c.is_closed()) {
-                Some(c) => c.clone(),
-                None => {
-                    let cfg = H2Config::default();
-                    let addr = url.authority();
-                    let c = if url.is_https() {
-                        let tls = self.opts.tls.clone().unwrap_or_else(crate::client::default_tls_config).with_alpn(&["h2"]);
-                        H2Connection::connect_tls(&addr, self.opts.tls_server_name.as_deref().unwrap_or(&url.host), &tls, cfg)
-                    } else {
-                        H2Connection::connect(&addr, cfg)
-                    }
-                    .map_err(|e| CamelError::new(kinds::CONNECT, format!("HTTP/2 connection to {} failed: {}", addr, e)))?;
-                    g.insert(key.clone(), c.clone());
-                    c
-                }
-            }
-        };
-        let mut req = H2Request { method: method.to_string(), path: url.request_target(), authority: Some(headers.get("Host").map(|s| s.to_string()).unwrap_or_else(|| url.host_header())), headers: Vec::new(), body: body.map(|b| b.to_vec()).unwrap_or_default() };
-        for (k, v) in headers.iter() {
-            let lower = k.to_ascii_lowercase();
-            if matches!(lower.as_str(), "host" | "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" | "te") {
-                continue;
-            }
-            req.headers.push((lower, v.to_string()));
-        }
-        let t = if self.opts.socket_timeout.is_zero() { None } else { Some(self.opts.socket_timeout) };
-        let r = conn.request(&req, t).map_err(|e| CamelError::io(format!("HTTP/2 request to {} failed: {}", what, e)))?;
-        let mut resp = HttpResponse::new(r.status);
-        for (k, v) in r.headers.iter().chain(r.trailers.iter()) {
-            resp.headers.add(k.clone(), v.clone());
-        }
-        resp.body = r.body;
-        Ok(resp)
     }
 }
 
@@ -552,11 +397,6 @@ impl Processor for HttpProducer {
         // a stream handle body is sent with chunked transfer coding without buffering
         let mut stream_reader = if send_body { cameleer_tls::stream_body::take(ex.body()) } else { None };
         let (body, default_ct) = match stream_reader.take() {
-            Some((mut r, _)) if self.opts.http2 => {
-                let mut b = Vec::new();
-                r.read_to_end(&mut b).map_err(|e| CamelError::io(format!("Cannot read the stream body: {}", e)))?;
-                (b, Some("application/octet-stream"))
-            }
             Some(sr) => {
                 stream_reader = Some(sr);
                 (Vec::new(), Some("application/octet-stream"))
@@ -604,21 +444,26 @@ impl Processor for HttpProducer {
         if self.opts.content_compression && !req_headers.contains("Accept-Encoding") {
             req_headers.set("Accept-Encoding", "gzip, deflate");
         }
-        let streaming = !self.opts.http2 && (stream_reader.is_some() || self.opts.disable_stream_cache);
+        let streaming = stream_reader.is_some() || self.opts.disable_stream_cache;
         let mut streamed_body: Option<Value> = None;
         let mut resp = if streaming {
-            let reader = stream_reader.take().map(|(r, _)| r);
-            let (mut resp, mut body_reader) = self.send_streaming(&method, &url, &req_headers, reader, if send_body { Some(&body) } else { None })?;
+            // a stream handle goes out chunked, whatever length it knows
+            let request_body = match stream_reader.take() {
+                Some((r, _)) => RequestBody::Stream(r, None),
+                None if send_body => RequestBody::Bytes(&body),
+                None => RequestBody::None,
+            };
+            let (mut resp, mut body_reader) = self.client.execute_streaming(&method, &url, &req_headers, request_body, None)?;
             let ok = self.opts.ok_status_code_range.iter().any(|(a, b)| (*a..=*b).contains(&resp.status));
             if self.opts.disable_stream_cache && !self.opts.ignore_response_body && (ok || !self.opts.throw_exception_on_failure) {
-                let len = body_reader.content_length();
-                streamed_body = Some(cameleer_tls::stream_body::register(Box::new(body_reader), len, &url.to_string()));
+                let len = resp.headers.get("Content-Length").and_then(|v| v.trim().parse::<u64>().ok());
+                streamed_body = Some(cameleer_tls::stream_body::register(body_reader, len, &url.to_string()));
             } else {
                 body_reader.read_to_end(&mut resp.body).map_err(|e| CamelError::io(format!("Cannot read the response of {}: {}", url, e)))?;
             }
             resp
         } else {
-            self.send(&method, &url, &req_headers, if send_body { Some(&body) } else { None })?
+            self.client.execute(&method, &url, &req_headers, if send_body { Some(&body) } else { None }, None)?
         };
         if self.opts.content_compression && streamed_body.is_none() {
             if let Some(enc) = resp.headers.get("Content-Encoding").map(|s| s.to_string()) {

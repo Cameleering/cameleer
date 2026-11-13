@@ -14,7 +14,7 @@ such as Mirth Connect, and what it does not do yet, see
 |---|---|
 | Docker | `docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer:health run /routes/route.camel.yaml` (also `:<version>-health`, and on ghcr.io) |
 | cargo | `cargo install cameleer-main --features health` |
-| a small edge build | `cargo build --profile dist -p cameleer-main --no-default-features --features "health,http2"` |
+| a small edge build | `cargo build --profile dist -p cameleer-main --no-default-features --features health` |
 | a release archive | `cameleer-health-<version>-<target>.tar.gz` (or `.zip`) |
 | Rust | depend on `cameleer-health` and call `ctx.add_pack(&cameleer_health::HEALTH)` |
 

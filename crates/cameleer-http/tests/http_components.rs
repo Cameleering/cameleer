@@ -585,3 +585,48 @@ fn keep_alive_clients_reuse_pooled_connections() {
     assert_eq!(pooled.request("GET", &url, &[], None, None).unwrap().body_text(), "again");
     server2.stop();
 }
+
+/// The client shares one connection pool per set of settings, refuses to turn certificate
+/// verification off, streams a response while it arrives and reports a closed port as a
+/// `ConnectException` (the old client's behaviour, on simoom-client).
+#[test]
+fn the_client_pools_streams_and_maps_errors() {
+    use std::io::Read;
+    let server = cameleer_http::server::HttpServer::bind("127.0.0.1:0", cameleer_http::server::ServerConfig::default(), |req: &mut cameleer_http::HttpRequest| {
+        let who = req.remote_addr.map(|a| a.to_string()).unwrap_or_default();
+        cameleer_http::HttpResponse::text(200, who)
+    })
+    .unwrap();
+    let url = format!("http://127.0.0.1:{}/x", server.port());
+    // with keep_alive the same connection serves every request, shared by clients with the same settings
+    let a = HttpClient::new().with_keep_alive(true);
+    let b = HttpClient::new().with_keep_alive(true);
+    let first = a.get(&url).unwrap().body_text();
+    assert_eq!(b.get(&url).unwrap().body_text(), first);
+    assert_eq!(a.get(&url).unwrap().body_text(), first);
+    // without it every request has its own connection
+    let c = HttpClient::new();
+    assert_ne!(c.get(&url).unwrap().body_text(), c.get(&url).unwrap().body_text());
+
+    // a streamed response is read as it arrives
+    let u = cameleer_http::Url::parse(&url).unwrap();
+    let (head, mut body) = c.execute_streaming("GET", &u, &cameleer_http::http::HttpHeaders::new(), cameleer_http::client::RequestBody::None, None).unwrap();
+    assert_eq!(head.status, 200);
+    let mut text = String::new();
+    body.read_to_string(&mut text).unwrap();
+    assert!(text.starts_with("127.0.0.1:"), "{text}");
+
+    // HTTP/2 prior knowledge against an HTTP/1.1-only server fails cleanly instead of hanging
+    let h2 = HttpClient { http2: true, read_timeout: Duration::from_secs(2), ..HttpClient::default() };
+    assert!(h2.get(&url).is_err());
+
+    // an unverified TLS configuration is refused, with the way out in the message
+    let insecure = cameleer_tls::TlsClientConfig::builder().system_roots(false).insecure_skip_verify(true).build();
+    let err = HttpClient::new().with_tls(insecure).get("https://127.0.0.1:1/").unwrap_err();
+    assert!(err.message.contains("always verifies"), "{}", err.message);
+
+    // a refused connection is a ConnectException
+    server.stop();
+    let refused = HttpClient::new().get(&url).unwrap_err();
+    assert_eq!(refused.kind, cameleer_core::error::kinds::CONNECT, "{refused:?}");
+}
