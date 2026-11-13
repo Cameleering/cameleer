@@ -111,7 +111,8 @@ fn elasticsearch_product_header_aggregations_and_delete_by_query() {
     let server = ElasticsearchServer::start().unwrap();
     let p = server.port();
     let (head, body) = http(p, "GET", "/", "");
-    assert!(head.contains("X-Elastic-Product: Elasticsearch"), "{}", head);
+    // header names are case-insensitive (the server writes them in lower case)
+    assert!(head.to_ascii_lowercase().contains("x-elastic-product: elasticsearch"), "{}", head);
     assert!(body.contains("\"build_flavor\":\"default\""));
     for (i, (g, n)) in [("a", 1), ("b", 5), ("a", 3), ("c", 7)].iter().enumerate() {
         http(p, "PUT", &format!("/agg/_doc/{}", i), &format!(r#"{{"g":"{}","n":{}}}"#, g, n));

@@ -1,0 +1,48 @@
+RESULT round=1 node=a variant=classic scenario=http conns=64 scenario=http msgs=1552122 secs=15.001 tput=103466 tput_min=102478 tput_max=104526 mean_us=618.12 p50_us=514.05 p99_us=3129.34 max_us=91720.64 connects=2092
+PROC round=1 node=a variant=classic scenario=http conns=64 cpu_ticks_14s=5400 threads=67 peak_rss_kb=12416
+RESULT round=1 node=a variant=simoom scenario=http conns=64 scenario=http msgs=1811252 secs=15.000 tput=120747 tput_min=119353 tput_max=122594 mean_us=529.64 p50_us=452.61 p99_us=1646.59 max_us=10162.06 connects=2466
+PROC round=1 node=a variant=simoom scenario=http conns=64 cpu_ticks_14s=5121 threads=12 peak_rss_kb=11172
+RESULT round=1 node=a variant=simoom+inline scenario=http conns=64 scenario=http msgs=2314366 secs=15.001 tput=154285 tput_min=146292 tput_max=158384 mean_us=414.36 p50_us=366.59 p99_us=1073.15 max_us=41402.43 connects=3120
+PROC round=1 node=a variant=simoom+inline scenario=http conns=64 cpu_ticks_14s=3724 threads=4 peak_rss_kb=8708
+RESULT round=1 node=a variant=classic scenario=rest-json conns=64 scenario=rest-json msgs=1261008 secs=15.000 tput=84066 tput_min=83612 tput_max=84307 mean_us=760.90 p50_us=634.88 p99_us=3162.11 max_us=17639.51 connects=1707
+PROC round=1 node=a variant=classic scenario=rest-json conns=64 cpu_ticks_14s=5504 threads=67 peak_rss_kb=13780
+RESULT round=1 node=a variant=simoom scenario=rest-json conns=64 scenario=rest-json msgs=1515909 secs=15.001 tput=101056 tput_min=100455 tput_max=102234 mean_us=632.86 p50_us=569.34 p99_us=1826.82 max_us=29001.91 connects=2060
+PROC round=1 node=a variant=simoom scenario=rest-json conns=64 cpu_ticks_14s=5377 threads=13 peak_rss_kb=12292
+RESULT round=1 node=a variant=simoom+inline scenario=rest-json conns=64 scenario=rest-json msgs=1794004 secs=15.003 tput=119578 tput_min=116672 tput_max=124963 mean_us=534.81 p50_us=378.88 p99_us=1515.52 max_us=35253.51 connects=2455
+PROC round=1 node=a variant=simoom+inline scenario=rest-json conns=64 cpu_ticks_14s=3846 threads=4 peak_rss_kb=9448
+RESULT round=1 node=a variant=classic scenario=mcp-session conns=64 scenario=mcp-session msgs=547505 secs=15.000 tput=36500 tput_min=36234 tput_max=36895 mean_us=1752.98 p50_us=1286.14 p99_us=6914.05 max_us=54490.27 connects=766
+PROC round=1 node=a variant=classic scenario=mcp-session conns=64 cpu_ticks_14s=5087 threads=135 peak_rss_kb=43456
+RESULT round=1 node=a variant=simoom scenario=mcp-session conns=64 scenario=mcp-session msgs=472571 secs=15.000 tput=31504 tput_min=31210 tput_max=31773 mean_us=2030.89 p50_us=1695.74 p99_us=7241.73 max_us=57495.58 connects=657
+PROC round=1 node=a variant=simoom scenario=mcp-session conns=64 cpu_ticks_14s=4389 threads=140 peak_rss_kb=57652
+RESULT round=1 node=a variant=simoom+inline scenario=mcp-session conns=64 scenario=mcp-session msgs=416951 secs=15.000 tput=27796 tput_min=27644 tput_max=28074 mean_us=2302.03 p50_us=1859.58 p99_us=6324.22 max_us=10735.35 connects=584
+PROC round=1 node=a variant=simoom+inline scenario=mcp-session conns=64 cpu_ticks_14s=2817 threads=12 peak_rss_kb=13400
+RESULT round=1 node=a variant=classic scenario=http conns=256 scenario=http msgs=1463341 secs=15.000 tput=97554 tput_min=96922 tput_max=97970 mean_us=2622.70 p50_us=1482.75 p99_us=15532.03 max_us=1348630.15 connects=43045
+PROC round=1 node=a variant=classic scenario=http conns=256 cpu_ticks_14s=5342 threads=202 peak_rss_kb=23736
+RESULT round=1 node=a variant=simoom scenario=http conns=256 scenario=http msgs=1872696 secs=15.001 tput=124841 tput_min=117970 tput_max=129333 mean_us=2050.23 p50_us=1875.97 p99_us=5144.58 max_us=39396.52 connects=2519
+PROC round=1 node=a variant=simoom scenario=http conns=256 cpu_ticks_14s=4832 threads=15 peak_rss_kb=12388
+RESULT round=1 node=a variant=simoom+inline scenario=http conns=256 scenario=http msgs=2277291 secs=15.001 tput=151811 tput_min=134080 tput_max=165672 mean_us=1685.92 p50_us=1056.77 p99_us=5865.47 max_us=93012.51 connects=3107
+PROC round=1 node=a variant=simoom+inline scenario=http conns=256 cpu_ticks_14s=3582 threads=4 peak_rss_kb=9480
+RESULT round=2 node=b variant=classic scenario=http conns=64 scenario=http msgs=1938323 secs=15.002 tput=129206 tput_min=128073 tput_max=130484 mean_us=494.95 p50_us=436.22 p99_us=1892.35 max_us=17046.91 connects=2613
+PROC round=2 node=b variant=classic scenario=http conns=64 cpu_ticks_14s=5477 threads=67 peak_rss_kb=12436
+RESULT round=2 node=b variant=simoom scenario=http conns=64 scenario=http msgs=2196485 secs=15.000 tput=146428 tput_min=143887 tput_max=148190 mean_us=436.72 p50_us=399.36 p99_us=1105.92 max_us=17339.01 connects=2974
+PROC round=2 node=b variant=simoom scenario=http conns=64 cpu_ticks_14s=4995 threads=12 peak_rss_kb=11136
+RESULT round=2 node=b variant=simoom+inline scenario=http conns=64 scenario=http msgs=2506861 secs=15.000 tput=167119 tput_min=165574 tput_max=169670 mean_us=382.65 p50_us=337.92 p99_us=544.77 max_us=220500.68 connects=3417
+PROC round=2 node=b variant=simoom+inline scenario=http conns=64 cpu_ticks_14s=3562 threads=4 peak_rss_kb=8492
+RESULT round=2 node=b variant=classic scenario=rest-json conns=64 scenario=rest-json msgs=1568425 secs=15.002 tput=104550 tput_min=104148 tput_max=104829 mean_us=611.69 p50_us=514.05 p99_us=2342.91 max_us=17510.99 connects=2123
+PROC round=2 node=b variant=classic scenario=rest-json conns=64 cpu_ticks_14s=5480 threads=67 peak_rss_kb=13908
+RESULT round=2 node=b variant=simoom scenario=rest-json conns=64 scenario=rest-json msgs=1887180 secs=15.000 tput=125810 tput_min=125361 tput_max=126331 mean_us=508.23 p50_us=464.90 p99_us=1318.91 max_us=9190.01 connects=2559
+PROC round=2 node=b variant=simoom scenario=rest-json conns=64 cpu_ticks_14s=5272 threads=13 peak_rss_kb=12296
+RESULT round=2 node=b variant=simoom+inline scenario=rest-json conns=64 scenario=rest-json msgs=2236223 secs=15.000 tput=149077 tput_min=141139 tput_max=154356 mean_us=428.76 p50_us=374.78 p99_us=1171.46 max_us=39503.43 connects=3042
+PROC round=2 node=b variant=simoom+inline scenario=rest-json conns=64 cpu_ticks_14s=3873 threads=4 peak_rss_kb=9316
+RESULT round=2 node=b variant=classic scenario=mcp-session conns=64 scenario=mcp-session msgs=696878 secs=15.000 tput=46458 tput_min=46416 tput_max=46539 mean_us=1377.23 p50_us=1056.77 p99_us=5144.58 max_us=13618.25 connects=960
+PROC round=2 node=b variant=classic scenario=mcp-session conns=64 cpu_ticks_14s=5186 threads=158 peak_rss_kb=49812
+RESULT round=2 node=b variant=simoom scenario=mcp-session conns=64 scenario=mcp-session msgs=627274 secs=15.000 tput=41818 tput_min=41617 tput_max=42070 mean_us=1530.12 p50_us=1269.76 p99_us=5537.79 max_us=24939.53 connects=879
+PROC round=2 node=b variant=simoom scenario=mcp-session conns=64 cpu_ticks_14s=4672 threads=141 peak_rss_kb=57860
+RESULT round=2 node=b variant=simoom+inline scenario=mcp-session conns=64 scenario=mcp-session msgs=536137 secs=15.000 tput=35742 tput_min=34175 tput_max=37025 mean_us=1790.29 p50_us=1777.66 p99_us=4046.85 max_us=5511.80 connects=762
+PROC round=2 node=b variant=simoom+inline scenario=mcp-session conns=64 cpu_ticks_14s=2579 threads=14 peak_rss_kb=13820
+RESULT round=2 node=b variant=classic scenario=http conns=256 scenario=http msgs=1495077 secs=15.000 tput=99670 tput_min=95050 tput_max=108469 mean_us=2567.94 p50_us=2342.91 p99_us=6258.69 max_us=220643.43 connects=211861
+PROC round=2 node=b variant=classic scenario=http conns=256 cpu_ticks_14s=4888 threads=202 peak_rss_kb=29244
+RESULT round=2 node=b variant=simoom scenario=http conns=256 scenario=http msgs=2320783 secs=15.001 tput=154708 tput_min=147735 tput_max=159887 mean_us=1654.22 p50_us=1597.44 p99_us=3293.18 max_us=72477.96 connects=3306
+PROC round=2 node=b variant=simoom scenario=http conns=256 cpu_ticks_14s=4796 threads=14 peak_rss_kb=11988
+RESULT round=2 node=b variant=simoom+inline scenario=http conns=256 scenario=http msgs=2370619 secs=15.001 tput=158035 tput_min=153616 tput_max=160433 mean_us=1619.66 p50_us=1597.44 p99_us=2670.59 max_us=78098.83 connects=3329
+PROC round=2 node=b variant=simoom+inline scenario=http conns=256 cpu_ticks_14s=3409 threads=4 peak_rss_kb=9128

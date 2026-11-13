@@ -349,6 +349,41 @@ impl TlsServerConfig {
     }
 }
 
+/// What another TLS engine needs to serve the same configuration as a [`TlsServerConfig`]
+/// (used by the HTTP server, which runs on simoom's TLS).
+#[derive(Clone, Debug)]
+pub struct ServerExport {
+    /// The certificate chain, DER, leaf first.
+    pub chain: Vec<Vec<u8>>,
+    /// The private key, PKCS#8 DER.
+    pub key_pkcs8: Vec<u8>,
+    /// ALPN protocols in preference order.
+    pub alpn: Vec<Vec<u8>>,
+    pub min_version: TlsVersion,
+    pub max_version: TlsVersion,
+    pub client_auth: ClientAuth,
+    /// The trust anchors that client certificates are verified against, DER.
+    pub client_roots: Vec<Vec<u8>>,
+    /// Whether session resumption is on.
+    pub resumption: bool,
+}
+
+impl TlsServerConfig {
+    /// The certificate, key and options, for an engine other than this crate's.
+    pub fn export(&self) -> ServerExport {
+        ServerExport {
+            chain: self.cert_chain.clone(),
+            key_pkcs8: self.key.to_pkcs8(),
+            alpn: self.alpn.clone(),
+            min_version: self.min_version,
+            max_version: self.max_version,
+            client_auth: self.client_auth,
+            client_roots: self.client_roots.certificates().map(|c| c.der.clone()).collect(),
+            resumption: self.sessions.is_some(),
+        }
+    }
+}
+
 /// Builder for [`TlsServerConfig`]; errors are reported by `build()`.
 pub struct TlsServerConfigBuilder {
     chain: Vec<Vec<u8>>,

@@ -96,8 +96,8 @@ impl Url {
     /// Path plus query (`/a/b?x=1`).
     pub fn request_target(&self) -> String {
         match &self.query {
-            Some(q) if !q.is_empty() => format!("{}?{}", self.path, q),
-            _ => self.path.clone(),
+            Some(q) if !q.is_empty() => encode_target(&format!("{}?{}", self.path, q)),
+            _ => encode_target(&self.path),
         }
     }
 
@@ -126,6 +126,28 @@ impl Url {
         u.query = q;
         Ok(u)
     }
+}
+
+/// Percent-encodes the bytes a request-target may not contain (RFC 9112 3.2: space, controls,
+/// `"` `<` `>` `\` `^` `` ` `` `{` `|` `}` `[` `]` and anything outside ASCII), and leaves `%` and
+/// everything else alone, so an already encoded target is unchanged. Strict servers (Tomcat,
+/// simoom, Envoy) refuse the raw characters; curl and Java's client encode them as well.
+/// The ASCII bytes (besides space and controls) that a request-target may not contain.
+const UNSAFE_IN_TARGET: &[u8] = &[b'"', b'<', b'>', b'\\', b'^', b'`', b'{', b'|', b'}', b'[', b']'];
+
+fn encode_target(target: &str) -> String {
+    if target.bytes().all(|b| (0x21..0x7f).contains(&b) && !UNSAFE_IN_TARGET.contains(&b)) {
+        return target.to_string();
+    }
+    let mut out = String::with_capacity(target.len() + 8);
+    for b in target.bytes() {
+        if (0x21..0x7f).contains(&b) && !UNSAFE_IN_TARGET.contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
 }
 
 impl std::fmt::Display for Url {
@@ -693,6 +715,17 @@ impl HttpConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_targets_are_percent_encoded_for_strict_servers() {
+        // a FHIR search: `|` is not allowed in a request-target (Tomcat, simoom and Envoy refuse it)
+        let u = Url::parse("http://h/Observation?subject=Patient/1&code=http://loinc.org|29463-7").unwrap();
+        assert_eq!(u.request_target(), "/Observation?subject=Patient/1&code=http://loinc.org%7C29463-7");
+        assert_eq!(encode_target("/a b?x=[1]&y={z}"), "/a%20b?x=%5B1%5D&y=%7Bz%7D");
+        // non-ASCII goes out as UTF-8 bytes; an already encoded target is unchanged
+        assert_eq!(encode_target("/caf\u{e9}"), "/caf%C3%A9");
+        assert_eq!(encode_target("/a%7Cb?q=%20"), "/a%7Cb?q=%20");
+    }
 
     #[test]
     fn parse_urls() {

@@ -5,6 +5,18 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The HTTP server runs on simoom** (https://crates.io/crates/simoom, in the Cameleering family).
+  An event loop per core replaces a thread per connection, for plain HTTP and HTTPS (TLS 1.2 and
+  1.3, client certificates), in `platform-http`, `http`, REST DSL, the MCP endpoint, the dev console
+  and the emulators. Measured on DigitalOcean `c-4` machines against the previous server, same
+  machines and rounds (`docs/design/simoom-adoption.md`): `http` 1.33x at 64 connections and 1.56x at
+  256, `rest-json` 1.31x, MCP session calls 1.37x; p99 latency 2 to 3x lower, CPU per request 40 to 47%
+  lower, 4 threads instead of 67 to 202, and half the memory. **Changed:** response header names are
+  lower case; an HTTP/1.0 client gets an HTTP/1.1 status line; the server refuses requests that are
+  ambiguous or malformed (request smuggling shapes, `|` and other unsafe bytes in the target); and
+  `ServerConfig.pool_size` limits the threads for routes that block, not connections. The HTTP
+  client now percent-encodes unsafe bytes in the request target, as curl and Java's client do.
+
 - **The `cameleer` crate.** `cargo install cameleer` installs the `cameleer` command and
   `cargo add cameleer` gives the `cameleer-main` API: a thin wrapper (`publish/cameleer`, outside
   the workspace because its binary has the same name as `cameleer-main`'s) that forwards every
