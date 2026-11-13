@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-Generated Code and Performance: The Evidence | Cameleering</title>
+<meta name="description" content="What studies measured about the efficiency of AI-generated code and developer speed: EffiBench, Mercury, EvalPerf, PIE, METR, DORA and GitClear, each with its limits.">
+<link rel="canonical" href="https://cameleer.ing/ai-code-performance/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="AI-Generated Code and Performance: The Evidence">
+<meta property="og:description" content="What studies measured about the efficiency of AI-generated code and developer speed: EffiBench, Mercury, EvalPerf, PIE, METR, DORA and GitClear, each with its limits.">
+<meta property="og:url" content="https://cameleer.ing/ai-code-performance/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "AI-Generated Code and Performance: The Evidence", "description": "What studies measured about the efficiency of AI-generated code and developer speed: EffiBench, Mercury, EvalPerf, PIE, METR, DORA and GitClear, each with its limits.", "url": "https://cameleer.ing/ai-code-performance/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@type": "Organization", "name": "Cameleering", "url": "https://cameleer.ing/", "logo": "https://cameleer.ing/brand/cameleering/cameleering-mark-512.png"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 2, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 3, "name": "AI code and performance"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is AI-generated code slower than human code?", "acceptedAnswer": {"@type": "Answer", "text": "On efficiency benchmarks from 2024, usually yes: in EffiBench, GPT-4's solutions took 3.12 times as long as human reference solutions on average, and other benchmarks found models more often correct than efficient. When models are asked to optimize and the result is measured, they can make code faster. The benchmarks are mostly Python puzzles, so measure your own code."}}, {"@type": "Question", "name": "Does AI make developers slower?", "acceptedAnswer": {"@type": "Answer", "text": "One 2025 randomized study of 16 experienced developers found tasks took 19% longer with AI. Its 2026 follow-up estimated tasks took 18% less time for returning developers, but with a confidence interval that includes no change, and its authors believe speedups have grown. The evidence is unsettled, and it measures developer time, not software speed."}}, {"@type": "Question", "name": "Does AI-generated code cause bloat?", "acceptedAnswer": {"@type": "Answer", "text": "There are signals: GitClear found duplicated code blocks rose about eightfold in 2024, and DORA associated more AI adoption with lower delivery stability. Neither can attribute the change to AI directly. Budgets in CI catch growth in size and memory whatever its cause."}}, {"@type": "Question", "name": "How do I keep AI-written code efficient?", "acceptedAnswer": {"@type": "Answer", "text": "Treat efficiency like correctness: set budgets for startup, memory, size and tail latency, check them in CI, ask for efficient code explicitly, and review changes with measurements."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · measured</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · measured</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · design, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../cameleer/">Home</a> / <a href="../">Cameleering</a> / AI code and performance</p>
+    <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
+    <p class="kicker">Cameleering · the evidence</p>
+    <h1>AI-generated code and performance: what the evidence says</h1>
+    <p class="lede">Coding agents make code cheap to produce. Whether that code is fast, small and correct is a separate question, and the research is younger and more mixed than either side of the debate admits. Here is what the studies measured, with their limits next to every finding.</p>
+    <p class="rule">No claim without a number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="summary">
+  <div class="wrap">
+    <h2>The short version</h2>
+    <ul>
+      <li><strong>On benchmarks, generated code is usually correct before it is efficient.</strong> Several 2024 studies found models write slower code than good human solutions, and bigger models were not reliably faster.</li>
+      <li><strong>Models can also make code faster</strong> when that is the task and the result is measured.</li>
+      <li><strong>Productivity results are moving.</strong> A 2025 controlled study found experienced developers slower with AI; its 2026 follow-up points the other way but cannot measure it cleanly.</li>
+      <li><strong>Across the industry,</strong> duplicated code and delivery instability rose as AI adoption grew. That is correlation, not proof of cause.</li>
+    </ul>
+    <p class="note">The practical conclusion does not depend on which study is right: measure the software you ship, whoever or whatever wrote it. That is what <a href="../method/">the method</a> is for.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="benchmarks">
+  <div class="wrap">
+    <h2>Benchmarks of generated code</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>study</th><th>what it measured</th><th>finding</th><th>limits</th></tr></thead>
+      <tbody>
+        <tr><td><strong>EffiBench</strong>, NeurIPS 2024 <sup><a href="#s1">[1]</a></sup></td><td>1,000 efficiency-critical coding problems, 42 models, against human reference solutions</td><td>GPT-4's code took 3.12x the execution time on average, up to 13.89x, and up to 43.92x the memory; the best average time ratio was 2.59x</td><td>Python, algorithm puzzles; depends on the test environment</td></tr>
+        <tr><td><strong>Mercury</strong>, 2024 <sup><a href="#s2">[2]</a></sup></td><td>1,889 Python tasks, scored on correctness and on a runtime-weighted score</td><td>leading code models reached about 65% on correctness but under 50% on the efficiency score</td><td>Python tasks</td></tr>
+        <tr><td><strong>EvalPerf</strong>, 2024 <sup><a href="#s3">[3]</a></sup></td><td>121 performance-challenging tasks, profiled on expensive inputs</td><td>larger models did not reliably write more efficient code; instruction tuning helped both correctness and efficiency</td><td>a curated task set</td></tr>
+        <tr><td><strong>ECCO</strong>, 2024 <sup><a href="#s4">[4]</a></sup></td><td>writing and editing code for efficiency</td><td>most methods made code moderately faster at a cost in correctness; feedback from running the code helped keep it correct</td><td>Python</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="faster">
+  <div class="wrap">
+    <h2>When AI makes code faster</h2>
+    <ul>
+      <li><strong>PIE</strong> (ICLR 2024): trained on more than 77,000 pairs of slower and faster C++ submissions, the best setup reached a mean speedup of 6.86x over eight attempts, against 3.66x for the average human optimization <sup><a href="#s5">[5]</a></sup>. Limits: competitive-programming code, timed in a simulator.</li>
+      <li><strong>AlphaDev</strong> (DeepMind, 2023): sorting routines found by reinforcement learning were merged into LLVM's C++ standard library; up to 70% faster for very short sequences and about 1.7% for more than 250,000 elements <sup><a href="#s6">[6]</a></sup>.</li>
+    </ul>
+    <p class="note">The pattern in both: performance was the goal and the result was measured. That is the same discipline cameleering asks of people.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="productivity">
+  <div class="wrap">
+    <h2>Developer speed is not product speed</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>METR, July 2025</h3>
+        <p>16 experienced open-source developers, 246 real issues in their own large repositories, each randomly assigned to "AI allowed" or not. With AI, tasks took 19% longer, while the developers believed they had been about 20% faster <sup><a href="#s7">[7]</a></sup>. METR says the result does not show that AI slows most developers: the sample is small, the setting specific, and later tools or more practice could change it.</p>
+      </div>
+      <div class="pane">
+        <h3>METR, February 2026 follow-up</h3>
+        <p>57 developers and more than 800 tasks: tasks took an estimated 18% less time for returning developers (confidence interval −38% to +9%) and 4% less for new developers (−15% to +9%), so both intervals include no change <sup><a href="#s8">[8]</a></sup>. METR calls the estimate a poor proxy, because many developers would no longer work without AI and withheld tasks, and it believes speedups are now larger than in early 2025.</p>
+      </div>
+    </div>
+    <p class="note">Either way, these studies measure how fast people finish tasks, not how fast the resulting software runs. Shipping code faster and shipping faster code are different claims.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="industry">
+  <div class="wrap">
+    <h2>Industry-wide signals</h2>
+    <ul>
+      <li><strong>DORA 2024</strong> (Google Cloud): for each 25% increase in AI adoption, documentation quality rose 7.5% and code quality 3.4%, while estimated delivery throughput fell 1.5% and delivery stability 7.2% <sup><a href="#s9">[9]</a></sup>. These are survey associations. The 2025 report found AI now associated with higher throughput, with instability still rising, and describes AI as an amplifier of a team's existing strengths and weaknesses <sup><a href="#s10">[10]</a></sup>.</li>
+      <li><strong>GitClear 2025</strong>: in 211 million changed lines from 2020 to 2024, duplicated code blocks rose about eightfold in 2024, and copy-pasted lines outnumbered moved (refactored) lines for the first time <sup><a href="#s11">[11]</a></sup>. GitClear cannot tell which lines AI wrote, so this is a trend during the years AI spread, not a measurement of AI.</li>
+      <li><strong>Security</strong>: in a Stanford study (CCS 2023), participants with an AI assistant wrote less secure code on four of five tasks and were more confident in it <sup><a href="#s12">[12]</a></sup>. Veracode's 2025 test of more than 100 models found about 45% of outputs chose an insecure option <sup><a href="#s13">[13]</a></sup>; Veracode sells security tools.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="practice">
+  <div class="wrap">
+    <h2>What to do about it</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>practice</th><th>why</th></tr></thead>
+      <tbody>
+        <tr><td>Put performance budgets in CI: startup, memory, size, p99</td><td>a generated change that doubles memory fails the build, like a failing test</td></tr>
+        <tr><td>Ask for efficiency explicitly, and measure the answer</td><td>the studies that found speedups made performance the task and checked it</td></tr>
+        <tr><td>Watch duplication and dependency count</td><td>copied code and pulled-in packages cost size, start time and audit work</td></tr>
+        <tr><td>Review with numbers, not impressions</td><td>developers in the 2025 study felt faster while measuring slower</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Is AI-generated code slower than human code?</summary><p>On efficiency benchmarks from 2024, usually yes: in EffiBench, GPT-4's solutions took 3.12 times as long as human reference solutions on average, and other benchmarks found models more often correct than efficient. When models are asked to optimize and the result is measured, they can make code faster. The benchmarks are mostly Python puzzles, so measure your own code.</p></details>
+    <details><summary>Does AI make developers slower?</summary><p>One 2025 randomized study of 16 experienced developers found tasks took 19% longer with AI. Its 2026 follow-up estimated tasks took 18% less time for returning developers, but with a confidence interval that includes no change, and its authors believe speedups have grown. The evidence is unsettled, and it measures developer time, not software speed.</p></details>
+    <details><summary>Does AI-generated code cause bloat?</summary><p>There are signals: GitClear found duplicated code blocks rose about eightfold in 2024, and DORA associated more AI adoption with lower delivery stability. Neither can attribute the change to AI directly. Budgets in CI catch growth in size and memory whatever its cause.</p></details>
+    <details><summary>How do I keep AI-written code efficient?</summary><p>Treat efficiency like correctness: set budgets for startup, memory, size and tail latency, check them in CI, ask for efficient code explicitly, and review changes with measurements.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-12.</p>
+    <ol class="sources">
+      <li id="s1">Huang et al., <a href="https://arxiv.org/abs/2402.02037">"EffiBench: Benchmarking the Efficiency of Automatically Generated Code"</a>, NeurIPS 2024.</li>
+      <li id="s2">Du et al., <a href="https://arxiv.org/abs/2402.07844">"Mercury: A Code Efficiency Benchmark for Code Large Language Models"</a>, 2024.</li>
+      <li id="s3">Liu et al., <a href="https://arxiv.org/abs/2408.06450">"Evaluating Language Models for Efficient Code Generation"</a> (EvalPerf), 2024.</li>
+      <li id="s4">Waghjale et al., <a href="https://arxiv.org/abs/2407.14044">"ECCO: Can We Improve Model-Generated Code Efficiency Without Sacrificing Functional Correctness?"</a>, 2024.</li>
+      <li id="s5">Shypula et al., <a href="https://arxiv.org/abs/2302.07867">"Learning Performance-Improving Code Edits"</a>, ICLR 2024.</li>
+      <li id="s6">Google DeepMind, <a href="https://deepmind.google/discover/blog/alphadev-discovers-faster-sorting-algorithms/">"AlphaDev discovers faster sorting algorithms"</a>, 2023.</li>
+      <li id="s7">METR, <a href="https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/">"Measuring the Impact of Early-2025 AI on Experienced Open-Source Developer Productivity"</a>, July 2025.</li>
+      <li id="s8">METR, <a href="https://metr.org/blog/2026-02-24-uplift-update/">uplift study update</a>, 24 February 2026.</li>
+      <li id="s9">Google Cloud, <a href="https://cloud.google.com/blog/products/devops-sre/announcing-the-2024-dora-report">"Announcing the 2024 DORA report"</a>.</li>
+      <li id="s10">Google Cloud DORA, <a href="https://services.google.com/fh/files/misc/2025_state_of_ai_assisted_software_development.pdf">State of AI-assisted Software Development 2025</a>.</li>
+      <li id="s11">GitClear, <a href="https://www.gitclear.com/ai_assistant_code_quality_2025_research">"AI Copilot Code Quality: 2025"</a>, as reported by <a href="https://www.devclass.com/ai-ml/2025/02/20/ai-is-eroding-code-quality-states-new-in-depth-report/1626250">DevClass</a>.</li>
+      <li id="s12">Perry et al., <a href="https://arxiv.org/abs/2211.03622">"Do Users Write More Insecure Code with AI Assistants?"</a>, CCS 2023.</li>
+      <li id="s13">Veracode, <a href="https://www.veracode.com/press-release/ai-generated-code-poses-major-security-risks-in-nearly-half-of-all-development-tasks-veracode-research-reveals/">2025 GenAI Code Security Report</a>.</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a></li>
+        <li><a href="../cameleer/compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

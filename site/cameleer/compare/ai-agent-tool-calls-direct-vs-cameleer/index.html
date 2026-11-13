@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Agent Tool Calls: Direct Function Calling vs an Integration Layer | Cameleer</title>
+<meta name="description" content="Direct LLM tool calls leave retries, duplicate actions, half-done work and business rules to the model. Compare them with tool calls routed through Cameleer: validated, run once, rolled back, audited.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="AI agent tool calls: direct function calling vs an integration layer">
+<meta property="og:description" content="What goes wrong when the model runs a multi-step job tool call by tool call, and how routing each tool through Cameleer fixes it.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../../apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/site.css">
+<link rel="stylesheet" href="../../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "AI agent tool calls: direct function calling vs an integration layer",
+ "description": "Direct LLM tool calls leave retries, duplicate actions, half-done work and business rules to the model. Compare them with tool calls routed through Cameleer.",
+ "url": "https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/",
+ "inLanguage": "en", "image": "https://cameleer.ing/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
+ "about": [{"@type": "Thing", "name": "LLM function calling"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
+ {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"},
+ {"@type": "ListItem", "position": 3, "name": "AI agent tool calls: direct vs Cameleer"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "Is Cameleer an AI agent framework?", "acceptedAnswer": {"@type": "Answer", "text": "Not primarily. An agent framework runs the model loop and decides which tool to call; Cameleer executes the tool: it is the action layer between the agent and your systems. For simple agents it also has an agent step that runs a model and its tools in a loop as one step of a route."}},
+ {"@type": "Question", "name": "Does routing tool calls through Cameleer replace function calling?", "acceptedAnswer": {"@type": "Answer", "text": "No. The model still uses function calling; the tool it calls is a Cameleer route behind an HTTP endpoint, declared with the same JSON schema the route validates against."}},
+ {"@type": "Question", "name": "Which models and agent frameworks does it work with?", "acceptedAnswer": {"@type": "Answer", "text": "Any that support function calling or tool use and can make an HTTP request: OpenAI, Anthropic, Google, AWS Bedrock and Azure OpenAI models, open models on Ollama or vLLM, and frameworks that let you define a tool as an HTTP call."}},
+ {"@type": "Question", "name": "Does Cameleer speak MCP?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. ai-tool routes are served to MCP clients over Streamable HTTP or stdio (cameleer run tools.camel.yaml --mcp), in the 2026-07-28 and 2025-11-25 protocol eras, with the same envelope: schema checks, deduplication, approvals, timeouts and audit. A tool can also stay a plain HTTP endpoint, which every framework with function calling can call. Apache Camel 4.22 ships an MCP server too; Cameleer uses its property names."}},
+ {"@type": "Question", "name": "How is this different from a hosted tool catalog such as Composio or Arcade?", "acceptedAnswer": {"@type": "Answer", "text": "Those platforms give an agent many pre-built connectors with managed OAuth, hosted and priced per use. Cameleer is open source and self-hosted: a 20 MB container or a library, about 230 components, and the reliability around the call written as a tested route: schema validation, idempotency, retries, sagas, human approval, rate limits and an audit log. Use a catalog for breadth of SaaS actions; use Cameleer when the action changes money, stock or records and must run exactly once inside your own network."}},
+ {"@type": "Question", "name": "What happens when an agent retries a tool call?", "acceptedAnswer": {"@type": "Answer", "text": "The route sees the same requestId and answers duplicate without executing anything again."}},
+ {"@type": "Question", "name": "When is a direct tool call enough?", "acceptedAnswer": {"@type": "Answer", "text": "When the call only reads, is a single step with no other system to keep consistent, or is a prototype. Use a route as soon as a call changes something, spans several systems, needs a rule the model must not override, or must be audited."}},
+ {"@type": "Question", "name": "Does an extra hop make tool calls slower?", "acceptedAnswer": {"@type": "Answer", "text": "A route adds microseconds to a call; a model turn takes hundreds of milliseconds to seconds. A multi-step job through one route saves model turns, so it is usually faster end to end."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../../" aria-label="Cameleering home"><img src="../../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../../cameleer/" aria-label="Cameleer home"><img src="../../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../../docs/">Docs</a>
+      <a class="keep" href="../../../cameleer/use-cases/">Use cases</a>
+      <a href="../../../cameleer/mcp/">MCP</a>
+      <a href="../../../cameleer/healthcare/">Healthcare</a>
+      <a aria-current="page" href="../../../cameleer/compare/">Compare</a>
+      <a href="../../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../../"><b>Cameleering</b><span>Carry more on less, measured against the original</span></a>
+          <a href="../../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../../projects/"><b>Projects</b><span>Cameleer and simoom measured; karez and ksar not yet</span></a>
+          <a href="../../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / AI agent tool calls</p>
+    <p class="kicker">The action layer for AI agents</p>
+    <h1>AI agent tool calls: direct function calling vs Cameleer</h1>
+    <p class="lede">When an agent calls your APIs directly, retries, duplicate actions, half-done work and business rules are left to the model. Route each tool through Cameleer and the model decides <em>what</em> to do while tested code decides <em>how</em>.</p>
+    <div class="stats">
+      <div class="stat"><b>1</b><span>tool call instead of 4 for a four-system job</span></div>
+      <div class="stat"><b>0</b><span>duplicate refunds when the agent retries</span></div>
+      <div class="stat"><b>400</b><span>with every bad argument named, before anything runs</span></div>
+      <div class="stat"><b>µs</b><span>added per call, against seconds per model turn saved</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="table">
+  <div class="wrap">
+    <h2>Direct tool calls vs tool calls through Cameleer</h2>
+    <p class="intro">The same agent, the same model, the same four APIs. The only difference is who executes the steps.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>concern</th><th>direct tool calls</th><th>through Cameleer</th></tr></thead>
+      <tbody>
+        <tr><td>Who runs a multi-step job</td><td>the model, one tool call and one model turn per step</td><td class="win">a route; the model makes one call</td></tr>
+        <tr><td>Wrong or invented arguments</td><td>reach the API unless glue code checks them</td><td class="win">rejected by a JSON schema with every error listed (<code>400</code>)</td></tr>
+        <tr><td>The agent retries a call</td><td>the action runs again: a second refund, a second email</td><td class="win">each <code>requestId</code> runs once; the repeat gets <code>duplicate</code></td></tr>
+        <tr><td>A step fails after an earlier one succeeded</td><td>half-done work the model has to notice and undo</td><td class="win">a saga runs the compensation (cancel the refund)</td></tr>
+        <tr><td>Flaky APIs</td><td>the model sees the error and may retry, give up or improvise</td><td class="win">retries with back-off at the failing step, then a clear answer</td></tr>
+        <tr><td>Business rules (amounts, limits, approvals)</td><td>written in the prompt and trusted to the model</td><td class="win">code in the route: the amount comes from the order</td></tr>
+        <tr><td>Credentials</td><td>the agent process holds every API key</td><td class="win">the route holds them; the agent can only call the tool</td></tr>
+        <tr><td>Audit</td><td>whatever the agent framework logs</td><td class="win">every accepted call appended to an audit log</td></tr>
+        <tr><td>Rate limits and outages</td><td>per agent, if at all</td><td class="win">throttle and circuit breaker around any API</td></tr>
+        <tr><td>Tokens and latency</td><td>every step re-sends the conversation and tool results</td><td class="win">one tool call, one final turn; steps run at code speed</td></tr>
+        <tr><td>Changing an API or vendor</td><td>change the tool, the prompt, maybe re-test the agent</td><td class="win">change the route; the tool the model sees stays the same</td></tr>
+        <tr><td>Testing</td><td>needs the model in the loop</td><td class="win">the route is tested without a model</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="use-case">
+  <div class="wrap">
+    <h2>A real job: refund a damaged order across four systems</h2>
+    <p class="intro">A customer writes: “My order EU-4411 arrived broken. I want my money back.” Resolving it means reading the order, refunding it, creating a return label and emailing the customer. Rules: delivered orders only, the refund is the order total, refunds over 200 need a person.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>Direct: the model orchestrates</h3>
+        <ul>
+          <li>Four tools: <code>get_order</code>, <code>issue_refund</code>, <code>create_return_label</code>, <code>send_email</code>.</li>
+          <li>A good run is 4 tool calls and 5 model turns, each re-sending the whole conversation.</li>
+          <li>The refund amount is whatever the model read or typed.</li>
+          <li>A retry after a timeout refunds twice. A carrier outage after the refund leaves money gone and no label.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Through Cameleer: the model decides, a route executes</h3>
+        <ul>
+          <li>One tool, <code>resolve_damaged_order</code>, with only what the conversation knows: request id, order id, reason.</li>
+          <li>The route validates the arguments, runs each request once, reads the total from the order and checks the rules.</li>
+          <li>Refund and label run as a saga: if the label fails, the refund is cancelled.</li>
+          <li>Retries with back-off, an audit entry, one clear answer to the model.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>What the tested route answers</h3>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>the agent sends</th><th>the route answers</th><th>what happened</th></tr></thead>
+      <tbody>
+        <tr><td><code>EU-4411</code>, damaged</td><td><code>200 resolved</code></td><td>amount 129.9 taken from the order; a failed payment call was retried; label created; customer emailed</td></tr>
+        <tr><td>the same call again</td><td><code>200 duplicate</code></td><td>nothing executed a second time</td></tr>
+        <tr><td>a malformed id, a free-text reason and an invented amount</td><td><code>400</code></td><td>every bad field named; nothing executed</td></tr>
+        <tr><td>an order not yet delivered</td><td><code>409 rejected</code></td><td>nothing executed</td></tr>
+        <tr><td>an order totalling 899</td><td><code>202 pending_approval</code></td><td>parked for a person, no refund</td></tr>
+        <tr><td>the carrier is down</td><td><code>502 failed</code></td><td>refund issued once, label tried three times, refund cancelled, no email</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">The route runs end to end in Cameleer's test suite against mock order, payment, shipping and email APIs. <a href="../../../docs/guides/agent-tool-calls.html">Read the full route and the walkthrough</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="when">
+  <div class="wrap">
+    <h2>When a direct tool call is enough</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Call the API directly when the call</h3>
+        <ul>
+          <li>only reads, like a search or a lookup, and a repeat does no harm;</li>
+          <li>is a single step with no other system to keep consistent;</li>
+          <li>is a prototype you will move behind a route before real users touch it.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Use a route as soon as a call</h3>
+        <ul>
+          <li>changes something: money, stock, messages, tickets;</li>
+          <li>spans several systems that must stay consistent;</li>
+          <li>needs a rule the model must not override, or an audit trail.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Is Cameleer an AI agent framework?</summary><p>Not primarily. An agent framework runs the model loop and decides which tool to call; Cameleer executes the tool: it is the action layer between the agent and your systems. For simple agents it also has an <a href="../../../docs/guides/agent-step.html">agent step</a> that runs a model and its tools in a loop as one step of a route.</p></details>
+    <details><summary>Does routing tool calls through Cameleer replace function calling?</summary><p>No. The model still uses function calling; the tool it calls is a Cameleer route behind an HTTP endpoint, declared with the same JSON schema the route validates against.</p></details>
+    <details><summary>Which models and agent frameworks does it work with?</summary><p>Any that support function calling or tool use and can make an HTTP request: OpenAI, Anthropic, Google, AWS Bedrock and Azure OpenAI models, open models on Ollama or vLLM, and frameworks that let you define a tool as an HTTP call.</p></details>
+    <details><summary>Does Cameleer speak MCP?</summary><p>Yes. <code>ai-tool</code> routes are served to MCP clients over Streamable HTTP or stdio (<code>cameleer run tools.camel.yaml --mcp</code>), in the 2026-07-28 and 2025-11-25 protocol eras, with the same envelope: schema checks, deduplication, approvals, timeouts and audit. See <a href="../../use-cases/mcp-tool-server/">routes as MCP tools</a>. A tool can also stay a plain HTTP endpoint, which every framework with function calling can call. Apache Camel 4.22 ships an MCP server too; Cameleer uses its property names (<a href="../camel-mcp-server-vs-cameleer/">comparison</a>).</p></details>
+    <details><summary>How is this different from a hosted tool catalog such as Composio or Arcade?</summary><p>Those platforms give an agent many pre-built connectors with managed OAuth, hosted and priced per use. Cameleer is open source and self-hosted: a 20 MB container or a library, about 230 components, and the reliability around the call written as a tested route: schema validation, idempotency, retries, sagas, human approval, rate limits and an audit log. Use a catalog for breadth of SaaS actions; use Cameleer when the action changes money, stock or records and must run exactly once inside your own network.</p></details>
+    <details><summary>What happens when an agent retries a tool call?</summary><p>The route sees the same <code>requestId</code> and answers <code>duplicate</code> without executing anything again.</p></details>
+    <details><summary>When is a direct tool call enough?</summary><p>When the call only reads, is a single step with no other system to keep consistent, or is a prototype. Use a route as soon as a call changes something, spans several systems, needs a rule the model must not override, or must be audited.</p></details>
+    <details><summary>Does an extra hop make tool calls slower?</summary><p>A route adds microseconds to a call; a model turn takes hundreds of milliseconds to seconds. A multi-step job through one route saves model turns, so it is usually faster end to end.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Try it</h2>
+    <p class="intro">Get the tested tool route from the guide and check it with <code>cameleer validate</code>. Then set the URLs of your order, payment, shipping and email APIs, run it, and point your agent's tool definition at it.</p>
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples/agents
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer validate /routes/damaged-order-tool.camel.yaml</pre>
+    <div class="cta">
+      <a class="btn primary" href="../../../docs/guides/agent-tool-calls.html">Read the full guide</a>
+      <a class="btn" href="https://github.com/cameleering/cameleer/blob/main/examples/agents/damaged-order-tool.camel.yaml">See the route</a>
+      <a class="btn" href="../../../docs/guides/agents.html">Agent cookbook</a>
+      <a class="btn" href="../../use-cases/">More use cases</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div>
+      <h4>Compare</h4>
+      <ul>
+        <li><a href="../apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a></li>
+        <li><a href="../../alternatives/apache-camel-alternatives/">Apache Camel alternatives</a></li>
+        <li><a href="./">AI agent tool calls</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../../docs/">Documentation</a></li>
+        <li><a href="../../../docs/guides/agents.html">Cameleer for AI agents</a></li>
+        <li><a href="../../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

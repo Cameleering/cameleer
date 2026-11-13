@@ -5,7 +5,7 @@
 > back, retries and audits, so the model only decides what to do.
 
 The short version, with the comparison table and FAQ, is on the
-[AI agent tool calls: direct vs Cameleer](https://cameleer.ing/compare/ai-agent-tool-calls-direct-vs-cameleer/)
+[AI agent tool calls: direct vs Cameleer](https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/)
 page.
 
 Function calling (also called tool use) is how an AI agent acts: the model answers with the

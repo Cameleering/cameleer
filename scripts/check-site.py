@@ -214,7 +214,22 @@ def main(argv=None):
     sm = os.path.join(site, "sitemap.xml")
     listed = set()
     if os.path.exists(sm):
-        for loc in re.findall(r"<loc>([^<]+)</loc>", open(sm, encoding="utf-8").read()):
+        index = open(sm, encoding="utf-8").read()
+        locs = []
+        if "<sitemapindex" in index:
+            for child in re.findall(r"<loc>([^<]+)</loc>", index):
+                cf = target_file(site, child[len(SITE_URL) - 1:]) if child.startswith(SITE_URL) else None
+                if cf is None:
+                    errors.append("sitemap index: child `%s` does not exist" % child)
+                    continue
+                prefix = child[: child.rindex("/") + 1]
+                for loc in re.findall(r"<loc>([^<]+)</loc>", open(cf, encoding="utf-8").read()):
+                    if not loc.startswith(prefix):
+                        errors.append("sitemap %s: `%s` is outside its directory (sitemaps.org location rule)" % (child, loc))
+                    locs.append(loc)
+        else:
+            locs = re.findall(r"<loc>([^<]+)</loc>", index)
+        for loc in locs:
             listed.add(loc)
             if not loc.startswith(SITE_URL):
                 errors.append("sitemap: `%s` is not on %s" % (loc, SITE_URL))

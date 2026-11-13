@@ -189,7 +189,7 @@ breaker bookkeeping, an audit record); the envelope costs about 6 µs per call o
 | deploy | one binary, about 3 ms start | JVM, Quarkus or Spring Boot | Node.js or Python service | inside the agent |
 
 The Camel column follows Camel's documentation as summarised in
-[Apache Camel's MCP server vs Cameleer](https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/);
+[Apache Camel's MCP server vs Cameleer](https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/);
 [direct tool calls vs Cameleer](agent-tool-calls.md) compares a hand-wired agent with a route on
 a refund across four systems.
 

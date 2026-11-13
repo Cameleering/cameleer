@@ -44,8 +44,8 @@ processing it keeps growing.
 
 | project | what it is | status |
 |---|---|---|
-| **[cameleer](https://github.com/cameleering/cameleer)** | Apache Camel routes in Rust, and the reliable action layer for AI agents: one std-only native binary, about 230 components | **measured** against Apache Camel 4.23.0 on Java 21, same machines: startup 3 ms vs 1.1 s, peak memory 4.8–54x less, throughput 1.7–8.7x, one p99 loss ([the ledger](https://cameleer.ing/cameleering/ledger/)) |
-| **[simoom](https://github.com/cameleering/simoom)** | an embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, Cameleer's HTTP engine | **measured** against Cameleer's previous HTTP server: 1.7–1.8x throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections; against 20 other servers on the same machines: first on start-up, CPU per request and plaintext over TLS, behind may-minihttp on plaintext (6%) and H2O on HTTP/3 (43%); every loss listed ([the ledger](https://cameleer.ing/cameleering/ledger/#simoom)); [crates.io](https://crates.io/crates/simoom) 0.1.0 |
+| **[cameleer](https://github.com/cameleering/cameleer)** | Apache Camel routes in Rust, and the reliable action layer for AI agents: one std-only native binary, about 230 components | **measured** against Apache Camel 4.23.0 on Java 21, same machines: startup 3 ms vs 1.1 s, peak memory 4.8–54x less, throughput 1.7–8.7x, one p99 loss ([the ledger](https://cameleer.ing/ledger/)) |
+| **[simoom](https://github.com/cameleering/simoom)** | an embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, Cameleer's HTTP engine | **measured** against Cameleer's previous HTTP server: 1.7–1.8x throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections; against 20 other servers on the same machines: first on start-up, CPU per request and plaintext over TLS, behind may-minihttp on plaintext (6%) and H2O on HTTP/3 (43%); every loss listed ([the ledger](https://cameleer.ing/ledger/#simoom)); [crates.io](https://crates.io/crates/simoom) 0.1.0 |
 | **karez** | database connectivity for Rust shaped like JDBC, ODBC and ADBC, with Arrow results | design stage, not public yet, targets only |
 | **ksar** | cryptographic primitives and PKI | planned, no repository yet |
 
@@ -63,8 +63,8 @@ and nothing else.
 7. Rewrite when the numbers say so.
 8. Publish the losses.
 
-[What is cameleering?](https://cameleer.ing/cameleering/) · [The ledger](https://cameleer.ing/cameleering/ledger/) ·
-[The method](https://cameleer.ing/cameleering/method/)
+[What is cameleering?](https://cameleer.ing/) · [The ledger](https://cameleer.ing/ledger/) ·
+[The method](https://cameleer.ing/method/)
 
 ## Where to find Cameleer
 

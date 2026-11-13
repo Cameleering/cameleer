@@ -1,8 +1,11 @@
 # cameleer.ing restructure: Cameleering at the root, Cameleer and simoom as microsites
 
 _Plan, 2026-11-13. Status: **v2, approved 2026-11-13.** The owner accepted D1-D4 and D6 as
-recommended. D5 (what Cameleering offers) is still open and is needed before phase 3. Phase 0 is
-in progress. Internal (under `docs/design/`, not published)._
+recommended. **D5:** Cameleering offers nothing but open source, and is open to consulting. That
+gets one line on the root, in `/about/` and in `llms.txt`. **Delivery:** the owner asked for every
+phase to be finished on one branch before a PR is opened. Phases 0-4 therefore ship as one PR, and
+the separate PRs planned for phases 0 and 1 in §11 don't happen. Phase 5, the outward-facing work,
+still waits 1-2 weeks after the merge. Internal (under `docs/design/`, not published)._
 
 **Owner's brief:**
 - Cameleering becomes the main site.

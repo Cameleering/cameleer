@@ -6,7 +6,7 @@
 
 For an overview of what healthcare teams build with it, how it compares with an interface engine
 such as Mirth Connect, and what it does not do yet, see
-[healthcare integration with Cameleer](https://cameleer.ing/healthcare/).
+[healthcare integration with Cameleer](https://cameleer.ing/cameleer/healthcare/).
 
 ## Get it
 

@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Server: Expose Integration Routes as MCP Tools | Cameleer</title>
+<meta name="description" content="Turn integration routes into MCP tools for Claude Desktop, VS Code, Cursor and agent frameworks. One command, both MCP protocol eras, and every call validated, run once, approved and audited.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/mcp-tool-server/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Integration routes as MCP tools, with a reliability envelope">
+<meta property="og:description" content="cameleer run tools.camel.yaml --mcp serves your routes to MCP clients over Streamable HTTP or stdio. Every call is schema-checked, deduplicated, approved when it is risky, cancelled when it is slow and audited.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/use-cases/mcp-tool-server/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/site.css">
+<link rel="stylesheet" href="../../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle",
+ "headline": "Integration routes as MCP tools, with a reliability envelope",
+ "description": "Cameleer serves ai-tool, ai-resource and ai-prompt routes to MCP clients over Streamable HTTP or stdio, in the 2026-07-28 and 2025-11-25 protocol eras, and runs every call through schema validation, deduplication, approvals, timeouts that cancel and a hash-chained audit log.",
+ "url": "https://cameleer.ing/cameleer/use-cases/mcp-tool-server/",
+ "inLanguage": "en", "image": "https://cameleer.ing/og.png",
+ "author": {"@type": "Person", "name": "Sudheesh PM"},
+ "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
+ "about": [{"@type": "Thing", "name": "Model Context Protocol"}, {"@type": "Thing", "name": "AI agent tools"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+ {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
+ {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"},
+ {"@type": "ListItem", "position": 3, "name": "MCP tool server"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
+ {"@type": "Question", "name": "Can I run the MCP server in Docker, on AWS Lambda or at the edge?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. In Docker over HTTP (docker run -p 8080:8080 ... --mcp) or over stdio (docker run -i ... --mcp-stdio as the client's command); on AWS Lambda, where function URL and API Gateway requests for /mcp reach the MCP server in process; on Cloud Run, Knative and Kubernetes as a container; and on an edge gateway, next to the devices its tools control."}},
+ {"@type": "Question", "name": "Which MCP clients work with it?", "acceptedAnswer": {"@type": "Answer", "text": "Any client of the Model Context Protocol: Claude Desktop, VS Code, Cursor and agent frameworks. Clients that start the server themselves use stdio (cameleer run tools.camel.yaml --mcp-stdio); others connect over Streamable HTTP at http://localhost:8080/mcp. Both the 2026-07-28 era and the 2025-11-25, 2025-06-18 and 2025-03-26 versions are served on the same endpoint."}},
+ {"@type": "Question", "name": "What happens when an agent retries a tool call?", "acceptedAnswer": {"@type": "Answer", "text": "A tool with side effects is deduplicated: a repeated call with the same call id (or, without one, the same principal and arguments within idempotencyWindow) returns the recorded result and the route does not run again. A repeat that arrives while the first call is still running waits for it."}},
+ {"@type": "Question", "name": "How does a person approve a risky call?", "acceptedAnswer": {"@type": "Answer", "text": "A destructiveHint tool, or one with an approval rule such as ${header.amount} > 500, does not run until someone says yes. With an approvalEndpoint the call is parked and resolved out of band, for example with cameleer tool approve <handle>. Without one, the client's user is asked: an input_required result with a sealed requestState in 2026-07-28, an elicitation/create request in legacy sessions."}},
+ {"@type": "Question", "name": "How do I withdraw a tool in production?", "acceptedAnswer": {"@type": "Answer", "text": "cameleer tool disable <name> against the running integration (or POST /q/dev/tools/{name}/disable on the dev console). The tool disappears from every list, its calls are refused, and connected clients get notifications/tools/list_changed."}},
+ {"@type": "Question", "name": "Can Cameleer sit in front of other MCP servers?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. With camel.ai.mcp.NAME.* it connects to remote MCP servers over HTTP or stdio, imports their tools into its registry and serves them again next to your own tools, with one authentication, one audit log, approvals for destructive remote tools and pinned definitions, so a server cannot change a tool under your clients."}},
+ {"@type": "Question", "name": "Is the client's token passed to my routes?", "acceptedAnswer": {"@type": "Answer", "text": "No. The client's token is never passed to the routes or downstream. Tool routes see the authenticated principal in CamelMcpSecurityPrincipal and its scopes in CamelMcpSecurityPrincipalScopes; rate limits, approvals and the audit log use the same principal."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../../" aria-label="Cameleering home"><img src="../../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../../cameleer/" aria-label="Cameleer home"><img src="../../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../../docs/">Docs</a>
+      <a class="keep" aria-current="page" href="../../../cameleer/use-cases/">Use cases</a>
+      <a href="../../../cameleer/mcp/">MCP</a>
+      <a href="../../../cameleer/healthcare/">Healthcare</a>
+      <a href="../../../cameleer/compare/">Compare</a>
+      <a href="../../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../../"><b>Cameleering</b><span>Carry more on less, measured against the original</span></a>
+          <a href="../../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../../projects/"><b>Projects</b><span>Cameleer and simoom measured; karez and ksar not yet</span></a>
+          <a href="../../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / MCP tool server</p>
+    <p class="kicker">Model Context Protocol</p>
+    <h1>Integration routes as MCP tools</h1>
+    <p class="lede">Write a route that looks up an order, issues a refund or opens a ticket, and Cameleer serves it to Claude Desktop, VS Code, Cursor or your agent framework as an MCP tool. The model decides what to call; the route decides how it runs: arguments checked against a schema, a retried call run once, risky calls held for a person, slow calls cancelled, every call in the audit log. Ten use cases with recorded requests through Claude are on the <a href="../../mcp/">Cameleer MCP</a> page. An existing route becomes a tool by changing one line, and Cameleer is also an MCP client that can import and re-serve other MCP servers' tools.</p>
+    <div class="stats">
+      <div class="stat"><b>1 command</b><span><code>cameleer run tools.camel.yaml --mcp</code>, or <code>--mcp-stdio</code> for clients that start the server</span></div>
+      <div class="stat"><b>2 eras</b><span>MCP 2026-07-28 and 2025-11-25 (also 06-18 and 03-26), on one endpoint</span></div>
+      <div class="stat"><b>39 / 39</b><span>scenarios of the official conformance suite for 2025-11-25; 26 / 26 for 2025-06-18</span></div>
+      <div class="stat"><b>Camel's names</b><span><code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties as in Apache Camel</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="route">
+  <div class="wrap">
+    <h2>A tool, a resource and a prompt</h2>
+    <p class="intro">Three components make what an MCP client sees: <a href="../../../docs/components/ai-tool.html"><code>ai-tool</code></a> (an action the model can take), <a href="../../../docs/components/ai-resource.html"><code>ai-resource</code></a> (a document it can read) and <a href="../../../docs/components/ai-prompt.html"><code>ai-prompt</code></a> (a prompt template the user can pick). A tool's arguments arrive as headers and the route's body becomes the result.</p>
+    <pre class="cmd"># mcp-server.camel.yaml
+- route:
+    id: lookup-order
+    from:
+      uri: ai-tool:lookup_order
+      parameters:
+        description: Look up an order by id
+        tags: support
+        parameter.orderId: string
+        parameter.orderId.description: The order id, such as EU-4411
+        parameter.orderId.required: true
+        readOnlyHint: true
+      steps:
+        - setBody:
+            simple: '{"orderId": "${header.orderId}", "status": "shipped", "carrier": "DHL"}'
+- route:
+    id: refund-policy
+    from:
+      uri: ai-resource:refund-policy
+      parameters:
+        uri: docs://refund-policy
+        description: When and how much we refund
+        mimeType: text/markdown
+        tags: support
+      steps:
+        - setBody:
+            constant: "# Refund policy\n\nDamaged items are refunded in full within 30 days."
+- route:
+    id: support-reply
+    from:
+      uri: ai-prompt:support-reply
+      parameters:
+        description: Draft a reply to a customer
+        tags: support
+        argument.question.description: The customer's question
+        argument.question.required: true
+        argument.tone.values: friendly,formal
+      steps:
+        - setBody:
+            simple: "Write a ${header.tone} reply to this customer question, citing our refund policy: ${header.question}"</pre>
+    <p class="note">The file is <a href="https://github.com/cameleering/cameleer/blob/main/examples/agents/mcp-server.camel.yaml">examples/agents/mcp-server.camel.yaml</a>. In a real tool the <code>setBody</code> is a call to your order system, a database query or a queue: any of the about 230 components, with the route's own error handling and retries.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Serve it</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Streamable HTTP</h3>
+        <pre class="cmd">cameleer run mcp-server.camel.yaml --mcp
+# MCP endpoint: http://localhost:8080/mcp</pre>
+        <p>The endpoint shares <code>camel.server.port</code> with <code>platform-http</code> routes and the health checks. Requests from browser origins other than localhost get <code>403</code> unless <code>camel.server.mcp-allowed-origins</code> lists them.</p>
+      </div>
+      <div class="pane">
+        <h3>stdio, for a client that starts the server</h3>
+        <pre class="cmd">{
+  "mcpServers": {
+    "orders": {
+      "command": "cameleer",
+      "args": ["run", "/path/to/mcp-server.camel.yaml", "--mcp-stdio"]
+    }
+  }
+}</pre>
+        <p>That is Claude Desktop's <code>claude_desktop_config.json</code>; other clients have a similar file.</p>
+      </div>
+    </div>
+    <p class="note">On the command line <code>--mcp</code> and <code>--mcp-stdio</code> expose every tool, resource and prompt. In a configuration file nothing is exposed until you choose: <code>camel.server.mcp-enabled=true</code> and <code>camel.server.mcp-tags=support</code>. All properties: <a href="../../../docs/guides/mcp-server.html#configuration">MCP server configuration</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="anywhere">
+  <div class="wrap">
+    <h2>Docker, serverless, the edge: the same tools wherever they run</h2>
+    <p class="intro">One route file serves MCP from the binary, the container, your own Rust program, a serverless platform or a gateway next to the machines. Every command below is in the <a href="../../../docs/guides/mcp-server.html#run-it-anywhere">MCP server guide</a>.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>Docker, over HTTP</h3>
+        <pre class="cmd">docker run --rm -p 8080:8080 -v "$PWD:/routes:ro"   cameleering/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
+        <p>Clients connect to <code>http://localhost:8080/mcp</code>. Add <code>--prop camel.server.mcp-tags=support</code> to expose only some tools. The same service runs under Docker Compose and Kubernetes.</p>
+      </div>
+      <div class="pane">
+        <h3>Docker, over stdio</h3>
+        <pre class="cmd">{
+  "mcpServers": {
+    "orders": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-v", "/path/to/tools:/routes:ro",
+               "cameleering/cameleer", "run", "/routes/mcp-server.camel.yaml",
+               "--mcp-stdio"]
+    }
+  }
+}</pre>
+        <p>The client starts the container. Logs go to stderr, so stdout carries only protocol messages.</p>
+      </div>
+      <div class="pane">
+        <h3>AWS Lambda and Cloud Run</h3>
+        <ul>
+          <li><strong>Lambda:</strong> the binary is its own runtime; function URL and API Gateway requests for <code>/mcp</code> reach the MCP server in process. Stateless 2026-07-28 clients suit it best.</li>
+          <li><strong>Cloud Run, Knative, Container Apps:</strong> the image with <code>--mcp</code>; routes are running about 3 ms after the container starts, so scaling to zero costs clients little.</li>
+          <li>Several instances share approvals through one <code>camel.server.mcp-request-state-key</code>.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>An edge gateway</h3>
+        <ul>
+          <li>Tools next to the devices: read the latest MQTT sensor readings, change a setpoint, with setpoints above a limit waiting for a person.</li>
+          <li>Readings stay on site; the agent reaches only what the tools expose. arm64 and amd64 images.</li>
+          <li><a href="../../../docs/guides/edge.html#mcp-tools-on-the-gateway-let-an-agent-read-sensors-and-change-setpoints">The tested gateway example</a> · <a href="../mqtt-iot-edge-gateway/">MQTT edge gateways</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="envelope">
+  <div class="wrap">
+    <h2>What happens on every call</h2>
+    <p class="intro">Every call, from an MCP client, the <a href="../../../docs/guides/agent-step.html">agent step</a>, a model component or a route, goes through the same envelope, in this order. In Apache Camel the tool hints are advisory; here they set the defaults of these checks.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>step</th><th>what it does</th><th>option</th></tr></thead>
+      <tbody>
+        <tr><td>Kill switch</td><td>a withdrawn tool is not listed and its calls are refused</td><td><code>camel.ai.disabled-tools</code>, <code>cameleer tool disable</code></td></tr>
+        <tr><td>Authorization</td><td>a policy bean or a Simple predicate over the arguments and the caller may refuse the call; the reason goes back to the model</td><td><code>authorizationPolicy</code>, <code>authorize</code></td></tr>
+        <tr><td>Arguments</td><td><code>camel*</code> and undeclared arguments are dropped; the rest is validated against JSON Schema 2020-12, and the error names each field and shows valid arguments</td><td><code>parameter.*</code>, <code>argSchema</code></td></tr>
+        <tr><td>Rate limit</td><td>calls per principal per period</td><td><code>rateLimit</code>, <code>rateLimitPeriod</code></td></tr>
+        <tr><td>Circuit breaker</td><td>after repeated failures the model gets a fallback text and the route does not run</td><td><code>circuitBreakerThreshold</code></td></tr>
+        <tr><td>Approval</td><td>destructive or matching calls wait for a person</td><td><code>destructiveHint</code>, <code>approval</code>, <code>approvalEndpoint</code></td></tr>
+        <tr><td>Idempotency</td><td>a retried call returns the recorded result; a repeat that arrives during the first call waits for it</td><td><code>idempotency</code>, <code>idempotencyWindow</code></td></tr>
+        <tr><td>Compensation</td><td>the undo step is registered before the call; if the conversation fails later, undo steps run newest first</td><td><code>compensation</code></td></tr>
+        <tr><td>Timeout</td><td>when the caller stops waiting, the tool's route is cancelled before its next step</td><td><code>timeout</code> (default 20 s)</td></tr>
+        <tr><td>Result</td><td>objects and arrays stay structured; an <code>outputSchema</code> is checked; secrets, e-mail addresses, card numbers, IBANs and other patterns can be redacted before the result reaches the model, the client or the log</td><td><code>outputSchema</code>, <code>redact</code>, <code>cacheTtl</code></td></tr>
+        <tr><td>Audit</td><td>one hash-chained record per call: digests of arguments and result, the decision, the approver, the duration. An edited, removed or reordered record fails verification</td><td><code>camel.ai.audit.*</code></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Pinning: a tool's definition hash covers its name, description, schemas and hints. A route that changes a tool but keeps its <code>version</code> fails to start, so a tool cannot change under a client that already trusts it (<code>camel.ai.manifest</code> keeps the hashes across restarts). Details: <a href="../../../docs/components/ai-tool.html#a-call-step-by-step">ai-tool, a call step by step</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="approvals">
+  <div class="wrap">
+    <h2>Approvals and operators</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>A person in the loop</h3>
+        <ul>
+          <li><strong>Out of band.</strong> With an <code>approvalEndpoint</code> (Slack, e-mail, a ticket queue) the call is parked with a handle and the client is told it is waiting. <code>cameleer tool approve &lt;handle&gt;</code> runs it once; <code>cameleer tool deny</code> runs nothing.</li>
+          <li><strong>In band, 2026-07-28.</strong> The result is <code>input_required</code> with an <code>elicitation/create</code> form and a <code>requestState</code> sealed with AES-256-GCM, bound to the principal, the tool, a digest of the arguments and an expiry. A tampered state, changed arguments or a replay run nothing.</li>
+          <li><strong>In band, legacy sessions.</strong> The server sends <code>elicitation/create</code> on the call's response stream (HTTP) or on stdout (stdio).</li>
+          <li>A client that did not declare the <code>elicitation</code> capability gets <code>-32021</code> and the call does not run.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Running it</h3>
+        <ul>
+          <li><code>cameleer tool list</code>, <code>disable</code>, <code>enable</code>, <code>approvals</code>, <code>approve</code>, <code>deny</code> against a running integration; <code>GET /q/dev/tools</code> on the dev console.</li>
+          <li>Authentication over HTTP: API keys, JWTs (JWKS or HMAC) or RFC 7662 introspection, with RFC 9728 protected-resource metadata and RFC 8707 audience checks.</li>
+          <li>The client's token never reaches the routes; they see the principal in <code>CamelMcpSecurityPrincipal</code>.</li>
+          <li>Route exceptions reach clients as a generic message with an error id, as in Camel, unless <code>camel.server.mcp-expose-errors=true</code>.</li>
+        </ul>
+      </div>
+    </div>
+    <h3>From inside a tool route</h3>
+    <p>A long tool can report progress and log lines to the client, ask the client's user a question or ask the client's model, in both protocol eras: <code>ai-tool:x?operation=progress</code>, <code>log</code>, <code>elicit</code> and <code>sample</code>. A route can also return images, audio or embedded resources by setting <code>CamelAiToolContent</code>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="gateway">
+  <div class="wrap">
+    <h2>One gateway in front of other MCP servers</h2>
+    <p class="intro">Cameleer is also an MCP client. It imports the tools of remote servers into its registry, where they run through the same envelope, and its own server can serve them again next to your tools.</p>
+    <pre class="cmd">camel.ai.mcp.github.url=https://mcp.example.com/github
+camel.ai.mcp.github.bearerToken={{env:GITHUB_TOKEN}}
+camel.ai.mcp.files.command=files-server
+
+camel.server.mcp-enabled=true
+camel.server.mcp-tags=mcp:*,support
+camel.server.mcp-auth=jwt
+camel.server.mcp-jwt-jwks-url=https://login.example.com/.well-known/jwks.json
+camel.server.mcp-resource-url=https://tools.example.com/mcp</pre>
+    <div class="two">
+      <div class="pane">
+        <h3>What clients get</h3>
+        <ul>
+          <li>One endpoint and one login instead of a configuration per server; the third-party credentials stay in Cameleer's configuration.</li>
+          <li>One hash-chained audit log for local and remote calls, with the client's principal.</li>
+          <li>Your rules on their tools: remote arguments are validated locally before anything is sent, destructive remote tools need approval, the kill switch and deduplication apply.</li>
+          <li>Clients of either protocol era can use servers of either era.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Rug-pull protection</h3>
+        <ul>
+          <li>Imported tools are pinned. If a server changes a tool's description, schema or annotations after it was imported, the change is refused and the tool is withdrawn, with the reason in the log.</li>
+          <li>This stops a server that was trusted when it was added from rewriting a tool into an instruction for the model later.</li>
+          <li>Tool lists re-sync on <code>list_changed</code> and reconnects; a server that is down does not stop the integration.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">The agent step uses remote tools with <code>tools: mcp:github</code>, and a route calls one without a model with <code>to: mcp:github/create_issue</code>. Details: <a href="../../../docs/guides/mcp-client.html">MCP client and gateway</a> and the <a href="../../../docs/components/mcp.html">mcp component</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="verified">
+  <div class="wrap">
+    <h2>How it is checked</h2>
+    <ul>
+      <li>The official conformance suite (<code>@modelcontextprotocol/conformance</code> 0.1.16, pinned and checksum-verified) passes every scenario: 39 of 39 for 2025-11-25 and 26 of 26 for 2025-06-18. The suite predates 2026-07-28, so that era is covered by the hermetic tests.</li>
+      <li>Hermetic tests drive both eras over real HTTP and stdio connections, including approvals, subscriptions, authentication, the gateway and a tool that changes upstream.</li>
+      <li>An end-to-end test starts the real <code>cameleer</code> binary as a stdio MCP server and has an agent step call one of its tools.</li>
+    </ul>
+    <p class="note">Measured on three identical cloud machines: 39,922 tool calls per second in MCP sessions in 56 MB, against 22,604 in 289 MB for Apache Camel's MCP server and 2,257 for a server written on the official TypeScript SDK; a tool call through the envelope costs 3 to 6 µs (<a href="../../compare/camel-mcp-server-vs-cameleer/">the comparison</a>).</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Which MCP clients work with it?</summary><p>Any client of the Model Context Protocol: Claude Desktop, VS Code, Cursor and agent frameworks. Clients that start the server themselves use stdio (<code>cameleer run tools.camel.yaml --mcp-stdio</code>); others connect over Streamable HTTP at <code>http://localhost:8080/mcp</code>. Both the 2026-07-28 era and the 2025-11-25, 2025-06-18 and 2025-03-26 versions are served on the same endpoint.</p></details>
+    <details><summary>Can I run the MCP server in Docker, on AWS Lambda or at the edge?</summary><p>Yes. In Docker over HTTP (<code>docker run -p 8080:8080 ... --mcp</code>) or over stdio (<code>docker run -i ... --mcp-stdio</code> as the client's command); on AWS Lambda, where function URL and API Gateway requests for <code>/mcp</code> reach the MCP server in process; on Cloud Run, Knative and Kubernetes as a container; and on an edge gateway, next to the devices its tools control.</p></details>
+    <details><summary>What happens when an agent retries a tool call?</summary><p>A tool with side effects is deduplicated: a repeated call with the same call id (or, without one, the same principal and arguments within <code>idempotencyWindow</code>) returns the recorded result and the route does not run again. A repeat that arrives while the first call is still running waits for it.</p></details>
+    <details><summary>How does a person approve a risky call?</summary><p>A <code>destructiveHint</code> tool, or one with an approval rule such as <code>${header.amount} &gt; 500</code>, does not run until someone says yes. With an <code>approvalEndpoint</code> the call is parked and resolved out of band, for example with <code>cameleer tool approve &lt;handle&gt;</code>. Without one, the client's user is asked: an <code>input_required</code> result with a sealed <code>requestState</code> in 2026-07-28, an <code>elicitation/create</code> request in legacy sessions.</p></details>
+    <details><summary>How do I withdraw a tool in production?</summary><p><code>cameleer tool disable &lt;name&gt;</code> against the running integration (or <code>POST /q/dev/tools/{name}/disable</code> on the dev console). The tool disappears from every list, its calls are refused, and connected clients get <code>notifications/tools/list_changed</code>.</p></details>
+    <details><summary>Can Cameleer sit in front of other MCP servers?</summary><p>Yes. With <code>camel.ai.mcp.NAME.*</code> it connects to remote MCP servers over HTTP or stdio, imports their tools into its registry and serves them again next to your own tools, with one authentication, one audit log, approvals for destructive remote tools and pinned definitions, so a server cannot change a tool under your clients.</p></details>
+    <details><summary>Is the client's token passed to my routes?</summary><p>No. The client's token is never passed to the routes or downstream. Tool routes see the authenticated principal in <code>CamelMcpSecurityPrincipal</code> and its scopes in <code>CamelMcpSecurityPrincipalScopes</code>; rate limits, approvals and the audit log use the same principal.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="run">
+  <div class="wrap">
+    <h2>Run it</h2>
+    <p class="intro">Clone the examples, then point an MCP client at the endpoint or the stdio command.</p>
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples/agents
+cameleer run mcp-server.camel.yaml --mcp
+# or, without installing anything:
+docker run --rm -p 8080:8080 -v "$PWD:/routes:ro" cameleering/cameleer run /routes/mcp-server.camel.yaml --mcp</pre>
+    <div class="cta">
+      <a class="btn primary" href="../../mcp/">Cameleer MCP: all use cases</a>
+      <a class="btn" href="../../../docs/guides/mcp-server.html">MCP server guide</a>
+      <a class="btn" href="../../../docs/components/ai-tool.html">ai-tool reference</a>
+      <a class="btn" href="../../compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a>
+      <a class="btn" href="../llm-gateway-in-process/">Model calls without a gateway</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div>
+      <h4>Use cases</h4>
+      <ul>
+        <li><a href="../">All use cases</a></li>
+        <li><a href="../llm-gateway-in-process/">Model calls without a gateway</a></li>
+        <li><a href="../../compare/ai-agent-tool-calls-direct-vs-cameleer/">Tools for AI agents</a></li>
+        <li><a href="../serverless-aws-lambda/">Serverless</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../../docs/guides/mcp-server.html">MCP server</a></li>
+        <li><a href="../../../docs/guides/mcp-client.html">MCP client and gateway</a></li>
+        <li><a href="../../../docs/guides/agent-step.html">The agent step</a></li>
+        <li><a href="../../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
