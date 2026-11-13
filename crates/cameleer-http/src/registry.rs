@@ -194,6 +194,17 @@ impl Router {
         }
     }
 
+    /// The id of the route a request would be dispatched to.
+    pub fn route_id(&self, req: &HttpRequest) -> Option<u64> {
+        let entries = self.entries.read().unwrap();
+        let mut candidates: Vec<&RouteEntry> = entries.iter().filter(|e| e.spec.allows(&req.method) && e.template.matches(&req.raw_path, e.spec.match_on_uri_prefix).is_some()).collect();
+        candidates.sort_by_key(|e| {
+            let prefix = e.spec.match_on_uri_prefix || e.template.wildcard;
+            (prefix, std::cmp::Reverse(e.template.literal_count()), std::cmp::Reverse(e.template.segments.len()))
+        });
+        candidates.first().map(|e| e.id)
+    }
+
     /// The asynchronous handler the request would be dispatched to, with its path parameters.
     pub fn async_target(&self, req: &HttpRequest) -> Option<(AsyncRouteHandler, Vec<(String, String)>)> {
         let entries = self.entries.read().unwrap();
@@ -310,6 +321,9 @@ impl crate::server::HttpHandler for RouterHandler {
     }
     fn is_async(&self, request: &HttpRequest) -> bool {
         self.0.async_target(request).is_some()
+    }
+    fn route_key(&self, request: &HttpRequest) -> u64 {
+        self.0.route_id(request).unwrap_or(0)
     }
     fn handle_async(&self, request: HttpRequest, respond: crate::server::Responder) {
         match self.0.async_target(&request) {

@@ -37,6 +37,12 @@ pub type Responder = Box<dyn FnOnce(HttpResponse) + Send>;
 pub trait HttpHandler: Send + Sync {
     fn handle(&self, request: &mut HttpRequest) -> HttpResponse;
 
+    /// Identifies the route a request is dispatched to (0 = unknown). An event-loop engine uses it
+    /// to learn per route whether the handler is fast enough to run on the loop thread.
+    fn route_key(&self, _request: &HttpRequest) -> u64 {
+        0
+    }
+
     /// Whether this request is answered by [`HttpHandler::handle_async`]: the handler never
     /// blocks the calling thread, it hands the work on and answers through the responder, from
     /// any thread, later. An event-loop engine calls it on the loop thread; the thread-per-
