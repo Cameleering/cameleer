@@ -69,6 +69,17 @@
     <h1>Headroom: what is left when servers drop out</h1>
     <p class="lede">On 12 and 13 November 2026, Microsoft 365 went down around the world. Microsoft said the load that strained its infrastructure was not new traffic. It was the same traffic, landing on fewer servers. How much a fleet survives losing part of itself depends on what each request costs and how fast a server can come back. That is an efficiency property, and it can be measured before an incident.</p>
     <p class="rule">No claim without a number.</p>
+    <!-- partial:series-box -->
+<aside class="series" aria-label="The headroom series">
+    <p class="series-label">The headroom series &middot; part 1 of 4</p>
+    <ol>
+        <li aria-current="page"><span class="sn">Part 1</span> <b>Headroom: what is left when servers drop out</b> <span class="sw">The question, and the incident that raised it. You are here.</span></li>
+        <li><span class="sn">Part 2</span> <a href="../degraded-fleet-test/"><b>The degraded-fleet test</b></a> <span class="sw">How to measure it before an incident.</span></li>
+        <li><span class="sn">Part 3</span> <a href="../cold-start-recovery/"><b>Cold start is a recovery problem</b></a> <span class="sw">Why a restarted server is weakest when it first takes traffic.</span></li>
+        <li><span class="sn">Part 4</span> <a href="../tls-handshake-cost/"><b>The cost of a TLS handshake</b></a> <span class="sw">Why a reconnection wave is a load test.</span></li>
+    </ol>
+  </aside>
+<!-- /partial:series-box -->
   </div>
 </section>
 
@@ -114,7 +125,7 @@
     <p>Two properties decide how this goes:</p>
     <ul>
       <li><strong>Start-up time.</strong> How long from process start to serving at full speed (<a href="../cold-start-recovery/">cold start is a recovery problem</a>). Seconds of warm-up per node add up across a fleet restart.</li>
-      <li><strong>The cost of a new connection.</strong> After an outage, clients reconnect together. A full TLS handshake costs far more than a request on an open connection, so the reconnection wave can be heavier than normal traffic.</li>
+      <li><strong>The cost of a new connection.</strong> After an outage, clients reconnect together. A full TLS handshake costs far more than a request on an open connection, so the reconnection wave can be heavier than normal traffic (<a href="../tls-handshake-cost/">the cost of a TLS handshake</a>).</li>
     </ul>
     <p>The standard mitigations are well known, and Microsoft used one of them:</p>
     <div class="cards">
@@ -216,6 +227,12 @@
     </ul>
   </div>
 </section>
+<!-- partial:series-nav -->
+<nav class="series-nav" aria-label="The headroom series">
+    <span></span>
+    <a class="next" href="../degraded-fleet-test/"><span>Part 2 &rarr;</span><b>The degraded-fleet test</b></a>
+  </nav>
+<!-- /partial:series-nav -->
 </main>
 
 <footer>

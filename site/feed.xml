@@ -8,6 +8,14 @@
   <updated>2026-11-13T00:00:00Z</updated>
   <author><name>Cameleering</name><uri>https://cameleer.ing/</uri></author>
   <entry>
+    <title>The cost of a TLS handshake, and why a reconnection wave is a load test</title>
+    <link href="https://cameleer.ing/tls-handshake-cost/"/>
+    <id>https://cameleer.ing/tls-handshake-cost/</id>
+    <published>2026-11-13T00:00:00Z</published>
+    <updated>2026-11-13T00:00:00Z</updated>
+    <summary>TLS on an open connection is cheap; setting it up is not, and after a restart or failover many clients set up at once. What a handshake asks of a server, the arithmetic of a reconnection wave, the fixes, and what our own handshake numbers do and do not show.</summary>
+  </entry>
+  <entry>
     <title>Cold start is a recovery problem</title>
     <link href="https://cameleer.ing/cold-start-recovery/"/>
     <id>https://cameleer.ing/cold-start-recovery/</id>
