@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Headroom: What Is Left When Servers Drop Out | Cameleering</title>
+<meta name="description" content="The November 2026 Microsoft 365 outage was the same traffic on fewer servers. Why per-request cost sets your headroom, and a test to measure it in advance.">
+<link rel="canonical" href="https://cameleer.ing/headroom/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="Headroom: what is left when servers drop out">
+<meta property="og:description" content="The Microsoft 365 outage of 12 and 13 November 2026 was not new traffic but the same traffic on fewer servers. How per-request cost and recovery time set a fleet's margin, and how to measure it before an incident.">
+<meta property="og:url" content="https://cameleer.ing/headroom/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Headroom: what is left when servers drop out", "description": "The Microsoft 365 outage of 12 and 13 November 2026 was not new traffic but the same traffic on fewer servers. How per-request cost and recovery time set a fleet's margin, and how to measure it before an incident.", "url": "https://cameleer.ing/headroom/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-13", "dateModified": "2026-11-13", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Headroom"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Was the Microsoft 365 outage a cyberattack?", "acceptedAnswer": {"@type": "Answer", "text": "Microsoft said there was no indication of a cyberattack, as reported by ABC News and BleepingComputer."}}, {"@type": "Question", "name": "What caused the outage?", "acceptedAnswer": {"@type": "Answer", "text": "Microsoft has not published a root cause or a post-incident review yet. Its status updates described servers that were unexpectedly unavailable and the strain that put on the rest. We will update this page when the review is out."}}, {"@type": "Question", "name": "What is headroom?", "acceptedAnswer": {"@type": "Answer", "text": "The spare capacity a fleet has between its normal load and the load at which it stops answering in time. It is what absorbs lost servers, traffic spikes and the extra work of recovery."}}, {"@type": "Question", "name": "How do I test my own headroom?", "acceptedAnswer": {"@type": "Answer", "text": "Run a degraded-fleet test: remove a third of your servers, replay production-shaped load, and record p99 latency, error rate, CPU, memory and how long a restarted node takes to become healthy. Add a cold restart under load and a storm of new TLS connections."}}, {"@type": "Question", "name": "Would a more efficient server have prevented it?", "acceptedAnswer": {"@type": "Answer", "text": "No one can say, and we do not claim it. Efficient software buys margin, not immunity. It does not replace capacity planning, load shedding and safe rollouts."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <a href="../articles/">Articles</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / Headroom</p>
+    <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
+    <p class="kicker">Cameleering · capacity, recovery and efficiency</p>
+    <h1>Headroom: what is left when servers drop out</h1>
+    <p class="lede">On 12 and 13 November 2026, Microsoft 365 went down around the world. Microsoft said the load that strained its infrastructure was not new traffic. It was the same traffic, landing on fewer servers. How much a fleet survives losing part of itself depends on what each request costs and how fast a server can come back. That is an efficiency property, and it can be measured before an incident.</p>
+    <p class="rule">No claim without a number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="known">
+  <div class="wrap">
+    <h2>What Microsoft has said so far</h2>
+    <p class="note"><strong>Read this first.</strong> As of 13 November 2026, Microsoft has published no post-incident review and no root cause. We don't know the cause, and nothing on this page is a guess at it. We will update the page when Microsoft publishes its review.</p>
+    <p>The outage affected Exchange Online and Outlook, Teams, SharePoint Online, Copilot for Microsoft 365, Defender XDR and other services. Microsoft tracked it as advisory MO1550821, with a related Exchange incident EX1550543 <sup><a href="#s1">[1]</a></sup> <sup><a href="#s2">[2]</a></sup>, and outage trackers filled with reports from users who could not reach mail or meetings <sup><a href="#s5">[5]</a></sup>.</p>
+    <p>Microsoft's status updates, in order:</p>
+    <ul>
+      <li>The elevated load "isn't driven by an increase in traffic", but by servers being unexpectedly unavailable, "straining the remaining infrastructure" <sup><a href="#s1">[1]</a></sup>.</li>
+      <li>Engineers were restarting and validating servers, and assessing whether reverting "a small number of recent configuration updates" could help <sup><a href="#s2">[2]</a></sup>.</li>
+      <li>Servers returned to service "can become unresponsive again once they receive traffic", so Microsoft was temporarily limiting which types of traffic could reach the affected infrastructure <sup><a href="#s3">[3]</a></sup>.</li>
+    </ul>
+    <p>Reports say servers were failing automated health checks <sup><a href="#s4">[4]</a></sup>. Microsoft said there was no indication of a cyberattack <sup><a href="#s5">[5]</a></sup> <sup><a href="#s6">[6]</a></sup>.</p>
+    <p>Two things in those updates are general, whatever the cause turns out to be. Load from lost servers moved onto the ones still running. And servers coming back fell over again when traffic reached them. Every fleet faces both, and both can be tested.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="arithmetic">
+  <div class="wrap">
+    <h2>The same traffic on fewer servers</h2>
+    <p class="intro">When servers drop out, the requests they were serving do not go away. Load balancers send them to the survivors. Each survivor's utilisation rises by the ratio of the old fleet to the new one.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>normal utilisation</th><th class="num">lose a quarter</th><th class="num">lose a third</th><th class="num">lose half</th></tr></thead>
+      <tbody>
+        <tr><td>40%</td><td class="num">53%</td><td class="num">60%</td><td class="num">80%</td></tr>
+        <tr><td>50%</td><td class="num">66%</td><td class="num">75%</td><td class="num">100%</td></tr>
+        <tr><td>60%</td><td class="num">80%</td><td class="num">90%</td><td class="num">120%</td></tr>
+        <tr><td>70%</td><td class="num">93%</td><td class="num">105%</td><td class="num">140%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Arithmetic, not a measurement: utilisation divided by the fraction of servers left. It assumes load spreads evenly and that nothing else changes. In practice it gets worse: latency climbs long before 100%, queues grow, and clients retry.</p>
+    <p>A fleet at 60% that loses a third of its servers runs the survivors at 90%. That is tight but alive. The same fleet at 70% is past 100%. The difference between those two rows is the headroom.</p>
+    <p>Headroom is usually bought with more servers. But utilisation is load times cost per request. Halve the CPU, memory and connection setup each request needs, and the same fleet runs at half the utilisation. The margin is the same as doubling the servers, and it stays there on the day some of them disappear. That is why per-request cost is a reliability number, not only a cost number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="recovery">
+  <div class="wrap">
+    <h2>Coming back under load</h2>
+    <p>Microsoft's third update describes a known trap. A restarted server is at its weakest when it first joins. Its caches are empty. A JIT-compiled runtime has not compiled its hot paths yet. Connection pools to databases and back ends are empty. TLS session caches are cold, so every client does a full handshake. If that server gets its full share of traffic at once, it can fail its health check and leave again. The rest of the fleet then carries the load for one more cycle.</p>
+    <p>Two properties decide how this goes:</p>
+    <ul>
+      <li><strong>Start-up time.</strong> How long from process start to serving at full speed. Seconds of warm-up per node add up across a fleet restart.</li>
+      <li><strong>The cost of a new connection.</strong> After an outage, clients reconnect together. A full TLS handshake costs far more than a request on an open connection, so the reconnection wave can be heavier than normal traffic.</li>
+    </ul>
+    <p>The standard mitigations are well known, and Microsoft used one of them:</p>
+    <div class="cards">
+      <div class="card"><div class="res">slow start</div><p>The load balancer ramps a new server's share up over a window instead of sending it a full share at once.</p></div>
+      <div class="card"><div class="res">load shedding</div><p>A server refuses work it cannot finish in time, cheaply and early, rather than accepting everything and timing out on all of it.</p></div>
+      <div class="card"><div class="res">admission control</div><p>Limit concurrent work per server and per traffic type. Limiting which types of traffic reach the affected servers, as Microsoft did, is this.</p></div>
+      <div class="card"><div class="res">retry budgets</div><p>Clients cap retries as a share of requests and back off with jitter, so a failure does not multiply the load.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="test">
+  <div class="wrap">
+    <h2>Measure it before the incident</h2>
+    <p class="intro">Headroom is easy to assume and easy to measure. Three tests, run on a staging fleet that matches production in shape, tell you where you stand. Record the results next to the date and the build, as the <a href="../method/">Cameleering method</a> asks for every number.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>test</th><th>what to do</th><th>what to record</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1. Degraded fleet</strong></td><td>Take N servers at production-shaped load. Remove a third of them. Replay the same load for at least as long as your longest past incident.</td><td>p99 latency, error rate, CPU and memory on the survivors; the point where p99 breaks your target.</td></tr>
+        <tr><td><strong>2. Cold restart under load</strong></td><td>While the degraded fleet is under load, restart one node and let it rejoin with and without slow start.</td><td>Time from process start to passing health checks; time to full speed; whether it fails again.</td></tr>
+        <tr><td><strong>3. Connection storm</strong></td><td>Drop all client connections at once and let clients reconnect, with full and with resumed TLS handshakes.</td><td>Handshakes per second per core, p99 during the wave, time until normal latency returns.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Run them again after every change that touches the hot path, and keep the history. A regression in per-request cost is a regression in headroom, even when no test fails. The <a href="../#playbook">playbook</a> describes how to turn such numbers into budgets that fail a build.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="ours">
+  <div class="wrap">
+    <h2>What our own measurements say</h2>
+    <p class="intro">Cameleering's projects measure the properties above against the software they replace. These numbers come from our own runs, each with its baseline. They say nothing about Microsoft's systems, and we do not claim any of it would have prevented this outage.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>property</th><th>result</th><th>baseline</th></tr></thead>
+      <tbody>
+        <tr><td>start-up</td><td>Cameleer: 3 ms</td><td>Apache Camel 4.23 on Java 21: 1.1 s; on Quarkus native: 30 ms</td></tr>
+        <tr><td>throughput on the same CPUs</td><td>Cameleer: 1.7 to 8.7x</td><td>Apache Camel 4.23 on Java 21, same DigitalOcean c-4 machines</td></tr>
+        <tr><td>peak memory</td><td>Cameleer: 4.8 to 54x less</td><td>the same</td></tr>
+        <tr><td>CPU per request</td><td>simoom: about 13 µs, 43% less</td><td>cameleer-http, the server it replaced: about 23 µs</td></tr>
+        <tr><td>throughput</td><td>simoom: 1.7 to 1.8x</td><td>cameleer-http</td></tr>
+        <tr><td>TLS 1.3 handshakes per second</td><td>simoom: 9,396 full, 12,388 resumed</td><td>1.39x and 1.56x H2O; 24% and 9% behind axum + rustls</td></tr>
+        <tr><td>overload, 195k req/s offered</td><td>simoom: 10th of 19 for answers within 1 ms</td><td>about as many answers in total as the others; actix-web answered 22x more in time</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Sources: <a href="../ledger/#cameleer">the ledger, Cameleer</a>, <a href="../ledger/#simoom">the ledger, simoom</a> and <a href="../simoom/benchmarks/">simoom benchmarks</a> <sup><a href="#s7">[7]</a></sup>.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>Where it helps</h3>
+        <p>Lower CPU per request and lower memory mean lower utilisation for the same load, which is headroom. A 3 ms start-up shortens the time before a restarted node can take traffic at all, though caches and pools still have to fill. Fast resumed TLS handshakes make a reconnection wave cheaper.</p>
+      </div>
+      <div class="pane">
+        <h3>Where it does not, yet</h3>
+        <p>Overload behaviour is hard, and our own numbers show it. Offered far more than it could serve, simoom answered about as many requests as the other servers but few of them within 1 ms. That is the failure mode load shedding exists for, and we have work to do there. On full TLS handshakes, axum with rustls is ahead of us.</p>
+      </div>
+    </div>
+    <p>Efficient software buys headroom. It is not a substitute for capacity planning, load shedding and safe rollouts. It makes each of them easier, because there is more margin to work with.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="close">
+  <div class="wrap">
+    <h2>A note on the people</h2>
+    <p>Somewhere, engineers spent the night restarting servers, watching them fall over, and trying again with less traffic. That is hard, careful work, done in public, under pressure. Their updates were clear about what they knew and what they did not. This page is not a verdict on them.</p>
+    <p>The thing to fight is waste, not the people. Every request that costs less leaves a little more room for the day the fleet is smaller than planned. For the cost side of the same idea, see <a href="../finops/">code efficiency as a FinOps lever</a>; for how we measure, <a href="../method/">the method</a>; for every result, good and bad, <a href="../ledger/">the ledger</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Was the Microsoft 365 outage a cyberattack?</summary><p>Microsoft said there was no indication of a cyberattack, as reported by ABC News and BleepingComputer.</p></details>
+    <details><summary>What caused the outage?</summary><p>Microsoft has not published a root cause or a post-incident review yet. Its status updates described servers that were unexpectedly unavailable and the strain that put on the rest. We will update this page when the review is out.</p></details>
+    <details><summary>What is headroom?</summary><p>The spare capacity a fleet has between its normal load and the load at which it stops answering in time. It is what absorbs lost servers, traffic spikes and the extra work of recovery.</p></details>
+    <details><summary>How do I test my own headroom?</summary><p>Run a degraded-fleet test: remove a third of your servers, replay production-shaped load, and record p99 latency, error rate, CPU, memory and how long a restarted node takes to become healthy. Add a cold restart under load and a storm of new TLS connections.</p></details>
+    <details><summary>Would a more efficient server have prevented it?</summary><p>No one can say, and we do not claim it. Efficient software buys margin, not immunity. It does not replace capacity planning, load shedding and safe rollouts.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-13.</p>
+    <ol class="sources">
+      <li id="s1">Microsoft 365 Status, <a href="https://x.com/MSFT365Status/status/2120962673911181437">status update on elevated load</a>, 12 November 2026.</li>
+      <li id="s2">Microsoft 365 Status, <a href="https://x.com/MSFT365Status/status/2120995209261514827">status update on restarts and configuration reverts</a>, 12 November 2026.</li>
+      <li id="s3">Microsoft 365 Status, <a href="https://x.com/MSFT365Status/status/2121031935010951521">status update on servers becoming unresponsive under traffic</a>, 13 November 2026.</li>
+      <li id="s4">Forbes, <a href="https://www.forbes.com/sites/antoniopequenoiv/2026/11/12/microsoft-365-down-tech-giant-says-server-failures-causing-disruption/">"Microsoft 365 down: tech giant says server failures causing disruption"</a>, 12 November 2026.</li>
+      <li id="s5">BleepingComputer, <a href="https://www.bleepingcomputer.com/news/microsoft/massive-microsoft-365-outage-disrupts-outlook-teams-copilot-worldwide/">"Massive Microsoft 365 outage disrupts Outlook, Teams, Copilot worldwide"</a>.</li>
+      <li id="s6">ABC News, <a href="https://www.abc.net.au/news/2026-11-13/microsoft-outage-affects-users-worldwide/107381050">"Microsoft outage affects users worldwide"</a>, 13 November 2026.</li>
+      <li id="s7">Cameleering measurements: <a href="../ledger/">the ledger</a> and <a href="../simoom/benchmarks/">simoom benchmarks</a>.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="c-sec" id="updates">
+  <div class="wrap">
+    <h2>Updates</h2>
+    <ul>
+      <li>2026-11-13: first version, written before Microsoft's post-incident review.</li>
+    </ul>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a></li>
+        <li><a href="../cameleer/compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

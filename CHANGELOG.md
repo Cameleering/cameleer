@@ -3,6 +3,13 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+- **The `cameleer` crate.** `cargo install cameleer` installs the `cameleer` command and
+  `cargo add cameleer` gives the `cameleer-main` API: a thin wrapper (`publish/cameleer`, outside
+  the workspace because its binary has the same name as `cameleer-main`'s) that forwards every
+  feature. First published as 0.6.0; `cameleer-main` is unchanged.
+
 ## 0.6.0 (2026-11-12)
 
 Cameleer gets packs: optional, industry-specific sets of components with their own version. The

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found | cameleer.ing</title>
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#ffffff">
+<!-- GitHub Pages serves this file for every missing path, at any depth: all URLs are absolute. -->
+<link rel="icon" href="/brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="/brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/site.css">
+<style>
+  .nf { max-width: 720px; margin: 0 auto; padding: 72px 16px 96px; }
+  .nf h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.15; margin: 0 0 12px; }
+  .nf p { font-size: 17px; line-height: 1.6; }
+  .nf code { font-family: "JetBrains Mono", monospace; font-size: 15px; word-break: break-all; }
+  .nf ul { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 10px; }
+  .nf li a { display: block; padding: 14px 16px; border: 1px solid var(--line, #e5e5e5); border-radius: 10px; text-decoration: none; }
+  .nf li a b { display: block; }
+  .nf li a span { color: var(--muted, #666); font-size: 15px; }
+</style>
+</head>
+<body>
+<main class="nf">
+  <p class="kicker">404</p>
+  <h1>This page is not here.</h1>
+  <p>Nothing lives at <code id="nf-path">this address</code>. It may have moved, or the link may be mistyped. Pages that moved keep a redirect, so if you followed a link from this site, please <a href="https://github.com/cameleering/cameleer/issues/new">tell us</a>.</p>
+  <ul>
+    <li><a href="/"><b>Cameleering</b><span>the practice: carry more on less, measured</span></a></li>
+    <li><a href="/cameleer/"><b>Cameleer</b><span>the integration engine in the style of Apache Camel</span></a></li>
+    <li><a href="/docs/"><b>Cameleer documentation</b><span>guides, components, languages and data formats</span></a></li>
+    <li><a href="/ledger/"><b>The ledger</b><span>every measured claim, its baseline and its losses</span></a></li>
+    <li><a href="/simoom/"><b>simoom</b><span>the HTTP engine, std-only Rust</span></a></li>
+    <li><a href="/llms.txt"><b>llms.txt</b><span>the site index for language models and coding agents</span></a></li>
+  </ul>
+</main>
+<script>
+  // show the path that was asked for (text only, never HTML)
+  document.getElementById("nf-path").textContent = location.pathname + location.search + location.hash;
+</script>
+</body>
+</html>

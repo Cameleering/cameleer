@@ -3,7 +3,7 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", "scripts/build-docs.py", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "scripts/build-docs.py", "scripts/check-site.py", "scripts/redirects.txt", "scripts/llms/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -27,6 +27,8 @@ jobs:
           fetch-depth: 0 # full history: page dates (sitemap lastmod, dateModified) come from git
       - name: Build the docs into site/docs
         run: python3 scripts/build-docs.py
+      - name: Check the site (links, anchors, JSON-LD, redirects, sitemap); a broken site never deploys
+        run: python3 scripts/check-site.py
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
@@ -42,7 +44,16 @@ jobs:
           base="https://cameleer.ing"
           python3 - <<'PY' > urls.json
           import json, os, re
-          urls = re.findall(r"<loc>([^<]+)</loc>", open("site/sitemap.xml", encoding="utf-8").read())
+          # site/sitemap.xml is an index: read its child sitemaps (site-relative), then add the old URLs
+          # of scripts/redirects.txt so engines recrawl them and see the redirect stubs
+          index = open("site/sitemap.xml", encoding="utf-8").read()
+          urls = []
+          for child in re.findall(r"<loc>https://cameleer\.ing/([^<]+)</loc>", index):
+              urls += re.findall(r"<loc>([^<]+)</loc>", open("site/" + child, encoding="utf-8").read())
+          for line in open("scripts/redirects.txt", encoding="utf-8"):
+              line = line.split("#", 1)[0].split()
+              if len(line) == 2:
+                  urls.append("https://cameleer.ing" + line[0])
           print(json.dumps({"host": "cameleer.ing", "key": os.environ["INDEXNOW_KEY"],
                             "keyLocation": "https://cameleer.ing/" + os.environ["INDEXNOW_KEY"] + ".txt",
                             "urlList": urls[:10000]}))

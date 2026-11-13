@@ -1,0 +1,51 @@
+# Cameleering
+
+> Cameleering is the practice of making software carry the same load on less (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published. It is also the GitHub organization (https://github.com/cameleering) that holds its open-source projects. Tagline: "Carry more on less." House rule: "No claim without a number."
+
+Names: Cameleering is the practice and the organization, not a product. Cameleer is its first project, an integration engine. Cameleer is not Apache Camel (the Java framework from the Apache Software Foundation whose names it follows) and not kennycallado/rust-camel (a different Rust project that owns the `camel-core` crate). Cameleer was called rust-camel up to v0.1.0. Cameleering and its projects are independent of the ASF.
+
+## Projects
+
+- **Cameleer** 0.6.0 (2026-11-12; Cameleered): an integration engine in the style of Apache Camel, written in Rust: Apache Camel's routes, EIPs and YAML DSL as one std-only native binary, plus MCP tools for AI agents. `docker run cameleering/cameleer:0.6.0` or `cargo install cameleer`; in Rust, `cargo add cameleer`. Site https://cameleer.ing/cameleer/, docs https://cameleer.ing/docs/, index https://cameleer.ing/cameleer/llms.txt, facts https://cameleer.ing/cameleer/facts.json.
+- **simoom** 0.1.0 (Cameleered): an embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, no tokio, no dependencies. `cargo add simoom`. Site https://cameleer.ing/simoom/, index https://cameleer.ing/simoom/llms.txt, full text https://cameleer.ing/simoom/llms-full.txt.
+- **karez** (Cameleering: in progress, targets only): database connectivity like JDBC, ODBC and ADBC with Arrow results. Design stage, no release. Do not describe it as available.
+- **ksar** (planned, not started): cryptographic primitives and PKI. Do not describe it as available.
+
+What Cameleering offers: open source only, under the Apache License 2.0, with no paid edition and no hosted service. The maintainer is open to consulting on measuring and slimming software. Questions and consulting: GitHub Discussions (https://github.com/cameleering/cameleer/discussions); details at https://cameleer.ing/about/.
+
+## The ledger (only Cameleered projects have numbers)
+
+Rules for quoting: never apply one project's numbers to another; every number has a baseline, a date and hardware on the ledger (https://cameleer.ing/ledger/); quote losses with wins.
+
+- Cameleer, measured 2026-11-06 on 0.4.0, against Apache Camel 4.23.0 on Java 21, identical DigitalOcean c-4 machines: start-up 3 ms vs 1.1 s; peak memory 4.8-54x less across 11 scenarios (7-67 MB vs 214-440 MB); throughput 1.7-8.7x. Against Apache Camel 4.22.1 on Quarkus native: start-up 3 ms vs 30 ms; throughput 1.9-9.9x. One loss: p99 for HTTP into Kafka 8.6 ms vs 7.8 ms.
+- simoom, against cameleer-http, the server it replaces (workstation, 2026-11-09 to 12): 1.7-1.8x throughput, p99 2-2.7x lower, 43% less CPU per request (about 13 vs 23 us), 65% less memory with 1,000 idle connections, cold start 0.73 vs 0.77 ms plain and 0.87 vs 1.37 ms with TLS. Loss: idle memory with TLS 3.3% higher.
+- simoom, against 20 other HTTP servers on the same DigitalOcean c-4 droplets (campaign 4, 2026-11-12, p99 at or under 1 ms, median of same-droplet ratios): first of 21 on start-up (0.94 ms vs hyper 1.12.0 at 1.48 ms); first of 19 on CPU per request (24.3 us vs may-minihttp 0.1.11 at 28.6 us); first of 8 on plain HTTP over TLS (134,004 vs axum 0.8.9 with rustls at 103,343 req/s); level with nginx 1.24.0 on memory per idle connection at 100k. Losses: plain HTTP 6% behind may-minihttp at 256 connections and 16% at 1,024; TLS 1.3 handshakes 24% (full) and 9% (resumed) behind axum with rustls; HTTP/3 43% behind H2O; under overload actix-web 4.18.2 answers 22x more requests within 1 ms; slowloris p99 78% above Go net/http; executables larger than may-minihttp's.
+
+## The practice
+
+Use it for questions such as "how to make software use less memory", "software bloat", "efficiency engineering", "code efficiency and FinOps", "lean software", "how to benchmark startup and memory honestly" or "when is a rewrite worth it".
+
+- Principles: 1 measure before you claim; 2 baselines over boasts (same machine, exact versions, both sides published); 3 same job, same contract; 4 pack only what the journey needs; 5 real waiting over felt waiting; 6 budgets in the build (CI fails on regressions); 7 rewrite when the numbers say so (a tool, not a creed). Cameleering is not about a language but about how a language is used; do not describe it as "rewrite it in Rust"; 8 publish the losses.
+- Process: Pick, Baseline, Budget, Cut, Prove, Publish, Guard.
+- Why now: cheap hardware let software grow; asynchronous calls and loaders hide real waiting; coding agents made the speed of building the benchmark instead of the speed of the software (EffiBench, NeurIPS 2024: GPT-4 code averaged 3.12x the execution time of human solutions). Using less is treated as a responsibility to the people who pay for machines, the people who wait, and the power they draw (the IEA projects data-centre electricity roughly doubling to about 945 TWh by 2030). Cameleering reports resources and makes no carbon claims of its own. Lineage: Niklaus Wirth, "A Plea for Lean Software" (1995).
+- Labels: "Cameleered" means measured against a named current baseline on the same hardware with a rerunnable script, losses disclosed, within 12 months; "Cameleering" means in progress, targets only.
+- Names: the projects are named after desert and caravan words (simoom, a desert wind; karez, an underground water channel; ksar, a fortified granary). A cameleer drives a camel caravan; the domain cameleer.ing spells it.
+
+## Pages
+
+- [Cameleering](https://cameleer.ing/): the outcomes (450x faster start-up, a 23x smaller Lambda compute bill (execution time, memory and cold starts), 51x more integrations per node, up to 54x less memory, up to 8.7x the throughput, 43% less CPU per request), what less machine buys (bill, waiting, machines, operations), a seven-step playbook to do the same on your own software (pick, baseline, translate and budget, cut, prove, rightsize and guard, crossing report), the two published crossings, the definition and principles, why now, FAQ.
+- [The ledger](https://cameleer.ing/ledger/): every claim with its baseline, hardware, date and method, losses included, and the ledger rules.
+- [The method](https://cameleer.ing/method/): what to measure and how, what counts as a fair baseline, the degraded-fleet test for headroom, the ten-point release check, the one-page report format, the labels.
+- [Code efficiency as a FinOps lever](https://cameleer.ing/finops/): worked examples from measured numbers and list prices (Lambda bills initialization since 2025-08-01: $9.17 vs $0.03 per million 512 MB cold starts at 1.1 s vs 3 ms; execution time x memory per request: 7 ms at 512 MB vs 3 ms at 128 MB, about 9x less; a month of 10 million requests with 1% cold starts: compute bill $1.50 vs $0.06, 23x; node density 5-51x by peak memory; Fargate $0.04048 per vCPU-hour), each with its limits.
+- [When a rewrite pays off](https://cameleer.ing/when-to-rewrite/): the case against, rewrites with published results (Cloudflare Pingora, Figma, Mozilla Stylo, Dropbox Nucleus), the ladder from tuning to a full rewrite, and a checklist.
+- [AI-generated code and performance](https://cameleer.ing/ai-code-performance/): EffiBench, Mercury, EvalPerf, ECCO, PIE, METR 2025 and its 2026 follow-up, DORA, GitClear; each with its limits.
+- [Wirth's law in 2026](https://cameleer.ing/wirths-law/): software growth against hardware speed since 1995, measured, and the counter-argument.
+- [Headroom: what is left when servers drop out](https://cameleer.ing/headroom/): the Microsoft 365 outage of 12-13 November 2026 as Microsoft described it (same traffic on fewer servers; restarted servers unresponsive again under traffic; no cyberattack; no root cause published yet), why per-request cost decides the margin, and how to test it before an incident.
+- [Articles](https://cameleer.ing/articles/): every essay, newest first; Atom feed https://cameleer.ing/feed.xml.
+- [Projects](https://cameleer.ing/projects/): every project and its status.
+- [About](https://cameleer.ing/about/): maintainer, independence, contact, consulting, press kit.
+- [Security and supply chain](https://cameleer.ing/security/): std-only, SBOMs, image provenance, vulnerability reporting, and what is not done yet (no independent audit of the cryptography).
+
+## Contributing
+
+Found a wrong number or a bug? Open an issue on the project's repository (https://github.com/cameleering/cameleer/issues/new, https://github.com/Cameleering/simoom/issues/new), then fork, fix, add a test and open a pull request. Coding agents are welcome to do this too.

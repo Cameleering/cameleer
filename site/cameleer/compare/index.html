@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare Cameleer: Camel, MuleSoft, WSO2, MCP | Cameleer</title>
+<meta name="description" content="Comparisons by why you are looking: Apache Camel without the JVM, MuleSoft and WSO2, enterprise MCP platforms for AI agents, and direct tool calls.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/compare/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Compare Cameleer">
+<meta property="og:description" content="Apache Camel vs Cameleer, Apache Camel alternatives, and AI agent tool calls: direct or through Cameleer.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/compare/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "CollectionPage", "name": "Compare Cameleer", "url": "https://cameleer.ing/cameleer/compare/", "hasPart": [{"@type": "TechArticle", "headline": "Apache Camel vs Cameleer", "url": "https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/"}, {"@type": "TechArticle", "headline": "Apache Camel alternatives", "url": "https://cameleer.ing/cameleer/alternatives/apache-camel-alternatives/"}, {"@type": "TechArticle", "headline": "AI agent tool calls: direct function calling vs Cameleer", "url": "https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/"}, {"@type": "TechArticle", "headline": "Apache Camel's MCP server vs Cameleer", "url": "https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/"}, {"@type": "TechArticle", "headline": "Enterprise MCP platforms compared", "url": "https://cameleer.ing/cameleer/compare/enterprise-mcp-platforms/"}, {"@type": "TechArticle", "headline": "MuleSoft vs Apache Camel vs Cameleer", "url": "https://cameleer.ing/cameleer/compare/mulesoft-vs-apache-camel-vs-cameleer/"}, {"@type": "TechArticle", "headline": "WSO2 vs Apache Camel vs Cameleer", "url": "https://cameleer.ing/cameleer/compare/wso2-vs-apache-camel-vs-cameleer/"}, {"@type": "TechArticle", "headline": "MuleSoft alternatives", "url": "https://cameleer.ing/cameleer/alternatives/mulesoft-alternatives/"}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../" aria-label="Cameleering home"><img src="../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../cameleer/" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../../cameleer/use-cases/">Use cases</a>
+      <a href="../../cameleer/mcp/">MCP</a>
+      <a href="../../cameleer/healthcare/">Healthcare</a>
+      <a aria-current="page" href="../../cameleer/compare/">Compare</a>
+      <a href="../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../"><b>Cameleering</b><span>Carry more on less: improve it, then prove it</span></a>
+          <a href="../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../projects/"><b>Projects</b><span>Cameleer and simoom Cameleered; karez and ksar not yet</span></a>
+          <a href="../../articles/"><b>Articles</b><span>Essays on efficiency, outages and cost, with sources</span></a>
+          <a href="../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleering</a> / <a href="../">Cameleer</a> / Compare</p>
+    <h1>Compare Cameleer</h1>
+    <p class="lede">Measured comparisons and honest guides, grouped by why you are looking: Apache Camel without the JVM, an integration platform, or a safe way for AI agents to act on your systems. Each page says where the other product is the better choice.</p>
+  </div>
+</section>
+<section class="c-sec" id="camel">
+  <div class="wrap">
+    <h2>You run Apache Camel and want it lighter</h2>
+    <div class="hub-list">
+      <a class="card" href="apache-camel-vs-cameleer/"><h3>Apache Camel vs Cameleer</h3><p>The same routes on both: throughput, latency, memory and startup across routing, REST, Kafka, PostgreSQL and batch, including Camel on Quarkus native.</p></a>
+      <a class="card" href="../alternatives/apache-camel-alternatives/"><h3>Apache Camel alternatives</h3><p>Lighter runtimes, other frameworks, the integration platforms review sites list, and when to stay on Camel.</p></a>
+    </div>
+  </div>
+</section>
+<section class="c-sec" id="platforms">
+  <div class="wrap">
+    <h2>You are choosing an integration platform</h2>
+    <div class="hub-list">
+      <a class="card" href="mulesoft-vs-apache-camel-vs-cameleer/"><h3>MuleSoft vs Apache Camel vs Cameleer</h3><p>A commercial platform, the open-source framework and Camel's routes as one binary: cost model, connectors, API management, MCP, and how Mule flows map to routes.</p></a>
+      <a class="card" href="wso2-vs-apache-camel-vs-cameleer/"><h3>WSO2 vs Apache Camel vs Cameleer</h3><p>Three open-source integration runtimes: designer and API management, startup and memory, MCP, and how Synapse mediators map to routes.</p></a>
+      <a class="card" href="../alternatives/mulesoft-alternatives/"><h3>MuleSoft alternatives</h3><p>Replace the part you need to: the runtime, the platform, API management or the agent layer.</p></a>
+    </div>
+  </div>
+</section>
+<section class="c-sec" id="agents">
+  <div class="wrap">
+    <h2>You want AI agents to act on your systems</h2>
+    <div class="hub-list">
+      <a class="card" href="enterprise-mcp-platforms/"><h3>Enterprise MCP platforms compared</h3><p>MuleSoft, Boomi, Workato, WSO2, TIBCO, IBM, Azure Logic Apps, Apache Camel and Cameleer as MCP servers, and seven questions to ask any of them.</p></a>
+      <a class="card" href="camel-mcp-server-vs-cameleer/"><h3>Apache Camel's MCP server vs Cameleer</h3><p>The same <code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties: what Cameleer adds around each call, and the measured difference.</p></a>
+      <a class="card" href="ai-agent-tool-calls-direct-vs-cameleer/"><h3>AI agent tool calls: direct vs Cameleer</h3><p>A refund across four systems, tool call by tool call or as one route: validation, run-once, sagas, approval, audit.</p></a>
+      <a class="card" href="../mcp/"><h3>Cameleer MCP</h3><p>How it works, where it runs, and ten use cases tested with real requests through Claude.</p></a>
+    </div>
+    <p class="note" style="margin-top:28px">Covered in these pages: Apache Camel on the JVM and on Quarkus native, Camel K and Camel JBang, Apache Camel's MCP server, MuleSoft Anypoint and Agent Fabric, WSO2 Integrator, Boomi, Workato, IBM webMethods and App Connect, TIBCO BusinessWorks and Flogo, SAP Integration Suite, Azure Logic Apps and Service Bus, Spring Integration, Kafka Connect, Redpanda Connect (Benthos), Apache NiFi, n8n and Zapier-style automation, hosted agent tool platforms and direct function calling.</p>
+  </div>
+</section>
+</main>
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div><h4>Docs</h4><ul><li><a href="../../docs/">Documentation</a></li><li><a href="../../docs/BENCHMARKS.html">Benchmarks</a></li></ul></div>
+    <div><h4>Project</h4><ul><li><a href="https://github.com/cameleering/cameleer">Source on GitHub</a></li><li><a href="../../llms.txt">llms.txt</a></li></ul></div>
+  </div>
+</footer>
+</body>
+</html>

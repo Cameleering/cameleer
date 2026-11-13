@@ -20,8 +20,8 @@ size and dependencies) and proving every gain against the original, on the same 
 method published. Its one hard rule is no claim without a number. Cameleer is the first Cameleering
 project: Apache Camel's routes run by one native Rust binary that starts in about 3 ms and runs in
 megabytes. The word comes from *cameleer*, the driver of a camel caravan. See
-[what is cameleering?](https://cameleer.ing/cameleering/) and
-[the ledger](https://cameleer.ing/cameleering/ledger/).
+[what is cameleering?](https://cameleer.ing/) and
+[the ledger](https://cameleer.ing/ledger/).
 
 ### Is Cameleer compatible with Apache Camel?
 
@@ -52,7 +52,7 @@ With the same routes, Cameleer handles 1.7 to 8.7 times the throughput of Apache
 Java 21 in every scenario measured: 2.1x on a REST API with JSON, 2.3x writing to PostgreSQL,
 1.7x publishing to Kafka, 8.7x on Kafka stream processing and 3.0x on a content-based router.
 Every scenario, the method and the raw data are on the
-[Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)
+[Apache Camel vs Cameleer](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/)
 page and in [BENCHMARKS.md](../BENCHMARKS.md).
 
 ### How much memory does it use?

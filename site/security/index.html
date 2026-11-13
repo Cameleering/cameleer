@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security and Supply Chain | Cameleering</title>
+<meta name="description" content="Std-only Rust with no third-party crates, CycloneDX SBOMs, image provenance, private vulnerability reporting, and the open item: no audit yet.">
+<link rel="canonical" href="https://cameleer.ing/security/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="Security and supply chain in the Cameleering projects">
+<meta property="og:description" content="Std-only Rust with no third-party crates, CycloneDX SBOMs, build provenance on every image, private vulnerability reporting, and the open item: no independent audit yet.">
+<meta property="og:url" content="https://cameleer.ing/security/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Security and supply chain in the Cameleering projects", "name": "Security and supply chain in the Cameleering projects", "description": "Std-only Rust with no third-party crates, CycloneDX SBOMs, build provenance on every image, private vulnerability reporting, and the open item: no independent audit yet.", "url": "https://cameleer.ing/security/", "inLanguage": "en", "dateModified": "2026-11-13", "publisher": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Security and supply chain", "item": "https://cameleer.ing/security/"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Has the cryptography been audited?", "acceptedAnswer": {"@type": "Answer", "text": "Not yet. The from-scratch TLS, X.509, SSH and XML security code has had no independent audit; one is planned, along with fuzzing of the parsers. The projects publish this openly so a reviewer can weigh it."}}, {"@type": "Question", "name": "How do I report a vulnerability?", "acceptedAnswer": {"@type": "Answer", "text": "Privately through GitHub's vulnerability reporting on the affected repository, not in a public issue."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <a href="../articles/">Articles</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / Security and supply chain</p>
+    <p class="kicker">Cameleering · security</p>
+    <h1>Security and supply chain: what you can check, and what is not done yet</h1>
+    <p class="lede">What a security or procurement review of Cameleer or simoom needs: the licence, what is in a build, how images are built and attested, how to report a vulnerability, and the honest list of what has not been done.</p>
+  </div>
+</section>
+<section class="c-sec" id="facts">
+  <div class="wrap">
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>question</th><th>answer</th></tr></thead>
+      <tbody>
+        <tr><td>Licence</td><td>Apache License 2.0, every project, no closed parts.</td></tr>
+        <tr><td>Third-party dependencies</td><td>None. Cameleer and simoom are written on the Rust standard library only: TLS, X.509, HTTP/2, HTTP/3, the protocol clients and the parsers are their own code. CI fails Cameleer's build if any third-party crate appears in its SBOM.</td></tr>
+        <tr><td>What is in a build</td><td>A CycloneDX 1.5 SBOM of exactly what a build compiles in, generated from <code>cargo tree</code> (<code>scripts/sbom.py</code>) and checked in CI.</td></tr>
+        <tr><td>Container images</td><td><code>cameleering/cameleer</code> on Docker Hub and <code>ghcr.io/cameleering/cameleer</code>: an SBOM, max-mode build provenance and a GitHub attestation on every push. Verify with <code>gh attestation verify oci://ghcr.io/cameleering/cameleer:latest --owner cameleering</code> (<a href="../docs/DEPLOYMENT.html">deployment guide</a>).</td></tr>
+        <tr><td>TLS</td><td>simoom: certificate verification cannot be turned off. Cameleer: TLS 1.3 and 1.2 with X.509 path validation; the policy for its options is in the <a href="../docs/guides/tls-and-security.html">TLS and security guide</a>.</td></tr>
+        <tr><td>Unsafe code</td><td>simoom: every crate except <code>simoom-sys</code> is <code>#![forbid(unsafe_code)]</code>.</td></tr>
+        <tr><td>Reporting a vulnerability</td><td>Privately, through <a href="https://github.com/cameleering/cameleer/security/advisories/new">GitHub's vulnerability reporting</a> on the affected repository, never in a public issue. The policy is in <a href="https://github.com/cameleering/cameleer/blob/main/SECURITY.md">SECURITY.md</a>.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+<section class="c-sec" id="not-done">
+  <div class="wrap">
+    <h2>Not done yet</h2>
+    <ul>
+      <li><strong>No independent security audit</strong> of the from-scratch cryptography and protocol code (TLS state machine, X.509 path validation, SSH, XML security) has been done. It is planned, along with fuzzing of the parsers.</li>
+      <li><strong>Signed release archives</strong> (each with a SHA-256 checksum, an SBOM and a keyless cosign signature) arrive with the next release; 0.6.0 ships as images and crates only.</li>
+      <li>Both projects are pre-1.0 and maintained by one person. Fixes go to the <code>main</code> branch.</li>
+    </ul>
+    <p class="note">Confidential computing (attestation of what a Cameleer process runs) is a Cameleer feature: <a href="../cameleer/confidential-computing/">confidential integrations</a>.</p>
+  </div>
+</section>
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Has the cryptography been audited?</summary><p>Not yet. The from-scratch TLS, X.509, SSH and XML security code has had no independent audit; one is planned, along with fuzzing of the parsers. The projects publish this openly so a reviewer can weigh it.</p></details>
+    <details><summary>How do I report a vulnerability?</summary><p>Privately through GitHub's vulnerability reporting on the affected repository, not in a public issue.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+        <li><a href="../projects/">Projects</a></li>
+        <li><a href="../about/">About and contact</a></li>
+        <li><a href="../security/">Security and supply chain</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a> · <a href="../docs/">docs</a></li>
+        <li><a href="../simoom/">simoom</a> · <a href="../simoom/docs/">docs</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Gateway In Process: Retries, Fallbacks, Caching | Cameleer</title>
+<meta name="description" content="23 model providers with retries, fallback models, prompt caching, an exact response cache and request coalescing inside the process. No extra hop.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Model calls without a separate LLM gateway">
+<meta property="og:description" content="Provider presets, retries, fallback models, prompt caching, a response cache and request coalescing, in the same process as the routes and the tools.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/site.css">
+<link rel="stylesheet" href="../../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Model calls without a separate LLM gateway", "description": "Cameleer talks to 23 model providers and adds retries, fallback models, prompt caching, an exact response cache and coalescing of identical requests in the same process as the routes, so model calls take no extra network hop.", "url": "https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "Large language models"}, {"@type": "Thing", "name": "LLM gateway"}, {"@type": "Thing", "name": "Prompt caching"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"}, {"@type": "ListItem", "position": 4, "name": "Model calls without a gateway"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Which model providers does Cameleer support?", "acceptedAnswer": {"@type": "Answer", "text": "23 out of the box: native components for OpenAI (Chat Completions and the Responses API), Ollama's /api/chat, Anthropic, Gemini, Azure OpenAI, AWS Bedrock Converse and Gemini on Vertex AI, plus provider= presets for OpenAI-compatible services such as Groq, Mistral, DeepSeek, xAI, OpenRouter, Together, Fireworks, Cerebras, Perplexity, Hugging Face, Qwen, Kimi, Cohere, NVIDIA NIM, vLLM, LM Studio and llama.cpp. Any other OpenAI-compatible server works with baseUrl."}}, {"@type": "Question", "name": "Can a retried model call run a tool twice?", "acceptedAnswer": {"@type": "Answer", "text": "No. Tools run in the ai-tool envelope after the model answers, with their own idempotency, so a retried, cached or coalesced model turn never repeats a tool call."}}, {"@type": "Question", "name": "Is the response cache safe to turn on?", "acceptedAnswer": {"@type": "Answer", "text": "responseCache and coalesce are off by default, because two users who send the same prompt get the same answer. Turn them on for classification, extraction and other deterministic calls. A cached or coalesced answer reports zero tokens, so the usage headers show what was paid."}}, {"@type": "Question", "name": "Were the presets tested against the live services?", "acceptedAnswer": {"@type": "Answer", "text": "No. The presets were checked against each provider's documentation; the tests run against mock servers."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../../" aria-label="Cameleering home"><img src="../../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../../cameleer/" aria-label="Cameleer home"><img src="../../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../../docs/">Docs</a>
+      <a class="keep" aria-current="page" href="../../../cameleer/use-cases/">Use cases</a>
+      <a href="../../../cameleer/mcp/">MCP</a>
+      <a href="../../../cameleer/healthcare/">Healthcare</a>
+      <a href="../../../cameleer/compare/">Compare</a>
+      <a href="../../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../../"><b>Cameleering</b><span>Carry more on less: improve it, then prove it</span></a>
+          <a href="../../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../../projects/"><b>Projects</b><span>Cameleer and simoom Cameleered; karez and ksar not yet</span></a>
+          <a href="../../../articles/"><b>Articles</b><span>Essays on efficiency, outages and cost, with sources</span></a>
+          <a href="../../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Use cases</a> / Model calls without a gateway</p>
+    <p class="kicker">LLM calls, in process</p>
+    <h1>An LLM gateway that is not another hop</h1>
+    <p class="lede">Retries, fallback models, prompt caching and a response cache usually mean a hosted gateway or a sidecar between your code and the model. In Cameleer they are options on the model endpoint, in the same process as the routes and the tools, over pooled keep-alive connections.</p>
+    <div class="stats">
+      <div class="stat"><b>23</b><span>model providers out of the box, plus any OpenAI-compatible server through <code>baseUrl</code></span></div>
+      <div class="stat"><b>0</b><span>extra network hops: the call goes from the route to the provider</span></div>
+      <div class="stat"><b>1 run</b><span>per tool call, even when the model turn is retried, cached or coalesced</span></div>
+      <div class="stat"><b>same options</b><span>on every model component, the tool loop and the agent step</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="example">
+  <div class="wrap">
+    <h2>One endpoint URI</h2>
+    <p class="intro">A model call with an exact response cache and a fallback to another provider when the first still fails after its retries:</p>
+    <pre class="cmd">- route:
+    from:
+      uri: direct:ask
+      steps:
+        - to: "openai:chat-completion?model=gpt-5.4-mini&amp;tags=support&amp;responseCache=exact&amp;fallbackModels=anthropic:messages?model=claude-sonnet-4-5"</pre>
+    <p>A provider preset sets the base URL and the environment variable the key is read from:</p>
+    <pre class="cmd">        - to: "llm:chat-completion?provider=groq&amp;model=llama-3.3-70b-versatile&amp;tags=support"</pre>
+    <p class="note"><code>tags=support</code> offers the model the <a href="../../../docs/components/ai-tool.html"><code>ai-tool</code></a> routes with that tag and runs the tool loop; leave it out for a plain chat call. Inside a URI option, write a fallback's own <code>&amp;</code> as <code>%26</code>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="options">
+  <div class="wrap">
+    <h2>Reliability and cost options</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>option</th><th>default</th><th>what it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>maxRetries</code></td><td>2</td><td>retries 408, 409, 425, 429, 5xx and 529 answers, timeouts and resets, with exponential backoff</td></tr>
+        <tr><td><code>retryDelay</code></td><td>500 ms</td><td>the first backoff; it doubles each retry, up to 10 s</td></tr>
+        <tr><td><code>fallbackModels</code></td><td></td><td>model endpoint URIs tried in order when the model still fails; they can be other providers</td></tr>
+        <tr><td><code>responseCache</code></td><td>off</td><td><code>exact</code>: an identical request (model, messages, tools, system prompt) is answered from memory</td></tr>
+        <tr><td><code>responseCacheTtl</code>, <code>responseCacheSize</code></td><td>5 m, 1000</td><td>how long and how many answers are kept</td></tr>
+        <tr><td><code>coalesce</code></td><td>false</td><td>identical requests in flight at the same time share one model call</td></tr>
+        <tr><td><code>promptCaching</code></td><td>per component</td><td><code>anthropic</code> adds <code>cache_control</code> breakpoints by default; <code>aws-bedrock</code> adds Converse <code>cachePoint</code>s with <code>promptCaching=true</code></td></tr>
+      </tbody>
+    </table></div>
+    <div class="two">
+      <div class="pane">
+        <h3>What they guarantee</h3>
+        <ul>
+          <li>A retried, cached or coalesced model turn never repeats a tool call: tools run in the <code>ai-tool</code> envelope after the model answers, with their own idempotency.</li>
+          <li>A cached or coalesced answer reports zero tokens, so the usage headers show what was paid.</li>
+          <li>A streamed call is not retried once text has been sent to the chunk processor.</li>
+          <li><code>responseCache</code> and <code>coalesce</code> are off by default: two users who send the same prompt would get the same answer. Turn them on for classification, extraction and other deterministic calls.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Prompt caching</h3>
+        <ul>
+          <li>Providers bill cached input at a fraction of the normal price, but only for a prefix that is byte for byte the same as last time.</li>
+          <li>Cameleer assembles the prompt itself (tools in a fixed order, then the system prompt, then the history), so the prefix stays stable from turn to turn.</li>
+          <li><code>openai</code> and the presets use the provider's automatic prefix caching; <code>gemini</code> and <code>google-vertexai</code> use Gemini's implicit caching.</li>
+          <li><code>CamelAiCacheReadTokens</code> and <code>CamelAiCacheWriteTokens</code> report cached input tokens.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="providers">
+  <div class="wrap">
+    <h2>Providers</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Native components</h3>
+        <ul>
+          <li><a href="../../../docs/components/openai.html"><code>openai</code>, <code>llm</code></a>: Chat Completions, the Responses API, embeddings; streaming in the tool loop; <code>apiFormat=ollama</code> for Ollama's <code>/api/chat</code>.</li>
+          <li><a href="../../../docs/components/anthropic.html"><code>anthropic</code></a>: the Messages API, with automatic prompt caching.</li>
+          <li><a href="../../../docs/components/gemini.html"><code>gemini</code></a>: the Gemini API with AI Studio keys; thought signatures kept during tool calls.</li>
+          <li><a href="../../../docs/components/azure-openai.html"><code>azure-openai</code></a> (Entra ID or keys), <a href="../../../docs/components/aws-bedrock.html"><code>aws-bedrock</code></a> (Converse, guardrails), <a href="../../../docs/components/google-vertexai.html"><code>google-vertexai</code></a> (service accounts).</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3><code>provider=</code> presets on <code>openai</code> / <code>llm</code></h3>
+        <p>openai, gemini, mistral, deepseek, xai, groq, cerebras, together, fireworks, openrouter, perplexity, huggingface, dashscope (Qwen), moonshot (Kimi), cohere, nvidia (NIM), ollama, vllm, lmstudio, llamacpp.</p>
+        <p>Per provider, the component sends <code>max_completion_tokens</code> to OpenAI's o-series and GPT-5 models, sends DeepSeek's, Qwen's and Kimi's <code>reasoning_content</code> back during a tool loop, and generates missing tool call ids.</p>
+      </div>
+    </div>
+    <p class="note">The presets were checked against each provider's documentation, not against the live services; the tests run against mock servers. Full table with base URLs and key variables: <a href="../../../docs/guides/model-providers.html">model providers</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="why">
+  <div class="wrap">
+    <h2>Why in the same process</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>A separate gateway</h3>
+        <ul>
+          <li>A hosted gateway adds a network hop to every model call; a sidecar adds a local hop and another process to run.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Cameleer</h3>
+        <ul>
+          <li>Model calls go straight from the route to the provider over pooled keep-alive connections: no TCP or TLS handshake after the first call.</li>
+          <li>The cache and coalescing live in the same memory as the routes. The tool loop, approvals and the audit log are in the same process, so a retried model turn cannot run a tool twice.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">No latency figures are published for model calls yet. The <a href="../../../docs/guides/agent-step.html">agent step</a> uses the same options, and <code>record</code> / <code>replay</code> let <code>cameleer test</code> check an agent route without calling a model.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Which model providers does Cameleer support?</summary><p>23 out of the box: native components for OpenAI (Chat Completions and the Responses API), Ollama's <code>/api/chat</code>, Anthropic, Gemini, Azure OpenAI, AWS Bedrock Converse and Gemini on Vertex AI, plus <code>provider=</code> presets for OpenAI-compatible services such as Groq, Mistral, DeepSeek, xAI, OpenRouter, Together, Fireworks, Cerebras, Perplexity, Hugging Face, Qwen, Kimi, Cohere, NVIDIA NIM, vLLM, LM Studio and llama.cpp. Any other OpenAI-compatible server works with <code>baseUrl</code>.</p></details>
+    <details><summary>Can a retried model call run a tool twice?</summary><p>No. Tools run in the <code>ai-tool</code> envelope after the model answers, with their own idempotency, so a retried, cached or coalesced model turn never repeats a tool call.</p></details>
+    <details><summary>Is the response cache safe to turn on?</summary><p><code>responseCache</code> and <code>coalesce</code> are off by default, because two users who send the same prompt get the same answer. Turn them on for classification, extraction and other deterministic calls. A cached or coalesced answer reports zero tokens, so the usage headers show what was paid.</p></details>
+    <details><summary>Were the presets tested against the live services?</summary><p>No. The presets were checked against each provider's documentation; the tests run against mock servers.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Try it</h2>
+    <p class="intro">The tested fallback example fails over from a hosted model to a local OpenAI-compatible one (Ollama, vLLM) with the failover load balancer EIP; <code>fallbackModels</code> does the same as one option on the endpoint. Check it, then run it with the command in the file's header.</p>
+    <pre class="cmd">git clone https://github.com/cameleering/cameleer &amp;&amp; cd cameleer/examples/agents
+docker run --rm -v "$PWD:/routes:ro" cameleering/cameleer validate /routes/llm-multi-model-fallback.camel.yaml</pre>
+    <div class="cta">
+      <a class="btn primary" href="../../../docs/guides/model-providers.html">Model providers guide</a>
+      <a class="btn" href="../../../docs/guides/agent-step.html">The agent step</a>
+      <a class="btn" href="../mcp-tool-server/">Routes as MCP tools</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div>
+      <h4>Use cases</h4>
+      <ul>
+        <li><a href="../">All use cases</a></li>
+        <li><a href="../mcp-tool-server/">Routes as MCP tools</a></li>
+        <li><a href="../../compare/ai-agent-tool-calls-direct-vs-cameleer/">Tools for AI agents</a></li>
+        <li><a href="../serverless-aws-lambda/">Serverless</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../../docs/guides/model-providers.html">Model providers</a></li>
+        <li><a href="../../../docs/guides/agent-step.html">The agent step</a></li>
+        <li><a href="../../../docs/guides/ai-components.html">AI components</a></li>
+        <li><a href="../../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

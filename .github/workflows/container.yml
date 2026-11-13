@@ -92,7 +92,7 @@ jobs:
           labels: |
             org.opencontainers.image.title=Cameleer
             org.opencontainers.image.description=Apache Camel routes, rebuilt in Rust: one native binary, about 1 ms startup, about 10 MB of memory.
-            org.opencontainers.image.url=https://cameleer.ing/
+            org.opencontainers.image.url=https://cameleer.ing/cameleer/
             org.opencontainers.image.documentation=https://github.com/cameleering/cameleer/blob/main/docs/DEPLOYMENT.md
             org.opencontainers.image.licenses=Apache-2.0
           annotations: |

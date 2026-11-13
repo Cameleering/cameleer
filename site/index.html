@@ -3,829 +3,294 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cameleer: Apache Camel in Rust, MCP tools for AI agents</title>
-<meta name="description" content="Apache Camel routes as one native Rust binary: 3 ms startup, up to 54x less memory. Routes become MCP tools for AI agents: validated, run once, audited.">
-<meta name="keywords" content="Apache Camel, Rust, cameleering, Apache Camel alternative, integration framework, enterprise integration patterns, EIP, AI agents, MCP server, MCP tools, agent tool calls, LLM gateway, serverless, AWS Lambda, edge, MQTT, HL7, DICOM, Kafka, YAML DSL">
+<title>Software Efficiency: Same Work, Less Machine | Cameleering</title>
+<meta name="description" content="Make software do the same work on less machine, and prove it. Cameleer starts in 3 ms where Apache Camel takes 1.1 s. The method and every result are open.">
 <link rel="canonical" href="https://cameleer.ing/">
 <meta name="theme-color" content="#ffffff">
 <meta name="google-site-verification" content="MvbqVebLUL_zfBeTqUJFrMzVbzt3An6QuIhFIasAcMA">
 <meta name="context7-site-verification" content="ask_86adbac2b101d98629eb7020">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Cameleer: the reliable action layer for AI agents, on Apache Camel's integration patterns, in Rust.">
-<meta property="og:description" content="Runs Apache Camel routes unchanged: starts in 3 ms, runs in megabytes, and moves 1.7–8.7x the messages of Apache Camel. Routes become MCP tools that are validated, idempotent, approved and audited.">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="The same work, on a fraction of the machine: Cameleering">
+<meta property="og:description" content="450x faster start-up, 300x cheaper cold starts, 51x more integrations per node, with the losses beside them, and the seven steps to get your own.">
 <meta property="og:url" content="https://cameleer.ing/">
-<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
-<link rel="icon" href="favicon-192.png" sizes="192x192" type="image/png">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="brand/cameleering/cameleering-apple-touch-icon.png">
 <link rel="alternate" type="text/plain" href="llms.txt" title="LLM-readable summary">
+<link rel="alternate" type="application/atom+xml" href="feed.xml" title="Cameleering articles">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareSourceCode",
-  "name": "Cameleer",
-  "alternateName": "rust-camel",
-  "description": "Apache Camel rewritten in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only. One native binary that starts in 3 ms and runs in megabytes, with a built-in AWS Lambda runtime. For AI agents it serves routes as MCP tools over Streamable HTTP and stdio and runs every tool call through JSON-schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts, compensation and a hash-chained audit log; it also has an agent step and tool calling in its model components.",
-  "codeRepository": "https://github.com/cameleering/cameleer",
-  "url": "https://cameleer.ing/",
-  "sameAs": ["https://github.com/cameleering/cameleer", "https://crates.io/crates/cameleer-main", "https://hub.docker.com/r/cameleering/cameleer"],
-  "programmingLanguage": "Rust",
-  "runtimePlatform": "Linux, macOS, Windows, Docker, AWS Lambda",
-  "image": "https://cameleer.ing/og.png",
-  "logo": "https://cameleer.ing/brand/cameleer-mark.png",
-  "license": "https://www.apache.org/licenses/LICENSE-2.0",
-  "version": "0.6.0",
-  "author": {"@type": "Person", "name": "Sudheesh PM"},
-  "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7, DICOM",
-  "isBasedOn": {"@type": "SoftwareSourceCode", "name": "Apache Camel", "url": "https://camel.apache.org/", "codeRepository": "https://github.com/apache/camel"}
-}
-</script>
 <link rel="stylesheet" href="assets/site.css">
-<style>
-/* hero */
-.hero { position: relative; padding: 72px 0 88px; overflow: hidden; }
-.hero::before {
-  content: ""; position: absolute; inset: 0; z-index: -1;
-  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 32px 32px;
-  mask-image: radial-gradient(ellipse 70% 80% at 75% 40%, #000 30%, transparent 75%);
-}
-.hero .wrap { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
-h1 {
-  font-size: clamp(44px, 6.4vw, 84px);
-  line-height: .98; letter-spacing: -.045em; font-weight: 800; margin: 0 0 28px;
-}
-h1 .line { display: block; }
-h1 .strike { color: var(--muted); font-weight: 500; position: relative; }
-h1 .strike::after { content: ""; position: absolute; left: 0; right: 0; top: 54%; height: .07em; background: var(--signal); transform: scaleX(1); transform-origin: left; animation: strike .7s .5s cubic-bezier(.6,0,.2,1) backwards; }
-/* both ends explicit: the line ends drawn on every browser, and stays drawn without the animation */
-@keyframes strike { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-@media (prefers-reduced-motion: reduce) { h1 .strike::after { animation: none; } }
-.lede { font-size: 20px; color: var(--muted); max-width: 30em; margin: 0 0 32px; }
-.lede strong { color: var(--ink); font-weight: 600; }
-.agent-line { font-size: 17px; line-height: 1.55; color: var(--ink); max-width: 32em; margin: -12px 0 32px; padding: 2px 0 2px 16px; border-left: 3px solid var(--signal); }
-.agent-line strong { font-weight: 700; }
-.ctas { display: flex; gap: 12px; flex-wrap: wrap; }
-.btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 22px; border-radius: 10px; font-weight: 600; text-decoration: none; font-size: 16px; transition: transform .15s, background .15s, border-color .15s; }
-.btn:active { transform: translateY(1px); }
-.btn.primary { background: var(--ink); color: #fff; }
-.btn.primary:hover { background: var(--signal); }
-.btn.ghost { border: 1px solid var(--line); background: #fff; }
-.btn.ghost:hover { border-color: var(--ink); }
-.facts { display: flex; gap: 36px; margin: 44px 0 0; padding: 0; }
-.facts div { margin: 0; }
-.facts dt { font-size: 30px; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
-.facts dd { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
-
-.diagram { width: 100%; height: auto; display: block; }
-.diagram .node rect { fill: #fff; stroke: var(--ink); stroke-width: 1.5; }
-.diagram .node.ai rect { fill: var(--signal-soft); stroke: var(--signal); }
-.diagram .node text { font-family: var(--sans); fill: var(--ink); }
-.diagram .node .k { font-size: 12px; fill: var(--muted); font-family: var(--mono); }
-.diagram .node .v { font-size: 16px; font-weight: 700; }
-.diagram .wire { fill: none; stroke: var(--ink); stroke-width: 1.5; }
-.diagram .wire.dash { stroke-dasharray: 4 5; animation: flow 1.2s linear infinite; }
-@keyframes flow { to { stroke-dashoffset: -18; } }
-.diagram .choice { fill: #fff; stroke: var(--ink); stroke-width: 1.5; }
-.diagram .msg { fill: var(--sand); }
-.diagram .msg.hot { fill: var(--signal); }
-.diagram .cap { font: 500 12px var(--mono); fill: var(--muted); }
-.diagram .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 1.6s ease-out infinite; fill: none; stroke: var(--signal); }
-@keyframes pulse { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.35); } }
-
-/* sections */
-section { padding: 96px 0; }
-section + section { border-top: 1px solid var(--line); }
-h2 { font-size: clamp(32px, 4vw, 48px); line-height: 1.05; letter-spacing: -.035em; font-weight: 800; margin: 0 0 16px; max-width: 16em; }
-.sub { color: var(--muted); font-size: 19px; max-width: 34em; margin: 0 0 48px; }
-
-/* same camel */
-.same { display: grid; grid-template-columns: 1.15fr .85fr; gap: 40px; align-items: stretch; }
-.code { background: #fbfcfe; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-.code header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--muted); }
-.code pre { margin: 0; padding: 20px; font-size: 14px; line-height: 1.65; overflow-x: auto; }
-.tk-k { color: var(--signal); }
-.tk-s { color: #0f7a55; }
-.tk-c { color: var(--muted); }
-.runner { border: 1px solid var(--line); border-radius: 14px; padding: 24px; display: flex; flex-direction: column; }
-.toggle { display: grid; grid-template-columns: 1fr 1fr 1fr; background: var(--grid); border-radius: 10px; padding: 4px; position: relative; margin-bottom: 24px; }
-.toggle button { position: relative; z-index: 1; border: 0; background: none; font: 600 14px var(--sans); padding: 10px 6px; cursor: pointer; color: var(--muted); border-radius: 8px; transition: color .2s; }
-.toggle button[aria-pressed="true"] { color: var(--ink); }
-.toggle .knob { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(33.333% - 2.667px); background: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(24,32,58,.12), 0 0 0 1px var(--line); transition: transform .35s cubic-bezier(.5,0,.2,1); }
-.toggle[data-side="java"] .knob { transform: translateX(100%); }
-.toggle[data-side="native"] .knob { transform: translateX(200%); }
-.runner[data-side="native"] .meter .bar i { background: #8d97ad; }
-.term { font: 14px/1.6 var(--mono); background: var(--ink); color: #e9ecf5; border-radius: 10px; padding: 16px; margin: 0 0 24px; min-height: 104px; }
-.term .ok { color: #7ee2b0; }
-.term .dim { color: #8a93ab; }
-.meter { margin: 0 0 18px; }
-.meter .row { display: flex; justify-content: space-between; font-size: 14px; color: var(--muted); margin-bottom: 6px; }
-.meter .row b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
-.meter .bar { height: 8px; background: var(--grid); border-radius: 99px; overflow: hidden; }
-.meter .bar i { display: block; height: 100%; background: var(--signal); border-radius: 99px; transition: width .6s cubic-bezier(.5,0,.2,1), background .3s; }
-.toggle[data-side="java"] ~ .meter .bar i, .runner[data-side="java"] .meter .bar i { background: var(--java); }
-.runner .note { margin-top: auto; font-size: 14px; color: var(--muted); }
-
-/* numbers */
-.bench { display: grid; gap: 22px; max-width: 900px; }
-.bench .item { display: grid; grid-template-columns: 220px 1fr 70px; gap: 20px; align-items: center; }
-.bench .label { font-weight: 600; font-size: 16px; line-height: 1.3; }
-.bench .label small { display: block; color: var(--muted); font-weight: 400; font-size: 13px; }
-.bench .bars { display: grid; gap: 5px; }
-.bench .b { height: 14px; border-radius: 4px; width: 0; transition: width 1.1s cubic-bezier(.3,0,.1,1); position: relative; }
-.bench .b.r { background: var(--signal); }
-.bench .b.j { background: var(--java); }
-.bench .b span { position: absolute; left: calc(100% + 8px); top: -3px; font-size: 12px; white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
-.bench .x { font-size: 22px; font-weight: 800; letter-spacing: -.02em; text-align: right; font-variant-numeric: tabular-nums; }
-.legend { display: flex; gap: 24px; font-size: 14px; color: var(--muted); margin: 0 0 32px; }
-.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
-.fine { font-size: 14px; color: var(--muted); margin-top: 40px; max-width: 46em; }
-
-/* uses */
-.uses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px; }
-.use svg { width: 100%; max-width: 260px; height: auto; display: block; margin-bottom: 20px; }
-.use h3 { font-size: 22px; letter-spacing: -.02em; margin: 0 0 8px; }
-.use p { margin: 0; color: var(--muted); }
-.use h3 a { text-decoration: none; }
-.use h3 a::after { content: " \2197"; color: var(--signal); font-weight: 400; }
-.use h3 a:hover, .use h3 a:focus-visible { text-decoration: underline; text-underline-offset: 4px; }
-.more-cases { margin: 56px 0 0; }
-.more-cases .cases { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 32px; }
-.all-cases { margin: 24px 0 0; font-size: 15px; }
-.all-cases a { color: var(--signal); font-weight: 600; text-decoration: none; }
-.all-cases a:hover { text-decoration: underline; }
-.agents-plan { margin: 16px 0 0; font-size: 14px; color: #8a93ab; }
-.agents-plan a { color: #c9cfdf; }
-.vs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin: 48px 0 0; }
-.vs-col { border: 1px solid #3b4566; border-radius: 12px; padding: 24px 26px; }
-.vs-col.good { border-color: var(--sand); background: rgba(255, 255, 255, .04); }
-.vs-col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: #a9b1c7; margin: 0 0 8px; font-weight: 600; }
-.vs-n { display: block; font-size: clamp(22px, 2.4vw, 28px); font-weight: 800; letter-spacing: -.02em; color: #fff; margin: 0 0 14px; }
-.vs-col ul { margin: 0; padding-left: 18px; color: #c9cfdf; font-size: 15px; }
-.vs-col li { margin: 6px 0; }
-.vs-proof { margin: 20px 0 0; font-size: 14px; color: #a9b1c7; max-width: 60em; }
-.vs-proof code { color: #fff; }
-.vs-proof a { color: #fff; }
-@media (max-width: 900px) { .vs { grid-template-columns: 1fr; } }
-.ill .s { fill: none; stroke: var(--ink); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.ill .f { fill: var(--signal-soft); stroke: var(--signal); stroke-width: 1.5; }
-.ill .d { fill: var(--sand); }
-
-/* inside */
-.inside { display: grid; grid-template-columns: .9fr 1.1fr; gap: 56px; align-items: start; }
-.same > *, .inside > *, .hero .wrap > * { min-width: 0; }
-.wall { display: flex; flex-wrap: wrap; gap: 8px; }
-.wall span { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; font-size: 15px; background: #fff; }
-.wall span.k { border-color: var(--signal); color: var(--signal); }
-.count { display: flex; flex-wrap: wrap; gap: 24px 40px; margin-top: 32px; }
-.count b { display: block; font-size: 40px; font-weight: 800; letter-spacing: -.04em; line-height: 1; }
-.count span { color: var(--muted); font-size: 14px; }
-
-/* start */
-.tabs { display: inline-flex; gap: 4px; background: var(--grid); border-radius: 10px; padding: 4px; margin: 0 0 28px; }
-.tabs button { border: 0; background: none; font: 600 15px var(--sans); padding: 9px 18px; border-radius: 8px; cursor: pointer; color: var(--muted); transition: background .2s, color .2s; }
-.tabs button[aria-selected="true"] { background: #fff; color: var(--ink); box-shadow: 0 1px 2px rgba(24,32,58,.12), 0 0 0 1px var(--line); }
-.panel[hidden] { display: none; }
-.panel:not([hidden]) { animation: panel-in .25s ease-out; }
-@keyframes panel-in { from { opacity: 0; transform: translateY(4px); } }
-.qs { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 40px; align-items: start; }
-.qs > * { min-width: 0; }
-.steps { list-style: none; margin: 0; padding: 0; counter-reset: s; display: grid; gap: 20px; }
-.steps li { counter-increment: s; display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 12px; }
-.steps li > div { min-width: 0; }
-.steps li::before { content: counter(s); width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--ink); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
-.cmd { margin: 8px 0 0; font-size: 13.5px; line-height: 1.55; background: var(--grid); padding: 10px 14px; border-radius: 8px; overflow-x: auto; }
-code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-radius: 5px; white-space: nowrap; }
-.qs .code pre { font-size: 13px; }
-.code header a { color: var(--ink); text-decoration: none; font-family: var(--mono); font-size: 13px; }
-.code header a:hover { text-decoration: underline; }
-.note { color: var(--muted); font-size: 15px; margin: 24px 0 0; max-width: 48em; }
-.uc-h { font-size: 24px; letter-spacing: -.02em; margin: 72px 0 20px; }
-.cases { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; }
-.cases a { display: grid; gap: 4px; padding: 18px 0; border-top: 1px solid var(--line); text-decoration: none; }
-.cases a b { font-size: 17px; }
-.cases a b::after { content: " \2197"; color: var(--signal); font-weight: 400; opacity: 0; transition: opacity .15s; }
-.cases a:hover b::after, .cases a:focus-visible b::after { opacity: 1; }
-.cases a span { color: var(--muted); font-size: 15px; }
-.example { margin-top: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fbfcfe; }
-.example summary { cursor: pointer; padding: 14px 18px; font-weight: 600; }
-.example pre { margin: 0; padding: 0 18px 18px; font-size: 13px; line-height: 1.6; overflow-x: auto; }
-
-@media (max-width: 900px) {
-  .hero .wrap, .same, .inside, .qs { grid-template-columns: 1fr; }
-  .cases, .more-cases .cases { grid-template-columns: 1fr; }
-  .uses { grid-template-columns: 1fr; gap: 40px; }
-  .bench .item { grid-template-columns: 1fr 60px; }
-  .bench .label { grid-column: 1 / -1; }
-  .hero { padding: 40px 0 64px; }
-  section { padding: 72px 0; }
-  .facts { gap: 24px; flex-wrap: wrap; }
-}
-@media (max-width: 480px) {
-  .bench .b span { display: none; }
-  .toggle button { font-size: 13px; padding: 10px 2px; }
-}
-</style>
+<link rel="stylesheet" href="assets/compare.css">
+<link rel="stylesheet" href="assets/cameleering.css">
+<script>
+  // The old home (Cameleer's) moved to /cameleer/; forward its section links there.
+  (function () {
+    var old = ["start", "bench", "numbers", "agents", "uses", "yaml", "runner", "same", "cameleering"];
+    var h = location.hash.slice(1);
+    if (h && old.indexOf(h) >= 0) location.replace("cameleer/#" + h);
+  })();
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@graph": [
+ {"@type": "Organization", "@id": "https://cameleer.ing/#org", "name": "Cameleering", "url": "https://cameleer.ing/", "slogan": "Carry more on less.", "logo": "https://cameleer.ing/brand/cameleering/cameleering-mark-512.png", "description": "A way of engineering, and the open-source projects that prove it with measurements: make software carry the same load on less, and prove every gain against the original.", "sameAs": ["https://github.com/cameleering", "https://hub.docker.com/u/cameleering"]},
+ {"@type": "WebSite", "@id": "https://cameleer.ing/#website", "name": "Cameleering", "alternateName": "cameleer.ing", "url": "https://cameleer.ing/", "publisher": {"@id": "https://cameleer.ing/#org"}, "inLanguage": "en"},
+ {"@type": "DefinedTerm", "@id": "https://cameleer.ing/#cameleering", "name": "Cameleering", "description": "The practice of making software carry the same load on less (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published.", "url": "https://cameleer.ing/", "inDefinedTermSet": {"@type": "DefinedTermSet", "name": "Cameleering", "url": "https://cameleer.ing/"}},
+ {"@type": "ItemList", "name": "Cameleering projects", "itemListElement": [
+  {"@type": "ListItem", "position": 1, "item": {"@type": "SoftwareSourceCode", "@id": "https://cameleer.ing/cameleer/#software", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/", "codeRepository": "https://github.com/cameleering/cameleer", "programmingLanguage": "Rust", "license": "https://www.apache.org/licenses/LICENSE-2.0", "description": "An integration engine in the style of Apache Camel, one std-only native binary. Measured 2026-11-06.", "publisher": {"@id": "https://cameleer.ing/#org"}}},
+  {"@type": "ListItem", "position": 2, "item": {"@type": "SoftwareSourceCode", "@id": "https://cameleer.ing/simoom/#software", "name": "simoom", "url": "https://cameleer.ing/simoom/", "codeRepository": "https://github.com/Cameleering/simoom", "programmingLanguage": "Rust", "license": "https://www.apache.org/licenses/LICENSE-2.0", "description": "An embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust. Measured 2026-11-09 to 2026-11-12.", "publisher": {"@id": "https://cameleer.ing/#org"}}},
+  {"@type": "ListItem", "position": 3, "item": {"@type": "SoftwareSourceCode", "name": "karez", "url": "https://cameleer.ing/projects/#karez", "description": "Database connectivity shaped like JDBC, ODBC and ADBC, with Arrow results. Design stage, targets only."}},
+  {"@type": "ListItem", "position": 4, "item": {"@type": "SoftwareSourceCode", "name": "ksar", "url": "https://cameleer.ing/projects/#ksar", "description": "Cryptographic primitives and PKI. Planned."}}]}
+]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is this “rewrite it in Rust”?", "acceptedAnswer": {"@type": "Answer", "text": "No. The gains come from how software uses its language: what goes into the build, which defaults ship, and how many threads and allocations a request costs. A rewrite is the top step of the ladder, used only when the design is the limit. Each claim is a measured result, never the language."}}, {"@type": "Question", "name": "Will I get the same savings?", "acceptedAnswer": {"@type": "Answer", "text": "Not necessarily. The FinOps figures are arithmetic on measured numbers and list prices, and each says what it leaves out. Yours depend on your workload, your discounts and whether you rightsize afterwards. That is why step 2 is your own baseline."}}, {"@type": "Question", "name": "Why should I trust these numbers?", "acceptedAnswer": {"@type": "Answer", "text": "Check them. Every result names its baseline version and hardware, and links to the scripts and raw results. Ratios are rounded down, and the losses are in the same table as the wins."}}, {"@type": "Question", "name": "Can we do this on closed-source software?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The steps work the same in private, and the crossing report goes to your team instead of the web. The public ledger lists only results whose scripts and raw data are published."}}, {"@type": "Question", "name": "How is this different from FinOps?", "acceptedAnswer": {"@type": "Answer", "text": "FinOps rightsizes the infrastructure to fit the software. Cameleering changes how much the software needs, so the next rightsizing goes further. The two fit together."}}, {"@type": "Question", "name": "What does Cameleering sell?", "acceptedAnswer": {"@type": "Answer", "text": "Nothing. The projects are open source under the Apache License 2.0, with no paid edition. The maintainer is open to consulting; ask in GitHub Discussions."}}, {"@type": "Question", "name": "Is Cameleering affiliated with the Apache Software Foundation?", "acceptedAnswer": {"@type": "Answer", "text": "No. Cameleer follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF."}}]}
+</script>
 </head>
 <body>
-
+<!-- partial:header-cameleering -->
 <header class="top" id="top">
   <div class="wrap">
-    <a class="brand" href="#" aria-label="Cameleer home">
-      <img src="brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">
-      Cameleer
-    </a>
+    <a class="brand" href="./" aria-label="Cameleering home"><img src="brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
     <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="ledger/">Ledger</a>
+      <a class="keep" href="method/">Method</a>
+      <a href="finops/">FinOps</a>
+      <a href="articles/">Articles</a>
       <div class="nav-menu">
-        <a href="cameleering/" aria-haspopup="true">Cameleering</a>
+        <a href="projects/" aria-haspopup="true">Projects</a>
         <div class="nav-sub">
-          <a href="cameleering/"><b>The practice</b><span>Carry more on less, measured</span></a>
-          <a href="cameleering/ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
-          <a href="simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+          <a href="cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
         </div>
       </div>
-      <a class="keep" href="docs/">Docs</a>
-      <a class="keep" href="use-cases/">Use cases</a>
-      <a href="mcp/">MCP</a>
-      <div class="nav-menu">
-        <a href="docs/packs/" aria-haspopup="true">Packs</a>
-        <div class="nav-sub">
-          <a href="healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
-          <a href="docs/packs/"><b>All packs</b><span>What a pack is, how to get one</span></a>
-        </div>
-      </div>
-      <a href="trust/">Trust</a>
-      <a href="compare/">Compare</a>
-      <a class="gh" href="https://github.com/cameleering/cameleer">
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        GitHub
-      </a>
+      <a href="about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
     </nav>
   </div>
 </header>
-
+<!-- /partial:header-cameleering -->
 <main>
-<section class="hero" aria-labelledby="h">
+<section class="c-hero home-hero">
   <div class="wrap">
-    <div>
-      <h1 id="h" aria-label="Integration routes, in Rust instead of on the JVM">
-        <span class="line" aria-hidden="true">Integration routes.</span>
-        <span class="line" aria-hidden="true"><span class="strike">On the JVM.</span></span>
-        <span class="line" aria-hidden="true">In Rust.</span>
-      </h1>
-      <p class="lede">Cameleer runs your Apache Camel routes, patterns and endpoint URIs unchanged, as one native binary. <strong>It starts in 3 ms and runs in megabytes.</strong></p>
-      <p class="agent-line"><strong>The reliable action layer for AI agents.</strong> An agent decides; a route does it. Serve routes as MCP tools with one command, and every call is validated against a schema, runs once, waits for approval when it is risky and lands in the audit log. <a href="mcp/">Cameleer MCP</a></p>
-      <div class="ctas">
-        <a class="btn primary" href="#start">Run your first route</a>
-        <a class="btn ghost" href="docs/guides/agents.html">Agent patterns</a>
-      </div>
-      <dl class="facts">
-        <div><dt>450x</dt><dd>faster startup than Apache Camel: 3 ms vs 1.1 s</dd></div>
-        <div><dt>54x</dt><dd>less memory: 8 MB vs 399 MB</dd></div>
-        <div><dt>1.7–8.7x</dt><dd>the throughput, in every scenario</dd></div>
-      </dl>
+    <p class="latest"><span>New</span> <a href="headroom/">Headroom: what is left when servers drop out</a>, on the Microsoft 365 outage of 12&ndash;13 November</p>
+    <p class="kicker">Cameleering · make software need less, then prove it against the original</p>
+    <h1>Shrink what your software needs, not just the instances.</h1>
+    <p class="lede"><strong>Cameleering is a practice, not a product:</strong> make software carry the same load on less memory, CPU and start-up time, then prove each gain against the original on the same machines. The results below come from two open-source projects built this way, <a href="cameleer/">Cameleer</a> and <a href="simoom/">simoom</a>. Further down are the steps to get the same on your own software.</p>
+    <p class="quick">Looking for a project? <a href="cameleer/">Cameleer</a>, the integration engine · <a href="simoom/">simoom</a>, the HTTP engine · <a href="#playbook">the steps</a></p>
+    <p class="outcomes-label">Results from projects built with the practice · each number names its project and its baseline</p>
+    <div class="outcomes">
+      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>450x</b><em>faster start-up</em><span>1.1 s to 3 ms for a started context (Apache Camel 4.23 on Java 21; on Quarkus native, 30 ms).</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="finops/#translate"><b>23x</b><em>smaller Lambda compute bill</em><span>$0.06 instead of $1.50 for a month of 10 million requests: execution time 3 ms instead of 7 ms, memory 128 MB instead of 512 MB, and cold starts that cost 300 times less.</span><small>Cameleer vs Apache Camel · arithmetic on measured time and memory</small></a>
+      <a class="outcome" href="finops/"><b>51x</b><em>more integrations per node</em><span>20 to 1,024 per 8 GiB on a direct route; 24 to 122 for HTTP into Kafka.</span><small>Cameleer · arithmetic on measured peak memory</small></a>
+      <a class="outcome" href="ledger/#cameleer"><b>54x</b><em>less memory, at best</em><span>Peak 214&ndash;440 MB to 7&ndash;67 MB: 4.8 to 54 times less across 11 scenarios.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>8.7x</b><em>the throughput, at best</em><span>1.7 to 8.7 times Apache Camel&rsquo;s messages per second, in all 11 scenarios, on the same machines.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="simoom/benchmarks/"><b>43%</b><em>less CPU per request</em><span>About 23 &micro;s to 13 &micro;s, with 1.7&ndash;1.8x the requests per second.</span><small>simoom vs the server it replaced</small></a>
     </div>
-
-    <figure style="margin:0">
-      <svg class="diagram" viewBox="0 0 560 440" role="img" aria-labelledby="dt dd">
-        <title id="dt">A Cameleer route running</title>
-        <desc id="dd">Messages arrive from a Kafka topic, an AI model classifies each one, and a content-based router sends urgent tickets and routine tickets to different Kafka topics.</desc>
-        <defs>
-          <path id="pu" d="M114 92 V310 H262 Q282 310 282 290 V276 Q282 258 302 258 H340"/>
-          <path id="pr" d="M114 92 V370 H340"/>
-        </defs>
-        <path class="wire" d="M114 92 V170"/>
-        <path class="wire" d="M114 222 V288"/>
-        <path class="wire dash" d="M136 310 H262 Q282 310 282 290 V276 Q282 258 302 258 H340"/>
-        <path class="wire dash" d="M114 332 V370 H340"/>
-        <path class="wire" d="M332 252 l8 6 -8 6 M332 364 l8 6 -8 6"/>
-
-        <g class="msgs" aria-hidden="true">
-          <circle class="msg" r="6"><animateMotion dur="3.4s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear"><mpath href="#pu"/></animateMotion></circle>
-          <circle class="msg" r="6"><animateMotion dur="3.4s" begin="-1.1s" repeatCount="indefinite"><mpath href="#pr"/></animateMotion></circle>
-          <circle class="msg" r="6"><animateMotion dur="3.4s" begin="-2.2s" repeatCount="indefinite"><mpath href="#pr"/></animateMotion></circle>
-        </g>
-
-        <g class="node"><rect x="24" y="40" width="180" height="52" rx="10"/><text class="k" x="40" y="62">from</text><text class="v" x="40" y="81">kafka:tickets</text></g>
-        <g class="node ai"><rect x="24" y="170" width="180" height="52" rx="10"/><rect class="pulse" x="24" y="170" width="180" height="52" rx="10"/><text class="k" x="40" y="192">to</text><text class="v" x="40" y="211">openai: classify</text></g>
-        <path class="choice" d="M114 288 L136 310 L114 332 L92 310 Z"/>
-        <text class="cap" x="150" y="302">urgent</text>
-        <text class="cap" x="124" y="358">otherwise</text>
-        <g class="node"><rect x="340" y="232" width="196" height="52" rx="10"/><text class="k" x="356" y="254">to</text><text class="v" x="356" y="273">kafka:urgent</text></g>
-        <g class="node"><rect x="340" y="344" width="196" height="52" rx="10"/><text class="k" x="356" y="366">to</text><text class="v" x="356" y="385">kafka:routine</text></g>
-
-        <g transform="translate(250 54)">
-          <rect width="286" height="118" rx="12" fill="#fff" stroke="#e4e8f0"/>
-          <text class="cap" x="16" y="28">triage.camel.yaml</text>
-          <text font-family="JetBrains Mono, monospace" font-size="12" fill="#18203a">
-            <tspan x="16" y="52">from: kafka:tickets</tspan>
-            <tspan x="16" y="70">  - to: openai:chat-completion</tspan>
-            <tspan x="16" y="88">  - choice: ${body} contains</tspan>
-            <tspan x="16" y="106">      'URGENT'</tspan>
-          </text>
-        </g>
-      </svg>
-    </figure>
+    <div class="cta"><a class="btn primary" href="#playbook">Run it on your software</a><a class="btn" href="ledger/">See every result in the ledger</a></div>
+    <nav class="doors" aria-label="Where to go next">
+      <a href="finops/"><b>I pay for the machines</b><span>What code efficiency saves</span></a>
+      <a href="cameleer/"><b>I run Apache Camel</b><span>Cameleer runs its routes in one binary</span></a>
+      <a href="simoom/"><b>I need a Rust HTTP server</b><span>simoom: no tokio, no dependencies</span></a>
+      <a href="cameleer/mcp/"><b>I build AI agents</b><span>Cameleer as an MCP tool server</span></a>
+    </nav>
   </div>
 </section>
 
-<section id="cameleering" aria-labelledby="cam-h">
+<section class="c-sec" id="ledger">
   <div class="wrap">
-    <h2 id="cam-h">The first Cameleering project: carry more on less.</h2>
-    <p class="sub"><strong>Cameleering</strong> is the practice of making software carry the same load on less, and proving every gain against the original. Cameleer is its first project: Apache Camel's patterns, endpoint URIs and YAML, run by one native Rust binary that starts in 3 ms and runs in megabytes, so Camel-style integration goes where a JVM does not fit.</p>
-    <div class="more-cases">
-      <ul class="cases">
-        <li><a href="use-cases/mqtt-iot-edge-gateway/"><b>At the edge</b><span>MQTT, syslog and HL7 routing on gateways and small devices, buffering when the uplink is down; arm64 image.</span></a></li>
-        <li><a href="use-cases/serverless-aws-lambda/"><b>In serverless functions</b><span>Its own AWS Lambda runtime; the same route on Cloud Run and Knative, with no JVM cold start.</span></a></li>
-        <li><a href="use-cases/mcp-tool-server/"><b>Behind AI agents</b><span>Routes as MCP tools that are validated, run once, approved when risky and audited.</span></a></li>
-      </ul>
-      <p class="all-cases"><a href="cameleering/">What is cameleering?</a> · <a href="cameleering/ledger/">The ledger</a></p>
-    </div>
-  </div>
-</section>
-
-<section id="same" aria-labelledby="same-h">
-  <div class="wrap">
-    <h2 id="same-h">Keep your routes. Change the runtime.</h2>
-    <p class="sub">The same YAML runs on Apache Camel and on Cameleer. Switch the runtime and watch what changes, including Apache Camel compiled natively with Quarkus.</p>
-    <div class="same">
-      <div class="code">
-        <header><span>triage.camel.yaml</span><button class="copy" data-copy="yaml">Copy</button></header>
-<pre id="yaml"><code><span class="tk-k">- route:</span>
-    <span class="tk-k">id:</span> triage
-    <span class="tk-k">from:</span>
-      <span class="tk-k">uri:</span> kafka:support-tickets
-      <span class="tk-k">steps:</span>
-        - <span class="tk-k">to:</span> <span class="tk-s">"openai:chat-completion?model=gpt-4o-mini"</span>
-        - <span class="tk-k">choice:</span>
-            <span class="tk-k">when:</span>
-              - <span class="tk-k">simple:</span> <span class="tk-s">"${body} contains 'URGENT'"</span>
-                <span class="tk-k">steps:</span>
-                  - <span class="tk-k">to:</span> kafka:tickets-urgent
-            <span class="tk-k">otherwise:</span>
-              <span class="tk-k">steps:</span>
-                - <span class="tk-k">to:</span> kafka:tickets-routine</code></pre>
+    <h2>It works on software people run every day</h2>
+    <p class="intro">Two projects have run every step in public.</p>
+    <div class="two">
+      <div class="pane proof">
+        <h3><a href="cameleer/">Cameleer</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-06</span></h3>
+        <p>An integration engine in the style of Apache Camel, and the first Cameleering project.</p>
+        <ul>
+          <li><b>Baseline:</b> Apache Camel 4.23.0 on Java 21 and 4.22.1 on Quarkus native, on identical DigitalOcean c-4 machines.</li>
+          <li><b>Cut:</b> one std-only binary that keeps Camel&rsquo;s routes, YAML and endpoint URIs, with component families as build options.</li>
+          <li><b>Proved:</b> start-up 450x faster (10x against Quarkus native), 4.8&ndash;54x less memory, 1.7&ndash;8.7x the throughput.</li>
+        </ul>
+        <p><a href="cameleer/compare/apache-camel-vs-cameleer/">Full comparison</a> · <a href="docs/BENCHMARKS.html">every scenario and the raw data</a></p>
       </div>
-      <div class="runner" id="runner" data-side="rust">
-        <div class="toggle" role="group" aria-label="Runtime" data-side="rust">
-          <span class="knob" aria-hidden="true"></span>
-          <button type="button" aria-pressed="true" data-side="rust">Cameleer</button>
-          <button type="button" aria-pressed="false" data-side="java">Camel, JVM</button>
-          <button type="button" aria-pressed="false" data-side="native">Camel, native</button>
-        </div>
-        <pre class="term" id="term" aria-live="polite"></pre>
-        <div class="meter"><div class="row"><span>Startup</span><b id="m-start">3 ms</b></div><div class="bar"><i id="b-start" style="width:1%"></i></div></div>
-        <div class="meter"><div class="row"><span>Memory</span><b id="m-mem">8 MB</b></div><div class="bar"><i id="b-mem" style="width:2%"></i></div></div>
-        <div class="meter"><div class="row"><span>Install size</span><b id="m-size">one binary</b></div><div class="bar"><i id="b-size" style="width:6%"></i></div></div>
-        <p class="note">Measured with the same routes against Apache Camel 4.23 on Java 21 and Apache Camel 4.22 compiled natively with Quarkus (<a href="compare/apache-camel-vs-cameleer/">full comparison</a>). Same endpoint options, headers, Simple expressions and error handling on all three.</p>
+      <div class="pane proof">
+        <h3><a href="simoom/">simoom</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-12</span></h3>
+        <p>An HTTP engine in std-only Rust, built to replace Cameleer&rsquo;s original server.</p>
+        <ul>
+          <li><b>Against the server it replaced:</b> 1.7&ndash;1.8x the throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections.</li>
+          <li><b>Against 20 other servers on the same droplets:</b> first of 21 on start-up (0.94 ms) and first of 19 on CPU per request.</li>
+        </ul>
+        <p><a href="simoom/benchmarks/">simoom benchmarks</a> · <a href="projects/">all projects, including the ones not yet measured</a></p>
       </div>
     </div>
   </div>
 </section>
 
-<section id="numbers" aria-labelledby="num-h">
+<section class="c-sec" id="saves">
   <div class="wrap">
-    <h2 id="num-h">Faster in every scenario we measured.</h2>
-    <p class="sub">The same routes on Cameleer and Apache Camel: APIs, Kafka, PostgreSQL and in-memory routing.</p>
-    <div class="legend"><span><i style="background:var(--signal)"></i>Cameleer</span><span><i style="background:var(--java)"></i>Apache Camel 4.23, Java 21</span></div>
-    <div class="bench" id="bench">
-      <div class="item"><div class="label">REST API<small>read JSON, answer JSON</small></div><div class="bars"><div class="b r" data-w="100"><span>80.3k req/s</span></div><div class="b j" data-w="47.0"><span>37.9k</span></div></div><div class="x">2.1x</div></div>
-      <div class="item"><div class="label">Writing to PostgreSQL<small>insert per request, pool of 16</small></div><div class="bars"><div class="b r" data-w="100"><span>11.0k req/s</span></div><div class="b j" data-w="42.8"><span>4.8k</span></div></div><div class="x">2.3x</div></div>
-      <div class="item"><div class="label">Order ingestion<small>HTTP into Kafka, keyed</small></div><div class="bars"><div class="b r" data-w="100"><span>17.8k req/s</span></div><div class="b j" data-w="56.3"><span>10.1k</span></div></div><div class="x">1.7x</div></div>
-      <div class="item"><div class="label">Stream processing<small>Kafka in, filter, Kafka out</small></div><div class="bars"><div class="b r" data-w="100"><span>6.0k rec/s</span></div><div class="b j" data-w="11.5"><span>698</span></div></div><div class="x">8.7x</div></div>
-      <div class="item"><div class="label">Content-based router<small>choice, filter, transform</small></div><div class="bars"><div class="b r" data-w="100"><span>1.14M msgs/s</span></div><div class="b j" data-w="32.8"><span>376k</span></div></div><div class="x">3.0x</div></div>
-      <div class="item"><div class="label">Request-reply<small>in-memory queue</small></div><div class="bars"><div class="b r" data-w="100"><span>719k msgs/s</span></div><div class="b j" data-w="16.3"><span>118k</span></div></div><div class="x">6.1x</div></div>
+    <h2>What less machine buys you</h2>
+    <p class="intro">Software decides how much memory and CPU every instance needs. Flexera&rsquo;s 2026 survey puts cloud waste at 29% of infrastructure spend.</p>
+    <div class="cards four benefits">
+      <div class="card"><h3>A smaller bill</h3><p>Lambda bills execution time times memory, and since August 2025 the cold start too. Each request runs 3 ms in 128 MB instead of 7 ms in 512 MB, about <b>9 times less</b> per request, and a million cold starts cost <b>$0.03</b> instead of $9.17. For a month of 10 million requests the compute bill is $0.06 against $1.50.</p><p class="note">Arithmetic on measured numbers and AWS list prices. <a href="finops/">The arithmetic, with its limits</a></p></div>
+      <div class="card"><h3>Less waiting</h3><p>A started context in <b>3 ms</b> instead of 1.1 s. A REST API with JSON has a p99 of <b>2.6 ms</b> instead of 6.3 ms. Behind simoom, p99 fell from 0.87&ndash;0.91 ms to 0.32&ndash;0.44 ms while serving 1.7&ndash;1.8x the requests.</p><p class="note"><a href="cameleer/">Cameleer</a> · <a href="simoom/">simoom</a></p></div>
+      <div class="card"><h3>Fewer machines</h3><p><b>1,024</b> integrations fit in 8 GiB by peak memory instead of 20. At 1.7&ndash;8.7x the throughput on the same CPUs, the same load needs fewer vCPUs, and each costs about $29.55 a month on Fargate at list price.</p><p class="note">Arithmetic; real density is lower on both sides. <a href="finops/">Density and vCPU examples</a></p></div>
+      <div class="card"><h3>Simpler operations</h3><p>One binary with no JVM to install: <b>8 MB</b> of memory at start-up instead of 114 MB. simoom has no crates.io dependencies at all and holds 1,000 idle connections in <b>2.7 MB</b> instead of 7.7 MB.</p><p class="note"><a href="ledger/">Both rows in the ledger</a></p></div>
     </div>
-    <p class="fine">Apache Camel compiled natively with Quarkus starts faster than on the JVM but has lower throughput; it is in the full comparison. <a href="compare/apache-camel-vs-cameleer/">Every scenario, the method and the raw data</a>.</p>
   </div>
 </section>
 
-<section id="agents" class="agents" aria-labelledby="agents-h">
+<section class="c-sec" id="playbook">
   <div class="wrap">
-    <h2 id="agents-h">The action layer for AI agents.</h2>
-    <p class="agents-lede">The model decides <em>what</em>; a tested route decides <em>how</em>. Cameleer feeds events to models, routes on their answers, and turns an agent's tool calls into actions that are validated, run once, retried, rolled back and audited.</p>
-    <ol class="flow" aria-label="How an agent uses Cameleer">
-      <li><b>Events in</b><span>Kafka, MQTT, webhooks, files, mailboxes, queues, databases</span></li>
-      <li><b>Model</b><span>23 providers: OpenAI, Anthropic, Gemini, Bedrock, Azure OpenAI, Vertex AI, Ollama and OpenAI-compatible services, with retries, fallbacks and caching in process</span></li>
-      <li><b>Route on the answer</b><span>content-based routing on a fixed label set, JSON schema checks on the output, a re-ask on failure</span></li>
-      <li><b>Reliable actions</b><span>MCP or REST tools with schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts that cancel, compensation, audit log</span></li>
+    <h2>Do it on your own software</h2>
+    <p class="intro">Seven steps, in any language, on the service you already run. You need one service, two identical machines and a load generator on a third machine.</p>
+    <ol class="playbook">
+      <li class="pstep"><h3><span class="n">1</span> Pick the service that costs the most</h3>
+        <dl><dt>Do</dt><dd>Rank your services by spend in your cost reports and take the top one.</dd><dt>Record</dt><dd>Its monthly cost, instance count and the unit you are billed in.</dd><dt>Use</dt><dd>Step 1 of <a href="finops/#method">the FinOps practice</a>.</dd><dt>Done when</dt><dd>One service is named, with its cost on one line.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">2</span> Baseline it on fixed hardware</h3>
+        <dl><dt>Do</dt><dd>Measure start-up, idle and peak memory, throughput, p99, CPU per request, size and dependencies. Report the median of many runs.</dd><dt>Record</dt><dd>The exact version, runtime, flags and machine type.</dd><dt>Use</dt><dd>&ldquo;What to measure&rdquo; and the fair-baseline rules in <a href="method/">the method</a>.</dd><dt>Done when</dt><dd>A teammate can rerun the baseline with one script and get the same figures.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">3</span> Translate and budget</h3>
+        <dl><dt>Do</dt><dd>Turn each number into what you pay for: GB-seconds, vCPU-hours, instances per node. Set a target for each, labelled as a target.</dd><dt>Record</dt><dd>The arithmetic, and what it leaves out.</dd><dt>Use</dt><dd>The worked examples on <a href="finops/">the FinOps page</a>.</dd><dt>Done when</dt><dd>Every target has a number, a unit and a price.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">4</span> Cut, starting with the smallest step</h3>
+        <dl><dt>Do</dt><dd>Climb the ladder one rung at a time: tune, remove, replace one component, rewrite the hot path; rewrite it all only when the design is the limit. Keep the behaviour users rely on.</dd><dt>Record</dt><dd>One change per measurement, and why you made it.</dd><dt>Use</dt><dd><a href="when-to-rewrite/">The ladder and the rewrite checklist</a>.</dd><dt>Done when</dt><dd>The behaviour tests still pass and the change moved a number.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">5</span> Prove it on the same machines</h3>
+        <dl><dt>Do</dt><dd>Rerun the same harness on the same hardware, swapping the roles of the two machines. Round against yourself: your times and memory up, your ratios down.</dd><dt>Record</dt><dd>Both ends of every range, and every scenario you lose.</dd><dt>Use</dt><dd>The &ldquo;Don&rsquo;t&rdquo; list in <a href="method/">the method</a>.</dd><dt>Done when</dt><dd>You have a before-and-after table with the losses in it.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">6</span> Rightsize, then guard</h3>
+        <dl><dt>Do</dt><dd>Lower requests, limits and memory settings to match, or the software shrinks and the bill does not. Then make CI fail on size, memory, start-up and p99 regressions.</dd><dt>Record</dt><dd>The answers to the ten-question water check before each release.</dd><dt>Use</dt><dd>The water check in <a href="method/">the method</a>.</dd><dt>Done when</dt><dd>A regression fails the build before it reaches the bill.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">7</span> Write the crossing report</h3>
+        <dl><dt>Do</dt><dd>One page per result: <b>Load</b> (the workload), <b>Baseline</b> (exact versions), <b>Terrain</b> (hardware and OS), <b>Water</b> (start-up, memory, size, CPU), <b>Distance</b> (throughput and latency), <b>Losses</b>, <b>Repeat it</b> (scripts and raw results) and <b>Date</b>.</dd><dt>Record</dt><dd>The report, next to the raw results.</dd><dt>Done when</dt><dd>Someone outside the team could check your numbers.</dd></dl></li>
     </ol>
-    <div class="vs" role="group" aria-label="One refund across four systems: direct tool calls compared with a Cameleer route">
-      <div class="vs-col">
-        <h3>Direct tool calls</h3>
-        <b class="vs-n">4 tool calls, 5 model turns</b>
-        <ul>
-          <li>A retried call refunds the customer twice</li>
-          <li>A failed step leaves half-done work for the model to undo</li>
-          <li>The model chooses the refund amount</li>
-          <li>The agent holds every API key</li>
-        </ul>
+    <div class="two">
+      <div class="pane">
+        <h3>When a result can be called Cameleered</h3>
+        <p>All five must hold: a named, current baseline version; both sides on the same hardware; a script anyone can rerun, and the raw results; the losses disclosed; measured within the last 12 months. Work in progress is <span class="st st-progress">Cameleering</span> and shows targets only; work not started is <span class="st st-planned">planned</span>.</p>
       </div>
-      <div class="vs-col good">
-        <h3>Through a Cameleer route</h3>
-        <b class="vs-n">1 tool call, 2 model turns</b>
-        <ul>
-          <li>Each request runs once; a repeat gets <code>duplicate</code></li>
-          <li>A saga cancels the refund when a later step fails</li>
-          <li>The amount comes from the order, not the prompt</li>
-          <li>Keys stay in the route; every call lands in the audit log</li>
-        </ul>
+      <div class="pane">
+        <h3>Need a second pair of eyes?</h3>
+        <p>Stuck on a baseline, or not sure a number is fair? Ask in <a href="https://github.com/cameleering/cameleer/discussions">GitHub Discussions</a>. Cameleering sells nothing; the maintainer is open to consulting.</p>
+        <div class="cta"><a class="btn primary" href="method/">Open the method</a><a class="btn" href="when-to-rewrite/">Is a rewrite worth it?</a></div>
       </div>
-    </div>
-    <p class="vs-proof">Tested on a damaged-order refund across orders, payments, shipping and email: <code>200</code> resolved · <code>200</code> duplicate, nothing run twice · <code>400</code> every bad argument named · <code>409</code> not delivered yet · <code>202</code> over the limit, waits for a person · <code>502</code> carrier down, refund rolled back. <a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">The route and the walkthrough</a></p>
-    <p class="agents-more"><a href="mcp/"><b>Cameleer MCP: how it works, where it runs, ten tested use cases</b></a> · <a href="use-cases/mcp-tool-server/">Routes as MCP tools</a> · <a href="compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a> · <a href="use-cases/llm-gateway-in-process/">Model calls without a gateway</a> · <a href="docs/guides/agents.html">Agent cookbook</a> · <a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">Direct tool calls vs Cameleer</a> · <a href="docs/guides/ai-components.html">AI components</a> · <a href="docs/guides/yaml-for-coding-agents.html">Let a coding agent write the routes</a>, checked with <code>cameleer validate</code></p>
-    <p class="agents-plan">An existing route becomes an MCP tool by changing one line, its <code>from</code> URI to <code>ai-tool:...</code>; then <code>cameleer run routes.camel.yaml --mcp</code> (or the same in Docker, or one property in the Rust crate) serves it to Claude Desktop, VS Code, Cursor and agent frameworks, in both MCP protocol eras. Cameleer is both an MCP server and an MCP client: as a gateway it puts the same rules on other MCP servers' tools. The <a href="docs/guides/agent-step.html">agent step</a> runs a model and its tools in a loop inside a route. Since 0.6.0, in a confidential VM, Cameleer can <a href="trust/">prove to a client which routes and tools it runs</a>.</p>
-  </div>
-</section>
-
-<section id="uses" aria-labelledby="uses-h">
-  <div class="wrap">
-    <h2 id="uses-h">What people run on it.</h2>
-    <p class="sub">Each use case has a tested route in the repository and a page that explains it. A 3 ms start and an 8 MB footprint change where integration code can run.</p>
-    <div class="uses">
-      <article class="use">
-        <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
-          <rect class="f" x="96" y="44" width="68" height="62" rx="14"/>
-          <circle class="s" cx="118" cy="70" r="4"/><circle class="s" cx="142" cy="70" r="4"/><path class="s" d="M116 86 q14 10 28 0"/>
-          <path class="s" d="M130 44 V28"/><circle class="d" cx="130" cy="24" r="5"/>
-          <path class="s" d="M96 75 H52 M164 75 H208 M130 106 V126"/>
-          <rect class="s" x="16" y="62" width="36" height="26" rx="6"/><rect class="s" x="208" y="62" width="36" height="26" rx="6"/><rect class="s" x="112" y="126" width="36" height="18" rx="5"/>
-        </svg>
-        <h3><a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">Tools for AI agents</a></h3>
-        <p>Give an agent tools it can call safely across databases, queues, SaaS APIs and files, over MCP or REST: schema validation, idempotency, retries, compensation and an audit log on every call, and a person in the loop for the risky ones.</p>
-      </article>
-      <article class="use">
-        <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
-          <path class="s" d="M70 104 a26 26 0 0 1 4-52 a36 36 0 0 1 68-8 a30 30 0 0 1 46 26 a20 20 0 0 1-6 34 Z"/>
-          <path class="f" d="M128 60 l-14 26 h14 l-6 24 22-32 h-14 l8-18 z"/>
-          <text x="196" y="132" font-family="JetBrains Mono, monospace" font-size="12" fill="#5b6479">1 ms</text>
-        </svg>
-        <h3><a href="use-cases/serverless-aws-lambda/">Serverless without the cold start</a></h3>
-        <p>Start per request, scale to zero, pay for milliseconds. No JVM warmup, no snapshot tricks, and the binary is its own AWS Lambda runtime. <a href="docs/guides/build-features.html">Build only the components a function uses</a>.</p>
-      </article>
-      <article class="use">
-        <svg class="ill" viewBox="0 0 260 150" aria-hidden="true">
-          <rect class="s" x="90" y="40" width="80" height="72" rx="8"/>
-          <rect class="f" x="104" y="54" width="52" height="44" rx="4"/>
-          <path class="s" d="M104 40 V28 M118 40 V28 M132 40 V28 M146 40 V28 M156 40 V28 M104 112 V124 M118 112 V124 M132 112 V124 M146 112 V124 M156 112 V124 M90 60 H78 M90 76 H78 M90 92 H78 M170 60 H182 M170 76 H182 M170 92 H182"/>
-          <circle class="d" cx="130" cy="76" r="6"/>
-        </svg>
-        <h3><a href="use-cases/mqtt-iot-edge-gateway/">Gateways at the edge</a></h3>
-        <p>Run MQTT, syslog and HTTP routing on small devices, filter and aggregate on site, and buffer when the uplink is down, with one binary and no runtime to install, down to 5.9 MB with <a href="docs/guides/build-features.html">build features</a>.</p>
-      </article>
-    </div>
-    <div class="more-cases">
-      <ul class="cases">
-        <li><a href="use-cases/mcp-tool-server/"><b>Routes as MCP tools</b><span>Serve tools, resources and prompts to MCP clients with one command; gateway in front of other MCP servers.</span></a></li>
-        <li><a href="use-cases/llm-gateway-in-process/"><b>Model calls without a gateway</b><span>23 providers with retries, fallback models, prompt caching and a response cache in process.</span></a></li>
-        <li><a href="use-cases/hl7-mllp-healthcare-integration/"><b>Healthcare: HL7 v2 over MLLP</b><span>Receive ADT and lab messages, acknowledge after delivery, post to the EHR or a FHIR server (health pack).</span></a></li>
-        <li><a href="use-cases/dicom-imaging-gateway/"><b>Medical imaging: DICOM</b><span>DIMSE in, DICOMweb or a PACS out, PS3.15 de-identification and AI results as FHIR (health pack, since 0.6.0).</span></a></li>
-        <li><a href="use-cases/file-sftp-pipelines/"><b>File, FTP and SFTP pipelines</b><span>Poll folders and servers, parse CSV and fixed-width files, split, validate and load.</span></a></li>
-        <li><a href="docs/guides/migrating-from-apache-camel.html"><b>Camel routes off the JVM</b><span>Move YAML and XML routes as they are; a checklist for the parts that differ.</span></a></li>
-        <li><a href="docs/guides/agents.html#rag-ingestion-chunk-embed-and-store"><b>LLM pipelines and RAG ingestion</b><span>Chunk, embed and index documents; summarize; classify and route; guard model output.</span></a></li>
-        <li><a href="use-cases/#webhooks"><b>SaaS webhooks to chat and tickets</b><span>Alerts and GitHub events in, Slack, Telegram, Jira and email out.</span></a></li>
-        <li><a href="use-cases/#cdc"><b>Change data capture and scheduled jobs</b><span>DynamoDB Streams, MongoDB change streams, Cosmos change feeds, table polling, cron.</span></a></li>
-      </ul>
-      <p class="all-cases"><a href="use-cases/">All use cases</a></p>
     </div>
   </div>
 </section>
 
-<section class="catalog" aria-labelledby="in-h">
+
+<section class="c-sec" id="how">
   <div class="wrap">
-    <div class="catalog-head">
-      <div>
-        <h2 id="in-h">Everything you need to connect, built in.</h2>
-        <p class="sub">163 components, 26 languages and 29 data formats, each with its own page and tested examples. No third-party crates: every protocol is written on the Rust standard library and checked against real servers and official clients.</p>
-      </div>
-      <dl class="catalog-stats">
-        <div><dt>230</dt><dd>components, languages, formats</dd></div>
-        <div><dt>0</dt><dd>dependencies</dd></div>
-        <div><dt>2,800+</dt><dd>tests</dd></div>
-      </dl>
-    </div>
-    <div class="cats">
-      <article class="cat">
-        <h3>Messaging and streaming</h3>
-        <p class="cat-n"><b>10</b> components</p>
-        <ul><li><a href="docs/components/kafka.html">Kafka</a></li><li><a href="docs/components/rabbitmq.html">RabbitMQ</a></li><li><a href="docs/components/amqp.html">AMQP 1.0</a></li><li><a href="docs/components/paho.html">MQTT</a></li><li><a href="docs/components/jms.html">JMS</a></li><li><a href="docs/components/stomp.html">STOMP</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=Messaging">See all 10</a>
-      </article>
-      <article class="cat">
-        <h3>AI and LLMs</h3>
-        <p class="cat-n"><b>11</b> components</p>
-        <ul><li><a href="docs/components/ai-tool.html">Routes as tools</a></li><li><a href="docs/components/mcp.html">MCP</a></li><li><a href="docs/components/openai.html">OpenAI and compatible</a></li><li><a href="docs/components/anthropic.html">Anthropic</a></li><li><a href="docs/components/gemini.html">Gemini</a></li><li><a href="docs/components/aws-bedrock.html">AWS Bedrock</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=AI+and+LLMs">See all 11</a>
-      </article>
-      <article class="cat">
-        <h3>HTTP, REST and web services</h3>
-        <p class="cat-n"><b>17</b> components</p>
-        <ul><li><a href="docs/components/http.html">HTTP and HTTP/2</a></li><li><a href="docs/components/platform-http.html">REST server</a></li><li><a href="docs/components/rest.html">REST DSL</a></li><li><a href="docs/components/graphql.html">GraphQL</a></li><li><a href="docs/components/websocket.html">WebSocket</a></li><li><a href="docs/components/cxf.html">SOAP</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=HTTP">See all 17</a>
-      </article>
-      <article class="cat">
-        <h3>Databases and search</h3>
-        <p class="cat-n"><b>10</b> components</p>
-        <ul><li><a href="docs/components/sql.html">PostgreSQL / SQL</a></li><li><a href="docs/components/mongodb.html">MongoDB</a></li><li><a href="docs/components/spring-redis.html">Redis</a></li><li><a href="docs/components/cql.html">Cassandra</a></li><li><a href="docs/components/elasticsearch.html">Elasticsearch</a></li><li><a href="docs/components/opensearch.html">OpenSearch</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=Databases">See all 10</a>
-      </article>
-      <article class="cat">
-        <h3>Amazon Web Services</h3>
-        <p class="cat-n"><b>32</b> components</p>
-        <ul><li><a href="docs/components/aws2-s3.html">S3</a></li><li><a href="docs/components/aws2-sqs.html">SQS</a></li><li><a href="docs/components/aws2-sns.html">SNS</a></li><li><a href="docs/components/aws2-ddb.html">DynamoDB</a></li><li><a href="docs/components/aws2-lambda.html">Lambda</a></li><li><a href="docs/components/aws2-kinesis.html">Kinesis</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=Amazon+Web+Services">See all 32</a>
-      </article>
-      <article class="cat">
-        <h3>Microsoft Azure</h3>
-        <p class="cat-n"><b>11</b> components</p>
-        <ul><li><a href="docs/components/azure-servicebus.html">Service Bus</a></li><li><a href="docs/components/azure-eventhubs.html">Event Hubs</a></li><li><a href="docs/components/azure-storage-blob.html">Blob Storage</a></li><li><a href="docs/components/azure-cosmosdb.html">Cosmos DB</a></li><li><a href="docs/components/azure-key-vault.html">Key Vault</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=Microsoft+Azure">See all 11</a>
-      </article>
-      <article class="cat">
-        <h3>Google Cloud and Workspace</h3>
-        <p class="cat-n"><b>17</b> components</p>
-        <ul><li><a href="docs/components/google-pubsub.html">Pub/Sub</a></li><li><a href="docs/components/google-bigquery.html">BigQuery</a></li><li><a href="docs/components/google-storage.html">Cloud Storage</a></li><li><a href="docs/components/google-sheets.html">Sheets</a></li><li><a href="docs/components/google-mail.html">Gmail</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=Google">See all 17</a>
-      </article>
-      <article class="cat">
-        <h3>Files, protocols and mail</h3>
-        <p class="cat-n"><b>15</b> components</p>
-        <ul><li><a href="docs/components/file.html">Files</a></li><li><a href="docs/components/sftp.html">SFTP</a></li><li><a href="docs/components/ftp.html">FTP / FTPS</a></li><li><a href="docs/components/smtp.html">Email (SMTP, IMAP)</a></li><li><a href="docs/components/grpc.html">gRPC</a></li><li><a href="docs/packs/health/">HL7, FHIR and DICOM (health pack)</a></li></ul>
-        <a class="cat-more" href="docs/components/">See all 15</a>
-      </article>
-      <article class="cat">
-        <h3>Core and scheduling</h3>
-        <p class="cat-n"><b>22</b> components</p>
-        <ul><li><a href="docs/components/seda.html">Direct and SEDA</a></li><li><a href="docs/components/timer.html">Timer</a></li><li><a href="docs/components/cron.html">Cron</a></li><li><a href="docs/components/log.html">Log</a></li><li><a href="docs/components/kamelet.html">Kamelets</a></li><li><a href="docs/components/mock.html">Mock (testing)</a></li></ul>
-        <a class="cat-more" href="docs/components/">See all 22</a>
-      </article>
-      <article class="cat">
-        <h3>Chat and SaaS</h3>
-        <p class="cat-n"><b>5</b> components</p>
-        <ul><li><a href="docs/components/slack.html">Slack</a></li><li><a href="docs/components/github.html">GitHub</a></li><li><a href="docs/components/jira.html">Jira</a></li><li><a href="docs/components/telegram.html">Telegram</a></li><li><a href="docs/components/twilio.html">Twilio</a></li></ul>
-        <a class="cat-more" href="docs/components/?q=Chat+and+SaaS">See all 5</a>
-      </article>
-      <article class="cat">
-        <h3>Transformation</h3>
-        <p class="cat-n"><b>13</b> components</p>
-        <ul><li><a href="docs/components/xslt.html">XSLT</a></li><li><a href="docs/components/xquery.html">XQuery</a></li><li><a href="docs/components/json-validator.html">JSON Schema</a></li><li><a href="docs/components/freemarker.html">FreeMarker</a></li><li><a href="docs/components/velocity.html">Velocity</a></li><li><a href="docs/components/mustache.html">Mustache</a></li></ul>
-        <a class="cat-more" href="docs/components/">See all 13</a>
-      </article>
-      <article class="cat">
-        <h3>Languages and data formats</h3>
-        <p class="cat-n"><b>55</b> languages and formats</p>
-        <ul><li><a href="docs/languages/simple.html">Simple</a></li><li><a href="docs/languages/jsonpath.html">JSONPath</a></li><li><a href="docs/languages/jq.html">jq</a></li><li><a href="docs/dataformats/json.html">JSON and CSV</a></li><li><a href="docs/dataformats/avro.html">Avro</a></li><li><a href="docs/dataformats/protobuf.html">Protobuf</a></li></ul>
-        <a class="cat-more" href="docs/languages/">26 languages</a> <a class="cat-more" href="docs/dataformats/">29 data formats</a>
-      </article>
-    </div>
-    <p class="catalog-foot">Plus every Enterprise Integration Pattern: <a href="docs/guides/eips.html">the EIP guide</a>. Looking for something specific? <a href="docs/components/">Search all components</a>.</p>
+    <h2>We call this cameleering</h2>
+    <p class="definition">Cameleering is the practice of making software carry the same load on less (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published.</p>
+    <p class="rule">Carry more on less. No claim without a number.</p>
+    <ol class="principles">
+      <li><b>Measure before you claim.</b> Targets are labelled as targets until they are measured.</li>
+      <li><b>Baselines over boasts.</b> The version people run today, on the same machine, with both sides published.</li>
+      <li><b>Same job, same contract.</b> Keep the names, options and behaviour people rely on.</li>
+      <li><b>Pack only what the journey needs.</b> Every feature, dependency and idle thread pays its way, or ships as an option.</li>
+      <li><b>Real waiting over felt waiting.</b> A loader changes how a wait feels; only engineering changes how long it is.</li>
+      <li><b>Budgets in the build.</b> Size, memory, startup and latency regressions fail CI.</li>
+      <li><b>Rewrite when the numbers say so.</b> A rewrite is a tool, not a creed (<a href="when-to-rewrite/">when it pays off</a>).</li>
+      <li><b>Publish the losses.</b> A ledger with no red rows is not trusted.</li>
+    </ol>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>approach</th><th>what it does</th><th>how cameleering relates</th></tr></thead>
+      <tbody>
+        <tr><td>FinOps</td><td>manages cloud spend, mostly by rightsizing infrastructure <sup><a href="#s8">[8]</a></sup></td><td>cameleering changes how much the software needs, so the next rightsizing goes further</td></tr>
+        <tr><td>Green software and the SCI standard</td><td>measures and reports the carbon of software <sup><a href="#s7">[7]</a></sup></td><td>complementary: cameleering changes the software and reports resources; SCI can turn those into carbon</td></tr>
+        <tr><td>Performance engineering</td><td>tunes a system, usually privately and step by step</td><td>the same craft, done in public against the incumbent, losses included</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">The idea is old: in 1995 Niklaus Wirth wrote &ldquo;A Plea for Lean Software&rdquo; <sup><a href="#s1">[1]</a></sup>. Cameleering adds shipped improvements to widely used software, proven against the original in public.</p>
   </div>
 </section>
 
-<section id="start" aria-labelledby="start-h">
+<section class="c-sec" id="why">
   <div class="wrap">
-    <h2 id="start-h">Start with Cameleer: your first route in a minute.</h2>
-    <p class="sub">Use the container, the Rust crates or the CLI. Every example here is a file in the repository, run end to end by the test suite.</p>
-
-    <div class="tabs" role="tablist" aria-label="How to run Cameleer">
-      <button role="tab" id="tab-docker" aria-controls="panel-docker" aria-selected="true">Docker</button>
-      <button role="tab" id="tab-rust" aria-controls="panel-rust" aria-selected="false" tabindex="-1">Rust crate</button>
-      <button role="tab" id="tab-cli" aria-controls="panel-cli" aria-selected="false" tabindex="-1">CLI</button>
+    <h2>Why now: using less is a responsibility</h2>
+    <p class="intro">We spent faster chips and cheaper memory on features and layers, often for good reasons. Now code is cheap to produce: in one benchmark, GPT-4&rsquo;s code took 3.12 times as long to run as human solutions <sup><a href="#s3">[3]</a></sup> (<a href="ai-code-performance/">the evidence</a>). The thing to fight is waste, not the people who build features.</p>
+    <div class="cards">
+      <div class="card"><h3>To the people who pay for the machines</h3><p>Every idle gigabyte is paid for, every month, by someone.</p></div>
+      <div class="card"><h3>To the people who wait</h3><p>A slow start or a slow p99 is a person waiting, or a function billed while it warms up.</p></div>
+      <div class="card"><h3>To the power we all share</h3><p>The IEA projects data-centre electricity use to reach about 945 TWh by 2030 <sup><a href="#s2">[2]</a></sup>. One project cannot change that; every team that removes waste does its share. Cameleering reports milliseconds and megabytes and makes no carbon claims of its own.</p></div>
     </div>
-
-    <div class="panel" role="tabpanel" id="panel-docker" aria-labelledby="tab-docker">
-      <div class="qs">
-        <ol class="steps">
-          <li><div>Save a Camel YAML route as <code class="in">hello-api.camel.yaml</code></div></li>
-          <li><div>Run it in the container<pre class="cmd"><code>docker run --rm -p 8080:8080 \
-  -v "$PWD:/routes:ro" cameleering/cameleer \
-  run /routes/hello-api.camel.yaml</code></pre></div></li>
-          <li><div>Call it<pre class="cmd"><code>curl localhost:8080/orders/42
-{"id": "42", "status": "shipped"}</code></pre></div></li>
-        </ol>
-        <div class="code">
-          <header><a href="https://github.com/cameleering/cameleer/blob/main/examples/hello-api.camel.yaml">hello-api.camel.yaml</a><button class="copy" data-copy="qs-yaml">Copy</button></header>
-<pre id="qs-yaml"><code><span class="tk-k">- rest:</span>
-    <span class="tk-k">path:</span> /orders
-    <span class="tk-k">get:</span>
-      - <span class="tk-k">path:</span> /{id}
-        <span class="tk-k">to:</span> direct:getOrder
-<span class="tk-k">- route:</span>
-    <span class="tk-k">from:</span>
-      <span class="tk-k">uri:</span> direct:getOrder
-      <span class="tk-k">steps:</span>
-        - <span class="tk-k">setBody:</span>
-            <span class="tk-k">simple:</span> <span class="tk-s">'{"id": "${header.id}", "status": "shipped"}'</span></code></pre>
-        </div>
-      </div>
-      <p class="note">One native binary on distroless, for linux/amd64 and linux/arm64, non-root and fine with <code class="in">--read-only</code>. On <a href="https://hub.docker.com/r/cameleering/cameleer">Docker Hub</a> and as <code class="in">ghcr.io/cameleering/cameleer</code>. Routes written for Apache Camel's YAML DSL run unchanged. Kubernetes and Cloud Run: <a href="https://github.com/cameleering/cameleer/blob/main/docs/DEPLOYMENT.md">deployment guide</a>.</p>
+    <div class="cards four" style="margin-top:18px">
+      <a class="card" href="finops/"><h3>Code efficiency as a FinOps lever</h3><p>Milliseconds and megabytes turned into instances and dollars.</p></a>
+      <a class="card" href="when-to-rewrite/"><h3>When a rewrite pays off</h3><p>The ladder from a setting to a full rewrite, and a checklist.</p></a>
+      <a class="card" href="headroom/"><h3>Headroom: what is left when servers drop out</h3><p>The same traffic on fewer servers: why per-request cost decides the margin.</p></a>
+      <a class="card" href="articles/"><h3>All articles</h3><p>AI code performance, Wirth&rsquo;s law and more, with sources; also as <a href="feed.xml">a feed</a>.</p></a>
     </div>
+  </div>
+</section>
 
-    <div class="panel" role="tabpanel" id="panel-rust" aria-labelledby="tab-rust" hidden>
-      <div class="qs">
-        <ol class="steps">
-          <li><div>Add the crates to <code class="in">Cargo.toml</code><pre class="cmd"><code>[dependencies]
-cameleer-core = "0.5"
-cameleer-http = "0.5"</code></pre></div></li>
-          <li><div>Write routes in the Rust DSL (right)</div></li>
-          <li><div>Run and call it<pre class="cmd"><code>cargo run --release
-curl localhost:8080/api/greet/Ada</code></pre></div></li>
-        </ol>
-        <div class="code">
-          <header><a href="https://github.com/cameleering/cameleer/blob/main/crates/cameleer-main/examples/rest_service.rs">src/main.rs</a><button class="copy" data-copy="qs-rs">Copy</button></header>
-<pre id="qs-rs"><code><span class="tk-k">use</span> cameleer_core::prelude::*;
-<span class="tk-k">use</span> cameleer_http::rest::RestDslExt;
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Is this “rewrite it in Rust”?</summary><p>No. The gains come from how software uses its language: what goes into the build, which defaults ship, and how many threads and allocations a request costs. A rewrite is the top step of the ladder, used only when the design is the limit. Each claim is a measured result, never the language.</p></details>
+    <details><summary>Will I get the same savings?</summary><p>Not necessarily. The FinOps figures are arithmetic on measured numbers and list prices, and each says what it leaves out. Yours depend on your workload, your discounts and whether you rightsize afterwards. That is why step 2 is your own baseline.</p></details>
+    <details><summary>Why should I trust these numbers?</summary><p>Check them. Every result names its baseline version and hardware, and links to the scripts and raw results. Ratios are rounded down, and the losses are in the same table as the wins.</p></details>
+    <details><summary>Can we do this on closed-source software?</summary><p>Yes. The steps work the same in private, and the crossing report goes to your team instead of the web. The public ledger lists only results whose scripts and raw data are published.</p></details>
+    <details><summary>How is this different from FinOps?</summary><p>FinOps rightsizes the infrastructure to fit the software. Cameleering changes how much the software needs, so the next rightsizing goes further. The two fit together.</p></details>
+    <details><summary>What does Cameleering sell?</summary><p>Nothing. The projects are open source under the Apache License 2.0, with no paid edition. The maintainer is open to consulting; ask in GitHub Discussions.</p></details>
+    <details><summary>Is Cameleering affiliated with the Apache Software Foundation?</summary><p>No. Cameleer follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF.</p></details>
+  </div>
+</section>
 
-<span class="tk-k">fn</span> main() -&gt; Result&lt;()&gt; {
-    <span class="tk-k">let</span> ctx = CamelContext::new();
-    cameleer_http::register(&amp;ctx);
-    ctx.properties().set(<span class="tk-s">"camel.server.port"</span>, <span class="tk-s">"8080"</span>);
-    ctx.add_routes(|b| {
-        b.rest(<span class="tk-s">"/api/greet"</span>).get(<span class="tk-s">"/{name}"</span>).to(<span class="tk-s">"direct:greet"</span>);
-        b.from(<span class="tk-s">"direct:greet"</span>)
-            .set_body(simple(<span class="tk-s">r#"{"greeting": "Hello, ${header.name}!"}"#</span>));
-    })?;
-    ctx.start()?;
-    <span class="tk-k">loop</span> { std::thread::park(); }
-}</code></pre>
-        </div>
-      </div>
-      <p class="note">To run YAML routes with every component from your own binary, depend on <code class="in">cameleer-main</code> and call <code class="in">cameleer_main::new_main()</code> (<a href="https://github.com/cameleering/cameleer/blob/main/crates/cameleer-main/examples/embed_yaml.rs">embed_yaml.rs</a>).</p>
-    </div>
+<section class="c-sec final" id="involved">
+  <div class="wrap">
+    <h2>Pick one service. Measure it this week.</h2>
+    <p class="intro">Start with the baseline. Everything after it is a number you can show.</p>
+    <div class="cta"><a class="btn primary" href="method/">Open the method</a><a class="btn" href="ledger/">See the ledger</a><a class="btn" href="https://github.com/cameleering/cameleer/discussions">Ask in GitHub Discussions</a></div>
+    <p class="note">Everything is open source under the Apache License 2.0: the code, the benchmark harness and the raw results. Security reports go privately through <a href="https://github.com/cameleering/cameleer/security/advisories/new">GitHub&rsquo;s vulnerability reporting</a> (<a href="security/">security and supply chain</a>).</p>
+  </div>
+</section>
 
-    <div class="panel" role="tabpanel" id="panel-cli" aria-labelledby="tab-cli" hidden>
-      <div class="qs">
-        <ol class="steps">
-          <li><div>Install the CLI from crates.io<pre class="cmd"><code>cargo install cameleer-main</code></pre></div></li>
-          <li><div>Run any Camel YAML route<pre class="cmd"><code>cameleer run hello-api.camel.yaml</code></pre></div></li>
-          <li><div>Manage running integrations, Camel JBang style<pre class="cmd"><code>cameleer ps
-cameleer stop hello-api</code></pre></div></li>
-        </ol>
-        <div class="code">
-          <header><span>One binary, Camel JBang's subcommands</span></header>
-<pre><code>$ cameleer run hello-api.camel.yaml
-<span class="tk-c">INFO  HTTP server started on 0.0.0.0:8080</span>
-<span class="tk-c">INFO  Cameleer 0.6.0 (camel-1) started (3 routes, 3 started)</span>
-
-$ cameleer validate hello-api.camel.yaml   <span class="tk-c"># before it runs</span>
-$ cameleer --help
-<span class="tk-c">init, run, validate, schema, export, bind, ps, stop, get, cmd, log, trace, catalog, version</span></code></pre>
-        </div>
-      </div>
-    </div>
-
-    <h3 class="uc-h">Real use cases, ready to run</h3>
-    <ul class="cases">
-      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/ai-ticket-triage.camel.yaml"><b>AI ticket triage</b><span>Kafka in. An LLM classifies each ticket P1 or P3, and urgent tickets go to their own topic. OpenAI or any compatible server: Ollama, vLLM, Azure OpenAI.</span></a></li>
-      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/alerts-to-slack.camel.yaml"><b>Alerts to Slack</b><span>An HTTP webhook takes monitoring alerts, keeps the critical ones and posts them to a Slack channel.</span></a></li>
-      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/files-to-s3.camel.yaml"><b>Files to S3</b><span>Watches a folder, uploads each new CSV file to an S3 bucket, then moves it to <code class="in">.done</code>.</span></a></li>
-      <li><a href="https://github.com/cameleering/cameleer/blob/main/examples/rest-api.camel.yaml"><b>REST API</b><span>JSON endpoints with validation, a content-based router and error handling. Needs nothing else.</span></a></li>
-    </ul>
-
-    <details class="example">
-      <summary>The AI ticket triage route</summary>
-<pre><code><span class="tk-k">- route:</span>
-    <span class="tk-k">id:</span> ticket-triage
-    <span class="tk-k">from:</span>
-      <span class="tk-k">uri:</span> <span class="tk-s">"kafka:support-tickets?brokers={{env:KAFKA_BROKERS:localhost:9092}}&amp;groupId=triage&amp;autoOffsetReset=earliest"</span>
-      <span class="tk-k">steps:</span>
-        - <span class="tk-k">setProperty:</span>
-            <span class="tk-k">name:</span> ticket
-            <span class="tk-k">simple:</span> <span class="tk-s">"${body}"</span>
-        - <span class="tk-k">to:</span> <span class="tk-s">"openai:chat-completion?model={{env:OPENAI_MODEL:gpt-4o-mini}}&amp;baseUrl={{env:OPENAI_BASE_URL:https://api.openai.com/v1}}&amp;temperature=0&amp;systemMessage=Classify the support ticket. Reply P1 for outages, data loss or security issues, otherwise P3. Reply with P1 or P3 only."</span>
-        - <span class="tk-k">setHeader:</span>
-            <span class="tk-k">name:</span> priority
-            <span class="tk-k">simple:</span> <span class="tk-s">"${body}"</span>
-        - <span class="tk-k">setBody:</span>
-            <span class="tk-k">simple:</span> <span class="tk-s">"${exchangeProperty.ticket}"</span>
-        - <span class="tk-k">choice:</span>
-            <span class="tk-k">when:</span>
-              - <span class="tk-k">simple:</span> <span class="tk-s">"${header.priority} contains 'P1'"</span>
-                <span class="tk-k">steps:</span>
-                  - <span class="tk-k">to:</span> <span class="tk-s">"kafka:tickets-urgent?brokers={{env:KAFKA_BROKERS:localhost:9092}}"</span>
-            <span class="tk-k">otherwise:</span>
-              <span class="tk-k">steps:</span>
-                - <span class="tk-k">to:</span> <span class="tk-s">"kafka:tickets-routine?brokers={{env:KAFKA_BROKERS:localhost:9092}}"</span>
-
-<span class="tk-c"># docker run --rm --network host -e KAFKA_BROKERS=localhost:9092 -e OPENAI_API_KEY \</span>
-<span class="tk-c">#   -v "$PWD:/routes:ro" cameleering/cameleer run /routes/ai-ticket-triage.camel.yaml</span></code></pre>
-    </details>
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <ol class="sources">
+      <li id="s1">Niklaus Wirth, &ldquo;A Plea for Lean Software&rdquo;, IEEE Computer 28(2), February 1995, <a href="https://doi.org/10.1109/2.348001">doi:10.1109/2.348001</a>.</li>
+      <li id="s2">International Energy Agency, <a href="https://www.iea.org/news/ai-is-set-to-drive-surging-electricity-demand-from-data-centres-while-offering-the-potential-to-transform-how-the-energy-sector-works">&ldquo;AI is set to drive surging electricity demand from data centres&rdquo;</a>, 2025 (Energy and AI report).</li>
+      <li id="s3">Huang et al., <a href="https://arxiv.org/abs/2402.02037">&ldquo;EffiBench: Benchmarking the Efficiency of Automatically Generated Code&rdquo;</a>, NeurIPS 2024.</li>
+      <li id="s7">Green Software Foundation, <a href="https://greensoftware.foundation/standards/sci/">Software Carbon Intensity (SCI) specification</a>, published as ISO/IEC 21031:2024.</li>
+      <li id="s8">FinOps Foundation, <a href="https://www.finops.org/introduction/what-is-finops/">What is FinOps?</a></li>
+      <li id="s9">Measurements: Cameleer in <a href="docs/BENCHMARKS.html">BENCHMARKS</a> (raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-06-linux">benchmarks/results/2026-11-06-linux</a>); simoom in <a href="simoom/benchmarks/">its benchmarks</a>; FinOps arithmetic and the Flexera survey on <a href="finops/">the FinOps page</a>; all summarized in <a href="ledger/">the ledger</a>.</li>
+    </ol>
   </div>
 </section>
 </main>
 
 <footer>
   <div class="wrap">
-    <div class="credit">
-      <h4>Cameleer</h4>
-      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a> (<a href="https://github.com/apache/camel">source</a>), following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
-      <p>Cameleer is a <a href="cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
-      <p>Apache License 2.0.</p>
-      <p>Supported by <a href="https://datahq.ai"><img src="brand/datahq-logo.png" alt="DataHQ" width="120" height="120" style="display:block;margin-top:8px"></a></p>
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
     </div>
+<!-- /partial:credit-cameleering -->
     <div>
-      <h4>Project</h4>
+      <h4>Cameleering</h4>
       <ul>
-        <li><a href="https://github.com/cameleering/cameleer">Source on GitHub</a></li>
-        <li><a href="https://github.com/cameleering/cameleer/releases">Releases</a></li>
-        <li><a href="https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>
-        <li><a href="https://github.com/cameleering/cameleer/blob/main/SECURITY.md">Security</a></li>
+        <li><a href="ledger/">The ledger</a></li>
+        <li><a href="method/">The method</a></li>
+        <li><a href="finops/">Code efficiency and FinOps</a></li>
+        <li><a href="projects/">Projects</a></li>
+        <li><a href="about/">About and contact</a></li>
+        <li><a href="security/">Security and supply chain</a></li>
       </ul>
     </div>
     <div>
-      <h4>Docs</h4>
+      <h4>Projects</h4>
       <ul>
-        <li><a href="docs/">Documentation</a></li>
-        <li><a href="cameleering/">What is cameleering?</a></li>
-        <li><a href="use-cases/">Use cases</a></li>
-        <li><a href="docs/guides/agents.html">Cameleer for AI agents</a></li>
-        <li><a href="docs/components/">All components</a></li>
-        <li><a href="docs/BENCHMARKS.html">Benchmarks</a></li>
-        <li><a href="compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a></li>
-        <li><a href="alternatives/apache-camel-alternatives/">Apache Camel alternatives</a></li>
-        <li><a href="alternatives/mirth-connect-alternatives/">Mirth Connect alternatives</a></li>
-        <li><a href="alternatives/apache-camel-in-rust/">Apache Camel in Rust: the options</a></li>
-        <li><a href="compare/mulesoft-vs-apache-camel-vs-cameleer/">MuleSoft vs Apache Camel vs Cameleer</a></li>
-        <li><a href="compare/enterprise-mcp-platforms/">Enterprise MCP platforms compared</a></li>
-        <li><a href="compare/ai-agent-tool-calls-direct-vs-cameleer/">AI agent tool calls compared</a></li>
-        <li><a href="mcp/">Cameleer MCP</a></li>
-        <li><a href="trust/">Trust: confidential integrations</a></li>
-        <li><a href="healthcare/">Healthcare integration: HL7, FHIR, DICOM</a></li>
-        <li><a href="use-cases/dicom-imaging-gateway/">DICOM imaging gateway</a></li>
-        <li><a href="use-cases/mcp-tool-server/">Routes as MCP tools</a></li>
-        <li><a href="compare/camel-mcp-server-vs-cameleer/">Camel MCP server vs Cameleer</a></li>
-        <li><a href="docs/ROADMAP.html">Roadmap</a></li>
+        <li><a href="cameleer/">Cameleer</a> · <a href="docs/">docs</a></li>
+        <li><a href="simoom/">simoom</a> · <a href="simoom/docs/">docs</a></li>
         <li><a href="llms.txt">llms.txt</a></li>
       </ul>
     </div>
   </div>
 </footer>
-
-<script>
-(function () {
-  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (reduce) { var d = document.querySelector('.diagram'); if (d && d.pauseAnimations) d.pauseAnimations(); }
-
-  var top = document.getElementById('top');
-  addEventListener('scroll', function () { top.classList.toggle('scrolled', scrollY > 8); }, { passive: true });
-
-  // runtime toggle
-  var data = {
-    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.6.0</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
-    java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (Java 21)</span>', '<span class="ok">Started route triage in 1.1 s</span>'], start: ['1.1 s', 100], mem: ['399 MB', 100], size: ['JDK + jars', 100] },
-    native: { lines: ['$ ./triage-runner', '<span class="dim">Apache Camel 4.22 on Quarkus, native (Mandrel)</span>', '<span class="ok">Started route triage in 30 ms</span>'], start: ['30 ms', 3], mem: ['113 MB', 28], size: ['one binary, long native build', 40] }
-  };
-  var term = document.getElementById('term'), runner = document.getElementById('runner'), tog = runner.querySelector('.toggle'), timer;
-  function show(side) {
-    var d = data[side];
-    tog.dataset.side = side; runner.dataset.side = side;
-    tog.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', b.dataset.side === side); });
-    ['start', 'mem', 'size'].forEach(function (k) { document.getElementById('m-' + k).textContent = d[k][0]; document.getElementById('b-' + k).style.width = d[k][1] + '%'; });
-    clearTimeout(timer); term.innerHTML = '';
-    var i = 0, delay = side === 'rust' ? 120 : side === 'native' ? 260 : 520;
-    (function next() { if (i >= d.lines.length) return; term.innerHTML += (i ? '\n' : '') + d.lines[i++]; timer = setTimeout(next, reduce ? 0 : delay); })();
-  }
-  tog.addEventListener('click', function (e) { var b = e.target.closest('button'); if (b) show(b.dataset.side); });
-  show('rust');
-
-  // benchmark bars: one reveal when the chart comes into view
-  var bench = document.getElementById('bench');
-  function grow() { bench.querySelectorAll('.b').forEach(function (b, i) { b.style.transitionDelay = (reduce ? 0 : Math.floor(i / 2) * 90) + 'ms'; b.style.width = (b.dataset.w * 0.78) + '%'; }); }
-  if ('IntersectionObserver' in window && !reduce) {
-    var io = new IntersectionObserver(function (es) { if (es[0].isIntersecting) { grow(); io.disconnect(); } }, { threshold: .3 });
-    io.observe(bench);
-  } else grow();
-
-  // quick start tabs (arrow keys move between tabs)
-  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tabs [role=tab]'));
-  function select(t) {
-    tabs.forEach(function (x) {
-      var on = x === t;
-      x.setAttribute('aria-selected', on); x.tabIndex = on ? 0 : -1;
-      document.getElementById(x.getAttribute('aria-controls')).hidden = !on;
-    });
-  }
-  tabs.forEach(function (t, i) {
-    t.addEventListener('click', function () { select(t); });
-    t.addEventListener('keydown', function (e) {
-      var d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
-      if (d) { var n = tabs[(i + d + tabs.length) % tabs.length]; select(n); n.focus(); e.preventDefault(); }
-    });
-  });
-
-  // copy buttons
-  document.querySelectorAll('.copy').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var text = document.getElementById(btn.dataset.copy).innerText;
-      navigator.clipboard.writeText(text).then(function () { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy'; }, 1400); });
-    });
-  });
-})();
-</script>
 </body>
 </html>

@@ -1,0 +1,46 @@
+{
+  "name": "Cameleer",
+  "description": "An integration engine in the style of Apache Camel, written in Rust: Apache Camel's routes, Enterprise Integration Patterns, endpoint URIs and YAML DSL as one native binary with no third-party dependencies, plus MCP tools for AI agents.",
+  "project_of": {"name": "Cameleering", "url": "https://cameleer.ing/"},
+  "version": "0.6.0",
+  "released": "2026-11-12",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/cameleering/cameleer",
+  "site": "https://cameleer.ing/cameleer/",
+  "docs": "https://cameleer.ing/docs/",
+  "llms": {
+    "index": "https://cameleer.ing/cameleer/llms.txt",
+    "full": "https://cameleer.ing/llms-full.txt",
+    "family": "https://cameleer.ing/llms.txt"
+  },
+  "install": {
+    "container": "docker run cameleering/cameleer:0.6.0",
+    "container_health_pack": "docker run cameleering/cameleer:health",
+    "cli": "cargo install cameleer",
+    "binary": "cameleer",
+    "rust_library": "cameleer = \"0.6\"",
+    "crates": "cameleer (wraps cameleer-main and forwards its features; cargo install cameleer-main works the same)"
+  },
+  "images": ["docker.io/cameleering/cameleer", "ghcr.io/cameleering/cameleer"],
+  "image_tags": ["latest", "0.6.0", "0.6", "health", "0.6.0-health", "0.6-health"],
+  "platforms": ["linux/amd64", "linux/arm64", "macOS", "Windows", "AWS Lambda (provided.al2023)"],
+  "not": ["Apache Camel (the Java framework from the Apache Software Foundation)", "kennycallado/rust-camel (a different Rust project)"],
+  "formerly": "rust-camel (up to v0.1.0)",
+  "affiliation": "Independent; not affiliated with or endorsed by the Apache Software Foundation.",
+  "measured": {
+    "date": "2026-11-06",
+    "version": "0.4.0",
+    "hardware": "DigitalOcean c-4 (4 dedicated vCPUs), same machines for both sides",
+    "baselines": ["Apache Camel 4.23.0 on Java 21", "Apache Camel 4.22.1 on Quarkus 3.40.0 native"],
+    "results": [
+      {"metric": "time to a started context", "cameleer": "3 ms", "baseline": "1.1 s (JVM); 30 ms (Quarkus native)"},
+      {"metric": "peak memory, 11 scenarios", "cameleer": "7-67 MB", "baseline": "214-440 MB (JVM)", "result": "4.8-54x less"},
+      {"metric": "throughput, 11 scenarios", "result": "1.7-8.7x (JVM); 1.9-9.9x (Quarkus native)"}
+    ],
+    "losses": [
+      {"metric": "p99 latency, HTTP into Kafka", "cameleer": "8.6 ms", "baseline": "7.8 ms (JVM)"}
+    ],
+    "ledger": "https://cameleer.ing/ledger/#cameleer",
+    "method": "https://cameleer.ing/docs/BENCHMARKS.html"
+  }
+}

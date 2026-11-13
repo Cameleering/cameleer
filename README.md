@@ -25,16 +25,16 @@ formats, ported one by one and verified against the real systems.
   habits come with you ([migrating from Apache Camel](docs/guides/migrating-from-apache-camel.md)).
 - **Run anywhere.** One native binary that starts in **3 ms**, runs in **megabytes**, is its own AWS
   Lambda runtime, and moves **1.7–8.7x the messages** of Apache Camel on the same CPUs, in every
-  scenario we measured ([Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)).
+  scenario we measured ([Apache Camel vs Cameleer](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/)).
 
 **Cameleer is the first Cameleering project.** Cameleering is the practice of making software carry
 the same load on less (time, memory, size, dependencies) and proving every gain against the original,
 with the method published: no claim without a number
-([what is cameleering?](https://cameleer.ing/cameleering/), [the ledger](https://cameleer.ing/cameleering/ledger/)).
+([what is cameleering?](https://cameleer.ing/), [the ledger](https://cameleer.ing/ledger/)).
 
-[Website](https://cameleer.ing/) · [Docs](https://cameleer.ing/docs/) · [Use cases](https://cameleer.ing/use-cases/) ·
+[Website](https://cameleer.ing/cameleer/) · [Docs](https://cameleer.ing/docs/) · [Use cases](https://cameleer.ing/cameleer/use-cases/) ·
 [Quick start](#quick-start) · [Benchmarks](#rebuilt-for-speed-memory-and-scale) ·
-[Agents](#the-action-layer-for-ai-agents) · [MCP tools](https://cameleer.ing/use-cases/mcp-tool-server/) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
+[Agents](#the-action-layer-for-ai-agents) · [MCP tools](https://cameleer.ing/cameleer/use-cases/mcp-tool-server/) · [Serverless](#rebuilt-for-serverless-and-the-edge) ·
 [Roadmap](docs/ROADMAP.md) · [FAQ](#faq)
 
 _Cameleer was called rust-camel up to v0.1.0._
@@ -95,7 +95,7 @@ Content-based router                                    higher is better
 | Content-based router | **1.14M msg/s** | 376k msg/s | 120k msg/s |
 | In-memory request-reply (`seda`) | **719k msg/s** | 118k msg/s | 73k msg/s |
 
-Every scenario, the method and the raw data: [Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/)
+Every scenario, the method and the raw data: [Apache Camel vs Cameleer](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/)
 and the full report, [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Run it yourself with
 [`scripts/cloud-bench`](scripts/cloud-bench/) for about a dollar of cloud time.
 
@@ -245,7 +245,7 @@ $ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the serv
   ([attestation](docs/guides/attestation.md)).
 - **Measured:** 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's
   `camel-mcp-server` on the same machines, in 56 MB against 289 MB (p99 6.3 ms against 5.2 ms)
-  ([Apache Camel's MCP server vs Cameleer](https://cameleer.ing/compare/camel-mcp-server-vs-cameleer/),
+  ([Apache Camel's MCP server vs Cameleer](https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/),
   [MCP server guide](docs/guides/mcp-server.md)).
 
 An agent decides; something still has to *do* it:
@@ -342,11 +342,11 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
 | **File exchange** | partner files on `sftp` | unmarshal CSV, XML or EDI → validate → `split` | rows in PostgreSQL, rejects back to the partner |
 
 Every component named here ships today; each row is a pattern you assemble from them. The
-[use-case pages](https://cameleer.ing/use-cases/) walk through the tested routes
+[use-case pages](https://cameleer.ing/cameleer/use-cases/) walk through the tested routes
 for AI agent tools, HL7 over MLLP, DICOM imaging, MQTT edge gateways, AWS Lambda and file/SFTP pipelines.
 
 **Healthcare is a pack (since 0.6.0).** Cameleer is also an open-source healthcare integration
-engine ([overview](https://cameleer.ing/healthcare/)): HL7 v2 and MLLP, FHIR and DICOM live in the
+engine ([overview](https://cameleer.ing/cameleer/healthcare/)): HL7 v2 and MLLP, FHIR and DICOM live in the
 [health pack](docs/packs/health/index.md) (`cameleer-health`), not in the default build or image:
 use `cameleering/cameleer:health` or `cargo install cameleer-main --features health`. Up to 0.5.1,
 `mllp`, `hl7` and `fhir` are in the default image. The pack adds DICOM, which Apache Camel does not
@@ -355,7 +355,7 @@ have: `dicom` (DIMSE as SCU and SCP: C-ECHO, C-STORE, C-FIND, C-MOVE, C-GET, ove
 `dicomDeidentify` (the PS3.15 Annex E basic profile and options, without the pixel options). Its
 live tests pass 10/10 against DCMTK 3.6.7, Orthanc 1.12.2, python-hl7 and HAPI FHIR; the cloud
 DICOM services are not tested yet
-([DICOM imaging gateway](https://cameleer.ing/use-cases/dicom-imaging-gateway/),
+([DICOM imaging gateway](https://cameleer.ing/cameleer/use-cases/dicom-imaging-gateway/),
 [DICOM Conformance Statement](docs/packs/health/conformance/dicom-conformance-statement-0.6.0.md)).
 
 ---

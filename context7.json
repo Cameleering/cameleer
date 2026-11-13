@@ -1,5 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
+  "url": "https://context7.com/cameleering/cameleer",
+  "public_key": "pk_2s9kWDFD5PfUEhy9Alhu5",
   "projectTitle": "Cameleer",
   "description": "Camel-compatible integration routes in Rust: runs Apache Camel YAML routes, EIPs and endpoint URIs with about 230 components; the integration layer for AI agents, serverless and edge.",
   "folders": ["docs", "examples", "README.md", "AGENTS.md"],
@@ -9,8 +11,8 @@
     "Write routes in the Camel YAML DSL (*.camel.yaml) unless the user asks for Rust; Apache Camel YAML routes run unchanged.",
     "Look up a component's options on docs/components/<scheme>.md before using them; unknown endpoint options are rejected at startup, as in Apache Camel.",
     "Put secrets in {{env:NAME}} placeholders, never inline.",
-    "Run routes with the Docker image cameleering/cameleer or the cameleer CLI (cargo install cameleer-main); there is no `camel` binary.",
+    "Run routes with the Docker image cameleering/cameleer or the cameleer CLI (`cargo install cameleer`; `cargo install cameleer-main` installs the same program); there is no `camel` binary.",
     "From Cameleer 0.3, validate generated routes with `cameleer validate <file> --format json` and fix every finding before running them.",
-    "Rust crates: cameleer-core (engine, Rust DSL) plus one crate per area (cameleer-http, cameleer-kafka-mqtt, cameleer-cloud, cameleer-saas, ...); cameleer-main bundles all components."
+    "Rust: `cargo add cameleer` re-exports the cameleer-main API, which bundles all components. cameleer-core is the engine and Rust DSL; area crates include cameleer-http, cameleer-kafka-mqtt, cameleer-cloud and cameleer-saas."
   ]
 }

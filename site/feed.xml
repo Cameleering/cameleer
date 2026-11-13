@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Cameleering: articles</title>
+  <subtitle>Software efficiency, measured against the original: essays with sources.</subtitle>
+  <link href="https://cameleer.ing/feed.xml" rel="self"/>
+  <link href="https://cameleer.ing/articles/"/>
+  <id>https://cameleer.ing/articles/</id>
+  <updated>2026-11-13T00:00:00Z</updated>
+  <author><name>Cameleering</name><uri>https://cameleer.ing/</uri></author>
+  <entry>
+    <title>Headroom: what is left when servers drop out</title>
+    <link href="https://cameleer.ing/headroom/"/>
+    <id>https://cameleer.ing/headroom/</id>
+    <published>2026-11-13T00:00:00Z</published>
+    <updated>2026-11-13T00:00:00Z</updated>
+    <summary>The Microsoft 365 outage of 12-13 November 2026 was the same traffic on fewer servers. How much a fleet survives losing part of itself is an efficiency property, and it can be measured before an incident.</summary>
+  </entry>
+  <entry>
+    <title>Code efficiency as a FinOps lever</title>
+    <link href="https://cameleer.ing/finops/"/>
+    <id>https://cameleer.ing/finops/</id>
+    <published>2026-11-12T00:00:00Z</published>
+    <updated>2026-11-12T00:00:00Z</updated>
+    <summary>Measured milliseconds and megabytes turned into instances and dollars: Lambda execution time, memory and cold starts, node density, Fargate, with the arithmetic shown.</summary>
+  </entry>
+  <entry>
+    <title>When a rewrite pays off: a decision checklist</title>
+    <link href="https://cameleer.ing/when-to-rewrite/"/>
+    <id>https://cameleer.ing/when-to-rewrite/</id>
+    <published>2026-11-12T00:00:00Z</published>
+    <updated>2026-11-12T00:00:00Z</updated>
+    <summary>The case against rewrites, the ones that worked with published results, the ladder from a setting to a full rewrite, and a checklist.</summary>
+  </entry>
+  <entry>
+    <title>AI-generated code and performance: what the evidence says</title>
+    <link href="https://cameleer.ing/ai-code-performance/"/>
+    <id>https://cameleer.ing/ai-code-performance/</id>
+    <published>2026-11-12T00:00:00Z</published>
+    <updated>2026-11-12T00:00:00Z</updated>
+    <summary>Generated code ran 3.12 times as long in one benchmark: what EffiBench, Mercury, EvalPerf, PIE, METR and DORA measured, each with its limits.</summary>
+  </entry>
+  <entry>
+    <title>Wirth&#x27;s law in 2026: measured</title>
+    <link href="https://cameleer.ing/wirths-law/"/>
+    <id>https://cameleer.ing/wirths-law/</id>
+    <published>2026-11-12T00:00:00Z</published>
+    <updated>2026-11-12T00:00:00Z</updated>
+    <summary>Software growth against hardware speed since 1995: page weight, input latency, single-core speed, and the counter-argument.</summary>
+  </entry>
+</feed>

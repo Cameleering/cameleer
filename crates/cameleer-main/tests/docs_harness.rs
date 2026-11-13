@@ -696,3 +696,95 @@ fn docs_pages_invite_fixes() {
     }
     fail("pages without the \"Found a problem?\" section", &missing);
 }
+
+// ---------------------------------------------------------------------------
+// Absolute links to the site
+// ---------------------------------------------------------------------------
+
+/// `https://cameleer.ing/...` URLs in a text, without trailing punctuation.
+fn site_urls(text: &str) -> Vec<String> {
+    const BASE: &str = "https://cameleer.ing/";
+    let mut out = Vec::new();
+    let mut rest = text;
+    while let Some(i) = rest.find(BASE) {
+        let tail = &rest[i..];
+        let end = tail.find(|c: char| c.is_whitespace() || ")\"'`<>]|".contains(c)).unwrap_or(tail.len());
+        out.push(tail[..end].trim_end_matches(|c| ".,;:".contains(c)).to_string());
+        rest = &tail[end..];
+    }
+    out
+}
+
+/// scripts/redirects.txt: old site path -> new site path.
+fn redirects(root: &Path) -> BTreeMap<String, String> {
+    let text = std::fs::read_to_string(root.join("scripts/redirects.txt")).unwrap_or_default();
+    text.lines()
+        .filter_map(|l| {
+            let mut p = l.split('#').next().unwrap_or("").split_whitespace();
+            Some((p.next()?.to_string(), p.next()?.to_string()))
+        })
+        .collect()
+}
+
+/// Whether a site path (after `https://cameleer.ing/`, without query or fragment) is served by
+/// the current site: a hand-written page or file under `site/`, a docs page built from
+/// `docs/**/*.md` by scripts/build-docs.py, or a file that build writes.
+fn site_path_exists(root: &Path, path: &str) -> bool {
+    let site = root.join("site");
+    if ["llms-full.txt", "sitemap.xml"].contains(&path) {
+        return true; // written by scripts/build-docs.py
+    }
+    if let Some(d) = path.strip_prefix("docs/") {
+        let docs = root.join("docs");
+        if d.is_empty() || d.ends_with('/') {
+            return docs.join(d).is_dir(); // a section index (generated, or README.md)
+        }
+        if let Some(stem) = d.strip_suffix(".html") {
+            if let Some(dir) = stem.strip_suffix("index") {
+                return docs.join(dir).is_dir();
+            }
+            return docs.join(format!("{}.md", stem)).is_file();
+        }
+        return docs.join(d).is_file(); // a raw .md twin or an asset
+    }
+    if path.is_empty() || path.ends_with('/') {
+        return site.join(path).join("index.html").is_file();
+    }
+    site.join(path).is_file() || site.join(path).join("index.html").is_file()
+}
+
+/// Every absolute link to the site in the repository's markdown (docs, README, the Docker Hub
+/// overview, AGENTS.md) points at a current URL: not at a path that moved (scripts/redirects.txt
+/// names the new one) and not at one that does not exist. Release notes and the CHANGELOG are
+/// left out: published release bodies can't change, and the redirect stubs serve them.
+#[test]
+fn absolute_site_links_point_at_current_urls() {
+    assert_eq!(
+        site_urls("see https://cameleer.ing/docs/a.html#x, [l](https://cameleer.ing/compare/) and `https://cameleer.ing/`."),
+        vec!["https://cameleer.ing/docs/a.html#x", "https://cameleer.ing/compare/", "https://cameleer.ing/"]
+    );
+    let root = repo_root();
+    let moved = redirects(&root);
+    let mut files = markdown_files(&root.join("docs"));
+    for f in ["README.md", "docker/README.dockerhub.md", "AGENTS.md"] {
+        if root.join(f).is_file() {
+            files.push(root.join(f));
+        }
+    }
+    let mut errors = Vec::new();
+    let mut checked = 0;
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap();
+        for url in site_urls(&text) {
+            checked += 1;
+            let path = url["https://cameleer.ing/".len()..].split(['#', '?']).next().unwrap_or("");
+            if let Some(new) = moved.get(&format!("/{}", path)) {
+                errors.push(format!("{}: {} moved to https://cameleer.ing{}", rel(&root, f), url, new));
+            } else if !site_path_exists(&root, path) {
+                errors.push(format!("{}: {} does not exist on the site", rel(&root, f), url));
+            }
+        }
+    }
+    println!("{} absolute site links checked", checked);
+    fail("absolute links to cameleer.ing that are not current", &errors);
+}

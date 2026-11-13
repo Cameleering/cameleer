@@ -4,15 +4,15 @@
 
 **Apache Camel routes, rebuilt in Rust.** If you know [Apache Camel](https://camel.apache.org/), you already know Cameleer: the same YAML DSL, endpoint URIs, Enterprise Integration Patterns and Simple expressions, in a single native binary.
 
-Cameleer is the first [Cameleering](https://cameleer.ing/cameleering/) project: software that carries the same load on less, with every gain measured against the original ([the ledger](https://cameleer.ing/cameleering/ledger/)).
+Cameleer is the first [Cameleering](https://cameleer.ing/) project: software that carries the same load on less, with every gain measured against the original ([the ledger](https://cameleer.ing/ledger/)).
 
-- **450x faster startup** than Apache Camel (3 ms vs 1.1 s), **up to 54x less memory**, **1.7–8.7x** the throughput in every scenario ([comparison](https://cameleer.ing/compare/apache-camel-vs-cameleer/))
+- **450x faster startup** than Apache Camel (3 ms vs 1.1 s), **up to 54x less memory**, **1.7–8.7x** the throughput in every scenario ([comparison](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/))
 - About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
-- **Routes as MCP tools** for AI agents (`--mcp`, or `--mcp-stdio` for Claude Desktop): schema checks, approvals, run-once, timeouts and audit on every call; official MCP conformance 39/39 and 26/26 ([MCP](https://cameleer.ing/mcp/))
+- **Routes as MCP tools** for AI agents (`--mcp`, or `--mcp-stdio` for Claude Desktop): schema checks, approvals, run-once, timeouts and audit on every call; official MCP conformance 39/39 and 26/26 ([MCP](https://cameleer.ing/cameleer/mcp/))
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**
 - Image: one native binary on distroless, **linux/amd64 and linux/arm64**, non-root, no shell, about 20 MB to download
 
-Website: https://cameleer.ing/ · Source: https://github.com/cameleering/cameleer
+Website: https://cameleer.ing/cameleer/ · Source: https://github.com/cameleering/cameleer
 
 ## Quick start
 
