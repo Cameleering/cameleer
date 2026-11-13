@@ -6,7 +6,7 @@ Names: Cameleering is the practice and the organization, not a product. Cameleer
 
 ## Projects
 
-- **Cameleer** 0.6.0 (2026-11-12; Cameleered): an integration engine in the style of Apache Camel, written in Rust: Apache Camel's routes, EIPs and YAML DSL as one std-only native binary, plus MCP tools for AI agents. `docker run cameleering/cameleer:0.6.0` or `cargo install cameleer-main` (binary `cameleer`). Site https://cameleer.ing/cameleer/, docs https://cameleer.ing/docs/, index https://cameleer.ing/cameleer/llms.txt, facts https://cameleer.ing/cameleer/facts.json.
+- **Cameleer** 0.6.0 (2026-11-12; Cameleered): an integration engine in the style of Apache Camel, written in Rust: Apache Camel's routes, EIPs and YAML DSL as one std-only native binary, plus MCP tools for AI agents. `docker run cameleering/cameleer:0.6.0` or `cargo install cameleer`; in Rust, `cargo add cameleer`. Site https://cameleer.ing/cameleer/, docs https://cameleer.ing/docs/, index https://cameleer.ing/cameleer/llms.txt, facts https://cameleer.ing/cameleer/facts.json.
 - **simoom** 0.1.0 (Cameleered): an embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, no tokio, no dependencies. `cargo add simoom`. Site https://cameleer.ing/simoom/, index https://cameleer.ing/simoom/llms.txt, full text https://cameleer.ing/simoom/llms-full.txt.
 - **karez** (Cameleering: in progress, targets only): database connectivity like JDBC, ODBC and ADBC with Arrow results. Design stage, no release. Do not describe it as available.
 - **ksar** (planned, not started): cryptographic primitives and PKI. Do not describe it as available.

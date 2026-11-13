@@ -212,6 +212,35 @@ def main(argv=None):
             if p.description is not None and len(p.description) > 165:
                 warnings.append("%s: meta description is %d characters (over 165)" % (rel, len(p.description)))
 
+    # every real page has the standard head: language, charset, viewport, title, description,
+    # canonical (= og:url), Open Graph, Twitter card, icons and JSON-LD (the 404 page only the basics)
+    head_tags = [
+        ("lang", r'<html[^>]*\slang="[a-z]'), ("charset", r'<meta charset="utf-8">'), ("viewport", r'<meta name="viewport"'),
+        ("title", r"<title>[^<]+</title>"), ("icon", r'<link rel="icon"'), ("apple-touch-icon", r'<link rel="apple-touch-icon"'),
+        ("description", r'<meta name="description" content="[^"]+"'), ("canonical", r'<link rel="canonical" href="https://cameleer\.ing/'),
+        ("theme-color", r'<meta name="theme-color"'), ("og:type", r'<meta property="og:type"'), ("og:site_name", r'<meta property="og:site_name"'),
+        ("og:title", r'<meta property="og:title"'), ("og:description", r'<meta property="og:description"'), ("og:url", r'<meta property="og:url"'),
+        ("og:image", r'<meta property="og:image"'), ("twitter:card", r'<meta name="twitter:card"'), ("JSON-LD", r'application/ld\+json'),
+    ]
+    for rel in pages:
+        if is_stub(rel):
+            continue
+        text = open(os.path.join(site, rel), encoding="utf-8").read()
+        head = text[: text.find("</head>")]
+        need = head_tags[:6] if rel == "404.html" else head_tags
+        miss = [name for name, rx in need if not re.search(rx, head)]
+        if miss:
+            errors.append("%s: head is missing %s" % (rel, ", ".join(miss)))
+        c = re.search(r'<link rel="canonical" href="([^"]+)"', head)
+        o = re.search(r'<meta property="og:url" content="([^"]+)"', head)
+        if c and o and c.group(1) != o.group(1):
+            errors.append("%s: og:url `%s` differs from the canonical `%s`" % (rel, o.group(1), c.group(1)))
+        for img in re.findall(r'<meta property="og:image" content="https://cameleer\.ing/([^"]+)"', head):
+            if target_file(site, "/" + img) is None:
+                errors.append("%s: og:image `%s` does not exist" % (rel, img))
+    if not os.path.isfile(os.path.join(site, "favicon.ico")):
+        errors.append("site/favicon.ico is missing (browsers and crawlers ask for it at the root)")
+
     # sitemap: every URL is a real page; every designed page is listed
     sm = os.path.join(site, "sitemap.xml")
     listed = set()
