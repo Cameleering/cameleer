@@ -26,3 +26,4 @@ health pack (HL7, FHIR, DICOM).
 - Documentation: <https://cameleer.ing/docs/>
 - Home: <https://cameleer.ing/cameleer/>
 - Source: <https://github.com/cameleering/cameleer> (Apache-2.0)
+- MCP Registry name: mcp-name: io.github.cameleering/cameleer
