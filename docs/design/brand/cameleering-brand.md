@@ -85,7 +85,7 @@ every repo and session; it is not published on the site._
 - Both ends of every range ("4.8-54x").
 - A result older than 12 months is stale.
 - Rows are never deleted: a newer run supersedes the old row, which stays visible, struck through.
-- Losses go in the same table as the wins.
+- Losses go in the same table as the wins on the ledger and on each project's own pages (benchmarks, comparisons). The Cameleering home page (owner, 2026-11-13) shows the outcomes and links to the ledger for the full record, losses included; it does not list losses itself.
 - Every row links to its crossing report: Load, Baseline, Terrain, Water, Distance, Losses, Repeat
   it, Date.
 

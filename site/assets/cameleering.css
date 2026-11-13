@@ -47,6 +47,7 @@ ol.principles li { padding-left: 4px; }
 /* under 600 px the mini-ledger becomes cards: the baseline stays next to the number, never in a tooltip */
 @media (max-width: 600px) {
   .home-hero { padding-top: 28px; }
+  .home-hero .lede { font-size: 17px; margin-bottom: 20px; }
   .home-hero .carry { font-size: 18px; }
   .home-hero .quick { display: block; font-size: 15px; margin: -14px 0 20px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
   .home-hero .quick a { font-weight: 600; }
@@ -92,3 +93,4 @@ ol.playbook { list-style: none; padding: 0; margin: 8px 0 28px; display: grid; g
 .proof li.lost { color: #a33a2b; }
 .definition { font-size: 21px; line-height: 1.5; max-width: 44em; margin: 0 0 18px; color: var(--ink); }
 @media (max-width: 800px) { ol.playbook { grid-template-columns: 1fr; } .pstep dl { grid-template-columns: 1fr; gap: 2px; } .pstep dt { padding-top: 6px; } }
+.outcomes-label { font: 600 13px var(--mono); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 6px 0 10px; }

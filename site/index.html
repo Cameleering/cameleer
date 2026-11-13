@@ -78,8 +78,9 @@
   <div class="wrap">
     <p class="kicker">Cameleering · make software need less, then prove it against the original</p>
     <h1>Shrink what your software needs, not just the instances.</h1>
-    <p class="lede">Make software carry the same load on less memory, CPU and start-up time, then prove each gain against the original on the same machines. Below are the results so far, and the steps to get your own.</p>
+    <p class="lede"><strong>Cameleering is a practice, not a product:</strong> make software carry the same load on less memory, CPU and start-up time, then prove each gain against the original on the same machines. The results below come from two open-source projects built this way, <a href="cameleer/">Cameleer</a> and <a href="simoom/">simoom</a>. Further down are the steps to get the same on your own software.</p>
     <p class="quick">Looking for a project? <a href="cameleer/">Cameleer</a>, the integration engine · <a href="simoom/">simoom</a>, the HTTP engine · <a href="#playbook">the steps</a></p>
+    <p class="outcomes-label">Results from projects built with the practice · each number names its project and its baseline</p>
     <div class="outcomes">
       <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>450x</b><em>faster start-up</em><span>1.1 s to 3 ms for a started context (Apache Camel 4.23 on Java 21; on Quarkus native, 30 ms).</span><small>Cameleer vs Apache Camel</small></a>
       <a class="outcome" href="finops/"><b>300x</b><em>cheaper cold starts</em><span>$9.17 to $0.03 per million AWS Lambda cold starts at 512 MB.</span><small>Cameleer · arithmetic on measured start-up</small></a>
@@ -88,8 +89,7 @@
       <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>8.7x</b><em>the throughput, at best</em><span>1.7 to 8.7 times Apache Camel&rsquo;s messages per second, in all 11 scenarios, on the same machines.</span><small>Cameleer vs Apache Camel</small></a>
       <a class="outcome" href="simoom/benchmarks/"><b>43%</b><em>less CPU per request</em><span>About 23 &micro;s to 13 &micro;s, with 1.7&ndash;1.8x the requests per second.</span><small>simoom vs the server it replaced</small></a>
     </div>
-    <p class="losses"><b>Where we lose, shown with the wins:</b> Cameleer&rsquo;s p99 for HTTP into Kafka is 8.6 ms against Apache Camel&rsquo;s 7.8 ms. simoom is 6% behind may-minihttp on plain HTTP and behind H2O on HTTP/3. Every row is in <a href="ledger/">the ledger</a>.</p>
-    <div class="cta"><a class="btn primary" href="#playbook">Run it on your software</a><a class="btn" href="ledger/">See every result and loss</a></div>
+    <div class="cta"><a class="btn primary" href="#playbook">Run it on your software</a><a class="btn" href="ledger/">See every result in the ledger</a></div>
     <nav class="doors" aria-label="Where to go next">
       <a href="finops/"><b>I pay for the machines</b><span>What code efficiency saves</span></a>
       <a href="cameleer/"><b>I run Apache Camel</b><span>Cameleer runs its routes in one binary</span></a>
@@ -158,7 +158,6 @@
           <li><b>Baseline:</b> Apache Camel 4.23.0 on Java 21 and 4.22.1 on Quarkus native, on identical DigitalOcean c-4 machines.</li>
           <li><b>Cut:</b> one std-only binary that keeps Camel&rsquo;s routes, YAML and endpoint URIs, with component families as build options.</li>
           <li><b>Proved:</b> start-up 450x faster (10x against Quarkus native), 4.8&ndash;54x less memory, 1.7&ndash;8.7x the throughput.</li>
-          <li class="lost"><b>Lost:</b> p99 for HTTP into Kafka, 8.6 ms against 7.8 ms.</li>
         </ul>
         <p><a href="cameleer/compare/apache-camel-vs-cameleer/">Full comparison</a> · <a href="docs/BENCHMARKS.html">every scenario and the raw data</a></p>
       </div>
@@ -168,7 +167,6 @@
         <ul>
           <li><b>Against the server it replaced:</b> 1.7&ndash;1.8x the throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections.</li>
           <li><b>Against 20 other servers on the same droplets:</b> first of 21 on start-up (0.94 ms) and first of 19 on CPU per request.</li>
-          <li class="lost"><b>Lost:</b> 6% behind may-minihttp on plain HTTP, behind H2O on HTTP/3, and 10th of 19 on answers within 1 ms under overload.</li>
         </ul>
         <p><a href="simoom/benchmarks/">simoom benchmarks</a> · <a href="projects/">all projects, including the ones not yet measured</a></p>
       </div>
