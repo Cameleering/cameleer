@@ -87,7 +87,7 @@
 <section class="c-sec" id="cameleer">
   <div class="wrap">
     <h2>Cameleer, measured 2026-11-06</h2>
-    <p class="intro">Cameleer 0.4.0 against Apache Camel 4.23.0 on Java 21, the same routes on identical DigitalOcean c-4 machines (4 dedicated vCPUs each); each figure is the mean of two runs on two servers. Ratios are rounded down, Cameleer's times and memory up.</p>
+    <p class="intro">Cameleer 0.4.0 against Apache Camel 4.23.0 on Java 21, the same routes on identical DigitalOcean c-4 machines (4 dedicated vCPUs each); each figure is the mean of two runs on two servers. Ratios are rounded down, Cameleer's times and memory up. The start-up ratio is computed from the unrounded means, Apache Camel on the JVM 1,106 ms and Cameleer 2.45 ms, which is 451x and is shown as 450x; the table shows the times rounded (1.1 s and 3 ms), so dividing the table's own figures gives less (<a href="https://github.com/cameleering/cameleer/blob/main/benchmarks/results/2026-11-06-linux/summary.json">summary.json</a>).</p>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>metric</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th><th class="num">result</th></tr></thead>
       <tbody>
