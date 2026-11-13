@@ -11,7 +11,7 @@ simoom's own docs (`docs/STATUS.md`, `docs/parity/*.md`, `docs/SECURITY.md`,
 Should Cameleer replace its own HTTP server, HTTP client, HTTP/2 and the HTTP side of its TLS with
 the published simoom 0.1.0 crates?
 
-**Recommendation: yes, in stages, opt-in first.** The owner already set this direction (simoom
+**Recommendation (revised 2026-11-13, see �9): adopt only if a measured gate is met, and then fully; no optional feature.** The owner already set this direction (simoom
 plan 짠0 items 0 and 8: Cameleer deletes its HTTP, HTTP/2, WebSocket and TLS code once simoom is
 tested, verified and benchmarked, and depends on the published crates). What this note adds is the
 gain-and-loss accounting and a path with a gate and a way back at every step.
@@ -187,3 +187,46 @@ ms with the pool).
 - Not measured: droplets (the plan's reference machines), TLS, idle connections, binary size.
 - Test differences found: 3 of the http tests assert wire details simoom does differently (lower-case
   header names, no per-connection worker cap, 8 KiB chunk sizes); all others pass with the engine on.
+
+## 9. MCP slowdown found, and the decision rule (2026-11-13)
+
+**Owner rule:** no optional feature. Either simoom is a measured advantage and Cameleer uses it
+(and deletes the old server), or Cameleer does not use it. The `simoom` feature and
+`CAMEL_HTTP_ENGINE` switch exist only on the spike branch to take measurements, and sections 5 and 6
+are superseded: there is no opt-in release, no `classic-http` fallback, and no staged default flip.
+Stages 2 to 5 run only after a go decision, as one change.
+
+**Why `mcp-session` is slower** (same A/B, plus CPU per request from `/proc/<pid>/stat` and thread
+states while under load, `cpu-ab.sh` and `thr.sh`):
+
+| scenario | engine | req/s | server CPU per request | threads |
+|---|---|---:|---:|---:|
+| `mcp-session` | classic | 64,300 | 59 탎 | 141 |
+| `mcp-session` | simoom, pool | 50,700 | 70 탎 (+19%) | 145 |
+| `mcp-session` | simoom, loop thread | 36,700 | 75 탎, CPUs 69% busy | 40 |
+| `http` | classic | 97,600 | 40 탎 | 67 |
+| `http` | simoom, pool | 113,400 | 36 탎 | 12 |
+| `http` | simoom, loop thread | 130,300 | 30 탎 | 5 |
+
+- In a legacy MCP session every `tools/call` runs on the MCP server's own worker pool
+  (`mcp-call`, `call_with_channel`) and the HTTP handler thread waits on a channel for the result.
+  That is one hop already. Classic has it once (connection thread, then `mcp-call`).
+- With simoom's pool there are two hops (offload worker, then `mcp-call`): 11 탎 more CPU per
+  request on a box where CPU is the limit, so 21% fewer requests.
+- On the loop thread the handler blocks the loop while `mcp-call` works. Four loops can then have
+  only four calls in flight and the CPUs sit idle (31%): 43% fewer requests.
+- Non-blocking routes (`http`) do gain, and with fewer threads (5 against 67): 20 to 34% more
+  requests, 10 to 25% less CPU per request.
+
+**What it takes to win on MCP and every other blocking route:** the handler API must become
+completion-based, so the handler hands the request on and answers later through a responder
+(simoom's `Reply::defer`). Then no thread waits, the `mcp-call` worker answers straight to the
+connection, and the hop disappears. That changes `HttpHandler`, the registry's `RouteHandler`,
+`platform-http`, the REST DSL and the MCP endpoint, not just the engine. It is the real cost of
+adoption; the figures above suggest roughly a 20 to 35% gain for non-blocking routes and, if it
+removes a hop, a gain on MCP too, but that is not yet measured.
+
+**Go / no-go gate, replacing the old one:** build the completion-based path for `platform-http` and
+the MCP endpoint on the spike branch, and re-measure on the droplets. Go only if `http`, `rest-json`
+and `mcp-session` are each at least 1.2x classic with lower or equal CPU per request and p99 no worse.
+Otherwise no-go: close the spike, keep `cameleer-http`.
