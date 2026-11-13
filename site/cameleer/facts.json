@@ -16,10 +16,10 @@
   "install": {
     "container": "docker run cameleering/cameleer:0.6.0",
     "container_health_pack": "docker run cameleering/cameleer:health",
-    "cli": "cargo install cameleer-main",
+    "cli": "cargo install cameleer",
     "binary": "cameleer",
-    "rust_library": "cameleer-main = \"0.6\"",
-    "not_a_crate": "cameleer (the binary is named cameleer; the crate is cameleer-main)"
+    "rust_library": "cameleer = \"0.6\"",
+    "crates": "cameleer (wraps cameleer-main and forwards its features; cargo install cameleer-main works the same)"
   },
   "images": ["docker.io/cameleering/cameleer", "ghcr.io/cameleering/cameleer"],
   "image_tags": ["latest", "0.6.0", "0.6", "health", "0.6.0-health", "0.6-health"],
