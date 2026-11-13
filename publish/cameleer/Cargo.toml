@@ -1,0 +1,57 @@
+# The `cameleer` crate: the name for `cargo install cameleer` and `cargo add cameleer`.
+# It is a thin wrapper of `cameleer-main` (the runner and CLI, in the Cameleer workspace) and
+# lives outside the workspace on purpose: its binary has the same name as cameleer-main's, and two
+# workspace packages with one binary name make `cargo build --workspace` warn about an output
+# filename collision.
+[package]
+name = "cameleer"
+version = "0.6.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/cameleering/cameleer"
+homepage = "https://cameleer.ing/cameleer/"
+documentation = "https://cameleer.ing/docs/"
+authors = ["Sudheesh PM <pmsudhi@gmail.com>"]
+readme = "README.md"
+keywords = ["camel", "integration", "cli", "mcp", "serverless"]
+categories = ["command-line-utilities", "network-programming"]
+description = "Cameleer: Apache Camel's integration model in Rust, and the reliable action layer for AI agents. Installs the `cameleer` command (the cameleer-main crate)."
+
+[workspace]
+
+[dependencies]
+cameleer-core = { path = "../../crates/cameleer-core", version = "0.6.0", default-features = false }
+cameleer-main = { path = "../../crates/cameleer-main", version = "0.6.0", default-features = false }
+
+# Every feature of cameleer-main, forwarded: `cargo install cameleer --features health`, or
+# `--no-default-features --features cloud` for a smaller build.
+[features]
+default = ["full"]
+core = ["cameleer-main/core"]
+full = ["cameleer-main/full"]
+templates = ["cameleer-main/templates"]
+jq = ["cameleer-main/jq"]
+xpath = ["cameleer-main/xpath"]
+http2 = ["cameleer-main/http2"]
+validate = ["cameleer-main/validate"]
+health = ["cameleer-main/health"]
+ai = ["cameleer-main/ai"]
+attest = ["cameleer-main/attest"]
+amqp = ["cameleer-main/amqp"]
+amqp10 = ["cameleer-main/amqp10"]
+cloud = ["cameleer-main/cloud"]
+dataformats = ["cameleer-main/dataformats"]
+datastores = ["cameleer-main/datastores"]
+grpc = ["cameleer-main/grpc"]
+kafka-mqtt = ["cameleer-main/kafka-mqtt"]
+protocols = ["cameleer-main/protocols"]
+saas = ["cameleer-main/saas"]
+script = ["cameleer-main/script"]
+soap = ["cameleer-main/soap"]
+sql = ["cameleer-main/sql"]
+ssh = ["cameleer-main/ssh"]
+xml = ["cameleer-main/xml"]
+
+[[bin]]
+name = "cameleer"
+path = "src/main.rs"
