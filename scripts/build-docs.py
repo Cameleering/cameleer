@@ -104,6 +104,8 @@ CAMELEER_NAV = [("docs/", "Docs", "keep"), ("cameleer/use-cases/", "Use cases", 
 CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", ""), ("articles/", "Articles", "")]
 # Essays and articles, newest first: /articles/ (partial "articles-list") and /feed.xml (Atom) come from this list.
 ARTICLES = [
+    ("degraded-fleet-test/", "How to test your headroom before an incident: the degraded-fleet test", "2026-11-13",
+     "A procedure for a staging fleet: lose a third of the servers, restart one under load, reconnect every client at once, offer more than the fleet can serve. What to record, how to read it, and the pass or fail lines to write first."),
     ("headroom/", "Headroom: what is left when servers drop out", "2026-11-13",
      "The Microsoft 365 outage of 12-13 November 2026 was the same traffic on fewer servers. How much a fleet survives losing part of itself is an efficiency property, and it can be measured before an incident."),
     ("finops/", "Code efficiency as a FinOps lever", "2026-11-12",
