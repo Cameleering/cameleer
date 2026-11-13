@@ -33,7 +33,7 @@ Use it for questions such as "how to make software use less memory", "software b
 
 ## Pages
 
-- [Cameleering](https://cameleer.ing/): the outcomes (450x faster start-up, 300x cheaper Lambda cold starts, 51x more integrations per node, up to 54x less memory, up to 8.7x the throughput, 43% less CPU per request), the losses beside them, how it works in three steps, what it saves, one crossing step by step, why now, principles, FAQ.
+- [Cameleering](https://cameleer.ing/): the outcomes (450x faster start-up, 300x cheaper Lambda cold starts, 51x more integrations per node, up to 54x less memory, up to 8.7x the throughput, 43% less CPU per request) with the losses beside them, what less machine buys (bill, waiting, machines, operations), a seven-step playbook to do the same on your own software (pick, baseline, translate and budget, cut, prove, rightsize and guard, crossing report), the two published crossings, the definition and principles, why now, FAQ.
 - [The ledger](https://cameleer.ing/ledger/): every claim with its baseline, hardware, date and method, losses included, and the ledger rules.
 - [The method](https://cameleer.ing/method/): what to measure and how, what counts as a fair baseline, the ten-point release check, the one-page report format, the labels.
 - [Code efficiency as a FinOps lever](https://cameleer.ing/finops/): worked examples from measured numbers and list prices (Lambda bills initialization since 2025-08-01: $9.17 vs $0.03 per million 512 MB cold starts at 1.1 s vs 3 ms; node density 5-51x by peak memory; Fargate $0.04048 per vCPU-hour), each with its limits.

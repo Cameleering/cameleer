@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Software Efficiency, Measured | Cameleering</title>
-<meta name="description" content="Cameleering makes software carry the same load on less and proves it against the original: Cameleer starts in 3 ms where Apache Camel takes 1.1 s. Losses included.">
+<title>Software Efficiency: Same Work, Less Machine | Cameleering</title>
+<meta name="description" content="Make software do the same work on less machine, and prove it. Cameleer starts in 3 ms where Apache Camel takes 1.1 s. The method and every result are open.">
 <link rel="canonical" href="https://cameleer.ing/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Cameleering">
-<meta property="og:title" content="Cameleering: software efficiency, measured against the original">
-<meta property="og:description" content="Make software carry the same load on less, and prove every gain against the original on the same hardware, losses included. No claim without a number.">
+<meta property="og:title" content="The same work, on a fraction of the machine: Cameleering">
+<meta property="og:description" content="450x faster start-up, 300x cheaper cold starts, 51x more integrations per node, with the losses beside them, and the seven steps to get your own.">
 <meta property="og:url" content="https://cameleer.ing/">
 <meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -45,7 +45,7 @@
 ]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is cameleering?", "acceptedAnswer": {"@type": "Answer", "text": "Cameleering is the practice of making software carry the same load on less (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published. Its one hard rule is no claim without a number."}}, {"@type": "Question", "name": "What is the difference between Cameleer and Cameleering?", "acceptedAnswer": {"@type": "Answer", "text": "Cameleering is the practice and the organization. Cameleer is one product: an integration engine in the style of Apache Camel, and the first Cameleering project. simoom, an HTTP engine, is the second."}}, {"@type": "Question", "name": "Is cameleering about rewriting software in another language?", "acceptedAnswer": {"@type": "Answer", "text": "No. It is not about the language but about how you use it: what goes into the build, which defaults ship, how many threads, allocations and copies a request costs, and what waits on what. A rewrite is one tool, used when measurement shows the current design cannot reach the target; many gains come from settings, smaller defaults and removed layers. Each claim is the measured result, never the language."}}, {"@type": "Question", "name": "How is cameleering different from green software or FinOps?", "acceptedAnswer": {"@type": "Answer", "text": "Green software standards such as the Software Carbon Intensity specification measure and report carbon, and FinOps manages cloud spend, mostly at the infrastructure level. Cameleering changes the software itself so it needs fewer resources, and publishes the before and after. The approaches fit together."}}, {"@type": "Question", "name": "How do I start cameleering my own software?", "acceptedAnswer": {"@type": "Answer", "text": "Pick one service, measure it on fixed hardware (startup, idle and peak memory, throughput, p99, size, dependencies), set budgets, remove what does not earn its place, measure again, and publish both numbers. The method page has the checklist and the report format."}}, {"@type": "Question", "name": "Does Cameleering sell anything?", "acceptedAnswer": {"@type": "Answer", "text": "No. The projects are open source under the Apache License 2.0, with no paid edition. The maintainer is open to consulting on measuring and slimming software; the about page says how to get in touch."}}, {"@type": "Question", "name": "Is Cameleering affiliated with the Apache Software Foundation?", "acceptedAnswer": {"@type": "Answer", "text": "No. Cameleering and Cameleer are independent open-source projects. Cameleer follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is this “rewrite it in Rust”?", "acceptedAnswer": {"@type": "Answer", "text": "No. The gains come from how software uses its language: what goes into the build, which defaults ship, and how many threads and allocations a request costs. A rewrite is the top step of the ladder, used only when the design is the limit. Each claim is a measured result, never the language."}}, {"@type": "Question", "name": "Will I get the same savings?", "acceptedAnswer": {"@type": "Answer", "text": "Not necessarily. The FinOps figures are arithmetic on measured numbers and list prices, and each says what it leaves out. Yours depend on your workload, your discounts and whether you rightsize afterwards. That is why step 2 is your own baseline."}}, {"@type": "Question", "name": "Why should I trust these numbers?", "acceptedAnswer": {"@type": "Answer", "text": "Check them. Every result names its baseline version and hardware, and links to the scripts and raw results. Ratios are rounded down, and the losses are in the same table as the wins."}}, {"@type": "Question", "name": "Can we do this on closed-source software?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The steps work the same in private, and the crossing report goes to your team instead of the web. The public ledger lists only results whose scripts and raw data are published."}}, {"@type": "Question", "name": "How is this different from FinOps?", "acceptedAnswer": {"@type": "Answer", "text": "FinOps rightsizes the infrastructure to fit the software. Cameleering changes how much the software needs, so the next rightsizing goes further. The two fit together."}}, {"@type": "Question", "name": "What does Cameleering sell?", "acceptedAnswer": {"@type": "Answer", "text": "Nothing. The projects are open source under the Apache License 2.0, with no paid edition. The maintainer is open to consulting; ask in GitHub Discussions."}}, {"@type": "Question", "name": "Is Cameleering affiliated with the Apache Software Foundation?", "acceptedAnswer": {"@type": "Answer", "text": "No. Cameleer follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF."}}]}
 </script>
 </head>
 <body>
@@ -77,121 +77,110 @@
 <section class="c-hero home-hero">
   <div class="wrap">
     <p class="kicker">Cameleering · software efficiency, measured against the original</p>
-    <h1>The same work, on a fraction of the machine.</h1>
-    <p class="lede">We take software that companies run every day, rebuild it to need less memory, CPU and start-up time, and prove the gain against the original on the same machines. <strong>Carry more on less.</strong></p>
-    <p class="quick">Looking for a project? <a href="cameleer/">Cameleer</a>, the integration engine · <a href="simoom/">simoom</a>, the HTTP engine · <a href="finops/">what it saves</a></p>
+    <h1>Shrink what your software needs, not just the instances.</h1>
+    <p class="lede">Make software carry the same load on less memory, CPU and start-up time, then prove each gain against the original on the same machines. Below are the results so far, and the steps to get your own.</p>
+    <p class="quick">Looking for a project? <a href="cameleer/">Cameleer</a>, the integration engine · <a href="simoom/">simoom</a>, the HTTP engine · <a href="#playbook">the steps</a></p>
     <div class="outcomes">
-      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>450x</b><em>faster start-up</em><span>Ready in 3 ms. Apache Camel 4.23 on Java 21 takes 1.1 s for the same routes; on Quarkus native, 30 ms.</span><small>Cameleer vs Apache Camel</small></a>
-      <a class="outcome" href="finops/"><b>300x</b><em>cheaper cold starts</em><span>$0.03 per million AWS Lambda cold starts at 512 MB, against $9.17 for Apache Camel on Java 21.</span><small>Cameleer · arithmetic from measured start-up</small></a>
-      <a class="outcome" href="finops/"><b>51x</b><em>more integrations per node</em><span>1,024 integrations in 8 GiB instead of 20 on a direct route; 122 instead of 24 for HTTP into Kafka.</span><small>Cameleer · arithmetic from measured peak memory</small></a>
-      <a class="outcome" href="ledger/#cameleer"><b>54x</b><em>less memory, at best</em><span>Peak memory 7–67 MB against 214–440 MB: 4.8 to 54 times less across 11 scenarios.</span><small>Cameleer vs Apache Camel</small></a>
-      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>8.7x</b><em>the throughput, at best</em><span>1.7 to 8.7 times Apache Camel's throughput, in every scenario measured, on the same machines.</span><small>Cameleer vs Apache Camel</small></a>
-      <a class="outcome" href="simoom/benchmarks/"><b>43%</b><em>less CPU per request</em><span>Against the HTTP server it replaced, with 1.7–1.8x the throughput; first of 21 HTTP servers on start-up.</span><small>simoom vs cameleer-http</small></a>
+      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>450x</b><em>faster start-up</em><span>1.1 s to 3 ms for a started context (Apache Camel 4.23 on Java 21; on Quarkus native, 30 ms).</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="finops/"><b>300x</b><em>cheaper cold starts</em><span>$9.17 to $0.03 per million AWS Lambda cold starts at 512 MB.</span><small>Cameleer · arithmetic on measured start-up</small></a>
+      <a class="outcome" href="finops/"><b>51x</b><em>more integrations per node</em><span>20 to 1,024 per 8 GiB on a direct route; 24 to 122 for HTTP into Kafka.</span><small>Cameleer · arithmetic on measured peak memory</small></a>
+      <a class="outcome" href="ledger/#cameleer"><b>54x</b><em>less memory, at best</em><span>Peak 214&ndash;440 MB to 7&ndash;67 MB: 4.8 to 54 times less across 11 scenarios.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>8.7x</b><em>the throughput, at best</em><span>1.7 to 8.7 times Apache Camel&rsquo;s messages per second, in all 11 scenarios, on the same machines.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="simoom/benchmarks/"><b>43%</b><em>less CPU per request</em><span>About 23 &micro;s to 13 &micro;s, with 1.7&ndash;1.8x the requests per second.</span><small>simoom vs the server it replaced</small></a>
     </div>
-    <p class="losses"><b>Where we lose, said in the same place:</b> Cameleer's p99 latency for HTTP into Kafka is 8.6 ms against Apache Camel's 7.8 ms; simoom is 6% behind may-minihttp on plain HTTP. Every win, loss, baseline and raw result is in <a href="ledger/">the ledger</a>.</p>
-    <div class="cta"><a class="btn primary" href="ledger/">See every result</a><a class="btn" href="#how">How it works</a></div>
+    <p class="losses"><b>Where we lose, shown with the wins:</b> Cameleer&rsquo;s p99 for HTTP into Kafka is 8.6 ms against Apache Camel&rsquo;s 7.8 ms. simoom is 6% behind may-minihttp on plain HTTP and behind H2O on HTTP/3. Every row is in <a href="ledger/">the ledger</a>.</p>
+    <div class="cta"><a class="btn primary" href="#playbook">Run it on your software</a><a class="btn" href="ledger/">See every result and loss</a></div>
     <nav class="doors" aria-label="Where to go next">
       <a href="finops/"><b>I pay for the machines</b><span>What code efficiency saves</span></a>
       <a href="cameleer/"><b>I run Apache Camel</b><span>Cameleer runs its routes in one binary</span></a>
-      <a href="simoom/"><b>I need a Rust HTTP server</b><span>simoom, no tokio, no dependencies</span></a>
+      <a href="simoom/"><b>I need a Rust HTTP server</b><span>simoom: no tokio, no dependencies</span></a>
       <a href="cameleer/mcp/"><b>I build AI agents</b><span>Cameleer as an MCP tool server</span></a>
-      <a href="method/"><b>I want to measure my own software</b><span>The method and the report format</span></a>
     </nav>
-  </div>
-</section>
-
-<section class="c-sec" id="how">
-  <div class="wrap">
-    <h2>How cameleering works</h2>
-    <p class="intro"><strong>Cameleering is the practice of making software carry the same load on less</strong> (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published. In three steps:</p>
-    <div class="cards steps3">
-      <div class="card"><h3><span class="n">1</span> Pick software everyone runs</h3><p>Widely used and expensive to run: an integration framework, an HTTP server. Measure it first, on fixed hardware, with the exact version named.</p></div>
-      <div class="card"><h3><span class="n">2</span> Make it carry the same load on less</h3><p>Keep the names and behaviour people rely on, so their routes and code still work. Remove what does not earn its place: layers, threads, dependencies, start-up work.</p></div>
-      <div class="card"><h3><span class="n">3</span> Prove it, losses included</h3><p>Run the same benchmark on both, on the same machines, and publish the method, the raw data and where the new version is slower. <strong>No claim without a number.</strong></p></div>
-    </div>
   </div>
 </section>
 
 <section class="c-sec" id="saves">
   <div class="wrap">
-    <h2>What it saves</h2>
-    <p class="intro">Software decides how much memory and CPU every instance needs. FinOps teams rightsize the instances; few of them change the software. Two worked examples from Cameleer's measured numbers, with the arithmetic shown on <a href="finops/">the FinOps page</a>.</p>
-    <div class="two">
-      <div class="pane">
-        <h3>Integrations per 8 GiB node</h3>
-        <div class="c-table-wrap"><table class="c-table">
-          <thead><tr><th>route</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th></tr></thead>
-          <tbody>
-            <tr><td>direct route</td><td class="num">20</td><td class="num">1,024</td></tr>
-            <tr><td>HTTP into Kafka</td><td class="num">24</td><td class="num">122</td></tr>
-          </tbody>
-        </table></div>
-        <p class="note">Arithmetic, not a measurement: 8,192 MiB divided by measured peak memory. It ignores CPU and the orchestrator's overhead, so real density is lower on both sides. Depending on the route, 5 to 51 times as many integrations per node.</p>
-      </div>
-      <div class="pane">
-        <h3>Lambda cold starts, per million, at 512 MB</h3>
-        <div class="c-table-wrap"><table class="c-table">
-          <thead><tr><th></th><th class="num">start-up</th><th class="num">initialization cost</th></tr></thead>
-          <tbody>
-            <tr><td>Apache Camel on Java 21</td><td class="num">1.1 s</td><td class="num">$9.17</td></tr>
-            <tr><td>Cameleer</td><td class="num">3 ms</td><td class="num">$0.03</td></tr>
-          </tbody>
-        </table></div>
-        <p class="note">AWS bills the initialization phase of on-demand functions since 1 August 2025. The start-up times were measured on cloud virtual machines, not inside Lambda; Lambda adds its own sandbox start on both sides.</p>
-      </div>
+    <h2>What less machine buys you</h2>
+    <p class="intro">Software decides how much memory and CPU every instance needs. Flexera&rsquo;s 2026 survey puts cloud waste at 29% of infrastructure spend.</p>
+    <div class="cards four benefits">
+      <div class="card"><h3>A smaller bill</h3><p>Serverless now bills the cold start. At 512 MB, a million cold starts cost <b>$9.17</b> for Apache Camel on Java 21 and <b>$0.03</b> for Cameleer. A function that fits in 128 MB instead of 512 MB costs $0.21 instead of $0.83 per million 100 ms calls.</p><p class="note">Arithmetic on measured numbers and AWS list prices. <a href="finops/">The arithmetic, with its limits</a></p></div>
+      <div class="card"><h3>Less waiting</h3><p>A started context in <b>3 ms</b> instead of 1.1 s. A REST API with JSON has a p99 of <b>2.6 ms</b> instead of 6.3 ms. Behind simoom, p99 fell from 0.87&ndash;0.91 ms to 0.32&ndash;0.44 ms while serving 1.7&ndash;1.8x the requests.</p><p class="note"><a href="cameleer/">Cameleer</a> · <a href="simoom/">simoom</a></p></div>
+      <div class="card"><h3>Fewer machines</h3><p><b>1,024</b> integrations fit in 8 GiB by peak memory instead of 20. At 1.7&ndash;8.7x the throughput on the same CPUs, the same load needs fewer vCPUs, and each costs about $29.55 a month on Fargate at list price.</p><p class="note">Arithmetic; real density is lower on both sides. <a href="finops/">Density and vCPU examples</a></p></div>
+      <div class="card"><h3>Simpler operations</h3><p>One binary with no JVM to install: <b>8 MB</b> of memory at start-up instead of 114 MB. simoom has no crates.io dependencies at all and holds 1,000 idle connections in <b>2.7 MB</b> instead of 7.7 MB.</p><p class="note"><a href="ledger/">Both rows in the ledger</a></p></div>
     </div>
-    <div class="cta"><a class="btn" href="finops/">Code efficiency as a FinOps lever</a></div>
   </div>
 </section>
 
-<section class="c-sec" id="process">
+<section class="c-sec" id="playbook">
   <div class="wrap">
-    <h2>One crossing, step by step</h2>
-    <p class="intro">The practice is seven steps any team can run on its own software. Here they are as Cameleer ran them against Apache Camel, each with its evidence.</p>
-    <div class="c-table-wrap"><table class="c-table">
-      <thead><tr><th>step</th><th>what it means</th><th>in Cameleer</th></tr></thead>
-      <tbody>
-        <tr><td><strong>1. Pick</strong></td><td>software many people run, and that costs a lot to run</td><td>Apache Camel, the integration framework behind many enterprise and Kubernetes deployments</td></tr>
-        <tr><td><strong>2. Baseline</strong></td><td>measure it on fixed hardware, with the exact version named</td><td>Apache Camel 4.23.0 on Java 21 and 4.22.1 on Quarkus native, on DigitalOcean c-4 machines (<a href="cameleer/compare/apache-camel-vs-cameleer/">every scenario</a>)</td></tr>
-        <tr><td><strong>3. Budget</strong></td><td>set targets, and label them as targets</td><td>start-up, memory and throughput targets in <a href="docs/BENCHMARKS.html">BENCHMARKS</a></td></tr>
-        <tr><td><strong>4. Cut</strong></td><td>remove, simplify, and rewrite only where the design is the limit</td><td>one std-only Rust binary, about 230 components, Camel's YAML routes unchanged; component families as cargo features (about 6 MB with the core alone)</td></tr>
-        <tr><td><strong>5. Prove</strong></td><td>rerun the same harness on the same hardware, losses included</td><td><code>scripts/cloud-bench</code> on three droplets, both sides, raw results committed</td></tr>
-        <tr><td><strong>6. Publish</strong></td><td>a ledger row with the method and the raw data</td><td><a href="ledger/#cameleer">the ledger row</a>, including the Kafka p99 loss</td></tr>
-        <tr><td><strong>7. Guard</strong></td><td>budgets in CI, benchmarks rerun every release</td><td>zero-warning builds, the hermetic suite and the size gates in CI; remeasuring on the current release is the next step</td></tr>
-      </tbody>
-    </table></div>
-    <p class="note">How each number is measured, the release checklist and the report format: <a href="method/">the method</a>.</p>
+    <h2>Do it on your own software</h2>
+    <p class="intro">Seven steps, in any language, on the service you already run. You need one service, two identical machines and a load generator on a third machine.</p>
+    <ol class="playbook">
+      <li class="pstep"><h3><span class="n">1</span> Pick the service that costs the most</h3>
+        <dl><dt>Do</dt><dd>Rank your services by spend in your cost reports and take the top one.</dd><dt>Record</dt><dd>Its monthly cost, instance count and the unit you are billed in.</dd><dt>Use</dt><dd>Step 1 of <a href="finops/#method">the FinOps practice</a>.</dd><dt>Done when</dt><dd>One service is named, with its cost on one line.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">2</span> Baseline it on fixed hardware</h3>
+        <dl><dt>Do</dt><dd>Measure start-up, idle and peak memory, throughput, p99, CPU per request, size and dependencies. Report the median of many runs.</dd><dt>Record</dt><dd>The exact version, runtime, flags and machine type.</dd><dt>Use</dt><dd>&ldquo;What to measure&rdquo; and the fair-baseline rules in <a href="method/">the method</a>.</dd><dt>Done when</dt><dd>A teammate can rerun the baseline with one script and get the same figures.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">3</span> Translate and budget</h3>
+        <dl><dt>Do</dt><dd>Turn each number into what you pay for: GB-seconds, vCPU-hours, instances per node. Set a target for each, labelled as a target.</dd><dt>Record</dt><dd>The arithmetic, and what it leaves out.</dd><dt>Use</dt><dd>The worked examples on <a href="finops/">the FinOps page</a>.</dd><dt>Done when</dt><dd>Every target has a number, a unit and a price.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">4</span> Cut, starting with the smallest step</h3>
+        <dl><dt>Do</dt><dd>Climb the ladder one rung at a time: tune, remove, replace one component, rewrite the hot path; rewrite it all only when the design is the limit. Keep the behaviour users rely on.</dd><dt>Record</dt><dd>One change per measurement, and why you made it.</dd><dt>Use</dt><dd><a href="when-to-rewrite/">The ladder and the rewrite checklist</a>.</dd><dt>Done when</dt><dd>The behaviour tests still pass and the change moved a number.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">5</span> Prove it on the same machines</h3>
+        <dl><dt>Do</dt><dd>Rerun the same harness on the same hardware, swapping the roles of the two machines. Round against yourself: your times and memory up, your ratios down.</dd><dt>Record</dt><dd>Both ends of every range, and every scenario you lose.</dd><dt>Use</dt><dd>The &ldquo;Don&rsquo;t&rdquo; list in <a href="method/">the method</a>.</dd><dt>Done when</dt><dd>You have a before-and-after table with the losses in it.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">6</span> Rightsize, then guard</h3>
+        <dl><dt>Do</dt><dd>Lower requests, limits and memory settings to match, or the software shrinks and the bill does not. Then make CI fail on size, memory, start-up and p99 regressions.</dd><dt>Record</dt><dd>The answers to the ten-question water check before each release.</dd><dt>Use</dt><dd>The water check in <a href="method/">the method</a>.</dd><dt>Done when</dt><dd>A regression fails the build before it reaches the bill.</dd></dl></li>
+      <li class="pstep"><h3><span class="n">7</span> Write the crossing report</h3>
+        <dl><dt>Do</dt><dd>One page per result: <b>Load</b> (the workload), <b>Baseline</b> (exact versions), <b>Terrain</b> (hardware and OS), <b>Water</b> (start-up, memory, size, CPU), <b>Distance</b> (throughput and latency), <b>Losses</b>, <b>Repeat it</b> (scripts and raw results) and <b>Date</b>.</dd><dt>Record</dt><dd>The report, next to the raw results.</dd><dt>Done when</dt><dd>Someone outside the team could check your numbers.</dd></dl></li>
+    </ol>
+    <div class="two">
+      <div class="pane">
+        <h3>When a result can be called Cameleered</h3>
+        <p>All five must hold: a named, current baseline version; both sides on the same hardware; a script anyone can rerun, and the raw results; the losses disclosed; measured within the last 12 months. Work in progress is <span class="st st-progress">Cameleering</span> and shows targets only; work not started is <span class="st st-planned">planned</span>.</p>
+      </div>
+      <div class="pane">
+        <h3>Need a second pair of eyes?</h3>
+        <p>Stuck on a baseline, or not sure a number is fair? Ask in <a href="https://github.com/cameleering/cameleer/discussions">GitHub Discussions</a>. Cameleering sells nothing; the maintainer is open to consulting.</p>
+        <div class="cta"><a class="btn primary" href="method/">Open the method</a><a class="btn" href="when-to-rewrite/">Is a rewrite worth it?</a></div>
+      </div>
+    </div>
   </div>
 </section>
 
 <section class="c-sec" id="ledger">
   <div class="wrap">
-    <h2>The projects, as proof</h2>
-    <p class="intro">To show the method works on ordinary, widely used software, we rewrite some of it and measure the results. A project gets numbers only once it is measured.</p>
-    <div class="cards">
-      <a class="card" href="cameleer/"><h3>Cameleer <span class="st st-measured">Cameleered</span></h3><p>Integration engine in the style of Apache Camel: its routes, patterns and endpoint URIs as one native binary, with MCP tools for AI agents. Starts in 3 ms where Apache Camel on Java 21 takes 1.1 s.</p></a>
-      <a class="card" href="simoom/"><h3>simoom <span class="st st-measured">Cameleered</span></h3><p>Embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, no tokio. First of 21 servers on start-up; 43% behind H2O on HTTP/3.</p></a>
-      <a class="card" href="projects/"><h3>karez and ksar</h3><p>Database connectivity (<span class="st st-progress">Cameleering</span>) and cryptography with PKI (<span class="st st-planned">planned</span>). No numbers until they are measured.</p></a>
+    <h2>It works on software people run every day</h2>
+    <p class="intro">Two projects have run every step in public.</p>
+    <div class="two">
+      <div class="pane proof">
+        <h3><a href="cameleer/">Cameleer</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-06</span></h3>
+        <p>An integration engine in the style of Apache Camel, and the first Cameleering project.</p>
+        <ul>
+          <li><b>Baseline:</b> Apache Camel 4.23.0 on Java 21 and 4.22.1 on Quarkus native, on identical DigitalOcean c-4 machines.</li>
+          <li><b>Cut:</b> one std-only binary that keeps Camel&rsquo;s routes, YAML and endpoint URIs, with component families as build options.</li>
+          <li><b>Proved:</b> start-up 450x faster (10x against Quarkus native), 4.8&ndash;54x less memory, 1.7&ndash;8.7x the throughput.</li>
+          <li class="lost"><b>Lost:</b> p99 for HTTP into Kafka, 8.6 ms against 7.8 ms.</li>
+        </ul>
+        <p><a href="cameleer/compare/apache-camel-vs-cameleer/">Full comparison</a> · <a href="docs/BENCHMARKS.html">every scenario and the raw data</a></p>
+      </div>
+      <div class="pane proof">
+        <h3><a href="simoom/">simoom</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-12</span></h3>
+        <p>An HTTP engine in std-only Rust, built to replace Cameleer&rsquo;s original server.</p>
+        <ul>
+          <li><b>Against the server it replaced:</b> 1.7&ndash;1.8x the throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections.</li>
+          <li><b>Against 20 other servers on the same droplets:</b> first of 21 on start-up (0.94 ms) and first of 19 on CPU per request.</li>
+          <li class="lost"><b>Lost:</b> 6% behind may-minihttp on plain HTTP, behind H2O on HTTP/3, and 10th of 19 on answers within 1 ms under overload.</li>
+        </ul>
+        <p><a href="simoom/benchmarks/">simoom benchmarks</a> · <a href="projects/">all projects, including the ones not yet measured</a></p>
+      </div>
     </div>
   </div>
 </section>
 
-<section class="c-sec" id="why">
+<section class="c-sec" id="how">
   <div class="wrap">
-    <h2>Why now: using less is a responsibility</h2>
-    <p class="intro">Chips got faster and memory got cheaper, and we spent the gain on features, frameworks and layers, often for good reasons. The cost moved into bigger binaries, slower starts and machines that sit half idle. Now code is cheap to produce: in one benchmark, code written by GPT-4 took on average 3.12 times as long to run as human solutions <sup><a href="#s3">[3]</a></sup>, and the studies of AI tools measure how fast people finish, not how fast the software runs (<a href="ai-code-performance/">the evidence</a>).</p>
-    <div class="cards">
-      <div class="card"><h3>To the people who pay for the machines</h3><p>Every idle gigabyte and every extra instance is paid for, every month, by someone. Software that needs a tenth of the memory needs fewer, smaller machines.</p></div>
-      <div class="card"><h3>To the people who wait</h3><p>A second at startup or a slow tail at p99 is a person waiting, or a function billed while it warms up. A spinner hides a bottleneck; it does not remove it.</p></div>
-      <div class="card"><h3>To the power we all share</h3><p>The IEA projects data-centre electricity use to roughly double by 2030, to about 945 TWh <sup><a href="#s2">[2]</a></sup>. One project cannot change that. Every team that measures and removes waste in its own software does its share.</p></div>
-    </div>
-    <p class="note">This is about waste, not about the people who build features: features are why software matters. Cameleering reports resources (milliseconds, megabytes, CPU) and makes no carbon claims of its own.</p>
-  </div>
-</section>
-
-<section class="c-sec" id="principles">
-  <div class="wrap">
-    <h2>Eight principles</h2>
+    <h2>We call this cameleering</h2>
+    <p class="definition">Cameleering is the practice of making software carry the same load on less (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published.</p>
+    <p class="rule">Carry more on less. No claim without a number.</p>
     <ol class="principles">
       <li><b>Measure before you claim.</b> Targets are labelled as targets until they are measured.</li>
       <li><b>Baselines over boasts.</b> The version people run today, on the same machine, with both sides published.</li>
@@ -202,50 +191,32 @@
       <li><b>Rewrite when the numbers say so.</b> A rewrite is a tool, not a creed (<a href="when-to-rewrite/">when it pays off</a>).</li>
       <li><b>Publish the losses.</b> A ledger with no red rows is not trusted.</li>
     </ol>
-  </div>
-</section>
-
-<section class="c-sec" id="lineage">
-  <div class="wrap">
-    <h2>Where it comes from, and how it differs</h2>
-    <p class="intro">In 1995 Niklaus Wirth wrote "A Plea for Lean Software", observing that software was growing faster than the hardware that ran it <sup><a href="#s1">[1]</a></sup>. Cameleering adds a practice: shipped rewrites of widely used software, measured against the original in public.</p>
     <div class="c-table-wrap"><table class="c-table">
       <thead><tr><th>approach</th><th>what it does</th><th>how cameleering relates</th></tr></thead>
       <tbody>
-        <tr><td>Green software and the Software Carbon Intensity standard</td><td>measures and reports the carbon of software <sup><a href="#s7">[7]</a></sup></td><td>complementary: cameleering changes the software and reports resources; SCI can turn those into carbon</td></tr>
-        <tr><td>FinOps</td><td>manages cloud spend, mostly by rightsizing infrastructure <sup><a href="#s8">[8]</a></sup></td><td>cameleering changes the software itself; FinOps then measures the saving</td></tr>
-        <tr><td>Performance engineering</td><td>tunes a system, usually privately and step by step</td><td>the same craft, done in public against the incumbent, with a rewrite when the design is the limit</td></tr>
+        <tr><td>FinOps</td><td>manages cloud spend, mostly by rightsizing infrastructure <sup><a href="#s8">[8]</a></sup></td><td>cameleering changes how much the software needs, so the next rightsizing goes further</td></tr>
+        <tr><td>Green software and the SCI standard</td><td>measures and reports the carbon of software <sup><a href="#s7">[7]</a></sup></td><td>complementary: cameleering changes the software and reports resources; SCI can turn those into carbon</td></tr>
+        <tr><td>Performance engineering</td><td>tunes a system, usually privately and step by step</td><td>the same craft, done in public against the incumbent, losses included</td></tr>
       </tbody>
     </table></div>
+    <p class="note">The idea is old: in 1995 Niklaus Wirth wrote &ldquo;A Plea for Lean Software&rdquo; <sup><a href="#s1">[1]</a></sup>. Cameleering adds shipped rewrites of widely used software, measured against the original in public.</p>
   </div>
 </section>
 
-<section class="c-sec" id="read">
+<section class="c-sec" id="why">
   <div class="wrap">
-    <h2>Read further</h2>
-    <div class="cards four">
-      <a class="card" href="finops/"><h3>Code efficiency as a FinOps lever</h3><p>Measured milliseconds and megabytes turned into instances and dollars, with the arithmetic shown.</p></a>
-      <a class="card" href="when-to-rewrite/"><h3>When a rewrite pays off</h3><p>The case against rewrites, the ones that worked, smaller steps first, and a checklist.</p></a>
-      <a class="card" href="ai-code-performance/"><h3>AI-generated code and performance</h3><p>Generated code ran 3.12 times as long in one benchmark; what the studies measured, with their limits.</p></a>
-      <a class="card" href="wirths-law/"><h3>Wirth's law in 2026</h3><p>Software growth against hardware speed since 1995, measured, and the counter-argument.</p></a>
+    <h2>Why now: using less is a responsibility</h2>
+    <p class="intro">We spent faster chips and cheaper memory on features and layers, often for good reasons. Now code is cheap to produce: in one benchmark, GPT-4&rsquo;s code took 3.12 times as long to run as human solutions <sup><a href="#s3">[3]</a></sup> (<a href="ai-code-performance/">the evidence</a>). The thing to fight is waste, not the people who build features.</p>
+    <div class="cards">
+      <div class="card"><h3>To the people who pay for the machines</h3><p>Every idle gigabyte is paid for, every month, by someone.</p></div>
+      <div class="card"><h3>To the people who wait</h3><p>A slow start or a slow p99 is a person waiting, or a function billed while it warms up.</p></div>
+      <div class="card"><h3>To the power we all share</h3><p>The IEA projects data-centre electricity use to reach about 945 TWh by 2030 <sup><a href="#s2">[2]</a></sup>. One project cannot change that; every team that removes waste does its share. Cameleering reports milliseconds and megabytes and makes no carbon claims of its own.</p></div>
     </div>
-  </div>
-</section>
-
-<section class="c-sec" id="involved">
-  <div class="wrap">
-    <h2>Get involved</h2>
-    <div class="two">
-      <div class="pane">
-        <h3>Use it, check it, improve it</h3>
-        <p>Everything is open source under the Apache License 2.0: the code, the benchmark harness and the raw results. If a number on this site is wrong, or you can make one of the projects carry more on less, open an issue or a pull request.</p>
-        <div class="cta"><a class="btn" href="https://github.com/cameleering">GitHub</a><a class="btn" href="https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></div>
-      </div>
-      <div class="pane">
-        <h3>Talk to us</h3>
-        <p>Cameleering sells nothing: there is no paid edition. The maintainer is open to consulting on measuring and slimming software: start a <a href="https://github.com/cameleering/cameleer/discussions">GitHub Discussion</a>, or read <a href="about/">about and contact</a>.</p>
-        <p>Security reports go privately through <a href="https://github.com/cameleering/cameleer/security/advisories/new">GitHub's vulnerability reporting</a> (<a href="security/">security and supply chain</a>).</p>
-      </div>
+    <div class="cards four" style="margin-top:18px">
+      <a class="card" href="finops/"><h3>Code efficiency as a FinOps lever</h3><p>Milliseconds and megabytes turned into instances and dollars.</p></a>
+      <a class="card" href="when-to-rewrite/"><h3>When a rewrite pays off</h3><p>The ladder from a setting to a full rewrite, and a checklist.</p></a>
+      <a class="card" href="ai-code-performance/"><h3>AI-generated code and performance</h3><p>What the studies measured, with their limits.</p></a>
+      <a class="card" href="wirths-law/"><h3>Wirth&rsquo;s law in 2026</h3><p>Software growth against hardware speed since 1995.</p></a>
     </div>
   </div>
 </section>
@@ -253,13 +224,22 @@
 <section class="c-sec faq" id="faq">
   <div class="wrap">
     <h2>Common questions</h2>
-    <details><summary>What is cameleering?</summary><p>Cameleering is the practice of making software carry the same load on less (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published. Its one hard rule is no claim without a number.</p></details>
-    <details><summary>What is the difference between Cameleer and Cameleering?</summary><p>Cameleering is the practice and the organization. Cameleer is one product: an integration engine in the style of Apache Camel, and the first Cameleering project. simoom, an HTTP engine, is the second.</p></details>
-    <details><summary>Is cameleering about rewriting software in another language?</summary><p>No. It is not about the language but about how you use it: what goes into the build, which defaults ship, how many threads, allocations and copies a request costs, and what waits on what. A rewrite is one tool, used when measurement shows the current design cannot reach the target; many gains come from settings, smaller defaults and removed layers. Each claim is the measured result, never the language.</p></details>
-    <details><summary>How is cameleering different from green software or FinOps?</summary><p>Green software standards such as the Software Carbon Intensity specification measure and report carbon, and FinOps manages cloud spend, mostly at the infrastructure level. Cameleering changes the software itself so it needs fewer resources, and publishes the before and after. The approaches fit together.</p></details>
-    <details><summary>How do I start cameleering my own software?</summary><p>Pick one service, measure it on fixed hardware (startup, idle and peak memory, throughput, p99, size, dependencies), set budgets, remove what does not earn its place, measure again, and publish both numbers. <a href="method/">The method</a> has the checklist and the report format.</p></details>
-    <details><summary>Does Cameleering sell anything?</summary><p>No. The projects are open source under the Apache License 2.0, with no paid edition. The maintainer is open to consulting on measuring and slimming software; <a href="about/">the about page</a> says how to get in touch.</p></details>
-    <details><summary>Is Cameleering affiliated with the Apache Software Foundation?</summary><p>No. Cameleering and Cameleer are independent open-source projects. Cameleer follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF.</p></details>
+    <details><summary>Is this “rewrite it in Rust”?</summary><p>No. The gains come from how software uses its language: what goes into the build, which defaults ship, and how many threads and allocations a request costs. A rewrite is the top step of the ladder, used only when the design is the limit. Each claim is a measured result, never the language.</p></details>
+    <details><summary>Will I get the same savings?</summary><p>Not necessarily. The FinOps figures are arithmetic on measured numbers and list prices, and each says what it leaves out. Yours depend on your workload, your discounts and whether you rightsize afterwards. That is why step 2 is your own baseline.</p></details>
+    <details><summary>Why should I trust these numbers?</summary><p>Check them. Every result names its baseline version and hardware, and links to the scripts and raw results. Ratios are rounded down, and the losses are in the same table as the wins.</p></details>
+    <details><summary>Can we do this on closed-source software?</summary><p>Yes. The steps work the same in private, and the crossing report goes to your team instead of the web. The public ledger lists only results whose scripts and raw data are published.</p></details>
+    <details><summary>How is this different from FinOps?</summary><p>FinOps rightsizes the infrastructure to fit the software. Cameleering changes how much the software needs, so the next rightsizing goes further. The two fit together.</p></details>
+    <details><summary>What does Cameleering sell?</summary><p>Nothing. The projects are open source under the Apache License 2.0, with no paid edition. The maintainer is open to consulting; ask in GitHub Discussions.</p></details>
+    <details><summary>Is Cameleering affiliated with the Apache Software Foundation?</summary><p>No. Cameleer follows Apache Camel's names and semantics but contains no Camel source code and is not affiliated with or endorsed by the ASF.</p></details>
+  </div>
+</section>
+
+<section class="c-sec final" id="involved">
+  <div class="wrap">
+    <h2>Pick one service. Measure it this week.</h2>
+    <p class="intro">Start with the baseline. Everything after it is a number you can show.</p>
+    <div class="cta"><a class="btn primary" href="method/">Open the method</a><a class="btn" href="ledger/">See the ledger</a><a class="btn" href="https://github.com/cameleering/cameleer/discussions">Ask in GitHub Discussions</a></div>
+    <p class="note">Everything is open source under the Apache License 2.0: the code, the benchmark harness and the raw results. Security reports go privately through <a href="https://github.com/cameleering/cameleer/security/advisories/new">GitHub&rsquo;s vulnerability reporting</a> (<a href="security/">security and supply chain</a>).</p>
   </div>
 </section>
 
@@ -267,12 +247,12 @@
   <div class="wrap">
     <h2>Sources</h2>
     <ol class="sources">
-      <li id="s1">Niklaus Wirth, "A Plea for Lean Software", IEEE Computer 28(2), February 1995, <a href="https://doi.org/10.1109/2.348001">doi:10.1109/2.348001</a>.</li>
-      <li id="s2">International Energy Agency, <a href="https://www.iea.org/news/ai-is-set-to-drive-surging-electricity-demand-from-data-centres-while-offering-the-potential-to-transform-how-the-energy-sector-works">"AI is set to drive surging electricity demand from data centres"</a>, 2025 (Energy and AI report).</li>
-      <li id="s3">Huang et al., <a href="https://arxiv.org/abs/2402.02037">"EffiBench: Benchmarking the Efficiency of Automatically Generated Code"</a>, NeurIPS 2024.</li>
+      <li id="s1">Niklaus Wirth, &ldquo;A Plea for Lean Software&rdquo;, IEEE Computer 28(2), February 1995, <a href="https://doi.org/10.1109/2.348001">doi:10.1109/2.348001</a>.</li>
+      <li id="s2">International Energy Agency, <a href="https://www.iea.org/news/ai-is-set-to-drive-surging-electricity-demand-from-data-centres-while-offering-the-potential-to-transform-how-the-energy-sector-works">&ldquo;AI is set to drive surging electricity demand from data centres&rdquo;</a>, 2025 (Energy and AI report).</li>
+      <li id="s3">Huang et al., <a href="https://arxiv.org/abs/2402.02037">&ldquo;EffiBench: Benchmarking the Efficiency of Automatically Generated Code&rdquo;</a>, NeurIPS 2024.</li>
       <li id="s7">Green Software Foundation, <a href="https://greensoftware.foundation/standards/sci/">Software Carbon Intensity (SCI) specification</a>, published as ISO/IEC 21031:2024.</li>
       <li id="s8">FinOps Foundation, <a href="https://www.finops.org/introduction/what-is-finops/">What is FinOps?</a></li>
-      <li id="s9">Measurements: Cameleer in <a href="docs/BENCHMARKS.html">BENCHMARKS</a> (raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-06-linux">benchmarks/results/2026-11-06-linux</a>); simoom in <a href="simoom/benchmarks/">its benchmarks</a>; both summarized in <a href="ledger/">the ledger</a>.</li>
+      <li id="s9">Measurements: Cameleer in <a href="docs/BENCHMARKS.html">BENCHMARKS</a> (raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-06-linux">benchmarks/results/2026-11-06-linux</a>); simoom in <a href="simoom/benchmarks/">its benchmarks</a>; FinOps arithmetic and the Flexera survey on <a href="finops/">the FinOps page</a>; all summarized in <a href="ledger/">the ledger</a>.</li>
     </ol>
   </div>
 </section>
