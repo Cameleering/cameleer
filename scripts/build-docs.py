@@ -90,7 +90,7 @@ GITHUB_SVG = ('<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true
 
 # The Cameleering menu, shared by every header: (path, title, line)
 FAMILY_MENU = [
-    ("", "Cameleering", "Carry more on less, measured against the original"),
+    ("", "Cameleering", "Carry more on less: improve it, then prove it"),
     ("ledger/", "The ledger", "Every project, its baseline and its losses"),
     ("method/", "The method", "How a gain is measured and reported"),
     ("finops/", "Code efficiency and FinOps", "What the milliseconds and megabytes cost"),
