@@ -285,3 +285,28 @@ missed on the two plain routes at 64 connections (1.16x and 1.10x).** CPU per re
 memory are better in every row. What is left is the pool hop on plain routes; the loop-thread
 variant measured 1.38 to 1.57x on them (section 10), so the remaining work is to run routes that
 cannot block on the loop thread: per route, not for the whole server.
+
+## 12. Round 3 on the droplets: the per-route governor (2026-11-13)
+
+Commit `9323719`. Routes start on simoom's offload pool; the governor times the handler there and moves
+a route to the loop thread when 126 of 128 calls take under 1 ms. It moves back to the pool for a
+minute when a call stalls the loop (over 50 ms, or three over 5 ms in a second). The MCP endpoint
+answers from its call worker (section 11). Same machines and method as sections 10 and 11; raw data in
+`docs/design/simoom-adoption-results/round3/`.
+
+| scenario | classic | simoom | ratio (round 1, round 2) | p99 | CPU per request | threads | peak RSS |
+|---|---:|---:|---|---|---|---|---|
+| `http`, 64 | 126,600 | 167,900 | **1.33x** (1.33, 1.32) | 2.05 to 0.75 ms | 29.8 to 16.0 µs | 67 to 4 | 12.2 to 9.1 MB |
+| `http`, 256 | 106,100 | 165,800 | **1.56x** (1.72, 1.43) | 7.06 to 2.67 ms | 31.1 to 15.9 µs | 202 to 4 | 28.3 to 9.9 MB |
+| `rest-json`, 64 | 104,500 | 137,300 | **1.31x** (1.21, 1.42) | 2.61 to 1.25 ms | 37.4 to 20.4 µs | 67 to 4 | 13.8 to 9.9 MB |
+| `mcp-session`, 64 | 44,200 | 60,500 | **1.37x** (1.37, 1.37) | 5.64 to 3.18 ms | 82.9 to 45.9 µs | 147 to 71 | 54.3 to 29.3 MB |
+
+**Gate (each scenario at least 1.2x, CPU and p99 no worse): met in every scenario and every round.**
+Binary size is +1.7% for `full` and +7.4% for `core` with nothing deleted yet (section 11).
+
+Known limits of the prototype, to close in the full replacement:
+- A route that is fast 126 times in 128 and then blocks stalls a loop thread until the governor
+  demotes it; a route that blocks on a request to its own server can deadlock one loop for that call.
+- TLS listeners, the HTTP client, HTTP/2 and the gRPC server still use the old code.
+- Wire differences: lower-case response header names, 8 KiB chunking of chunked bodies by the engine,
+  no per-connection worker cap. Three old tests assert those details and must be updated.
