@@ -414,18 +414,17 @@ impl HttpClient {
         let key = engine::key(
             self.connect_timeout,
             read,
-            self.max_redirects,
             self.keep_alive,
             self.connections_per_route,
             self.http2,
-            https || self.follow_redirects,
+            https,
             self.limits.max_header_bytes,
             self.limits.max_body_bytes,
             self.tls.as_ref(),
             self.tls_server_name.as_deref(),
             self.proxy.as_ref(),
         );
-        engine::engine(&engine::EngineSettings { key, tls: self.tls.as_deref(), proxy: self.proxy.as_ref() })
+        engine::engine(&engine::EngineSettings { key, tls: self.tls.as_deref(), tls_arc: self.tls.clone(), proxy: self.proxy.as_ref() })
     }
 
     /// Perform a request against a parsed URL, following redirects if enabled. The whole response
@@ -450,16 +449,46 @@ impl HttpClient {
         timeout: Option<Duration>,
     ) -> Result<(HttpResponse, Box<dyn Read + Send>)> {
         let read = timeout.unwrap_or(self.read_timeout);
-        let client = self.engine(read, url.is_https())?;
+        let mut method = method.to_ascii_uppercase();
+        let mut url = url.clone();
         let chunked = self.chunked_requests && matches!(body, RequestBody::Bytes(_));
-        let body = match body {
-            RequestBody::None => simoom_client::Body::Empty,
-            RequestBody::Bytes(b) => simoom_client::Body::Bytes(b.to_vec()),
-            RequestBody::Stream(r, len) => simoom_client::Body::Reader { reader: r, len },
-        };
-        let resp = engine::send(&client, engine::Call { method: &method.to_ascii_uppercase(), url, headers, body, chunked, follow_redirects: self.follow_redirects })?;
-        let head = engine::head(&resp);
-        Ok((head, engine::reader(resp)))
+        // a body in memory can be sent again to the next hop; a stream cannot
+        let mut bytes: Option<Vec<u8>> = None;
+        let mut stream: Option<(Box<dyn Read + Send>, Option<u64>)> = None;
+        match body {
+            RequestBody::None => {}
+            RequestBody::Bytes(b) => bytes = Some(b.to_vec()),
+            RequestBody::Stream(r, len) => stream = Some((r, len)),
+        }
+        let mut redirects = 0;
+        loop {
+            // one client per scheme: the system trust store is loaded only for `https`
+            let client = self.engine(read, url.is_https())?;
+            let sent = match (&bytes, stream.take()) {
+                (Some(b), _) => simoom_client::Body::Bytes(b.clone()),
+                (None, Some((r, len))) => simoom_client::Body::Reader { reader: r, len },
+                (None, None) => simoom_client::Body::Empty,
+            };
+            let replayable = !matches!(sent, simoom_client::Body::Reader { .. });
+            let resp = engine::send(&client, engine::Call { method: &method, url: &url, headers, body: sent, chunked, follow_redirects: false })?;
+            let head = engine::head(&resp);
+            if self.follow_redirects && matches!(head.status, 301 | 302 | 303 | 307 | 308) && redirects < self.max_redirects {
+                if let Some(loc) = head.headers.get("Location") {
+                    let moves_to_get = matches!(head.status, 301..=303) && method != "HEAD";
+                    if replayable || moves_to_get {
+                        url = url.join(loc)?;
+                        redirects += 1;
+                        drop(resp);
+                        if moves_to_get {
+                            method = "GET".into();
+                            bytes = None;
+                        }
+                        continue;
+                    }
+                }
+            }
+            return Ok((head, engine::reader(resp)));
+        }
     }
 }
 
@@ -492,8 +521,8 @@ impl HttpConnection {
     /// Connect to `host:port`, over TLS when `tls` is given (SNI/verification use `host`). The
     /// connection is opened by the first request.
     pub fn connect_with(host: &str, port: u16, tls: Option<&TlsClientConfig>, timeout: Duration) -> Result<HttpConnection> {
-        let key = engine::key(timeout, timeout, 10, true, 1, false, tls.is_some(), 64 * 1024, 256 * 1024 * 1024, None, None, None);
-        let client = engine::build(&engine::EngineSettings { key, tls, proxy: None })?;
+        let key = engine::key(timeout, timeout, true, 1, false, tls.is_some(), 64 * 1024, 256 * 1024 * 1024, None, None, None);
+        let client = engine::build(&engine::EngineSettings { key, tls, tls_arc: None, proxy: None })?;
         let scheme = if tls.is_some() { "https" } else { "http" };
         let authority = if host.contains(':') { format!("[{}]:{}", host, port) } else { format!("{}:{}", host, port) };
         Ok(HttpConnection { client, base: format!("{}://{}", scheme, authority), host_header: authority, tls: tls.is_some(), closed: false })

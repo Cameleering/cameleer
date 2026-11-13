@@ -21,7 +21,6 @@ use crate::http::{HttpHeaders, HttpResponse};
 pub(crate) struct EngineKey {
     pub connect_ms: u64,
     pub read_ms: u64,
-    pub max_redirects: usize,
     pub keep_alive: bool,
     pub per_origin: usize,
     pub http2: bool,
@@ -40,11 +39,17 @@ pub(crate) struct EngineKey {
 pub(crate) struct EngineSettings<'a> {
     pub key: EngineKey,
     pub tls: Option<&'a TlsClientConfig>,
+    /// The `Arc` behind `tls` when the client is to be cached (see [`Entry`]).
+    pub tls_arc: Option<Arc<TlsClientConfig>>,
     pub proxy: Option<&'a ProxyConfig>,
 }
 
-fn engines() -> &'static Mutex<HashMap<EngineKey, sc::Client>> {
-    static ENGINES: OnceLock<Mutex<HashMap<EngineKey, sc::Client>>> = OnceLock::new();
+/// A cached client, with the TLS configuration its key points at (kept alive so that its address is never reused by
+/// another configuration while the client is cached).
+type Entry = (sc::Client, Option<Arc<TlsClientConfig>>);
+
+fn engines() -> &'static Mutex<HashMap<EngineKey, Entry>> {
+    static ENGINES: OnceLock<Mutex<HashMap<EngineKey, Entry>>> = OnceLock::new();
     ENGINES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -102,7 +107,7 @@ fn proxy_config(p: &ProxyConfig) -> sc::ProxyConfig {
 /// The simoom client for `settings`, created on first use and shared afterwards.
 pub(crate) fn engine(settings: &EngineSettings<'_>) -> Result<sc::Client> {
     let mut map = engines().lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(c) = map.get(&settings.key) {
+    if let Some((c, _)) = map.get(&settings.key) {
         return Ok(c.clone());
     }
     let client = build(settings)?;
@@ -110,13 +115,13 @@ pub(crate) fn engine(settings: &EngineSettings<'_>) -> Result<sc::Client> {
     if map.len() > 256 {
         map.clear();
     }
-    map.insert(settings.key.clone(), client.clone());
+    map.insert(settings.key.clone(), (client.clone(), settings.tls_arc.clone()));
     Ok(client)
 }
 
 /// Idle pooled connections of the shared clients.
 pub fn pooled_connections() -> usize {
-    engines().lock().unwrap_or_else(|p| p.into_inner()).values().map(|c| c.pool_stats().idle).sum()
+    engines().lock().unwrap_or_else(|p| p.into_inner()).values().map(|(c, _)| c.pool_stats().idle).sum()
 }
 
 /// A new simoom client for `settings` (not shared).
@@ -126,7 +131,6 @@ pub(crate) fn build(settings: &EngineSettings<'_>) -> Result<sc::Client> {
     cfg.connect_timeout = duration(k.connect_ms);
     cfg.read_timeout = duration(k.read_ms);
     cfg.write_timeout = duration(k.read_ms);
-    cfg.max_redirects = k.max_redirects;
     cfg.keep_alive = k.keep_alive;
     cfg.pool_max_idle_per_origin = k.per_origin.max(1);
     cfg.version = if k.http2 { sc::HttpVersion::Http2 } else { sc::HttpVersion::Http1 };
@@ -267,7 +271,6 @@ pub(crate) fn reader(resp: sc::Response) -> Box<dyn Read + Send> {
 pub(crate) fn key(
     connect: Duration,
     read: Duration,
-    max_redirects: usize,
     keep_alive: bool,
     per_origin: usize,
     http2: bool,
@@ -281,7 +284,6 @@ pub(crate) fn key(
     EngineKey {
         connect_ms: connect.as_millis() as u64,
         read_ms: read.as_millis() as u64,
-        max_redirects,
         keep_alive,
         per_origin,
         http2,
@@ -297,6 +299,21 @@ pub(crate) fn key(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cached client is found by the address of its TLS configuration. A configuration that is dropped must
+    /// not free that address for another one while the client is cached (it would get the wrong client).
+    #[test]
+    fn a_dropped_tls_configuration_does_not_free_its_address_while_its_client_is_cached() {
+        let mut addrs = std::collections::HashSet::new();
+        for _ in 0..40 {
+            let cfg = Arc::new(TlsClientConfig::builder().system_roots(false).build());
+            addrs.insert(Arc::as_ptr(&cfg) as usize);
+            let key = key(Duration::from_secs(1), Duration::from_secs(1), false, 1, false, true, 1024, 1024, Some(&cfg), None, None);
+            engine(&EngineSettings { key, tls: Some(&cfg), tls_arc: Some(cfg.clone()), proxy: None }).unwrap();
+            // `cfg` goes out of scope here; its cached client still holds it
+        }
+        assert_eq!(addrs.len(), 40, "an address was reused while its client was cached");
+    }
 
     #[test]
     fn simoom_certificate_errors_become_the_old_camel_messages() {
