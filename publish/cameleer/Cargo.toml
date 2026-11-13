@@ -5,7 +5,7 @@
 # filename collision.
 [package]
 name = "cameleer"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/cameleering/cameleer"
@@ -20,8 +20,8 @@ description = "Cameleer: Apache Camel's integration model in Rust, and the relia
 [workspace]
 
 [dependencies]
-cameleer-core = { path = "../../crates/cameleer-core", version = "0.6.0", default-features = false }
-cameleer-main = { path = "../../crates/cameleer-main", version = "0.6.0", default-features = false }
+cameleer-core = { path = "../../crates/cameleer-core", version = "0.6.1", default-features = false }
+cameleer-main = { path = "../../crates/cameleer-main", version = "0.6.1", default-features = false }
 
 # Every feature of cameleer-main, forwarded: `cargo install cameleer --features health`, or
 # `--no-default-features --features cloud` for a smaller build.

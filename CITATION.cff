@@ -8,8 +8,8 @@ authors:
 repository-code: "https://github.com/cameleering/cameleer"
 url: "https://cameleer.ing/cameleer/"
 license: Apache-2.0
-version: 0.6.0
-date-released: "2026-11-12"
+version: 0.6.1
+date-released: "2026-11-13"
 keywords:
   - rust
   - apache-camel
