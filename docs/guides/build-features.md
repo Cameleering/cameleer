@@ -154,7 +154,7 @@ cameleer-main = { version = "0.6", default-features = false, features = ["cloud"
 
 ```text
 $ cameleer version
-Cameleer 0.6.0 (components: core, http, yaml, cloud, sql, jq)
+Cameleer 0.6.1 (components: core, http, yaml, cloud, sql, jq)
 ```
 
 A full build lists every feature.
