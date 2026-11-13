@@ -30,6 +30,10 @@ are ✅.
    - the script interpreters
 
    Don't add a dependency to any `Cargo.toml` without explicit approval from the owner.
+   One approved exception (owner, 2026-11-13): the simoom crates (`simoom`, `simoom-tls` and the
+   crates under them: the HTTP server, protocols and TLS of the Cameleering family, std-only too),
+   used by `cameleer-http`. `scripts/sbom.py` counts them as first-party and still fails on any
+   other third-party crate.
 2. Mirror Camel's names and semantics: EIP names, endpoint options, header and property
    names, exception kinds and Simple syntax. When in doubt, follow the Camel docs.
 3. `cargo build` produces **zero warnings**, and `cargo test --workspace` passes. Every feature

@@ -38,6 +38,7 @@ pub mod producer;
 pub mod registry;
 pub mod rest;
 pub mod server;
+pub mod server_simoom;
 
 use std::sync::Arc;
 

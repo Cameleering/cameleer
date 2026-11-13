@@ -1,0 +1,21 @@
+== server a
+CPU: Intel(R) Xeon(R) Platinum 8280 CPU @ 2.70GHz
+vCPUs: 4
+RAM: 7.8 GiB
+OS: Ubuntu 24.04.5 LTS 6.8.0-147-generic
+Rust: rustc 1.99.1 (58cf8f9c3 2026-10-13)
+== server b
+CPU: Intel(R) Xeon(R) Platinum 8280 CPU @ 2.70GHz
+vCPUs: 4
+RAM: 7.8 GiB
+OS: Ubuntu 24.04.5 LTS 6.8.0-147-generic
+Rust: rustc 1.99.1 (58cf8f9c3 2026-10-13)
+== load
+CPU: Intel(R) Xeon(R) Platinum 8280 CPU @ 2.70GHz
+vCPUs: 4
+RAM: 7.8 GiB
+OS: Ubuntu 24.04.5 LTS 6.8.0-147-generic
+Rust: rustc 1.99.1 (58cf8f9c3 2026-10-13)
+Commit: 972ba65
+Date: 2026-11-13 05:34 UTC
+Plan: warmup 5 s, 3 x 5 s per run; 64 connections (http also 256); variants interleaved, 2 rounds, server droplet rotated

@@ -141,6 +141,14 @@ Set the `CamelHttpResponseCode` header before the route ends, e.g. 201 or 404.
 Set `camel.server.ssl.keyStore` (or `certFile` and `keyFile`) and `camel.server.sslEnabled=true`,
 or add `ssl=true` / `sslContextParameters=#tls` to an endpoint.
 
+### How many connections and requests can it serve?
+
+The server runs on [simoom](https://crates.io/crates/simoom), an event loop on a few threads, so an
+idle keep-alive connection costs a few hundred bytes and no thread: tens of thousands of open
+connections are fine. A route runs on the loop thread while it is fast, and on a pool of at most 200
+threads while it blocks (a call to another service, a database); Cameleer learns which per route, by
+timing the route's calls. Header names in responses are lower case, as HTTP allows.
+
 ### Can I serve every path below a prefix?
 Yes: `platform-http:/files?matchOnUriPrefix=true`; `CamelHttpPath` holds the full path.
 
