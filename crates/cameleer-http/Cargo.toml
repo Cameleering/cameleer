@@ -13,8 +13,8 @@ categories = ["web-programming::http-server", "web-programming::http-client", "n
 description = "Cameleer HTTP/1.1 server and client, http/platform-http components, REST DSL and netty (tcp/udp)"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.6.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.6.1" }
 # The HTTP server engine (docs/design/simoom-adoption.md): an event loop per core, HTTP/1.1 and TLS.
 simoom = { version = "0.1.0", default-features = false, features = ["http1", "tls", "tls-extra", "guard", "idle-trim"] }
 # The HTTP client: HTTP/1.1 and HTTP/2, pooling, proxies, redirects, TLS with full verification

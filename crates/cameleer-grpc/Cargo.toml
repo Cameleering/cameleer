@@ -13,8 +13,8 @@ categories = ["network-programming", "encoding"]
 description = "Cameleer HTTP/2 (RFC 9113 + HPACK), Protocol Buffers (.proto parser, dynamic codec, protobuf data format) and the gRPC component"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.6.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.6.1" }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not

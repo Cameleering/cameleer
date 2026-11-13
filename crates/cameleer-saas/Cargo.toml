@@ -13,9 +13,9 @@ categories = ["api-bindings", "web-programming::http-client"]
 description = "Cameleer SaaS / API connectors over REST (std only): slack, telegram, github, twilio, jira, openai (and 19 compatible providers), anthropic, gemini, webhook, graphql, rss/atom, with embedded mock servers"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false, features = ["agent"] }
-cameleer-http = { path = "../cameleer-http", version = "0.6.0", default-features = false }
-cameleer-xml = { path = "../cameleer-xml", version = "0.6.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.6.1", default-features = false, features = ["agent"] }
+cameleer-http = { path = "../cameleer-http", version = "0.6.1", default-features = false }
+cameleer-xml = { path = "../cameleer-xml", version = "0.6.1" }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not

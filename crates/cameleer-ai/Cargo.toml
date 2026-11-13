@@ -13,9 +13,9 @@ categories = ["development-tools", "network-programming"]
 description = "Cameleer action layer for AI agents (std only): routes as tools (ai-tool, ai-resource, ai-prompt), a tool registry, JSON Schema 2020-12 argument checks, and a reliability envelope with idempotency, approvals, timeouts that cancel, rate limits, circuit breakers, compensation, a hash-chained audit log, pinning and a kill switch"
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false, features = ["agent"] }
-cameleer-http = { path = "../cameleer-http", version = "0.6.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
+cameleer-core = { path = "../cameleer-core", version = "0.6.1", default-features = false, features = ["agent"] }
+cameleer-http = { path = "../cameleer-http", version = "0.6.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.6.1" }
 
 [dev-dependencies]
 cameleer-core = { path = "../cameleer-core" }

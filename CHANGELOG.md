@@ -5,6 +5,17 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+## 0.6.1 (2026-11-13)
+
+Cameleer's HTTP stack moves onto [simoom](https://crates.io/crates/simoom), the std-only HTTP engine of
+the Cameleering family: the server (an event loop per core instead of a thread per connection) and the
+client (pooling, HTTP/2 multiplexing, streaming). The numbers are in `docs/design/simoom-adoption.md`.
+This is a patch number for a release that contains **breaking changes** (listed under **Changed** below):
+the `http2` cargo feature is gone, response header names are lower case, and the HTTP clients no longer
+accept turning certificate verification off. The release also carries the entry for the official MCP
+Registry (`server.json`, the `mcp-name` line in the `cameleer` crate README and the image label), which
+checks published artifacts and so needed a new version.
+
 - **The HTTP client runs on simoom-client** (the `http` and `https` producers, `HttpClient`, the MCP,
   SaaS, datastore, FHIR and DICOMweb clients): one pool per set of settings, HTTP/1.1 keep-alive and HTTP/2
   multiplexing, proxies, redirects, streamed request and response bodies, the same Camel exceptions and

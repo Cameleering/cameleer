@@ -1,7 +1,7 @@
 [package]
 name = "cameleer-health"
 # The pack has its own version (docs/design/packs/domain-packs.md section 8.5).
-version = "0.6.0"
+version = "0.6.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -20,10 +20,10 @@ fhir = ["dep:cameleer-xml"]
 dicom = []
 
 [dependencies]
-cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false }
-cameleer-http = { path = "../cameleer-http", version = "0.6.0", default-features = false }
-cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
-cameleer-xml = { path = "../cameleer-xml", version = "0.6.0", optional = true }
+cameleer-core = { path = "../cameleer-core", version = "0.6.1", default-features = false }
+cameleer-http = { path = "../cameleer-http", version = "0.6.1", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.6.1" }
+cameleer-xml = { path = "../cameleer-xml", version = "0.6.1", optional = true }
 
 [dev-dependencies]
 cameleer-core = { path = "../cameleer-core" }
