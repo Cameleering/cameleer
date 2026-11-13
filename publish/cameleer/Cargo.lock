@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-health"
-version = "0.6.1"
+version = "0.6.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",

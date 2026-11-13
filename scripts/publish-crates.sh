@@ -30,11 +30,19 @@ while len(out) < len(pkgs):
 print(" ".join(out))
 ')
 
+# "name version" per crate: a pack (cameleer-health) has a version of its own
+CRATE_VERSIONS=$(cargo metadata --format-version 1 --no-deps | "$PY" -c '
+import json, sys
+for p in json.load(sys.stdin)["packages"]:
+    print(p["name"], p["version"])
+' | tr -d '\r')
+
 echo "Cameleer $VERSION, publishing in order: $ORDER"
 for crate in $ORDER; do
-  code=$(curl -s -o /dev/null -w "%{http_code}" -A "$UA" "https://crates.io/api/v1/crates/$crate/$VERSION")
+  cv=$(echo "$CRATE_VERSIONS" | awk -v c="$crate" '$1==c {print $2}')
+  code=$(curl -s -o /dev/null -w "%{http_code}" -A "$UA" "https://crates.io/api/v1/crates/$crate/$cv")
   if [ "$code" = "200" ]; then
-    echo "== $crate $VERSION is already on crates.io, skipping"
+    echo "== $crate $cv is already on crates.io, skipping"
     continue
   fi
   if [ -n "${DRY_RUN:-}" ]; then
@@ -42,7 +50,7 @@ for crate in $ORDER; do
     continue
   fi
   for attempt in $(seq 1 12); do
-    echo "== publishing $crate $VERSION (attempt $attempt)"
+    echo "== publishing $crate $cv (attempt $attempt)"
     if out=$(cargo publish -p "$crate" 2>&1); then
       echo "$out" | tail -3
       break
