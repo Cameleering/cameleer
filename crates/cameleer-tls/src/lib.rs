@@ -113,7 +113,7 @@ pub mod x509;
 
 pub use certgen::{self_signed, self_signed_with_sans, SelfSigned};
 pub use keys::{PrivateKey, PublicKey};
-pub use tls::config::{CertifiedKey, ClientAuth, OcspMode, ServerExport, TlsClientConfig, TlsClientConfigBuilder, TlsServerConfig, TlsServerConfigBuilder};
+pub use tls::config::{CertifiedKey, ClientAuth, ClientExport, OcspMode, ServerExport, TlsClientConfig, TlsClientConfigBuilder, TlsServerConfig, TlsServerConfigBuilder};
 pub use tls::session::ClientSessionCache;
 pub use net::NetStream;
 pub use params::{PemSource, SslContextParameters};

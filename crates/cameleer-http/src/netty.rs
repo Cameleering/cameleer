@@ -27,8 +27,8 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -45,7 +45,25 @@ use cameleer_tls::camel_support::{endpoint_tls, EndpointTls};
 use cameleer_tls::net::NetStream;
 use cameleer_tls::SslContextParameters;
 
-use crate::client::{connect, map_io_error, parse_authority};
+use crate::client::{map_io_error, parse_authority};
+
+/// Connect to `host:port` with a timeout, trying each resolved address.
+pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
+    let what = format!("{}:{}", host, port);
+    let addrs: Vec<SocketAddr> = (host, port).to_socket_addrs().map_err(|e| map_io_error(e, &what))?.collect();
+    let mut last = None;
+    for a in addrs {
+        match TcpStream::connect_timeout(&a, timeout) {
+            Ok(s) => return Ok(s),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(match last {
+        Some(e) if e.kind() == ErrorKind::TimedOut => CamelError::new(kinds::CONNECT, format!("Connect timed out: {}", what)),
+        Some(e) => map_io_error(e, &what),
+        None => CamelError::new(kinds::CONNECT, format!("Unknown host: {}", host)),
+    })
+}
 
 /// Header: remote address of the peer.
 pub const NETTY_REMOTE_ADDRESS: &str = "CamelNettyRemoteAddress";

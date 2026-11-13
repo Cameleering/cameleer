@@ -162,19 +162,6 @@ fn xpath_names_the_xpath_feature() {
     assert!(e.message.contains("`xpath` feature"), "{}", e.message);
 }
 
-/// The http producer rejects `httpVersion=HTTP/2` in a build without `http2`; HTTP/1.1 works.
-#[cfg(not(feature = "http2"))]
-#[test]
-fn http2_names_the_http2_feature() {
-    let main = cameleer_main::new_main();
-    let ctx = main.context();
-    for v in ["HTTP/2", "2", "h2c"] {
-        let e = ctx.check_endpoint(&format!("http://localhost:1/x?httpVersion={v}")).unwrap_err();
-        assert!(e.message.contains("`http2` feature"), "{}", e.message);
-    }
-    ctx.check_endpoint("http://localhost:1/x?httpVersion=HTTP/1.1").unwrap();
-}
-
 /// `cameleer validate` and `cameleer schema` say which feature they need.
 #[cfg(not(feature = "validate"))]
 #[test]

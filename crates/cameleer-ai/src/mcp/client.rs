@@ -601,14 +601,11 @@ impl McpClient {
 
     fn listen_once(&self, url: &str, headers: &[(String, String)]) -> Result<()> {
         let parsed = cameleer_http::client::Url::parse(url)?;
-        let (mut stream, absolute) = cameleer_http::client::open_stream(&parsed, None, None, None, Duration::from_secs(10), None)?;
         let mut h = cameleer_http::http::HttpHeaders::new();
-        h.set("Host", parsed.host_header());
         h.set("Accept", "text/event-stream, application/json");
         for (k, v) in headers {
             h.set(k.clone(), v.clone());
         }
-        let target = if absolute { url.to_string() } else { parsed.request_target() };
         let (method, body) = if self.is_modern() {
             h.set("Content-Type", "application/json");
             h.set("MCP-Protocol-Version", MODERN_VERSION);
@@ -639,12 +636,13 @@ impl McpClient {
             }
             ("GET", None)
         };
-        if let Some(b) = &body {
-            h.set("Content-Length", b.len().to_string());
-        }
-        cameleer_http::http::write_request(&mut stream, method, &target, &h, body.as_deref().map(|b| b.as_bytes()), false).map_err(|e| CamelError::io(e.to_string()))?;
-        let reader = BufReader::new(stream);
-        let (head, mut body_reader) = cameleer_http::http::read_response_streaming(reader, method, &cameleer_http::http::Limits::default()).map_err(|e| CamelError::io(format!("{:?}", e)))?;
+        // the stream stays open for as long as the server keeps it: no read timeout
+        let client = cameleer_http::HttpClient { connect_timeout: Duration::from_secs(10), read_timeout: Duration::ZERO, ..cameleer_http::HttpClient::default() };
+        let request_body = match &body {
+            Some(b) => cameleer_http::client::RequestBody::Bytes(b.as_bytes()),
+            None => cameleer_http::client::RequestBody::None,
+        };
+        let (head, mut body_reader) = client.execute_streaming(method, &parsed, &h, request_body, None)?;
         if head.status != 200 {
             return Err(CamelError::io(format!("MCP listen answered {}", head.status)));
         }

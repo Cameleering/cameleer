@@ -2,7 +2,7 @@
 
 > The `http` component calls HTTP and HTTPS endpoints from a route: REST APIs, webhooks and LLM APIs, over HTTP/1.1 or HTTP/2.
 
-**Scheme:** `http:` · **Also:** `https:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included; HTTP/2 needs [`http2`](../guides/build-features.md) ·
+**Scheme:** `http:` · **Also:** `https:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included (HTTP/1.1 and HTTP/2) ·
 **Consumer:** no · **Producer:** yes · **Apache Camel:** [HTTP](https://camel.apache.org/components/next/http-component.html)
 
 The `http` component is a client only. To serve HTTP requests, use

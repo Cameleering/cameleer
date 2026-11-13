@@ -17,6 +17,10 @@ readme = "README.md"
 [profile.dev.package.cameleer-tls]
 opt-level = 2
 
+# simoom-tls, likewise: the same cryptography, and the TLS handshakes of the tests
+[profile.dev.package.simoom-tls]
+opt-level = 2
+
 # Release binaries (CLI, container image, Lambda zip): whole-program (fat) LTO and one
 # codegen unit, at the cost of a longer build; `cargo build --release` and the tests keep the
 # default profile. Fat LTO measured faster than thin (splitagg +6-8%) with 25% less peak RSS,

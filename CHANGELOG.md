@@ -5,6 +5,16 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The HTTP client runs on simoom-client** (the `http` and `https` producers, `HttpClient`, the MCP,
+  SaaS, datastore, FHIR and DICOMweb clients): one pool per set of settings, HTTP/1.1 keep-alive and HTTP/2
+  multiplexing, proxies, redirects, streamed request and response bodies, the same Camel exceptions and
+  messages. `httpVersion=HTTP/2` works in every build, also with a streamed body, so the **`http2` cargo
+  feature is gone** (`--features http2` is now an error: drop it). **Changed:** the HTTP clients always
+  verify the server certificate and its host name; `hostnameVerification=false` and
+  `trustAllCertificates` are refused there with a message that says what to do (trust a private server
+  with `trustStore`, or set `serverName`); the cloud components keep their own client and their
+  `trustAllCertificates` for now. A plain `http://` request to a TLS port reports
+  "Connection closed unexpectedly: the answer is not HTTP".
 - **The HTTP server runs on simoom** (https://crates.io/crates/simoom, in the Cameleering family).
   An event loop per core replaces a thread per connection, for plain HTTP and HTTPS (TLS 1.2 and
   1.3, client certificates), in `platform-http`, `http`, REST DSL, the MCP endpoint, the dev console

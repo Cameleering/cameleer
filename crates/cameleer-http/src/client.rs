@@ -10,18 +10,16 @@
 //! println!("{} {}", resp.status, resp.body_text());
 //! ```
 
-use std::io::{BufReader, ErrorKind, Read, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::io::{ErrorKind, Read};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
-use cameleer_tls::net::NetStream;
 use cameleer_tls::TlsClientConfig;
 
 use cameleer_core::error::{kinds, CamelError, Result};
 
-use crate::http::{read_response, response_keep_alive, write_request, HttpError, HttpHeaders, HttpResponse, Limits};
+use crate::client_engine as engine;
+use crate::http::{HttpHeaders, HttpResponse, Limits};
 
 /// A parsed `http://` or `https://` URL.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,32 +185,6 @@ pub(crate) fn map_io_error(e: std::io::Error, what: &str) -> CamelError {
     }
 }
 
-fn map_http_error(e: HttpError, what: &str) -> CamelError {
-    match e {
-        HttpError::Io(e) => map_io_error(e, what),
-        HttpError::Timeout => CamelError::new(kinds::SOCKET_TIMEOUT, format!("Read timed out: {}", what)),
-        other => CamelError::io(format!("{}: {}", other, what)),
-    }
-}
-
-/// Connect to `host:port` with a timeout, trying each resolved address.
-pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream> {
-    let what = format!("{}:{}", host, port);
-    let addrs: Vec<SocketAddr> = (host, port).to_socket_addrs().map_err(|e| map_io_error(e, &what))?.collect();
-    let mut last = None;
-    for a in addrs {
-        match TcpStream::connect_timeout(&a, timeout) {
-            Ok(s) => return Ok(s),
-            Err(e) => last = Some(e),
-        }
-    }
-    Err(match last {
-        Some(e) if e.kind() == ErrorKind::TimedOut => CamelError::new(kinds::CONNECT, format!("Connect timed out: {}", what)),
-        Some(e) => map_io_error(e, &what),
-        None => CamelError::new(kinds::CONNECT, format!("Unknown host: {}", host)),
-    })
-}
-
 /// An HTTP proxy address (`http://[user:pass@]host:port`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProxyAddr {
@@ -336,86 +308,19 @@ pub fn default_tls_config() -> Arc<TlsClientConfig> {
     CFG.get_or_init(|| Arc::new(TlsClientConfig::builder().alpn_protocols(&["http/1.1"]).build())).clone()
 }
 
-/// Opens a connection to the target of `url`: directly or through `proxy`
-/// (a `CONNECT` tunnel for `https`), then performs the TLS handshake for `https`.
-/// Returns the stream and whether requests must use the absolute form (plain http via proxy).
-pub fn open_stream(
-    url: &Url,
-    tls: Option<&TlsClientConfig>,
-    sni: Option<&str>,
-    proxy: Option<&ProxyAddr>,
-    connect_timeout: Duration,
-    io_timeout: Option<Duration>,
-) -> Result<(NetStream, bool)> {
-    let what = url.to_string();
-    let tcp = match proxy {
-        Some(p) => connect(&p.host, p.port, connect_timeout)?,
-        None => connect(&url.host, url.port, connect_timeout)?,
-    };
-    let _ = tcp.set_read_timeout(io_timeout);
-    let _ = tcp.set_write_timeout(io_timeout);
-    let _ = tcp.set_nodelay(true);
-    if !url.is_https() {
-        return Ok((NetStream::plain(tcp), proxy.is_some()));
-    }
-    if let Some(p) = proxy {
-        connect_tunnel(&tcp, &url.authority(), p).map_err(|e| match e {
-            TunnelError::Io(e) => map_io_error(e, &format!("proxy {}:{}", p.host, p.port)),
-            TunnelError::Refused(msg) => CamelError::io(format!("Proxy CONNECT to {} failed: {}", url.authority(), msg)),
-        })?;
-    }
-    let default_cfg;
-    let cfg = match tls {
-        Some(c) => c,
-        None => {
-            default_cfg = default_tls_config();
-            &default_cfg
-        }
-    };
-    let name = sni.unwrap_or(&url.host);
-    let s = NetStream::client(tcp, name, cfg).map_err(|e| map_io_error(e, &what))?;
-    Ok((s, false))
+/// The body of a request.
+pub enum RequestBody<'a> {
+    None,
+    /// In memory (chunked on the wire when [`HttpClient::chunked_requests`] is set).
+    Bytes(&'a [u8]),
+    /// Streamed; sent with `Content-Length` when the length is known, otherwise chunked.
+    Stream(Box<dyn Read + Send>, Option<u64>),
 }
 
-enum TunnelError {
-    Io(std::io::Error),
-    Refused(String),
-}
-
-/// Sends `CONNECT authority` to the proxy and consumes its response head byte by
-/// byte (nothing past the blank line is read, so the TLS handshake starts cleanly).
-fn connect_tunnel(tcp: &TcpStream, authority: &str, proxy: &ProxyAddr) -> std::result::Result<(), TunnelError> {
-    let mut req = format!("CONNECT {} HTTP/1.1\r\nHost: {}\r\n", authority, authority);
-    if let Some(c) = &proxy.credentials {
-        req.push_str(&format!("Proxy-Authorization: Basic {}\r\n", crate::http::base64_encode(c.as_bytes())));
-    }
-    req.push_str("\r\n");
-    let mut w = tcp;
-    w.write_all(req.as_bytes()).map_err(TunnelError::Io)?;
-    let mut head = Vec::new();
-    let mut b = [0u8; 1];
-    let mut r = tcp;
-    while !head.ends_with(b"\r\n\r\n") && !head.ends_with(b"\n\n") {
-        if r.read(&mut b).map_err(TunnelError::Io)? == 0 {
-            return Err(TunnelError::Refused("proxy closed the connection".into()));
-        }
-        head.push(b[0]);
-        if head.len() > 64 * 1024 {
-            return Err(TunnelError::Refused("proxy response too large".into()));
-        }
-    }
-    let text = String::from_utf8_lossy(&head);
-    let status_line = text.lines().next().unwrap_or("").trim().to_string();
-    let code: u16 = status_line.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
-    if (200..300).contains(&code) {
-        Ok(())
-    } else {
-        Err(TunnelError::Refused(status_line))
-    }
-}
-
-/// HTTP client settings. Each request uses a new connection (`Connection: close`);
-/// use [`HttpConnection`] for keep-alive.
+/// HTTP client settings, on simoom-client: HTTP/1.1 and HTTP/2, TLS with full verification (it
+/// cannot be turned off), proxies, redirects. Requests with the same settings share connections
+/// when [`HttpClient::keep_alive`] is on; otherwise each request uses a new connection
+/// (`Connection: close`). Use [`HttpConnection`] for one persistent connection.
 #[derive(Clone, Debug)]
 pub struct HttpClient {
     pub connect_timeout: Duration,
@@ -432,10 +337,12 @@ pub struct HttpClient {
     pub tls_server_name: Option<String>,
     /// Proxy settings (none by default; see [`ProxyConfig::from_env`]).
     pub proxy: Option<ProxyConfig>,
-    /// Reuse connections from a process-wide pool (HTTP/1.1 keep-alive) instead of one
-    /// connection per request. Requests through a proxy, with a custom TLS server name or with
-    /// chunked bodies still use their own connection.
+    /// Reuse connections (HTTP/1.1 keep-alive, HTTP/2 multiplexing) instead of one connection per request.
     pub keep_alive: bool,
+    /// Speak HTTP/2 (prior knowledge for `http`, ALPN for `https`).
+    pub http2: bool,
+    /// Idle connections kept per origin when `keep_alive` is on.
+    pub connections_per_route: usize,
 }
 
 impl Default for HttpClient {
@@ -451,6 +358,8 @@ impl Default for HttpClient {
             tls_server_name: None,
             proxy: None,
             keep_alive: false,
+            http2: false,
+            connections_per_route: 20,
         }
     }
 }
@@ -460,7 +369,7 @@ impl HttpClient {
         Self::default()
     }
 
-    /// Reuse pooled keep-alive connections (see [`HttpClient::keep_alive`]).
+    /// Reuse connections (see [`HttpClient::keep_alive`]).
     pub fn with_keep_alive(mut self, on: bool) -> Self {
         self.keep_alive = on;
         self
@@ -501,58 +410,85 @@ impl HttpClient {
         self.request("POST", url, &[("Content-Type", content_type)], Some(body), None)
     }
 
-    /// Perform a request against a parsed URL, following redirects if enabled.
-    pub fn execute(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>, timeout: Option<Duration>) -> Result<HttpResponse> {
-        let mut method = method.to_ascii_uppercase();
-        let mut url = url.clone();
-        let mut body = body.map(|b| b.to_vec());
-        let mut redirects = 0;
-        loop {
-            let resp = self.execute_once(&method, &url, headers, body.as_deref(), timeout)?;
-            if self.follow_redirects && matches!(resp.status, 301 | 302 | 303 | 307 | 308) && redirects < self.max_redirects {
-                if let Some(loc) = resp.headers.get("Location") {
-                    url = url.join(loc)?;
-                    redirects += 1;
-                    if matches!(resp.status, 301..=303) && method != "HEAD" {
-                        method = "GET".into();
-                        body = None;
-                    }
-                    continue;
-                }
-            }
-            return Ok(resp);
-        }
+    fn engine(&self, read: Duration, https: bool) -> Result<simoom_client::Client> {
+        let key = engine::key(
+            self.connect_timeout,
+            read,
+            self.keep_alive,
+            self.connections_per_route,
+            self.http2,
+            https,
+            self.limits.max_header_bytes,
+            self.limits.max_body_bytes,
+            self.tls.as_ref(),
+            self.tls_server_name.as_deref(),
+            self.proxy.as_ref(),
+        );
+        engine::engine(&engine::EngineSettings { key, tls: self.tls.as_deref(), tls_arc: self.tls.clone(), proxy: self.proxy.as_ref() })
     }
 
-    fn execute_once(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>, timeout: Option<Duration>) -> Result<HttpResponse> {
+    /// Perform a request against a parsed URL, following redirects if enabled. The whole response
+    /// body is read.
+    pub fn execute(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>, timeout: Option<Duration>) -> Result<HttpResponse> {
         let what = url.to_string();
-        let t = timeout.unwrap_or(self.read_timeout);
-        let t = if t.is_zero() { None } else { Some(t) };
-        let proxy = self.proxy.as_ref().and_then(|p| p.proxy_for(url));
-        if self.keep_alive && proxy.is_none() && self.tls_server_name.is_none() && !(self.chunked_requests && body.is_some()) {
-            return self.execute_pooled(method, url, headers, body, t);
+        let (mut head, mut reader) = self.execute_streaming(method, url, headers, body.map_or(RequestBody::None, RequestBody::Bytes), timeout)?;
+        let mut all = Vec::new();
+        reader.read_to_end(&mut all).map_err(|e| map_io_error(e, &what))?;
+        head.body = all;
+        Ok(head)
+    }
+
+    /// Perform a request and return the response head with its body as a reader that is read as
+    /// it arrives (event streams, large downloads), and optionally stream the request body.
+    pub fn execute_streaming(
+        &self,
+        method: &str,
+        url: &Url,
+        headers: &HttpHeaders,
+        body: RequestBody<'_>,
+        timeout: Option<Duration>,
+    ) -> Result<(HttpResponse, Box<dyn Read + Send>)> {
+        let read = timeout.unwrap_or(self.read_timeout);
+        let mut method = method.to_ascii_uppercase();
+        let mut url = url.clone();
+        let chunked = self.chunked_requests && matches!(body, RequestBody::Bytes(_));
+        // a body in memory can be sent again to the next hop; a stream cannot
+        let mut bytes: Option<Vec<u8>> = None;
+        let mut stream: Option<(Box<dyn Read + Send>, Option<u64>)> = None;
+        match body {
+            RequestBody::None => {}
+            RequestBody::Bytes(b) => bytes = Some(b.to_vec()),
+            RequestBody::Stream(r, len) => stream = Some((r, len)),
         }
-        let (stream, absolute) = open_stream(url, self.tls.as_deref(), self.tls_server_name.as_deref(), proxy, self.connect_timeout, t)?;
-        let mut h = headers.clone();
-        if !h.contains("Host") {
-            h.set("Host", url.host_header());
-        }
-        h.set("Connection", "close");
-        let target = if absolute {
-            if let Some(c) = proxy.and_then(|p| p.credentials.as_ref()) {
-                h.set("Proxy-Authorization", format!("Basic {}", crate::http::base64_encode(c.as_bytes())));
+        let mut redirects = 0;
+        loop {
+            // one client per scheme: the system trust store is loaded only for `https`
+            let client = self.engine(read, url.is_https())?;
+            let sent = match (&bytes, stream.take()) {
+                (Some(b), _) => simoom_client::Body::Bytes(b.clone()),
+                (None, Some((r, len))) => simoom_client::Body::Reader { reader: r, len },
+                (None, None) => simoom_client::Body::Empty,
+            };
+            let replayable = !matches!(sent, simoom_client::Body::Reader { .. });
+            let resp = engine::send(&client, engine::Call { method: &method, url: &url, headers, body: sent, chunked, follow_redirects: false })?;
+            let head = engine::head(&resp);
+            if self.follow_redirects && matches!(head.status, 301 | 302 | 303 | 307 | 308) && redirects < self.max_redirects {
+                if let Some(loc) = head.headers.get("Location") {
+                    let moves_to_get = matches!(head.status, 301..=303) && method != "HEAD";
+                    if replayable || moves_to_get {
+                        url = url.join(loc)?;
+                        redirects += 1;
+                        drop(resp);
+                        if moves_to_get {
+                            method = "GET".into();
+                            bytes = None;
+                        }
+                        continue;
+                    }
+                }
             }
-            url.to_string()
-        } else {
-            url.request_target()
-        };
-        let mut buf = Vec::new();
-        write_request(&mut buf, method, &target, &h, body, self.chunked_requests && body.is_some()).map_err(|e| map_io_error(e, &what))?;
-        (&stream).write_all(&buf).map_err(|e| map_io_error(e, &what))?;
-        let mut r = BufReader::new(&stream);
-        let resp = read_response(&mut r, method, &self.limits).map_err(|e| map_http_error(e, &what))?;
-        let _ = stream.close_notify();
-        Ok(resp)
+            return Ok((head, engine::reader(resp)));
+        }
     }
 }
 
@@ -561,98 +497,18 @@ pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&
     HttpClient::new().request(method, url, headers, body, timeout)
 }
 
-/// Idle keep-alive connections, by origin and TLS configuration.
-struct Pool {
-    idle: Mutex<HashMap<String, Vec<(Instant, HttpConnection)>>>,
-}
-
-/// Connections idle longer than this are closed (servers commonly drop them after 60 s).
-const POOL_IDLE: Duration = Duration::from_secs(30);
-/// Idle connections kept per origin.
-const POOL_MAX_IDLE: usize = 16;
-
-fn pool() -> &'static Pool {
-    static POOL: OnceLock<Pool> = OnceLock::new();
-    POOL.get_or_init(|| Pool { idle: Mutex::new(HashMap::new()) })
-}
-
-impl Pool {
-    fn take(&self, key: &str) -> Option<HttpConnection> {
-        let mut idle = self.idle.lock().unwrap_or_else(|p| p.into_inner());
-        let list = idle.get_mut(key)?;
-        while let Some((at, c)) = list.pop() {
-            if at.elapsed() < POOL_IDLE && !c.is_closed() {
-                return Some(c);
-            }
-        }
-        None
-    }
-    fn put(&self, key: String, c: HttpConnection) {
-        let mut idle = self.idle.lock().unwrap_or_else(|p| p.into_inner());
-        let list = idle.entry(key).or_default();
-        list.retain(|(at, _)| at.elapsed() < POOL_IDLE);
-        if list.len() < POOL_MAX_IDLE {
-            list.push((Instant::now(), c));
-        }
-    }
-}
-
-/// Connections in the keep-alive pool (for tests and diagnostics).
+/// Idle keep-alive connections of every client (for tests and diagnostics).
 pub fn pooled_connections() -> usize {
-    pool().idle.lock().unwrap_or_else(|p| p.into_inner()).values().map(|v| v.len()).sum()
+    engine::pooled_connections()
 }
 
-impl HttpClient {
-    /// A request on a pooled connection. A reused connection the server already closed is
-    /// replaced once (the request had not reached the server); timeouts are never retried.
-    fn execute_pooled(&self, method: &str, url: &Url, headers: &HttpHeaders, body: Option<&[u8]>, t: Option<Duration>) -> Result<HttpResponse> {
-        let default_cfg;
-        let tls = if url.is_https() {
-            Some(match &self.tls {
-                Some(c) => c.as_ref(),
-                None => {
-                    default_cfg = default_tls_config();
-                    default_cfg.as_ref()
-                }
-            })
-        } else {
-            None
-        };
-        let key = format!("{}://{}#{:p}", if url.is_https() { "https" } else { "http" }, url.authority(), tls.map(|c| c as *const TlsClientConfig).unwrap_or(std::ptr::null()));
-        let hv: Vec<(String, String)> = headers.iter().filter(|(k, _)| !k.eq_ignore_ascii_case("Connection")).map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        let mut h: Vec<(&str, &str)> = hv.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        let host = url.host_header();
-        if !headers.contains("Host") {
-            h.push(("Host", host.as_str()));
-        }
-        let target = url.request_target();
-        for attempt in 0..2 {
-            let (mut conn, reused) = match pool().take(&key) {
-                Some(c) => (c, true),
-                None => (HttpConnection::connect_with(&url.host, url.port, tls, self.connect_timeout)?, false),
-            };
-            conn.set_timeout(t);
-            match conn.send(method, &target, &h, body) {
-                Ok(resp) => {
-                    if !conn.is_closed() {
-                        pool().put(key, conn);
-                    }
-                    return Ok(resp);
-                }
-                Err(e) if reused && attempt == 0 && e.kind != kinds::SOCKET_TIMEOUT => continue,
-                Err(e) => return Err(e),
-            }
-        }
-        Err(CamelError::io(format!("Connection to {} failed", url.authority())))
-    }
-}
-
-/// A persistent (keep-alive) client connection to one server.
+/// A persistent (keep-alive) client connection to one server: requests go over the same connection
+/// until the server closes it.
 pub struct HttpConnection {
-    stream: NetStream,
-    reader: BufReader<NetStream>,
+    client: simoom_client::Client,
+    base: String,
     host_header: String,
-    limits: Limits,
+    tls: bool,
     closed: bool,
 }
 
@@ -662,18 +518,14 @@ impl HttpConnection {
         HttpConnection::connect_with(host, port, None, timeout)
     }
 
-    /// Connect to `host:port`, over TLS when `tls` is given (SNI/verification use `host`).
+    /// Connect to `host:port`, over TLS when `tls` is given (SNI/verification use `host`). The
+    /// connection is opened by the first request.
     pub fn connect_with(host: &str, port: u16, tls: Option<&TlsClientConfig>, timeout: Duration) -> Result<HttpConnection> {
-        let tcp = connect(host, port, timeout)?;
-        let _ = tcp.set_read_timeout(Some(timeout));
-        let _ = tcp.set_write_timeout(Some(timeout));
-        let _ = tcp.set_nodelay(true);
-        let stream = match tls {
-            Some(cfg) => NetStream::client(tcp, host, cfg).map_err(|e| map_io_error(e, host))?,
-            None => NetStream::plain(tcp),
-        };
-        let reader = BufReader::new(stream.try_clone().map_err(|e| map_io_error(e, host))?);
-        Ok(HttpConnection { stream, reader, host_header: format!("{}:{}", host, port), limits: Limits::default(), closed: false })
+        let key = engine::key(timeout, timeout, true, 1, false, tls.is_some(), 64 * 1024, 256 * 1024 * 1024, None, None, None);
+        let client = engine::build(&engine::EngineSettings { key, tls, tls_arc: None, proxy: None })?;
+        let scheme = if tls.is_some() { "https" } else { "http" };
+        let authority = if host.contains(':') { format!("[{}]:{}", host, port) } else { format!("{}:{}", host, port) };
+        Ok(HttpConnection { client, base: format!("{}://{}", scheme, authority), host_header: authority, tls: tls.is_some(), closed: false })
     }
 
     /// Send a request on this connection and read the response.
@@ -681,24 +533,20 @@ impl HttpConnection {
         if self.closed {
             return Err(CamelError::io("Connection closed by server"));
         }
+        let url = Url::parse(&format!("{}{}", self.base, target))?;
         let mut h: HttpHeaders = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         if !h.contains("Host") {
             h.set("Host", self.host_header.clone());
         }
-        let mut buf = Vec::new();
-        write_request(&mut buf, method, target, &h, body, false).map_err(|e| map_io_error(e, target))?;
-        (&self.stream).write_all(&buf).map_err(|e| map_io_error(e, target))?;
-        let resp = read_response(&mut self.reader, method, &self.limits).map_err(|e| map_http_error(e, target))?;
-        if !response_keep_alive(&resp) {
+        let what = target.to_string();
+        let sent = body.map_or(simoom_client::Body::Empty, |b| simoom_client::Body::Bytes(b.to_vec()));
+        let resp = engine::send(&self.client, engine::Call { method: &method.to_ascii_uppercase(), url: &url, headers: &h, body: sent, chunked: false, follow_redirects: false })?;
+        let mut head = engine::head(&resp);
+        head.body = engine::read_all(resp, &what)?;
+        if head.headers.has_token("Connection", "close") {
             self.closed = true;
         }
-        Ok(resp)
-    }
-
-    /// Set the read and write timeout for the next requests.
-    pub fn set_timeout(&self, t: Option<Duration>) {
-        let _ = self.stream.set_read_timeout(t);
-        let _ = self.stream.set_write_timeout(t);
+        Ok(head)
     }
 
     /// Whether the server signalled that the connection will be closed.
@@ -708,7 +556,7 @@ impl HttpConnection {
 
     /// Whether the connection uses TLS.
     pub fn is_tls(&self) -> bool {
-        self.stream.is_tls()
+        self.tls
     }
 }
 

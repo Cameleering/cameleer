@@ -97,7 +97,9 @@ fn jira_workflow_operations_and_consumers() {
     })
     .unwrap();
     ctx.start().unwrap();
-    std::thread::sleep(Duration::from_millis(200)); // consumers record the current state
+    // the consumers record the current state with their first polls: wait until those were answered
+    assert!(jira.server.wait_for_requests(10, Duration::from_secs(20)));
+    std::thread::sleep(Duration::from_millis(100));
     let t = ctx.create_producer_template();
     // updateIssue
     t.request_body_and_headers("direct:op0", "new description", vec![("IssueKey", Value::from(k1.clone())), ("IssueSummary", Value::from("first (edited)"))]).unwrap();
