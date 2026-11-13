@@ -3,7 +3,7 @@ name: Pages
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", "scripts/build-docs.py", ".github/workflows/pages.yml"]
+    paths: ["site/**", "docs/**", "scripts/build-docs.py", "scripts/check-site.py", "scripts/redirects.txt", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
@@ -27,6 +27,8 @@ jobs:
           fetch-depth: 0 # full history: page dates (sitemap lastmod, dateModified) come from git
       - name: Build the docs into site/docs
         run: python3 scripts/build-docs.py
+      - name: Check the site (links, anchors, JSON-LD, redirects, sitemap); a broken site never deploys
+        run: python3 scripts/check-site.py
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:

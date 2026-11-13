@@ -68,14 +68,30 @@ GUIDE_ORDER = ["getting-started", "configuration", "cli", "concepts", "yaml-dsl"
                "cloud-credentials", "agents", "agent-tool-calls", "mcp", "mcp-server", "mcp-client",
                "agent-step", "model-providers", "ai-components", "mcp-shop-example", "edge", "faq"]
 
-# Pages that moved (old output path -> new output path): the old URL gets a redirect page.
-MOVED = {
-    "components/mllp.html": "packs/health/components/mllp.html",
-    "components/fhir.html": "packs/health/components/fhir.html",
-    "dataformats/hl7.html": "packs/health/dataformats/hl7.html",
-    "dataformats/fhir.html": "packs/health/dataformats/fhir.html",
-    "languages/hl7terser.html": "packs/health/languages/hl7terser.html",
-}
+# Pages that moved: scripts/redirects.txt (`old-path new-path`, site paths from the root).
+# Every old URL gets a redirect stub (write_moved); the table is shared with check-site.py and
+# the docs harness test.
+REDIRECTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "redirects.txt")
+STUB_MARK = "<!-- redirect stub: scripts/redirects.txt -->"
+
+
+def read_redirects(path=REDIRECTS_FILE):
+    table = {}
+    if os.path.exists(path):
+        for n, line in enumerate(open(path, encoding="utf-8"), 1):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) != 2 or not parts[0].startswith("/") or not parts[1].startswith("/"):
+                raise BuildError("scripts/redirects.txt:%d: expected `/old/path /new/path`" % n)
+            if parts[0] in table:
+                raise BuildError("scripts/redirects.txt:%d: %s listed twice" % (n, parts[0]))
+            table[parts[0]] = parts[1]
+    for old, new in table.items():
+        if new in table:
+            raise BuildError("scripts/redirects.txt: %s -> %s -> %s is a chain; point %s at the final page" % (old, new, table[new], old))
+    return table
 
 CATEGORY_ORDER = [
     "Core and routing", "Scheduling", "Files, shell and streams", "HTTP, REST and web services",
@@ -1238,22 +1254,40 @@ class Site:
         return "\n".join(out)
 
     def write_moved(self, docs_out):
-        """Pages that moved keep their old URL as a redirect, so links and search results still work."""
-        for old, new in MOVED.items():
-            if old in self.by_out:
-                raise BuildError("%s is in MOVED but a page renders there" % old)
-            if new not in self.by_out:
-                raise BuildError("MOVED %s -> %s: no page renders to %s" % (old, new, new))
-            rel = relurl(old, new)
-            url = abs_url(new)
-            title = self.by_out[new].title
-            write(os.path.join(docs_out, old), (
-                '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
-                '<title>%s (moved) | %s</title>\n'
-                '<link rel="canonical" href="%s">\n<meta name="robots" content="noindex">\n'
+        """Pages that moved keep their old URL as a redirect stub (scripts/redirects.txt), so links
+        and search results still work. No noindex: it conflicts with the canonical, and search
+        consoles would file the stub as excluded instead of as a redirect."""
+        def file_of(path):
+            """/a/b/ -> <out>/a/b/index.html; /a/b.html -> <out>/a/b.html"""
+            p = path.lstrip("/")
+            return os.path.join(self.out, p + "index.html" if p == "" or p.endswith("/") else p)
+
+        for old, new in read_redirects().items():
+            old_docs = old[len("/docs/"):] if old.startswith("/docs/") else None
+            new_docs = new[len("/docs/"):] if new.startswith("/docs/") else None
+            if old_docs is not None and old_docs in self.by_out:
+                raise BuildError("redirects.txt: %s is a redirect but a docs page renders there" % old)
+            old_file = file_of(old)
+            if old_docs is None and os.path.exists(old_file) and STUB_MARK not in open(old_file, encoding="utf-8").read():
+                raise BuildError("redirects.txt: %s is a redirect but a real page exists at %s" % (old, os.path.relpath(old_file, self.repo)))
+            if new_docs is not None:
+                if new_docs not in self.by_out:
+                    raise BuildError("redirects.txt: %s -> %s: no docs page renders to %s" % (old, new, new))
+                title = self.by_out[new_docs].title
+            else:
+                if not os.path.exists(file_of(new)):
+                    raise BuildError("redirects.txt: %s -> %s: the target does not exist" % (old, new))
+                m = re.search(r"<title>([^<]*)</title>", open(file_of(new), encoding="utf-8").read())
+                title = html.unescape(m.group(1)).split(" | ")[0].strip() if m else new
+            url = SITE_URL + new.lstrip("/")
+            write(old_file, (
+                '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n%s\n'
+                '<title>%s (moved)</title>\n'
+                '<link rel="canonical" href="%s">\n'
+                '<script>location.replace(%s + location.search + location.hash)</script>\n'
                 '<meta http-equiv="refresh" content="0; url=%s">\n</head>\n'
                 '<body><p>This page moved to <a href="%s">%s</a>.</p></body></html>\n')
-                % (esc(title), SITE_NAME, esc(url), esc(rel), esc(rel), esc(title)))
+                % (STUB_MARK, esc(title), esc(url), json.dumps(url), esc(url), esc(url), esc(title)))
 
     def write_llms(self):
         u = abs_url

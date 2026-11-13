@@ -1,7 +1,8 @@
 # cameleer.ing restructure: Cameleering at the root, Cameleer and simoom as microsites
 
-_Plan, 2026-11-13. Status: **v2, revised after two independent reviews; awaiting the owner's
-decisions (§12)**. Internal (under `docs/design/`, not published)._
+_Plan, 2026-11-13. Status: **v2, approved 2026-11-13.** The owner accepted D1-D4 and D6 as
+recommended. D5 (what Cameleering offers) is still open and is needed before phase 3. Phase 0 is
+in progress. Internal (under `docs/design/`, not published)._
 
 **Owner's brief:**
 - Cameleering becomes the main site.
@@ -445,6 +446,36 @@ While that branch is open, edits to the 22 moving pages are frozen.
 | 4 | **Cut-over** (the last commit, then merge): stubs for the 29 old URLs; sitemap index; docs header switched; IndexNow with the old URLs once | 30 changed | live checks pass |
 | 5 | **Outward-facing, 1-2 weeks after the cut-over:**<br>• Docker Hub description sync<br>• the live `Cameleering/.github` profile<br>• Context7<br>• `pmsudhi.github.io` stubs (owner, A6)<br>• third-party posts (owner, A4) | none | each confirmed live |
 | 6 | **Content programme** (§9) and the monthly measurement | additive | per page |
+
+**Phase 0 as built (2026-11-13).**
+
+**Built:**
+- `scripts/check-site.py`, which fails the build on any of these:
+  - a link, anchor or absolute site URL that doesn't resolve;
+  - a link through a stub;
+  - JSON-LD that doesn't parse or has no `@context`;
+  - a designed page whose canonical isn't its own URL, or that doesn't have exactly one H1;
+  - a sitemap entry that is missing or a stub;
+  - a redirect table entry that is wrong.
+
+  It warns on long titles and descriptions: 29 on today's site.
+- `scripts/redirects.txt`, which replaces `MOVED` in `build-docs.py`. The stubs carry no `noindex`,
+  and the JS line keeps the fragment.
+- `site/404.html`.
+- The Rust test `absolute_site_links_point_at_current_urls`.
+- The site build and check in the `ubuntu` CI job and in `pages.yml`.
+- The baseline in `research/baseline-2026-11-13/`.
+
+**Checks:** each guard was proved by planting faults:
+- five planted faults for the site check, all caught;
+- a missing target, a chain and a stub over a real page for the table, all refused;
+- a moved and a missing URL for the Rust test, both caught.
+
+**Deferred to phase 1:** `git diff --exit-code site/`. It matters once partials exist. Today the
+committed `site/sitemap.xml` takes its dates from git history, so a shallow CI checkout would differ
+from it for no real reason.
+
+**Phase 4 reminder:** update the 404 page's ledger link to `/ledger/`.
 
 **Rollback:**
 - Before merging the cut-over, record the last good commit and open the revert branch.

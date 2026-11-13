@@ -29,6 +29,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Rust toolchain (rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install
+      - name: Site build and checks (links, anchors, JSON-LD, redirects, sitemap), before merge
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          python3 scripts/build-docs.py
+          python3 scripts/check-site.py
       - name: Build with zero warnings
         run: cargo build --workspace --all-targets
         env:

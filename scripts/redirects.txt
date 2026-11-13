@@ -1,0 +1,18 @@
+# Pages that moved: `old-path new-path`, one per line, both site paths from the root.
+#
+# scripts/build-docs.py writes a redirect stub at every old path: an absolute canonical, a
+# JavaScript location.replace that keeps the query and the #fragment, a 0-second meta refresh and
+# a visible link. No noindex (it conflicts with the canonical). Stubs are kept forever: published
+# crates, images, release notes and other sites link to old URLs.
+#
+# The build fails when a real page renders at an old path, when a target does not exist, or when a
+# target is itself an old path (a chain). scripts/check-site.py checks the stubs again after the
+# build, and crates/cameleer-main/tests/docs_harness.rs rejects links to old paths in the repo's
+# markdown. Plan: docs/design/site-restructure/plan.md.
+
+# The health pack (0.6.0): HL7, MLLP and FHIR left the core docs.
+/docs/components/mllp.html      /docs/packs/health/components/mllp.html
+/docs/components/fhir.html      /docs/packs/health/components/fhir.html
+/docs/dataformats/hl7.html      /docs/packs/health/dataformats/hl7.html
+/docs/dataformats/fhir.html     /docs/packs/health/dataformats/fhir.html
+/docs/languages/hl7terser.html  /docs/packs/health/languages/hl7terser.html
