@@ -80,7 +80,7 @@
       <thead><tr><th>project</th><th>what it is</th><th>status</th><th>compared with</th><th>last measured</th></tr></thead>
       <tbody>
         <tr><td><strong><a href="../../">Cameleer</a></strong></td><td>integration engine in the style of Apache Camel, one std-only native binary</td><td><span class="st st-measured">measured</span></td><td>Apache Camel 4.23.0 on Java 21; Apache Camel 4.22.1 on Quarkus 3.40.0 native</td><td>2026-11-06</td></tr>
-        <tr><td><strong><a href="../../simoom/">simoom</a></strong></td><td>embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine, std-only Rust</td><td><span class="st st-measured">measured</span></td><td>Cameleer's previous HTTP server (cameleer-http); hyper 1.12.0, may-minihttp 0.1.11, h2o (commit f35c735), nginx 1.24.0, haproxy 2.8.30</td><td>2026-11-12</td></tr>
+        <tr><td><strong><a href="../../simoom/">simoom</a></strong></td><td>embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine, std-only Rust</td><td><span class="st st-measured">measured</span></td><td>Cameleer's previous HTTP server (cameleer-http); 20 HTTP servers in Rust, C, Go, Java, .NET and JavaScript, among them hyper 1.12.0, actix-web 4.18.2, axum 0.8.9 with rustls, may-minihttp 0.1.11, nginx 1.24.0 and H2O</td><td>2026-11-12</td></tr>
         <tr><td><strong>karez</strong></td><td>database connectivity shaped like JDBC, ODBC and ADBC, with Arrow results</td><td><span class="st st-design">design</span></td><td class="na">targets only</td><td class="na">—</td></tr>
         <tr><td><strong>ksar</strong></td><td>cryptographic primitives and PKI</td><td><span class="st st-planned">planned</span></td><td class="na">—</td><td class="na">—</td></tr>
       </tbody>
@@ -124,7 +124,7 @@
 <section class="c-sec" id="simoom">
   <div class="wrap">
     <h2>simoom, measured 2026-11-11 and 2026-11-12</h2>
-    <p class="intro">simoom 0.1.0, before its first release, the HTTP engine that replaces Cameleer's thread-per-connection server. Two comparisons: against that original server on one machine, and against other HTTP servers on the same DigitalOcean c-4 droplet (4 dedicated vCPUs), load from two separate nodes, open loop. Throughput is the highest rate whose p99 stays at or under 1 ms.</p>
+    <p class="intro">simoom 0.1.0, the HTTP engine that replaces Cameleer's thread-per-connection server. Two comparisons: against that original server on one machine, and against 20 other HTTP servers on the same DigitalOcean c-4 droplets (4 dedicated vCPUs), load from two separate nodes, open loop. Throughput is the highest rate whose p99 stays at or under 1 ms.</p>
     <h3>Against the server it replaces: cameleer-http</h3>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>metric</th><th class="num">cameleer-http</th><th class="num">simoom</th><th class="num">result</th></tr></thead>
@@ -139,29 +139,54 @@
       </tbody>
     </table></div>
     <p class="note">Workstation, WSL2 on 12 CPUs, the same 13-byte reply on both sides: load figures 2026-11-09, start-up and memory 2026-11-11 (10 alternating rounds), TLS memory after the K11 fix of 2026-11-12.</p>
-    <h3>Against other HTTP servers, same droplet</h3>
+    <h3>Against 20 other HTTP servers, same droplets: campaign 4, 2026-11-12</h3>
+    <p class="intro">hyper 1.12.0, axum 0.8.9, axum 0.8.9 + rustls 0.23.46 (aws-lc-rs), actix-web 4.18.2, ntex 2.18.0, xitca-web 0.7.1, h3 0.0.8 + quinn 0.11.12, may-minihttp 0.1.11, nginx 1.24.0, H2O 2.3.0-DEV, HAProxy 2.8.30, Envoy, Caddy 2.11.9, cameleer-http 0.5.1, Go net/http and fasthttp (go1.27.3), Netty 4.2.20, Vert.x 5.2.3, Kestrel (.NET 10.0.403) and uWebSockets.js 20.71.0, against simoom at commit <code>a81c368</code> (the benchmark server with every feature). Three lanes of DigitalOcean c-4 droplets in blr1. simoom ran in every lane and every round, before that lane's other servers, and the server droplets rotated between rounds. Each figure is the same-droplet run whose ratio to simoom is the median. "Place" counts the servers more than 3% ahead of simoom.</p>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>metric</th><th class="num">best other on the droplet</th><th class="num">simoom</th><th class="num">result</th></tr></thead>
       <tbody>
-        <tr><td>plaintext GET, 64 / 256 / 1024 connections (median of 3 rounds, 2026-11-12)</td><td class="num">may-minihttp 158,598 / 150,673 / 120,610 req/s</td><td class="num">170,648 / 172,638 / 148,429 req/s</td><td class="num res">+8% / +15% / +23%</td></tr>
-        <tr><td>TLS 1.3 full / resumed handshakes per second</td><td class="num">h2o 7,711 / 7,758</td><td class="num">10,083 / 11,213</td><td class="num res">+31% / +45%</td></tr>
-        <tr><td>plaintext GET over TLS, 256 connections</td><td class="num">h2o 97,219 req/s</td><td class="num">160,441 req/s</td><td class="num res">1.65x</td></tr>
-        <tr><td>HTTP/3 GET</td><td class="num">h2o 94,507 req/s</td><td class="num">106,947 req/s</td><td class="num res">+13%</td></tr>
-        <tr><td>CPU per request at 50k req/s</td><td class="num">hyper 28.10 µs</td><td class="num">25.05 µs</td><td class="num res">11% less</td></tr>
-        <tr><td>memory per idle connection, 100k open</td><td class="num">nginx 532 B</td><td class="num">520–533 B</td><td class="num res">level</td></tr>
-        <tr class="loss"><td>answered within 1 ms at 1.17x the NIC ceiling (overload)</td><td class="num">nginx 52.4k req/s</td><td class="num">6.4k req/s</td><td class="num res">loss</td></tr>
-        <tr class="loss"><td>p99 for legitimate requests during a slowloris attack</td><td class="num">haproxy 724 µs</td><td class="num">784 µs</td><td class="num res">8% higher (loss)</td></tr>
-        <tr class="loss"><td>stripped HTTP/1.1-only executable</td><td class="num">may-minihttp 515 KB</td><td class="num">536 KB</td><td class="num res">4% larger (loss)</td></tr>
+        <tr class="loss"><td>plaintext GET, 256 connections (3 rounds)</td><td class="num">may-minihttp 154,590 req/s</td><td class="num">145,171 req/s</td><td class="num res">6% behind, 2nd of 19 (loss)</td></tr>
+        <tr class="loss"><td>plaintext GET, 1,024 connections (1 round)</td><td class="num">may-minihttp 155,048 req/s</td><td class="num">133,243 req/s</td><td class="num res">16% behind, 2nd of 19 (loss)</td></tr>
+        <tr class="loss"><td>plaintext GET, 64 connections (1 round; simoom stalled in its run)</td><td class="num">Vert.x 104,411 req/s</td><td class="num">69,415 req/s</td><td class="num res">Vert.x 50% ahead, 6th of 19 (loss)</td></tr>
+        <tr class="loss"><td>TLS 1.3 full handshakes per second (3 rounds)</td><td class="num">axum + rustls 11,633</td><td class="num">9,396</td><td class="num res">24% behind, 2nd of 8; 1.39x H2O (loss)</td></tr>
+        <tr class="loss"><td>TLS 1.3 resumed handshakes per second (3 rounds)</td><td class="num">axum + rustls 13,537</td><td class="num">12,388</td><td class="num res">9% behind, 2nd of 8; 1.56x H2O (loss)</td></tr>
+        <tr><td>plaintext GET over TLS, 256 connections (3 rounds)</td><td class="num">axum + rustls 103,343 req/s</td><td class="num">134,004 req/s</td><td class="num res">+30%, 1st of 8</td></tr>
+        <tr class="loss"><td>HTTP/3 GET, 64 connections (3 rounds)</td><td class="num">H2O 74,961 req/s</td><td class="num">52,259 req/s</td><td class="num res">H2O 43% ahead, 2nd of 4; 1.65x quinn + h3 (loss)</td></tr>
+        <tr><td>CPU per request at 50k req/s (3 rounds)</td><td class="num">may-minihttp 28.6 µs</td><td class="num">24.3 µs</td><td class="num res">15% less, 1st of 19</td></tr>
+        <tr><td>memory per idle connection, 100k open</td><td class="num">nginx 528 B</td><td class="num">532 B</td><td class="num res">level, joint 1st of 15</td></tr>
+        <tr class="loss"><td>memory per idle connection, 10k open</td><td class="num">nginx 538 B</td><td class="num">575 B</td><td class="num res">7% more, 2nd of 19 (loss)</td></tr>
+        <tr class="loss"><td>answered within 1 ms at 195k req/s offered (overload)</td><td class="num">actix-web 59,015 req/s</td><td class="num">2,743 req/s</td><td class="num res">22x fewer, 10th of 19 (loss)</td></tr>
+        <tr class="loss"><td>all answers at 195k req/s offered</td><td class="num">uWebSockets.js 159,633 req/s</td><td class="num">150,344 req/s</td><td class="num res">6% fewer; most servers 150k–160k</td></tr>
+        <tr class="loss"><td>p99 of real requests under 10k slowloris + 1k slow-read connections</td><td class="num">Go net/http 445 µs</td><td class="num">791 µs</td><td class="num res">78% higher, 6th of 19 (loss)</td></tr>
+        <tr><td>start-up to first answer, default build</td><td class="num">hyper 1.48 ms</td><td class="num">0.94 ms</td><td class="num res">57% faster, 1st of 21</td></tr>
+        <tr class="loss"><td>stripped executable, default build</td><td class="num">may-minihttp 515 KB</td><td class="num">735 KB</td><td class="num res">43% larger, 2nd of 17 (loss)</td></tr>
+        <tr class="loss"><td>stripped HTTP/1.1-only executable</td><td class="num">may-minihttp 527,424 B</td><td class="num">550,224 B</td><td class="num res">4% larger (loss)</td></tr>
       </tbody>
     </table></div>
     <h3>Known losses and limits</h3>
     <ul>
-      <li>Under overload simoom answers the most requests in total (160.3k against nginx's 145.5k) but few of them within 1 ms; nginx's in-time figure changed 20-fold between droplets, so it is recorded as a limit of that test.</li>
-      <li>On a droplet with a degraded network path, may-minihttp kept 114.7k req/s while simoom and the other servers fell to 17–62k.</li>
-      <li>A new connection per request was split: ahead of hyper on one droplet (22.1k against 19.3k), behind xitca 0.7.1 on another (19.3k against 24.3k).</li>
-      <li>Droplets of the same type differed by up to 7x for every server, so only figures from the same droplet are compared. Larger machines and multi-queue NICs are not measured yet.</li>
+      <li>Under overload simoom answers about as many requests in total as the others (150.3k, against 150k–160k for most servers), but few of them within 1 ms: actix-web answered 59.0k in time and nginx 29k.</li>
+      <li>A new connection per request: 5th of 19. xitca-web is 29% ahead, cameleer-http 9%, actix-web 5% and may-minihttp 4%.</li>
+      <li>The 64-connection plaintext row is a single round in which simoom stalled, so it is not a fair reading of simoom's throughput at that load.</li>
+      <li>The degraded-network result from campaign 3 (2026-11-11: may-minihttp kept 114.7k req/s while simoom and the others fell to 17k–62k) was not retested.</li>
+      <li>Larger machines and multi-queue NICs are not measured yet.</li>
     </ul>
-    <p class="note">The full crossing report: <a href="../../simoom/benchmarks/">simoom benchmarks</a>. Method, raw data and analyses: <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-12-epoll/analysis.md">bench/results/2026-11-12-epoll</a> (plaintext, handshakes), <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-11-campaign3/analysis.md">bench/results/2026-11-11-campaign3</a> (the other rows) and <a href="https://github.com/Cameleering/simoom/blob/main/docs/STATUS.md">docs/STATUS.md</a> (against cameleer-http); the scripts are in <a href="https://github.com/Cameleering/simoom/tree/main/bench/cloud">bench/cloud</a>. Source: <a href="https://github.com/Cameleering/simoom/">github.com/Cameleering/simoom</a>. The crates are not on crates.io yet.</p>
+    <h3>Superseded: the 2026-11-12 epoll round and campaign 3 (2026-11-11)</h3>
+    <p class="intro">These runs had fewer servers, and droplets of the same type differed by up to 7x between runs. Campaign 4 reran every row with simoom on each server's own droplet.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>metric</th><th class="num">best other on the droplet</th><th class="num">simoom</th><th class="num">result</th></tr></thead>
+      <tbody>
+        <tr class="st-superseded"><td>plaintext GET, 64 / 256 / 1024 connections (median of 3 rounds, 2026-11-12)</td><td class="num">may-minihttp 158,598 / 150,673 / 120,610 req/s</td><td class="num">170,648 / 172,638 / 148,429 req/s</td><td class="num res">+8% / +15% / +23%</td></tr>
+        <tr class="st-superseded"><td>TLS 1.3 full / resumed handshakes per second</td><td class="num">h2o 7,711 / 7,758</td><td class="num">10,083 / 11,213</td><td class="num res">+31% / +45%</td></tr>
+        <tr class="st-superseded"><td>plaintext GET over TLS, 256 connections</td><td class="num">h2o 97,219 req/s</td><td class="num">160,441 req/s</td><td class="num res">1.65x</td></tr>
+        <tr class="st-superseded"><td>HTTP/3 GET</td><td class="num">h2o 94,507 req/s</td><td class="num">106,947 req/s</td><td class="num res">+13%</td></tr>
+        <tr class="st-superseded"><td>CPU per request at 50k req/s</td><td class="num">hyper 28.10 µs</td><td class="num">25.05 µs</td><td class="num res">11% less</td></tr>
+        <tr class="st-superseded"><td>memory per idle connection, 100k open</td><td class="num">nginx 532 B</td><td class="num">520–533 B</td><td class="num res">level</td></tr>
+        <tr class="st-superseded"><td>answered within 1 ms at 1.17x the NIC ceiling (overload)</td><td class="num">nginx 52.4k req/s</td><td class="num">6.4k req/s</td><td class="num res">loss</td></tr>
+        <tr class="st-superseded"><td>p99 for legitimate requests during a slowloris attack</td><td class="num">haproxy 724 µs</td><td class="num">784 µs</td><td class="num res">8% higher (loss)</td></tr>
+        <tr class="st-superseded"><td>stripped HTTP/1.1-only executable</td><td class="num">may-minihttp 515 KB</td><td class="num">536 KB</td><td class="num res">4% larger (loss)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">The full crossing report: <a href="../../simoom/benchmarks/">simoom benchmarks</a>. Method, raw data and analyses: <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-12-campaign4/analysis.md">bench/results/2026-11-12-campaign4</a> (the campaign 4 table, every figure from <code>c4.json</code> at simoom commit <code>ef33bb9</code>); superseded: <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-12-epoll/analysis.md">bench/results/2026-11-12-epoll</a> (plaintext, handshakes), <a href="https://github.com/Cameleering/simoom/blob/main/bench/results/2026-11-11-campaign3/analysis.md">bench/results/2026-11-11-campaign3</a> (the other rows) and <a href="https://github.com/Cameleering/simoom/blob/main/docs/STATUS.md">docs/STATUS.md</a> (against cameleer-http); the scripts are in <a href="https://github.com/Cameleering/simoom/tree/main/bench/cloud">bench/cloud</a>. Source: <a href="https://github.com/Cameleering/simoom/">github.com/Cameleering/simoom</a>. Released as 0.1.0 on <a href="https://crates.io/crates/simoom">crates.io</a> (tag <code>v0.1.0</code>).</p>
   </div>
 </section>
 
