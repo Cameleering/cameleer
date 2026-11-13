@@ -56,6 +56,13 @@ jobs:
           cargo build -p cameleer-health --no-default-features
         env:
           RUSTFLAGS: -D warnings
+      - name: The cameleer crate (wrapper of cameleer-main, outside the workspace)
+        shell: bash
+        run: |
+          CARGO_TARGET_DIR=target cargo build --manifest-path publish/cameleer/Cargo.toml
+          CARGO_TARGET_DIR=target cargo run -q --manifest-path publish/cameleer/Cargo.toml -- version
+        env:
+          RUSTFLAGS: -D warnings
       - name: SBOMs (general, health distribution, health crate)
         shell: bash
         run: |
