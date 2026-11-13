@@ -111,17 +111,33 @@
     </table></div>
     <p class="note">Arithmetic: startup × 0.5 GB × $0.0000166667 × 1,000,000. The startup times were measured on cloud virtual machines, not inside Lambda; Lambda adds its own sandbox start on both sides. For JVM functions AWS also offers SnapStart, which cuts startup differently.</p>
 
-    <h3>3. Smaller memory settings cost less per invocation</h3>
+    <h3>3. Execution time and memory: what each request is billed</h3>
+    <p>Lambda bills every invocation for its execution time, rounded up to the millisecond, times the memory setting. Both come from the same measured scenario, a REST API reading and answering JSON, on identical cloud machines (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</p>
     <div class="c-table-wrap"><table class="c-table ledger">
-      <thead><tr><th>per million invocations of 100 ms</th><th class="num">memory setting</th><th class="num">duration cost</th></tr></thead>
+      <thead><tr><th>REST API with JSON</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th></tr></thead>
       <tbody>
-        <tr><td>a function that needs about 400 MB at peak</td><td class="num">512 MB</td><td class="num">$0.83</td></tr>
-        <tr><td>a function that needs under 70 MB at peak</td><td class="num">128 MB</td><td class="num">$0.21</td></tr>
+        <tr><td>execution time per request, p99 (measured)</td><td class="num">6.3 ms</td><td class="num">2.6 ms</td></tr>
+        <tr><td>billed duration, rounded up to the millisecond</td><td class="num">7 ms</td><td class="num">3 ms</td></tr>
+        <tr><td>peak memory (measured)</td><td class="num">402 MB</td><td class="num">19 MB</td></tr>
+        <tr><td>smallest memory setting with room for that peak</td><td class="num">512 MB</td><td class="num">128 MB (the minimum)</td></tr>
+        <tr><td>duration cost per million invocations</td><td class="num">$0.0583</td><td class="num">$0.0063</td></tr>
       </tbody>
     </table></div>
-    <p class="note">Arithmetic: 0.1 s × memory in GB × $0.0000166667 × 1,000,000, plus $0.20 per million requests on both sides <sup><a href="#s7">[7]</a></sup>. Caveat: Lambda gives a function CPU in proportion to its memory, so a smaller setting also means less CPU; a CPU-bound function may run longer and cancel part of the saving. Measure the duration at each setting.</p>
+    <p class="note">Arithmetic: billed seconds × memory in GB × $0.0000166667 × 1,000,000; about 9 times less per request. Both sides also pay $0.20 per million requests. Caveats: the times were measured on cloud virtual machines over the network, not inside Lambda, and the p99 is used on purpose as a pessimistic duration. Lambda gives a function CPU in proportion to its memory, so at 128 MB a CPU-bound route runs slower than on a full VM: measure the duration at each setting before you pick one.</p>
 
-    <h3>4. Always-on containers pay for memory and vCPUs every hour</h3>
+    <h3>4. A month of requests: the Lambda compute bill</h3>
+    <p>One example month: 10 million requests, one in a hundred a cold start, each side at its own memory setting from example 3.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>10 million requests, 100,000 cold starts</th><th class="num">Apache Camel (JVM), 512 MB</th><th class="num">Cameleer, 128 MB</th></tr></thead>
+      <tbody>
+        <tr><td>execution time (duration)</td><td class="num">$0.58</td><td class="num">$0.06</td></tr>
+        <tr><td>cold starts (initialization: 1.1 s against 3 ms)</td><td class="num">$0.92</td><td class="num">$0.0006</td></tr>
+        <tr><td><strong>compute bill</strong></td><td class="num"><strong>$1.50</strong></td><td class="num"><strong>$0.06</strong></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Arithmetic on the measured numbers above and list prices: the compute bill is 23 times smaller. The per-request fee, $2.00 for 10 million requests, is the same on both sides and left out. Change the mix and the ratio moves: the more cold starts, the larger the gap; a route that waits on a slow database spends most of its time waiting, on either runtime.</p>
+
+    <h3>5. Always-on containers pay for memory and vCPUs every hour</h3>
     <p>On AWS Fargate (Linux, x86), memory costs $0.004446 per GB-hour and a vCPU $0.04048 per hour <sup><a href="#s8">[8]</a></sup>, about $3.25 per GB and $29.55 per vCPU for a 730-hour month.</p>
     <ul>
       <li><strong>Memory:</strong> 100 integrations that each need 391 MB less (399 MB against 8 MB) save about $127 a month at list price. Memory is cheap per unit; the larger effect is the node count in example 1.</li>
