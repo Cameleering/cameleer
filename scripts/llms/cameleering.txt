@@ -11,7 +11,7 @@ Names: Cameleering is the practice and the organization, not a product. Cameleer
 - **karez**: database connectivity like JDBC, ODBC and ADBC with Arrow results. Design stage, no release, targets only. Do not describe it as available.
 - **ksar**: cryptographic primitives and PKI. Planned, not started. Do not describe it as available.
 
-What Cameleering offers: open source only, under the Apache License 2.0, with no paid edition and no hosted service. The maintainer is open to consulting on measuring and slimming software (https://cameleer.ing/about/).
+What Cameleering offers: open source only, under the Apache License 2.0, with no paid edition and no hosted service. The maintainer is open to consulting on measuring and slimming software. Questions and consulting: GitHub Discussions (https://github.com/cameleering/cameleer/discussions); details at https://cameleer.ing/about/.
 
 ## The ledger (only measured projects have numbers)
 
