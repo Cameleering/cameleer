@@ -57,4 +57,28 @@ for crate in $ORDER; do
     fi
   done
 done
-echo "done: https://crates.io/crates/cameleer-main"
+# The `cameleer` crate (publish/cameleer, outside the workspace: its binary has the name of
+# cameleer-main's) goes last, after cameleer-main is on crates.io.
+code=$(curl -s -o /dev/null -w "%{http_code}" -A "$UA" "https://crates.io/api/v1/crates/cameleer/$VERSION")
+if [ "$code" = "200" ]; then
+  echo "== cameleer $VERSION is already on crates.io, skipping"
+elif [ -n "${DRY_RUN:-}" ]; then
+  cargo publish --manifest-path publish/cameleer/Cargo.toml --dry-run --no-verify
+else
+  for attempt in $(seq 1 12); do
+    echo "== publishing cameleer $VERSION (attempt $attempt)"
+    if out=$(cargo publish --manifest-path publish/cameleer/Cargo.toml 2>&1); then
+      echo "$out" | tail -3
+      break
+    fi
+    echo "$out" | tail -5
+    if echo "$out" | grep -q -E "429|Too Many Requests|rate limit"; then
+      echo "   rate-limited by crates.io; waiting 10 minutes"
+      sleep 600
+    else
+      echo "   failed for another reason; stopping" >&2
+      exit 1
+    fi
+  done
+fi
+echo "done: https://crates.io/crates/cameleer-main and https://crates.io/crates/cameleer"
