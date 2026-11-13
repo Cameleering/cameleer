@@ -30,6 +30,7 @@ ol.sources li:target { background: var(--signal-soft); }
 /* the Cameleering home (/): hero line, mini-ledger, doors, principles */
 .home-hero .carry { font: 800 clamp(20px, 2.6vw, 28px)/1.1 var(--sans); letter-spacing: -.02em; color: var(--signal); margin: 0 0 8px; }
 .home-hero h1 { max-width: 22em; }
+.home-hero .quick { display: none; }
 .mini-ledger caption { caption-side: top; text-align: left; font: 600 13px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 0 8px; }
 .mini-ledger th[scope="row"] { text-align: left; font-weight: 400; white-space: nowrap; }
 .mini-ledger .sub { font-size: 13px; color: var(--muted); }
@@ -45,6 +46,10 @@ ol.principles li { padding-left: 4px; }
 @media (max-width: 700px) { ol.principles { grid-template-columns: 1fr; } }
 /* under 600 px the mini-ledger becomes cards: the baseline stays next to the number, never in a tooltip */
 @media (max-width: 600px) {
+  .home-hero { padding-top: 28px; }
+  .home-hero .carry { font-size: 18px; }
+  .home-hero .quick { display: block; font-size: 15px; margin: -14px 0 20px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .home-hero .quick a { font-weight: 600; }
   .doors { grid-template-columns: 1fr; gap: 8px; margin-top: 20px; }
   .doors a { padding: 10px 14px; }
   .mini-ledger, .mini-ledger tbody, .mini-ledger tr, .mini-ledger th, .mini-ledger td { display: block; width: 100%; }

@@ -478,7 +478,34 @@ While that branch is open, edits to the 22 moving pages are frozen.
 committed `site/sitemap.xml` takes its dates from git history, so a shallow CI checkout would differ
 from it for no real reason.
 
-**Phase 4 reminder:** update the 404 page's ledger link to `/ledger/`.
+**Phase 4 reminder:** update the 404 page's ledger link to `/ledger/` (done).
+
+**Phases 1-4 as built (2026-11-13, branch `site-restructure-plan`, not pushed).**
+- **The move.** Cameleer's home and its 22 pages are under `/cameleer/`, and the practice pages sit
+  at the top level. 29 stubs come from `scripts/redirects.txt`, plus the 5 docs stubs from before.
+- **Shared header and footer.** Two headers (the Cameleer lockup, and Cameleering) and two footer
+  credit blocks are rendered by `build-docs.py` between markers; the docs template uses the same
+  ones. This replaced phase 1's "identical output" step, because every header changed anyway.
+- **New pages.** The new root, `/projects/`, `/about/`, `/security/`.
+- **Cameleer home.** The chip, the facts box, "Apache Camel and us", both baselines and the loss.
+- **llms.** Split into `/llms.txt` (family, from `scripts/llms/cameleering.txt`),
+  `/cameleer/llms.txt` (from `scripts/llms/cameleer.txt`, also written to the repository's
+  `llms.txt`) and 25 section bundles under 150 KB.
+- **Sitemaps and IndexNow.** A sitemap index with child sitemaps; IndexNow expands the children and
+  submits the old URLs once.
+- **Titles.** Titles and descriptions are within length on every page.
+- **Brand guide.** Updated.
+- **Checks.**
+  - The site check passes except for simoom's links (about 85 links to `/cameleering/` and 34
+    "Cameleer" links to the root). Those wait on the simoom repository; the note is
+    `simoom-restructure-links.md` in the shared notes folder.
+  - The docs tests pass (95).
+  - The browser pass at 1280 and 375 px covered the root, the Cameleer home and a docs page. The
+    phone shortcut line on the root ends at 644 px, inside the first 375×667 screen.
+- **Contact.** GitHub Discussions is not enabled on the org or the repository (404), so the contact
+  path is GitHub issues plus the maintainer's GitHub profile. Owner action A8: enable Discussions,
+  then switch the link.
+- **Deviation.** Footers keep their page-specific columns; only the credit block is shared.
 
 **Rollback:**
 - Before merging the cut-over, record the last good commit and open the revert branch.
