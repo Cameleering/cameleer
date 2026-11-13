@@ -4,6 +4,7 @@
   <url><loc>https://cameleer.ing/about/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/ai-code-performance/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/articles/</loc><lastmod>2026-11-13</lastmod></url>
+  <url><loc>https://cameleer.ing/cold-start-recovery/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/degraded-fleet-test/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/BENCHMARKS.html</loc><lastmod>2026-11-13</lastmod></url>
@@ -11,7 +12,7 @@
   <url><loc>https://cameleer.ing/docs/FEATURES.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/INTEROP.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/ROADMAP.html</loc><lastmod>2026-11-12</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/activemq.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ai-prompt.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/ai-resource.html</loc><lastmod>2026-11-12</lastmod></url>
@@ -130,7 +131,7 @@
   <url><loc>https://cameleer.ing/docs/components/opensearch.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/paho-mqtt5.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/paho.html</loc><lastmod>2026-11-12</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/platform-http.html</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/platform-http.html</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/pop3.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/quartz.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/rabbitmq.html</loc><lastmod>2026-11-12</lastmod></url>

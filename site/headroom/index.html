@@ -113,7 +113,7 @@
     <p>Microsoft's third update describes a known trap. A restarted server is at its weakest when it first joins. Its caches are empty. A JIT-compiled runtime has not compiled its hot paths yet. Connection pools to databases and back ends are empty. TLS session caches are cold, so every client does a full handshake. If that server gets its full share of traffic at once, it can fail its health check and leave again. The rest of the fleet then carries the load for one more cycle.</p>
     <p>Two properties decide how this goes:</p>
     <ul>
-      <li><strong>Start-up time.</strong> How long from process start to serving at full speed. Seconds of warm-up per node add up across a fleet restart.</li>
+      <li><strong>Start-up time.</strong> How long from process start to serving at full speed (<a href="../cold-start-recovery/">cold start is a recovery problem</a>). Seconds of warm-up per node add up across a fleet restart.</li>
       <li><strong>The cost of a new connection.</strong> After an outage, clients reconnect together. A full TLS handshake costs far more than a request on an open connection, so the reconnection wave can be heavier than normal traffic.</li>
     </ul>
     <p>The standard mitigations are well known, and Microsoft used one of them:</p>

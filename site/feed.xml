@@ -8,6 +8,14 @@
   <updated>2026-11-13T00:00:00Z</updated>
   <author><name>Cameleering</name><uri>https://cameleer.ing/</uri></author>
   <entry>
+    <title>Cold start is a recovery problem</title>
+    <link href="https://cameleer.ing/cold-start-recovery/"/>
+    <id>https://cameleer.ing/cold-start-recovery/</id>
+    <published>2026-11-13T00:00:00Z</published>
+    <updated>2026-11-13T00:00:00Z</updated>
+    <summary>A restarted or new server is at its weakest when it first takes traffic. Four clocks from process start to full speed, the arithmetic of recovery, the ladder of fixes, and what our own start-up numbers do and do not show.</summary>
+  </entry>
+  <entry>
     <title>How to test your headroom before an incident: the degraded-fleet test</title>
     <link href="https://cameleer.ing/degraded-fleet-test/"/>
     <id>https://cameleer.ing/degraded-fleet-test/</id>
