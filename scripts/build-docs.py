@@ -104,6 +104,10 @@ CAMELEER_NAV = [("docs/", "Docs", "keep"), ("cameleer/use-cases/", "Use cases", 
 CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", ""), ("articles/", "Articles", "")]
 # Essays and articles, newest first: /articles/ (partial "articles-list") and /feed.xml (Atom) come from this list.
 ARTICLES = [
+    ("tls-handshake-cost/", "The cost of a TLS handshake, and why a reconnection wave is a load test", "2026-11-13",
+     "TLS on an open connection is cheap; setting it up is not, and after a restart or failover many clients set up at once. What a handshake asks of a server, the arithmetic of a reconnection wave, the fixes, and what our own handshake numbers do and do not show."),
+    ("cold-start-recovery/", "Cold start is a recovery problem", "2026-11-13",
+     "A restarted or new server is at its weakest when it first takes traffic. Four clocks from process start to full speed, the arithmetic of recovery, the ladder of fixes, and what our own start-up numbers do and do not show."),
     ("degraded-fleet-test/", "How to test your headroom before an incident: the degraded-fleet test", "2026-11-13",
      "A procedure for a staging fleet: lose a third of the servers, restart one under load, reconnect every client at once, offer more than the fleet can serve. What to record, how to read it, and the pass or fail lines to write first."),
     ("headroom/", "Headroom: what is left when servers drop out", "2026-11-13",
@@ -116,6 +120,14 @@ ARTICLES = [
      "Generated code ran 3.12 times as long in one benchmark: what EffiBench, Mercury, EvalPerf, PIE, METR and DORA measured, each with its limits."),
     ("wirths-law/", "Wirth's law in 2026: measured", "2026-11-12",
      "Software growth against hardware speed since 1995: page weight, input latency, single-core speed, and the counter-argument."),
+]
+# The headroom series: the incident and the question, then three follow-ups, read in this order.
+SERIES_NAME = "The headroom series"
+SERIES = [
+    ("headroom/", "Headroom: what is left when servers drop out", "The question, and the incident that raised it"),
+    ("degraded-fleet-test/", "The degraded-fleet test", "How to measure it before an incident"),
+    ("cold-start-recovery/", "Cold start is a recovery problem", "Why a restarted server is weakest when it first takes traffic"),
+    ("tls-handshake-cost/", "The cost of a TLS handshake", "Why a reconnection wave is a load test"),
 ]
 PROJECTS_MENU = [("cameleer/", "Cameleer", "Integration engine in the style of Apache Camel · Cameleered"),
                  ("simoom/", "simoom", "HTTP engine, std-only Rust · Cameleered"),
@@ -178,10 +190,29 @@ def render_partial(name, root, page_path):
                 '      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. '
                 'It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>\n'
                 '      <p>Cameleer is a <a href="%s">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>\n    </div>' % (root, root))
+    if name in ("series-box", "series-nav"):
+        paths = [p for p, *_ in SERIES]
+        if page_path not in paths:
+            raise BuildError("partial `%s` is on %s, which is not in SERIES" % (name, page_path))
+        i = paths.index(page_path)
+        if name == "series-box":
+            rows = []
+            for n, (p, title, why) in enumerate(SERIES, 1):
+                if n - 1 == i:
+                    rows.append('        <li aria-current="page"><span class="sn">Part %d</span> <b>%s</b> <span class="sw">%s. You are here.</span></li>' % (n, esc(title), esc(why)))
+                else:
+                    rows.append('        <li><span class="sn">Part %d</span> <a href="%s%s"><b>%s</b></a> <span class="sw">%s.</span></li>' % (n, root, p, esc(title), esc(why)))
+            return ('<aside class="series" aria-label="%s">\n    <p class="series-label">%s &middot; part %d of %d</p>\n    <ol>\n%s\n    </ol>\n  </aside>'
+                    % (SERIES_NAME, SERIES_NAME, i + 1, len(SERIES), "\n".join(rows)))
+        prev = ('<a class="prev" href="%s%s"><span>&larr; Part %d</span><b>%s</b></a>' % (root, SERIES[i - 1][0], i, esc(SERIES[i - 1][1]))) if i > 0 else "<span></span>"
+        nxt = ('<a class="next" href="%s%s"><span>Part %d &rarr;</span><b>%s</b></a>' % (root, SERIES[i + 1][0], i + 2, esc(SERIES[i + 1][1]))) if i < len(SERIES) - 1 else '<a class="next" href="%sarticles/"><span>All articles &rarr;</span><b>Every essay, newest first</b></a>' % root
+        return '<nav class="series-nav" aria-label="%s">\n    %s\n    %s\n  </nav>' % (SERIES_NAME, prev, nxt)
     if name == "articles-list":
         items = []
+        series_paths = [p for p, *_ in SERIES]
         for path, title, date, summary in ARTICLES:
-            items.append('      <li><a href="%s%s"><b>%s</b></a> <time datetime="%s">%s</time><p>%s</p></li>' % (root, path, esc(title), date, date, esc(summary)))
+            tag = ('<span class="series-tag">%s, part %d of %d</span> ' % (SERIES_NAME, series_paths.index(path) + 1, len(series_paths))) if path in series_paths else ""
+            items.append('      <li>%s<a href="%s%s"><b>%s</b></a> <time datetime="%s">%s</time><p>%s</p></li>' % (tag, root, path, esc(title), date, date, esc(summary)))
         return '<ol class="articles">\n%s\n    </ol>' % "\n".join(items)
     if name == "credit-cameleering":
         return ('<div class="credit">\n      <h4><img src="%sbrand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>\n'

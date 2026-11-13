@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TLS Handshake Cost and the Reconnection Wave | Cameleering</title>
+<meta name="description" content="What a TLS handshake costs a server, why clients reconnect together, the arithmetic of a reconnection wave, the fixes and a checklist, with our numbers and limits.">
+<link rel="canonical" href="https://cameleer.ing/tls-handshake-cost/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="The cost of a TLS handshake, and why a reconnection wave is a load test">
+<meta property="og:description" content="A new connection costs far more than a request on an open one. What a TLS handshake asks of a server, why a restart makes every client come back together, and how to find your limit before an incident.">
+<meta property="og:url" content="https://cameleer.ing/tls-handshake-cost/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "The cost of a TLS handshake, and why a reconnection wave is a load test", "description": "A new connection costs far more than a request on an open one. What a TLS handshake asks of a server, why a restart makes every client come back together, and how to find your limit before an incident.", "url": "https://cameleer.ing/tls-handshake-cost/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-13", "dateModified": "2026-11-13", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "TLS handshake cost"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is TLS expensive?", "acceptedAnswer": {"@type": "Answer", "text": "Per request on an open connection, usually not: Google reported in 2010 that TLS took under 1% of the CPU on its production front ends. The cost is in setting a connection up, and it matters when many connections are set up at once."}}, {"@type": "Question", "name": "Does TLS 1.3 fix the handshake cost?", "acceptedAnswer": {"@type": "Answer", "text": "It removes a round trip, so a client waits less. The server still does a key exchange and, in a full handshake, signs with the certificate's key, so the CPU cost per new connection does not go away. Measure it on your own servers."}}, {"@type": "Question", "name": "Is session resumption worth it?", "acceptedAnswer": {"@type": "Answer", "text": "It lets a returning client skip the certificate and the signature. In our own test, resumed handshakes ran about a third faster than full ones, not many times faster, because a resumption with forward secrecy still does a key exchange. It also needs ticket keys that every server can read, and it must be rotated."}}, {"@type": "Question", "name": "Should I turn on 0-RTT?", "acceptedAnswer": {"@type": "Answer", "text": "Only for requests that are safe to replay, if at all. RFC 8446 says 0-RTT data has no guarantee of non-replay between connections and is not forward secret. simoom never accepts it."}}, {"@type": "Question", "name": "How do I find my own limit?", "acceptedAnswer": {"@type": "Answer", "text": "Open new connections at a set rate against one server, with a client that does not reuse them, and raise the rate until p99 or the error rate moves. Do it with full handshakes and with resumed ones, and watch CPU. Test 3 of the degraded-fleet test is the procedure."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <a href="../articles/">Articles</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / TLS handshake cost</p>
+    <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
+    <p class="kicker">Cameleering · capacity, recovery and efficiency</p>
+    <h1>The cost of a TLS handshake, and why a reconnection wave is a load test</h1>
+    <p class="lede">TLS on an open connection is cheap. Setting the connection up is not, and after a restart, a failover or a network blip, many clients set up at once. The handshake rate a server can sustain is a capacity limit that most teams have never measured.</p>
+    <p class="rule">No claim without a number.</p>
+    <!-- partial:series-box -->
+<aside class="series" aria-label="The headroom series">
+    <p class="series-label">The headroom series &middot; part 4 of 4</p>
+    <ol>
+        <li><span class="sn">Part 1</span> <a href="../headroom/"><b>Headroom: what is left when servers drop out</b></a> <span class="sw">The question, and the incident that raised it.</span></li>
+        <li><span class="sn">Part 2</span> <a href="../degraded-fleet-test/"><b>The degraded-fleet test</b></a> <span class="sw">How to measure it before an incident.</span></li>
+        <li><span class="sn">Part 3</span> <a href="../cold-start-recovery/"><b>Cold start is a recovery problem</b></a> <span class="sw">Why a restarted server is weakest when it first takes traffic.</span></li>
+        <li aria-current="page"><span class="sn">Part 4</span> <b>The cost of a TLS handshake</b> <span class="sw">Why a reconnection wave is a load test. You are here.</span></li>
+    </ol>
+  </aside>
+<!-- /partial:series-box -->
+  </div>
+</section>
+
+<section class="c-sec" id="question">
+  <div class="wrap">
+    <h2>The question: how many new connections per second can one server take?</h2>
+    <p>The <a href="../headroom/">headroom essay</a> and the <a href="../degraded-fleet-test/">degraded-fleet test</a> both mention a connection storm: every client drops and reconnects together. The <a href="../cold-start-recovery/">cold-start page</a> adds that a restarted node's TLS session cache starts empty. This page takes that one thread and follows it: what a handshake asks of the server, why reconnections bunch up, what that does to a fleet that is already short, and what to do about it.</p>
+    <p>Nothing here is about a particular incident. It is a general property of any service that terminates TLS.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="steady">
+  <div class="wrap">
+    <h2>First, the good news: TLS on an open connection is cheap</h2>
+    <p>In 2010 Adam Langley wrote that on Google's production front ends, SSL/TLS accounted for under 1% of the CPU load, under 10 KB of memory per connection and under 2% of network overhead <sup><a href="#s3">[3]</a></sup>. That figure is a fair reason not to worry about TLS in steady state, and it is the reason this page is not an argument against TLS.</p>
+    <p>It is also a figure for a service in steady state, where connections last and are reused. It does not say what happens when a large share of the connections are new at the same moment. That is a different workload, and the next section shows where the work is.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="handshake">
+  <div class="wrap">
+    <h2>What a handshake asks of the server</h2>
+    <p class="intro">The table compares the four cases a server meets. "Server work" names the costly operations only; it is not a measurement.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>case</th><th>round trips before application data</th><th>server work</th><th>notes</th></tr></thead>
+      <tbody>
+        <tr><td><strong>TLS 1.3, full</strong></td><td>1</td><td>a key exchange, a signature with the certificate's key, sending the certificate chain</td><td>the client has no state for this server</td></tr>
+        <tr><td><strong>TLS 1.3, resumed</strong></td><td>1</td><td>checking the ticket; a key exchange as well when forward secrecy is kept; no certificate, no signature</td><td>the ticket is a pre-shared key from an earlier connection <sup><a href="#s1">[1]</a></sup></td></tr>
+        <tr><td><strong>TLS 1.3, resumed with 0-RTT</strong></td><td>0 for the first request</td><td>as resumed</td><td>no forward secrecy and no guarantee of non-replay for that data <sup><a href="#s1">[1]</a></sup></td></tr>
+        <tr><td><strong>TLS 1.2, full</strong></td><td>2</td><td>a key exchange and a signature</td><td>older clients, and most middleboxes that have not been updated</td></tr>
+      </tbody>
+    </table></div>
+    <p>TLS 1.3 saves a round trip, which is the client's wait <sup><a href="#s1">[1]</a></sup>. In TLS 1.2, session IDs and tickets did the work that pre-shared keys do now <sup><a href="#s2">[2]</a></sup>. The server still has to do public-key work for every full handshake. Bulk encryption of the data afterwards is the cheap part on current hardware, which is why Langley's steady-state figure is so low.</p>
+    <p>The signature depends on the certificate. An RSA key and an elliptic-curve key cost very different amounts to sign with, and the difference is large enough to matter. We do not quote a ratio here, because it depends on the CPU and the library. Run <code>openssl speed</code> on your own hardware for the algorithms you actually serve, as the istlsfastyet guide suggests <sup><a href="#s3">[3]</a></sup>.</p>
+    <p class="note">Resumption saves less than it sounds like. A resumption that keeps forward secrecy still does a key exchange <sup><a href="#s1">[1]</a></sup>. What it skips is the certificate and the signature. In our own test, resumed handshakes were about a third faster than full ones, not many times faster (see below).</p>
+  </div>
+</section>
+
+<section class="c-sec" id="wave">
+  <div class="wrap">
+    <h2>Why reconnections arrive together</h2>
+    <p class="intro">Normal clients reconnect spread out over hours. These events make them reconnect in the same few seconds.</p>
+    <div class="cards">
+      <div class="card"><h3>A restart or crash</h3><p>Every connection that node held is gone, and every client reconnects. Through a load balancer, they reconnect to the nodes that remain.</p></div>
+      <div class="card"><h3>A deploy that drops connections</h3><p>A rolling deploy that closes connections instead of draining them sends each node's clients back at once, and it does that node by node.</p></div>
+      <div class="card"><h3>A load balancer or network failure</h3><p>A failover moves every connection to a new path in the same instant.</p></div>
+      <div class="card"><h3>An idle timeout that is the same everywhere</h3><p>If every connection is dropped after the same idle time, and clients all started together, they come back together.</p></div>
+      <div class="card"><h3>Retries without jitter</h3><p>A client that retries after a fixed delay returns at the same moment as every other client that failed at the same moment. The AWS Builders' Library recommends adding jitter for exactly this reason <sup><a href="#s5">[5]</a></sup>.</p></div>
+      <div class="card"><h3>A certificate or ticket-key change</h3><p>If every server stops accepting the old tickets at once, every returning client does a full handshake instead of a resumed one.</p></div>
+    </div>
+    <p>These events happen when the fleet is least able to absorb them. The Google SRE book's chapter on cascading failures lists cold caches and slow start-up among the causes <sup><a href="#s7">[7]</a></sup>. A reconnection wave adds a load that scales with the number of clients, not with the traffic they were sending a minute earlier.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="arithmetic">
+  <div class="wrap">
+    <h2>The arithmetic of a reconnection wave</h2>
+    <p class="intro">Offered handshake rate = clients ÷ the time they take to come back. Every number here is an example, not a measurement.</p>
+    <p>Take 100,000 clients and two fleets. Assume each server can sustain 5,000 handshakes a second while still doing its other work, so a fleet of 8 can take 40,000 a second and a fleet of 5 can take 25,000. The capacity is invented to show the shape. The table shows how loaded each fleet would be.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>example, not a measurement</th><th class="num">clients come back within</th><th class="num">offered handshakes per second</th><th class="num">load on 8 servers (40,000/s)</th><th class="num">load on 5 servers (25,000/s)</th></tr></thead>
+      <tbody>
+        <tr><td>reconnect spread out</td><td class="num">60 s</td><td class="num">1,667</td><td class="num">4%</td><td class="num">7%</td></tr>
+        <tr><td>a slow wave</td><td class="num">10 s</td><td class="num">10,000</td><td class="num">25%</td><td class="num">40%</td></tr>
+        <tr><td>a fast wave</td><td class="num">5 s</td><td class="num">20,000</td><td class="num">50%</td><td class="num">80%</td></tr>
+        <tr><td>a very fast wave</td><td class="num">2 s</td><td class="num">50,000</td><td class="num">125%</td><td class="num">200%</td></tr>
+        <tr><td>everyone at once</td><td class="num">1 s</td><td class="num">100,000</td><td class="num">250%</td><td class="num">400%</td></tr>
+      </tbody>
+    </table></div>
+    <p>Three things follow, and all of them depend on the invented capacity, so test your own.</p>
+    <ul>
+      <li><strong>The window matters more than the client count.</strong> The same 100,000 clients are harmless over a minute and an overload in a second or two.</li>
+      <li><strong>Losing servers moves the line.</strong> The 5-server fleet is at 80% for a five-second wave. That leaves little for the requests the connected clients are sending, because the handshakes and the requests share the same cores.</li>
+      <li><strong>Overload makes it worse, not just longer.</strong> A handshake that waits in a queue until the client gives up is CPU spent on a connection nobody will use. The client retries, and if it retries without jitter, the retries arrive as a second wave. Load that the server cannot serve should be refused early, which is what load shedding is for <sup><a href="#s7">[7]</a></sup>.</li>
+    </ul>
+    <p class="note">The page on <a href="../cold-start-recovery/#arithmetic">recovery arithmetic</a> has the same shape: what looks small in steady state decides the outcome when the fleet is short.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="fixes">
+  <div class="wrap">
+    <h2>The ladder of fixes</h2>
+    <p class="intro">Climb it one rung at a time. The first rungs cost the least and change nothing for your users.</p>
+    <div class="cards">
+      <div class="card"><h3>1. Measure the ceiling</h3><p>Find how many full and how many resumed handshakes per second one server sustains with p99 within target, and what CPU that uses. You cannot manage a limit you have not read.</p></div>
+      <div class="card"><h3>2. Reuse connections</h3><p>Keep-alive and HTTP/2 multiplexing mean fewer handshakes in the first place. Check that load balancers and clients do not close connections more often than they need to.</p></div>
+      <div class="card"><h3>3. Choose the certificate with the cost in mind</h3><p>Measure signing with each key type you could serve, on your own CPU. Serve the cheapest one every client you care about accepts.</p></div>
+      <div class="card"><h3>4. Make resumption work across the fleet</h3><p>A ticket is useful only if the server that receives it can read it. Servers behind one name must share ticket keys, and the keys must rotate. nginx documents this need for several servers <sup><a href="#s4">[4]</a></sup>. A ticket may not be given a lifetime of more than seven days <sup><a href="#s1">[1]</a></sup>.</p></div>
+      <div class="card"><h3>5. Spread the wave</h3><p>Drain connections instead of dropping them: an HTTP/2 server can send GOAWAY and let clients move over gradually <sup><a href="#s6">[6]</a></sup>. Give clients exponential backoff with jitter <sup><a href="#s5">[5]</a></sup>.</p></div>
+      <div class="card"><h3>6. Admit what you can serve</h3><p>Limit new connections per second and refuse the rest quickly, so the handshakes you do accept finish. Refusing early is cheaper than failing late <sup><a href="#s7">[7]</a></sup>.</p></div>
+      <div class="card"><h3>7. Spend less CPU per handshake</h3><p>Last, and only with measurements: a different library, a different server, or hardware that offloads the public-key work. Do the cheaper rungs first.</p></div>
+    </div>
+    <h3>A word on 0-RTT</h3>
+    <p>0-RTT lets a returning client send its first request with the handshake, saving a round trip. RFC 8446 says that data is not forward secret and that TLS gives no guarantee of non-replay between connections. It describes anti-replay measures a server can use and says every 0-RTT payload should be replay-safe <sup><a href="#s1">[1]</a></sup>. If you cannot say that for every request a client might send in it, leave it off. simoom never accepts 0-RTT <sup><a href="#s8">[8]</a></sup>.</p>
+    <p class="note">Resumption trades something too. Tickets that live for days, under keys that never change, weaken forward secrecy for the sessions they protect. Rotate the keys and keep lifetimes short enough for your security policy to accept.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="measure">
+  <div class="wrap">
+    <h2>How to find your limit</h2>
+    <p class="intro">This is Test 3 of the <a href="../degraded-fleet-test/#test-3">degraded-fleet test</a>, narrowed to the handshake.</p>
+    <ol>
+      <li>Use one server, not the fleet, with its real certificate chain and TLS settings, and a client machine with CPU to spare. If the generator is at 100% you have measured the generator.</li>
+      <li>Open new connections, and make sure the client does not reuse them. k6 has <code>noConnectionReuse</code> for this <sup><a href="#s9">[9]</a></sup>. Check on the server side that the handshake count matches what you meant to send.</li>
+      <li>Run once with resumption off and once with it on. Record full and resumed handshakes per second, p99 of the time to the first response byte, error rate and CPU.</li>
+      <li>Raise the rate in steps until p99 or errors move. The step before is the handshake ceiling for that server.</li>
+      <li>Repeat with real request traffic running at the same time, since in production the handshakes share cores with it.</li>
+      <li>Write down the pass line first: for example, "the fleet minus a third takes a ten-second wave of all clients with p99 under X".</li>
+    </ol>
+    <p class="note">Say which loop you used. A closed-loop test (a fixed number of workers, each opening the next connection when the last finishes) measures what the server can sustain. An open-loop test (connections opened at a fixed rate whatever happens) measures what happens when clients keep coming, which is closer to a wave. The first is easier to run and the second answers the question on this page.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="ours">
+  <div class="wrap">
+    <h2>Our own numbers, and what they do not show</h2>
+    <p class="intro">All of these come from <a href="../simoom/benchmarks/">simoom's campaign 4</a>: DigitalOcean c-4 droplets, 2026-11-12, each server against simoom on the same droplet, median of three rounds. They are in <a href="../ledger/#simoom">the ledger</a> with their losses.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>measure</th><th>simoom</th><th>baseline, same droplet</th></tr></thead>
+      <tbody>
+        <tr class="loss"><td>new TLS 1.3 clients, full handshakes per second</td><td>9,396</td><td>axum 0.8.9 with rustls: 11,633 (24% more than simoom)</td></tr>
+        <tr class="loss"><td>returning TLS 1.3 clients, resumed handshakes per second</td><td>12,388</td><td>axum 0.8.9 with rustls: 13,537 (9% more than simoom)</td></tr>
+        <tr><td>full handshakes against H2O and Go net/http</td><td>1.39x H2O; 79% more than Go net/http</td><td>H2O; Go net/http</td></tr>
+        <tr><td>full and resumed handshakes against cameleer-http, the server simoom replaced</td><td>5.9x and 2.2x</td><td>1,517 and 4,487 per second</td></tr>
+      </tbody>
+    </table></div>
+    <ul>
+      <li>Against the other server that is built for speed here, we lost: axum with rustls does more handshakes per second than simoom. We say so in the ledger and on every page that quotes the number.</li>
+      <li>Resumed handshakes were about a third faster than full ones in our test (12,388 against 9,396 per second). That is the size of the saving to expect from resumption alone; your certificate and hardware will move it.</li>
+    </ul>
+    <h3>The limits, said plainly</h3>
+    <ul>
+      <li><strong>These tests are closed-loop.</strong> 192 workers each opened a new connection per request, so the figures are handshakes per second at saturation, not a rate we offered and not a wave.</li>
+      <li><strong>They are for one droplet type and one certificate setup,</strong> in a campaign about HTTP servers, not a fleet. We have not run a wave against a degraded fleet on either project.</li>
+      <li><strong>We have not published CPU per handshake.</strong> Handshakes per second at saturation is related to it but is not the same number.</li>
+      <li>The figures differ a little between pages because each one is a median of ratios against one rival on the same droplet; the 9,396 and 12,388 here are the pair measured against axum.</li>
+      <li>These figures say nothing about Microsoft's systems, or about any outage.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="checklist">
+  <div class="wrap">
+    <h2>A handshake and reconnection checklist</h2>
+    <p class="intro">Ten items a team can start next week. Record each result with its build and date, as <a href="../method/">the method</a> asks.</p>
+    <ol>
+      <li>Measure full and resumed handshakes per second per server, with the real certificate, and write the number down.</li>
+      <li>Count how many of your connections are new in a normal minute, and how many would be after a restart of one node.</li>
+      <li>Find the shortest window in which your clients can all come back, and compare the offered rate with the ceiling of the fleet minus a third.</li>
+      <li>Check that ticket keys are shared across every server behind one name, and that they rotate.</li>
+      <li>Check how often a certificate or ticket-key rotation leaves every returning client with a full handshake.</li>
+      <li>Replace fixed retry delays with exponential backoff and jitter in every client you control.</li>
+      <li>Turn dropped connections in deploys into drained ones, and check that the load balancer supports it.</li>
+      <li>Put a limit on new connections per second, and test that the server refuses quickly when it is exceeded.</li>
+      <li>Run the connection-storm test in staging, with full and resumed TLS and with request traffic running.</li>
+      <li>Add the handshake ceiling to the release checks, so a change that lowers it fails the build.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Is TLS expensive?</summary><p>Per request on an open connection, usually not: Google reported in 2010 that TLS took under 1% of the CPU on its production front ends. The cost is in setting a connection up, and it matters when many connections are set up at once.</p></details>
+    <details><summary>Does TLS 1.3 fix the handshake cost?</summary><p>It removes a round trip, so a client waits less. The server still does a key exchange and, in a full handshake, signs with the certificate's key, so the CPU cost per new connection does not go away. Measure it on your own servers.</p></details>
+    <details><summary>Is session resumption worth it?</summary><p>It lets a returning client skip the certificate and the signature. In our own test, resumed handshakes ran about a third faster than full ones, not many times faster, because a resumption with forward secrecy still does a key exchange. It also needs ticket keys that every server can read, and it must be rotated.</p></details>
+    <details><summary>Should I turn on 0-RTT?</summary><p>Only for requests that are safe to replay, if at all. RFC 8446 says 0-RTT data has no guarantee of non-replay between connections and is not forward secret. simoom never accepts it.</p></details>
+    <details><summary>How do I find my own limit?</summary><p>Open new connections at a set rate against one server, with a client that does not reuse them, and raise the rate until p99 or the error rate moves. Do it with full handshakes and with resumed ones, and watch CPU. Test 3 of the degraded-fleet test is the procedure.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-13.</p>
+    <ol class="sources">
+      <li id="s1">IETF, <a href="https://www.rfc-editor.org/rfc/rfc8446">RFC 8446, The Transport Layer Security (TLS) Protocol Version 1.3</a>: section 2.2 (resumption and pre-shared keys), section 4.6.1 (tickets and their lifetime), section 8 and appendix E.5 (0-RTT and replay).</li>
+      <li id="s2">IETF, <a href="https://www.rfc-editor.org/rfc/rfc5077">RFC 5077, TLS session resumption without server-side state</a>: the TLS 1.2 ticket mechanism that RFC 8446 replaces.</li>
+      <li id="s3">Adam Langley, quoted in <a href="https://istlsfastyet.com/">Is TLS Fast Yet?</a>: "Overclocking SSL" and the advice to run <code>openssl speed</code>.</li>
+      <li id="s4">nginx, <a href="https://nginx.org/en/docs/http/ngx_http_ssl_module.html">ngx_http_ssl_module</a>: <code>ssl_session_ticket_key</code> and sharing keys between servers.</li>
+      <li id="s5">Amazon Builders' Library, <a href="https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/">Timeouts, retries and backoff with jitter</a>.</li>
+      <li id="s6">IETF, <a href="https://www.rfc-editor.org/rfc/rfc9113">RFC 9113, HTTP/2</a>: the GOAWAY frame, section 6.8.</li>
+      <li id="s7">Google, Site Reliability Engineering, <a href="https://sre.google/sre-book/addressing-cascading-failures/">chapter 22, "Addressing Cascading Failures"</a>: load shedding, slow start-up and cold caching.</li>
+      <li id="s8">simoom, <a href="../simoom/docs/guides/tls.html">TLS guide</a>: tickets are on by default with rotating keys; 0-RTT is never accepted.</li>
+      <li id="s9">Grafana k6, <a href="https://grafana.com/docs/k6/latest/using-k6/k6-options/reference/">options reference: <code>noConnectionReuse</code></a>.</li>
+      <li id="s10">Cameleering measurements: <a href="../ledger/">the ledger</a> and <a href="../simoom/benchmarks/">simoom benchmarks</a>. The headroom context is in the <a href="../headroom/">headroom essay</a>.</li>
+    </ol>
+  </div>
+</section>
+<!-- partial:series-nav -->
+<nav class="series-nav" aria-label="The headroom series">
+    <a class="prev" href="../cold-start-recovery/"><span>&larr; Part 3</span><b>Cold start is a recovery problem</b></a>
+    <a class="next" href="../articles/"><span>All articles &rarr;</span><b>Every essay, newest first</b></a>
+  </nav>
+<!-- /partial:series-nav -->
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a></li>
+        <li><a href="../cameleer/compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

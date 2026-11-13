@@ -105,3 +105,19 @@ ol.articles p { margin: 0; color: var(--muted); max-width: 46em; }
 .home-hero .latest { font-size: 15px; margin: 0 0 18px; }
 .home-hero .latest span { display: inline-block; font: 700 11px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: #fff; background: var(--signal); border-radius: 999px; padding: 2px 8px; margin-right: 6px; vertical-align: 1px; }
 .home-hero .latest a { font-weight: 600; }
+
+/* The headroom series: a box under the hero and prev/next at the foot of each part */
+.series { border: 1px solid var(--line); border-left: 4px solid var(--signal); border-radius: 10px; padding: 16px 20px; margin: 22px 0 0; max-width: 46em; background: var(--paper, transparent); }
+.series-label { font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 8px; }
+.series ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.series li { font-size: 15px; line-height: 1.45; }
+.series .sn { display: inline-block; min-width: 3.9em; font: 600 12px var(--mono); color: var(--muted); }
+.series .sw { color: var(--muted); }
+.series li[aria-current="page"] b { color: var(--ink); }
+.series-nav { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 0 auto; padding: 0 16px 36px; max-width: 1040px; }
+.series-nav a { display: block; border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; text-decoration: none; color: var(--ink); }
+.series-nav a:hover { border-color: var(--signal); }
+.series-nav a span { display: block; font: 600 12px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 4px; }
+.series-nav .next { text-align: right; grid-column: 2; }
+.series-tag { display: inline-block; font: 700 11px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--ink); background: var(--line); border-radius: 999px; padding: 2px 9px; margin-bottom: 6px; }
+@media (max-width: 640px) { .series-nav { grid-template-columns: 1fr; } .series-nav .next { grid-column: auto; } }

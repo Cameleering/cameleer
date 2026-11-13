@@ -69,6 +69,17 @@
     <h1>How to test your headroom before an incident: the degraded-fleet test</h1>
     <p class="lede">Four tests you can run next week on a staging fleet, in any language and on any stack: capacity with the full fleet and with a third of it gone, a restart under load, a reconnection storm, and overload. What to set up, what to record, how to read it, and how to write pass or fail before you start.</p>
     <p class="rule">No claim without a number.</p>
+    <!-- partial:series-box -->
+<aside class="series" aria-label="The headroom series">
+    <p class="series-label">The headroom series &middot; part 2 of 4</p>
+    <ol>
+        <li><span class="sn">Part 1</span> <a href="../headroom/"><b>Headroom: what is left when servers drop out</b></a> <span class="sw">The question, and the incident that raised it.</span></li>
+        <li aria-current="page"><span class="sn">Part 2</span> <b>The degraded-fleet test</b> <span class="sw">How to measure it before an incident. You are here.</span></li>
+        <li><span class="sn">Part 3</span> <a href="../cold-start-recovery/"><b>Cold start is a recovery problem</b></a> <span class="sw">Why a restarted server is weakest when it first takes traffic.</span></li>
+        <li><span class="sn">Part 4</span> <a href="../tls-handshake-cost/"><b>The cost of a TLS handshake</b></a> <span class="sw">Why a reconnection wave is a load test.</span></li>
+    </ol>
+  </aside>
+<!-- /partial:series-box -->
   </div>
 </section>
 
@@ -159,6 +170,7 @@
 <section class="c-sec" id="test-2">
   <div class="wrap">
     <h2>Test 2: restart under load</h2>
+    <p class="note">Why this test matters more than start-up time alone: <a href="../cold-start-recovery/">cold start is a recovery problem</a>.</p>
     <p class="intro">With the degraded fleet under steady load, restart one node and let it rejoin. Do it twice: (a) it gets its full share at once, (b) the load balancer ramps it up with slow start.</p>
     <div class="c-table-wrap"><table class="c-table">
       <thead><tr><th>record</th><th>from</th><th>to</th></tr></thead>
@@ -188,7 +200,7 @@
       <li><strong>Handshakes per second per core</strong>, and CPU time per handshake.</li>
       <li><strong>p99 on connections that were already open</strong> during the wave. A storm that starves existing users is worse than one that only delays new ones.</li>
       <li><strong>Time until latency is normal again.</strong></li>
-      <li><strong>Full and resumed TLS.</strong> Run once with session resumption off and once with it on. A full handshake costs far more than a resumed one, and after a restart the session cache may be empty.</li>
+      <li><strong>Full and resumed TLS.</strong> Run once with session resumption off and once with it on. A full handshake costs more than a resumed one (about a third more in our own test, <a href="../tls-handshake-cost/#ours">details and limits</a>), and after a restart the session cache may be empty. <a href="../tls-handshake-cost/">The cost of a TLS handshake</a> explains what to measure.</li>
     </ul>
     <p class="note">Your load generator must open new connections at the rate you configure, not reuse them. k6 has <code>noConnectionReuse</code> to turn off keep-alive <sup><a href="#s10">[10]</a></sup>; Vegeta has <code>-keepalive</code>, true by default <sup><a href="#s4">[4]</a></sup>. Count the handshakes on the server side to confirm.</p>
   </div>
@@ -298,6 +310,12 @@
     </ol>
   </div>
 </section>
+<!-- partial:series-nav -->
+<nav class="series-nav" aria-label="The headroom series">
+    <a class="prev" href="../headroom/"><span>&larr; Part 1</span><b>Headroom: what is left when servers drop out</b></a>
+    <a class="next" href="../cold-start-recovery/"><span>Part 3 &rarr;</span><b>Cold start is a recovery problem</b></a>
+  </nav>
+<!-- /partial:series-nav -->
 </main>
 
 <footer>
