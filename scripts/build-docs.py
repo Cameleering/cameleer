@@ -94,16 +94,16 @@ FAMILY_MENU = [
     ("ledger/", "The ledger", "Every project, its baseline and its losses"),
     ("method/", "The method", "How a gain is measured and reported"),
     ("finops/", "Code efficiency and FinOps", "What the milliseconds and megabytes cost"),
-    ("projects/", "Projects", "Cameleer and simoom measured; karez and ksar not yet"),
+    ("projects/", "Projects", "Cameleer and simoom Cameleered; karez and ksar not yet"),
     ("about/", "About", "Who maintains it, how to get in touch"),
 ]
 CAMELEER_NAV = [("docs/", "Docs", "keep"), ("cameleer/use-cases/", "Use cases", "keep"), ("cameleer/mcp/", "MCP", ""),
                 ("cameleer/healthcare/", "Healthcare", ""), ("cameleer/compare/", "Compare", ""),
                 ("docs/BENCHMARKS.html", "Benchmarks", "")]
 CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", "")]
-PROJECTS_MENU = [("cameleer/", "Cameleer", "Integration engine in the style of Apache Camel · measured"),
-                 ("simoom/", "simoom", "HTTP engine, std-only Rust · measured"),
-                 ("projects/#karez", "karez", "Database connectivity · design, no numbers yet"),
+PROJECTS_MENU = [("cameleer/", "Cameleer", "Integration engine in the style of Apache Camel · Cameleered"),
+                 ("simoom/", "simoom", "HTTP engine, std-only Rust · Cameleered"),
+                 ("projects/#karez", "karez", "Database connectivity · Cameleering, no numbers yet"),
                  ("projects/#ksar", "ksar", "Cryptography and PKI · planned")]
 
 

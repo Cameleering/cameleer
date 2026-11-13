@@ -44,9 +44,9 @@
       <div class="nav-menu">
         <a href="../projects/" aria-haspopup="true">Projects</a>
         <div class="nav-sub">
-          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · measured</span></a>
-          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · measured</span></a>
-          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · design, no numbers yet</span></a>
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
           <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
         </div>
       </div>
@@ -74,9 +74,9 @@
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>project</th><th>what it is</th><th>status</th><th>compared with</th><th>last measured</th></tr></thead>
       <tbody>
-        <tr><td><strong><a href="../cameleer/">Cameleer</a></strong></td><td>integration engine in the style of Apache Camel, one std-only native binary</td><td><span class="st st-measured">measured</span></td><td>Apache Camel 4.23.0 on Java 21; Apache Camel 4.22.1 on Quarkus 3.40.0 native</td><td>2026-11-06</td></tr>
-        <tr><td><strong><a href="../simoom/">simoom</a></strong></td><td>embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine, std-only Rust</td><td><span class="st st-measured">measured</span></td><td>Cameleer's previous HTTP server (cameleer-http); 20 HTTP servers in Rust, C, Go, Java, .NET and JavaScript, among them hyper 1.12.0, actix-web 4.18.2, axum 0.8.9 with rustls, may-minihttp 0.1.11, nginx 1.24.0 and H2O</td><td>2026-11-12</td></tr>
-        <tr><td><strong>karez</strong></td><td>database connectivity shaped like JDBC, ODBC and ADBC, with Arrow results</td><td><span class="st st-design">design</span></td><td class="na">targets only</td><td class="na">—</td></tr>
+        <tr><td><strong><a href="../cameleer/">Cameleer</a></strong></td><td>integration engine in the style of Apache Camel, one std-only native binary</td><td><span class="st st-measured">Cameleered</span></td><td>Apache Camel 4.23.0 on Java 21; Apache Camel 4.22.1 on Quarkus 3.40.0 native</td><td>2026-11-06</td></tr>
+        <tr><td><strong><a href="../simoom/">simoom</a></strong></td><td>embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine, std-only Rust</td><td><span class="st st-measured">Cameleered</span></td><td>Cameleer's previous HTTP server (cameleer-http); 20 HTTP servers in Rust, C, Go, Java, .NET and JavaScript, among them hyper 1.12.0, actix-web 4.18.2, axum 0.8.9 with rustls, may-minihttp 0.1.11, nginx 1.24.0 and H2O</td><td>2026-11-12</td></tr>
+        <tr><td><strong>karez</strong></td><td>database connectivity shaped like JDBC, ODBC and ADBC, with Arrow results</td><td><span class="st st-progress">Cameleering</span></td><td class="na">targets only</td><td class="na">—</td></tr>
         <tr><td><strong>ksar</strong></td><td>cryptographic primitives and PKI</td><td><span class="st st-planned">planned</span></td><td class="na">—</td><td class="na">—</td></tr>
       </tbody>
     </table></div>
@@ -202,7 +202,7 @@
       <div class="pane">
         <h3>How rows change</h3>
         <ul>
-          <li><span class="st st-measured">measured</span> rows carry numbers. <span class="st st-progress">in progress</span>, <span class="st st-design">design</span> and <span class="st st-planned">planned</span> rows do not.</li>
+          <li><span class="st st-measured">Cameleered</span> rows carry numbers: measured against a named current baseline on the same hardware, with a rerunnable script, losses disclosed, within 12 months (<a href="../method/#labels">the labels</a>). <span class="st st-progress">Cameleering</span> rows are in progress and show targets only; <span class="st st-planned">planned</span> rows are not started. Neither carries numbers.</li>
           <li>A target is shown hollow, like <span class="ledger"><span class="target">10x</span></span>, and never in the result column.</li>
           <li>A result older than 12 months is marked stale until it is rerun.</li>
           <li>Rows are never deleted. A newer run supersedes an old one, which stays visible, <span class="st-superseded">struck through</span>.</li>

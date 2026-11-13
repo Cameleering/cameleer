@@ -47,9 +47,9 @@
       <div class="nav-menu">
         <a aria-current="page" href="../projects/" aria-haspopup="true">Projects</a>
         <div class="nav-sub">
-          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · measured</span></a>
-          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · measured</span></a>
-          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · design, no numbers yet</span></a>
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
           <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
         </div>
       </div>
@@ -70,7 +70,7 @@
 </section>
 <section class="c-sec" id="cameleer">
   <div class="wrap">
-    <h2>Cameleer <span class="st st-measured">measured</span></h2>
+    <h2>Cameleer <span class="st st-measured">Cameleered</span></h2>
     <p class="intro">An integration engine in the style of Apache Camel: Camel's routes, Enterprise Integration Patterns and YAML DSL as one std-only native binary with about 230 components, plus MCP tools for AI agents. Version 0.6.0. The first Cameleering project, and the one the practice is named after.</p>
     <p>Measured on 2026-11-06 (version 0.4.0) against Apache Camel 4.23.0 on Java 21 and Apache Camel 4.22.1 on Quarkus native, same DigitalOcean c-4 machines: start-up 3 ms against 1.1 s on the JVM and 30 ms native; peak memory 4.8–54x less; throughput 1.7–8.7x. One loss: p99 for HTTP into Kafka, 8.6 ms against 7.8 ms.</p>
     <div class="cta"><a class="btn primary" href="../cameleer/">Cameleer</a><a class="btn" href="../ledger/#cameleer">Ledger row</a><a class="btn" href="https://github.com/cameleering/cameleer">Source</a></div>
@@ -78,7 +78,7 @@
 </section>
 <section class="c-sec" id="simoom">
   <div class="wrap">
-    <h2>simoom <span class="st st-measured">measured</span></h2>
+    <h2>simoom <span class="st st-measured">Cameleered</span></h2>
     <p class="intro">An embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust, with its own TLS 1.3 and no async runtime. Version 0.1.0 on crates.io (<code>cargo add simoom</code>). It replaces Cameleer's thread-per-connection HTTP server.</p>
     <p>Measured from 2026-11-09 to 2026-11-12, first against cameleer-http, the server it replaces (CPU per request about 13 µs against about 23 µs, 43% less), then against 20 other HTTP servers on the same DigitalOcean c-4 droplets: first of 21 on start-up and first of 19 on CPU per request. Losses: plain HTTP 6% behind may-minihttp, TLS handshakes behind axum with rustls, HTTP/3 behind H2O.</p>
     <div class="cta"><a class="btn primary" href="../simoom/">simoom</a><a class="btn" href="../ledger/#simoom">Ledger rows</a><a class="btn" href="https://github.com/Cameleering/simoom">Source</a></div>
@@ -86,7 +86,7 @@
 </section>
 <section class="c-sec" id="karez">
   <div class="wrap">
-    <h2>karez <span class="st st-design">design</span></h2>
+    <h2>karez <span class="st st-progress">Cameleering</span></h2>
     <p class="intro">Database connectivity shaped like JDBC, ODBC and ADBC, with Arrow results, in std-only Rust. A karez is an underground water channel. It is at the design stage: it has targets, and targets are not results, so it has no numbers here.</p>
   </div>
 </section>

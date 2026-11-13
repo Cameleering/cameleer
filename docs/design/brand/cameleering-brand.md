@@ -33,7 +33,7 @@ every repo and session; it is not published on the site._
 4. Pack only what the journey needs.
 5. Real waiting over felt waiting.
 6. Budgets in the build: CI fails on size, memory, startup and p99 regressions.
-7. Rewrite when the numbers say so: a tool, not a creed. Language neutral.
+7. Rewrite when the numbers say so: a tool, not a creed. The practice is not about a language but about how a language is used; never frame it as "rewrite it in X".
 8. Publish the losses.
 
 **Process:** Pick, Baseline, Budget, Cut, Prove, Publish, Guard.
@@ -46,7 +46,7 @@ every repo and session; it is not published on the site._
   agent builders, healthcare integration, Rust developers) lands on the project microsites by deep
   links and must never be routed through the practice pages.
 - **Versus FinOps or buying more cloud:** it fixes the software.
-- **Versus "rewrite it in Rust":** every claim is measured against the original.
+- **Versus a language switch:** the gain comes from how software uses its language (the build, the defaults, threads, allocations, waiting), and every claim is measured against the original, never credited to the language.
 - **Responsibility:** prominent, by the owner's choice, but always tied to people and measured
   resources: who pays for the machines, who waits, the power drawn. It is never aimed at
   developers ("the thing to fight is waste, not the people who build features"). No carbon
@@ -79,8 +79,8 @@ every repo and session; it is not published on the site._
 
 ## The ledger rules
 
-- Only measured rows carry numbers.
-- Statuses: measured, in progress, design, planned.
+- Only Cameleered rows carry numbers.
+- Statuses, shown with these words everywhere (badges, menus, llms.txt): **Cameleered** (measured, every label condition met), **Cameleering** (in progress or design, targets only), **planned** (not started). Never "measured" or "design" as a status badge.
 - Targets are hollow figures and never sit in the result column.
 - Both ends of every range ("4.8-54x").
 - A result older than 12 months is stale.
@@ -93,7 +93,8 @@ every repo and session; it is not published on the site._
 
 - **Cameleered** (measured): a named current baseline, the same hardware, a rerunnable script and
   raw results, losses disclosed, measured within 12 months.
-- **Cameleering** (in progress): targets only.
+- **Cameleering** (in progress, including design): targets only.
+- A project not started is **planned** and carries neither label.
 
 ## Naming rule for projects
 
