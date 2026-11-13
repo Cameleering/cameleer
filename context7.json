@@ -5,8 +5,8 @@
   "projectTitle": "Cameleer",
   "description": "Camel-compatible integration routes in Rust: runs Apache Camel YAML routes, EIPs and endpoint URIs with about 230 components; the integration layer for AI agents, serverless and edge.",
   "folders": ["docs", "examples", "README.md", "AGENTS.md"],
-  "excludeFolders": ["target", "site", "benchmarks", "crates", "scripts", ".github"],
-  "excludeFiles": ["docs/STATUS.md", "docs/INTEROP.md"],
+  "excludeFolders": ["target", "site", "benchmarks", "crates", "scripts", ".github", "docs/design", "docs/release-notes"],
+  "excludeFiles": ["docs/STATUS.md", "docs/INTEROP.md", "docs/FEATURES.md", "docs/website-plan.md"],
   "rules": [
     "Write routes in the Camel YAML DSL (*.camel.yaml) unless the user asks for Rust; Apache Camel YAML routes run unchanged.",
     "Look up a component's options on docs/components/<scheme>.md before using them; unknown endpoint options are rejected at startup, as in Apache Camel.",
