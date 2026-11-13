@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cold Start Is a Recovery Problem | Cameleering</title>
+<meta name="description" content="Start-up time decides how fast a fleet recovers. The four clocks from process start to full speed, recovery arithmetic, the fixes and a 10-item checklist.">
+<link rel="canonical" href="https://cameleer.ing/cold-start-recovery/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="Cold start is a recovery problem">
+<meta property="og:description" content="A restarted server is at its weakest when it first takes traffic. Four clocks from process start to full speed, what each costs a fleet in recovery, the ladder of fixes, and a checklist for next week.">
+<meta property="og:url" content="https://cameleer.ing/cold-start-recovery/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Cold start is a recovery problem", "description": "A restarted server is at its weakest when it first takes traffic. Four clocks from process start to full speed, what each costs a fleet in recovery, the ladder of fixes, and a checklist for next week.", "url": "https://cameleer.ing/cold-start-recovery/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-13", "dateModified": "2026-11-13", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cold start and recovery"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does a faster start-up mean I do not need slow start?", "acceptedAnswer": {"@type": "Answer", "text": "No. A fast start shortens the time before a node can answer at all. Its caches, connection pools and TLS session cache still start empty, so a full share at once can still push it over. Keep the ramp, and measure whether you can shorten it."}}, {"@type": "Question", "name": "Is native image the answer?", "acceptedAnswer": {"@type": "Answer", "text": "It is one answer for start-up. Ahead-of-time compilation removes JIT warm-up and starts in milliseconds, at the cost of longer builds, metadata for reflection and other dynamic features, and, in our own comparison of Apache Camel, lower throughput than the JVM. Caches and pools still have to fill. Measure all four clocks before and after."}}, {"@type": "Question", "name": "Does this matter if I run long-lived servers?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, on the days that count. Long-lived servers still restart for deploys, patches, crashes and failover, and those are the moments when the fleet is already short. A rolling deploy also puts several warming nodes in service at once."}}, {"@type": "Question", "name": "How do I measure time to full speed?", "acceptedAnswer": {"@type": "Answer", "text": "Restart one node in a staging fleet under steady, open-loop, production-shaped load. Record the time from process start until the node's own p99 stays within target at its full share, and count its health-check failures on the way. Test 2 of the degraded-fleet test is the procedure."}}, {"@type": "Question", "name": "What about serverless?", "acceptedAnswer": {"@type": "Answer", "text": "There the first two clocks are both the user's wait and the bill. Since 1 August 2025 AWS Lambda bills the initialization phase of on-demand functions, and a new execution environment still starts with empty caches and no open connections. SnapStart and provisioned concurrency are the platform's tools; a smaller start-up is the code's."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <a href="../articles/">Articles</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / Cold start and recovery</p>
+    <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
+    <p class="kicker">Cameleering · capacity, recovery and efficiency</p>
+    <h1>Cold start is a recovery problem</h1>
+    <p class="lede">Start-up time is usually filed under cost or latency. It also decides how fast a fleet recovers. A restarted or newly added server is at its weakest when it first takes traffic, and the time before it can carry a full share is capacity the fleet does not have.</p>
+    <p class="rule">No claim without a number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="question">
+  <div class="wrap">
+    <h2>The question: what is a server worth in its first minutes?</h2>
+    <p>During the Microsoft 365 outage of 12 and 13 November 2026, Microsoft said that servers returned to service "can become unresponsive again once they receive traffic". The <a href="../headroom/">headroom essay</a> covers that incident. Microsoft has not published a root cause, and this page does not guess at one. It takes the general lesson only: a server that has just started is not yet a whole server.</p>
+    <p>So how much of a server is it, and for how long? That number decides how long a fleet runs short after a crash, a deploy or a scale-out. The <a href="../degraded-fleet-test/">degraded-fleet test</a> gives the procedure for measuring it. This page explains what to measure and why the usual start-up figure is not enough.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="clocks">
+  <div class="wrap">
+    <h2>Four clocks, not one</h2>
+    <p class="intro">"Start-up time" hides four different intervals. Each starts at process start and ends later than the one before.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>clock ends when the process is</th><th>dominated by</th><th>what you measure</th><th>where it shows up</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1. Listening</strong></td><td>runtime start, loading code, reading configuration</td><td>time to the listening socket or the first answer of any kind</td><td>serverless INIT, crash loops</td></tr>
+        <tr><td><strong>2. Ready</strong></td><td>eager connections, migrations, route or bean wiring, the first health check</td><td>time to passing the readiness check</td><td>rolling deploys, failover, autoscaling lag</td></tr>
+        <tr><td><strong>3. Warm</strong></td><td>caches, connection pools, JIT-compiled hot paths, the TLS session cache, lazily loaded classes or modules</td><td>time until per-request cost stops falling</td><td>the minutes after a restart, cache-cold failover</td></tr>
+        <tr><td><strong>4. Full speed</strong></td><td>all of the above, under its real share of load</td><td>time until the node's own p99 stays within target at its full share</td><td>recovery from an incident, scale-out under pressure</td></tr>
+      </tbody>
+    </table></div>
+    <p>Most published start-up numbers, ours included, are the first clock or the second. They are easy to measure on one machine with no load. The fourth clock needs a fleet, a load generator and a target, so it is rarely published. It is also the one that decides recovery.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="gap">
+  <div class="wrap">
+    <h2>Why the gap between ready and full speed is the dangerous part</h2>
+    <p>A node between clock 2 and clock 4 passes its health check but cannot yet serve its share. The load balancer sees a healthy node and gives it a full share. Every request misses a cold cache, opens a new database connection or does a full TLS handshake. Latency climbs, the health check fails, and the node leaves. The rest of the fleet carries its load for another cycle, and then the node tries again. That is flapping, and <a href="../degraded-fleet-test/#test-2">Test 2 of the degraded-fleet test</a> counts it.</p>
+    <p>Google's SRE book names both halves of this. Processes "are often slower at responding to requests immediately after starting than they will be in steady state", from connection set-up and JIT warm-up; and with an empty cache, "100% of requests are costly". Its advice is to add load to a cluster slowly and to test how the service behaves after a large restart <sup><a href="#s1">[1]</a></sup>.</p>
+    <p>The danger grows when the cold state feeds itself. Bronson and colleagues describe metastable failures: a trigger pushes a system into a bad state that persists after the trigger is removed, held there by a sustaining effect. One of their examples is a look-aside cache: lose a cache with a 90% hit rate and the database sees ten times the queries, answers too slowly for the cache to refill, and stays overloaded <sup><a href="#s2">[2]</a></sup>. A fleet of cold nodes can sit in that state long after the original fault is gone.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="arithmetic">
+  <div class="wrap">
+    <h2>The arithmetic of recovery</h2>
+    <p class="intro">Time to add capacity = detect + provision + start + warm. Every number in this section is an example, not a measurement.</p>
+    <p>Take 12 nodes at 70% and lose a third. The load is 8.4 nodes' worth, and 8 nodes remain, so the survivors run at 105%. To get them back under 80% you need 11 nodes, three more. Until those three are at full speed, the fleet is past its knee.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>example, not a measurement</th><th class="num">detect</th><th class="num">provision</th><th class="num">start</th><th class="num">warm</th><th class="num">total</th><th class="num">start cut to 1 s</th></tr></thead>
+      <tbody>
+        <tr><td>new VM, runtime with a long warm-up</td><td class="num">60 s</td><td class="num">90 s</td><td class="num">30 s</td><td class="num">120 s</td><td class="num">300 s</td><td class="num">271 s (−9%)</td></tr>
+        <tr><td>new pod on a node that is already up</td><td class="num">60 s</td><td class="num">5 s</td><td class="num">30 s</td><td class="num">120 s</td><td class="num">215 s</td><td class="num">186 s (−13%)</td></tr>
+        <tr><td>new pod, little state to warm</td><td class="num">60 s</td><td class="num">5 s</td><td class="num">30 s</td><td class="num">10 s</td><td class="num">105 s</td><td class="num">76 s (−27%)</td></tr>
+        <tr><td>restart in place after a crash</td><td class="num">10 s</td><td class="num">0 s</td><td class="num">30 s</td><td class="num">10 s</td><td class="num">50 s</td><td class="num">21 s (−58%)</td></tr>
+      </tbody>
+    </table></div>
+    <p>Read it honestly. When provisioning and warm-up dominate, as in the first two rows, cutting start-up from 30 seconds to one saves a tenth of the outage window. For many systems that is the true picture, and the money is better spent on warm pools of spare capacity, faster detection or a cache that survives restarts. Start-up dominates only when the rest is small: restarts in place, crash loops, pods on nodes that are already up, services with little to warm. There, the same cut more than halves the window.</p>
+    <p class="note">Flapping multiplies everything. If a node fails its health check three times before it holds, the start and warm columns are paid three times while the fleet stays short.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="fixes">
+  <div class="wrap">
+    <h2>What makes start slow, and the ladder of fixes</h2>
+    <p class="intro">Climb it one rung at a time, as on the <a href="../when-to-rewrite/#ladder">rewrite ladder</a>. Most teams stop well before the top.</p>
+    <div class="cards">
+      <div class="card"><h3>1. Measure the four clocks</h3><p>Log a timestamp at process start, at listening, at ready, and record per-request cost and p99 for the first minutes under load. You cannot fix a clock you have not read.</p></div>
+      <div class="card"><h3>2. Tune</h3><p>Configuration first: lazy initialization, fewer eager connections, smaller pools that grow, migrations run as a separate job rather than on every start.</p></div>
+      <div class="card"><h3>3. Trim</h3><p>Remove what does not earn its place: unused modules, classpath scanning, reflection-heavy wiring, dependencies that load code you never call.</p></div>
+      <div class="card"><h3>4. Snapshot or compile ahead of time</h3><p>Start from a prepared state instead of building it at every start. Each option below has a price.</p></div>
+      <div class="card"><h3>5. Ramp the traffic</h3><p>Instead of making the node faster, give it less at first: slow start in the load balancer, and probes that mean what they say.</p></div>
+      <div class="card"><h3>6. A different design</h3><p>Only when the measurements show that the design itself is the limit, and the smaller rungs have been tried.</p></div>
+    </div>
+    <h3>Rung 4 in detail</h3>
+    <ul>
+      <li><strong>GraalVM Native Image</strong> compiles Java ahead of time to a binary that starts in milliseconds, under a closed-world assumption: code reached through reflection, JNI and other dynamic features must be declared in metadata <sup><a href="#s4">[4]</a></sup>. Quarkus builds on it and names the costs plainly: native builds take minutes and several gigabytes of build-host memory, where JVM builds take seconds <sup><a href="#s5">[5]</a></sup>. In our own comparison, Apache Camel on Quarkus native started far faster than on the JVM but handled fewer messages per second, since it has no JIT compiler (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</li>
+      <li><strong>AWS Lambda SnapStart</strong> initializes the function when you publish a version, snapshots the memory and disk of the execution environment, and resumes new environments from it. Your code must restore uniqueness (IDs, secrets, random seeds) and re-establish network connections after a resume. It supports Java 11 and later, Python 3.12 and later and .NET 8 and later, and not provisioned concurrency; for Python and .NET there are caching and restore charges <sup><a href="#s6">[6]</a></sup>.</li>
+      <li><strong>CRaC</strong> (Coordinated Restore at Checkpoint) is an OpenJDK project that starts a Java application from an image of a warmed-up running instance. Open files and sockets cannot be saved, so the application must close them before the checkpoint and reopen them after restore <sup><a href="#s7">[7]</a></sup>.</li>
+    </ul>
+    <h3>Rung 5 in detail</h3>
+    <p>In Kubernetes, a startup probe holds off the liveness and readiness probes until the application has started, and is the recommended tool for slow starters; a failed readiness probe removes the pod from its Services, and a failed liveness probe restarts it <sup><a href="#s3">[3]</a></sup>. A liveness probe that fails under load turns a warming node into a crash loop. The load balancer settings for slow start, and their limits, are listed in <a href="../degraded-fleet-test/#test-2">Test 2</a>.</p>
+    <p class="note">Native or JIT-free does not mean warm. A snapshot or a native binary removes compilation warm-up. Caches, connection pools and TLS sessions still start empty, unless the snapshot carries them and they are still valid on restore.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="money">
+  <div class="wrap">
+    <h2>The money</h2>
+    <p>Since 1 August 2025 AWS Lambda bills the initialization phase of on-demand functions on managed runtimes with ZIP packaging; custom runtimes, container images and provisioned concurrency already paid for it <sup><a href="#s8">[8]</a></sup>. The first two clocks are now on the invoice. The <a href="../finops/">FinOps page</a> has the arithmetic; one line of it, at list price for 512 MB functions: a million cold starts cost $9.17 at 1.1 s and $0.03 at 3 ms. That is arithmetic on our measured start-up times, not a measured bill.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="ours">
+  <div class="wrap">
+    <h2>Our own numbers, and what they do not show</h2>
+    <p class="intro">These are the only start-up figures we have. Each names its project, its baseline and how it was measured. Every result, good and bad, is in <a href="../ledger/">the ledger</a>.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>project and measure</th><th>result</th><th>baseline</th><th>clock</th></tr></thead>
+      <tbody>
+        <tr><td>Cameleer 0.4.0, time to a started context</td><td>3 ms</td><td>Apache Camel 4.23.0 on Java 21: 1.1 s; Apache Camel 4.22.1 on Quarkus native: 30 ms</td><td>2</td></tr>
+        <tr><td>Cameleer 0.4.0, memory at start-up</td><td>8 MB</td><td>Apache Camel 4.23.0 on Java 21: 114 MB</td><td>–</td></tr>
+        <tr><td>simoom, process start to first answer, default build</td><td>0.94 ms, 1st of 21</td><td>hyper 1.48 ms, the next best of 20 other servers</td><td>1</td></tr>
+        <tr><td>simoom, first answer, plain / TLS</td><td>0.73 / 0.87 ms</td><td>cameleer-http, the server it replaced: 0.77 / 1.37 ms</td><td>1</td></tr>
+      </tbody>
+    </table></div>
+    <ul>
+      <li><strong>Cameleer:</strong> DigitalOcean c-4 machines, 2026-11-06. The table shows rounded times; the means are 1,106 ms and 2.45 ms. Start-up is the time from spawning the process to its <code>READY</code> line, median of five (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</li>
+      <li><strong>simoom against 20 servers:</strong> campaign 4, DigitalOcean c-4 droplets, 2026-11-12, one round, each server against simoom on the same droplet (<a href="../simoom/benchmarks/">simoom benchmarks</a>).</li>
+      <li><strong>simoom against cameleer-http:</strong> one workstation, WSL2 on 12 CPUs, 2026-11-11, 10 alternating rounds.</li>
+    </ul>
+    <h3>The limits, said plainly</h3>
+    <ul>
+      <li>These are the first or second clock. We have not measured time to full speed, or a restart under load, for either project.</li>
+      <li>We have not run the full degraded-fleet test on our own projects. Until we do, we cannot say how either behaves in the window this page is about.</li>
+      <li>A 3 ms start-up does not by itself make a node safe to give a full share. Caches and pools still fill; the ramp still matters.</li>
+      <li>These figures say nothing about Microsoft's systems, or about the outage.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="checklist">
+  <div class="wrap">
+    <h2>A start-up and recovery checklist</h2>
+    <p class="intro">Ten items a team can start next week. Record each result with its build and date, as <a href="../method/">the method</a> asks.</p>
+    <ol>
+      <li>Log a timestamp at process start, at listening and at ready, in every service.</li>
+      <li>Restart one node under steady load in staging and record all four clocks, with and without slow start.</li>
+      <li>Count health-check failures after a restart. More than zero means the node joins too early.</li>
+      <li>Check that readiness means "can serve now" and liveness means "is stuck"; add a startup probe for slow starters.</li>
+      <li>Turn on slow start in the load balancer, and check that your balancing algorithm supports it.</li>
+      <li>List what each start does eagerly: connections, migrations, cache loads, scans. Move what you can off the start path.</li>
+      <li>Measure the cache hit rate in the first minutes after a restart, and decide whether caches should survive one.</li>
+      <li>Write down detect, provision, start and warm for your scale-out path, and find which one dominates.</li>
+      <li>Add a start-up budget per release to CI that fails the build on a regression, as step 6 of <a href="../#playbook">the playbook</a> describes.</li>
+      <li>Before trying snapshots or native images, write down what they would cost you in builds, configuration and peak throughput.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Does a faster start-up mean I do not need slow start?</summary><p>No. A fast start shortens the time before a node can answer at all. Its caches, connection pools and TLS session cache still start empty, so a full share at once can still push it over. Keep the ramp, and measure whether you can shorten it.</p></details>
+    <details><summary>Is native image the answer?</summary><p>It is one answer for start-up. Ahead-of-time compilation removes JIT warm-up and starts in milliseconds, at the cost of longer builds, metadata for reflection and other dynamic features, and, in our own comparison of Apache Camel, lower throughput than the JVM. Caches and pools still have to fill. Measure all four clocks before and after.</p></details>
+    <details><summary>Does this matter if I run long-lived servers?</summary><p>Yes, on the days that count. Long-lived servers still restart for deploys, patches, crashes and failover, and those are the moments when the fleet is already short. A rolling deploy also puts several warming nodes in service at once.</p></details>
+    <details><summary>How do I measure time to full speed?</summary><p>Restart one node in a staging fleet under steady, open-loop, production-shaped load. Record the time from process start until the node's own p99 stays within target at its full share, and count its health-check failures on the way. Test 2 of the degraded-fleet test is the procedure.</p></details>
+    <details><summary>What about serverless?</summary><p>There the first two clocks are both the user's wait and the bill. Since 1 August 2025 AWS Lambda bills the initialization phase of on-demand functions, and a new execution environment still starts with empty caches and no open connections. SnapStart and provisioned concurrency are the platform's tools; a smaller start-up is the code's.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-13. Microsoft's status update is quoted and sourced in the <a href="../headroom/">headroom essay</a>.</p>
+    <ol class="sources">
+      <li id="s1">Google, Site Reliability Engineering, <a href="https://sre.google/sre-book/addressing-cascading-failures/">chapter 22, "Addressing Cascading Failures"</a>: slow start-up and cold caching.</li>
+      <li id="s2">Nathan Bronson, Abutalib Aghayev, Aleksey Charapko and Timothy Zhu, <a href="https://doi.org/10.1145/3458336.3465286">"Metastable Failures in Distributed Systems"</a>, HotOS '21 (<a href="https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf">PDF</a>).</li>
+      <li id="s3">Kubernetes, <a href="https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/">liveness, readiness and startup probes</a>.</li>
+      <li id="s4">GraalVM, <a href="https://www.graalvm.org/latest/reference-manual/native-image/">Native Image reference manual</a>.</li>
+      <li id="s5">Quarkus, <a href="https://quarkus.io/guides/building-native-image">building a native executable</a>.</li>
+      <li id="s6">AWS, <a href="https://docs.aws.amazon.com/lambda/latest/dg/snapstart.html">improving startup performance with Lambda SnapStart</a>.</li>
+      <li id="s7">CRaC, <a href="https://github.com/CRaC/docs">Coordinated Restore at Checkpoint documentation</a>.</li>
+      <li id="s8">AWS Compute Blog, <a href="https://aws.amazon.com/blogs/compute/aws-lambda-standardizes-billing-for-init-phase/">"AWS Lambda standardizes billing for INIT Phase"</a>.</li>
+      <li id="s9">Cameleering measurements: <a href="../ledger/">the ledger</a>, <a href="../docs/BENCHMARKS.html">Cameleer BENCHMARKS</a> and <a href="../simoom/benchmarks/">simoom benchmarks</a>.</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a></li>
+        <li><a href="../cameleer/compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

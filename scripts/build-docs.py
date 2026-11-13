@@ -104,6 +104,8 @@ CAMELEER_NAV = [("docs/", "Docs", "keep"), ("cameleer/use-cases/", "Use cases", 
 CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", ""), ("articles/", "Articles", "")]
 # Essays and articles, newest first: /articles/ (partial "articles-list") and /feed.xml (Atom) come from this list.
 ARTICLES = [
+    ("cold-start-recovery/", "Cold start is a recovery problem", "2026-11-13",
+     "A restarted or new server is at its weakest when it first takes traffic. Four clocks from process start to full speed, the arithmetic of recovery, the ladder of fixes, and what our own start-up numbers do and do not show."),
     ("degraded-fleet-test/", "How to test your headroom before an incident: the degraded-fleet test", "2026-11-13",
      "A procedure for a staging fleet: lose a third of the servers, restart one under load, reconnect every client at once, offer more than the fleet can serve. What to record, how to read it, and the pass or fail lines to write first."),
     ("headroom/", "Headroom: what is left when servers drop out", "2026-11-13",
