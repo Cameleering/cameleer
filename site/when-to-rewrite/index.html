@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>When a Rewrite Pays Off: A Decision Checklist | Cameleering</title>
+<meta name="description" content="When to rewrite software and when not to: the case against rewrites, the rewrites that worked and what they measured, smaller steps to try first, and a checklist.">
+<link rel="canonical" href="https://cameleer.ing/when-to-rewrite/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="When a Rewrite Pays Off: A Decision Checklist">
+<meta property="og:description" content="When to rewrite software and when not to: the case against rewrites, the rewrites that worked and what they measured, smaller steps to try first, and a checklist.">
+<meta property="og:url" content="https://cameleer.ing/when-to-rewrite/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "When a Rewrite Pays Off: A Decision Checklist", "description": "When to rewrite software and when not to: the case against rewrites, the rewrites that worked and what they measured, smaller steps to try first, and a checklist.", "url": "https://cameleer.ing/when-to-rewrite/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "When to rewrite"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Should we rewrite our software in a different language?", "acceptedAnswer": {"@type": "Answer", "text": "Only if measurement shows the current design cannot reach a target that matters, and smaller steps have been tried. A new language is not the reason; the measured limit is, and how the code uses its language matters more than which one it is. Cloudflare, Figma and Mozilla rewrote specific parts with clear limits in view, and published what changed."}}, {"@type": "Question", "name": "Is rewriting from scratch always a mistake?", "acceptedAnswer": {"@type": "Answer", "text": "No, but it is the riskiest option. Joel Spolsky's 2000 essay explains why: knowledge in old code is lost and the old product stops improving. Rewrites that worked usually kept the same contract, shipped in pieces, and measured the result against the original."}}, {"@type": "Question", "name": "What is the Strangler Fig pattern?", "acceptedAnswer": {"@type": "Answer", "text": "Martin Fowler's name for growing a new system beside the old one and moving behaviour over piece by piece until the old one can be switched off. It avoids a big-bang replacement and keeps the system releasable throughout."}}, {"@type": "Question", "name": "How do I know a rewrite was worth it?", "acceptedAnswer": {"@type": "Answer", "text": "Measure the old version first, on fixed hardware, then the new one on the same hardware with the same workload: startup, memory, throughput, tail latency, size. If the numbers are not better where you pay, it was not worth it, whatever the code looks like."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / When to rewrite</p>
+    <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
+    <p class="kicker">Cameleering · principle 7</p>
+    <h1>When a rewrite pays off: a decision checklist</h1>
+    <p class="lede">"Rewrite when the numbers say so: a tool, not a creed." Most rewrites should not happen, and a few are the only way forward. This page puts the case against rewrites next to the ones that worked, a ladder of smaller steps to try first, and a checklist to run before you start.</p>
+    <p class="rule">No claim without a number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="against">
+  <div class="wrap">
+    <h2>The case against, taken seriously</h2>
+    <p>In 2000 Joel Spolsky called rewriting code from scratch the worst strategic mistake a software company can make <sup><a href="#s1">[1]</a></sup>. His argument still holds:</p>
+    <ul>
+      <li>Old code looks messy partly because reading code is harder than writing it, and its odd-looking parts often hold bug fixes learned in the field. A rewrite throws that knowledge away.</li>
+      <li>While the new version is built, the old one stops improving. Netscape went from version 4.0 to the first beta of 6.0 with no 5.0 in between, nearly three years without a major release, and lost its market <sup><a href="#s1">[1]</a></sup>.</li>
+      <li>Rewrites often ship with fewer features than what they replace; he cites Borland's Quattro Pro and Microsoft's abandoned Word rewrite <sup><a href="#s1">[1]</a></sup>.</li>
+    </ul>
+    <p>Smaller teams learn the same lesson. Less Annoying CRM stopped a full rewrite in 2012 after less than a month; incremental improvements over the next few months raised signups instead <sup><a href="#s2">[2]</a></sup>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="worked">
+  <div class="wrap">
+    <h2>When it worked, and what they measured</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>case</th><th>why they rewrote</th><th>what they published</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Cloudflare Pingora</strong> (2022), replacing an NGINX-based proxy</td><td>the old architecture limited connection reuse and was hard to extend</td><td>about 70% less CPU and 67% less memory for the same traffic; median time to first byte 5 ms lower and the 95th percentile 80 ms lower <sup><a href="#s3">[3]</a></sup></td></tr>
+        <tr><td><strong>Dropbox Nucleus</strong> (2020), the sync engine, about four years of work</td><td>a data model older than sharing, weak consistency guarantees, hard to test, and incremental fixes had hit a ceiling</td><td>no before-and-after performance figures; lessons: exhaust refactoring first, deliver value along the way, expect feature work to slow <sup><a href="#s4">[4]</a></sup></td></tr>
+        <tr><td><strong>Figma multiplayer</strong> (2018), only the hot path</td><td>a single-threaded server falling behind on large documents</td><td>serialization "over 10x faster"; networking stayed in Node.js and a full rewrite was dropped <sup><a href="#s5">[5]</a></sup></td></tr>
+        <tr><td><strong>Mozilla Stylo</strong> (2017), Firefox's CSS engine</td><td>two earlier attempts to parallelize styling in C++ had failed</td><td>about 160,000 lines of C++ replaced by 85,000 lines of Rust, shipped component by component; 30% faster page load on Amazon's homepage <sup><a href="#s6">[6]</a></sup></td></tr>
+        <tr><td><strong>Discord Read States</strong> (2020), Go to Rust</td><td>latency spikes about every two minutes from garbage collection</td><td>no more spikes, and better latency, CPU and memory after tuning; shown as graphs, with no numbers in the text <sup><a href="#s7">[7]</a></sup></td></tr>
+        <tr><td><strong>uv</strong> (2024), a Python package installer</td><td>pip's speed</td><td>8–10x faster than pip without a cache and 80–115x with a warm cache, by its authors' benchmark <sup><a href="#s8">[8]</a></sup></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">What the successful cases share: a specific, measured limit in the old design; a baseline to compare against; and, in most of them, a partial rewrite or a component-by-component path instead of a big bang. Cameleer is one more data point: a full reimplementation that keeps Apache Camel's routes, URIs and semantics as its contract, with the before-and-after published in <a href="../ledger/">the ledger</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="ladder">
+  <div class="wrap">
+    <h2>The ladder: try each rung before the next</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>rung</th><th>what it means</th></tr></thead>
+      <tbody>
+        <tr><td><strong>1. Measure</strong></td><td>Find where the time and memory go. Knuth's famous line about premature optimization goes on to say we should not pass up the critical 3% <sup><a href="#s9">[9]</a></sup>; Brendan Gregg's USE method (utilization, saturation, errors for every resource) is one way to find it <sup><a href="#s10">[10]</a></sup>.</td></tr>
+        <tr><td><strong>2. Tune</strong></td><td>Settings, pool sizes, memory limits, a different garbage collector, caching.</td></tr>
+        <tr><td><strong>3. Remove</strong></td><td>Features nobody uses, dependencies that cost more than they give, layers that only forward calls.</td></tr>
+        <tr><td><strong>4. Replace one component</strong></td><td>Martin Fowler's Strangler Fig grows the new beside the old and moves behaviour over piece by piece <sup><a href="#s11">[11]</a></sup>; Branch by Abstraction puts an interface in front of the part being replaced so both can run while clients move <sup><a href="#s12">[12]</a></sup>.</td></tr>
+        <tr><td><strong>5. Rewrite the hot path</strong></td><td>Move only the part the measurements point at, as Figma and Mozilla did.</td></tr>
+        <tr><td><strong>6. Rewrite it all</strong></td><td>Only when the design itself is the limit, the contract can be kept, and you can measure the result against the original.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="checklist">
+  <div class="wrap">
+    <h2>The checklist</h2>
+    <div class="two">
+      <div class="pane good">
+        <h3>Signs a rewrite can pay off</h3>
+        <ul>
+          <li>You have a baseline: the current startup, memory, throughput and p99, measured on fixed hardware.</li>
+          <li>The limit is in the design (a data model, a threading model, a runtime), and tuning has hit a ceiling.</li>
+          <li>The contract can stay the same: the same API, formats, names and behaviour, with tests that prove it.</li>
+          <li>You can ship in pieces, or run old and new side by side and compare.</li>
+          <li>The gain is large and counts where you pay: many instances, many users, a hard budget at the edge or in serverless.</li>
+          <li>The old version can keep shipping fixes while the new one is built.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Signs it will not</h3>
+        <ul>
+          <li>No baseline, only a feeling that it is slow or ugly.</li>
+          <li>The real problem is one hot path, a missing index or a bad setting.</li>
+          <li>The plan changes the contract and the implementation at the same time.</li>
+          <li>Nobody can say how the result will be measured, or what number counts as success.</li>
+          <li>It must be finished before any of it ships.</li>
+          <li>The main reason is a new language.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">After a rewrite, publish the before and after, losses included, the way <a href="../method/">the method</a> describes. A rewrite that cannot show its numbers has not proven it was worth doing.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Should we rewrite our software in a different language?</summary><p>Only if measurement shows the current design cannot reach a target that matters, and smaller steps have been tried. A new language is not the reason; the measured limit is, and how the code uses its language matters more than which one it is. Cloudflare, Figma and Mozilla rewrote specific parts with clear limits in view, and published what changed.</p></details>
+    <details><summary>Is rewriting from scratch always a mistake?</summary><p>No, but it is the riskiest option. Joel Spolsky's 2000 essay explains why: knowledge in old code is lost and the old product stops improving. Rewrites that worked usually kept the same contract, shipped in pieces, and measured the result against the original.</p></details>
+    <details><summary>What is the Strangler Fig pattern?</summary><p>Martin Fowler's name for growing a new system beside the old one and moving behaviour over piece by piece until the old one can be switched off. It avoids a big-bang replacement and keeps the system releasable throughout.</p></details>
+    <details><summary>How do I know a rewrite was worth it?</summary><p>Measure the old version first, on fixed hardware, then the new one on the same hardware with the same workload: startup, memory, throughput, tail latency, size. If the numbers are not better where you pay, it was not worth it, whatever the code looks like.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-12.</p>
+    <ol class="sources">
+      <li id="s1">Joel Spolsky, <a href="https://www.joelonsoftware.com/2000/04/06/things-you-should-never-do-part-i/">"Things You Should Never Do, Part I"</a>, 6 April 2000.</li>
+      <li id="s2">Less Annoying CRM, <a href="https://www.lessannoyingcrm.com/blog/code-rewrite-cautionary-tale">"A code rewrite cautionary tale"</a>, 30 July 2013.</li>
+      <li id="s3">Cloudflare, <a href="https://blog.cloudflare.com/how-we-built-pingora-the-proxy-that-connects-cloudflare-to-the-internet/">"How we built Pingora"</a>, 14 September 2022.</li>
+      <li id="s4">Dropbox, <a href="https://dropbox.tech/infrastructure/rewriting-the-heart-of-our-sync-engine">"Rewriting the heart of our sync engine"</a>, 9 March 2020.</li>
+      <li id="s5">Figma, <a href="https://www.figma.com/blog/rust-in-production-at-figma/">"Rust in production at Figma"</a>, 2 May 2018.</li>
+      <li id="s6">The Rust Blog, <a href="https://blog.rust-lang.org/2017/11/14/Fearless-Concurrency-In-Firefox-Quantum/">"Fearless Concurrency in Firefox Quantum"</a>, 14 November 2017.</li>
+      <li id="s7">Discord, <a href="https://discord.com/blog/why-discord-is-switching-from-go-to-rust">"Why Discord is switching from Go to Rust"</a>, 4 February 2020.</li>
+      <li id="s8">Astral, <a href="https://astral.sh/blog/uv">"uv: Python packaging in Rust"</a>, 15 February 2024.</li>
+      <li id="s9">Donald Knuth, "Structured Programming with go to Statements", ACM Computing Surveys 6(4), 1974, <a href="https://doi.org/10.1145/356635.356640">doi:10.1145/356635.356640</a>.</li>
+      <li id="s10">Brendan Gregg, <a href="https://www.brendangregg.com/usemethod.html">The USE Method</a>.</li>
+      <li id="s11">Martin Fowler, <a href="https://martinfowler.com/bliki/StranglerFigApplication.html">Strangler Fig Application</a> (2004, rewritten 2024).</li>
+      <li id="s12">Martin Fowler, <a href="https://martinfowler.com/bliki/BranchByAbstraction.html">Branch By Abstraction</a>, 7 January 2014.</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a></li>
+        <li><a href="../cameleer/compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

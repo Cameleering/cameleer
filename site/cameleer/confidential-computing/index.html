@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confidential Integrations and Attested MCP Servers | Cameleer</title>
+<meta name="description" content="Run Cameleer in an Intel TDX, AMD SEV-SNP or dstack VM and prove to a client which routes, configuration and MCP tools it runs. Since 0.6.0.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/confidential-computing/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Cameleer can prove what it runs: confidential integrations and attested MCP servers">
+<meta property="og:description" content="Inside a confidential VM, a client or an agent can ask Cameleer for hardware evidence of the exact routes, configuration and MCP tools it is running, bound to the client's nonce and to the TLS connection.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/confidential-computing/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../assets/site.css">
+<link rel="stylesheet" href="../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Confidential integrations and attested MCP servers with Cameleer", "description": "How Cameleer, running in an Intel TDX or AMD SEV-SNP confidential VM or a dstack CVM, proves to a client which routes, configuration and MCP tools it runs, what the evidence covers, how a client checks it, and what it does not prove yet.", "url": "https://cameleer.ing/cameleer/confidential-computing/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "Confidential computing"}, {"@type": "Thing", "name": "Remote attestation"}, {"@type": "Thing", "name": "Model Context Protocol"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Trust"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Can an MCP client check what a Cameleer server is running?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, since 0.6.0, when Cameleer runs in a confidential VM. The client sends a nonce in server/discover or initialize and gets a hardware-signed report bound to that nonce, to the SHA-256 of the server's TLS key and to a manifest of the routes, configuration and MCP tools. The client checks the binding (cameleer_attest::check_binding in Rust) and verifies the hardware signature with the platform's verifier."}}, {"@type": "Question", "name": "What is confidential integration?", "acceptedAnswer": {"@type": "Answer", "text": "Running integration routes inside a confidential VM, where the hardware encrypts memory and can attest what software runs. With Cameleer the evidence covers the integration itself: the route files, the routes, the configuration (with secret values left out) and the MCP tools it publishes, not only the virtual machine."}}, {"@type": "Question", "name": "Does Cameleer verify Intel or AMD attestation evidence?", "acceptedAnswer": {"@type": "Answer", "text": "Not yet. Cameleer produces the evidence and the binding; a verifier such as Intel Trust Authority, Microsoft Azure Attestation, Google's verifier or dstack's checks the hardware signature chain. Verifying remote MCP servers inside Cameleer is planned."}}, {"@type": "Question", "name": "Which confidential computing platforms does it support?", "acceptedAnswer": {"@type": "Answer", "text": "Intel TDX and AMD SEV-SNP confidential VMs whose Linux kernel (6.7 or later) exposes configfs-tsm, and dstack CVMs such as Phala Cloud or dstack on Google Cloud TDX. AWS Nitro Enclaves, Azure vTPM attestation and Google Confidential Space are not supported yet."}}, {"@type": "Question", "name": "Is it enough for an AI model to call the attestation tool?", "acceptedAnswer": {"@type": "Answer", "text": "No. A model that shows evidence is not checking it. Only a program that checks the binding and the hardware signature gets the guarantee; the cameleer_attestation tool exists so that clients which only speak tools can fetch the report for such a program."}}, {"@type": "Question", "name": "Is attestation released?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, in Cameleer 0.6.0 (2026-11-12). Its tests use a simulated configfs-tsm and a simulated dstack agent; it has not yet been run on real TEE hardware."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../" aria-label="Cameleering home"><img src="../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../cameleer/" aria-label="Cameleer home"><img src="../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../docs/">Docs</a>
+      <a class="keep" href="../../cameleer/use-cases/">Use cases</a>
+      <a href="../../cameleer/mcp/">MCP</a>
+      <a href="../../cameleer/healthcare/">Healthcare</a>
+      <a href="../../cameleer/compare/">Compare</a>
+      <a href="../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../"><b>Cameleering</b><span>Carry more on less: improve it, then prove it</span></a>
+          <a href="../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../projects/"><b>Projects</b><span>Cameleer and simoom Cameleered; karez and ksar not yet</span></a>
+          <a href="../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../">Cameleering</a> / <a href="../">Cameleer</a> / Trust</p>
+    <p class="kicker">Confidential integrations and attested MCP servers · since 0.6.0</p>
+    <h1>Cameleer can prove what it runs.</h1>
+    <p class="lede">Run Cameleer in a confidential VM and a client, or an agent's MCP client, can ask it for hardware evidence of the exact routes, configuration and MCP tools it is running, bound to the client's nonce and to the TLS connection the client is using. That is confidential computing applied to the integration itself, not only to the machine under it. The <a href="../mcp/">action layer</a> already makes every agent action checked, run once, approved and audited; attestation lets the caller check which routes those are.</p>
+    <p class="note"><strong>Status:</strong> released in 0.6.0 (2026-11-12). The tests use a simulated configfs-tsm and a simulated dstack agent; it has not yet run on real TEE hardware. <a href="#limits">What it does not prove</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="what">
+  <div class="wrap">
+    <h2>What a report proves</h2>
+    <p class="intro">The TEE signs 64 bytes (REPORTDATA) that Cameleer computes from four things. A client that recomputes them knows the evidence was made for its own connection, now, by a process running that manifest.</p>
+    <div class="cards four">
+      <div class="card"><h3>Your nonce</h3><p>16 to 64 random bytes the client sends, so a report can't be replayed.</p></div>
+      <div class="card"><h3>The TLS key</h3><p>The SHA-256 of the server's own TLS public key. A proxy that terminates TLS in between changes the key, and the check fails.</p></div>
+      <div class="card"><h3>The manifest</h3><p>Cameleer's version and features, every route file with its SHA-256, every route, the configuration with secret values replaced by <code>&lt;secret&gt;</code>, and the published MCP tools with their fingerprints.</p></div>
+      <div class="card"><h3>The change log</h3><p>A hash-chained record of every change after start-up: a route added or removed, a tool turned off with the kill switch.</p></div>
+    </div>
+    <pre class="cmd">REPORTDATA = SHA-512( "cameleer-attest-v1" || 0x00
+                    || manifest digest (the log's head, SHA-384)
+                    || SHA-256 of the server's TLS public key
+                    || nonce length || nonce )</pre>
+  </div>
+</section>
+
+<section class="c-sec" id="how">
+  <div class="wrap">
+    <h2>Turn it on, fetch it, check it</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>In the confidential VM</h3>
+        <pre class="cmd"># application.properties
+camel.attestation.enabled=true
+# optional: also as an MCP tool
+camel.attestation.mcp-tool=true</pre>
+        <p>At start-up Cameleer finds an evidence source (dstack first, then Linux configfs-tsm). If attestation is on and none works, <strong>start-up fails</strong>: a process asked to be attested never runs looking attested when it isn't.</p>
+        <h3>Three ways to fetch a report</h3>
+        <ul>
+          <li><strong>HTTP:</strong> <code>GET /q/attestation?nonce=...</code></li>
+          <li><strong>MCP handshake:</strong> <code>_meta["ing.cameleer/attestation"]</code> in <code>server/discover</code> (2026-07-28) and <code>initialize</code> (earlier versions); a client that sends a nonce gets the full report in the same round trip</li>
+          <li><strong>MCP tool:</strong> <code>cameleer_attestation(nonce)</code>, for clients that only speak tools</li>
+        </ul>
+      </div>
+      <div class="pane good">
+        <h3>A client checks two things</h3>
+        <ol>
+          <li><strong>The binding.</strong> Recompute REPORTDATA from the manifest digest, the TLS key seen on its own connection and the nonce it sent; check the log chain ends at that digest. In Rust: <code>cameleer_attest::check_binding</code>.</li>
+          <li><strong>The hardware signature.</strong> Verify the TDX quote or SEV-SNP report against Intel's or AMD's roots and the platform measurements with the platform's verifier: Intel Trust Authority, Microsoft Azure Attestation, Google's verifier, or dstack's.</li>
+        </ol>
+        <p>Then decide: is this the image digest you reviewed, are these the routes and tools you expect?</p>
+        <pre class="cmd">curl "https://orders.example.com/q/attestation?nonce=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="who">
+  <div class="wrap">
+    <h2>Who it is for</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Agent builders: an attested MCP server</h3>
+        <p>An agent that calls tools has to trust the server behind them. With Cameleer in a confidential VM, the MCP client can ask in the handshake which routes and tools the server runs, bound to the session's TLS connection, and refuse a server whose manifest isn't the one it expects. The MCP specification has no standard for this yet; Cameleer's design stays inside the spec with a vendor-prefixed <code>_meta</code> entry.</p>
+      </div>
+      <div class="pane">
+        <h3>Regulated data: confidential integration</h3>
+        <p>Healthcare, finance and the public sector already run sensitive workloads in confidential VMs. The integration engine moving that data is part of the workload: with Cameleer it can show an auditor or a partner which routes and configuration processed the data. We found no other integration engine or iPaaS that advertises attestation of its own routes (searched November 2026).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="healthcare">
+  <div class="wrap">
+    <h2>Healthcare: attested de-identification</h2>
+    <p class="intro">Since 0.6.0: run the health pack's DICOM de-identifier (the PS3.15 Annex E basic profile and options) in a confidential VM, and a data owner can ask for evidence of which routes and configuration, including the de-identification options, handle the identifiable images before sending them. Each de-identified instance also writes a record to the hash-chained audit log. <a href="../use-cases/dicom-imaging-gateway/">DICOM imaging gateway</a>, <a href="../healthcare/">healthcare integration</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="platforms">
+  <div class="wrap">
+    <h2>Where it runs</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>evidence source</th><th>where</th><th>platforms</th><th>status</th></tr></thead>
+      <tbody>
+        <tr><td>Linux configfs-tsm</td><td><code>/sys/kernel/config/tsm/report</code> (Linux 6.7 and later)</td><td>Intel TDX and AMD SEV-SNP confidential VMs</td><td class="win">supported (since 0.6.0)</td></tr>
+        <tr><td>dstack guest agent</td><td><code>/var/run/dstack.sock</code></td><td>dstack CVMs on Intel TDX: Phala Cloud, dstack on Google Cloud</td><td class="win">supported (since 0.6.0)</td></tr>
+        <tr><td>AWS Nitro Enclaves</td><td>NSM device</td><td>AWS</td><td>not yet</td></tr>
+        <tr><td>Azure vTPM attestation</td><td>vTPM, Microsoft Azure Attestation</td><td>Azure confidential VMs</td><td>not yet</td></tr>
+        <tr><td>Google Confidential Space</td><td>attestation tokens</td><td>Google Cloud</td><td>not yet</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="limits">
+  <div class="wrap">
+    <h2>What it does not prove (yet)</h2>
+    <ul>
+      <li><strong>Cameleer doesn't verify hardware evidence.</strong> It produces the evidence and the binding; checking Intel's or AMD's signature chain is the client's verifier's job. A gateway that refuses tools from MCP servers that don't attest is planned.</li>
+      <li><strong>No sealed secrets yet.</strong> Releasing secrets only to an attested process is planned.</li>
+      <li><strong>Not yet run on real TEE hardware.</strong> The tests use a simulated configfs-tsm and a simulated dstack agent; the report formats follow the kernel ABI and dstack's API.</li>
+      <li><strong>"This exact release" needs a pinned image.</strong> Reproducible builds aren't published yet, so pin the image by digest (<code>cameleering/cameleer@sha256:...</code>) and let the platform measurement identify the build you reviewed.</li>
+      <li><strong>Physical attacks.</strong> TEEs trust the cloud's physical security as well as the CPU vendor; memory-bus interposers (TEE.fail, 2025) have extracted keys from TDX and SEV-SNP machines.</li>
+      <li><strong>Runtime changes are recorded, not prevented.</strong> The log shows a route added after start-up; refusing it is the verifier's decision.</li>
+      <li><strong>A model showing evidence is not checking it.</strong> Only a program that checks the binding and the signature gets the guarantee.</li>
+    </ul>
+    <p class="note">The full reference, with every property: <a href="../../docs/guides/attestation.html">Attestation in confidential VMs</a>. Security of the TLS stack itself: <a href="../../docs/guides/tls-and-security.html">TLS and security</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Can an MCP client check what a Cameleer server is running?</summary><p>Yes, since 0.6.0, when Cameleer runs in a confidential VM. The client sends a nonce in <code>server/discover</code> or <code>initialize</code> and gets a hardware-signed report bound to that nonce, to the SHA-256 of the server's TLS key and to a manifest of the routes, configuration and MCP tools. The client checks the binding (<code>cameleer_attest::check_binding</code> in Rust) and verifies the hardware signature with the platform's verifier.</p></details>
+    <details><summary>What is confidential integration?</summary><p>Running integration routes inside a confidential VM, where the hardware encrypts memory and can attest what software runs. With Cameleer the evidence covers the integration itself: the route files, the routes, the configuration (with secret values left out) and the MCP tools it publishes, not only the virtual machine.</p></details>
+    <details><summary>Does Cameleer verify Intel or AMD attestation evidence?</summary><p>Not yet. Cameleer produces the evidence and the binding; a verifier such as Intel Trust Authority, Microsoft Azure Attestation, Google's verifier or dstack's checks the hardware signature chain. Verifying remote MCP servers inside Cameleer is planned.</p></details>
+    <details><summary>Which confidential computing platforms does it support?</summary><p>Intel TDX and AMD SEV-SNP confidential VMs whose Linux kernel (6.7 or later) exposes configfs-tsm, and dstack CVMs such as Phala Cloud or dstack on Google Cloud TDX. AWS Nitro Enclaves, Azure vTPM attestation and Google Confidential Space are not supported yet.</p></details>
+    <details><summary>Is it enough for an AI model to call the attestation tool?</summary><p>No. A model that shows evidence is not checking it. Only a program that checks the binding and the hardware signature gets the guarantee; the <code>cameleer_attestation</code> tool exists so that clients which only speak tools can fetch the report for such a program.</p></details>
+    <details><summary>Is attestation released?</summary><p>Yes, in Cameleer 0.6.0 (2026-11-12). Its tests use a simulated configfs-tsm and a simulated dstack agent; it has not yet been run on real TEE hardware.</p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div>
+      <h4>Trust</h4>
+      <ul>
+        <li><a href="../../docs/guides/attestation.html">Attestation guide</a></li>
+        <li><a href="../../docs/guides/tls-and-security.html">TLS and security</a></li>
+        <li><a href="../mcp/">The action layer for AI agents</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../docs/">Documentation</a></li>
+        <li><a href="../../">What is cameleering?</a></li>
+        <li><a href="../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

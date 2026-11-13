@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MQTT and IoT Edge Gateway Routes in Rust | Cameleer</title>
+<meta name="description" content="MQTT 3.1.1 and 5.0 in, per-sensor rollups on site, store and forward when the uplink is down, syslog into Kafka: one binary, about 10 MB, arm64.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="MQTT and IoT edge gateway routes, in Rust">
+<meta property="og:description" content="MQTT in, rollups on site, store and forward when offline, syslog into Kafka. Five tested routes for gateways with about 10 MB of memory.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/site.css">
+<link rel="stylesheet" href="../../../assets/compare.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "MQTT and IoT edge gateway routes in Rust: store and forward, rollups, syslog bridging", "description": "Integration routes on edge gateways with Cameleer: MQTT in, validation and rollups on site, store and forward when the uplink is down, syslog into Kafka, presence with a last will.", "url": "https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "MQTT"}, {"@type": "Thing", "name": "Edge computing"}, {"@type": "Thing", "name": "IoT gateway"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"}, {"@type": "ListItem", "position": 4, "name": "MQTT edge gateways"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does Cameleer run on a Raspberry Pi?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, on a 64-bit OS. The image is published for linux/arm64 (Raspberry Pi 3, 4 and 5 with 64-bit Raspberry Pi OS, NVIDIA Jetson, Graviton) and a running route uses about 10 MB of memory. There is no 32-bit ARM image."}}, {"@type": "Question", "name": "Which MQTT versions and brokers are supported?", "acceptedAnswer": {"@type": "Answer", "text": "paho speaks MQTT 3.1.1 and paho-mqtt5 speaks MQTT 5.0, with QoS 0 to 2, retained messages, last will, persistent sessions and TLS. They are tested against Mosquitto, RabbitMQ and ActiveMQ and work with any broker, including EMQX, HiveMQ and AWS IoT Core."}}, {"@type": "Question", "name": "What happens to messages when the uplink is down?", "acceptedAnswer": {"@type": "Answer", "text": "The store-and-forward route retries with back-off, then writes the original message to a buffer folder through a dead letter channel. A replay route polls the folder every 30 seconds and moves each file to .sent once the cloud accepted it. The buffer is on disk, so it survives restarts."}}, {"@type": "Question", "name": "Can a gateway bridge protocols?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The tested routes bridge MQTT into Kafka and HTTP, and syslog (RFC 5424 and 3164 over UDP, TCP or TLS) into Kafka with severity filtering. AMQP, STOMP and files are available on the same gateway, and HL7 over MLLP with the health pack."}}, {"@type": "Question", "name": "Is there a Modbus or OPC UA component?", "acceptedAnswer": {"@type": "Answer", "text": "No. Field protocols are expected to arrive through a local broker or an HTTP, TCP or UDP adapter; the netty component handles raw TCP and UDP."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../../" aria-label="Cameleering home"><img src="../../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../../cameleer/" aria-label="Cameleer home"><img src="../../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../../docs/">Docs</a>
+      <a class="keep" aria-current="page" href="../../../cameleer/use-cases/">Use cases</a>
+      <a href="../../../cameleer/mcp/">MCP</a>
+      <a href="../../../cameleer/healthcare/">Healthcare</a>
+      <a href="../../../cameleer/compare/">Compare</a>
+      <a href="../../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../../"><b>Cameleering</b><span>Carry more on less: improve it, then prove it</span></a>
+          <a href="../../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../../projects/"><b>Projects</b><span>Cameleer and simoom Cameleered; karez and ksar not yet</span></a>
+          <a href="../../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Use cases</a> / MQTT edge gateways</p>
+    <p class="kicker">Edge and IoT</p>
+    <h1>MQTT edge gateways that keep working when the uplink doesn't</h1>
+    <p class="lede">Gateways sit between machines and the cloud. They speak local protocols, keep working offline, and share small hardware with other software. Cameleer runs Apache Camel's routes there without a JVM: five tested patterns, one binary, about 10 MB of memory.</p>
+    <div class="stats">
+      <div class="stat"><b>~10 MB</b><span>memory for a running route; 8 MB at startup</span></div>
+      <div class="stat"><b>arm64</b><span>image for Raspberry Pi 3, 4 and 5 (64-bit), Jetson, Graviton</span></div>
+      <div class="stat"><b>QoS 0–2</b><span>MQTT 3.1.1 and 5.0, retained messages, last will, persistent sessions, TLS</span></div>
+      <div class="stat"><b>0 lost</b><span>messages while offline: the buffer is on disk and survives restarts</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="patterns">
+  <div class="wrap">
+    <h2>Five tested patterns</h2>
+    <p class="intro">Each is a complete route file in <a href="https://github.com/cameleering/cameleer/tree/main/examples/edge"><code>examples/edge/</code></a>, run by the test suite against the embedded MQTT and Kafka brokers and HTTP mocks. The <a href="../../../docs/guides/edge.html">edge cookbook</a> walks through each one.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>pattern</th><th>what the route does</th><th>file</th></tr></thead>
+      <tbody>
+        <tr><td>Sensor rollups</td><td>subscribe to <code>sensors/+/temperature</code>, drop malformed and out-of-range readings, aggregate five readings per sensor (or a minute's worth) into count, min, max and average, publish to Kafka keyed by sensor</td><td><code>mqtt-sensor-rollup.camel.yaml</code></td></tr>
+        <tr><td>Store and forward</td><td>telemetry into a <code>seda</code> queue, post to the cloud with retries and back-off, dead-letter to a buffer folder, replay every 30 seconds and move to <code>.sent</code> on success</td><td><code>store-and-forward.camel.yaml</code></td></tr>
+        <tr><td>Syslog to Kafka</td><td>receive RFC 5424 and 3164 syslog over UDP, TCP or TLS, parse it, keep warnings and above, publish to Kafka</td><td><code>syslog-to-kafka.camel.yaml</code></td></tr>
+        <tr><td>HL7 over MLLP</td><td>health pack; hospital gateway: MLLP in, HTTP to the EHR, acknowledge after delivery (<a href="../hl7-mllp-healthcare-integration/">own page</a>)</td><td><code>hl7-mllp-to-http.camel.yaml</code></td></tr>
+        <tr><td>Gateway presence</td><td>publish a retained <code>online</code> status with a last-will <code>offline</code>, plus a heartbeat on a timer</td><td><code>gateway-heartbeat.camel.yaml</code></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="route">
+  <div class="wrap">
+    <h2>Store and forward, the part that matters</h2>
+    <p class="intro">From <a href="https://github.com/cameleering/cameleer/blob/main/examples/edge/store-and-forward.camel.yaml"><code>store-and-forward.camel.yaml</code></a>: the uplink route's error handler. When the post fails three times, the original message becomes a file in the buffer; a second route replays the buffer.</p>
+    <pre class="cmd">- route:
+    id: uplink
+    errorHandler:
+      deadLetterChannel:
+        deadLetterUri: "file:{{env:BUFFER_DIR:buffer}}?fileName=${date:now:yyyyMMddHHmmssSSS}-${exchangeId}.msg"
+        useOriginalMessage: true
+        redeliveryPolicy:
+          maximumRedeliveries: 3
+          redeliveryDelay: "{{env:RETRY_DELAY_MS:1000}}"
+          useExponentialBackOff: true
+    from:
+      uri: "seda:uplink?size=10000"
+      steps:
+        # ... set headers, post to {{env:UPLINK_URL}}/ingest</pre>
+    <div class="two">
+      <div class="pane">
+        <h3>Why it holds up</h3>
+        <ul>
+          <li>The MQTT consumer hands off to a bounded <code>seda</code> queue, so a slow uplink never blocks the broker subscription.</li>
+          <li><code>useOriginalMessage</code> buffers what arrived, not a half-transformed body.</li>
+          <li>The buffer is a folder: it survives a restart, and it is the only thing the container writes, so the image runs <code>--read-only</code> with one volume.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Components used across the five routes</h3>
+        <ul>
+          <li><a href="../../../docs/components/paho.html"><code>paho</code></a> (MQTT 3.1.1) and <a href="../../../docs/components/paho-mqtt5.html"><code>paho-mqtt5</code></a> (MQTT 5.0)</li>
+          <li><a href="../../../docs/components/syslog.html"><code>syslog</code></a>, <a href="../../../docs/packs/health/components/mllp.html"><code>mllp</code></a> (health pack), <a href="../../../docs/components/netty.html"><code>netty</code></a> for raw TCP and UDP</li>
+          <li><a href="../../../docs/components/kafka.html"><code>kafka</code></a>, <a href="../../../docs/components/http.html"><code>http</code></a>, <a href="../../../docs/components/file.html"><code>file</code></a>, <a href="../../../docs/components/seda.html"><code>seda</code></a>, <a href="../../../docs/components/timer.html"><code>timer</code></a></li>
+          <li>EIPs: <code>aggregate</code>, <code>filter</code>, <code>choice</code>, dead letter channel, <a href="../../../docs/languages/jq.html">jq</a> for the statistics</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="footprint">
+  <div class="wrap">
+    <h2>Footprint on the device</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>build</th><th class="num">binary</th><th class="num">HTTP route ready</th><th class="num">memory, HTTP route</th></tr></thead>
+      <tbody>
+        <tr><td>all components, glibc</td><td class="num">23.9 MB</td><td class="num">1.17 ms</td><td class="num">10.4 MB</td></tr>
+        <tr><td><code>--features cloud</code>, static musl</td><td class="num">11.8 MB</td><td class="num">0.75 ms</td><td class="num">5.3 MB</td></tr>
+        <tr><td><code>--features core</code>, static musl</td><td class="num">7.5 MB</td><td class="num">0.69 ms</td><td class="num">4.2 MB</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Measured on Linux x86-64 with <code>cameleer-bench coldstart</code>; method and the full table in <a href="../../../docs/BENCHMARKS.html#faas-cold-start-and-size">BENCHMARKS</a>. The container image is about 20 MB to download with every component, 12.5 MB with <code>FEATURES=core</code>. For a gateway, <code>--features kafka-mqtt,protocols</code> keeps MQTT, syslog and the core, and adding <code>health</code> brings MLLP (since 0.6.0); the <a href="../../../docs/guides/build-features.html">build features guide</a> lists every family.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="mcp">
+  <div class="wrap">
+    <h2>Let an AI agent work with the plant, through MCP tools on the gateway</h2>
+    <p class="intro">The gateway can serve MCP tools next to the devices: a technician asks Claude Desktop which sensors run hot and turns a fan down, or an agent in the cloud adjusts setpoints overnight. Readings stay on site, and the agent reaches only what the tools expose.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>The tested example</h3>
+        <ul>
+          <li><code>latest_readings</code> returns the last MQTT reading of every sensor, kept in the embedded in-memory SQL database.</li>
+          <li><code>set_setpoint</code> publishes to <code>devices/&lt;device&gt;/setpoint</code>; only known devices pass the schema, and a setpoint above 30 °C waits for an operator.</li>
+          <li><a href="../../../docs/guides/edge.html#mcp-tools-on-the-gateway-let-an-agent-read-sensors-and-change-setpoints">The route and its test</a></li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Run it on the gateway</h3>
+        <pre class="cmd">docker run -d --name gw --network host --read-only --tmpfs /tmp   -e CAMEL_LOCAL_STATUS=true -e MQTT_BROKER -e GATEWAY_ID   -v "$PWD:/routes:ro" cameleering/cameleer   run /routes/mcp-gateway-tools.camel.yaml --mcp
+docker exec gw cameleer tool approve &lt;handle&gt;   # a parked setpoint</pre>
+        <p>Agents connect to <code>http://&lt;gateway&gt;:8080/mcp</code>. Add API-key or JWT checks before the port is reachable beyond the plant network (<a href="../mcp-tool-server/">routes as MCP tools</a>).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Does Cameleer run on a Raspberry Pi?</summary><p>Yes, on a 64-bit OS. The image is published for <code>linux/arm64</code> (Raspberry Pi 3, 4 and 5 with 64-bit Raspberry Pi OS, NVIDIA Jetson, Graviton) and a running route uses about 10 MB of memory. There is no 32-bit ARM image.</p></details>
+    <details><summary>Which MQTT versions and brokers are supported?</summary><p><code>paho</code> speaks MQTT 3.1.1 and <code>paho-mqtt5</code> speaks MQTT 5.0, with QoS 0 to 2, retained messages, last will, persistent sessions and TLS. They are tested against Mosquitto, RabbitMQ and ActiveMQ and work with any broker, including EMQX, HiveMQ and AWS IoT Core.</p></details>
+    <details><summary>What happens to messages when the uplink is down?</summary><p>The store-and-forward route retries with back-off, then writes the original message to a buffer folder through a dead letter channel. A replay route polls the folder every 30 seconds and moves each file to <code>.sent</code> once the cloud accepted it. The buffer is on disk, so it survives restarts.</p></details>
+    <details><summary>Can a gateway bridge protocols?</summary><p>Yes. The tested routes bridge MQTT into Kafka and HTTP, and syslog (RFC 5424 and 3164 over UDP, TCP or TLS) into Kafka with severity filtering. AMQP, STOMP and files are available on the same gateway, and HL7 over MLLP with the <a href="../../../docs/packs/health/">health pack</a>.</p></details>
+    <details><summary>Is there a Modbus or OPC UA component?</summary><p>No. Field protocols are expected to arrive through a local broker or an HTTP, TCP or UDP adapter; the <code>netty</code> component handles raw TCP and UDP.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="start">
+  <div class="wrap">
+    <h2>Run it</h2>
+    <p class="intro">The buffer is the only thing written, on its own volume; everything else is read-only.</p>
+    <pre class="cmd">export MQTT_BROKER=tcp://localhost:1883 UPLINK_URL=https://ingest.example.com GATEWAY_ID=plant-7
+docker run --rm --network host --read-only -e MQTT_BROKER -e UPLINK_URL -e GATEWAY_ID \
+  -e BUFFER_DIR=/buffer -v cameleer-buffer:/buffer -v "$PWD:/routes:ro" \
+  cameleering/cameleer run /routes/store-and-forward.camel.yaml</pre>
+    <div class="cta">
+      <a class="btn primary" href="../../../docs/guides/edge.html">Read the edge cookbook</a>
+      <a class="btn" href="https://github.com/cameleering/cameleer/tree/main/examples/edge">See the five routes</a>
+      <a class="btn" href="../../../docs/components/paho.html">The paho component</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div>
+      <h4>Use cases</h4>
+      <ul>
+        <li><a href="../">All use cases</a></li>
+        <li><a href="../hl7-mllp-healthcare-integration/">HL7 over MLLP</a></li>
+        <li><a href="../serverless-aws-lambda/">Serverless</a></li>
+        <li><a href="../file-sftp-pipelines/">File and SFTP pipelines</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../../docs/">Documentation</a></li>
+        <li><a href="../../../docs/guides/build-features.html">Build features</a></li>
+        <li><a href="../../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

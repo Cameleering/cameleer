@@ -33,7 +33,7 @@ every repo and session; it is not published on the site._
 4. Pack only what the journey needs.
 5. Real waiting over felt waiting.
 6. Budgets in the build: CI fails on size, memory, startup and p99 regressions.
-7. Rewrite when the numbers say so: a tool, not a creed. Language neutral.
+7. Rewrite when the numbers say so: a tool, not a creed. The practice is not about a language but about how a language is used; never frame it as "rewrite it in X".
 8. Publish the losses.
 
 **Process:** Pick, Baseline, Budget, Cut, Prove, Publish, Guard.
@@ -41,11 +41,12 @@ every repo and session; it is not published on the site._
 ## Positioning
 
 - **Category:** efficiency engineering. Cameleering is the named method inside it.
-- **First audience:** platform and infrastructure teams running heavyweight JVM integration.
-  Then edge and serverless builders (simoom is measured since 2026-11-12), then CTOs under cloud-cost pressure
-  (through FinOps).
+- **Audiences:** the root (practice first) speaks to CTOs under cloud-cost pressure, FinOps
+  practitioners and efficiency-minded engineers; product traffic (platform teams on JVM integration,
+  agent builders, healthcare integration, Rust developers) lands on the project microsites by deep
+  links and must never be routed through the practice pages.
 - **Versus FinOps or buying more cloud:** it fixes the software.
-- **Versus "rewrite it in Rust":** every claim is measured against the original.
+- **Versus a language switch:** the gain comes from how software uses its language (the build, the defaults, threads, allocations, waiting), and every claim is measured against the original, never credited to the language.
 - **Responsibility:** prominent, by the owner's choice, but always tied to people and measured
   resources: who pays for the machines, who waits, the power drawn. It is never aimed at
   developers ("the thing to fight is waste, not the people who build features"). No carbon
@@ -64,22 +65,27 @@ every repo and session; it is not published on the site._
 
 ## Domains
 
-- Now: the cameleer.ing root stays Cameleer's home. Cameleering lives at `/cameleering/`, with a
-  menu item on every page.
-- Phase 2, triggered when a second project has measured results: the root becomes the Cameleering
-  home, and Cameleer moves to `/cameleer/` with redirect stubs (see `write_moved` in
-  `scripts/build-docs.py`).
-- Do not link `github.com/cameleering/...` from the live site until the repos are transferred.
+- **Done (2026-11-13, phase 2 of the plan in `docs/design/site-restructure/plan.md`):** the
+  cameleer.ing root is the Cameleering home. The practice pages sit at the top level (`/ledger/`,
+  `/method/`, `/finops/`, ...), Cameleer's pages under `/cameleer/` (its docs stay at `/docs/`),
+  simoom under `/simoom/`. Every old URL keeps a redirect stub (`scripts/redirects.txt`).
+- Reserved slugs: a project takes its own name (`/cameleer/`, `/simoom/`, later `/karez/`, `/ksar/`);
+  the practice takes common nouns (`/ledger/`, `/method/`, `/about/`, `/projects/`, `/security/`).
+- Navigation: one bar per page. Project pages show the lockup "Cameleering / Cameleer" with the
+  project mark larger, and a Cameleering menu (`scripts/build-docs.py` `FAMILY_MENU`); simoom's
+  build carries the same menu.
+- What Cameleering offers (owner, 2026-11-13): open source only, and open to consulting. Say it in one
+  line where it is asked, never as a pitch.
 
 ## The ledger rules
 
-- Only measured rows carry numbers.
-- Statuses: measured, in progress, design, planned.
+- Only Cameleered rows carry numbers.
+- Statuses, shown with these words everywhere (badges, menus, llms.txt): **Cameleered** (measured, every label condition met), **Cameleering** (in progress or design, targets only), **planned** (not started). Never "measured" or "design" as a status badge.
 - Targets are hollow figures and never sit in the result column.
 - Both ends of every range ("4.8-54x").
 - A result older than 12 months is stale.
 - Rows are never deleted: a newer run supersedes the old row, which stays visible, struck through.
-- Losses go in the same table as the wins.
+- Losses go in the same table as the wins on the ledger and on each project's own pages (benchmarks, comparisons). The Cameleering home page (owner, 2026-11-13) shows the outcomes and links to the ledger for the full record, losses included; it does not list losses itself.
 - Every row links to its crossing report: Load, Baseline, Terrain, Water, Distance, Losses, Repeat
   it, Date.
 
@@ -87,7 +93,8 @@ every repo and session; it is not published on the site._
 
 - **Cameleered** (measured): a named current baseline, the same hardware, a rerunnable script and
   raw results, losses disclosed, measured within 12 months.
-- **Cameleering** (in progress): targets only.
+- **Cameleering** (in progress, including design): targets only.
+- A project not started is **planned** and carries neither label.
 
 ## Naming rule for projects
 

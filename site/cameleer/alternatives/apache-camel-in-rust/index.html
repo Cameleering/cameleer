@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apache Camel in Rust: Options and Benchmarks | Cameleer</title>
+<meta name="description" content="Camel-style engines in Rust compared: Cameleer runs Apache Camel YAML routes unchanged, with a published benchmark against Apache Camel; rust-camel does not.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/alternatives/apache-camel-in-rust/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Apache Camel in Rust: Options and Benchmarks">
+<meta property="og:description" content="The Apache Camel alternatives written in Rust compared: Cameleer, rust-camel and rust-integration-services, which run Camel routes unchanged, and the published benchmark against Apache Camel.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/alternatives/apache-camel-in-rust/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/site.css">
+<link rel="stylesheet" href="../../../assets/compare.css">
+<link rel="stylesheet" href="../../../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Apache Camel in Rust: Options and Benchmarks", "description": "The Apache Camel alternatives written in Rust compared: Cameleer, rust-camel and rust-integration-services, which run Camel routes unchanged, and the published benchmark against Apache Camel.", "url": "https://cameleer.ing/cameleer/alternatives/apache-camel-in-rust/", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Apache Camel alternatives", "item": "https://cameleer.ing/cameleer/alternatives/apache-camel-alternatives/"}, {"@type": "ListItem", "position": 4, "name": "Apache Camel in Rust"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is there an Apache Camel alternative written in Rust?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Cameleer reimplements Apache Camel in Rust and runs Camel's YAML and XML routes unchanged as one native binary with about 230 components. rust-camel offers Camel-style routing built on Tower middleware and is pre-release. rust-integration-services is a smaller integration library that is not modelled on Camel."}}, {"@type": "Question", "name": "Which one runs my existing Camel routes?", "acceptedAnswer": {"@type": "Answer", "text": "Cameleer, for routes written in Camel's YAML or XML DSL: the endpoint URIs, EIPs, Simple expressions and headers carry over. Routes written in Camel's Java DSL, and Java beans or custom components, have to be rewritten in Rust. rust-camel says it is not a drop-in replacement."}}, {"@type": "Question", "name": "How much faster is Camel in Rust?", "acceptedAnswer": {"@type": "Answer", "text": "Cameleer was measured against Apache Camel 4.23 on Java 21 on identical cloud machines: 3 ms to start against 1.1 s, 4.8 to 54 times less peak memory, and 1.7 to 8.7 times the throughput, with one scenario where its p99 latency was higher. No published benchmark of the other Rust projects against Camel was found."}}, {"@type": "Question", "name": "Is Cameleer the same project as rust-camel?", "acceptedAnswer": {"@type": "Answer", "text": "No. They are independent projects by different authors. rust-camel publishes the camel-* crates on crates.io; Cameleer publishes the cameleer-* crates. Neither is part of the Apache Software Foundation."}}, {"@type": "Question", "name": "Is Camel on Quarkus native an alternative?", "acceptedAnswer": {"@type": "Answer", "text": "For startup time, yes: it started in 30 ms in the same benchmark, against 1.1 s on the JVM. It keeps Java and Camel's full component catalogue, but it had the lowest throughput of the three runtimes measured, because native images have no JIT compiler."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../../" aria-label="Cameleering home"><img src="../../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../../cameleer/" aria-label="Cameleer home"><img src="../../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../../docs/">Docs</a>
+      <a class="keep" href="../../../cameleer/use-cases/">Use cases</a>
+      <a href="../../../cameleer/mcp/">MCP</a>
+      <a href="../../../cameleer/healthcare/">Healthcare</a>
+      <a href="../../../cameleer/compare/">Compare</a>
+      <a href="../../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../../"><b>Cameleering</b><span>Carry more on less: improve it, then prove it</span></a>
+          <a href="../../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../../projects/"><b>Projects</b><span>Cameleer and simoom Cameleered; karez and ksar not yet</span></a>
+          <a href="../../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../apache-camel-alternatives/">Alternatives</a> / Apache Camel in Rust</p>
+    <p class="kicker">Apache Camel alternatives · checked 2026-11-12</p>
+    <h1>Apache Camel in Rust: the options, and what has been measured</h1>
+    <p class="lede">If you want Apache Camel's routing model without the JVM, there are three Rust projects to look at and one do-it-yourself path. They differ in one question that decides a migration: do your existing Camel routes run unchanged? This page compares them on facts from each project's own repository, and shows the one benchmark against Apache Camel that has been published.</p>
+    <p class="note">Cameleer is one of the options, so read this as a vendor's comparison. Facts about other projects come from their repositories and crates.io pages, linked in the <a href="#sources">sources</a>. Corrections are welcome as a <a href="https://github.com/cameleering/cameleer/issues/new?template=bug_report.md&amp;title=Camel+in+Rust+page%3A+">GitHub issue</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="answer">
+  <div class="wrap">
+    <h2>The short answer</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>if you want</th><th>look at</th></tr></thead>
+      <tbody>
+        <tr><td>your existing Camel YAML or XML routes to run unchanged, as one native binary</td><td><strong>Cameleer</strong> <sup><a href="#s1">[1]</a></sup></td></tr>
+        <tr><td>Camel-style routing designed around Rust's Tower middleware, and you accept pre-release APIs</td><td><strong>rust-camel</strong> <sup><a href="#s2">[2]</a></sup></td></tr>
+        <tr><td>a small library of protocol building blocks (HTTP, files, SFTP, S3, SMTP, a scheduler) to wire yourself</td><td><strong>rust-integration-services</strong> <sup><a href="#s4">[4]</a></sup></td></tr>
+        <tr><td>full control and only a few integrations</td><td>your own service on tokio and the client crates you need</td></tr>
+        <tr><td>Camel itself, faster to start</td><td>Apache Camel on Quarkus native <sup><a href="#s6">[6]</a></sup> (not Rust, but no JIT warm-up)</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="compare">
+  <div class="wrap">
+    <h2>The Rust projects side by side</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th></th><th>Cameleer</th><th>rust-camel</th><th>rust-integration-services</th></tr></thead>
+      <tbody>
+        <tr><td>what it is</td><td>a reimplementation of Apache Camel: the same EIPs, endpoint URIs, Simple language, YAML and XML DSLs</td><td>"Apache Camel-style integration routes in Rust", with EIPs as Tower middleware <sup><a href="#s2">[2]</a></sup></td><td>an integration library for receiving and sending data over common protocols <sup><a href="#s4">[4]</a></sup></td></tr>
+        <tr><td>Camel routes run unchanged</td><td>yes for YAML and XML; Java DSL routes are rewritten in the Rust DSL</td><td>not a goal: it is for evaluating Camel-inspired routing "without assuming drop-in compatibility" <sup><a href="#s2">[2]</a></sup></td><td>no (not Camel-shaped)</td></tr>
+        <tr><td>components</td><td>about 230 components, languages and data formats</td><td>about 30 listed, including timer, http, kafka, mqtt, redis, sql, jms, grpc, llm and mcp <sup><a href="#s2">[2]</a></sup></td><td>file, HTTP/1.1 and 2, scheduler, SFTP, SMTP, S3 and others, as cargo features <sup><a href="#s4">[4]</a></sup></td></tr>
+        <tr><td>dependencies</td><td>Rust standard library only (TLS, HTTP/2, Kafka and the other protocols written in-tree)</td><td>built on Tower and the Rust ecosystem <sup><a href="#s2">[2]</a></sup></td><td>built on tokio and hyper <sup><a href="#s4">[4]</a></sup></td></tr>
+        <tr><td>status</td><td>released (0.6.0 on crates.io); container image on Docker Hub and GHCR</td><td>pre-release; "APIs may change" <sup><a href="#s2">[2]</a></sup>; <code>camel-core</code> 0.66.0 on crates.io <sup><a href="#s3">[3]</a></sup></td><td><code>rust-integration-services</code> 0.5.41 on crates.io <sup><a href="#s5">[5]</a></sup></td></tr>
+        <tr><td>licence</td><td>Apache-2.0</td><td>Apache-2.0 <sup><a href="#s2">[2]</a></sup></td><td>MIT <sup><a href="#s4">[4]</a></sup></td></tr>
+        <tr><td>benchmarked against Apache Camel</td><td>yes, published with method and raw data (below)</td><td>no published comparison found</td><td>no published comparison found</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">The crate names differ: rust-camel publishes <code>camel-core</code>, <code>camel-cli</code> and other <code>camel-*</code> crates; Cameleer publishes <code>cameleer-*</code>. Neither is an Apache Software Foundation project.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="measured">
+  <div class="wrap">
+    <h2>What has been measured against Apache Camel</h2>
+    <p class="intro">The only published head-to-head we found: Cameleer 0.4.0 against Apache Camel 4.23.0 on Java 21 and Camel 4.22.1 on Quarkus 3.40.0 native, with the same routes on identical DigitalOcean c-4 machines, measured 2026-11-06 <sup><a href="#s6">[6]</a></sup>.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>metric</th><th class="num">Apache Camel (JVM)</th><th class="num">Camel (Quarkus native)</th><th class="num">Cameleer</th></tr></thead>
+      <tbody>
+        <tr><td>time to a started context</td><td class="num">1.1 s</td><td class="num">30 ms</td><td class="num"><span class="win">3 ms</span></td></tr>
+        <tr><td>memory at startup</td><td class="num">114 MB</td><td class="num">69 MB</td><td class="num"><span class="win">8 MB</span></td></tr>
+        <tr><td>peak memory, 11 scenarios</td><td class="num">214–440 MB</td><td class="num">113–199 MB</td><td class="num"><span class="win">7–67 MB</span></td></tr>
+        <tr><td>throughput vs Cameleer, 11 scenarios</td><td class="num">Cameleer 1.7–8.7x</td><td class="num">Cameleer 1.9–9.9x</td><td class="num">—</td></tr>
+        <tr><td>p99, HTTP into Kafka (the one loss)</td><td class="num"><span class="win">7.8 ms</span></td><td class="num">12.6 ms</td><td class="num">8.6 ms</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Every scenario, the method and the raw results: <a href="../../compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a> and <a href="../../../docs/BENCHMARKS.html">BENCHMARKS</a>. We have not benchmarked rust-camel or rust-integration-services, so this page makes no performance claim about them.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="choose">
+  <div class="wrap">
+    <h2>How to choose</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>You have Camel routes already</h3>
+        <ul>
+          <li>Run them with <code>cameleer validate routes/</code> first: it loads every file, resolves every endpoint URI against the real components and lists what is missing, without starting anything.</li>
+          <li>YAML and XML routes run unchanged with <code>cameleer run</code>; Java DSL routes, beans and custom components are rewritten in Rust. The <a href="../../../docs/guides/migrating-from-apache-camel.html">migration guide</a> lists what differs.</li>
+          <li>Check the long tail: Apache Camel has 300+ components, Cameleer about 230. The <a href="../../../docs/components/">component index</a> shows which exist.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>You are starting fresh in Rust</h3>
+        <ul>
+          <li>If your team thinks in Tower services and wants routes as Rust code first, rust-camel is designed for that.</li>
+          <li>If you need two or three protocols and no routing language, a library such as rust-integration-services, or your own tokio service, is less to learn.</li>
+          <li>If you want Camel's patterns, YAML that a non-Rust team can read, and published numbers, start with Cameleer's <a href="../../../docs/guides/getting-started.html">getting started</a>.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Is there an Apache Camel alternative written in Rust?</summary><p>Yes. Cameleer reimplements Apache Camel in Rust and runs Camel's YAML and XML routes unchanged as one native binary with about 230 components. rust-camel offers Camel-style routing built on Tower middleware and is pre-release. rust-integration-services is a smaller integration library that is not modelled on Camel.</p></details>
+    <details><summary>Which one runs my existing Camel routes?</summary><p>Cameleer, for routes written in Camel's YAML or XML DSL: the endpoint URIs, EIPs, Simple expressions and headers carry over. Routes written in Camel's Java DSL, and Java beans or custom components, have to be rewritten in Rust. rust-camel says it is not a drop-in replacement.</p></details>
+    <details><summary>How much faster is Camel in Rust?</summary><p>Cameleer was measured against Apache Camel 4.23 on Java 21 on identical cloud machines: 3 ms to start against 1.1 s, 4.8 to 54 times less peak memory, and 1.7 to 8.7 times the throughput, with one scenario where its p99 latency was higher. No published benchmark of the other Rust projects against Camel was found.</p></details>
+    <details><summary>Is Cameleer the same project as rust-camel?</summary><p>No. They are independent projects by different authors. rust-camel publishes the camel-* crates on crates.io; Cameleer publishes the cameleer-* crates. Neither is part of the Apache Software Foundation.</p></details>
+    <details><summary>Is Camel on Quarkus native an alternative?</summary><p>For startup time, yes: it started in 30 ms in the same benchmark, against 1.1 s on the JVM. It keeps Java and Camel's full component catalogue, but it had the lowest throughput of the three runtimes measured, because native images have no JIT compiler.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-12.</p>
+    <ol class="sources">
+      <li id="s1">Cameleer: <a href="https://github.com/cameleering/cameleer">cameleering/cameleer</a> on GitHub and <a href="../../../docs/">its documentation</a>.</li>
+      <li id="s2"><a href="https://github.com/kennycallado/rust-camel">kennycallado/rust-camel</a> on GitHub: description, README (components, status, intended users), licence.</li>
+      <li id="s3"><a href="https://crates.io/crates/camel-core">camel-core</a> on crates.io (version 0.66.0).</li>
+      <li id="s4"><a href="https://github.com/AndreasLill/rust-integration-services">AndreasLill/rust-integration-services</a> on GitHub: description, README features, licence.</li>
+      <li id="s5"><a href="https://crates.io/crates/rust-integration-services">rust-integration-services</a> on crates.io (version 0.5.41).</li>
+      <li id="s6">Cameleer benchmarks: <a href="../../../docs/BENCHMARKS.html">BENCHMARKS</a>, raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-06-linux">benchmarks/results/2026-11-06-linux</a>.</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div>
+      <h4>Compare</h4>
+      <ul>
+        <li><a href="../../compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a></li>
+        <li><a href="../apache-camel-alternatives/">Apache Camel alternatives</a></li>
+        <li><a href="../mirth-connect-alternatives/">Mirth Connect alternatives</a></li>
+        <li><a href="../../../ledger/">The ledger</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Docs</h4>
+      <ul>
+        <li><a href="../../../docs/">Documentation</a></li>
+        <li><a href="../../../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a></li>
+        <li><a href="../../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

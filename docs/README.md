@@ -26,9 +26,9 @@ same. Start with a guide, then look up the components your route uses.
 | understand an error message or a TLS failure | [Troubleshooting](guides/troubleshooting.md) |
 | check whether something is supported before you rely on it | [What Cameleer does not do](guides/limitations.md) |
 | check which Camel features are implemented, with their options | [Feature matrix](FEATURES.md) |
-| see what people run on it: AI agent tools, HL7 over MLLP, MQTT edge gateways, serverless, file and SFTP pipelines | [Use cases](https://cameleer.ing/use-cases/), the [agent cookbook](guides/agents.md) and the [edge cookbook](guides/edge.md) |
-| compare Cameleer with Apache Camel: throughput, memory, startup | [Apache Camel vs Cameleer](https://cameleer.ing/compare/apache-camel-vs-cameleer/) and the [benchmark report](BENCHMARKS.md) |
-| choose between Apache Camel alternatives | [Apache Camel alternatives](https://cameleer.ing/alternatives/apache-camel-alternatives/) |
+| see what people run on it: AI agent tools, HL7 over MLLP, MQTT edge gateways, serverless, file and SFTP pipelines | [Use cases](https://cameleer.ing/cameleer/use-cases/), the [agent cookbook](guides/agents.md) and the [edge cookbook](guides/edge.md) |
+| compare Cameleer with Apache Camel: throughput, memory, startup | [Apache Camel vs Cameleer](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/) and the [benchmark report](BENCHMARKS.md) |
+| choose between Apache Camel alternatives | [Apache Camel alternatives](https://cameleer.ing/cameleer/alternatives/apache-camel-alternatives/) |
 | see what was verified against real servers and clients | [Interop](INTEROP.md) |
 | see what is planned | [Roadmap](ROADMAP.md) |
 

@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mirth Connect Alternatives: Open Source Forks | Cameleer</title>
+<meta name="description" content="Mirth Connect is commercial from 4.6. The alternatives with sources: Open Integration Engine, BridgeLink, Rhapsody, Cloverleaf, Qvera and Cameleer.">
+<link rel="canonical" href="https://cameleer.ing/cameleer/alternatives/mirth-connect-alternatives/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleer">
+<meta property="og:title" content="Mirth Connect alternatives: the open-source forks, the commercial engines, and interfaces as code">
+<meta property="og:description" content="What changed with Mirth Connect 4.6, and every option since, each fact linked to its source.">
+<meta property="og:url" content="https://cameleer.ing/cameleer/alternatives/mirth-connect-alternatives/">
+<meta property="og:image" content="https://cameleer.ing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../../../favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../../../apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../../../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../../assets/site.css">
+<link rel="stylesheet" href="../../../assets/compare.css">
+<style>
+sup a { text-decoration: none; color: var(--signal); font-size: 12px; margin-left: 1px; }
+ol.sources { padding-left: 22px; font-size: 15px; color: var(--muted); }
+ol.sources li { margin: 0 0 8px; }
+ol.sources li:target { background: var(--signal-soft); }
+</style>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Mirth Connect alternatives: the open-source forks, the commercial engines, and interfaces as code", "description": "What changed with Mirth Connect 4.6 and the alternatives: Open Integration Engine, BridgeLink, Rhapsody, Infor Cloverleaf, InterSystems Health Connect, Qvera, Apache Camel and Cameleer, with sources.", "url": "https://cameleer.ing/cameleer/alternatives/mirth-connect-alternatives/", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Healthcare", "item": "https://cameleer.ing/cameleer/healthcare/"}, {"@type": "ListItem", "position": 4, "name": "Mirth Connect alternatives"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is Mirth Connect still open source?", "acceptedAnswer": {"@type": "Answer", "text": "Not from version 4.6. NextGen moved to a single commercial, proprietary licence with 4.6 (announced on 19 March 2025), and the source code for new releases is no longer public. Version 4.5.2 is the last open-source release."}}, {"@type": "Question", "name": "What are the open-source alternatives to Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "Two forks of Mirth's code: Open Integration Engine (MPL-2.0, community governed, an incubating Eclipse project) and BridgeLink (MPL-2.0 server, from Innovar Healthcare, with paid plugins and support available). Outside Mirth's code base, Apache Camel (Java) and Cameleer (Rust, with the health pack) are Apache-2.0 frameworks for interfaces as code."}}, {"@type": "Question", "name": "Can I keep using Mirth Connect 4.5.2?", "acceptedAnswer": {"@type": "Answer", "text": "NextGen listed staying on the current version or upgrading to 4.5.2 as options for open-source users. New releases from 4.6 need a licence."}}, {"@type": "Question", "name": "Which commercial engines replace Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "Rhapsody, Infor Cloverleaf, InterSystems Health Connect and Qvera Interface Engine are healthcare integration engines sold by their vendors; each vendor's page lists HL7 v2 and FHIR, and some list DICOM and X12."}}, {"@type": "Question", "name": "Can Cameleer import Mirth channels?", "acceptedAnswer": {"@type": "Answer", "text": "No. Channels are rewritten as Apache Camel YAML routes: an MLLP listener becomes from: mllp:..., destinations become endpoints, filters and transformers become steps. Mirth's JavaScript transformers do not run."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleer -->
+<header class="top" id="top">
+  <div class="wrap">
+    <span class="lockup"><a class="fam" href="../../../" aria-label="Cameleering home"><img src="../../../brand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a><span class="sep" aria-hidden="true">/</span><a class="brand" href="../../../cameleer/" aria-label="Cameleer home"><img src="../../../brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../../../docs/">Docs</a>
+      <a class="keep" href="../../../cameleer/use-cases/">Use cases</a>
+      <a href="../../../cameleer/mcp/">MCP</a>
+      <a href="../../../cameleer/healthcare/">Healthcare</a>
+      <a href="../../../cameleer/compare/">Compare</a>
+      <a href="../../../docs/BENCHMARKS.html">Benchmarks</a>
+      <div class="nav-menu">
+        <a href="../../../" aria-haspopup="true">Cameleering</a>
+        <div class="nav-sub">
+          <a href="../../../"><b>Cameleering</b><span>Carry more on less: improve it, then prove it</span></a>
+          <a href="../../../ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
+          <a href="../../../method/"><b>The method</b><span>How a gain is measured and reported</span></a>
+          <a href="../../../finops/"><b>Code efficiency and FinOps</b><span>What the milliseconds and megabytes cost</span></a>
+          <a href="../../../projects/"><b>Projects</b><span>Cameleer and simoom Cameleered; karez and ksar not yet</span></a>
+          <a href="../../../about/"><b>About</b><span>Who maintains it, how to get in touch</span></a>
+          <a href="../../../simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
+        </div>
+      </div>
+      <a class="gh" href="https://github.com/cameleering/cameleer"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleer -->
+
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../../healthcare/">Healthcare</a> / Mirth Connect alternatives</p>
+    <p class="kicker">Healthcare integration · researched 2026-11-12</p>
+    <h1>Mirth Connect alternatives: the open-source forks, the commercial engines, and interfaces as code</h1>
+    <p class="lede">From version 4.6, Mirth Connect is sold only under a commercial, closed-source licence. If your interfaces ran on the open-source edition, you can stay on 4.5.2, buy a licence, move to an open-source fork, move to another commercial engine, or rewrite the interfaces as code. Here is what each option is, with every fact linked to its source.</p>
+    <p class="note">Cameleer is one of the options on this page, so read it as a vendor's comparison. Each fact about another product is cited to that product's own page or repository, and numbered links go to the <a href="#sources">sources</a> at the end. Corrections are welcome as a <a href="https://github.com/cameleering/cameleer/issues/new?template=bug_report.md&amp;title=Mirth+alternatives+page%3A+">GitHub issue</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="what-changed">
+  <div class="wrap">
+    <h2>What changed with Mirth Connect 4.6</h2>
+    <ul>
+      <li>On 19 March 2025 NextGen Healthcare announced a move from a dual licence (open source and commercial) to a single commercial, proprietary licence, starting with Mirth Connect 4.6 <sup><a href="#s1">[1]</a></sup>.</li>
+      <li>NextGen's downloads page says the source code for new releases is no longer public, and that upgrading to 4.6 or later needs a licence. It lists Enterprise, Gold and Platinum tiers, with no prices <sup><a href="#s2">[2]</a></sup>.</li>
+      <li>NextGen gave open-source users three choices: stay on their current version, upgrade to 4.5.2 (the last open-source release), or buy a licence and upgrade to 4.6 <sup><a href="#s1">[1]</a></sup>. The last tagged release in the public repository is 4.5.2, from 23 September 2024 <sup><a href="#s3">[3]</a></sup>.</li>
+      <li>There is a free "Mirth Connect for Research" licence for approved research studies affiliated with a non-profit institution <sup><a href="#s1">[1]</a></sup>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="answer">
+  <div class="wrap">
+    <h2>The short answer</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>if you want</th><th>look at</th></tr></thead>
+      <tbody>
+        <tr><td>Mirth as it is, with updates and vendor support</td><td><strong>Mirth Connect 4.6+</strong> under a NextGen licence <sup><a href="#s2">[2]</a></sup></td></tr>
+        <tr><td>Mirth's open-source code base and channel model, still open source</td><td><strong>Open Integration Engine</strong> (community, Eclipse incubating) <sup><a href="#s4">[4]</a><a href="#s5">[5]</a></sup> or <strong>BridgeLink</strong> (Innovar Healthcare, paid plugins and support available) <sup><a href="#s6">[6]</a></sup></td></tr>
+        <tr><td>a commercial interface engine with a vendor behind it</td><td><strong>Rhapsody</strong> <sup><a href="#s7">[7]</a></sup>, <strong>Infor Cloverleaf</strong> <sup><a href="#s8">[8]</a></sup>, <strong>InterSystems Health Connect</strong> <sup><a href="#s9">[9]</a></sup>, <strong>Qvera Interface Engine</strong> <sup><a href="#s10">[10]</a></sup></td></tr>
+        <tr><td>interfaces as code on the JVM</td><td><strong>Apache Camel</strong> with its HL7, MLLP and FHIR components <sup><a href="#s11">[11]</a></sup></td></tr>
+        <tr><td>interfaces as code without a JVM, with HL7, FHIR and DICOM in one small binary</td><td><strong>Cameleer</strong> with the <a href="../../healthcare/">health pack</a> (Apache-2.0)</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="c-sec" id="compare">
+  <div class="wrap">
+    <h2>The options side by side</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>option</th><th>licence</th><th>what it is</th><th>standards and deployment, as its source states them</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Mirth Connect 4.6+</strong> (NextGen)</td><td>commercial, closed source from 4.6 <sup><a href="#s1">[1]</a><a href="#s2">[2]</a></sup></td><td>the original engine: channels, a desktop administrator, licensed tiers</td><td>a licence is required to upgrade past 4.5.2 <sup><a href="#s2">[2]</a></sup></td></tr>
+        <tr><td><strong>Open Integration Engine</strong></td><td>MPL-2.0 <sup><a href="#s4">[4]</a><a href="#s5">[5]</a></sup></td><td>"an open source fork of the now closed-source Mirth Connect", community governed, with vendor neutrality as a stated value; an incubating Eclipse project <sup><a href="#s4">[4]</a><a href="#s5">[5]</a></sup></td><td>releases v4.6.0 (9 July 2026) and v4.7.0 (21 October 2026) <sup><a href="#s4">[4]</a></sup></td></tr>
+        <tr><td><strong>BridgeLink</strong> (Innovar Healthcare)</td><td>server MPL-2.0; the WebAdmin is under the Business Source License 1.1 <sup><a href="#s6">[6]</a></sup></td><td>began as a fork of Mirth Connect 4.5.2, first release March 2025; paid plugins (SSO, MFA, SIEM logging and others), support plans with SLAs, and migration services <sup><a href="#s6">[6]</a></sup></td><td>Java 17 or later for 26.x; latest release v26.9.0 (1 October 2026) <sup><a href="#s6">[6]</a></sup></td></tr>
+        <tr><td><strong>Rhapsody</strong></td><td>commercial <sup><a href="#s7">[7]</a></sup></td><td>healthcare integration engine</td><td>HL7 v2, FHIR, CDA, X12/EDI and others; SaaS, your own infrastructure, or iPaaS <sup><a href="#s7">[7]</a></sup></td></tr>
+        <tr><td><strong>Infor Cloverleaf</strong></td><td>commercial <sup><a href="#s8">[8]</a></sup></td><td>healthcare integration engine</td><td>HL7 v2, FHIR, CDA, X12; cloud, on premises or hybrid with Docker <sup><a href="#s8">[8]</a></sup></td></tr>
+        <tr><td><strong>InterSystems Health Connect</strong></td><td>commercial <sup><a href="#s9">[9]</a></sup></td><td>healthcare integration engine</td><td>HL7 v2, FHIR, DICOM and IHE profiles; offered as a cloud-first managed service <sup><a href="#s9">[9]</a></sup></td></tr>
+        <tr><td><strong>Qvera Interface Engine</strong></td><td>commercial <sup><a href="#s10">[10]</a></sup></td><td>healthcare integration engine, also licensed to software vendors to embed</td><td>HL7, FHIR, DICOM (including DIMSE), X12; on premises, in containers or in your cloud <sup><a href="#s10">[10]</a></sup></td></tr>
+        <tr><td><strong>Apache Camel</strong></td><td>Apache-2.0</td><td>a Java integration framework; interfaces are routes in Java, YAML or XML</td><td><code>camel-hl7</code>, <code>camel-mllp</code> and <code>camel-fhir</code> components <sup><a href="#s11">[11]</a></sup>; no DICOM component in its component index <sup><a href="#s12">[12]</a></sup></td></tr>
+        <tr><td><strong>Cameleer</strong> + health pack</td><td>Apache-2.0</td><td>Apache Camel's model rewritten in Rust: the same YAML routes, run by one native binary</td><td>HL7 v2 over MLLP, FHIR (R4, R4B, R5, DSTU3), DICOM DIMSE and DICOMweb, PS3.15 de-identification; tested against DCMTK, Orthanc, python-hl7 and HAPI FHIR <sup><a href="#s13">[13]</a></sup>; since 0.6.0</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">iNTERFACEWARE Iguana is often listed as well; its product page could not be fetched on 2026-11-12, so it is left out rather than described from memory.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="choose">
+  <div class="wrap">
+    <h2>How to choose</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Stay close to Mirth</h3>
+        <p>If your team lives in the Mirth Administrator and has many channels with JavaScript transformers, the least work is to stay on Mirth's code base: a licence for 4.6+, or one of the forks, which both start from the 4.5.2 code <sup><a href="#s4">[4]</a><a href="#s6">[6]</a></sup>. Check each fork's notes for how it handles your channels, plugins and Java version before you move.</p>
+      </div>
+      <div class="pane">
+        <h3>Move to interfaces as code</h3>
+        <p>If you would rather review interfaces in pull requests, test them in CI and deploy them like any other service, a framework fits better: Apache Camel on the JVM, or Cameleer as one native binary. The cost is a rewrite: there is no channel importer, and Mirth's JavaScript transformers do not run.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="mapping">
+  <div class="wrap">
+    <h2>From Mirth channels to Cameleer routes</h2>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>in Mirth Connect</th><th>in Cameleer</th></tr></thead>
+      <tbody>
+        <tr><td>a channel</td><td>a route in a YAML file, kept in Git</td></tr>
+        <tr><td>a TCP listener source with MLLP</td><td><code>from: mllp://0.0.0.0:2575</code>, with automatic AA, AE or AR acknowledgements</td></tr>
+        <tr><td>a destination (HTTP, database, file, another MLLP system)</td><td><code>to:</code> an endpoint: <code>http</code>, <code>sql</code>, <code>file</code>, <code>mllp</code>, <code>fhir</code>, <code>kafka</code> and about 230 others</td></tr>
+        <tr><td>a filter</td><td>the <code>filter</code> or <code>choice</code> step with a predicate, such as <code>${header.CamelMllpEventType} == 'ADT'</code></td></tr>
+        <tr><td>a JavaScript transformer</td><td>steps such as <code>setHeader</code> with <code>hl7terser: PID-3-1</code>, <code>setBody</code> with Simple or jq, and the <code>hl7</code> and <code>fhirJson</code> data formats</td></tr>
+        <tr><td>code templates shared by channels</td><td>route templates and Kamelets</td></tr>
+        <tr><td>queuing and retries on a destination</td><td>redelivery policies and a dead letter channel</td></tr>
+        <tr><td>deploying a channel</td><td><code>cameleer validate</code> and <code>cameleer test</code> in CI, then <code>cameleer run</code> or the <code>cameleering/cameleer:health</code> image</td></tr>
+        <tr><td>the message browser</td><td>no equivalent; logs, tracing, metrics and the audit log instead</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">A tested example: <a href="../../use-cases/hl7-mllp-healthcare-integration/">HL7 v2 over MLLP to the EHR, acknowledging after delivery</a>.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="cameleer">
+  <div class="wrap">
+    <h2>Where Cameleer fits, and where it does not</h2>
+    <div class="two">
+      <div class="pane good">
+        <h3>A good fit when</h3>
+        <ul>
+          <li>you want an Apache-2.0 engine whose licence will not change under you;</li>
+          <li>you want interfaces reviewed, tested and deployed as code;</li>
+          <li>the engine must be small: one native binary, no JVM and no database, for a gateway or a container;</li>
+          <li>you need HL7, FHIR and DICOM in one engine, alongside Kafka, databases, cloud services or AI tools.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>Not a fit (yet) when</h3>
+        <ul>
+          <li>your team needs a visual channel editor or a message browser;</li>
+          <li>you want to import Mirth channels or keep their JavaScript;</li>
+          <li>you need cloud healthcare services tested today (Azure, Google, AWS), or Storage Commitment, MPPS and pixel transcoding for DICOM;</li>
+          <li>you need throughput figures against Mirth before you choose: none have been measured yet.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="../../healthcare/">Healthcare integration with Cameleer</a>
+      <a class="btn" href="https://github.com/cameleering/cameleer/issues/new?template=feature_request.md&amp;title=Health+pack%3A+">Ask for a missing feature</a>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>Is Mirth Connect still open source?</summary><p>Not from version 4.6. NextGen moved to a single commercial, proprietary licence with 4.6 (announced on 19 March 2025), and the source code for new releases is no longer public. Version 4.5.2 is the last open-source release.</p></details>
+    <details><summary>What are the open-source alternatives to Mirth Connect?</summary><p>Two forks of Mirth's code: Open Integration Engine (MPL-2.0, community governed, an incubating Eclipse project) and BridgeLink (MPL-2.0 server, from Innovar Healthcare, with paid plugins and support available). Outside Mirth's code base, Apache Camel (Java) and Cameleer (Rust, with the health pack) are Apache-2.0 frameworks for interfaces as code.</p></details>
+    <details><summary>Can I keep using Mirth Connect 4.5.2?</summary><p>NextGen listed staying on the current version or upgrading to 4.5.2 as options for open-source users. New releases from 4.6 need a licence.</p></details>
+    <details><summary>Which commercial engines replace Mirth Connect?</summary><p>Rhapsody, Infor Cloverleaf, InterSystems Health Connect and Qvera Interface Engine are healthcare integration engines sold by their vendors; each vendor's page lists HL7 v2 and FHIR, and some list DICOM and X12.</p></details>
+    <details><summary>Can Cameleer import Mirth channels?</summary><p>No. Channels are rewritten as Apache Camel YAML routes: an MLLP listener becomes <code>from: mllp:...</code>, destinations become endpoints, filters and transformers become steps. Mirth's JavaScript transformers do not run.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Fetched on 2026-11-12 unless noted.</p>
+    <ol class="sources">
+      <li id="s1">NextGen Healthcare, <a href="https://www.nextgen.com/blog/industry-news/a-new-era-for-mirth-connect-by-nextgen-healthcare">"A new era for Mirth Connect by NextGen Healthcare"</a>, 19 March 2025: the licence change, the options for open-source users, Mirth Connect for Research.</li>
+      <li id="s2">NextGen Healthcare, <a href="https://www.nextgen.com/products-and-services/mirth-connect-downloads">Mirth Connect downloads</a>: closed source from 4.6, a licence to upgrade, Enterprise, Gold and Platinum tiers.</li>
+      <li id="s3"><a href="https://github.com/nextgenhealthcare/connect/releases">nextgenhealthcare/connect releases</a> on GitHub: 4.5.2 published on 23 September 2024 is the latest tag.</li>
+      <li id="s4"><a href="https://github.com/OpenIntegrationEngine/engine">OpenIntegrationEngine/engine</a> on GitHub: description, mission and values, MPL-2.0, releases v4.6.0 and v4.7.0.</li>
+      <li id="s5">Eclipse Foundation, <a href="https://projects.eclipse.org/projects/technology.oie">Eclipse Open Integration Engine</a>: state Incubating, MPL-2.0 (proposal: <a href="https://projects.eclipse.org/node/35849">projects.eclipse.org/node/35849</a>).</li>
+      <li id="s6"><a href="https://github.com/Innovar-Healthcare/BridgeLink">Innovar-Healthcare/BridgeLink</a> on GitHub: fork of Mirth Connect 4.5.2, first release March 2025, MPL-2.0 server, Business Source License 1.1 WebAdmin, plugins and support plans, Java 17+, release v26.9.0.</li>
+      <li id="s7">Rhapsody, <a href="https://rhapsody.health/solutions/rhapsody/">Rhapsody Integration Engine</a>: standards and deployment options.</li>
+      <li id="s8">Infor, <a href="https://www.infor.com/products/cloverleaf">Infor Cloverleaf</a>: standards and deployment options.</li>
+      <li id="s9">InterSystems, <a href="https://www.intersystems.com/products/healthshare/health-connect/">InterSystems Health Connect</a>: standards and the managed service.</li>
+      <li id="s10">Qvera, <a href="https://www.qvera.com/">Qvera Interface Engine</a>: standards, embedding and deployment options.</li>
+      <li id="s11"><a href="https://github.com/apache/camel/tree/main/components">apache/camel components</a> on GitHub: <code>camel-hl7</code>, <code>camel-mllp</code> and <code>camel-fhir</code>.</li>
+      <li id="s12">Apache Camel, <a href="https://camel.apache.org/components/next/index.html">component index</a>: no DICOM component (checked 2026-11-11).</li>
+      <li id="s13">Cameleer, <a href="../../../docs/packs/health/">the health pack</a> and <a href="../../../docs/INTEROP.html">INTEROP</a>: the live tier of 2026-11-11, 10 of 10 against DCMTK 3.6.7, Orthanc 1.12.2, python-hl7 0.4.5 and HAPI FHIR 8.12.0.</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleer -->
+<div class="credit">
+      <h4><a href="../../../cameleer/">Cameleer</a></h4>
+      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
+      <p>Cameleer is a <a href="../../../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+    </div>
+<!-- /partial:credit-cameleer -->
+    <div>
+      <h4>Healthcare</h4>
+      <ul>
+        <li><a href="../../healthcare/">Healthcare integration with Cameleer</a></li>
+        <li><a href="../../use-cases/hl7-mllp-healthcare-integration/">HL7 v2 over MLLP</a></li>
+        <li><a href="../../use-cases/dicom-imaging-gateway/">DICOM imaging gateway</a></li>
+        <li><a href="../../../docs/packs/health/">Health pack documentation</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Compare</h4>
+      <ul>
+        <li><a href="../apache-camel-alternatives/">Apache Camel alternatives</a></li>
+        <li><a href="../mulesoft-alternatives/">MuleSoft alternatives</a></li>
+        <li><a href="../../compare/apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a></li>
+        <li><a href="../../../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

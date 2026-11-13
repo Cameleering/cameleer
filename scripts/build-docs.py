@@ -68,14 +68,153 @@ GUIDE_ORDER = ["getting-started", "configuration", "cli", "concepts", "yaml-dsl"
                "cloud-credentials", "agents", "agent-tool-calls", "mcp", "mcp-server", "mcp-client",
                "agent-step", "model-providers", "ai-components", "mcp-shop-example", "edge", "faq"]
 
-# Pages that moved (old output path -> new output path): the old URL gets a redirect page.
-MOVED = {
-    "components/mllp.html": "packs/health/components/mllp.html",
-    "components/fhir.html": "packs/health/components/fhir.html",
-    "dataformats/hl7.html": "packs/health/dataformats/hl7.html",
-    "dataformats/fhir.html": "packs/health/dataformats/fhir.html",
-    "languages/hl7terser.html": "packs/health/languages/hl7terser.html",
-}
+# Pages that moved: scripts/redirects.txt (`old-path new-path`, site paths from the root).
+# Every old URL gets a redirect stub (write_moved); the table is shared with check-site.py and
+# the docs harness test.
+REDIRECTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "redirects.txt")
+STUB_MARK = "<!-- redirect stub: scripts/redirects.txt -->"
+# Project microsites built in their own repositories and copied into site/<name>/.
+MICROSITES = ("simoom",)
+
+
+# ---- shared header and footer partials ----------------------------------------------------
+#
+# The hand-written pages under site/ keep their own <main> and footer columns. Their header and the
+# credit block of their footer sit between markers:
+#     <!-- partial:header-cameleer -->...<!-- /partial:header-cameleer -->
+# and the build rewrites what is between them on every run (apply_partials), with links relative
+# to the page and aria-current set from the page's path. The docs template uses the same partials.
+# Plan: docs/design/site-restructure/plan.md section 2.2.
+
+GITHUB_SVG = ('<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>')
+
+# The Cameleering menu, shared by every header: (path, title, line)
+FAMILY_MENU = [
+    ("", "Cameleering", "Carry more on less: improve it, then prove it"),
+    ("ledger/", "The ledger", "Every project, its baseline and its losses"),
+    ("method/", "The method", "How a gain is measured and reported"),
+    ("finops/", "Code efficiency and FinOps", "What the milliseconds and megabytes cost"),
+    ("projects/", "Projects", "Cameleer and simoom Cameleered; karez and ksar not yet"),
+    ("about/", "About", "Who maintains it, how to get in touch"),
+]
+CAMELEER_NAV = [("docs/", "Docs", "keep"), ("cameleer/use-cases/", "Use cases", "keep"), ("cameleer/mcp/", "MCP", ""),
+                ("cameleer/healthcare/", "Healthcare", ""), ("cameleer/compare/", "Compare", ""),
+                ("docs/BENCHMARKS.html", "Benchmarks", "")]
+CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", "")]
+PROJECTS_MENU = [("cameleer/", "Cameleer", "Integration engine in the style of Apache Camel · Cameleered"),
+                 ("simoom/", "simoom", "HTTP engine, std-only Rust · Cameleered"),
+                 ("projects/#karez", "karez", "Database connectivity · Cameleering, no numbers yet"),
+                 ("projects/#ksar", "ksar", "Cryptography and PKI · planned")]
+
+
+def _current(page_path, items):
+    """The nav path that covers the page: exact, or the longest section prefix (not the homes)."""
+    best = None
+    for path, *_ in items:
+        p = path.split("#")[0]
+        if p == page_path or (p and p.endswith("/") and p not in ("cameleer/", "") and page_path.startswith(p)):
+            if best is None or len(p) > len(best):
+                best = p
+    return best
+
+
+def _menu(root, label, href, entries, current):
+    cur = ' aria-current="page"' if current else ""
+    subs = "\n".join('          <a href="%s%s"><b>%s</b><span>%s</span></a>' % (root, p, esc(t), esc(s)) for p, t, s in entries)
+    return ('      <div class="nav-menu">\n        <a%s href="%s" aria-haspopup="true">%s</a>\n'
+            '        <div class="nav-sub">\n%s\n        </div>\n      </div>' % (cur, href, label, subs))
+
+
+def render_partial(name, root, page_path):
+    """root: relative prefix from the page to the site root ("", "../", ...). page_path: the
+    page's path from the root ("cameleer/mcp/", "docs/guides/x.html", "" for the home)."""
+    toggle = ('    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" '
+              'onclick="var t=this.closest(\'.top\'),o=t.classList.toggle(\'open\');this.setAttribute(\'aria-expanded\',o)">'
+              '<span class="bars" aria-hidden="true"></span>Menu</button>')
+    family_cur = page_path in [p for p, *_ in FAMILY_MENU if p] or page_path == ""
+    if name == "header-cameleer":
+        cur = _current(page_path, CAMELEER_NAV)
+        links = "\n".join('      <a%s%s href="%s%s">%s</a>' % (' class="%s"' % c if c else "", ' aria-current="page"' if p == cur else "", root, p, t)
+                          for p, t, c in CAMELEER_NAV)
+        return ('<header class="top" id="top">\n  <div class="wrap">\n'
+                '    <span class="lockup">'
+                '<a class="fam" href="%s" aria-label="Cameleering home"><img src="%sbrand/cameleering/cameleering-mark-64.png" width="22" height="22" alt="" aria-hidden="true">Cameleering</a>'
+                '<span class="sep" aria-hidden="true">/</span>'
+                '<a class="brand" href="%scameleer/" aria-label="Cameleer home"><img src="%sbrand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleer</a></span>\n'
+                '%s\n    <nav id="main-nav" aria-label="Main">\n%s\n%s\n'
+                '      <a class="gh" href="%s">%s GitHub</a>\n    </nav>\n  </div>\n</header>'
+                % (root, root, root, root, toggle, links, _menu(root, "Cameleering", root, FAMILY_MENU + [("simoom/", "simoom", "The HTTP engine, std-only Rust")], False),
+                   REPO_URL, GITHUB_SVG))
+    if name == "header-cameleering":
+        cur = _current(page_path, CAMELEERING_NAV)
+        links = "\n".join('      <a%s%s href="%s%s">%s</a>' % (' class="%s"' % c if c else "", ' aria-current="page"' if p == cur else "", root, p, t)
+                          for p, t, c in CAMELEERING_NAV)
+        about_cur = ' aria-current="page"' if page_path == "about/" else ""
+        return ('<header class="top" id="top">\n  <div class="wrap">\n'
+                '    <a class="brand" href="%s" aria-label="Cameleering home"><img src="%sbrand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>\n'
+                '%s\n    <nav id="main-nav" aria-label="Main">\n%s\n%s\n'
+                '      <a%s href="%sabout/">About</a>\n'
+                '      <a class="gh" href="https://github.com/cameleering">%s GitHub</a>\n    </nav>\n  </div>\n</header>'
+                % (root or "./", root, toggle, links, _menu(root, "Projects", root + "projects/", PROJECTS_MENU, page_path == "projects/"),
+                   about_cur, root, GITHUB_SVG))
+    if name == "credit-cameleer":
+        return ('<div class="credit">\n      <h4><a href="%scameleer/">Cameleer</a></h4>\n'
+                '      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. '
+                'It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>\n'
+                '      <p>Cameleer is a <a href="%s">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>\n    </div>' % (root, root))
+    if name == "credit-cameleering":
+        return ('<div class="credit">\n      <h4><img src="%sbrand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>\n'
+                '      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="%sabout/">about</a>).</p>\n'
+                '      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>\n    </div>' % (root, root))
+    raise BuildError("unknown partial `%s`" % name)
+
+
+PARTIAL_RE = re.compile(r"<!-- partial:([a-z-]+) -->.*?<!-- /partial:\1 -->", re.S)
+
+
+def apply_partials(site_dir):
+    """Rewrite the partial regions of every hand-written page under site/ (not docs/ or the
+    project microsites built in other repositories). Returns the number of files changed."""
+    changed = 0
+    for d, dirs, files in os.walk(site_dir):
+        rel_dir = os.path.relpath(d, site_dir).replace("\\", "/")
+        if rel_dir.split("/")[0] in ("docs", "simoom", "assets", "brand"):
+            dirs[:] = []
+            continue
+        for f in files:
+            if not f.endswith(".html"):
+                continue
+            full = os.path.join(d, f)
+            rel = os.path.relpath(full, site_dir).replace("\\", "/")
+            page_path = rel[: -len("index.html")] if rel.endswith("index.html") else rel
+            depth = page_path.count("/") if rel.endswith("index.html") else rel.count("/")
+            root = "../" * depth
+            text = open(full, encoding="utf-8").read()
+            new = PARTIAL_RE.sub(lambda m: "<!-- partial:%s -->\n%s\n<!-- /partial:%s -->" % (m.group(1), render_partial(m.group(1), root, page_path), m.group(1)), text)
+            if new != text:
+                with open(full, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(new)
+                changed += 1
+    return changed
+
+
+def read_redirects(path=REDIRECTS_FILE):
+    table = {}
+    if os.path.exists(path):
+        for n, line in enumerate(open(path, encoding="utf-8"), 1):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) != 2 or not parts[0].startswith("/") or not parts[1].startswith("/"):
+                raise BuildError("scripts/redirects.txt:%d: expected `/old/path /new/path`" % n)
+            if parts[0] in table:
+                raise BuildError("scripts/redirects.txt:%d: %s listed twice" % (n, parts[0]))
+            table[parts[0]] = parts[1]
+    for old, new in table.items():
+        if new in table:
+            raise BuildError("scripts/redirects.txt: %s -> %s -> %s is a chain; point %s at the final page" % (old, new, table[new], old))
+    return table
 
 CATEGORY_ORDER = [
     "Core and routing", "Scheduling", "Files, shell and streams", "HTTP, REST and web services",
@@ -1069,7 +1208,7 @@ class Site:
             alt = '<link rel="alternate" type="text/markdown" href="%s" title="Markdown source">\n' % esc(os.path.basename(source_rel))
         return TEMPLATE.format(
             title=esc(title), full_title=esc("%s | %s" % (title, SITE_NAME) if title != SITE_NAME else SITE_NAME),
-            desc=esc(desc), url=esc(url), root=root, site_root=site_root, ld=ld_json, alt=alt,
+            desc=esc(desc), url=esc(url), root=root, site_root=site_root, ld=ld_json, alt=alt, header=render_partial("header-cameleer", site_root, "docs/" + out).replace('class="top"', 'class="top scrolled"', 1), credit=render_partial("credit-cameleer", site_root, "docs/" + out),
             nav=self.nav(out), crumbs=crumb_html, body=body, toc=toc, edit=edit,
             og_image=SITE_URL + "og.png",
         )
@@ -1166,6 +1305,7 @@ class Site:
             dst = os.path.join(docs_out, a)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copyfile(os.path.join(self.docs, a), dst)
+        apply_partials(self.out)
         self.write_moved(docs_out)
         self.write_sitemap()
         self.write_llms()
@@ -1174,38 +1314,58 @@ class Site:
     # ---- sitemap and llms ---------------------------------------------------
 
     def write_sitemap(self):
+        """A sitemap index (/sitemap.xml) and its children: /sitemap-root.xml (the Cameleering pages
+        and Cameleer's docs at /docs/), /cameleer/sitemap.xml (only /cameleer/ URLs, by the
+        sitemaps.org location rule) and the sitemaps of microsites built in other repositories
+        (/simoom/sitemap.xml). Redirect stubs are never listed."""
         home_date = max([d for d in self.dates.values()] or [""]) or None
-        urls = [(SITE_URL, home_date), (SITE_URL + "llms.txt", home_date), (SITE_URL + "llms-full.txt", home_date)]
+        root_urls = [(SITE_URL + "llms.txt", home_date), (SITE_URL + "llms-full.txt", home_date)]
+        cameleer_urls = []
         for rel in self.designed_pages():
-            urls.append((SITE_URL + rel[: -len("index.html")], self.git_date(os.path.join(self.out, rel)) or home_date))
+            url = SITE_URL + rel[: -len("index.html")]
+            entry = (url, self.git_date(os.path.join(self.out, rel)) or home_date)
+            (cameleer_urls if rel.startswith("cameleer/") else root_urls).append(entry)
         for out in self.all_outs():
             p = self.by_out.get(out)
             if p is not None and p.canonical:
                 continue
-            urls.append((abs_url(out), self.date_of(out)))
-        # project microsites built in their own repositories (simoom: scripts/build-site.py there)
-        # keep their own sitemap; their URLs join this one so the root sitemap lists every page
-        seen = {u for u, _ in urls}
-        for project in ("simoom",):
-            sm = os.path.join(self.out, project, "sitemap.xml")
-            if os.path.exists(sm):
-                text = open(sm, encoding="utf-8").read()
-                for loc, mod in re.findall(r"<loc>([^<]+)</loc>(?:<lastmod>([^<]+)</lastmod>)?", text):
-                    if loc not in seen:
-                        seen.add(loc)
-                        urls.append((loc, mod or None))
-        lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
-        for u, d in urls:
-            lines.append("  <url><loc>%s</loc>%s</url>" % (esc(u), "<lastmod>%s</lastmod>" % d if d else ""))
-        lines.append("</urlset>")
+            root_urls.append((abs_url(out), self.date_of(out)))
+
+        def urlset(urls):
+            lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+            for u, d in sorted(urls, key=lambda x: (x[0] != SITE_URL, x[0])):
+                lines.append("  <url><loc>%s</loc>%s</url>" % (esc(u), "<lastmod>%s</lastmod>" % d if d else ""))
+            lines.append("</urlset>")
+            return "\n".join(lines) + "\n"
+
+        write(os.path.join(self.out, "sitemap-root.xml"), urlset(root_urls))
+        write(os.path.join(self.out, "cameleer", "sitemap.xml"), urlset(cameleer_urls))
+        children = ["sitemap-root.xml", "cameleer/sitemap.xml"]
+        for project in MICROSITES:
+            if not os.path.exists(os.path.join(self.out, project, "sitemap.xml")):
+                raise BuildError("site/%s/sitemap.xml is missing (copy the microsite from its repository)" % project)
+            children.append(project + "/sitemap.xml")
+        lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+        for c in children:
+            lines.append("  <sitemap><loc>%s%s</loc></sitemap>" % (SITE_URL, c))
+        lines.append("</sitemapindex>")
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
 
     def designed_pages(self):
-        """Hand-written landing pages: <out>/cameleering/**, <out>/mcp/**, <out>/compare/**, <out>/alternatives/**, <out>/use-cases/**, <out>/trust/** and <out>/healthcare/** (index.html)."""
+        """Hand-written pages: every index.html under site/ except Cameleer's generated docs, the
+        microsites built in other repositories, shared assets and redirect stubs."""
         found = []
-        for d, _, files in (w for top in ("cameleering", "mcp", "compare", "alternatives", "use-cases", "trust", "healthcare") for w in os.walk(os.path.join(self.out, top))):
+        for d, dirs, files in os.walk(self.out):
+            rel_dir = os.path.relpath(d, self.out).replace("\\", "/")
+            if rel_dir.split("/")[0] in ("docs", "assets", "brand") + MICROSITES:
+                dirs[:] = []
+                continue
+            dirs.sort()
             if "index.html" in files:
-                found.append(os.path.relpath(os.path.join(d, "index.html"), self.out).replace("\\", "/"))
+                full = os.path.join(d, "index.html")
+                if STUB_MARK in open(full, encoding="utf-8").read():
+                    continue
+                found.append(os.path.relpath(full, self.out).replace("\\", "/"))
         return sorted(found)
 
     def git_date(self, path):
@@ -1238,22 +1398,76 @@ class Site:
         return "\n".join(out)
 
     def write_moved(self, docs_out):
-        """Pages that moved keep their old URL as a redirect, so links and search results still work."""
-        for old, new in MOVED.items():
-            if old in self.by_out:
-                raise BuildError("%s is in MOVED but a page renders there" % old)
-            if new not in self.by_out:
-                raise BuildError("MOVED %s -> %s: no page renders to %s" % (old, new, new))
-            rel = relurl(old, new)
-            url = abs_url(new)
-            title = self.by_out[new].title
-            write(os.path.join(docs_out, old), (
-                '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
-                '<title>%s (moved) | %s</title>\n'
-                '<link rel="canonical" href="%s">\n<meta name="robots" content="noindex">\n'
+        """Pages that moved keep their old URL as a redirect stub (scripts/redirects.txt), so links
+        and search results still work. No noindex: it conflicts with the canonical, and search
+        consoles would file the stub as excluded instead of as a redirect."""
+        def file_of(path):
+            """/a/b/ -> <out>/a/b/index.html; /a/b.html -> <out>/a/b.html"""
+            p = path.lstrip("/")
+            return os.path.join(self.out, p + "index.html" if p == "" or p.endswith("/") else p)
+
+        for old, new in read_redirects().items():
+            old_docs = old[len("/docs/"):] if old.startswith("/docs/") else None
+            new_docs = new[len("/docs/"):] if new.startswith("/docs/") else None
+            if old_docs is not None and old_docs in self.by_out:
+                raise BuildError("redirects.txt: %s is a redirect but a docs page renders there" % old)
+            old_file = file_of(old)
+            if old_docs is None and os.path.exists(old_file) and STUB_MARK not in open(old_file, encoding="utf-8").read():
+                raise BuildError("redirects.txt: %s is a redirect but a real page exists at %s" % (old, os.path.relpath(old_file, self.repo)))
+            if new_docs is not None:
+                if new_docs not in self.by_out:
+                    raise BuildError("redirects.txt: %s -> %s: no docs page renders to %s" % (old, new, new))
+                title = self.by_out[new_docs].title
+            else:
+                if not os.path.exists(file_of(new)):
+                    raise BuildError("redirects.txt: %s -> %s: the target does not exist" % (old, new))
+                m = re.search(r"<title>([^<]*)</title>", open(file_of(new), encoding="utf-8").read())
+                title = html.unescape(m.group(1)).split(" | ")[0].strip() if m else new
+            url = SITE_URL + new.lstrip("/")
+            write(old_file, (
+                '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n%s\n'
+                '<title>%s (moved)</title>\n'
+                '<link rel="canonical" href="%s">\n'
+                '<script>location.replace(%s + location.search + location.hash)</script>\n'
                 '<meta http-equiv="refresh" content="0; url=%s">\n</head>\n'
                 '<body><p>This page moved to <a href="%s">%s</a>.</p></body></html>\n')
-                % (esc(title), SITE_NAME, esc(url), esc(rel), esc(rel), esc(title)))
+                % (STUB_MARK, esc(title), esc(url), json.dumps(url), esc(url), esc(url), esc(title)))
+
+    def write_llms_bundles(self, limit=150_000):
+        """/cameleer/llms/<section>.txt: guides, languages, data formats, packs and the components
+        by category, so an agent can fetch one part whole. Returns [(name, title, pages)]."""
+        out_dir = os.path.join(self.out, "cameleer", "llms")
+        if os.path.isdir(out_dir):
+            shutil.rmtree(out_dir)
+        made = []
+
+        def emit(name, title, pages):
+            if not pages:
+                return
+            # fill parts in order until the next page would pass the limit: name, or name-1, name-2, ...
+            parts, cur = [], []
+            for p in pages:
+                if cur and len(_bundle_text(self, title, cur + [p]).encode("utf-8")) > limit:
+                    parts.append(cur)
+                    cur = []
+                cur.append(p)
+            parts.append(cur)
+            for i, part in enumerate(parts, 1):
+                n, t = (name, title) if len(parts) == 1 else ("%s-%d" % (name, i), "%s (part %d of %d)" % (title, i, len(parts)))
+                write(os.path.join(out_dir, n + ".txt"), _bundle_text(self, t, part))
+                made.append((n, t, len(part)))
+
+        emit("guides", "Guides", self.ordered("guides"))
+        cats = {}
+        for p in self.ordered("components"):
+            cats.setdefault(p.category or "Other", []).append(p)
+        for cat in CATEGORY_ORDER + sorted(set(cats) - set(CATEGORY_ORDER)):
+            if cat in cats:
+                emit("components-" + slugify(cat), "Components: " + cat, cats[cat])
+        emit("languages", "Languages", self.ordered("languages"))
+        emit("dataformats", "Data formats", self.ordered("dataformats"))
+        emit("packs", "Packs (the health pack)", sorted((p for p in self.pages.values() if p.section == "packs"), key=lambda p: p.out))
+        return made
 
     def write_llms(self):
         u = abs_url
@@ -1278,8 +1492,17 @@ class Site:
             sec.append("")
             for p in guides:
                 sec.append("- [%s](%s): %s" % (p.title, u(p.out), p.answer))
+        # section bundles an agent can fetch whole (each at most about 150 KB)
+        bundles = self.write_llms_bundles()
+        sec.append("")
+        sec.append("Section bundles (plain markdown, each small enough to fetch whole):")
+        sec.append("")
+        for name, title, n in bundles:
+            sec.append("- [%s](%scameleer/llms/%s.txt): %d pages" % (title, SITE_URL, name, n))
         block = "\n".join(sec) + "\n"
-        src = os.path.join(self.repo, "site", "llms.txt")
+        # sources: scripts/llms/cameleer.txt (Cameleer's index, served at /cameleer/llms.txt and kept
+        # as the repository's llms.txt) and scripts/llms/cameleering.txt (the family index, /llms.txt)
+        src = os.path.join(self.repo, "scripts", "llms", "cameleer.txt")
         base = open(src, encoding="utf-8").read() if os.path.exists(src) else "# Cameleer\n"
         base = base.replace("\r\n", "\n")
         # replace an existing generated section, else insert it before "## Docs" (or append)
@@ -1289,10 +1512,17 @@ class Site:
         else:
             k = base.find("\n## Docs\n")
             text = base[:k + 1] + block + "\n" + base[k + 1:] if k >= 0 else base.rstrip("\n") + "\n\n" + block
-        write(os.path.join(self.out, "llms.txt"), text.rstrip("\n") + "\n")
+        text = text.rstrip("\n") + "\n"
+        write(os.path.join(self.out, "cameleer", "llms.txt"), text)
+        if os.path.normcase(self.out) == os.path.normcase(os.path.join(self.repo, "site")):
+            with open(os.path.join(self.repo, "llms.txt"), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text)
+        family = os.path.join(self.repo, "scripts", "llms", "cameleering.txt")
+        if os.path.exists(family):
+            write(os.path.join(self.out, "llms.txt"), open(family, encoding="utf-8").read().replace("\r\n", "\n"))
 
         full = ["# Cameleer documentation (full text)", "",
-                "> Every page of the Cameleer documentation (%sdocs/) concatenated as plain markdown, for LLMs and coding assistants. Cameleer is Apache Camel rewritten in Rust." % SITE_URL, ""]
+                "> Every page of the Cameleer documentation (%sdocs/) concatenated as plain markdown, for LLMs and coding assistants. This file covers Cameleer's docs only: the family index is %sllms.txt, Cameleer's index %scameleer/llms.txt, and the section bundles under %scameleer/llms/ are smaller. Cameleer is an integration engine in the style of Apache Camel, written in Rust." % (SITE_URL, SITE_URL, SITE_URL, SITE_URL), ""]
         order = []
         if "index.html" in self.by_out:
             order.append(self.by_out["index.html"])
@@ -1310,6 +1540,14 @@ class Site:
             full.append(self.abs_md(p, p.text).strip("\n"))
             full.append("")
         write(os.path.join(self.out, "llms-full.txt"), "\n".join(full))
+
+
+def _bundle_text(site, title, pages):
+    out = ["# Cameleer documentation: %s" % title, "",
+           "> Part of Cameleer's documentation as plain markdown (%scameleer/llms.txt lists every part). Cameleer is an integration engine in the style of Apache Camel, written in Rust." % SITE_URL, ""]
+    for p in pages:
+        out += ["---", "", "Source: %s" % abs_url(p.out), "", site.abs_md(p, p.text).strip("\n"), ""]
+    return "\n".join(out)
 
 
 def strip_tags_keep_code(h):
@@ -1350,41 +1588,7 @@ TEMPLATE = """<!doctype html>
 </head>
 <body class="docs">
 <a class="skip" href="#content">Skip to content</a>
-<header class="top scrolled" id="top">
-  <div class="wrap">
-    <a class="brand" href="{site_root}" aria-label="Cameleer home">
-      <img src="{site_root}brand/cameleer-mark-64.png" width="32" height="32" alt="" aria-hidden="true">
-      Cameleer
-    </a>
-    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
-    <nav id="main-nav" aria-label="Main">
-      <div class="nav-menu">
-        <a href="{site_root}cameleering/" aria-haspopup="true">Cameleering</a>
-        <div class="nav-sub">
-          <a href="{site_root}cameleering/"><b>The practice</b><span>Carry more on less, measured</span></a>
-          <a href="{site_root}cameleering/ledger/"><b>The ledger</b><span>Every project, its baseline and its losses</span></a>
-          <a href="{site_root}simoom/"><b>simoom</b><span>The HTTP engine, std-only Rust</span></a>
-        </div>
-      </div>
-      <a class="keep" href="{root}index.html">Docs</a>
-      <a href="{root}guides/index.html">Guides</a>
-      <a href="{root}components/index.html">Components</a>
-      <div class="nav-menu">
-        <a href="{root}packs/index.html" aria-haspopup="true">Packs</a>
-        <div class="nav-sub">
-          <a href="{site_root}healthcare/"><b>Healthcare</b><span>HL7 v2, MLLP, FHIR, DICOM</span></a>
-          <a href="{root}packs/index.html"><b>All packs</b><span>What a pack is, how to get one</span></a>
-        </div>
-      </div>
-      <a href="{site_root}use-cases/">Use cases</a>
-      <a href="{site_root}trust/">Trust</a>
-      <a class="gh" href="https://github.com/cameleering/cameleer">
-        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        GitHub
-      </a>
-    </nav>
-  </div>
-</header>
+{header}
 <div class="docs-layout">
   <aside class="sidebar">
     <details class="navbox" open>
@@ -1406,18 +1610,15 @@ TEMPLATE = """<!doctype html>
 </div>
 <footer>
   <div class="wrap">
-    <div class="credit">
-      <h4>Cameleer</h4>
-      <p>An independent Rust reimplementation of <a href="https://camel.apache.org/">Apache Camel</a> (<a href="https://github.com/apache/camel">source</a>), following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF.</p>
-      <p>Cameleer is a <a href="{site_root}cameleering/">Cameleering</a> project: carry more on less, no claim without a number.</p>
-      <p>Apache License 2.0.</p>
-    </div>
+    {credit}
     <div>
       <h4>Project</h4>
       <ul>
-        <li><a href="{site_root}">Home</a></li>
-        <li><a href="{site_root}use-cases/">Use cases</a></li>
-        <li><a href="{site_root}compare/">Compare</a></li>
+        <li><a href="{site_root}cameleer/">Cameleer home</a></li>
+        <li><a href="{site_root}cameleer/use-cases/">Use cases</a></li>
+        <li><a href="{site_root}cameleer/compare/">Compare</a></li>
+        <li><a href="{site_root}cameleer/mcp/">MCP</a></li>
+        <li><a href="{site_root}cameleer/healthcare/">Healthcare</a></li>
         <li><a href="https://github.com/cameleering/cameleer">Source on GitHub</a></li>
         <li><a href="https://github.com/cameleering/cameleer/releases">Releases</a></li>
         <li><a href="https://github.com/cameleering/cameleer/blob/main/CONTRIBUTING.md">Contributing</a></li>

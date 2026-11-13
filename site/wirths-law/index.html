@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wirth's Law in 2026: Measured | Cameleering</title>
+<meta name="description" content="Wirth said in 1995 that software slows faster than hardware speeds up. Since then: mobile page weight up 4.6x in ten years, input latency, single-core speed.">
+<link rel="canonical" href="https://cameleer.ing/wirths-law/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="Wirth's Law in 2026: Measured">
+<meta property="og:description" content="Niklaus Wirth said in 1995 that software slows faster than hardware speeds up. The measurements since: page weight, input latency, single-core performance, and the counter-argument.">
+<meta property="og:url" content="https://cameleer.ing/wirths-law/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Wirth's Law in 2026: Measured", "description": "Niklaus Wirth said in 1995 that software slows faster than hardware speeds up. The measurements since: page weight, input latency, single-core performance, and the counter-argument.", "url": "https://cameleer.ing/wirths-law/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Wirth's law"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is Wirth's law?", "acceptedAnswer": {"@type": "Answer", "text": "The observation that software is getting slower more rapidly than hardware is getting faster, from Niklaus Wirth's 1995 article \"A Plea for Lean Software\" in IEEE Computer. Wirth credited the line to Martin Reiser."}}, {"@type": "Question", "name": "Is Wirth's law still true?", "acceptedAnswer": {"@type": "Answer", "text": "In parts. Software kept growing: the median mobile web page is about 4.6 times heavier than in 2014, and Dan Luu measured keypress-to-screen latency of 50 to 200 ms on modern machines against 30 ms on a 1983 Apple IIe. Meanwhile single-core speed now improves only a few percent a year, so growth in software work shows up directly as time and cost."}}, {"@type": "Question", "name": "Why is modern software slow?", "acceptedAnswer": {"@type": "Answer", "text": "Mostly because it does more work and carries more code than the task needs: larger pages and scripts, more layers and dependencies, and waiting hidden behind loaders. Hardware used to hide much of it; single-core speed no longer grows fast enough to do so."}}, {"@type": "Question", "name": "Is hardware cheaper than optimizing code?", "acceptedAnswer": {"@type": "Answer", "text": "For a single team's own servers it often is, as Jeff Atwood argued in 2008. For software that runs on many machines or is billed per second in the cloud, the cost of inefficiency is multiplied by every instance and request, and fixing the software usually wins."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / Wirth's law</p>
+    <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
+    <p class="kicker">Cameleering · the lineage</p>
+    <h1>Wirth's law in 2026: measured</h1>
+    <p class="lede">In 1995 Niklaus Wirth wrote that software was getting slower more rapidly than hardware was getting faster. Thirty years later we can check the claim against numbers: how much bigger software got, how much faster hardware got, and what users wait for. The answer is not as simple as the slogan, which is a reason to measure.</p>
+    <p class="rule">No claim without a number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="law">
+  <div class="wrap">
+    <h2>The law and its family</h2>
+    <ul>
+      <li><strong>Wirth's law.</strong> In "A Plea for Lean Software" (IEEE Computer, February 1995) Wirth argued that software grows because hardware lets it, and because customers cannot tell essential features from nice-to-have ones. He credited the line about software slowing faster than hardware speeds up to Martin Reiser <sup><a href="#s1">[1]</a></sup><sup><a href="#s2">[2]</a></sup>. His own counter-example was Oberon, a complete system designed to be small.</li>
+      <li><strong>Gates's law and May's law</strong> make the same point with a number: software efficiency halves every 18 months, cancelling out Moore's law <sup><a href="#s2">[2]</a></sup>.</li>
+      <li><strong>Page's law</strong>, named by Sergey Brin after Larry Page in 2009, says the same of software speed <sup><a href="#s2">[2]</a></sup>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="software">
+  <div class="wrap">
+    <h2>Software got bigger: the measurements</h2>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>measure</th><th class="num">then</th><th class="num">now</th><th class="num">change</th></tr></thead>
+      <tbody>
+        <tr><td>median web page weight, mobile <sup><a href="#s3">[3]</a></sup></td><td class="num">505 KB (2014)</td><td class="num">2,311 KB (2024)</td><td class="num res">4.6x</td></tr>
+        <tr><td>median web page weight, desktop <sup><a href="#s3">[3]</a></sup></td><td class="num">1,208 KB (2014)</td><td class="num">2,652 KB (2024)</td><td class="num res">2.2x</td></tr>
+        <tr><td>median JavaScript on a mobile home page <sup><a href="#s3">[3]</a></sup></td><td class="num">—</td><td class="num">558 KB (2024)</td><td class="num res">+14% in one year</td></tr>
+        <tr><td>keypress to screen, Apple IIe (1983) vs modern machines <sup><a href="#s4">[4]</a></sup></td><td class="num">30 ms</td><td class="num">50–200 ms</td><td class="num res">slower</td></tr>
+        <tr><td>Linux kernel source, lines <sup><a href="#s5">[5]</a></sup></td><td class="num">about 20 M (2015)</td><td class="num">40 M (2025)</td><td class="num res">about 2x</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Caveats from the sources: Dan Luu's latency figures depend on the terminal and display refresh rate (a 165 Hz desktop measured 50 ms); the kernel count includes comments, blank lines and drivers a given machine never loads. Page weight is the most direct measure of growth, because it is downloaded and parsed on every visit.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="hardware">
+  <div class="wrap">
+    <h2>Hardware stopped getting faster for free</h2>
+    <ul>
+      <li>Single-processor performance grew about 52% a year from 1986 to 2003, and only about 3.5% a year recently: a doubling roughly every 20 years instead of every two <sup><a href="#s6">[6]</a></sup>. Hennessy and Patterson's Turing lecture reported about 3% in a single recent year <sup><a href="#s7">[7]</a></sup>.</li>
+      <li>Memory and storage kept getting cheaper per byte for decades <sup><a href="#s8">[8]</a></sup>, which made it easy to spend bytes.</li>
+    </ul>
+    <p>So the free ride Wirth described has changed shape. Bytes are still cheap, but a single core is barely faster each year, so software that does more work per request now costs real time, and in the cloud, real money (<a href="../finops/">code efficiency as a FinOps lever</a>).</p>
+  </div>
+</section>
+
+<section class="c-sec" id="counter">
+  <div class="wrap">
+    <h2>The counter-argument</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>"Hardware is cheap, programmers are expensive"</h3>
+        <p>Jeff Atwood argued in 2008 that buying hardware should come first: Stack Overflow's servers cost about $5,000, less than a month of a programmer <sup><a href="#s9">[9]</a></sup>. For one team running its own servers, that is often right, and he added his own caveats: hardware cannot save you from bad code, and code that runs on users' machines is a different case.</p>
+      </div>
+      <div class="pane good">
+        <h3>Where it stops holding</h3>
+        <p>The cost of slow software is paid once per machine, per user, per request. For a library or product that runs on thousands of machines, or for cloud services billed by the second, that sum quickly exceeds the engineering time to fix it, as readers of Atwood's own post pointed out <sup><a href="#s10">[10]</a></sup>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="c-sec" id="answer">
+  <div class="wrap">
+    <h2>What cameleering takes from Wirth</h2>
+    <p class="intro">Wirth's answer was a lean system built by design. Cameleering adds a measurement: take software that many people already run, make it carry the same load on less, and publish the before and after, losses included. Cameleer is the first case, an integration engine that starts in 3 ms where Apache Camel on Java 21 took 1.1 s on the same machines (<a href="../ledger/">the ledger</a>).</p>
+    <div class="cta"><a class="btn primary" href="../">What is cameleering?</a><a class="btn" href="../method/">The method</a></div>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>What is Wirth's law?</summary><p>The observation that software is getting slower more rapidly than hardware is getting faster, from Niklaus Wirth's 1995 article "A Plea for Lean Software" in IEEE Computer. Wirth credited the line to Martin Reiser.</p></details>
+    <details><summary>Is Wirth's law still true?</summary><p>In parts. Software kept growing: the median mobile web page is about 4.6 times heavier than in 2014, and Dan Luu measured keypress-to-screen latency of 50 to 200 ms on modern machines against 30 ms on a 1983 Apple IIe. Meanwhile single-core speed now improves only a few percent a year, so growth in software work shows up directly as time and cost.</p></details>
+    <details><summary>Why is modern software slow?</summary><p>Mostly because it does more work and carries more code than the task needs: larger pages and scripts, more layers and dependencies, and waiting hidden behind loaders. Hardware used to hide much of it; single-core speed no longer grows fast enough to do so.</p></details>
+    <details><summary>Is hardware cheaper than optimizing code?</summary><p>For a single team's own servers it often is, as Jeff Atwood argued in 2008. For software that runs on many machines or is billed per second in the cloud, the cost of inefficiency is multiplied by every instance and request, and fixing the software usually wins.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-12.</p>
+    <ol class="sources">
+      <li id="s1">Niklaus Wirth, "A Plea for Lean Software", IEEE Computer 28(2):64–68, February 1995, <a href="https://doi.org/10.1109/2.348001">doi:10.1109/2.348001</a>.</li>
+      <li id="s2">Wikipedia, <a href="https://en.wikipedia.org/wiki/Wirth%27s_law">Wirth's law</a> (the law's wording, Reiser's preface, Gates's, May's and Page's laws).</li>
+      <li id="s3">HTTP Archive, <a href="https://almanac.httparchive.org/en/2024/page-weight">Web Almanac 2024: Page Weight</a>.</li>
+      <li id="s4">Dan Luu, <a href="https://danluu.com/input-lag/">"Computer latency: 1977–2017"</a>, 2017.</li>
+      <li id="s5">Tom's Hardware, <a href="https://www.tomshardware.com/software/linux/linux-kernel-source-expands-beyond-40-million-lines-it-has-doubled-in-size-in-a-decade">"Linux kernel source expands beyond 40 million lines"</a>, January 2025.</li>
+      <li id="s6">Hennessy and Patterson, Computer Architecture: A Quantitative Approach, <a href="https://cse.buffalo.edu/~rsridhar/cse490-590/lec/Chapter01.pdf">chapter 1</a>.</li>
+      <li id="s7">ACM SIGARCH, <a href="https://www.sigarch.org/john-hennessy-and-david-patterson-share-acm-turing-award/">"John Hennessy and David Patterson share ACM Turing Award"</a>.</li>
+      <li id="s8">Our World in Data, <a href="https://ourworldindata.org/grapher/historical-cost-of-computer-memory-and-storage">Historical cost of computer memory and storage</a> (after John C. McCallum's series).</li>
+      <li id="s9">Jeff Atwood, <a href="https://blog.codinghorror.com/hardware-is-cheap-programmers-are-expensive/">"Hardware is Cheap, Programmers are Expensive"</a>, 18 December 2008.</li>
+      <li id="s10">Coding Horror discussion, <a href="https://discourse.codinghorror.com/t/hardware-is-cheap-programmers-are-expensive/243">"Hardware is Cheap, Programmers are Expensive"</a>.</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a></li>
+        <li><a href="../cameleer/compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

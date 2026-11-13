@@ -33,6 +33,11 @@ code, pre { font-family: var(--mono); }
 .top .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; text-decoration: none; font-size: 18px; letter-spacing: -.01em; }
 .top nav { display: flex; gap: 28px; align-items: center; font-size: 15px; }
+/* family lockup on project pages: "Cameleering / Cameleer" (new selectors only; simoom loads this file) */
+.lockup { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.lockup .fam { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.lockup .fam:hover { color: var(--ink); }
+.lockup .sep { color: var(--line); font-size: 22px; font-weight: 300; line-height: 1; }
 .top nav a { text-decoration: none; color: var(--muted); }
 .top nav a:hover { color: var(--ink); }
 .top nav a[aria-current="page"] { color: var(--ink); font-weight: 600; }
@@ -87,6 +92,9 @@ footer .credit { max-width: 32em; }
 @media (max-width: 480px) {
   .wrap { padding: 0 16px; }
   .brand { font-size: 17px; gap: 8px; }
+  .lockup { gap: 6px; }
+  .lockup .fam { font-size: 0; gap: 0; }
+  .lockup .fam img { width: 22px; height: 22px; }
   .top nav { gap: 12px; font-size: 14px; }
   .top nav a { white-space: nowrap; }
   .top nav .gh { padding: 6px 10px; gap: 6px; }

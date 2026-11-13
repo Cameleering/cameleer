@@ -1,0 +1,51 @@
+# Pages that moved: `old-path new-path`, one per line, both site paths from the root.
+#
+# scripts/build-docs.py writes a redirect stub at every old path: an absolute canonical, a
+# JavaScript location.replace that keeps the query and the #fragment, a 0-second meta refresh and
+# a visible link. No noindex (it conflicts with the canonical). Stubs are kept forever: published
+# crates, images, release notes and other sites link to old URLs.
+#
+# The build fails when a real page renders at an old path, when a target does not exist, or when a
+# target is itself an old path (a chain). scripts/check-site.py checks the stubs again after the
+# build, and crates/cameleer-main/tests/docs_harness.rs rejects links to old paths in the repo's
+# markdown. Plan: docs/design/site-restructure/plan.md.
+
+# The health pack (0.6.0): HL7, MLLP and FHIR left the core docs.
+/docs/components/mllp.html      /docs/packs/health/components/mllp.html
+/docs/components/fhir.html      /docs/packs/health/components/fhir.html
+/docs/dataformats/hl7.html      /docs/packs/health/dataformats/hl7.html
+/docs/dataformats/fhir.html     /docs/packs/health/dataformats/fhir.html
+/docs/languages/hl7terser.html  /docs/packs/health/languages/hl7terser.html
+
+# The restructure (plan: docs/design/site-restructure/plan.md): Cameleering at the root, Cameleer's
+# pages under /cameleer/, the practice pages one level up. The old home / now serves Cameleering;
+# its old anchors are forwarded to /cameleer/ by a script on the new home page.
+/cameleering/                                       /
+/cameleering/ledger/                                /ledger/
+/cameleering/method/                                /method/
+/cameleering/finops/                                /finops/
+/cameleering/when-to-rewrite/                       /when-to-rewrite/
+/cameleering/wirths-law/                            /wirths-law/
+/cameleering/ai-code-performance/                   /ai-code-performance/
+/compare/                                           /cameleer/compare/
+/compare/apache-camel-vs-cameleer/                  /cameleer/compare/apache-camel-vs-cameleer/
+/compare/camel-mcp-server-vs-cameleer/              /cameleer/compare/camel-mcp-server-vs-cameleer/
+/compare/ai-agent-tool-calls-direct-vs-cameleer/    /cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/
+/compare/enterprise-mcp-platforms/                  /cameleer/compare/enterprise-mcp-platforms/
+/compare/mulesoft-vs-apache-camel-vs-cameleer/      /cameleer/compare/mulesoft-vs-apache-camel-vs-cameleer/
+/compare/wso2-vs-apache-camel-vs-cameleer/          /cameleer/compare/wso2-vs-apache-camel-vs-cameleer/
+/alternatives/apache-camel-alternatives/            /cameleer/alternatives/apache-camel-alternatives/
+/alternatives/apache-camel-in-rust/                 /cameleer/alternatives/apache-camel-in-rust/
+/alternatives/mirth-connect-alternatives/           /cameleer/alternatives/mirth-connect-alternatives/
+/alternatives/mulesoft-alternatives/                /cameleer/alternatives/mulesoft-alternatives/
+/use-cases/                                         /cameleer/use-cases/
+/use-cases/dicom-imaging-gateway/                   /cameleer/use-cases/dicom-imaging-gateway/
+/use-cases/file-sftp-pipelines/                     /cameleer/use-cases/file-sftp-pipelines/
+/use-cases/hl7-mllp-healthcare-integration/         /cameleer/use-cases/hl7-mllp-healthcare-integration/
+/use-cases/llm-gateway-in-process/                  /cameleer/use-cases/llm-gateway-in-process/
+/use-cases/mcp-tool-server/                         /cameleer/use-cases/mcp-tool-server/
+/use-cases/mqtt-iot-edge-gateway/                   /cameleer/use-cases/mqtt-iot-edge-gateway/
+/use-cases/serverless-aws-lambda/                   /cameleer/use-cases/serverless-aws-lambda/
+/mcp/                                               /cameleer/mcp/
+/healthcare/                                        /cameleer/healthcare/
+/trust/                                             /cameleer/confidential-computing/
