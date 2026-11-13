@@ -261,3 +261,27 @@ memory). `mcp-session` loses (0.88x) with the same CPU per request; on the loop 
 less CPU per request but the blocked loops cap throughput. This confirms section 9: the cause is
 the blocking handler path, not the engine. The decision now rests on whether a completion-based
 handler API for `platform-http` and the MCP endpoint (section 9) lifts `mcp-session` to 1.2x.
+
+## 11. Round 2 on the droplets, with the completion-based path (2026-11-13)
+
+Commit `972ba65`: `HttpHandler::handle_async`, async routes in the registry, the MCP endpoint
+answers `tools/call` from its call worker, and the simoom engine runs async routes on the loop thread.
+Same method and machines as section 10 (variants: classic and simoom only; ratios per round
+below). Raw data in `docs/design/simoom-adoption-results/round2/`. Plain routes (`http`,
+`rest-json`) still go through simoom's worker pool; only MCP is on the new path.
+
+| scenario | classic | simoom | ratio (round 1, round 2) | p99 | CPU per request | threads | peak RSS |
+|---|---:|---:|---|---|---|---|---|
+| `mcp-session`, 64 | 40,100 | 55,000 | **1.37x** (1.39, 1.35) | 6.52 to 4.17 ms | 91 to 52 µs | 140 to 74 | 52.8 to 29.5 MB |
+| `http`, 256 | 96,700 | 140,500 | **1.45x** (1.52, 1.38) | 9.85 to 4.81 ms | 36.9 to 25.9 µs | 202 to 14 | 27.1 to 12.2 MB |
+| `rest-json`, 64 | 94,200 | 109,100 | 1.16x (1.15, 1.16) | 2.69 to 1.65 ms | 41.8 to 34.5 µs | 67 to 14 | 13.7 to 12.0 MB |
+| `http`, 64 | 116,900 | 128,100 | 1.10x (1.08, 1.11) | 2.13 to 1.43 ms | 33.4 to 28.5 µs | 66 to 13 | 12.1 to 10.7 MB |
+
+Binary size (stripped, `dist`, Linux, simoom added and nothing deleted yet): `core` 6,008,400 to
+6,454,952 bytes (+7.4%); `full` 25,728,912 to 26,167,688 (+1.7%, inside the +2% gate).
+
+**Gate (each scenario at least 1.2x, CPU and p99 no worse): met on MCP and on high concurrency,
+missed on the two plain routes at 64 connections (1.16x and 1.10x).** CPU per request, p99, threads and
+memory are better in every row. What is left is the pool hop on plain routes; the loop-thread
+variant measured 1.38 to 1.57x on them (section 10), so the remaining work is to run routes that
+cannot block on the loop thread: per route, not for the whole server.
