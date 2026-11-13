@@ -145,6 +145,7 @@
     </ul>
     <h3>Rung 5 in detail</h3>
     <p>In Kubernetes, a startup probe holds off the liveness and readiness probes until the application has started, and is the recommended tool for slow starters; a failed readiness probe removes the pod from its Services, and a failed liveness probe restarts it <sup><a href="#s3">[3]</a></sup>. A liveness probe that fails under load turns a warming node into a crash loop. The load balancer settings for slow start, and their limits, are listed in <a href="../degraded-fleet-test/#test-2">Test 2</a>.</p>
+    <p class="note">The TLS session cache is a case in point: <a href="../tls-handshake-cost/">the cost of a TLS handshake</a> shows what an empty one costs when clients reconnect together.</p>
     <p class="note">Native or JIT-free does not mean warm. A snapshot or a native binary removes compilation warm-up. Caches, connection pools and TLS sessions still start empty, unless the snapshot carries them and they are still valid on restore.</p>
   </div>
 </section>

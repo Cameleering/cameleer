@@ -189,7 +189,7 @@
       <li><strong>Handshakes per second per core</strong>, and CPU time per handshake.</li>
       <li><strong>p99 on connections that were already open</strong> during the wave. A storm that starves existing users is worse than one that only delays new ones.</li>
       <li><strong>Time until latency is normal again.</strong></li>
-      <li><strong>Full and resumed TLS.</strong> Run once with session resumption off and once with it on. A full handshake costs far more than a resumed one, and after a restart the session cache may be empty.</li>
+      <li><strong>Full and resumed TLS.</strong> Run once with session resumption off and once with it on. A full handshake costs more than a resumed one (about a third more in our own test, <a href="../tls-handshake-cost/#ours">details and limits</a>), and after a restart the session cache may be empty. <a href="../tls-handshake-cost/">The cost of a TLS handshake</a> explains what to measure.</li>
     </ul>
     <p class="note">Your load generator must open new connections at the rate you configure, not reuse them. k6 has <code>noConnectionReuse</code> to turn off keep-alive <sup><a href="#s10">[10]</a></sup>; Vegeta has <code>-keepalive</code>, true by default <sup><a href="#s4">[4]</a></sup>. Count the handshakes on the server side to confirm.</p>
   </div>

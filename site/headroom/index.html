@@ -114,7 +114,7 @@
     <p>Two properties decide how this goes:</p>
     <ul>
       <li><strong>Start-up time.</strong> How long from process start to serving at full speed (<a href="../cold-start-recovery/">cold start is a recovery problem</a>). Seconds of warm-up per node add up across a fleet restart.</li>
-      <li><strong>The cost of a new connection.</strong> After an outage, clients reconnect together. A full TLS handshake costs far more than a request on an open connection, so the reconnection wave can be heavier than normal traffic.</li>
+      <li><strong>The cost of a new connection.</strong> After an outage, clients reconnect together. A full TLS handshake costs far more than a request on an open connection, so the reconnection wave can be heavier than normal traffic (<a href="../tls-handshake-cost/">the cost of a TLS handshake</a>).</li>
     </ul>
     <p>The standard mitigations are well known, and Microsoft used one of them:</p>
     <div class="cards">

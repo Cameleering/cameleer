@@ -104,6 +104,8 @@ CAMELEER_NAV = [("docs/", "Docs", "keep"), ("cameleer/use-cases/", "Use cases", 
 CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", ""), ("articles/", "Articles", "")]
 # Essays and articles, newest first: /articles/ (partial "articles-list") and /feed.xml (Atom) come from this list.
 ARTICLES = [
+    ("tls-handshake-cost/", "The cost of a TLS handshake, and why a reconnection wave is a load test", "2026-11-13",
+     "TLS on an open connection is cheap; setting it up is not, and after a restart or failover many clients set up at once. What a handshake asks of a server, the arithmetic of a reconnection wave, the fixes, and what our own handshake numbers do and do not show."),
     ("cold-start-recovery/", "Cold start is a recovery problem", "2026-11-13",
      "A restarted or new server is at its weakest when it first takes traffic. Four clocks from process start to full speed, the arithmetic of recovery, the ladder of fixes, and what our own start-up numbers do and do not show."),
     ("degraded-fleet-test/", "How to test your headroom before an incident: the degraded-fleet test", "2026-11-13",
