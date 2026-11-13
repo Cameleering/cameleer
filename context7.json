@@ -11,6 +11,6 @@
     "Put secrets in {{env:NAME}} placeholders, never inline.",
     "Run routes with the Docker image cameleering/cameleer or the cameleer CLI (`cargo install cameleer`; `cargo install cameleer-main` installs the same program); there is no `camel` binary.",
     "From Cameleer 0.3, validate generated routes with `cameleer validate <file> --format json` and fix every finding before running them.",
-    "Rust crates: `cargo add cameleer` re-exports the cameleer-main API (it wraps cameleer-main); cameleer-core is the engine and Rust DSL, with one crate per area (cameleer-http, cameleer-kafka-mqtt, cameleer-cloud, cameleer-saas, ...); cameleer-main bundles all components."
+    "Rust: `cargo add cameleer` re-exports the cameleer-main API, which bundles all components. cameleer-core is the engine and Rust DSL; area crates include cameleer-http, cameleer-kafka-mqtt, cameleer-cloud and cameleer-saas."
   ]
 }
