@@ -108,6 +108,8 @@ pub struct HttpServer {
     inner: Arc<ServerInner>,
     local_addr: SocketAddr,
     accept_thread: Mutex<Option<JoinHandle<()>>>,
+    #[cfg(feature = "simoom")]
+    simoom: Option<crate::server_simoom::SimoomEngine>,
 }
 
 impl HttpServer {
@@ -118,6 +120,23 @@ impl HttpServer {
 
     /// Like [`HttpServer::bind`] with a shared handler.
     pub fn bind_arc(addr: impl ToSocketAddrs, config: ServerConfig, handler: Arc<dyn HttpHandler>) -> io::Result<HttpServer> {
+        #[cfg(feature = "simoom")]
+        if config.tls.is_none() && crate::server_simoom::selected() {
+            let engine = crate::server_simoom::SimoomEngine::start(addr, &config, handler.clone())?;
+            let local_addr = engine.local_addr();
+            let pool = ThreadPool::new(&format!("{}-{}", config.name, local_addr.port()), 1);
+            let inner = Arc::new(ServerInner {
+                running: AtomicBool::new(true),
+                connections: Mutex::new(HashMap::new()),
+                next_id: AtomicU64::new(1),
+                busy: AtomicUsize::new(0),
+                pool,
+                handler,
+                config,
+            });
+            cameleer_core::camel_debug!("cameleer-http", "HTTP server (simoom) listening on {}", local_addr);
+            return Ok(HttpServer { inner, local_addr, accept_thread: Mutex::new(None), simoom: Some(engine) });
+        }
         let listener = cameleer_tls::net::bind_listener(addr)?;
         let local_addr = listener.local_addr()?;
         let pool = ThreadPool::new(&format!("{}-{}", config.name, local_addr.port()), config.pool_size);
@@ -135,7 +154,13 @@ impl HttpServer {
             .name(format!("{}-accept-{}", inner.config.name, local_addr.port()))
             .spawn(move || accept_loop(inner2, listener))?;
         cameleer_core::camel_debug!("cameleer-http", "HTTP server listening on {}", local_addr);
-        Ok(HttpServer { inner, local_addr, accept_thread: Mutex::new(Some(accept_thread)) })
+        Ok(HttpServer {
+            inner,
+            local_addr,
+            accept_thread: Mutex::new(Some(accept_thread)),
+            #[cfg(feature = "simoom")]
+            simoom: None,
+        })
     }
 
     /// The bound address.
@@ -159,12 +184,22 @@ impl HttpServer {
 
     /// Number of open connections.
     pub fn connection_count(&self) -> usize {
+        #[cfg(feature = "simoom")]
+        if let Some(e) = &self.simoom {
+            return e.connection_count();
+        }
         self.inner.connections.lock().unwrap().len()
     }
 
     /// Gracefully stop the server. Idempotent.
     pub fn stop(&self) {
         if !self.inner.running.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        #[cfg(feature = "simoom")]
+        if let Some(e) = &self.simoom {
+            e.stop();
+            self.inner.pool.shutdown();
             return;
         }
         // wake the blocking accept() with a loopback connection
