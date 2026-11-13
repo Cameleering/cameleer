@@ -230,3 +230,34 @@ removes a hop, a gain on MCP too, but that is not yet measured.
 the MCP endpoint on the spike branch, and re-measure on the droplets. Go only if `http`, `rest-json`
 and `mcp-session` are each at least 1.2x classic with lower or equal CPU per request and p99 no worse.
 Otherwise no-go: close the spike, keep `cameleer-http`.
+
+## 10. DigitalOcean round (2026-11-13)
+
+Method as simoom's same-droplet A/B: three c-4 droplets in blr1 (Ubuntu 24.04), server droplet `a` in
+round 1 and `b` in round 2, a separate load node on the private network, variants interleaved,
+`cameleer-bench loadgen-remote`, 5 s warm-up and 3 x 5 s per run. Server CPU from `/proc/<pid>/stat`
+over 14 s of load. Two rounds, so a ratio is the mean of two runs on two droplets (droplet `b`
+was about 25% faster than `a` for every variant). Raw lines, machine and script:
+`docs/design/simoom-adoption-results/`. Droplets deleted afterwards.
+
+| scenario | variant | req/s | vs classic | p99 | CPU per request | threads | peak RSS |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `http`, 64 conns | classic | 116,300 | 1.00x | 2.51 ms | 33.8 µs | 67 | 12.1 MB |
+| | simoom, pool | 133,600 | 1.15x | 1.38 ms | 27.3 µs | 12 | 10.9 MB |
+| | simoom, loop thread | 160,700 | 1.38x | 0.81 ms | 16.2 µs | 4 | 8.4 MB |
+| `http`, 256 conns | classic | 98,600 | 1.00x | 10.9 ms | 37.1 µs | 202 | 25.9 MB |
+| | simoom, pool | 139,800 | 1.42x | 4.22 ms | 24.9 µs | 14 | 11.9 MB |
+| | simoom, loop thread | 154,900 | 1.57x | 4.27 ms | 16.1 µs | 4 | 9.1 MB |
+| `rest-json`, 64 | classic | 94,300 | 1.00x | 2.75 ms | 42.1 µs | 67 | 13.5 MB |
+| | simoom, pool | 113,400 | 1.20x | 1.57 ms | 34.0 µs | 13 | 12.0 MB |
+| | simoom, loop thread | 134,300 | 1.42x | 1.34 ms | 20.8 µs | 4 | 9.2 MB |
+| `mcp-session`, 64 | classic | 41,500 | 1.00x | 6.03 ms | 89.6 µs | 146 | 45.5 MB |
+| | simoom, pool | 36,700 | **0.88x** | 6.39 ms | 89.7 µs | 140 | 56.4 MB |
+| | simoom, loop thread | 31,800 | **0.77x** | 5.19 ms | 62.0 µs | 13 | 13.3 MB |
+
+**Gate (each scenario at least 1.2x with CPU and p99 no worse): not met.** Plain routes win clearly,
+and more so at 256 connections (1.42x with the pool, p99 2.6x lower, 8x fewer threads, half the
+memory). `mcp-session` loses (0.88x) with the same CPU per request; on the loop thread it uses 31%
+less CPU per request but the blocked loops cap throughput. This confirms section 9: the cause is
+the blocking handler path, not the engine. The decision now rests on whether a completion-based
+handler API for `platform-http` and the MCP endpoint (section 9) lifts `mcp-session` to 1.2x.
