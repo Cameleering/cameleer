@@ -11,7 +11,7 @@ simoom's own docs (`docs/STATUS.md`, `docs/parity/*.md`, `docs/SECURITY.md`,
 Should Cameleer replace its own HTTP server, HTTP client, HTTP/2 and the HTTP side of its TLS with
 the published simoom 0.1.0 crates?
 
-**Recommendation (revised 2026-11-13, see §9): adopt only if a measured gate is met, and then fully; no optional feature.** The owner already set this direction (simoom
+**Recommendation (revised 2026-11-13, see Â§9): adopt only if a measured gate is met, and then fully; no optional feature.** The owner already set this direction (simoom
 plan Â§0 items 0 and 8: Cameleer deletes its HTTP, HTTP/2, WebSocket and TLS code once simoom is
 tested, verified and benchmarked, and depends on the published crates). What this note adds is the
 gain-and-loss accounting and a path with a gate and a way back at every step.
@@ -201,17 +201,17 @@ states while under load, `cpu-ab.sh` and `thr.sh`):
 
 | scenario | engine | req/s | server CPU per request | threads |
 |---|---|---:|---:|---:|
-| `mcp-session` | classic | 64,300 | 59 µs | 141 |
-| `mcp-session` | simoom, pool | 50,700 | 70 µs (+19%) | 145 |
-| `mcp-session` | simoom, loop thread | 36,700 | 75 µs, CPUs 69% busy | 40 |
-| `http` | classic | 97,600 | 40 µs | 67 |
-| `http` | simoom, pool | 113,400 | 36 µs | 12 |
-| `http` | simoom, loop thread | 130,300 | 30 µs | 5 |
+| `mcp-session` | classic | 64,300 | 59 Âµs | 141 |
+| `mcp-session` | simoom, pool | 50,700 | 70 Âµs (+19%) | 145 |
+| `mcp-session` | simoom, loop thread | 36,700 | 75 Âµs, CPUs 69% busy | 40 |
+| `http` | classic | 97,600 | 40 Âµs | 67 |
+| `http` | simoom, pool | 113,400 | 36 Âµs | 12 |
+| `http` | simoom, loop thread | 130,300 | 30 Âµs | 5 |
 
 - In a legacy MCP session every `tools/call` runs on the MCP server's own worker pool
   (`mcp-call`, `call_with_channel`) and the HTTP handler thread waits on a channel for the result.
   That is one hop already. Classic has it once (connection thread, then `mcp-call`).
-- With simoom's pool there are two hops (offload worker, then `mcp-call`): 11 µs more CPU per
+- With simoom's pool there are two hops (offload worker, then `mcp-call`): 11 Âµs more CPU per
   request on a box where CPU is the limit, so 21% fewer requests.
 - On the loop thread the handler blocks the loop while `mcp-call` works. Four loops can then have
   only four calls in flight and the CPUs sit idle (31%): 43% fewer requests.

@@ -1,8 +1,7 @@
 //! The simoom event-loop engine behind [`crate::server::HttpServer`] (spike; see
 //! `docs/design/simoom-adoption.md`).
 //!
-//! Selected at run time with `CAMEL_HTTP_ENGINE=simoom` (plain HTTP only; TLS listeners keep the
-//! thread-per-connection engine in this spike).
+//! Plain HTTP and HTTPS (TLS 1.2 and 1.3, optional client certificates).
 //!
 //! How a request runs:
 //!
@@ -123,12 +122,9 @@ impl Governor {
 
 /// A running simoom server.
 pub struct SimoomEngine {
-    handle: simoom::ServerHandle,
+    handle: std::sync::Mutex<Option<simoom::ServerHandle>>,
+    addr: SocketAddr,
     shutdown: Duration,
-}
-
-pub fn selected() -> bool {
-    std::env::var("CAMEL_HTTP_ENGINE").map(|v| v.eq_ignore_ascii_case("simoom")).unwrap_or(false)
 }
 
 impl SimoomEngine {
@@ -136,10 +132,14 @@ impl SimoomEngine {
         let mut limits = simoom::Limits::default();
         limits.max_body = config.limits.max_body_bytes as u64;
         limits.max_head = config.limits.max_header_bytes;
+        limits.max_request_line = config.limits.max_header_bytes;
+        limits.max_header_line = config.limits.max_header_bytes;
         limits.max_headers = config.limits.max_headers;
+        limits.head_timeout = config.read_timeout;
         limits.keep_alive_timeout = config.keep_alive_timeout;
         limits.write_timeout = config.write_timeout;
         limits.max_requests_per_connection = config.max_keep_alive_requests as u64;
+        limits.offload_threads = config.pool_size.max(1);
         let governor = Arc::new(Governor::new());
         let service = move |req: &mut simoom::Request<'_>, reply: simoom::Reply<'_>| -> simoom::Outcome {
             // the route, found once (a streamed body goes to the pool unexamined)
@@ -162,10 +162,11 @@ impl SimoomEngine {
                         let mut r = build_request(req);
                         if !(has_body(&r) && handler.stream_request(&r)) {
                             let head_request = r.method == "HEAD";
+                            let http10 = r.version == HttpVersion::Http10;
                             let t0 = Instant::now();
                             let resp = run(&*handler, &mut r);
                             governor.record(&st, t0.elapsed());
-                            return finish(reply, resp, head_request);
+                            return finish(reply, resp, head_request, http10);
                         }
                     }
                     state = Some(st);
@@ -176,21 +177,72 @@ impl SimoomEngine {
             let observe = state.map(|st| (governor.clone(), st));
             reply.offload(req, move |req, reply| serve(&*h, req, reply, observe))
         };
-        let handle = simoom::Server::builder().listen(addr).limits(limits).service(service).start()?;
-        Ok(SimoomEngine { handle, shutdown: config.shutdown_timeout })
+        let mut builder = simoom::Server::builder().limits(limits).service(service);
+        builder = match &config.tls {
+            Some(tls) => builder.listen_tls(addr).tls(server_tls(tls)?),
+            None => builder.listen(addr),
+        };
+        let handle = builder.start()?;
+        let addr = handle.local_addr();
+        Ok(SimoomEngine { handle: std::sync::Mutex::new(Some(handle)), addr, shutdown: config.shutdown_timeout })
     }
 
     pub fn local_addr(&self) -> SocketAddr {
-        self.handle.local_addr()
+        self.addr
     }
 
     pub fn connection_count(&self) -> usize {
-        self.handle.stats().active
+        self.handle.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map_or(0, |h| h.stats().active)
     }
 
+    /// Stop gracefully. Returns once the listening port can be bound again; the loops finish
+    /// closing their connections in the background (a peer that ignores the close can hold one
+    /// for a couple of seconds).
     pub fn stop(&self) {
-        self.handle.stop(self.shutdown);
+        let handle = self.handle.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(h) = handle {
+            h.stop(self.shutdown);
+            let _ = std::thread::Builder::new().name("simoom-stop".into()).spawn(move || h.join());
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if std::net::TcpListener::bind(self.addr).is_ok() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
     }
+}
+
+/// simoom's TLS configuration for the certificate, key and options of a [`cameleer_tls::TlsServerConfig`].
+fn server_tls(cfg: &cameleer_tls::TlsServerConfig) -> io::Result<simoom_tls::ServerConfig> {
+    use cameleer_tls::TlsVersion;
+    let bad = |e: String| io::Error::new(io::ErrorKind::InvalidInput, format!("TLS configuration: {e}"));
+    let x = cfg.export();
+    let key = simoom_tls::CertifiedKey::from_der(x.chain, &x.key_pkcs8).map_err(|e| bad(e.to_string()))?;
+    let mut out = simoom_tls::ServerConfig::new(key);
+    out.alpn = x.alpn;
+    let version = |v: TlsVersion| match v {
+        TlsVersion::Tls12 => simoom_tls::tls::ProtocolVersion::Tls12,
+        TlsVersion::Tls13 => simoom_tls::tls::ProtocolVersion::Tls13,
+    };
+    out.min_version = version(x.min_version);
+    out.max_version = version(x.max_version);
+    if !x.resumption {
+        out.ticketer = None;
+        out.session_ids = None;
+    }
+    if x.client_auth != cameleer_tls::ClientAuth::None {
+        let mut roots = simoom_tls::x509::RootStore::empty();
+        for der in &x.client_roots {
+            roots.add_der(der).map_err(bad)?;
+        }
+        out.client_auth = match x.client_auth {
+            cameleer_tls::ClientAuth::Need => simoom_tls::ClientAuth::Required(roots),
+            _ => simoom_tls::ClientAuth::Optional(roots),
+        };
+    }
+    Ok(out)
 }
 
 fn has_body(r: &HttpRequest) -> bool {
@@ -234,6 +286,7 @@ fn serve(handler: &dyn HttpHandler, req: &mut simoom::Request<'_>, reply: simoom
         r.body = body;
     }
     let head_request = r.method == "HEAD";
+    let http10 = r.version == HttpVersion::Http10;
     let t0 = Instant::now();
     let resp = run(handler, &mut r);
     if let Some((g, st)) = &observe {
@@ -245,9 +298,12 @@ fn serve(handler: &dyn HttpHandler, req: &mut simoom::Request<'_>, reply: simoom
         }
     }
     if let Some(h) = stream_handle {
-        cameleer_tls::stream_body::release(&h);
+        // an echo route answers with the request's own stream: it is taken when the response goes out
+        if resp.stream.as_ref() != Some(&h) {
+            cameleer_tls::stream_body::release(&h);
+        }
     }
-    finish(reply, resp, head_request)
+    finish(reply, resp, head_request, http10)
 }
 
 /// The head of a request (no body).
@@ -270,6 +326,9 @@ fn build_head(req: &mut simoom::Request<'_>) -> HttpRequest {
     }
     r.headers = headers;
     r.remote_addr = req.peer_addr();
+    if let Some(t) = req.tls() {
+        r.peer_certificates = t.peer_certificates().to_vec();
+    }
     r
 }
 
@@ -282,8 +341,9 @@ fn build_request(req: &mut simoom::Request<'_>) -> HttpRequest {
 
 /// Send a response. Plain bodies go out directly; streams and chunked bodies are pumped from their
 /// own thread, so a blocking read never holds the loop (or a pool worker).
-fn finish(reply: simoom::Reply<'_>, mut resp: HttpResponse, head_request: bool) -> simoom::Outcome {
-    if resp.stream.is_some() || (resp.chunked && !head_request && !resp.body.is_empty()) {
+fn finish(reply: simoom::Reply<'_>, mut resp: HttpResponse, head_request: bool, http10: bool) -> simoom::Outcome {
+    // (an HTTP/1.0 client gets a plain body with a length: no chunking)
+    if resp.stream.is_some() || (resp.chunked && !http10 && !head_request && !resp.body.is_empty()) {
         let responder = reply.defer();
         complete(responder, resp, head_request);
         return simoom::Outcome::Deferred;
@@ -354,4 +414,53 @@ fn complete(responder: simoom::Responder, mut resp: HttpResponse, head_request: 
         return;
     }
     responder.send(out.body(std::mem::take(&mut resp.body)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_route_is_promoted_after_a_fast_sample_and_demoted_when_it_stalls() {
+        let g = Governor::new();
+        let st = g.state(7);
+        assert!(!g.inline_ok(&st), "a new route starts on the pool");
+        // 126 of 128 calls under 1 ms: promoted
+        for i in 0..SAMPLE {
+            g.observe(&st, if i < 2 { Duration::from_millis(3) } else { Duration::from_micros(80) });
+        }
+        assert!(g.inline_ok(&st));
+        // one call over 50 ms is plainly blocking: back to the pool, and not promoted again soon
+        g.record(&st, Duration::from_millis(80));
+        assert!(!g.inline_ok(&st));
+        for _ in 0..SAMPLE {
+            g.observe(&st, Duration::from_micros(80));
+        }
+        assert!(!g.inline_ok(&st), "a demoted route waits out its minute");
+    }
+
+    #[test]
+    fn a_blocking_route_is_never_promoted() {
+        let g = Governor::new();
+        let st = g.state(8);
+        for _ in 0..(SAMPLE * 4) {
+            g.observe(&st, Duration::from_millis(20));
+        }
+        assert!(!g.inline_ok(&st));
+    }
+
+    #[test]
+    fn three_stalls_in_a_second_demote_a_route() {
+        let g = Governor::new();
+        let st = g.state(9);
+        for _ in 0..SAMPLE {
+            g.observe(&st, Duration::from_micros(50));
+        }
+        assert!(g.inline_ok(&st));
+        g.record(&st, Duration::from_millis(6));
+        g.record(&st, Duration::from_millis(6));
+        assert!(g.inline_ok(&st));
+        g.record(&st, Duration::from_millis(6));
+        assert!(!g.inline_ok(&st));
+    }
 }

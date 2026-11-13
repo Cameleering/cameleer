@@ -272,8 +272,10 @@ fn chunked_responses_and_requests_on_the_wire() {
     let p = port(&ctx);
     let out = raw(p, "GET /chunked HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
     assert!(out.starts_with("HTTP/1.1 200 OK\r\n"), "{}", &out[..60.min(out.len())]);
-    assert!(out.contains("Transfer-Encoding: chunked\r\n"));
-    assert!(!out.contains("Content-Length"));
+    // header names are case-insensitive (the server writes them in lower case)
+    let lower = out.to_ascii_lowercase();
+    assert!(lower.contains("transfer-encoding: chunked\r\n"));
+    assert!(!lower.contains("content-length"));
     assert!(out.contains("\r\n2000\r\n"), "8192-byte chunks expected");
     assert!(out.ends_with("\r\n0\r\n\r\n"));
     let r = get(&format!("http://127.0.0.1:{}/chunked", p));
@@ -281,8 +283,10 @@ fn chunked_responses_and_requests_on_the_wire() {
     assert_eq!(r.body_text(), big);
     // HTTP/1.0 client: no chunking
     let out = raw(p, "GET /chunked HTTP/1.0\r\n\r\n");
-    assert!(out.starts_with("HTTP/1.0 200 OK\r\n"));
-    assert!(out.contains(&format!("Content-Length: {}\r\n", big.len())));
+    // (a 1.1 server may answer a 1.0 client with its own version, but must not chunk)
+    assert!(out.starts_with("HTTP/1.0 200 OK\r\n") || out.starts_with("HTTP/1.1 200 OK\r\n"), "{}", &out[..40]);
+    assert!(out.to_ascii_lowercase().contains(&format!("content-length: {}\r\n", big.len())));
+    assert!(!out.to_ascii_lowercase().contains("transfer-encoding"));
     // chunked request body + Expect: 100-continue
     let out = raw(
         p,
@@ -539,8 +543,8 @@ fn streaming_request_and_response_bodies() {
 
     // on the wire: the streamed response uses chunked transfer coding
     let reply = raw(p, "GET /download HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-    assert!(reply.contains("Transfer-Encoding: chunked\r\n"), "{}", &reply[..200]);
-    assert!(!reply[..reply.find("\r\n\r\n").unwrap()].contains("Content-Length"));
+    assert!(reply.to_ascii_lowercase().contains("transfer-encoding: chunked\r\n"), "{}", &reply[..200]);
+    assert!(!reply[..reply.find("\r\n\r\n").unwrap()].to_ascii_lowercase().contains("content-length"));
 
     // echo of a streamed request into a streamed response
     let body = stream_body::register(Box::new(Gen { pos: 0, n: 100_000 }), None, "echo");

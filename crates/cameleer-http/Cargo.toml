@@ -16,16 +16,16 @@ description = "Cameleer HTTP/1.1 server and client, http/platform-http component
 cameleer-core = { path = "../cameleer-core", version = "0.6.0", default-features = false }
 cameleer-tls = { path = "../cameleer-tls", version = "0.6.0" }
 cameleer-grpc = { path = "../cameleer-grpc", version = "0.6.0", default-features = false, optional = true }
-# Spike (docs/design/simoom-adoption.md, stage 1): the simoom event-loop engine, off by default,
-# selected at run time with CAMEL_HTTP_ENGINE=simoom.
-simoom = { version = "0.1.0", optional = true }
+# The HTTP server engine (docs/design/simoom-adoption.md): an event loop per core, HTTP/1.1 and TLS.
+simoom = { version = "0.1.0", default-features = false, features = ["http1", "tls", "tls-extra", "guard", "idle-trim"] }
+# TLS 1.2 next to 1.3, as the server has always offered
+simoom-tls = { version = "0.1.0", default-features = false, features = ["tls12", "rsa", "p384", "ed25519", "chacha20"] }
 
 # `http2`: the http producer's `httpVersion=HTTP/2` (cameleer-grpc's HTTP/2 client). On by
 # default and in cameleer-main's `full`; without it that option fails with the feature to enable.
 [features]
 default = ["http2"]
 http2 = ["dep:cameleer-grpc"]
-simoom = ["dep:simoom"]
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not
