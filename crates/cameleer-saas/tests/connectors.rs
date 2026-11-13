@@ -268,7 +268,9 @@ fn github_consumers_pull_requests_issues_commits() {
     })
     .unwrap();
     ctx.start().unwrap();
-    std::thread::sleep(Duration::from_millis(150)); // first polls record the existing state
+    // the first polls (one per consumer) record the existing state: wait until they were answered, not for a fixed time
+    assert!(mock.server.wait_for_requests(6, Duration::from_secs(20)));
+    std::thread::sleep(Duration::from_millis(100));
     let n = mock.add_pull("new feature", "s1");
     mock.add_issue("new issue");
     mock.add_commit("main", "c2", "fix bug", "bob");

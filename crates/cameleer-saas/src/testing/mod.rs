@@ -150,6 +150,19 @@ impl MockServer {
         self.requests.lock().unwrap().clone()
     }
 
+    /// Waits until at least `n` requests have arrived (up to `timeout`). A poll that has reached the
+    /// server and been answered is progress a fixed sleep cannot promise on a slow machine.
+    pub fn wait_for_requests(&self, n: usize, timeout: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + timeout;
+        while self.requests.lock().unwrap().len() < n {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        true
+    }
+
     /// Requests to a path.
     pub fn requests_to(&self, path: &str) -> Vec<Recorded> {
         self.requests().into_iter().filter(|r| r.path == path).collect()
