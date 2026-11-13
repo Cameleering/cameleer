@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.cameleering/cameleer",
+  "title": "Cameleer",
+  "description": "Serve Camel-style routes as MCP tools with approvals, rate limits and audit; also an MCP gateway.",
+  "websiteUrl": "https://cameleer.ing/cameleer/mcp/",
+  "repository": {
+    "url": "https://github.com/cameleering/cameleer",
+    "source": "github"
+  },
+  "version": "0.6.0",
+  "packages": [
+    {
+      "registryType": "cargo",
+      "identifier": "cameleer",
+      "version": "0.6.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "run"
+        },
+        {
+          "type": "positional",
+          "valueHint": "routes_file",
+          "description": "Camel YAML, XML or Rust routes file; its ai-tool routes become the MCP tools",
+          "format": "filepath",
+          "isRequired": true
+        },
+        {
+          "type": "named",
+          "name": "--mcp-stdio"
+        }
+      ]
+    }
+  ]
+}

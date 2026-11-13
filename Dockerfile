@@ -70,7 +70,8 @@ LABEL org.opencontainers.image.title="Cameleer" \
       org.opencontainers.image.source="https://github.com/cameleering/cameleer" \
       org.opencontainers.image.url="https://cameleer.ing/cameleer/" \
       org.opencontainers.image.documentation="https://github.com/cameleering/cameleer/blob/main/docs/DEPLOYMENT.md" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="Apache-2.0" \
+      io.modelcontextprotocol.server.name="io.github.cameleering/cameleer"
 WORKDIR /routes
 EXPOSE 8080
 USER 65532:65532
