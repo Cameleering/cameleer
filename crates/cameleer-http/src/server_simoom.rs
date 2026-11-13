@@ -37,6 +37,18 @@ impl SimoomEngine {
         // offload pool, to measure the cost of the thread hop.
         let inline = std::env::var("CAMEL_SIMOOM_INLINE").is_ok();
         let service = move |req: &mut simoom::Request<'_>, reply: simoom::Reply<'_>| -> simoom::Outcome {
+            // Routes that answer later (never block) run on the loop thread and answer from
+            // whatever thread finishes the work: no worker is held while they wait.
+            if !req.is_streamed() {
+                let head = HttpRequest::new(&String::from_utf8_lossy(req.method()), &String::from_utf8_lossy(req.target()));
+                if handler.is_async(&head) {
+                    let r = build_request(req);
+                    let head_request = r.method == "HEAD";
+                    let responder = reply.defer();
+                    handler.handle_async(r, Box::new(move |resp| complete(responder, resp, head_request)));
+                    return simoom::Outcome::Deferred;
+                }
+            }
             if inline {
                 return serve(&*handler, req, reply);
             }
@@ -163,4 +175,69 @@ fn send(reply: simoom::Reply<'_>, mut resp: HttpResponse, head_request: bool) ->
         return simoom::Outcome::Done;
     }
     reply.body(std::mem::take(&mut resp.body))
+}
+
+/// The head and the buffered body of a request.
+fn build_request(req: &mut simoom::Request<'_>) -> HttpRequest {
+    let target = String::from_utf8_lossy(req.target()).into_owned();
+    let mut r = HttpRequest::new(&String::from_utf8_lossy(req.method()), &target);
+    r.version = match req.version() {
+        simoom::Version::Http10 => HttpVersion::Http10,
+        _ => HttpVersion::Http11,
+    };
+    let mut headers = HttpHeaders::new();
+    for (k, v) in req.headers() {
+        headers.add(String::from_utf8_lossy(k).into_owned(), String::from_utf8_lossy(v).into_owned());
+    }
+    if !headers.contains("Host") {
+        if let Some(h) = req.host() {
+            headers.add("Host", String::from_utf8_lossy(h).into_owned());
+        }
+    }
+    r.headers = headers;
+    r.body = req.body().to_vec();
+    r.remote_addr = req.peer_addr();
+    r
+}
+
+/// Send a response through a deferred responder, from the thread that finished the work.
+fn complete(responder: simoom::Responder, mut resp: HttpResponse, head_request: bool) {
+    let mut out = simoom::Response::new(resp.status);
+    for (k, v) in resp.headers.iter() {
+        if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding") {
+            continue;
+        }
+        out = out.header(k, v);
+    }
+    if let Some(handle) = resp.stream.take() {
+        if let Some((mut reader, _)) = cameleer_tls::stream_body::take(&handle) {
+            if head_request {
+                responder.send(out);
+                return;
+            }
+            // an event stream: pumped from its own thread so the caller can go on producing
+            let _ = std::thread::Builder::new().name("simoom-stream".into()).spawn(move || {
+                let mut sink = responder.stream(out);
+                let mut buf = vec![0u8; 16 * 1024];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            if sink.write(&buf[..n]).is_err() {
+                                sink.abort();
+                                return;
+                            }
+                        }
+                        Err(_) => {
+                            sink.abort();
+                            return;
+                        }
+                    }
+                }
+                sink.finish();
+            });
+            return;
+        }
+    }
+    responder.send(out.body(std::mem::take(&mut resp.body)));
 }

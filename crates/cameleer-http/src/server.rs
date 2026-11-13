@@ -30,9 +30,26 @@ use cameleer_tls::TlsServerConfig;
 
 use crate::http::{read_chunked, read_request_head, write_response, BodyKind, BodyReader, HttpRequest, HttpResponse, Limits};
 
+/// Delivers a response later (see [`HttpHandler::handle_async`]).
+pub type Responder = Box<dyn FnOnce(HttpResponse) + Send>;
+
 /// Handles a request and produces a response.
 pub trait HttpHandler: Send + Sync {
     fn handle(&self, request: &mut HttpRequest) -> HttpResponse;
+
+    /// Whether this request is answered by [`HttpHandler::handle_async`]: the handler never
+    /// blocks the calling thread, it hands the work on and answers through the responder, from
+    /// any thread, later. An event-loop engine calls it on the loop thread; the thread-per-
+    /// connection engine waits for the answer.
+    fn is_async(&self, _request: &HttpRequest) -> bool {
+        false
+    }
+
+    /// Answer `request` through `respond` (exactly once, from any thread). Only called when
+    /// [`HttpHandler::is_async`] is true.
+    fn handle_async(&self, mut request: HttpRequest, respond: Responder) {
+        respond(self.handle(&mut request));
+    }
 
     /// Whether the body of this request (head only, body still on the connection) should be
     /// streamed: it is then passed as a `cameleer_tls::stream_body` handle in
@@ -408,7 +425,17 @@ fn serve_connection(inner: &ServerInner, tcp: &TcpStream) {
         let head = req.method == "HEAD";
         let version = req.version;
         let handler = inner.handler.clone();
-        let mut resp = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.handle(&mut req))) {
+        let mut resp = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if handler.is_async(&req) {
+                let (tx, rx) = std::sync::mpsc::channel();
+                handler.handle_async(req.clone(), Box::new(move |r| {
+                    let _ = tx.send(r);
+                }));
+                rx.recv().unwrap_or_else(|_| HttpResponse::text(500, "Internal Server Error"))
+            } else {
+                handler.handle(&mut req)
+            }
+        })) {
             Ok(r) => r,
             Err(_) => HttpResponse::text(500, "Internal Server Error"),
         };

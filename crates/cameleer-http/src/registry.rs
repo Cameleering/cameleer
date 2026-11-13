@@ -128,11 +128,16 @@ impl HttpRouteSpec {
 /// Handles a matched request; receives the path template parameters.
 pub type RouteHandler = Arc<dyn Fn(&mut HttpRequest, Vec<(String, String)>) -> HttpResponse + Send + Sync>;
 
+/// Handles a matched request without blocking: answers through the responder, later.
+pub type AsyncRouteHandler = Arc<dyn Fn(HttpRequest, Vec<(String, String)>, crate::server::Responder) + Send + Sync>;
+
 struct RouteEntry {
     id: u64,
     spec: HttpRouteSpec,
     template: PathTemplate,
     handler: RouteHandler,
+    /// Set for routes turned asynchronous with [`Router::make_async`].
+    async_handler: Option<AsyncRouteHandler>,
     /// Request bodies are streamed (`disableStreamCache=true`).
     streaming: bool,
 }
@@ -169,8 +174,40 @@ impl Router {
             }
         }
         let id = ROUTE_IDS.fetch_add(1, Ordering::Relaxed);
-        entries.push(RouteEntry { id, spec, template, handler, streaming: false });
+        entries.push(RouteEntry { id, spec, template, handler, async_handler: None, streaming: false });
         Ok(id)
+    }
+
+    /// Turn a registered route into an asynchronous one (blocking callers wait for the answer).
+    pub fn make_async(&self, id: u64, handler: AsyncRouteHandler) {
+        let h2 = handler.clone();
+        let blocking: RouteHandler = Arc::new(move |req: &mut HttpRequest, params: Vec<(String, String)>| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            h2(req.clone(), params, Box::new(move |r| {
+                let _ = tx.send(r);
+            }));
+            rx.recv().unwrap_or_else(|_| HttpResponse::text(500, "Internal Server Error"))
+        });
+        for e in self.entries.write().unwrap().iter_mut().filter(|e| e.id == id) {
+            e.handler = blocking.clone();
+            e.async_handler = Some(handler.clone());
+        }
+    }
+
+    /// The asynchronous handler the request would be dispatched to, with its path parameters.
+    pub fn async_target(&self, req: &HttpRequest) -> Option<(AsyncRouteHandler, Vec<(String, String)>)> {
+        let entries = self.entries.read().unwrap();
+        let mut candidates: Vec<(&RouteEntry, Vec<(String, String)>)> = entries
+            .iter()
+            .filter(|e| e.spec.allows(&req.method))
+            .filter_map(|e| e.template.matches(&req.raw_path, e.spec.match_on_uri_prefix).map(|p| (e, p)))
+            .collect();
+        candidates.sort_by_key(|(e, _)| {
+            let prefix = e.spec.match_on_uri_prefix || e.template.wildcard;
+            (prefix, std::cmp::Reverse(e.template.literal_count()), std::cmp::Reverse(e.template.segments.len()))
+        });
+        let (e, params) = candidates.into_iter().next()?;
+        e.async_handler.clone().map(|h| (h, params))
     }
 
     /// Remove a route; returns true if it existed.
@@ -271,6 +308,18 @@ impl crate::server::HttpHandler for RouterHandler {
     fn stream_request(&self, request: &HttpRequest) -> bool {
         self.0.wants_stream(request)
     }
+    fn is_async(&self, request: &HttpRequest) -> bool {
+        self.0.async_target(request).is_some()
+    }
+    fn handle_async(&self, request: HttpRequest, respond: crate::server::Responder) {
+        match self.0.async_target(&request) {
+            Some((h, params)) => h(request, params, respond),
+            None => {
+                let mut r = request;
+                respond(self.0.dispatch(&mut r))
+            }
+        }
+    }
 }
 
 /// A server shared by all consumers bound to its port.
@@ -367,6 +416,15 @@ impl ServerRegistry {
         cameleer_core::camel_info!("cameleer-http", "HTTP server started on {}:{}", host, actual);
         servers.insert(actual, Arc::new(SharedServer { server: Some(server), tls: config.tls.is_some(), router }));
         Ok(Registration { port: actual, route_id })
+    }
+
+    /// Like [`ServerRegistry::register`] for a handler that answers later and never blocks.
+    pub fn register_async(&self, host: &str, port: u16, config: &ServerConfig, spec: HttpRouteSpec, handler: AsyncRouteHandler) -> Result<Registration> {
+        let reg = self.register(host, port, config, spec, Arc::new(|_: &mut HttpRequest, _: Vec<(String, String)>| HttpResponse::new(500)))?;
+        if let Some(s) = self.servers.lock().unwrap().get(&reg.port) {
+            s.router.make_async(reg.route_id, handler);
+        }
+        Ok(reg)
     }
 
     /// Remove a registration; the server is stopped when its last route is removed.

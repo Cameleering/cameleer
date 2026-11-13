@@ -9,8 +9,8 @@ run() { # engine scenario
   taskset -c 4-11 $B loadgen-remote 127.0.0.1 $port $sc 64 5 5 3 2>&1 | sed "s/^/$eng /"
   kill $pid 2>/dev/null; wait $pid 2>/dev/null
 }
-for round in 1 2; do
-  for sc in http rest-json mcp-session; do
-    for eng in classic simoom simoom+inline; do run $eng $sc; done
+for round in 1 2 3; do
+  for sc in mcp-session http; do
+    for eng in classic simoom; do run $eng $sc; done
   done
 done

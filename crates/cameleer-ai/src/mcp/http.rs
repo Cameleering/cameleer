@@ -2,6 +2,7 @@
 //! (`camel.server.port`, the same server as `platform-http` routes and the management
 //! endpoints).
 
+use std::cell::RefCell;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -9,8 +10,8 @@ use std::time::Duration;
 use cameleer_core::error::Result;
 use cameleer_core::value::{ObjectMap, Value};
 use cameleer_http::http::{HttpRequest, HttpResponse};
-use cameleer_http::registry::{registry, HttpRouteSpec, Registration, RouteHandler};
-use cameleer_http::server::ServerConfig;
+use cameleer_http::registry::{registry, AsyncRouteHandler, HttpRouteSpec, Registration, RouteHandler};
+use cameleer_http::server::{Responder, ServerConfig};
 
 use super::auth::{AuthError, Authenticator};
 use super::sse::SseStream;
@@ -32,8 +33,16 @@ impl McpHttpServer {
         // the shared port speaks HTTPS with camel.server.sslEnabled, so the endpoint does too
         let server_config = ServerConfig { name: "camel-mcp".into(), tls, ..Default::default() };
         let e2 = endpoint.clone();
-        let handler: RouteHandler = Arc::new(move |req: &mut HttpRequest, _p: Vec<(String, String)>| e2.handle(req));
-        let reg = registry().register(&cfg.host, cfg.port, &server_config, HttpRouteSpec { path: cfg.path.clone(), ..Default::default() }, handler)?;
+        // The endpoint never blocks the thread it is called on: a `tools/call` is handed to a
+        // pooled worker that answers through the responder (see `call_deferred`).
+        let handler: AsyncRouteHandler = Arc::new(move |mut req: HttpRequest, _p: Vec<(String, String)>, respond: Responder| {
+            DEFER.with(|d| *d.borrow_mut() = Some(respond));
+            let resp = e2.handle(&mut req);
+            if let Some(respond) = take_defer() {
+                respond(resp);
+            }
+        });
+        let reg = registry().register_async(&cfg.host, cfg.port, &server_config, HttpRouteSpec { path: cfg.path.clone(), ..Default::default() }, handler)?;
         let port = reg.port;
         let mut regs = vec![reg];
         if cfg.auth.is_oauth() {
@@ -71,6 +80,16 @@ impl Drop for McpHttpServer {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+thread_local! {
+    /// The responder of the request being handled by the `AsyncRouteHandler`, taken by a call
+    /// that answers later.
+    static DEFER: RefCell<Option<Responder>> = const { RefCell::new(None) };
+}
+
+fn take_defer() -> Option<Responder> {
+    DEFER.with(|d| d.borrow_mut().take())
 }
 
 struct Endpoint {
@@ -234,6 +253,11 @@ impl Endpoint {
         if method == "tools/call" && wants_sse {
             return self.call_with_channel(id, params, rc);
         }
+        if method == "tools/call" {
+            if let Some(respond) = take_defer() {
+                return self.call_deferred(id, params, rc, respond, false);
+            }
+        }
         // legacy JSON-RPC errors travel in a 200 response, as the 2025 SDKs do
         json_rpc(200, &response(&id, self.server.dispatch(method, &params, &rc)))
     }
@@ -243,6 +267,9 @@ impl Endpoint {
     /// worker; on its first message to the client the response becomes an event stream that
     /// carries the messages and then the result, otherwise it is plain JSON.
     fn call_with_channel(&self, id: Value, params: ObjectMap, mut rc: RequestContext) -> HttpResponse {
+        if let Some(respond) = take_defer() {
+            return self.call_deferred(id, params, rc, respond, true);
+        }
         let (tx, rx) = channel::<Event>();
         if rc.era != Era::Modern {
             let chan = Arc::new(HttpClientChannel { server: self.server.clone(), events: Mutex::new(tx.clone()) });
@@ -274,6 +301,37 @@ impl Endpoint {
             }
             Err(_) => rpc_error(&id, RpcError::new(codes::INTERNAL_ERROR, "The call ended without a result")),
         }
+    }
+
+    /// A `tools/call` answered through `respond`: the call runs on a pooled worker and no thread
+    /// waits for it. With `events` the response becomes an event stream on the call's first message
+    /// to the client, as in `call_with_channel`; the worker is the one that emits the events.
+    fn call_deferred(&self, id: Value, params: ObjectMap, mut rc: RequestContext, respond: Responder, events: bool) -> HttpResponse {
+        let out = Arc::new(CallOut { state: Mutex::new(CallState::Pending(Some(respond))), keep_alive: self.server.config.keep_alive });
+        if events {
+            if rc.era != Era::Modern {
+                rc.client = Some(Arc::new(DeferredChannel { server: self.server.clone(), out: out.clone() }));
+            }
+            let o2 = out.clone();
+            rc.notify = Some(Arc::new(move |m: &Value| o2.emit(Event::Request(m.clone()))));
+        }
+        let server = self.server.clone();
+        let id2 = id.clone();
+        let o3 = out.clone();
+        let modern = rc.era == Era::Modern;
+        let spawned = call_pool().execute(move || {
+            let r = server.dispatch("tools/call", &params, &rc);
+            // 2026-07-28 errors carry their HTTP status; legacy ones travel in a 200
+            let status = match (&r, modern) {
+                (Err(e), true) => e.http_status,
+                _ => 200,
+            };
+            o3.finish(status, response(&id2, r));
+        });
+        if !spawned {
+            out.emit(Event::Final(response(&id, Err(RpcError::new(codes::INTERNAL_ERROR, "Cannot start the call")))));
+        }
+        HttpResponse::new(0) // answered (or to be answered) through the responder
     }
 
     fn modern(&self, req: &HttpRequest, method: &str, id: Option<Value>, params: ObjectMap, principal: Principal) -> HttpResponse {
@@ -320,6 +378,11 @@ impl Endpoint {
         if method == "tools/call" && wants_events && accepts_sse {
             return self.call_with_channel(id, params, rc);
         }
+        if method == "tools/call" {
+            if let Some(respond) = take_defer() {
+                return self.call_deferred(id, params, rc, respond, false);
+            }
+        }
         match self.server.dispatch(method, &params, &rc) {
             Ok(r) => json_rpc(200, &response(&id, Ok(r))),
             Err(e) => rpc_error(&id, e),
@@ -341,6 +404,83 @@ impl Endpoint {
             server.end_listen(listener);
         });
         sse_response(handle)
+    }
+}
+
+enum CallState {
+    /// Nothing sent yet: the responder is waiting for the first message.
+    Pending(Option<Responder>),
+    Stream(SseStream),
+    Done,
+}
+
+/// Where a deferred call's messages go: a plain JSON response, or an event stream once the call
+/// talks to the client before it ends.
+struct CallOut {
+    state: Mutex<CallState>,
+    keep_alive: Duration,
+}
+
+impl CallOut {
+    fn emit(&self, ev: Event) {
+        match ev {
+            Event::Final(m) => self.finish(200, m),
+            ev => self.send(ev, 200),
+        }
+    }
+
+    fn finish(&self, status: u16, m: Value) {
+        self.send(Event::Final(m), status)
+    }
+
+    fn send(&self, ev: Event, status: u16) {
+        let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        match (&mut *st, ev) {
+            (CallState::Pending(slot), Event::Final(m)) => {
+                let respond = slot.take();
+                *st = CallState::Done;
+                drop(st);
+                if let Some(r) = respond {
+                    r(json_rpc(status, &m));
+                }
+            }
+            (CallState::Pending(slot), Event::Request(m)) => {
+                let respond = slot.take();
+                let (stream, handle) = SseStream::new();
+                stream.keep_alive(self.keep_alive);
+                stream.send(&m);
+                *st = CallState::Stream(stream);
+                drop(st);
+                if let Some(r) = respond {
+                    r(sse_response(handle));
+                }
+            }
+            (CallState::Stream(s), Event::Request(m)) => {
+                s.send(&m);
+            }
+            (CallState::Stream(s), Event::Final(m)) => {
+                s.send(&m);
+                s.close();
+                *st = CallState::Done;
+            }
+            (CallState::Done, _) => {}
+        }
+    }
+}
+
+struct DeferredChannel {
+    server: Arc<McpServer>,
+    out: Arc<CallOut>,
+}
+
+impl ClientChannel for DeferredChannel {
+    fn request(&self, method: &str, params: Value, timeout: Duration) -> Option<std::result::Result<Value, Value>> {
+        let (id, rx) = self.server.begin_client_request();
+        let msg = Value::object([("jsonrpc", Value::from("2.0")), ("id", Value::from(id.as_str())), ("method", Value::from(method)), ("params", params)]);
+        self.out.emit(Event::Request(msg));
+        let answer = rx.recv_timeout(timeout).ok();
+        self.server.end_client_request(&id);
+        answer
     }
 }
 
