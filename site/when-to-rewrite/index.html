@@ -25,10 +25,10 @@
 <link rel="stylesheet" href="../assets/compare.css">
 <link rel="stylesheet" href="../assets/cameleering.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle", "headline": "When a Rewrite Pays Off: A Decision Checklist", "description": "When to rewrite software and when not to: the case against rewrites, the rewrites that worked and what they measured, smaller steps to try first, and a checklist.", "url": "https://cameleer.ing/when-to-rewrite/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@type": "Organization", "name": "Cameleering", "url": "https://cameleer.ing/", "logo": "https://cameleer.ing/brand/cameleering/cameleering-mark-512.png"}}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "When a Rewrite Pays Off: A Decision Checklist", "description": "When to rewrite software and when not to: the case against rewrites, the rewrites that worked and what they measured, smaller steps to try first, and a checklist.", "url": "https://cameleer.ing/when-to-rewrite/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 2, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 3, "name": "When to rewrite"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "When to rewrite"}]}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Should we rewrite our software in Rust?", "acceptedAnswer": {"@type": "Answer", "text": "Only if measurement shows the current design cannot reach a target that matters, and smaller steps have been tried. The language is not the reason; the measured limit is. Cloudflare, Figma and Mozilla rewrote specific parts with clear limits in view, and published what changed."}}, {"@type": "Question", "name": "Is rewriting from scratch always a mistake?", "acceptedAnswer": {"@type": "Answer", "text": "No, but it is the riskiest option. Joel Spolsky's 2000 essay explains why: knowledge in old code is lost and the old product stops improving. Rewrites that worked usually kept the same contract, shipped in pieces, and measured the result against the original."}}, {"@type": "Question", "name": "What is the Strangler Fig pattern?", "acceptedAnswer": {"@type": "Answer", "text": "Martin Fowler's name for growing a new system beside the old one and moving behaviour over piece by piece until the old one can be switched off. It avoids a big-bang replacement and keeps the system releasable throughout."}}, {"@type": "Question", "name": "How do I know a rewrite was worth it?", "acceptedAnswer": {"@type": "Answer", "text": "Measure the old version first, on fixed hardware, then the new one on the same hardware with the same workload: startup, memory, throughput, tail latency, size. If the numbers are not better where you pay, it was not worth it, whatever the code looks like."}}]}
@@ -62,7 +62,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../cameleer/">Home</a> / <a href="../">Cameleering</a> / When to rewrite</p>
+    <p class="crumbs"><a href="../">Cameleering</a> / When to rewrite</p>
     <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
     <p class="kicker">Cameleering · principle 7</p>
     <h1>When a rewrite pays off: a decision checklist</h1>

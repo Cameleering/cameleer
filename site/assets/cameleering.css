@@ -26,3 +26,30 @@ ol.sources li:target { background: var(--signal-soft); }
 .check li::before { content: counter(c); position: absolute; left: 0; top: 1px; width: 24px; height: 24px; border-radius: 50%; background: var(--signal-soft); color: var(--signal); font: 600 13px/24px var(--mono); text-align: center; }
 @media (max-width: 700px) { .check { grid-template-columns: 1fr; } }
 .cam-mark { display: block; margin: 0 0 14px; }
+
+/* the Cameleering home (/): hero line, mini-ledger, doors, principles */
+.home-hero .carry { font: 800 clamp(20px, 2.6vw, 28px)/1.1 var(--sans); letter-spacing: -.02em; color: var(--signal); margin: 0 0 8px; }
+.home-hero h1 { max-width: 22em; }
+.mini-ledger caption { caption-side: top; text-align: left; font: 600 13px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 0 8px; }
+.mini-ledger th[scope="row"] { text-align: left; font-weight: 400; white-space: nowrap; }
+.mini-ledger .sub { font-size: 13px; color: var(--muted); }
+.mini-ledger td.lossc { color: #a33a2b; }
+.doors { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 28px 0 0; }
+.doors a { display: block; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; text-decoration: none; background: #fff; }
+.doors a:hover, .doors a:focus-visible { border-color: var(--ink); }
+.doors b { display: block; color: var(--ink); font-weight: 700; font-size: 15px; line-height: 1.3; }
+.doors span { display: block; color: var(--muted); font-size: 14px; margin-top: 4px; }
+ol.principles { padding-left: 22px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 32px; }
+ol.principles li { padding-left: 4px; }
+@media (max-width: 1000px) { .doors { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { ol.principles { grid-template-columns: 1fr; } }
+/* under 600 px the mini-ledger becomes cards: the baseline stays next to the number, never in a tooltip */
+@media (max-width: 600px) {
+  .doors { grid-template-columns: 1fr; gap: 8px; margin-top: 20px; }
+  .doors a { padding: 10px 14px; }
+  .mini-ledger, .mini-ledger tbody, .mini-ledger tr, .mini-ledger th, .mini-ledger td { display: block; width: 100%; }
+  .mini-ledger thead { display: none; }
+  .mini-ledger tr { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin: 0 0 12px; background: #fff; }
+  .mini-ledger th[scope="row"], .mini-ledger td { border: 0; padding: 4px 0; white-space: normal; }
+  .mini-ledger td::before { content: attr(data-label); display: block; font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+}

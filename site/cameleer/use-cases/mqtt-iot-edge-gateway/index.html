@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MQTT and IoT Edge Gateway Routes in Rust: Store and Forward, Rollups | Cameleer</title>
-<meta name="description" content="Run integration routes on edge gateways: MQTT 3.1.1 and 5.0 in, validation and per-sensor rollups on site, store and forward when the uplink is down, syslog into Kafka. One binary, about 10 MB, arm64 image.">
+<title>MQTT and IoT Edge Gateway Routes in Rust | Cameleer</title>
+<meta name="description" content="MQTT 3.1.1 and 5.0 in, per-sensor rollups on site, store and forward when the uplink is down, syslog into Kafka: one binary, about 10 MB, arm64.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,28 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "MQTT and IoT edge gateway routes in Rust: store and forward, rollups, syslog bridging",
- "description": "Integration routes on edge gateways with Cameleer: MQTT in, validation and rollups on site, store and forward when the uplink is down, syslog into Kafka, presence with a last will.",
- "url": "https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "MQTT"}, {"@type": "Thing", "name": "Edge computing"}, {"@type": "Thing", "name": "IoT gateway"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "MQTT and IoT edge gateway routes in Rust: store and forward, rollups, syslog bridging", "description": "Integration routes on edge gateways with Cameleer: MQTT in, validation and rollups on site, store and forward when the uplink is down, syslog into Kafka, presence with a last will.", "url": "https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "MQTT"}, {"@type": "Thing", "name": "Edge computing"}, {"@type": "Thing", "name": "IoT gateway"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"},
- {"@type": "ListItem", "position": 3, "name": "MQTT edge gateways"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"}, {"@type": "ListItem", "position": 4, "name": "MQTT edge gateways"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Does Cameleer run on a Raspberry Pi?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, on a 64-bit OS. The image is published for linux/arm64 (Raspberry Pi 3, 4 and 5 with 64-bit Raspberry Pi OS, NVIDIA Jetson, Graviton) and a running route uses about 10 MB of memory. There is no 32-bit ARM image."}},
- {"@type": "Question", "name": "Which MQTT versions and brokers are supported?", "acceptedAnswer": {"@type": "Answer", "text": "paho speaks MQTT 3.1.1 and paho-mqtt5 speaks MQTT 5.0, with QoS 0 to 2, retained messages, last will, persistent sessions and TLS. They are tested against Mosquitto, RabbitMQ and ActiveMQ and work with any broker, including EMQX, HiveMQ and AWS IoT Core."}},
- {"@type": "Question", "name": "What happens to messages when the uplink is down?", "acceptedAnswer": {"@type": "Answer", "text": "The store-and-forward route retries with back-off, then writes the original message to a buffer folder through a dead letter channel. A replay route polls the folder every 30 seconds and moves each file to .sent once the cloud accepted it. The buffer is on disk, so it survives restarts."}},
- {"@type": "Question", "name": "Can a gateway bridge protocols?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The tested routes bridge MQTT into Kafka and HTTP, and syslog (RFC 5424 and 3164 over UDP, TCP or TLS) into Kafka with severity filtering. AMQP, STOMP and files are available on the same gateway, and HL7 over MLLP with the health pack."}},
- {"@type": "Question", "name": "Is there a Modbus or OPC UA component?", "acceptedAnswer": {"@type": "Answer", "text": "No. Field protocols are expected to arrive through a local broker or an HTTP, TCP or UDP adapter; the netty component handles raw TCP and UDP."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does Cameleer run on a Raspberry Pi?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, on a 64-bit OS. The image is published for linux/arm64 (Raspberry Pi 3, 4 and 5 with 64-bit Raspberry Pi OS, NVIDIA Jetson, Graviton) and a running route uses about 10 MB of memory. There is no 32-bit ARM image."}}, {"@type": "Question", "name": "Which MQTT versions and brokers are supported?", "acceptedAnswer": {"@type": "Answer", "text": "paho speaks MQTT 3.1.1 and paho-mqtt5 speaks MQTT 5.0, with QoS 0 to 2, retained messages, last will, persistent sessions and TLS. They are tested against Mosquitto, RabbitMQ and ActiveMQ and work with any broker, including EMQX, HiveMQ and AWS IoT Core."}}, {"@type": "Question", "name": "What happens to messages when the uplink is down?", "acceptedAnswer": {"@type": "Answer", "text": "The store-and-forward route retries with back-off, then writes the original message to a buffer folder through a dead letter channel. A replay route polls the folder every 30 seconds and moves each file to .sent once the cloud accepted it. The buffer is on disk, so it survives restarts."}}, {"@type": "Question", "name": "Can a gateway bridge protocols?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The tested routes bridge MQTT into Kafka and HTTP, and syslog (RFC 5424 and 3164 over UDP, TCP or TLS) into Kafka with severity filtering. AMQP, STOMP and files are available on the same gateway, and HL7 over MLLP with the health pack."}}, {"@type": "Question", "name": "Is there a Modbus or OPC UA component?", "acceptedAnswer": {"@type": "Answer", "text": "No. Field protocols are expected to arrive through a local broker or an HTTP, TCP or UDP adapter; the netty component handles raw TCP and UDP."}}]}
 </script>
 </head>
 <body>
@@ -81,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / MQTT edge gateways</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Use cases</a> / MQTT edge gateways</p>
     <p class="kicker">Edge and IoT</p>
     <h1>MQTT edge gateways that keep working when the uplink doesn't</h1>
     <p class="lede">Gateways sit between machines and the cloud. They speak local protocols, keep working offline, and share small hardware with other software. Cameleer runs Apache Camel's routes there without a JVM: five tested patterns, one binary, about 10 MB of memory.</p>

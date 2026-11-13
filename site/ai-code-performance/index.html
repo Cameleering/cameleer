@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI-Generated Code and Performance: The Evidence | Cameleering</title>
-<meta name="description" content="What studies measured about the efficiency of AI-generated code and developer speed: EffiBench, Mercury, EvalPerf, PIE, METR, DORA and GitClear, each with its limits.">
+<title>AI-Generated Code Performance: The Evidence | Cameleering</title>
+<meta name="description" content="Generated code ran 3.12x as long as human code in one benchmark. What EffiBench, Mercury, EvalPerf, PIE, METR and DORA measured, each with its limits.">
 <link rel="canonical" href="https://cameleer.ing/ai-code-performance/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -25,10 +25,10 @@
 <link rel="stylesheet" href="../assets/compare.css">
 <link rel="stylesheet" href="../assets/cameleering.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle", "headline": "AI-Generated Code and Performance: The Evidence", "description": "What studies measured about the efficiency of AI-generated code and developer speed: EffiBench, Mercury, EvalPerf, PIE, METR, DORA and GitClear, each with its limits.", "url": "https://cameleer.ing/ai-code-performance/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@type": "Organization", "name": "Cameleering", "url": "https://cameleer.ing/", "logo": "https://cameleer.ing/brand/cameleering/cameleering-mark-512.png"}}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "AI-Generated Code and Performance: The Evidence", "description": "What studies measured about the efficiency of AI-generated code and developer speed: EffiBench, Mercury, EvalPerf, PIE, METR, DORA and GitClear, each with its limits.", "url": "https://cameleer.ing/ai-code-performance/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 2, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 3, "name": "AI code and performance"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "AI code and performance"}]}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is AI-generated code slower than human code?", "acceptedAnswer": {"@type": "Answer", "text": "On efficiency benchmarks from 2024, usually yes: in EffiBench, GPT-4's solutions took 3.12 times as long as human reference solutions on average, and other benchmarks found models more often correct than efficient. When models are asked to optimize and the result is measured, they can make code faster. The benchmarks are mostly Python puzzles, so measure your own code."}}, {"@type": "Question", "name": "Does AI make developers slower?", "acceptedAnswer": {"@type": "Answer", "text": "One 2025 randomized study of 16 experienced developers found tasks took 19% longer with AI. Its 2026 follow-up estimated tasks took 18% less time for returning developers, but with a confidence interval that includes no change, and its authors believe speedups have grown. The evidence is unsettled, and it measures developer time, not software speed."}}, {"@type": "Question", "name": "Does AI-generated code cause bloat?", "acceptedAnswer": {"@type": "Answer", "text": "There are signals: GitClear found duplicated code blocks rose about eightfold in 2024, and DORA associated more AI adoption with lower delivery stability. Neither can attribute the change to AI directly. Budgets in CI catch growth in size and memory whatever its cause."}}, {"@type": "Question", "name": "How do I keep AI-written code efficient?", "acceptedAnswer": {"@type": "Answer", "text": "Treat efficiency like correctness: set budgets for startup, memory, size and tail latency, check them in CI, ask for efficient code explicitly, and review changes with measurements."}}]}
@@ -62,7 +62,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../cameleer/">Home</a> / <a href="../">Cameleering</a> / AI code and performance</p>
+    <p class="crumbs"><a href="../">Cameleering</a> / AI code and performance</p>
     <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
     <p class="kicker">Cameleering · the evidence</p>
     <h1>AI-generated code and performance: what the evidence says</h1>

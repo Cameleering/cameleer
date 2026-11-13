@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Code Efficiency as a FinOps Lever | Cameleering</title>
-<meta name="description" content="How measured savings in memory, CPU and startup time turn into instances and dollars on AWS Lambda, Fargate and Kubernetes, with the arithmetic shown and its limits stated.">
+<meta name="description" content="How measured memory, CPU and startup savings turn into instances and dollars on Lambda, Fargate and Kubernetes: $9.17 vs $0.03 per million cold starts.">
 <link rel="canonical" href="https://cameleer.ing/finops/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -25,10 +25,10 @@
 <link rel="stylesheet" href="../assets/compare.css">
 <link rel="stylesheet" href="../assets/cameleering.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Code Efficiency as a FinOps Lever", "description": "How measured savings in memory, CPU and startup time turn into instances and dollars on AWS Lambda, Fargate and Kubernetes, with the arithmetic shown and its limits stated.", "url": "https://cameleer.ing/finops/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@type": "Organization", "name": "Cameleering", "url": "https://cameleer.ing/", "logo": "https://cameleer.ing/brand/cameleering/cameleering-mark-512.png"}}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Code Efficiency as a FinOps Lever", "description": "How measured savings in memory, CPU and startup time turn into instances and dollars on AWS Lambda, Fargate and Kubernetes, with the arithmetic shown and its limits stated.", "url": "https://cameleer.ing/finops/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 2, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 3, "name": "Code efficiency and FinOps"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Code efficiency and FinOps"}]}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does code efficiency belong in FinOps?", "acceptedAnswer": {"@type": "Answer", "text": "It is the input FinOps usually takes as fixed. FinOps rightsizes infrastructure to fit the software; code efficiency changes how much the software needs. The FinOps Framework's Usage Optimization capability already says engineering does most of that work, and making the code need less is the part of it that rightsizing cannot reach."}}, {"@type": "Question", "name": "Is memory saving worth it when memory is cheap?", "acceptedAnswer": {"@type": "Answer", "text": "Per gigabyte, often not much: on AWS Fargate a gigabyte costs about $3.25 a month at list price. The larger effects are density (how many services fit on a node, so how many nodes you run), cold-start time that serverless platforms now bill, and CPU, which costs about nine times as much per unit as memory on Fargate."}}, {"@type": "Question", "name": "Does AWS Lambda bill cold starts?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, for on-demand functions since 1 August 2025: the initialization phase is billed at the normal duration rate, rounded up to the nearest millisecond. Functions with custom runtimes, container images or provisioned concurrency already paid for it."}}, {"@type": "Question", "name": "Will a smaller Lambda memory setting always save money?", "acceptedAnswer": {"@type": "Answer", "text": "Not always. Lambda gives CPU in proportion to memory, so a smaller setting can make a CPU-bound function run longer. Measure the duration at each setting and pick the cheapest one that meets your latency target."}}, {"@type": "Question", "name": "Are these savings guaranteed?", "acceptedAnswer": {"@type": "Answer", "text": "No. The worked examples are arithmetic on measured numbers and public list prices, and each states what it ignores. Your saving depends on your workload, discounts and whether you rightsize after the software gets smaller."}}]}
@@ -62,7 +62,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../cameleer/">Home</a> / <a href="../">Cameleering</a> / FinOps</p>
+    <p class="crumbs"><a href="../">Cameleering</a> / FinOps</p>
     <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
     <p class="kicker">Cameleering · code efficiency and cloud cost</p>
     <h1>Code efficiency as a FinOps lever</h1>
@@ -98,7 +98,7 @@
         <tr><td>the same, HTTP into Kafka</td><td class="num">24</td><td class="num">122</td></tr>
       </tbody>
     </table></div>
-    <p class="note">Arithmetic, not a measurement: 8,192 MiB divided by peak memory. It ignores CPU, the operating system and the orchestrator's own overhead, so real density is lower on both sides. The point is the ratio: depending on the route, 5 to 54 times as many integrations per node, which is fewer nodes for the same work.</p>
+    <p class="note">Arithmetic, not a measurement: 8,192 MiB divided by peak memory. It ignores CPU, the operating system and the orchestrator's own overhead, so real density is lower on both sides. The point is the ratio: depending on the route, 5 to 51 times as many integrations per node, which is fewer nodes for the same work.</p>
 
     <h3>2. Cold starts are billed on AWS Lambda</h3>
     <p>Since 1 August 2025, AWS Lambda bills the initialization phase of on-demand functions at the normal duration rate <sup><a href="#s6">[6]</a></sup>, and duration is rounded up to the nearest millisecond at $0.0000166667 per GB-second on x86 <sup><a href="#s7">[7]</a></sup>.</p>

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DICOM Router and Imaging Gateway: DIMSE to DICOMweb | Cameleer</title>
-<meta name="description" content="An open-source DICOM router in one small binary: receive images over DIMSE, route on tags, de-identify with the PS3.15 profile, forward to a PACS, a DICOMweb store or an AI model, with HL7 and FHIR in the same engine: the Cameleer health pack (since 0.6.0).">
+<title>DICOM Router and Gateway: DIMSE to DICOMweb | Cameleer</title>
+<meta name="description" content="An open-source DICOM router in one binary: receive over DIMSE, route on tags, de-identify with PS3.15, forward to a PACS, DICOMweb or an AI model.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/dicom-imaging-gateway/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,29 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "A DICOM router and imaging gateway with Cameleer",
- "description": "How Cameleer receives DICOM over DIMSE, routes on tags, de-identifies with the PS3.15 Annex E profile and forwards to a PACS, a DICOMweb store or an AI model, with three tested examples, the conformance summary and the limits.",
- "url": "https://cameleer.ing/cameleer/use-cases/dicom-imaging-gateway/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "DICOM"}, {"@type": "Thing", "name": "DICOMweb"}, {"@type": "Thing", "name": "Medical imaging"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "A DICOM router and imaging gateway with Cameleer", "description": "How Cameleer receives DICOM over DIMSE, routes on tags, de-identifies with the PS3.15 Annex E profile and forwards to a PACS, a DICOMweb store or an AI model, with three tested examples, the conformance summary and the limits.", "url": "https://cameleer.ing/cameleer/use-cases/dicom-imaging-gateway/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "DICOM"}, {"@type": "Thing", "name": "DICOMweb"}, {"@type": "Thing", "name": "Medical imaging"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"},
- {"@type": "ListItem", "position": 3, "name": "DICOM imaging gateway"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"}, {"@type": "ListItem", "position": 4, "name": "DICOM imaging gateway"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Does Apache Camel have a DICOM component?", "acceptedAnswer": {"@type": "Answer", "text": "No. Apache Camel has HL7 (mllp, hl7) and FHIR components but no DICOM component. Cameleer's health pack adds dicom (DIMSE), dicomweb (DICOMweb) and the dicom, dicomJson and dicomDeidentify data formats, named to read like Camel."}},
- {"@type": "Question", "name": "How do I forward DICOM from a modality to a DICOMweb store?", "acceptedAnswer": {"@type": "Answer", "text": "Start a route from dicom:GATEWAY@0.0.0.0:11112 (a Storage SCP), filter on tags such as ${dicom.Modality}, and send to dicomweb:https://host/dicom-web?operation=stow. Cameleer's modality-to-cloud example also parks an instance in a folder when the upload fails and retries it later."}},
- {"@type": "Question", "name": "Which de-identification profile does Cameleer apply?", "acceptedAnswer": {"@type": "Answer", "text": "The PS3.15 Annex E basic profile (Table E.1-1, edition 2026d) and its options except the pixel options. Replacement UIDs, pseudonyms and date shifts are HMAC-SHA256 values under one key, so the output is deterministic across batches and gateways, and each instance writes a record to a hash-chained audit log."}},
- {"@type": "Question", "name": "Has it been tested with real DICOM software?", "acceptedAnswer": {"@type": "Answer", "text": "Yes: the health pack's live tests pass 10 of 10 against DCMTK 3.6.7 (as SCU and SCP, with and without TLS), Orthanc 1.12.2 (as a PACS, and its DICOMweb plugin as server and client), python-hl7 and HAPI FHIR, and 33 public pydicom test files are read and written back byte for byte. The cloud DICOM services of Azure, Google and AWS have not been tested yet."}},
- {"@type": "Question", "name": "Which Cameleer build has DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, since 0.6.0: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. It is not in the default image or the full build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR."}},
- {"@type": "Question", "name": "Is Cameleer a PACS or a viewer?", "acceptedAnswer": {"@type": "Answer", "text": "No. It routes, filters, transforms and de-identifies images between modalities, PACS, cloud stores and AI services. It does not store an archive, render images or transcode compressed pixel data."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does Apache Camel have a DICOM component?", "acceptedAnswer": {"@type": "Answer", "text": "No. Apache Camel has HL7 (mllp, hl7) and FHIR components but no DICOM component. Cameleer's health pack adds dicom (DIMSE), dicomweb (DICOMweb) and the dicom, dicomJson and dicomDeidentify data formats, named to read like Camel."}}, {"@type": "Question", "name": "How do I forward DICOM from a modality to a DICOMweb store?", "acceptedAnswer": {"@type": "Answer", "text": "Start a route from dicom:GATEWAY@0.0.0.0:11112 (a Storage SCP), filter on tags such as ${dicom.Modality}, and send to dicomweb:https://host/dicom-web?operation=stow. Cameleer's modality-to-cloud example also parks an instance in a folder when the upload fails and retries it later."}}, {"@type": "Question", "name": "Which de-identification profile does Cameleer apply?", "acceptedAnswer": {"@type": "Answer", "text": "The PS3.15 Annex E basic profile (Table E.1-1, edition 2026d) and its options except the pixel options. Replacement UIDs, pseudonyms and date shifts are HMAC-SHA256 values under one key, so the output is deterministic across batches and gateways, and each instance writes a record to a hash-chained audit log."}}, {"@type": "Question", "name": "Has it been tested with real DICOM software?", "acceptedAnswer": {"@type": "Answer", "text": "Yes: the health pack's live tests pass 10 of 10 against DCMTK 3.6.7 (as SCU and SCP, with and without TLS), Orthanc 1.12.2 (as a PACS, and its DICOMweb plugin as server and client), python-hl7 and HAPI FHIR, and 33 public pydicom test files are read and written back byte for byte. The cloud DICOM services of Azure, Google and AWS have not been tested yet."}}, {"@type": "Question", "name": "Which Cameleer build has DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, since 0.6.0: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. It is not in the default image or the full build; it adds about 2 MB to the binary and also contains HL7 v2, MLLP and FHIR."}}, {"@type": "Question", "name": "Is Cameleer a PACS or a viewer?", "acceptedAnswer": {"@type": "Answer", "text": "No. It routes, filters, transforms and de-identifies images between modalities, PACS, cloud stores and AI services. It does not store an archive, render images or transcode compressed pixel data."}}]}
 </script>
 </head>
 <body>
@@ -82,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / DICOM imaging gateway</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Use cases</a> / DICOM imaging gateway</p>
     <p class="kicker">Medical imaging · health pack · since 0.6.0</p>
     <h1>A DICOM router that is also an integration engine</h1>
     <p class="lede">Receive images from modalities and PACS over DIMSE, route on tags, de-identify with the PS3.15 profile, and forward to a PACS, a DICOMweb store or an AI model. HL7 v2, FHIR and about 230 other components run in the same small binary, so the result of an AI model can go back to the EHR as FHIR in the same route. Apache Camel has no DICOM component; Cameleer's <a href="../../healthcare/">health pack</a> adds one with Camel-style names.</p>

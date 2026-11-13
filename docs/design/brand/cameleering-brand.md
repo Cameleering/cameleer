@@ -41,9 +41,10 @@ every repo and session; it is not published on the site._
 ## Positioning
 
 - **Category:** efficiency engineering. Cameleering is the named method inside it.
-- **First audience:** platform and infrastructure teams running heavyweight JVM integration.
-  Then edge and serverless builders (simoom is measured since 2026-11-12), then CTOs under cloud-cost pressure
-  (through FinOps).
+- **Audiences:** the root (practice first) speaks to CTOs under cloud-cost pressure, FinOps
+  practitioners and efficiency-minded engineers; product traffic (platform teams on JVM integration,
+  agent builders, healthcare integration, Rust developers) lands on the project microsites by deep
+  links and must never be routed through the practice pages.
 - **Versus FinOps or buying more cloud:** it fixes the software.
 - **Versus "rewrite it in Rust":** every claim is measured against the original.
 - **Responsibility:** prominent, by the owner's choice, but always tied to people and measured
@@ -64,12 +65,17 @@ every repo and session; it is not published on the site._
 
 ## Domains
 
-- Now: the cameleer.ing root stays Cameleer's home. Cameleering lives at `/cameleering/`, with a
-  menu item on every page.
-- Phase 2, triggered when a second project has measured results: the root becomes the Cameleering
-  home, and Cameleer moves to `/cameleer/` with redirect stubs (see `write_moved` in
-  `scripts/build-docs.py`).
-- Do not link `github.com/cameleering/...` from the live site until the repos are transferred.
+- **Done (2026-11-13, phase 2 of the plan in `docs/design/site-restructure/plan.md`):** the
+  cameleer.ing root is the Cameleering home. The practice pages sit at the top level (`/ledger/`,
+  `/method/`, `/finops/`, ...), Cameleer's pages under `/cameleer/` (its docs stay at `/docs/`),
+  simoom under `/simoom/`. Every old URL keeps a redirect stub (`scripts/redirects.txt`).
+- Reserved slugs: a project takes its own name (`/cameleer/`, `/simoom/`, later `/karez/`, `/ksar/`);
+  the practice takes common nouns (`/ledger/`, `/method/`, `/about/`, `/projects/`, `/security/`).
+- Navigation: one bar per page. Project pages show the lockup "Cameleering / Cameleer" with the
+  project mark larger, and a Cameleering menu (`scripts/build-docs.py` `FAMILY_MENU`); simoom's
+  build carries the same menu.
+- What Cameleering offers (owner, 2026-11-13): open source only, and open to consulting. Say it in one
+  line where it is asked, never as a pitch.
 
 ## The ledger rules
 

@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cameleer: Apache Camel in Rust, MCP tools for AI agents</title>
-<meta name="description" content="Apache Camel routes as one native Rust binary: 3 ms startup, up to 54x less memory. Routes become MCP tools for AI agents: validated, run once, audited.">
-<meta name="keywords" content="Apache Camel, Rust, cameleering, Apache Camel alternative, integration framework, enterprise integration patterns, EIP, AI agents, MCP server, MCP tools, agent tool calls, LLM gateway, serverless, AWS Lambda, edge, MQTT, HL7, DICOM, Kafka, YAML DSL">
+<title>Cameleer: Run Apache Camel Routes in Rust, MCP for Agents</title>
+<meta name="description" content="Apache Camel routes as one native Rust binary: 3 ms startup, 4.8-54x less memory. Routes become MCP tools for AI agents: validated, run once, audited.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta name="google-site-verification" content="MvbqVebLUL_zfBeTqUJFrMzVbzt3An6QuIhFIasAcMA">
 <meta name="context7-site-verification" content="ask_86adbac2b101d98629eb7020">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="Cameleer">
 <meta property="og:title" content="Cameleer: the reliable action layer for AI agents, on Apache Camel's integration patterns, in Rust.">
 <meta property="og:description" content="Runs Apache Camel routes unchanged: starts in 3 ms, runs in megabytes, and moves 1.7–8.7x the messages of Apache Camel. Routes become MCP tools that are validated, idempotent, approved and audited.">
 <meta property="og:url" content="https://cameleer.ing/cameleer/">
@@ -24,25 +24,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareSourceCode",
-  "name": "Cameleer",
-  "alternateName": "rust-camel",
-  "description": "Apache Camel rewritten in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only. One native binary that starts in 3 ms and runs in megabytes, with a built-in AWS Lambda runtime. For AI agents it serves routes as MCP tools over Streamable HTTP and stdio and runs every tool call through JSON-schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts, compensation and a hash-chained audit log; it also has an agent step and tool calling in its model components.",
-  "codeRepository": "https://github.com/cameleering/cameleer",
-  "url": "https://cameleer.ing/cameleer/",
-  "sameAs": ["https://github.com/cameleering/cameleer", "https://crates.io/crates/cameleer-main", "https://hub.docker.com/r/cameleering/cameleer"],
-  "programmingLanguage": "Rust",
-  "runtimePlatform": "Linux, macOS, Windows, Docker, AWS Lambda",
-  "image": "https://cameleer.ing/og.png",
-  "logo": "https://cameleer.ing/brand/cameleer-mark.png",
-  "license": "https://www.apache.org/licenses/LICENSE-2.0",
-  "version": "0.6.0",
-  "author": {"@type": "Person", "name": "Sudheesh PM"},
-  "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7, DICOM",
-  "isBasedOn": {"@type": "SoftwareSourceCode", "name": "Apache Camel", "url": "https://camel.apache.org/", "codeRepository": "https://github.com/apache/camel"}
-}
+{"@context": "https://schema.org", "@type": "SoftwareSourceCode", "name": "Cameleer", "alternateName": "rust-camel", "description": "An integration engine in the style of Apache Camel, written in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only. One native binary that starts in 3 ms and runs in megabytes, with a built-in AWS Lambda runtime. For AI agents it serves routes as MCP tools over Streamable HTTP and stdio and runs every tool call through JSON-schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts, compensation and a hash-chained audit log; it also has an agent step and tool calling in its model components.", "codeRepository": "https://github.com/cameleering/cameleer", "url": "https://cameleer.ing/cameleer/", "sameAs": ["https://github.com/cameleering/cameleer", "https://crates.io/crates/cameleer-main", "https://hub.docker.com/r/cameleering/cameleer"], "programmingLanguage": "Rust", "runtimePlatform": "Linux, macOS, Windows, Docker, AWS Lambda", "image": "https://cameleer.ing/og.png", "logo": "https://cameleer.ing/brand/cameleer-mark.png", "license": "https://www.apache.org/licenses/LICENSE-2.0", "author": {"@type": "Person", "name": "Sudheesh PM"}, "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7, DICOM", "@id": "https://cameleer.ing/cameleer/#software", "softwareVersion": "0.6.0", "publisher": {"@id": "https://cameleer.ing/#org"}, "maintainer": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
 </script>
 <link rel="stylesheet" href="../assets/site.css">
 <style>
@@ -79,7 +61,15 @@ h1 .strike::after { content: ""; position: absolute; left: 0; right: 0; top: 54%
 .facts { display: flex; gap: 36px; margin: 44px 0 0; padding: 0; }
 .facts div { margin: 0; }
 .facts dt { font-size: 30px; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
-.facts dd { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.facts dd { margin: 6px 0 0; color: var(--muted); font-size: 14px; max-width: 16em; }
+.chip { margin: 22px 0 0; font-size: 14px; color: var(--muted); }
+.chip a { color: var(--ink); }
+.chip img { vertical-align: -3px; margin-right: 6px; }
+.factbox { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 40px; margin: 0; }
+.factbox div { display: grid; grid-template-columns: 9em 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.factbox dt { font-weight: 700; }
+.factbox dd { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 760px) { .factbox { grid-template-columns: 1fr; } .factbox div { grid-template-columns: 1fr; gap: 2px; } }
 
 .diagram { width: 100%; height: auto; display: block; }
 .diagram .node rect { fill: #fff; stroke: var(--ink); stroke-width: 1.5; }
@@ -279,10 +269,11 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
         <a class="btn ghost" href="../docs/guides/agents.html">Agent patterns</a>
       </div>
       <dl class="facts">
-        <div><dt>450x</dt><dd>faster startup than Apache Camel: 3 ms vs 1.1 s</dd></div>
-        <div><dt>54x</dt><dd>less memory: 8 MB vs 399 MB</dd></div>
-        <div><dt>1.7–8.7x</dt><dd>the throughput, in every scenario</dd></div>
+        <div><dt>3 ms</dt><dd>to a started context; Apache Camel 4.23 on Java 21: 1.1 s, on Quarkus native: 30 ms</dd></div>
+        <div><dt>4.8–54x</dt><dd>less peak memory than Apache Camel on the JVM, across 11 scenarios</dd></div>
+        <div><dt>1.7–8.7x</dt><dd>the throughput, in every scenario; one p99 loss, below</dd></div>
       </dl>
+      <p class="chip"><a href="../"><img src="../brand/cameleering/cameleering-mark-32.png" width="16" height="16" alt="" aria-hidden="true">A Cameleering project</a> · measured 2026-11-06 on 0.4.0 against Apache Camel 4.23 · <a href="../ledger/#cameleer">ledger row</a></p>
     </div>
 
     <figure style="margin:0">
@@ -330,16 +321,9 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
 
 <section id="cameleering" aria-labelledby="cam-h">
   <div class="wrap">
-    <h2 id="cam-h">The first Cameleering project: carry more on less.</h2>
-    <p class="sub"><strong>Cameleering</strong> is the practice of making software carry the same load on less, and proving every gain against the original. Cameleer is its first project: Apache Camel's patterns, endpoint URIs and YAML, run by one native Rust binary that starts in 3 ms and runs in megabytes, so Camel-style integration goes where a JVM does not fit.</p>
-    <div class="more-cases">
-      <ul class="cases">
-        <li><a href="use-cases/mqtt-iot-edge-gateway/"><b>At the edge</b><span>MQTT, syslog and HL7 routing on gateways and small devices, buffering when the uplink is down; arm64 image.</span></a></li>
-        <li><a href="use-cases/serverless-aws-lambda/"><b>In serverless functions</b><span>Its own AWS Lambda runtime; the same route on Cloud Run and Knative, with no JVM cold start.</span></a></li>
-        <li><a href="use-cases/mcp-tool-server/"><b>Behind AI agents</b><span>Routes as MCP tools that are validated, run once, approved when risky and audited.</span></a></li>
-      </ul>
-      <p class="all-cases"><a href="../">What is cameleering?</a> · <a href="../ledger/">The ledger</a></p>
-    </div>
+    <h2 id="cam-h">Apache Camel and us.</h2>
+    <p class="sub">Cameleer exists because Apache Camel got integration right: its patterns, endpoint URIs and YAML DSL are what Cameleer follows, name for name, so the routes you have run unchanged. Cameleer is an independent Rust implementation in the style of Apache Camel. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation; the comparisons on this site are factual and name the exact versions measured.</p>
+    <p class="all-cases">Found a route that behaves differently on Cameleer? That is a bug: <a href="https://github.com/cameleering/cameleer/issues/new">report it</a> with the route and both outputs. · <a href="../docs/guides/migrating-from-apache-camel.html">Migrating from Apache Camel</a> · <a href="../">Cameleering, the practice behind it</a></p>
   </div>
 </section>
 
@@ -395,7 +379,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <div class="item"><div class="label">Content-based router<small>choice, filter, transform</small></div><div class="bars"><div class="b r" data-w="100"><span>1.14M msgs/s</span></div><div class="b j" data-w="32.8"><span>376k</span></div></div><div class="x">3.0x</div></div>
       <div class="item"><div class="label">Request-reply<small>in-memory queue</small></div><div class="bars"><div class="b r" data-w="100"><span>719k msgs/s</span></div><div class="b j" data-w="16.3"><span>118k</span></div></div><div class="x">6.1x</div></div>
     </div>
-    <p class="fine">Apache Camel compiled natively with Quarkus starts faster than on the JVM but has lower throughput; it is in the full comparison. <a href="compare/apache-camel-vs-cameleer/">Every scenario, the method and the raw data</a>.</p>
+    <p class="fine"><strong>One loss:</strong> p99 latency for HTTP into Kafka is 8.6 ms against Apache Camel's 7.8 ms, while serving 1.7 times the requests. Plain HTTP reaches 68% of a do-nothing server on the same machines; <a href="../simoom/">simoom</a>, the new HTTP engine, is measured to close that gap (<a href="../ledger/#simoom">its ledger rows</a>). Apache Camel compiled natively with Quarkus starts faster than on the JVM but has lower throughput; it is in the full comparison. <a href="compare/apache-camel-vs-cameleer/">Every scenario, the method and the raw data</a>.</p>
   </div>
 </section>
 
@@ -578,6 +562,22 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       </article>
     </div>
     <p class="catalog-foot">Plus every Enterprise Integration Pattern: <a href="../docs/guides/eips.html">the EIP guide</a>. Looking for something specific? <a href="../docs/components/">Search all components</a>.</p>
+  </div>
+</section>
+
+<section id="facts" aria-labelledby="facts-h">
+  <div class="wrap">
+    <h2 id="facts-h">Cameleer at a glance.</h2>
+    <dl class="factbox">
+      <div><dt>Version</dt><dd>0.6.0 (2026-11-12)</dd></div>
+      <div><dt>Licence</dt><dd>Apache License 2.0</dd></div>
+      <div><dt>Container</dt><dd><code>docker run cameleering/cameleer:0.6.0</code>; health pack: <code>:health</code></dd></div>
+      <div><dt>CLI</dt><dd><code>cargo install cameleer-main</code> (the binary is <code>cameleer</code>; there is no <code>cameleer</code> crate)</dd></div>
+      <div><dt>Source</dt><dd><a href="https://github.com/cameleering/cameleer">github.com/cameleering/cameleer</a></dd></div>
+      <div><dt>Platforms</dt><dd>Linux, macOS, Windows; images for linux/amd64 and linux/arm64; AWS Lambda</dd></div>
+      <div><dt>Dependencies</dt><dd>none outside the Rust standard library</dd></div>
+      <div><dt>Affiliation</dt><dd>independent; not affiliated with the Apache Software Foundation</dd></div>
+    </dl>
   </div>
 </section>
 

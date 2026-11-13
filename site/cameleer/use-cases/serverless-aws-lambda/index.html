@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Serverless Integration Routes on AWS Lambda and Cloud Run | Cameleer</title>
-<meta name="description" content="Run Apache Camel-style routes as serverless functions: Cameleer is its own AWS Lambda runtime (provided.al2023), starts in milliseconds, and runs as-is on Cloud Run, Knative and Azure Container Apps. No JVM, no snapshot tricks.">
+<title>Serverless Routes on AWS Lambda and Cloud Run | Cameleer</title>
+<meta name="description" content="Cameleer is its own AWS Lambda runtime (provided.al2023): Camel-style routes start in milliseconds and run as-is on Cloud Run and Knative. No JVM.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/serverless-aws-lambda/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,28 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Serverless integration routes on AWS Lambda and Cloud Run",
- "description": "Cameleer is its own AWS Lambda custom runtime and runs unchanged on Cloud Run, Knative and Azure Container Apps: integration routes that start in milliseconds and scale to zero.",
- "url": "https://cameleer.ing/cameleer/use-cases/serverless-aws-lambda/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "AWS Lambda"}, {"@type": "Thing", "name": "Serverless computing"}, {"@type": "Thing", "name": "Google Cloud Run"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Serverless integration routes on AWS Lambda and Cloud Run", "description": "Cameleer is its own AWS Lambda custom runtime and runs unchanged on Cloud Run, Knative and Azure Container Apps: integration routes that start in milliseconds and scale to zero.", "url": "https://cameleer.ing/cameleer/use-cases/serverless-aws-lambda/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "AWS Lambda"}, {"@type": "Thing", "name": "Serverless computing"}, {"@type": "Thing", "name": "Google Cloud Run"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"},
- {"@type": "ListItem", "position": 3, "name": "Serverless"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"}, {"@type": "ListItem", "position": 4, "name": "Serverless"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Do I need a Lambda layer, adapter or runtime library?", "acceptedAnswer": {"@type": "Answer", "text": "No. When Lambda sets AWS_LAMBDA_RUNTIME_API, cameleer run starts the routes and serves the Runtime API itself on the provided.al2023 runtime. The zip holds the binary as bootstrap plus your route files."}},
- {"@type": "Question", "name": "Which events reach which routes?", "acceptedAnswer": {"@type": "Answer", "text": "API Gateway REST and HTTP APIs, function URLs and ALB events go to your platform-http routes in process, and the HTTP response becomes the proxy-integration response. Other events (S3, SQS, EventBridge, direct invokes) go request-reply to the handler endpoint: the function's Handler setting when it is an endpoint URI, else camel.main.lambda-handler, else direct:lambda."}},
- {"@type": "Question", "name": "How fast is a cold start?", "acceptedAnswer": {"@type": "Answer", "text": "In the cloud benchmark, routes are running 3 ms after the process starts (Apache Camel on the JVM: 1.1 s; on Quarkus native: 30 ms). In AWS's provided:al2023 image with the Lambda Runtime Interface Emulator, init took 3.5 to 5.2 ms and warm invocations 0.7 to 1.3 ms. Lambda's own sandbox start is added on top on every platform."}},
- {"@type": "Question", "name": "Does the same route run on Cloud Run or Kubernetes?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The same route file runs on Lambda, in the container on Cloud Run, Knative, Azure Container Apps, Fly.io, ECS and Kubernetes, and as a plain binary. Cloud Run sends requests to PORT, 8080 by default."}},
- {"@type": "Question", "name": "How small can the function be?", "acceptedAnswer": {"@type": "Answer", "text": "scripts/package-lambda.sh takes --features to keep only the component families the routes use. A static musl build with the cloud family is 11.8 MB and has an HTTP route ready in 0.75 ms; core alone is 7.5 MB."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do I need a Lambda layer, adapter or runtime library?", "acceptedAnswer": {"@type": "Answer", "text": "No. When Lambda sets AWS_LAMBDA_RUNTIME_API, cameleer run starts the routes and serves the Runtime API itself on the provided.al2023 runtime. The zip holds the binary as bootstrap plus your route files."}}, {"@type": "Question", "name": "Which events reach which routes?", "acceptedAnswer": {"@type": "Answer", "text": "API Gateway REST and HTTP APIs, function URLs and ALB events go to your platform-http routes in process, and the HTTP response becomes the proxy-integration response. Other events (S3, SQS, EventBridge, direct invokes) go request-reply to the handler endpoint: the function's Handler setting when it is an endpoint URI, else camel.main.lambda-handler, else direct:lambda."}}, {"@type": "Question", "name": "How fast is a cold start?", "acceptedAnswer": {"@type": "Answer", "text": "In the cloud benchmark, routes are running 3 ms after the process starts (Apache Camel on the JVM: 1.1 s; on Quarkus native: 30 ms). In AWS's provided:al2023 image with the Lambda Runtime Interface Emulator, init took 3.5 to 5.2 ms and warm invocations 0.7 to 1.3 ms. Lambda's own sandbox start is added on top on every platform."}}, {"@type": "Question", "name": "Does the same route run on Cloud Run or Kubernetes?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The same route file runs on Lambda, in the container on Cloud Run, Knative, Azure Container Apps, Fly.io, ECS and Kubernetes, and as a plain binary. Cloud Run sends requests to PORT, 8080 by default."}}, {"@type": "Question", "name": "How small can the function be?", "acceptedAnswer": {"@type": "Answer", "text": "scripts/package-lambda.sh takes --features to keep only the component families the routes use. A static musl build with the cloud family is 11.8 MB and has an HTTP route ready in 0.75 ms; core alone is 7.5 MB."}}]}
 </script>
 </head>
 <body>
@@ -81,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / Serverless</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Use cases</a> / Serverless</p>
     <p class="kicker">Serverless and scale to zero</p>
     <h1>Integration routes as functions, without the cold start</h1>
     <p class="lede">Integrations sit idle, then get busy all at once: the load serverless is priced for, and the load a JVM handles worst. Cameleer starts its routes in milliseconds, is its own AWS Lambda runtime, and runs the same route file in a container on Cloud Run, Knative or Azure Container Apps.</p>

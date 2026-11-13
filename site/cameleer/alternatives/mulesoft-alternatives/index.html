@@ -23,26 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "MuleSoft alternatives: open-source and commercial",
- "description": "Alternatives to MuleSoft grouped by what you are replacing: the integration runtime (Apache Camel, Cameleer, WSO2, Spring Integration), the whole platform (Boomi, Workato, IBM, TIBCO, SAP, Azure), API management, or the AI agent layer.",
- "url": "https://cameleer.ing/cameleer/alternatives/mulesoft-alternatives/",
- "dateModified": "2026-11-09",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"}}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "MuleSoft alternatives: open-source and commercial", "description": "Alternatives to MuleSoft grouped by what you are replacing: the integration runtime (Apache Camel, Cameleer, WSO2, Spring Integration), the whole platform (Boomi, Workato, IBM, TIBCO, SAP, Azure), API management, or the AI agent layer.", "url": "https://cameleer.ing/cameleer/alternatives/mulesoft-alternatives/", "dateModified": "2026-11-09", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "MuleSoft alternatives"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "MuleSoft alternatives"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "What is the best open-source alternative to MuleSoft?", "acceptedAnswer": {"@type": "Answer", "text": "For the integration runtime: Apache Camel (the most widely used open-source integration framework), Cameleer (Camel's routes as one native binary, with an MCP server for AI agents) or WSO2 Integrator (open source with a visual designer and API management as a separate product). For API management on its own, an open-source API gateway. None of them is the whole Anypoint platform in one product."}},
- {"@type": "Question", "name": "Why do teams look for MuleSoft alternatives?", "acceptedAnswer": {"@type": "Answer", "text": "Usually cost and how it scales (MuleSoft prices by quote, and buyers report contracts from tens of thousands of dollars a year), dependence on one vendor's runtime, designer and hosting, the footprint of a JVM runtime for small or edge integrations, and wanting integrations as code in Git."}},
- {"@type": "Question", "name": "Is there a MuleSoft alternative for AI agents and MCP?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Boomi, Workato, WSO2, IBM, Azure Logic Apps and Apache Camel all offer MCP support. Cameleer is open source and self-hosted, serves routes as MCP tools in both protocol eras, and enforces schema checks, run-once, approvals, cancelling timeouts and a hash-chained audit on every call."}},
- {"@type": "Question", "name": "How hard is it to move from MuleSoft to Apache Camel or Cameleer?", "acceptedAnswer": {"@type": "Answer", "text": "Flows are rewritten as routes; there is no automatic converter. The patterns match closely (Choice to choice, For Each to split, Scatter-Gather to multicast, Try and On Error to doTry and onException), DataWeave is rewritten in DataSonnet, jq or Simple, and API management moves to a separate gateway. Check that each system a flow uses has a component."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is the best open-source alternative to MuleSoft?", "acceptedAnswer": {"@type": "Answer", "text": "For the integration runtime: Apache Camel (the most widely used open-source integration framework), Cameleer (Camel's routes as one native binary, with an MCP server for AI agents) or WSO2 Integrator (open source with a visual designer and API management as a separate product). For API management on its own, an open-source API gateway. None of them is the whole Anypoint platform in one product."}}, {"@type": "Question", "name": "Why do teams look for MuleSoft alternatives?", "acceptedAnswer": {"@type": "Answer", "text": "Usually cost and how it scales (MuleSoft prices by quote, and buyers report contracts from tens of thousands of dollars a year), dependence on one vendor's runtime, designer and hosting, the footprint of a JVM runtime for small or edge integrations, and wanting integrations as code in Git."}}, {"@type": "Question", "name": "Is there a MuleSoft alternative for AI agents and MCP?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Boomi, Workato, WSO2, IBM, Azure Logic Apps and Apache Camel all offer MCP support. Cameleer is open source and self-hosted, serves routes as MCP tools in both protocol eras, and enforces schema checks, run-once, approvals, cancelling timeouts and a hash-chained audit on every call."}}, {"@type": "Question", "name": "How hard is it to move from MuleSoft to Apache Camel or Cameleer?", "acceptedAnswer": {"@type": "Answer", "text": "Flows are rewritten as routes; there is no automatic converter. The patterns match closely (Choice to choice, For Each to split, Scatter-Gather to multicast, Try and On Error to doTry and onException), DataWeave is rewritten in DataSonnet, jq or Simple, and API management moves to a separate gateway. Check that each system a flow uses has a component."}}]}
 </script>
 </head>
 <body>
@@ -79,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / MuleSoft alternatives</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / MuleSoft alternatives</p>
     <p class="kicker">MuleSoft alternatives</p>
     <h1>MuleSoft alternatives: replace the part you need to</h1>
     <p class="lede">MuleSoft Anypoint bundles an integration runtime, a designer, DataWeave, API management, a connector marketplace, hosting and an agent layer. Most teams that look elsewhere want to replace one or two of those, not all of them. Start from which part it is.</p>

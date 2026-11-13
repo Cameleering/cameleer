@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Apache Camel vs Cameleer: Throughput, Memory and Startup Benchmarks | Cameleer</title>
-<meta name="description" content="Apache Camel vs Cameleer, measured with the same routes: throughput, latency, memory and startup across routing, REST APIs, Kafka, PostgreSQL and batch jobs, including Apache Camel on Quarkus native.">
+<title>Apache Camel vs Cameleer: Benchmarks, Memory | Cameleer</title>
+<meta name="description" content="Apache Camel vs Cameleer with the same routes: 3 ms vs 1.1 s startup, 4.8-54x less memory, 1.7-8.7x throughput, one p99 loss; Quarkus native included.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -22,30 +22,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Apache Camel vs Cameleer: throughput, memory and startup benchmarks",
- "description": "Apache Camel (JVM and Quarkus native) and Cameleer measured with the same routes across routing, REST APIs, Kafka, PostgreSQL and batch jobs.",
- "url": "https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"},
-           {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}],
- "isBasedOn": {"@type": "Dataset", "name": "Cameleer and Apache Camel benchmark results", "url": "https://github.com/cameleering/cameleer/tree/main/benchmarks/results"}}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Apache Camel vs Cameleer: throughput, memory and startup benchmarks", "description": "Apache Camel (JVM and Quarkus native) and Cameleer measured with the same routes across routing, REST APIs, Kafka, PostgreSQL and batch jobs.", "url": "https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}], "isBasedOn": {"@type": "Dataset", "name": "Cameleer and Apache Camel benchmark results", "url": "https://github.com/cameleering/cameleer/tree/main/benchmarks/results"}}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"},
- {"@type": "ListItem", "position": 3, "name": "Apache Camel vs Cameleer"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"}, {"@type": "ListItem", "position": 4, "name": "Apache Camel vs Cameleer"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Is Cameleer a drop-in replacement for Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "For routes written in Camel's YAML or XML DSL with the components Cameleer provides, yes: the same endpoint URIs, EIPs, Simple expressions and headers. Routes that call Java beans or use the Java DSL need those parts rewritten, and a few Camel components have no Cameleer equivalent."}},
- {"@type": "Question", "name": "Was the JVM warmed up?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Every scenario runs 15 seconds of warmup before five timed 5-second iterations, on both sides, so the JIT compiler has finished its work before anything is measured."}},
- {"@type": "Question", "name": "Was Apache Camel tuned?", "acceptedAnswer": {"@type": "Answer", "text": "Both sides ran their default settings: no JVM flags, no thread pool or GC tuning, and the same connection pool size for PostgreSQL. The routes are identical on both sides."}},
- {"@type": "Question", "name": "What about Apache Camel on Quarkus native?", "acceptedAnswer": {"@type": "Answer", "text": "It is in the benchmark. Native compilation makes Camel start much faster and use less memory than on the JVM, but without a JIT compiler its throughput is lower than on the JVM. Cameleer is faster and smaller than both."}},
- {"@type": "Question", "name": "Can I run the benchmark myself?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The routes, the harness and the scripts that create the cloud machines are in the Cameleer repository under scripts/cloud-bench; a full run costs about one US dollar of cloud time."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is Cameleer a drop-in replacement for Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "For routes written in Camel's YAML or XML DSL with the components Cameleer provides, yes: the same endpoint URIs, EIPs, Simple expressions and headers. Routes that call Java beans or use the Java DSL need those parts rewritten, and a few Camel components have no Cameleer equivalent."}}, {"@type": "Question", "name": "Was the JVM warmed up?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Every scenario runs 15 seconds of warmup before five timed 5-second iterations, on both sides, so the JIT compiler has finished its work before anything is measured."}}, {"@type": "Question", "name": "Was Apache Camel tuned?", "acceptedAnswer": {"@type": "Answer", "text": "Both sides ran their default settings: no JVM flags, no thread pool or GC tuning, and the same connection pool size for PostgreSQL. The routes are identical on both sides."}}, {"@type": "Question", "name": "What about Apache Camel on Quarkus native?", "acceptedAnswer": {"@type": "Answer", "text": "It is in the benchmark. Native compilation makes Camel start much faster and use less memory than on the JVM, but without a JIT compiler its throughput is lower than on the JVM. Cameleer is faster and smaller than both."}}, {"@type": "Question", "name": "Can I run the benchmark myself?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The routes, the harness and the scripts that create the cloud machines are in the Cameleer repository under scripts/cloud-bench; a full run costs about one US dollar of cloud time."}}]}
 </script>
 </head>
 <body>
@@ -82,7 +65,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / Apache Camel vs Cameleer</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Compare</a> / Apache Camel vs Cameleer</p>
     <p class="kicker">Same routes. Measured.</p>
     <h1>Apache Camel vs Cameleer</h1>
     <p class="lede">Cameleer runs Apache Camel's routes, EIPs and YAML DSL as one native binary. We ran the same routes on both, from in-memory routing to REST APIs, Kafka and PostgreSQL. Cameleer starts in milliseconds, runs in megabytes and moves more messages on the same CPUs.</p>

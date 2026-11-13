@@ -23,28 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "WSO2 vs Apache Camel vs Cameleer",
- "description": "WSO2 Integrator, Apache Camel and Cameleer compared as open-source integration runtimes: how integrations are written, runtime, startup and memory, designer and API management, MCP and AI agents, support, and when to choose each.",
- "url": "https://cameleer.ing/cameleer/compare/wso2-vs-apache-camel-vs-cameleer/",
- "dateModified": "2026-11-09",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "SoftwareApplication", "name": "WSO2 Integrator"}, {"@type": "SoftwareApplication", "name": "Apache Camel"}, {"@type": "SoftwareApplication", "name": "Cameleer"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "WSO2 vs Apache Camel vs Cameleer", "description": "WSO2 Integrator, Apache Camel and Cameleer compared as open-source integration runtimes: how integrations are written, runtime, startup and memory, designer and API management, MCP and AI agents, support, and when to choose each.", "url": "https://cameleer.ing/cameleer/compare/wso2-vs-apache-camel-vs-cameleer/", "dateModified": "2026-11-09", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "SoftwareApplication", "name": "WSO2 Integrator"}, {"@type": "SoftwareApplication", "name": "Apache Camel"}, {"@type": "SoftwareApplication", "name": "Cameleer"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"},
- {"@type": "ListItem", "position": 3, "name": "WSO2 vs Apache Camel vs Cameleer"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"}, {"@type": "ListItem", "position": 4, "name": "WSO2 vs Apache Camel vs Cameleer"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "What is the difference between WSO2 and Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "Both are open-source integration runtimes on the JVM. WSO2 Integrator is a product: the Micro Integrator (built on Apache Synapse) with a VS Code visual designer, a low-code Ballerina profile, management tooling, an API Manager as a separate product, and paid support from WSO2. Apache Camel is a framework: routes in Java, YAML or XML using the Enterprise Integration Patterns, about 300 components, embedded in Camel Main, Quarkus or Spring Boot, supported by the community and by vendors."}},
- {"@type": "Question", "name": "Is WSO2 or Apache Camel faster?", "acceptedAnswer": {"@type": "Answer", "text": "We have not benchmarked WSO2. WSO2 states about 4 to 5 seconds of startup for the Micro Integrator and recommends 1 GB of memory per container. On identical cloud machines, Apache Camel 4.23 on Java 21 started in 1.1 s and peaked at 399 MB on a simple route; Cameleer started in 2.5 ms and peaked at 7 MB on the same route."}},
- {"@type": "Question", "name": "Do WSO2 and Apache Camel support MCP and AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. WSO2 Integrator can expose APIs and integrations as MCP servers and build agents with memory and RAG. Apache Camel 4.22 added camel-ai-tool and camel-mcp-server (Preview). Cameleer serves routes as MCP tools in both protocol eras, imports other MCP servers as a gateway, and enforces schema checks, run-once, approvals, cancelling timeouts and a hash-chained audit on every call."}},
- {"@type": "Question", "name": "Can Cameleer run WSO2 integrations?", "acceptedAnswer": {"@type": "Answer", "text": "No. Cameleer runs Apache Camel routes. WSO2 Synapse sequences and Ballerina integrations are rewritten as routes; most Synapse mediators have a direct Camel equivalent, listed on this page."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is the difference between WSO2 and Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "Both are open-source integration runtimes on the JVM. WSO2 Integrator is a product: the Micro Integrator (built on Apache Synapse) with a VS Code visual designer, a low-code Ballerina profile, management tooling, an API Manager as a separate product, and paid support from WSO2. Apache Camel is a framework: routes in Java, YAML or XML using the Enterprise Integration Patterns, about 300 components, embedded in Camel Main, Quarkus or Spring Boot, supported by the community and by vendors."}}, {"@type": "Question", "name": "Is WSO2 or Apache Camel faster?", "acceptedAnswer": {"@type": "Answer", "text": "We have not benchmarked WSO2. WSO2 states about 4 to 5 seconds of startup for the Micro Integrator and recommends 1 GB of memory per container. On identical cloud machines, Apache Camel 4.23 on Java 21 started in 1.1 s and peaked at 399 MB on a simple route; Cameleer started in 2.5 ms and peaked at 7 MB on the same route."}}, {"@type": "Question", "name": "Do WSO2 and Apache Camel support MCP and AI agents?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. WSO2 Integrator can expose APIs and integrations as MCP servers and build agents with memory and RAG. Apache Camel 4.22 added camel-ai-tool and camel-mcp-server (Preview). Cameleer serves routes as MCP tools in both protocol eras, imports other MCP servers as a gateway, and enforces schema checks, run-once, approvals, cancelling timeouts and a hash-chained audit on every call."}}, {"@type": "Question", "name": "Can Cameleer run WSO2 integrations?", "acceptedAnswer": {"@type": "Answer", "text": "No. Cameleer runs Apache Camel routes. WSO2 Synapse sequences and Ballerina integrations are rewritten as routes; most Synapse mediators have a direct Camel equivalent, listed on this page."}}]}
 </script>
 </head>
 <body>
@@ -81,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / WSO2 vs Apache Camel vs Cameleer</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Compare</a> / WSO2 vs Apache Camel vs Cameleer</p>
     <p class="kicker">Open-source integration</p>
     <h1>WSO2 vs Apache Camel vs Cameleer</h1>
     <p class="lede">Three open-source ways to run integrations. WSO2 Integrator is a product with a visual designer, management tooling and paid support. Apache Camel is the framework of the Enterprise Integration Patterns, on the JVM. Cameleer runs Camel's routes unchanged as one native binary, and adds a reliability layer for AI agent tools.</p>

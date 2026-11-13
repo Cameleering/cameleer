@@ -155,7 +155,7 @@ def render_partial(name, root, page_path):
                 '%s\n    <nav id="main-nav" aria-label="Main">\n%s\n%s\n'
                 '      <a%s href="%sabout/">About</a>\n'
                 '      <a class="gh" href="https://github.com/cameleering">%s GitHub</a>\n    </nav>\n  </div>\n</header>'
-                % (root, root, toggle, links, _menu(root, "Projects", root + "projects/", PROJECTS_MENU, page_path == "projects/"),
+                % (root or "./", root, toggle, links, _menu(root, "Projects", root + "projects/", PROJECTS_MENU, page_path == "projects/"),
                    about_cur, root, GITHUB_SVG))
     if name == "credit-cameleer":
         return ('<div class="credit">\n      <h4><a href="%scameleer/">Cameleer</a></h4>\n'
@@ -1433,6 +1433,42 @@ class Site:
                 '<body><p>This page moved to <a href="%s">%s</a>.</p></body></html>\n')
                 % (STUB_MARK, esc(title), esc(url), json.dumps(url), esc(url), esc(url), esc(title)))
 
+    def write_llms_bundles(self, limit=150_000):
+        """/cameleer/llms/<section>.txt: guides, languages, data formats, packs and the components
+        by category, so an agent can fetch one part whole. Returns [(name, title, pages)]."""
+        out_dir = os.path.join(self.out, "cameleer", "llms")
+        if os.path.isdir(out_dir):
+            shutil.rmtree(out_dir)
+        made = []
+
+        def emit(name, title, pages):
+            if not pages:
+                return
+            # fill parts in order until the next page would pass the limit: name, or name-1, name-2, ...
+            parts, cur = [], []
+            for p in pages:
+                if cur and len(_bundle_text(self, title, cur + [p]).encode("utf-8")) > limit:
+                    parts.append(cur)
+                    cur = []
+                cur.append(p)
+            parts.append(cur)
+            for i, part in enumerate(parts, 1):
+                n, t = (name, title) if len(parts) == 1 else ("%s-%d" % (name, i), "%s (part %d of %d)" % (title, i, len(parts)))
+                write(os.path.join(out_dir, n + ".txt"), _bundle_text(self, t, part))
+                made.append((n, t, len(part)))
+
+        emit("guides", "Guides", self.ordered("guides"))
+        cats = {}
+        for p in self.ordered("components"):
+            cats.setdefault(p.category or "Other", []).append(p)
+        for cat in CATEGORY_ORDER + sorted(set(cats) - set(CATEGORY_ORDER)):
+            if cat in cats:
+                emit("components-" + slugify(cat), "Components: " + cat, cats[cat])
+        emit("languages", "Languages", self.ordered("languages"))
+        emit("dataformats", "Data formats", self.ordered("dataformats"))
+        emit("packs", "Packs (the health pack)", sorted((p for p in self.pages.values() if p.section == "packs"), key=lambda p: p.out))
+        return made
+
     def write_llms(self):
         u = abs_url
         sec = ["## Documentation", "",
@@ -1456,8 +1492,17 @@ class Site:
             sec.append("")
             for p in guides:
                 sec.append("- [%s](%s): %s" % (p.title, u(p.out), p.answer))
+        # section bundles an agent can fetch whole (each at most about 150 KB)
+        bundles = self.write_llms_bundles()
+        sec.append("")
+        sec.append("Section bundles (plain markdown, each small enough to fetch whole):")
+        sec.append("")
+        for name, title, n in bundles:
+            sec.append("- [%s](%scameleer/llms/%s.txt): %d pages" % (title, SITE_URL, name, n))
         block = "\n".join(sec) + "\n"
-        src = os.path.join(self.repo, "site", "llms.txt")
+        # sources: scripts/llms/cameleer.txt (Cameleer's index, served at /cameleer/llms.txt and kept
+        # as the repository's llms.txt) and scripts/llms/cameleering.txt (the family index, /llms.txt)
+        src = os.path.join(self.repo, "scripts", "llms", "cameleer.txt")
         base = open(src, encoding="utf-8").read() if os.path.exists(src) else "# Cameleer\n"
         base = base.replace("\r\n", "\n")
         # replace an existing generated section, else insert it before "## Docs" (or append)
@@ -1467,10 +1512,17 @@ class Site:
         else:
             k = base.find("\n## Docs\n")
             text = base[:k + 1] + block + "\n" + base[k + 1:] if k >= 0 else base.rstrip("\n") + "\n\n" + block
-        write(os.path.join(self.out, "llms.txt"), text.rstrip("\n") + "\n")
+        text = text.rstrip("\n") + "\n"
+        write(os.path.join(self.out, "cameleer", "llms.txt"), text)
+        if os.path.normcase(self.out) == os.path.normcase(os.path.join(self.repo, "site")):
+            with open(os.path.join(self.repo, "llms.txt"), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(text)
+        family = os.path.join(self.repo, "scripts", "llms", "cameleering.txt")
+        if os.path.exists(family):
+            write(os.path.join(self.out, "llms.txt"), open(family, encoding="utf-8").read().replace("\r\n", "\n"))
 
         full = ["# Cameleer documentation (full text)", "",
-                "> Every page of the Cameleer documentation (%sdocs/) concatenated as plain markdown, for LLMs and coding assistants. Cameleer is Apache Camel rewritten in Rust." % SITE_URL, ""]
+                "> Every page of the Cameleer documentation (%sdocs/) concatenated as plain markdown, for LLMs and coding assistants. This file covers Cameleer's docs only: the family index is %sllms.txt, Cameleer's index %scameleer/llms.txt, and the section bundles under %scameleer/llms/ are smaller. Cameleer is an integration engine in the style of Apache Camel, written in Rust." % (SITE_URL, SITE_URL, SITE_URL, SITE_URL), ""]
         order = []
         if "index.html" in self.by_out:
             order.append(self.by_out["index.html"])
@@ -1488,6 +1540,14 @@ class Site:
             full.append(self.abs_md(p, p.text).strip("\n"))
             full.append("")
         write(os.path.join(self.out, "llms-full.txt"), "\n".join(full))
+
+
+def _bundle_text(site, title, pages):
+    out = ["# Cameleer documentation: %s" % title, "",
+           "> Part of Cameleer's documentation as plain markdown (%scameleer/llms.txt lists every part). Cameleer is an integration engine in the style of Apache Camel, written in Rust." % SITE_URL, ""]
+    for p in pages:
+        out += ["---", "", "Source: %s" % abs_url(p.out), "", site.abs_md(p, p.text).strip("\n"), ""]
+    return "\n".join(out)
 
 
 def strip_tags_keep_code(h):

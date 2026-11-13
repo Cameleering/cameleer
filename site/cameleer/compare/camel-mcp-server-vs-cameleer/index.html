@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Apache Camel MCP Server vs Cameleer | Cameleer</title>
-<meta name="description" content="Apache Camel 4.22 ships camel-ai-tool and camel-mcp-server. Cameleer uses the same option and property names and adds an enforced reliability envelope, both MCP eras and an MCP gateway.">
+<meta name="description" content="Apache Camel 4.22 ships camel-mcp-server. Cameleer keeps its option names and adds an enforced reliability envelope: 39,922 vs 22,604 tool calls/s.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,27 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Apache Camel's MCP server vs Cameleer",
- "description": "Apache Camel 4.22 ships camel-ai-tool and camel-mcp-server; Cameleer implements the same option and property names in Rust and adds an enforced reliability envelope, both MCP protocol eras on one endpoint and an MCP client and gateway.",
- "url": "https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}, {"@type": "Thing", "name": "Model Context Protocol"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Apache Camel's MCP server vs Cameleer", "description": "Apache Camel 4.22 ships camel-ai-tool and camel-mcp-server; Cameleer implements the same option and property names in Rust and adds an enforced reliability envelope, both MCP protocol eras on one endpoint and an MCP client and gateway.", "url": "https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "SoftwareSourceCode", "name": "Apache Camel", "codeRepository": "https://github.com/apache/camel"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}, {"@type": "Thing", "name": "Model Context Protocol"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"},
- {"@type": "ListItem", "position": 3, "name": "Camel MCP server vs Cameleer"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"}, {"@type": "ListItem", "position": 4, "name": "Camel MCP server vs Cameleer"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Do my Camel ai-tool routes and MCP properties carry over?", "acceptedAnswer": {"@type": "Answer", "text": "The ai-tool options (description, tags, parameter.*, argSchema, outputSchema, the four hints, returnDirect) and the camel.server.mcp-* properties use Camel's names and semantics, so YAML tool routes and their properties carry over. Java beans do not: an authorizationPolicy, for example, is a Rust implementation of ToolAuthorizationPolicy in Cameleer."}},
- {"@type": "Question", "name": "Is Camel's MCP server unreliable?", "acceptedAnswer": {"@type": "Answer", "text": "No. In Camel the tool hints are advisory and the reliability is yours to build in the route with Camel's EIPs: idempotent consumer, saga, throttle, circuit breaker. Cameleer makes those checks part of every call, so a tool cannot forget them."}},
- {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When the tools call Java libraries or beans, when you need a component Cameleer does not have, when the MCP server should live inside a Spring Boot or Quarkus application, or when you need commercial support."}},
- {"@type": "Question", "name": "Are there benchmarks of the MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's camel-mcp-server on the JVM and 2,257 for a server written on the official TypeScript SDK, with 56 MB of memory against 289 MB and 197 MB. Stateless 2026-07-28 calls reached 50,514 per second in 26 MB. Every Cameleer call went through the full tool envelope."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do my Camel ai-tool routes and MCP properties carry over?", "acceptedAnswer": {"@type": "Answer", "text": "The ai-tool options (description, tags, parameter.*, argSchema, outputSchema, the four hints, returnDirect) and the camel.server.mcp-* properties use Camel's names and semantics, so YAML tool routes and their properties carry over. Java beans do not: an authorizationPolicy, for example, is a Rust implementation of ToolAuthorizationPolicy in Cameleer."}}, {"@type": "Question", "name": "Is Camel's MCP server unreliable?", "acceptedAnswer": {"@type": "Answer", "text": "No. In Camel the tool hints are advisory and the reliability is yours to build in the route with Camel's EIPs: idempotent consumer, saga, throttle, circuit breaker. Cameleer makes those checks part of every call, so a tool cannot forget them."}}, {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When the tools call Java libraries or beans, when you need a component Cameleer does not have, when the MCP server should live inside a Spring Boot or Quarkus application, or when you need commercial support."}}, {"@type": "Question", "name": "Are there benchmarks of the MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's camel-mcp-server on the JVM and 2,257 for a server written on the official TypeScript SDK, with 56 MB of memory against 289 MB and 197 MB. Stateless 2026-07-28 calls reached 50,514 per second in 26 MB. Every Cameleer call went through the full tool envelope."}}]}
 </script>
 </head>
 <body>
@@ -80,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / Camel MCP server vs Cameleer</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Compare</a> / Camel MCP server vs Cameleer</p>
     <p class="kicker">Same names, enforced semantics</p>
     <h1>Apache Camel's MCP server vs Cameleer</h1>
     <p class="lede">Apache Camel 4.22 added <code>camel-ai-tool</code> and <code>camel-mcp-server</code>: routes become tools that MCP clients can call. Cameleer implements the same option and property names, so the routes and the configuration look the same. The difference is what happens around each call, and the runtime the server runs on. The overview, environments and tested use cases are on the <a href="../../mcp/">Cameleer MCP</a> page.</p>

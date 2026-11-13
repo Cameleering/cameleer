@@ -46,6 +46,7 @@ class Page(html.parser.HTMLParser):
         self.description = None
         self._in_ld = False
         self._in_title = False
+        self._seen_title = False
         self._buf = []
 
     def handle_starttag(self, tag, attrs):
@@ -70,8 +71,8 @@ class Page(html.parser.HTMLParser):
                 self.description = a.get("content", "")
         elif tag == "h1":
             self.h1 += 1
-        elif tag == "title":
-            self._in_title = True
+        elif tag == "title" and not self._seen_title:
+            self._in_title = True  # the page title only, not an inline SVG's <title>
         if tag == "script" and (a.get("type") or "") == "application/ld+json":
             self._in_ld = True
             self._buf = []
@@ -80,8 +81,9 @@ class Page(html.parser.HTMLParser):
         if tag == "script" and self._in_ld:
             self.ldjson.append("".join(self._buf))
             self._in_ld = False
-        elif tag == "title":
+        elif tag == "title" and self._in_title:
             self._in_title = False
+            self._seen_title = True
 
     def handle_data(self, data):
         if self._in_ld:

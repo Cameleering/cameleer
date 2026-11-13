@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Confidential Integrations and Attested MCP Servers | Cameleer</title>
-<meta name="description" content="Run Cameleer in a confidential VM (Intel TDX, AMD SEV-SNP, dstack) and prove to a client which routes, configuration and MCP tools it runs, with hardware evidence bound to the TLS connection. Since 0.6.0.">
+<meta name="description" content="Run Cameleer in an Intel TDX, AMD SEV-SNP or dstack VM and prove to a client which routes, configuration and MCP tools it runs. Since 0.6.0.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/confidential-computing/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,28 +23,13 @@
 <link rel="stylesheet" href="../../assets/site.css">
 <link rel="stylesheet" href="../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Confidential integrations and attested MCP servers with Cameleer",
- "description": "How Cameleer, running in an Intel TDX or AMD SEV-SNP confidential VM or a dstack CVM, proves to a client which routes, configuration and MCP tools it runs, what the evidence covers, how a client checks it, and what it does not prove yet.",
- "url": "https://cameleer.ing/cameleer/confidential-computing/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "Confidential computing"}, {"@type": "Thing", "name": "Remote attestation"}, {"@type": "Thing", "name": "Model Context Protocol"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Confidential integrations and attested MCP servers with Cameleer", "description": "How Cameleer, running in an Intel TDX or AMD SEV-SNP confidential VM or a dstack CVM, proves to a client which routes, configuration and MCP tools it runs, what the evidence covers, how a client checks it, and what it does not prove yet.", "url": "https://cameleer.ing/cameleer/confidential-computing/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "Confidential computing"}, {"@type": "Thing", "name": "Remote attestation"}, {"@type": "Thing", "name": "Model Context Protocol"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Trust"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Trust"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Can an MCP client check what a Cameleer server is running?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, since 0.6.0, when Cameleer runs in a confidential VM. The client sends a nonce in server/discover or initialize and gets a hardware-signed report bound to that nonce, to the SHA-256 of the server's TLS key and to a manifest of the routes, configuration and MCP tools. The client checks the binding (cameleer_attest::check_binding in Rust) and verifies the hardware signature with the platform's verifier."}},
- {"@type": "Question", "name": "What is confidential integration?", "acceptedAnswer": {"@type": "Answer", "text": "Running integration routes inside a confidential VM, where the hardware encrypts memory and can attest what software runs. With Cameleer the evidence covers the integration itself: the route files, the routes, the configuration (with secret values left out) and the MCP tools it publishes, not only the virtual machine."}},
- {"@type": "Question", "name": "Does Cameleer verify Intel or AMD attestation evidence?", "acceptedAnswer": {"@type": "Answer", "text": "Not yet. Cameleer produces the evidence and the binding; a verifier such as Intel Trust Authority, Microsoft Azure Attestation, Google's verifier or dstack's checks the hardware signature chain. Verifying remote MCP servers inside Cameleer is planned."}},
- {"@type": "Question", "name": "Which confidential computing platforms does it support?", "acceptedAnswer": {"@type": "Answer", "text": "Intel TDX and AMD SEV-SNP confidential VMs whose Linux kernel (6.7 or later) exposes configfs-tsm, and dstack CVMs such as Phala Cloud or dstack on Google Cloud TDX. AWS Nitro Enclaves, Azure vTPM attestation and Google Confidential Space are not supported yet."}},
- {"@type": "Question", "name": "Is it enough for an AI model to call the attestation tool?", "acceptedAnswer": {"@type": "Answer", "text": "No. A model that shows evidence is not checking it. Only a program that checks the binding and the hardware signature gets the guarantee; the cameleer_attestation tool exists so that clients which only speak tools can fetch the report for such a program."}},
- {"@type": "Question", "name": "Is attestation released?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, in Cameleer 0.6.0 (2026-11-12). Its tests use a simulated configfs-tsm and a simulated dstack agent; it has not yet been run on real TEE hardware."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Can an MCP client check what a Cameleer server is running?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, since 0.6.0, when Cameleer runs in a confidential VM. The client sends a nonce in server/discover or initialize and gets a hardware-signed report bound to that nonce, to the SHA-256 of the server's TLS key and to a manifest of the routes, configuration and MCP tools. The client checks the binding (cameleer_attest::check_binding in Rust) and verifies the hardware signature with the platform's verifier."}}, {"@type": "Question", "name": "What is confidential integration?", "acceptedAnswer": {"@type": "Answer", "text": "Running integration routes inside a confidential VM, where the hardware encrypts memory and can attest what software runs. With Cameleer the evidence covers the integration itself: the route files, the routes, the configuration (with secret values left out) and the MCP tools it publishes, not only the virtual machine."}}, {"@type": "Question", "name": "Does Cameleer verify Intel or AMD attestation evidence?", "acceptedAnswer": {"@type": "Answer", "text": "Not yet. Cameleer produces the evidence and the binding; a verifier such as Intel Trust Authority, Microsoft Azure Attestation, Google's verifier or dstack's checks the hardware signature chain. Verifying remote MCP servers inside Cameleer is planned."}}, {"@type": "Question", "name": "Which confidential computing platforms does it support?", "acceptedAnswer": {"@type": "Answer", "text": "Intel TDX and AMD SEV-SNP confidential VMs whose Linux kernel (6.7 or later) exposes configfs-tsm, and dstack CVMs such as Phala Cloud or dstack on Google Cloud TDX. AWS Nitro Enclaves, Azure vTPM attestation and Google Confidential Space are not supported yet."}}, {"@type": "Question", "name": "Is it enough for an AI model to call the attestation tool?", "acceptedAnswer": {"@type": "Answer", "text": "No. A model that shows evidence is not checking it. Only a program that checks the binding and the hardware signature gets the guarantee; the cameleer_attestation tool exists so that clients which only speak tools can fetch the report for such a program."}}, {"@type": "Question", "name": "Is attestation released?", "acceptedAnswer": {"@type": "Answer", "text": "Yes, in Cameleer 0.6.0 (2026-11-12). Its tests use a simulated configfs-tsm and a simulated dstack agent; it has not yet been run on real TEE hardware."}}]}
 </script>
 </head>
 <body>
@@ -81,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../">Cameleer</a> / Trust</p>
+    <p class="crumbs"><a href="../../">Cameleering</a> / <a href="../">Cameleer</a> / Trust</p>
     <p class="kicker">Confidential integrations and attested MCP servers · since 0.6.0</p>
     <h1>Cameleer can prove what it runs.</h1>
     <p class="lede">Run Cameleer in a confidential VM and a client, or an agent's MCP client, can ask it for hardware evidence of the exact routes, configuration and MCP tools it is running, bound to the client's nonce and to the TLS connection the client is using. That is confidential computing applied to the integration itself, not only to the machine under it. The <a href="../mcp/">action layer</a> already makes every agent action checked, run once, approved and audited; attestation lets the caller check which routes those are.</p>

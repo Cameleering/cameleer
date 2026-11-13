@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cameleer Use Cases: MCP Tools, HL7, DICOM, MQTT Edge, Serverless | Cameleer</title>
-<meta name="description" content="What people run on Cameleer, each with a tested route: MCP tools for AI agents, model calls without a gateway, HL7 over MLLP and DICOM imaging, MQTT edge gateways, AWS Lambda and Cloud Run, file and SFTP pipelines, webhooks, change data capture, scheduled jobs.">
+<title>Cameleer Use Cases: MCP, HL7, DICOM, Edge, Serverless</title>
+<meta name="description" content="What people run on Cameleer, each with a tested route: MCP tools, model calls, HL7 and DICOM, MQTT edge gateways, AWS Lambda, file pipelines, CDC.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="website">
@@ -34,24 +34,10 @@
 @media (max-width: 900px) { .uc-grid { grid-template-columns: 1fr; } }
 </style>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "CollectionPage", "name": "Cameleer use cases",
- "url": "https://cameleer.ing/cameleer/use-cases/",
- "description": "What people run on Cameleer, each with a tested route.",
- "hasPart": [
-  {"@type": "TechArticle", "headline": "Integration routes as MCP tools", "url": "https://cameleer.ing/cameleer/use-cases/mcp-tool-server/"},
-  {"@type": "TechArticle", "headline": "Model calls without a separate LLM gateway", "url": "https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/"},
-  {"@type": "TechArticle", "headline": "AI agent tool calls: direct vs through Cameleer", "url": "https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/"},
-  {"@type": "TechArticle", "headline": "HL7 v2 over MLLP and FHIR integration", "url": "https://cameleer.ing/cameleer/use-cases/hl7-mllp-healthcare-integration/"},
-  {"@type": "TechArticle", "headline": "DICOM router and imaging gateway", "url": "https://cameleer.ing/cameleer/use-cases/dicom-imaging-gateway/"},
-  {"@type": "TechArticle", "headline": "MQTT and IoT edge gateways", "url": "https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/"},
-  {"@type": "TechArticle", "headline": "Serverless integration on AWS Lambda and Cloud Run", "url": "https://cameleer.ing/cameleer/use-cases/serverless-aws-lambda/"},
-  {"@type": "TechArticle", "headline": "File, FTP and SFTP pipelines", "url": "https://cameleer.ing/cameleer/use-cases/file-sftp-pipelines/"},
-  {"@type": "TechArticle", "headline": "Migrating from Apache Camel", "url": "https://cameleer.ing/docs/guides/migrating-from-apache-camel.html"}]}
+{"@context": "https://schema.org", "@type": "CollectionPage", "name": "Cameleer use cases", "url": "https://cameleer.ing/cameleer/use-cases/", "description": "What people run on Cameleer, each with a tested route.", "hasPart": [{"@type": "TechArticle", "headline": "Integration routes as MCP tools", "url": "https://cameleer.ing/cameleer/use-cases/mcp-tool-server/"}, {"@type": "TechArticle", "headline": "Model calls without a separate LLM gateway", "url": "https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/"}, {"@type": "TechArticle", "headline": "AI agent tool calls: direct vs through Cameleer", "url": "https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/"}, {"@type": "TechArticle", "headline": "HL7 v2 over MLLP and FHIR integration", "url": "https://cameleer.ing/cameleer/use-cases/hl7-mllp-healthcare-integration/"}, {"@type": "TechArticle", "headline": "DICOM router and imaging gateway", "url": "https://cameleer.ing/cameleer/use-cases/dicom-imaging-gateway/"}, {"@type": "TechArticle", "headline": "MQTT and IoT edge gateways", "url": "https://cameleer.ing/cameleer/use-cases/mqtt-iot-edge-gateway/"}, {"@type": "TechArticle", "headline": "Serverless integration on AWS Lambda and Cloud Run", "url": "https://cameleer.ing/cameleer/use-cases/serverless-aws-lambda/"}, {"@type": "TechArticle", "headline": "File, FTP and SFTP pipelines", "url": "https://cameleer.ing/cameleer/use-cases/file-sftp-pipelines/"}, {"@type": "TechArticle", "headline": "Migrating from Apache Camel", "url": "https://cameleer.ing/docs/guides/migrating-from-apache-camel.html"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Use cases"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases"}]}
 </script>
 </head>
 <body>
@@ -88,7 +74,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../">Cameleer</a> / Use cases</p>
+    <p class="crumbs"><a href="../../">Cameleering</a> / <a href="../">Cameleer</a> / Use cases</p>
     <p class="kicker">Tested routes, not slideware</p>
     <h1>What people run on Cameleer</h1>
     <p class="lede">Every use case below has a route in the repository that the test suite runs end to end, against embedded brokers and mock APIs. Each page names the components, shows the route, and gives the exact Docker command. Same Camel YAML, one native binary.</p>

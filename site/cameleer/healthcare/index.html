@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Open-Source Healthcare Integration Engine: HL7, FHIR, DICOM | Cameleer</title>
-<meta name="description" content="Cameleer's health pack is an open-source (Apache-2.0) healthcare integration engine: HL7 v2 over MLLP, FHIR, DICOM DIMSE and DICOMweb, and PS3.15 de-identification, as Camel YAML routes in one small native binary.">
+<title>Open-Source Healthcare Integration: HL7, FHIR, DICOM</title>
+<meta name="description" content="Cameleer's health pack: HL7 v2 over MLLP, FHIR, DICOM DIMSE and DICOMweb, and PS3.15 de-identification in one small binary, since 0.6.0.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/healthcare/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,37 +23,16 @@
 <link rel="stylesheet" href="../../assets/site.css">
 <link rel="stylesheet" href="../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "An open-source healthcare integration engine: HL7, FHIR and DICOM in one binary",
- "description": "What Cameleer's health pack does for healthcare integration (HL7 v2 over MLLP, FHIR, DICOM DIMSE and DICOMweb, PS3.15 de-identification), how to get it, how it was verified, how it compares with an interface engine such as Mirth Connect, and what it does not do yet.",
- "url": "https://cameleer.ing/cameleer/healthcare/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "Healthcare integration engine"}, {"@type": "Thing", "name": "HL7 v2"}, {"@type": "Thing", "name": "FHIR"}, {"@type": "Thing", "name": "DICOM"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "An open-source healthcare integration engine: HL7, FHIR and DICOM in one binary", "description": "What Cameleer's health pack does for healthcare integration (HL7 v2 over MLLP, FHIR, DICOM DIMSE and DICOMweb, PS3.15 de-identification), how to get it, how it was verified, how it compares with an interface engine such as Mirth Connect, and what it does not do yet.", "url": "https://cameleer.ing/cameleer/healthcare/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "Healthcare integration engine"}, {"@type": "Thing", "name": "HL7 v2"}, {"@type": "Thing", "name": "FHIR"}, {"@type": "Thing", "name": "DICOM"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "SoftwareApplication",
- "name": "Cameleer health pack", "applicationCategory": "DeveloperApplication", "operatingSystem": "Linux, Windows, macOS",
- "softwareVersion": "0.6.0", "license": "https://www.apache.org/licenses/LICENSE-2.0",
- "url": "https://cameleer.ing/cameleer/healthcare/", "codeRepository": "https://github.com/cameleering/cameleer",
- "description": "An optional pack for Cameleer, Apache Camel rewritten in Rust: HL7 v2 over MLLP, FHIR, DICOM DIMSE and DICOMweb, and PS3.15 de-identification.",
- "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}
+{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "Cameleer health pack", "applicationCategory": "DeveloperApplication", "operatingSystem": "Linux, Windows, macOS", "softwareVersion": "0.6.0", "license": "https://www.apache.org/licenses/LICENSE-2.0", "url": "https://cameleer.ing/cameleer/healthcare/", "codeRepository": "https://github.com/cameleering/cameleer", "description": "An optional pack for Cameleer, Apache Camel rewritten in Rust: HL7 v2 over MLLP, FHIR, DICOM DIMSE and DICOMweb, and PS3.15 de-identification.", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Packs", "item": "https://cameleer.ing/docs/packs/"},
- {"@type": "ListItem", "position": 3, "name": "Healthcare"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Packs", "item": "https://cameleer.ing/docs/packs/"}, {"@type": "ListItem", "position": 4, "name": "Healthcare"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Is there an open-source healthcare integration engine for HL7, FHIR and DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "Cameleer's health pack is one, under the Apache-2.0 licence: HL7 v2 over MLLP with acknowledgements, the hl7 data format and terser paths, the fhir component and FHIR JSON and XML, DICOM over DIMSE and DICOMweb, and PS3.15 de-identification. Integrations are Apache Camel YAML routes run by one native binary."}},
- {"@type": "Question", "name": "Is Cameleer an alternative to Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "For teams that keep integrations as code, yes: channels become routes in YAML files kept in Git, tested in CI, with Apache Camel's error handling and routing patterns, under the Apache-2.0 licence. It has no visual channel editor, no message browser and no importer for Mirth channels, and it does not run Mirth's JavaScript transformers."}},
- {"@type": "Question", "name": "Which image or build has the healthcare components?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, since 0.6.0: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. The default image and the full build do not include it. Up to 0.5.1, mllp, hl7 and fhir were in the default image; DICOM is new in the pack."}},
- {"@type": "Question", "name": "How was it tested?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack's live tests pass 10 of 10 against DCMTK 3.6.7, Orthanc 1.12.2 with its DICOMweb plugin, python-hl7 0.4.5 (MLLP both ways, AA and AR acknowledgements) and the HAPI FHIR 8.12.0 server (create, read, update, search, history, delete, JSON and XML). 33 public pydicom test files are read and written back byte for byte."}},
- {"@type": "Question", "name": "Is Cameleer HIPAA compliant?", "acceptedAnswer": {"@type": "Answer", "text": "Compliance belongs to a deployment, not to a library. Cameleer gives you controls: TLS and mutual TLS on MLLP, DIMSE and HTTP, PS3.15 de-identification with audit records, a hash-chained audit log, and, since 0.6.0, attestation in a confidential VM. It is not certified, cleared or audited for HIPAA or by the FDA."}},
- {"@type": "Question", "name": "Can I ask for a feature the health pack does not have?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Open a feature request on GitHub with your workflow, the systems involved and what you use today. Requests are read and answered on the issue, and worked on with the person who asked."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is there an open-source healthcare integration engine for HL7, FHIR and DICOM?", "acceptedAnswer": {"@type": "Answer", "text": "Cameleer's health pack is one, under the Apache-2.0 licence: HL7 v2 over MLLP with acknowledgements, the hl7 data format and terser paths, the fhir component and FHIR JSON and XML, DICOM over DIMSE and DICOMweb, and PS3.15 de-identification. Integrations are Apache Camel YAML routes run by one native binary."}}, {"@type": "Question", "name": "Is Cameleer an alternative to Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "For teams that keep integrations as code, yes: channels become routes in YAML files kept in Git, tested in CI, with Apache Camel's error handling and routing patterns, under the Apache-2.0 licence. It has no visual channel editor, no message browser and no importer for Mirth channels, and it does not run Mirth's JavaScript transformers."}}, {"@type": "Question", "name": "Which image or build has the healthcare components?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack, since 0.6.0: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. The default image and the full build do not include it. Up to 0.5.1, mllp, hl7 and fhir were in the default image; DICOM is new in the pack."}}, {"@type": "Question", "name": "How was it tested?", "acceptedAnswer": {"@type": "Answer", "text": "The health pack's live tests pass 10 of 10 against DCMTK 3.6.7, Orthanc 1.12.2 with its DICOMweb plugin, python-hl7 0.4.5 (MLLP both ways, AA and AR acknowledgements) and the HAPI FHIR 8.12.0 server (create, read, update, search, history, delete, JSON and XML). 33 public pydicom test files are read and written back byte for byte."}}, {"@type": "Question", "name": "Is Cameleer HIPAA compliant?", "acceptedAnswer": {"@type": "Answer", "text": "Compliance belongs to a deployment, not to a library. Cameleer gives you controls: TLS and mutual TLS on MLLP, DIMSE and HTTP, PS3.15 de-identification with audit records, a hash-chained audit log, and, since 0.6.0, attestation in a confidential VM. It is not certified, cleared or audited for HIPAA or by the FDA."}}, {"@type": "Question", "name": "Can I ask for a feature the health pack does not have?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Open a feature request on GitHub with your workflow, the systems involved and what you use today. Requests are read and answered on the issue, and worked on with the person who asked."}}]}
 </script>
 </head>
 <body>
@@ -90,7 +69,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../">Cameleer</a> / <a href="../../docs/packs/">Packs</a> / Healthcare</p>
+    <p class="crumbs"><a href="../../">Cameleering</a> / <a href="../">Cameleer</a> / <a href="../../docs/packs/">Packs</a> / Healthcare</p>
     <p class="kicker">Healthcare integration · the health pack</p>
     <h1>An open-source healthcare integration engine: HL7, FHIR and DICOM in one binary</h1>
     <p class="lede">Receive HL7 v2 over MLLP and acknowledge after delivery, talk to FHIR servers, route medical images over DIMSE and DICOMweb, and de-identify them with the PS3.15 profile. Every interface is an Apache Camel YAML route kept in Git and tested in CI, run by one native binary that fits on a hospital gateway. Apache-2.0, no licence fees, no lock-in.</p>

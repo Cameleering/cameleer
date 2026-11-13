@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LLM Gateway In Process: Retries, Fallbacks, Caching | Cameleer</title>
-<meta name="description" content="23 model providers, with retries, fallback models, prompt caching, an exact response cache and coalescing of identical requests inside the integration process. No separate LLM gateway, no extra hop.">
+<meta name="description" content="23 model providers with retries, fallback models, prompt caching, an exact response cache and request coalescing inside the process. No extra hop.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,27 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Model calls without a separate LLM gateway",
- "description": "Cameleer talks to 23 model providers and adds retries, fallback models, prompt caching, an exact response cache and coalescing of identical requests in the same process as the routes, so model calls take no extra network hop.",
- "url": "https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "Large language models"}, {"@type": "Thing", "name": "LLM gateway"}, {"@type": "Thing", "name": "Prompt caching"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Model calls without a separate LLM gateway", "description": "Cameleer talks to 23 model providers and adds retries, fallback models, prompt caching, an exact response cache and coalescing of identical requests in the same process as the routes, so model calls take no extra network hop.", "url": "https://cameleer.ing/cameleer/use-cases/llm-gateway-in-process/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "Large language models"}, {"@type": "Thing", "name": "LLM gateway"}, {"@type": "Thing", "name": "Prompt caching"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"},
- {"@type": "ListItem", "position": 3, "name": "Model calls without a gateway"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"}, {"@type": "ListItem", "position": 4, "name": "Model calls without a gateway"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Which model providers does Cameleer support?", "acceptedAnswer": {"@type": "Answer", "text": "23 out of the box: native components for OpenAI (Chat Completions and the Responses API), Ollama's /api/chat, Anthropic, Gemini, Azure OpenAI, AWS Bedrock Converse and Gemini on Vertex AI, plus provider= presets for OpenAI-compatible services such as Groq, Mistral, DeepSeek, xAI, OpenRouter, Together, Fireworks, Cerebras, Perplexity, Hugging Face, Qwen, Kimi, Cohere, NVIDIA NIM, vLLM, LM Studio and llama.cpp. Any other OpenAI-compatible server works with baseUrl."}},
- {"@type": "Question", "name": "Can a retried model call run a tool twice?", "acceptedAnswer": {"@type": "Answer", "text": "No. Tools run in the ai-tool envelope after the model answers, with their own idempotency, so a retried, cached or coalesced model turn never repeats a tool call."}},
- {"@type": "Question", "name": "Is the response cache safe to turn on?", "acceptedAnswer": {"@type": "Answer", "text": "responseCache and coalesce are off by default, because two users who send the same prompt get the same answer. Turn them on for classification, extraction and other deterministic calls. A cached or coalesced answer reports zero tokens, so the usage headers show what was paid."}},
- {"@type": "Question", "name": "Were the presets tested against the live services?", "acceptedAnswer": {"@type": "Answer", "text": "No. The presets were checked against each provider's documentation; the tests run against mock servers."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Which model providers does Cameleer support?", "acceptedAnswer": {"@type": "Answer", "text": "23 out of the box: native components for OpenAI (Chat Completions and the Responses API), Ollama's /api/chat, Anthropic, Gemini, Azure OpenAI, AWS Bedrock Converse and Gemini on Vertex AI, plus provider= presets for OpenAI-compatible services such as Groq, Mistral, DeepSeek, xAI, OpenRouter, Together, Fireworks, Cerebras, Perplexity, Hugging Face, Qwen, Kimi, Cohere, NVIDIA NIM, vLLM, LM Studio and llama.cpp. Any other OpenAI-compatible server works with baseUrl."}}, {"@type": "Question", "name": "Can a retried model call run a tool twice?", "acceptedAnswer": {"@type": "Answer", "text": "No. Tools run in the ai-tool envelope after the model answers, with their own idempotency, so a retried, cached or coalesced model turn never repeats a tool call."}}, {"@type": "Question", "name": "Is the response cache safe to turn on?", "acceptedAnswer": {"@type": "Answer", "text": "responseCache and coalesce are off by default, because two users who send the same prompt get the same answer. Turn them on for classification, extraction and other deterministic calls. A cached or coalesced answer reports zero tokens, so the usage headers show what was paid."}}, {"@type": "Question", "name": "Were the presets tested against the live services?", "acceptedAnswer": {"@type": "Answer", "text": "No. The presets were checked against each provider's documentation; the tests run against mock servers."}}]}
 </script>
 </head>
 <body>
@@ -80,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / Model calls without a gateway</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Use cases</a> / Model calls without a gateway</p>
     <p class="kicker">LLM calls, in process</p>
     <h1>An LLM gateway that is not another hop</h1>
     <p class="lede">Retries, fallback models, prompt caching and a response cache usually mean a hosted gateway or a sidecar between your code and the model. In Cameleer they are options on the model endpoint, in the same process as the routes and the tools, over pooled keep-alive connections.</p>

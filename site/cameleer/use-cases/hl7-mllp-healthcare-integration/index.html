@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HL7 v2 over MLLP and FHIR Integration Routes in Rust | Cameleer</title>
-<meta name="description" content="Receive HL7 v2 messages over MLLP, read fields with terser paths, post to an EHR or FHIR server and acknowledge after delivery: a tested Cameleer route for hospital gateways, in the Cameleer health pack.">
+<title>HL7 v2 over MLLP and FHIR Routes in Rust | Cameleer</title>
+<meta name="description" content="Receive HL7 v2 over MLLP, read fields with terser paths, post to an EHR or FHIR server and acknowledge after delivery: a tested route in the health pack.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/use-cases/hl7-mllp-healthcare-integration/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -23,29 +23,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "HL7 v2 over MLLP and FHIR integration routes in Rust",
- "description": "Receive HL7 v2 messages over MLLP, read fields with terser paths, post to an EHR or FHIR server and acknowledge after delivery, with Cameleer.",
- "url": "https://cameleer.ing/cameleer/use-cases/hl7-mllp-healthcare-integration/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "HL7 v2"}, {"@type": "Thing", "name": "MLLP"}, {"@type": "Thing", "name": "FHIR"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "HL7 v2 over MLLP and FHIR integration routes in Rust", "description": "Receive HL7 v2 messages over MLLP, read fields with terser paths, post to an EHR or FHIR server and acknowledge after delivery, with Cameleer.", "url": "https://cameleer.ing/cameleer/use-cases/hl7-mllp-healthcare-integration/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "HL7 v2"}, {"@type": "Thing", "name": "MLLP"}, {"@type": "Thing", "name": "FHIR"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"},
- {"@type": "ListItem", "position": 3, "name": "HL7 over MLLP"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Use cases", "item": "https://cameleer.ing/cameleer/use-cases/"}, {"@type": "ListItem", "position": 4, "name": "HL7 over MLLP"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Does Cameleer parse HL7 v2 messages?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The mllp component frames and acknowledges messages, the hl7 data format parses ER7 (pipe-delimited) text into a structured value and encodes it back, and the hl7terser language reads a field by path, such as PID-3-1."}},
- {"@type": "Question", "name": "Which FHIR versions does it support?", "acceptedAnswer": {"@type": "Answer", "text": "The fhir component talks to FHIR servers for R4, R4B, R5 and DSTU3: create, read, update, delete, search, history, transactions, operations, patch and validation. The fhirJson and fhirXml data formats parse and serialize resources and convert between the two encodings."}},
- {"@type": "Question", "name": "When is the MLLP acknowledgement sent?", "acceptedAnswer": {"@type": "Answer", "text": "After the route finishes. In the tested route the EHR call runs first, so the sender gets AA only when the message was delivered and AE when it still failed after the retries, and keeps the message to resend it. A route can set the acknowledgement type itself."}},
- {"@type": "Question", "name": "Is it an interface engine like Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "It is a routing engine with HL7 v2, MLLP and FHIR support: channels are routes in YAML files kept in Git, with Apache Camel's error handling, transformation and routing patterns. There is no visual channel editor or message browser."}},
- {"@type": "Question", "name": "Which Cameleer image has HL7 and FHIR?", "acceptedAnswer": {"@type": "Answer", "text": "Since 0.6.0, mllp, hl7, hl7terser and fhir are in the health pack, with DICOM: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. The default image and the full build no longer include them. Up to 0.5.1 they were in the default image."}},
- {"@type": "Question", "name": "Does MLLP support TLS?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The consumer accepts TLS connections and the producer connects with TLS when sslContextParameters or the global camel.ssl.* parameters are set."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Does Cameleer parse HL7 v2 messages?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The mllp component frames and acknowledges messages, the hl7 data format parses ER7 (pipe-delimited) text into a structured value and encodes it back, and the hl7terser language reads a field by path, such as PID-3-1."}}, {"@type": "Question", "name": "Which FHIR versions does it support?", "acceptedAnswer": {"@type": "Answer", "text": "The fhir component talks to FHIR servers for R4, R4B, R5 and DSTU3: create, read, update, delete, search, history, transactions, operations, patch and validation. The fhirJson and fhirXml data formats parse and serialize resources and convert between the two encodings."}}, {"@type": "Question", "name": "When is the MLLP acknowledgement sent?", "acceptedAnswer": {"@type": "Answer", "text": "After the route finishes. In the tested route the EHR call runs first, so the sender gets AA only when the message was delivered and AE when it still failed after the retries, and keeps the message to resend it. A route can set the acknowledgement type itself."}}, {"@type": "Question", "name": "Is it an interface engine like Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "It is a routing engine with HL7 v2, MLLP and FHIR support: channels are routes in YAML files kept in Git, with Apache Camel's error handling, transformation and routing patterns. There is no visual channel editor or message browser."}}, {"@type": "Question", "name": "Which Cameleer image has HL7 and FHIR?", "acceptedAnswer": {"@type": "Answer", "text": "Since 0.6.0, mllp, hl7, hl7terser and fhir are in the health pack, with DICOM: the image cameleering/cameleer:health, or cargo install cameleer-main --features health. The default image and the full build no longer include them. Up to 0.5.1 they were in the default image."}}, {"@type": "Question", "name": "Does MLLP support TLS?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. The consumer accepts TLS connections and the producer connects with TLS when sslContextParameters or the global camel.ssl.* parameters are set."}}]}
 </script>
 </head>
 <body>
@@ -82,7 +66,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Use cases</a> / HL7 over MLLP</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Use cases</a> / HL7 over MLLP</p>
     <p class="kicker">Healthcare integration · health pack</p>
     <h1>HL7 v2 over MLLP, FHIR, and an acknowledgement that means it</h1>
     <p class="lede">A hospital gateway receives ADT and lab messages from the HIS over MLLP, reads the patient id with a terser path, posts the message to the EHR and acknowledges <em>after</em> delivery. The route is Camel YAML; the runtime is one native binary that fits next to the other software on the gateway.</p>

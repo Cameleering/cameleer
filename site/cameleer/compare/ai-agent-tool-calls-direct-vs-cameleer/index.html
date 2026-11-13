@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Agent Tool Calls: Direct Function Calling vs an Integration Layer | Cameleer</title>
-<meta name="description" content="Direct LLM tool calls leave retries, duplicate actions, half-done work and business rules to the model. Compare them with tool calls routed through Cameleer: validated, run once, rolled back, audited.">
+<title>AI Agent Tool Calls: Direct vs an Integration Layer</title>
+<meta name="description" content="Direct LLM tool calls leave retries, duplicates and half-done work to the model. Through Cameleer they are validated, run once, rolled back and audited.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -22,31 +22,13 @@
 <link rel="stylesheet" href="../../../assets/site.css">
 <link rel="stylesheet" href="../../../assets/compare.css">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "AI agent tool calls: direct function calling vs an integration layer",
- "description": "Direct LLM tool calls leave retries, duplicate actions, half-done work and business rules to the model. Compare them with tool calls routed through Cameleer.",
- "url": "https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"},
- "about": [{"@type": "Thing", "name": "LLM function calling"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}]}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "AI agent tool calls: direct function calling vs an integration layer", "description": "Direct LLM tool calls leave retries, duplicate actions, half-done work and business rules to the model. Compare them with tool calls routed through Cameleer.", "url": "https://cameleer.ing/cameleer/compare/ai-agent-tool-calls-direct-vs-cameleer/", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "about": [{"@type": "Thing", "name": "LLM function calling"}, {"@type": "SoftwareSourceCode", "name": "Cameleer", "codeRepository": "https://github.com/cameleering/cameleer"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"},
- {"@type": "ListItem", "position": 3, "name": "AI agent tool calls: direct vs Cameleer"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"}, {"@type": "ListItem", "position": 4, "name": "AI agent tool calls: direct vs Cameleer"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [
- {"@type": "Question", "name": "Is Cameleer an AI agent framework?", "acceptedAnswer": {"@type": "Answer", "text": "Not primarily. An agent framework runs the model loop and decides which tool to call; Cameleer executes the tool: it is the action layer between the agent and your systems. For simple agents it also has an agent step that runs a model and its tools in a loop as one step of a route."}},
- {"@type": "Question", "name": "Does routing tool calls through Cameleer replace function calling?", "acceptedAnswer": {"@type": "Answer", "text": "No. The model still uses function calling; the tool it calls is a Cameleer route behind an HTTP endpoint, declared with the same JSON schema the route validates against."}},
- {"@type": "Question", "name": "Which models and agent frameworks does it work with?", "acceptedAnswer": {"@type": "Answer", "text": "Any that support function calling or tool use and can make an HTTP request: OpenAI, Anthropic, Google, AWS Bedrock and Azure OpenAI models, open models on Ollama or vLLM, and frameworks that let you define a tool as an HTTP call."}},
- {"@type": "Question", "name": "Does Cameleer speak MCP?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. ai-tool routes are served to MCP clients over Streamable HTTP or stdio (cameleer run tools.camel.yaml --mcp), in the 2026-07-28 and 2025-11-25 protocol eras, with the same envelope: schema checks, deduplication, approvals, timeouts and audit. A tool can also stay a plain HTTP endpoint, which every framework with function calling can call. Apache Camel 4.22 ships an MCP server too; Cameleer uses its property names."}},
- {"@type": "Question", "name": "How is this different from a hosted tool catalog such as Composio or Arcade?", "acceptedAnswer": {"@type": "Answer", "text": "Those platforms give an agent many pre-built connectors with managed OAuth, hosted and priced per use. Cameleer is open source and self-hosted: a 20 MB container or a library, about 230 components, and the reliability around the call written as a tested route: schema validation, idempotency, retries, sagas, human approval, rate limits and an audit log. Use a catalog for breadth of SaaS actions; use Cameleer when the action changes money, stock or records and must run exactly once inside your own network."}},
- {"@type": "Question", "name": "What happens when an agent retries a tool call?", "acceptedAnswer": {"@type": "Answer", "text": "The route sees the same requestId and answers duplicate without executing anything again."}},
- {"@type": "Question", "name": "When is a direct tool call enough?", "acceptedAnswer": {"@type": "Answer", "text": "When the call only reads, is a single step with no other system to keep consistent, or is a prototype. Use a route as soon as a call changes something, spans several systems, needs a rule the model must not override, or must be audited."}},
- {"@type": "Question", "name": "Does an extra hop make tool calls slower?", "acceptedAnswer": {"@type": "Answer", "text": "A route adds microseconds to a call; a model turn takes hundreds of milliseconds to seconds. A multi-step job through one route saves model turns, so it is usually faster end to end."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is Cameleer an AI agent framework?", "acceptedAnswer": {"@type": "Answer", "text": "Not primarily. An agent framework runs the model loop and decides which tool to call; Cameleer executes the tool: it is the action layer between the agent and your systems. For simple agents it also has an agent step that runs a model and its tools in a loop as one step of a route."}}, {"@type": "Question", "name": "Does routing tool calls through Cameleer replace function calling?", "acceptedAnswer": {"@type": "Answer", "text": "No. The model still uses function calling; the tool it calls is a Cameleer route behind an HTTP endpoint, declared with the same JSON schema the route validates against."}}, {"@type": "Question", "name": "Which models and agent frameworks does it work with?", "acceptedAnswer": {"@type": "Answer", "text": "Any that support function calling or tool use and can make an HTTP request: OpenAI, Anthropic, Google, AWS Bedrock and Azure OpenAI models, open models on Ollama or vLLM, and frameworks that let you define a tool as an HTTP call."}}, {"@type": "Question", "name": "Does Cameleer speak MCP?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. ai-tool routes are served to MCP clients over Streamable HTTP or stdio (cameleer run tools.camel.yaml --mcp), in the 2026-07-28 and 2025-11-25 protocol eras, with the same envelope: schema checks, deduplication, approvals, timeouts and audit. A tool can also stay a plain HTTP endpoint, which every framework with function calling can call. Apache Camel 4.22 ships an MCP server too; Cameleer uses its property names."}}, {"@type": "Question", "name": "How is this different from a hosted tool catalog such as Composio or Arcade?", "acceptedAnswer": {"@type": "Answer", "text": "Those platforms give an agent many pre-built connectors with managed OAuth, hosted and priced per use. Cameleer is open source and self-hosted: a 20 MB container or a library, about 230 components, and the reliability around the call written as a tested route: schema validation, idempotency, retries, sagas, human approval, rate limits and an audit log. Use a catalog for breadth of SaaS actions; use Cameleer when the action changes money, stock or records and must run exactly once inside your own network."}}, {"@type": "Question", "name": "What happens when an agent retries a tool call?", "acceptedAnswer": {"@type": "Answer", "text": "The route sees the same requestId and answers duplicate without executing anything again."}}, {"@type": "Question", "name": "When is a direct tool call enough?", "acceptedAnswer": {"@type": "Answer", "text": "When the call only reads, is a single step with no other system to keep consistent, or is a prototype. Use a route as soon as a call changes something, spans several systems, needs a rule the model must not override, or must be audited."}}, {"@type": "Question", "name": "Does an extra hop make tool calls slower?", "acceptedAnswer": {"@type": "Answer", "text": "A route adds microseconds to a call; a model turn takes hundreds of milliseconds to seconds. A multi-step job through one route saves model turns, so it is usually faster end to end."}}]}
 </script>
 </head>
 <body>
@@ -83,7 +65,7 @@
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../">Compare</a> / AI agent tool calls</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../">Compare</a> / AI agent tool calls</p>
     <p class="kicker">The action layer for AI agents</p>
     <h1>AI agent tool calls: direct function calling vs Cameleer</h1>
     <p class="lede">When an agent calls your APIs directly, retries, duplicate actions, half-done work and business rules are left to the model. Route each tool through Cameleer and the model decides <em>what</em> to do while tested code decides <em>how</em>.</p>

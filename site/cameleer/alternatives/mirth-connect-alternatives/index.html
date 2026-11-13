@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mirth Connect Alternatives: Open-Source Forks and Engines | Cameleer</title>
-<meta name="description" content="Mirth Connect is commercial from 4.6. The alternatives with sources: Open Integration Engine and BridgeLink (MPL-2.0 forks), Rhapsody, Cloverleaf, InterSystems, Qvera, Apache Camel and Cameleer.">
+<title>Mirth Connect Alternatives: Open Source Forks | Cameleer</title>
+<meta name="description" content="Mirth Connect is commercial from 4.6. The alternatives with sources: Open Integration Engine, BridgeLink, Rhapsody, Cloverleaf, Qvera and Cameleer.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/alternatives/mirth-connect-alternatives/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -29,20 +29,10 @@ ol.sources li { margin: 0 0 8px; }
 ol.sources li:target { background: var(--signal-soft); }
 </style>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "TechArticle",
- "headline": "Mirth Connect alternatives: the open-source forks, the commercial engines, and interfaces as code",
- "description": "What changed with Mirth Connect 4.6 and the alternatives: Open Integration Engine, BridgeLink, Rhapsody, Infor Cloverleaf, InterSystems Health Connect, Qvera, Apache Camel and Cameleer, with sources.",
- "url": "https://cameleer.ing/cameleer/alternatives/mirth-connect-alternatives/",
- "datePublished": "2026-11-12", "dateModified": "2026-11-12",
- "inLanguage": "en", "image": "https://cameleer.ing/og.png",
- "author": {"@type": "Person", "name": "Sudheesh PM"},
- "publisher": {"@type": "Organization", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/"}}
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "Mirth Connect alternatives: the open-source forks, the commercial engines, and interfaces as code", "description": "What changed with Mirth Connect 4.6 and the alternatives: Open Integration Engine, BridgeLink, Rhapsody, Infor Cloverleaf, InterSystems Health Connect, Qvera, Apache Camel and Cameleer, with sources.", "url": "https://cameleer.ing/cameleer/alternatives/mirth-connect-alternatives/", "datePublished": "2026-11-12", "dateModified": "2026-11-12", "inLanguage": "en", "image": "https://cameleer.ing/og.png", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
- {"@type": "ListItem", "position": 1, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"},
- {"@type": "ListItem", "position": 2, "name": "Healthcare", "item": "https://cameleer.ing/cameleer/healthcare/"},
- {"@type": "ListItem", "position": 3, "name": "Mirth Connect alternatives"}]}
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Healthcare", "item": "https://cameleer.ing/cameleer/healthcare/"}, {"@type": "ListItem", "position": 4, "name": "Mirth Connect alternatives"}]}
 </script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Is Mirth Connect still open source?", "acceptedAnswer": {"@type": "Answer", "text": "Not from version 4.6. NextGen moved to a single commercial, proprietary licence with 4.6 (announced on 19 March 2025), and the source code for new releases is no longer public. Version 4.5.2 is the last open-source release."}}, {"@type": "Question", "name": "What are the open-source alternatives to Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "Two forks of Mirth's code: Open Integration Engine (MPL-2.0, community governed, an incubating Eclipse project) and BridgeLink (MPL-2.0 server, from Innovar Healthcare, with paid plugins and support available). Outside Mirth's code base, Apache Camel (Java) and Cameleer (Rust, with the health pack) are Apache-2.0 frameworks for interfaces as code."}}, {"@type": "Question", "name": "Can I keep using Mirth Connect 4.5.2?", "acceptedAnswer": {"@type": "Answer", "text": "NextGen listed staying on the current version or upgrading to 4.5.2 as options for open-source users. New releases from 4.6 need a licence."}}, {"@type": "Question", "name": "Which commercial engines replace Mirth Connect?", "acceptedAnswer": {"@type": "Answer", "text": "Rhapsody, Infor Cloverleaf, InterSystems Health Connect and Qvera Interface Engine are healthcare integration engines sold by their vendors; each vendor's page lists HL7 v2 and FHIR, and some list DICOM and X12."}}, {"@type": "Question", "name": "Can Cameleer import Mirth channels?", "acceptedAnswer": {"@type": "Answer", "text": "No. Channels are rewritten as Apache Camel YAML routes: an MLLP listener becomes from: mllp:..., destinations become endpoints, filters and transformers become steps. Mirth's JavaScript transformers do not run."}}]}
@@ -82,7 +72,7 @@ ol.sources li:target { background: var(--signal-soft); }
 <main>
 <section class="c-hero">
   <div class="wrap">
-    <p class="crumbs"><a href="../../">Cameleer</a> / <a href="../../healthcare/">Healthcare</a> / Mirth Connect alternatives</p>
+    <p class="crumbs"><a href="../../../">Cameleering</a> / <a href="../../">Cameleer</a> / <a href="../../healthcare/">Healthcare</a> / Mirth Connect alternatives</p>
     <p class="kicker">Healthcare integration · researched 2026-11-12</p>
     <h1>Mirth Connect alternatives: the open-source forks, the commercial engines, and interfaces as code</h1>
     <p class="lede">From version 4.6, Mirth Connect is sold only under a commercial, closed-source licence. If your interfaces ran on the open-source edition, you can stay on 4.5.2, buy a licence, move to an open-source fork, move to another commercial engine, or rewrite the interfaces as code. Here is what each option is, with every fact linked to its source.</p>
