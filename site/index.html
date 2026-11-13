@@ -102,6 +102,34 @@
   </div>
 </section>
 
+<section class="c-sec" id="ledger">
+  <div class="wrap">
+    <h2>It works on software people run every day</h2>
+    <p class="intro">Two projects have run every step in public.</p>
+    <div class="two">
+      <div class="pane proof">
+        <h3><a href="cameleer/">Cameleer</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-06</span></h3>
+        <p>An integration engine in the style of Apache Camel, and the first Cameleering project.</p>
+        <ul>
+          <li><b>Baseline:</b> Apache Camel 4.23.0 on Java 21 and 4.22.1 on Quarkus native, on identical DigitalOcean c-4 machines.</li>
+          <li><b>Cut:</b> one std-only binary that keeps Camel&rsquo;s routes, YAML and endpoint URIs, with component families as build options.</li>
+          <li><b>Proved:</b> start-up 450x faster (10x against Quarkus native), 4.8&ndash;54x less memory, 1.7&ndash;8.7x the throughput.</li>
+        </ul>
+        <p><a href="cameleer/compare/apache-camel-vs-cameleer/">Full comparison</a> · <a href="docs/BENCHMARKS.html">every scenario and the raw data</a></p>
+      </div>
+      <div class="pane proof">
+        <h3><a href="simoom/">simoom</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-12</span></h3>
+        <p>An HTTP engine in std-only Rust, built to replace Cameleer&rsquo;s original server.</p>
+        <ul>
+          <li><b>Against the server it replaced:</b> 1.7&ndash;1.8x the throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections.</li>
+          <li><b>Against 20 other servers on the same droplets:</b> first of 21 on start-up (0.94 ms) and first of 19 on CPU per request.</li>
+        </ul>
+        <p><a href="simoom/benchmarks/">simoom benchmarks</a> · <a href="projects/">all projects, including the ones not yet measured</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="c-sec" id="saves">
   <div class="wrap">
     <h2>What less machine buys you</h2>
@@ -149,33 +177,6 @@
   </div>
 </section>
 
-<section class="c-sec" id="ledger">
-  <div class="wrap">
-    <h2>It works on software people run every day</h2>
-    <p class="intro">Two projects have run every step in public.</p>
-    <div class="two">
-      <div class="pane proof">
-        <h3><a href="cameleer/">Cameleer</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-06</span></h3>
-        <p>An integration engine in the style of Apache Camel, and the first Cameleering project.</p>
-        <ul>
-          <li><b>Baseline:</b> Apache Camel 4.23.0 on Java 21 and 4.22.1 on Quarkus native, on identical DigitalOcean c-4 machines.</li>
-          <li><b>Cut:</b> one std-only binary that keeps Camel&rsquo;s routes, YAML and endpoint URIs, with component families as build options.</li>
-          <li><b>Proved:</b> start-up 450x faster (10x against Quarkus native), 4.8&ndash;54x less memory, 1.7&ndash;8.7x the throughput.</li>
-        </ul>
-        <p><a href="cameleer/compare/apache-camel-vs-cameleer/">Full comparison</a> · <a href="docs/BENCHMARKS.html">every scenario and the raw data</a></p>
-      </div>
-      <div class="pane proof">
-        <h3><a href="simoom/">simoom</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-12</span></h3>
-        <p>An HTTP engine in std-only Rust, built to replace Cameleer&rsquo;s original server.</p>
-        <ul>
-          <li><b>Against the server it replaced:</b> 1.7&ndash;1.8x the throughput, 43% less CPU per request, 65% less memory with 1,000 idle connections.</li>
-          <li><b>Against 20 other servers on the same droplets:</b> first of 21 on start-up (0.94 ms) and first of 19 on CPU per request.</li>
-        </ul>
-        <p><a href="simoom/benchmarks/">simoom benchmarks</a> · <a href="projects/">all projects, including the ones not yet measured</a></p>
-      </div>
-    </div>
-  </div>
-</section>
 
 <section class="c-sec" id="how">
   <div class="wrap">
