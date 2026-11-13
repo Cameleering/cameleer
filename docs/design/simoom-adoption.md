@@ -155,3 +155,35 @@ benchmark pages in the same change (SEO session).
    for HTTP/3?
 3. Should the lenient-parsing escape hatch exist, or does Cameleer follow simoom's strictness?
 4. Order: do this before the SAP pack work, or after?
+
+## 8. Stage 1 spike result (2026-11-13, local, not droplets)
+
+Branch `simoom-spike`: `cameleer-http` feature `simoom`, selected at run time with
+`CAMEL_HTTP_ENGINE=simoom` (plain HTTP; TLS keeps the classic engine). Handlers run on simoom's
+offload pool by default, or on the loop thread with `CAMEL_SIMOOM_INLINE=1`. Script: `ab-local.sh`.
+
+Method: WSL2 Ubuntu 24.04, server pinned to 4 CPUs, load generator on 8 others, 64 connections,
+`cameleer-bench serve` and `loadgen-remote`, 5 s warm-up, 3 x 5 s, 2 interleaved rounds. Requests
+per second, mean of the rounds:
+
+| scenario | classic | simoom, offload pool | simoom, inline |
+|---|---:|---:|---:|
+| `http` (small JSON route) | 109,300 | 111,600 (+2%) | 137,100 (+25%) |
+| `rest-json` | 95,700 | 101,800 (+6%) | 113,400 (+18%) |
+| `mcp-session` | 67,300 | 54,200 (**-19%**) | 36,200 (**-46%**) |
+
+p99 is higher with simoom in every scenario (HTTP 1.7 ms against 1.3 ms; MCP 4.0 ms against 3.4
+ms with the pool).
+
+**Gate (HTTP and MCP at least 1.2x, nothing slower than `main`): not met.** What the numbers say:
+
+- The raw-server gain (1.2 to 1.8x) does not carry into routes that block: with the pool, every
+  request pays a thread hop and a copy, and the gain falls to 2 to 6%.
+- Inline works for routes that never block (+18 to +25%) but is unsafe for the rest: the MCP
+  session scenario waits inside the handler, stalls the loops and loses 46%.
+- So the adapter, not the engine, decides the result. The next step would be per-route mode (inline
+  for registry routes marked non-blocking, pool for the rest), and finding what makes
+  `mcp-session` slow even on the pool (it is 19% slower, more than a hop explains).
+- Not measured: droplets (the plan's reference machines), TLS, idle connections, binary size.
+- Test differences found: 3 of the http tests assert wire details simoom does differently (lower-case
+  header names, no per-connection worker cap, 8 KiB chunk sizes); all others pass with the engine on.

@@ -33,7 +33,13 @@ impl SimoomEngine {
         limits.keep_alive_timeout = config.keep_alive_timeout;
         limits.write_timeout = config.write_timeout;
         limits.max_requests_per_connection = config.max_keep_alive_requests as u64;
+        // Spike switch: run handlers on the loop thread (CAMEL_SIMOOM_INLINE=1) instead of the
+        // offload pool, to measure the cost of the thread hop.
+        let inline = std::env::var("CAMEL_SIMOOM_INLINE").is_ok();
         let service = move |req: &mut simoom::Request<'_>, reply: simoom::Reply<'_>| -> simoom::Outcome {
+            if inline {
+                return serve(&*handler, req, reply);
+            }
             let h = handler.clone();
             reply.offload(req, move |req, reply| serve(&*h, req, reply))
         };
