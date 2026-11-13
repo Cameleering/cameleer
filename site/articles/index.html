@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Articles on Software Efficiency | Cameleering</title>
+<meta name="description" content="Essays on software efficiency, outages and cloud cost, with sources: headroom when servers drop out, FinOps and Lambda bills, rewrites, AI code, Wirth's law.">
+<link rel="canonical" href="https://cameleer.ing/articles/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="Cameleering articles">
+<meta property="og:description" content="Essays on software efficiency, outages and cloud cost, with sources: headroom when servers drop out, FinOps and Lambda bills, rewrites, AI code, Wirth's law.">
+<meta property="og:url" content="https://cameleer.ing/articles/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "CollectionPage", "name": "Cameleering articles", "headline": "Cameleering articles", "description": "Essays on software efficiency, outages and cloud cost, with sources: headroom when servers drop out, FinOps and Lambda bills, rewrites, AI code, Wirth's law.", "url": "https://cameleer.ing/articles/", "inLanguage": "en", "publisher": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Articles", "item": "https://cameleer.ing/articles/"}]}
+</script>
+<link rel="alternate" type="application/atom+xml" href="../feed.xml" title="Cameleering articles">
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <a aria-current="page" href="../articles/">Articles</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / Articles</p>
+    <p class="kicker">Cameleering · articles</p>
+    <h1>Articles: efficiency, outages and cost, with sources</h1>
+    <p class="lede">Essays on why software needs as much as it does, what that costs, and how to measure it. Every external fact is cited; every number of ours names its project and its baseline. New articles also arrive in <a href="../feed.xml">the Atom feed</a>.</p>
+  </div>
+</section>
+<section class="c-sec" id="list">
+  <div class="wrap">
+    <!-- partial:articles-list -->
+<ol class="articles">
+      <li><a href="../headroom/"><b>Headroom: what is left when servers drop out</b></a> <time datetime="2026-11-13">2026-11-13</time><p>The Microsoft 365 outage of 12-13 November 2026 was the same traffic on fewer servers. How much a fleet survives losing part of itself is an efficiency property, and it can be measured before an incident.</p></li>
+      <li><a href="../finops/"><b>Code efficiency as a FinOps lever</b></a> <time datetime="2026-11-12">2026-11-12</time><p>Measured milliseconds and megabytes turned into instances and dollars: Lambda execution time, memory and cold starts, node density, Fargate, with the arithmetic shown.</p></li>
+      <li><a href="../when-to-rewrite/"><b>When a rewrite pays off: a decision checklist</b></a> <time datetime="2026-11-12">2026-11-12</time><p>The case against rewrites, the ones that worked with published results, the ladder from a setting to a full rewrite, and a checklist.</p></li>
+      <li><a href="../ai-code-performance/"><b>AI-generated code and performance: what the evidence says</b></a> <time datetime="2026-11-12">2026-11-12</time><p>Generated code ran 3.12 times as long in one benchmark: what EffiBench, Mercury, EvalPerf, PIE, METR and DORA measured, each with its limits.</p></li>
+      <li><a href="../wirths-law/"><b>Wirth&#x27;s law in 2026: measured</b></a> <time datetime="2026-11-12">2026-11-12</time><p>Software growth against hardware speed since 1995: page weight, input latency, single-core speed, and the counter-argument.</p></li>
+    </ol>
+<!-- /partial:articles-list -->
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+        <li><a href="../projects/">Projects</a></li>
+        <li><a href="../about/">About and contact</a></li>
+        <li><a href="../security/">Security and supply chain</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a> · <a href="../docs/">docs</a></li>
+        <li><a href="../simoom/">simoom</a> · <a href="../simoom/docs/">docs</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

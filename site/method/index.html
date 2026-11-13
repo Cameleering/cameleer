@@ -41,6 +41,7 @@
       <a class="keep" href="../ledger/">Ledger</a>
       <a class="keep" aria-current="page" href="../method/">Method</a>
       <a href="../finops/">FinOps</a>
+      <a href="../articles/">Articles</a>
       <div class="nav-menu">
         <a href="../projects/" aria-haspopup="true">Projects</a>
         <div class="nav-sub">
@@ -112,6 +113,23 @@
         </ul>
       </div>
     </div>
+  </div>
+</section>
+
+<section class="c-sec" id="degraded-fleet">
+  <div class="wrap">
+    <h2>Headroom: the degraded-fleet test</h2>
+    <p class="intro">An outage often brings no new traffic: it is the same traffic on fewer servers, and restarted servers that fall over again when the load returns (<a href="../headroom/">headroom, explained</a>). Measure that margin before an incident, with the same harness and baseline rules as above.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>test</th><th>what you do</th><th>what you record</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Lose a third</strong></td><td>run production-shaped load on N servers, then take a third of them out of rotation without changing the load</td><td>p99, error rate, CPU and memory on the survivors; the load at which p99 passes your target</td></tr>
+        <tr><td><strong>Restart under load</strong></td><td>restart one server while the others carry full traffic, and send it its share at once</td><td>time to its first answer, time until its p99 is back within target, and whether it fails its health check again</td></tr>
+        <tr><td><strong>Connection storm</strong></td><td>open many new TLS connections at once, as clients do when they reconnect after a failure</td><td>handshakes per second, CPU per handshake, and p99 for requests on connections that were already open</td></tr>
+        <tr><td><strong>Overload</strong></td><td>offer more load than the fleet can serve</td><td>how many requests are still answered within target, not only in total; whether load shedding or admission control kicks in</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Report it like any other result: both sides, the same hardware, the losses. Our own overload result is a loss: simoom answers as many requests in total as the others but few within 1 ms (<a href="../ledger/#simoom">the ledger</a>).</p>
   </div>
 </section>
 

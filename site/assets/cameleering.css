@@ -49,7 +49,7 @@ ol.principles li { padding-left: 4px; }
   .home-hero { padding-top: 28px; }
   .home-hero .lede { font-size: 17px; margin-bottom: 20px; }
   .home-hero .carry { font-size: 18px; }
-  .home-hero .quick { display: block; font-size: 15px; margin: -14px 0 20px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .home-hero .quick { display: none; font-size: 15px; margin: -14px 0 20px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
   .home-hero .quick a { font-weight: 600; }
   .doors { grid-template-columns: 1fr; gap: 8px; margin-top: 20px; }
   .doors a { padding: 10px 14px; }
@@ -94,3 +94,14 @@ ol.playbook { list-style: none; padding: 0; margin: 8px 0 28px; display: grid; g
 .definition { font-size: 21px; line-height: 1.5; max-width: 44em; margin: 0 0 18px; color: var(--ink); }
 @media (max-width: 800px) { ol.playbook { grid-template-columns: 1fr; } .pstep dl { grid-template-columns: 1fr; gap: 2px; } .pstep dt { padding-top: 6px; } }
 .outcomes-label { font: 600 13px var(--mono); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 6px 0 10px; }
+
+/* /articles/: the list of essays */
+ol.articles { list-style: none; padding: 0; margin: 0; display: grid; gap: 0; }
+ol.articles li { padding: 20px 0; border-top: 1px solid var(--line); }
+ol.articles li a b { font-size: 20px; }
+ol.articles time { display: block; font: 500 13px var(--mono); color: var(--muted); margin: 4px 0 6px; }
+ol.articles p { margin: 0; color: var(--muted); max-width: 46em; }
+
+.home-hero .latest { font-size: 15px; margin: 0 0 18px; }
+.home-hero .latest span { display: inline-block; font: 700 11px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: #fff; background: var(--signal); border-radius: 999px; padding: 2px 8px; margin-right: 6px; vertical-align: 1px; }
+.home-hero .latest a { font-weight: 600; }

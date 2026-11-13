@@ -95,12 +95,26 @@ FAMILY_MENU = [
     ("method/", "The method", "How a gain is measured and reported"),
     ("finops/", "Code efficiency and FinOps", "What the milliseconds and megabytes cost"),
     ("projects/", "Projects", "Cameleer and simoom Cameleered; karez and ksar not yet"),
+    ("articles/", "Articles", "Essays on efficiency, outages and cost, with sources"),
     ("about/", "About", "Who maintains it, how to get in touch"),
 ]
 CAMELEER_NAV = [("docs/", "Docs", "keep"), ("cameleer/use-cases/", "Use cases", "keep"), ("cameleer/mcp/", "MCP", ""),
                 ("cameleer/healthcare/", "Healthcare", ""), ("cameleer/compare/", "Compare", ""),
                 ("docs/BENCHMARKS.html", "Benchmarks", "")]
-CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", "")]
+CAMELEERING_NAV = [("ledger/", "Ledger", "keep"), ("method/", "Method", "keep"), ("finops/", "FinOps", ""), ("articles/", "Articles", "")]
+# Essays and articles, newest first: /articles/ (partial "articles-list") and /feed.xml (Atom) come from this list.
+ARTICLES = [
+    ("headroom/", "Headroom: what is left when servers drop out", "2026-11-13",
+     "The Microsoft 365 outage of 12-13 November 2026 was the same traffic on fewer servers. How much a fleet survives losing part of itself is an efficiency property, and it can be measured before an incident."),
+    ("finops/", "Code efficiency as a FinOps lever", "2026-11-12",
+     "Measured milliseconds and megabytes turned into instances and dollars: Lambda execution time, memory and cold starts, node density, Fargate, with the arithmetic shown."),
+    ("when-to-rewrite/", "When a rewrite pays off: a decision checklist", "2026-11-12",
+     "The case against rewrites, the ones that worked with published results, the ladder from a setting to a full rewrite, and a checklist."),
+    ("ai-code-performance/", "AI-generated code and performance: what the evidence says", "2026-11-12",
+     "Generated code ran 3.12 times as long in one benchmark: what EffiBench, Mercury, EvalPerf, PIE, METR and DORA measured, each with its limits."),
+    ("wirths-law/", "Wirth's law in 2026: measured", "2026-11-12",
+     "Software growth against hardware speed since 1995: page weight, input latency, single-core speed, and the counter-argument."),
+]
 PROJECTS_MENU = [("cameleer/", "Cameleer", "Integration engine in the style of Apache Camel · Cameleered"),
                  ("simoom/", "simoom", "HTTP engine, std-only Rust · Cameleered"),
                  ("projects/#karez", "karez", "Database connectivity · Cameleering, no numbers yet"),
@@ -162,6 +176,11 @@ def render_partial(name, root, page_path):
                 '      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. '
                 'It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>\n'
                 '      <p>Cameleer is a <a href="%s">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>\n    </div>' % (root, root))
+    if name == "articles-list":
+        items = []
+        for path, title, date, summary in ARTICLES:
+            items.append('      <li><a href="%s%s"><b>%s</b></a> <time datetime="%s">%s</time><p>%s</p></li>' % (root, path, esc(title), date, date, esc(summary)))
+        return '<ol class="articles">\n%s\n    </ol>' % "\n".join(items)
     if name == "credit-cameleering":
         return ('<div class="credit">\n      <h4><img src="%sbrand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>\n'
                 '      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="%sabout/">about</a>).</p>\n'
@@ -1308,6 +1327,7 @@ class Site:
         apply_partials(self.out)
         self.write_moved(docs_out)
         self.write_sitemap()
+        self.write_feed()
         self.write_llms()
         return len(rendered), time.time() - t0
 
@@ -1350,6 +1370,22 @@ class Site:
             lines.append("  <sitemap><loc>%s%s</loc></sitemap>" % (SITE_URL, c))
         lines.append("</sitemapindex>")
         write(os.path.join(self.out, "sitemap.xml"), "\n".join(lines) + "\n")
+
+    def write_feed(self):
+        """/feed.xml: an Atom feed of ARTICLES (newest first)."""
+        updated = max(d for _, _, d, _ in ARTICLES) + "T00:00:00Z"
+        lines = ['<?xml version="1.0" encoding="utf-8"?>', '<feed xmlns="http://www.w3.org/2005/Atom">',
+                 '  <title>Cameleering: articles</title>',
+                 '  <subtitle>Software efficiency, measured against the original: essays with sources.</subtitle>',
+                 '  <link href="%sfeed.xml" rel="self"/>' % SITE_URL, '  <link href="%sarticles/"/>' % SITE_URL,
+                 '  <id>%sarticles/</id>' % SITE_URL, '  <updated>%s</updated>' % updated,
+                 '  <author><name>Cameleering</name><uri>%s</uri></author>' % SITE_URL]
+        for path, title, date, summary in ARTICLES:
+            lines += ['  <entry>', '    <title>%s</title>' % esc(title), '    <link href="%s%s"/>' % (SITE_URL, path),
+                      '    <id>%s%s</id>' % (SITE_URL, path), '    <published>%sT00:00:00Z</published>' % date,
+                      '    <updated>%sT00:00:00Z</updated>' % date, '    <summary>%s</summary>' % esc(summary), '  </entry>']
+        lines.append('</feed>')
+        write(os.path.join(self.out, "feed.xml"), "\n".join(lines) + "\n")
 
     def designed_pages(self):
         """Hand-written pages: every index.html under site/ except Cameleer's generated docs, the
