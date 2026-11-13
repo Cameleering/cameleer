@@ -254,6 +254,13 @@
         <tr><td>start-up to first answer</td><td>0.94 ms, 1st of 21</td><td>the other 20 servers, same droplets</td></tr>
       </tbody>
     </table></div>
+    <h3>How we generated the load</h3>
+    <p>The advice above is open-loop. Our own harnesses are not all open-loop, so here is what each figure rests on.</p>
+    <ul>
+      <li><strong>Cameleer against Apache Camel (the ledger&rsquo;s Cameleer rows) is closed-loop.</strong> N worker threads each send the next request as soon as the last one is answered, with the same driver on both sides. Throughput is what each side sustains at saturation. The p99 values are latencies at that saturation, timed from when each request was sent, so they are not corrected for coordinated omission. Both sides use the same driver, so the comparison is like for like, but read those p99 figures as relative, not as what an open-loop test at a fixed rate would show (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</li>
+      <li><strong>simoom&rsquo;s request-rate and latency tests are open-loop.</strong> They hold a constant rate and time each request from when it was due. The overload test offers a fixed absolute rate over 1,024 connections.</li>
+      <li><strong>simoom&rsquo;s TLS handshake, HTTP/3 and bulk-download tests are closed-loop.</strong> The handshake figures above are handshakes per second at saturation, from 192 workers each opening a new connection per request, not a rate we offered.</li>
+    </ul>
     <p class="note">These were measured on one droplet type, not on a fleet. We have not yet run the full degraded-fleet test on our own projects. It is the next result we will publish, with the losses, in the ledger.</p>
   </div>
 </section>
