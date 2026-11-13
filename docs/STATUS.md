@@ -489,6 +489,27 @@ a new `TRAFFIC_TOKEN`, the org profile README, the crates.io team and 0.6.0.
 - **Healthcare research**: `docs/design/medical/dicom-and-healthcare.md` (DICOM, DICOMweb,
   de-identification, Mirth alternatives, positioning); not started.
 
+## The HTTP server runs on simoom (2026-11-13, branch `simoom-server`)
+
+Decision and measurements: `docs/design/simoom-adoption.md` (sections 8 to 12; raw data in
+`docs/design/simoom-adoption-results/`). Owner rule: no optional feature, either simoom replaces
+Cameleer's own HTTP code or it is not used.
+
+- **PR 1 (this change): the server.** `cameleer-http` serves plain HTTP and HTTPS on simoom (an event
+  loop per core): `server_simoom.rs` (the engine, the per-route governor between the loop thread and
+  simoom's offload pool, response streaming), `HttpHandler::{is_async, handle_async, route_key}`, async
+  routes in the registry, the MCP endpoint answering `tools/call` from its call worker,
+  `cameleer_tls::TlsServerConfig::export` for the TLS bridge, the client percent-encoding unsafe bytes in
+  request targets. The thread-per-connection server is gone.
+- **Measured** (three rounds on DigitalOcean `c-4`, classic against simoom, same machines): `http`
+  1.33x at 64 connections and 1.56x at 256, `rest-json` 1.31x, `mcp-session` 1.37x; p99 2 to 3x lower;
+  CPU per request 40 to 47% lower; 4 threads instead of 67 to 202. Binary: `full` +1.7%.
+- **Still on the old code, in the next PRs:** the HTTP client and WebSocket (`simoom-client`), HTTP/2
+  and the gRPC server (`cameleer-grpc` h2 on `simoom-h2`), the cloud mocks that call
+  `cameleer_grpc::h2`, and the deletion of the unused server helpers in `http.rs`.
+- **Not verified:** the live, official-client and simulator tiers (WSL2) on the new server; the
+  hermetic suite on Windows 11: 2965 passed, 0 failed after the fixes.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

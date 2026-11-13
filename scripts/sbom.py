@@ -4,8 +4,9 @@
 The crates and their edges come from `cargo tree -p <package> -e normal` with the same feature
 flags as the build (cargo tree resolves features like `cargo build -p`, unlike `cargo metadata`,
 which unifies the whole workspace), so the SBOM lists exactly the crates compiled in: Cameleer is
-std-only, so that is `cameleer-*` crates of this workspace, plus the Rust toolchain and its
-standard library (from `rustc -vV`). Descriptions and licences come from `cargo metadata`.
+std-only, so that is `cameleer-*` crates of this workspace and the crates of simoom (the HTTP
+server and its protocol and TLS crates, in the same GitHub organization and under the same
+rules), plus the Rust toolchain and its standard library (from `rustc -vV`). Descriptions and licences come from `cargo metadata`.
 Standard library only; no third-party tools.
 
   scripts/sbom.py --package cameleer-main --out dist/cameleer.cdx.json                     # general distribution
@@ -121,7 +122,8 @@ def build(args):
         return by_name.get(key[0]) or {"name": key[0], "version": key[1], "description": "", "license": None}
 
     deps = sorted((pkg(k) for k in crates if k != root_key), key=lambda p: p["name"])
-    third_party = [p for p in deps if not p["name"].startswith("cameleer-")]
+    # the Cameleering family: this workspace and simoom (std-only too, same owner and licence)
+    third_party = [p for p in deps if not (p["name"].startswith("cameleer-") or p["name"] == "simoom" or p["name"].startswith("simoom-"))]
     rust = {
         "type": "framework",
         "bom-ref": "pkg:generic/rust-std@%s" % tc.get("release", "unknown"),
