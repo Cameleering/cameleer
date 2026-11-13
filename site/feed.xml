@@ -8,6 +8,14 @@
   <updated>2026-11-13T00:00:00Z</updated>
   <author><name>Cameleering</name><uri>https://cameleer.ing/</uri></author>
   <entry>
+    <title>How to test your headroom before an incident: the degraded-fleet test</title>
+    <link href="https://cameleer.ing/degraded-fleet-test/"/>
+    <id>https://cameleer.ing/degraded-fleet-test/</id>
+    <published>2026-11-13T00:00:00Z</published>
+    <updated>2026-11-13T00:00:00Z</updated>
+    <summary>A procedure for a staging fleet: lose a third of the servers, restart one under load, reconnect every client at once, offer more than the fleet can serve. What to record, how to read it, and the pass or fail lines to write first.</summary>
+  </entry>
+  <entry>
     <title>Headroom: what is left when servers drop out</title>
     <link href="https://cameleer.ing/headroom/"/>
     <id>https://cameleer.ing/headroom/</id>

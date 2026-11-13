@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Degraded Fleet Test: Check Your Headroom | Cameleering</title>
+<meta name="description" content="Four tests to run on staging before an incident: remove a third of your servers, restart a node under load, drop every connection, offer 120% of capacity.">
+<link rel="canonical" href="https://cameleer.ing/degraded-fleet-test/">
+<meta name="theme-color" content="#ffffff">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Cameleering">
+<meta property="og:title" content="How to test your headroom before an incident: the degraded-fleet test">
+<meta property="og:description" content="A procedure for any stack: find capacity with the full fleet and with a third of it gone, restart a node under load, drop every connection at once, and offer 120% of capacity. What to record, how to read it, and how to set pass/fail lines in advance.">
+<meta property="og:url" content="https://cameleer.ing/degraded-fleet-test/">
+<meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../brand/cameleering/cameleering-mark.svg" type="image/svg+xml">
+<link rel="icon" href="../brand/cameleering/cameleering-mark-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="../brand/cameleering/cameleering-apple-touch-icon.png">
+<link rel="alternate" type="text/plain" href="../llms.txt" title="LLM-readable summary">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/site.css">
+<link rel="stylesheet" href="../assets/compare.css">
+<link rel="stylesheet" href="../assets/cameleering.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "TechArticle", "headline": "How to test your headroom before an incident: the degraded-fleet test", "description": "A procedure for any stack: find capacity with the full fleet and with a third of it gone, restart a node under load, drop every connection at once, and offer 120% of capacity. What to record, how to read it, and how to set pass/fail lines in advance.", "url": "https://cameleer.ing/degraded-fleet-test/", "inLanguage": "en", "image": "https://cameleer.ing/brand/cameleering/cameleering-og.png", "datePublished": "2026-11-13", "dateModified": "2026-11-13", "author": {"@type": "Person", "name": "Sudheesh PM"}, "publisher": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Degraded-fleet test"}]}
+</script>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How many servers do I need to test?", "acceptedAnswer": {"@type": "Answer", "text": "Enough that removing a third is meaningful: at least three, and six or more if you can. Keep the production ratios between tiers and dependencies, and remove servers the way they fail in production, for example a whole zone."}}, {"@type": "Question", "name": "Can I run it in production?", "acceptedAnswer": {"@type": "Answer", "text": "Run it in staging first. In production it belongs in a planned game day, within your error budget, with a clear abort rule, people watching, and a way to put the servers back at once. Never start with the overload test in production."}}, {"@type": "Question", "name": "How long does it take?", "acceptedAnswer": {"@type": "Answer", "text": "Plan a day for the first run: set-up and the four tests, plus the hold at peak for as long as your longest incident. Later runs reuse the scripts and take a few hours."}}, {"@type": "Question", "name": "Which load tool should I use?", "acceptedAnswer": {"@type": "Answer", "text": "Any tool that schedules requests by the clock and measures latency from when each request was due, such as wrk2, k6 with the constant-arrival-rate executor, or Vegeta. For the connection storm it must also be able to open new connections at a set rate."}}, {"@type": "Question", "name": "Is this chaos engineering?", "acceptedAnswer": {"@type": "Answer", "text": "It is related. This is a measured capacity test with pass/fail lines written in advance. Chaos tools can do the removing of servers for you; the measuring and the pass lines are what this page adds."}}, {"@type": "Question", "name": "Does it replace capacity planning?", "acceptedAnswer": {"@type": "Answer", "text": "No. It gives capacity planning real numbers: the capacity with a third of the fleet gone, the restart time and the cost of a reconnection wave. Planning still decides how much margin to buy."}}]}
+</script>
+</head>
+<body>
+<!-- partial:header-cameleering -->
+<header class="top" id="top">
+  <div class="wrap">
+    <a class="brand" href="../" aria-label="Cameleering home"><img src="../brand/cameleering/cameleering-mark-64.png" width="32" height="32" alt="" aria-hidden="true">Cameleering</a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav" onclick="var t=this.closest('.top'),o=t.classList.toggle('open');this.setAttribute('aria-expanded',o)"><span class="bars" aria-hidden="true"></span>Menu</button>
+    <nav id="main-nav" aria-label="Main">
+      <a class="keep" href="../ledger/">Ledger</a>
+      <a class="keep" href="../method/">Method</a>
+      <a href="../finops/">FinOps</a>
+      <a href="../articles/">Articles</a>
+      <div class="nav-menu">
+        <a href="../projects/" aria-haspopup="true">Projects</a>
+        <div class="nav-sub">
+          <a href="../cameleer/"><b>Cameleer</b><span>Integration engine in the style of Apache Camel · Cameleered</span></a>
+          <a href="../simoom/"><b>simoom</b><span>HTTP engine, std-only Rust · Cameleered</span></a>
+          <a href="../projects/#karez"><b>karez</b><span>Database connectivity · Cameleering, no numbers yet</span></a>
+          <a href="../projects/#ksar"><b>ksar</b><span>Cryptography and PKI · planned</span></a>
+        </div>
+      </div>
+      <a href="../about/">About</a>
+      <a class="gh" href="https://github.com/cameleering"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+<!-- /partial:header-cameleering -->
+<main>
+<section class="c-hero">
+  <div class="wrap">
+    <p class="crumbs"><a href="../">Cameleering</a> / Degraded-fleet test</p>
+    <img class="cam-mark" src="../brand/cameleering/cameleering-mark.svg" width="56" height="56" alt="Cameleering">
+    <p class="kicker">Cameleering · capacity, recovery and efficiency</p>
+    <h1>How to test your headroom before an incident: the degraded-fleet test</h1>
+    <p class="lede">Four tests you can run next week on a staging fleet, in any language and on any stack: capacity with the full fleet and with a third of it gone, a restart under load, a reconnection storm, and overload. What to set up, what to record, how to read it, and how to write pass or fail before you start.</p>
+    <p class="rule">No claim without a number.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="why">
+  <div class="wrap">
+    <h2>Why run it, and what you will learn</h2>
+    <p>Outages often bring no new traffic. They bring the same traffic onto fewer servers, and restarted servers that fall over again when the load reaches them. The <a href="../headroom/">headroom essay</a> explains why. This page is the procedure.</p>
+    <p>At the end you will know four things, each as a number with a date. Where the capacity curve bends (the knee) with N servers and with two thirds of N. How long a restarted node takes to become healthy under load, and whether it stays healthy. What a wave of reconnecting clients costs. And what your service does when it is offered more than it can serve.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="setup">
+  <div class="wrap">
+    <h2>Set-up that makes the numbers believable</h2>
+    <p class="intro">A capacity number is only as good as the test that produced it. Most of the work is here.</p>
+    <div class="two">
+      <div class="pane">
+        <h3>The fleet and the load</h3>
+        <ul>
+          <li><strong>A staging fleet shaped like production.</strong> Same instance type, same ratios between tiers, same configuration, TLS on, the same dependencies (databases, caches, downstream services). It can be smaller, but keep the ratios.</li>
+          <li><strong>Production-shaped load.</strong> Replay a sample of real traffic, or model the mix: request types, payload sizes, cache hit rates, and a realistic share of new connections. A single cheap endpoint tells you about that endpoint only.</li>
+          <li><strong>Warm state where production is warm.</strong> Fill caches the way production fills them before you measure. Test cold starts separately, on purpose.</li>
+        </ul>
+      </div>
+      <div class="pane">
+        <h3>The load generator</h3>
+        <ul>
+          <li><strong>Open-loop, constant rate.</strong> Requests are scheduled by the clock, not sent when the previous one returns.</li>
+          <li><strong>On separate machines.</strong> Never on the servers under test. Watch the generators' CPU and network; if they saturate, the result is theirs, not yours.</li>
+          <li><strong>Written down.</strong> Versions, hardware, kernel, flags, the load script and the date, as the <a href="../method/#baseline">baseline rules</a> ask. A result without them cannot be repeated.</li>
+        </ul>
+      </div>
+    </div>
+    <p>The open-loop point matters most. A closed-loop generator waits for each answer before sending the next request, so when the server slows down, the generator slows down with it and never measures the requests that should have been sent during the stall. Gil Tene called this <em>coordinated omission</em>; it can make the tail look many times better than users see it <sup><a href="#s1">[1]</a></sup> <sup><a href="#s2">[2]</a></sup>.</p>
+    <p>Tools that schedule by the clock include wrk2, built to produce a constant throughput load and measure latency from the intended send time <sup><a href="#s2">[2]</a></sup>; k6 with its <code>constant-arrival-rate</code> executor, an open-model executor that starts iterations regardless of how the system responds <sup><a href="#s3">[3]</a></sup>; and Vegeta, which attacks at a constant request rate <sup><a href="#s4">[4]</a></sup>. Check that your tool reports latency from when a request was due, not from when it was finally sent.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="test-1">
+  <div class="wrap">
+    <h2>Test 1: the degraded fleet</h2>
+    <div class="two">
+      <div class="pane">
+        <h3>Procedure</h3>
+        <ol>
+          <li>Write down the latency target, for example "p99 under 200 ms", and the error budget. Use the target you already promise users.</li>
+          <li>On the full fleet of N servers, offer load in steps (say 10% of the expected peak per step, 5 minutes each). Record every step.</li>
+          <li>The highest step where p99 and errors stay within target is the capacity <strong>C</strong>.</li>
+          <li>Take a third of the servers out of rotation. Do not change the offered rate. Watch what happens to the survivors.</li>
+          <li>Repeat the steps on the smaller fleet. Its capacity is <strong>C′</strong>.</li>
+          <li>Hold the smaller fleet at today's production peak for as long as your longest past incident.</li>
+        </ol>
+      </div>
+      <div class="pane">
+        <h3>Pass or fail, written before you run</h3>
+        <p>Write one sentence and commit it next to the test, for example: <em>"With a third of the fleet gone, p99 stays under 200 ms and errors under 0.1% at today's peak load, for four hours."</em></p>
+        <p>Written afterwards, a pass line tends to move to where the result landed. Written before, it is a test.</p>
+      </div>
+    </div>
+    <h3>What to record at every step</h3>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>column</th><th>why</th></tr></thead>
+      <tbody>
+        <tr><td>offered rate and answered rate</td><td>if they differ, requests are queuing or failing</td></tr>
+        <tr><td>p50, p99, p99.9 from the load generator</td><td>what users wait; averages hide the tail</td></tr>
+        <tr><td>error rate, by kind (timeouts, 5xx, resets)</td><td>where the failure starts</td></tr>
+        <tr><td>CPU, memory, open connections, threads per server</td><td>which resource saturates first</td></tr>
+        <tr><td>dependency latency and pool waits</td><td>the bottleneck is often a database or a downstream service</td></tr>
+        <tr><td>load generator CPU</td><td>proof the generator was not the limit</td></tr>
+      </tbody>
+    </table></div>
+    <h3>How to read it</h3>
+    <p>Compare C′/C with the ideal 2/3. Close to 2/3 means the work spreads cleanly. Well below means something shared is the limit: a dependency, a lock, a connection pool sized per fleet rather than per server. Look at the shape too. A sharp knee gives little warning before p99 breaks; a gentle one gives you time to react. Note the step where errors begin, and which resource ran out first.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>example, not a measurement</th><th class="num">full fleet (12)</th><th class="num">degraded (8)</th></tr></thead>
+      <tbody>
+        <tr><td>capacity at p99 under 200 ms</td><td class="num">48,000 req/s</td><td class="num">29,000 req/s</td></tr>
+        <tr><td>ideal degraded capacity, 2/3 of C</td><td class="num">–</td><td class="num">32,000 req/s</td></tr>
+        <tr><td>C′/C</td><td class="num">–</td><td class="num">0.60</td></tr>
+        <tr><td>first resource to saturate</td><td class="num">CPU</td><td class="num">database pool</td></tr>
+        <tr><td>today's production peak</td><td class="num">30,000 req/s</td><td class="num">30,000 req/s</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Invented numbers, to show the reading. This fleet looks comfortable at 62% of capacity on a normal day. With a third gone it is past its knee at today's peak, and CPU is not the reason: the database pool is. The pass line fails, and the fix is a pool setting, not more servers.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="test-2">
+  <div class="wrap">
+    <h2>Test 2: restart under load</h2>
+    <p class="intro">With the degraded fleet under steady load, restart one node and let it rejoin. Do it twice: (a) it gets its full share at once, (b) the load balancer ramps it up with slow start.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>record</th><th>from</th><th>to</th></tr></thead>
+      <tbody>
+        <tr><td>time to first answer</td><td>process start</td><td>first successful response</td></tr>
+        <tr><td>time to healthy</td><td>process start</td><td>passing the readiness check</td></tr>
+        <tr><td>time to full speed</td><td>process start</td><td>the node's own p99 back within target</td></tr>
+        <tr><td>flapping</td><td colspan="2">does it fail its health check again after joining, and how many times</td></tr>
+      </tbody>
+    </table></div>
+    <p>What to look at: warm-up. Caches are empty, connection pools to databases are empty, a JIT runtime has not compiled its hot paths, and the TLS session cache is cold, so every client does a full handshake. The SRE book lists slow start-up and cold caches as a cause of cascading failure <sup><a href="#s5">[5]</a></sup>.</p>
+    <p>Health-check design decides whether a slow node recovers or flaps. In Kubernetes, a failed liveness probe restarts the container, a failed readiness probe removes the pod from its Services' endpoints, and a startup probe holds both off until the application has started <sup><a href="#s6">[6]</a></sup>. A liveness probe that fails under load turns a slow node into a restart loop. Readiness should mean "can serve now"; liveness should mean "is stuck and needs a restart".</p>
+    <p>Slow start exists in the common load balancers, with limits worth knowing:</p>
+    <ul>
+      <li>AWS Application Load Balancer: the target group attribute <code>slow_start.duration_seconds</code> ramps a healthy target's requests up linearly; it cannot be used with the least outstanding requests or weighted random algorithms <sup><a href="#s7">[7]</a></sup>.</li>
+      <li>NGINX: the <code>slow_start</code> parameter of <code>server</code> in an upstream recovers weight from zero; it is part of the commercial subscription and cannot be used with <code>hash</code>, <code>ip_hash</code> or <code>random</code> <sup><a href="#s8">[8]</a></sup>.</li>
+      <li>Envoy: slow start mode scales a new endpoint's weight over a window, for round robin, least request and client-side weighted round robin <sup><a href="#s9">[9]</a></sup>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="test-3">
+  <div class="wrap">
+    <h2>Test 3: the connection storm</h2>
+    <p class="intro">After a failure, clients reconnect together. Drop all client connections at once, for example by restarting the load balancer's listeners or the generators' connection pools, and let clients reconnect. Run it twice: with clients that back off with jitter, and with clients that reconnect at once.</p>
+    <ul>
+      <li><strong>Handshakes per second per core</strong>, and CPU time per handshake.</li>
+      <li><strong>p99 on connections that were already open</strong> during the wave. A storm that starves existing users is worse than one that only delays new ones.</li>
+      <li><strong>Time until latency is normal again.</strong></li>
+      <li><strong>Full and resumed TLS.</strong> Run once with session resumption off and once with it on. A full handshake costs far more than a resumed one, and after a restart the session cache may be empty.</li>
+    </ul>
+    <p class="note">Your load generator must open new connections at the rate you configure, not reuse them. k6 has <code>noConnectionReuse</code> to turn off keep-alive <sup><a href="#s10">[10]</a></sup>; Vegeta has <code>-keepalive</code>, true by default <sup><a href="#s4">[4]</a></sup>. Count the handshakes on the server side to confirm.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="test-4">
+  <div class="wrap">
+    <h2>Test 4: overload</h2>
+    <p>Offer about 120% of C and hold it. Count the answers that came back within the latency target, not only the total. AWS calls the useful part <em>goodput</em>: responses without errors and fast enough for the client to use. A response that arrives after the client gave up is wasted work <sup><a href="#s11">[11]</a></sup>.</p>
+    <ul>
+      <li>Does load shedding or admission control engage, and does it refuse work early and cheaply?</li>
+      <li>Do clients retry, and how much? Retries can multiply load. Google's SRE book describes a per-client retry budget of 10% of requests <sup><a href="#s12">[12]</a></sup>; AWS describes capped retries, exponential backoff with jitter and a local token bucket <sup><a href="#s13">[13]</a></sup>.</li>
+      <li>When the offered load drops back to normal, does the fleet recover by itself? Both the SRE book and AWS advise testing to the breaking point and beyond it <sup><a href="#s5">[5]</a></sup> <sup><a href="#s11">[11]</a></sup>.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="report">
+  <div class="wrap">
+    <h2>Put it together</h2>
+    <p class="intro">One page per run, in the shape of the <a href="../method/#report">crossing report</a>. Fill it in and keep it in the repository.</p>
+    <div class="c-table-wrap"><table class="c-table">
+      <thead><tr><th>section</th><th>for this test</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Load</strong></td><td>the request mix, share of new connections, rate steps, the generator and how it schedules</td></tr>
+        <tr><td><strong>Baseline</strong></td><td>the build under test and the previous run it is compared with</td></tr>
+        <tr><td><strong>Terrain</strong></td><td>instance type, N, the servers removed, load balancer and its settings, dependencies</td></tr>
+        <tr><td><strong>Water</strong></td><td>CPU, memory, connections per server at C and at C′; CPU per handshake</td></tr>
+        <tr><td><strong>Distance</strong></td><td>C, C′, C′/C; restart times; storm recovery time; goodput at 120%</td></tr>
+        <tr><td><strong>Losses</strong></td><td>every pass line that failed, and the resource that ran out</td></tr>
+        <tr><td><strong>Repeat it</strong></td><td>scripts, configuration, raw results</td></tr>
+        <tr><td><strong>Date</strong></td><td>when it ran</td></tr>
+      </tbody>
+    </table></div>
+    <p>Then turn each pass line into a budget, as step 6 of the <a href="../#playbook">playbook</a> describes: a smaller version of test 1 in CI that fails the build when C′ drops or p99 at the target rate rises past the line. Rerun the full set after any change to the hot path, after changes to instance types or dependencies, and before every peak season.</p>
+  </div>
+</section>
+
+<section class="c-sec" id="mistakes">
+  <div class="wrap">
+    <h2>Common mistakes</h2>
+    <ul>
+      <li><strong>Closed-loop load.</strong> The generator slows down with the server, and the tail disappears from the results.</li>
+      <li><strong>A saturated load generator.</strong> If its CPU is at 100%, you measured the generator.</li>
+      <li><strong>An empty cache, or a perfect one.</strong> Measure the hit rate production has, and test cold starts on purpose.</li>
+      <li><strong>Only the happy fleet size.</strong> Capacity with N servers says little about N minus a third.</li>
+      <li><strong>Different builds, unsaid.</strong> Compare runs only with the build, flags and date written next to each.</li>
+      <li><strong>Averages.</strong> Use p99 and p99.9 from the client side.</li>
+      <li><strong>No pass line beforehand.</strong> Then any result can be read as fine.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="c-sec" id="ours">
+  <div class="wrap">
+    <h2>Our own numbers</h2>
+    <p class="intro">Parts of this test we have measured on simoom, our HTTP engine. All of these come from <a href="../simoom/benchmarks/">simoom's campaign 4</a> on DigitalOcean c-4 droplets, 2026-11-12, against 20 other HTTP servers on the same machines (<a href="../ledger/#simoom">the ledger</a>).</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>property</th><th>simoom</th><th>baseline</th></tr></thead>
+      <tbody>
+        <tr><td>TLS 1.3 handshakes per second</td><td>9,396 full, 12,388 resumed</td><td>1.39x and 1.56x H2O; 24% and 9% behind axum + rustls</td></tr>
+        <tr class="loss"><td>overload, 195k req/s offered</td><td>about as many answers in total as the others; 10th of 19 on answers within 1 ms</td><td>actix-web answered 22x more within 1 ms</td></tr>
+        <tr><td>start-up to first answer</td><td>0.94 ms, 1st of 21</td><td>the other 20 servers, same droplets</td></tr>
+      </tbody>
+    </table></div>
+    <h3>How we generated the load</h3>
+    <p>The advice above is open-loop. Our own harnesses are not all open-loop, so here is what each figure rests on.</p>
+    <ul>
+      <li><strong>Cameleer against Apache Camel (the ledger&rsquo;s Cameleer rows) is closed-loop.</strong> N worker threads each send the next request as soon as the last one is answered, with the same driver on both sides. Throughput is what each side sustains at saturation. The p99 values are latencies at that saturation, timed from when each request was sent, so they are not corrected for coordinated omission. Both sides use the same driver, so the comparison is like for like, but read those p99 figures as relative, not as what an open-loop test at a fixed rate would show (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</li>
+      <li><strong>simoom&rsquo;s request-rate and latency tests are open-loop.</strong> They hold a constant rate and time each request from when it was due. The overload test offers a fixed absolute rate over 1,024 connections.</li>
+      <li><strong>simoom&rsquo;s TLS handshake, HTTP/3 and bulk-download tests are closed-loop.</strong> The handshake figures above are handshakes per second at saturation, from 192 workers each opening a new connection per request, not a rate we offered.</li>
+    </ul>
+    <p class="note">These were measured on one droplet type, not on a fleet. We have not yet run the full degraded-fleet test on our own projects. It is the next result we will publish, with the losses, in the ledger.</p>
+  </div>
+</section>
+
+<section class="c-sec faq" id="faq">
+  <div class="wrap">
+    <h2>Common questions</h2>
+    <details><summary>How many servers do I need to test?</summary><p>Enough that removing a third is meaningful: at least three, and six or more if you can. Keep the production ratios between tiers and dependencies, and remove servers the way they fail in production, for example a whole zone.</p></details>
+    <details><summary>Can I run it in production?</summary><p>Run it in staging first. In production it belongs in a planned game day, within your error budget, with a clear abort rule, people watching, and a way to put the servers back at once. Never start with the overload test in production.</p></details>
+    <details><summary>How long does it take?</summary><p>Plan a day for the first run: set-up and the four tests, plus the hold at peak for as long as your longest incident. Later runs reuse the scripts and take a few hours.</p></details>
+    <details><summary>Which load tool should I use?</summary><p>Any tool that schedules requests by the clock and measures latency from when each request was due, such as wrk2, k6 with the constant-arrival-rate executor, or Vegeta. For the connection storm it must also be able to open new connections at a set rate.</p></details>
+    <details><summary>Is this chaos engineering?</summary><p>It is related. This is a measured capacity test with pass/fail lines written in advance. Chaos tools can do the removing of servers for you; the measuring and the pass lines are what this page adds.</p></details>
+    <details><summary>Does it replace capacity planning?</summary><p>No. It gives capacity planning real numbers: the capacity with a third of the fleet gone, the restart time and the cost of a reconnection wave. Planning still decides how much margin to buy.</p></details>
+  </div>
+</section>
+
+<section class="c-sec" id="sources">
+  <div class="wrap">
+    <h2>Sources</h2>
+    <p class="intro">Checked on 2026-11-13.</p>
+    <ol class="sources">
+      <li id="s1">Gil Tene, <a href="https://spring.io/blog/2014/06/03/springone2gx-2013-replay-how-not-to-measure-latency">"How NOT to Measure Latency"</a>, SpringOne2GX 2013 recording.</li>
+      <li id="s2">wrk2, <a href="https://github.com/giltene/wrk2">README</a>: constant throughput load and coordinated omission.</li>
+      <li id="s3">Grafana k6, <a href="https://grafana.com/docs/k6/latest/using-k6/scenarios/executors/constant-arrival-rate/">constant-arrival-rate executor</a>.</li>
+      <li id="s4">Vegeta, <a href="https://github.com/tsenart/vegeta">README</a>: constant request rate and the <code>-keepalive</code> option.</li>
+      <li id="s5">Google, Site Reliability Engineering, <a href="https://sre.google/sre-book/addressing-cascading-failures/">chapter 22, "Addressing Cascading Failures"</a>.</li>
+      <li id="s6">Kubernetes, <a href="https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/">liveness, readiness and startup probes</a>.</li>
+      <li id="s7">AWS, <a href="https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html">Application Load Balancer target group attributes: slow start mode</a>.</li>
+      <li id="s8">NGINX, <a href="https://nginx.org/en/docs/http/ngx_http_upstream_module.html">ngx_http_upstream_module: <code>slow_start</code></a>.</li>
+      <li id="s9">Envoy, <a href="https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/slow_start">slow start mode</a>.</li>
+      <li id="s10">Grafana k6, <a href="https://grafana.com/docs/k6/latest/using-k6/k6-options/reference/">options reference: <code>noConnectionReuse</code></a>.</li>
+      <li id="s11">Amazon Builders' Library, <a href="https://builder.aws.com/content/3Eun1EEyX6p2e3VYNyRLSJzLuMV/using-load-shedding-to-avoid-overload">"Using load shedding to avoid overload"</a>.</li>
+      <li id="s12">Google, Site Reliability Engineering, <a href="https://sre.google/sre-book/handling-overload/">chapter 21, "Handling Overload"</a>.</li>
+      <li id="s13">Amazon Builders' Library, <a href="https://builder.aws.com/content/3EumjoZascWd1oZiEgL8ORlv3qE/timeouts-retries-and-backoff-with-jitter">"Timeouts, retries, and backoff with jitter"</a>.</li>
+    </ol>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <!-- partial:credit-cameleering -->
+<div class="credit">
+      <h4><img src="../brand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>
+      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="../about/">about</a>).</p>
+      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>
+    </div>
+<!-- /partial:credit-cameleering -->
+    <div>
+      <h4>Cameleering</h4>
+      <ul>
+        <li><a href="../">What is cameleering?</a></li>
+        <li><a href="../ledger/">The ledger</a></li>
+        <li><a href="../method/">The method</a></li>
+      </ul>
+    </div>
+    <div>
+      <h4>Projects</h4>
+      <ul>
+        <li><a href="../cameleer/">Cameleer</a></li>
+        <li><a href="../cameleer/compare/apache-camel-vs-cameleer/">Cameleer benchmarks</a></li>
+        <li><a href="../llms.txt">llms.txt</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

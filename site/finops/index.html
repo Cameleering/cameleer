@@ -124,7 +124,7 @@
         <tr><td>duration cost per million invocations</td><td class="num">$0.0583</td><td class="num">$0.0063</td></tr>
       </tbody>
     </table></div>
-    <p class="note">Arithmetic: billed seconds × memory in GB × $0.0000166667 × 1,000,000; about 9 times less per request. Both sides also pay $0.20 per million requests. Caveats: the times were measured on cloud virtual machines over the network, not inside Lambda, and the p99 is used on purpose as a pessimistic duration. Lambda gives a function CPU in proportion to its memory, so at 128 MB a CPU-bound route runs slower than on a full VM: measure the duration at each setting before you pick one.</p>
+    <p class="note">Arithmetic: billed seconds × memory in GB × $0.0000166667 × 1,000,000; about 9 times less per request. Both sides also pay $0.20 per million requests. Caveats: the times were measured on cloud virtual machines over the network, not inside Lambda, and the p99 is used on purpose as a pessimistic duration: it comes from a closed-loop driver at saturation, so it includes queueing that a lightly loaded function would not see. Lambda gives a function CPU in proportion to its memory, so at 128 MB a CPU-bound route runs slower than on a full VM: measure the duration at each setting before you pick one.</p>
 
     <h3>4. A month of requests: the Lambda compute bill</h3>
     <p>One example month: 10 million requests, one in a hundred a cold start, each side at its own memory setting from example 3.</p>
