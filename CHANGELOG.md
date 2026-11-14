@@ -5,6 +5,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The gRPC client runs on simoom-client** (the `grpc` producer, Pub/Sub streaming and Pub/Sub Lite, and
+  Kinesis `SubscribeToShard`): HTTP/2 connections are pooled and re-established by the engine, calls
+  stream in both directions. **Changed:** the gRPC client always verifies the server certificate and its
+  host name against the trust anchors it is given.
+
 ## 0.6.1 (2026-11-13)
 
 Cameleer's HTTP stack moves onto [simoom](https://crates.io/crates/simoom), the std-only HTTP engine of

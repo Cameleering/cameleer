@@ -61,7 +61,11 @@ fn duration(ms: u64) -> Option<Duration> {
     }
 }
 
-fn tls_options(cfg: Option<&TlsClientConfig>, server_name: Option<&str>, https: bool) -> Result<sc::tls::TlsOptions> {
+/// The simoom TLS options for a Cameleer client configuration: the trust anchors, the client certificate and session
+/// resumption. Certificate verification and the host name check cannot be turned off (an error says what to do instead).
+/// Shared with the gRPC client; not part of the stable API.
+#[doc(hidden)]
+pub fn tls_options(cfg: Option<&TlsClientConfig>, server_name: Option<&str>, https: bool) -> Result<sc::tls::TlsOptions> {
     if !https {
         return Ok(sc::tls::TlsOptions { roots: sc::tls::RootStore::empty(), client_cert: None, server_name: None, resumption: false });
     }
