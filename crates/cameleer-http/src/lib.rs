@@ -31,7 +31,8 @@
 
 pub mod binding;
 pub mod client;
-mod client_engine;
+#[doc(hidden)]
+pub mod client_engine;
 pub mod http;
 pub mod netty;
 pub mod platform;

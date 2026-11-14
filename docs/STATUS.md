@@ -509,9 +509,16 @@ Cameleer's own HTTP code or it is not used.
   clients; `HttpConnection`, the producer's own pool and its HTTP/2 client are gone; the `http2` feature
   is gone). `cameleer_tls::TlsClientConfig::export` is the bridge. Certificate verification cannot be
   turned off in these clients.
-- **Still on the old code, in the next PRs:** WebSocket, HTTP/2
-  and the gRPC server (`cameleer-grpc` h2 on `simoom-h2`), the cloud mocks that call
-  `cameleer_grpc::h2`, and the deletion of the unused server helpers in `http.rs`.
+- **PR 3 (branch `simoom-h2`): the gRPC client** on `simoom-client`'s full-duplex `Call`
+  (`cameleer-grpc` `grpc/client.rs`: `GrpcClient`, `ClientCall` and `CallSender` keep their API; the
+  engine is created on first use from the public settings, stream opens are serialized so racing calls
+  share one connection). The TLS bridge is `cameleer_http::client_engine::tls_options`; certificate
+  verification cannot be turned off (the gRPC component has no such option). Kinesis `SubscribeToShard`
+  (`cameleer-cloud` `h2_event_stream`) uses the same client. `H2Connection` is no longer used by library
+  code; the tests of the old HTTP/2 server still use it until the server moves.
+- **Still on the old code, in the next PRs:** WebSocket, the HTTP/2 and gRPC server (`cameleer-grpc` h2
+  on `simoom-h2`) with the cloud mocks that call `cameleer_grpc::h2`, and the deletion of the unused code
+  (`h2`, `hpack`, server helpers in `http.rs`).
 - **Not verified:** the live, official-client and simulator tiers (WSL2) on the new server; the
   hermetic suite on Windows 11: 2965 passed, 0 failed after the fixes.
 

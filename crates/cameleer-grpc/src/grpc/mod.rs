@@ -171,6 +171,24 @@ impl From<crate::h2::H2Error> for Status {
     }
 }
 
+/// RST_STREAM codes the peer sends: CANCEL and REFUSED_STREAM.
+const RST_CANCEL: u64 = 8;
+const RST_REFUSED_STREAM: u64 = 7;
+
+impl From<simoom_client::Error> for Status {
+    fn from(e: simoom_client::Error) -> Status {
+        use simoom_client::{ErrorKind as K, TimeoutKind as T};
+        match &e.kind {
+            K::Timeout(T::Connect | T::Tls) => Status::new(Code::Unavailable, e.to_string()),
+            K::Timeout(_) => Status::new(Code::DeadlineExceeded, "deadline exceeded"),
+            K::Cancelled | K::Reset(RST_CANCEL) => Status::new(Code::Cancelled, "stream cancelled"),
+            K::Reset(RST_REFUSED_STREAM) => Status::new(Code::Unavailable, e.to_string()),
+            K::Reset(_) | K::Protocol | K::Decode => Status::new(Code::Internal, e.to_string()),
+            _ => Status::new(Code::Unavailable, e.to_string()),
+        }
+    }
+}
+
 /// Maps a non-200 HTTP status to a gRPC code (gRPC "HTTP to gRPC status code mapping").
 pub fn code_from_http_status(status: u16) -> Code {
     match status {
