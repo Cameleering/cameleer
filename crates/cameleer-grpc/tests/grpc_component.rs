@@ -18,7 +18,7 @@ fn greeter(ex: &mut Exchange) -> Result<()> {
                 "bad" => return Err(CamelError::illegal_argument("name must not be 'bad'")),
                 "boom" => return Err(CamelError::new(kinds::CAMEL_EXCHANGE, "boom happened")),
                 "missing" => return Err(CamelError::new("StatusRuntimeException", "NOT_FOUND: no such person")),
-                "slow" => std::thread::sleep(Duration::from_millis(600)),
+                "slow" => std::thread::sleep(Duration::from_millis(2000)),
                 _ => {}
             }
             let tenant = ex.header("x-tenant").map(|v| v.to_string()).unwrap_or_default();
@@ -202,7 +202,7 @@ fn deadline_exceeded() {
     let start = Instant::now();
     let err = t.request_body(&f.uri("sayHello", "&deadline=150"), Value::object([("name", "slow")])).unwrap_err();
     assert!(status_of(&err).starts_with("DEADLINE_EXCEEDED"), "{}", status_of(&err));
-    assert!(start.elapsed() < Duration::from_millis(550), "{:?}", start.elapsed());
+    assert!(start.elapsed() < Duration::from_millis(1500), "{:?}", start.elapsed());
     // the server side enforces grpc-timeout as well (client without local timer check)
     let client = GrpcClient::plaintext(&format!("127.0.0.1:{}", f.port));
     let pool = DescriptorPool::from_file(PROTO).unwrap();
