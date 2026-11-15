@@ -252,7 +252,7 @@ impl AwsConfig {
         stop: &dyn Fn() -> bool,
         on_message: &mut dyn FnMut(eventstream::Message) -> Result<bool>,
     ) -> Result<()> {
-        use cameleer_grpc::h2::{ErrorCode, H2Config, H2Connection};
+        use simoom_client as sc;
         let url = self.endpoint(service_host)?;
         let mut req = Request::new("POST", url.clone())
             .header("Content-Type", format!("application/x-amz-json-{}", json_version))
@@ -260,33 +260,46 @@ impl AwsConfig {
             .body(body.to_json().into_bytes());
         let creds = self.credentials()?;
         sigv4::sign_request(&mut req, &creds, &self.region, service, now_secs());
-        let h2err = |e: cameleer_grpc::h2::H2Error| cloud_error(kind, format!("HTTP/2 error talking to {}: {}", url.origin(), e));
-        let conn = if url.is_https() {
-            let tls = cameleer_tls::TlsClientConfig::builder().alpn_protocols(&["h2"]).build();
-            H2Connection::connect_tls(&url.authority(), &url.host, &tls, H2Config::default()).map_err(h2err)?
+        let h2err = |e: sc::Error| cloud_error(kind, format!("HTTP/2 error talking to {}: {}", url.origin(), e));
+        // HTTP/2 only: TLS endpoints negotiate ALPN h2 and verify the certificate, `http://` overrides use prior knowledge.
+        // The system trust store is loaded only when the endpoint is `https`.
+        let mut cfg = sc::Config::default();
+        cfg.version = sc::HttpVersion::Http2;
+        // the loop below polls with its own deadlines
+        cfg.read_timeout = None;
+        let tls = if url.is_https() {
+            sc::tls::TlsOptions::default()
         } else {
-            H2Connection::connect(&url.authority(), H2Config::default()).map_err(h2err)?
+            sc::tls::TlsOptions { roots: sc::tls::RootStore::empty(), client_cert: None, server_name: None, resumption: false }
         };
-        let mut headers = vec![
-            (":method".to_string(), "POST".to_string()),
-            (":scheme".to_string(), if url.is_https() { "https" } else { "http" }.to_string()),
-            (":authority".to_string(), req.get_header("Host").unwrap_or_default().to_string()),
-            (":path".to_string(), url.target()),
-        ];
+        let client = sc::ClientBuilder::default().config(cfg).tls(tls).build();
+        let mut headers = sc::Headers::new();
         for (k, v) in &req.headers {
-            let k = k.to_ascii_lowercase();
-            if !matches!(k.as_str(), "host" | "connection" | "content-length") {
-                headers.push((k, v.clone()));
+            // `host` becomes the :authority
+            if !matches!(k.to_ascii_lowercase().as_str(), "connection" | "content-length") {
+                headers.append(k, v);
             }
         }
+        let full = format!("{}://{}{}", if url.is_https() { "https" } else { "http" }, url.authority(), url.target());
         let result = (|| -> Result<()> {
-            let stream = conn.open_stream(&headers, false).map_err(h2err)?;
-            stream.send_data(&req.body, true).map_err(h2err)?;
-            let head = stream.recv_headers(Some(std::time::Duration::from_secs(30))).map_err(h2err)?.unwrap_or_default();
-            let status: u16 = head.iter().find(|(k, _)| k == ":status").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
+            let mut call = client.call("POST", &full, &headers).map_err(h2err)?;
+            call.send(&req.body).map_err(h2err)?;
+            call.finish().map_err(h2err)?;
+            let (status, head) = {
+                let (s, h) = call.response_until(Some(std::time::Instant::now() + std::time::Duration::from_secs(30))).map_err(h2err)?;
+                (s, h.to_strings())
+            };
+            let mut buf = vec![0u8; 16 * 1024];
             if status != 200 {
-                let body = stream.read_body(Some(std::time::Duration::from_secs(30))).unwrap_or_default();
-                let resp = Response { status, headers: head.into_iter().filter(|(k, _)| !k.starts_with(':')).collect(), body };
+                let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                let mut body = Vec::new();
+                while let Ok(n) = call.read_until(&mut buf, Some(until)) {
+                    if n == 0 {
+                        break;
+                    }
+                    body.extend_from_slice(&buf[..n]);
+                }
+                let resp = Response { status, headers: head, body };
                 return Err(service_error(kind, service, &resp));
             }
             let k = kind.to_string();
@@ -302,13 +315,13 @@ impl AwsConfig {
             });
             loop {
                 if stop() {
-                    stream.reset(ErrorCode::CANCEL);
+                    call.cancel();
                     return Ok(());
                 }
-                match stream.recv_data(Some(std::time::Duration::from_millis(100))) {
-                    Ok(Some(chunk)) => decoder.push(&chunk)?,
-                    Ok(None) => break,
-                    Err(cameleer_grpc::h2::H2Error::Timeout) => continue,
+                match call.read_until(&mut buf, Some(std::time::Instant::now() + std::time::Duration::from_millis(100))) {
+                    Ok(0) => break,
+                    Ok(n) => decoder.push(&buf[..n])?,
+                    Err(e) if e.is_timeout() => continue,
                     Err(e) => return Err(h2err(e)),
                 }
                 if cancelled.get() {
@@ -317,11 +330,11 @@ impl AwsConfig {
             }
             drop(decoder);
             if cancelled.get() {
-                stream.reset(ErrorCode::CANCEL);
+                call.cancel();
             }
             Ok(())
         })();
-        conn.close();
+        client.close_idle();
         result
     }
 

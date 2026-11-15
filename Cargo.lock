@@ -57,6 +57,7 @@ dependencies = [
  "cameleer-grpc",
  "cameleer-kafka-mqtt",
  "cameleer-tls",
+ "simoom-client",
 ]
 
 [[package]]
@@ -86,7 +87,9 @@ name = "cameleer-grpc"
 version = "0.6.1"
 dependencies = [
  "cameleer-core",
+ "cameleer-http",
  "cameleer-tls",
+ "simoom-client",
 ]
 
 [[package]]
