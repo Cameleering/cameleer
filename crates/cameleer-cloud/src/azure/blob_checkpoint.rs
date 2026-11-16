@@ -48,7 +48,7 @@ impl BlobCheckpointStore {
                 uri_endpoint_override: opts.endpoint.clone(),
                 override_endpoint: opts.endpoint.is_some(),
                 proxy: Proxy::Environment,
-                trust_all_certificates: false,
+                tls: None,
             },
             container: opts.container_name.clone(),
             container_ready: Mutex::new(false),

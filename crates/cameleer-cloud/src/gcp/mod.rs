@@ -307,7 +307,7 @@ pub struct GcpConfig {
     pub authenticate: bool,
     pub endpoint: Option<String>,
     pub proxy: Proxy,
-    pub trust_all_certificates: bool,
+    pub tls: Option<std::sync::Arc<cameleer_tls::TlsClientConfig>>,
     /// User impersonated with domain-wide delegation (`delegate` / `subject` options).
     pub subject: Option<String>,
     /// OAuth2 user credentials (`clientId` / `clientSecret` / `refreshToken`).
@@ -520,11 +520,11 @@ impl GcpConfig {
         } else {
             None
         };
-        Ok(GcpConfig { key, authenticate, endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)?, subject, user, static_token, external, metadata })
+        Ok(GcpConfig { key, authenticate, endpoint, proxy, tls: o.tls()?, subject, user, static_token, external, metadata })
     }
 
     pub fn http(&self) -> HttpClient {
-        HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates)
+        HttpClient::new().with_proxy(self.proxy.clone()).with_tls(self.tls.clone())
     }
 
     /// POST/GET/... a JSON request and parse the JSON response.

@@ -82,7 +82,7 @@ ctx.add_routes(|b| {
 | `contentResponseOnWriteEnabled` | `true` | `false` sends `Prefer: return=minimal` (writes return no item). |
 | `changeFeedStartFromBeginning` | `false` | Cameleer: the consumer starts at the beginning of the change feed instead of now. |
 | `leaseContainerName`, `leaseDatabaseName`, `createLeaseContainerIfNotExists`, `createLeaseDatabaseIfNotExists`, `hostName`, `leaseExpirationInterval` | | Consumer as a change feed processor: one lease per partition key range, balanced between hosts (`leaseExpirationInterval` ms, default 60000). Without a lease container the continuations are kept in memory. |
-| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `trustAllCertificates` | | Connection settings. |
+| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `sslContextParameters` | | Connection settings. |
 
 Cameleer always talks to the REST gateway; the SDK's direct (TCP) connection mode options do not apply.
 

@@ -63,7 +63,7 @@ Every AWS component accepts these options:
 | `uriEndpointOverride` | | Base URL of an emulator or a VPC endpoint. |
 | `overrideEndpoint` | `false` | Must be `true` for `uriEndpointOverride` to be used. |
 | `proxyHost`, `proxyPort`, `proxyProtocol` | , `3128`, `HTTP` | Explicit proxy. Without it, the usual proxy environment variables apply. |
-| `trustAllCertificates` | `false` | Disables certificate checks. Only for local test servers with self-signed certificates; never in production. |
+| `sslContextParameters` | | `#bean` with the trust store (a private CA or a local test server's self-signed certificate); also `camel.ssl.*`. Certificates are always verified. |
 
 ### LocalStack, MinIO and other emulators
 
@@ -133,7 +133,7 @@ retried once with a fresh token.
 Storage components accept `accessKey` (or `accountKey`), `sasToken`, `credentialType`, `tenantId`,
 `clientId`, `clientSecret`, `authorityHost`, `federatedTokenFile`, `managedIdentityClientId`,
 `managedIdentityEndpoint`, `uriEndpointOverride` + `overrideEndpoint`, `proxyHost` + `proxyPort` and
-`trustAllCertificates` (local tests only). The other Azure components accept the subset that applies
+`sslContextParameters`. The other Azure components accept the subset that applies
 to them, listed on their pages.
 
 ### Azurite and other emulators

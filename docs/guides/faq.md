@@ -118,9 +118,9 @@ the file named by the `SSL_CERT_FILE` environment variable, else the first bundl
 `/etc/ssl/ca-bundle.pem`, `/etc/ssl/cert.pem` or
 `/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem`. The Docker image and most Linux
 distributions have one of these, and macOS has `/etc/ssl/cert.pem`. Windows has none, so set
-`SSL_CERT_FILE` there (for example to a `cacert.pem` bundle). Certificates are always checked
-unless you set Camel's `trustAllCertificates=true` (in `camel.ssl.*` or an `SSLContextParameters`
-bean), which is meant for tests only.
+`SSL_CERT_FILE` there (for example to a `cacert.pem` bundle). Certificates are always checked:
+the HTTP, cloud and gRPC clients refuse Camel's `trustAllCertificates=true`, so trust a private CA
+with `camel.ssl.trustStore` or an `SSLContextParameters` bean.
 
 ### Can it run with a read-only filesystem?
 

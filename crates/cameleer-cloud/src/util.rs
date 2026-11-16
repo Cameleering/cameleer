@@ -492,6 +492,27 @@ impl<'a> Opts<'a> {
             },
         }
     }
+    /// The TLS settings of the endpoint: `sslContextParameters=#bean` (or the component property), else the
+    /// global `camel.ssl.*` parameters when they are enabled, else `None` (the system trust store, full
+    /// verification). `trustAllCertificates=true` is refused: the client always verifies the server
+    /// certificate and its host name.
+    pub fn tls(&mut self) -> Result<Option<std::sync::Arc<cameleer_tls::TlsClientConfig>>> {
+        let refused = |scheme: &str| {
+            CamelError::illegal_argument(format!(
+                "{}: trustAllCertificates is not supported: the client always verifies the server certificate and its host name. Trust a private server by adding its certificate or CA to the trust store: sslContextParameters=#bean, or camel.ssl.enabled=true with camel.ssl.trustStore=ca.crt",
+                scheme
+            ))
+        };
+        if self.bool("trustAllCertificates", false)? {
+            return Err(refused(&self.scheme));
+        }
+        let explicit = cameleer_tls::camel_support::take_endpoint_ssl(self.ctx, self.params, &self.scheme)?;
+        let Some(p) = explicit.or(cameleer_tls::camel_support::global_ssl_context_parameters(self.ctx)?) else { return Ok(None) };
+        if p.insecure_skip_verify {
+            return Err(refused(&self.scheme));
+        }
+        Ok(Some(std::sync::Arc::new(cameleer_tls::camel_support::client_config(self.ctx, Some(&p))?)))
+    }
     pub fn i64(&mut self, key: &str, default: i64) -> Result<i64> {
         match self.get(key) {
             None => Ok(default),

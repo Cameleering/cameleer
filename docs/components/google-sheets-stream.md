@@ -83,7 +83,7 @@ position is kept in memory, so after a restart the first poll emits the whole ra
 | `uriEndpointOverride` + `overrideEndpoint=true` | | Base URL of an emulator or proxy. |
 
 The other shared Google options (`tokenServerUrl`, `useMetadataServer`, `authenticate`,
-`proxyHost`, `proxyPort`, `trustAllCertificates`) work as on the
+`proxyHost`, `proxyPort`, `sslContextParameters`) work as on the
 [google-sheets](google-sheets.md#options) page. `includeGridData` and `maxResults` are accepted
 and ignored.
 

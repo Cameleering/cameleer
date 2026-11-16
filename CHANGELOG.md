@@ -5,6 +5,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The AWS, Azure and Google components always verify the server certificate.** `trustAllCertificates=true`
+  (and a global `camel.ssl.trustAllCertificates`) is refused at endpoint creation with a message that says
+  what to do. The components take `sslContextParameters=#bean` and the global `camel.ssl.*` settings, so a
+  private CA or a local emulator's certificate is trusted through a trust store. **Changed:** routes that
+  set `trustAllCertificates=true` on these components fail until they trust the server's certificate.
 - **The HTTP server speaks HTTP/2** (`platform-http`, `jetty`, `undertow`, `netty-http`, `rest`, the MCP
   endpoint): h2c prior knowledge and `Upgrade: h2c` on plain HTTP, ALPN `h2` next to `http/1.1` on HTTPS.
   Routes need no change. **Changed:** an HTTPS consumer now negotiates `h2` with clients that offer it

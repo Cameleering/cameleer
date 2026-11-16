@@ -75,7 +75,7 @@ ctx.add_routes(|b| {
 
 Common AWS options (`region`, `accessKey`, `secretKey`, `sessionToken`, `profileCredentialsName`,
 `useDefaultCredentialsProvider`, `useProfileCredentialsProvider`, `uriEndpointOverride`,
-`overrideEndpoint`, `proxyHost`, `proxyPort`, `proxyProtocol`, `trustAllCertificates`) are described in
+`overrideEndpoint`, `proxyHost`, `proxyPort`, `proxyProtocol`, `sslContextParameters`) are described in
 [Cloud credentials](../guides/cloud-credentials.md).
 
 | option | default | description |

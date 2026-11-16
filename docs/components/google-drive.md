@@ -122,7 +122,7 @@ poll and emits its whole result.
 | `uriEndpointOverride` + `overrideEndpoint=true` | | Base URL of an emulator or proxy. |
 
 `tokenServerUrl`, `useMetadataServer`, `authenticate`, `proxyHost`, `proxyPort` and
-`trustAllCertificates` work as on the [google-sheets](google-sheets.md#options) page.
+`sslContextParameters` work as on the [google-sheets](google-sheets.md#options) page.
 `applicationName`, `inBody` and `splitResult` are accepted and ignored.
 
 ## Message headers

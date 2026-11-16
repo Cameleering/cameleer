@@ -71,7 +71,7 @@ ctx.add_routes(|b| {
 | `sharedAccessSignature` | | Pre-built SAS token. |
 | `sasTokenTtl` | `3600` | Lifetime (seconds) of tokens signed with `accessKey`. |
 | `topicEndpoint` | | Alternative to the path. |
-| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `trustAllCertificates` | | Connection settings. |
+| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `sslContextParameters` | | Connection settings. |
 
 ## Message headers
 

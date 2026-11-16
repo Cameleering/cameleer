@@ -85,7 +85,7 @@ ctx.add_routes(|b| {
 | `tenantId`, `clientId`, `clientSecret` | | Service principal. |
 | `authorityHost` | `https://login.microsoftonline.com` | Entra ID host (sovereign clouds). |
 | `uriEndpointOverride`, `overrideEndpoint` | | Cameleer: vault URL instead of `https://{vaultName}.vault.azure.net`. |
-| `proxyHost`, `proxyPort`, `trustAllCertificates` | | Connection settings. |
+| `proxyHost`, `proxyPort`, `sslContextParameters` | | Connection settings. |
 
 ### The `{{azure:...}}` placeholder
 
