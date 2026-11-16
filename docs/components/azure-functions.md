@@ -60,7 +60,7 @@ ctx.add_routes(|b| {
 | `parseJson` | `false` | Parse JSON responses into maps and lists. |
 | `credentialType`, `tenantId`, `clientId`, `clientSecret`, `scope` | | Microsoft Entra ID tokens for functions protected by App Service authentication. |
 | `uriEndpointOverride` | | Base URL instead of `https://{functionApp}.azurewebsites.net` (for example the local Functions host). |
-| `proxyHost`, `proxyPort`, `trustAllCertificates` | | Connection settings. |
+| `proxyHost`, `proxyPort`, `sslContextParameters` | | Connection settings. |
 
 Anonymous functions need no key. A non-2xx response raises an `HttpResponseException` with the status
 in the message.

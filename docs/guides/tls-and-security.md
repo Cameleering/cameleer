@@ -76,7 +76,7 @@ camel.ssl.keyFile = client.key
 | `crlFile` | a certificate revocation list for client certificates |
 | `serverName`, `hostnameVerification` | the SNI name to send, and whether to check the host name (on by default; the `http` and `https` clients always check it: set `serverName` to the name in the certificate instead of turning the check off) |
 | `alpn`, `sessionTimeout`, `sessionResumption` | ALPN protocols and session resumption |
-| `trustAllCertificates` | turn off certificate verification: for tests only, never in production. The `http` and `https` clients (and the components built on them) refuse it and always verify: trust a private server with `trustStore` |
+| `trustAllCertificates` | turn off certificate verification: for tests only, never in production. The `http` and `https` clients (and the components built on them) and the AWS, Azure and Google components refuse it and always verify: trust a private server with `trustStore` |
 
 **Per endpoint.** An `sslContextParameters=#name` option on the URI, or
 `camel.component.<scheme>.sslContextParameters=#name`, uses a bean registered in Rust

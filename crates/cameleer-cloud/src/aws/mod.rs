@@ -12,7 +12,7 @@
 //! `AWS_DEFAULT_REGION` / `us-east-1`), `useDefaultCredentialsProvider`,
 //! `useProfileCredentialsProvider`, `profileCredentialsName`, `useSessionCredentials`,
 //! `uriEndpointOverride` + `overrideEndpoint=true` (e.g. a LocalStack or mock URL),
-//! `proxyHost`, `proxyPort`, `proxyProtocol`, `trustAllCertificates`.
+//! `proxyHost`, `proxyPort`, `proxyProtocol`, `sslContextParameters`.
 //!
 //! Credentials: explicit `accessKey`/`secretKey` when given, otherwise the default chain:
 //! `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`, then the shared
@@ -80,7 +80,7 @@ pub struct AwsConfig {
     pub uri_endpoint_override: Option<String>,
     pub override_endpoint: bool,
     pub proxy: Proxy,
-    pub trust_all_certificates: bool,
+    pub tls: Option<std::sync::Arc<cameleer_tls::TlsClientConfig>>,
 }
 
 impl AwsConfig {
@@ -115,7 +115,7 @@ impl AwsConfig {
             uri_endpoint_override: o.get("uriEndpointOverride"),
             override_endpoint: o.bool("overrideEndpoint", false)?,
             proxy,
-            trust_all_certificates: o.bool("trustAllCertificates", false)?,
+            tls: o.tls()?,
         };
         o.ignore(&["useSessionCredentials", "autoDiscoverClient", "useIAMCredentials"]);
         if cfg.override_endpoint && cfg.uri_endpoint_override.is_none() {
@@ -131,7 +131,7 @@ impl AwsConfig {
 
     /// The HTTP client for this configuration.
     pub fn http(&self) -> HttpClient {
-        HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates)
+        HttpClient::new().with_proxy(self.proxy.clone()).with_tls(self.tls.clone())
     }
 
     /// Whether a custom endpoint is in use.

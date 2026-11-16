@@ -26,7 +26,7 @@ pub struct AzureRest {
     pub base: String,
     pub auth: AzureAuth,
     pub proxy: Proxy,
-    pub trust_all_certificates: bool,
+    pub tls: Option<std::sync::Arc<cameleer_tls::TlsClientConfig>>,
     /// Exception kind of error responses.
     pub kind: &'static str,
 }
@@ -44,7 +44,7 @@ pub fn aad_credential(o: &mut Opts, identity: bool) -> Result<Option<ClientSecre
 
 impl AzureRest {
     /// Read the common options: `uriEndpointOverride` (+ `overrideEndpoint`, default true when
-    /// an override is given), `proxyHost` / `proxyPort`, `trustAllCertificates`.
+    /// an override is given), `proxyHost` / `proxyPort`, `sslContextParameters`.
     pub fn from_opts(o: &mut Opts, default_base: &str, auth: AzureAuth, kind: &'static str) -> Result<AzureRest> {
         let over = o.get("uriEndpointOverride");
         let base = if o.bool("overrideEndpoint", over.is_some())? { over.unwrap_or_else(|| default_base.to_string()) } else { default_base.to_string() };
@@ -55,11 +55,11 @@ impl AzureRest {
                 Proxy::Environment
             }
         };
-        Ok(AzureRest { base: base.trim_end_matches('/').to_string(), auth, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)?, kind })
+        Ok(AzureRest { base: base.trim_end_matches('/').to_string(), auth, proxy, tls: o.tls()?, kind })
     }
 
     pub fn http(&self) -> HttpClient {
-        HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates)
+        HttpClient::new().with_proxy(self.proxy.clone()).with_tls(self.tls.clone())
     }
 
     /// `{base}{path}` with an already encoded query.

@@ -12,7 +12,7 @@
 //! `tenantId`, `clientId`, `clientSecret`, `authorityHost`, `federatedTokenFile`,
 //! `managedIdentityClientId`, `managedIdentityEndpoint`), `sasToken`,
 //! `uriEndpointOverride` + `overrideEndpoint=true` (Azurite-style path addressing
-//! `http://host:port/{account}/...`), `proxyHost`/`proxyPort`, `trustAllCertificates`.
+//! `http://host:port/{account}/...`), `proxyHost`/`proxyPort`, `sslContextParameters`.
 //!
 //! `azure-servicebus` / `azure-eventhubs` speak AMQP 1.0 and are not part of this crate.
 
@@ -72,7 +72,7 @@ pub struct AzureConfig {
     pub uri_endpoint_override: Option<String>,
     pub override_endpoint: bool,
     pub proxy: Proxy,
-    pub trust_all_certificates: bool,
+    pub tls: Option<std::sync::Arc<cameleer_tls::TlsClientConfig>>,
 }
 
 impl AzureConfig {
@@ -120,7 +120,7 @@ impl AzureConfig {
             uri_endpoint_override: o.get("uriEndpointOverride"),
             override_endpoint: o.bool("overrideEndpoint", false)?,
             proxy,
-            trust_all_certificates: o.bool("trustAllCertificates", false)?,
+            tls: o.tls()?,
         })
     }
 
@@ -148,7 +148,7 @@ impl AzureConfig {
     /// Authorize (Shared Key, SAS or bearer token) and send; non-2xx responses become errors
     /// of `kind`. Bearer requests are retried once with a fresh token after a 401.
     pub fn send(&self, req: Request, kind: &str) -> Result<Response> {
-        let client = HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates);
+        let client = HttpClient::new().with_proxy(self.proxy.clone()).with_tls(self.tls.clone());
         for attempt in 0..2 {
             let mut r = req.clone();
             r.set_header("x-ms-date", http_date(now_secs()));

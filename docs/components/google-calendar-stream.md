@@ -88,7 +88,7 @@ State (seen events, sync token) is kept in memory; after a restart the consumer 
 | `uriEndpointOverride` + `overrideEndpoint=true` | | Base URL of an emulator or proxy. |
 
 `tokenServerUrl`, `useMetadataServer`, `authenticate`, `proxyHost`, `proxyPort` and
-`trustAllCertificates` work as on the [google-sheets](google-sheets.md#options) page.
+`sslContextParameters` work as on the [google-sheets](google-sheets.md#options) page.
 
 ## Message headers
 

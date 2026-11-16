@@ -11,7 +11,7 @@ fn context() -> CamelContext {
 }
 
 #[test]
-fn s3_over_https_with_trust_all_and_through_a_connect_proxy() {
+fn s3_over_https_with_a_trusted_certificate_and_through_a_connect_proxy() {
     let mock = AwsMock::start_tls().unwrap();
     assert!(mock.url().starts_with("https://localhost:"));
     mock.create_bucket("secure");
@@ -21,12 +21,21 @@ fn s3_over_https_with_trust_all_and_through_a_connect_proxy() {
     // the self-signed certificate is not trusted by default
     let e = t.request_body_and_header(&base, "x", "CamelAwsS3Key", "k").unwrap_err();
     assert!(e.root_cause().is_a("SSLHandshakeException"), "{}", e);
-    // trustAllCertificates
-    t.send_body_and_header(&format!("{}&trustAllCertificates=true", base), "over tls", "CamelAwsS3Key", "k").unwrap();
+    // trustAllCertificates is refused, and the message says how to trust the server
+    let e = t.send_body_and_header(&format!("{}&trustAllCertificates=true", base), "x", "CamelAwsS3Key", "k").unwrap_err();
+    let text = format!("{} / {}", e, e.root_cause());
+    assert!(text.contains("always verifies") && text.contains("camel.ssl.trustStore"), "{}", text);
+
+    // trusting the server's certificate through the global SSL settings
+    let ctx = context();
+    ctx.properties().set("camel.ssl.enabled", "true");
+    ctx.properties().set("camel.ssl.trustStore", mock.cert_pem().unwrap());
+    let t = ctx.create_producer_template();
+    t.send_body_and_header(&base, "over tls", "CamelAwsS3Key", "k").unwrap();
     assert_eq!(mock.object("secure", "k").unwrap(), b"over tls");
     // explicit proxy: the request is tunnelled with CONNECT, then TLS end to end
     let proxy = ConnectProxy::start().unwrap();
-    let uri = format!("{}&trustAllCertificates=true&proxyHost=127.0.0.1&proxyPort={}&operation=getObject", base, proxy.port());
+    let uri = format!("{}&proxyHost=127.0.0.1&proxyPort={}&operation=getObject", base, proxy.port());
     let body = t.request_body_and_header(&uri, "", "CamelAwsS3Key", "k").unwrap();
     assert_eq!(body.to_string(), "over tls");
     assert_eq!(proxy.tunnel_count(), 1);
@@ -48,4 +57,17 @@ fn https_with_verified_certificate_and_hostname() {
     let cfg = cameleer_tls::TlsClientConfig::builder().system_roots(false).add_root_pem(other.cert_pem.as_bytes()).unwrap().build();
     let r = HttpClient::new().with_tls_config(cfg).send(&Request::new("GET", Url::parse(&format!("{}/", mock.url())).unwrap()));
     assert!(r.unwrap_err().is_a("SSLHandshakeException"));
+}
+
+#[test]
+fn a_global_trust_all_setting_is_refused_too() {
+    let mock = AwsMock::start_tls().unwrap();
+    mock.create_bucket("secure");
+    let ctx = context();
+    ctx.properties().set("camel.ssl.enabled", "true");
+    ctx.properties().set("camel.ssl.trustAllCertificates", "true");
+    let t = ctx.create_producer_template();
+    let e = t.send_body_and_header(&format!("aws2-s3://secure?{}", mock.endpoint_options()), "x", "CamelAwsS3Key", "k").unwrap_err();
+    let text = format!("{} / {}", e, e.root_cause());
+    assert!(text.contains("always verifies"), "{}", text);
 }

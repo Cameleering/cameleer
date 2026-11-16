@@ -66,7 +66,7 @@ ctx.add_routes(|b| {
 | `imageSize`, `imageCount`, `imageQuality`, `imageResponseFormat` | `1024x1024`, , , `url` | `imageGeneration` settings (`url` or `b64_json`). |
 | `assistantsApiVersion` | `2024-05-01-preview` | API version of the Assistants operations. |
 | `runPollInterval`, `runTimeout` | `200`, `60000` | Polling of `runAssistant` (ms). |
-| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `trustAllCertificates` | | Connection settings (for example an API gateway in front of Azure OpenAI). |
+| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `sslContextParameters` | | Connection settings (for example an API gateway in front of Azure OpenAI). |
 
 A list body is sent as the message list (`{role, content}` maps); a map body is sent as the request.
 For `embeddings` a text body gives one vector and a list body a list of vectors.

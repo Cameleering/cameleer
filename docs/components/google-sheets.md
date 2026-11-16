@@ -113,7 +113,7 @@ else the body. Accepted shapes: a list of rows (lists), a single flat list (one 
 | `authenticate` | `true` | `false` sends no credentials (emulators). |
 | `uriEndpointOverride` + `overrideEndpoint=true` | | Send requests to another base URL (an emulator or a proxy). `endpoint` (`host:port` or a URL) does the same. |
 | `proxyHost`, `proxyPort` | `3128` | HTTP proxy. Without them the `HTTPS_PROXY`/`NO_PROXY` environment variables apply. |
-| `trustAllCertificates` | `false` | Only for local emulators with self-signed certificates. |
+| `sslContextParameters` | | `#bean` with the trust store (a private CA or a local emulator's self-signed certificate); also `camel.ssl.*`. Certificates are always verified. |
 
 `applicationName`, `scopes`, `splitResult`, `inBody` and `includeGridData` are accepted for
 compatibility with Camel and ignored. The OAuth scope is always

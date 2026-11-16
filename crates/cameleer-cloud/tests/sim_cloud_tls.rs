@@ -1,9 +1,8 @@
 //! Third-party simulators over HTTPS: moto (15001), Azurite (Blob 20010 / Queue 20011) and
-//! fake-gcs-server (14444) serve the live-interop `localhost` certificate. The cloud
-//! components have no trust store option (like Camel's, which use the JVM trust store), so this
-//! test binary points the process trust store (`SSL_CERT_FILE`) at the system bundle plus the
-//! interop CA (`sim_aws.rs` checks that without it the server is refused unless
-//! `trustAllCertificates=true`). Runs only with `CAMEL_SIMULATORS=1`.
+//! fake-gcs-server (14444) serve the live-interop `localhost` certificate. This test binary points
+//! the process trust store (`SSL_CERT_FILE`) at the system bundle plus the interop CA (`sim_aws.rs`
+//! checks that without it the server is refused, and that `trustAllCertificates=true` is not an
+//! escape). Runs only with `CAMEL_SIMULATORS=1`.
 
 use std::sync::Once;
 

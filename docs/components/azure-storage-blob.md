@@ -72,7 +72,7 @@ ctx.add_routes(|b| {
 ## Options
 
 Common Azure options (`accessKey`, `sasToken`, `credentialType`, Entra ID options,
-`uriEndpointOverride`, `overrideEndpoint`, `proxyHost`, `proxyPort`, `trustAllCertificates`) are
+`uriEndpointOverride`, `overrideEndpoint`, `proxyHost`, `proxyPort`, `sslContextParameters`) are
 described in [Cloud credentials](../guides/cloud-credentials.md#azure-options).
 
 | option | default | description |

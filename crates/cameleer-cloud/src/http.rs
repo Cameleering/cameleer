@@ -211,12 +211,11 @@ pub struct HttpClient {
     pub timeout: Duration,
     pub proxy: Proxy,
     tls: Option<Arc<TlsClientConfig>>,
-    insecure: bool,
 }
 
 impl std::fmt::Debug for HttpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("HttpClient").field("timeout", &self.timeout).field("proxy", &self.proxy).field("insecure", &self.insecure).finish()
+        f.debug_struct("HttpClient").field("timeout", &self.timeout).field("proxy", &self.proxy).finish()
     }
 }
 
@@ -226,28 +225,24 @@ impl Default for HttpClient {
     }
 }
 
-fn default_tls(insecure: bool) -> Arc<TlsClientConfig> {
+fn default_tls() -> Arc<TlsClientConfig> {
     static SECURE: OnceLock<Arc<TlsClientConfig>> = OnceLock::new();
-    static INSECURE: OnceLock<Arc<TlsClientConfig>> = OnceLock::new();
-    if insecure {
-        INSECURE.get_or_init(|| Arc::new(TlsClientConfig::builder().system_roots(false).insecure_skip_verify(true).alpn_protocols(&["http/1.1"]).build())).clone()
-    } else {
-        SECURE.get_or_init(|| Arc::new(TlsClientConfig::builder().alpn_protocols(&["http/1.1"]).build())).clone()
-    }
+    SECURE.get_or_init(|| Arc::new(TlsClientConfig::builder().alpn_protocols(&["http/1.1"]).build())).clone()
 }
 
 impl HttpClient {
     pub fn new() -> HttpClient {
-        HttpClient { timeout: Duration::from_secs(60), proxy: Proxy::Environment, tls: None, insecure: false }
+        HttpClient { timeout: Duration::from_secs(60), proxy: Proxy::Environment, tls: None }
     }
     /// Use a custom TLS configuration (e.g. extra trusted roots).
     pub fn with_tls_config(mut self, cfg: TlsClientConfig) -> HttpClient {
         self.tls = Some(Arc::new(cfg));
         self
     }
-    /// Skip certificate verification (`trustAllCertificates=true`); for tests only.
-    pub fn trust_all(mut self, yes: bool) -> HttpClient {
-        self.insecure = yes;
+    /// Use the TLS settings of an endpoint (`sslContextParameters`, `camel.ssl.*`); `None` keeps the
+    /// defaults: the system trust store and full verification.
+    pub fn with_tls(mut self, cfg: Option<Arc<TlsClientConfig>>) -> HttpClient {
+        self.tls = cfg;
         self
     }
     pub fn with_proxy(mut self, proxy: Proxy) -> HttpClient {
@@ -299,9 +294,9 @@ impl HttpClient {
     fn pool_key(&self, url: &Url) -> String {
         let tls = match &self.tls {
             Some(c) => Arc::as_ptr(c) as usize,
-            None => Arc::as_ptr(&default_tls(self.insecure)) as usize,
+            None => Arc::as_ptr(&default_tls()) as usize,
         };
-        format!("{}://{}#{}#{}#{}", if url.is_https() { "https" } else { "http" }, url.authority(), tls, self.insecure, self.timeout.as_millis())
+        format!("{}://{}#{}#{}", if url.is_https() { "https" } else { "http" }, url.authority(), tls, self.timeout.as_millis())
     }
 
     fn send_pooled(&self, req: &Request) -> Result<Response> {
@@ -440,7 +435,7 @@ impl HttpClient {
     fn tls_wrap(&self, tcp: TcpStream, url: &Url) -> Result<TlsStream<TcpStream>> {
         let cfg = match &self.tls {
             Some(c) => c.clone(),
-            None => default_tls(self.insecure),
+            None => default_tls(),
         };
         TlsStream::connect(tcp, &url.host, &cfg).map_err(|e| CamelError::new("SSLHandshakeException", format!("TLS handshake with {} failed: {}", url.authority(), e)))
     }
