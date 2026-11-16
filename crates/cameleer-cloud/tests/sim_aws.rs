@@ -758,7 +758,7 @@ fn aws_query(service: &str, form: &str) -> String {
         uri_endpoint_override: Some("http://127.0.0.1:15000".into()),
         override_endpoint: true,
         proxy: cameleer_cloud::http::Proxy::Environment,
-        trust_all_certificates: false,
+        tls: None,
     };
     let mut r = cameleer_cloud::http::Request::new("POST", cameleer_cloud::http::Url::parse("http://127.0.0.1:15000/").unwrap());
     r.set_header("Content-Type", "application/x-www-form-urlencoded; charset=utf-8");
@@ -847,7 +847,7 @@ fn sim_aws_iam_authentication_and_sigv4() {
 }
 
 #[test]
-fn sim_aws_https_untrusted_certificate_refused_unless_trust_all() {
+fn sim_aws_https_untrusted_certificate_is_refused_and_trust_all_is_not_an_escape() {
     if !sim::enabled() {
         return;
     }
@@ -858,5 +858,6 @@ fn sim_aws_https_untrusted_certificate_refused_unless_trust_all() {
     let e = t.request_body(&format!("aws2-s3://x?operation=listBuckets&{}", https), "").unwrap_err();
     let text = format!("{} / {}", e, e.root_cause());
     assert!(text.to_ascii_lowercase().contains("certificate") || text.contains("TLS"), "{}", text);
-    assert!(t.request_body(&format!("aws2-s3://x?operation=listBuckets&trustAllCertificates=true&{}", https), "").is_ok());
+    let e = t.request_body(&format!("aws2-s3://x?operation=listBuckets&trustAllCertificates=true&{}", https), "").unwrap_err();
+    assert!(format!("{} / {}", e, e.root_cause()).contains("always verifies"), "{}", e);
 }

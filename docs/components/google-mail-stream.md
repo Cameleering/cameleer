@@ -85,7 +85,7 @@ restart, messages that are still unread are emitted again.
 | `scopes` | `https://mail.google.com/` | Comma separated OAuth scopes. |
 | `uriEndpointOverride` + `overrideEndpoint=true` | | Base URL of an emulator or proxy. |
 
-`useMetadataServer`, `authenticate`, `proxyHost`, `proxyPort` and `trustAllCertificates` work as
+`useMetadataServer`, `authenticate`, `proxyHost`, `proxyPort` and `sslContextParameters` work as
 on the [google-sheets](google-sheets.md#options) page.
 
 ## Message headers

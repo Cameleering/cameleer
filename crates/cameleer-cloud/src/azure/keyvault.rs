@@ -114,7 +114,7 @@ pub struct KeyVaultService {
     pub operation: Option<String>,
     pub endpoint: Option<String>,
     pub proxy: Proxy,
-    pub trust_all_certificates: bool,
+    pub tls: Option<std::sync::Arc<cameleer_tls::TlsClientConfig>>,
 }
 
 /// Factory for the component.
@@ -138,12 +138,12 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         }
     };
     o.ignore(&["secretClient"]);
-    Ok(Arc::new(KeyVaultService { vault: remaining.to_string(), credential, operation: o.get("operation"), endpoint, proxy, trust_all_certificates: o.bool("trustAllCertificates", false)? }))
+    Ok(Arc::new(KeyVaultService { vault: remaining.to_string(), credential, operation: o.get("operation"), endpoint, proxy, tls: o.tls()? }))
 }
 
 impl KeyVaultService {
     fn http(&self) -> HttpClient {
-        HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates)
+        HttpClient::new().with_proxy(self.proxy.clone()).with_tls(self.tls.clone())
     }
 
     fn url(&self, path: &str) -> Result<Url> {
@@ -473,7 +473,7 @@ pub fn properties_function(ctx: &CamelContext) -> PropertiesFunction {
         let vault = get("vaultName").ok_or_else(|| CamelError::illegal_argument("camel.vault.azure.vaultName must be set to use {{azure:...}} placeholders"))?;
         let identity = get("azureIdentityEnabled").is_some_and(|v| v.eq_ignore_ascii_case("true"));
         let credential = ClientSecretCredential::resolve(&get, identity)?;
-        let svc = KeyVaultService { vault, credential, operation: None, endpoint: get("uriEndpointOverride"), proxy: Proxy::Environment, trust_all_certificates: false };
+        let svc = KeyVaultService { vault, credential, operation: None, endpoint: get("uriEndpointOverride"), proxy: Proxy::Environment, tls: None };
         let (name, field, version) = crate::aws::secretsmanager::parse_secret_ref(r);
         match svc.get_secret(&name, version.as_deref()) {
             Ok(v) => Ok({

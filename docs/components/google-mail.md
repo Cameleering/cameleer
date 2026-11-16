@@ -102,7 +102,7 @@ Methods that take a request body (`labels/create`, `threads/modify`, ...) read i
 | `tokenServerUrl` | `https://oauth2.googleapis.com/token` | Token endpoint for the refresh-token flow (Cameleer). |
 | `uriEndpointOverride` + `overrideEndpoint=true` | | Base URL of an emulator or proxy. |
 
-`useMetadataServer`, `authenticate`, `proxyHost`, `proxyPort` and `trustAllCertificates` work as
+`useMetadataServer`, `authenticate`, `proxyHost`, `proxyPort` and `sslContextParameters` work as
 on the [google-sheets](google-sheets.md#options) page. `applicationName`, `inBody` and
 `splitResult` are accepted and ignored.
 

@@ -176,8 +176,8 @@ handshake), both kinds of `SSLException` and `IOException`, so an `onException` 
 | `TLS alert received from peer: ...` | the other side refused the handshake: no common protocol version or cipher suite, or it wanted a client certificate | check the server's TLS versions; for `certificate_required`, configure a client certificate (`camel.ssl.certFile` and `camel.ssl.keyFile`, or `keyStore`) |
 | `TLS configuration error: ...` | a certificate, key or store file cannot be read or parsed, or a password is wrong | the message names the file; PEM, PKCS#12 and JKS are read |
 
-Cameleer verifies every certificate chain and host name by default. `trustAllCertificates`
-exists for tests; never use it in production. [TLS and security](tls-and-security.md) has every
+Cameleer verifies every certificate chain and host name, and the HTTP, cloud and gRPC clients
+refuse `trustAllCertificates`: trust a private CA instead. [TLS and security](tls-and-security.md) has every
 TLS setting.
 
 ## Exception kinds

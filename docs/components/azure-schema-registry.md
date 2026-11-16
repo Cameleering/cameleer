@@ -59,7 +59,7 @@ ctx.add_routes(|b| {
 | `schemaId` | | Schema id of `getSchema`. |
 | `format` | `Avro` | `Avro`, `Json` or `Custom`. |
 | `credentialType` | `CLIENT_SECRET` | `CLIENT_SECRET` (`tenantId`, `clientId`, `clientSecret`, `authorityHost`) or `AZURE_IDENTITY`. |
-| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `trustAllCertificates` | | Connection settings. |
+| `uriEndpointOverride`, `proxyHost`, `proxyPort`, `sslContextParameters` | | Connection settings. |
 
 ## Message headers
 

@@ -105,7 +105,7 @@ pub struct CosmosService {
     pub create_container_if_not_exists: bool,
     pub start_from_beginning: bool,
     pub proxy: Proxy,
-    pub trust_all_certificates: bool,
+    pub tls: Option<std::sync::Arc<cameleer_tls::TlsClientConfig>>,
     pub scheduler: ScheduledPollConfig,
     continuations: Mutex<HashMap<String, String>>,
     /// Entra ID credential (`credentialType=AZURE_IDENTITY`), instead of the account key.
@@ -163,7 +163,7 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
         create_database_if_not_exists: o.bool("createDatabaseIfNotExists", false)?,
         create_container_if_not_exists: o.bool("createContainerIfNotExists", false)?,
         start_from_beginning: o.bool("changeFeedStartFromBeginning", false)?,
-        trust_all_certificates: o.bool("trustAllCertificates", false)?,
+        tls: o.tls()?,
         scheduler: ScheduledPollConfig::from_params(o.params, Duration::from_millis(1000), Duration::from_millis(500))?,
         continuations: Mutex::new(HashMap::new()),
         aad,
@@ -190,7 +190,7 @@ pub fn create(remaining: &str, o: &mut Opts) -> Result<Arc<dyn CloudService>> {
 
 impl CosmosService {
     fn http(&self) -> HttpClient {
-        HttpClient::new().with_proxy(self.proxy.clone()).trust_all(self.trust_all_certificates)
+        HttpClient::new().with_proxy(self.proxy.clone()).with_tls(self.tls.clone())
     }
 
     /// Sign and send a request for the decoded resource `path` (e.g. `dbs/db/colls/c/docs`).
