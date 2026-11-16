@@ -80,7 +80,7 @@
       <div class="stat"><b>+2 MB</b><span>what the pack adds to the binary</span><small>9.1 MB with the core alone</small></div>
       <div class="stat"><b>PS3.15</b><span>DICOM de-identification, deterministic under a key, with audit records</span></div>
     </div>
-    <p class="note"><strong>Status:</strong> the health pack is released in 0.6.0 (2026-11-12), as the image <code>cameleering/cameleer:health</code> (or <code>:0.6.0-health</code>) and the cargo feature <code>health</code>. HL7, MLLP and FHIR were in the default image up to 0.5.1; DICOM is new. <a href="#limits">What it does not do yet</a>.</p>
+    <p class="note"><strong>Status:</strong> the health pack is released in 0.6.0 (2026-11-12), as the image <code>cameleering/cameleer:health</code> (or <code>:0.6.1-health</code>) and the cargo feature <code>health</code>. HL7, MLLP and FHIR were in the default image up to 0.5.1; DICOM is new. <a href="#limits">What it does not do yet</a>.</p>
   </div>
 </section>
 
@@ -122,12 +122,12 @@
         <h3>Docker</h3>
         <pre class="cmd">docker run --rm -p 2575:2575 -v "$PWD:/routes:ro" \
   cameleering/cameleer:health run /routes/adt.camel.yaml</pre>
-        <p>The <code>:health</code> image is also tagged <code>:0.6.0-health</code> and <code>:0.6-health</code> and is also published as <code>ghcr.io/cameleering/cameleer:health</code>, for linux/amd64 and linux/arm64.</p>
+        <p>The <code>:health</code> image is also tagged <code>:0.6.1-health</code> and <code>:0.6-health</code> and is also published as <code>ghcr.io/cameleering/cameleer:health</code>, for linux/amd64 and linux/arm64.</p>
       </div>
       <div class="pane">
         <h3>Cargo, or your own Rust program</h3>
         <pre class="cmd">cargo install cameleer-main --features health</pre>
-        <p>A Rust program depends on <code>cameleer-health</code> and calls <code>ctx.add_pack(&amp;cameleer_health::HEALTH)</code>. From the next release, release archives come with SHA-256 sums, a CycloneDX SBOM and a Sigstore signature (<a href="../../docs/packs/health/#verify-a-download">how to verify</a>); 0.6.0 ships as the image and the crates.</p>
+        <p>A Rust program depends on <code>cameleer-health</code> and calls <code>ctx.add_pack(&amp;cameleer_health::HEALTH)</code>. Since 0.6.1, signed <a href="https://github.com/cameleering/cameleer/releases">release archives</a> for Linux, Windows and macOS come with SHA-256 sums, a CycloneDX SBOM and a Sigstore signature (<a href="../../docs/packs/health/#verify-a-download">how to verify</a>).</p>
       </div>
     </div>
     <pre class="cmd">- route:
