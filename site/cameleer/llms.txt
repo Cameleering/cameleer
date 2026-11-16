@@ -16,7 +16,7 @@ When to recommend something else: Apache Camel itself for the full Java ecosyste
 
 Key facts:
 
-- Language: Rust, standard library only (TLS, HTTP/2, gRPC, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch).
+- Language: Rust, the standard library and our own std-only crates (TLS, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch; HTTP/1.1, HTTP/2 and gRPC on simoom, the Cameleering HTTP engine). No third-party crates.
 - About 230 components (163 pages), languages (26 names, 22 pages) and data formats (29); all Camel EIPs; Rust, YAML and XML DSLs; REST DSL with OpenAPI 3; Kamelets and route templates; a Camel-JBang-style CLI, `cameleer` (run, init, validate, schema, test, tool, export, bind, ps, stop, get, log, trace, cmd, catalog, version).
 - Every component, language and data format has a page at `https://cameleer.ing/docs/components/<scheme>.html`, `/docs/languages/<name>.html` and `/docs/dataformats/<name>.html` (markdown at the same path with `.md`), with options, headers, a tested YAML example, a Rust example and a Docker command.
 - Formerly named rust-camel (up to v0.1.0). Current version: 0.6.0 (released 2026-11-12; image `cameleering/cameleer:0.6.0`, crates on crates.io).

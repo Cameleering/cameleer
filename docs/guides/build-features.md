@@ -15,7 +15,7 @@ Every build, even the smallest one (`core`), contains:
 
 - the routing engine, every EIP, error handling, sagas, route templates and Kamelets
 - the YAML DSL, the XML DSL, the Rust DSL and the REST DSL
-- HTTP/1.1 and TLS: `platform-http`, `http`/`https`, `rest`, `netty`, `netty-http`, `jetty`, `undertow`
+- HTTP/1.1, HTTP/2 and TLS (the server and client run on simoom): `platform-http`, `http`/`https`, `rest`, `netty`, `netty-http`, `jetty`, `undertow`
 - the core components: `direct`, `seda`, `vm`, `timer`, `scheduler`, `cron`, `quartz`, `file`,
   `log`, `mock`, `stub`, `bean`, `class`, `ref`, `browse`, `controlbus`, `dataformat`,
   `dataset`, `dataset-test`, `exec`, `json-validator`, `kamelet`, `language`, `saga`, `stream`,
@@ -93,8 +93,8 @@ PostgreSQL needs `cloud,jq,sql`. A webhook that calls Slack needs only `saas`, b
 `platform-http` consumer is always included.
 
 **A feature list replaces the default; it doesn't add to it.** `--features cloud` gives `core`
-plus `cloud` and nothing else, so jq, the template engines, HTTP/2 and `cameleer validate` are
-left out. Name every feature you use, for example `--features cloud,jq,validate`.
+plus `cloud` and nothing else, so jq, the template engines and `cameleer validate` are left
+out. Name every feature you use, for example `--features cloud,jq,validate`.
 
 ## Build it
 
@@ -137,7 +137,7 @@ too; turn them off to drop the parts you don't use:
 ```toml
 [dependencies]
 cameleer-core = { version = "0.6", default-features = false, features = ["jq"] }
-cameleer-http = { version = "0.6", default-features = false }   # HTTP/1.1 only, no gRPC crate
+cameleer-http = "0.6"   # HTTP/1.1 and HTTP/2; gRPC is the separate cameleer-grpc crate
 cameleer-cloud = "0.6"
 ```
 
@@ -212,8 +212,8 @@ full build is only bigger on disk and takes a little longer to load.
 
 ### I upgraded and `--features cloud` lost jq (or `cameleer validate`). Why?
 
-Since 0.4.0, the template engines, jq, the core XPath subset, HTTP/2 and `validate` are features
-too, and a feature list replaces the default. Add them to your list, for example `--features
+Since 0.4.0, the template engines, jq, the core XPath subset and `validate` are features too
+(HTTP/2 was one as well until it became part of `core` in 0.7), and a feature list replaces the default. Add them to your list, for example `--features
 cloud,jq,validate`.
 
 ### How do I find out which feature a component needs?
