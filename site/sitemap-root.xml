@@ -8,7 +8,7 @@
   <url><loc>https://cameleer.ing/degraded-fleet-test/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/BENCHMARKS.html</loc><lastmod>2026-11-13</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/DEPLOYMENT.html</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/DEPLOYMENT.html</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/FEATURES.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/INTEROP.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/ROADMAP.html</loc><lastmod>2026-11-12</lastmod></url>
@@ -108,7 +108,7 @@
   <url><loc>https://cameleer.ing/docs/components/google-vertexai.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/graphql.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/grpc.html</loc><lastmod>2026-11-12</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/components/http.html</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/http.html</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/imap.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/jdbc.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/jetty.html</loc><lastmod>2026-11-12</lastmod></url>
@@ -208,7 +208,7 @@
   <url><loc>https://cameleer.ing/docs/guides/agents.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/ai-components.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/attestation.html</loc><lastmod>2026-11-12</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/build-features.html</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/build-features.html</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/cli.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/cloud-credentials.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/concepts.html</loc><lastmod>2026-11-12</lastmod></url>
@@ -243,7 +243,7 @@
   <url><loc>https://cameleer.ing/docs/guides/observability.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/rust.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/testing.html</loc><lastmod>2026-11-12</lastmod></url>
-  <url><loc>https://cameleer.ing/docs/guides/tls-and-security.html</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/guides/tls-and-security.html</loc><lastmod>2026-11-13</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/troubleshooting.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/validate.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/guides/yaml-dsl.html</loc><lastmod>2026-11-12</lastmod></url>
