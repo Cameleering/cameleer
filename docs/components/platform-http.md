@@ -1,6 +1,6 @@
 # Platform HTTP component
 
-> The `platform-http` component serves HTTP requests on Cameleer's embedded HTTP/1.1 server: each route binds a path and its reply becomes the HTTP response.
+> The `platform-http` component serves HTTP requests on Cameleer's embedded HTTP server (HTTP/1.1 and HTTP/2): each route binds a path and its reply becomes the HTTP response.
 
 **Scheme:** `platform-http:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Platform HTTP](https://camel.apache.org/components/next/platform-http-component.html)

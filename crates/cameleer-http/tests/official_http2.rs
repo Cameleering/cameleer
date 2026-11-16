@@ -2,7 +2,7 @@
 //! net/http (golang.org/x/net/http2 bundled in the standard library) over crypto/tls:
 //! Go's HTTP/2 client against simoom's HTTP/2 server (ALPN h2, 1 MiB flow-controlled
 //! upload, concurrent streams on one connection, HTTP/1.1 clients answered on HTTP/1.1) and
-//! against a camel https consumer (ALPN fallback to HTTP/1.1); simoom-client's HTTP/2 client and
+//! against a camel https consumer (ALPN h2, and HTTP/1.1 for a client without it); simoom-client's HTTP/2 client and
 //! the `https` producer with `httpVersion=HTTP/2` against Go's HTTP/2 server.
 //! Runs only with `CAMEL_OFFICIAL_CLIENTS=1` (see `scripts/official-clients.sh`).
 
@@ -113,8 +113,8 @@ fn go_http_client_against_camel_https_consumer() {
     let ca = dir.join("ca.pem");
     std::fs::write(&ca, &cameleer_tls::testing::pki().localhost.cert_pem).unwrap();
     let r = go_h2(&format!("https://localhost:{}", port), &ca).ok();
-    // no h2 in the consumer's ALPN: Go falls back to HTTP/1.1 (keep-alive, pooled connections)
-    assert_eq!(r.value("proto:"), "HTTP/1.1", "{}\n{}", r.stdout, r.stderr);
+    // the server offers h2 next to http/1.1 in ALPN: Go's client negotiates HTTP/2
+    assert_eq!(r.value("proto:"), "HTTP/2.0", "{}\n{}", r.stdout, r.stderr);
     assert!(r.value("get:").starts_with("200 text/plain"), "{}", r.stdout);
     assert!(r.value("get:").ends_with("hello x=1"), "{}", r.stdout);
     assert_eq!(r.value("echo:"), "200 1048576 same=true");

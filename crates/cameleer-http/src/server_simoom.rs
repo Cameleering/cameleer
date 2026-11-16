@@ -1,7 +1,8 @@
 //! The simoom event-loop engine behind [`crate::server::HttpServer`] (spike; see
 //! `docs/design/simoom-adoption.md`).
 //!
-//! Plain HTTP and HTTPS (TLS 1.2 and 1.3, optional client certificates).
+//! Plain HTTP and HTTPS (TLS 1.2 and 1.3, optional client certificates), HTTP/1.1 and HTTP/2: h2c prior
+//! knowledge, `Upgrade: h2c`, and ALPN `h2` on HTTPS.
 //!
 //! How a request runs:
 //!
@@ -177,8 +178,7 @@ impl SimoomEngine {
             let observe = state.map(|st| (governor.clone(), st));
             reply.offload(req, move |req, reply| serve(&*h, req, reply, observe))
         };
-        // HTTP/1.1 only, whatever features other crates switch on in simoom (the gRPC server needs HTTP/2)
-        let mut builder = simoom::Server::builder().http2(false).limits(limits).service(service);
+        let mut builder = simoom::Server::builder().limits(limits).service(service);
         builder = match &config.tls {
             Some(tls) => builder.listen_tls(addr).tls(server_tls(tls)?),
             None => builder.listen(addr),
