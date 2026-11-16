@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cameleer_core::prelude::*;
-use cameleer_grpc::h2::{H2Config, H2Server, H2Stream, ServerRequest};
 
 /// A tiny HTTP/1.1 keep-alive server: counts connections, echoes request headers it was
 /// asked about and answers gzip when the client accepts it.
@@ -92,13 +91,18 @@ fn pooling_and_content_coding() {
 fn http2_prior_knowledge() {
     let streams = Arc::new(AtomicUsize::new(0));
     let s2 = streams.clone();
-    let server = H2Server::bind("127.0.0.1:0", H2Config::default(), None, move |req: ServerRequest, stream: H2Stream| {
+    let service = move |req: &mut simoom::Request<'_>, reply: simoom::Reply<'_>| -> simoom::Outcome {
         s2.fetch_add(1, Ordering::SeqCst);
-        let body = stream.read_body(None).unwrap_or_default();
-        let text = format!("{} {} {} ua={}", req.method, req.path, String::from_utf8_lossy(&body), req.header("user-agent").unwrap_or(""));
-        let _ = ServerRequest::respond(&stream, 201, &[("content-type", "text/plain"), ("x-proto", "h2")], text.as_bytes());
-    })
-    .unwrap();
+        let text = format!(
+            "{} {} {} ua={}",
+            String::from_utf8_lossy(req.method()),
+            String::from_utf8_lossy(req.target()),
+            String::from_utf8_lossy(req.body()),
+            req.header("user-agent").map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default()
+        );
+        reply.status(201).header("content-type", "text/plain").header("x-proto", "h2").body(text)
+    };
+    let server = simoom::Server::builder().service(service).listen("127.0.0.1:0").start().unwrap();
     let port = server.local_addr().port();
     let ctx = CamelContext::new();
     cameleer_http::register(&ctx);
@@ -111,5 +115,5 @@ fn http2_prior_knowledge() {
         assert!(ex.body().to_string().starts_with(&format!("POST /v2/items?q=1 b{} ua=cameleer", i)), "{}", ex.body());
     }
     assert_eq!(streams.load(Ordering::SeqCst), 3);
-    server.stop_graceful(std::time::Duration::from_millis(100));
+    server.stop(std::time::Duration::from_millis(100));
 }

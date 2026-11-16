@@ -57,6 +57,7 @@ dependencies = [
  "cameleer-grpc",
  "cameleer-kafka-mqtt",
  "cameleer-tls",
+ "simoom",
  "simoom-client",
 ]
 
@@ -89,6 +90,7 @@ dependencies = [
  "cameleer-core",
  "cameleer-http",
  "cameleer-tls",
+ "simoom",
  "simoom-client",
 ]
 
@@ -107,7 +109,6 @@ name = "cameleer-http"
 version = "0.6.1"
 dependencies = [
  "cameleer-core",
- "cameleer-grpc",
  "cameleer-tls",
  "simoom",
  "simoom-client",
@@ -229,6 +230,7 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c5c9115046985d4d6760388135f976e020e45a2a4226b5e2fb7eb6dae50c471"
 dependencies = [
+ "simoom-h2",
  "simoom-http1",
  "simoom-rt",
  "simoom-sys",

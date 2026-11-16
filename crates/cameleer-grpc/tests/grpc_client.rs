@@ -62,7 +62,7 @@ fn calls_share_one_connection_and_run_concurrently() {
     for h in handles {
         h.join().unwrap();
     }
-    assert_eq!(s.h2().connection_count(), 1, "all calls ride on one connection");
+    assert_eq!(s.connection_count(), 1, "all calls ride on one connection");
 }
 
 #[test]

@@ -177,7 +177,8 @@ impl SimoomEngine {
             let observe = state.map(|st| (governor.clone(), st));
             reply.offload(req, move |req, reply| serve(&*h, req, reply, observe))
         };
-        let mut builder = simoom::Server::builder().limits(limits).service(service);
+        // HTTP/1.1 only, whatever features other crates switch on in simoom (the gRPC server needs HTTP/2)
+        let mut builder = simoom::Server::builder().http2(false).limits(limits).service(service);
         builder = match &config.tls {
             Some(tls) => builder.listen_tls(addr).tls(server_tls(tls)?),
             None => builder.listen(addr),
@@ -214,8 +215,10 @@ impl SimoomEngine {
     }
 }
 
-/// simoom's TLS configuration for the certificate, key and options of a [`cameleer_tls::TlsServerConfig`].
-fn server_tls(cfg: &cameleer_tls::TlsServerConfig) -> io::Result<simoom_tls::ServerConfig> {
+/// simoom's TLS configuration for the certificate, key and options of a [`cameleer_tls::TlsServerConfig`]
+/// (also used by the gRPC server).
+#[doc(hidden)]
+pub fn server_tls(cfg: &cameleer_tls::TlsServerConfig) -> io::Result<simoom_tls::ServerConfig> {
     use cameleer_tls::TlsVersion;
     let bad = |e: String| io::Error::new(io::ErrorKind::InvalidInput, format!("TLS configuration: {e}"));
     let x = cfg.export();

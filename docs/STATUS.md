@@ -516,9 +516,17 @@ Cameleer's own HTTP code or it is not used.
   verification cannot be turned off (the gRPC component has no such option). Kinesis `SubscribeToShard`
   (`cameleer-cloud` `h2_event_stream`) uses the same client. `H2Connection` is no longer used by library
   code; the tests of the old HTTP/2 server still use it until the server moves.
-- **Still on the old code, in the next PRs:** WebSocket, the HTTP/2 and gRPC server (`cameleer-grpc` h2
-  on `simoom-h2`) with the cloud mocks that call `cameleer_grpc::h2`, and the deletion of the unused code
-  (`h2`, `hpack`, server helpers in `http.rs`).
+- **PR 4 (branch `simoom-srv`): the gRPC server and the cloud mocks** on `simoom` (`cameleer-grpc`
+  `grpc/server.rs`: `GrpcServer` and `ServerCall` keep their API; `Limits::body_buffer` is 1 byte, so a call
+  starts with its first request bytes and bidirectional streams work; one thread per call, a reader thread
+  feeds the request messages through a channel so `recv` can wait with the deadline; the response head goes
+  out with the first message, or the call ends trailers-only). The TLS bridge is
+  `cameleer_http::server_simoom::server_tls`. The old `h2` module (`H2Server`, `H2Connection`, frames,
+  connection engine) and `hpack` are deleted; `cameleer_grpc::h2` keeps `H2Config`. The `MockServer` of
+  `cameleer-cloud` serves its h2c connections (the AWS mock's Kinesis `SubscribeToShard`) from an internal
+  simoom server behind a tunnel. The HTTP/2 tests of `cameleer-http` use simoom's server and client.
+- **Still on the old code:** WebSocket, and the server helpers in `cameleer-http/src/http.rs` that nothing
+  calls any more (the last cleanup PR).
 - **Not verified:** the live, official-client and simulator tiers (WSL2) on the new server; the
   hermetic suite on Windows 11: 2965 passed, 0 failed after the fixes.
 

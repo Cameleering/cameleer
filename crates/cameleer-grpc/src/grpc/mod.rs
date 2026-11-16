@@ -158,19 +158,6 @@ impl fmt::Display for Status {
 
 impl std::error::Error for Status {}
 
-impl From<crate::h2::H2Error> for Status {
-    fn from(e: crate::h2::H2Error) -> Status {
-        use crate::h2::{ErrorCode, H2Error};
-        match e {
-            H2Error::Timeout => Status::new(Code::DeadlineExceeded, "deadline exceeded"),
-            H2Error::StreamReset(ErrorCode::CANCEL) => Status::new(Code::Cancelled, "stream cancelled"),
-            H2Error::StreamReset(ErrorCode::REFUSED_STREAM) | H2Error::GoAway(_) => Status::new(Code::Unavailable, e.to_string()),
-            H2Error::StreamReset(_) | H2Error::Protocol(..) => Status::new(Code::Internal, e.to_string()),
-            H2Error::Io(_) | H2Error::Closed(_) => Status::new(Code::Unavailable, e.to_string()),
-        }
-    }
-}
-
 /// RST_STREAM codes the peer sends: CANCEL and REFUSED_STREAM.
 const RST_CANCEL: u64 = 8;
 const RST_REFUSED_STREAM: u64 = 7;
