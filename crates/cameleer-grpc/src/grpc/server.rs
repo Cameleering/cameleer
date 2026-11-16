@@ -1,14 +1,33 @@
-//! gRPC server (byte-level messages) on top of [`crate::h2::H2Server`].
+//! gRPC server (byte-level messages) on simoom.
+//!
+//! One simoom server (an event loop per core, HTTP/2 over h2c prior knowledge, `Upgrade: h2c` or TLS
+//! with ALPN `h2`) runs the HTTP/2 side. Each call gets its own thread, so a handler may block while
+//! it waits for the next request message or for the client to cancel.
+//!
+//! How the pieces fit:
+//!
+//! * simoom calls the service when the first request bytes arrive (the server's `body_buffer` is 1
+//!   byte), not when the request has ended: a bidirectional call is answered while the client is
+//!   still sending. A call whose request is complete at once (a unary call) is handed over with its
+//!   body already read.
+//! * The request body reaches the handler through a channel fed by a reader thread, so `recv` can
+//!   wait with the call's deadline.
+//! * The response head is sent with the first message (or a trailers-only answer when the call ends
+//!   without one), the status goes out as trailers.
 
+use std::io::Read;
 use std::net::SocketAddr;
-use std::sync::mpsc::{channel, RecvTimeoutError};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use cameleer_tls::TlsServerConfig;
+use simoom::{BodySink, Outcome, Reply, Request, Responder, Response};
 
 use super::{encode_grpc_message, frame_message_with, is_reserved_header, parse_timeout, Code, MessageDecoder, Metadata, Status};
-use crate::h2::{H2Config, H2Error, H2Server, H2Stream, ServerRequest};
+use crate::h2::H2Config;
 
 /// Implements the methods of one or more services. Return the final status of the call.
 pub trait GrpcService: Send + Sync {
@@ -24,16 +43,30 @@ where
     }
 }
 
+/// What the reader thread passes on.
+enum Chunk {
+    Data(Vec<u8>),
+    End,
+    /// The stream was reset or the connection dropped.
+    Failed,
+}
+
+struct Incoming {
+    rx: Receiver<Chunk>,
+    decoder: MessageDecoder,
+}
+
 struct CallState {
     send_encoding: Option<String>,
-    headers_sent: bool,
     finished: bool,
     response_headers: Metadata,
     trailers: Metadata,
+    /// The response has not started: the responder answers the whole call (trailers only) or
+    /// opens the stream with the first message.
+    responder: Option<Responder>,
 }
 
 struct CallInner {
-    stream: H2Stream,
     service: String,
     method: String,
     metadata: Metadata,
@@ -41,9 +74,13 @@ struct CallInner {
     deadline: Option<Instant>,
     peer: Option<SocketAddr>,
     accept_encoding: Option<String>,
-    decoder: Mutex<MessageDecoder>,
+    incoming: Mutex<Incoming>,
+    /// Lock order: `sink`, then `state`.
+    sink: Mutex<Option<BodySink>>,
     state: Mutex<CallState>,
-    observer: std::sync::atomic::AtomicI64,
+    /// The client cancelled the call or went away.
+    cancelled: Arc<AtomicBool>,
+    observer: AtomicI64,
 }
 
 /// One server-side call. Cheap to clone (shared state).
@@ -63,11 +100,11 @@ impl ServerCall {
     }
     /// Id of the response observer handed to routes (`routeControlledStreamObserver`).
     pub fn observer_id(&self) -> Option<i64> {
-        Some(self.inner.observer.load(std::sync::atomic::Ordering::Relaxed)).filter(|i| *i != 0)
+        Some(self.inner.observer.load(Ordering::Relaxed)).filter(|i| *i != 0)
     }
     /// Associates a response observer id with this call.
     pub fn set_observer_id(&self, id: i64) {
-        self.inner.observer.store(id, std::sync::atomic::Ordering::Relaxed);
+        self.inner.observer.store(id, Ordering::Relaxed);
     }
     /// Request metadata (user headers, lower-case).
     pub fn metadata(&self) -> &Metadata {
@@ -87,7 +124,11 @@ impl ServerCall {
 
     /// True once the call was finished (e.g. deadline exceeded) or cancelled by the client.
     pub fn is_cancelled(&self) -> bool {
-        self.inner.state.lock().unwrap().finished || self.inner.stream.reset_code().is_some()
+        if self.inner.state.lock().unwrap().finished || self.inner.cancelled.load(Ordering::SeqCst) {
+            return true;
+        }
+        // a writer holds the sink while it waits for the client to read: not cancelled by that alone
+        self.inner.sink.try_lock().ok().and_then(|g| g.as_ref().map(|s| s.is_closed())).unwrap_or(false)
     }
 
     /// The client's `grpc-accept-encoding`.
@@ -115,175 +156,293 @@ impl ServerCall {
         self.inner.state.lock().unwrap().trailers.push((name.to_ascii_lowercase(), value.to_string()));
     }
 
-    fn map_err(&self, e: H2Error) -> Status {
-        match e {
-            H2Error::StreamReset(_) => Status::new(Code::Cancelled, "call cancelled by the client"),
-            other => Status::from(other),
-        }
+    fn gone(&self) -> Status {
+        Status::new(Code::Cancelled, "call cancelled by the client")
     }
 
     /// Receives the next request message; `Ok(None)` when the client half-closed.
     pub fn recv(&self) -> Result<Option<Vec<u8>>, Status> {
-        let mut dec = self.inner.decoder.lock().unwrap();
+        let mut inc = self.inner.incoming.lock().unwrap();
         loop {
-            if let Some(m) = dec.next_message()? {
+            if let Some(m) = inc.decoder.next_message()? {
                 return Ok(Some(m));
             }
-            let left = match self.inner.deadline {
-                Some(d) => Some(d.checked_duration_since(Instant::now()).ok_or_else(|| Status::new(Code::DeadlineExceeded, "deadline exceeded"))?),
-                None => None,
+            let chunk = match self.inner.deadline {
+                Some(d) => {
+                    let left = d.checked_duration_since(Instant::now()).ok_or_else(|| Status::new(Code::DeadlineExceeded, "deadline exceeded"))?;
+                    match inc.rx.recv_timeout(left) {
+                        Ok(c) => c,
+                        Err(RecvTimeoutError::Timeout) => return Err(Status::new(Code::DeadlineExceeded, "deadline exceeded")),
+                        Err(RecvTimeoutError::Disconnected) => Chunk::Failed,
+                    }
+                }
+                None => inc.rx.recv().unwrap_or_else(|_| Chunk::Failed),
             };
-            match self.inner.stream.recv_data(left) {
-                Ok(Some(c)) => dec.push(&c),
-                Ok(None) => {
-                    if !dec.is_empty() {
+            match chunk {
+                Chunk::Data(c) => inc.decoder.push(&c),
+                Chunk::End => {
+                    if !inc.decoder.is_empty() {
                         return Err(Status::new(Code::Internal, "truncated request message"));
                     }
                     return Ok(None);
                 }
-                Err(H2Error::Timeout) => return Err(Status::new(Code::DeadlineExceeded, "deadline exceeded")),
-                Err(e) => return Err(self.map_err(e)),
+                Chunk::Failed => return Err(self.gone()),
             }
         }
     }
 
-    fn ensure_headers(&self) -> Result<(), Status> {
+    /// Opens the response stream when it is not open yet. Needs the sink lock held by the caller.
+    fn open(&self, sink: &mut Option<BodySink>) -> Result<(), Status> {
         let mut st = self.inner.state.lock().unwrap();
         if st.finished {
             return Err(Status::new(Code::Cancelled, "call already finished"));
         }
-        if !st.headers_sent {
-            let mut h = vec![
-                (":status".to_string(), "200".to_string()),
-                ("content-type".to_string(), "application/grpc".to_string()),
-                ("grpc-accept-encoding".to_string(), "identity,gzip,deflate".to_string()),
-            ];
+        if sink.is_none() {
+            let Some(responder) = st.responder.take() else { return Err(self.gone()) };
+            let mut head = Response::new(200).header("content-type", "application/grpc").header("grpc-accept-encoding", "identity,gzip,deflate");
             if let Some(e) = &st.send_encoding {
-                h.push(("grpc-encoding".to_string(), e.clone()));
+                head = head.header("grpc-encoding", e);
             }
-            h.extend(st.response_headers.iter().filter(|(n, _)| !is_reserved_header(n)).cloned());
-            self.inner.stream.send_headers(&h, false).map_err(|e| self.map_err(e))?;
-            st.headers_sent = true;
+            for (n, v) in st.response_headers.iter().filter(|(n, _)| !is_reserved_header(n)) {
+                head = head.header(n, v);
+            }
+            *sink = Some(responder.stream(head));
         }
         Ok(())
     }
 
     /// Sends one response message.
     pub fn send(&self, msg: &[u8]) -> Result<(), Status> {
-        self.ensure_headers()?;
+        let mut guard = self.inner.sink.lock().unwrap();
+        self.open(&mut guard)?;
         let enc = self.inner.state.lock().unwrap().send_encoding.clone();
-        self.inner.stream.send_data(&frame_message_with(msg, enc.as_deref()), false).map_err(|e| self.map_err(e))
+        match guard.as_mut() {
+            Some(sink) => sink.write(&frame_message_with(msg, enc.as_deref())).map_err(|_| self.gone()),
+            None => Err(self.gone()),
+        }
     }
 
     /// Completes the call with `status` (idempotent).
     pub fn finish(&self, status: &Status) {
+        let mut guard = self.inner.sink.lock().unwrap();
         let mut st = self.inner.state.lock().unwrap();
         if st.finished {
             return;
         }
         st.finished = true;
-        let mut t = Vec::new();
-        if !st.headers_sent {
-            t.push((":status".to_string(), "200".to_string()));
-            t.push(("content-type".to_string(), "application/grpc".to_string()));
-        }
-        t.push(("grpc-status".to_string(), (status.code as i32).to_string()));
+        let mut t: Vec<(String, String)> = vec![("grpc-status".to_string(), (status.code as i32).to_string())];
         if !status.message.is_empty() {
             t.push(("grpc-message".to_string(), encode_grpc_message(&status.message)));
         }
         t.extend(st.trailers.iter().filter(|(n, _)| !is_reserved_header(n)).cloned());
         t.extend(status.metadata.iter().filter(|(n, _)| !is_reserved_header(n)).cloned());
-        st.headers_sent = true;
-        let _ = self.inner.stream.send_headers(&t, true);
+        if let Some(sink) = guard.take() {
+            let refs: Vec<(&str, &str)> = t.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
+            sink.finish_with_trailers(&refs);
+        } else if let Some(responder) = st.responder.take() {
+            // no message was sent: a trailers-only response
+            let mut r = Response::new(200).header("content-type", "application/grpc");
+            for (n, v) in &t {
+                r = r.header(n, v);
+            }
+            responder.send(r);
+        }
     }
 }
 
 /// A running gRPC server.
 pub struct GrpcServer {
-    h2: H2Server,
+    handle: Mutex<Option<simoom::ServerHandle>>,
+    addr: SocketAddr,
 }
 
 impl GrpcServer {
     /// Binds `addr` and serves `service` (plaintext h2c, or TLS when `tls` is given —
     /// configure the TLS server with ALPN `h2`).
     pub fn bind(addr: &str, config: H2Config, tls: Option<TlsServerConfig>, max_message_size: usize, service: Arc<dyn GrpcService>) -> Result<GrpcServer, Status> {
-        let h2 = H2Server::bind(addr, config, tls, move |req: ServerRequest, stream: H2Stream| handle(&service, max_message_size, req, stream))
-            .map_err(|e| Status::new(Code::Unavailable, e.to_string()))?;
-        Ok(GrpcServer { h2 })
+        let unavailable = |e: String| Status::new(Code::Unavailable, e);
+        let mut limits = simoom::Limits::default();
+        // A call starts with its first request bytes, whatever their number, and a stream never
+        // ends because of its length or a quiet spell: messages are bounded by `max_message_size`.
+        limits.body_buffer = 1;
+        limits.max_body = 1 << 62;
+        limits.min_body_rate = 0;
+        limits.keep_alive_timeout = Duration::from_secs(3600);
+        limits.max_concurrent_streams = config.max_concurrent_streams;
+        limits.header_table_size = config.header_table_size;
+        if config.max_header_list_size > 0 {
+            limits.max_header_list = config.max_header_list_size;
+        }
+        limits.write_timeout = config.write_timeout;
+        let svc = move |req: &mut Request<'_>, reply: Reply<'_>| -> Outcome { dispatch(&service, max_message_size, req, reply) };
+        let builder = simoom::Server::builder().limits(limits).service(svc);
+        let builder = match &tls {
+            Some(t) => builder.listen_tls(addr).tls(cameleer_http::server_simoom::server_tls(t).map_err(|e| unavailable(e.to_string()))?),
+            None => builder.listen(addr),
+        };
+        let handle = builder.start().map_err(|e| unavailable(format!("cannot bind {}: {}", addr, e)))?;
+        let addr = handle.local_addr();
+        Ok(GrpcServer { handle: Mutex::new(Some(handle)), addr })
     }
 
     pub fn local_addr(&self) -> SocketAddr {
-        self.h2.local_addr()
+        self.addr
     }
 
-    /// Graceful stop (GOAWAY, wait for in-flight calls up to `timeout`).
+    /// Number of live connections.
+    pub fn connection_count(&self) -> usize {
+        self.handle.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map_or(0, |h| h.stats().active)
+    }
+
+    /// Graceful stop (GOAWAY, wait for in-flight calls up to `timeout`). Returns once the port can be
+    /// bound again.
     pub fn stop(&self, timeout: Duration) {
-        self.h2.stop_graceful(timeout);
-    }
-
-    /// The underlying HTTP/2 server.
-    pub fn h2(&self) -> &H2Server {
-        &self.h2
+        let handle = self.handle.lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(h) = handle {
+            h.stop(timeout);
+            let _ = std::thread::Builder::new().name("grpc-stop".into()).spawn(move || h.join());
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if std::net::TcpListener::bind(self.addr).is_ok() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
     }
 }
 
-fn handle(service: &Arc<dyn GrpcService>, max_message_size: usize, req: ServerRequest, stream: H2Stream) {
-    if req.method != "POST" {
-        let _ = ServerRequest::respond(&stream, 405, &[("allow", "POST")], b"");
-        return;
+impl Drop for GrpcServer {
+    fn drop(&mut self) {
+        self.stop(Duration::from_millis(100));
     }
-    let ct = req.header("content-type").unwrap_or("").to_string();
+}
+
+/// Runs on a loop thread: checks the request head, hands the call to its own thread.
+fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut Request<'_>, reply: Reply<'_>) -> Outcome {
+    if req.method() != b"POST" {
+        return reply.status(405).header("allow", "POST").empty();
+    }
+    let ct = req.header("content-type").map(|v| String::from_utf8_lossy(v).into_owned()).unwrap_or_default();
     if !ct.starts_with("application/grpc") {
-        let _ = ServerRequest::respond(&stream, 415, &[("content-type", "text/plain")], b"gRPC requires content-type application/grpc");
-        return;
+        return reply.status(415).header("content-type", "text/plain").body_copy(b"gRPC requires content-type application/grpc");
     }
-    let (svc, method) = match req.path.strip_prefix('/').and_then(|p| p.split_once('/')) {
+    let path = req.path_str().to_string();
+    let (svc, method) = match path.strip_prefix('/').and_then(|p| p.split_once('/')) {
         Some((s, m)) if !s.is_empty() && !m.is_empty() => (s.to_string(), m.to_string()),
         _ => (String::new(), String::new()),
     };
-    let deadline = req.header("grpc-timeout").and_then(parse_timeout).map(|d| Instant::now() + d);
-    let encoding = req.header("grpc-encoding").map(|s| s.to_string());
+    let text = |name: &str| req.header(name).map(|v| String::from_utf8_lossy(v).into_owned());
+    let deadline = text("grpc-timeout").and_then(|t| parse_timeout(&t)).map(|d| Instant::now() + d);
+    let encoding = text("grpc-encoding");
+    let metadata: Metadata = req
+        .headers()
+        .map(|(n, v)| (String::from_utf8_lossy(n).to_ascii_lowercase(), String::from_utf8_lossy(v).into_owned()))
+        .filter(|(n, _)| !n.starts_with(':') && !is_reserved_header(n))
+        .collect();
+    let user_agent = text("user-agent");
+    let accept_encoding = text("grpc-accept-encoding");
+    let peer = req.peer_addr();
+
+    // the request body: complete already, or streamed through a reader thread
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = channel();
+    let first = req.body().to_vec();
+    match req.take_body() {
+        Some(mut src) => {
+            if !first.is_empty() {
+                let _ = tx.send(Chunk::Data(first));
+            }
+            let gone = cancelled.clone();
+            let spawned = std::thread::Builder::new().name("grpc-body".into()).spawn(move || {
+                let mut buf = vec![0u8; 16 * 1024];
+                loop {
+                    match src.read(&mut buf) {
+                        Ok(0) => {
+                            let _ = tx.send(Chunk::End);
+                            return;
+                        }
+                        Ok(n) => {
+                            if tx.send(Chunk::Data(buf[..n].to_vec())).is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => {
+                            gone.store(true, Ordering::SeqCst);
+                            let _ = tx.send(Chunk::Failed);
+                            return;
+                        }
+                    }
+                }
+            });
+            if spawned.is_err() {
+                return reply.status(503).body_static(b"cannot start a thread for the request body");
+            }
+        }
+        None => {
+            if !first.is_empty() {
+                let _ = tx.send(Chunk::Data(first));
+            }
+            let _ = tx.send(Chunk::End);
+        }
+    }
+
+    let responder = reply.defer();
+    let flag = cancelled.clone();
+    responder.on_cancel(move || flag.store(true, Ordering::SeqCst));
     let call = ServerCall {
         inner: Arc::new(CallInner {
-            stream,
             service: svc,
             method,
-            metadata: req.headers.iter().filter(|(n, _)| !is_reserved_header(n)).cloned().collect(),
-            user_agent: req.header("user-agent").map(|s| s.to_string()),
+            metadata,
+            user_agent,
             deadline,
-            peer: req.peer_addr,
-            accept_encoding: req.header("grpc-accept-encoding").map(|s| s.to_string()),
-            decoder: Mutex::new(MessageDecoder::new(encoding, max_message_size)),
-            state: Mutex::new(CallState { send_encoding: None, headers_sent: false, finished: false, response_headers: Vec::new(), trailers: Vec::new() }),
-            observer: std::sync::atomic::AtomicI64::new(0),
+            peer,
+            accept_encoding,
+            incoming: Mutex::new(Incoming { rx, decoder: MessageDecoder::new(encoding, max_message_size) }),
+            sink: Mutex::new(None),
+            state: Mutex::new(CallState { send_encoding: None, finished: false, response_headers: Vec::new(), trailers: Vec::new(), responder: Some(responder) }),
+            cancelled,
+            observer: AtomicI64::new(0),
         }),
     };
     if call.service().is_empty() {
-        call.finish(&Status::new(Code::Unimplemented, format!("malformed method path {}", req.path)));
+        call.finish(&Status::new(Code::Unimplemented, format!("malformed method path {}", path)));
+        return Outcome::Deferred;
+    }
+    let (service, c2) = (service.clone(), call.clone());
+    let spawned = std::thread::Builder::new().name("grpc-call".into()).spawn(move || run(service, c2));
+    if spawned.is_err() {
+        call.finish(&Status::new(Code::ResourceExhausted, "cannot spawn handler thread"));
+    }
+    Outcome::Deferred
+}
+
+/// The handler's status; a panic is an internal error.
+fn guarded(service: &Arc<dyn GrpcService>, call: &ServerCall) -> Status {
+    catch_unwind(AssertUnwindSafe(|| service.call(call))).unwrap_or_else(|_| Status::new(Code::Internal, "handler panicked"))
+}
+
+fn run(service: Arc<dyn GrpcService>, call: ServerCall) {
+    let Some(deadline) = call.deadline() else {
+        let st = guarded(&service, &call);
+        call.finish(&st);
+        return;
+    };
+    // run the handler on its own thread so the deadline can be enforced
+    let (tx, rx) = channel();
+    let (svc, c2) = (service.clone(), call.clone());
+    let spawned = std::thread::Builder::new().name("grpc-handler".into()).spawn(move || {
+        let st = guarded(&svc, &c2);
+        let _ = tx.send(st);
+    });
+    if spawned.is_err() {
+        call.finish(&Status::new(Code::ResourceExhausted, "cannot spawn handler thread"));
         return;
     }
-    match deadline {
-        None => {
-            let st = service.call(&call);
-            call.finish(&st);
-        }
-        Some(d) => {
-            // run the handler on its own thread so the deadline can be enforced
-            let (tx, rx) = channel();
-            let (svc, c2) = (service.clone(), call.clone());
-            let spawned = std::thread::Builder::new().name("grpc-call".into()).spawn(move || {
-                let st = svc.call(&c2);
-                let _ = tx.send(st);
-            });
-            if spawned.is_err() {
-                call.finish(&Status::new(Code::ResourceExhausted, "cannot spawn handler thread"));
-                return;
-            }
-            match rx.recv_timeout(d.saturating_duration_since(Instant::now())) {
-                Ok(st) => call.finish(&st),
-                Err(RecvTimeoutError::Timeout) => call.finish(&Status::new(Code::DeadlineExceeded, "deadline exceeded")),
-                Err(RecvTimeoutError::Disconnected) => call.finish(&Status::new(Code::Internal, "handler panicked")),
-            }
-        }
+    match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(st) => call.finish(&st),
+        Err(RecvTimeoutError::Timeout) => call.finish(&Status::new(Code::DeadlineExceeded, "deadline exceeded")),
+        Err(RecvTimeoutError::Disconnected) => call.finish(&Status::new(Code::Internal, "handler panicked")),
     }
 }

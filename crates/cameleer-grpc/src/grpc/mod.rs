@@ -158,15 +158,20 @@ impl fmt::Display for Status {
 
 impl std::error::Error for Status {}
 
-impl From<crate::h2::H2Error> for Status {
-    fn from(e: crate::h2::H2Error) -> Status {
-        use crate::h2::{ErrorCode, H2Error};
-        match e {
-            H2Error::Timeout => Status::new(Code::DeadlineExceeded, "deadline exceeded"),
-            H2Error::StreamReset(ErrorCode::CANCEL) => Status::new(Code::Cancelled, "stream cancelled"),
-            H2Error::StreamReset(ErrorCode::REFUSED_STREAM) | H2Error::GoAway(_) => Status::new(Code::Unavailable, e.to_string()),
-            H2Error::StreamReset(_) | H2Error::Protocol(..) => Status::new(Code::Internal, e.to_string()),
-            H2Error::Io(_) | H2Error::Closed(_) => Status::new(Code::Unavailable, e.to_string()),
+/// RST_STREAM codes the peer sends: CANCEL and REFUSED_STREAM.
+const RST_CANCEL: u64 = 8;
+const RST_REFUSED_STREAM: u64 = 7;
+
+impl From<simoom_client::Error> for Status {
+    fn from(e: simoom_client::Error) -> Status {
+        use simoom_client::{ErrorKind as K, TimeoutKind as T};
+        match &e.kind {
+            K::Timeout(T::Connect | T::Tls) => Status::new(Code::Unavailable, e.to_string()),
+            K::Timeout(_) => Status::new(Code::DeadlineExceeded, "deadline exceeded"),
+            K::Cancelled | K::Reset(RST_CANCEL) => Status::new(Code::Cancelled, "stream cancelled"),
+            K::Reset(RST_REFUSED_STREAM) => Status::new(Code::Unavailable, e.to_string()),
+            K::Reset(_) | K::Protocol | K::Decode => Status::new(Code::Internal, e.to_string()),
+            _ => Status::new(Code::Unavailable, e.to_string()),
         }
     }
 }

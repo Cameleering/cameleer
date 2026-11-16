@@ -1,8 +1,8 @@
 //! Official-client cross-verification of Cameleer's HTTP/2 and HTTPS stacks with Go's
 //! net/http (golang.org/x/net/http2 bundled in the standard library) over crypto/tls:
-//! Go's HTTP/2 client against cameleer-grpc's HTTP/2 server (ALPN h2, 1 MiB flow-controlled
-//! upload, concurrent streams on one connection, HTTP/1.1 clients answered with 505) and
-//! against a camel https consumer (ALPN fallback to HTTP/1.1); camel's HTTP/2 client and
+//! Go's HTTP/2 client against simoom's HTTP/2 server (ALPN h2, 1 MiB flow-controlled
+//! upload, concurrent streams on one connection, HTTP/1.1 clients answered on HTTP/1.1) and
+//! against a camel https consumer (ALPN fallback to HTTP/1.1); simoom-client's HTTP/2 client and
 //! the `https` producer with `httpVersion=HTTP/2` against Go's HTTP/2 server.
 //! Runs only with `CAMEL_OFFICIAL_CLIENTS=1` (see `scripts/official-clients.sh`).
 
@@ -13,9 +13,19 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use cameleer_core::prelude::*;
-use cameleer_grpc::h2::{H2Config, H2Connection, H2Request, H2Server, H2Stream, ServerRequest};
 use cameleer_tls::testing::official::{self, run, Run};
 use cameleer_tls::{TlsClientConfig, TlsServerConfig};
+
+/// One request on `client`: the status and the whole body.
+fn fetch(client: &simoom_client::Client, url: &str, body: Option<Vec<u8>>, secs: u64) -> (u16, Vec<u8>) {
+    let req = match body {
+        Some(b) => client.post(url).body(b),
+        None => client.get(url),
+    };
+    let resp = req.timeout(Duration::from_secs(secs)).accept_any_status().send().unwrap();
+    let status = resp.status();
+    (status, resp.bytes().unwrap())
+}
 
 fn go_tls() -> &'static PathBuf {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
@@ -36,16 +46,28 @@ fn go_http2_client_against_camel_h2_server() {
     let pem = official::pem_files("go-h2-client");
     let p = cameleer_tls::testing::mtls();
     let tls = TlsServerConfig::builder().cert_chain_pem(p.server.cert_pem.as_bytes()).private_key_pem(p.server.key_pem.as_bytes()).alpn_protocols(&["h2"]).build().unwrap();
-    let server = H2Server::bind("127.0.0.1:0", H2Config::default(), Some(tls), |req: ServerRequest, stream: H2Stream| {
-        let body = stream.read_body(Some(Duration::from_secs(30))).unwrap_or_default();
-        let path = req.path.clone();
-        let _ = match path.split('?').next().unwrap_or("") {
-            "/hello" => ServerRequest::respond(&stream, 200, &[("content-type", "text/plain")], format!("hello {} {}", req.method, path).as_bytes()),
-            "/echo" => ServerRequest::respond(&stream, 200, &[("content-type", "application/octet-stream")], &body),
-            _ => ServerRequest::respond(&stream, 404, &[("content-type", "text/plain")], b"not found"),
-        };
-    })
-    .unwrap();
+    let service = |req: &mut simoom::Request<'_>, reply: simoom::Reply<'_>| -> simoom::Outcome {
+        let target = String::from_utf8_lossy(req.target()).into_owned();
+        let method = String::from_utf8_lossy(req.method()).into_owned();
+        match target.split('?').next().unwrap_or("") {
+            "/hello" => reply.header("content-type", "text/plain").body(format!("hello {} {}", method, target)),
+            "/echo" => {
+                // the body streams in when it is larger than the buffer
+                reply.blocking(req, |mut r| {
+                    let body = r.read_body().unwrap_or_default();
+                    simoom::Response::new(200).header("content-type", "application/octet-stream").body(body)
+                })
+            }
+            _ => reply.status(404).header("content-type", "text/plain").body_static(b"not found"),
+        }
+    };
+    let server = simoom::Server::builder()
+        .limits(simoom::Limits { max_body: 8 << 20, ..simoom::Limits::default() })
+        .service(service)
+        .listen_tls("127.0.0.1:0")
+        .tls(cameleer_http::server_simoom::server_tls(&tls).unwrap())
+        .start()
+        .unwrap();
     let url = format!("https://localhost:{}", server.local_addr().port());
     let r = go_h2(&url, &pem.ca).ok();
     assert_eq!(r.value("proto:"), "HTTP/2.0", "{}\n{}", r.stdout, r.stderr);
@@ -54,9 +76,8 @@ fn go_http2_client_against_camel_h2_server() {
     assert_eq!(r.value("echo:"), "200 1048576 same=true");
     assert_eq!(r.value("parallel:"), "16/16");
     assert_eq!(r.value("missing:"), "404");
-    // an HTTP/1.1-only client: the h2-only server completes the handshake without ALPN
-    // (RFC 7301 allows either) and answers 505 HTTP Version Not Supported
-    assert_eq!(r.value("h1:"), "HTTP/1.1 505", "{}", r.stdout);
+    // an HTTP/1.1-only client (no h2 in ALPN) is served over HTTP/1.1 by the same server
+    assert_eq!(r.value("h1:"), "HTTP/1.1 200", "{}", r.stdout);
 }
 
 #[test]
@@ -146,31 +167,34 @@ fn camel_http2_clients_against_go_server() {
     let pem = official::pem_files("go-h2-server");
     let p = cameleer_tls::testing::mtls();
     let go = GoServer::start(&["-cert", pem.server_cert.to_str().unwrap(), "-key", pem.server_key.to_str().unwrap()]);
-    // cameleer-grpc's HTTP/2 client (TLS, ALPN h2)
+    // simoom-client's HTTP/2 client (TLS, ALPN h2)
     let tls = TlsClientConfig::builder().system_roots(false).add_root_pem(p.ca.cert_pem.as_bytes()).unwrap().alpn_protocols(&["h2"]).build();
-    let conn = H2Connection::connect_tls(&format!("127.0.0.1:{}", go.port), "localhost", &tls, H2Config::default()).unwrap();
-    let resp = conn.request(&H2Request::get("/info?a=1"), Some(Duration::from_secs(10))).unwrap();
-    assert_eq!(resp.status, 200);
-    let text = String::from_utf8_lossy(&resp.body).to_string();
+    let mut cfg = simoom_client::Config::default();
+    cfg.version = simoom_client::HttpVersion::Http2;
+    let client = std::sync::Arc::new(
+        simoom_client::ClientBuilder::default().config(cfg).tls(cameleer_http::client_engine::tls_options(Some(&tls), Some("localhost"), true).unwrap()).build(),
+    );
+    let base = format!("https://localhost:{}", go.port);
+    let (status, body) = fetch(&client, &format!("{base}/info?a=1"), None, 10);
+    assert_eq!(status, 200);
+    let text = String::from_utf8_lossy(&body).to_string();
     assert!(text.starts_with("proto=HTTP/2.0 version=TLS 1.3 ") && text.contains("alpn=h2") && text.contains("path=/info?a=1"), "{}", text);
     let big: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
-    let resp = conn.request(&H2Request::post("/echo", big.clone()), Some(Duration::from_secs(30))).unwrap();
-    assert_eq!((resp.status, resp.body.len()), (200, big.len()));
-    assert!(resp.body == big, "echoed body differs");
-    let resp = conn.request(&H2Request::get("/stream"), Some(Duration::from_secs(10))).unwrap();
-    assert_eq!(String::from_utf8_lossy(&resp.body).lines().count(), 5);
-    let resp = conn.request(&H2Request::get("/missing"), Some(Duration::from_secs(10))).unwrap();
-    assert_eq!(resp.status, 404);
+    let (status, body) = fetch(&client, &format!("{base}/echo"), Some(big.clone()), 30);
+    assert_eq!((status, body.len()), (200, big.len()));
+    assert!(body == big, "echoed body differs");
+    let (_, body) = fetch(&client, &format!("{base}/stream"), None, 10);
+    assert_eq!(String::from_utf8_lossy(&body).lines().count(), 5);
+    assert_eq!(fetch(&client, &format!("{base}/missing"), None, 10).0, 404);
     // concurrent streams on the one connection
-    let conn = std::sync::Arc::new(conn);
     let handles: Vec<_> = (0..12)
         .map(|i| {
-            let c = conn.clone();
-            std::thread::spawn(move || c.request(&H2Request::get(&format!("/info?i={}", i)), Some(Duration::from_secs(20))).map(|r| String::from_utf8_lossy(&r.body).contains(&format!("path=/info?i={}", i))))
+            let (c, base) = (client.clone(), base.clone());
+            std::thread::spawn(move || String::from_utf8_lossy(&fetch(&c, &format!("{base}/info?i={i}"), None, 20).1).contains(&format!("path=/info?i={i}")))
         })
         .collect();
     for h in handles {
-        assert!(h.join().unwrap().unwrap());
+        assert!(h.join().unwrap());
     }
     // the https producer with httpVersion=HTTP/2 (headers become request headers)
     let ctx = CamelContext::new();

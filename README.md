@@ -612,7 +612,7 @@ See [docs/INTEROP.md](docs/INTEROP.md).
 | `cameleer-sql` | embedded SQL engine, PostgreSQL client, sql / jdbc components, JDBC repositories |
 | `cameleer-cloud` | AWS (incl. Bedrock), Azure (incl. OpenAI), Google Cloud (incl. Vertex AI), with verifying emulators |
 | `cameleer-ssh` | SSH-2 + SFTP: sftp and ssh components |
-| `cameleer-grpc` | HTTP/2 + HPACK, protobuf, grpc component and protobuf data format |
+| `cameleer-grpc` | gRPC client and server on simoom, protobuf, grpc component and protobuf data format |
 | `cameleer-datastores` | spring-redis, mongodb, elasticsearch/opensearch, cql (Cassandra), couchdb (with embedded test servers) |
 | `cameleer-xml` | XML 1.0 parser + DOM, XPath 1.0, XSLT 1.0, XML Schema validation, `xj`, `xmlsecurity-sign`/`-verify` |
 | `cameleer-ai` | `ai-tool`, `ai-resource`, `ai-prompt`, the tool registry and reliability envelope, the MCP server, client and gateway, the `mcp` component |

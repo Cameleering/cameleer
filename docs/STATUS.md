@@ -509,9 +509,28 @@ Cameleer's own HTTP code or it is not used.
   clients; `HttpConnection`, the producer's own pool and its HTTP/2 client are gone; the `http2` feature
   is gone). `cameleer_tls::TlsClientConfig::export` is the bridge. Certificate verification cannot be
   turned off in these clients.
-- **Still on the old code, in the next PRs:** WebSocket, HTTP/2
-  and the gRPC server (`cameleer-grpc` h2 on `simoom-h2`), the cloud mocks that call
-  `cameleer_grpc::h2`, and the deletion of the unused server helpers in `http.rs`.
+- **PR 3 (branch `simoom-h2`): the gRPC client** on `simoom-client`'s full-duplex `Call`
+  (`cameleer-grpc` `grpc/client.rs`: `GrpcClient`, `ClientCall` and `CallSender` keep their API; the
+  engine is created on first use from the public settings, stream opens are serialized so racing calls
+  share one connection). The TLS bridge is `cameleer_http::client_engine::tls_options`; certificate
+  verification cannot be turned off (the gRPC component has no such option). Kinesis `SubscribeToShard`
+  (`cameleer-cloud` `h2_event_stream`) uses the same client. `H2Connection` is no longer used by library
+  code; the tests of the old HTTP/2 server still use it until the server moves.
+- **PR 4 (branch `simoom-srv`): the gRPC server and the cloud mocks** on `simoom` (`cameleer-grpc`
+  `grpc/server.rs`: `GrpcServer` and `ServerCall` keep their API; `Limits::body_buffer` is 1 byte, so a call
+  starts with its first request bytes and bidirectional streams work; one thread per call, a reader thread
+  feeds the request messages through a channel so `recv` can wait with the deadline; the response head goes
+  out with the first message, or the call ends trailers-only). The TLS bridge is
+  `cameleer_http::server_simoom::server_tls`. The old `h2` module (`H2Server`, `H2Connection`, frames,
+  connection engine) and `hpack` are deleted; `cameleer_grpc::h2` keeps `H2Config`. The `MockServer` of
+  `cameleer-cloud` serves its h2c connections (the AWS mock's Kinesis `SubscribeToShard`) from an internal
+  simoom server behind a tunnel. The HTTP/2 tests of `cameleer-http` use simoom's server and client.
+- **PR 5: cleanup.** The HTTP/1.1 reader and writer in `cameleer-http/src/http.rs` (`read_request`,
+  `read_response`, `write_response`, `write_request`, chunked coding, `BodyReader`, `HttpError`) had no
+  callers left and are deleted; the file keeps the message model and the URL, query, media-type and date
+  helpers. The official tier ran in WSL (Go 1.24.7): the three HTTP/2 tests against Go and the two grpcio
+  tests pass; the gcloud CLI test needs the Google Cloud SDK, which is not installed.
+- **Still on the old code:** WebSocket.
 - **Not verified:** the live, official-client and simulator tiers (WSL2) on the new server; the
   hermetic suite on Windows 11: 2965 passed, 0 failed after the fixes.
 

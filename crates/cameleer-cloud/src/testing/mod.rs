@@ -84,8 +84,106 @@ pub fn verify_entra_token(token: &str, scope: &str) -> Option<String> {
 /// Request handler of a [`MockServer`].
 pub type Handler = Arc<dyn Fn(&ServerRequest) -> Response + Send + Sync>;
 
-/// HTTP/2 stream handler of a [`MockServer`] (cleartext h2c prior-knowledge connections).
-pub type H2Handler = Arc<dyn Fn(cameleer_grpc::h2::ServerRequest, cameleer_grpc::h2::H2Stream) + Send + Sync>;
+/// HTTP/2 request handler of a [`MockServer`] (cleartext h2c prior-knowledge connections): the request
+/// with its body read, and the way to answer it.
+pub type H2Handler = Arc<dyn Fn(ServerRequest, H2Reply) + Send + Sync>;
+
+/// The answer to an HTTP/2 request: all at once ([`H2Reply::respond`]) or streamed ([`H2Reply::stream`]).
+pub struct H2Reply {
+    responder: simoom::Responder,
+}
+
+impl H2Reply {
+    /// Sends the whole response.
+    pub fn respond(self, status: u16, headers: &[(&str, &str)], body: &[u8]) {
+        let mut r = simoom::Response::new(status);
+        for (n, v) in headers {
+            r = r.header(n.to_ascii_lowercase(), v);
+        }
+        self.responder.send(r.body(body.to_vec()));
+    }
+
+    /// Sends the response head; the body follows through the returned [`H2Body`].
+    pub fn stream(self, status: u16, headers: &[(&str, &str)]) -> H2Body {
+        let mut r = simoom::Response::new(status);
+        for (n, v) in headers {
+            r = r.header(n.to_ascii_lowercase(), v);
+        }
+        H2Body { sink: self.responder.stream(r) }
+    }
+}
+
+/// The body of a streamed HTTP/2 response.
+pub struct H2Body {
+    sink: simoom::BodySink,
+}
+
+impl H2Body {
+    /// Sends body bytes (waits while the client reads slowly).
+    pub fn send(&mut self, data: &[u8]) -> io::Result<()> {
+        self.sink.write(data)
+    }
+
+    /// True once the client cancelled the stream or went away.
+    pub fn is_closed(&self) -> bool {
+        self.sink.is_closed()
+    }
+
+    /// Ends the body.
+    pub fn finish(self) {
+        self.sink.finish();
+    }
+}
+
+/// A simoom server for the HTTP/2 connections of a [`MockServer`]: the mock's own accept loop hands
+/// them over through a tunnel, because simoom accepts its own connections only.
+fn start_h2_server(h2: H2Handler) -> io::Result<simoom::ServerHandle> {
+    let service = move |req: &mut simoom::Request<'_>, reply: simoom::Reply<'_>| -> simoom::Outcome {
+        let h2 = h2.clone();
+        reply.offload(req, move |req, reply| {
+            let mut body = req.body().to_vec();
+            if let Some(mut src) = req.take_body() {
+                if src.read_to_end(&mut body).is_err() {
+                    return reply.status(400).body_static(b"bad request body");
+                }
+            }
+            let target = String::from_utf8_lossy(req.target()).into_owned();
+            let (path, query) = match target.split_once('?') {
+                Some((p, q)) => (p.to_string(), q.to_string()),
+                None => (target, String::new()),
+            };
+            let mut headers: Vec<(String, String)> = req.headers().map(|(n, v)| (String::from_utf8_lossy(n).to_ascii_lowercase(), String::from_utf8_lossy(v).into_owned())).collect();
+            if let Some(h) = req.host() {
+                headers.push(("host".into(), String::from_utf8_lossy(h).into_owned()));
+            }
+            let request = ServerRequest { method: String::from_utf8_lossy(req.method()).into_owned(), path, query, headers, body };
+            let responder = reply.defer();
+            // the handler may stream for a long time: its own thread, not a pool worker
+            let spawned = std::thread::Builder::new().name("mock-h2".into()).spawn(move || h2(request, H2Reply { responder }));
+            if spawned.is_err() {
+                return simoom::Outcome::Deferred;
+            }
+            simoom::Outcome::Deferred
+        })
+    };
+    simoom::Server::builder().threads(1).service(service).listen("127.0.0.1:0").start()
+}
+
+/// Copies bytes both ways between `client` and the local `port` until either side closes.
+fn tunnel(client: TcpStream, port: u16) {
+    let Ok(up) = TcpStream::connect(("127.0.0.1", port)) else { return };
+    let (Ok(mut c2), Ok(mut u2)) = (client.try_clone(), up.try_clone()) else { return };
+    let (mut c1, mut u1) = (client, up);
+    let back = std::thread::spawn(move || {
+        let _ = io::copy(&mut u2, &mut c2);
+        let _ = cameleer_tls::net::shutdown_socket(&c2, Shutdown::Both);
+        let _ = cameleer_tls::net::shutdown_socket(&u2, Shutdown::Both);
+    });
+    let _ = io::copy(&mut c1, &mut u1);
+    let _ = cameleer_tls::net::shutdown_socket(&u1, Shutdown::Both);
+    let _ = cameleer_tls::net::shutdown_socket(&c1, Shutdown::Both);
+    let _ = back.join();
+}
 
 /// A small threaded HTTP/1.1 server (one thread per connection, keep-alive supported).
 pub struct MockServer {
@@ -94,6 +192,8 @@ pub struct MockServer {
     stop: Arc<AtomicBool>,
     requests: Arc<AtomicUsize>,
     accept: Option<JoinHandle<()>>,
+    /// The server of the HTTP/2 connections, when the mock serves any.
+    h2_server: Option<simoom::ServerHandle>,
     /// PEM of the self-signed certificate when TLS is enabled.
     pub cert_pem: Option<String>,
 }
@@ -128,25 +228,27 @@ impl MockServer {
         let stop = Arc::new(AtomicBool::new(false));
         let requests = Arc::new(AtomicUsize::new(0));
         let (stop2, req2, is_tls) = (stop.clone(), requests.clone(), tls.is_some());
+        let h2_server = match (h2, &tls) {
+            (Some(h), None) => Some(start_h2_server(h)?),
+            _ => None,
+        };
+        let h2_port = h2_server.as_ref().map(|s| s.local_addr().port());
         let accept = std::thread::Builder::new().name(format!("mock-server-{}", port)).spawn(move || {
             for conn in listener.incoming() {
                 if stop2.load(Ordering::SeqCst) {
                     break;
                 }
                 let Ok(sock) = conn else { continue };
-                let (h, tls, reqs, stop3, h2) = (handler.clone(), tls.clone(), req2.clone(), stop2.clone(), h2.clone());
+                let (h, tls, reqs, stop3) = (handler.clone(), tls.clone(), req2.clone(), stop2.clone());
                 std::thread::spawn(move || {
                     let _ = sock.set_read_timeout(Some(Duration::from_secs(30)));
                     let _ = sock.set_nodelay(true);
-                    if let (Some(h2), None) = (&h2, &tls) {
+                    if let (Some(port), None) = (h2_port, &tls) {
                         let mut pre = [0u8; 3];
                         if matches!(sock.peek(&mut pre), Ok(3)) && &pre == b"PRI" {
                             let _ = sock.set_read_timeout(None);
                             reqs.fetch_add(1, Ordering::SeqCst);
-                            let h2 = h2.clone();
-                            if let Ok(t) = cameleer_grpc::h2::Transport::tcp(sock) {
-                                let _ = cameleer_grpc::h2::serve_transport(t, cameleer_grpc::h2::H2Config::default(), move |r: cameleer_grpc::h2::ServerRequest, s: cameleer_grpc::h2::H2Stream| h2(r, s));
-                            }
+                            tunnel(sock, port);
                             return;
                         }
                     }
@@ -161,7 +263,7 @@ impl MockServer {
                 });
             }
         })?;
-        Ok(MockServer { port, tls: is_tls, stop, requests, accept: Some(accept), cert_pem: None })
+        Ok(MockServer { port, tls: is_tls, stop, requests, accept: Some(accept), h2_server, cert_pem: None })
     }
 
     pub fn port(&self) -> u16 {
@@ -189,6 +291,10 @@ impl MockServer {
             if let Some(h) = self.accept.take() {
                 let _ = h.join();
             }
+        }
+        if let Some(h) = self.h2_server.take() {
+            h.stop(Duration::from_millis(200));
+            let _ = std::thread::Builder::new().name("mock-h2-stop".into()).spawn(move || h.join());
         }
     }
 }

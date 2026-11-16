@@ -5,8 +5,7 @@
 //!
 //! | module | |
 //! |---|---|
-//! | [`hpack`] | HPACK header compression (RFC 7541) |
-//! | [`h2`] | HTTP/2 client and server (RFC 9113), h2c prior knowledge and TLS + ALPN `h2` (cameleer-tls) |
+//! | [`h2`] | HTTP/2 settings (the engine is simoom: h2c prior knowledge, `Upgrade: h2c` and TLS + ALPN `h2`) |
 //! | [`proto`] | `.proto` parser, descriptors, dynamic protobuf codec, proto3 JSON mapping |
 //! | [`grpc`] | gRPC framing, status codes, deadlines, metadata, byte-level client/server |
 //! | [`component`] | the Camel `grpc` component |
@@ -40,7 +39,6 @@ pub mod component;
 pub mod dataformat;
 pub mod grpc;
 pub mod h2;
-pub mod hpack;
 pub mod proto;
 
 use std::sync::Arc;

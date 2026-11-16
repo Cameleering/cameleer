@@ -5,6 +5,19 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The gRPC server and the cloud mock servers run on simoom.** The byte-level gRPC server (`GrpcServer`,
+  the `grpc` consumer, the Pub/Sub emulators) is a simoom server: an event loop per core, HTTP/2 over h2c
+  prior knowledge, `Upgrade: h2c` or TLS with ALPN `h2`, one thread per call. A call starts when its
+  first request bytes arrive, so bidirectional streams are answered while the client is still sending.
+  The old HTTP/2 and HPACK implementation in `cameleer-grpc` (`H2Server`, `H2Connection`, `hpack`) is
+  deleted; `cameleer_grpc::h2` keeps only `H2Config`. **Changed:** the server's flow-control windows and
+  frame size are simoom's own (`flowControlWindow` and the frame settings now apply to the client side
+  only), and a plain HTTP/1.1 request to a gRPC port is refused with a 4xx instead of 505.
+- **The gRPC client runs on simoom-client** (the `grpc` producer, Pub/Sub streaming and Pub/Sub Lite, and
+  Kinesis `SubscribeToShard`): HTTP/2 connections are pooled and re-established by the engine, calls
+  stream in both directions. **Changed:** the gRPC client always verifies the server certificate and its
+  host name against the trust anchors it is given.
+
 ## 0.6.1 (2026-11-13)
 
 Cameleer's HTTP stack moves onto [simoom](https://crates.io/crates/simoom), the std-only HTTP engine of
