@@ -8,12 +8,12 @@
     "url": "https://github.com/cameleering/cameleer",
     "source": "github"
   },
-  "version": "0.6.1",
+  "version": "0.7.0",
   "packages": [
     {
       "registryType": "cargo",
       "identifier": "cameleer",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "transport": {
         "type": "stdio"
       },

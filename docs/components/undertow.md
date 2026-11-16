@@ -5,7 +5,7 @@
 **Scheme:** `undertow:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Undertow](https://camel.apache.org/components/next/undertow-component.html)
 
-`undertow:` endpoints run on Cameleer's embedded HTTP/1.1 server, the same one as
+`undertow:` endpoints run on Cameleer's embedded HTTP server (HTTP/1.1 and HTTP/2), the same one as
 [platform-http](platform-http.md) and [jetty](jetty.md). Host and port are part of the URI.
 Cameleer's `undertow` is a consumer only: to call HTTP services use [http](http.md). Undertow's
 WebSocket support is not part of this scheme; use [websocket](websocket.md).
