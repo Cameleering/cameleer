@@ -5,7 +5,7 @@
 **Scheme:** `jetty:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Jetty](https://camel.apache.org/components/next/jetty-component.html)
 
-Cameleer has no Jetty: `jetty:` endpoints run on the same embedded HTTP/1.1 server as
+Cameleer has no Jetty: `jetty:` endpoints run on the same embedded HTTP server (HTTP/1.1 and HTTP/2) as
 [platform-http](platform-http.md), so routes that use `jetty:http://...` keep working
 unchanged. The difference from `platform-http` is that the host and port are part of the URI.
 [undertow](undertow.md) and [netty-http](netty-http.md) behave the same way.

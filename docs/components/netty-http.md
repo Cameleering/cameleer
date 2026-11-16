@@ -5,7 +5,7 @@
 **Scheme:** `netty-http:` · **Crate:** `cameleer-http` · **Cargo feature:** none, always included ([build features](../guides/build-features.md)) ·
 **Consumer:** yes · **Producer:** no · **Apache Camel:** [Netty HTTP](https://camel.apache.org/components/next/netty-http-component.html)
 
-`netty-http:` endpoints run on Cameleer's embedded HTTP/1.1 server, the same one as
+`netty-http:` endpoints run on Cameleer's embedded HTTP server (HTTP/1.1 and HTTP/2), the same one as
 [platform-http](platform-http.md). There is no Netty: the scheme exists so Camel routes run
 unchanged. For raw TCP and UDP use the `netty` component; for outgoing HTTP use [http](http.md).
 

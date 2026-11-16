@@ -5,6 +5,10 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The HTTP server speaks HTTP/2** (`platform-http`, `jetty`, `undertow`, `netty-http`, `rest`, the MCP
+  endpoint): h2c prior knowledge and `Upgrade: h2c` on plain HTTP, ALPN `h2` next to `http/1.1` on HTTPS.
+  Routes need no change. **Changed:** an HTTPS consumer now negotiates `h2` with clients that offer it
+  (before, it answered HTTP/1.1 only).
 - **The gRPC server and the cloud mock servers run on simoom.** The byte-level gRPC server (`GrpcServer`,
   the `grpc` consumer, the Pub/Sub emulators) is a simoom server: an event loop per core, HTTP/2 over h2c
   prior knowledge, `Upgrade: h2c` or TLS with ALPN `h2`, one thread per call. A call starts when its

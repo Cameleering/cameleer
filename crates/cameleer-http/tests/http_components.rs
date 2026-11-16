@@ -32,6 +32,50 @@ fn raw(port: u16, request: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// A route behind `platform-http` answers HTTP/2 clients (prior knowledge) like HTTP/1.1 ones: the same
+/// headers and bodies, a response header that only means something to HTTP/1.1 (`Connection`) does not
+/// break the stream, and many streams run at once on one connection.
+#[test]
+fn platform_http_serves_http2_next_to_http11() {
+    let ctx = context();
+    ctx.add_routes(|b| {
+        b.from("platform-http:/h2").route_id("h2").process(|ex: &mut Exchange| {
+            let body = ex.body().to_string();
+            ex.set_body(format!("{} {}", ex.message.header_as::<String>("CamelHttpMethod")?.unwrap_or_default(), body));
+            ex.set_header("Content-Type", "text/plain");
+            ex.set_header("X-Reply", "yes");
+            ex.set_header("Connection", "keep-alive");
+            Ok(())
+        });
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let url = format!("http://127.0.0.1:{}/h2", port(&ctx));
+    let h2 = std::sync::Arc::new(HttpClient { http2: true, read_timeout: Duration::from_secs(5), ..HttpClient::default() });
+    let r = h2.post(&url, "text/plain", b"over h2").unwrap();
+    assert_eq!((r.status, r.body_text().as_str()), (200, "POST over h2"));
+    assert_eq!(r.headers.get("x-reply"), Some("yes"));
+    let r = h2.get(&url).unwrap();
+    assert_eq!(r.body_text(), "GET ");
+    // the same route over HTTP/1.1
+    assert_eq!(HttpClient::new().post(&url, "text/plain", b"over h1").unwrap().body_text(), "POST over h1");
+    // concurrent streams on the pooled connection
+    let handles: Vec<_> = (0..16)
+        .map(|i| {
+            let (c, url) = (h2.clone(), url.clone());
+            std::thread::spawn(move || c.post(&url, "text/plain", format!("n{i}").as_bytes()).unwrap().body_text())
+        })
+        .collect();
+    for (i, h) in handles.into_iter().enumerate() {
+        assert_eq!(h.join().unwrap(), format!("POST n{i}"));
+    }
+    // the producer, asked for HTTP/2
+    let t = ctx.create_producer_template();
+    let reply = t.request_body(&format!("{url}?httpVersion=HTTP/2"), "via producer").unwrap();
+    assert_eq!(reply, Value::from("POST via producer"));
+    ctx.stop().unwrap();
+}
+
 #[test]
 fn get_and_post_round_trip() {
     let ctx = context();
@@ -616,9 +660,9 @@ fn the_client_pools_streams_and_maps_errors() {
     body.read_to_string(&mut text).unwrap();
     assert!(text.starts_with("127.0.0.1:"), "{text}");
 
-    // HTTP/2 prior knowledge against an HTTP/1.1-only server fails cleanly instead of hanging
+    // HTTP/2 prior knowledge: the server speaks it next to HTTP/1.1
     let h2 = HttpClient { http2: true, read_timeout: Duration::from_secs(2), ..HttpClient::default() };
-    assert!(h2.get(&url).is_err());
+    assert_eq!(h2.get(&url).unwrap().status, 200);
 
     // an unverified TLS configuration is refused, with the way out in the message
     let insecure = cameleer_tls::TlsClientConfig::builder().system_roots(false).insecure_skip_verify(true).build();
