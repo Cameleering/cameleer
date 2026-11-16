@@ -5,7 +5,7 @@
 **Scheme:** `grpc:` · **Crate:** `cameleer-grpc` · **Cargo feature:** [`grpc`](../guides/build-features.md) ·
 **Consumer:** yes · **Producer:** yes · **Apache Camel:** [gRPC](https://camel.apache.org/components/next/grpc-component.html)
 
-Cameleer has its own HTTP/2, HPACK and protobuf implementation. Instead of generated Java stubs,
+Cameleer runs gRPC on simoom (HTTP/2) and has its own protobuf implementation. Instead of generated Java stubs,
 it reads the service and message definitions from `protoFile` when the route starts; messages
 are maps (`{"sku": "A-100"}`) on the Camel side. Without `protoFile`, bodies are raw protobuf
 bytes. It interoperates with grpcio, grpc-go and curl.
@@ -109,7 +109,7 @@ fn inventory_service_route(b: &mut RouteBuilder, port: u16, proto: &str) {
 | `compression` | | `gzip` or `deflate` for requests. Alias `compressorName`. |
 | `maxMessageSize` | 4 MiB | Largest message. |
 | `maxConcurrentCallsPerConnection` | 256 | Consumer limit. |
-| `flowControlWindow` | 1 MiB | HTTP/2 flow control window. |
+| `flowControlWindow` | 1 MiB | HTTP/2 flow control window of the producer. The consumer's server (simoom) uses its own windows. |
 | `shutdownTimeout` | `5s` | Consumer shutdown grace time. |
 | `clientInterceptors`, `serverInterceptors` | | `#bean` lists of interceptors; `autoDiscoverClientInterceptors` / `autoDiscoverServerInterceptors` (default `true`) pick up registry beans. |
 

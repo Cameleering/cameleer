@@ -10,13 +10,15 @@ authors.workspace = true
 readme.workspace = true
 keywords = ["camel", "grpc", "protobuf", "http2", "integration"]
 categories = ["network-programming", "encoding"]
-description = "Cameleer HTTP/2 (RFC 9113 + HPACK), Protocol Buffers (.proto parser, dynamic codec, protobuf data format) and the gRPC component"
+description = "Cameleer gRPC client and server on simoom (HTTP/2), Protocol Buffers (.proto parser, dynamic codec, protobuf data format) and the gRPC component"
 
 [dependencies]
 cameleer-core = { path = "../cameleer-core", version = "0.6.1", default-features = false }
 cameleer-tls = { path = "../cameleer-tls", version = "0.6.1" }
 # The TLS bridge of the HTTP client (trust anchors, client certificates), shared with the gRPC client
 cameleer-http = { path = "../cameleer-http", version = "0.6.1", default-features = false }
+# The gRPC server: an event loop per core, HTTP/2 (h2c, upgrade and TLS) with streamed bodies and trailers
+simoom = { version = "0.1.0", default-features = false, features = ["http1", "http2", "tls", "tls-extra"] }
 # The gRPC client: full-duplex HTTP/2 calls (docs/design/simoom-adoption.md)
 simoom-client = { version = "0.1.0", default-features = false, features = ["client-h2", "h2c-upgrade", "tls", "tls-extra"] }
 

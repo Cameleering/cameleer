@@ -420,15 +420,7 @@ fn auth_error(req: &ServerRequest, f: &AuthFailure) -> Response {
 
 /// HTTP/2 requests (h2c): event stream operations (`SubscribeToShard`) stream their events,
 /// every other request is answered like over HTTP/1.1.
-fn handle_h2(st: &Shared, h2req: cameleer_grpc::h2::ServerRequest, stream: cameleer_grpc::h2::H2Stream) {
-    let body = stream.read_body(Some(Duration::from_secs(30))).unwrap_or_default();
-    let (path, query) = match h2req.path.split_once('?') {
-        Some((p, q)) => (p.to_string(), q.to_string()),
-        None => (h2req.path.clone(), String::new()),
-    };
-    let mut headers: Vec<(String, String)> = h2req.headers.clone();
-    headers.push(("host".into(), h2req.authority.clone()));
-    let req = ServerRequest { method: h2req.method.clone(), path, query, headers, body };
+fn handle_h2(st: &Shared, req: ServerRequest, reply: super::H2Reply) {
     let creds = st.0.lock().unwrap().credentials.clone();
     let resp = match verify_request(&req, &|k| creds.get(k).cloned(), now_secs()) {
         Err(f) => {
@@ -436,15 +428,14 @@ fn handle_h2(st: &Shared, h2req: cameleer_grpc::h2::ServerRequest, stream: camel
             auth_error(&req, &f)
         }
         Ok(v) if v.service == "kinesis" && req.header("X-Amz-Target").is_some_and(|t| t.ends_with(".SubscribeToShard")) => {
-            gaps::subscribe_to_shard(st, &req, &stream);
+            gaps::subscribe_to_shard(st, &req, reply);
             return;
         }
         Ok(_) => handle(st, &req),
     };
-    let hs: Vec<(&str, &str)> = resp.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let hs: Vec<(String, String)> = hs.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.to_string())).filter(|(k, _)| k != "content-length" && k != "connection").collect();
+    let hs: Vec<(String, String)> = resp.headers.iter().map(|(k, v)| (k.to_ascii_lowercase(), v.to_string())).filter(|(k, _)| k != "content-length" && k != "connection").collect();
     let hs: Vec<(&str, &str)> = hs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let _ = cameleer_grpc::h2::ServerRequest::respond(&stream, resp.status, &hs, &resp.body);
+    reply.respond(resp.status, &hs, &resp.body);
 }
 
 fn handle(st: &Shared, req: &ServerRequest) -> Response {

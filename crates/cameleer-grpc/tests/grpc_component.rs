@@ -1,6 +1,7 @@
 //! gRPC round trips through Camel routes: a consumer route implements
 //! `helloworld.Greeter`, producers call it.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cameleer_core::prelude::*;
@@ -549,22 +550,29 @@ fn h2c_upgrade_and_route_controlled_stream_observer() {
     assert!(status_of(&err).starts_with("PERMISSION_DENIED"), "{}", status_of(&err));
     ctx.stop().unwrap();
 
-    // raw h2 level: upgrade request served as stream 1 by an H2Server, then normal requests
-    use cameleer_grpc::h2::{H2Config, H2Connection, H2Request, H2Server, H2Stream, ServerRequest};
-    let server = H2Server::bind("127.0.0.1:0", H2Config::default(), None, |req: ServerRequest, stream: H2Stream| {
-        let body = stream.read_body(None).unwrap_or_default();
-        let _ = ServerRequest::respond(&stream, 200, &[("content-type", "text/plain")], format!("{} {}", req.path, body.len()).as_bytes());
-    })
+    // the byte-level server upgrades an HTTP/1.1 request to h2c too, and refuses what is not gRPC
+    use cameleer_grpc::grpc::server::GrpcServer;
+    use cameleer_grpc::grpc::Status;
+    let server = GrpcServer::bind("127.0.0.1:0", cameleer_grpc::h2::H2Config::default(), None, 4 << 20, Arc::new(|call: &cameleer_grpc::grpc::server::ServerCall| {
+        let n = call.recv().ok().flatten().map(|m| m.len()).unwrap_or(0);
+        let _ = call.send(format!("{} {}", call.method(), n).as_bytes());
+        Status::ok()
+    }))
     .unwrap();
-    let conn = H2Connection::connect_upgrade(&server.local_addr().to_string(), H2Config::default()).unwrap();
-    let resp = conn.request(&H2Request::post("/echo", b"hello".to_vec()), Some(Duration::from_secs(5))).unwrap();
-    assert_eq!(resp.body, b"/echo 5");
-    // a plain HTTP/1.1 client without the upgrade is refused
+    let mut client = GrpcClient::plaintext(&server.local_addr().to_string());
+    client.upgrade = true;
+    let (resp, _) = client.unary("/t.Echo/Say", b"hello", &vec![], Some(Duration::from_secs(5))).unwrap();
+    assert_eq!(resp, b"Say 5");
+    // a plain HTTP/1.1 request is not gRPC
     let mut s = std::net::TcpStream::connect(server.local_addr()).unwrap();
     use std::io::{Read, Write};
-    s.write_all(b"GET /x HTTP/1.1\r\nHost: a\r\n\r\n").unwrap();
+    s.write_all(b"GET /x HTTP/1.1
+Host: a
+Connection: close
+
+").unwrap();
     let mut out = String::new();
     let _ = s.read_to_string(&mut out);
-    assert!(out.starts_with("HTTP/1.1 505"), "{}", out);
-    server.stop();
+    assert!(out.starts_with("HTTP/1.1 4"), "a request that is not gRPC is refused: {}", out);
+    server.stop(Duration::from_secs(1));
 }

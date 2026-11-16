@@ -23,7 +23,7 @@ simoom-client = { version = "0.1.0", default-features = false, features = ["clie
 simoom-tls = { version = "0.1.0", default-features = false, features = ["tls12", "rsa", "p384", "ed25519", "chacha20", "client"] }
 
 [dev-dependencies]
-# the HTTP/2 tests run the producer against cameleer-grpc's HTTP/2 server
-cameleer-grpc = { path = "../cameleer-grpc", default-features = false }
+# the HTTP/2 tests run the producer against simoom's HTTP/2 server
+simoom = { version = "0.1.0", default-features = false, features = ["http1", "http2", "tls", "tls-extra"] }
 # the tests use every optional part of core/http (their default features); the library does not
 cameleer-core = { path = "../cameleer-core" }

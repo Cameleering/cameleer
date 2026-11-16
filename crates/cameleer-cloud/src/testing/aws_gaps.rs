@@ -372,38 +372,36 @@ fn kinesis_more(st: &Shared, req: &ServerRequest) -> Option<Response> {
     }
 }
 
-fn h2_json_error(stream: &cameleer_grpc::h2::H2Stream, code: &str, msg: &str) {
+fn h2_json_error(reply: crate::testing::H2Reply, code: &str, msg: &str) {
     let body = obj([("__type", Value::from(code)), ("message", Value::from(msg))]).to_json();
-    let _ = cameleer_grpc::h2::ServerRequest::respond(stream, 400, &[("content-type", "application/x-amz-json-1.1"), ("x-amzn-errortype", code)], body.as_bytes());
+    reply.respond(400, &[("content-type", "application/x-amz-json-1.1"), ("x-amzn-errortype", code)], body.as_bytes());
 }
 
 /// Serve one `SubscribeToShard` call (HTTP/2): stream `SubscribeToShardEvent`s for the
 /// subscription lifetime, or until the shard ends.
-pub(super) fn subscribe_to_shard(st: &Shared, req: &ServerRequest, stream: &cameleer_grpc::h2::H2Stream) {
+pub(super) fn subscribe_to_shard(st: &Shared, req: &ServerRequest, reply: crate::testing::H2Reply) {
     let b = body(req);
     let (consumer, shard_name) = (s_(&b, "ConsumerARN"), s_(&b, "ShardId"));
     let pos_spec = b.get("StartingPosition").cloned().unwrap_or_default();
     let (stream_name, lifetime, idx, mut pos) = {
         let mut s = st.0.lock().unwrap();
-        let Some(c) = s.gaps.consumers.get(&consumer) else { return h2_json_error(stream, "ResourceNotFoundException", &format!("Consumer {} not found", consumer)) };
+        let Some(c) = s.gaps.consumers.get(&consumer) else { return h2_json_error(reply, "ResourceNotFoundException", &format!("Consumer {} not found", consumer)) };
         if c.status != "ACTIVE" {
-            return h2_json_error(stream, "ResourceInUseException", "Consumer is not ACTIVE");
+            return h2_json_error(reply, "ResourceInUseException", "Consumer is not ACTIVE");
         }
         let name = stream_name_of(&c.stream_arn);
         let lifetime = Duration::from_millis(s.gaps.subscription_millis.unwrap_or(300_000));
-        let Some(k) = s.ext.streams.get(&name) else { return h2_json_error(stream, "ResourceNotFoundException", "Stream not found") };
-        let Some(idx) = (0..k.shards.len()).find(|i| shard_id(*i) == shard_name) else { return h2_json_error(stream, "ResourceNotFoundException", &format!("Shard {} not found", shard_name)) };
+        let Some(k) = s.ext.streams.get(&name) else { return h2_json_error(reply, "ResourceNotFoundException", "Stream not found") };
+        let Some(idx) = (0..k.shards.len()).find(|i| shard_id(*i) == shard_name) else { return h2_json_error(reply, "ResourceNotFoundException", &format!("Shard {} not found", shard_name)) };
         let seq: u128 = s_(&pos_spec, "SequenceNumber").parse().unwrap_or(0);
         let ts = pos_spec.get("Timestamp").and_then(|t| t.as_f64()).unwrap_or(0.0);
-        let Some(pos) = start_position(&k.shards[idx], &s_(&pos_spec, "Type"), seq, ts) else { return h2_json_error(stream, "InvalidArgumentException", "Invalid StartingPosition") };
+        let Some(pos) = start_position(&k.shards[idx], &s_(&pos_spec, "Type"), seq, ts) else { return h2_json_error(reply, "InvalidArgumentException", "Invalid StartingPosition") };
         s.gaps.subscriptions += 1;
         (name, lifetime, idx, pos)
     };
-    let hs = [(":status".to_string(), "200".to_string()), ("content-type".to_string(), "application/vnd.amazon.eventstream".to_string()), ("x-amzn-requestid".to_string(), request_id())];
-    if stream.send_headers(&hs, false).is_err() {
-        return;
-    }
-    if stream.send_data(&Message::event("initial-response", &obj([])).encode(), false).is_err() {
+    let request_id = request_id();
+    let mut body = reply.stream(200, &[("content-type", "application/vnd.amazon.eventstream"), ("x-amzn-requestid", request_id.as_str())]);
+    if body.send(&Message::event("initial-response", &obj([])).encode()).is_err() {
         return;
     }
     let start = Instant::now();
@@ -448,17 +446,17 @@ pub(super) fn subscribe_to_shard(st: &Shared, req: &ServerRequest, stream: &came
             } else {
                 m.insert("ContinuationSequenceNumber".into(), Value::from(continuation.clone().unwrap_or_default()));
             }
-            if stream.send_data(&Message::event("SubscribeToShardEvent", &Value::Object(m)).encode(), false).is_err() {
+            if body.send(&Message::event("SubscribeToShardEvent", &Value::Object(m)).encode()).is_err() {
                 return;
             }
             last_event = Instant::now();
         }
-        if ended || start.elapsed() >= lifetime || stream.is_remote_closed() {
+        if ended || start.elapsed() >= lifetime || body.is_closed() {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
-    let _ = stream.send_data(&[], true);
+    body.finish();
 }
 
 // ---------------------------------------------------------------------------
