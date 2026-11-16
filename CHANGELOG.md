@@ -3,7 +3,12 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
-## Unreleased
+## 0.7.0 (2026-11-16)
+
+The move onto [simoom](https://crates.io/crates/simoom) is finished: the gRPC client and server and
+everything that spoke HTTP/2 run on it, the old HTTP/2 and HPACK code is deleted, the HTTP server speaks
+HTTP/2, and no client can be told to skip certificate verification any more. The release has **behaviour
+changes** (marked **Changed** below; `docs/release-notes/0.7.0.md` lists them under Upgrading).
 
 - **The AWS, Azure and Google components always verify the server certificate.** `trustAllCertificates=true`
   (and a global `camel.ssl.trustAllCertificates`) is refused at endpoint creation with a message that says
