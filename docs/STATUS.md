@@ -525,8 +525,12 @@ Cameleer's own HTTP code or it is not used.
   connection engine) and `hpack` are deleted; `cameleer_grpc::h2` keeps `H2Config`. The `MockServer` of
   `cameleer-cloud` serves its h2c connections (the AWS mock's Kinesis `SubscribeToShard`) from an internal
   simoom server behind a tunnel. The HTTP/2 tests of `cameleer-http` use simoom's server and client.
-- **Still on the old code:** WebSocket, and the server helpers in `cameleer-http/src/http.rs` that nothing
-  calls any more (the last cleanup PR).
+- **PR 5: cleanup.** The HTTP/1.1 reader and writer in `cameleer-http/src/http.rs` (`read_request`,
+  `read_response`, `write_response`, `write_request`, chunked coding, `BodyReader`, `HttpError`) had no
+  callers left and are deleted; the file keeps the message model and the URL, query, media-type and date
+  helpers. The official tier ran in WSL (Go 1.24.7): the three HTTP/2 tests against Go and the two grpcio
+  tests pass; the gcloud CLI test needs the Google Cloud SDK, which is not installed.
+- **Still on the old code:** WebSocket.
 - **Not verified:** the live, official-client and simulator tiers (WSL2) on the new server; the
   hermetic suite on Windows 11: 2965 passed, 0 failed after the fixes.
 
