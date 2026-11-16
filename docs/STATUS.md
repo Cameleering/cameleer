@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-09 (release 0.5.0). Branch `main`. The verified head before this file
+_Last updated: 2026-11-16 (release 0.7.0). Branch `main`. The verified head before this file
 was added is `7de6166`._
 
 ## Name, packaging and release (2026-11-05)
@@ -530,9 +530,18 @@ Cameleer's own HTTP code or it is not used.
   callers left and are deleted; the file keeps the message model and the URL, query, media-type and date
   helpers. The official tier ran in WSL (Go 1.24.7): the three HTTP/2 tests against Go and the two grpcio
   tests pass; the gcloud CLI test needs the Google Cloud SDK, which is not installed.
-- **Still on the old code:** WebSocket.
-- **Not verified:** the live, official-client and simulator tiers (WSL2) on the new server; the
-  hermetic suite on Windows 11: 2965 passed, 0 failed after the fixes.
+- **PR 6: the HTTP server speaks HTTP/2** (`http2(false)` removed from `server_simoom.rs`; h2c prior
+  knowledge, `Upgrade: h2c`, ALPN `h2`; test `platform_http_serves_http2_next_to_http11`). Go's client
+  negotiates `HTTP/2.0` with a `jetty:https` route.
+- **PR 7: the cloud components always verify certificates** (`Opts::tls` in `cameleer-cloud/src/util.rs`:
+  `sslContextParameters` and `camel.ssl.*`; `trustAllCertificates` and a global
+  `camel.ssl.trustAllCertificates` are refused; `HttpClient` has no insecure mode).
+- **0.7.0 (2026-11-16): the simoom replacement is finished.** Release notes in `docs/release-notes/0.7.0.md`.
+  Hermetic suite on Windows 11: 2961 passed, 0 failed, zero warnings; the official tier (WSL2, Go 1.24.7
+  and grpcio): HTTP/2 3/3, TLS 2/2, gRPC 2/2.
+- **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
+- **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
+  check of the official tier (needs the Google Cloud SDK).
 
 ## Pending / todo
 
