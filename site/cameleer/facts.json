@@ -2,8 +2,8 @@
   "name": "Cameleer",
   "description": "An integration engine in the style of Apache Camel, written in Rust: Apache Camel's routes, Enterprise Integration Patterns, endpoint URIs and YAML DSL as one native binary with no third-party dependencies, plus MCP tools for AI agents.",
   "project_of": {"name": "Cameleering", "url": "https://cameleer.ing/"},
-  "version": "0.6.1",
-  "released": "2026-11-13",
+  "version": "0.7.0",
+  "released": "2026-11-16",
   "license": "Apache-2.0",
   "repository": "https://github.com/cameleering/cameleer",
   "site": "https://cameleer.ing/cameleer/",
@@ -14,7 +14,7 @@
     "family": "https://cameleer.ing/llms.txt"
   },
   "install": {
-    "container": "docker run cameleering/cameleer:0.6.1",
+    "container": "docker run cameleering/cameleer:0.7.0",
     "container_health_pack": "docker run cameleering/cameleer:health",
     "cli": "cargo install cameleer",
     "binary": "cameleer",
@@ -23,7 +23,7 @@
     "archives": "https://github.com/cameleering/cameleer/releases (since 0.6.1: Linux x86-64, Windows x86-64, macOS arm64; each with SHA-256, CycloneDX SBOM and Sigstore bundle)"
   },
   "images": ["docker.io/cameleering/cameleer", "ghcr.io/cameleering/cameleer"],
-  "image_tags": ["latest", "0.6.1", "0.6", "health", "0.6.1-health", "0.6-health"],
+  "image_tags": ["latest", "0.7.0", "0.7", "health", "0.7.0-health", "0.7-health"],
   "platforms": ["linux/amd64", "linux/arm64", "macOS", "Windows", "AWS Lambda (provided.al2023)"],
   "not": ["Apache Camel (the Java framework from the Apache Software Foundation)", "kennycallado/rust-camel (a different Rust project)"],
   "formerly": "rust-camel (up to v0.1.0)",
