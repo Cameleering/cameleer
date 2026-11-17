@@ -29,14 +29,20 @@ fn string_values<'a>(json: &'a str, key: &str) -> Vec<&'a str> {
 #[test]
 fn server_json_matches_the_release() {
     let json = repo_file("server.json");
-    let name = "io.github.cameleering/cameleer";
+    // the namespace is the organization as GitHub spells it: the registry compares it case-sensitively
+    let name = "io.github.Cameleering/cameleer";
     assert_eq!(string_values(&json, "name").first().copied(), Some(name));
 
-    let version = env!("CARGO_PKG_VERSION");
+    // the registry checks the published `cameleer` wrapper crate: its version is the entry's version
+    let manifest = repo_file("publish/cameleer/Cargo.toml");
+    let version = string_values(&manifest, "version").first().copied().map(str::to_string).or_else(|| {
+        manifest.lines().find_map(|l| l.strip_prefix("version = \"").and_then(|r| r.strip_suffix('"')).map(str::to_string))
+    });
+    let version = version.expect("the wrapper crate has a version");
     let versions = string_values(&json, "version");
     assert_eq!(versions.len(), 2, "server version and package version");
     for v in versions {
-        assert_eq!(v, version, "server.json version must follow the workspace version");
+        assert_eq!(v, version, "server.json version must follow the cameleer wrapper crate");
     }
 
     let description = string_values(&json, "description")[0];

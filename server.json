@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.cameleering/cameleer",
+  "name": "io.github.Cameleering/cameleer",
   "title": "Cameleer",
   "description": "Serve Camel-style routes as MCP tools with approvals, rate limits and audit; also an MCP gateway.",
   "websiteUrl": "https://cameleer.ing/cameleer/mcp/",
@@ -8,12 +8,12 @@
     "url": "https://github.com/cameleering/cameleer",
     "source": "github"
   },
-  "version": "0.7.0",
+  "version": "0.7.1",
   "packages": [
     {
       "registryType": "cargo",
       "identifier": "cameleer",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "transport": {
         "type": "stdio"
       },
