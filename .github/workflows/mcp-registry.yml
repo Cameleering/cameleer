@@ -1,0 +1,61 @@
+name: MCP Registry
+
+# Publishes server.json to the official MCP Registry (registry.modelcontextprotocol.io) with GitHub OIDC.
+# The name io.github.cameleering/cameleer belongs to the organization, so the publisher must prove it runs
+# in a repository of that organization: the interactive `mcp-publisher login github` flow cannot read
+# organization roles, OIDC does not need a token.
+#
+# Run it by hand after a release is on crates.io (the registry checks the published crate and its README
+# line `mcp-name: io.github.cameleering/cameleer`): Actions > MCP Registry > Run workflow, with the release
+# tag (for example v0.7.0). It publishes the server.json of that tag.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose server.json is published (for example v0.7.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write # the OIDC token the registry verifies
+    env:
+      PUBLISHER_VERSION: v1.8.9
+      # SHA-256 of mcp-publisher_linux_amd64.tar.gz in registry_1.8.9_checksums.txt of that release
+      PUBLISHER_SHA256: 4d527ca8f1ced0394c962dc925c2a4a4addef441cbefd62501c875e9481823a8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+      - name: Install mcp-publisher (checksum verified)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/${PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+      - name: Check server.json against the tag
+        run: |
+          set -euo pipefail
+          version="${INPUT_TAG#v}"
+          python3 - "$version" <<'EOF'
+          import json, sys
+          s = json.load(open("server.json"))
+          want = sys.argv[1]
+          assert s["version"] == want, f"server.json says {s['version']}, the tag is {want}"
+          assert all(p["version"] == want for p in s["packages"]), "a package version differs from the tag"
+          print("server.json", s["name"], want)
+          EOF
+          ./mcp-publisher validate
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+      - name: Log in with GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+      - name: Publish
+        run: ./mcp-publisher publish
