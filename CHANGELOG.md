@@ -3,6 +3,12 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+- **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
+  the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
+  Nothing else changed; the other crates, the tag, the images and the archives stay at 0.7.0.
+
 ## 0.7.0 (2026-11-16)
 
 The move onto [simoom](https://crates.io/crates/simoom) is finished: the gRPC client and server and
