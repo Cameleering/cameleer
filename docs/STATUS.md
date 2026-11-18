@@ -546,6 +546,12 @@ Cameleer's own HTTP code or it is not used.
   `docs/BENCHMARKS.md`. Open: why gRPC stops at about 11,000 calls/s on both builds (thread creation is the
   suspect, not profiled), why HTTP/2 is slower than HTTP/1.1, and the 5% on `rest-json`. Not measured: gRPC
   streaming, HTTP/2 over TLS, the gRPC client, Windows.
+- **gRPC calls on a pool of threads (branch `grpc-pool`, 2026-11-18, after 0.7.0):** the threads of a call come from
+  one process-wide cached `ThreadPool` (`grpc/server.rs`). Droplet round (`benchmarks/results/2026-11-18-linux-grpc-pool/`):
+  gRPC unary 4.65x (64 calls) and 4.34x (256 calls), CPU per call 57 against 221 microseconds, p99 2.5 against 14 ms;
+  peak memory 49 against 14 MB (64 calls) and 169 against 21 MB (256). The control (identical code for HTTP, REST and
+  MCP) varied 0.91x to 1.06x, so the 5% `rest-json` loss reported for 0.7.0 is probably noise. Open: fewer threads
+  per call (no handler thread, no reader thread for a unary call) to cut the memory.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).

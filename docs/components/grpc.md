@@ -156,9 +156,10 @@ Yes: `usePlainText=false` with `keyCertChainResource` and `keyResource` on the s
 
 Measured on 4-vCPU cloud machines (release 0.7.0, unary calls with a protobuf request and reply, 64 concurrent
 calls over 4 HTTP/2 connections): about 10,500 calls per second at about 200 microseconds of server CPU per call,
-with a p99 of about 11 ms. A call on an idle server takes about 0.3 ms. Throughput stops rising at about 11,000
-calls per second from 16 concurrent calls up, while the machine still has CPU to spare; the cause is not known
-(each call starts threads, which is the suspect). Streaming calls were not measured. The
+with a p99 of about 11 ms. A call on an idle server takes about 0.3 ms. Release 0.7.0 stops at about 11,000
+calls per second from 16 concurrent calls up because each call starts threads; running them on a pool (after 0.7.0,
+not released yet) gave about 47,000 calls per second at about 57 microseconds of server CPU per call and a p99 of
+about 2.5 ms, and costs memory (49 MB at 64 concurrent calls, 169 MB at 256, against 14 and 21 MB). Streaming calls were not measured. The
 [full numbers and the comparison with 0.6.1](../BENCHMARKS.md#grpc-and-http2-on-simoom-070-2026-11-18) are in
 the benchmark report.
 

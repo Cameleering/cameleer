@@ -5,6 +5,14 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The gRPC server runs the threads of its calls on a pool.** A call used to start up to three threads (the
+  call, the reader of its request messages and, with a deadline, the handler), and starting them limited the
+  server to about 11,000 calls per second. They now come from one process-wide cached pool (a worker starts only
+  when none is idle; an idle worker exits after 30 seconds). Measured on 4-vCPU machines, unary calls with 64
+  concurrent callers: 47,282 against 10,174 per second (4.65x), p99 2.5 against 14 ms, 57 against 221 microseconds
+  of server CPU per call. **Changed:** the price is memory: peak memory of the gRPC server is 49 against 14 MB at
+  64 concurrent calls and 169 against 21 MB at 256, because the pool keeps its threads. See
+  `docs/BENCHMARKS.md` and `benchmarks/results/2026-11-18-linux-grpc-pool/`.
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
   the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
   Nothing else changed; the other crates, the tag, the images and the archives stay at 0.7.0.
