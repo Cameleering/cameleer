@@ -303,7 +303,7 @@ detailed measurements, the Windows numbers and the tuning history are in
 ## gRPC and HTTP/2 on simoom (0.7.0, 2026-11-18)
 
 Release 0.7.0 moved the gRPC client and server and the HTTP/2 code onto simoom
-(see the [0.7.0 release notes](release-notes/0.7.0.md)). This round compares two builds of Cameleer, 0.7.0
+(see the [0.7.0 release notes](https://github.com/cameleering/cameleer/blob/main/docs/release-notes/0.7.0.md)). This round compares two builds of Cameleer, 0.7.0
 against 0.6.1, on the three-droplet setup above: the same machines, the same load generator for both, each
 build on both servers in both phases, two runs at 64 connections and one at 256. The raw records, the
 method and the cases that failed in the first attempt are in
