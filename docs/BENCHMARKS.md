@@ -300,6 +300,57 @@ detailed measurements, the Windows numbers and the tuning history are in
 [`benchmarks/analysis.md`](../benchmarks/analysis.md); the build options are in
 [build features](guides/build-features.md).
 
+## gRPC and HTTP/2 on simoom (0.7.0, 2026-11-18)
+
+Release 0.7.0 moved the gRPC client and server and the HTTP/2 code onto simoom
+(see the [0.7.0 release notes](https://github.com/cameleering/cameleer/blob/main/docs/release-notes/0.7.0.md)). This round compares two builds of Cameleer, 0.7.0
+against 0.6.1, on the three-droplet setup above: the same machines, the same load generator for both, each
+build on both servers in both phases, two runs at 64 connections and one at 256. The raw records, the
+method and the cases that failed in the first attempt are in
+[`benchmarks/results/2026-11-18-linux-grpc-http2/`](../benchmarks/results/2026-11-18-linux-grpc-http2/).
+It is not a comparison with Apache Camel: no Camel side was written for gRPC.
+
+| scenario, 64 connections | new req/s | old req/s | new / old | p99 new / old | CPU per request new / old | peak memory new / old |
+|---|---:|---:|---:|---|---|---|
+| HTTP, fixed reply | 146,477 | 146,770 | 1.00x | 1.42 / 1.52 ms | 20 / 20 us | 10.4 / 10.6 MB |
+| REST API with JSON | 123,793 | 130,956 | **0.95x** | 1.56 / 1.45 ms | 23 / 22 us | 10.9 / 11.1 MB |
+| gRPC unary call (protobuf) | 10,472 | 9,926 | **1.06x** | 10.85 / 16.66 ms | 204 / 287 us | 13.1 / 16.3 MB |
+| MCP tool call, stateless | 54,179 | 54,187 | 1.00x | 4.16 / 4.08 ms | 54 / 54 us | 30.6 / 30.5 MB |
+| MCP tool call, session | 55,816 | 56,082 | 1.00x | 4.10 / 3.96 ms | 51 / 50 us | 30.8 / 30.6 MB |
+
+At 256 connections gRPC is 1.05x (10,328 / 9,882 requests per second, CPU per request 199 / 284 us, p99
+39 / 45 ms) and the other rows are within 2%.
+
+### Gains
+
+- **gRPC server, per call:** 29% less CPU per request (204 against 287 us) and a p99 that is 35% lower at 64
+  connections (10.85 against 16.66 ms). Throughput is 1.05x to 1.06x, within what two runs can separate from
+  noise, so the claim is the CPU and the tail, not the throughput.
+- **Binary size:** the `full` build is 0.7% smaller (26,523,736 against 26,714,760 bytes, stripped) and the
+  `core` build is unchanged (7,047,640 against 7,047,768). That is the net of deleting the old HTTP/2 and HPACK
+  code and using simoom's; the 0.6.1 growth (+1.7% and +7.4%) was measured before that code was removed.
+- **Cold start and memory of the CLI:** no difference (ready in 2.2 ms for `full`, 1.6 ms for `core`).
+
+### Losses and limits
+
+- **`rest-json` is about 5% slower** (0.94x and 0.95x in the two runs, 123,793 against 130,956 requests per second;
+  p99 1.56 against 1.45 ms). `http` and MCP show no change. I do not know the cause. The change between the
+  builds that touches this path is that the HTTP server now speaks HTTP/2; that is a guess I did not test.
+- **HTTP/2 serves about half the requests per second of HTTP/1.1** for small requests on the same route: 63,941
+  against 125,721 (0.51x) at 64 concurrent calls over 4 connections, with the same CPU per request (21 us) and a
+  server at 79 to 126% of 400% CPU. It is not the number of connections (4, 16 and 64 all gave 72,000 to 81,000)
+  and not the load generator (its threads were at most 17% busy). Not explained. HTTP/1.1 remains the faster
+  protocol for small calls on this server.
+- **gRPC stops at about 11,000 calls per second on both builds,** from 16 concurrent calls up, while neither the
+  server (at most 230% of 400% CPU) nor the load generator (70% of one core) is out of CPU; one call on an idle server takes
+  0.27 ms. Server time is mostly kernel time and each call starts threads, so thread creation is the suspect;
+  I did not profile it. The new server is not faster at the top end because both have this ceiling.
+- **At 256 connections** the gRPC server's peak memory is 18.9 against 17.5 MB (one thread per call).
+- Noise: the two servers differ by 10 to 25% in speed and phase 1 was slower than phase 2 in the first run, so
+  differences of a few percent between builds are not results. The figures are means over both servers and
+  both phases.
+- Not measured: gRPC streaming calls, HTTP/2 with TLS, the gRPC client against the old client, Windows.
+
 ## Found a problem?
 
 If a number here doesn't match what you measure, please

@@ -42,9 +42,11 @@ version = "0.7.0"
 dependencies = [
  "cameleer-ai",
  "cameleer-core",
+ "cameleer-grpc",
  "cameleer-http",
  "cameleer-kafka-mqtt",
  "cameleer-sql",
+ "simoom-client",
 ]
 
 [[package]]

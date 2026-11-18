@@ -61,6 +61,7 @@ fn context(sink: &Arc<AtomicU64>) -> Result<CamelContext> {
 fn realworld_context() -> CamelContext {
     let ctx = CamelContext::new();
     cameleer_http::register(&ctx);
+    cameleer_grpc::register(&ctx);
     cameleer_kafka_mqtt::register(&ctx);
     cameleer_sql::register(&ctx);
     ctx
