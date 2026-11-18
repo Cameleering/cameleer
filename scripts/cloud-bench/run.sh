@@ -16,7 +16,9 @@
 # Layout: two identical servers (a, b) and a load node with Kafka, PostgreSQL and the load
 # generator. Phase 1 runs Apache Camel (JVM and Quarkus native) on a and Cameleer on b, phase 2
 # swaps them, so a difference between the two machines cancels out. Only one side runs at a time.
-# BENCH_SIDES limits the sides (default: java rust native).
+# BENCH_SIDES limits the sides (default: java rust native). BENCH_INPROC=0 skips the in-process and
+# Kafka-stream scenarios (only the served ones run); BENCH_SERVED picks them (default: http rest-json
+# http-kafka http-sql; also grpc and rest-json-h2, an HTTP/2 variant of rest-json).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -90,14 +92,14 @@ one_side() { # one_side <phase> <side> <node-pub> <node-priv> <node-name>
   # Apache Camel's camel-mcp-server (JVM) and the official TypeScript SDK (side node)
   local served="$SERVED"
   case "$side" in
-    rust) served="$served mcp mcp-session" ;;
+    rust|base) served="$served mcp mcp-session" ;;
     java) served="$served mcp-session" ;;
     node) served="mcp-session" ;;
   esac
   local env="BENCH_KAFKA=$L_PRIV:9092 BENCH_PG=$L_PRIV BENCH_RUN=$phase$side$(date +%s)"
   local tag="phase=$phase node=$node"
   # a failing step is recorded as a FAILED line and the run goes on with the next one
-  if [ "$side" != node ]; then
+  if [ "$side" != node ] && [ "${BENCH_INPROC:-1}" = 1 ]; then
   log "phase $phase: $side on $node, in-process scenarios"
   { on "$pub" "$env /root/cameleer/scripts/cloud-bench/bench-node.sh inproc $side $WARMUP $ITER $ITERS" 2>>"$OUT/run.log" \
     || echo "FAILED side=$side scenario=inproc"; } | sed "s/^\([A-Z]*\) /\1 $tag /" | tee -a "$results"

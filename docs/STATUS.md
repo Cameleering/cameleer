@@ -539,6 +539,13 @@ Cameleer's own HTTP code or it is not used.
 - **0.7.0 (2026-11-16): the simoom replacement is finished.** Release notes in `docs/release-notes/0.7.0.md`.
   Hermetic suite on Windows 11: 2961 passed, 0 failed, zero warnings; the official tier (WSL2, Go 1.24.7
   and grpcio): HTTP/2 3/3, TLS 2/2, gRPC 2/2.
+- **Benchmark round of 2026-11-18 (0.7.0 against 0.6.1, three DigitalOcean `c-4` droplets, deleted afterwards):**
+  gRPC unary 1.06x requests/s with 29% less server CPU per call and a 35% lower p99; plain HTTP and MCP 1.00x;
+  `rest-json` 0.95x (not explained); HTTP/2 at 0.51x of HTTP/1.1 for small calls (not explained); `full` binary
+  -0.7%, `core` unchanged. Raw data and method in `benchmarks/results/2026-11-18-linux-grpc-http2/`, report in
+  `docs/BENCHMARKS.md`. Open: why gRPC stops at about 11,000 calls/s on both builds (thread creation is the
+  suspect, not profiled), why HTTP/2 is slower than HTTP/1.1, and the 5% on `rest-json`. Not measured: gRPC
+  streaming, HTTP/2 over TLS, the gRPC client, Windows.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).

@@ -152,6 +152,16 @@ With the default `SIMPLE` strategy the body becomes an array of responses; set
 Yes: `usePlainText=false` with `keyCertChainResource` and `keyResource` on the server and
 `trustCertCollectionResource` on the client. Mutual TLS is supported.
 
+### How fast is it?
+
+Measured on 4-vCPU cloud machines (release 0.7.0, unary calls with a protobuf request and reply, 64 concurrent
+calls over 4 HTTP/2 connections): about 10,500 calls per second at about 200 microseconds of server CPU per call,
+with a p99 of about 11 ms. A call on an idle server takes about 0.3 ms. Throughput stops rising at about 11,000
+calls per second from 16 concurrent calls up, while the machine still has CPU to spare; the cause is not known
+(each call starts threads, which is the suspect). Streaming calls were not measured. The
+[full numbers and the comparison with 0.6.1](../BENCHMARKS.md#grpc-and-http2-on-simoom-070-2026-11-18) are in
+the benchmark report.
+
 ## Related
 
 - [thrift](thrift.md): Thrift RPC.

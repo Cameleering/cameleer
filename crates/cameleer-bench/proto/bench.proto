@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package bench;
+
+// The gRPC scenario of the cloud benchmark: one unary call, a request and a reply with two fields.
+service Echo {
+  rpc Say (Req) returns (Reply);
+}
+
+message Req {
+  string name = 1;
+  int64 id = 2;
+}
+
+message Reply {
+  string message = 1;
+  int64 id = 2;
+}

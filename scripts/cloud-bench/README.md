@@ -32,6 +32,8 @@ because they're billed by the hour.
 | `rest-json` | over the network | an order API: read fields from the JSON request, answer with JSON |
 | `http-kafka` | over the network | order ingestion: publish each order to Kafka, keyed by id, then answer |
 | `http-sql` | over the network | persistence: insert each order into PostgreSQL, then answer |
+| `grpc` | over the network | a unary gRPC call through the `grpc` consumer, protobuf request and reply (`crates/cameleer-bench/proto/bench.proto`); `BENCH_H2_CONNS` sets the HTTP/2 connections (default 4) |
+| `rest-json-h2` | over the network | the `rest-json` route called over HTTP/2 (Cameleer only; there is no Java side) |
 | `kafka-stream` | Kafka on the load node | consume orders, filter, reshape, publish to another topic |
 | `startup` | in process | time to a started context with every route |
 
@@ -45,3 +47,14 @@ Pinned and checksum-verified downloads:
 - Apache Kafka 4.3.2
 
 PostgreSQL is Ubuntu 24.04's package.
+
+## Comparing two builds of Cameleer
+
+`BENCH_BASE=<git ref> BENCH_SIDES="rust base"` measures this commit (`rust`) against another one (`base`) on the
+same droplets, and `BENCH_INPROC=0 BENCH_SERVED="http rest-json grpc"` limits the run to served scenarios. The
+two servers differ in speed, so run it at least twice and read the result with
+`python3 scripts/cloud-bench/compare.py "64 connections" results-1.txt results-2.txt`, which takes the mean of
+each build over both servers and both phases. The baseline needs the benchmark scenarios too: make a branch from
+the old release and cherry-pick the scenario commit onto it (the round of 2026-11-18 did this with
+`bench-base-0.6.1`, see `benchmarks/results/2026-11-18-linux-grpc-http2/`). `run.sh sizes` compares binary
+size, cold start and memory of the `cameleer` command.
