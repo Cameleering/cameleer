@@ -20,9 +20,10 @@ use std::net::SocketAddr;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use cameleer_core::executor::ThreadPool;
 use cameleer_tls::TlsServerConfig;
 use simoom::{BodySink, Outcome, Reply, Request, Responder, Response};
 
@@ -41,6 +42,16 @@ where
     fn call(&self, call: &ServerCall) -> Status {
         self(call)
     }
+}
+
+/// The threads of all calls, in one pool for the process: a call needs up to three (the call itself, the
+/// reader of its request messages and, with a deadline, the handler), and starting threads was what limited
+/// the server to about 11,000 calls per second. The pool is a cached one: it starts a worker only when none is
+/// idle, no matter how many are busy (a call may block for as long as its stream lives), and a worker that
+/// stays idle for 30 seconds exits. It is never shut down, so stopping a server does not wait for a call.
+fn pool() -> &'static Arc<ThreadPool> {
+    static POOL: OnceLock<Arc<ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| ThreadPool::with_keep_alive("grpc", 1 << 20, Duration::from_secs(30)))
 }
 
 /// What the reader thread passes on.
@@ -354,7 +365,7 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
                 let _ = tx.send(Chunk::Data(first));
             }
             let gone = cancelled.clone();
-            let spawned = std::thread::Builder::new().name("grpc-body".into()).spawn(move || {
+            let started = pool().execute(move || {
                 let mut buf = vec![0u8; 16 * 1024];
                 loop {
                     match src.read(&mut buf) {
@@ -375,7 +386,7 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
                     }
                 }
             });
-            if spawned.is_err() {
+            if !started {
                 return reply.status(503).body_static(b"cannot start a thread for the request body");
             }
         }
@@ -411,9 +422,8 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
         return Outcome::Deferred;
     }
     let (service, c2) = (service.clone(), call.clone());
-    let spawned = std::thread::Builder::new().name("grpc-call".into()).spawn(move || run(service, c2));
-    if spawned.is_err() {
-        call.finish(&Status::new(Code::ResourceExhausted, "cannot spawn handler thread"));
+    if !pool().execute(move || run(service, c2)) {
+        call.finish(&Status::new(Code::ResourceExhausted, "cannot start a thread for the call"));
     }
     Outcome::Deferred
 }
@@ -432,12 +442,12 @@ fn run(service: Arc<dyn GrpcService>, call: ServerCall) {
     // run the handler on its own thread so the deadline can be enforced
     let (tx, rx) = channel();
     let (svc, c2) = (service.clone(), call.clone());
-    let spawned = std::thread::Builder::new().name("grpc-handler".into()).spawn(move || {
+    let started = pool().execute(move || {
         let st = guarded(&svc, &c2);
         let _ = tx.send(st);
     });
-    if spawned.is_err() {
-        call.finish(&Status::new(Code::ResourceExhausted, "cannot spawn handler thread"));
+    if !started {
+        call.finish(&Status::new(Code::ResourceExhausted, "cannot start a thread for the handler"));
         return;
     }
     match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
