@@ -143,11 +143,30 @@
     <ul>
       <li>REST API with JSON showed 0.95x on 0.7.0 (0.94x and 0.95x in the two runs). A later control round on the same droplets, in which this route ran identical code in both builds, varied by as much (0.98x and 0.91x; 0.91x to 1.06x across the HTTP, REST and MCP routes), so this is within the noise of the setup and not counted as a loss. An earlier version of this page listed it as one.</li>
       <li>HTTP/2 on Cameleer's HTTP server serves about half the requests per second of HTTP/1.1 for small calls on the same route, at the same CPU per request (21 µs) and with the server far from saturated. It is not the number of connections and not the load generator; the cause is not known. HTTP/1.1 is the faster protocol for small calls on this server.</li>
-      <li>gRPC throughput stops at about 11,000 calls per second on both builds from 16 concurrent calls up, while neither the server nor the load generator is out of CPU; the cause has not been profiled. So the gRPC gain is CPU per call and tail latency, not throughput: 1.05x to 1.06x is within what two runs separate from noise.</li>
+      <li>gRPC throughput stops at about 11,000 calls per second on both builds from 16 concurrent calls up, while neither the server nor the load generator is out of CPU. So the gRPC gain of 0.7.0 is CPU per call and tail latency, not throughput: 1.05x to 1.06x is within what two runs separate from noise. The limit was the threads started for each call: running them on a pool removes it (next table, not released yet).</li>
       <li>At 256 connections gRPC is 1.05x (10,328 against 9,882 req/s), CPU per request 199 against 284 µs and p99 39 against 45 ms, but peak memory is higher: 18.9 against 17.5 MB (loss).</li>
       <li>Noise: the two servers differ by 10 to 25% in speed, and phase 1 was slower than phase 2 in the first run, so differences of a few percent between the builds are not results.</li>
       <li>Not measured: gRPC streaming calls, HTTP/2 over TLS, the gRPC client against the old client, Windows, and any comparison with Apache Camel for gRPC or HTTP/2.</li>
     </ul>
+    <h3 id="grpc-pool">After release 0.7.0, not released yet: gRPC calls on a pool of threads</h3>
+    <p class="intro">Measured 2026-11-18 on the same droplets and setup. The gRPC server takes the threads of each call from a shared pool instead of starting them per call. This is on <code>main</code> but in no release yet. New: <code>main</code> with the pool; old: release 0.7.0 library code. The same load generator for both, each build on both servers in both phases; two runs at 64 concurrent calls, one at 256.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>gRPC unary call (protobuf)</th><th class="num">0.7.0</th><th class="num">with the pool</th><th class="num">result</th></tr></thead>
+      <tbody>
+        <tr><td>throughput, 64 concurrent calls</td><td class="num">10,174 req/s</td><td class="num">47,282 req/s</td><td class="num res">4.65x (runs: 4.82x, 4.48x)</td></tr>
+        <tr><td>throughput, 256 concurrent calls</td><td class="num">10,400 req/s</td><td class="num">45,108 req/s</td><td class="num res">4.34x</td></tr>
+        <tr><td>p99 latency, 64 concurrent calls</td><td class="num">13.96 ms</td><td class="num">2.52 ms</td><td class="num res">5.5x lower</td></tr>
+        <tr><td>server CPU per request, 64 concurrent calls</td><td class="num">221 µs</td><td class="num">57 µs</td><td class="num res">74% less</td></tr>
+        <tr class="loss"><td>peak memory, 64 concurrent calls</td><td class="num">14.1 MB</td><td class="num">49.0 MB</td><td class="num res">3.5x more (loss)</td></tr>
+        <tr class="loss"><td>peak memory, 256 concurrent calls</td><td class="num">20.5 MB</td><td class="num">168.5 MB</td><td class="num res">8x more (loss)</td></tr>
+      </tbody>
+    </table></div>
+    <ul>
+      <li>The cost is memory: the pool keeps many threads, each with its stack and buffers, and the memory grows with the number of concurrent calls.</li>
+      <li>The HTTP, REST and MCP routes run identical code in both builds of this round; their ratios (0.91x to 1.06x from run to run) are the noise control used above.</li>
+      <li>Not measured: gRPC streaming calls, TLS, the gRPC client, Windows.</li>
+    </ul>
+    <p class="note">Method and raw data: <a href="../docs/BENCHMARKS.html#grpc-on-a-pool-of-threads-2026-11-18-same-day">BENCHMARKS, gRPC on a pool of threads</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-18-linux-grpc-pool">benchmarks/results/2026-11-18-linux-grpc-pool</a>.</p>
     <p class="note">Method, every scenario and the raw data: <a href="../docs/BENCHMARKS.html#grpc-and-http2-on-simoom-070-2026-11-18">BENCHMARKS, gRPC and HTTP/2 on simoom</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-18-linux-grpc-http2">benchmarks/results/2026-11-18-linux-grpc-http2</a>. The earlier simoom figures below (its HTTP/1.1 server against the server it replaced) are a separate round and still stand.</p>
   </div>
 </section>
