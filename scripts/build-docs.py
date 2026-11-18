@@ -153,6 +153,10 @@ def _menu(root, label, href, entries, current):
             '        <div class="nav-sub">\n%s\n        </div>\n      </div>' % (cur, href, label, subs))
 
 
+SUPPORTED = ('<p class="supported">Supported by '
+             '<a href="https://datahq.ai" aria-label="DataHQ"><img src="%sbrand/datahq-wordmark.png" alt="DataHQ" width="152" height="27" loading="lazy" style="display:block;margin-top:8px"></a></p>')
+
+
 def render_partial(name, root, page_path):
     """root: relative prefix from the page to the site root ("", "../", ...). page_path: the
     page's path from the root ("cameleer/mcp/", "docs/guides/x.html", "" for the home)."""
@@ -189,7 +193,7 @@ def render_partial(name, root, page_path):
         return ('<div class="credit">\n      <h4><a href="%scameleer/">Cameleer</a></h4>\n'
                 '      <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. '
                 'It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>\n'
-                '      <p>Cameleer is a <a href="%s">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>\n    </div>' % (root, root))
+                '      <p>Cameleer is a <a href="%s">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>\n      %s\n    </div>' % (root, root, SUPPORTED % root))
     if name in ("series-box", "series-nav"):
         paths = [p for p, *_ in SERIES]
         if page_path not in paths:
@@ -217,7 +221,7 @@ def render_partial(name, root, page_path):
     if name == "credit-cameleering":
         return ('<div class="credit">\n      <h4><img src="%sbrand/cameleering/cameleering-mark.svg" width="22" height="22" alt="" style="vertical-align:-5px;margin-right:8px">Cameleering</h4>\n'
                 '      <p>Carry more on less. No claim without a number. Cameleering is a way of engineering and the home of its projects: Cameleer is the first, simoom the second. Open source, Apache License 2.0; open to consulting (<a href="%sabout/">about</a>).</p>\n'
-                '      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>\n    </div>' % (root, root))
+                '      <p>Independent of the Apache Software Foundation: Apache, Apache Camel and Camel are trademarks of the ASF, and other product names are trademarks of their owners.</p>\n      %s\n    </div>' % (root, root, SUPPORTED % root))
     raise BuildError("unknown partial `%s`" % name)
 
 

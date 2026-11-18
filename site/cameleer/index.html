@@ -219,6 +219,23 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
   .bench .b span { display: none; }
   .toggle button { font-size: 13px; padding: 10px 2px; }
 }
+/* results: the improvement is the headline, the before and after under it (same cards as the Cameleering home) */
+#results { padding-top: 56px; }
+.outcomes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 8px 0 18px; }
+.outcome { display: block; border: 1px solid var(--line); border-radius: 14px; padding: 20px 20px 16px; background: #fff; text-decoration: none; color: var(--ink); }
+.outcome:hover, .outcome:focus-visible { border-color: var(--signal); }
+.outcome b { display: block; font-size: clamp(38px, 4.6vw, 56px); font-weight: 800; letter-spacing: -.04em; line-height: 1; color: var(--signal); }
+.outcome em { display: block; font-style: normal; font-weight: 700; font-size: 18px; margin: 6px 0 8px; }
+.outcome span { display: block; font-size: 15px; color: var(--muted); line-height: 1.45; }
+.outcome small { display: block; margin-top: 10px; font: 500 12px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.outcome.cost { border-color: var(--signal); background: var(--signal-soft, #eef2ff); }
+.results-links { display: flex; flex-wrap: wrap; gap: 12px; margin: 4px 0 0; }
+@media (max-width: 1000px) { .outcomes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .outcomes { grid-template-columns: 1fr; gap: 10px; }
+  .outcome { padding: 14px 16px 12px; }
+  .outcome b { font-size: 40px; }
+}
 </style>
 </head>
 <body>
@@ -320,6 +337,22 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
   </div>
 </section>
 
+<section id="results" aria-labelledby="res-h">
+  <div class="wrap">
+    <h2 id="res-h">What it saves, measured.</h2>
+    <p class="sub">Each number names its baseline: Apache Camel 4.23 on Java 21, the same routes on the same machines. The cost figures are arithmetic on the measured time and memory, shown step by step on the FinOps page.</p>
+    <div class="outcomes">
+      <a class="outcome" href="compare/apache-camel-vs-cameleer/"><b>450x</b><em>faster start-up</em><span>1,106 ms to 2.45 ms for a started context (451x, shown rounded down; on Quarkus native, Apache Camel takes 30 ms).</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome cost" href="../finops/#translate"><b>23x</b><em>smaller Lambda compute bill</em><span>$0.06 instead of $1.50 for a month of 10 million requests: execution time 3 ms instead of 7 ms, memory 128 MB instead of 512 MB, and cold starts that cost 300 times less.</span><small>Arithmetic on measured time and memory</small></a>
+      <a class="outcome cost" href="../finops/"><b>51x</b><em>more integrations per node</em><span>20 to 1,024 per 8 GiB on a direct route; 24 to 122 for HTTP into Kafka.</span><small>Arithmetic on measured peak memory</small></a>
+      <a class="outcome" href="../ledger/#cameleer"><b>54x</b><em>less memory, at best</em><span>Peak 214&ndash;440 MB to 7&ndash;67 MB: 4.8 to 54 times less across 11 scenarios.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="compare/apache-camel-vs-cameleer/"><b>8.7x</b><em>the throughput, at best</em><span>1.7 to 8.7 times Apache Camel&rsquo;s messages per second, in all 11 scenarios; one p99 loss, below.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="mcp/"><b>1.77x</b><em>the MCP tool calls</em><span>39,922 calls per second against 22,604 for Apache Camel&rsquo;s MCP server, at 56 MB of memory instead of 289 MB.</span><small>Cameleer vs camel-mcp-server</small></a>
+    </div>
+    <div class="results-links"><a class="btn primary" href="../finops/">What this saves on your cloud bill</a><a class="btn ghost" href="../ledger/#cameleer">Every result and loss in the ledger</a></div>
+  </div>
+</section>
+
 <section id="cameleering" aria-labelledby="cam-h">
   <div class="wrap">
     <h2 id="cam-h">Apache Camel and us.</h2>
@@ -381,6 +414,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <div class="item"><div class="label">Request-reply<small>in-memory queue</small></div><div class="bars"><div class="b r" data-w="100"><span>719k msgs/s</span></div><div class="b j" data-w="16.3"><span>118k</span></div></div><div class="x">6.1x</div></div>
     </div>
     <p class="fine"><strong>One loss:</strong> p99 latency for HTTP into Kafka is 8.6 ms against Apache Camel's 7.8 ms, while serving 1.7 times the requests. Plain HTTP reaches 68% of a do-nothing server on the same machines; <a href="../simoom/">simoom</a>, the new HTTP engine, is measured to close that gap (<a href="../ledger/#simoom">its ledger rows</a>). Apache Camel compiled natively with Quarkus starts faster than on the JVM but has lower throughput; it is in the full comparison. <a href="compare/apache-camel-vs-cameleer/">Every scenario, the method and the raw data</a>.</p>
+    <p class="fine"><strong>0.7.0 against 0.6.1</strong> (2026-11-18, gRPC and HTTP/2 moved onto simoom; two builds of Cameleer, not Apache Camel): the gRPC server uses 29% less CPU per call (204 against 287 &micro;s) with a 35% lower p99 (10.85 against 16.66 ms); its throughput is level within noise (1.06x), because both builds stop near 11,000 calls per second. <strong>Two losses:</strong> REST API with JSON is 0.95x (123,793 against 130,956 req/s), and on this server HTTP/2 serves about half the small requests per second of HTTP/1.1 (63,941 against 125,721); neither cause is known yet. <a href="../docs/BENCHMARKS.html#grpc-and-http2-on-simoom-070-2026-11-18">The round, its limits and the raw data</a> · <a href="../ledger/#cameleer-0-7">ledger rows</a>.</p>
   </div>
 </section>
 
@@ -577,7 +611,7 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <div><dt>Downloads</dt><dd><a href="https://github.com/cameleering/cameleer/releases">signed archives</a> for Linux x86-64, Windows x86-64 and macOS arm64, each with SHA-256, SBOM and Sigstore bundle</dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/cameleering/cameleer">github.com/cameleering/cameleer</a></dd></div>
       <div><dt>Platforms</dt><dd>Linux, macOS, Windows; images for linux/amd64 and linux/arm64; AWS Lambda</dd></div>
-      <div><dt>Dependencies</dt><dd>none outside the Rust standard library</dd></div>
+      <div><dt>Dependencies</dt><dd>no third-party crates: the Rust standard library and Cameleering&rsquo;s own std-only crates (simoom for HTTP)</dd></div>
       <div><dt>Affiliation</dt><dd>independent; not affiliated with the Apache Software Foundation</dd></div>
     </dl>
   </div>
@@ -722,6 +756,7 @@ $ cameleer --help
       <h4><a href="../cameleer/">Cameleer</a></h4>
       <p>An independent Rust implementation in the style of <a href="https://camel.apache.org/">Apache Camel</a>, following its names, options and semantics. It contains no Camel source code and is not affiliated with or endorsed by the Apache Software Foundation. Apache, Apache Camel and Camel are trademarks of the ASF; other product names are trademarks of their owners.</p>
       <p>Cameleer is a <a href="../">Cameleering</a> project: carry more on less, no claim without a number. Apache License 2.0.</p>
+      <p class="supported">Supported by <a href="https://datahq.ai" aria-label="DataHQ"><img src="../brand/datahq-wordmark.png" alt="DataHQ" width="152" height="27" loading="lazy" style="display:block;margin-top:8px"></a></p>
     </div>
 <!-- /partial:credit-cameleer -->
     <div>
