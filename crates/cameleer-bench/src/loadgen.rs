@@ -212,8 +212,11 @@ pub fn run_remote(host: &str, port: u16, path: &str, body: &str, conns: usize, p
 }
 
 /// HTTP/2 connections (and gRPC channels) the load of `conns` concurrent calls is spread over: a
-/// few connections carrying many streams, the way HTTP/2 clients run.
-pub const H2_CONNECTIONS: usize = 4;
+/// few connections carrying many streams, the way HTTP/2 clients run. `BENCH_H2_CONNS` changes it:
+/// a client that shares few connections between many threads can become the limit of the run.
+pub fn h2_connections() -> usize {
+    std::env::var("BENCH_H2_CONNS").ok().and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(4)
+}
 
 /// A protobuf `bench.Req`: field 1 `name` (string) and field 2 `id` (int64).
 pub fn grpc_request(id: u64) -> Vec<u8> {
@@ -234,9 +237,9 @@ pub fn grpc_request(id: u64) -> Vec<u8> {
     m
 }
 
-/// `conns` concurrent unary gRPC calls over [`H2_CONNECTIONS`] channels (HTTP/2 connections).
+/// `conns` concurrent unary gRPC calls over [`h2_connections`] channels (HTTP/2 connections).
 fn run_grpc(host: &str, port: u16, conns: usize, plan: Plan) -> (Outcome, u64) {
-    let channels: Vec<Arc<cameleer_grpc::grpc::GrpcClient>> = (0..H2_CONNECTIONS.min(conns.max(1))).map(|_| Arc::new(cameleer_grpc::grpc::GrpcClient::plaintext(&format!("{host}:{port}")))).collect();
+    let channels: Vec<Arc<cameleer_grpc::grpc::GrpcClient>> = (0..h2_connections().min(conns.max(1))).map(|_| Arc::new(cameleer_grpc::grpc::GrpcClient::plaintext(&format!("{host}:{port}")))).collect();
     let n_channels = channels.len();
     let out = driver::run(plan, conns, None, |w| {
         let channel = channels[w % n_channels].clone();
@@ -251,9 +254,9 @@ fn run_grpc(host: &str, port: u16, conns: usize, plan: Plan) -> (Outcome, u64) {
     (out, n_channels as u64)
 }
 
-/// `conns` concurrent POSTs of orders over [`H2_CONNECTIONS`] HTTP/2 connections (h2c prior knowledge).
+/// `conns` concurrent POSTs of orders over [`h2_connections`] HTTP/2 connections (h2c prior knowledge).
 fn run_h2(host: &str, port: u16, path: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
-    let clients: Vec<Arc<simoom_client::Client>> = (0..H2_CONNECTIONS.min(conns.max(1)))
+    let clients: Vec<Arc<simoom_client::Client>> = (0..h2_connections().min(conns.max(1)))
         .map(|_| {
             let mut cfg = simoom_client::Config::default();
             cfg.version = simoom_client::HttpVersion::Http2;
@@ -302,7 +305,7 @@ mod tests {
         let plan = Plan { warmup: Duration::from_millis(50), iteration: Duration::from_millis(150), iters: 2 };
         let (out, channels) = run_remote("127.0.0.1", grpc_port, "bench.Echo", "grpc", 8, plan);
         assert!(out.msgs > 10, "grpc: {out:?}");
-        assert_eq!(channels, H2_CONNECTIONS as u64);
+        assert_eq!(channels, h2_connections() as u64);
         let (out, _) = run_remote("127.0.0.1", h2_port, "/orders", "order-h2", 8, plan);
         assert!(out.msgs > 10, "http/2: {out:?}");
         ctx.stop().unwrap();

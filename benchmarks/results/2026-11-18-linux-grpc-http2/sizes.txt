@@ -1,0 +1,36 @@
+SIZE build=new-full bytes=29979312 stripped=26523736
+SIZE build=base-full bytes=30187400 stripped=26714760
+SIZE build=new-core bytes=8210640 stripped=7047640
+SIZE build=base-core bytes=8210392 stripped=7047768
+COLDSTART build=base-full route=http round=1 ready_ms=2.13 min_ready_ms=1.86 exit_ms=2.64 peak_kb=11008 ready_runs=2.66,2.36,2.29,2.13,2.00,1.86,1.99,1.96,2.48,2.05,1.98,2.05,2.27,2.00,2.20,2.12,2.00,2.13,2.29,2.29
+COLDSTART build=base-full route=timer round=1 ready_ms=2.97 min_ready_ms=2.00 exit_ms=1004.41 peak_kb=12544 ready_runs=2.00,3.09,2.95,2.97,3.02,2.96,2.93,2.72,2.93,3.14,3.03,2.96,3.05,3.05,3.02,2.92,2.95,2.95,3.03,3.04
+COLDSTART build=new-full route=http round=1 ready_ms=2.18 min_ready_ms=1.94 exit_ms=2.62 peak_kb=11136 ready_runs=2.72,2.25,2.22,2.15,2.09,1.94,1.94,2.15,2.12,2.08,2.09,2.18,1.96,2.35,2.09,2.33,2.20,2.18,2.29,2.26
+COLDSTART build=new-full route=timer round=1 ready_ms=2.98 min_ready_ms=1.99 exit_ms=1004.38 peak_kb=12288 ready_runs=1.99,3.12,2.99,2.93,2.83,2.95,3.11,3.06,3.00,2.94,2.98,2.98,2.97,2.76,2.93,3.09,2.93,2.66,3.05,3.02
+COLDSTART build=base-core route=http round=1 ready_ms=1.53 min_ready_ms=1.39 exit_ms=2.04 peak_kb=6912 ready_runs=1.99,1.72,1.44,1.63,1.52,1.51,1.50,1.49,1.50,1.54,1.39,1.53,1.44,1.53,1.42,1.65,1.72,1.85,1.78,1.87
+COLDSTART build=base-core route=timer round=1 ready_ms=2.33 min_ready_ms=1.64 exit_ms=1003.35 peak_kb=7808 ready_runs=1.64,2.34,2.30,2.28,2.39,2.37,2.37,2.44,2.37,2.29,2.29,2.33,2.33,2.28,2.31,2.28,2.35,2.31,2.39,2.36
+COLDSTART build=new-core route=http round=1 ready_ms=1.54 min_ready_ms=1.30 exit_ms=1.91 peak_kb=6656 ready_runs=1.89,1.98,1.55,1.52,1.44,1.53,1.54,1.63,1.40,1.54,1.49,1.47,1.52,1.46,1.72,1.39,1.70,1.30,1.56,1.80
+COLDSTART build=new-core route=timer round=1 ready_ms=2.31 min_ready_ms=1.39 exit_ms=1003.33 peak_kb=7680 ready_runs=1.39,2.04,1.95,2.06,2.08,2.44,2.31,2.37,2.31,2.38,2.27,2.38,2.43,2.30,2.39,2.38,2.21,2.30,2.36,2.31
+COLDSTART build=base-full route=http round=2 ready_ms=2.08 min_ready_ms=1.89 exit_ms=2.62 peak_kb=11008 ready_runs=2.85,2.39,2.10,2.05,2.16,2.02,2.08,1.89,1.97,1.97,1.89,2.01,2.28,2.29,2.24,1.98,2.24,2.08,2.25,2.03
+COLDSTART build=base-full route=timer round=2 ready_ms=3.02 min_ready_ms=1.89 exit_ms=1004.41 peak_kb=12544 ready_runs=1.89,3.00,2.96,3.02,3.03,3.03,3.09,2.93,3.04,3.06,2.99,3.04,2.99,3.08,3.08,2.99,2.94,3.05,2.95,2.97
+COLDSTART build=new-full route=http round=2 ready_ms=2.28 min_ready_ms=1.97 exit_ms=2.74 peak_kb=11136 ready_runs=2.74,2.43,2.24,2.04,2.07,1.97,2.02,2.32,2.11,2.25,2.05,2.21,2.30,2.45,2.41,2.28,2.30,2.29,2.24,2.30
+COLDSTART build=new-full route=timer round=2 ready_ms=3.04 min_ready_ms=2.12 exit_ms=1004.42 peak_kb=12288 ready_runs=2.12,2.91,2.89,2.92,3.04,3.08,3.07,3.09,3.04,2.90,3.06,2.99,3.00,2.97,2.96,3.07,3.06,3.08,3.11,2.96
+COLDSTART build=base-core route=http round=2 ready_ms=1.59 min_ready_ms=1.42 exit_ms=2.03 peak_kb=6784 ready_runs=2.09,1.62,1.60,1.48,1.58,1.52,1.69,1.53,1.47,1.59,1.50,1.57,1.59,1.55,1.50,1.76,1.79,1.42,1.68,1.81
+COLDSTART build=base-core route=timer round=2 ready_ms=2.31 min_ready_ms=1.47 exit_ms=1003.38 peak_kb=7808 ready_runs=1.47,2.38,2.34,2.29,2.34,2.39,2.23,2.40,2.31,2.40,2.31,2.16,2.22,2.23,2.28,2.40,2.16,2.42,2.39,2.13
+COLDSTART build=new-core route=http round=2 ready_ms=1.58 min_ready_ms=1.41 exit_ms=1.99 peak_kb=6656 ready_runs=2.02,1.74,1.67,1.58,1.54,1.48,1.52,1.41,1.58,1.43,1.53,1.47,1.57,1.90,1.57,1.79,1.59,1.72,1.85,1.72
+COLDSTART build=new-core route=timer round=2 ready_ms=2.35 min_ready_ms=1.50 exit_ms=1003.33 peak_kb=7680 ready_runs=1.50,2.33,2.32,2.34,2.32,2.35,2.37,2.37,2.45,2.35,2.35,2.31,2.26,2.40,2.44,2.38,2.43,2.26,2.27,2.28
+COLDSTART build=base-full route=http round=3 ready_ms=2.15 min_ready_ms=1.96 exit_ms=2.65 peak_kb=11008 ready_runs=2.82,2.33,2.15,2.16,2.11,2.06,2.15,2.00,2.01,1.96,2.32,1.99,2.24,2.05,2.38,2.21,2.09,2.13,2.30,2.19
+COLDSTART build=base-full route=timer round=3 ready_ms=2.99 min_ready_ms=1.87 exit_ms=1004.39 peak_kb=12544 ready_runs=1.87,2.93,3.11,2.88,3.01,2.99,2.99,3.01,2.96,2.93,2.96,2.93,2.98,3.07,3.02,3.17,3.03,3.04,2.92,3.12
+COLDSTART build=new-full route=http round=3 ready_ms=2.15 min_ready_ms=1.80 exit_ms=2.62 peak_kb=11136 ready_runs=2.80,2.31,2.12,1.96,2.04,2.18,2.35,2.05,1.80,1.95,1.84,2.00,2.30,2.10,2.15,2.10,2.16,2.21,2.28,2.30
+COLDSTART build=new-full route=timer round=3 ready_ms=2.73 min_ready_ms=2.02 exit_ms=1004.41 peak_kb=12416 ready_runs=2.02,2.83,2.78,2.73,2.77,2.73,2.71,2.76,2.81,2.70,2.75,2.72,2.70,2.83,2.72,2.72,2.66,2.76,2.68,2.80
+COLDSTART build=base-core route=http round=3 ready_ms=1.58 min_ready_ms=1.37 exit_ms=1.90 peak_kb=6784 ready_runs=2.06,1.74,1.60,1.55,1.50,1.58,1.52,1.52,1.54,1.53,1.53,1.48,1.59,1.37,1.62,1.58,1.74,1.52,1.67,1.72
+COLDSTART build=base-core route=timer round=3 ready_ms=2.05 min_ready_ms=1.50 exit_ms=1003.33 peak_kb=7808 ready_runs=1.50,2.01,2.02,2.09,2.05,1.95,2.05,1.93,2.05,2.12,2.11,1.94,1.96,2.07,2.09,2.07,2.12,2.02,1.95,2.09
+COLDSTART build=new-core route=http round=3 ready_ms=1.61 min_ready_ms=1.47 exit_ms=1.99 peak_kb=6784 ready_runs=1.98,1.65,1.71,1.51,1.59,1.65,1.62,1.54,1.61,1.59,1.65,1.55,1.52,1.47,1.50,1.58,1.53,1.71,1.74,1.70
+COLDSTART build=new-core route=timer round=3 ready_ms=2.06 min_ready_ms=1.49 exit_ms=1003.37 peak_kb=7680 ready_runs=1.49,2.12,2.06,1.95,1.98,2.02,2.15,2.04,2.17,2.02,1.96,2.05,2.14,2.10,2.10,2.08,2.09,1.99,2.05,2.13
+COLDSTART build=base-full route=http round=4 ready_ms=2.13 min_ready_ms=1.86 exit_ms=2.66 peak_kb=11008 ready_runs=2.64,2.33,2.34,2.01,1.96,2.07,1.88,1.98,1.97,2.13,2.04,1.87,2.26,2.08,1.86,2.25,2.25,2.25,2.24,2.21
+COLDSTART build=base-full route=timer round=4 ready_ms=3.06 min_ready_ms=1.93 exit_ms=1004.42 peak_kb=12544 ready_runs=1.93,3.06,3.20,3.09,2.87,3.03,2.98,3.11,3.08,3.06,3.24,2.89,3.01,3.16,3.11,3.04,2.97,3.09,2.90,3.05
+COLDSTART build=new-full route=http round=4 ready_ms=2.05 min_ready_ms=1.82 exit_ms=2.57 peak_kb=11136 ready_runs=2.79,2.33,2.04,2.12,1.85,1.89,2.16,2.01,1.96,2.18,1.92,1.95,2.05,1.92,2.20,2.07,1.82,2.06,1.87,2.14
+COLDSTART build=new-full route=timer round=4 ready_ms=2.74 min_ready_ms=1.88 exit_ms=1004.33 peak_kb=12416 ready_runs=1.88,2.73,2.60,2.75,2.77,2.81,2.74,2.78,2.74,2.77,2.80,2.70,2.72,2.73,2.72,2.70,2.80,2.76,2.70,2.92
+COLDSTART build=base-core route=http round=4 ready_ms=1.55 min_ready_ms=1.44 exit_ms=1.92 peak_kb=6912 ready_runs=1.87,1.73,1.47,1.60,1.56,1.71,1.44,1.60,1.44,1.62,1.49,1.54,1.46,1.55,1.61,1.53,1.52,1.54,1.48,1.85
+COLDSTART build=base-core route=timer round=4 ready_ms=2.30 min_ready_ms=1.42 exit_ms=1003.40 peak_kb=7808 ready_runs=1.42,2.30,2.28,2.34,2.39,2.38,2.21,2.34,2.27,2.28,2.28,2.33,2.43,2.40,2.29,2.28,2.30,2.23,2.37,2.43
+COLDSTART build=new-core route=http round=4 ready_ms=1.61 min_ready_ms=1.35 exit_ms=2.04 peak_kb=6784 ready_runs=2.09,2.14,1.65,1.62,1.54,1.48,1.51,1.60,1.46,1.62,1.52,1.68,1.61,1.54,1.54,1.74,1.54,1.82,1.35,1.92
+COLDSTART build=new-core route=timer round=4 ready_ms=2.35 min_ready_ms=1.67 exit_ms=1003.29 peak_kb=7680 ready_runs=1.67,2.33,2.33,2.27,2.35,2.41,2.35,2.44,2.45,2.34,2.38,2.30,2.40,2.34,2.50,2.24,2.39,2.36,2.37,2.32

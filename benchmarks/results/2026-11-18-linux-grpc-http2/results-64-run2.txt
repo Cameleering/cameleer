@@ -1,0 +1,60 @@
+VERSION phase=1 node=b scenario=http side=rust impl=Cameleer camel=0.7.0
+RESULT phase=1 node=b side=rust scenario=http msgs=4068162 secs=25.010 tput=162659 tput_min=148678 tput_max=166921 mean_us=393.10 p50_us=313.34 p99_us=1028.10 max_us=253148.45 connects=6607
+PROC phase=1 node=b side=rust scenario=http peak_rss_kb=10624 cpu_pct=219% user_s=64.84 sys_s=44.81
+VERSION phase=1 node=b scenario=rest-json side=rust impl=Cameleer camel=0.7.0
+RESULT phase=1 node=b side=rust scenario=rest-json msgs=3417143 secs=25.001 tput=136683 tput_min=129590 tput_max=141032 mean_us=467.87 p50_us=366.59 p99_us=1318.91 max_us=33520.00 connects=5666
+PROC phase=1 node=b side=rust scenario=rest-json peak_rss_kb=10880 cpu_pct=232% user_s=79.03 sys_s=37.40
+VERSION phase=1 node=b scenario=grpc side=rust impl=Cameleer camel=0.7.0
+RESULT phase=1 node=b side=rust scenario=grpc msgs=275446 secs=25.000 tput=11018 tput_min=10987 tput_max=11053 mean_us=5807.99 p50_us=5668.86 p99_us=10289.15 max_us=15685.65 connects=4
+PROC phase=1 node=b side=rust scenario=grpc peak_rss_kb=13464 cpu_pct=171% user_s=23.43 sys_s=62.44
+VERSION phase=1 node=b scenario=mcp side=rust impl=Cameleer camel=0.7.0
+RESULT phase=1 node=b side=rust scenario=mcp msgs=1447866 secs=25.001 tput=57913 tput_min=57231 tput_max=58789 mean_us=1104.77 p50_us=962.56 p99_us=3653.63 max_us=13725.97 connects=2358
+PROC phase=1 node=b side=rust scenario=mcp peak_rss_kb=31232 cpu_pct=236% user_s=85.96 sys_s=32.14
+VERSION phase=1 node=b scenario=mcp-session side=rust impl=Cameleer camel=0.7.0
+RESULT phase=1 node=b side=rust scenario=mcp-session msgs=1485279 secs=25.000 tput=59410 tput_min=58754 tput_max=60580 mean_us=1076.95 p50_us=921.60 p99_us=3784.70 max_us=17104.08 connects=2431
+PROC phase=1 node=b side=rust scenario=mcp-session peak_rss_kb=31872 cpu_pct=221% user_s=80.89 sys_s=29.91
+VERSION phase=1 node=a scenario=http side=base impl=Cameleer camel=0.6.1
+RESULT phase=1 node=a side=base scenario=http msgs=3923765 secs=25.001 tput=156946 tput_min=140307 tput_max=165390 mean_us=407.34 p50_us=358.40 p99_us=1171.46 max_us=42911.38 connects=6162
+PROC phase=1 node=a side=base scenario=http peak_rss_kb=10368 cpu_pct=225% user_s=66.67 sys_s=46.34
+VERSION phase=1 node=a scenario=rest-json side=base impl=Cameleer camel=0.6.1
+RESULT phase=1 node=a side=base scenario=rest-json msgs=2832732 secs=25.001 tput=113306 tput_min=106883 tput_max=119751 mean_us=564.56 p50_us=313.34 p99_us=1761.28 max_us=4282.99 connects=4587
+PROC phase=1 node=a side=base scenario=rest-json peak_rss_kb=11392 cpu_pct=225% user_s=74.41 sys_s=38.15
+VERSION phase=1 node=a scenario=grpc side=base impl=Cameleer camel=0.6.1
+RESULT phase=1 node=a side=base scenario=grpc msgs=239345 secs=25.000 tput=9574 tput_min=9560 tput_max=9583 mean_us=6684.22 p50_us=6324.22 p99_us=17170.43 max_us=29046.06 connects=4
+PROC phase=1 node=a side=base scenario=grpc peak_rss_kb=16628 cpu_pct=229% user_s=28.94 sys_s=85.65
+VERSION phase=1 node=a scenario=mcp side=base impl=Cameleer camel=0.6.1
+RESULT phase=1 node=a side=base scenario=mcp msgs=1269866 secs=25.000 tput=50794 tput_min=50345 tput_max=51228 mean_us=1259.65 p50_us=1089.54 p99_us=4292.61 max_us=19396.38 connects=2070
+PROC phase=1 node=a side=base scenario=mcp peak_rss_kb=31488 cpu_pct=234% user_s=85.85 sys_s=31.59
+VERSION phase=1 node=a scenario=mcp-session side=base impl=Cameleer camel=0.6.1
+RESULT phase=1 node=a side=base scenario=mcp-session msgs=1320436 secs=25.000 tput=52817 tput_min=52033 tput_max=53998 mean_us=1211.44 p50_us=1044.48 p99_us=4046.85 max_us=18590.62 connects=2138
+PROC phase=1 node=a side=base scenario=mcp-session peak_rss_kb=31616 cpu_pct=223% user_s=81.48 sys_s=30.22
+VERSION phase=2 node=a scenario=http side=rust impl=Cameleer camel=0.7.0
+RESULT phase=2 node=a side=rust scenario=http msgs=3828452 secs=25.000 tput=153135 tput_min=144781 tput_max=160486 mean_us=417.57 p50_us=350.21 p99_us=1236.99 max_us=33129.38 connects=6196
+PROC phase=2 node=a side=rust scenario=http peak_rss_kb=10624 cpu_pct=225% user_s=67.00 sys_s=45.99
+VERSION phase=2 node=a scenario=rest-json side=rust impl=Cameleer camel=0.7.0
+RESULT phase=2 node=a side=rust scenario=rest-json msgs=2691964 secs=25.000 tput=107677 tput_min=98220 tput_max=115930 mean_us=594.09 p50_us=268.29 p99_us=1826.82 max_us=4254.25 connects=4458
+PROC phase=2 node=a side=rust scenario=rest-json peak_rss_kb=10880 cpu_pct=223% user_s=73.75 sys_s=37.85
+VERSION phase=2 node=a scenario=grpc side=rust impl=Cameleer camel=0.7.0
+RESULT phase=2 node=a side=rust scenario=grpc msgs=243659 secs=25.000 tput=9746 tput_min=9695 tput_max=9830 mean_us=6565.72 p50_us=6389.76 p99_us=11599.87 max_us=17534.49 connects=4
+PROC phase=2 node=a side=rust scenario=grpc peak_rss_kb=13276 cpu_pct=168% user_s=22.45 sys_s=61.61
+VERSION phase=2 node=a scenario=mcp side=rust impl=Cameleer camel=0.7.0
+RESULT phase=2 node=a side=rust scenario=mcp msgs=1270855 secs=25.000 tput=50833 tput_min=49982 tput_max=51529 mean_us=1258.71 p50_us=1073.15 p99_us=4554.75 max_us=23825.17 connects=2063
+PROC phase=2 node=a side=rust scenario=mcp peak_rss_kb=30976 cpu_pct=232% user_s=85.44 sys_s=31.04
+VERSION phase=2 node=a scenario=mcp-session side=rust impl=Cameleer camel=0.7.0
+RESULT phase=2 node=a side=rust scenario=mcp-session msgs=1312576 secs=25.000 tput=52502 tput_min=51764 tput_max=53652 mean_us=1218.70 p50_us=1036.29 p99_us=4227.07 max_us=208296.55 connects=2133
+PROC phase=2 node=a side=rust scenario=mcp-session peak_rss_kb=31360 cpu_pct=220% user_s=80.47 sys_s=29.74
+VERSION phase=2 node=b scenario=http side=base impl=Cameleer camel=0.6.1
+RESULT phase=2 node=b side=base scenario=http msgs=4149360 secs=25.001 tput=165971 tput_min=165565 tput_max=166189 mean_us=385.32 p50_us=321.54 p99_us=626.69 max_us=246751.35 connects=6720
+PROC phase=2 node=b side=base scenario=http peak_rss_kb=10496 cpu_pct=222% user_s=65.36 sys_s=45.92
+VERSION phase=2 node=b scenario=rest-json side=base impl=Cameleer camel=0.6.1
+RESULT phase=2 node=b side=base scenario=rest-json msgs=3593158 secs=25.001 tput=143722 tput_min=132003 tput_max=150043 mean_us=444.92 p50_us=382.98 p99_us=1368.06 max_us=20760.22 connects=5710
+PROC phase=2 node=b side=base scenario=rest-json peak_rss_kb=11648 cpu_pct=230% user_s=78.40 sys_s=37.10
+VERSION phase=2 node=b scenario=grpc side=base impl=Cameleer camel=0.6.1
+RESULT phase=2 node=b side=base scenario=grpc msgs=249753 secs=25.001 tput=9990 tput_min=9949 tput_max=10050 mean_us=6405.84 p50_us=5996.54 p99_us=16908.29 max_us=30884.00 connects=4
+PROC phase=2 node=b side=base scenario=grpc peak_rss_kb=16616 cpu_pct=224% user_s=29.17 sys_s=83.20
+VERSION phase=2 node=b scenario=mcp side=base impl=Cameleer camel=0.6.1
+RESULT phase=2 node=b side=base scenario=mcp msgs=1417662 secs=25.000 tput=56706 tput_min=56382 tput_max=56973 mean_us=1128.33 p50_us=962.56 p99_us=4112.38 max_us=18583.06 connects=2301
+PROC phase=2 node=b side=base scenario=mcp peak_rss_kb=31488 cpu_pct=228% user_s=83.48 sys_s=30.82
+VERSION phase=2 node=b scenario=mcp-session side=base impl=Cameleer camel=0.6.1
+RESULT phase=2 node=b side=base scenario=mcp-session msgs=1485091 secs=25.000 tput=59403 tput_min=58340 tput_max=61522 mean_us=1077.09 p50_us=921.60 p99_us=3981.31 max_us=16282.86 connects=2402
+PROC phase=2 node=b side=base scenario=mcp-session peak_rss_kb=31104 cpu_pct=224% user_s=80.91 sys_s=31.19
