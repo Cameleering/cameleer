@@ -189,3 +189,31 @@ fn many_calls_blocked_in_their_handlers_do_not_starve_a_new_call() {
         call.cancel();
     }
 }
+
+#[test]
+fn the_server_ends_a_call_at_its_deadline_whatever_the_handler_is_doing() {
+    // the handler sleeps through the deadline; a raw HTTP/2 client (no timer of its own) sends grpc-timeout
+    let s = serve(|call| {
+        std::thread::sleep(Duration::from_secs(2));
+        let _ = call.send(b"late");
+        Status::ok()
+    });
+    let mut cfg = simoom_client::Config::default();
+    cfg.version = simoom_client::HttpVersion::Http2;
+    let client = simoom_client::ClientBuilder::default().config(cfg).build();
+    let mut h = simoom_client::Headers::new();
+    h.append("content-type", "application/grpc");
+    h.append("te", "trailers");
+    h.append("grpc-timeout", "300m");
+    let mut call = client.call("POST", &format!("http://{}/t.Echo/Slow", s.local_addr()), &h).unwrap();
+    call.send(&[0, 0, 0, 0, 1, b'x']).unwrap();
+    call.finish().unwrap();
+    let started = Instant::now();
+    let until = Some(Instant::now() + Duration::from_secs(5));
+    let status_in_head = call.response_until(until).unwrap().1.get("grpc-status").map(str::to_string);
+    let mut buf = [0u8; 64];
+    while call.read_until(&mut buf, until).unwrap_or(0) > 0 {}
+    let status = status_in_head.or_else(|| call.trailers().and_then(|t| t.get("grpc-status").map(str::to_string)));
+    assert_eq!(status.as_deref(), Some("4"), "DEADLINE_EXCEEDED");
+    assert!(started.elapsed() < Duration::from_millis(1500), "ended after {:?}, not when the handler returned", started.elapsed());
+}
