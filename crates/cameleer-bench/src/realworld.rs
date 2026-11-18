@@ -21,8 +21,21 @@ use cameleer_core::prelude::*;
 use crate::driver::{self, Outcome, Plan};
 
 /// Scenarios served over HTTP, with the path the load generator calls and its request body.
-pub const SERVED: &[(&str, &str, &str)] =
-    &[("http", "/bench", "small"), ("rest-json", "/orders", "order"), ("http-kafka", "/ingest", "order"), ("http-sql", "/persist", "order"), ("mcp", "/mcp", "mcp"), ("mcp-session", "/mcp", "mcp-session")];
+pub const SERVED: &[(&str, &str, &str)] = &[
+    ("http", "/bench", "small"),
+    ("rest-json", "/orders", "order"),
+    // the same route as `rest-json`, called over HTTP/2 (h2c prior knowledge, multiplexed streams)
+    ("rest-json-h2", "/orders", "order-h2"),
+    ("http-kafka", "/ingest", "order"),
+    ("http-sql", "/persist", "order"),
+    ("mcp", "/mcp", "mcp"),
+    ("mcp-session", "/mcp", "mcp-session"),
+    // a unary gRPC call through the `grpc` consumer (protobuf request and reply, see proto/bench.proto)
+    ("grpc", "bench.Echo", "grpc"),
+];
+
+/// The `.proto` file of the gRPC scenario.
+pub const GRPC_PROTO: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/proto/bench.proto");
 
 /// PostgreSQL pool size on both sides (Cameleer `poolSize`, HikariCP `maximumPoolSize`).
 pub const PG_POOL: usize = 16;
@@ -57,7 +70,7 @@ pub fn served(scenario: &str) -> Option<(&'static str, &'static str)> {
 /// Add the route of a served scenario on `0.0.0.0:port`.
 pub fn add_server_route(ctx: &CamelContext, scenario: &str, port: u16, env: &Env) -> Result<()> {
     let (path, _) = served(scenario).ok_or_else(|| CamelError::illegal_argument(format!("not a served scenario: {scenario}")))?;
-    let from = format!("netty-http:http://0.0.0.0:{port}{path}");
+    let from = if scenario == "grpc" { format!("grpc://0.0.0.0:{port}/{path}?protoFile={GRPC_PROTO}") } else { format!("netty-http:http://0.0.0.0:{port}{path}") };
     let env = env.clone();
     let scenario = scenario.to_string();
     ctx.add_routes(move |b| match scenario.as_str() {
@@ -69,7 +82,7 @@ pub fn add_server_route(ctx: &CamelContext, scenario: &str, port: u16, env: &Env
                 .set_body(constant("{\"status\":\"ok\"}"));
         }
         // an order API: read fields from the JSON request, answer with a JSON document
-        "rest-json" => {
+        "rest-json" | "rest-json-h2" => {
             b.from(&from)
                 .route_id("rest-json")
                 .convert_body_to("String")
@@ -99,6 +112,15 @@ pub fn add_server_route(ctx: &CamelContext, scenario: &str, port: u16, env: &Env
                 .to(&format!("sql:insert into orders (order_id, customer, side) values (:#orderId, :#customer, '{}')?dataSource={}", env.side, env.pg_url()))
                 .set_header("Content-Type", constant("application/json"))
                 .set_body(constant("{\"status\":\"stored\"}"));
+        }
+        // a unary gRPC call: the request fields are read, the reply carries them back
+        "grpc" => {
+            b.from(&from).route_id("grpc").process(|ex: &mut Exchange| {
+                let name = ex.body().get("name").map(|v| v.to_string()).unwrap_or_default();
+                let id = ex.body().get("id").cloned().unwrap_or(Value::Int(0));
+                ex.set_body(Value::object([("message", Value::from(format!("hello {name}"))), ("id", id)]));
+                Ok(())
+            });
         }
         _ => unreachable!(),
     })

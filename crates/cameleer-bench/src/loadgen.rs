@@ -157,6 +157,12 @@ pub fn run(port: u16, path: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
 /// Load `host:port/path` with `conns` connections. `body` is `small` (the fixed document of
 /// [`run`]) or `order` (an order with a new id on every request).
 pub fn run_remote(host: &str, port: u16, path: &str, body: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
+    if body == "grpc" {
+        return run_grpc(host, port, conns, plan);
+    }
+    if body == "order-h2" {
+        return run_h2(host, port, path, conns, plan);
+    }
     if body == "mcp-session" {
         let connects = Arc::new(AtomicU64::new(0));
         let out = driver::run(plan, conns, None, |w| {
@@ -205,10 +211,102 @@ pub fn run_remote(host: &str, port: u16, path: &str, body: &str, conns: usize, p
     (out, connects.load(Ordering::Relaxed))
 }
 
+/// HTTP/2 connections (and gRPC channels) the load of `conns` concurrent calls is spread over: a
+/// few connections carrying many streams, the way HTTP/2 clients run.
+pub const H2_CONNECTIONS: usize = 4;
+
+/// A protobuf `bench.Req`: field 1 `name` (string) and field 2 `id` (int64).
+pub fn grpc_request(id: u64) -> Vec<u8> {
+    let name = b"bench";
+    let mut m = vec![0x0a, name.len() as u8];
+    m.extend_from_slice(name);
+    m.push(0x10);
+    let mut v = id;
+    loop {
+        let b = (v & 0x7f) as u8;
+        v >>= 7;
+        if v == 0 {
+            m.push(b);
+            break;
+        }
+        m.push(b | 0x80);
+    }
+    m
+}
+
+/// `conns` concurrent unary gRPC calls over [`H2_CONNECTIONS`] channels (HTTP/2 connections).
+fn run_grpc(host: &str, port: u16, conns: usize, plan: Plan) -> (Outcome, u64) {
+    let channels: Vec<Arc<cameleer_grpc::grpc::GrpcClient>> = (0..H2_CONNECTIONS.min(conns.max(1))).map(|_| Arc::new(cameleer_grpc::grpc::GrpcClient::plaintext(&format!("{host}:{port}")))).collect();
+    let n_channels = channels.len();
+    let out = driver::run(plan, conns, None, |w| {
+        let channel = channels[w % n_channels].clone();
+        let mut n = 0u64;
+        move || {
+            n += 1;
+            let req = grpc_request((w as u64 + 1) * 1_000_000_000 + n);
+            let (reply, _) = channel.unary("/bench.Echo/Say", &req, &vec![], Some(Duration::from_secs(30))).expect("grpc call failed");
+            assert!(!reply.is_empty(), "empty gRPC reply");
+        }
+    });
+    (out, n_channels as u64)
+}
+
+/// `conns` concurrent POSTs of orders over [`H2_CONNECTIONS`] HTTP/2 connections (h2c prior knowledge).
+fn run_h2(host: &str, port: u16, path: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
+    let clients: Vec<Arc<simoom_client::Client>> = (0..H2_CONNECTIONS.min(conns.max(1)))
+        .map(|_| {
+            let mut cfg = simoom_client::Config::default();
+            cfg.version = simoom_client::HttpVersion::Http2;
+            Arc::new(simoom_client::ClientBuilder::default().config(cfg).build())
+        })
+        .collect();
+    let n_clients = clients.len();
+    let url = format!("http://{host}:{port}{path}");
+    let out = driver::run(plan, conns, None, |w| {
+        let client = clients[w % n_clients].clone();
+        let url = url.clone();
+        let mut n = 0u64;
+        move || {
+            n += 1;
+            let body = crate::scenarios::order_json((w as u64 + 1) * 1_000_000_000 + n).into_bytes();
+            let resp = client.post(&url).header("content-type", "application/json").body(body).timeout(Duration::from_secs(30)).send().expect("http/2 request failed");
+            assert_eq!(resp.status(), 200, "unexpected HTTP status");
+            resp.bytes().expect("http/2 response body");
+        }
+    });
+    (out, n_clients as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    #[test]
+    fn a_grpc_request_is_a_valid_protobuf_message() {
+        assert_eq!(grpc_request(1), [0x0a, 5, b'b', b'e', b'n', b'c', b'h', 0x10, 1]);
+        // 300 = 0b1_0010_1100: two varint bytes
+        assert_eq!(&grpc_request(300)[7..], [0x10, 0xac, 0x02]);
+    }
+
+    #[test]
+    fn loads_the_grpc_and_http2_scenarios() {
+        use cameleer_core::prelude::*;
+        let ctx = CamelContext::new();
+        cameleer_http::register(&ctx);
+        cameleer_grpc::register(&ctx);
+        let (grpc_port, h2_port) = (crate::free_port(), crate::free_port());
+        crate::realworld::add_server_route(&ctx, "grpc", grpc_port, &crate::realworld::Env::from_env()).unwrap();
+        crate::realworld::add_server_route(&ctx, "rest-json-h2", h2_port, &crate::realworld::Env::from_env()).unwrap();
+        ctx.start().unwrap();
+        let plan = Plan { warmup: Duration::from_millis(50), iteration: Duration::from_millis(150), iters: 2 };
+        let (out, channels) = run_remote("127.0.0.1", grpc_port, "bench.Echo", "grpc", 8, plan);
+        assert!(out.msgs > 10, "grpc: {out:?}");
+        assert_eq!(channels, H2_CONNECTIONS as u64);
+        let (out, _) = run_remote("127.0.0.1", h2_port, "/orders", "order-h2", 8, plan);
+        assert!(out.msgs > 10, "http/2: {out:?}");
+        ctx.stop().unwrap();
+    }
 
     #[test]
     fn parses_content_length_chunked_and_close() {
