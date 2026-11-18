@@ -333,23 +333,47 @@ At 256 connections gRPC is 1.05x (10,328 / 9,882 requests per second, CPU per re
 
 ### Losses and limits
 
-- **`rest-json` is about 5% slower** (0.94x and 0.95x in the two runs, 123,793 against 130,956 requests per second;
-  p99 1.56 against 1.45 ms). `http` and MCP show no change. I do not know the cause. The change between the
-  builds that touches this path is that the HTTP server now speaks HTTP/2; that is a guess I did not test.
+- **`rest-json` came out 5% slower** (0.94x and 0.95x in the two runs, 123,793 against 130,956 requests per
+  second; p99 1.56 against 1.45 ms), but this is probably noise: in the later round with the gRPC thread pool,
+  two builds with identical HTTP code gave 0.98x and 0.91x for the same route (and 1.05x and 0.93x for MCP),
+  so swings of 5 to 9% between two builds on this setup are not results. `http` and MCP showed no change.
 - **HTTP/2 serves about half the requests per second of HTTP/1.1** for small requests on the same route: 63,941
   against 125,721 (0.51x) at 64 concurrent calls over 4 connections, with the same CPU per request (21 us) and a
   server at 79 to 126% of 400% CPU. It is not the number of connections (4, 16 and 64 all gave 72,000 to 81,000)
   and not the load generator (its threads were at most 17% busy). Not explained. HTTP/1.1 remains the faster
   protocol for small calls on this server.
-- **gRPC stops at about 11,000 calls per second on both builds,** from 16 concurrent calls up, while neither the
-  server (at most 230% of 400% CPU) nor the load generator (70% of one core) is out of CPU; one call on an idle server takes
-  0.27 ms. Server time is mostly kernel time and each call starts threads, so thread creation is the suspect;
-  I did not profile it. The new server is not faster at the top end because both have this ceiling.
-- **At 256 connections** the gRPC server's peak memory is 18.9 against 17.5 MB (one thread per call).
+- **gRPC stopped at about 11,000 calls per second on both builds** (release 0.7.0 and 0.6.1), from 16 concurrent
+  calls up, while neither the server nor the load generator was out of CPU. Starting threads for each call was the
+  suspect; the next section tests it: on a pool of threads the 0.7.0 server does 4.3x to 4.8x as many calls.
+- **At 256 connections** the 0.7.0 gRPC server's peak memory was 18.9 against 17.5 MB (one thread per call).
 - Noise: the two servers differ by 10 to 25% in speed and phase 1 was slower than phase 2 in the first run, so
   differences of a few percent between builds are not results. The figures are means over both servers and
   both phases.
 - Not measured: gRPC streaming calls, HTTP/2 with TLS, the gRPC client against the old client, Windows.
+
+### gRPC on a pool of threads (2026-11-18, same day)
+
+The ceiling above was tested by running the threads of a call (the call, the reader of its request messages and,
+with a deadline, the handler) on one process-wide cached pool instead of starting them per call. New is that
+change (`80e3d08`), old is `main` at release 0.7.0 (`d14472e`); the setup, the load generator and the way of
+counting are those of the round above. Raw records, method and a noise control:
+[`benchmarks/results/2026-11-18-linux-grpc-pool/`](../benchmarks/results/2026-11-18-linux-grpc-pool/).
+
+| gRPC unary call | 64 concurrent calls (two runs) | 256 concurrent calls |
+|---|---|---|
+| requests per second, new / old | **47,282 / 10,174 = 4.65x** (per run 4.82x and 4.48x) | 45,108 / 10,400 = 4.34x |
+| p99 | 2.52 / 13.96 ms | 10.22 / 39.06 ms |
+| server CPU per request | 57 / 221 us | 56 / 200 us |
+| **server peak memory** | **49.0 / 14.1 MB** | **168.5 / 20.5 MB** |
+
+- **The suspicion was right:** with the thread starts removed, the same server does 4.3x to 4.8x the calls per second
+  on the same machines, at a quarter of the CPU per call and a fifth of the p99.
+- **The price is memory:** the pool keeps many threads, each with its stack and buffers, so peak memory is 3.5x at
+  64 concurrent calls and 8x at 256 (49 and 169 MB). Fewer threads per call (no separate handler thread, no reader
+  thread for a unary call) might keep the gain with less memory; that was not tried.
+- **Everything else is unchanged within the noise** (HTTP 1.03x, REST 0.95x, MCP 0.99x; the code is identical in
+  both builds, so these show the size of the noise: 0.91x to 1.06x from run to run).
+- Not measured: streaming calls, TLS, the gRPC client, Windows.
 
 ## Found a problem?
 

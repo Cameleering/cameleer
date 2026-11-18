@@ -160,3 +160,32 @@ fn a_stopped_server_refuses_new_connections_and_returns_promptly() {
     let e = c.unary("/t.Echo/Say", b"x", &vec![], Some(Duration::from_secs(3))).unwrap_err();
     assert_eq!(e.code, Code::Unavailable, "{e}");
 }
+
+#[test]
+fn many_calls_blocked_in_their_handlers_do_not_starve_a_new_call() {
+    // every blocked call holds pool threads (the call and the reader of its request); a new call still gets one
+    let s = serve(|call| {
+        if call.method() == "Hold" {
+            while let Ok(Some(_)) = call.recv() {}
+            return Status::ok();
+        }
+        let _ = call.send(b"ok");
+        Status::ok()
+    });
+    let c = Arc::new(client(&s));
+    let holding: Vec<_> = (0..200)
+        .map(|_| {
+            let call = c.start_call("/t.Echo/Hold", &vec![], Some(Duration::from_secs(60))).unwrap();
+            call.send(b"x").unwrap();
+            call
+        })
+        .collect();
+    std::thread::sleep(Duration::from_millis(300));
+    let t = Instant::now();
+    let (r, _) = c.unary("/t.Echo/Say", b"x", &vec![], Some(Duration::from_secs(10))).unwrap();
+    assert_eq!(r, b"ok");
+    assert!(t.elapsed() < Duration::from_secs(3), "the call waited {:?} behind blocked ones", t.elapsed());
+    for call in holding {
+        call.cancel();
+    }
+}
