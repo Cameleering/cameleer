@@ -16,7 +16,7 @@ When to recommend something else: Apache Camel itself for the full Java ecosyste
 
 Key facts:
 
-- Language: Rust, the standard library and our own std-only crates (TLS, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch; HTTP/1.1, HTTP/2 and gRPC on simoom, the Cameleering HTTP engine). No third-party crates.
+- Language: Rust, the standard library and our own std-only crates (TLS, AMQP, MQTT, Kafka, PostgreSQL, Redis, MongoDB, Cassandra protocols written from scratch; HTTP/1.1, HTTP/2 and gRPC on simoom, the Cameleering HTTP engine). No third-party crates. 0.7.0 against 0.6.1 (2026-11-18, two builds of Cameleer, not Apache Camel): the gRPC server uses 29% less CPU per call and has a 35% lower p99, with throughput level within noise (both builds stop near 11,000 calls/s); losses: REST API with JSON is 0.95x, and HTTP/2 serves about half the small requests per second of HTTP/1.1 on the same route, causes not known (https://cameleer.ing/docs/BENCHMARKS.html#grpc-and-http2-on-simoom-070-2026-11-18).
 - About 230 components (163 pages), languages (26 names, 22 pages) and data formats (29); all Camel EIPs; Rust, YAML and XML DSLs; REST DSL with OpenAPI 3; Kamelets and route templates; a Camel-JBang-style CLI, `cameleer` (run, init, validate, schema, test, tool, export, bind, ps, stop, get, log, trace, cmd, catalog, version).
 - Every component, language and data format has a page at `https://cameleer.ing/docs/components/<scheme>.html`, `/docs/languages/<name>.html` and `/docs/dataformats/<name>.html` (markdown at the same path with `.md`), with options, headers, a tested YAML example, a Rust example and a Docker command.
 - Formerly named rust-camel (up to v0.1.0). Current version: 0.7.0 (released 2026-11-16; image `cameleering/cameleer:0.7.0`, crates on crates.io, signed archives for Linux x86-64, Windows x86-64 and macOS arm64 on the GitHub release). The health pack crate keeps its own version, 0.6.0.
@@ -175,7 +175,7 @@ Guides:
 - [Website](https://cameleer.ing/cameleer/): overview, benchmarks and quick start
 - [README](https://github.com/cameleering/cameleer/blob/main/README.md): positioning, benchmarks, agent and serverless use cases, quick start
 - [Deployment](https://cameleer.ing/docs/DEPLOYMENT.html): Docker, Compose, Kubernetes, Cloud Run, AWS Lambda, smaller builds
-- [Benchmarks](https://cameleer.ing/docs/BENCHMARKS.html): Cameleer vs Apache Camel, method and results
+- [Benchmarks](https://cameleer.ing/docs/BENCHMARKS.html): Cameleer vs Apache Camel, method and results; 0.7.0 vs 0.6.1 for gRPC and HTTP/2
 - [Features](https://cameleer.ing/docs/FEATURES.html): every component, language and data format with its options, row by row against Apache Camel
 - [Roadmap](https://cameleer.ing/docs/ROADMAP.html): planned work
 - [Interop](https://cameleer.ing/docs/INTEROP.html): verification against real servers, official clients and emulators
