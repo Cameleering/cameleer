@@ -15,17 +15,17 @@
 //! * The response head is sent with the first message (or a trailers-only answer when the call ends
 //!   without one), the status goes out as trailers.
 
-use std::io::Read;
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use cameleer_core::executor::ThreadPool;
 use cameleer_tls::TlsServerConfig;
-use simoom::{BodySink, Outcome, Reply, Request, Responder, Response};
+use simoom::{BodySink, BodySource, Outcome, Reply, Request, Responder, Response};
 
 use super::{encode_grpc_message, frame_message_with, is_reserved_header, parse_timeout, Code, MessageDecoder, Metadata, Status};
 use crate::h2::H2Config;
@@ -44,28 +44,40 @@ where
     }
 }
 
-/// The threads of all calls, in one pool for the process: a call needs up to three (the call itself, the
-/// reader of its request messages and, with a deadline, the handler), and starting threads was what limited
-/// the server to about 11,000 calls per second. The pool is a cached one: it starts a worker only when none is
-/// idle, no matter how many are busy (a call may block for as long as its stream lives), and a worker that
-/// stays idle for 30 seconds exits. It is never shut down, so stopping a server does not wait for a call.
+/// The threads of all calls, in one pool for the process: a call runs as one job (its handler), and starting a
+/// thread per call was what limited the server to about 11,000 calls per second. The pool is a cached one: it
+/// starts a worker only when none is idle, no matter how many are busy (a call may block for as long as its
+/// stream lives), and a worker that stays idle for 30 seconds exits. It is never shut down, so stopping a
+/// server does not wait for a call.
 fn pool() -> &'static Arc<ThreadPool> {
     static POOL: OnceLock<Arc<ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| ThreadPool::with_keep_alive("grpc", 1 << 20, Duration::from_secs(30)))
 }
 
-/// What the reader thread passes on.
-enum Chunk {
-    Data(Vec<u8>),
-    End,
-    /// The stream was reset or the connection dropped.
-    Failed,
+/// The request side of a call: the messages that arrived, and the body still to come.
+struct Incoming {
+    /// The rest of the request body; `None` when it arrived whole with the head.
+    src: Option<BodySource>,
+    decoder: MessageDecoder,
+    /// The client half-closed: no more bytes will come.
+    done: bool,
 }
 
-struct Incoming {
-    rx: Receiver<Chunk>,
-    decoder: MessageDecoder,
+/// Wakes the thread that waits for request bytes.
+struct Unpark(std::thread::Thread);
+
+impl Wake for Unpark {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
 }
+
+/// How long a wait for request bytes goes on without a deadline before it looks at the call again (a
+/// cancel is noticed within this time even when nothing wakes the thread).
+const POLL: Duration = Duration::from_millis(250);
 
 struct CallState {
     send_encoding: Option<String>,
@@ -92,6 +104,8 @@ struct CallInner {
     /// The client cancelled the call or went away.
     cancelled: Arc<AtomicBool>,
     observer: AtomicI64,
+    /// The entry of this call in the deadline timer, removed when the call finishes.
+    watch: Mutex<Option<(Instant, u64)>>,
 }
 
 /// One server-side call. Cheap to clone (shared state).
@@ -174,30 +188,40 @@ impl ServerCall {
     /// Receives the next request message; `Ok(None)` when the client half-closed.
     pub fn recv(&self) -> Result<Option<Vec<u8>>, Status> {
         let mut inc = self.inner.incoming.lock().unwrap();
+        let mut buf = [0u8; 8192];
         loop {
             if let Some(m) = inc.decoder.next_message()? {
                 return Ok(Some(m));
             }
-            let chunk = match self.inner.deadline {
-                Some(d) => {
-                    let left = d.checked_duration_since(Instant::now()).ok_or_else(|| Status::new(Code::DeadlineExceeded, "deadline exceeded"))?;
-                    match inc.rx.recv_timeout(left) {
-                        Ok(c) => c,
-                        Err(RecvTimeoutError::Timeout) => return Err(Status::new(Code::DeadlineExceeded, "deadline exceeded")),
-                        Err(RecvTimeoutError::Disconnected) => Chunk::Failed,
-                    }
+            if inc.done {
+                if !inc.decoder.is_empty() {
+                    return Err(Status::new(Code::Internal, "truncated request message"));
                 }
-                None => inc.rx.recv().unwrap_or_else(|_| Chunk::Failed),
+                return Ok(None);
+            }
+            let waker = Waker::from(Arc::new(Unpark(std::thread::current())));
+            let mut cx = Context::from_waker(&waker);
+            let polled = match inc.src.as_mut() {
+                Some(src) => src.poll_read(&mut cx, &mut buf),
+                None => Poll::Ready(Ok(0)),
             };
-            match chunk {
-                Chunk::Data(c) => inc.decoder.push(&c),
-                Chunk::End => {
-                    if !inc.decoder.is_empty() {
-                        return Err(Status::new(Code::Internal, "truncated request message"));
-                    }
-                    return Ok(None);
+            match polled {
+                Poll::Ready(Ok(0)) => inc.done = true,
+                Poll::Ready(Ok(n)) => inc.decoder.push(&buf[..n]),
+                Poll::Ready(Err(_)) => {
+                    self.inner.cancelled.store(true, Ordering::SeqCst);
+                    return Err(self.gone());
                 }
-                Chunk::Failed => return Err(self.gone()),
+                Poll::Pending => {
+                    if self.inner.cancelled.load(Ordering::SeqCst) {
+                        return Err(self.gone());
+                    }
+                    let wait = match self.inner.deadline {
+                        Some(d) => d.checked_duration_since(Instant::now()).ok_or_else(|| Status::new(Code::DeadlineExceeded, "deadline exceeded"))?.min(POLL),
+                        None => POLL,
+                    };
+                    std::thread::park_timeout(wait);
+                }
             }
         }
     }
@@ -241,6 +265,9 @@ impl ServerCall {
             return;
         }
         st.finished = true;
+        if let Some(key) = self.inner.watch.lock().unwrap().take() {
+            deadlines().unwatch(key);
+        }
         let mut t: Vec<(String, String)> = vec![("grpc-status".to_string(), (status.code as i32).to_string())];
         if !status.message.is_empty() {
             t.push(("grpc-message".to_string(), encode_grpc_message(&status.message)));
@@ -355,48 +382,15 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
     let accept_encoding = text("grpc-accept-encoding");
     let peer = req.peer_addr();
 
-    // the request body: complete already, or streamed through a reader thread
+    // the request body: complete already, or the rest of it still to come
     let cancelled = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = channel();
-    let first = req.body().to_vec();
-    match req.take_body() {
-        Some(mut src) => {
-            if !first.is_empty() {
-                let _ = tx.send(Chunk::Data(first));
-            }
-            let gone = cancelled.clone();
-            let started = pool().execute(move || {
-                let mut buf = vec![0u8; 16 * 1024];
-                loop {
-                    match src.read(&mut buf) {
-                        Ok(0) => {
-                            let _ = tx.send(Chunk::End);
-                            return;
-                        }
-                        Ok(n) => {
-                            if tx.send(Chunk::Data(buf[..n].to_vec())).is_err() {
-                                return;
-                            }
-                        }
-                        Err(_) => {
-                            gone.store(true, Ordering::SeqCst);
-                            let _ = tx.send(Chunk::Failed);
-                            return;
-                        }
-                    }
-                }
-            });
-            if !started {
-                return reply.status(503).body_static(b"cannot start a thread for the request body");
-            }
-        }
-        None => {
-            if !first.is_empty() {
-                let _ = tx.send(Chunk::Data(first));
-            }
-            let _ = tx.send(Chunk::End);
-        }
+    let mut decoder = MessageDecoder::new(encoding, max_message_size);
+    let first = req.body();
+    if !first.is_empty() {
+        decoder.push(first);
     }
+    let src = req.take_body();
+    let incoming = Incoming { done: src.is_none(), src, decoder };
 
     let responder = reply.defer();
     let flag = cancelled.clone();
@@ -410,16 +404,21 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
             deadline,
             peer,
             accept_encoding,
-            incoming: Mutex::new(Incoming { rx, decoder: MessageDecoder::new(encoding, max_message_size) }),
+            incoming: Mutex::new(incoming),
             sink: Mutex::new(None),
             state: Mutex::new(CallState { send_encoding: None, finished: false, response_headers: Vec::new(), trailers: Vec::new(), responder: Some(responder) }),
             cancelled,
             observer: AtomicI64::new(0),
+            watch: Mutex::new(None),
         }),
     };
     if call.service().is_empty() {
         call.finish(&Status::new(Code::Unimplemented, format!("malformed method path {}", path)));
         return Outcome::Deferred;
+    }
+    // a call that outlives its deadline ends with DEADLINE_EXCEEDED while its handler may still run
+    if let Some(d) = deadline {
+        *call.inner.watch.lock().unwrap() = Some(deadlines().watch(d, call.clone()));
     }
     let (service, c2) = (service.clone(), call.clone());
     if !pool().execute(move || run(service, c2)) {
@@ -434,25 +433,71 @@ fn guarded(service: &Arc<dyn GrpcService>, call: &ServerCall) -> Status {
 }
 
 fn run(service: Arc<dyn GrpcService>, call: ServerCall) {
-    let Some(deadline) = call.deadline() else {
-        let st = guarded(&service, &call);
-        call.finish(&st);
-        return;
-    };
-    // run the handler on its own thread so the deadline can be enforced
-    let (tx, rx) = channel();
-    let (svc, c2) = (service.clone(), call.clone());
-    let started = pool().execute(move || {
-        let st = guarded(&svc, &c2);
-        let _ = tx.send(st);
-    });
-    if !started {
-        call.finish(&Status::new(Code::ResourceExhausted, "cannot start a thread for the handler"));
-        return;
+    let st = guarded(&service, &call);
+    call.finish(&st);
+}
+
+/// The deadlines of the calls that have one, on one timer thread: when a call's time is up the timer
+/// ends it with DEADLINE_EXCEEDED, whatever its handler is doing (the handler's sends then fail, and
+/// `recv` reports the deadline too). A call that finishes first is taken out.
+struct Deadlines {
+    next: AtomicU64,
+    map: Mutex<BTreeMap<(Instant, u64), ServerCall>>,
+    wake: Condvar,
+}
+
+fn deadlines() -> &'static Deadlines {
+    static TIMER: OnceLock<&'static Deadlines> = OnceLock::new();
+    TIMER.get_or_init(|| {
+        let d: &'static Deadlines = Box::leak(Box::new(Deadlines { next: AtomicU64::new(0), map: Mutex::new(BTreeMap::new()), wake: Condvar::new() }));
+        let _ = std::thread::Builder::new().name("grpc-deadlines".into()).spawn(move || d.run());
+        d
+    })
+}
+
+impl Deadlines {
+    fn watch(&self, at: Instant, call: ServerCall) -> (Instant, u64) {
+        let key = (at, self.next.fetch_add(1, Ordering::Relaxed));
+        let mut map = self.map.lock().unwrap();
+        let first = map.keys().next().is_none_or(|k| key < *k);
+        map.insert(key, call);
+        drop(map);
+        if first {
+            self.wake.notify_one();
+        }
+        key
     }
-    match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-        Ok(st) => call.finish(&st),
-        Err(RecvTimeoutError::Timeout) => call.finish(&Status::new(Code::DeadlineExceeded, "deadline exceeded")),
-        Err(RecvTimeoutError::Disconnected) => call.finish(&Status::new(Code::Internal, "handler panicked")),
+
+    fn unwatch(&self, key: (Instant, u64)) {
+        self.map.lock().unwrap().remove(&key);
+    }
+
+    fn run(&self) {
+        let mut map = self.map.lock().unwrap();
+        loop {
+            let now = Instant::now();
+            let mut due = Vec::new();
+            while let Some((&key, _)) = map.iter().next() {
+                if key.0 > now {
+                    break;
+                }
+                if let Some(call) = map.remove(&key) {
+                    due.push(call);
+                }
+            }
+            if !due.is_empty() {
+                // finishing a call takes it out of this map: not with the lock held
+                drop(map);
+                for call in due {
+                    call.finish(&Status::new(Code::DeadlineExceeded, "deadline exceeded"));
+                }
+                map = self.map.lock().unwrap();
+                continue;
+            }
+            map = match map.keys().next().map(|k| k.0) {
+                Some(at) => self.wake.wait_timeout(map, at.saturating_duration_since(now)).unwrap().0,
+                None => self.wake.wait(map).unwrap(),
+            };
+        }
     }
 }

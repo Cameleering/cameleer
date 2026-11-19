@@ -92,7 +92,18 @@ impl ThreadPool {
         let started = self.started.clone();
         let keep_alive = self.keep_alive;
         let spawned = std::thread::Builder::new().name(format!("{}-{}", self.name, n + 1)).spawn(move || loop {
-            let job = { rx.lock().unwrap().recv_timeout(keep_alive) };
+            // A worker that finds no job waiting is about to block: it hands the blocks cached by the
+            // allocator to the shared lists first (a pool of hundreds of idle workers would hold
+            // hundreds of caches). A busy pool never does this: it finds a job at once.
+            let ready = rx.lock().unwrap().try_recv();
+            let job = match ready {
+                Ok(job) => Ok(job),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    crate::alloc::release_thread_cache();
+                    rx.lock().unwrap().recv_timeout(keep_alive)
+                }
+            };
             let job = match job {
                 Err(RecvTimeoutError::Timeout) => {
                     // leave first, then look for work: `execute` counts a job as pending
