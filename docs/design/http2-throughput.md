@@ -233,3 +233,30 @@ pump's wake-ups 8.5%.
 
 What is left in the client is the hand-off a blocking API needs: the requesting thread sleeps until the
 pump wakes it (about 1.2 context switches per request, against 1.1 for HTTP/1.1).
+
+### End to end, cameleer-bench's own generator (WSL2, 3 interleaved rounds, 64 calls)
+
+Before: Cameleer `6252f0a` on simoom 0.1.0 from crates.io. After: Cameleer `2ca6b30` plus the
+`call_with_body` client path, on the local simoom checkout (`7894b4c`, `1bfc257`, `f8a1733`, `153f5da`).
+
+| scenario | before req/s | after req/s | client CPU per request before / after |
+|---|---:|---:|---|
+| `rest-json-h2`, 4 connections | 95,691 / 97,936 / 99,392 | 158,994 / 157,436 / 151,781 | 53.5 / 36.1 us |
+| `grpc` unary, 4 channels | 76,102 / 76,202 / 51,511 | 162,222 / 158,585 / 159,124 | 74 / 36 us |
+| `rest-json` (HTTP/1.1, hand-written client) | 279,965 / 215,470 / 220,156 | 231,351 / 269,453 / 270,729 | 16 / 16 us (unchanged code) |
+
+What still separates HTTP/2 from HTTP/1.1 in this harness is the client: 36 us against 16 us per request.
+The HTTP/1.1 generator is a hand-written raw client in which each thread blocks in `read` on its own socket.
+The HTTP/2 client is a general library: a pump thread per connection wakes the requesting thread, about 1.3
+context switches per request. 62% of its time is in the kernel; the largest kernel item, 9.4%, is the
+scheduler's run-queue spinlock in cross-CPU wake-ups. Its user time is spread out: allocation about 5%,
+formatting, HPACK, URL parsing, none above 3.5%. Closing that last gap needs callers that do not block per
+request (an asynchronous producer API in Cameleer on `simoom_client::rt`), not a faster blocking client.
+
+### What is not done
+
+- simoom is not released: the four simoom commits above reach Cameleer with simoom 0.1.1. Cameleer's
+  `cameleer-grpc` client then switches to `Client::call_with_body` (a one-call change, kept as a diff in the
+  session notes); until then it sends the head, message and end of stream in three writes.
+- No droplet round with these changes: the droplets build Cameleer from its tarball against crates.io,
+  so a round needs the simoom release or a `[patch]` with the simoom sources shipped along.
