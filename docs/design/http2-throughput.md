@@ -161,8 +161,7 @@ Requests per second, server `a` / server `b`:
 
 **The server has no HTTP/2 gap.** Under h2load it serves HTTP/2 at 1.6 to 1.8x its HTTP/1.1 rate (one
 request per connection turn costs a read and a write system call per request; 16 streams per connection
-batch them), with 135 to 161% of 400% CPU, and gRPC unary at 93k/73k calls/s. The p99 under h2load was
-about 0.5 ms higher than the mean plus 2 sd (h2load's latency line: mean 398 us, sd 50 us for HTTP/2 on `a`).
+batch them), with 135 to 161% of 400% CPU, and gRPC unary at 93k/73k calls/s. h2load reports a mean of 398 us (sd 50 us) per HTTP/2 request on `a`, against 738 us for HTTP/1.1.
 
 **The 0.51x of the 0.7.0 round was the load generator.** cameleer-bench's HTTP/2 path (`simoom-client`,
 two thread hand-offs per response) reaches about half of what the server serves (79k against 153k on
