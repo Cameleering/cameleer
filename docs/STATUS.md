@@ -575,7 +575,9 @@ Cameleer's own HTTP code or it is not used.
     req/s) and the asynchronous one does not.
   - **Tests:** hermetic suite 2977 passed, 0 failed.
   - **Where to read more:** design and results in `docs/design/async-routing.md`.
-  - **Open:** the client on the server's loops (simoom S1-S3), an in-flight limit, phases 1-4.
+  - **In-flight limit:** `maxInflightRequests` on `platform-http` (default
+    `camel.server.maxInflightRequests` or 10,000) answers 503 beyond it.
+  - **Open:** the client on the server's loops (simoom S1-S3), phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).

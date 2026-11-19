@@ -30,7 +30,23 @@
 //! chunked transfer coding without buffering.
 
 use std::any::Any;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Default of `maxInflightRequests` (`camel.server.maxInflightRequests`).
+pub const DEFAULT_MAX_INFLIGHT: usize = 10_000;
+
+/// One request counted against `maxInflightRequests`.
+struct InflightSlot(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for InflightSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// The in-flight limit is logged once per process.
+static LIMIT_WARNED: AtomicBool = AtomicBool::new(false);
 
 use cameleer_core::context::{CamelContext, WeakContext};
 use cameleer_core::error::{CamelError, Result};
@@ -183,8 +199,16 @@ impl Component for HttpConsumerComponent {
         ] {
             params.take(ignored);
         }
+        // requests an asynchronous route works on at once (docs/design/async-routing.md): beyond it the
+        // consumer answers 503 at once instead of queueing; 0 = no limit
+        let default_inflight = match ctx.properties().get("camel.server.maxInflightRequests") {
+            Some(v) => v.trim().parse().map_err(|_| CamelError::illegal_argument(format!("Invalid camel.server.maxInflightRequests: {}", v)))?,
+            None => DEFAULT_MAX_INFLIGHT,
+        };
+        let max_inflight = params.take_usize("maxInflightRequests", default_inflight)?;
         let shared_port = if port == 0 && share { Some(self.shared_port.clone()) } else { None };
         Ok(Arc::new(HttpConsumerEndpoint {
+            max_inflight,
             uri: uri.to_string(),
             host,
             port,
@@ -205,6 +229,7 @@ impl Component for HttpConsumerComponent {
 /// An HTTP consumer endpoint.
 pub struct HttpConsumerEndpoint {
     uri: String,
+    max_inflight: usize,
     host: String,
     port: u16,
     spec: HttpRouteSpec,
@@ -248,6 +273,8 @@ impl Endpoint for HttpConsumerEndpoint {
             server_config: self.server_config.clone(),
             shared_port: self.shared_port.clone(),
             bound_port: self.bound_port.clone(),
+            max_inflight: self.max_inflight,
+            inflight: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             processor,
             registration: Mutex::new(None),
             suspend: cameleer_core::component::support::SuspendState::new(),
@@ -260,6 +287,9 @@ impl Endpoint for HttpConsumerEndpoint {
 
 struct HttpConsumer {
     host: String,
+    /// Requests an asynchronous route may work on at once (0 = no limit).
+    max_inflight: usize,
+    inflight: Arc<std::sync::atomic::AtomicUsize>,
     port: u16,
     spec: HttpRouteSpec,
     binding: ConsumerBinding,
@@ -334,15 +364,34 @@ impl Service for HttpConsumer {
             && self.spec.produces.is_none();
         if asynchronous {
             let (ctx, processor, binding, suspend) = (self.ctx.clone(), self.processor.clone(), self.binding.clone(), self.suspend.clone());
+            let (max, inflight) = (self.max_inflight, self.inflight.clone());
             let handler: crate::registry::AsyncRouteHandler = Arc::new(move |req: HttpRequest, params: Vec<(String, String)>, respond: crate::server::Responder| {
                 if suspend.get() {
                     return respond(HttpResponse::text(503, "Service Unavailable"));
                 }
                 let Some(ctx) = ctx.upgrade() else { return respond(HttpResponse::text(503, "Service Unavailable")) };
+                // without threads to run out of, this is what keeps overload from turning into memory
+                if inflight.fetch_add(1, Ordering::AcqRel) >= max && max > 0 {
+                    inflight.fetch_sub(1, Ordering::AcqRel);
+                    if !LIMIT_WARNED.swap(true, Ordering::Relaxed) {
+                        cameleer_core::camel_warn!("cameleer-http", "{} requests in flight on {}: answering 503 until some complete (maxInflightRequests)", max, req.path);
+                    }
+                    return respond(HttpResponse::text(503, "Service Unavailable").with_header("Retry-After", "1"));
+                }
                 let mut ex = Box::new(Exchange::new(Some(ctx)));
                 binding.read_request(&req, &params, &mut ex);
+                // released when the answer is built, or if the task is dropped without finishing
+                let slot = InflightSlot(inflight.clone());
                 let binding = binding.clone();
-                cameleer_core::reactive::spawn(processor.clone(), ex, Box::new(move |ex: Box<Exchange>| respond(binding.write_response(&ex))));
+                cameleer_core::reactive::spawn(
+                    processor.clone(),
+                    ex,
+                    Box::new(move |ex: Box<Exchange>| {
+                        let resp = binding.write_response(&ex);
+                        drop(slot);
+                        respond(resp)
+                    }),
+                );
             });
             registry().set_async(&registration, handler);
         }

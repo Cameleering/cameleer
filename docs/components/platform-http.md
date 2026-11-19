@@ -92,10 +92,16 @@ fn device_readings_routes(b: &mut RouteBuilder) {
 | `mapHttpMessageHeaders` | `true` | Map request headers to message headers. |
 | `mapHttpMessageFormUrlEncodedBody` | `true` | Map form fields of `application/x-www-form-urlencoded` bodies to headers. |
 | `disableStreamCache` | `false` | Pass the request body as a stream handle read lazily from the connection. |
+| `maxInflightRequests` | `camel.server.maxInflightRequests` or 10000 | Cameleer extension. The most requests a route that waits without holding a thread (a route that calls `http`) works on at once. Beyond it the endpoint answers `503` with `Retry-After: 1` straight away. `0` means no limit. |
 | `ssl` | `false` | Serve HTTPS (certificate from `camel.server.ssl.*` or `sslContextParameters`). |
 | `sslContextParameters` | | `#bean` with the server key store; also enables HTTPS. |
 | `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 | `needClientAuth` | `false` | Require a client certificate (mutual TLS). `clientAuth=NONE\|WANT\|REQUIRE` is the long form. |
+
+A route whose steps can wait without holding a thread, for example one that calls the `http`
+producer, answers its requests without taking a server thread while it waits. A route that only
+computes or calls blocking components runs on the server's threads as before. `maxInflightRequests`
+bounds the first kind, because the thread count no longer does.
 
 `camel.server.sslEnabled=true` turns on HTTPS for every `platform-http` endpoint. Apache Camel
 options such as `transferException`, `useStreaming`, `headerFilterStrategy` and

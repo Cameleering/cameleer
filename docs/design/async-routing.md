@@ -316,7 +316,6 @@ simoom is a separate repository and its releases are the owner's decision. The d
 **Not built in phase 0:**
 - S1-S3: the client still runs on its own loops, not the server's;
 - the HTTP/2 event-loop client, which is not released;
-- the in-flight limit;
 - phases 1-4.
 
 **Tests.**
@@ -370,11 +369,19 @@ CPUs, and CPU and switches are counted for that process only:
 **Verdict.** The gate is passed. The model's mechanism is confirmed: hand-offs and the thread bound,
 not the work. Its count of hand-offs was too high, as explained above.
 
+**In-flight limit (done after phase 0).**
+- **The option:** `maxInflightRequests` on `platform-http` (and its aliases). The default comes from
+  `camel.server.maxInflightRequests`, else 10,000; `0` means no limit.
+- **Beyond the limit:** an asynchronous route answers `503` with `Retry-After: 1` at once instead of
+  queueing. The slot is released when the answer is built, or when the task is dropped unfinished.
+- **Test:** `crates/cameleer-http/tests/async_inflight.rs` sends 20 requests at once to a 1 s
+  backend. Exactly the limit are served and the rest refused, and the route serves again afterwards.
+- **Not counted here:** the synchronous path, which is still bounded by the server's threads.
+
 **Next steps:**
 1. S1/S2 in simoom: the client on the server's loops, and a same-loop responder. The prediction: the
    remaining 0.07-0.2 switches go, and CPU per request falls by the two posts.
-2. The in-flight limit, before asynchronous routing is on by default in a release.
-3. Phase 1.
+2. Phase 1.
 
 ## References
 
