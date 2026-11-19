@@ -256,9 +256,19 @@ fn run_grpc(host: &str, port: u16, conns: usize, plan: Plan) -> (Outcome, u64) {
 
 /// `conns` concurrent POSTs of orders over [`h2_connections`] HTTP/2 connections (h2c prior knowledge).
 fn run_h2(host: &str, port: u16, path: &str, conns: usize, plan: Plan) -> (Outcome, u64) {
-    let clients: Vec<Arc<simoom_client::Client>> = (0..h2_connections().min(conns.max(1)))
+    // BENCH_H2_CLIENT_HTTP1=1: the same library client over HTTP/1.1 (one shared client, each thread
+    // reads its own pooled connection), a control that has the library's work but no hand-off
+    let http1 = std::env::var("BENCH_H2_CLIENT_HTTP1").is_ok_and(|v| v == "1");
+    let n = if http1 { 1 } else { h2_connections().min(conns.max(1)) };
+    let clients: Vec<Arc<simoom_client::Client>> = (0..n)
         .map(|_| {
             let mut cfg = simoom_client::Config::default();
+            if http1 {
+                cfg.version = simoom_client::HttpVersion::Http1;
+                cfg.pool_max_idle_per_origin = conns.max(1);
+                let client = simoom_client::ClientBuilder::default().config(cfg).build();
+                return Arc::new(client);
+            }
             cfg.version = simoom_client::HttpVersion::Http2;
             Arc::new(simoom_client::ClientBuilder::default().config(cfg).build())
         })

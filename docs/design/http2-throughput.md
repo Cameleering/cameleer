@@ -260,3 +260,115 @@ request (an asynchronous producer API in Cameleer on `simoom_client::rt`), not a
   session notes); until then it sends the head, message and end of stream in three writes.
 - No droplet round with these changes: the droplets build Cameleer from its tarball against crates.io,
   so a round needs the simoom release or a `[patch]` with the simoom sources shipped along.
+
+## Root cause of the client gap: a cost model (2026-11-19, WSL2)
+
+The question: why does the blocking HTTP/2 client cost 36 us per request while the hand-written
+HTTP/1.1 client costs 16? The answer: most of the gap is in *who is billed* for one unavoidable
+operation, not in extra work.
+
+### The model
+
+For a closed-loop client with N calls in flight, the client CPU per request is C = U + K, where
+K = sum_s n_s c_s + n_sleep c_switch + n_wake c_wake. The capacity on P CPUs is X <= P / C, and
+Little's law (Little, 1961) gives the response time R = N / X.
+
+A synchronous caller sleeps until its response arrives, so every request costs exactly one wake
+of a sleeping thread somewhere. The protocol decides who performs that wake:
+
+- **HTTP/1.1, a thread blocking in `read` on its own socket.** The wake runs in the TCP receive
+  path of the sender. On loopback that is inside the server thread's `sendto`; with a NIC it is
+  the receiving host's softirq. Either way it is not billed to the client process.
+- **HTTP/2 over a shared connection.** The response arrives on a socket that many callers share.
+  Whoever reads it must wake the caller it belongs to: a thread of the client, billed to the
+  client.
+
+### Unit costs (`ubench`, std-only, in the session notes; ns per round trip, two one-way hand-offs)
+
+| operation | any CPU | one CPU | two CPUs |
+|---|---:|---:|---:|
+| system call (0-byte read) | 201 | | |
+| cache-line ping-pong (spinning) | | | 55 |
+| Mutex + Condvar ping-pong | 24,116 | 10,728 | 24,857 |
+| loopback TCP request/response (each side blocking in `read`) | 52,726 | 16,318 | 49,432 |
+| TCP + a reader thread waking the requester (the blocking HTTP/2 shape) | 96,257 | 24,691 | 66,918 |
+
+A cross-CPU wake in this VM takes about 12 us of latency, against about 5 us on one CPU. The
+difference is the inter-processor interrupt to a halted virtual CPU, which in a VM costs a VM exit
+(an order of magnitude more than on bare metal; QNX hypervisor documentation, ELVIS, ATC 2013).
+The extra reader thread adds 17 to 44 us to a round trip.
+
+### Per-request counts of the client process (perf; 64 calls)
+
+| | raw HTTP/1.1 | simoom-client over HTTP/1.1 | simoom-client over HTTP/2, 4 connections |
+|---|---:|---:|---:|
+| system calls | 2.04 | 2.05 | 3.19 |
+| futex | 0 | 0 | 2.37 |
+| sendto / recvfrom | 1.02 / 1.02 | 1.02 / 1.02 | 0.67 / 0.14 (about 7 responses per read) |
+| wakes performed by the client (`sched_waking`) | 0.11 | 0.13 | 1.28 |
+| context switches | 1.02 | 1.07 | 1.33-1.38 |
+| CPU migrations | 0.01 | 0.01 | 0.21-0.29 |
+| user instructions / cycles | 6.7k / 10.8k | 31.5k / 37.6k | 40.4k / 57.4k |
+| kernel instructions / cycles | 25.4k / 78.1k | 26.0k / 87.1k | 31.1k / 136.2k |
+
+The HTTP/1.1 clients perform 0.1 wakes per request, the HTTP/2 client 1.28. The HTTP/2 client
+executes only 5k more kernel instructions per request but spends 49k more kernel cycles. Its kernel
+time goes to cross-CPU wakes, not to work. The library control (`BENCH_H2_CLIENT_HTTP1=1` in
+cameleer-bench, the same simoom-client over HTTP/1.1) separates the library's user-space work
+(+27k cycles over the raw client) from what HTTP/2 adds (+20k user cycles: framing, HPACK, the
+multiplexer).
+
+### The whole machine: client plus server CPU per request
+
+Three rounds, interleaved, each started only after Windows had stayed below 15% CPU for 3 s
+(`quiet.sh` + `tot.sh`):
+
+| | client us | server us | total us |
+|---|---:|---:|---:|
+| raw HTTP/1.1 | 18.1-31.6 | 26.4-84.6 | 44.5-116 (bimodal, as in every earlier run) |
+| simoom-client over HTTP/1.1 | 24.2-25.8 | 41.1-44.3 | **65.4-70.1** |
+| simoom-client over HTTP/2 | 39.0-41.6 | 22.0-22.6 | **61.0-64.2** |
+
+With the same library, HTTP/2 costs the machine *less* than HTTP/1.1 per request (about 62 against
+68 us). The client spends 15 us more and the server about 21 us less: the per-response wake moved
+from the server's `sendto` to the client's reader thread. "The client is twice as slow as HTTP/1.1"
+compared a client that is billed for the wake with one that is not.
+
+### What can remove the wake
+
+Shared connections with blocking callers have a floor. Let k be the number of responses that one
+read of the socket delivers (about 7 here). Some thread must read the socket, and every response it
+reads for another caller costs that caller a wake. Wakes billed to the client per request:
+
+| design | wakes per request | note |
+|---|---:|---|
+| pump thread per connection (the blocking client today) | 1 + 1/k | the pump's own sleep and wake, plus one wake per response |
+| event-driven connection + blocking facade | 1 | the loop wakes the caller; removes the pump thread and the connection mutex |
+| leader/followers (Schmidt, O'Ryan, Pyarali, Kircher, Buschmann, PLoP 2000 / POSA2) | (k-1)/k | the reading thread keeps its own response; gains about 1/k, little at k = 7 |
+| spin then park | 1 | spinning only pays when R is below the spin budget; here R = N/X is about 400 us |
+| one connection per caller | 0 | the HTTP/1.1 shape: gives up multiplexing |
+| event-driven connection + asynchronous caller | **0** | the response completes on the loop that read it (FlexSC, OSDI 2010: decouple invocation from completion) |
+
+Context-switch costs: Li, Ding and Shen measured a direct cost of about 3.4 us and indirect cache
+costs of tens of us (ExpCS 2007).
+
+### Measured (simoom branch `h2-event-client`, commit `0199bd9`, separate session; WSL2, 64 calls, 4 connections)
+
+| client | client CPU per request | req/s |
+|---|---:|---:|
+| blocking `Client` (today) | 36 us | 88k |
+| event-driven HTTP/2 + blocking facade | 24 us | 212k-239k |
+| event-driven HTTP/2, asynchronous callers | **3.2-4.8 us** | **513k-606k** |
+
+This matches the model. The facade removes the pump and the mutex but keeps one wake per request;
+only asynchronous callers remove it.
+
+### What this means for Cameleer
+
+Cameleer's routing engine is synchronous: `cameleer_core::spi::Processor::process(&self, &mut
+Exchange)` has no asynchronous path. A route thread therefore waits for each reply, and an
+http, gRPC or HTTP/2 producer can at best use the blocking facade (24 us). Getting to the
+asynchronous number needs Camel's own answer: the `AsyncProcessor` contract, where `process(exchange,
+callback)` returns at once and the routing engine continues the exchange from the callback on the
+I/O loop. That is a change to the core routing engine (pipelines, error handlers, EIPs that wait),
+not to the client.
