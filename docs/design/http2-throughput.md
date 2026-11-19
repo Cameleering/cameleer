@@ -120,9 +120,30 @@ own (stream limits, flow control, GOAWAY and retries on the loop), not a patch, 
 2. **Release simoom with the placement change** and bump Cameleer's dependency.
 3. **The load generator** can use `BENCH_H2_CONNS=16` as an additional record to separate client from server.
 
-## Droplet round to confirm (needs the owner's approval, not run)
+## Droplet round (2026-11-19, run with the owner's approval; droplets deleted afterwards)
 
-Same three `c-4` droplets and `scripts/cloud-bench`; new build against the 0.7.0 tag, scenarios `rest-json`,
-`rest-json-h2` (4 and 16 connections), `grpc`, 64 and 256 calls, two phases, with
-`CAMEL_SERVER_LAZY_LOOPS=true` on the old side to separate this change from anything else. Expect gRPC and
-`rest-json-h2` up as above and `rest-json-h2` still below `rest-json` because of the client.
+Three `c-4` droplets in blr1, `scripts/cloud-bench`, `BENCH_BASE=28cea75` (before this change) against `6252f0a`
+(eager loops), 64 connections, 4 HTTP/2 connections, both servers and both phases, one run
+(`benchmarks/results/2026-11-19-linux-http2-loops/`). Not the placement change of simoom-rt, which is not
+released.
+
+| scenario | new req/s | old req/s | new / old |
+|---|---|---|---|
+| `rest-json` (HTTP/1.1) | 98,642 | 104,920 | 0.94x (noise: the two servers differ by 10 to 25%) |
+| `rest-json-h2` | 79,419 | 75,532 | 1.05x |
+| gRPC unary | 61,134 | 58,635 | 1.04x |
+
+**The droplets do not confirm the local gain.** Here the old build already served `rest-json-h2` at 75k (the
+0.7.0 round measured 64k) and gRPC at 58.6k (that round: 41k after the pool fix), so HTTP/2 is at 0.75x of
+HTTP/1.1, not 0.51x, and the server process used only 125 to 170% of 400% CPU on both builds. Lazy start
+pins connections on the WSL2 test box because the client and server share 12 CPUs and the connections
+arrive in one burst; on the droplets the connections arrive a few ms apart from another machine, and the
+placement is luckier or the loops grew sooner. What the droplets show is that the server is not the limit
+at 4 connections there: the load node (4 vCPUs running 64 request threads and 4 pump threads) is, which is
+the client cost described above. So the root cause of "HTTP/2 at half of HTTP/1.1" is two things, in this
+order on the droplets: the client's two hand-offs per response (about 53 against 21 us of load-node CPU per
+request), and, where loops start lazily, the stranded connections (confirmed on WSL2, worth 2x for gRPC
+there, +4 to +5% on the droplets). The eager start is kept because it removes a failure mode that depends on
+timing, costs 0.8 ms of start-up on 12 CPUs, and did not slow anything; whether that is worth it without a
+measured gain on the target hardware is the owner's call (`CAMEL_SERVER_LAZY_LOOPS=true` restores the old
+behaviour).
