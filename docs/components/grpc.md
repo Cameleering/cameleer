@@ -158,8 +158,9 @@ Measured on 4-vCPU cloud machines (release 0.7.0, unary calls with a protobuf re
 calls over 4 HTTP/2 connections): about 10,500 calls per second at about 200 microseconds of server CPU per call,
 with a p99 of about 11 ms. A call on an idle server takes about 0.3 ms. Release 0.7.0 stops at about 11,000
 calls per second from 16 concurrent calls up because each call starts threads; running them on a pool (after 0.7.0,
-not released yet) gave about 47,000 calls per second at about 57 microseconds of server CPU per call and a p99 of
-about 2.5 ms, and costs memory (49 MB at 64 concurrent calls, 169 MB at 256, against 14 and 21 MB). Streaming calls were not measured. The
+not released yet) gave about 41,000 calls per second at about 37 microseconds of server CPU per call and a p99 of
+about 4 ms, with the same peak memory as 0.7.0 (13.5 against 13.8 MB at 64 concurrent calls, 18.6 against 20.1 MB
+at 256). Streaming calls were not measured. The
 [full numbers and the comparison with 0.6.1](../BENCHMARKS.md#grpc-and-http2-on-simoom-070-2026-11-18) are in
 the benchmark report.
 

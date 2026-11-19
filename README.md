@@ -103,8 +103,9 @@ The table above is Cameleer against Apache Camel (0.4.0). The same setup also co
 own previous release: 0.7.0 against 0.6.1 (gRPC and HTTP/2 on simoom) gave 29% less CPU per gRPC call and a
 35% lower p99 at the same throughput, no change for plain HTTP, MCP and the JSON REST route (a 5% difference
 there is within the noise of the setup) and HTTP/2 at about half the request rate of HTTP/1.1 for small calls. A
-later change (gRPC calls on a pool of threads, not released yet) raised gRPC to 4.65x the 0.7.0 rate at about four
-times less CPU per call, and cost memory (49 against 14 MB at 64 concurrent calls); see
+later change (gRPC calls on a pool of threads, not released yet) raised gRPC to 3.9x the 0.7.0 rate (3.6x at 256
+concurrent calls) at about a sixth of the CPU per call, with the same peak memory as 0.7.0 (13.5 against 13.8 MB at 64
+concurrent calls); see
 [the section in BENCHMARKS.md](docs/BENCHMARKS.md#grpc-and-http2-on-simoom-070-2026-11-18).
 
 **How, without changing what Camel means:**
