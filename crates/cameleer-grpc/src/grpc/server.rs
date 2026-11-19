@@ -313,7 +313,7 @@ impl GrpcServer {
         }
         limits.write_timeout = config.write_timeout;
         let svc = move |req: &mut Request<'_>, reply: Reply<'_>| -> Outcome { dispatch(&service, max_message_size, req, reply) };
-        let builder = simoom::Server::builder().limits(limits).service(svc);
+        let builder = cameleer_http::server_simoom::event_loops(simoom::Server::builder().limits(limits).service(svc));
         let builder = match &tls {
             Some(t) => builder.listen_tls(addr).tls(cameleer_http::server_simoom::server_tls(t).map_err(|e| unavailable(e.to_string()))?),
             None => builder.listen(addr),
