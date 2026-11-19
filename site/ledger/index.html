@@ -134,14 +134,14 @@
         <tr><td>binary size, <code>full</code> (stripped, Linux)</td><td class="num">26,714,760 B</td><td class="num">26,523,736 B</td><td class="num res">0.7% smaller</td></tr>
         <tr><td>binary size, <code>core</code></td><td class="num">7,047,768 B</td><td class="num">7,047,640 B</td><td class="num res">level</td></tr>
         <tr><td>cold start of the CLI, <code>full</code> / <code>core</code></td><td class="num">2.2 / 1.6 ms</td><td class="num">2.2 / 1.6 ms</td><td class="num res">level</td></tr>
-        <tr class="loss"><td>REST API with JSON: throughput</td><td class="num">130,956 req/s</td><td class="num">123,793 req/s</td><td class="num res">0.95x (loss)</td></tr>
-        <tr class="loss"><td>REST API with JSON: p99 latency</td><td class="num">1.45 ms</td><td class="num">1.56 ms</td><td class="num res">8% higher (loss)</td></tr>
+        <tr><td>REST API with JSON: throughput</td><td class="num">130,956 req/s</td><td class="num">123,793 req/s</td><td class="num res">0.95x, within noise</td></tr>
+        <tr><td>REST API with JSON: p99 latency</td><td class="num">1.45 ms</td><td class="num">1.56 ms</td><td class="num res">8% higher, within noise</td></tr>
         <tr class="loss"><td>HTTP/2 against HTTP/1.1 on 0.7.0, small calls, same route</td><td class="num">HTTP/1.1: 125,721 req/s</td><td class="num">HTTP/2: 63,941 req/s</td><td class="num res">0.51x (loss)</td></tr>
       </tbody>
     </table></div>
     <h3>Known losses and limits</h3>
     <ul>
-      <li>REST API with JSON is about 5% slower on 0.7.0 (0.94x and 0.95x in the two runs). The cause is not known.</li>
+      <li>REST API with JSON showed 0.95x on 0.7.0 (0.94x and 0.95x in the two runs). A later control round on the same droplets, in which this route ran identical code in both builds, varied by as much (0.98x and 0.91x; 0.91x to 1.06x across the HTTP, REST and MCP routes), so this is within the noise of the setup and not counted as a loss. An earlier version of this page listed it as one.</li>
       <li>HTTP/2 on Cameleer's HTTP server serves about half the requests per second of HTTP/1.1 for small calls on the same route, at the same CPU per request (21 µs) and with the server far from saturated. It is not the number of connections and not the load generator; the cause is not known. HTTP/1.1 is the faster protocol for small calls on this server.</li>
       <li>gRPC throughput stops at about 11,000 calls per second on both builds from 16 concurrent calls up, while neither the server nor the load generator is out of CPU; the cause has not been profiled. So the gRPC gain is CPU per call and tail latency, not throughput: 1.05x to 1.06x is within what two runs separate from noise.</li>
       <li>At 256 connections gRPC is 1.05x (10,328 against 9,882 req/s), CPU per request 199 against 284 µs and p99 39 against 45 ms, but peak memory is higher: 18.9 against 17.5 MB (loss).</li>
