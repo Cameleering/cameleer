@@ -217,3 +217,140 @@ fn the_server_ends_a_call_at_its_deadline_whatever_the_handler_is_doing() {
     assert_eq!(status.as_deref(), Some("4"), "DEADLINE_EXCEEDED");
     assert!(started.elapsed() < Duration::from_millis(1500), "ended after {:?}, not when the handler returned", started.elapsed());
 }
+
+/// A service whose methods are all unary, running `f`.
+struct Unary<F>(F);
+
+impl<F: Fn(&ServerCall) -> Status + Send + Sync> cameleer_grpc::grpc::server::GrpcService for Unary<F> {
+    fn call(&self, call: &ServerCall) -> Status {
+        (self.0)(call)
+    }
+    fn unary(&self, _: &str, _: &str) -> bool {
+        true
+    }
+}
+
+fn serve_unary(f: impl Fn(&ServerCall) -> Status + Send + Sync + 'static) -> GrpcServer {
+    GrpcServer::bind("127.0.0.1:0", H2Config::default(), None, 4 << 20, Arc::new(Unary(f))).unwrap()
+}
+
+// A unary reply is held and sent whole: head, message, response metadata and trailers in one
+// response; an error status sends no message (trailers only), and a second reply is refused.
+#[test]
+fn a_unary_reply_carries_its_message_metadata_and_status() {
+    let s = serve_unary(|call| {
+        let m = call.recv().unwrap().unwrap();
+        match &m[..] {
+            b"fail" => {
+                call.send(b"never sent").unwrap();
+                Status::new(Code::NotFound, "no such thing")
+            }
+            b"twice" => {
+                call.send(b"one").unwrap();
+                match call.send(b"two") {
+                    Err(e) => e,
+                    Ok(()) => Status::ok(),
+                }
+            }
+            _ => {
+                call.add_response_header("x-answer", "42");
+                call.add_trailer("x-trailer", "t");
+                call.send(&[b"re: ".as_slice(), &m].concat()).unwrap();
+                Status::ok()
+            }
+        }
+    });
+    let c = client(&s);
+    let (reply, md) = c.unary("/t.S/M", b"hello", &vec![], Some(Duration::from_secs(5))).unwrap();
+    assert_eq!(reply, b"re: hello");
+    assert!(md.iter().any(|(n, v)| n == "x-answer" && v == "42") && md.iter().any(|(n, v)| n == "x-trailer" && v == "t"), "{md:?}");
+    let e = c.unary("/t.S/M", b"fail", &vec![], Some(Duration::from_secs(5))).unwrap_err();
+    assert_eq!((e.code, e.message.as_str()), (Code::NotFound, "no such thing"));
+    let e = c.unary("/t.S/M", b"twice", &vec![], Some(Duration::from_secs(5))).unwrap_err();
+    assert_eq!(e.code, Code::Internal, "{e:?}");
+}
+
+/// A bare HTTP/2 client (simoom-h2) that writes each call's head, message and end of stream in one
+/// write, the way h2load and most gRPC clients send a unary call.
+struct OneWrite {
+    s: std::net::TcpStream,
+    conn: simoom_h2::Connection,
+    buf: Vec<u8>,
+}
+
+impl OneWrite {
+    fn connect(s: &GrpcServer) -> OneWrite {
+        let s = std::net::TcpStream::connect(s.local_addr()).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        OneWrite { s, conn: simoom_h2::Connection::client(simoom_h2::Config::default()), buf: Vec::new() }
+    }
+
+    fn write(&mut self) {
+        use std::io::Write;
+        let out = self.conn.output().to_vec();
+        self.conn.advance_output(out.len());
+        self.s.write_all(&out).unwrap();
+    }
+
+    /// One unary call: the reply message.
+    fn unary(&mut self, path: &str, msg: &[u8]) -> Vec<u8> {
+        use std::io::Read;
+        let fields: [(&[u8], &[u8]); 2] = [(b"content-type", b"application/grpc"), (b"te", b"trailers")];
+        let id = self.conn.send_request(b"POST", b"http", b"localhost", path.as_bytes(), &fields, false).unwrap();
+        let mut framed = vec![0u8];
+        framed.extend_from_slice(&(msg.len() as u32).to_be_bytes());
+        framed.extend_from_slice(msg);
+        self.conn.send_data(id, &framed, true).unwrap();
+        self.write();
+        let mut body = Vec::new();
+        let mut done = false;
+        let mut chunk = [0u8; 16384];
+        while !done {
+            let n = self.s.read(&mut chunk).unwrap();
+            assert!(n > 0, "connection closed");
+            self.buf.extend_from_slice(&chunk[..n]);
+            let mut got = Vec::new();
+            let used = self.conn.recv(&self.buf, 0, &mut |ev| match ev {
+                simoom_h2::Event::Data { stream, data, .. } if stream == id => got.extend_from_slice(data),
+                simoom_h2::Event::Trailers { stream, .. } if stream == id => done = true,
+                simoom_h2::Event::Headers { stream, end_stream: true, .. } if stream == id => done = true,
+                _ => {}
+            });
+            self.buf.drain(..used);
+            self.conn.release(id, got.len());
+            body.extend_from_slice(&got);
+            self.write();
+        }
+        body.get(5..).unwrap_or_default().to_vec()
+    }
+}
+
+// A fast unary route moves onto the event loop (no thread hand-off per call) once its calls arrive
+// whole; a route that blocks stays on the pool, so it never stalls the loop.
+#[test]
+fn fast_unary_calls_run_on_the_loop_and_blocking_ones_on_the_pool() {
+    let threads = Arc::new(Mutex::new(Vec::new()));
+    let t2 = threads.clone();
+    let s = serve_unary(move |call| {
+        let m = call.recv().unwrap().unwrap();
+        if m == b"slow" {
+            std::thread::sleep(Duration::from_millis(60));
+        }
+        t2.lock().unwrap().push((m.clone(), std::thread::current().name().unwrap_or("").to_string()));
+        call.send(&m).unwrap();
+        Status::ok()
+    });
+    let mut c = OneWrite::connect(&s);
+    for _ in 0..300 {
+        assert_eq!(c.unary("/t.S/Fast", b"fast"), b"fast");
+    }
+    for _ in 0..3 {
+        assert_eq!(c.unary("/t.S/Slow", b"slow"), b"slow");
+    }
+    // the crate's own client too (its unary replies are held whatever thread runs the call)
+    assert_eq!(client(&s).unary("/t.S/Fast", b"fast", &vec![], Some(Duration::from_secs(5))).unwrap().0, b"fast");
+    let t = threads.lock().unwrap();
+    let on_loop = t.iter().filter(|(m, n)| m == b"fast" && n.starts_with("simoom")).count();
+    assert!(on_loop >= 100, "a fast route runs on a loop thread: {on_loop} of 300 calls did");
+    assert!(t.iter().filter(|(m, _)| m == b"slow").all(|(_, n)| !n.starts_with("simoom")), "a blocking route stays on the pool: {:?}", t.iter().filter(|(m, _)| m == b"slow").collect::<Vec<_>>());
+}

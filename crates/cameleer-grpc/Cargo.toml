@@ -25,3 +25,5 @@ simoom-client = { version = "0.1.0", default-features = false, features = ["clie
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not
 cameleer-core = { path = "../cameleer-core" }
+# a raw HTTP/2 client in the tests (a request head and body in one write)
+simoom-h2 = "0.1.0"

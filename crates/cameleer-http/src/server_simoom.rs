@@ -40,8 +40,9 @@ const WINDOW_MS: u64 = 1000;
 const POOL_MS: u64 = 60_000;
 
 /// What the engine has learned about one route.
+#[doc(hidden)]
 #[derive(Default)]
-struct RouteState {
+pub struct RouteState {
     /// The route runs on the loop thread.
     inline: AtomicBool,
     /// Calls and slow calls of the current sample on the pool.
@@ -53,14 +54,17 @@ struct RouteState {
     stalls: AtomicU32,
 }
 
-/// Decides per route whether a handler may run on the loop thread.
-struct Governor {
+/// Decides per route whether a handler may run on the loop thread (also used by the gRPC server
+/// for unary calls).
+#[doc(hidden)]
+pub struct Governor {
     base: Instant,
     routes: RwLock<HashMap<u64, Arc<RouteState>>>,
 }
 
 impl Governor {
-    fn new() -> Governor {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Governor {
         Governor { base: Instant::now(), routes: RwLock::new(HashMap::new()) }
     }
 
@@ -69,19 +73,19 @@ impl Governor {
         self.base.elapsed().as_millis() as u64 + 1
     }
 
-    fn state(&self, key: u64) -> Arc<RouteState> {
+    pub fn state(&self, key: u64) -> Arc<RouteState> {
         if let Some(s) = self.routes.read().unwrap_or_else(|p| p.into_inner()).get(&key) {
             return s.clone();
         }
         self.routes.write().unwrap_or_else(|p| p.into_inner()).entry(key).or_default().clone()
     }
 
-    fn inline_ok(&self, st: &RouteState) -> bool {
+    pub fn inline_ok(&self, st: &RouteState) -> bool {
         st.inline.load(Ordering::Relaxed)
     }
 
     /// A call on the loop thread took `took`: back to the pool when it stalls the loop.
-    fn record(&self, st: &RouteState, took: Duration) {
+    pub fn record(&self, st: &RouteState, took: Duration) {
         if took < STALL {
             return;
         }
@@ -107,7 +111,7 @@ impl Governor {
     }
 
     /// A call on the pool took `took` (the handler only, without the queue).
-    fn observe(&self, st: &RouteState, took: Duration) {
+    pub fn observe(&self, st: &RouteState, took: Duration) {
         if took >= FAST {
             st.slow.fetch_add(1, Ordering::Relaxed);
         }

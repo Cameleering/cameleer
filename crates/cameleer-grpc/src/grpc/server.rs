@@ -24,6 +24,7 @@ use std::task::{Context, Poll, Wake, Waker};
 use std::time::{Duration, Instant};
 
 use cameleer_core::executor::ThreadPool;
+use cameleer_http::server_simoom::Governor;
 use cameleer_tls::TlsServerConfig;
 use simoom::{BodySink, BodySource, Outcome, Reply, Request, Responder, Response};
 
@@ -33,6 +34,14 @@ use crate::h2::H2Config;
 /// Implements the methods of one or more services. Return the final status of the call.
 pub trait GrpcService: Send + Sync {
     fn call(&self, call: &ServerCall) -> Status;
+    /// Whether `service`/`method` is unary (one request, one response). A unary call whose request
+    /// arrived whole may run on the event loop thread while its route is fast (the governor of the
+    /// HTTP server decides, as for REST routes), and its reply leaves as one response instead of
+    /// a stream. Default `false`: every call gets a thread of its own.
+    fn unary(&self, service: &str, method: &str) -> bool {
+        let _ = (service, method);
+        false
+    }
 }
 
 impl<F> GrpcService for F
@@ -87,6 +96,9 @@ struct CallState {
     /// The response has not started: the responder answers the whole call (trailers only) or
     /// opens the stream with the first message.
     responder: Option<Responder>,
+    /// A unary call's reply (a framed message), sent with the head and the trailers as one
+    /// response when the call finishes.
+    held: Option<Vec<u8>>,
 }
 
 struct CallInner {
@@ -97,6 +109,8 @@ struct CallInner {
     deadline: Option<Instant>,
     peer: Option<SocketAddr>,
     accept_encoding: Option<String>,
+    /// One request, one reply: the reply is held and sent whole (see [`GrpcService::unary`]).
+    unary: bool,
     incoming: Mutex<Incoming>,
     /// Lock order: `sink`, then `state`.
     sink: Mutex<Option<BodySink>>,
@@ -249,6 +263,18 @@ impl ServerCall {
     /// Sends one response message.
     pub fn send(&self, msg: &[u8]) -> Result<(), Status> {
         let mut guard = self.inner.sink.lock().unwrap();
+        if self.inner.unary {
+            // held and sent with the trailers, in one response that never waits on the loop
+            let mut st = self.inner.state.lock().unwrap();
+            if st.finished {
+                return Err(Status::new(Code::Cancelled, "call already finished"));
+            }
+            if st.held.is_some() {
+                return Err(Status::new(Code::Internal, "more than one response message for a unary method"));
+            }
+            st.held = Some(frame_message_with(msg, st.send_encoding.as_deref()));
+            return Ok(());
+        }
         self.open(&mut guard)?;
         let enc = self.inner.state.lock().unwrap().send_encoding.clone();
         match guard.as_mut() {
@@ -277,6 +303,21 @@ impl ServerCall {
         if let Some(sink) = guard.take() {
             let refs: Vec<(&str, &str)> = t.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
             sink.finish_with_trailers(&refs);
+        } else if let (Some(msg), true) = (st.held.take(), status.is_ok()) {
+            // a unary reply: head, message and trailers in one response
+            let Some(responder) = st.responder.take() else { return };
+            let mut r = Response::new(200).header("content-type", "application/grpc").header("grpc-accept-encoding", "identity,gzip,deflate");
+            if let Some(e) = &st.send_encoding {
+                r = r.header("grpc-encoding", e);
+            }
+            for (n, v) in st.response_headers.iter().filter(|(n, _)| !is_reserved_header(n)) {
+                r = r.header(n, v);
+            }
+            r = r.body(msg);
+            for (n, v) in &t {
+                r = r.trailer(n, v);
+            }
+            responder.send(r);
         } else if let Some(responder) = st.responder.take() {
             // no message was sent: a trailers-only response
             let mut r = Response::new(200).header("content-type", "application/grpc");
@@ -312,7 +353,8 @@ impl GrpcServer {
             limits.max_header_list = config.max_header_list_size;
         }
         limits.write_timeout = config.write_timeout;
-        let svc = move |req: &mut Request<'_>, reply: Reply<'_>| -> Outcome { dispatch(&service, max_message_size, req, reply) };
+        let governor = Arc::new(Governor::new());
+        let svc = move |req: &mut Request<'_>, reply: Reply<'_>| -> Outcome { dispatch(&service, &governor, max_message_size, req, reply) };
         let builder = cameleer_http::server_simoom::event_loops(simoom::Server::builder().limits(limits).service(svc));
         let builder = match &tls {
             Some(t) => builder.listen_tls(addr).tls(cameleer_http::server_simoom::server_tls(t).map_err(|e| unavailable(e.to_string()))?),
@@ -356,8 +398,9 @@ impl Drop for GrpcServer {
     }
 }
 
-/// Runs on a loop thread: checks the request head, hands the call to its own thread.
-fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut Request<'_>, reply: Reply<'_>) -> Outcome {
+/// Runs on a loop thread: checks the request head, then runs the call there (a unary call of a
+/// fast route) or hands it to a thread of its own.
+fn dispatch(service: &Arc<dyn GrpcService>, governor: &Arc<Governor>, max_message_size: usize, req: &mut Request<'_>, reply: Reply<'_>) -> Outcome {
     if req.method() != b"POST" {
         return reply.status(405).header("allow", "POST").empty();
     }
@@ -390,7 +433,11 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
         decoder.push(first);
     }
     let src = req.take_body();
-    let incoming = Incoming { done: src.is_none(), src, decoder };
+    // a unary method's reply is held and sent whole; a unary call whose request arrived whole (a
+    // client that writes the head and the message together) also needs no thread to wait on
+    let unary = service.unary(&svc, &method);
+    let whole = src.is_none();
+    let incoming = Incoming { done: whole, src, decoder };
 
     let responder = reply.defer();
     let flag = cancelled.clone();
@@ -406,7 +453,8 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
             accept_encoding,
             incoming: Mutex::new(incoming),
             sink: Mutex::new(None),
-            state: Mutex::new(CallState { send_encoding: None, finished: false, response_headers: Vec::new(), trailers: Vec::new(), responder: Some(responder) }),
+            unary,
+            state: Mutex::new(CallState { send_encoding: None, finished: false, response_headers: Vec::new(), trailers: Vec::new(), responder: Some(responder), held: None }),
             cancelled,
             observer: AtomicI64::new(0),
             watch: Mutex::new(None),
@@ -420,11 +468,39 @@ fn dispatch(service: &Arc<dyn GrpcService>, max_message_size: usize, req: &mut R
     if let Some(d) = deadline {
         *call.inner.watch.lock().unwrap() = Some(deadlines().watch(d, call.clone()));
     }
+    if unary && whole {
+        let st = governor.state(route_key(&path));
+        if governor.inline_ok(&st) {
+            // a fast route: on this loop thread, no hand-off to a thread and back; a call that
+            // stalls the loop moves the route back to the pool
+            let t0 = Instant::now();
+            run(service.clone(), call);
+            governor.record(&st, t0.elapsed());
+            return Outcome::Deferred;
+        }
+        let (service, governor, c2) = (service.clone(), governor.clone(), call.clone());
+        if !pool().execute(move || {
+            let t0 = Instant::now();
+            run(service, c2);
+            governor.observe(&st, t0.elapsed());
+        }) {
+            call.finish(&Status::new(Code::ResourceExhausted, "cannot start a thread for the call"));
+        }
+        return Outcome::Deferred;
+    }
     let (service, c2) = (service.clone(), call.clone());
     if !pool().execute(move || run(service, c2)) {
         call.finish(&Status::new(Code::ResourceExhausted, "cannot start a thread for the call"));
     }
     Outcome::Deferred
+}
+
+/// The governor's key for a method path.
+fn route_key(path: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    path.hash(&mut h);
+    h.finish()
 }
 
 /// The handler's status; a panic is an internal error.

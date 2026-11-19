@@ -176,3 +176,60 @@ Consequences:
 2. The client cost is real for Cameleer as an HTTP/2 and gRPC client (`http` producer with HTTP/2, `grpc`
    producer, Kinesis `SubscribeToShard`): about 53 us of CPU per call against about 21 us for HTTP/1.1. That
    is what the event-driven HTTP/2 client in simoom-client (above) would fix.
+
+## Profiling round (2026-11-19, WSL2, perf 6.8 with frame pointers)
+
+`perf record -g` and `perf stat` on each side, the server driven by nghttp2's `h2load` (Ubuntu's
+`nghttp2-client` 1.59.0) so the client cannot limit it, the client against the same server. Scripts in the
+session notes: `prof.sh` (client), `sprof.sh` (server), `futex.py` (futex time by the client function that
+caused it).
+
+### Server, HTTP/2 REST: no waste found
+
+`h2load -c 4 -m 16`: 300k req/s on 2.78 CPUs, **9.3 us per request**, IPC 1.68, 73% of the time in user
+space and most of it the route (Camel's router, JSONPath, Simple). HTTP/1.1 with 64 connections costs about
+36 us per request on the same server, of which the `send` of every response is 37% (on loopback the send also
+runs the receiver's TCP input): one write per response is what HTTP/1.1 without pipelining costs; HTTP/2
+spreads it over 16 responses per write.
+
+### Server, gRPC unary: 34.5 -> 7.8 us per call (4.4x)
+
+Before: 151k calls/s on 5.2 CPUs, 34.5 us per call, IPC 0.64. Two causes:
+
+1. **A flush per reply** (simoom-rt, 36.5% of the time). Each call ran on a pool thread and its reply reached
+   the loop as a message; the loop's early flush (K4: when 16 or more events of a turn are left, a
+   connection's output is written as soon as its callback returns) assumed one event per connection. A
+   multiplexed connection gets many messages per batch, so N replies became N `send` calls. Fix (simoom
+   `153f5da`): the early flush waits for a connection's last message of the batch. 151k -> 235k calls/s.
+   Test `a_batch_of_messages_for_one_connection_is_written_once` (32 replies: 18 sends before, 1 after).
+2. **A thread hand-off and back per call**, and a reply sent as a stream (head, data, trailers: three
+   messages and a body sink). Fix (Cameleer): `GrpcService::unary` says which methods are unary (the consumer
+   reads it from the proto descriptor); a unary reply is held and sent as one response with its trailers;
+   a unary call whose request arrived whole runs on the loop thread while its route is fast, under the same
+   governor as REST routes (a route that stalls the loop goes back to the pool). 235k -> 335k calls/s on
+   2.6 CPUs, 7.8 us per call, IPC 1.51: cheaper than a REST call. Tests
+   `a_unary_reply_carries_its_message_metadata_and_status`,
+   `fast_unary_calls_run_on_the_loop_and_blocking_ones_on_the_pool`.
+
+### Client (simoom-client and cameleer-grpc's client)
+
+Before: HTTP/2 with 4 connections, 85k req/s locally under perf, 6.25 CPUs, 1.8 context switches and 0.64
+CPU migrations per request, IPC 0.40; **futex system calls 37% of the client's time**, 63% in the kernel.
+By cause: waiting for the response 15.8%, the connection lock contended when opening a stream 10.0%, the
+pump's wake-ups 8.5%.
+
+1. **The head and the body in two writes** (simoom `1bfc257`): `open` wrote the HEADERS, `write` the DATA.
+   A request body in memory now leaves with the head in one write, and `Client::call_with_body` does the
+   same for calls (a gRPC unary call's head, message and end of stream). Kernel time per request with one
+   stream per connection 22.6 -> 15.4 us (the HTTP/1.1 level).
+2. **Wake-ups under the lock, one per event** (simoom `f8a1733`): the pump woke a waiting thread for every
+   event of its stream (head, data, end: up to three futex wakes per response) while it held the connection
+   lock, so the woken thread blocked on that lock at once. Now each waiting thread is woken once per batch,
+   after the lock is released. HTTP/2 with 4 connections 103k -> 152k req/s (+48%), kernel time per request
+   35 -> 24 us; the contention share fell from 10% to 2.5%. Test `a_waiting_thread_is_woken_once_per_batch`.
+3. **cameleer-grpc serialized every stream opening** behind a mutex (meant for a cold channel): it is now
+   taken only while the channel has no connection. With 1 and 2: gRPC unary through the crate's client 95k
+   -> 121k calls/s.
+
+What is left in the client is the hand-off a blocking API needs: the requesting thread sleeps until the
+pump wakes it (about 1.2 context switches per request, against 1.1 for HTTP/1.1).
