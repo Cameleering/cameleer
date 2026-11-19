@@ -22,6 +22,7 @@ SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$
 on() { local h=$1; shift; ssh "${SSH_OPTS[@]}" "root@$h" "$@"; }
 log() { printf '==> %s %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; }
 RES="$OUT/peer.txt"
+: > "$RES"
 
 log "load node: h2load (Ubuntu's nghttp2-client) and the request bodies"
 on "$L_PUB" 'command -v h2load >/dev/null || (apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nghttp2-client >/dev/null); h2load --version | head -1
@@ -67,7 +68,6 @@ one_server() { # one_server <name> <pub> <priv>
   run_case grpc own-grpc own grpc
 }
 
-: > "$RES"
 one_server a "$(field cameleer-bench-a 2)" "$(field cameleer-bench-a 3)"
 one_server b "$(field cameleer-bench-b 2)" "$(field cameleer-bench-b 3)"
 log "results in $RES"

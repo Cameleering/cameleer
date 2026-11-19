@@ -147,3 +147,33 @@ there, +4 to +5% on the droplets). The eager start is kept because it removes a 
 timing, costs 0.8 ms of start-up on 12 CPUs, and did not slow anything; whether that is worth it without a
 measured gain on the target hardware is the owner's call (`CAMEL_SERVER_LAZY_LOOPS=true` restores the old
 behaviour).
+
+## Independent client (2026-11-19, droplets in sfo3, deleted afterwards)
+
+`scripts/cloud-bench/peer.sh` drove the same server build (`916bbca`) with nghttp2's `h2load` and with
+cameleer-bench's own generator, on two servers (records in `benchmarks/results/2026-11-19-linux-http2-peer/`).
+Requests per second, server `a` / server `b`:
+
+| client | `rest-json` HTTP/1.1, 64 conns | `rest-json` HTTP/2, 4 conns x 16 streams | HTTP/2, 16 x 4 | gRPC unary, 4 x 16 |
+|---|---|---|---|---|
+| h2load | 86,429 / 70,696 | **153,010 / 115,820** | 139,469 / 125,521 | **93,157 / 73,426** |
+| cameleer-bench | 103,390 / 75,271 | 79,182 / 75,013 | - | 58,046 / 49,911 |
+
+**The server has no HTTP/2 gap.** Under h2load it serves HTTP/2 at 1.6 to 1.8x its HTTP/1.1 rate (one
+request per connection turn costs a read and a write system call per request; 16 streams per connection
+batch them), with 135 to 161% of 400% CPU, and gRPC unary at 93k/73k calls/s. The p99 under h2load was
+about 0.5 ms higher than the mean plus 2 sd (h2load's latency line: mean 398 us, sd 50 us for HTTP/2 on `a`).
+
+**The 0.51x of the 0.7.0 round was the load generator.** cameleer-bench's HTTP/2 path (`simoom-client`,
+two thread hand-offs per response) reaches about half of what the server serves (79k against 153k on
+`a`), and its gRPC path about 0.62x (58k against 93k). Its HTTP/1.1 path is faster than h2load's (103k
+against 86k on `a`), which is why its HTTP/1.1 figure looked high next to its HTTP/2 figure.
+
+Consequences:
+
+1. Published HTTP/2 and gRPC throughput of the server should be measured with h2load (or another
+   event-driven client), not with cameleer-bench's generator. `docs/BENCHMARKS.md` and the site list
+   "HTTP/2 at 0.51x of HTTP/1.1" as a loss: that row measured the client, not the server.
+2. The client cost is real for Cameleer as an HTTP/2 and gRPC client (`http` producer with HTTP/2, `grpc`
+   producer, Kinesis `SubscribeToShard`): about 53 us of CPU per call against about 21 us for HTTP/1.1. That
+   is what the event-driven HTTP/2 client in simoom-client (above) would fix.
