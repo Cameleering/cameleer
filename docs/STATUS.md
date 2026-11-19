@@ -561,6 +561,21 @@ Cameleer's own HTTP code or it is not used.
   (simoom-client's reader thread hands each response to the request thread). The HTTP and gRPC servers now start every
   event loop (lazy start only on Lambda or with `CAMEL_SERVER_LAZY_LOOPS=true`), and simoom-rt places a few long-lived
   connections on the least loaded loop (simoom, not released). Open: an event-driven HTTP/2 client in simoom-client.
+- **Asynchronous routing, phase 0 (2026-11-19, branch `claude/affectionate-dijkstra-0f0dea`, not
+  released):**
+  - **What was built:**
+    - an `AsyncProcessor` path in the routing engine: `cameleer_core::reactive`, plus the async forms
+      of the pipeline, the route, the error channel and `to`;
+    - the `http` producer on simoom-client's event-loop client;
+    - `platform-http` routes answering from tasks;
+    - `CAMEL_ASYNC_ROUTING=false` as the control.
+  - **Measured** (WSL2, `platform-http → http` proxy, 4 CPUs): 2.2x req/s at 64 connections and 2.9x
+    at 256, 26-33% less CPU per request, 0.07-0.2 context switches per request instead of 1, 8 threads
+    instead of 69-205. With a 20 ms backend the synchronous path stops at the 200-thread bound (9,900
+    req/s) and the asynchronous one does not.
+  - **Tests:** hermetic suite 2977 passed, 0 failed.
+  - **Where to read more:** design and results in `docs/design/async-routing.md`.
+  - **Open:** the client on the server's loops (simoom S1-S3), an in-flight limit, phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).

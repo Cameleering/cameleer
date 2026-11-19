@@ -194,6 +194,7 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
                 "iocp2" => cameleer_bench::rawiocp::iocp(port, 2),
                 "iocp8" => cameleer_bench::rawiocp::iocp(port, 8),
                 "iocp16" => cameleer_bench::rawiocp::iocp(port, 16),
+                m if m.starts_with("sleep") => cameleer_bench::rawhttp::threads_delayed(port, m["sleep".len()..].parse().map_err(|_| "bad sleep<ms>")?),
                 _ => cameleer_bench::rawhttp::threads(port),
             };
             r.map_err(|e| e.to_string())

@@ -1,4 +1,4 @@
-//! `cameleer-bench raw-http <port> threads|poll`: a minimal HTTP responder without Camel, to
+//! `cameleer-bench raw-http <port> threads|poll|sleep<ms>`: a minimal HTTP responder without Camel, to
 //! measure what the load generator and the socket model allow on this machine (the ceiling
 //! for the `http` scenario). Not part of the reported results.
 
@@ -13,6 +13,11 @@ fn complete_requests(buf: &[u8]) -> usize {
 
 /// Thread per connection, blocking reads (the model of cameleer-http's server).
 pub fn threads(port: u16) -> std::io::Result<()> {
+    threads_delayed(port, 0)
+}
+
+/// [`threads`], answering each request after `delay_ms` (a slow backend for the proxy scenario).
+pub fn threads_delayed(port: u16, delay_ms: u64) -> std::io::Result<()> {
     let l = TcpListener::bind(("0.0.0.0", port))?;
     for s in l.incoming() {
         let mut s = s?;
@@ -30,6 +35,9 @@ pub fn threads(port: u16) -> std::io::Result<()> {
                 if reqs > 0 {
                     // the load generator sends one request at a time
                     have = 0;
+                    if delay_ms > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+                    }
                     for _ in 0..reqs {
                         if s.write_all(RESPONSE).is_err() {
                             return;

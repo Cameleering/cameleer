@@ -326,6 +326,26 @@ impl Service for HttpConsumer {
         if self.binding.disable_stream_cache {
             registry().set_streaming(&registration, true);
         }
+        // a route that can wait without a thread answers from a task (docs/design/async-routing.md);
+        // routes that restrict media types keep the synchronous dispatch, which checks them
+        let asynchronous = cameleer_core::reactive::async_of(&*self.processor).is_some()
+            && !self.binding.disable_stream_cache
+            && self.spec.consumes.is_none()
+            && self.spec.produces.is_none();
+        if asynchronous {
+            let (ctx, processor, binding, suspend) = (self.ctx.clone(), self.processor.clone(), self.binding.clone(), self.suspend.clone());
+            let handler: crate::registry::AsyncRouteHandler = Arc::new(move |req: HttpRequest, params: Vec<(String, String)>, respond: crate::server::Responder| {
+                if suspend.get() {
+                    return respond(HttpResponse::text(503, "Service Unavailable"));
+                }
+                let Some(ctx) = ctx.upgrade() else { return respond(HttpResponse::text(503, "Service Unavailable")) };
+                let mut ex = Box::new(Exchange::new(Some(ctx)));
+                binding.read_request(&req, &params, &mut ex);
+                let binding = binding.clone();
+                cameleer_core::reactive::spawn(processor.clone(), ex, Box::new(move |ex: Box<Exchange>| respond(binding.write_response(&ex))));
+            });
+            registry().set_async(&registration, handler);
+        }
         *self.bound_port.lock().unwrap() = Some(registration.port);
         *reg = Some(registration);
         Ok(())

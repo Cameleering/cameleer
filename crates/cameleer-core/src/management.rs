@@ -517,6 +517,14 @@ impl Processor for InstrumentedProcessor {
         self.process_timed(ex, 0).0
     }
 
+    fn as_async(&self) -> Option<&dyn crate::spi::AsyncProcessor> {
+        self.inner.as_async().map(|_| self as &dyn crate::spi::AsyncProcessor)
+    }
+
+    fn blocking(&self) -> crate::spi::Blocking {
+        self.inner.blocking()
+    }
+
     fn process_timed(&self, ex: &mut Exchange, start: u64) -> (Result<()>, u64) {
         let n = &self.node;
         let stats = self.state.processor_stats();
@@ -547,6 +555,43 @@ impl Processor for InstrumentedProcessor {
     }
 }
 
+impl InstrumentedProcessor {
+    fn recording(&self) -> bool {
+        self.state.processor_stats() || self.state.tracer.is_active() || self.state.history_enabled.load(Ordering::Relaxed)
+    }
+}
+
+impl crate::spi::AsyncProcessor for InstrumentedProcessor {
+    fn process_async<'a>(&'a self, ex: &'a mut Exchange) -> crate::spi::ProcessFuture<'a> {
+        Box::pin(async move {
+            let inner = self.inner.as_async().expect("as_async checked the inner processor");
+            if !self.recording() {
+                return inner.process_async(ex).await;
+            }
+            let n = &self.node;
+            let stats = self.state.processor_stats();
+            if self.state.tracer.is_active() {
+                self.state.tracer.trace(&n.route_id, &n.node_id, &n.label, false, ex);
+            }
+            let hist = if self.state.history_enabled.load(Ordering::Relaxed) {
+                Some(crate::history::begin(ex, &n.route_id, &n.node_id, &n.label))
+            } else {
+                None
+            };
+            let start = crate::clock::ticks();
+            let r = inner.process_async(ex).await;
+            let end = crate::clock::ticks();
+            if stats {
+                n.perf.record_ticks(start, end, r.is_err() || ex.is_failed());
+            }
+            if let Some(i) = hist {
+                crate::history::end(ex, i, &n.node_id, crate::clock::elapsed(start, end));
+            }
+            r
+        })
+    }
+}
+
 struct RouteInstrumentation {
     state: Arc<ManagementState>,
     mgmt: Arc<RouteMgmt>,
@@ -557,6 +602,14 @@ struct RouteInstrumentation {
 impl Processor for RouteInstrumentation {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
         self.process_timed(ex, 0).0
+    }
+
+    fn as_async(&self) -> Option<&dyn crate::spi::AsyncProcessor> {
+        self.inner.as_async().map(|_| self as &dyn crate::spi::AsyncProcessor)
+    }
+
+    fn blocking(&self) -> crate::spi::Blocking {
+        self.inner.blocking()
     }
 
     fn process_timed(&self, ex: &mut Exchange, outer_start: u64) -> (Result<()>, u64) {
@@ -576,6 +629,29 @@ impl Processor for RouteInstrumentation {
         let end = crate::clock::ticks();
         crate::history::end(ex, i, id, crate::clock::elapsed(start, end));
         (r, end)
+    }
+}
+
+impl crate::spi::AsyncProcessor for RouteInstrumentation {
+    fn process_async<'a>(&'a self, ex: &'a mut Exchange) -> crate::spi::ProcessFuture<'a> {
+        Box::pin(async move {
+            let inner = self.inner.as_async().expect("as_async checked the inner processor");
+            let id = &self.mgmt.route_id;
+            if self.state.tracer.is_active() {
+                self.state.tracer.trace(id, id, &self.label, true, ex);
+            }
+            let hist = if self.state.history_enabled.load(Ordering::Relaxed) {
+                Some(crate::history::begin(ex, id, id, &self.label))
+            } else {
+                None
+            };
+            let Some(i) = hist else { return inner.process_async(ex).await };
+            let start = crate::clock::ticks();
+            let r = inner.process_async(ex).await;
+            let end = crate::clock::ticks();
+            crate::history::end(ex, i, id, crate::clock::elapsed(start, end));
+            r
+        })
     }
 }
 

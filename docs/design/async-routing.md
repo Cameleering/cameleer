@@ -1,6 +1,6 @@
 # Asynchronous routing: an `AsyncProcessor` path for Cameleer
 
-_2026-11-19. Design only, nothing built. Follows the cost model in
+_2026-11-19. Phase 0 built and measured (section 12); the later phases are not. Follows the cost model in
 [http2-throughput.md](http2-throughput.md), section "Root cause of the client gap"._
 
 ## 1. Why
@@ -288,6 +288,93 @@ simoom is a separate repository and its releases are the owner's decision. The d
 2. Phase 0: build the prototype and measure it against the predictions above before any further
    engine change.
 3. The simoom changes S1-S3, on simoom's own schedule.
+
+## 12. Phase 0: built and measured (2026-11-19)
+
+**What was built.**
+
+- **Core:**
+  - `cameleer_core::reactive`: the executor (tasks polled where they are woken, `block_on`, `offload`,
+    `oneshot`, `enter_loop`).
+  - `Processor::as_async` / `blocking` and `AsyncProcessor` in `spi.rs`.
+  - Async forms of `Pipeline`, the route entry (`RouteProcessor`), `RouteWrapper` (not with
+    `interceptFrom`), `ErrorChannel` (the first attempt is awaited; redeliveries and failure processors
+    run on a worker), the management instrumentation and `to`.
+  - `setHeader`/`setBody`/`transform` with constant, header, JsonPath, jq or Simple (without `bean:`)
+    expressions report `Blocking::Never`.
+- **HTTP:**
+  - **`http` producer:** sends over simoom-client's event-loop client (`rt::RtClient`, already in the
+    released 0.1.0, HTTP/1.1). It uses a process-wide runtime of half the CPUs
+    (`CAMEL_HTTP_CLIENT_LOOPS`).
+  - **Requests that stay on the blocking client:** streamed bodies, HTTP/2, proxies and chunked request
+    coding. They move to a worker first.
+  - **`platform-http` routes (and the `jetty`/`undertow` aliases):** routes that are async-capable answer
+    from a task. Routes with `consumes`/`produces` or `disableStreamCache` stay synchronous.
+- **The control:** `CAMEL_ASYNC_ROUTING=false` (or `reactive::set_enabled(false)`) builds every
+  consumer on the synchronous path. It is used by the differential test and by the benchmark.
+
+**Not built in phase 0:**
+- S1-S3: the client still runs on its own loops, not the server's;
+- the HTTP/2 event-loop client, which is not released;
+- the in-flight limit;
+- phases 1-4.
+
+**Tests.**
+- `crates/cameleer-core/src/reactive.rs`, 5 tests:
+  - a step completed from another thread;
+  - 100,000 synchronous completions on a 256 KiB stack (no recursion);
+  - a panic fails the exchange;
+  - a blocking step moves off the loop;
+  - `block_on`.
+- `crates/cameleer-http/tests/async_routing.rs`: the same routes with asynchronous routing on and off
+  must give the same answers (a proxy, a handled `onException`, redelivery to success, a failure).
+  The step after the HTTP call runs on the client's event loop. 40 requests to a 200 ms backend
+  through a server with 2 offload threads finish in under 2.5 s; the synchronous path takes over
+  3.5 s.
+- Hermetic suite on Windows 11: **2977 passed, 0 failed**, zero warnings.
+
+**Measured.** `platform-http → http → respond` (bridge), WSL2, three guarded rounds. Raw data and
+method are in `benchmarks/results/2026-11-19-wsl-async-proxy/`. The Cameleer process is pinned to 4
+CPUs, and CPU and switches are counted for that process only:
+
+| backend, connections | path | req/s (3 rounds) | CPU µs/req | ctx switches/req | threads | p99 |
+|---|---|---:|---:|---:|---:|---:|
+| fast, 64 | synchronous | 35,377 / 33,973 / 34,346 | 61.8 / 62.3 / 62.1 | 1.01-1.05 | 69 | 4.4 ms |
+| fast, 64 | asynchronous | 78,543 / 77,456 / 79,630 | 45.7 / 45.6 / 45.7 | 0.21-0.22 | 8 | 2.1-2.2 ms |
+| fast, 256 | synchronous | 28,992 / 29,244 / 30,821 | 61.2 / 57.1 / 61.9 | 0.92-1.00 | 205 | 15.7-16.9 ms |
+| fast, 256 | asynchronous | 86,424 / 88,743 / 88,858 | 37.0 / 40.9 / 41.8 | 0.07-0.08 | 8 | 7.2-8.0 ms |
+| 20 ms, 256 | synchronous | 9,891 / 9,897 / 9,916 | 77-91 | 1.7-2.1 | 205 | 37.0-37.5 ms |
+| 20 ms, 256 | asynchronous | 12,608 / 12,587 / 12,559 | 71-86 | 1.2-1.7 | 8 | 20.8-21.1 ms |
+
+**Against the predictions of section 9:**
+
+- **Context switches: met.** They fell from 1.0 to 0.07-0.22 per request. The prediction had counted
+  about 3 hand-offs per request for the synchronous path; the measurement shows 1. Under load the
+  server loops rarely park, so a post to them costs no switch. The worker that parks for every request
+  is the one switch.
+- **Thread bound: met, to the request.** The synchronous path with a 20 ms backend stops at 9,900
+  req/s, which is the T/R = 200 / 0.020 s = 10,000 of section 1. The asynchronous path reaches
+  12,600 = N/R = 256 / 0.0203 s: the closed-loop load generator, not Cameleer, is then the limit. Its
+  p99 is the backend's 20.8 ms against 37 ms.
+- **CPU per request: 16-20 µs saved (26-33%),** against 25-40 µs predicted for the whole machine.
+  - That is above half the prediction (the gate) but at its lower end.
+  - Part of the difference is billing. In the synchronous path the parked worker is woken by the
+    backend's send, so that wake is billed to the backend process, which is not counted here. The
+    asynchronous path pays its two cross-loop posts itself.
+  - S1 and S2 (the client on the server's loops) remove those two posts. They are the next
+    measurement.
+- **Throughput: 2.2x at 64 connections and 2.9x at 256.** That is more than the CPU saving alone
+  explains. The synchronous path was not CPU-bound: it kept 1.7-2.2 of 4 CPUs busy, held back by
+  the hand-off latency. The asynchronous path uses 3.2-3.7 of them.
+
+**Verdict.** The gate is passed. The model's mechanism is confirmed: hand-offs and the thread bound,
+not the work. Its count of hand-offs was too high, as explained above.
+
+**Next steps:**
+1. S1/S2 in simoom: the client on the server's loops, and a same-loop responder. The prediction: the
+   remaining 0.07-0.2 switches go, and CPU per request falls by the two posts.
+2. The in-flight limit, before asynchronous routing is on by default in a release.
+3. Phase 1.
 
 ## References
 

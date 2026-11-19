@@ -4,15 +4,20 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::message::Exchange;
-use crate::spi::Processor;
+use crate::spi::{AsyncProcessor, Blocking, ProcessFuture, Processor};
 
 pub struct Pipeline {
     processors: Vec<Arc<dyn Processor>>,
+    /// A step has an asynchronous form (decided once, here).
+    is_async: bool,
+    blocking: Blocking,
 }
 
 impl Pipeline {
     pub fn new(processors: Vec<Arc<dyn Processor>>) -> Self {
-        Pipeline { processors }
+        let is_async = processors.iter().any(|p| p.as_async().is_some());
+        let blocking = if processors.iter().all(|p| p.as_async().is_some() || p.blocking() == Blocking::Never) { Blocking::Never } else { Blocking::Maybe };
+        Pipeline { processors, is_async, blocking }
     }
     pub fn processors(&self) -> &[Arc<dyn Processor>] {
         &self.processors
@@ -39,6 +44,44 @@ impl Processor for Pipeline {
             }
         }
         (Ok(()), t)
+    }
+
+    fn as_async(&self) -> Option<&dyn AsyncProcessor> {
+        if self.is_async {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    fn blocking(&self) -> Blocking {
+        self.blocking
+    }
+}
+
+impl AsyncProcessor for Pipeline {
+    fn process_async<'a>(&'a self, exchange: &'a mut Exchange) -> ProcessFuture<'a> {
+        Box::pin(async move {
+            for p in &self.processors {
+                if !exchange.should_continue() {
+                    break;
+                }
+                let r = match p.as_async() {
+                    Some(a) => a.process_async(exchange).await,
+                    None => {
+                        if p.blocking() == Blocking::Maybe {
+                            crate::reactive::offload().await;
+                        }
+                        p.process_timed(exchange, 0).0
+                    }
+                };
+                if let Err(e) = r {
+                    exchange.set_exception(e);
+                    break;
+                }
+            }
+            Ok(())
+        })
     }
 }
 

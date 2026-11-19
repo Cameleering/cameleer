@@ -574,6 +574,32 @@ impl Processor for ErrorChannel {
         }
         (self.after_attempt(ex), 0)
     }
+
+    fn as_async(&self) -> Option<&dyn crate::spi::AsyncProcessor> {
+        self.inner.as_async().map(|_| self as &dyn crate::spi::AsyncProcessor)
+    }
+
+    fn blocking(&self) -> crate::spi::Blocking {
+        self.inner.blocking()
+    }
+}
+
+impl crate::spi::AsyncProcessor for ErrorChannel {
+    fn process_async<'a>(&'a self, ex: &'a mut Exchange) -> crate::spi::ProcessFuture<'a> {
+        Box::pin(async move {
+            let inner = self.inner.as_async().expect("as_async checked the inner processor");
+            if let Err(e) = inner.process_async(ex).await {
+                ex.set_exception(e);
+            }
+            if ex.exception.is_none() {
+                return Ok(());
+            }
+            // Failures are rare: redeliveries and the failure processors run synchronously, on a
+            // worker when the task is on an event loop (their delays and processors may block).
+            crate::reactive::offload().await;
+            self.after_attempt(ex)
+        })
+    }
 }
 
 impl ErrorChannel {
