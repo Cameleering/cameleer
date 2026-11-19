@@ -158,6 +158,60 @@ unsafe fn pop_batch(class: usize) -> Option<(*mut Node, u32)> {
     }
 }
 
+/// The shared regions of each size class: the untouched rests of chunks that threads gave back (see
+/// [`release_thread_cache`]), a lock-free stack like [`SHARED`]. A region is described in its own
+/// first block, so giving one back writes to one page of it only, not to every block. A thread that
+/// needs blocks and finds neither a recycled batch nor its own region takes one of these before it
+/// carves a new chunk, so the pages in use follow the memory the program needs and not the number of
+/// threads that ever allocated.
+static REGIONS: [AtomicU64; CLASSES] = [SHARED_INIT; CLASSES];
+
+/// A region's description, stored at its start (a block is 16 bytes or more).
+#[repr(C)]
+struct RegionNode {
+    /// The next region on the stack (low 48 bits).
+    next: AtomicU64,
+    /// The end of the region.
+    end: AtomicU64,
+}
+
+/// Push the region `start..end` (at least one block) onto the shared stack of `class`.
+unsafe fn push_region(class: usize, start: *mut u8, end: *mut u8) {
+    let node = start as *mut RegionNode;
+    let shared = &REGIONS[class];
+    let mut cur = shared.load(Ordering::Acquire);
+    loop {
+        (*node).next.store(cur & ADDR, Ordering::Relaxed);
+        (*node).end.store(end as u64, Ordering::Relaxed);
+        let tag = ((cur >> 48) + 1) & 0xFFFF;
+        match shared.compare_exchange_weak(cur, (start as u64) | (tag << 48), Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return,
+            Err(now) => cur = now,
+        }
+    }
+}
+
+/// Pop a region from the shared stack of `class`: (start, end).
+unsafe fn pop_region(class: usize) -> Option<(*mut u8, *mut u8)> {
+    let shared = &REGIONS[class];
+    let mut cur = shared.load(Ordering::Acquire);
+    loop {
+        let head = (cur & ADDR) as *mut RegionNode;
+        if head.is_null() {
+            return None;
+        }
+        // Blocks are never returned to the system, so these reads are safe even when another thread
+        // took the region meanwhile (the compare-exchange then fails and the values are discarded).
+        let next = (*head).next.load(Ordering::Relaxed);
+        let end = (*head).end.load(Ordering::Relaxed);
+        let tag = ((cur >> 48) + 1) & 0xFFFF;
+        match shared.compare_exchange_weak(cur, (next & ADDR) | (tag << 48), Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return Some((head as *mut u8, end as *mut u8)),
+            Err(now) => cur = now,
+        }
+    }
+}
+
 const UNINIT: u8 = 0;
 const INITIALIZING: u8 = 1;
 const ALIVE: u8 = 2;
@@ -210,24 +264,57 @@ const fn class_size(class: usize) -> usize {
     }
 }
 
-/// Move all blocks of a thread bin, including the unused rest of its chunk, to the shared
-/// stack of the class.
+/// Move all blocks of a thread bin to the shared stack of the class, and the unused rest of its
+/// chunk to the shared regions (without touching its pages).
 unsafe fn give_back(class: usize, bin: &mut Bin, bump: &mut Option<Bump>) {
-    if let Some(mut b) = bump.take() {
-        let size = class_size(class);
-        while b.ptr < b.end {
-            let p = b.ptr;
-            b.ptr = p.add(size);
-            bin.push(p);
+    give_back_bump(class, bump);
+    give_back_bin(class, bin);
+}
+
+/// Move the unused rest of a chunk to the shared regions of the class.
+unsafe fn give_back_bump(class: usize, bump: &mut Option<Bump>) {
+    if let Some(b) = bump.take() {
+        if b.ptr < b.end {
+            push_region(class, b.ptr, b.end);
         }
     }
-    give_back_bin(class, bin);
 }
 
 /// Move the blocks of `bin` to the shared stack of the class.
 unsafe fn give_back_bin(class: usize, bin: &mut Bin) {
     push_batch(class, bin.head, bin.len);
     *bin = EMPTY;
+}
+
+/// Hands what the calling thread holds to other threads: its cached free blocks go to the shared
+/// lists and the unused rest of its chunks to the shared regions, so that the threads that allocate
+/// next reuse them instead of carving new chunks.
+///
+/// A thread that is about to wait (a pool worker with no job) should call this. A thread keeps its
+/// free blocks and one chunk region per size class for as long as it lives, and a program with a
+/// pool of hundreds of threads would hold hundreds of them: measured, a gRPC server on 133 pooled
+/// threads needed 51 MB where the system allocator needed 23 MB (threads that exit give everything
+/// back on their own). The unused rest of a chunk is not touched when it moves: a region is described
+/// in its own first block, so only that page is written, where linking every block would make all of
+/// the pages resident. Does nothing for a thread that has not used the allocator.
+pub fn release_thread_cache() {
+    let _ = CACHE.try_with(|c| {
+        if c.state.get() != ALIVE {
+            return;
+        }
+        // SAFETY: the cache is only used by its own thread, never re-entrantly, and nothing here
+        // allocates.
+        let t = unsafe { &mut *c.bins.get() };
+        for class in 0..CLASSES {
+            // SAFETY: as above
+            unsafe {
+                if t.bins[class].len > 0 {
+                    give_back_bin(class, &mut t.bins[class]);
+                }
+                give_back_bump(class, &mut t.bumps[class]);
+            }
+        }
+    });
 }
 
 /// Take a block from the unused rest of the class's last chunk.
@@ -275,6 +362,11 @@ unsafe fn refill(class: usize, bin: &mut Bin, bump: &mut Option<Bump>) -> *mut u
     let p = bin.pop();
     if !p.is_null() {
         return p;
+    }
+    // a region another thread gave back, before new memory
+    if let Some((start, end)) = pop_region(class) {
+        *bump = Some(Bump { ptr: start.add(class_size(class)), end });
+        return start;
     }
     carve(class, bump)
 }
@@ -403,6 +495,52 @@ mod tests {
         assert_eq!(class_of(&layout(MAX_SMALL + 1, 8)), None);
         assert_eq!(class_of(&layout(64, 32)), None, "over-aligned blocks use the system allocator");
         assert_eq!(class_of(&layout(0, 1)), None);
+    }
+
+    #[test]
+    fn releasing_the_thread_cache_hands_its_blocks_to_other_threads() {
+        let a = CamelAllocator;
+        let l = layout(96, 16);
+        let class = class_of(&l).unwrap();
+        let ptrs: Vec<usize> = (0..100).map(|_| unsafe { a.alloc(l) } as usize).collect();
+        for &p in &ptrs {
+            unsafe { a.dealloc(p as *mut u8, l) };
+        }
+        let held = with_cache(|t| t.bins[class].len).unwrap();
+        assert!(held >= 100, "the freed blocks are cached by this thread: {held}");
+        release_thread_cache();
+        assert_eq!(with_cache(|t| t.bins[class].len).unwrap(), 0, "nothing is cached after the release");
+        // another thread, which has nothing cached, is served from the released blocks
+        let reused = std::thread::spawn(move || {
+            let a = CamelAllocator;
+            let got: Vec<usize> = (0..100).map(|_| unsafe { a.alloc(l) } as usize).collect();
+            let n = got.iter().filter(|p| ptrs.contains(p)).count();
+            for p in got {
+                unsafe { a.dealloc(p as *mut u8, l) };
+            }
+            n
+        })
+        .join()
+        .unwrap();
+        assert!(reused > 0, "the released blocks are reused by another thread");
+    }
+
+    #[test]
+    fn releasing_the_thread_cache_hands_the_unused_rest_of_a_chunk_to_other_threads() {
+        // a size class no other test uses, because the shared lists are global
+        let l = layout(3_000, 16);
+        let size = class_size(class_of(&l).unwrap());
+        let (kept, next) = std::thread::spawn(move || {
+            let a = CamelAllocator;
+            // blocks that stay allocated: the thread's chunk has an unused rest after them
+            let kept: Vec<usize> = (0..3).map(|_| unsafe { a.alloc(l) } as usize).collect();
+            release_thread_cache();
+            (kept, std::thread::spawn(move || unsafe { CamelAllocator.alloc(l) } as usize).join().unwrap())
+        })
+        .join()
+        .unwrap();
+        // the new thread has no chunk of its own: it takes the block after the last of the first thread
+        assert_eq!(next, kept.iter().max().unwrap() + size, "it continues in the first thread's chunk");
     }
 
     #[test]

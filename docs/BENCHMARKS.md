@@ -368,12 +368,36 @@ counting are those of the round above. Raw records, method and a noise control:
 
 - **The suspicion was right:** with the thread starts removed, the same server does 4.3x to 4.8x the calls per second
   on the same machines, at a quarter of the CPU per call and a fifth of the p99.
-- **The price is memory:** the pool keeps many threads, each with its stack and buffers, so peak memory is 3.5x at
-  64 concurrent calls and 8x at 256 (49 and 169 MB). Fewer threads per call (no separate handler thread, no reader
-  thread for a unary call) might keep the gain with less memory; that was not tried.
+- **The price was memory:** the pool kept many threads, each with its stack and buffers, so peak memory was 3.5x at
+  64 concurrent calls and 8x at 256 (49 and 169 MB). The next section removes that cost.
 - **Everything else is unchanged within the noise** (HTTP 1.03x, REST 0.95x, MCP 0.99x; the code is identical in
   both builds, so these show the size of the noise: 0.91x to 1.06x from run to run).
 - Not measured: streaming calls, TLS, the gRPC client, Windows.
+
+### gRPC on a pool of threads, without the memory cost (2026-11-19)
+
+The first pool used up to three threads per call and kept them. Two changes remove the cost: a call is now one job on
+the pool (the request body is read with simoom's waker based `BodySource::poll_read` on the call's own thread, and
+deadlines are kept by one shared timer thread), and a pool worker that has no job hands the blocks in its allocator
+cache (including the unused rest of its chunk) to other threads before it waits, so memory freed by one worker is
+reused by the next. New is branch `grpc-mem` (`a3b3879`); one session on `c-4` droplets in `sfo3` (the earlier rounds
+used `blr1`, where `c-4` is no longer offered). Raw records, method and the tables:
+[`benchmarks/results/2026-11-19-linux-grpc-memory/`](../benchmarks/results/2026-11-19-linux-grpc-memory/).
+
+| gRPC unary call | against 0.7.0, 64 calls | against 0.7.0, 256 calls | against the first pool build, 64 calls |
+|---|---|---|---|
+| requests per second, new / old | **41,020 / 10,514 = 3.90x** (second run 3.96x) | 36,266 / 10,194 = 3.56x | 40,788 / 39,020 = 1.05x |
+| p99 | 3.96 / 12.71 ms | 23.07 / 41.16 ms | 4.01 / 4.12 ms |
+| server CPU per request | 37 / 214 us | 38 / 204 us | 35 / 60 us |
+| **server peak memory** | **13.5 / 13.8 MB** | **18.6 / 20.1 MB** | **14.3 / 49.7 MB** |
+
+- **Same speed as the first pool, a quarter of its memory, and no more memory than 0.7.0** (13.5 against 13.8 MB at
+  64 calls, 18.6 against 20.1 MB at 256), at 3.6x to 3.9x the call rate, a third of the p99 and about a sixth of the
+  CPU per call.
+- **The rest-json 0.93x to 0.95x of earlier rounds was probably the harness, not the code:** with the order of the
+  sides swapped, REST measured 0.98x against the pool build (identical code), and the HTTP, REST and MCP ratios
+  stayed between 0.90x and 1.04x from run to run.
+- Not measured: streaming calls, TLS, the gRPC client, Windows, long-lived idle calls.
 
 ## Found a problem?
 
