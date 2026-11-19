@@ -86,17 +86,38 @@ pair), so read the means: `rest-json-h2` 70k to 80k (+14%), `grpc` 27.6k to 57.2
 pair (`mem.sh`): 30.1k, 31.8k lazy against 58.0k, 35.4k eager. Memory is within 0.2 MB at 64 calls.
 Windows was not remeasured; the hermetic tests of `cameleer-http` and `cameleer-grpc` pass there.
 
+## Placement fix in simoom-rt (simoom repository, commit 7894b4c, not released)
+
+With every loop started, `SO_REUSEPORT` still picks the loop by a hash of the four-tuple, so 4 long-lived
+connections landed 3 on one loop about 18% of the time. `simoom-rt` now hands a freshly accepted connection
+to the least loaded loop when this loop holds more than the least loaded one and the server has at most
+4 connections per loop (`balance_target`, `loop_pending` counts hand-offs not yet adopted, so a burst does not
+all pick the same loop). With many connections the hash evens out and a hand-off per accept would only cost a
+wake-up, so the rule stays off. Test `few_connections_spread_one_per_loop` (4 loops, 4 connections, every loop
+gets exactly one, 10 rounds): fails without the change (`[0, 2, 1, 1]` in round 0), passes with it; the
+`simoom-rt` and `simoom` suites pass on WSL2. Cameleer picks this up with the next simoom release; a local
+before/after throughput measurement was not conclusive because the machine was loaded by the droplet setup
+(HTTP/2 between 25k and 83k req/s in both builds), so the evidence is the placement test.
+
+## The client, measured but not fixed
+
+Context switches of the load generator over 2 s (`/proc/<pid>/task/*/status`, `ctx.sh`): HTTP/1.1 417k for
+341k requests, 1.2 per request; HTTP/2 381k for 170k requests, 2.2 per request. One thread per request over a
+shared connection needs two hand-offs per response: the pump thread wakes from `read`, then wakes the request
+thread through its condition variable. In a VM a cross-core wake costs far more than the 5 us of bare metal,
+which is consistent with 53 us against 21 us per request. Spinning before parking does not help (responses
+arrive a few hundred us later under load), and a leader/follower read only moves the wake. Removing the hop
+needs an event-driven HTTP/2 client: `simoom-client`'s `rt::RtClient` already runs HTTP/1.1 on simoom-rt loops
+with completion callbacks, and the sans-io `simoom-h2` engine is what the blocking client drives, so the work is
+an HTTP/2 connection type for `RtClient` plus a blocking facade over it for `Client`. It is a feature of its
+own (stream limits, flow control, GOAWAY and retries on the loop), not a patch, and is not started.
+
 ## What remains, ranked
 
-1. **Connection placement in simoom-rt** (separate repository): placement is by `SO_REUSEPORT` hash, so
-   even eager, 4 connections can land 3 on one loop (about 18% of the time in the test above), and nothing
-   moves a hot connection. Options: balance by least-loaded loop at accept for every protocol; grow when a
-   loop is busy rather than at 3 connections; migrate idle-between-requests connections. The first is
-   cheap, the last architectural.
-2. **The client pump** (simoom-client): per-connection single pump plus a condition variable per stream. An
-   event-driven client (one loop per connection set, completions delivered by channel) would remove the
-   serial 30 us section. This is what keeps HTTP/2 below HTTP/1.1 in this harness once the server is fixed
-   (85k against 150k to 175k); the droplets have a separate load node, so the cost there is on its 4 CPUs.
+1. **An event-driven HTTP/2 client** in simoom-client, as above. This is what keeps HTTP/2 below HTTP/1.1 in
+   this harness once the server is fixed (85k against 150k to 175k). The droplets have a separate load node, so
+   the cost there is on its 4 CPUs.
+2. **Release simoom with the placement change** and bump Cameleer's dependency.
 3. **The load generator** can use `BENCH_H2_CONNS=16` as an additional record to separate client from server.
 
 ## Droplet round to confirm (needs the owner's approval, not run)
