@@ -479,15 +479,15 @@ impl Processor for HttpProducer {
         let ct = resp.headers.get("Content-Type").map(|s| s.to_string());
         let msg = &mut ex.message;
         if !self.opts.skip_response_headers {
-            let mut seen: Vec<String> = Vec::new();
+            // a response header replaces the message header of that name; repeats of it add values
+            let mut seen: Vec<&str> = Vec::with_capacity(resp.headers.len());
             for (k, v) in resp.headers.iter() {
                 if crate::binding::filter_inbound(k) {
                     continue;
                 }
-                let lower = k.to_ascii_lowercase();
-                if !seen.contains(&lower) {
+                if !seen.iter().any(|s| s.eq_ignore_ascii_case(k)) {
                     msg.headers.remove(k);
-                    seen.push(lower);
+                    seen.push(k);
                 }
                 add_header_value(&mut msg.headers, k, Value::String(v.to_string()));
             }

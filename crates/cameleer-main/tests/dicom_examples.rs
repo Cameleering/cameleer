@@ -25,8 +25,21 @@ fn example(name: &str, replace: &[(&str, &str)]) -> String {
     text
 }
 
+/// A free port for a listener the example binds itself. It comes from 20000-29999, below the ephemeral ranges
+/// (Windows 49152-65535, Linux 32768-60999): a port picked with `bind(0)` and released could be handed out again
+/// at once to a server that binds port 0, such as Main's own HTTP server (seen on Windows CI).
 fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    let start = std::process::id().wrapping_mul(7919) % 10_000;
+    loop {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        assert!(n < 10_000, "no free port in 20000-29999");
+        let port = 20_000 + ((start + n) % 10_000) as u16;
+        if std::net::TcpListener::bind(("0.0.0.0", port)).is_ok() && std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
 }
 
 fn wait_for(what: &str, f: impl Fn() -> bool) {
