@@ -541,7 +541,7 @@ Cameleer's own HTTP code or it is not used.
   and grpcio): HTTP/2 3/3, TLS 2/2, gRPC 2/2.
 - **Benchmark round of 2026-11-18 (0.7.0 against 0.6.1, three DigitalOcean `c-4` droplets, deleted afterwards):**
   gRPC unary 1.06x requests/s with 29% less server CPU per call and a 35% lower p99; plain HTTP and MCP 1.00x;
-  `rest-json` 0.95x (not explained); HTTP/2 at 0.51x of HTTP/1.1 for small calls (explained on 2026-11-19: the load generator's HTTP/2 client, see below); `full` binary
+  `rest-json` 0.95x (not explained); HTTP/2 at 0.51x of HTTP/1.1 for small calls (explained on 2026-11-19: mostly the load generator's HTTP/2 client, partly lazily started event loops, see below); `full` binary
   -0.7%, `core` unchanged. Raw data and method in `benchmarks/results/2026-11-18-linux-grpc-http2/`, report in
   `docs/BENCHMARKS.md`. Open: why gRPC stops at about 11,000 calls/s on both builds (thread creation is the
   suspect, not profiled) and the 5% on `rest-json`. Not measured: gRPC
@@ -555,12 +555,17 @@ Cameleer's own HTTP code or it is not used.
   13.8 MB and 18.6 against 20.1 MB; against the first pool build the same speed (1.05x) at 14.3 against 49.7 MB. With
   the order of the sides swapped `rest-json` was 0.98x (identical code), so the earlier 0.93x to 0.95x was probably the
   harness.
-- **HTTP/2 against HTTP/1.1 explained (2026-11-19, `docs/design/http2-throughput.md`):** driven by nghttp2's h2load
-  (`scripts/cloud-bench/peer.sh`, `benchmarks/results/2026-11-19-linux-http2-peer/`), the server serves HTTP/2 at 1.6x to
-  1.8x its HTTP/1.1 rate and gRPC unary at 73k to 93k calls/s; the 0.51x was cameleer-bench's HTTP/2 client
-  (simoom-client's reader thread hands each response to the request thread). The HTTP and gRPC servers now start every
-  event loop (lazy start only on Lambda or with `CAMEL_SERVER_LAZY_LOOPS=true`), and simoom-rt places a few long-lived
-  connections on the least loaded loop (simoom, not released). Open: an event-driven HTTP/2 client in simoom-client.
+- **HTTP/2 against HTTP/1.1 explained (2026-11-19, `docs/design/http2-throughput.md`).** The 0.51x had two causes:
+  - **Mostly cameleer-bench's HTTP/2 client:** simoom-client's reader thread handed each response to the request
+    thread, two hand-offs per response.
+  - **Partly the server's lazily started event loops,** which left most long-lived HTTP/2 connections on one thread
+    when they arrived in a burst. The HTTP and gRPC servers now start every event loop (lazy start only on Lambda or
+    with `CAMEL_SERVER_LAZY_LOOPS=true`). Worth 2.07x for gRPC unary on WSL2, 1.04x on the droplets.
+
+  Driven by nghttp2's h2load (`scripts/cloud-bench/peer.sh`, `benchmarks/results/2026-11-19-linux-http2-peer/`; 16
+  streams per connection, one run on two droplets), the server served HTTP/2 at 1.6x to 1.8x its HTTP/1.1 rate, and
+  gRPC unary at 73k to 93k calls/s. simoom 0.2.0 places a few long-lived connections on the least loaded loop. Open: an
+  event-driven HTTP/2 client in simoom-client.
 - **Asynchronous routing, phase 0 (2026-11-19; on by default, `CAMEL_ASYNC_ROUTING=false` turns it
   off):**
   - **What was built:**
