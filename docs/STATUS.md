@@ -566,6 +566,30 @@ Cameleer's own HTTP code or it is not used.
   streams per connection, one run on two droplets), the server served HTTP/2 at 1.6x to 1.8x its HTTP/1.1 rate, and
   gRPC unary at 73k to 93k calls/s. simoom 0.2.0 places a few long-lived connections on the least loaded loop. Open: an
   event-driven HTTP/2 client in simoom-client.
+- **Asynchronous routing, phase 0 (2026-11-19; on by default, `CAMEL_ASYNC_ROUTING=false` turns it
+  off):**
+  - **What was built:**
+    - an `AsyncProcessor` path in the routing engine: `cameleer_core::reactive`, plus the async forms
+      of the pipeline, the route, the error channel and `to`;
+    - the `http` producer on simoom-client's event-loop client;
+    - `platform-http` routes answering from tasks;
+    - `CAMEL_ASYNC_ROUTING=false` as the control.
+  - **Measured** (WSL2, `platform-http → http` proxy, 4 CPUs): 2.2x req/s at 64 connections and 2.9x
+    at 256, 26-33% less CPU per request, 0.07-0.2 context switches per request instead of 1, 8 threads
+    instead of 69-205. With a 20 ms backend the synchronous path stops at the 200-thread bound (9,900
+    req/s) and the asynchronous one does not.
+  - **Tests:** hermetic suite 2977 passed, 0 failed.
+  - **Where to read more:** design and results in `docs/design/async-routing.md`.
+  - **In-flight limit:** `maxInflightRequests` on `platform-http` (default
+    `camel.server.maxInflightRequests` or 10,000) answers 503 beyond it.
+  - **Client on the server's loops** (simoom 0.2.0, which this change requires; measured on 2026-11-20
+    with the same simoom code as a local `[patch]` before the release):
+    - 0.00-0.03 context switches per request;
+    - +13-15% req/s and a 35% lower p99 at 64 connections;
+    - the same CPU per request (about 45 µs), so the route is now CPU-bound.
+  - **Profile of the remaining 45 µs** (section 14 of the design): mostly Camel's header mapping and
+    simoom's HTTP work; the URL is now handed to the client once.
+  - **Open:** phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).

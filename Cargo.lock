@@ -115,6 +115,7 @@ dependencies = [
  "cameleer-tls",
  "simoom",
  "simoom-client",
+ "simoom-rt",
  "simoom-tls",
 ]
 

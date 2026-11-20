@@ -92,10 +92,29 @@ fn device_readings_routes(b: &mut RouteBuilder) {
 | `mapHttpMessageHeaders` | `true` | Map request headers to message headers. |
 | `mapHttpMessageFormUrlEncodedBody` | `true` | Map form fields of `application/x-www-form-urlencoded` bodies to headers. |
 | `disableStreamCache` | `false` | Pass the request body as a stream handle read lazily from the connection. |
+| `maxInflightRequests` | `camel.server.maxInflightRequests` or 10000 | Cameleer extension. The most requests a route that waits without holding a thread (a route that calls `http`) works on at once. Beyond it the endpoint answers `503` with `Retry-After: 1` straight away. `0` means no limit. |
 | `ssl` | `false` | Serve HTTPS (certificate from `camel.server.ssl.*` or `sslContextParameters`). |
 | `sslContextParameters` | | `#bean` with the server key store; also enables HTTPS. |
 | `useGlobalSslContextParameters` | `false` | Use the global `camel.ssl.*` parameters (with `camel.ssl.enabled=true`). |
 | `needClientAuth` | `false` | Require a client certificate (mutual TLS). `clientAuth=NONE\|WANT\|REQUIRE` is the long form. |
+
+### Asynchronous routes
+
+A route that calls the `http` producer answers its requests without holding a server thread while it waits
+for the reply. This is on by default.
+
+- **Where it runs:** the route continues on the event loop that read the reply.
+  - Steps that only compute run there too: `setHeader`, `setBody` or `transform` with constant, header,
+    JsonPath, jq or Simple expressions (Simple without `bean:`, `ref:` or `properties:`).
+  - Before any other step (a processor, a bean, a blocking component), the route moves to a worker thread.
+- **Always on the server's threads, as before:** endpoints with `consumes`, `produces` or
+  `disableStreamCache`, and routes with `interceptFrom`.
+- **The limit:** the server's thread count no longer bounds how many such requests run at once, so
+  `maxInflightRequests` does. Beyond it the endpoint answers `503` with `Retry-After: 1`.
+- **Switches:**
+  - `CAMEL_ASYNC_ROUTING=false` turns asynchronous routes off for the whole process.
+  - `CAMEL_HTTP_CLIENT_LOOPS` sets the number of event loops of the `http` producer's client (default half
+    the CPUs, at most 64).
 
 `camel.server.sslEnabled=true` turns on HTTPS for every `platform-http` endpoint. Apache Camel
 options such as `transferException`, `useStreaming`, `headerFilterStrategy` and

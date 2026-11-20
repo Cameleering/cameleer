@@ -108,6 +108,21 @@ fn proxy_config(p: &ProxyConfig) -> sc::ProxyConfig {
     cfg
 }
 
+/// The event loops shared by the non-blocking clients of asynchronous routes, started on first use:
+/// half the CPUs (1 to 8), or `CAMEL_HTTP_CLIENT_LOOPS`.
+pub(crate) fn client_loops() -> Result<Vec<simoom_rt::LoopHandle>> {
+    static RT: OnceLock<std::result::Result<simoom_rt::RuntimeHandle, String>> = OnceLock::new();
+    let rt = RT.get_or_init(|| {
+        let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+        let n = std::env::var("CAMEL_HTTP_CLIENT_LOOPS").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(cpus.div_ceil(2)).clamp(1, 64);
+        simoom_rt::Runtime::builder().threads(n).start().map_err(|e| e.to_string())
+    });
+    match rt {
+        Ok(h) => Ok(h.loops()),
+        Err(e) => Err(CamelError::io(format!("Cannot start the HTTP client event loops: {e}"))),
+    }
+}
+
 /// The simoom client for `settings`, created on first use and shared afterwards.
 pub(crate) fn engine(settings: &EngineSettings<'_>) -> Result<sc::Client> {
     let mut map = engines().lock().unwrap_or_else(|p| p.into_inner());

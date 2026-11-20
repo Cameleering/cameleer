@@ -30,6 +30,9 @@ pub const SERVED: &[(&str, &str, &str)] = &[
     ("http-sql", "/persist", "order"),
     ("mcp", "/mcp", "mcp"),
     ("mcp-session", "/mcp", "mcp-session"),
+    // a proxy: the request is forwarded with the `http` producer to `BENCH_PROXY_TARGET` (host:port)
+    // and its answer returned (docs/design/async-routing.md, phase 0)
+    ("http-proxy", "/proxy", "small"),
     // a unary gRPC call through the `grpc` consumer (protobuf request and reply, see proto/bench.proto)
     ("grpc", "bench.Echo", "grpc"),
 ];
@@ -70,10 +73,17 @@ pub fn served(scenario: &str) -> Option<(&'static str, &'static str)> {
 /// Add the route of a served scenario on `0.0.0.0:port`.
 pub fn add_server_route(ctx: &CamelContext, scenario: &str, port: u16, env: &Env) -> Result<()> {
     let (path, _) = served(scenario).ok_or_else(|| CamelError::illegal_argument(format!("not a served scenario: {scenario}")))?;
-    let from = if scenario == "grpc" { format!("grpc://0.0.0.0:{port}/{path}?protoFile={GRPC_PROTO}") } else { format!("netty-http:http://0.0.0.0:{port}{path}") };
+    let from = if scenario == "http-proxy" {
+        // the `platform-http` consumer family (jetty is an alias), which runs asynchronous routes
+        format!("jetty:http://0.0.0.0:{port}{path}")
+    } else if scenario == "grpc" { format!("grpc://0.0.0.0:{port}/{path}?protoFile={GRPC_PROTO}") } else { format!("netty-http:http://0.0.0.0:{port}{path}") };
     let env = env.clone();
     let scenario = scenario.to_string();
     ctx.add_routes(move |b| match scenario.as_str() {
+        "http-proxy" => {
+            let target = std::env::var("BENCH_PROXY_TARGET").unwrap_or_else(|_| "127.0.0.1:8081".into());
+            b.from(&from).route_id("http-proxy").to(&format!("http://{target}?bridgeEndpoint=true&connectionsPerRoute=1024"));
+        }
         // a fixed reply: the cost of the HTTP stack itself
         "http" => {
             b.from(&from)

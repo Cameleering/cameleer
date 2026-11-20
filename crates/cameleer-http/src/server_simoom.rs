@@ -184,6 +184,8 @@ impl SimoomEngine {
                     let r = build_request(req);
                     let head_request = r.method == "HEAD";
                     let responder = reply.defer();
+                    // a route started here runs on the loop until a step that may block
+                    let _on_loop = cameleer_core::reactive::enter_loop();
                     handler.handle_async(r, Box::new(move |resp| complete(responder, resp, head_request)));
                     return simoom::Outcome::Deferred;
                 }

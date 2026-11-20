@@ -9,7 +9,7 @@ use crate::impl_definition_boilerplate;
 use crate::log::Level;
 use crate::message::{props, Exchange, ExchangePattern};
 use crate::model::{OutputList, ProcessorDefinition, RouteContext};
-use crate::spi::{Expression, Processor, Producer};
+use crate::spi::{AsyncProcessor, Blocking, Expression, ProcessFuture, Processor, Producer};
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
@@ -53,6 +53,51 @@ impl Processor for SendProcessor {
             exchange.pattern = saved;
         }
         r
+    }
+
+    fn as_async(&self) -> Option<&dyn AsyncProcessor> {
+        if self.producer.as_async().is_some() {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    fn blocking(&self) -> Blocking {
+        self.producer.blocking()
+    }
+}
+
+impl AsyncProcessor for SendProcessor {
+    fn process_async<'a>(&'a self, exchange: &'a mut Exchange) -> ProcessFuture<'a> {
+        Box::pin(async move {
+            let saved = exchange.pattern;
+            if let Some(p) = self.pattern {
+                exchange.pattern = p;
+            }
+            exchange.set_property(props::TO_ENDPOINT, self.uri.clone());
+            let r = match self.producer.as_async() {
+                Some(a) => a.process_async(exchange).await,
+                None => self.producer.process(exchange),
+            };
+            if self.pattern.is_some() {
+                exchange.pattern = saved;
+            }
+            r
+        })
+    }
+}
+
+/// Whether evaluating `e` only computes (no I/O, no user code): safe on an event loop.
+pub(crate) fn computes_only(e: &ExpressionDefinition) -> bool {
+    match e {
+        ExpressionDefinition::Language { language, expression, .. } => match language.as_str() {
+            "constant" | "header" | "exchangeProperty" | "variable" | "jsonpath" | "jq" | "tokenize" => true,
+            // `${bean:...}` and `${ref:...}` call user code
+            "simple" => !expression.contains("bean:") && !expression.contains("ref:") && !expression.contains("properties:"),
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -173,6 +218,8 @@ impl SetDefinition {
 pub struct SetProcessor {
     target: SetTarget,
     expression: Arc<dyn Expression>,
+    /// The expression only computes (see [`computes_only`]).
+    computes_only: bool,
     /// The header name, shared by the headers of every exchange this sets it on.
     header: Option<Arc<str>>,
 }
@@ -183,7 +230,13 @@ impl SetProcessor {
             SetTarget::Header(n) => Some(Arc::from(n.as_str())),
             _ => None,
         };
-        SetProcessor { target, expression, header }
+        SetProcessor { target, expression, header, computes_only: false }
+    }
+
+    /// Marks the expression as one that only computes ([`Processor::blocking`] is then `Never`).
+    pub fn computing(mut self, yes: bool) -> Self {
+        self.computes_only = yes;
+        self
     }
 }
 
@@ -209,6 +262,14 @@ impl Processor for SetProcessor {
         }
         Ok(())
     }
+
+    fn blocking(&self) -> Blocking {
+        if self.computes_only {
+            Blocking::Never
+        } else {
+            Blocking::Maybe
+        }
+    }
 }
 
 impl ProcessorDefinition for SetDefinition {
@@ -224,7 +285,8 @@ impl ProcessorDefinition for SetDefinition {
         }
     }
     fn create_processor(&self, rc: &RouteContext) -> Result<Arc<dyn Processor>> {
-        Ok(Arc::new(SetProcessor::new(self.target.clone(), self.expression.resolve_expression(&rc.context)?)))
+        let p = SetProcessor::new(self.target.clone(), self.expression.resolve_expression(&rc.context)?).computing(computes_only(&self.expression));
+        Ok(Arc::new(p))
     }
     impl_definition_boilerplate!();
 }

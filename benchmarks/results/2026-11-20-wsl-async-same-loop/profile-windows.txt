@@ -1,0 +1,127 @@
+2026-11-20 02:44:35.453 INFO  [main] cameleer-http : HTTP server started on 0.0.0.0:56900
+2026-11-20 02:44:35.453 INFO  [main] CamelContext : Cameleer 0.7.0 (camel-1) started (10 routes, 10 started)
+PROFILE samples=162335 busy=2386
+--- self
+  6.45%     154 cameleer_core::alloc::impl$2::alloc
+  3.31%      79 cameleer_core::alloc::impl$2::dealloc
+  3.19%      76 simoom_rt::event_loop::Core::run
+  3.10%      74 cameleer_core::alloc::CACHE::constant$0::closure$1::__RUST_STD_INTERNAL_VAL
+  2.68%      64 _NLG_Return2
+  1.63%      39 RtlQueryPerformanceCounter
+  1.59%      38 cameleer_http::producer::impl$9::process_async::async_block$0
+  1.47%      35 simoom_sys::driver::iocp::Driver::turn
+  1.22%      29 recv
+  1.17%      28 cameleer_core::message::Headers::get
+  1.09%      26 cameleer_http::producer::HttpProducer::prepare
+  1.09%      26 simoom_http1::parse::parse_fields
+  1.01%      24 core::str::converts::from_utf8
+  1.01%      24 cameleer_http::producer::HttpProducer::complete
+  1.01%      24 simoom_sys::driver::iocp::Driver::flush
+  0.96%      23 core::slice::sort::shared::smallsort::insert_tail<tuple$<ref$<str$>,ref$<enum2$<cameleer_core::value::Value> > >,alloc::slice::impl$0::sort_by::closure_env$0<tuple$<ref$<str$>,ref$<enum2$<cameleer_core::value::Value> > >,cameleer_core::message::impl$3::sorted::closure_env$1> >
+  0.96%      23 core::str::lossy::impl$4::next
+  0.88%      21 GetQueuedCompletionStatusEx
+  0.84%      20 cameleer_http::binding::filter_outbound
+  0.80%      19 simoom_client::rt::RtConn::parse
+  0.75%      18 TlsGetValue
+  0.75%      18 core::str::impl$0::trim_matches<bool (*)(char)>
+  0.75%      18 alloc::raw_vec::RawVecInner::finish_grow<alloc::alloc::Global>
+  0.71%      17 simoom_sys::driver::iocp::Driver::complete
+  0.71%      17 core::fmt::write
+  0.71%      17 cameleer_core::processor::basic::impl$3::process_async::async_block$0
+  0.71%      17 simoom_client::h1::H1Conn::write_head
+  0.71%      17 alloc::string::impl$63::write_str
+  0.67%      16 alloc::raw_vec::impl$4::reserve::do_reserve_and_handle<alloc::alloc::Global>
+  0.67%      16 simoom_rt::event_loop::Core::settle
+  0.67%      16 simoom_sys::driver::iocp::Driver::send
+  0.63%      15 core::ops::function::FnOnce::call_once<simoom_sys::driver::iocp::impl$5::turn::closure_env$0,tuple$<enum2$<core::option::Option<core::time::Duration> >,ref_mut$<simoom_sys::driver::DriverStats> > >
+  0.63%      15 cameleer_core::message::Headers::set<ref$<str$>,enum2$<cameleer_core::value::Value> >
+  0.63%      15 simoom_client::url::Url::parse
+  0.63%      15 cameleer_core::message::Headers::put
+  0.59%      14 simoom_client::h1::is_tchar
+  0.59%      14 memcmp
+  0.59%      14 WSASend
+  0.59%      14 cameleer_http::binding::ConsumerBinding::read_request
+  0.59%      14 core::slice::memchr::memchr_aligned
+  0.54%      13 simoom_sys::driver::iocp::Driver::send_done
+  0.54%      13 simoom_rt::event_loop::Core::call_data
+  0.54%      13 cameleer_core::processor::errors::hook::impl$6::process_async::async_block$0
+  0.54%      13 cameleer_core::context::RouteProcessor::leave
+  0.54%      13 cameleer_core::management::impl$12::process_async::async_block$0
+  0.54%      13 cameleer_core::processor::basic::impl$2::as_async
+  0.54%      13 send
+  0.50%      12 std::time::Instant::now
+  0.50%      12 core::ptr::drop_glue<enum2$<cameleer_core::value::Value> >
+  0.50%      12 simoom::h1::impl$1::input
+  0.50%      12 simoom_sys::scan::x86::field_line_avx2
+  0.50%      12 cameleer_core::management::impl$14::process_async::async_block$0
+  0.50%      12 simoom_http1::parse::parse_request
+  0.46%      11 cameleer_core::reactive::Task::run
+  0.46%      11 core::fmt::Formatter::pad
+  0.46%      11 cameleer_http::binding::ConsumerBinding::write_response
+  0.46%      11 cameleer_core::value::impl$2::fmt
+  0.46%      11 cameleer_core::processor::errors::handler::impl$7::process_async::async_block$0
+  0.42%      10 simoom::h1::H1::parsed
+  0.42%      10 simoom::service::impl$0::call<cameleer_http::server_simoom::impl$1::start::closure_env$0<alloc::string::String> >
+--- inclusive
+100.00%    2386 std::sys::thread::windows::impl$0::new::thread_start
+100.00%    2386 RtlUserThreadStart
+100.00%    2386 BaseThreadInitThunk
+ 93.08%    2221 core::ops::function::FnOnce::call_once<std::thread::lifecycle::spawn_unchecked::closure_env$1<alloc::boxed::Box<dyn$<core::ops::function::FnOnce<tuple$<>,assoc$<Output,tuple$<> > >,core::marker::Send>,alloc::alloc::Global>,tuple$<> >,tuple$<> >
+ 93.08%    2221 core::ops::function::FnOnce::call_once<simoom_rt::runtime::spawn_loop::closure_env$0,tuple$<> >
+ 93.08%    2221 std::sys::backtrace::__rust_begin_short_backtrace<alloc::boxed::Box<dyn$<core::ops::function::FnOnce<tuple$<>,assoc$<Output,tuple$<> > >,core::marker::Send>,alloc::alloc::Global>,tuple$<> >
+ 93.08%    2221 simoom_rt::event_loop::Core::run
+ 66.60%    1589 simoom_rt::event_loop::Core::call_data
+ 43.76%    1044 simoom::conn::Conn::with_io
+ 40.82%     974 simoom::conn::Conn::feed
+ 40.19%     959 core::ops::function::FnOnce::call_once<simoom::conn::impl$3::feed::closure_env$0,tuple$<ref_mut$<dyn$<simoom::conn::Layer> >,ref_mut$<simoom::conn::Io> > >
+ 40.03%     955 simoom::h1::impl$1::input
+ 37.26%     889 simoom::h1::H1::parsed
+ 36.97%     882 cameleer_core::reactive::Task::run
+ 36.84%     879 simoom::h1::H1::dispatch
+ 36.38%     868 simoom::server::call
+ 36.00%     859 simoom::service::impl$0::call<cameleer_http::server_simoom::impl$1::start::closure_env$0<alloc::string::String> >
+ 29.72%     709 cameleer_http::registry::impl$3::handle_async
+ 28.50%     680 cameleer_http::platform::impl$5::start::closure$2
+ 28.00%     668 cameleer_core::context::impl$8::process_async::async_block$0
+ 26.19%     625 cameleer_core::management::impl$14::process_async::async_block$0
+ 25.48%     608 cameleer_core::processor::errors::hook::impl$6::process_async::async_block$0
+ 24.94%     595 simoom_client::rt::RtConn::parse
+ 24.69%     589 simoom_client::rt::impl$6::on_data
+ 24.52%     585 cameleer_core::management::impl$12::process_async::async_block$0
+ 23.76%     567 cameleer_core::processor::errors::handler::impl$7::process_async::async_block$0
+ 23.13%     552 cameleer_core::processor::basic::impl$3::process_async::async_block$0
+ 21.67%     517 cameleer_http::producer::impl$9::process_async::async_block$0
+ 21.21%     506 simoom_client::rt::RtConn::complete
+ 21.04%     502 cameleer_core::reactive::spawn
+ 18.73%     447 core::ops::function::FnOnce::call_once<cameleer_http::producer::impl$9::process_async::async_block$0::closure_env$1,tuple$<enum2$<core::result::Result<simoom_client::rt::RtResponse,simoom_client::error::Error> > > >
+ 18.27%     436 cameleer_core::reactive::Complete::complete<enum2$<core::result::Result<simoom_client::rt::RtResponse,simoom_client::error::Error> > >
+ 17.85%     426 alloc::task::raw_waker::wake<cameleer_core::reactive::Task>
+ 12.78%     305 simoom_sys::driver::Driver::turn
+ 12.45%     297 simoom_sys::driver::iocp::Driver::turn
+  8.55%     204 simoom_rt::event_loop::Core::settle
+  8.34%     199 core::ops::function::FnOnce::call_once<cameleer_http::platform::impl$5::start::closure$2::closure_env$0,tuple$<alloc::boxed::Box<cameleer_core::message::Exchange,alloc::alloc::Global> > >
+  8.13%     194 cameleer_core::alloc::impl$2::alloc
+  7.88%     188 simoom_rt::event_loop::Core::deliver
+  7.80%     186 simoom_rt::event_loop::Core::with_conn_dyn
+  6.92%     165 core::ops::function::FnOnce::call_once<std::thread::lifecycle::spawn_unchecked::closure_env$1<cameleer_bench::driver::run::closure_env$0<cameleer_bench::loadgen::run_remote::closure_env$1,cameleer_bench::loadgen::run_remote::closure$1::closure_env$0>,alloc::vec::Vec<cameleer_bench::hist::Histogram,alloc::alloc::Global> >,tuple$<> >
+  6.92%     165 std::sys::backtrace::__rust_begin_short_backtrace<cameleer_bench::driver::run::closure_env$0<cameleer_bench::loadgen::run_remote::closure_env$1,cameleer_bench::loadgen::run_remote::closure$1::closure_env$0>,alloc::vec::Vec<cameleer_bench::hist::Histogram,alloc::alloc::Global> >
+  6.54%     156 cameleer_http::binding::ConsumerBinding::read_request
+  6.12%     146 cameleer_http::producer::HttpProducer::prepare
+  5.74%     137 cameleer_bench::loadgen::Conn::exchange
+  4.78%     114 cameleer_http::binding::ConsumerBinding::write_response
+  4.74%     113 cameleer_core::alloc::impl$2::dealloc
+  4.53%     108 alloc::raw_vec::RawVecInner::finish_grow<alloc::alloc::Global>
+  4.36%     104 simoom_client::rt::impl$6::on_message
+  3.94%      94 cameleer_http::producer::HttpProducer::complete
+  3.90%      93 core::fmt::write
+  3.56%      85 simoom_client::rt::RtConn::start
+  3.52%      84 recv
+  3.44%      82 simoom_client::rt::RtClient::send<cameleer_http::producer::impl$9::process_async::async_block$0::closure_env$1>
+  3.39%      81 cameleer_http::binding::write_message_headers
+  3.23%      77 simoom::conn::impl$4::on_message
+  3.23%      77 simoom_sys::driver::iocp::Driver::flush
+  3.10%      74 cameleer_core::alloc::CACHE::constant$0::closure$1::__RUST_STD_INTERNAL_VAL
+  2.68%      64 _NLG_Return2
+  2.64%      63 simoom_client::rt::dispatch
+2026-11-20 02:44:44.112 INFO  [main] cameleer-http : HTTP server on port 56900 stopped
+2026-11-20 02:44:44.113 INFO  [main] CamelContext : Cameleer (camel-1) shutdown in 8.659s (uptime)

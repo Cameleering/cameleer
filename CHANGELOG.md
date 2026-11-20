@@ -53,6 +53,35 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   to collect and sort the headers on every iteration. The HTTP binding and the `http` producer no longer allocate
   a lowercase copy of each header name to filter it or to detect repeats. No gain is claimed: it was not measured
   on its own.
+- **Changed: asynchronous routing, on by default.** A `platform-http` (or `jetty`/`undertow`) route that calls the
+  `http` producer now runs as a task (`cameleer_core::reactive`, Camel's `AsyncProcessor` contract). It no longer
+  holds a server thread while it waits for the reply.
+  - **How it runs:** the producer sends on simoom-client's event-loop client, and the route continues on the event
+    loop that read the reply.
+    - Steps that only compute run there too: `setHeader`, `setBody` or `transform` with constant, header, JsonPath, jq
+      or Simple expressions (Simple without `bean:`, `ref:` or `properties:`).
+    - Any other step may block (a processor, a bean, a blocking component), so the route moves to a worker thread
+      before it.
+  - **Not affected:**
+    - endpoints with `consumes`, `produces` or `disableStreamCache`, and routes with `interceptFrom`, which stay on
+      the server's threads as before;
+    - `http` requests that stream their body, use HTTP/2, a proxy or chunked request coding, which keep the blocking
+      client, on a worker.
+  - **What changes for you:** the server's thread pool (200 by default) no longer bounds how many requests such a
+    route works on at once. The new endpoint option `maxInflightRequests` does instead (default
+    `camel.server.maxInflightRequests`, else 10,000; `0` means no limit). Beyond it the route answers `503` with
+    `Retry-After: 1` at once.
+  - **Switches:**
+    - `CAMEL_ASYNC_ROUTING=false` keeps every route on the synchronous path, as before.
+    - `CAMEL_HTTP_CLIENT_LOOPS` sets the number of event loops of the `http` producer's client (default half the
+      CPUs, at most 64). With simoom 0.2.0, a request sent from a server loop goes out on that loop.
+  - **Measured** on one WSL2 machine (Cameleer on 4 CPUs), against the synchronous path of the same build, for a
+    `platform-http` -> `http` proxy, three guarded rounds:
+    - fast backend: 2.2-2.9x requests/s, 26-33% less CPU per request in the Cameleer process, 8 threads instead of
+      69-205;
+    - 20 ms backend: 12,600 against 9,900 requests/s, where the synchronous path stops at its thread pool.
+  - **Not measured:** cloud machines, Windows, HTTPS, and routes other than this proxy.
+  - Design, all measurements and the porting plan: `docs/design/async-routing.md`.
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
   the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
   Nothing else changed; the other crates, the tag, the images and the archives stay at 0.7.0.

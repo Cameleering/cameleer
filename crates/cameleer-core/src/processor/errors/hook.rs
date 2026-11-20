@@ -404,17 +404,11 @@ struct RouteWrapper {
     inner: Arc<dyn Processor>,
 }
 
-impl Processor for RouteWrapper {
-    fn process(&self, ex: &mut Exchange) -> Result<()> {
-        self.process_timed(ex, 0).0
-    }
-
-    fn process_timed(&self, ex: &mut Exchange, start: u64) -> (Result<()>, u64) {
-        let mut end = 0;
+impl RouteWrapper {
+    /// The work before the route's steps; returns (saved doTry block, original message taken).
+    fn begin(&self, ex: &mut Exchange) -> (Option<crate::value::Value>, bool) {
         // a called route has its own error handler scope (doTry of the caller does not apply)
         let saved_try = ex.remove_property(TRY_ROUTE_BLOCK);
-        // The original message belongs to the unit of work, which spans routes connected
-        // with direct/seda: only the first route of the unit of work takes the snapshot.
         let set_orig = !ex.properties.contains_key(ORIGINAL_MESSAGE)
             && (self.rt.needs_original
                 || ex.context.as_ref().map(|c| c.global_option(ALLOW_USE_ORIGINAL_MESSAGE).is_some()).unwrap_or(false));
@@ -431,6 +425,67 @@ impl Processor for RouteWrapper {
                 ex.add_on_completion(move |done: &Exchange| oc.run_on_copy(done));
             }
         }
+        (saved_try, set_orig)
+    }
+
+    /// The work after the route's steps.
+    fn end(&self, ex: &mut Exchange, saved_try: Option<crate::value::Value>, set_orig: bool) {
+        for oc in &self.rt.on_completions {
+            if oc.before_consumer && oc.mark_registered(ex) {
+                oc.run_in_place(ex);
+            }
+        }
+        for p in self.rt.route_policies.iter().rev() {
+            p.on_exchange_done(&self.route_id, ex);
+        }
+        if set_orig {
+            ex.remove_property(ORIGINAL_MESSAGE);
+        }
+        if let Some(v) = saved_try {
+            ex.set_property(TRY_ROUTE_BLOCK, v);
+        }
+    }
+}
+
+impl crate::spi::AsyncProcessor for RouteWrapper {
+    fn process_async<'a>(&'a self, ex: &'a mut Exchange) -> crate::spi::ProcessFuture<'a> {
+        Box::pin(async move {
+            let inner = self.inner.as_async().expect("as_async checked the inner processor");
+            let (saved_try, set_orig) = self.begin(ex);
+            if let Err(err) = inner.process_async(ex).await {
+                ex.set_exception(err);
+            }
+            // onCompletion processors and route policies may block
+            if self.rt.on_completions.iter().any(|oc| oc.before_consumer) {
+                crate::reactive::offload().await;
+            }
+            self.end(ex, saved_try, set_orig);
+            Ok(())
+        })
+    }
+}
+
+impl Processor for RouteWrapper {
+    fn process(&self, ex: &mut Exchange) -> Result<()> {
+        self.process_timed(ex, 0).0
+    }
+
+    fn as_async(&self) -> Option<&dyn crate::spi::AsyncProcessor> {
+        // interceptFrom runs processors before the route: kept on the synchronous path
+        if self.rt.from_intercepts.is_empty() && self.inner.as_async().is_some() {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
+    fn blocking(&self) -> crate::spi::Blocking {
+        self.inner.blocking()
+    }
+
+    fn process_timed(&self, ex: &mut Exchange, start: u64) -> (Result<()>, u64) {
+        let mut end = 0;
+        let (saved_try, set_orig) = self.begin(ex);
         let mut proceed = true;
         for ic in &self.rt.from_intercepts {
             if !matches_opt(&ic.on_when, ex) {
@@ -460,20 +515,7 @@ impl Processor for RouteWrapper {
                 end = e;
             }
         }
-        for oc in &self.rt.on_completions {
-            if oc.before_consumer && oc.mark_registered(ex) {
-                oc.run_in_place(ex);
-            }
-        }
-        for p in self.rt.route_policies.iter().rev() {
-            p.on_exchange_done(&self.route_id, ex);
-        }
-        if set_orig {
-            ex.remove_property(ORIGINAL_MESSAGE);
-        }
-        if let Some(v) = saved_try {
-            ex.set_property(TRY_ROUTE_BLOCK, v);
-        }
+        self.end(ex, saved_try, set_orig);
         (Ok(()), end)
     }
 }

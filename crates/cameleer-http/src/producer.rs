@@ -47,14 +47,14 @@ use std::time::Duration;
 use cameleer_core::context::CamelContext;
 use cameleer_core::error::{kinds, CamelError, Result};
 use cameleer_core::message::Exchange;
-use cameleer_core::spi::{Component, Endpoint, Processor, Producer, Service};
+use cameleer_core::spi::{AsyncProcessor, Component, Endpoint, ProcessFuture, Processor, Producer, Service};
 use cameleer_core::util::Parameters;
 use cameleer_core::value::{ObjectMap, Value};
 
 use crate::binding::{add_header_value, body_to_value, headers, value_to_body, write_message_headers};
 use crate::client::{HttpClient, ProxyAddr, ProxyConfig, RequestBody, Url};
 use cameleer_tls::TlsClientConfig;
-use crate::http::{base64_encode, percent_encode, HttpHeaders};
+use crate::http::{base64_encode, percent_encode, HttpHeaders, HttpResponse};
 
 /// The `http` / `https` component.
 pub struct HttpComponent {
@@ -261,7 +261,7 @@ impl Endpoint for HttpEndpoint {
             connections_per_route: o.connections_per_route.max(1),
             ..HttpClient::default()
         };
-        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone(), client }))
+        Ok(Arc::new(HttpProducer { base: self.base.clone(), opts: self.opts.clone(), client, rt: std::sync::OnceLock::new() }))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -274,6 +274,8 @@ pub struct HttpProducer {
     opts: HttpProducerOptions,
     /// HTTP/1.1 keep-alive pooling or HTTP/2 multiplexing, per the endpoint options.
     client: HttpClient,
+    /// The event-loop client of asynchronous routes, created on first use.
+    rt: std::sync::OnceLock<simoom_client::rt::RtClient>,
 }
 
 impl Service for HttpProducer {}
@@ -377,8 +379,18 @@ impl HttpOperationFailed {
     }
 }
 
-impl Processor for HttpProducer {
-    fn process(&self, ex: &mut Exchange) -> Result<()> {
+/// A request built from an exchange, before it is sent.
+struct Prepared {
+    url: Url,
+    method: String,
+    send_body: bool,
+    body: Vec<u8>,
+    req_headers: HttpHeaders,
+    stream_reader: Option<(Box<dyn std::io::Read + Send>, Option<u64>)>,
+}
+
+impl HttpProducer {
+    fn prepare(&self, ex: &mut Exchange) -> Result<Prepared> {
         let url = self.target_url(ex)?;
         let has_body = !ex.body().is_null();
         let method = ex
@@ -444,9 +456,15 @@ impl Processor for HttpProducer {
         if self.opts.content_compression && !req_headers.contains("Accept-Encoding") {
             req_headers.set("Accept-Encoding", "gzip, deflate");
         }
+        Ok(Prepared { url, method, send_body, body, req_headers, stream_reader })
+    }
+
+    /// Sends on the calling thread with the blocking client.
+    fn send_blocking(&self, ex: &mut Exchange, p: Prepared) -> Result<()> {
+        let Prepared { url, method, send_body, body, req_headers, mut stream_reader } = p;
         let streaming = stream_reader.is_some() || self.opts.disable_stream_cache;
         let mut streamed_body: Option<Value> = None;
-        let mut resp = if streaming {
+        let resp = if streaming {
             // a stream handle goes out chunked, whatever length it knows
             let request_body = match stream_reader.take() {
                 Some((r, _)) => RequestBody::Stream(r, None),
@@ -465,6 +483,11 @@ impl Processor for HttpProducer {
         } else {
             self.client.execute(&method, &url, &req_headers, if send_body { Some(&body) } else { None }, None)?
         };
+        self.complete(ex, &url, resp, streamed_body)
+    }
+
+    /// Fills the exchange from the response.
+    fn complete(&self, ex: &mut Exchange, url: &Url, mut resp: HttpResponse, streamed_body: Option<Value>) -> Result<()> {
         if self.opts.content_compression && streamed_body.is_none() {
             if let Some(enc) = resp.headers.get("Content-Encoding").map(|s| s.to_string()) {
                 if !resp.body.is_empty() && !enc.eq_ignore_ascii_case("identity") {
@@ -474,7 +497,6 @@ impl Processor for HttpProducer {
                 }
             }
         }
-
         // populate the response
         let ct = resp.headers.get("Content-Type").map(|s| s.to_string());
         let msg = &mut ex.message;
@@ -519,6 +541,91 @@ impl Processor for HttpProducer {
             return Err(CamelError::new(kinds::HTTP_OPERATION_FAILED, message));
         }
         Ok(())
+    }
+
+    /// Whether a prepared request can go out on the event-loop client (HTTP/1.1, body in memory,
+    /// no proxy, no chunked request coding); the rest takes the blocking client on a worker.
+    fn loop_client_ok(&self, p: &Prepared) -> bool {
+        p.stream_reader.is_none() && !self.opts.disable_stream_cache && !self.opts.http2 && self.opts.proxy.is_none() && !self.opts.chunked
+    }
+
+    fn loop_client(&self) -> Result<&simoom_client::rt::RtClient> {
+        if let Some(c) = self.rt.get() {
+            return Ok(c);
+        }
+        let o = &self.opts;
+        let mut cfg = simoom_client::rt::RtConfig::default();
+        cfg.connect_timeout = o.connect_timeout;
+        cfg.timeout = o.socket_timeout;
+        cfg.max_body = 256 * 1024 * 1024;
+        cfg.keep_alive = o.pooling;
+        cfg.max_idle_per_origin = o.connections_per_route.max(1);
+        cfg.follow_redirects = o.follow_redirects;
+        // bodies come back as sent: `complete` decodes `Content-Encoding` itself when asked to
+        cfg.decompress = false;
+        cfg.version = simoom_client::HttpVersion::Http1;
+        cfg.tls = crate::client_engine::tls_options(o.tls.as_deref(), o.tls_server_name.as_deref(), self.base.is_https())?;
+        let c = simoom_client::rt::RtClient::new(crate::client_engine::client_loops()?, cfg);
+        Ok(self.rt.get_or_init(|| c))
+    }
+}
+
+impl Processor for HttpProducer {
+    fn process(&self, ex: &mut Exchange) -> Result<()> {
+        let p = self.prepare(ex)?;
+        self.send_blocking(ex, p)
+    }
+
+    fn as_async(&self) -> Option<&dyn AsyncProcessor> {
+        Some(self)
+    }
+}
+
+impl AsyncProcessor for HttpProducer {
+    fn process_async<'a>(&'a self, ex: &'a mut Exchange) -> ProcessFuture<'a> {
+        Box::pin(async move {
+            let p = self.prepare(ex)?;
+            if !self.loop_client_ok(&p) {
+                cameleer_core::reactive::offload().await;
+                return self.send_blocking(ex, p);
+            }
+            let client = self.loop_client()?;
+            let url = p.url.to_simoom()?;
+            let mut req = simoom_client::rt::RtRequest { method: p.method.to_ascii_uppercase(), url, headers: simoom_client::Headers::new(), body: Vec::new() };
+            for (k, v) in p.req_headers.iter() {
+                // the client writes the framing and the connection handling itself
+                if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding") {
+                    continue;
+                }
+                if k.eq_ignore_ascii_case("connection") && !v.trim().eq_ignore_ascii_case("close") {
+                    continue;
+                }
+                req.headers.append(k, v);
+            }
+            if p.send_body {
+                req.body = p.body;
+            }
+            let (tx, rx) = cameleer_core::reactive::oneshot();
+            client.send(req, move |r| {
+                // the route continues here, on the loop that read the response
+                let _on_loop = cameleer_core::reactive::enter_loop();
+                tx.complete(r);
+            });
+            // the URL as text only for the error message
+            let r = rx.await.map_err(|e| crate::client_engine::camel_error_at(e, &p.url.to_string(), &p.url.authority()))?;
+            let mut resp = HttpResponse::new(r.status);
+            resp.reason = r.reason;
+            resp.version = match r.version {
+                simoom_client::Version::Http10 => crate::http::Version::Http10,
+                _ => crate::http::Version::Http11,
+            };
+            for (k, v) in r.headers.iter() {
+                resp.headers.add(k.to_string(), String::from_utf8_lossy(v).into_owned());
+            }
+            resp.chunked = !resp.headers.contains("Content-Length") && !matches!(r.status, 100..=199 | 204 | 304);
+            resp.body = r.body;
+            self.complete(ex, &p.url, resp, None)
+        })
     }
 }
 
