@@ -141,7 +141,7 @@ impl GrpcClient {
             }
         })?;
         let sender = call.sender();
-        // (with simoom-client 0.1.1, `call_with_body` sends these with the head, in one write)
+        // (with simoom-client 0.2, `call_with_body` sends these with the head, in one write)
         if !first.is_empty() {
             sender.send(first).map_err(Status::from)?;
         }

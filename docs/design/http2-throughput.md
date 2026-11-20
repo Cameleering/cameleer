@@ -255,7 +255,7 @@ request (an asynchronous producer API in Cameleer on `simoom_client::rt`), not a
 
 ### What is not done
 
-- simoom is not released: the four simoom commits above reach Cameleer with simoom 0.1.1. Cameleer's
+- simoom is not released: the four simoom commits above reach Cameleer with simoom 0.2.0. Cameleer's
   `cameleer-grpc` client then switches to `Client::call_with_body` (a one-call change, kept as a diff in the
   session notes); until then it sends the head, message and end of stream in three writes.
 - No droplet round with these changes: the droplets build Cameleer from its tarball against crates.io,

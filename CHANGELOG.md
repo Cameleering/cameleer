@@ -32,7 +32,7 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 - **HTTP/2 at 0.51x of HTTP/1.1 (benchmark round of 2026-11-18) measured the load generator, not the server.**
   Driven by nghttp2's h2load, the server serves HTTP/2 at 1.6-1.8x its HTTP/1.1 rate; the gap was the blocking
   HTTP/2 client in cameleer-bench. `docs/BENCHMARKS.md` and `docs/design/http2-throughput.md` explain it.
-  Not in Cameleer yet, waiting for simoom 0.1.1: one write per reply batch on a multiplexed connection
+  Not in Cameleer yet, waiting for simoom 0.2.0: one write per reply batch on a multiplexed connection
   (151k -> 235k gRPC calls/s), and the client's head and body in one write with one wake per batch.
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
   the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
