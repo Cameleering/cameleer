@@ -554,15 +554,9 @@ Cameleer's own HTTP code or it is not used.
   3.56x at 256 against 0.7.0, CPU per call 37 against 214 microseconds, p99 4.0 against 12.7 ms, peak memory 13.5 against
   13.8 MB and 18.6 against 20.1 MB; against the first pool build the same speed (1.05x) at 14.3 against 49.7 MB. With
   the order of the sides swapped `rest-json` was 0.98x (identical code), so the earlier 0.93x to 0.95x was probably the
-  harness.
-- **HTTP/2 against HTTP/1.1 explained (2026-11-19, `docs/design/http2-throughput.md`):** driven by nghttp2's h2load
-  (`scripts/cloud-bench/peer.sh`, `benchmarks/results/2026-11-19-linux-http2-peer/`), the server serves HTTP/2 at 1.6x to
-  1.8x its HTTP/1.1 rate and gRPC unary at 73k to 93k calls/s; the 0.51x was cameleer-bench's HTTP/2 client
-  (simoom-client's reader thread hands each response to the request thread). The HTTP and gRPC servers now start every
-  event loop (lazy start only on Lambda or with `CAMEL_SERVER_LAZY_LOOPS=true`), and simoom-rt places a few long-lived
-  connections on the least loaded loop (simoom, not released). Open: an event-driven HTTP/2 client in simoom-client.
-- **Asynchronous routing, phase 0 (2026-11-19, branch `claude/affectionate-dijkstra-0f0dea`, not
-  released):**
+  harness. Open: why HTTP/2 serves about half the requests of HTTP/1.1 for small calls.
+- **Asynchronous routing, phase 0 (2026-11-19, optional, not in the next release unless the owner
+  decides so):**
   - **What was built:**
     - an `AsyncProcessor` path in the routing engine: `cameleer_core::reactive`, plus the async forms
       of the pipeline, the route, the error channel and `to`;
@@ -583,7 +577,9 @@ Cameleer's own HTTP code or it is not used.
     - +13-15% req/s and a 35% lower p99 at 64 connections;
     - the same CPU per request (about 45 µs), so the route is now CPU-bound;
     - it ships once simoom releases it.
-  - **Open:** a profile of the remaining 45 µs, phases 1-4.
+  - **Profile of the remaining 45 µs** (section 14 of the design): mostly Camel's header mapping and
+    simoom's HTTP work; the URL is now handed to the client once.
+  - **Open:** phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).

@@ -482,11 +482,48 @@ without changing what a route sees:
    - `Instant::now` / QPC readings are about 2%: the client's deadline per request and the
      statistics.
 
-**Next step** (not done): fix items 1-3 in `binding.rs`, `producer.rs` and `message.rs`. Each is a
-local change, with behaviour pinned by the existing binding and header tests. Then measure again with
-section 12's method. A rough estimate from the shares above is 4-7 µs of the 15 µs (10-15% of the
-request). The simoom part (about 60%) is simoom's to profile, and it already has its own proxy
-benchmark.
+**Fixed (2026-11-20).** Items 1 and 2 are in their own pull request (they help every route, not only
+asynchronous ones); item 3 is in this one:
+1. **`Headers` kept sorted on insert,** ignoring ASCII case (`message.rs`). Lookups are a binary search
+   and iteration borrows the entries instead of collecting and sorting them. The order and the
+   "latest spelling wins" rule are unchanged, and removing a header keeps the order of the rest. A
+   test pins this: `header_order_tests`.
+2. **Header copies without allocation per header:**
+   - `filter_outbound` and `filter_inbound` compare ignoring case instead of building a lowercase
+     `String`;
+   - `write_message_headers` adds values without collecting them into a `Vec<String>` first;
+   - the producer's `complete` tracks the names it has replaced as borrowed `&str`, not lowercased
+     copies.
+
+   The four copies themselves remain. They are Camel's mapping (request into message, message into
+   request, response into message, message into response).
+3. **The URL is handed over once.** The asynchronous producer builds simoom's `Url` from Cameleer's
+   (`Url::to_simoom`). The path and query are encoded as `request_target` encodes them, and simoom's
+   host check is kept. The URL is formatted as text only for an error message. A test checks that
+   `to_simoom` equals parsing the formatted URL for six URLs, including spaces, non-ASCII, IPv6 and an
+   empty query.
+
+Hermetic suite: **2980 passed, 0 failed**, zero warnings.
+
+**Measured** (three guarded rounds, simoom `rt-same-loop`, the previous build against the fixed one;
+`benchmarks/results/2026-11-20-wsl-async-same-loop/rounds-fix.out`):
+
+| connections | build | req/s | CPU µs/req | p99 |
+|---|---|---:|---:|---:|
+| 64 | before | 88,413 / 86,316 / 85,540 | 44.8 / 45.6 / 45.7 | 1.5-1.9 ms |
+| 64 | fixed | 88,788 / 92,799 / 88,159 | 44.2 / 43.4 / 45.0 | 1.2-1.8 ms |
+| 256 | before | 94,274 / 91,816 / 88,376 | 42.4 / 42.3 / 43.3 | 5.1-6.3 ms |
+| 256 | fixed | 89,940 / 94,875 / 91,606 | 41.2 / 41.6 / 43.0 | 4.9-8.2 ms |
+
+**Result:** 0.3-2.2 µs less CPU per request (1-5%), and throughput within noise to +7.5%. That is below
+the estimate of 4-7 µs. The estimate used shares from a Windows profile in which the allocator's 13%
+also covers simoom's allocations. And the fix removes waste inside the four header copies, not the
+copies themselves.
+
+**What remains:**
+- The larger part of Cameleer's 15 µs is the copies: Camel's binding semantics, kept on purpose.
+- The rest is the per-step wrappers, about 3.5 µs.
+- About 60% of the request is simoom's HTTP work.
 
 ## References
 

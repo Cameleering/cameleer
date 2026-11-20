@@ -5,4 +5,4 @@ cd /mnt/e/Work/DataHQ/Code/Rust-camel/.claude/worktrees/affectionate-dijkstra-0f
 S=/mnt/e/Work/DataHQ/Code/Rust-camel/target-h2/simoom-rsl/crates
 ARGS=()
 for c in simoom simoom-client simoom-h2 simoom-hpack simoom-http1 simoom-rt simoom-sys simoom-tls; do ARGS+=(--config "patch.crates-io.$c.path=\"$S/$c\""); done
-CARGO_TARGET_DIR=$HOME/async-target-rsl cargo build --release -p cameleer-bench "${ARGS[@]}" 2>&1 | grep -E "^(warning|error)|Finished"
+CARGO_TARGET_DIR=${OUT:-$HOME/async-target-rsl} cargo build --release -p cameleer-bench "${ARGS[@]}" 2>&1 | grep -E "^(warning|error)|Finished"

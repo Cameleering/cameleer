@@ -15,31 +15,14 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   10,514 per second (3.9x), p99 4.0 against 12.7 ms, 37 against 214 microseconds of server CPU per call, peak memory
   13.5 against 13.8 MB (at 256 calls: 3.6x, 18.6 against 20.1 MB). See `docs/BENCHMARKS.md` and
   `benchmarks/results/2026-11-19-linux-grpc-memory/`.
-- **The HTTP and gRPC servers start every event loop.** Loops used to start lazily, and connections stay on the
-  loop that accepted them, so a few long-lived HTTP/2 connections could all land on one thread. Measured on WSL2
-  with 4 HTTP/2 connections (means of three noisy rounds): gRPC unary 27.6k -> 57.2k calls/s (2.07x),
-  `rest-json-h2` 70k -> 80k requests/s (+14%). The lazy start is kept
-  where it pays: on AWS Lambda, or with `CAMEL_SERVER_LAZY_LOOPS=true` (`false` forces eager). Cost: an HTTP route
-  is ready about 0.8 ms later on 12 CPUs (1.9 against 1.1 ms) and an idle server uses 0.5 MB more. See
-  `docs/design/http2-throughput.md`.
-- **gRPC unary calls are cheaper on the server.** The consumer reads from the proto descriptor which methods are
-  unary. Their reply is sent as one response with its trailers, instead of a stream of head, message and trailers.
-  A unary call whose request arrived whole runs on the event loop while its route is fast, under the same governor
-  as REST routes; a route that stalls the loop goes back to the pool. Measured locally with nghttp2's h2load, on
-  top of simoom 0.2.0's batching fix: 235k -> 335k calls/s, 7.8 us of server CPU per call.
-- **simoom 0.2.0.** Every simoom crate moves from 0.1 to 0.2 (0.2 is a minor version before 1.0 because two
-  config structs of simoom-client gained public fields). It brings one write per reply batch on a multiplexed
-  connection (151k -> 235k gRPC calls/s on WSL2), the client's head and body in one write with one wake per batch,
-  and the blocking client's HTTP/2 on event loops.
-- **A gRPC client call sends its head, first message and end of stream in one write** (`Client::call_with_body`,
-  simoom-client 0.2). Not measured alone: together with the other simoom 0.2.0 client fixes and the stream-opening
-  change above, gRPC unary through the crate's client went from 95k to 121k calls/s on WSL2
-  (`docs/design/http2-throughput.md`).
-- **The gRPC client no longer serializes stream openings.** The lock that guarded a cold channel is now taken
-  only while the channel has no connection.
-- **HTTP/2 at 0.51x of HTTP/1.1 (benchmark round of 2026-11-18) measured the load generator, not the server.**
-  Driven by nghttp2's h2load, the server serves HTTP/2 at 1.6-1.8x its HTTP/1.1 rate; the gap was the blocking
-  HTTP/2 client in cameleer-bench. `docs/BENCHMARKS.md` and `docs/design/http2-throughput.md` explain it.
+- **Asynchronous routing (optional; not in the next release unless the owner decides so).** A route whose steps
+  can wait without a thread runs as a task (`cameleer_core::reactive`, Camel's `AsyncProcessor`). Today that is a
+  `platform-http` route that calls the `http` producer: the producer sends on simoom-client's event-loop client and
+  the route continues on the thread that read the reply. Measured on WSL2 for a `platform-http` -> `http` proxy:
+  2.2-2.9x requests/s, 26-33% less CPU per request, 8 threads instead of 69-205, and no cap at the server's 200
+  threads with a slow backend. New option `maxInflightRequests` (default `camel.server.maxInflightRequests` or
+  10,000): beyond it such a route answers 503 with `Retry-After`. `CAMEL_ASYNC_ROUTING=false` keeps every route on
+  the synchronous path. Design, measurements and the porting plan: `docs/design/async-routing.md`.
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
   the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
   Nothing else changed; the other crates, the tag, the images and the archives stay at 0.7.0.

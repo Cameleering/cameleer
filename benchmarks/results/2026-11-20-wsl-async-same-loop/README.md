@@ -17,7 +17,8 @@ These are the raw results for `docs/design/async-routing.md`, section 13.
   - On that branch, `RtClient::send` called on a simoom loop sends on that loop, and a loop's own
     replies go out in the same turn.
 
-`proxy-any.sh` picks the build. `rounds-rsl.out` holds the raw lines.
+`proxy-any.sh` picks the build (`fix` is the code of section 14's fixes on the same simoom). `rounds-rsl.out`
+and `rounds-fix.out` hold the raw lines.
 
 Profile (section 14):
 - `profile-windows.txt`: `cameleer-bench profile http-proxy 8 60` on Windows 11, built against the

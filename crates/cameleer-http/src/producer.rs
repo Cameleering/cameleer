@@ -590,8 +590,8 @@ impl AsyncProcessor for HttpProducer {
                 return self.send_blocking(ex, p);
             }
             let client = self.loop_client()?;
-            let what = p.url.to_string();
-            let mut req = simoom_client::rt::RtRequest::new(&p.method, &what).map_err(|e| crate::client_engine::camel_error(e, &what))?;
+            let url = p.url.to_simoom()?;
+            let mut req = simoom_client::rt::RtRequest { method: p.method.to_ascii_uppercase(), url, headers: simoom_client::Headers::new(), body: Vec::new() };
             for (k, v) in p.req_headers.iter() {
                 // the client writes the framing and the connection handling itself
                 if k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding") {
@@ -611,7 +611,8 @@ impl AsyncProcessor for HttpProducer {
                 let _on_loop = cameleer_core::reactive::enter_loop();
                 tx.complete(r);
             });
-            let r = rx.await.map_err(|e| crate::client_engine::camel_error_at(e, &what, &p.url.authority()))?;
+            // the URL as text only for the error message
+            let r = rx.await.map_err(|e| crate::client_engine::camel_error_at(e, &p.url.to_string(), &p.url.authority()))?;
             let mut resp = HttpResponse::new(r.status);
             resp.reason = r.reason;
             resp.version = match r.version {

@@ -1,0 +1,12 @@
+r1 idle=2% build=rsl mode=async backend=fast conns=64 tput=88413 p50_us=708.61 p99_us=1531.90 cpu_us_per_req=44.8 ctx_per_req=0.02 threads=8 cpus_busy=3.96 
+r1 idle=8% build=fix mode=async backend=fast conns=64 tput=88788 p50_us=700.42 p99_us=1351.68 cpu_us_per_req=44.2 ctx_per_req=0.00 threads=8 cpus_busy=3.93 
+r1 idle=3% build=rsl mode=async backend=fast conns=256 tput=94274 p50_us=2670.59 p99_us=5144.58 cpu_us_per_req=42.4 ctx_per_req=0.00 threads=8 cpus_busy=4.00 
+r1 idle=5% build=fix mode=async backend=fast conns=256 tput=89940 p50_us=2801.66 p99_us=5799.94 cpu_us_per_req=41.2 ctx_per_req=0.02 threads=8 cpus_busy=3.71 
+r2 idle=4% build=rsl mode=async backend=fast conns=64 tput=86316 p50_us=659.46 p99_us=1662.98 cpu_us_per_req=45.6 ctx_per_req=0.02 threads=8 cpus_busy=3.94 
+r2 idle=2% build=fix mode=async backend=fast conns=64 tput=92799 p50_us=684.03 p99_us=1155.07 cpu_us_per_req=43.4 ctx_per_req=0.00 threads=8 cpus_busy=4.03 
+r2 idle=4% build=rsl mode=async backend=fast conns=256 tput=91816 p50_us=2506.75 p99_us=6324.22 cpu_us_per_req=42.3 ctx_per_req=0.00 threads=8 cpus_busy=3.88 
+r2 idle=3% build=fix mode=async backend=fast conns=256 tput=94875 p50_us=2670.59 p99_us=4947.97 cpu_us_per_req=41.6 ctx_per_req=0.00 threads=8 cpus_busy=3.95 
+r3 idle=2% build=rsl mode=async backend=fast conns=64 tput=85540 p50_us=643.07 p99_us=1859.58 cpu_us_per_req=45.7 ctx_per_req=0.01 threads=8 cpus_busy=3.91 
+r3 idle=5% build=fix mode=async backend=fast conns=64 tput=88159 p50_us=602.11 p99_us=1761.28 cpu_us_per_req=45.0 ctx_per_req=0.01 threads=8 cpus_busy=3.97 
+r3 idle=2% build=rsl mode=async backend=fast conns=256 tput=88376 p50_us=3129.34 p99_us=6258.69 cpu_us_per_req=43.3 ctx_per_req=0.02 threads=8 cpus_busy=3.82 
+r3 idle=9% build=fix mode=async backend=fast conns=256 tput=91606 p50_us=2072.58 p99_us=8159.23 cpu_us_per_req=43.0 ctx_per_req=0.01 threads=8 cpus_busy=3.94 
