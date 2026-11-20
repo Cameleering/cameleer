@@ -18,12 +18,12 @@ cameleer-tls = { path = "../cameleer-tls", version = "0.7.0" }
 # The TLS bridge of the HTTP client (trust anchors, client certificates), shared with the gRPC client
 cameleer-http = { path = "../cameleer-http", version = "0.7.0", default-features = false }
 # The gRPC server: an event loop per core, HTTP/2 (h2c, upgrade and TLS) with streamed bodies and trailers
-simoom = { version = "0.1.0", default-features = false, features = ["http1", "http2", "tls", "tls-extra"] }
+simoom = { version = "0.2", default-features = false, features = ["http1", "http2", "tls", "tls-extra"] }
 # The gRPC client: full-duplex HTTP/2 calls (docs/design/simoom-adoption.md)
-simoom-client = { version = "0.1.1", default-features = false, features = ["client-h2", "h2c-upgrade", "tls", "tls-extra"] }
+simoom-client = { version = "0.2", default-features = false, features = ["client-h2", "h2c-upgrade", "tls", "tls-extra"] }
 
 [dev-dependencies]
 # the tests use every optional part of core/http (their default features); the library does not
 cameleer-core = { path = "../cameleer-core" }
 # a raw HTTP/2 client in the tests (a request head and body in one write)
-simoom-h2 = "0.1.0"
+simoom-h2 = "0.2"
