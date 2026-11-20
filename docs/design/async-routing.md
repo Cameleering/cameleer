@@ -383,6 +383,56 @@ not the work. Its count of hand-offs was too high, as explained above.
    remaining 0.07-0.2 switches go, and CPU per request falls by the two posts.
 2. Phase 1.
 
+## 13. The client on the server's loops (simoom S1-S3, 2026-11-20)
+
+**simoom side** (branch `rt-same-loop`, `460aeaf`, off simoom `main`; not released):
+- `LoopHandle::current()`, `LoopHandle::is_current` and handle equality (S3).
+- `ServerHandle::loops()` (S1).
+- `RtClient::send` called on any simoom-rt loop thread dispatches inline on that loop, and its
+  callback runs there. This holds even for a client on its own runtime, so Cameleer needs no change:
+  the `http` producer already calls `send` from the server loop that polls the task.
+- Same-turn delivery of what a loop queues for itself (S2). This was not free, as section 12 had
+  assumed: a loop's message to itself cost an extra wait in the operating system each time.
+- Fixed along the way:
+  - idle connections are now pooled per client, so two clients on one loop no longer share them;
+  - `loops()` no longer returns an empty list just after start.
+
+**Cameleer side.** No code change. The same source is built against that branch with
+`--config patch.crates-io...` (not committed). The hermetic suite passes with the patch: **2978
+passed, 0 failed**, zero warnings.
+
+**Measured** (method of section 12, three guarded rounds; raw data in
+`benchmarks/results/2026-11-20-wsl-async-same-loop/`):
+
+| connections | build | req/s (3 rounds) | CPU µs/req | ctx switches/req | p99 |
+|---|---|---:|---:|---:|---:|
+| 64 | synchronous | 32,118 / 44,740 / 32,374 | 63.0-66.0 | 1.00-1.90 | 4.3-5.6 ms |
+| 64 | phase 0 async | 71,611 / 72,048 / 72,645 | 48.2-50.1 | 0.22-0.23 | 2.3-2.4 ms |
+| 64 | async, same loop | 82,408 / 82,949 / 81,163 | 47.0-48.5 | 0.01-0.03 | 1.5-1.6 ms |
+| 256 | synchronous | 33,149 / 27,297 / 28,036 | 63.5-66.9 | 1.00-1.55 | 14.0-17.7 ms |
+| 256 | phase 0 async | 80,961 / 84,187 / 72,150 | 42.9-45.9 | 0.06-0.11 | 7.2-9.0 ms |
+| 256 | async, same loop | 87,465 / 82,967 / 87,708 | 44.1-44.5 | 0.00-0.03 | 5.4-7.0 ms |
+
+**Against the prediction:**
+
+- **Context switches: met.** They fell from 0.06-0.23 per request to 0.00-0.03, so a proxied request
+  no longer changes thread.
+- **CPU per request: not met.** It barely moved: 1-3 µs at 64 connections, unchanged at 256. Under
+  load the two cross-loop posts were already cheap, because the loops were awake and no system call
+  was needed. What they cost was latency, not CPU.
+- **Throughput and latency improved instead:**
+  - at 64 connections, +13-15% req/s and p99 1.5-1.6 ms instead of 2.3-2.4 ms;
+  - at 256 connections, -1% to +21% req/s across the rounds (phase 0's own rounds varied by 14%),
+    and p99 5.4-7.0 ms instead of 7.2-9.0 ms.
+
+**Where it stands.** The Cameleer process now keeps 3.7-3.9 of its 4 CPUs busy, so the route is
+CPU-bound. The remaining cost is about 45 µs of CPU per proxied request, compared with 37 µs in
+simoom's own proxy benchmark. It is work, not hand-offs: two HTTP/1.1 legs, the exchange, the binding
+and the route. The next step is a profile of that work, not another scheduling change.
+
+**Shipping.** All of this needs a simoom release with `rt-same-loop`. That release is the owner's
+call. Until then Cameleer's `main` builds against simoom 0.1.0 and gets the phase 0 numbers.
+
 ## References
 
 - Apache Camel, "Asynchronous Routing Engine" and the `AsyncProcessor`, `AsyncCallback`,

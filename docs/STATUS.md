@@ -577,7 +577,13 @@ Cameleer's own HTTP code or it is not used.
   - **Where to read more:** design and results in `docs/design/async-routing.md`.
   - **In-flight limit:** `maxInflightRequests` on `platform-http` (default
     `camel.server.maxInflightRequests` or 10,000) answers 503 beyond it.
-  - **Open:** the client on the server's loops (simoom S1-S3), phases 1-4.
+  - **Client on the server's loops** (simoom branch `rt-same-loop`, `460aeaf`, not released;
+    Cameleer unchanged, measured with a local `[patch]` on 2026-11-20):
+    - 0.00-0.03 context switches per request;
+    - +13-15% req/s and a 35% lower p99 at 64 connections;
+    - the same CPU per request (about 45 µs), so the route is now CPU-bound;
+    - it ships once simoom releases it.
+  - **Open:** a profile of the remaining 45 µs, phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).
