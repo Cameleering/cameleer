@@ -26,11 +26,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   unary. Their reply is sent as one response with its trailers, instead of a stream of head, message and trailers.
   A unary call whose request arrived whole runs on the event loop while its route is fast, under the same governor
   as REST routes; a route that stalls the loop goes back to the pool. Measured locally with nghttp2's h2load, on
-  top of the simoom fix listed below: 235k -> 335k calls/s, 7.8 us of server CPU per call.
+  top of simoom 0.2.0's batching fix: 235k -> 335k calls/s, 7.8 us of server CPU per call.
 - **simoom 0.2.0.** Every simoom crate moves from 0.1 to 0.2 (0.2 is a minor version before 1.0 because two
   config structs of simoom-client gained public fields). It brings one write per reply batch on a multiplexed
-  connection, the client's head and body in one write with one wake per batch, and the blocking client's HTTP/2 on
-  event loops.
+  connection (151k -> 235k gRPC calls/s on WSL2), the client's head and body in one write with one wake per batch,
+  and the blocking client's HTTP/2 on event loops.
 - **A gRPC client call sends its head, first message and end of stream in one write** (`Client::call_with_body`,
   simoom-client 0.2). Not measured alone: together with the other simoom 0.2.0 client fixes and the stream-opening
   change above, gRPC unary through the crate's client went from 95k to 121k calls/s on WSL2
@@ -40,8 +40,6 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 - **HTTP/2 at 0.51x of HTTP/1.1 (benchmark round of 2026-11-18) measured the load generator, not the server.**
   Driven by nghttp2's h2load, the server serves HTTP/2 at 1.6-1.8x its HTTP/1.1 rate; the gap was the blocking
   HTTP/2 client in cameleer-bench. `docs/BENCHMARKS.md` and `docs/design/http2-throughput.md` explain it.
-  Not in Cameleer yet, waiting for simoom 0.2.0: one write per reply batch on a multiplexed connection
-  (151k -> 235k gRPC calls/s), and the client's head and body in one write with one wake per batch.
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
   the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
   Nothing else changed; the other crates, the tag, the images and the archives stay at 0.7.0.
