@@ -15,6 +15,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   10,514 per second (3.9x), p99 4.0 against 12.7 ms, 37 against 214 microseconds of server CPU per call, peak memory
   13.5 against 13.8 MB (at 256 calls: 3.6x, 18.6 against 20.1 MB). See `docs/BENCHMARKS.md` and
   `benchmarks/results/2026-11-19-linux-grpc-memory/`.
+- **Message headers cost less to copy and iterate.** `Headers` keeps its entries sorted by name ignoring case
+  (Camel's case-insensitive order, unchanged), so a lookup is a binary search and iterating needs no sort; it used
+  to collect and sort the headers on every iteration. The HTTP binding and the `http` producer no longer allocate
+  a lowercase copy of each header name to filter it or to detect repeats. Measured on WSL2 on a `platform-http` -> `http`
+  proxy route run asynchronously (a separate change): 0.3-2.2 microseconds less CPU per request (1-5%).
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
   the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
   Nothing else changed; the other crates, the tag, the images and the archives stay at 0.7.0.

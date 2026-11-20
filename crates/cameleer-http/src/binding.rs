@@ -54,14 +54,17 @@ const OUT_FILTER: &[&str] = &[
 /// True if a message header must not be written to an HTTP message (Camel internal
 /// headers `Camel*` / `org.apache.camel*`, framing and hop-by-hop headers).
 pub fn filter_outbound(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.starts_with("camel") || lower.starts_with("org.apache.camel") || OUT_FILTER.contains(&lower.as_str())
+    // compared ignoring case without building a lowercase copy (this runs for every header)
+    starts_with_ignore_case(name, "camel") || starts_with_ignore_case(name, "org.apache.camel") || OUT_FILTER.iter().any(|f| f.eq_ignore_ascii_case(name))
+}
+
+fn starts_with_ignore_case(s: &str, prefix: &str) -> bool {
+    s.len() >= prefix.len() && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
 /// True if an HTTP header must not be copied into the exchange.
 pub fn filter_inbound(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower == "transfer-encoding" || lower == "connection" || lower == "keep-alive" || lower == "content-length"
+    ["transfer-encoding", "connection", "keep-alive", "content-length"].iter().any(|f| f.eq_ignore_ascii_case(name))
 }
 
 /// Copy HTTP headers into message headers (repeated headers become arrays).
@@ -92,15 +95,19 @@ pub fn write_message_headers(src: &Headers, dst: &mut HttpHeaders) {
         if filter_outbound(k) || !is_valid_header_name(k) {
             continue;
         }
-        let values: Vec<String> = match v {
-            Value::Array(a) => a.iter().map(|x| x.to_string()).collect(),
-            Value::Null => continue,
-            other => vec![other.to_string()],
-        };
-        for s in values {
+        let mut add = |x: &Value| {
+            let s = match x {
+                Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
             if is_valid_header_value(&s) {
                 dst.add(k, s);
             }
+        };
+        match v {
+            Value::Array(a) => a.iter().for_each(&mut add),
+            Value::Null => {}
+            other => add(other),
         }
     }
 }

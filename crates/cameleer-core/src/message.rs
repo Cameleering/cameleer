@@ -67,18 +67,19 @@ impl Headers {
     pub fn new() -> Self {
         Self::default()
     }
+    /// The entries are kept sorted by name ignoring ASCII case (the iteration order of Camel's
+    /// case-insensitive map), so lookups are a binary search and iterating needs no sort.
+    #[inline]
+    fn search(&self, key: &str) -> std::result::Result<usize, usize> {
+        self.entries.binary_search_by(|(k, _)| cmp_ignore_ascii_case(k.as_str(), key))
+    }
     #[inline]
     fn position(&self, key: &str) -> Option<usize> {
-        self.entries.iter().position(|(k, _)| {
-            let k = k.as_str();
-            k.len() == key.len() && k.eq_ignore_ascii_case(key)
-        })
+        self.search(key).ok()
     }
     /// The entries in iteration order (sorted ignoring ASCII case).
-    fn sorted(&self) -> Vec<(&str, &Value)> {
-        let mut v: Vec<(&str, &Value)> = self.entries.iter().map(|(k, v)| (k.as_str(), v)).collect();
-        v.sort_by(|a, b| cmp_ignore_ascii_case(a.0, b.0));
-        v
+    fn sorted(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.entries.iter().map(|(k, v)| (k.as_str(), v))
     }
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.position(key).map(|i| &self.entries[i].1)
@@ -88,24 +89,24 @@ impl Headers {
     }
     pub fn set(&mut self, key: impl Into<String>, value: impl Into<Value>) {
         let key = key.into();
-        let at = self.position(&key);
+        let at = self.search(&key);
         self.put(at, HeaderKey::Owned(key), value.into());
     }
     /// [`Headers::set`] with a name the caller keeps and shares (no copy of the name).
     pub fn set_shared(&mut self, key: &std::sync::Arc<str>, value: impl Into<Value>) {
-        let at = self.position(key);
+        let at = self.search(key);
         self.put(at, HeaderKey::Shared(key.clone()), value.into());
     }
     #[inline]
-    fn put(&mut self, at: Option<usize>, key: HeaderKey, value: Value) {
+    fn put(&mut self, at: std::result::Result<usize, usize>, key: HeaderKey, value: Value) {
         match at {
             // the latest spelling of the key wins, as with the old map
-            Some(i) => self.entries[i] = (key, value),
-            None => self.entries.push((key, value)),
+            Ok(i) => self.entries[i] = (key, value),
+            Err(i) => self.entries.insert(i, (key, value)),
         }
     }
     pub fn remove(&mut self, key: &str) -> Option<Value> {
-        self.position(key).map(|i| self.entries.swap_remove(i).1)
+        self.position(key).map(|i| self.entries.remove(i).1)
     }
     pub fn contains(&self, key: &str) -> bool {
         self.position(key).is_some()
@@ -121,10 +122,10 @@ impl Headers {
     }
     /// Iterate `(original_key, value)` pairs (sorted ignoring ASCII case).
     pub fn iter(&self) -> impl Iterator<Item = (&str, &Value)> {
-        self.sorted().into_iter()
+        self.sorted()
     }
     pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.sorted().into_iter().map(|(k, _)| k)
+        self.sorted().map(|(k, _)| k)
     }
     /// Remove headers whose key matches a Camel-style pattern: exact (case-insensitive),
     /// wildcard (`Camel*`) or regex. Returns number removed.
@@ -1051,5 +1052,35 @@ mod tests {
         let na: u64 = a.rsplit('-').next().unwrap().parse().unwrap();
         let nb: u64 = b.rsplit('-').next().unwrap().parse().unwrap();
         assert!(nb > na);
+    }
+}
+
+#[cfg(test)]
+mod header_order_tests {
+    use super::*;
+
+    #[test]
+    fn headers_iterate_sorted_ignoring_case_and_look_up_any_spelling() {
+        let mut h = Headers::new();
+        for k in ["b", "A", "c", "Content-Type", "content-length", "X-Id", "a2"] {
+            h.set(k, k);
+        }
+        let keys: Vec<&str> = h.keys().collect();
+        assert_eq!(keys, vec!["A", "a2", "b", "c", "content-length", "Content-Type", "X-Id"]);
+        assert_eq!(h.get("CONTENT-TYPE"), Some(&Value::from("Content-Type")));
+        assert_eq!(h.get("x-id"), Some(&Value::from("X-Id")));
+        assert!(h.get("x-i").is_none() && h.get("x-idd").is_none());
+        // the latest spelling wins and keeps its place
+        h.set("CONTENT-TYPE", "json");
+        assert_eq!(h.keys().collect::<Vec<_>>(), vec!["A", "a2", "b", "c", "content-length", "CONTENT-TYPE", "X-Id"]);
+        // removing keeps the order of the rest
+        assert_eq!(h.remove("B"), Some(Value::from("b")));
+        assert_eq!(h.keys().collect::<Vec<_>>(), vec!["A", "a2", "c", "content-length", "CONTENT-TYPE", "X-Id"]);
+        assert_eq!(h.remove_matching("content*", &[]), 2);
+        assert_eq!(h.keys().collect::<Vec<_>>(), vec!["A", "a2", "c", "X-Id"]);
+        let shared: std::sync::Arc<str> = std::sync::Arc::from("Bb");
+        h.set_shared(&shared, 1);
+        assert_eq!(h.keys().collect::<Vec<_>>(), vec!["A", "a2", "Bb", "c", "X-Id"]);
+        assert_eq!(h.len(), 5);
     }
 }
