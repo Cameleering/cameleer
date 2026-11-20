@@ -430,8 +430,8 @@ CPU-bound. The remaining cost is about 45 µs of CPU per proxied request, compar
 simoom's own proxy benchmark. It is work, not hand-offs: two HTTP/1.1 legs, the exchange, the binding
 and the route. The next step is a profile of that work, not another scheduling change.
 
-**Shipping.** All of this needs a simoom release with `rt-same-loop`. That release is the owner's
-call. Until then Cameleer's `main` builds against simoom 0.1.0 and gets the phase 0 numbers.
+**Shipping.** `rt-same-loop` is in simoom 0.2.0 (released 2026-11-20), and this change requires simoom
+0.2, so it ships with these numbers. Cameleer needed no change for it.
 
 ## 14. Where the remaining 45 µs goes (profile, 2026-11-20)
 
