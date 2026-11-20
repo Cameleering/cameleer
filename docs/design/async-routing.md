@@ -433,6 +433,61 @@ and the route. The next step is a profile of that work, not another scheduling c
 **Shipping.** All of this needs a simoom release with `rt-same-loop`. That release is the owner's
 call. Until then Cameleer's `main` builds against simoom 0.1.0 and gets the phase 0 numbers.
 
+## 14. Where the remaining 45 µs goes (profile, 2026-11-20)
+
+**Method.** `perf` in WSL needs `kernel.perf_event_paranoid` lowered, and that change was left to the
+owner. The profile was taken instead on Windows 11 with `cameleer-bench profile http-proxy 8`, the
+std-only sampling profiler, which needs no privileges.
+- **Scenario:** the same proxy route as sections 12 and 13, on simoom `rt-same-loop`, with 64
+  connections from the load generator in the same process. The backend is `raw-http poll` in its own
+  process.
+- **Samples:** 2,386 busy samples, 93% of them on simoom loops; the load generator's own threads are
+  7%.
+- **Caveat:** the proportions below are Windows' (IOCP, not epoll), so they are indicative for Linux,
+  not exact.
+- **Files:** the raw output is in `benchmarks/results/2026-11-20-wsl-async-same-loop/profile-windows.txt`.
+
+| layer | inclusive share of the process | about, of 45 µs |
+|---|---:|---:|
+| simoom: HTTP/1.1 server and client parsing and writing, connections, I/O (the driver's turn alone is 13%) | about 60% | 27 µs |
+| Cameleer: the route as a task (`Task::run`, without `RtClient::send`) | 33% | 15 µs |
+| ... of which the `http` producer's `prepare` + `complete` | 10% | 4.5 µs |
+| ... of which the consumer binding's `read_request` + `write_response` | 11% | 5 µs |
+| ... of which the route, error channel, instrumentation and `to` wrappers | about 8% | 3.5 µs |
+| allocator, spread over all of it (`alloc` + `dealloc`) | 13% | 6 µs |
+
+For comparison, simoom's own proxy benchmark costs 37 µs per request with a handler that does almost
+nothing. That agrees with Cameleer adding roughly 8-15 µs on top of the same HTTP work.
+
+**What the self-time points at in Cameleer's share.** Each item below costs work on every request
+without changing what a route sees:
+
+1. **Headers are copied four times, each copy with allocations:**
+   - request → exchange (`read_request`);
+   - exchange → backend request (`write_message_headers`, `filter_outbound`);
+   - backend response → exchange (`complete`, which also builds a lowercased `String` per header to
+     remove duplicates);
+   - exchange → response (`write_response`).
+
+   Most of the allocator's 13% comes from here, along with `from_utf8`, lossy UTF-8 and `trim`.
+2. **Header iteration sorts.** `Headers::iter` collects and sorts every time
+   (`message.rs` `sorted`, Camel's case-insensitive TreeMap order). It shows as an insertion sort in
+   the top self-time list. Keeping the entries sorted on insert, or sorting once per copy, would keep
+   the order without the per-iteration sort.
+3. **The URL is parsed twice.** `prepare` builds a Cameleer `Url`, formats it to a `String`, and
+   `RtRequest::new` parses it again (`Url::parse`, `fmt::write`).
+4. **Formatting and clock reads:**
+   - `fmt::write` is 3.9% inclusive: the response code and `Content-Length` as text, and header
+     values through `to_string`;
+   - `Instant::now` / QPC readings are about 2%: the client's deadline per request and the
+     statistics.
+
+**Next step** (not done): fix items 1-3 in `binding.rs`, `producer.rs` and `message.rs`. Each is a
+local change, with behaviour pinned by the existing binding and header tests. Then measure again with
+section 12's method. A rough estimate from the shares above is 4-7 µs of the 15 µs (10-15% of the
+request). The simoom part (about 60%) is simoom's to profile, and it already has its own proxy
+benchmark.
+
 ## References
 
 - Apache Camel, "Asynchronous Routing Engine" and the `AsyncProcessor`, `AsyncCallback`,

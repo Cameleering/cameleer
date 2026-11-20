@@ -8,7 +8,7 @@
 //!                     load a served scenario on another machine
 //! cameleer-bench startup                                      start all routes, print READY, exit
 //! cameleer-bench breakdown [n]                                per-stage cost of a direct send
-//! cameleer-bench profile <scenario|http> <secs> [top]         sampling profile (Windows)
+//! cameleer-bench profile <scenario|http|http-proxy> <secs> [top]  sampling profile (Windows)
 //! cameleer-bench loadgen <port> <conns> <secs>                load an already running HTTP server
 //! cameleer-bench measure --side S --scenario X [--http CONNS] [--repeat N]
 //!                     [--warmup s --iter s --iters n] -- <command...>
@@ -149,6 +149,11 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
             if scenario == "http" {
                 scenarios::add_http_route(&ctx, port).map_err(s)?;
             }
+            if scenario == "http-proxy" {
+                // forwards to BENCH_PROXY_TARGET: start `raw-http <port> poll` there first
+                cameleer_http::register(&ctx);
+                realworld::add_server_route(&ctx, "http-proxy", port, &realworld::Env::from_env()).map_err(s)?;
+            }
             ctx.start().map_err(s)?;
             let plan = Plan { warmup: Duration::from_millis(500), iteration: secs_v, iters: 1 };
             let c2 = ctx.clone();
@@ -178,6 +183,8 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
                     });
                 } else if scenario == "http" {
                     let _ = cameleer_bench::loadgen::run(port, "/bench", 16, plan);
+                } else if scenario == "http-proxy" {
+                    let _ = cameleer_bench::loadgen::run_remote("127.0.0.1", port, "/proxy", "small", 64, plan);
                 } else if scenario.starts_with("ai-") {
                     let _ = cameleer_bench::ai::run(&c2, &scenario, plan);
                 } else {

@@ -18,3 +18,9 @@ These are the raw results for `docs/design/async-routing.md`, section 13.
     replies go out in the same turn.
 
 `proxy-any.sh` picks the build. `rounds-rsl.out` holds the raw lines.
+
+Profile (section 14):
+- `profile-windows.txt`: `cameleer-bench profile http-proxy 8 60` on Windows 11, built against the
+  same simoom export with `CARGO_PROFILE_RELEASE_DEBUG=line-tables-only`.
+- `build-prof.sh` and `prof.sh`: the `perf` version for WSL. It needs `kernel.perf_event_paranoid`
+  at 1 or lower, which the owner sets.
