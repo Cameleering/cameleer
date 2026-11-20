@@ -40,6 +40,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 - **HTTP/2 at 0.51x of HTTP/1.1 (benchmark round of 2026-11-18) measured the load generator, not the server.**
   Driven by nghttp2's h2load, the server serves HTTP/2 at 1.6-1.8x its HTTP/1.1 rate; the gap was the blocking
   HTTP/2 client in cameleer-bench. `docs/BENCHMARKS.md` and `docs/design/http2-throughput.md` explain it.
+- **Message headers cost less to copy and iterate.** `Headers` keeps its entries sorted by name ignoring case
+  (Camel's case-insensitive order, unchanged), so a lookup is a binary search and iterating needs no sort; it used
+  to collect and sort the headers on every iteration. The HTTP binding and the `http` producer no longer allocate
+  a lowercase copy of each header name to filter it or to detect repeats. No gain is claimed: it was not measured
+  on its own.
 - **Changed: asynchronous routing, on by default.** A `platform-http` (or `jetty`/`undertow`) route that calls the
   `http` producer now runs as a task (`cameleer_core::reactive`, Camel's `AsyncProcessor` contract). It no longer
   holds a server thread while it waits for the reply.
