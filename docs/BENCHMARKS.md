@@ -337,19 +337,34 @@ At 256 connections gRPC is 1.05x (10,328 / 9,882 requests per second, CPU per re
   second; p99 1.56 against 1.45 ms), but this is probably noise: in the later round with the gRPC thread pool,
   two builds with identical HTTP code gave 0.98x and 0.91x for the same route (and 1.05x and 0.93x for MCP),
   so swings of 5 to 9% between two builds on this setup are not results. `http` and MCP showed no change.
-- **HTTP/2 measured at 0.51x of HTTP/1.1 (63,941 against 125,721 requests per second) in this round, but that
-  was the load generator, not the server.** cameleer-bench's HTTP/2 client hands every response from a reader
-  thread to the waiting request thread (about 53 us of load-node CPU per call against 21 us for its HTTP/1.1
-  client). Driven by nghttp2's `h2load` on three `c-4` droplets (2026-11-19, `scripts/cloud-bench/peer.sh`,
-  records in `benchmarks/results/2026-11-19-linux-http2-peer/`), the same server served, server a / server b:
+- **HTTP/2 measured at 0.51x of HTTP/1.1 (63,941 against 125,721 requests per second) in this round. The gap had
+  two causes.**
+  - **Mostly the load generator:** cameleer-bench's HTTP/2 client hands every response from a reader thread to
+    the waiting request thread, two thread hand-offs per response (about 53 us of load-node CPU per call against
+    21 us for its HTTP/1.1 client).
+  - **Partly the server:** simoom started its event loops lazily, and a connection never moves between loops. When
+    connections arrive in a burst, most of the four long-lived HTTP/2 connections stayed on one loop. The servers
+    now start every loop.
+    - On WSL2, where client and server share the CPUs, that was worth 2.07x for gRPC unary and +14% for
+      `rest-json-h2` (means of three noisy rounds).
+    - On the droplets the same change gave 1.04x and 1.05x (one run, `benchmarks/results/2026-11-19-linux-http2-loops/`),
+      because connections from another machine arrive a few ms apart.
+
+  Driven by nghttp2's `h2load` on three `c-4` droplets (2026-11-19, sfo3, build `916bbca`,
+  `scripts/cloud-bench/peer.sh`, records in `benchmarks/results/2026-11-19-linux-http2-peer/`), the same server
+  served (server a / server b, one run per case):
 
   | client | HTTP/1.1, 64 connections | HTTP/2, 4 x 16 streams | HTTP/2, 16 x 4 | gRPC unary, 4 x 16 |
   |---|---:|---:|---:|---:|
   | `h2load` | 86,429 / 70,696 | 153,010 / 115,820 | 139,469 / 125,521 | 93,157 / 73,426 |
   | cameleer-bench | 103,390 / 75,271 | 79,182 / 75,013 | - | 58,046 / 49,911 |
 
-  So HTTP/2 is 1.6x to 1.8x HTTP/1.1 on this server, and gRPC unary is higher than the cameleer-bench figures in
-  this document show. The analysis is in `docs/design/http2-throughput.md`.
+  The cameleer-bench row comes from the same session as the `h2load` row, not from the 0.7.0 round above (blr1),
+  hence its different HTTP/1.1 figure. The two protocols are not loaded alike: HTTP/1.1 is 64 connections with one
+  request in flight each, HTTP/2 is 4 connections with 16 streams each. `h2load`'s HTTP/1.1 is also below
+  cameleer-bench's, so neither reached an HTTP/1.1 ceiling. So, with `h2load` and 16 streams per connection, one
+  run on two droplets, HTTP/2 came out at 1.6x to 1.8x HTTP/1.1 on this server, and gRPC unary higher than the
+  cameleer-bench figures in this document. The analysis is in `docs/design/http2-throughput.md`.
 - **gRPC stopped at about 11,000 calls per second on both builds** (release 0.7.0 and 0.6.1), from 16 concurrent
   calls up, while neither the server nor the load generator was out of CPU. Starting threads for each call was the
   suspect; the next section tests it: on a pool of threads the 0.7.0 server does 4.3x to 4.8x as many calls.
