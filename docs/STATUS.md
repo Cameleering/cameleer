@@ -561,8 +561,8 @@ Cameleer's own HTTP code or it is not used.
   (simoom-client's reader thread hands each response to the request thread). The HTTP and gRPC servers now start every
   event loop (lazy start only on Lambda or with `CAMEL_SERVER_LAZY_LOOPS=true`), and simoom-rt places a few long-lived
   connections on the least loaded loop (simoom, not released). Open: an event-driven HTTP/2 client in simoom-client.
-- **Asynchronous routing, phase 0 (2026-11-19, optional, not in the next release unless the owner
-  decides so):**
+- **Asynchronous routing, phase 0 (2026-11-19; on by default, `CAMEL_ASYNC_ROUTING=false` turns it
+  off):**
   - **What was built:**
     - an `AsyncProcessor` path in the routing engine: `cameleer_core::reactive`, plus the async forms
       of the pipeline, the route, the error channel and `to`;
