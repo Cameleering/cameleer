@@ -128,10 +128,10 @@ impl GrpcClient {
         let url = format!("{}://{}{}", if self.tls.is_some() { "https" } else { "http" }, self.addr, path);
         let opened = if engine.pool_stats().multiplexed > 0 {
             // a connection is up: the engine puts the stream on it, no need to queue the opens
-            engine.call("POST", &url, &headers)
+            engine.call_with_body("POST", &url, &headers, &first, end)
         } else {
             let _one_at_a_time = self.open.lock().unwrap_or_else(|p| p.into_inner());
-            engine.call("POST", &url, &headers)
+            engine.call_with_body("POST", &url, &headers, &first, end)
         };
         let call = opened.map_err(|e| {
             if e.is_connect() || matches!(e.kind, sc::ErrorKind::Tls | sc::ErrorKind::Closed | sc::ErrorKind::Io(_) | sc::ErrorKind::Timeout(sc::TimeoutKind::Tls)) {
@@ -141,13 +141,6 @@ impl GrpcClient {
             }
         })?;
         let sender = call.sender();
-        // (with simoom-client 0.2, `call_with_body` sends these with the head, in one write)
-        if !first.is_empty() {
-            sender.send(first).map_err(Status::from)?;
-        }
-        if end {
-            sender.finish().map_err(Status::from)?;
-        }
         Ok(ClientCall {
             send_encoding: self.send_compression.clone(),
             call,
