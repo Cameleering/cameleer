@@ -48,6 +48,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   loops above, where connections arrive in a burst. With nghttp2's h2load (16 streams per connection, one run on
   two droplets) the server served HTTP/2 at 1.6x to 1.8x its HTTP/1.1 rate. `docs/BENCHMARKS.md` and
   `docs/design/http2-throughput.md` explain it.
+- **Message headers cost less to copy and iterate.** `Headers` keeps its entries sorted by name ignoring case
+  (Camel's case-insensitive order, unchanged), so a lookup is a binary search and iterating needs no sort; it used
+  to collect and sort the headers on every iteration. The HTTP binding and the `http` producer no longer allocate
+  a lowercase copy of each header name to filter it or to detect repeats. No gain is claimed: it was not measured
+  on its own.
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
   the registry compares the namespace case-sensitively, so it is `io.github.Cameleering/cameleer`.
   Nothing else changed; the other crates, the tag, the images and the archives stay at 0.7.0.
