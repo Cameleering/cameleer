@@ -36,10 +36,14 @@ pub struct GrpcClient {
     /// (`negotiationType=PLAINTEXT_UPGRADE`) instead of prior knowledge.
     pub upgrade: bool,
     engine: Mutex<Option<sc::Client>>,
-    /// Opens streams one at a time, so that calls racing on a cold channel share the first connection
-    /// instead of each opening their own.
+    /// Opens streams one at a time while the channel has no connection, so that calls racing on a
+    /// cold channel share the first connection instead of each opening their own.
     open: Mutex<()>,
 }
+
+/// Largest framed unary request sent together with the call's head (the initial HTTP/2 window is
+/// 65,535 bytes, so it never waits for credit).
+const ONE_WRITE_MAX: usize = 16 * 1024;
 
 impl GrpcClient {
     /// Plaintext channel (HTTP/2 prior knowledge).
@@ -97,6 +101,12 @@ impl GrpcClient {
 
     /// Starts a call on `path` (`/package.Service/Method`).
     pub fn start_call(&self, path: &str, metadata: &Metadata, deadline: Option<Duration>) -> Result<ClientCall, Status> {
+        self.open_call(path, metadata, deadline, &[], false)
+    }
+
+    /// Opens a call whose first bytes (framed messages) and, with `end`, the end of the request
+    /// stream go out with the head, in one write.
+    fn open_call(&self, path: &str, metadata: &Metadata, deadline: Option<Duration>, first: &[u8], end: bool) -> Result<ClientCall, Status> {
         let engine = self.engine()?;
         let mut headers = sc::Headers::new();
         headers.append("content-type", "application/grpc");
@@ -116,9 +126,12 @@ impl GrpcClient {
             }
         }
         let url = format!("{}://{}{}", if self.tls.is_some() { "https" } else { "http" }, self.addr, path);
-        let opened = {
+        let opened = if engine.pool_stats().multiplexed > 0 {
+            // a connection is up: the engine puts the stream on it, no need to queue the opens
+            engine.call_with_body("POST", &url, &headers, &first, end)
+        } else {
             let _one_at_a_time = self.open.lock().unwrap_or_else(|p| p.into_inner());
-            engine.call("POST", &url, &headers)
+            engine.call_with_body("POST", &url, &headers, &first, end)
         };
         let call = opened.map_err(|e| {
             if e.is_connect() || matches!(e.kind, sc::ErrorKind::Tls | sc::ErrorKind::Closed | sc::ErrorKind::Io(_) | sc::ErrorKind::Timeout(sc::TimeoutKind::Tls)) {
@@ -143,9 +156,18 @@ impl GrpcClient {
 
     /// Unary call: returns the response message and the response metadata (headers + trailers).
     pub fn unary(&self, path: &str, request: &[u8], metadata: &Metadata, deadline: Option<Duration>) -> Result<(Vec<u8>, Metadata), Status> {
-        let mut call = self.start_call(path, metadata, deadline)?;
-        call.send(request)?;
-        call.close_send()?;
+        let framed = frame_message_with(request, self.send_compression.as_deref());
+        // A small request leaves with the head and the end of stream in one write (the stream
+        // opening is serialized, so a large one, which may wait for flow-control credit, is
+        // sent after it).
+        let mut call = if framed.len() <= ONE_WRITE_MAX {
+            self.open_call(path, metadata, deadline, &framed, true)?
+        } else {
+            let call = self.start_call(path, metadata, deadline)?;
+            call.send(request)?;
+            call.close_send()?;
+            call
+        };
         let first = call.recv()?;
         let msg = first.ok_or_else(|| Status::new(Code::Internal, "no response message received for unary call"))?;
         if call.recv()?.is_some() {

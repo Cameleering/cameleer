@@ -21,7 +21,7 @@ cameleer-http = { path = "../cameleer-http", version = "0.7.0" }
 cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.7.0" }
 cameleer-sql = { path = "../cameleer-sql", version = "0.7.0" }
 # the HTTP/2 load generator of the rest-json-h2 scenario
-simoom-client = { version = "0.1.0", default-features = false, features = ["client-h2"] }
+simoom-client = { version = "0.2", default-features = false, features = ["client-h2"] }
 
 [[bin]]
 name = "cameleer-bench"

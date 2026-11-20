@@ -102,7 +102,9 @@ and the full report, [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Run it yourself w
 The table above is Cameleer against Apache Camel (0.4.0). The same setup also compares Cameleer with its
 own previous release: 0.7.0 against 0.6.1 (gRPC and HTTP/2 on simoom) gave 29% less CPU per gRPC call and a
 35% lower p99 at the same throughput, no change for plain HTTP, MCP and the JSON REST route (a 5% difference
-there is within the noise of the setup) and HTTP/2 at about half the request rate of HTTP/1.1 for small calls. A
+there is within the noise of the setup). HTTP/2 first measured at half the request rate of HTTP/1.1, but that was
+the benchmark's own HTTP/2 client: with nghttp2's h2load the server serves HTTP/2 at 1.6x to 1.8x its HTTP/1.1
+rate. A
 later change (gRPC calls on a pool of threads, not released yet) raised gRPC to 3.9x the 0.7.0 rate (3.6x at 256
 concurrent calls) at about a sixth of the CPU per call, with the same peak memory as 0.7.0 (13.5 against 13.8 MB at 64
 concurrent calls); see

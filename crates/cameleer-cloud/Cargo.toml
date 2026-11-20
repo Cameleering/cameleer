@@ -17,9 +17,9 @@ cameleer-core = { path = "../cameleer-core", version = "0.7.0", default-features
 cameleer-tls = { path = "../cameleer-tls", version = "0.7.0" }
 cameleer-grpc = { path = "../cameleer-grpc", version = "0.7.0" }
 # The HTTP/2 server of the test mocks (h2c prior knowledge)
-simoom = { version = "0.1.0", default-features = false, features = ["http2"] }
+simoom = { version = "0.2", default-features = false, features = ["http2"] }
 # The HTTP/2 client of the event-stream calls (Kinesis SubscribeToShard)
-simoom-client = { version = "0.1.0", default-features = false, features = ["client-h2", "tls", "tls-extra"] }
+simoom-client = { version = "0.2", default-features = false, features = ["client-h2", "tls", "tls-extra"] }
 cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.7.0" }
 cameleer-dataformats = { path = "../cameleer-dataformats", version = "0.7.0" }
 cameleer-amqp10 = { path = "../cameleer-amqp10", version = "0.7.0" }
