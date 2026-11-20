@@ -160,7 +160,9 @@ with a p99 of about 11 ms. A call on an idle server takes about 0.3 ms. Release 
 calls per second from 16 concurrent calls up because each call starts threads; running them on a pool (after 0.7.0,
 not released yet) gave about 41,000 calls per second at about 37 microseconds of server CPU per call and a p99 of
 about 4 ms, with the same peak memory as 0.7.0 (13.5 against 13.8 MB at 64 concurrent calls, 18.6 against 20.1 MB
-at 256). Streaming calls were not measured. The
+at 256). After 0.7.0 (not released yet), a unary reply is sent as one response and a fast unary call runs on
+the server's event loop: about 7.8 microseconds of server CPU per call, measured locally with nghttp2's h2load.
+Streaming calls were not measured. The
 [full numbers and the comparison with 0.6.1](../BENCHMARKS.md#grpc-and-http2-on-simoom-070-2026-11-18) are in
 the benchmark report.
 
