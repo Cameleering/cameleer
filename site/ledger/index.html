@@ -136,14 +136,14 @@
         <tr><td>cold start of the CLI, <code>full</code> / <code>core</code></td><td class="num">2.2 / 1.6 ms</td><td class="num">2.2 / 1.6 ms</td><td class="num res">level</td></tr>
         <tr><td>REST API with JSON: throughput</td><td class="num">130,956 req/s</td><td class="num">123,793 req/s</td><td class="num res">0.95x, within noise</td></tr>
         <tr><td>REST API with JSON: p99 latency</td><td class="num">1.45 ms</td><td class="num">1.56 ms</td><td class="num res">8% higher, within noise</td></tr>
-        <tr class="loss"><td>HTTP/2 against HTTP/1.1 on 0.7.0, small calls, same route</td><td class="num">HTTP/1.1: 125,721 req/s</td><td class="num">HTTP/2: 63,941 req/s</td><td class="num res">0.51x (loss)</td></tr>
+        <tr><td>HTTP/2 against HTTP/1.1 on 0.7.0, small calls, same route</td><td class="num">HTTP/1.1: 125,721 req/s</td><td class="num">HTTP/2: 63,941 req/s</td><td class="num res">0.51x, mostly the benchmark&rsquo;s own client (below)</td></tr>
       </tbody>
     </table></div>
     <h3>Known losses and limits</h3>
     <ul>
       <li>REST API with JSON showed 0.95x on 0.7.0 (0.94x and 0.95x in the two runs). A later control round on the same droplets, in which this route ran identical code in both builds, varied by as much (0.98x and 0.91x; 0.91x to 1.06x across the HTTP, REST and MCP routes), so this is within the noise of the setup and not counted as a loss. An earlier version of this page listed it as one.</li>
-      <li>HTTP/2 on Cameleer's HTTP server serves about half the requests per second of HTTP/1.1 for small calls on the same route, at the same CPU per request (21 µs) and with the server far from saturated. It is not the number of connections and not the load generator; the cause is not known. HTTP/1.1 is the faster protocol for small calls on this server.</li>
-      <li>gRPC throughput stops at about 11,000 calls per second on both builds from 16 concurrent calls up, while neither the server nor the load generator is out of CPU. So the gRPC gain of 0.7.0 is CPU per call and tail latency, not throughput: 1.05x to 1.06x is within what two runs separate from noise. The limit was the threads started for each call: running them on a pool removes it (next table, not released yet).</li>
+      <li>HTTP/2 was first measured at 0.51x of HTTP/1.1 on the same route, and this page listed it as a loss with an unknown cause. That was mostly the benchmark&rsquo;s own HTTP/2 client, and partly event loops that started lazily. In the 0.8.0 candidate round (2026-11-20, not released yet) REST over HTTP/2 equals REST over HTTP/1.1 (1.00x), and nghttp2&rsquo;s <code>h2load</code> gets 1.5x to 1.6x the server&rsquo;s HTTP/1.1 rate over HTTP/2 (two runs, two servers; not a like-for-like protocol test). See <a href="#cameleer-0-8">the next table</a>.</li>
+      <li>gRPC throughput stops at about 11,000 calls per second on both builds from 16 concurrent calls up, while neither the server nor the load generator is out of CPU. So the gRPC gain of 0.7.0 is CPU per call and tail latency, not throughput: 1.05x to 1.06x is within what two runs separate from noise. The limit was the threads started for each call: running them on a pool removes it (the tables below, not released yet).</li>
       <li>At 256 connections gRPC is 1.05x (10,328 against 9,882 req/s), CPU per request 199 against 284 µs and p99 39 against 45 ms, but peak memory is higher: 18.9 against 17.5 MB (loss).</li>
       <li>Noise: the two servers differ by 10 to 25% in speed, and phase 1 was slower than phase 2 in the first run, so differences of a few percent between the builds are not results.</li>
       <li>Not measured: gRPC streaming calls, HTTP/2 over TLS, the gRPC client against the old client, Windows, and any comparison with Apache Camel for gRPC or HTTP/2.</li>
@@ -168,6 +168,42 @@
       <li>Not measured: gRPC streaming calls, TLS, the gRPC client, Windows, long-lived idle calls.</li>
     </ul>
     <p class="note">Method and raw data: <a href="../docs/BENCHMARKS.html#grpc-on-a-pool-of-threads-without-the-memory-cost-2026-11-19">BENCHMARKS, gRPC on a pool of threads, without the memory cost</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-19-linux-grpc-memory">benchmarks/results/2026-11-19-linux-grpc-memory</a>.</p>
+    <h3 id="cameleer-0-8">0.8.0 candidate against 0.7.0, not released yet (measured 2026-11-20)</h3>
+    <p class="intro">The 0.8.0 candidate (commit <code>7ee75e7</code>: simoom 0.2.0 with event loops started eagerly, a cheaper gRPC unary path, fewer header copies, and the gRPC thread pool) against release 0.7.0, which has none of these. Three DigitalOcean c-4 droplets in sfo2 (Xeon Platinum 8168 servers; c-4 is no longer offered in blr1 or sfo3, so absolute figures differ from the rounds above; each comparison is within this session), the same load generator for both builds, each build on both servers in both phases; two runs at 64 connections (the second with the order of the sides swapped), one at 256. Not in a release until the 0.8.0 tag.</p>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>metric</th><th class="num">0.7.0</th><th class="num">0.8.0 candidate</th><th class="num">result</th></tr></thead>
+      <tbody>
+        <tr><td>gRPC unary call, 64 concurrent calls</td><td class="num">8,300 calls/s</td><td class="num">94,400 calls/s</td><td class="num res">11.4x</td></tr>
+        <tr><td>gRPC unary call, 256 concurrent calls</td><td class="num">8,000 calls/s</td><td class="num">106,200 calls/s</td><td class="num res">13.3x</td></tr>
+        <tr><td>gRPC p99, 64 / 256 concurrent calls</td><td class="num">14.8 / 54 ms</td><td class="num">1.2 / 4.7 ms</td><td class="num res">12x / 11x lower</td></tr>
+        <tr><td>gRPC server CPU per call</td><td class="num">270 µs</td><td class="num">24 µs</td><td class="num res">91% less</td></tr>
+        <tr><td>gRPC peak memory, 64 / 256 concurrent calls</td><td class="num">13.6 / 19.3 MB</td><td class="num">9.2 / 10.2 MB</td><td class="num res">less</td></tr>
+        <tr><td>REST API with JSON, HTTP/1.1</td><td class="num">—</td><td class="num">—</td><td class="num res">0.99x to 1.03x, level</td></tr>
+        <tr><td>REST API with JSON over HTTP/2, against the same over HTTP/1.1</td><td class="num">—</td><td class="num">—</td><td class="num res">1.00x, level</td></tr>
+        <tr><td>HTTP, fixed reply</td><td class="num">—</td><td class="num">—</td><td class="num res">0.86x to 0.97x, inside the noise (below)</td></tr>
+        <tr class="loss"><td>MCP tool calls, stateless and session</td><td class="num">—</td><td class="num">—</td><td class="num res">0.96x to 0.98x (loss)</td></tr>
+        <tr class="loss"><td>HTTP route ready, <code>full</code> / <code>core</code></td><td class="num">2.72 / 1.99 ms</td><td class="num">3.02 / 2.45 ms</td><td class="num res">0.3 to 0.5 ms slower (loss)</td></tr>
+        <tr class="loss"><td>binary size, <code>full</code> / <code>core</code> (stripped)</td><td class="num">26.52 / 7.05 MB</td><td class="num">26.72 / 7.22 MB</td><td class="num res">+0.8% / +2.4% (loss)</td></tr>
+      </tbody>
+    </table></div>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>independent client: nghttp2&rsquo;s h2load against the candidate</th><th class="num">requests per second</th></tr></thead>
+      <tbody>
+        <tr><td>HTTP/1.1, 64 connections</td><td class="num">67k to 92k (mean about 80k)</td></tr>
+        <tr><td>HTTP/2, 4 connections &times; 16 streams</td><td class="num">116k to 126k</td></tr>
+        <tr><td>HTTP/2, 16 connections &times; 4 streams</td><td class="num">121k to 127k</td></tr>
+        <tr><td>gRPC, 4 connections &times; 16 streams</td><td class="num">129k to 135k calls/s</td></tr>
+      </tbody>
+    </table></div>
+    <ul>
+      <li>The gRPC ratio includes the thread pool, which release 0.7.0 does not have. The pool alone was measured at 3.6x to 3.9x on other droplets (the table above); the other parts of the gain were not measured one by one. Our own load generator stops at about 94,000 calls/s; h2load reached 129,000 to 135,000.</li>
+      <li>MCP is 0.96x to 0.98x of 0.7.0 on every pass, with the sides in either order: probably a real 2% to 4% slowdown. Its cause is not isolated (the eager event loops or the header change).</li>
+      <li>The eager event loops cost 0.3 to 0.5 ms of start-up for an HTTP route and 0.3 to 0.4 MB of memory; <code>CAMEL_SERVER_LAZY_LOOPS=true</code> restores the old start (not measured as a control).</li>
+      <li>Noise: there is no identical-code control in this round. Plain HTTP moves 0.84x to 1.02x per server and between passes, so its 0.86x to 0.97x is not distinguishable from noise; REST over HTTP/1.1 is level, so the 5% REST figure of the 0.7.0 round is not there.</li>
+      <li>Asynchronous routing (on by default in 0.8.0) was measured on one WSL2 machine only, not on these droplets: 2.2x to 2.9x the requests per second and 26% to 33% less CPU per request for a <code>platform-http</code> to <code>http</code> proxy.</li>
+      <li>Not measured: h2load over TLS, gRPC streaming calls, the gRPC client, Windows, asynchronous routing on droplets, and the lazy-loops control.</li>
+    </ul>
+    <p class="note">Method and raw data: <a href="../docs/BENCHMARKS.html#080-candidate-against-070-and-against-an-independent-client-2026-11-20">BENCHMARKS, 0.8.0 candidate against 0.7.0</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-20-linux-0.8.0-candidate">benchmarks/results/2026-11-20-linux-0.8.0-candidate</a>.</p>
     <p class="note">Method, every scenario and the raw data: <a href="../docs/BENCHMARKS.html#grpc-and-http2-on-simoom-070-2026-11-18">BENCHMARKS, gRPC and HTTP/2 on simoom</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-18-linux-grpc-http2">benchmarks/results/2026-11-18-linux-grpc-http2</a>. The earlier simoom figures below (its HTTP/1.1 server against the server it replaced) are a separate round and still stand.</p>
   </div>
 </section>
