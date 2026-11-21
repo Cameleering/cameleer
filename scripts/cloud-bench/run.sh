@@ -129,14 +129,15 @@ bench() {
     echo "Plan: warmup $WARMUP s, $ITERS x $ITER s; $CONNS HTTP connections; $STREAM_RECORDS stream records"; } > "$OUT/machine.txt"
   : > "$OUT/results.txt"; : > "$OUT/run.log"
   one_side 1 java "$A_PUB" "$A_PRIV" a
-  one_side 1 rust "$B_PUB" "$B_PRIV" b
+  if [ "${BENCH_SWAP:-0}" = 1 ]; then one_side 1 base "$A_PUB" "$A_PRIV" a; one_side 1 rust "$B_PUB" "$B_PRIV" b
+  else one_side 1 rust "$B_PUB" "$B_PRIV" b; one_side 1 base "$A_PUB" "$A_PRIV" a; fi
   one_side 1 native "$A_PUB" "$A_PRIV" a
-  one_side 1 base "$A_PUB" "$A_PRIV" a
   one_side 1 node "$A_PUB" "$A_PRIV" a
-  one_side 2 rust "$A_PUB" "$A_PRIV" a
-  one_side 2 java "$B_PUB" "$B_PRIV" b
+  if [ "${BENCH_SWAP:-0}" = 1 ]; then one_side 2 base "$B_PUB" "$B_PRIV" b; one_side 2 rust "$A_PUB" "$A_PRIV" a
+  else one_side 2 rust "$A_PUB" "$A_PRIV" a; one_side 2 java "$B_PUB" "$B_PRIV" b; fi
+  [ "${BENCH_SWAP:-0}" = 1 ] && one_side 2 java "$B_PUB" "$B_PRIV" b
   one_side 2 native "$B_PUB" "$B_PRIV" b
-  one_side 2 base "$B_PUB" "$B_PRIV" b
+  [ "${BENCH_SWAP:-0}" = 1 ] || one_side 2 base "$B_PUB" "$B_PRIV" b
   one_side 2 node "$B_PUB" "$B_PRIV" b
   log "results in $OUT/results.txt"
 }

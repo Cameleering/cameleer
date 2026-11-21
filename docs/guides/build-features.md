@@ -187,12 +187,12 @@ always included:
 
 ## Sizes
 
-Linux x86-64, `dist` profile, stripped:
+Linux x86-64, `dist` profile, stripped (glibc: the 0.8.0 candidate on a DigitalOcean `c-4`, 2026-11-20; musl: 2026-11, before the simoom growth):
 
 | build | glibc | static musl |
 |---|---:|---:|
-| `core` | 5.8 MB | 6.0 MB |
-| every feature (`full`) | 23.9 MB | 24.1 MB |
+| `core` | 7.2 MB | not re-measured (6.0 MB in 2026-11) |
+| every feature (`full`) | 26.7 MB | not re-measured (24.1 MB in 2026-11) |
 
 What each part adds to `core`: `templates` 0.50 MB, `jq` 0.42 MB, `validate` 0.27 MB and `xpath` 0.09 MB (HTTP/2 is part of `core` since 0.7). A smaller binary starts a little faster and uses less memory; startup
 is about 1 ms on Linux either way. Container image sizes, cold-start times and memory are in

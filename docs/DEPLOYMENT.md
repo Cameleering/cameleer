@@ -155,7 +155,7 @@ spec:
           configMap: { name: orders-routes }
 ```
 
-A route uses about 10 MB at rest, most of it pages of the binary itself; the private memory of
+A route uses about 11 MB at rest (0.8.0 candidate: 11.3 MB peak for `full`, 6.8 MB for `core`), most of it pages of the binary itself; the private memory of
 a running route is 1–2 MB. Size the memory limit for your message sizes and concurrency, not
 for a JVM.
 
@@ -249,8 +249,8 @@ scripts/package-lambda.sh --features cloud,jq --out function.zip orders.camel.ya
   ``No component found with scheme: kafka (this cameleer binary was built without the
   `kafka-mqtt` feature; rebuild cameleer-main with `--features kafka-mqtt`)``.
 - `cameleer version` lists the features of a build.
-- `FEATURES=core` is the smallest: 5.8 MB (glibc) or 6.0 MB (static musl) on Linux x86-64,
-  against 23.9 MB with every component. More sizes and cold-start times are in
+- `FEATURES=core` is the smallest: 7.2 MB (glibc, stripped, 0.8.0 candidate) on Linux x86-64, against 26.7 MB
+  with every component. More sizes and cold-start times are in
   [BENCHMARKS.md](BENCHMARKS.md#faas-cold-start-and-size).
 
 ## Without a container

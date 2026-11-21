@@ -162,7 +162,7 @@ or add `ssl=true` / `sslContextParameters=#tls` to an endpoint.
 
 ### How many connections and requests can it serve?
 
-The server runs on [simoom](https://crates.io/crates/simoom), an event loop on a few threads, so an
+The server runs on [simoom](https://crates.io/crates/simoom), one event loop per CPU, so an
 idle keep-alive connection costs a few hundred bytes and no thread: tens of thousands of open
 connections are fine. A route runs on the loop thread while it is fast, and on a pool of at most 200
 threads while it blocks (a call to another service, a database); Cameleer learns which per route, by
