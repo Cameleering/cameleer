@@ -55,6 +55,7 @@ pub use proto::DescriptorPool;
 /// registry (configured per exchange / via `camel.dataformat.protobuf.*` properties, see
 /// [`dataformat`]). Existing registrations are left untouched.
 pub fn register(ctx: &CamelContext) {
+    cameleer_http::server_simoom::reserve_descriptors_early();
     cameleer_core::error::register_kind_parent(grpc::STATUS_RUNTIME_EXCEPTION, cameleer_core::error::kinds::RUNTIME);
     cameleer_core::error::register_kind_parent("InvalidProtocolBufferException", cameleer_core::error::kinds::IO);
     if !ctx.has_component("grpc") {

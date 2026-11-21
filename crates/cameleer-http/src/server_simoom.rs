@@ -147,8 +147,29 @@ fn lazy_loops_from(setting: Option<&str>, faas: bool) -> bool {
     }
 }
 
+/// Grows the process's descriptor table now, while this is still the only thread.
+///
+/// simoom grows the table to `reserve_fds` (1024) descriptors when a server starts, because
+/// growing it later stalls the loop thread that crosses a step. The kernel grows a table with
+/// a plain reallocation while one thread uses it, but waits for an RCU grace period (20 to 40 ms
+/// on WSL2, about 10 ms on a cloud VM) as soon as a second thread exists, so a server started
+/// after a seda, timer or other consumer had spawned its threads cost tens of milliseconds
+/// (docs/design/startup-regression-2026-11.md). [`register`](crate::register) and the first server
+/// call this, which makes the reservation cheap whenever the components are registered before the
+/// routes start. It is done once per process; a no-op on other systems.
+pub fn reserve_descriptors_early() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        simoom_sys::net::reserve_descriptors(RESERVED_DESCRIPTORS);
+    });
+}
+
+/// The table size simoom reserves (`simoom_rt::Config::reserve_fds`, 1024 by default).
+const RESERVED_DESCRIPTORS: usize = 1024;
+
 /// Applies [`lazy_loops`] to a simoom server builder (the HTTP and the gRPC server use it).
 pub fn event_loops(builder: simoom::Builder) -> simoom::Builder {
+    reserve_descriptors_early();
     let lazy = lazy_loops();
     builder.runtime(move |c| c.lazy_loops = lazy)
 }

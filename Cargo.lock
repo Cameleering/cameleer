@@ -116,6 +116,7 @@ dependencies = [
  "simoom",
  "simoom-client",
  "simoom-rt",
+ "simoom-sys",
  "simoom-tls",
 ]
 
