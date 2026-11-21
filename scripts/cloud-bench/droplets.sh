@@ -7,14 +7,14 @@
 #
 # Environment:
 #   DO_TOKEN_FILE   file holding a DigitalOcean API token (read here only, never printed)
-#   DO_REGION       region (default blr1); DO_SIZE size (default c-4, 4 dedicated vCPU, 8 GB)
+#   DO_REGION       region (default sfo2; c-4 was not offered in blr1 or sfo3 on 2026-11-20); DO_SIZE size (default c-4, 4 dedicated vCPU, 8 GB)
 #   DO_SSH_PUB      public key to log in with (default ~/.ssh/id_ed25519.pub)
 #   BENCH_STATE     where the droplet list is written (default target/cloud-bench/droplets.txt)
 set -euo pipefail
 
 TAG=cameleer-bench
 KEY_NAME=cameleer-bench-key
-REGION="${DO_REGION:-blr1}"
+REGION="${DO_REGION:-sfo2}"
 SIZE="${DO_SIZE:-c-4}"
 IMAGE=ubuntu-24-04-x64
 # DO_NAMES: the droplets to create (default the three of the benchmark)

@@ -48,8 +48,8 @@ DSL) and the crates for the components you need:
 
 ```toml
 [dependencies]
-cameleer-core = "0.6"
-cameleer-http = "0.6"
+cameleer-core = "0.7"
+cameleer-http = "0.7"
 ```
 
 `cameleer-main` bundles every component and runs YAML routes from Rust; see
@@ -208,7 +208,7 @@ The project `cameleer export` writes depends on a Cameleer source checkout: its 
 has `cameleer-main = { path = "<camel-path>/cameleer-main" }`, where `--camel-path` defaults to
 the source tree the CLI was built from. With the Docker image or a `cargo install` build, pass
 `--camel-path` to a clone of the repository's `crates` folder, or replace that line with the
-published crate (`cameleer-main = "0.6"`).
+published crate (`cameleer-main = "0.7"`).
 
 ## Where to go next
 

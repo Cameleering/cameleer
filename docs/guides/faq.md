@@ -48,9 +48,9 @@ The Apache License 2.0 ([LICENSE](../../LICENSE)).
 
 ### How fast is Cameleer?
 
-With the same routes, Cameleer handles 1.7 to 8.7 times the throughput of Apache Camel 4.23 on
-Java 21 in every scenario measured: 2.1x on a REST API with JSON, 2.3x writing to PostgreSQL,
-1.7x publishing to Kafka, 8.7x on Kafka stream processing and 3.0x on a content-based router.
+With the same routes, Cameleer handles 1.8 to 15 times the throughput of Apache Camel 4.23 on
+Java 21 in every scenario measured (Cameleer 0.8.0, 2026-11-20): 2.4x on a REST API with JSON, 2.3x writing to PostgreSQL,
+3.2x publishing to Kafka, 15x on Kafka stream processing and 3.0x on a content-based router.
 Every scenario, the method and the raw data are on the
 [Apache Camel vs Cameleer](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/)
 page and in [BENCHMARKS.md](../BENCHMARKS.md).
