@@ -624,6 +624,14 @@ review that led to this documentation pass: `docs/design/docs-review-2026-11-20.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).
 
+## Start-up regression found and fixed (2026-11-22)
+
+The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31 ms on WSL2 (12 ms on the
+4-CPU droplets) in 0.6.1: simoom grows the descriptor table at server start, and Linux waits for an RCU grace
+period when a second thread exists. `cameleer_http::register` now does it while the process is single-threaded
+(test `early_descriptors`). Back to 2.8 ms. Details and per-release table: `docs/design/startup-regression-2026-11.md`.
+Not yet re-measured on a droplet.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it

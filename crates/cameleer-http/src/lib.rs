@@ -58,6 +58,8 @@ pub use server::{HttpServer, ServerConfig};
 /// `netty` and `rest`. Schemes that already have a component (or factory) registered
 /// are left untouched, so applications can pre-register customized components.
 pub fn register(ctx: &CamelContext) {
+    // before any route starts a thread (see the function's note)
+    server_simoom::reserve_descriptors_early();
     for scheme in ["platform-http", "jetty", "undertow", "netty-http"] {
         if !ctx.has_component(scheme) {
             ctx.add_component_factory(scheme, move || Arc::new(platform::HttpConsumerComponent::new(scheme)));
