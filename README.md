@@ -24,7 +24,7 @@ formats, ported one by one and verified against the real systems.
 - **Keep your routes.** Camel YAML and XML routes run unchanged; your team's Camel designs and
   habits come with you ([migrating from Apache Camel](docs/guides/migrating-from-apache-camel.md)).
 - **Run anywhere.** One native binary that starts in **3 ms**, runs in **megabytes**, is its own AWS
-  Lambda runtime, and moves **1.7–8.7x the messages** of Apache Camel on the same CPUs, in every
+  Lambda runtime, and moves **1.8–15x the messages** of Apache Camel on the same CPUs, in every
   scenario we measured ([Apache Camel vs Cameleer](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/)).
 
 **Cameleer is the first Cameleering project.** Cameleering is the practice of making software carry
@@ -52,61 +52,76 @@ The same routes on Cameleer and on Apache Camel, on the JVM and compiled nativel
 
 ```text
 Startup (spawn → routes running)                        lower is better
-  Cameleer     ▏                                          3 ms
-  Camel JVM    ████████████████████████████████████████   1,106 ms
-  Camel native █                                          30 ms
+  Cameleer     ▏                                          12 ms
+  Camel JVM    ████████████████████████████████████████   1,127 ms
+  Camel native █                                          27 ms
 
 Memory, same route (peak)                               lower is better
   Cameleer     ▏                                          8 MB
-  Camel JVM    ████████████████████████████████████████   399 MB
-  Camel native ███████████▏                               113 MB
+  Camel JVM    ████████████████████████████████████████   331 MB
+  Camel native █████████████▋                             113 MB
 
 REST API with JSON                                      higher is better
-  Cameleer     ████████████████████████████████████████   80.3k req/s
-  Camel JVM    ██████████████████▏                        37.9k req/s
+  Cameleer     ████████████████████████████████████████   88.4k req/s
+  Camel JVM    ████████████████▎                          36.0k req/s
   Camel native ████████▏                                  17.9k req/s
 
 HTTP into PostgreSQL                                    higher is better
-  Cameleer     ████████████████████████████████████████   11.0k req/s
-  Camel JVM    █████████████████▏                         4.8k req/s
-  Camel native ████████████▏                              3.6k req/s
+  Cameleer     ████████████████████████████████████████   17.3k req/s
+  Camel JVM    █████████████████▏                         7.4k req/s
+  Camel native ██████████▋                                4.6k req/s
 
 Kafka stream processing                                 higher is better
-  Cameleer     ████████████████████████████████████████   6.0k records/s
-  Camel JVM    ████▏                                      0.7k records/s
-  Camel native ████▏                                      0.7k records/s
+  Cameleer     ████████████████████████████████████████   10.1k records/s
+  Camel JVM    ██▋                                        0.7k records/s
+  Camel native ██▋                                        0.7k records/s
 
 Content-based router                                    higher is better
-  Cameleer     ████████████████████████████████████████   1.14M msg/s
-  Camel JVM    █████████████▏                             375.3k msg/s
-  Camel native ████▏                                      119.5k msg/s
+  Cameleer     ████████████████████████████████████████   1.15M msg/s
+  Camel JVM    █████████████▎                             384k msg/s
+  Camel native █████▏                                     146k msg/s
 ```
 
 | | Cameleer | Apache Camel (JVM) | Apache Camel (Quarkus native) |
 |---|---:|---:|---:|
-| **Startup** | **3 ms** | 1.1 s | 30 ms |
-| **Memory under load** | **8–68 MB** | 213–440 MB | 112–198 MB |
-| REST API with JSON | **80.3k req/s** | 37.9k req/s | 17.9k req/s |
-| HTTP into Kafka | **17.8k req/s** | 10.1k req/s | 9.3k req/s |
-| HTTP into PostgreSQL | **11.0k req/s** | 4.8k req/s | 3.6k req/s |
-| Kafka stream processing | **6.0k records/s** | 698 records/s | 694 records/s |
-| CSV batch, 1,000-row files | **998 files/s** | 468 files/s | 163 files/s |
-| Split and aggregate a JSON order | **70.9k orders/s** | 26.7k orders/s | 9.3k orders/s |
-| Content-based router | **1.14M msg/s** | 376k msg/s | 120k msg/s |
-| In-memory request-reply (`seda`) | **719k msg/s** | 118k msg/s | 73k msg/s |
+| **Startup** (every in-process route and an HTTP route) | **12 ms** | 1.1 s | 27 ms |
+| **Memory under load** | **8–57 MB** | 195–435 MB | 113–198 MB |
+| REST API with JSON | **88.4k req/s** | 36.0k req/s | 17.9k req/s |
+| HTTP into Kafka | **31.4k req/s** | 9.6k req/s | 9.0k req/s |
+| HTTP into PostgreSQL | **17.3k req/s** | 7.4k req/s | 4.6k req/s |
+| Kafka stream processing | **10.1k records/s** | 662 records/s | 654 records/s |
+| CSV batch, 1,000-row files | **1,102 files/s** | 466 files/s | 188 files/s |
+| Split and aggregate a JSON order | **74.8k orders/s** | 29.3k orders/s | 10.4k orders/s |
+| Content-based router | **1.15M msg/s** | 384k msg/s | 146k msg/s |
+| In-memory request-reply (`seda`) | **722k msg/s** | 105k msg/s | 63k msg/s |
 
 Every scenario, the method and the raw data: [Apache Camel vs Cameleer](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/)
 and the full report, [docs/BENCHMARKS.md](docs/BENCHMARKS.md). Run it yourself with
 [`scripts/cloud-bench`](scripts/cloud-bench/) for about a dollar of cloud time.
 
-The table above is Cameleer against Apache Camel (0.4.0). The same setup also compares Cameleer with its
-own previous release: 0.7.0 against 0.6.1 (gRPC and HTTP/2 on simoom) gave 29% less CPU per gRPC call and a
-35% lower p99 at the same throughput, no change for plain HTTP, MCP and the JSON REST route (a 5% difference
-there is within the noise of the setup) and HTTP/2 at about half the request rate of HTTP/1.1 for small calls. A
-later change (gRPC calls on a pool of threads, not released yet) raised gRPC to 3.9x the 0.7.0 rate (3.6x at 256
-concurrent calls) at about a sixth of the CPU per call, with the same peak memory as 0.7.0 (13.5 against 13.8 MB at 64
-concurrent calls); see
-[the section in BENCHMARKS.md](docs/BENCHMARKS.md#grpc-and-http2-on-simoom-070-2026-11-18).
+The table above is Cameleer 0.8.0 (the release candidate) against Apache Camel, all sides in one session on
+2026-11-20 on `c-4` droplets in DigitalOcean's `sfo2` region; p99 latency is lower than Camel's in every scenario.
+A single `platform-http` route is ready in about 3 ms (a 12 ms start is the benchmark's full route set).
+Absolute figures differ by 10 to 25% between the two servers of a session and by about 40% between sessions, so
+compare ratios inside a session.
+
+The same setup also compares Cameleer with its own previous release. 0.8.0 against 0.7.0 (2026-11-20, same
+droplets and load generator):
+- **gRPC unary calls:** 94,000 calls/s at 64 concurrent calls and 106,000 at 256 against about 8,000 for 0.7.0, with
+  24 against 270 microseconds of server CPU per call and a p99 of 1.2 against 14.8 ms. 0.7.0 does not have the pool
+  of threads for gRPC calls (PR 65), so the 11x to 13x is that change plus the later ones together; the pool alone was
+  measured at 3.6x to 3.9x on other droplets.
+- **HTTP and the JSON REST route:** no measurable difference, including the event loops that now start at once
+  (`http` 0.86x to 0.97x within the noise of the setup, `rest-json` 1.01x).
+- **HTTP/2:** `rest-json` over HTTP/2 equals HTTP/1.1 (1.00x), and with nghttp2's `h2load` the server serves HTTP/2
+  at 1.5x to 1.6x its HTTP/1.1 rate. The 0.51x measured on 2026-11-18 was mostly the benchmark's own HTTP/2 client.
+- **MCP:** 0.96x to 0.98x of 0.7.0 on every pass, a 2% to 4% slowdown that is probably real. The cause (the eager
+  event loops or the change in how headers are stored) was not isolated.
+- **Size and start:** the `full` binary is 0.8% larger and `core` 2.4% (26.7 and 7.2 MB stripped), a route is ready
+  0.3 to 0.5 ms later (3.0 ms), 0.3 MB more memory.
+
+Asynchronous routing (on by default since 0.8.0) was measured only on one WSL2 machine, not on the droplets
+([BENCHMARKS.md](docs/BENCHMARKS.md#080-candidate-against-070-and-against-an-independent-client-2026-11-20)).
 
 **How, without changing what Camel means:**
 - **Nothing but the Rust standard library and our own std-only crates.** TLS, SSH, AMQP, MQTT, the
@@ -253,8 +268,9 @@ $ cameleer run tools.camel.yaml --mcp-stdio    # for clients that start the serv
   tools, bound to the client's nonce and its own TLS key, over HTTP and in the MCP handshake. It
   does not verify the hardware signature itself yet and has not run on real TEE hardware
   ([attestation](docs/guides/attestation.md)).
-- **Measured:** 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's
-  `camel-mcp-server` on the same machines, in 56 MB against 289 MB (p99 6.3 ms against 5.2 ms)
+- **Measured:** 43,254 MCP tool calls per second in sessions against 20,968 for Apache Camel's
+  `camel-mcp-server` on the same machines (one session, Cameleer 0.8.0), in 22 MB against 281 MB (p99 4.4 ms
+  against 5.6 ms)
   ([Apache Camel's MCP server vs Cameleer](https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/),
   [MCP server guide](docs/guides/mcp-server.md)).
 
@@ -326,7 +342,7 @@ fights that model: it takes most of a second to boot and hundreds of megabytes t
   turns YAML routes into a standalone Rust project.
 - **Ship only what the routes use.** Every build includes everything by default; with
   [build features](docs/guides/build-features.md) a function keeps only its component families
-  (`--features cloud,jq`), down to a 5.9 MB binary with `core`.
+  (`--features cloud,jq`), down to a 7.2 MB binary with `core`.
 
 | Run it as | Status |
 |---|---|
@@ -422,8 +438,8 @@ same way. Kubernetes, Docker Compose and Cloud Run setups are in the
 
 ```toml
 [dependencies]
-cameleer-core = "0.6"
-cameleer-http = "0.6"
+cameleer-core = "0.7"
+cameleer-http = "0.7"
 ```
 
 ```rust

@@ -8,14 +8,18 @@ This is the full report behind the
 [Apache Camel vs Cameleer comparison](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/).
 It compares three runtimes on the same routes:
 
-- **Cameleer** 0.4.0, the native Rust binary;
+- **Cameleer** 0.8.0 (measured on the release candidate, commit `7ee75e7`), the native Rust binary;
 - **Apache Camel on the JVM**: Camel 4.23.0 on Java 21, the way most Camel runs today;
 - **Apache Camel on Quarkus, native**: Camel 4.22.1 compiled ahead of time with Quarkus 3.40.0
   and Mandrel, the fastest-starting way to run Camel.
 
 Every number below is generated from the raw results in
 [`benchmarks/results/`](../benchmarks/results/) by `scripts/cloud-bench/summarize.py`; none is
-typed by hand. Each figure is the mean of two runs on two identical servers.
+typed by hand. Each figure is the mean of two runs on two identical servers, all from **one session on
+2026-11-20** (Cameleer, both Camel builds and the MCP TypeScript SDK ran on the same droplets, in one go).
+The earlier published table was Cameleer 0.4.0 (2026-11-06); it is replaced, so this page no longer mixes
+Cameleer releases or sessions in its main table. Absolute figures differ by 10 to 25% between the two servers of
+one session and by about 40% between sessions and regions, so compare ratios inside a session.
 
 ## Results
 
@@ -24,70 +28,73 @@ typed by hand. Each figure is the mean of two runs on two identical servers.
 
 | scenario | Cameleer | Apache Camel (JVM) | Apache Camel (Quarkus native) | Cameleer vs Camel JVM | Cameleer vs Camel native |
 |---|---:|---:|---:|---:|---:|
-| Direct call through a route | 2,230,208 msg/s | 663,701 msg/s | 243,522 msg/s | 3.3x | 9.1x |
-| In-memory queue (seda), one-way | 1,644,186 msg/s | 603,426 msg/s | 316,442 msg/s | 2.7x | 5.1x |
-| In-memory queue (seda), request-reply | 719,433 msg/s | 117,442 msg/s | 72,113 msg/s | 6.1x | 9.9x |
-| Content-based router | 1,144,857 msg/s | 375,212 msg/s | 119,416 msg/s | 3.0x | 9.5x |
-| Split and aggregate a JSON order | 70,926 orders/s | 26,622 orders/s | 9,274 orders/s | 2.6x | 7.6x |
-| CSV batch (1,000-row files) | 998 files/s | 468 files/s | 163 files/s | 2.1x | 6.1x |
-| Kafka stream processing | 6,081 records/s | 698 records/s | 694 records/s | 8.7x | 8.7x |
-| HTTP, fixed reply | 99,012 req/s | 56,735 req/s | 28,584 req/s | 1.7x | 3.4x |
-| REST API with JSON | 80,367 req/s | 37,814 req/s | 17,860 req/s | 2.1x | 4.4x |
-| HTTP into Kafka | 17,854 req/s | 10,052 req/s | 9,267 req/s | 1.7x | 1.9x |
-| HTTP into PostgreSQL | 11,007 req/s | 4,710 req/s | 3,540 req/s | 2.3x | 3.1x |
+| Direct call through a route | 2,183,948 msg/s | 702,037 msg/s | 265,536 msg/s | 3.1x | 8.2x |
+| In-memory queue (seda), one-way | 1,530,109 msg/s | 577,238 msg/s | 332,326 msg/s | 2.6x | 4.6x |
+| In-memory queue (seda), request-reply | 722,258 msg/s | 105,184 msg/s | 63,132 msg/s | 6.8x | 11.4x |
+| Content-based router | 1,154,104 msg/s | 384,354 msg/s | 146,327 msg/s | 3.0x | 7.8x |
+| Split and aggregate a JSON order | 74,755 orders/s | 29,349 orders/s | 10,350 orders/s | 2.5x | 7.2x |
+| CSV batch (1,000-row files) | 1,102 files/s | 466 files/s | 188 files/s | 2.3x | 5.8x |
+| Kafka stream processing | 10,104 records/s | 662 records/s | 654 records/s | 15.2x | 15.4x |
+| HTTP, fixed reply | 102,131 req/s | 55,735 req/s | 27,828 req/s | 1.8x | 3.6x |
+| REST API with JSON | 88,440 req/s | 35,986 req/s | 17,938 req/s | 2.4x | 4.9x |
+| HTTP into Kafka | 31,351 req/s | 9,641 req/s | 9,006 req/s | 3.2x | 3.4x |
+| HTTP into PostgreSQL | 17,279 req/s | 7,394 req/s | 4,584 req/s | 2.3x | 3.7x |
 
 ### Latency, p99 (lower is better)
 
 | scenario | Cameleer | Apache Camel (JVM) | Apache Camel (Quarkus native) |
 |---|---:|---:|---:|
 | Direct call through a route | 1 µs | 3 µs | 10 µs |
-| In-memory queue (seda), request-reply | 38 µs | 85 µs | 137 µs |
-| Content-based router | 2 µs | 6 µs | 22 µs |
-| Split and aggregate a JSON order | 30 µs | 70 µs | 382 µs |
-| CSV batch (1,000-row files) | 1.7 ms | 3.2 ms | 12.5 ms |
-| HTTP, fixed reply | 2.9 ms | 3.8 ms | 7.4 ms |
-| REST API with JSON | 2.6 ms | 6.3 ms | 12.3 ms |
-| HTTP into Kafka | 8.6 ms | 7.8 ms | 12.6 ms |
-| HTTP into PostgreSQL | 10.6 ms | 19.8 ms | 27.7 ms |
+| In-memory queue (seda), request-reply | 33 µs | 88 µs | 148 µs |
+| Content-based router | 2 µs | 5 µs | 18 µs |
+| Split and aggregate a JSON order | 30 µs | 62 µs | 397 µs |
+| CSV batch (1,000-row files) | 1.9 ms | 3.4 ms | 11.7 ms |
+| HTTP, fixed reply | 1.7 ms | 3.7 ms | 7.2 ms |
+| REST API with JSON | 2.1 ms | 5.4 ms | 11.9 ms |
+| HTTP into Kafka | 3.5 ms | 8.1 ms | 13.0 ms |
+| HTTP into PostgreSQL | 9.4 ms | 11.3 ms | 22.8 ms |
 
 ### Memory and CPU
 
 | scenario | Cameleer: peak memory | Apache Camel (JVM): peak memory | Apache Camel (Quarkus native): peak memory | Cameleer: CPU | Apache Camel (JVM): CPU | Apache Camel (Quarkus native): CPU |
 |---|---:|---:|---:|---:|---:|---:|
-| Direct call through a route | 7 MB | 399 MB | 113 MB | - | - | - |
-| In-memory queue (seda), one-way | 9 MB | 440 MB | 199 MB | - | - | - |
-| In-memory queue (seda), request-reply | 9 MB | 257 MB | 113 MB | - | - | - |
-| Content-based router | 7 MB | 332 MB | 113 MB | - | - | - |
-| Split and aggregate a JSON order | 8 MB | 299 MB | 114 MB | - | - | - |
-| CSV batch (1,000-row files) | 8 MB | 337 MB | 126 MB | - | - | - |
-| Kafka stream processing | 36 MB | 214 MB | 130 MB | - | - | - |
-| HTTP, fixed reply | 18 MB | 244 MB | 121 MB | 318% | 315% | 306% |
-| REST API with JSON | 19 MB | 402 MB | 129 MB | 318% | 313% | 302% |
-| HTTP into Kafka | 67 MB | 328 MB | 129 MB | 108% | 148% | 168% |
-| HTTP into PostgreSQL | 25 MB | 273 MB | 133 MB | 80% | 176% | 208% |
+| Direct call through a route | 8 MB | 331 MB | 113 MB | - | - | - |
+| In-memory queue (seda), one-way | 10 MB | 435 MB | 198 MB | - | - | - |
+| In-memory queue (seda), request-reply | 9 MB | 195 MB | 113 MB | - | - | - |
+| Content-based router | 8 MB | 328 MB | 113 MB | - | - | - |
+| Split and aggregate a JSON order | 8 MB | 323 MB | 113 MB | - | - | - |
+| CSV batch (1,000-row files) | 8 MB | 318 MB | 131 MB | - | - | - |
+| Kafka stream processing | 39 MB | 210 MB | 130 MB | - | - | - |
+| HTTP, fixed reply | 9 MB | 262 MB | 120 MB | 220% | 315% | 306% |
+| REST API with JSON | 10 MB | 411 MB | 124 MB | 224% | 312% | 303% |
+| HTTP into Kafka | 57 MB | 317 MB | 128 MB | 202% | 144% | 166% |
+| HTTP into PostgreSQL | 29 MB | 313 MB | 146 MB | 158% | 245% | 280% |
 
 ### Startup
 
 | | Cameleer | Apache Camel (JVM) | Apache Camel (Quarkus native) |
 |---|---:|---:|---:|
-| time to a started context | 2.5 ms | 1106.1 ms | 30.4 ms |
-| memory at startup | 8 MB | 114 MB | 69 MB |
+| time to a started context | 12.3 ms | 1126.9 ms | 27.4 ms |
+| memory at startup | 9 MB | 116 MB | 69 MB |
 
 <!-- /bench:md-tables -->
 
 ## What the results show
 
-- **Startup.** Cameleer has its routes running in a few milliseconds. Apache Camel on the JVM takes
-  about a second; compiled natively with Quarkus it takes tens of milliseconds.
+- **Startup.** Cameleer has its routes running in about 12 ms in this scenario (every in-process route plus an
+  HTTP route; the 0.4.0 run measured 2.5 ms, and the route set and the build both changed since, so the cause of the
+  difference was not isolated). One `platform-http` route is ready in about 3 ms (see "Size, cold start and memory of
+  0.8.0" below). Apache Camel on the JVM takes about a second; compiled natively with Quarkus it takes tens of
+  milliseconds.
 - **Memory.** Cameleer runs these routes in tens of megabytes. Camel on the JVM uses hundreds;
   native Camel sits in between.
 - **Throughput.** Cameleer handles more messages per second than Camel on the JVM in every
   scenario, and more than native Camel by a wider margin: native Camel has no JIT compiler, so
   it trades throughput for startup.
-- **Latency.** Cameleer's p99 latency is lower in every scenario but one. In HTTP into Kafka it
-  is slightly higher than Camel on the JVM (8.6 ms against 7.8 ms) while serving 1.7 times the
-  requests: Cameleer batches the sends of concurrent requests, which raises the slowest
-  requests' wait a little.
+- **Latency.** Cameleer's p99 latency is lower than both Camel builds in every scenario of this session,
+  including HTTP into Kafka (3.5 ms against 8.1 ms on the JVM). The 0.4.0 run had one loss there (8.6 against
+  7.8 ms); the Kafka producer change of 2026-11-06 removed it. The one place where Cameleer uses more CPU than the
+  JVM is HTTP into Kafka (202% against 144%), because it sends on several connections at once.
 
 ## The scenarios
 
@@ -115,16 +122,17 @@ Quarkus build compiles the same class from
 
 ## How we tested
 
-**Machines.** Three DigitalOcean CPU-optimized droplets (`c-4`) in region `blr1`: 4 dedicated
-vCPUs (Intel Xeon Platinum 8168 at 2.7 GHz), 8 GB RAM, Ubuntu 24.04, on one private network. Two
+**Machines.** Three DigitalOcean CPU-optimized droplets (`c-4`) in region `sfo2` (this session; earlier rounds
+used `blr1`, then `sfo3`, which no longer offer `c-4`): 4 dedicated vCPUs (Intel Xeon Platinum 8168 at 2.7 GHz on
+the two servers, Platinum 8280 on the load machine), 8 GB RAM, Ubuntu 24.04, on one private network. Two
 of them are servers that take turns running each runtime; the third runs the HTTP load
 generator, Apache Kafka 4.3.2 (KRaft, one broker, 4 partitions per topic) and PostgreSQL 16. All
 three get the same kernel settings
 ([`scripts/cloud-bench/setup-node.sh`](../scripts/cloud-bench/setup-node.sh)).
 
 **Runtimes.** Temurin 21.0.13 for Apache Camel 4.23.0, with no JVM flags. Camel Quarkus 3.40.0
-(Apache Camel 4.22.1) compiled with Mandrel 25.0.4.1. Cameleer 0.4.0 built with Rust 1.99.1 in
-release mode. Every download is pinned and checksum-verified.
+(Apache Camel 4.22.1) compiled with Mandrel 25.0.4.1. Cameleer 0.8.0 (the candidate) built with Rust
+1.99.1 in release mode. Every download is pinned and checksum-verified.
 
 **Method.**
 - Each scenario runs in a fresh process: 15 s of warmup, then five timed 5-second iterations.
@@ -142,6 +150,7 @@ release mode. Every download is pinned and checksum-verified.
 
 ```sh
 export DO_TOKEN_FILE=~/do-token.txt     # a DigitalOcean API token
+export DO_REGION=sfo2                   # a region that offers c-4 (2026-11-20: sfo2, ams3, lon1)
 scripts/cloud-bench/droplets.sh up      # three c-4 droplets
 scripts/cloud-bench/run.sh all          # build, fill Kafka, run every scenario
 scripts/cloud-bench/droplets.sh down    # delete the droplets
@@ -189,6 +198,16 @@ roles halfway; each figure is the mean of the two phases). Raw records:
 run's figures, and why the TypeScript number changed, are under the table.
 
 ### MCP tool calls over the network
+
+**On 0.8.0 (2026-11-20, one session, Cameleer, Camel and the TypeScript SDK on the same droplets in `sfo2`):**
+`tools/call` in a session, mean of the two servers: Cameleer **43,254 calls/s**, p99 4.36 ms, 22 MB; Apache Camel
+`camel-mcp-server` 20,968 calls/s, 5.57 ms, 281 MB; the MCP TypeScript SDK (zod 4) 2,179 calls/s, 56.6 ms, 198 MB.
+That is **2.06x Camel and 19.9x the SDK**, and Cameleer's p99 is now lower than Camel's. Stateless `tools/call` on
+Cameleer: 41,532 calls/s, p99 4.62 ms. Records:
+[`benchmarks/results/2026-11-20-linux-0.8.0-camel/`](../benchmarks/results/2026-11-20-linux-0.8.0-camel/). The table
+below is the earlier run, on Cameleer 0.5.1 on `blr1` droplets (2026-11-12); the two sessions' figures are not
+comparable in absolute terms. Against 0.7.0 on the same droplets, Cameleer's MCP is 0.96x to 0.98x (see "0.8.0
+candidate against 0.7.0" below).
 
 One tool, `lookup_order`, answers a JSON document; every side exposes it the same way. The
 session flow is what Claude Desktop and agent frameworks do: `initialize`, then `tools/call`
@@ -246,6 +265,10 @@ its next step once the timeout passes); others run on pooled workers.
 
 ### Integration routes against `main`
 
+*(Cameleer 0.5.x, 2026-11-06. On 0.8.0 in `sfo2` the same two scenarios measured 31,351 req/s with p99 3.5 ms for
+HTTP into Kafka (3.2x Camel) and 10,104 records/s for Kafka stream processing (15.2x Camel); the machines and the
+session differ, and the lower HTTP-into-Kafka ratio than the 5.0x below was not investigated.)*
+
 No scenario got slower than `main`. Two got faster, from the Kafka producer's requests in flight
 on several connections (`maxInFlightRequest`, default 5):
 
@@ -261,6 +284,8 @@ PostgreSQL 2.3x Camel on the JVM).
 
 ### Size and cold start against `main`
 
+*(Cameleer 0.5.x. For 0.8.0 see "Size, cold start and memory of 0.8.0" below.)*
+
 `cameleer` CLI, `dist` builds, stripped, on the same droplet (cold start: spawn to `Routes
 startup` of one `platform-http` route, median of 80 runs alternating with `main`):
 
@@ -274,11 +299,13 @@ out (they were +165 KB before that change).
 
 ### The HTTP ceiling
 
-A do-nothing HTTP server without Camel (`cameleer-bench raw-http`, one thread per connection, one
-`recv` and one `send` per request) reaches 166,374 req/s on these machines with the same load
-generator; Cameleer's fixed-reply route reaches 112,910 req/s (68% of that ceiling), Camel 67,682.
-The difference is spread over the request path (allocation, header parsing, the exchange) and
-kernel scheduling of 64 threads; an event-driven server core is the next step for this scenario.
+*(Measured on 2026-11-06, before the HTTP server moved onto simoom.)* A do-nothing HTTP server without Camel
+(`cameleer-bench raw-http`, one thread per connection, one `recv` and one `send` per request) reached 166,374 req/s
+on these machines with the same load generator; Cameleer's fixed-reply route reached 112,910 req/s (68% of that
+ceiling), Camel 67,682. The event-driven server core that this section named as the next step shipped in 0.6.1
+(simoom, an event loop per core): in the 0.7.0 round the fixed reply served 146,477 req/s on other droplets, and
+in the 0.8.0 camel round 102,131 req/s in `sfo2`. The ceiling was not re-measured since, and figures from
+different droplets are not comparable, so there is no current "percent of ceiling".
 
 ## FaaS cold start and size
 
@@ -300,12 +327,19 @@ detailed measurements, the Windows numbers and the tuning history are in
 [`benchmarks/analysis.md`](../benchmarks/analysis.md); the build options are in
 [build features](guides/build-features.md).
 
+*The figures above are from 2026-11-05 (WSL2, 0.4.x). The current ones, from the droplets, are in "Size, cold start
+and memory of 0.8.0" at the end of this page: the `full` stripped binary is 26.7 MB and `core` 7.2 MB (glibc), a
+`platform-http` route is ready in about 3.0 ms (`full`) and 2.5 ms (`core`), at 11.3 and 6.8 MB of peak memory.
+The "about 20 MB" container image was not re-measured since the pack and MCP growth.*
+
 ## gRPC and HTTP/2 on simoom (0.7.0, 2026-11-18)
 
 Release 0.7.0 moved the gRPC client and server and the HTTP/2 code onto simoom
 (see the [0.7.0 release notes](https://github.com/cameleering/cameleer/blob/main/docs/release-notes/0.7.0.md)). This round compares two builds of Cameleer, 0.7.0
 against 0.6.1, on the three-droplet setup above: the same machines, the same load generator for both, each
-build on both servers in both phases, two runs at 64 connections and one at 256. The raw records, the
+build on both servers in both phases, two runs at 64 connections and one at 256. (This round and the next two
+were on `blr1`/`sfo3` droplets. The 0.8.0 round at the end of this page supersedes the absolute gRPC figures and
+the HTTP/2 conclusion.) The raw records, the
 method and the cases that failed in the first attempt are in
 [`benchmarks/results/2026-11-18-linux-grpc-http2/`](../benchmarks/results/2026-11-18-linux-grpc-http2/).
 It is not a comparison with Apache Camel: no Camel side was written for gRPC.
@@ -337,14 +371,39 @@ At 256 connections gRPC is 1.05x (10,328 / 9,882 requests per second, CPU per re
   second; p99 1.56 against 1.45 ms), but this is probably noise: in the later round with the gRPC thread pool,
   two builds with identical HTTP code gave 0.98x and 0.91x for the same route (and 1.05x and 0.93x for MCP),
   so swings of 5 to 9% between two builds on this setup are not results. `http` and MCP showed no change.
-- **HTTP/2 serves about half the requests per second of HTTP/1.1** for small requests on the same route: 63,941
-  against 125,721 (0.51x) at 64 concurrent calls over 4 connections, with the same CPU per request (21 us) and a
-  server at 79 to 126% of 400% CPU. It is not the number of connections (4, 16 and 64 all gave 72,000 to 81,000)
-  and not the load generator (its threads were at most 17% busy). Not explained. HTTP/1.1 remains the faster
-  protocol for small calls on this server.
+- **HTTP/2 measured at 0.51x of HTTP/1.1 (63,941 against 125,721 requests per second) in this round. The gap had
+  two causes.**
+  - **Mostly the load generator:** cameleer-bench's HTTP/2 client hands every response from a reader thread to
+    the waiting request thread, two thread hand-offs per response (about 53 us of load-node CPU per call against
+    21 us for its HTTP/1.1 client).
+  - **Partly the server:** simoom started its event loops lazily, and a connection never moves between loops. When
+    connections arrive in a burst, most of the four long-lived HTTP/2 connections stayed on one loop. The servers
+    now start every loop.
+    - On WSL2, where client and server share the CPUs, that was worth 2.07x for gRPC unary and +14% for
+      `rest-json-h2` (means of three noisy rounds).
+    - On the droplets the same change gave 1.04x and 1.05x (one run, `benchmarks/results/2026-11-19-linux-http2-loops/`),
+      because connections from another machine arrive a few ms apart.
+
+  Driven by nghttp2's `h2load` on three `c-4` droplets (2026-11-19, sfo3, build `916bbca`,
+  `scripts/cloud-bench/peer.sh`, records in `benchmarks/results/2026-11-19-linux-http2-peer/`), the same server
+  served (server a / server b, one run per case):
+
+  | client | HTTP/1.1, 64 connections | HTTP/2, 4 x 16 streams | HTTP/2, 16 x 4 | gRPC unary, 4 x 16 |
+  |---|---:|---:|---:|---:|
+  | `h2load` | 86,429 / 70,696 | 153,010 / 115,820 | 139,469 / 125,521 | 93,157 / 73,426 |
+  | cameleer-bench | 103,390 / 75,271 | 79,182 / 75,013 | - | 58,046 / 49,911 |
+
+  The cameleer-bench row comes from the same session as the `h2load` row, not from the 0.7.0 round above (blr1),
+  hence its different HTTP/1.1 figure. The two protocols are not loaded alike: HTTP/1.1 is 64 connections with one
+  request in flight each, HTTP/2 is 4 connections with 16 streams each. `h2load`'s HTTP/1.1 is also below
+  cameleer-bench's, so neither reached an HTTP/1.1 ceiling. (A later round with eager loops measured `rest-json-h2`
+equal to `rest-json`, 1.00x, and `h2load` at 1.5x to 1.6x: see the 0.8.0 section.) So, with `h2load` and 16 streams per connection, one
+  run on two droplets, HTTP/2 came out at 1.6x to 1.8x HTTP/1.1 on this server, and gRPC unary higher than the
+  cameleer-bench figures in this document. The analysis is in `docs/design/http2-throughput.md`.
 - **gRPC stopped at about 11,000 calls per second on both builds** (release 0.7.0 and 0.6.1), from 16 concurrent
   calls up, while neither the server nor the load generator was out of CPU. Starting threads for each call was the
-  suspect; the next section tests it: on a pool of threads the 0.7.0 server does 4.3x to 4.8x as many calls.
+  cause: on a pool of threads the 0.7.0 server does 4.3x to 4.8x as many calls (next section). cameleer-bench's own
+  client also has a ceiling, which a later `h2load` run showed to be below the server's.
 - **At 256 connections** the 0.7.0 gRPC server's peak memory was 18.9 against 17.5 MB (one thread per call).
 - Noise: the two servers differ by 10 to 25% in speed and phase 1 was slower than phase 2 in the first run, so
   differences of a few percent between builds are not results. The figures are means over both servers and
@@ -391,6 +450,9 @@ used `blr1`, where `c-4` is no longer offered). Raw records, method and the tabl
 | server CPU per request | 37 / 214 us | 38 / 204 us | 35 / 60 us |
 | **server peak memory** | **13.5 / 13.8 MB** | **18.6 / 20.1 MB** | **14.3 / 49.7 MB** |
 
+- **Superseded absolute figure.** 41,020 calls/s was limited by cameleer-bench's client, not the server: the same
+  server under `h2load` served 73,000 to 93,000 on these machines, and the 0.8.0 round below measured 94,000 at 64
+  calls (129,000 to 135,000 under `h2load`). Only ratios inside one session hold, and CPU per call.
 - **Same speed as the first pool, a quarter of its memory, and no more memory than 0.7.0** (13.5 against 13.8 MB at
   64 calls, 18.6 against 20.1 MB at 256), at 3.6x to 3.9x the call rate, a third of the p99 and about a sixth of the
   CPU per call.
@@ -398,6 +460,70 @@ used `blr1`, where `c-4` is no longer offered). Raw records, method and the tabl
   sides swapped, REST measured 0.98x against the pool build (identical code), and the HTTP, REST and MCP ratios
   stayed between 0.90x and 1.04x from run to run.
 - Not measured: streaming calls, TLS, the gRPC client, Windows, long-lived idle calls.
+
+## 0.8.0 candidate against 0.7.0, and against an independent client (2026-11-20)
+
+The build for release 0.8.0 (`main` plus the HTTP/2 and header changes: simoom 0.2.0, event loops that start at once,
+cheaper gRPC unary calls, headers kept sorted; commit `7ee75e7`) against release 0.7.0, on three `c-4` droplets in
+`sfo2` (Xeon Platinum 8168 on the servers, 8280 on the load machine; `sfo3` no longer offers `c-4`, so absolute
+figures differ from the earlier rounds and only comparisons inside this session count). Same load generator for both
+builds (cameleer-bench with simoom-client 0.2.0), servers swapping roles, two runs at 64 connections (the second with
+the order of the sides swapped) and one at 256. Raw records and method:
+[`benchmarks/results/2026-11-20-linux-0.8.0-candidate/`](../benchmarks/results/2026-11-20-linux-0.8.0-candidate/).
+**0.7.0 does not contain the gRPC pool fix** (the section "gRPC on a pool of threads" above), so the gRPC ratio mixes
+that fix with the later changes; the round cannot say how much each contributed, and the pool change alone was
+measured at 3.6x to 3.9x on other droplets.
+
+| scenario | 64 connections, run 1 | 64, sides swapped | 256 connections |
+|---|---:|---:|---:|
+| HTTP, fixed reply | 0.86x | 0.92x | 0.97x |
+| REST API with JSON | 1.03x | 0.99x | 1.03x |
+| REST API with JSON, HTTP/2 (4 connections) | 1.00x | 1.02x | 0.94x |
+| gRPC unary call | 11.5x | 11.2x | 13.3x |
+| MCP tool call, stateless | 0.96x | 0.96x | 0.98x |
+| MCP tool call, session | 0.97x | 0.97x | 0.97x |
+
+The ratios are 0.8.0 over 0.7.0. In absolute terms, 0.8.0: `http` 85,000 to 106,000 req/s, `rest-json` 78,000 to 87,000,
+`rest-json-h2` 79,000 to 94,000, gRPC unary **94,400 calls/s at 64 calls and 106,200 at 256** (0.7.0: 8,300 and
+8,000), p99 1.2 and 4.7 ms (0.7.0: 14.8 and 54 ms), **24 us of server CPU per call** (0.7.0: 270 us), peak memory
+9.2 MB at 64 calls and 10.2 MB at 256 (0.7.0: 13.6 and 19.3 MB). The "41,020 calls per second, 3.9x" figure of the
+pool round is superseded: it was limited by the load generator and measured before the later changes.
+
+- **HTTP/2 is not slower than HTTP/1.1 on this server.** `rest-json` over HTTP/2 equals `rest-json` over HTTP/1.1
+  (1.00x). Driven by nghttp2's `h2load` (`scripts/cloud-bench/peer.sh`, two runs on the two servers, same build),
+  HTTP/1.1 with 64 connections served 67,000 to 92,000 req/s (mean about 80,000), HTTP/2 with 4 connections of 16
+  streams 116,000 to 126,000 and with 16 connections of 4 streams 121,000 to 127,000, and gRPC unary (4 x 16)
+  129,000 to 135,000 calls/s: **HTTP/2 at 1.5x to 1.6x its HTTP/1.1 rate**, and gRPC 1.4x the rate cameleer-bench's own
+  generator reaches (94,000). The two protocols are not loaded alike (one request in flight per HTTP/1.1
+  connection, 16 or 4 streams per HTTP/2 connection), so this says the server is not slow at HTTP/2, not that
+  HTTP/2 is 1.5x faster. One `h2load` run had 8 failed requests out of 3.07 million.
+- **Event loops that start at once cost nothing measurable on `http` or `rest-json`.** `http` is 0.86x to 0.97x
+  but moved between 0.84x and 1.02x per server and between passes, which is the noise of this setup (there is no
+  identical-code control in this round); `rest-json` is 1.01x on average, so the 5% loss seen in the 0.7.0 round is
+  not there. The cost shows only in start-up and memory (below).
+- **MCP is 2% to 4% slower than 0.7.0, and probably really is.** It is 0.96x to 0.98x on every pass with the sides in
+  either order and 0.94x to 0.99x per server, which is tighter than the noise on the other rows (p99 and CPU per call
+  are within 1 to 3%; peak memory is lower). This round cannot say whether the eager event loops or the change to
+  how headers are stored causes it, because neither was measured alone. Not isolated.
+- **Not measured on droplets: asynchronous routing.** The 2.2x to 2.9x for a `platform-http` to `http` proxy is from
+  one WSL2 machine only (see the CHANGELOG and `docs/design/async-routing.md`); this round's `http` and `rest-json`
+  routes do not use the `http` producer. `CAMEL_SERVER_LAZY_LOOPS=true` (the old start) was not run as a control, h2load
+  over TLS and gRPC streaming have no scenario, and Windows was not measured.
+
+### Size, cold start and memory of 0.8.0
+
+`cameleer` CLI, `dist` builds on the `sfo2` server (`scripts/cloud-bench/run.sh sizes`, 4 rounds of 20 cold starts,
+means; 0.8.0 against 0.7.0):
+
+| build | binary, stripped | HTTP route ready | timer route ready | peak RSS, HTTP route |
+|---|---:|---:|---:|---:|
+| every component (`full`) | 26.72 / 26.52 MB (+0.8%) | 3.02 / 2.72 ms | 3.38 / 3.31 ms | 11.3 / 10.9 MB |
+| `core` | 7.22 / 7.05 MB (+2.4%) | 2.45 / 1.99 ms | 2.60 / 2.51 ms | 6.8 / 6.5 MB |
+
+Unstripped: `full` 30,219,544 against 29,979,312 bytes, `core` 8,416,632 against 8,210,640. The start-up and memory
+difference (about 0.3 to 0.5 ms and 0.3 to 0.4 MB) is the cost of starting every event loop, one per core (4 here).
+These droplets are slower per core than the Ryzen of the FaaS table above, so the two tables are not comparable.
+Raw: `sizes.txt` in the results folder.
 
 ## Found a problem?
 

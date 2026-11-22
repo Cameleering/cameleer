@@ -1,7 +1,7 @@
 # Status and pending work
 
-_Last updated: 2026-11-16 (release 0.7.0). Branch `main`. The verified head before this file
-was added is `7de6166`._
+_Last updated: 2026-11-21 (release 0.7.0 is the latest tag; 0.8.0 is prepared, see "0.8.0 candidate" below).
+Branch `main`._
 
 ## Name, packaging and release (2026-11-05)
 
@@ -14,7 +14,8 @@ was added is `7de6166`._
   (linux/amd64, linux/arm64), a glibc binary on distroless/cc (static musl measured 3-17% slower:
   direct -3%, seda InOut -10%, cbr -8%, splitagg -17%, same container, 2 rounds), built by `.github/workflows/container.yml` on `v*` tags (manual runs publish
   `edge`).
-- **crates.io:** 19 `cameleer-*` crates, published with `scripts/publish-crates.sh` (dependency
+- **crates.io:** 19 `cameleer-*` crates at the 0.1 release (the workspace now has 22 publishable library crates, plus the
+  `cameleer` wrapper in `publish/`; crates.io not re-checked for this count), published with `scripts/publish-crates.sh` (dependency
   order, skips versions already there, waits out crates.io's new-crate rate limit of about one
   per 10 minutes). `cameleer-bench` is `publish = false`. The account needs a verified email.
 - **Docker Hub:** `cameleering/cameleer`. CI pushes there when the `DOCKERHUB_TOKEN` secret is set;
@@ -31,7 +32,7 @@ was added is `7de6166`._
   `docs/guides/yaml-for-coding-agents.md`, `docs/guides/validate.md`, and `AGENTS.md`.
 - **0.4.0: serverless and smaller builds** (2026-11-06). AWS Lambda custom runtime in
   `cameleer run`; every component family plus `templates`, `jq`, `xpath`, `http2` and `validate`
-  as cargo features of `cameleer-main`; fewer idle threads (on-demand pool workers, one timer
+  as cargo features of `cameleer-main` (`http2` was removed again in 0.6.1: HTTP/2 is in every build); fewer idle threads (on-demand pool workers, one timer
   thread per timer name, XQuery/XSLT on the caller); the TLS alert fix. Release notes are in
   `CHANGELOG.md`. Feature docs: `docs/guides/build-features.md`, and every component, language
   and data format page names its feature in its header (`**Cargo feature:**`, checked by
@@ -302,8 +303,8 @@ in `docs/design/advantage-matrix.md` (internal).
   The cause was a real HTTP/2 bug, not the mock: a connection the peer closed kept its writer
   thread and socket, so every closed connection leaked a thread and two descriptors until the
   process ran out (`docs/INTEROP.md` bug 19, fixed in `cameleer-grpc` with a regression test).
-- **Open gaps (see the matrix):** plain HTTP is 1.67x Camel and 68% of a do-nothing server on the
-  same machines (an event-driven server core is the next step); MCP per-request CPU is about twice
+- **Open gaps (see the matrix; written 2026-11-07, the event-driven server core shipped in 0.6.1):** plain HTTP was 1.67x Camel and 68% of a do-nothing server on the
+  same machines (HTTP is now 1.8x Camel on the JVM, 0.8.0 round); MCP per-request CPU is about twice
   a plain HTTP request; on CPUs without SHA instructions the envelope costs 6 µs.
 
 ## MCP field test with Claude (2026-11-07, branch `agent-action-layer`)
@@ -541,11 +542,11 @@ Cameleer's own HTTP code or it is not used.
   and grpcio): HTTP/2 3/3, TLS 2/2, gRPC 2/2.
 - **Benchmark round of 2026-11-18 (0.7.0 against 0.6.1, three DigitalOcean `c-4` droplets, deleted afterwards):**
   gRPC unary 1.06x requests/s with 29% less server CPU per call and a 35% lower p99; plain HTTP and MCP 1.00x;
-  `rest-json` 0.95x (not explained); HTTP/2 at 0.51x of HTTP/1.1 for small calls (not explained); `full` binary
-  -0.7%, `core` unchanged. Raw data and method in `benchmarks/results/2026-11-18-linux-grpc-http2/`, report in
-  `docs/BENCHMARKS.md`. Open: why gRPC stops at about 11,000 calls/s on both builds (thread creation is the
-  suspect, not profiled), why HTTP/2 is slower than HTTP/1.1, and the 5% on `rest-json`. Not measured: gRPC
-  streaming, HTTP/2 over TLS, the gRPC client, Windows.
+  `rest-json` 0.95x (later shown to be noise: 1.01x in the 0.8.0 round); HTTP/2 at 0.51x of HTTP/1.1 for small calls
+  (explained on 2026-11-19: mostly the load generator's HTTP/2 client, partly lazily started event loops, see below);
+  `full` binary -0.7%, `core` unchanged. Raw data and method in `benchmarks/results/2026-11-18-linux-grpc-http2/`,
+  report in `docs/BENCHMARKS.md`. The gRPC ceiling of about 11,000 calls/s on both builds was thread creation (fixed by
+  the pool below). Not measured: gRPC streaming, HTTP/2 over TLS, the gRPC client, Windows.
 - **gRPC calls on a pool of threads (2026-11-18/19, after 0.7.0, PR 62 then PR 65):** a call is one job on a
   process-wide cached `ThreadPool` (`grpc/server.rs`, waker based body reads, one shared deadline thread); idle pool
   workers hand their allocator cache to other threads (`alloc::release_thread_cache`, shared regions). The first
@@ -554,10 +555,82 @@ Cameleer's own HTTP code or it is not used.
   3.56x at 256 against 0.7.0, CPU per call 37 against 214 microseconds, p99 4.0 against 12.7 ms, peak memory 13.5 against
   13.8 MB and 18.6 against 20.1 MB; against the first pool build the same speed (1.05x) at 14.3 against 49.7 MB. With
   the order of the sides swapped `rest-json` was 0.98x (identical code), so the earlier 0.93x to 0.95x was probably the
-  harness. Open: why HTTP/2 serves about half the requests of HTTP/1.1 for small calls.
+  harness. The 41,020 calls/s of that round was limited by cameleer-bench's client and is superseded by the 0.8.0
+  candidate round below.
+- **HTTP/2 against HTTP/1.1 explained (2026-11-19, `docs/design/http2-throughput.md`).** The 0.51x had two causes:
+  - **Mostly cameleer-bench's HTTP/2 client:** simoom-client's reader thread handed each response to the request
+    thread, two hand-offs per response.
+  - **Partly the server's lazily started event loops,** which left most long-lived HTTP/2 connections on one thread
+    when they arrived in a burst. The HTTP and gRPC servers now start every event loop (lazy start only on Lambda or
+    with `CAMEL_SERVER_LAZY_LOOPS=true`). Worth 2.07x for gRPC unary on WSL2, 1.04x on the droplets.
+
+  Driven by nghttp2's h2load (`scripts/cloud-bench/peer.sh`, `benchmarks/results/2026-11-19-linux-http2-peer/`; 16
+  streams per connection, one run on two droplets), the server served HTTP/2 at 1.6x to 1.8x its HTTP/1.1 rate, and
+  gRPC unary at 73k to 93k calls/s. simoom 0.2.0 places a few long-lived connections on the least loaded loop. Open: an
+  event-driven HTTP/2 client in simoom-client.
+- **Asynchronous routing, phase 0 (2026-11-19; on by default, `CAMEL_ASYNC_ROUTING=false` turns it
+  off):**
+  - **What was built:**
+    - an `AsyncProcessor` path in the routing engine: `cameleer_core::reactive`, plus the async forms
+      of the pipeline, the route, the error channel and `to`;
+    - the `http` producer on simoom-client's event-loop client;
+    - `platform-http` routes answering from tasks;
+    - `CAMEL_ASYNC_ROUTING=false` as the control.
+  - **Measured** (WSL2, `platform-http → http` proxy, 4 CPUs): 2.2x req/s at 64 connections and 2.9x
+    at 256, 26-33% less CPU per request, 0.07-0.2 context switches per request instead of 1, 8 threads
+    instead of 69-205. With a 20 ms backend the synchronous path stops at the 200-thread bound (9,900
+    req/s) and the asynchronous one does not.
+  - **Tests:** hermetic suite 2977 passed, 0 failed.
+  - **Where to read more:** design and results in `docs/design/async-routing.md`.
+  - **In-flight limit:** `maxInflightRequests` on `platform-http` (default
+    `camel.server.maxInflightRequests` or 10,000) answers 503 beyond it.
+  - **Client on the server's loops** (simoom 0.2.0, which this change requires; measured on 2026-11-20
+    with the same simoom code as a local `[patch]` before the release):
+    - 0.00-0.03 context switches per request;
+    - +13-15% req/s and a 35% lower p99 at 64 connections;
+    - the same CPU per request (about 45 µs), so the route is now CPU-bound.
+  - **Profile of the remaining 45 µs** (section 14 of the design): mostly Camel's header mapping and
+    simoom's HTTP work; the URL is now handed to the client once.
+  - **Open:** phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
+
+## 0.8.0 candidate (2026-11-20/21)
+
+`main` (PRs 65, 67, 68, 69, 71 and simoom 0.2.0 from crates.io) is the 0.8.0 candidate; the release itself (version
+bump, tag, images, crates, archives, the site) is a separate step. Two droplet sessions on 2026-11-20 (three `c-4` in
+`sfo2`: `c-4` is no longer offered in `blr1` or `sfo3`; only `sfo2`, `ams3` and `lon1` had it), builds at `7ee75e7` (main
+plus PR 67 and PR 68). Results, raw records and READMEs: `benchmarks/results/2026-11-20-linux-0.8.0-candidate/` (against
+0.7.0 and against nghttp2's h2load) and `.../2026-11-20-linux-0.8.0-camel/` (against Apache Camel, one session). The
+review that led to this documentation pass: `docs/design/docs-review-2026-11-20.md`.
+
+- **gRPC unary:** 94,400 calls/s at 64 calls and 106,200 at 256 (cameleer-bench's generator) against about 8,300 and
+  8,000 for 0.7.0, at 24 against 270 microseconds of server CPU per call, p99 1.2 against 14.8 ms, peak memory 9.2 against
+  13.6 MB. h2load: 129,000 to 135,000 calls/s. 0.7.0 lacks the PR 65 pool, so the 11x to 13x contains it (3.6x to 3.9x on
+  its own, other droplets); the other parts were not measured one by one.
+- **HTTP/2:** `rest-json-h2` equals `rest-json` (1.00x); h2load serves HTTP/2 at 1.5x to 1.6x its HTTP/1.1 rate (not a
+  like-for-like protocol test).
+- **Eager event loops:** no measurable cost on `http` (0.86x to 0.97x within the noise) or `rest-json` (1.01x). Cost in start-up
+  (+0.3 to 0.5 ms) and RSS (+0.3 to 0.4 MB). `CAMEL_SERVER_LAZY_LOOPS=true` was not run as a control.
+- **MCP:** 0.96x to 0.98x of 0.7.0 on every pass, probably a real 2% to 4% slowdown; the cause (eager loops or the header
+  storage change) was not isolated. Open.
+- **Size:** `full` 26.72 MB (+0.8%), `core` 7.22 MB (+2.4%), stripped, glibc.
+- **Against Camel, one session** (this replaces the 0.4.0 table): 1.8x (HTTP) to 6.8x (seda request-reply), Kafka
+  stream 15.2x, MCP session 43,254 calls/s against Camel's 20,968 (2.06x) and the TypeScript SDK's 2,179 (19.9x); p99 lower
+  in every scenario, so the HTTP-into-Kafka "loss" is gone (3.5 against 8.1 ms). Open: HTTP into Kafka is 31,351 req/s here
+  (3.2x Camel), against 48,800 (5.0x) in the 2026-11-06 run on other droplets, and the startup scenario reads 12.3 ms
+  against 2.5 ms in the 0.4.0 run; neither was investigated.
+- **Asynchronous routing** was measured on WSL2 only, never on droplets.
+- **Not measured:** h2load over TLS, gRPC streaming, the gRPC client, Windows, the lazy-loops control.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).
+
+## Start-up regression found and fixed (2026-11-22)
+
+The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31 ms on WSL2 (12 ms on the
+4-CPU droplets) in 0.6.1: simoom grows the descriptor table at server start, and Linux waits for an RCU grace
+period when a second thread exists. `cameleer_http::register` now does it while the process is single-threaded
+(test `early_descriptors`). Back to 2.8 ms. Details and per-release table: `docs/design/startup-regression-2026-11.md`.
+Not yet re-measured on a droplet.
 
 ## Pending / todo
 
@@ -628,7 +701,8 @@ Docker, or the lack of real accounts.
    DigitalOcean `c-4` droplets (two servers that swap roles, one load node with Kafka 4.3.2 and
    PostgreSQL 16) against Apache Camel 4.23.0 on Java 21 and Camel Quarkus 3.40.0 native (Camel
    4.22.1, Mandrel 25.0.4.1). Cameleer is ahead in every scenario: 1.7–8.7x Camel JVM throughput,
-   3 ms startup vs 1.1 s (native 30 ms), up to 54x less memory. Report: `docs/BENCHMARKS.md`
+   3 ms startup vs 1.1 s (native 30 ms), up to 54x less memory (Cameleer 0.4.0; replaced on 2026-11-20 by the 0.8.0 session:
+   1.8–15x, see "0.8.0 candidate"). Report: `docs/BENCHMARKS.md`
    (tables generated by `scripts/cloud-bench/summarize.py` from `benchmarks/results/`); landing
    page `site/compare/apache-camel-vs-cameleer/`. The run found and fixed three bugs: HTTP server
    32-worker keep-alive churn (now 200 workers), Kafka producer serializing concurrent sends (now
@@ -660,8 +734,8 @@ Docker, or the lack of real accounts.
    Still under 4x (why, and next steps, in `benchmarks/analysis.md`):
    - HTTP: a do-nothing server (threads or IOCP) reaches only about 400k req/s with the shared load
      generator on this machine, 3.6x Java, so 4x cannot be shown here; Cameleer reaches about 70%
-     of that. Needs the load generator on another machine. An event-driven cameleer-http server is
-     not built (it measured no faster here); the decision is with the owner.
+     of that. Needs the load generator on another machine (history: the event-driven server
+     core was built later, on simoom, in 0.6.1).
    - splitagg: JSON parsing and per-part exchange copies; next are shared JSON keys (an `ObjectMap`
      API change) and a smaller `Exchange` (public field changes).
    - cbr: the remaining cost is spread over many small steps.
@@ -669,7 +743,7 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect 2844 passing
+1. `git checkout main && cargo test --workspace`. Expect about 2,980 passing
    (Windows 11, 2026-11-09).
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.

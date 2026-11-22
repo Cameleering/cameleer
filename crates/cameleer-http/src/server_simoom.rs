@@ -40,8 +40,9 @@ const WINDOW_MS: u64 = 1000;
 const POOL_MS: u64 = 60_000;
 
 /// What the engine has learned about one route.
+#[doc(hidden)]
 #[derive(Default)]
-struct RouteState {
+pub struct RouteState {
     /// The route runs on the loop thread.
     inline: AtomicBool,
     /// Calls and slow calls of the current sample on the pool.
@@ -53,14 +54,17 @@ struct RouteState {
     stalls: AtomicU32,
 }
 
-/// Decides per route whether a handler may run on the loop thread.
-struct Governor {
+/// Decides per route whether a handler may run on the loop thread (also used by the gRPC server
+/// for unary calls).
+#[doc(hidden)]
+pub struct Governor {
     base: Instant,
     routes: RwLock<HashMap<u64, Arc<RouteState>>>,
 }
 
 impl Governor {
-    fn new() -> Governor {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Governor {
         Governor { base: Instant::now(), routes: RwLock::new(HashMap::new()) }
     }
 
@@ -69,19 +73,19 @@ impl Governor {
         self.base.elapsed().as_millis() as u64 + 1
     }
 
-    fn state(&self, key: u64) -> Arc<RouteState> {
+    pub fn state(&self, key: u64) -> Arc<RouteState> {
         if let Some(s) = self.routes.read().unwrap_or_else(|p| p.into_inner()).get(&key) {
             return s.clone();
         }
         self.routes.write().unwrap_or_else(|p| p.into_inner()).entry(key).or_default().clone()
     }
 
-    fn inline_ok(&self, st: &RouteState) -> bool {
+    pub fn inline_ok(&self, st: &RouteState) -> bool {
         st.inline.load(Ordering::Relaxed)
     }
 
     /// A call on the loop thread took `took`: back to the pool when it stalls the loop.
-    fn record(&self, st: &RouteState, took: Duration) {
+    pub fn record(&self, st: &RouteState, took: Duration) {
         if took < STALL {
             return;
         }
@@ -107,7 +111,7 @@ impl Governor {
     }
 
     /// A call on the pool took `took` (the handler only, without the queue).
-    fn observe(&self, st: &RouteState, took: Duration) {
+    pub fn observe(&self, st: &RouteState, took: Duration) {
         if took >= FAST {
             st.slow.fetch_add(1, Ordering::Relaxed);
         }
@@ -119,6 +123,55 @@ impl Governor {
             st.slow.store(0, Ordering::Relaxed);
         }
     }
+}
+
+/// Whether the server starts one event loop first and the others later (simoom's `lazy_loops`).
+///
+/// A lazy server grows its loops when a third connection is open at once, but connections that
+/// are already open stay on loop 0 for their whole life. HTTP/2 and gRPC clients keep a few
+/// connections with many streams each, so a lazy server serves 3 of 4 connections from one
+/// thread, which saturates at about 60,000 small requests per second while the other loops
+/// idle (docs/design/http2-throughput.md). Every loop therefore starts with the server, which
+/// costs about 0.8 ms of start-up and 0.5 MB on 12 CPUs. A FaaS instance (the AWS Lambda
+/// runtime API is set) serves one connection at a time and keeps the lazy start.
+/// `CAMEL_SERVER_LAZY_LOOPS=true|false` overrides.
+pub fn lazy_loops() -> bool {
+    lazy_loops_from(std::env::var("CAMEL_SERVER_LAZY_LOOPS").ok().as_deref(), std::env::var_os("AWS_LAMBDA_RUNTIME_API").is_some())
+}
+
+fn lazy_loops_from(setting: Option<&str>, faas: bool) -> bool {
+    match setting.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("true" | "1" | "yes") => true,
+        Some("false" | "0" | "no") => false,
+        _ => faas,
+    }
+}
+
+/// Grows the process's descriptor table now, while this is still the only thread.
+///
+/// simoom grows the table to `reserve_fds` (1024) descriptors when a server starts, because
+/// growing it later stalls the loop thread that crosses a step. The kernel grows a table with
+/// a plain reallocation while one thread uses it, but waits for an RCU grace period (20 to 40 ms
+/// on WSL2, about 10 ms on a cloud VM) as soon as a second thread exists, so a server started
+/// after a seda, timer or other consumer had spawned its threads cost tens of milliseconds
+/// (docs/design/startup-regression-2026-11.md). [`register`](crate::register) and the first server
+/// call this, which makes the reservation cheap whenever the components are registered before the
+/// routes start. It is done once per process; a no-op on other systems.
+pub fn reserve_descriptors_early() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        simoom_sys::net::reserve_descriptors(RESERVED_DESCRIPTORS);
+    });
+}
+
+/// The table size simoom reserves (`simoom_rt::Config::reserve_fds`, 1024 by default).
+const RESERVED_DESCRIPTORS: usize = 1024;
+
+/// Applies [`lazy_loops`] to a simoom server builder (the HTTP and the gRPC server use it).
+pub fn event_loops(builder: simoom::Builder) -> simoom::Builder {
+    reserve_descriptors_early();
+    let lazy = lazy_loops();
+    builder.runtime(move |c| c.lazy_loops = lazy)
 }
 
 /// A running simoom server.
@@ -152,6 +205,8 @@ impl SimoomEngine {
                     let r = build_request(req);
                     let head_request = r.method == "HEAD";
                     let responder = reply.defer();
+                    // a route started here runs on the loop until a step that may block
+                    let _on_loop = cameleer_core::reactive::enter_loop();
                     handler.handle_async(r, Box::new(move |resp| complete(responder, resp, head_request)));
                     return simoom::Outcome::Deferred;
                 }
@@ -179,6 +234,7 @@ impl SimoomEngine {
             reply.offload(req, move |req, reply| serve(&*h, req, reply, observe))
         };
         let mut builder = simoom::Server::builder().limits(limits).service(service);
+        builder = event_loops(builder);
         builder = match &config.tls {
             Some(tls) => builder.listen_tls(addr).tls(server_tls(tls)?),
             None => builder.listen(addr),
@@ -421,6 +477,43 @@ fn complete(responder: simoom::Responder, mut resp: HttpResponse, head_request: 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn lazy_loops_only_for_faas_unless_set() {
+        use super::lazy_loops_from as f;
+        assert!(!f(None, false));
+        assert!(f(None, true));
+        assert!(f(Some("true"), false));
+        assert!(!f(Some("FALSE"), true));
+        assert!(!f(Some("junk"), false));
+    }
+
+    /// Three long-lived connections on a 4-loop server do not all share a loop. With simoom's default
+    /// (lazy) start the first three stay on loop 0, and an HTTP/2 client with four connections
+    /// is served by one thread.
+    #[test]
+    fn long_lived_connections_spread_over_the_loops() {
+        use std::io::{Read, Write};
+        let service = |req: &mut simoom::Request<'_>, reply: simoom::Reply<'_>| -> simoom::Outcome { reply.send(simoom::Response::text(req.loop_index().to_string())) };
+        // A lazy server puts the first three connections on loop 0 every time; with every loop
+        // started they land on a random loop each, so a few attempts all failing is not chance.
+        let spread = (0..6).any(|_| {
+            let server = super::event_loops(simoom::Server::builder().threads(4).service(service)).listen("127.0.0.1:0").start().unwrap();
+            let addr = server.local_addr();
+            let mut conns: Vec<std::net::TcpStream> = (0..3).map(|_| std::net::TcpStream::connect(addr).unwrap()).collect();
+            let mut loops = std::collections::BTreeSet::new();
+            for c in conns.iter_mut() {
+                c.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+                let mut buf = [0u8; 512];
+                let n = c.read(&mut buf).unwrap();
+                let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                loops.insert(text.rsplit("\r\n\r\n").next().unwrap().trim().to_string());
+            }
+            server.stop(std::time::Duration::from_millis(100));
+            loops.len() >= 2
+        });
+        assert!(spread, "three long-lived connections stayed on one loop in six attempts");
+    }
+
     use super::*;
 
     #[test]

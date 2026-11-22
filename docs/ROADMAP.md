@@ -157,7 +157,7 @@ a tool route can ask the user a question with `ai-tool:current?operation=elicit`
 | **AWS Lambda runtime adapter**: route as a Lambda handler, with events mapped to exchanges | packages 1.4; Lambda is the largest serverless platform | ✅ built into `cameleer run` ([AWS Lambda](DEPLOYMENT.md#aws-lambda)) |
 | **Published container images and deployment examples** | shows scale-to-zero end to end | ✅ images on Docker Hub and ghcr (amd64, arm64); [deployment guide](DEPLOYMENT.md) for Docker, Compose, Kubernetes, Cloud Run and AWS Lambda. 🚧 worked examples for Fargate, Azure Container Apps and Knative |
 | **Static and ARM64 builds tested** (musl, aarch64 Linux) | edge gateways and Graviton or Ampere hosts | ✅ partly: the arm64 image is published and static musl is measured (3–22% slower than glibc, [benchmarks](BENCHMARKS.md#faas-cold-start-and-size)); 🚧 the hermetic suite on aarch64 |
-| **Binary size budget and feature flags per crate** | smaller images for functions that need only a few connectors | ✅ a feature per component family, plus `templates`, `jq`, `xpath`, `http2` and `validate` ([build features](guides/build-features.md)) |
+| **Binary size budget and feature flags per crate** | smaller images for functions that need only a few connectors | ✅ a feature per component family, plus `templates`, `jq`, `xpath` and `validate` ([build features](guides/build-features.md)) |
 
 ### 2.3 Performance
 
@@ -165,8 +165,8 @@ Current results: [BENCHMARKS.md](BENCHMARKS.md); analysis: [../benchmarks/analys
 
 | Item | Why | Status |
 |---|---|---|
-| **HTTP benchmark with the load generator on a second machine** | a fair HTTP comparison | ✅ `scripts/cloud-bench`: Cameleer 1.7x Camel on a fixed reply, 68% of a do-nothing server ([the HTTP ceiling](BENCHMARKS.md#the-http-ceiling)) |
-| **Event-driven HTTP server core** | plain HTTP is the one scenario under 2x Camel; the request path, not the work, is the cost | 🚧 next step |
+| **HTTP benchmark with the load generator on a second machine** | a fair HTTP comparison | ✅ `scripts/cloud-bench`: Cameleer 1.8x Camel on a fixed reply (0.8.0, one session; [the HTTP ceiling](BENCHMARKS.md#the-http-ceiling) was measured before simoom and not repeated) |
+| **Event-driven HTTP server core** | plain HTTP is the one scenario under 2x Camel; the request path, not the work, is the cost | ✅ simoom, an event loop per core (0.6.1) |
 | **Shared JSON object keys** (`ObjectMap` API change) | JSON parsing is the largest cost in split/aggregate (2.6x Camel today) | 🚧 |
 | **A smaller `Exchange`** (box `exception`, group `from_*`) | fewer bytes copied per split part and per seda hand-off | 🚧 |
 | **Kafka benchmark scenario** | a real broker on both sides | ✅ Kafka 4.3.2 in `scripts/cloud-bench`: 8.7x Camel on stream processing ([benchmarks](BENCHMARKS.md)) |

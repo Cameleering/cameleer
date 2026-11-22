@@ -58,7 +58,7 @@ fn device_status_route(b: &mut RouteBuilder, port: u16) {
 The options are those of [platform-http](platform-http.md#options): `httpMethodRestrict`,
 `matchOnUriPrefix`, `consumes`, `produces`, `muteException`, `chunked`, `mapHttpMessageBody`,
 `mapHttpMessageHeaders`, `mapHttpMessageFormUrlEncodedBody`, `disableStreamCache`,
-`sslContextParameters`, `useGlobalSslContextParameters`, `needClientAuth` / `clientAuth`. The
+`maxInflightRequests`, `sslContextParameters`, `useGlobalSslContextParameters`, `needClientAuth` / `clientAuth`. The
 host and port come from the URI (`port` and `host` options override them). Jetty-specific
 options such as `handlers`, `sessionSupport` and `httpBinding` are accepted and ignored.
 

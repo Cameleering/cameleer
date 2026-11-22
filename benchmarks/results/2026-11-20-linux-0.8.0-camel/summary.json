@@ -1,0 +1,374 @@
+{
+ "headline": {
+  "java_startup_ms": 1126.9499999999998,
+  "max_rss_mb": 57.375,
+  "mem_max_x": 43.815644654088054,
+  "mem_min_x": 5.4470498860471,
+  "startup_ms": 12.3,
+  "startup_x": 91.62195121951217,
+  "tput_max_x": 15.262084592145015,
+  "tput_min_x": 1.8324392213151521
+ },
+ "sides": {
+  "java": {
+   "scenarios": {
+    "cbr": {
+     "cpu_pct": null,
+     "p99_us": 4.9,
+     "peak_rss_mb": 327.734375,
+     "tput": 384353.5,
+     "tput_phases": [
+      381676.0,
+      387031.0
+     ]
+    },
+    "csv": {
+     "cpu_pct": null,
+     "p99_us": 3440.64,
+     "peak_rss_mb": 318.400390625,
+     "tput": 466.5,
+     "tput_phases": [
+      492.0,
+      441.0
+     ]
+    },
+    "direct": {
+     "cpu_pct": null,
+     "p99_us": 2.5300000000000002,
+     "peak_rss_mb": 330.873046875,
+     "tput": 702037.0,
+     "tput_phases": [
+      692802.0,
+      711272.0
+     ]
+    },
+    "http": {
+     "cpu_pct": 315.0,
+     "p99_us": 3686.3999999999996,
+     "peak_rss_mb": 261.7734375,
+     "per_core": 17693.650793650795,
+     "tput": 55735.0,
+     "tput_phases": [
+      56595.0,
+      54875.0
+     ]
+    },
+    "http-kafka": {
+     "cpu_pct": 143.5,
+     "p99_us": 8093.7,
+     "peak_rss_mb": 316.7109375,
+     "per_core": 6718.4668989547035,
+     "tput": 9641.0,
+     "tput_phases": [
+      9662.0,
+      9620.0
+     ]
+    },
+    "http-sql": {
+     "cpu_pct": 245.0,
+     "p99_us": 11337.73,
+     "peak_rss_mb": 312.77734375,
+     "per_core": 3017.755102040816,
+     "tput": 7393.5,
+     "tput_phases": [
+      7396.0,
+      7391.0
+     ]
+    },
+    "kafka-stream": {
+     "cpu_pct": null,
+     "p99_us": null,
+     "peak_rss_mb": 210.0625,
+     "tput": 662.0,
+     "tput_phases": [
+      656.0,
+      668.0
+     ]
+    },
+    "rest-json": {
+     "cpu_pct": 312.5,
+     "p99_us": 5439.49,
+     "peak_rss_mb": 410.814453125,
+     "per_core": 11515.36,
+     "tput": 35985.5,
+     "tput_phases": [
+      37041.0,
+      34930.0
+     ]
+    },
+    "seda": {
+     "cpu_pct": null,
+     "p99_us": null,
+     "peak_rss_mb": 435.41796875,
+     "tput": 577238.5,
+     "tput_phases": [
+      568054.0,
+      586423.0
+     ]
+    },
+    "seda-inout": {
+     "cpu_pct": null,
+     "p99_us": 87.555,
+     "peak_rss_mb": 194.75390625,
+     "tput": 105183.5,
+     "tput_phases": [
+      105822.0,
+      104545.0
+     ]
+    },
+    "splitagg": {
+     "cpu_pct": null,
+     "p99_us": 62.465,
+     "peak_rss_mb": 322.72265625,
+     "tput": 29349.0,
+     "tput_phases": [
+      28787.0,
+      29911.0
+     ]
+    }
+   },
+   "startup_ms": 1126.9499999999998,
+   "startup_rss_mb": 115.5546875
+  },
+  "native": {
+   "scenarios": {
+    "cbr": {
+     "cpu_pct": null,
+     "p99_us": 17.92,
+     "peak_rss_mb": 112.75,
+     "tput": 146327.0,
+     "tput_phases": [
+      144644.0,
+      148010.0
+     ]
+    },
+    "csv": {
+     "cpu_pct": null,
+     "p99_us": 11730.945,
+     "peak_rss_mb": 130.66796875,
+     "tput": 188.5,
+     "tput_phases": [
+      189.0,
+      188.0
+     ]
+    },
+    "direct": {
+     "cpu_pct": null,
+     "p99_us": 10.305,
+     "peak_rss_mb": 112.6875,
+     "tput": 265536.0,
+     "tput_phases": [
+      264493.0,
+      266579.0
+     ]
+    },
+    "http": {
+     "cpu_pct": 306.0,
+     "p99_us": 7208.959999999999,
+     "peak_rss_mb": 120.3515625,
+     "per_core": 9094.117647058823,
+     "tput": 27828.0,
+     "tput_phases": [
+      27842.0,
+      27814.0
+     ]
+    },
+    "http-kafka": {
+     "cpu_pct": 165.5,
+     "p99_us": 12976.125,
+     "peak_rss_mb": 128.25390625,
+     "per_core": 5441.389728096677,
+     "tput": 9005.5,
+     "tput_phases": [
+      8991.0,
+      9020.0
+     ]
+    },
+    "http-sql": {
+     "cpu_pct": 279.5,
+     "p99_us": 22806.525,
+     "peak_rss_mb": 145.78125,
+     "per_core": 1640.2504472271914,
+     "tput": 4584.5,
+     "tput_phases": [
+      4629.0,
+      4540.0
+     ]
+    },
+    "kafka-stream": {
+     "cpu_pct": null,
+     "p99_us": null,
+     "peak_rss_mb": 129.958984375,
+     "tput": 654.5,
+     "tput_phases": [
+      654.0,
+      655.0
+     ]
+    },
+    "rest-json": {
+     "cpu_pct": 303.0,
+     "p99_us": 11862.015,
+     "peak_rss_mb": 124.37890625,
+     "per_core": 5920.132013201321,
+     "tput": 17938.0,
+     "tput_phases": [
+      17875.0,
+      18001.0
+     ]
+    },
+    "seda": {
+     "cpu_pct": null,
+     "p99_us": null,
+     "peak_rss_mb": 197.87890625,
+     "tput": 332326.5,
+     "tput_phases": [
+      332201.0,
+      332452.0
+     ]
+    },
+    "seda-inout": {
+     "cpu_pct": null,
+     "p99_us": 148.48000000000002,
+     "peak_rss_mb": 113.220703125,
+     "tput": 63132.5,
+     "tput_phases": [
+      62976.0,
+      63289.0
+     ]
+    },
+    "splitagg": {
+     "cpu_pct": null,
+     "p99_us": 397.31,
+     "peak_rss_mb": 113.33203125,
+     "tput": 10350.5,
+     "tput_phases": [
+      10390.0,
+      10311.0
+     ]
+    }
+   },
+   "startup_ms": 27.35,
+   "startup_rss_mb": 68.75
+  },
+  "rust": {
+   "scenarios": {
+    "cbr": {
+     "cpu_pct": null,
+     "p99_us": 1.9649999999999999,
+     "peak_rss_mb": 7.9375,
+     "tput": 1154104.0,
+     "tput_phases": [
+      1151071.0,
+      1157137.0
+     ]
+    },
+    "csv": {
+     "cpu_pct": null,
+     "p99_us": 1921.025,
+     "peak_rss_mb": 8.4375,
+     "tput": 1102.0,
+     "tput_phases": [
+      1126.0,
+      1078.0
+     ]
+    },
+    "direct": {
+     "cpu_pct": null,
+     "p99_us": 0.885,
+     "peak_rss_mb": 7.9375,
+     "tput": 2183947.5,
+     "tput_phases": [
+      2283534.0,
+      2084361.0
+     ]
+    },
+    "http": {
+     "cpu_pct": 219.5,
+     "p99_us": 1679.3600000000001,
+     "peak_rss_mb": 8.8125,
+     "per_core": 46528.929384965835,
+     "tput": 102131.0,
+     "tput_phases": [
+      102581.0,
+      101681.0
+     ]
+    },
+    "http-kafka": {
+     "cpu_pct": 202.0,
+     "p99_us": 3506.175,
+     "peak_rss_mb": 57.375,
+     "per_core": 15520.29702970297,
+     "tput": 31351.0,
+     "tput_phases": [
+      31385.0,
+      31317.0
+     ]
+    },
+    "http-sql": {
+     "cpu_pct": 158.0,
+     "p99_us": 9437.18,
+     "peak_rss_mb": 29.375,
+     "per_core": 10936.075949367088,
+     "tput": 17279.0,
+     "tput_phases": [
+      17462.0,
+      17096.0
+     ]
+    },
+    "kafka-stream": {
+     "cpu_pct": null,
+     "p99_us": null,
+     "peak_rss_mb": 38.564453125,
+     "tput": 10103.5,
+     "tput_phases": [
+      10135.0,
+      10072.0
+     ]
+    },
+    "rest-json": {
+     "cpu_pct": 224.5,
+     "p99_us": 2093.06,
+     "peak_rss_mb": 9.6875,
+     "per_core": 39394.20935412026,
+     "tput": 88440.0,
+     "tput_phases": [
+      85846.0,
+      91034.0
+     ]
+    },
+    "seda": {
+     "cpu_pct": null,
+     "p99_us": null,
+     "peak_rss_mb": 9.9375,
+     "tput": 1530109.0,
+     "tput_phases": [
+      1548941.0,
+      1511277.0
+     ]
+    },
+    "seda-inout": {
+     "cpu_pct": null,
+     "p99_us": 33.215,
+     "peak_rss_mb": 8.875,
+     "tput": 722258.5,
+     "tput_phases": [
+      714409.0,
+      730108.0
+     ]
+    },
+    "splitagg": {
+     "cpu_pct": null,
+     "p99_us": 30.465,
+     "peak_rss_mb": 8.0625,
+     "tput": 74755.0,
+     "tput_phases": [
+      76617.0,
+      72893.0
+     ]
+    }
+   },
+   "startup_ms": 12.3,
+   "startup_rss_mb": 8.9375
+  }
+ }
+}

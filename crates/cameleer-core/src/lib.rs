@@ -32,6 +32,7 @@ pub mod message;
 pub mod model;
 pub mod multipart;
 pub mod pack;
+pub mod reactive;
 pub mod processor;
 pub mod regex;
 pub mod spi;

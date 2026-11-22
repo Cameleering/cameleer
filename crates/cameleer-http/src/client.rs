@@ -133,6 +133,23 @@ impl Url {
 /// The ASCII bytes (besides space and controls) that a request-target may not contain.
 const UNSAFE_IN_TARGET: &[u8] = &[b'"', b'<', b'>', b'\\', b'^', b'`', b'{', b'|', b'}', b'[', b']'];
 
+impl Url {
+    /// This URL as simoom-client's, its path and query encoded as [`Url::request_target`] encodes
+    /// them, without formatting it to text and parsing it again (the asynchronous producer's path).
+    pub(crate) fn to_simoom(&self) -> Result<simoom_client::Url> {
+        // the checks simoom's own parser makes
+        if self.host.is_empty() || self.host.bytes().any(|b| b <= b' ' || b >= 0x7f || b"/?#@\\".contains(&b)) {
+            return Err(CamelError::illegal_argument(format!("Invalid host in URL: {}", self)));
+        }
+        let path = if self.path.is_empty() { "/".to_string() } else { encode_target(&self.path) };
+        let query = match &self.query {
+            Some(q) if !q.is_empty() => Some(encode_target(q)),
+            _ => None,
+        };
+        Ok(simoom_client::Url { scheme: self.scheme.to_ascii_lowercase(), host: self.host.clone(), port: self.port, path, query, userinfo: None })
+    }
+}
+
 fn encode_target(target: &str) -> String {
     if target.bytes().all(|b| (0x21..0x7f).contains(&b) && !UNSAFE_IN_TARGET.contains(&b)) {
         return target.to_string();
@@ -663,5 +680,27 @@ impl EndpointClient {
             h.set("Authorization", format!("Basic {}", cameleer_tls::pem::base64_encode(format!("{}:{}", user, pw).as_bytes())));
         }
         self.http.execute(method, &u, &h, body, Some(self.timeout))
+    }
+}
+
+#[cfg(test)]
+mod to_simoom_tests {
+    use super::*;
+
+    #[test]
+    fn to_simoom_equals_parsing_the_formatted_url() {
+        for u in [
+            "http://127.0.0.1:8080/a/b?x=1&y=2",
+            "https://example.com/",
+            "http://example.com",
+            "http://example.com:80/path with space/é?q=a b",
+            "http://[::1]:9000/v6?",
+            "HTTPS://Host.Example:8443/x?",
+        ] {
+            let ours = Url::parse(u).unwrap();
+            let direct = ours.to_simoom().unwrap();
+            let parsed = simoom_client::Url::parse(&ours.to_string()).unwrap();
+            assert_eq!(direct, parsed, "{u}");
+        }
     }
 }

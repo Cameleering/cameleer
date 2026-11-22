@@ -102,6 +102,10 @@ Other variables Cameleer reads:
 | `CAMEL_LOCAL_STATUS` | `false` turns those status files off (the Docker image sets it) |
 | `SSL_CERT_FILE` | the CA bundle used as the system trust store; needed on Windows ([FAQ](faq.md#which-ca-certificates-does-cameleer-trust)) |
 | `TZ`, `TZDIR` | the default time zone and an alternative zoneinfo directory |
+| `CAMEL_SERVER_LAZY_LOOPS` | `true` starts the HTTP and gRPC servers' event loops lazily (the behaviour before 0.8.0: an HTTP route is ready about 0.8 ms sooner on 12 CPUs and an idle server uses 0.5 MB less, but a few long-lived HTTP/2 connections that arrive in a burst can end up on one loop); `false` starts one per CPU at once, the default except on AWS Lambda |
+| `CAMEL_ASYNC_ROUTING` | `false` keeps every route on the synchronous path; by default (since 0.8.0) a `platform-http` route that calls the `http` producer runs as a task |
+| `CAMEL_HTTP_CLIENT_LOOPS` | the number of event loops of the `http` producer's client (default half the CPUs, at most 64) |
+| `CAMEL_DNS_SERVER` | the name server the `dns` component asks when the endpoint sets none (`host` or `host:port`); otherwise the first `nameserver` of `/etc/resolv.conf` |
 | `CAMEL_PROPERTY_<KEY>` | the value of a placeholder `{{key}}` that no source defines (`{{orders.target}}` reads `CAMEL_PROPERTY_ORDERS_TARGET`) |
 
 ## Placeholders

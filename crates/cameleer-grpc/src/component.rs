@@ -979,6 +979,21 @@ impl ConsumerShared {
     }
 }
 
+/// The consumer's routes as a gRPC service; the proto descriptor says which methods are unary.
+struct ConsumerService(Arc<ConsumerShared>);
+
+impl crate::grpc::GrpcService for ConsumerService {
+    fn call(&self, call: &ServerCall) -> Status {
+        self.0.serve(call)
+    }
+
+    fn unary(&self, service: &str, method: &str) -> bool {
+        let Some(pool) = &self.0.pool else { return false };
+        let Some(svc) = pool.service(&self.0.cfg.service) else { return false };
+        svc.full_name == service && svc.methods.iter().any(|m| m.name == method && !m.client_streaming && !m.server_streaming)
+    }
+}
+
 struct GrpcConsumer {
     shared: Arc<ConsumerShared>,
     server: Mutex<Option<GrpcServer>>,
@@ -1009,8 +1024,7 @@ impl Service for GrpcConsumer {
                     .map_err(|e| CamelError::illegal_argument(format!("Invalid TLS configuration: {}", e)))?,
             )
         };
-        let shared = self.shared.clone();
-        let service: Arc<dyn crate::grpc::GrpcService> = Arc::new(move |call: &ServerCall| shared.serve(call));
+        let service: Arc<dyn crate::grpc::GrpcService> = Arc::new(ConsumerService(self.shared.clone()));
         let addr = cfg.authority();
         let server = GrpcServer::bind(&addr, cfg.h2_config(), tls, cfg.max_message_size, service).map_err(|s| CamelError::io(format!("Failed to start grpc consumer on {}: {}", addr, s.message)))?;
         *self.bound_port.lock().unwrap() = Some(server.local_addr().port());

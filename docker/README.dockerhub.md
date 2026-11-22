@@ -6,7 +6,7 @@
 
 Cameleer is the first [Cameleering](https://cameleer.ing/) project: software that carries the same load on less, with every gain measured against the original ([the ledger](https://cameleer.ing/ledger/)).
 
-- **450x faster startup** than Apache Camel (3 ms vs 1.1 s), **up to 54x less memory**, **1.7–8.7x** the throughput in every scenario ([comparison](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/))
+- **90x faster startup** than Apache Camel (12 ms vs 1.1 s for the benchmark's full route set; one route is ready in about 3 ms), **up to 43x less memory**, **1.8–15x** the throughput in every scenario (Cameleer 0.8.0, 2026-11-20) ([comparison](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/))
 - About **230 components**: Kafka, HTTP/REST, AMQP, MQTT, JMS, SQL/PostgreSQL, Redis, MongoDB, AWS, Azure, GCP, OpenAI, Slack, files, FTP/SFTP and more
 - **Routes as MCP tools** for AI agents (`--mcp`, or `--mcp-stdio` for Claude Desktop): schema checks, approvals, run-once, timeouts and audit on every call; official MCP conformance 39/39 and 26/26 ([MCP](https://cameleer.ing/cameleer/mcp/))
 - Built for **AI agents** (the integration and action layer), **serverless** and the **edge**

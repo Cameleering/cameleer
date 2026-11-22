@@ -1,0 +1,29 @@
+h2load nghttp2/1.59.0
+H2LOAD node=a case=h1-c64 | finished in 35.00s, 67604.96 req/s, 15.46MB/s | requests: 1690124 total, 1690124 started, 1690124 done, 1690124 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 1690124 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      192us     15.55ms       934us      1.18ms    76.77%
+PROC node=a case=h1-c64 side=rust scenario=rest-json peak_rss_kb=10624 cpu_pct=210% user_s=57.17 sys_s=48.02
+H2LOAD node=a case=h2-c4m16 | finished in 35.00s, 121318.00 req/s, 10.30MB/s | requests: 3032950 total, 3032950 started, 3032950 done, 3032950 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 3032950 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      218us      6.87ms       517us        99us    71.17%
+PROC node=a case=h2-c4m16 side=rust scenario=rest-json peak_rss_kb=9856 cpu_pct=173% user_s=76.68 sys_s=10.29
+H2LOAD node=a case=h2-c16m4 | finished in 35.00s, 127116.08 req/s, 10.79MB/s | requests: 3177902 total, 3177902 started, 3177902 done, 3177902 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 3177902 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      210us      7.45ms       488us        94us    65.44%
+PROC node=a case=h2-c16m4 side=rust scenario=rest-json peak_rss_kb=10240 cpu_pct=209% user_s=84.42 sys_s=20.15
+H2LOAD node=a case=grpc-c4m16 | finished in 35.00s, 131940.92 req/s, 7.17MB/s | requests: 3298523 total, 3298523 started, 3298523 done, 3298523 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 3298523 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      193us      4.49ms       465us        70us    79.28%
+PROC node=a case=grpc-c4m16 side=rust scenario=grpc peak_rss_kb=9472 cpu_pct=149% user_s=65.50 sys_s=9.31
+OWN node=a scenario=rest-json msgs=1844410 secs=25.000 tput=73775 tput_min=68350 tput_max=80322 mean_us=867.33 p50_us=317.44 p99_us=2375.68 max_us=8160.37 connects=2804
+PROC node=a case=own-h1 side=rust scenario=rest-json peak_rss_kb=9856 cpu_pct=188% user_s=62.50 sys_s=31.81
+OWN node=a scenario=rest-json-h2 msgs=1859870 secs=25.000 tput=74394 tput_min=68469 tput_max=79044 mean_us=860.07 p50_us=847.87 p99_us=1318.91 max_us=6900.27 connects=4
+PROC node=a case=own-h2 side=rust scenario=rest-json-h2 peak_rss_kb=9984 cpu_pct=138% user_s=63.73 sys_s=5.44
+OWN node=a scenario=grpc msgs=2365020 secs=25.001 tput=94599 tput_min=93975 tput_max=95412 mean_us=676.30 p50_us=659.46 p99_us=1171.46 max_us=8255.97 connects=4
+PROC node=a case=own-grpc side=rust scenario=grpc peak_rss_kb=9344 cpu_pct=159% user_s=60.48 sys_s=19.28
+H2LOAD node=b case=h1-c64 | finished in 35.00s, 92120.84 req/s, 21.06MB/s | requests: 2303021 total, 2303021 started, 2303021 done, 2303021 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 2303021 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      195us      8.42ms       686us       405us    73.58%
+PROC node=b case=h1-c64 side=rust scenario=rest-json peak_rss_kb=10112 cpu_pct=201% user_s=66.94 sys_s=33.79
+H2LOAD node=b case=h2-c4m16 | finished in 35.00s, 117830.84 req/s, 10.00MB/s | requests: 2945771 total, 2945771 started, 2945771 done, 2945771 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 2945771 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      223us      3.99ms       533us        90us    71.40%
+PROC node=b case=h2-c4m16 side=rust scenario=rest-json peak_rss_kb=9856 cpu_pct=169% user_s=75.16 sys_s=9.48
+H2LOAD node=b case=h2-c16m4 | finished in 35.00s, 120710.12 req/s, 10.25MB/s | requests: 3017753 total, 3017753 started, 3017753 done, 3017753 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 3017753 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      205us      3.80ms       520us       142us    52.92%
+PROC node=b case=h2-c16m4 side=rust scenario=rest-json peak_rss_kb=10496 cpu_pct=205% user_s=81.85 sys_s=20.91
+H2LOAD node=b case=grpc-c4m16 | finished in 35.00s, 131417.60 req/s, 7.14MB/s | requests: 3285440 total, 3285440 started, 3285440 done, 3285440 succeeded, 0 failed, 0 errored, 0 timeout | status codes: 3285440 2xx, 0 3xx, 0 4xx, 0 5xx | time for request:      196us     16.53ms       465us        66us    83.77%
+PROC node=b case=grpc-c4m16 side=rust scenario=grpc peak_rss_kb=9344 cpu_pct=151% user_s=65.80 sys_s=9.74
+OWN node=b scenario=rest-json msgs=2101252 secs=25.001 tput=84048 tput_min=76526 tput_max=89317 mean_us=761.29 p50_us=395.26 p99_us=2072.58 max_us=6269.38 connects=2920
+PROC node=b case=own-h1 side=rust scenario=rest-json peak_rss_kb=9728 cpu_pct=193% user_s=63.64 sys_s=32.94
+OWN node=b scenario=rest-json-h2 msgs=1564986 secs=25.001 tput=62598 tput_min=60958 tput_max=65007 mean_us=1022.18 p50_us=1171.46 p99_us=1662.98 max_us=12413.05 connects=4
+PROC node=b case=own-h2 side=rust scenario=rest-json-h2 peak_rss_kb=11008 cpu_pct=127% user_s=59.09 sys_s=4.54
+OWN node=b scenario=grpc msgs=2368321 secs=25.000 tput=94731 tput_min=94116 tput_max=95734 mean_us=675.33 p50_us=659.46 p99_us=1155.07 max_us=28963.29 connects=4
+PROC node=b case=own-grpc side=rust scenario=grpc peak_rss_kb=9472 cpu_pct=161% user_s=60.28 sys_s=20.46

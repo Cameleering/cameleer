@@ -24,6 +24,38 @@ pub trait Processor: Send + Sync {
     fn process_timed(&self, exchange: &mut Exchange, _start: u64) -> (Result<()>, u64) {
         (self.process(exchange), 0)
     }
+
+    /// The asynchronous form of this processor (Camel `AsyncProcessor`): `Some` when it can
+    /// complete without holding the calling thread, itself or through a child (containers return
+    /// `Some` when a child does). Decided when the route is built; see [`crate::reactive`].
+    fn as_async(&self) -> Option<&dyn AsyncProcessor> {
+        None
+    }
+
+    /// Whether the synchronous [`Processor::process`] may hold its thread for long (I/O, locks,
+    /// user code). An asynchronous route moves to a worker thread before a `Maybe` step when it
+    /// runs on an event loop. Steps that only compute return `Never`.
+    fn blocking(&self) -> Blocking {
+        Blocking::Maybe
+    }
+}
+
+/// See [`Processor::blocking`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blocking {
+    /// Only computes: safe on an event loop thread.
+    Never,
+    /// May wait (I/O, locks, user code).
+    Maybe,
+}
+
+/// The future of an asynchronous step.
+pub type ProcessFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>>;
+
+/// A processor that completes without holding the calling thread (Camel `AsyncProcessor`). The
+/// future completes when the step is done; dropping it cancels the step.
+pub trait AsyncProcessor: Send + Sync {
+    fn process_async<'a>(&'a self, exchange: &'a mut Exchange) -> ProcessFuture<'a>;
 }
 
 impl<F> Processor for F
@@ -41,6 +73,12 @@ impl Processor for Arc<dyn Processor> {
     }
     fn process_timed(&self, exchange: &mut Exchange, start: u64) -> (Result<()>, u64) {
         (**self).process_timed(exchange, start)
+    }
+    fn as_async(&self) -> Option<&dyn AsyncProcessor> {
+        (**self).as_async()
+    }
+    fn blocking(&self) -> Blocking {
+        (**self).blocking()
     }
 }
 

@@ -466,8 +466,16 @@ struct RouteProcessor {
     timer: Option<Arc<dyn RouteTimer>>,
 }
 
-impl Processor for RouteProcessor {
-    fn process(&self, exchange: &mut Exchange) -> Result<()> {
+/// What [`RouteProcessor::enter`] hands to [`RouteProcessor::leave`].
+struct RouteVisit {
+    ctx: Option<CamelContext>,
+    notify: bool,
+    is_root: bool,
+    start: u64,
+}
+
+impl RouteProcessor {
+    fn enter(&self, exchange: &mut Exchange) -> Result<RouteVisit> {
         // events are only built when someone listens (they clone ids)
         let notify = self.notifiers.load(Ordering::Acquire);
         // the context is only needed to attach it to the exchange or to notify
@@ -491,11 +499,12 @@ impl Processor for RouteProcessor {
             }
         }
         InflightRepository::add_to(&self.inflight);
-        let start = crate::clock::ticks();
-        let (r, end) = self.inner.process_timed(exchange, start);
-        if let Err(e) = r {
-            exchange.set_exception(e);
-        }
+        Ok(RouteVisit { ctx, notify, is_root, start: crate::clock::ticks() })
+    }
+
+    /// `end` is the last instrumented step's reading, or 0.
+    fn leave(&self, exchange: &mut Exchange, v: RouteVisit, end: u64) {
+        let RouteVisit { ctx, notify, is_root, start } = v;
         // the end reading of the last instrumented step, if the route passed it out
         let end = if end != 0 { end } else { crate::clock::ticks() };
         if let Some(t) = &self.timer {
@@ -515,7 +524,7 @@ impl Processor for RouteProcessor {
                 if is_root {
                     exchange.run_on_completions();
                 }
-                return Ok(());
+                return;
             }
         };
         if let Some(e) = &exchange.exception {
@@ -528,7 +537,44 @@ impl Processor for RouteProcessor {
             });
         }
         exchange.run_on_completions();
+    }
+}
+
+impl Processor for RouteProcessor {
+    fn process(&self, exchange: &mut Exchange) -> Result<()> {
+        let v = self.enter(exchange)?;
+        let (r, end) = self.inner.process_timed(exchange, v.start);
+        if let Err(e) = r {
+            exchange.set_exception(e);
+        }
+        self.leave(exchange, v, end);
         Ok(())
+    }
+
+    fn as_async(&self) -> Option<&dyn crate::spi::AsyncProcessor> {
+        self.inner.as_async().map(|_| self as &dyn crate::spi::AsyncProcessor)
+    }
+
+    fn blocking(&self) -> crate::spi::Blocking {
+        self.inner.blocking()
+    }
+}
+
+impl crate::spi::AsyncProcessor for RouteProcessor {
+    fn process_async<'a>(&'a self, exchange: &'a mut Exchange) -> crate::spi::ProcessFuture<'a> {
+        Box::pin(async move {
+            let inner = self.inner.as_async().expect("as_async checked the inner processor");
+            let v = self.enter(exchange)?;
+            if let Err(e) = inner.process_async(exchange).await {
+                exchange.set_exception(e);
+            }
+            // on-completion synchronizations and event notifiers are user code
+            if v.is_root && (!exchange.on_completions.is_empty() || v.notify) {
+                crate::reactive::offload().await;
+            }
+            self.leave(exchange, v, 0);
+            Ok(())
+        })
     }
 }
 

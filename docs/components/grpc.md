@@ -154,14 +154,18 @@ Yes: `usePlainText=false` with `keyCertChainResource` and `keyResource` on the s
 
 ### How fast is it?
 
-Measured on 4-vCPU cloud machines (release 0.7.0, unary calls with a protobuf request and reply, 64 concurrent
-calls over 4 HTTP/2 connections): about 10,500 calls per second at about 200 microseconds of server CPU per call,
-with a p99 of about 11 ms. A call on an idle server takes about 0.3 ms. Release 0.7.0 stops at about 11,000
-calls per second from 16 concurrent calls up because each call starts threads; running them on a pool (after 0.7.0,
-not released yet) gave about 41,000 calls per second at about 37 microseconds of server CPU per call and a p99 of
-about 4 ms, with the same peak memory as 0.7.0 (13.5 against 13.8 MB at 64 concurrent calls, 18.6 against 20.1 MB
-at 256). Streaming calls were not measured. The
-[full numbers and the comparison with 0.6.1](../BENCHMARKS.md#grpc-and-http2-on-simoom-070-2026-11-18) are in
+Measured on 4-vCPU cloud machines (unary calls with a protobuf request and reply, 64 concurrent calls over 4 HTTP/2
+connections, one session, the load generator is `cameleer-bench`): release 0.8.0 served about 94,000 calls per
+second at 64 concurrent calls and 106,000 at 256, with 24 microseconds of server CPU per call, a p99 of 1.2 ms (4.7 ms
+at 256) and 9.2 MB of peak memory (10.2 MB at 256). Release 0.7.0 on the same machines served about 8,000 calls per
+second at 270 microseconds per call, a p99 of 15 ms (54 ms at 256) and 13.6 MB (19.3 MB). 0.7.0 starts up to three
+threads per call, which limited it to about 11,000 calls per second; 0.8.0 runs them on a pool, sends a unary reply
+as one response, runs a fast unary call on the server's event loop and uses simoom 0.2.0's reply batching. The
+comparison contains all of those changes: the pool alone was measured at 3.6x to 3.9x, and the rest was not
+measured one by one. With nghttp2's `h2load` as an independent client the same server served 129,000 to 135,000
+calls per second (4 connections of 16 streams), so `cameleer-bench`'s client, not the server, is what limits the
+94,000. A call on an idle server takes about 0.3 ms. Streaming calls, TLS and the gRPC client were not measured. The
+[full numbers and the comparisons with 0.7.0 and 0.6.1](../BENCHMARKS.md#080-candidate-against-070-and-against-an-independent-client-2026-11-20) are in
 the benchmark report.
 
 ## Related

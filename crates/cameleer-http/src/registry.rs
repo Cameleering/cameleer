@@ -441,6 +441,14 @@ impl ServerRegistry {
         Ok(reg)
     }
 
+    /// Answer a registered route through `handler` (it never blocks and answers later; see
+    /// [`ServerRegistry::register_async`]).
+    pub fn set_async(&self, reg: &Registration, handler: AsyncRouteHandler) {
+        if let Some(s) = self.servers.lock().unwrap().get(&reg.port) {
+            s.router.make_async(reg.route_id, handler);
+        }
+    }
+
     /// Remove a registration; the server is stopped when its last route is removed.
     pub fn unregister(&self, reg: &Registration) {
         let to_stop = {
