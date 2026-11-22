@@ -41,9 +41,10 @@ the HTTP route was always added last. Both stay in the figures below; the AI add
 | `main` with the fix | 2.8, 2.8 ms |
 
 The jump is between v0.6.0 and v0.6.1, the release that moved the HTTP server to simoom. The mechanism was
-found by timestamps (the 25 to 40 ms were all inside `simoom::Builder::start`, and only when a seda or timer
+found by timestamps and then by `git bisect run` (WSL2, `cameleer-bench measure --scenario startup`, bad = median over 25 runs of 10 ms or more, 96 commits, 7 steps): the first bad commit is `8cadf36` "The HTTP server runs on simoom" (2026-11-13, PR 41); its parent measured 2.5 to 3.2 ms and it 23.2 ms. The step values were 2.6, 3.2, 2.5, 6.1 (an early merge), 23.2, 23.2 and 26.5 ms. The 25 to 40 ms were all inside `simoom::Builder::start`, and only when a seda or timer
 route had started first: seda alone 0.5 ms, timer alone 0.3 ms, HTTP alone 1.2 ms, seda + HTTP 14 to 30 ms,
-timer + HTTP 23 to 40 ms), not by a commit-level bisect.
+timer + HTTP 23 to 40 ms), 
+simoom 0.1.0 and 0.2.0 both contain `reserve_descriptors` (`Config::reserve_fds`, 1024), so no simoom release fixes it. A change in simoom would be: do not reserve when the process already has several threads (or make the reservation a public call, which this fix uses through `simoom-sys`). Cameleer does not need it.
 `CAMEL_SERVER_LAZY_LOOPS`, `CAMEL_ASYNC_ROUTING=false` and `taskset` to 1, 4 or 12 CPUs did not change the
 31 ms. A real `cameleer run` of only an HTTP route is single-threaded at that point, which is why the `sizes`
 check (3.0 ms) never showed it; an application with a timer or seda route plus an HTTP route did pay it.
