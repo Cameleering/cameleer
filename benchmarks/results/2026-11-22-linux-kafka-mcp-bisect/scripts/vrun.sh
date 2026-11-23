@@ -23,6 +23,7 @@ case1() { # phase node pub priv label venv scenario bin
   local phase=$1 node=$2 pub=$3 priv=$4 label=$5 venv=$6 sc=$7 bin=$8 tmp; tmp=$(mktemp)
   [ "$venv" = - ] && venv=""
   log "phase $phase node $node: $label $sc"
+  [ "$sc" = http-sql ] && on "$L_PUB" "PGPASSWORD=camelpw psql -q -h 127.0.0.1 -U camel -d bench -c 'TRUNCATE orders'" >/dev/null 2>&1
   on "$pub" "BENCH_KAFKA=$L_PRIV:9092 BENCH_PG=$L_PRIV BENCH_PROXY_TARGET=$L_PRIV:8081 VENV='$venv' /root/v/vserve.sh $bin $sc $PORT $secs" >/dev/null 2>>"$OUT/vrun.err" || { rm -f "$tmp"; return 1; }
   on "$L_PUB" "/root/cameleer/target/release/cameleer-bench loadgen-remote $priv $PORT $sc $CONNS $WARM $ITER $ITERS" 2>>"$OUT/vrun.err" \
     | sed -e "s/^RESULT /RESULT phase=$phase node=$node label=$label scenario=$sc /" > "$tmp"

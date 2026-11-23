@@ -14,6 +14,7 @@ for h in "$A" "$B" "$L"; do
   scp -q "${SSH_OPTS[@]}" "$TARS/main.tgz" "root@$h:/root/v/tars/"
   on "$h" 'chmod +x /root/v/*.sh; rm -rf /root/cameleer && mkdir -p /root/cameleer && tar -xzf /root/v/tars/main.tgz -C /root/cameleer && chmod +x /root/cameleer/scripts/*.sh /root/cameleer/scripts/cloud-bench/*.sh'
 done
+for h in "$A" "$B" "$L"; do scp -q "${SSH_OPTS[@]}" "$ROOT/scripts/cloud-bench/setup-node.sh" "root@$h:/root/cameleer/scripts/cloud-bench/setup-node.sh"; done
 for h in "$A" "$B"; do for n in "$@"; do [ "$n" = main ] || scp -q "${SSH_OPTS[@]}" "$TARS/$n.tgz" "root@$h:/root/v/tars/"; done; done
 on "$L" "/root/cameleer/scripts/cloud-bench/setup-node.sh load $LP" >"$OUT/vsetup-load.log" 2>&1 &
 for h in "$A" "$B"; do
