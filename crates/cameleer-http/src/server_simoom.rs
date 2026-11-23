@@ -38,6 +38,15 @@ const STALLS_TO_POOL: u32 = 3;
 const WINDOW_MS: u64 = 1000;
 /// How long a route stays on the pool before the loop thread is tried again.
 const POOL_MS: u64 = 60_000;
+/// A route on the loop thread is also sent back to the pool when its calls keep the loop threads this
+/// busy (the share of all loop threads' time over [`BUSY_WINDOW_MS`]). A route that blocks briefly (a
+/// Kafka or database call of 0.3 to 1 ms on a quiet connection) can look fast while the server is idle;
+/// once load arrives its calls run one after the other on the loop threads and only the stall rule
+/// would take it off, which needs a single call over 5 ms and can take 10 s or more.
+const BUSY_SHARE: f64 = 0.5;
+const BUSY_WINDOW_MS: u64 = 100;
+/// Calls shorter than this are not added up: the route cannot be blocking, and a fast route pays nothing.
+const BUSY_MIN: Duration = Duration::from_micros(100);
 
 /// What the engine has learned about one route.
 #[doc(hidden)]
@@ -52,6 +61,9 @@ pub struct RouteState {
     pool_until: AtomicU64,
     window_start: AtomicU64,
     stalls: AtomicU32,
+    /// Time spent in calls on the loop threads in the current busy window, and when the window began.
+    busy_ns: AtomicU64,
+    busy_start: AtomicU64,
 }
 
 /// Decides per route whether a handler may run on the loop thread (also used by the gRPC server
@@ -60,12 +72,19 @@ pub struct RouteState {
 pub struct Governor {
     base: Instant,
     routes: RwLock<HashMap<u64, Arc<RouteState>>>,
+    /// Event loop threads (the busy limit is a share of their time).
+    loops: u64,
 }
 
 impl Governor {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Governor {
-        Governor { base: Instant::now(), routes: RwLock::new(HashMap::new()) }
+        Governor::with_loops(std::thread::available_parallelism().map_or(1, |n| n.get()))
+    }
+
+    /// A governor for a server with `loops` event loop threads.
+    pub fn with_loops(loops: usize) -> Governor {
+        Governor { base: Instant::now(), routes: RwLock::new(HashMap::new()), loops: loops.max(1) as u64 }
     }
 
     /// Milliseconds since start, never 0.
@@ -86,10 +105,14 @@ impl Governor {
 
     /// A call on the loop thread took `took`: back to the pool when it stalls the loop.
     pub fn record(&self, st: &RouteState, took: Duration) {
-        if took < STALL {
+        if took < BUSY_MIN {
             return;
         }
         let now = self.now();
+        self.account(st, took, now);
+        if took < STALL {
+            return;
+        }
         if took >= BLOCKING {
             self.demote(st, now);
             return;
@@ -102,12 +125,33 @@ impl Governor {
         }
     }
 
+    /// Adds `took` to the route's busy time; at the end of a window, demotes the route when it used more
+    /// than [`BUSY_SHARE`] of all loop threads' time.
+    fn account(&self, st: &RouteState, took: Duration, now: u64) {
+        st.busy_ns.fetch_add(took.as_nanos().min(u128::from(u64::MAX / 2)) as u64, Ordering::Relaxed);
+        let start = st.busy_start.load(Ordering::Relaxed);
+        if now.saturating_sub(start) < BUSY_WINDOW_MS {
+            return;
+        }
+        // one caller closes the window
+        if st.busy_start.compare_exchange(start, now, Ordering::Relaxed, Ordering::Relaxed).is_err() {
+            return;
+        }
+        let busy = st.busy_ns.swap(0, Ordering::Relaxed);
+        let span_ns = now.saturating_sub(start).min(10 * BUSY_WINDOW_MS) * 1_000_000;
+        // the first window of a route has no start: not a measurement
+        if start != 0 && (busy as f64) > BUSY_SHARE * (span_ns * self.loops) as f64 {
+            self.demote(st, now);
+        }
+    }
+
     fn demote(&self, st: &RouteState, now: u64) {
         st.inline.store(false, Ordering::Relaxed);
         st.seen.store(0, Ordering::Relaxed);
         st.slow.store(0, Ordering::Relaxed);
         st.stalls.store(0, Ordering::Relaxed);
         st.pool_until.store(now + POOL_MS, Ordering::Relaxed);
+        st.busy_ns.store(0, Ordering::Relaxed);
     }
 
     /// A call on the pool took `took` (the handler only, without the queue).
@@ -477,6 +521,49 @@ fn complete(responder: simoom::Responder, mut resp: HttpResponse, head_request: 
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn inline_governor(loops: usize) -> (Governor, Arc<RouteState>) {
+        let g = Governor::with_loops(loops);
+        let st = g.state(1);
+        for _ in 0..SAMPLE {
+            g.observe(&st, Duration::from_micros(20));
+        }
+        assert!(g.inline_ok(&st), "128 fast calls move the route to the loop thread");
+        (g, st)
+    }
+
+    /// A route that blocks for 0.5 ms looks fast on an idle server. Once its calls fill the loop threads
+    /// (here 4 ms of calls in 1 ms on a single loop) it goes back to the pool within a window, without
+    /// any call reaching the stall limit.
+    #[test]
+    fn a_route_that_saturates_the_loops_returns_to_the_pool() {
+        let (g, st) = inline_governor(1);
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_millis(400) && g.inline_ok(&st) {
+            for _ in 0..50 {
+                g.record(&st, Duration::from_micros(2500)); // under STALL, 125 ms of calls per burst
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!g.inline_ok(&st), "busy loops demote the route");
+        assert!(st.pool_until.load(Ordering::Relaxed) > g.now(), "and it stays on the pool for a while");
+    }
+
+    /// A route whose calls take microseconds stays on the loop thread however many requests arrive.
+    #[test]
+    fn a_fast_route_stays_on_the_loop() {
+        let (g, st) = inline_governor(4);
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_millis(350) {
+            for _ in 0..2000 {
+                g.record(&st, Duration::from_micros(4));
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(g.inline_ok(&st));
+    }
+
     #[test]
     fn lazy_loops_only_for_faas_unless_set() {
         use super::lazy_loops_from as f;
@@ -513,8 +600,6 @@ mod tests {
         });
         assert!(spread, "three long-lived connections stayed on one loop in six attempts");
     }
-
-    use super::*;
 
     #[test]
     fn a_route_is_promoted_after_a_fast_sample_and_demoted_when_it_stalls() {
