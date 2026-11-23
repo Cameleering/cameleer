@@ -1,0 +1,27 @@
+## grpc
+  cand          n=2 tput     77954  p99   1.53 ms  per-phase 1:78050 2:77858
+  main          n=2 tput     78004  p99   1.55 ms  per-phase 1:77728 2:78280
+## http-sql
+  cand          n=4 tput      9654  p99  12.35 ms  per-phase 1:7820 1:10553 2:10098 2:10143
+  main          n=4 tput      9665  p99  12.42 ms  per-phase 1:10400 1:10432 2:7660 2:10167
+  v060          n=4 tput     10536  p99  11.67 ms  per-phase 1:10650 1:10682 2:10397 2:10415
+## http-kafka
+  cand          n=6 tput     35472  p99   3.09 ms  per-phase 1:35759 1:35777 1:37955 2:33827 2:34684 2:34831
+  main          n=6 tput     32527  p99   3.40 ms  per-phase 1:31892 1:32174 1:32192 2:31579 2:31609 2:35714
+  v060          n=4 tput     40744  p99   2.71 ms  per-phase 1:40866 1:40993 2:40494 2:40624
+## mcp-session
+  cand          n=2 tput     44618  p99   4.24 ms  per-phase 1:45194 2:44043
+  main          n=2 tput     45036  p99   4.24 ms  per-phase 1:45953 2:44118
+## rest-json
+  cand          n=2 tput     88142  p99   1.97 ms  per-phase 1:98968 2:77316
+  main          n=2 tput     90224  p99   1.88 ms  per-phase 1:103119 2:77328
+## http
+  cand          n=2 tput    120240  p99   1.29 ms  per-phase 1:117435 2:123044
+  main          n=2 tput    104510  p99   1.72 ms  per-phase 1:101506 2:107515
+## grpc
+  cand          n=2 tput     77954  p99   1.53 ms  per-phase 1:78050 2:77858
+  main          n=2 tput     78004  p99   1.55 ms  per-phase 1:77728 2:78280
+## mcp
+  cand          n=2 tput     43330  p99   4.46 ms  per-phase 1:44199 2:42461
+  main          n=2 tput     43385  p99   4.42 ms  per-phase 1:43757 2:43013
+  v060          n=2 tput     45392  p99   4.42 ms  per-phase 1:45862 2:44923
