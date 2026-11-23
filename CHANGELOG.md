@@ -3,6 +3,14 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+- **The `kafka` producer has an asynchronous form.** A `platform-http`, `jetty` or `netty-http` route that sends to Kafka
+  now waits for the broker's acknowledgement without holding a thread: sends are queued, up to `maxInFlightRequest`
+  sender threads (one per connection, started with the first asynchronous send) take them in batches, and the route
+  continues on the sender thread. Batching, partitioning, offsets and the exchange headers are the same as on the
+  synchronous path, which other routes still use. A send queued when the producer stops fails with an error.
+
 ## 0.8.0 (YYYY-MM-DD)
 
 gRPC and HTTP/2 on simoom 0.2.0: the gRPC server runs its calls on a pool of threads, the event loops start at

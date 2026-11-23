@@ -100,8 +100,8 @@ fn device_readings_routes(b: &mut RouteBuilder) {
 
 ### Asynchronous routes
 
-A route that calls the `http` producer answers its requests without holding a server thread while it waits
-for the reply. This is on by default.
+A route that calls the `http` or the `kafka` producer answers its requests without holding a server thread
+while it waits for the reply (for Kafka, the acknowledgement of the broker). This is on by default.
 
 - **Where it runs:** the route continues on the event loop that read the reply.
   - Steps that only compute run there too: `setHeader`, `setBody` or `transform` with constant, header,

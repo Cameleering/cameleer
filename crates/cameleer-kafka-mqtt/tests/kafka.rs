@@ -492,9 +492,9 @@ fn asynchronous_sends_share_produce_requests_and_keep_their_offsets() {
     ctx.stop().unwrap();
 }
 
-/// A send queued when the producer stops is failed, not left waiting.
+/// A send that cannot reach a broker returns the error to the route.
 #[test]
-fn an_asynchronous_send_fails_when_the_producer_stops_before_it_is_sent() {
+fn an_asynchronous_send_returns_the_connection_error() {
     let ctx = context();
     ctx.start().unwrap();
     // nothing listens here: the sender cannot connect
@@ -506,5 +506,31 @@ fn an_asynchronous_send_fails_when_the_producer_stops_before_it_is_sent() {
     let r = cameleer_core::reactive::block_on(a.process_async(&mut ex));
     assert!(r.is_err());
     producer.stop().unwrap();
+    ctx.stop().unwrap();
+}
+
+/// A send queued after the producer stopped is failed at once: its sender threads are gone, and
+/// without this it would wait for ever.
+#[test]
+fn an_asynchronous_send_after_stop_fails_instead_of_waiting() {
+    let broker = KafkaBroker::start_with_partitions(1).unwrap();
+    let ctx = context();
+    ctx.start().unwrap();
+    let ep = ctx.get_endpoint(&format!("kafka:afterstop?brokers={}", broker.bootstrap())).unwrap();
+    let producer = ep.create_producer().unwrap();
+    let a = producer.as_async().unwrap();
+    let mut ex = Exchange::new(None);
+    ex.set_body("before");
+    cameleer_core::reactive::block_on(a.process_async(&mut ex)).unwrap(); // starts the sender threads
+    producer.stop().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p2 = producer.clone();
+    std::thread::spawn(move || {
+        let mut ex = Exchange::new(None);
+        ex.set_body("after");
+        let r = cameleer_core::reactive::block_on(p2.as_async().unwrap().process_async(&mut ex));
+        let _ = tx.send(r.is_err());
+    });
+    assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(true), "a send after stop must fail, not hang");
     ctx.stop().unwrap();
 }

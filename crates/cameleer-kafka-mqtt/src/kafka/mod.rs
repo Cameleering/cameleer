@@ -518,6 +518,16 @@ impl Core {
         false
     }
 
+    /// Fails the queued sends (the producer is stopped, nobody will send them) instead of leaving them
+    /// waiting for ever.
+    fn fail_unsent(&self) {
+        let unsent = std::mem::take(&mut *self.queue.lock().unwrap_or_else(|p| p.into_inner()));
+        for send in &unsent {
+            fill(send, Err(CamelError::illegal_state("The Kafka producer was stopped")));
+        }
+        run_deferred();
+    }
+
     /// A sender thread: sends what asynchronous routes queue.
     fn sender_loop(&self) {
         // routes continue here: a step that may block moves to a worker first
@@ -684,12 +694,7 @@ impl Service for KafkaProducer {
     fn stop(&self) -> Result<()> {
         self.core.stopped.store(true, Ordering::Release);
         self.core.queue_cv.notify_all();
-        // asynchronous sends that were never sent fail instead of waiting for ever
-        let unsent = std::mem::take(&mut *self.core.queue.lock().unwrap_or_else(|p| p.into_inner()));
-        for send in &unsent {
-            fill(send, Err(CamelError::illegal_state("The Kafka producer was stopped")));
-        }
-        run_deferred();
+        self.core.fail_unsent();
         for c in &self.core.clients {
             if let Some(mut c) = c.lock().unwrap_or_else(|p| p.into_inner()).take() {
                 c.close();
@@ -830,6 +835,10 @@ impl AsyncProcessor for KafkaProducer {
                 done: Mutex::new(Some(Box::new(move |r| tx.complete(r)))),
             });
             self.core.queue_cv.notify_one();
+            // a producer stopped before or while this send was queued has no sender thread left to take it
+            if self.core.stopped.load(Ordering::Acquire) {
+                self.core.fail_unsent();
+            }
             // the route continues on the sender thread that got the acknowledgement
             let result: Result<(i32, i64, i64)> = rx.await;
             self.finish(ex, &p.topic, count, p.timestamp, result)
