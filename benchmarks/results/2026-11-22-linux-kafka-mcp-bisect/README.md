@@ -80,3 +80,41 @@ started); both were fixed (`raw/v060-first-attempt-before-proto-fix.txt` holds t
 `v070` proxy case failed twice because that build has no such scenario. Outliers: `v070` `http-kafka` phase 2 (12.3k) and
 `main` `http-sql` phase 2 on server a (5.2k) are single runs on server a that are not repeated by the other server or the
 next build; the droplets were deleted before they could be rerun.
+
+# Follow-up, 2026-11-23: the intermittent collapse of simoom builds, its cause and a fix
+
+New droplets (same type and region). `raw2/` holds the records.
+
+**The collapse is real and belongs to every simoom build.** Runs of `main` on HTTP into Kafka and PostgreSQL sometimes
+spend seconds at 7,000 to 15,000 req/s (1-second windows as low as 7,800) before reaching 31,000 (Kafka) or 11,000
+(PostgreSQL). Counting runs whose slowest second is under 80% of the fastest (all rounds): `main` 6 of 21 runs,
+`v061` 2 of 5, `v070` 1 of 3, `v060` 0 of 10, `k575` 0 of 3. That is the second reason the HTTP-into-PostgreSQL gate run
+(phase 2: 5,220 req/s) and the `v070` HTTP-into-Kafka run (12,296) were outliers: they were not noise.
+
+**Cause (from `raw2/trace-main-http-kafka-perf-stat.txt`).** In the slow state the server uses 0.8 CPUs with 7,500
+context switches per second (one per request) for the first 13 s of a run, then jumps to 2.8 CPUs and 82,000 switches
+per second. The governor in `crates/cameleer-http/src/server_simoom.rs` moves a route to the loop thread when 126 of 128
+of its calls took under 1 ms. A route that blocks for 0.3 to 1 ms (a Kafka acknowledgement or a database insert on a quiet
+connection) passes that test while the server is idle; when load arrives its calls run one after the other on the loop
+threads (64 connections over 4 loops, each call 0.5 ms: 8 ms per request, 8k req/s), and the only way back to the pool
+is the stall rule (a call over 5 ms, three times in a second), which these calls rarely trigger, so it takes 10 s or
+more. The loop is not the cause of the remaining steady-state gap to `v0.6.0` (31k against 39k), which is the hand-off to
+the offload pool.
+
+**Fix** (local branch `fix/governor-busy-demote`, `f731e9e` on `origin/main` `7952563`; not pushed, no PR): the governor
+adds up the time a route's calls (those over 100 µs) take on the loop threads and demotes the route when that is over
+half of all loop threads' time in a 100 ms window; two unit tests (a saturating route returns to the pool, a fast route stays).
+Workspace build 0 warnings; `cargo test -p cameleer-http --lib` 29 passed (full workspace suite not run).
+
+| fix2 against main, same droplets, both phases | fix2 | main |
+|---|---|---|
+| HTTP into Kafka (4 runs each) | 31,423 req/s, p99 3.56 ms, 0 runs with a dip | 22,851 (8,241, 21,741, 30,082, 31,341), p99 8.16 ms, 2 dips |
+| HTTP into PostgreSQL | 10,570, p99 12.9 ms | 10,214, p99 16.9 ms, 1 dip |
+| `http` (4 runs each) | 106,803 | 108,102 (0.99x) |
+| `rest-json` | 91,582 | 91,934 |
+| gRPC unary | 77,910 | 78,020 |
+| `mcp-session` (first version, `raw2/fix-round1.txt`) | 44,164 | 44,509 |
+
+fix2 had no dip in any of its 14 runs. An earlier version of the fix (`fix`, accounting every call) measured `http` at
+0.91x of `main` in one round and was changed to skip calls under 100 µs. HTTP into Kafka with the fix is still 0.8x of
+`v0.6.0` in steady state (31.4k against 39.2k, p99 3.6 against 2.9 ms): the loop-to-pool hand-off, not addressed here.
