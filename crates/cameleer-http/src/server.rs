@@ -91,7 +91,9 @@ pub struct ServerConfig {
     pub write_timeout: Duration,
     /// How long `stop` waits for in-flight requests.
     pub shutdown_timeout: Duration,
-    /// Maximum requests served on one connection.
+    /// Maximum requests served on one keep-alive connection before the server closes it;
+    /// 0 (the default) means unlimited, as in Jetty, Vert.x and Undertow, the servers behind
+    /// Camel's HTTP consumers. A limit makes every client reconnect after that many requests.
     pub max_keep_alive_requests: usize,
     /// Serve HTTPS with this TLS configuration (None = plain HTTP).
     pub tls: Option<Arc<TlsServerConfig>>,
@@ -107,7 +109,7 @@ impl Default for ServerConfig {
             keep_alive_timeout: Duration::from_secs(15),
             write_timeout: Duration::from_secs(30),
             shutdown_timeout: Duration::from_secs(10),
-            max_keep_alive_requests: 1000,
+            max_keep_alive_requests: 0,
             tls: None,
         }
     }
@@ -252,6 +254,24 @@ mod tests {
         let mut all = String::new();
         s.read_to_string(&mut all).unwrap();
         assert_eq!(all.matches("HTTP/1.1 200").count(), 3, "{all}");
+        server.stop();
+    }
+
+    #[test]
+    fn a_keep_alive_connection_has_no_request_limit_by_default() {
+        // the 2026-11-23 benchmark: a limit of 1000 requests made each client reconnect every
+        // 1000 requests, thousands of times per run
+        let server = HttpServer::bind("127.0.0.1:0", ServerConfig::default(), |_req: &mut HttpRequest| HttpResponse::text(200, "ok")).unwrap();
+        assert_eq!(keep_alive_requests(server.local_addr(), 2500), 0, "the server closed a keep-alive connection");
+        server.stop();
+    }
+
+    #[test]
+    fn max_keep_alive_requests_closes_the_connection_after_that_many_requests() {
+        let cfg = ServerConfig { max_keep_alive_requests: 3, ..ServerConfig::default() };
+        let server = HttpServer::bind("127.0.0.1:0", cfg, |_req: &mut HttpRequest| HttpResponse::text(200, "ok")).unwrap();
+        // the third response asks to close, and keep_alive_requests stops there
+        assert_eq!(keep_alive_requests(server.local_addr(), 10), 1);
         server.stop();
     }
 
