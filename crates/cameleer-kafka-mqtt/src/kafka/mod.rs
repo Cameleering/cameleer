@@ -51,14 +51,14 @@ pub mod protocol;
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex, Once, OnceLock};
 use std::time::Duration;
 
 use cameleer_core::context::{CamelContext, WeakContext};
 use cameleer_core::error::{kinds, CamelError, Result};
 use cameleer_core::message::Exchange;
-use cameleer_core::spi::{Component, Consumer, Endpoint, Processor, Producer, Service};
+use cameleer_core::spi::{AsyncProcessor, Component, Consumer, Endpoint, ProcessFuture, Processor, Producer, Service};
 use cameleer_core::util::Parameters;
 use cameleer_core::value::Value;
 
@@ -399,12 +399,17 @@ impl Endpoint for KafkaEndpoint {
     }
     fn create_producer(&self) -> Result<Arc<dyn Producer>> {
         Ok(Arc::new(KafkaProducer {
-            cfg: self.cfg.clone(),
-            clients: (0..self.cfg.max_in_flight).map(|_| Mutex::new(None)).collect(),
-            released: AtomicU64::new(0),
-            queue: Mutex::new(Vec::new()),
-            round_robin: AtomicUsize::new(0),
-            requests: AtomicUsize::new(0),
+            core: Arc::new(Core {
+                cfg: self.cfg.clone(),
+                clients: (0..self.cfg.max_in_flight).map(|_| Mutex::new(None)).collect(),
+                released: AtomicU64::new(0),
+                queue: Mutex::new(Vec::new()),
+                queue_cv: Condvar::new(),
+                round_robin: AtomicUsize::new(0),
+                requests: AtomicUsize::new(0),
+                stopped: AtomicBool::new(false),
+            }),
+            senders: Once::new(),
         }))
     }
     fn create_consumer(&self, processor: Arc<dyn Processor>) -> Result<Arc<dyn Consumer>> {
@@ -449,6 +454,9 @@ fn value_bytes(v: &Value) -> Option<Vec<u8>> {
 /// condvar wakes the exchange's thread when the result is there or a connection was released.
 type SendSlot = Arc<(Mutex<Option<Result<(i32, i64, i64)>>>, Condvar)>;
 
+/// What an asynchronous send does with its result (see [`fill`]).
+type SendDone = Box<dyn FnOnce(Result<(i32, i64, i64)>) + Send>;
+
 /// One exchange's records, waiting to be sent.
 struct PendingSend {
     topic: String,
@@ -456,9 +464,12 @@ struct PendingSend {
     explicit_partition: Option<i32>,
     records: Vec<Record>,
     slot: SendSlot,
+    /// Set by an asynchronous send: called with the result instead of filling `slot`.
+    done: Mutex<Option<SendDone>>,
 }
 
-struct KafkaProducer {
+/// The state shared by a producer and its sender threads.
+struct Core {
     cfg: KafkaConfig,
     /// Up to `maxInFlightRequest` connections; a sender takes a free one and sends everything
     /// queued, so concurrent sends share requests and no send waits behind more than one.
@@ -467,12 +478,68 @@ struct KafkaProducer {
     released: AtomicU64,
     /// Sends queued while every connection is busy.
     queue: Mutex<Vec<PendingSend>>,
+    /// Wakes a sender thread when an asynchronous send is queued.
+    queue_cv: Condvar,
     round_robin: AtomicUsize,
     /// Produce requests sent (for tests).
     requests: AtomicUsize,
+    stopped: AtomicBool,
 }
 
-impl KafkaProducer {
+/// A producer. An asynchronous route's sends are queued and a sender thread (started with the
+/// first one) takes the connection, so no route thread waits for the broker: the route continues
+/// on the sender thread that read the acknowledgement.
+struct KafkaProducer {
+    core: Arc<Core>,
+    senders: Once,
+}
+
+impl Core {
+    /// Take a free connection and send everything queued; false when every connection is busy.
+    fn drive(&self) -> bool {
+        for c in &self.clients {
+            let Ok(mut guard) = c.try_lock() else { continue };
+            let sends = std::mem::take(&mut *self.queue.lock().unwrap_or_else(|p| p.into_inner()));
+            if !sends.is_empty() {
+                self.send_queued(&mut guard, sends);
+            }
+            drop(guard);
+            self.released.fetch_add(1, Ordering::AcqRel);
+            // the routes of asynchronous sends continue now, without the connection held
+            run_deferred();
+            // a send queued meanwhile: wake its thread, a connection is free now
+            let next = self.queue.lock().unwrap_or_else(|p| p.into_inner()).first().map(|p| p.slot.clone());
+            if let Some(n) = next {
+                let _g = n.0.lock().unwrap_or_else(|p| p.into_inner());
+                n.1.notify_all();
+            }
+            return true;
+        }
+        false
+    }
+
+    /// A sender thread: sends what asynchronous routes queue.
+    fn sender_loop(&self) {
+        // routes continue here: a step that may block moves to a worker first
+        let _on_loop = cameleer_core::reactive::enter_loop();
+        loop {
+            {
+                let mut q = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+                while q.is_empty() && !self.stopped.load(Ordering::Acquire) {
+                    q = self.queue_cv.wait_timeout(q, Duration::from_millis(200)).unwrap_or_else(|p| p.into_inner()).0;
+                }
+                if self.stopped.load(Ordering::Acquire) {
+                    return;
+                }
+            }
+            if !self.drive() {
+                // every connection is busy: wait a moment for a release
+                let q = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+                let _ = self.queue_cv.wait_timeout(q, Duration::from_millis(1));
+            }
+        }
+    }
+
     /// Wait for a queued send's result: take a free connection and send everything queued
     /// (usually including this send), or wait until another sender has sent it or a
     /// connection is free again.
@@ -482,25 +549,7 @@ impl KafkaProducer {
                 return r;
             }
             let seen = self.released.load(Ordering::Acquire);
-            let mut took = false;
-            for c in &self.clients {
-                let Ok(mut guard) = c.try_lock() else { continue };
-                took = true;
-                let sends = std::mem::take(&mut *self.queue.lock().unwrap_or_else(|p| p.into_inner()));
-                if !sends.is_empty() {
-                    self.send_queued(&mut guard, sends);
-                }
-                drop(guard);
-                self.released.fetch_add(1, Ordering::AcqRel);
-                // a send queued meanwhile: wake its thread, a connection is free now
-                let next = self.queue.lock().unwrap_or_else(|p| p.into_inner()).first().map(|p| p.slot.clone());
-                if let Some(n) = next {
-                    let _g = n.0.lock().unwrap_or_else(|p| p.into_inner());
-                    n.1.notify_all();
-                }
-                break;
-            }
-            if took {
+            if self.drive() {
                 continue;
             }
             // every connection is busy: wait for the result or a release (a release since
@@ -538,7 +587,7 @@ impl KafkaProducer {
                     if let Some(mut c) = client.take() {
                         c.close();
                     }
-                    fill(&s.slot, Err(e));
+                    fill(s, Err(e));
                 }
             }
         }
@@ -575,7 +624,7 @@ impl KafkaProducer {
                     Ok((base, append_time)) => {
                         let mut next = base;
                         for &i in members.iter() {
-                            fill(&sends[i].slot, Ok((*partition, next, append_time)));
+                            fill(&sends[i], Ok((*partition, next, append_time)));
                             if next >= 0 {
                                 next += sends[i].records.len() as i64;
                             }
@@ -584,7 +633,7 @@ impl KafkaProducer {
                     Err(e) => {
                         failed = true;
                         for &i in members.iter() {
-                            fill(&sends[i].slot, Err(e.clone()));
+                            fill(&sends[i], Err(e.clone()));
                         }
                     }
                 }
@@ -598,14 +647,50 @@ impl KafkaProducer {
     }
 }
 
-fn fill(slot: &SendSlot, r: Result<(i32, i64, i64)>) {
-    *slot.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(r);
-    slot.1.notify_all();
+thread_local! {
+    /// Routes of asynchronous sends that continue once the connection is released.
+    static DEFERRED: std::cell::RefCell<Vec<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn run_deferred() {
+    loop {
+        let next = DEFERRED.with(|d| {
+            let mut d = d.borrow_mut();
+            if d.is_empty() {
+                None
+            } else {
+                Some(d.remove(0))
+            }
+        });
+        match next {
+            Some(f) => f(),
+            None => break,
+        }
+    }
+}
+
+/// Gives a send its result: to its route when it is asynchronous (after the connection is
+/// released, see [`run_deferred`]), else to the thread waiting on its slot.
+fn fill(send: &PendingSend, r: Result<(i32, i64, i64)>) {
+    if let Some(done) = send.done.lock().unwrap_or_else(|p| p.into_inner()).take() {
+        DEFERRED.with(|d| d.borrow_mut().push(Box::new(move || done(r))));
+        return;
+    }
+    *send.slot.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(r);
+    send.slot.1.notify_all();
 }
 
 impl Service for KafkaProducer {
     fn stop(&self) -> Result<()> {
-        for c in &self.clients {
+        self.core.stopped.store(true, Ordering::Release);
+        self.core.queue_cv.notify_all();
+        // asynchronous sends that were never sent fail instead of waiting for ever
+        let unsent = std::mem::take(&mut *self.core.queue.lock().unwrap_or_else(|p| p.into_inner()));
+        for send in &unsent {
+            fill(send, Err(CamelError::illegal_state("The Kafka producer was stopped")));
+        }
+        run_deferred();
+        for c in &self.core.clients {
             if let Some(mut c) = c.lock().unwrap_or_else(|p| p.into_inner()).take() {
                 c.close();
             }
@@ -614,18 +699,35 @@ impl Service for KafkaProducer {
     }
 }
 
-impl Processor for KafkaProducer {
-    fn process(&self, ex: &mut Exchange) -> Result<()> {
+impl Drop for KafkaProducer {
+    fn drop(&mut self) {
+        self.core.stopped.store(true, Ordering::Release);
+        self.core.queue_cv.notify_all();
+    }
+}
+
+/// An exchange's records, ready to be queued.
+struct Prepared {
+    topic: String,
+    key: Option<Vec<u8>>,
+    explicit_partition: Option<i32>,
+    records: Vec<Record>,
+    timestamp: i64,
+}
+
+impl KafkaProducer {
+    fn prepare(&self, ex: &mut Exchange) -> Result<Option<Prepared>> {
+        let cfg = &self.core.cfg;
         let topic = match ex.message.remove_header(headers::OVERRIDE_TOPIC).filter(|v| !v.is_null()) {
             Some(t) => t.to_string(),
-            None => self.cfg.topic.clone(),
+            None => cfg.topic.clone(),
         };
         if topic.is_empty() {
             return Err(CamelError::illegal_argument("No Kafka topic: set the endpoint topic or header kafka.OVERRIDE_TOPIC"));
         }
         let key: Option<Vec<u8>> = match ex.header(headers::KEY).filter(|v| !v.is_null()) {
             Some(v) => Some(v.to_bytes()),
-            None => self.cfg.key.as_ref().map(|k| k.as_bytes().to_vec()),
+            None => cfg.key.as_ref().map(|k| k.as_bytes().to_vec()),
         };
         let explicit_partition = match ex.header(headers::PARTITION_KEY).filter(|v| !v.is_null()) {
             Some(v) => Some(
@@ -633,7 +735,7 @@ impl Processor for KafkaProducer {
                     .or_else(|| v.to_string().trim().parse().ok())
                     .ok_or_else(|| CamelError::illegal_argument(format!("Invalid {} header: {}", headers::PARTITION_KEY, v)))? as i32,
             ),
-            None => self.cfg.partition_key,
+            None => cfg.partition_key,
         };
         let timestamp = ex.header(headers::OVERRIDE_TIMESTAMP).and_then(|v| v.as_i64()).unwrap_or_else(now_millis);
         let record_headers: Vec<(String, Option<Vec<u8>>)> = ex
@@ -650,22 +752,20 @@ impl Processor for KafkaProducer {
         let records: Vec<Record> =
             values.into_iter().map(|value| Record { offset: 0, timestamp, key: key.clone(), value, headers: record_headers.clone() }).collect();
         if records.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
+        Ok(Some(Prepared { topic, key, explicit_partition, records, timestamp }))
+    }
 
-        // queue the records, then take the client: whoever holds it sends everything queued, so
-        // a send that waited for the client usually finds its result already there
-        let count = records.len();
-        let slot: SendSlot = Arc::new((Mutex::new(None), Condvar::new()));
-        self.queue.lock().unwrap().push(PendingSend { topic: topic.clone(), key, explicit_partition, records, slot: slot.clone() });
-        let result = self.await_send(&slot);
+    /// Sets the result headers of a finished send on the exchange.
+    fn finish(&self, ex: &mut Exchange, topic: &str, count: usize, timestamp: i64, result: Result<(i32, i64, i64)>) -> Result<()> {
         let (partition, base, append_time) = result?;
         let ts = if append_time >= 0 { append_time } else { timestamp };
-        if self.cfg.record_metadata {
+        if self.core.cfg.record_metadata {
             let meta: Vec<Value> = (0..count)
                 .map(|i| {
                     Value::object([
-                        ("topic", Value::String(topic.clone())),
+                        ("topic", Value::String(topic.to_string())),
                         ("partition", Value::Int(partition as i64)),
                         ("offset", Value::Int(if base >= 0 { base + i as i64 } else { -1 })),
                         ("timestamp", Value::Int(ts)),
@@ -677,6 +777,63 @@ impl Processor for KafkaProducer {
         ex.set_header(headers::PARTITION, partition as i64);
         ex.set_header(headers::OFFSET, if base >= 0 { base + count as i64 - 1 } else { -1 });
         Ok(())
+    }
+
+    /// Starts the sender threads on the first asynchronous send: as many as connections.
+    fn start_senders(&self) {
+        self.senders.call_once(|| {
+            for i in 0..self.core.clients.len() {
+                let core = self.core.clone();
+                let _ = std::thread::Builder::new().name(format!("kafka-sender-{i}")).spawn(move || core.sender_loop());
+            }
+        });
+    }
+}
+
+impl Processor for KafkaProducer {
+    fn process(&self, ex: &mut Exchange) -> Result<()> {
+        let Some(p) = self.prepare(ex)? else { return Ok(()) };
+        // queue the records, then take the client: whoever holds it sends everything queued, so
+        // a send that waited for the client usually finds its result already there
+        let count = p.records.len();
+        let slot: SendSlot = Arc::new((Mutex::new(None), Condvar::new()));
+        self.core.queue.lock().unwrap_or_else(|e| e.into_inner()).push(PendingSend {
+            topic: p.topic.clone(),
+            key: p.key,
+            explicit_partition: p.explicit_partition,
+            records: p.records,
+            slot: slot.clone(),
+            done: Mutex::new(None),
+        });
+        let result = self.core.await_send(&slot);
+        self.finish(ex, &p.topic, count, p.timestamp, result)
+    }
+
+    fn as_async(&self) -> Option<&dyn AsyncProcessor> {
+        Some(self)
+    }
+}
+
+impl AsyncProcessor for KafkaProducer {
+    fn process_async<'a>(&'a self, ex: &'a mut Exchange) -> ProcessFuture<'a> {
+        Box::pin(async move {
+            let Some(p) = self.prepare(ex)? else { return Ok(()) };
+            let count = p.records.len();
+            let (tx, rx) = cameleer_core::reactive::oneshot();
+            self.start_senders();
+            self.core.queue.lock().unwrap_or_else(|e| e.into_inner()).push(PendingSend {
+                topic: p.topic.clone(),
+                key: p.key,
+                explicit_partition: p.explicit_partition,
+                records: p.records,
+                slot: Arc::new((Mutex::new(None), Condvar::new())),
+                done: Mutex::new(Some(Box::new(move |r| tx.complete(r)))),
+            });
+            self.core.queue_cv.notify_one();
+            // the route continues on the sender thread that got the acknowledgement
+            let result: Result<(i32, i64, i64)> = rx.await;
+            self.finish(ex, &p.topic, count, p.timestamp, result)
+        })
     }
 }
 
