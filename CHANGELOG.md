@@ -9,6 +9,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   database call of 0.3 to 1 ms) looked fast and moved to the event-loop thread, where under load its calls ran one after
   the other; in the 2026-11-22 benchmark runs this cut some runs to 7,000-15,000 requests/s. A route is now also sent
   back to the pool for a minute when its calls keep more than half of the loop threads' time busy over 100 ms.
+- **The `kafka` producer has an asynchronous form.** A `platform-http`, `jetty` or `netty-http` route that sends to Kafka
+  now waits for the broker's acknowledgement without holding a thread: sends are queued, up to `maxInFlightRequest`
+  sender threads (one per connection, started with the first asynchronous send) take them in batches, and the route
+  continues on the sender thread. Batching, partitioning, offsets and the exchange headers are the same as on the
+  synchronous path, which other routes still use. A send queued when the producer stops fails with an error.
 
 ## 0.8.0 (YYYY-MM-DD)
 
