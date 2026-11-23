@@ -1,0 +1,5 @@
+s2|KAFKA_SENDERS_EXPERIMENT=2|http-kafka|kasync3
+s3|KAFKA_SENDERS_EXPERIMENT=3|http-kafka|kasync3
+s4|KAFKA_SENDERS_EXPERIMENT=4|http-kafka|kasync3
+s5|KAFKA_SENDERS_EXPERIMENT=5|http-kafka|kasync3
+s1|KAFKA_SENDERS_EXPERIMENT=1|http-kafka|kasync3

@@ -118,3 +118,39 @@ Workspace build 0 warnings; `cargo test -p cameleer-http --lib` 29 passed (full 
 fix2 had no dip in any of its 14 runs. An earlier version of the fix (`fix`, accounting every call) measured `http` at
 0.91x of `main` in one round and was changed to skip calls under 100 µs. HTTP into Kafka with the fix is still 0.8x of
 `v0.6.0` in steady state (31.4k against 39.2k, p99 3.6 against 2.9 ms): the loop-to-pool hand-off, not addressed here.
+
+# Follow-up 2, 2026-11-23: the Kafka producer in an asynchronous route
+
+Local branch `fix/kafka-async` (`9143b2c`, test `410894e`, on `origin/main` `7952563`; not pushed, no PR). The `kafka`
+producer now implements `AsyncProcessor`: the send is queued with a completion, `maxInFlightRequest` sender threads
+(started with the first asynchronous send) take the connections and send everything queued as before, and the route
+continues on the sender thread that read the acknowledgement; the synchronous path is unchanged, and a send that was
+never sent fails when the producer stops. Tests: `crates/cameleer-kafka-mqtt/tests/kafka.rs` (two new, 12 pass),
+`crates/cameleer-main/tests/kafka_async_route.rs` (an HTTP route to an embedded broker, async against sync). Workspace
+build 0 warnings; the full workspace suite was not run.
+
+| HTTP into Kafka, 64 connections, same droplets, both phases | req/s | p99 | CPU of the process |
+|---|---|---|---|
+| `v0.6.0` (classic server) | 40,841 | 2.7 ms | about 3.5 CPUs |
+| `main` | 31,500 (steady; 27,700 with a dip) | 3.5 ms (7.9 with a dip) | 2.8 CPUs |
+| `fix/kafka-async` (5 senders) | **34,931 to 35,174** | 3.1 ms | 1.6 CPUs (loops 1.0, senders 0.6) |
+| same, 10 senders | 32,098 | 3.6 ms | |
+| same, 2 / 3 / 4 / 5 / 1 senders | 35,177 / 35,356 / 36,110 / 35,588 / 33,340 | 2.9 to 3.1 ms | |
+
+**Result: a 12% gain and no dips, but not the whole gap.** The route no longer holds a thread (65 idle workers, no
+`simoom-offload` CPU, 564k futex calls per 10 s against 1.18M), and the path is now latency-bound, not CPU-bound
+(1.6 CPUs for 35k req/s, `v0.6.0` needs 3.5 for 41k). The sender count between 2 and 5 does not matter, 1 is 6% lower and
+10 is 9% lower. What is left (about 0.14 ms per request, 0.86x of `v0.6.0`) is the wake-up from the loop to a sender and from
+the sender back to the loop that writes the answer, which `v0.6.0`'s leader-follower design (the request thread sends and
+answers itself) does not have. Not tried: answering from the sender thread without the loop hop (needs simoom), a spinning
+sender, per-loop senders.
+
+**Harness fault found and fixed (an earlier round of this follow-up is invalid).** `git archive` gives every file the commit
+date; building a tarball with an older commit date after a newer build, in the same target directory, made cargo treat the
+sources as built: the first `kasync` binary was `main`'s (same md5). `scripts/vbuild.sh` now touches the sources before every
+build, and every binary's md5 was checked after that. `raw2/kasync-invalid-stale-binary.txt` is that round. The same fault
+may have affected the first bisect (`pre`, `pr67`, `pr68`, `v070`, `v061`, `k575` were built in an order where it could
+apply; their md5s were not recorded). `v060`, `v061` and `k575` behave differently from `main` (thread names, throughput),
+so the `v0.6.0` against simoom conclusions stand, but **the attribution of MCP and `rest-json` differences to PR 67 and PR 68
+(section 2 and 4 above) is unverified**; the gate round (`../2026-11-22-linux-0.8.0-gate`) built `main` and `v0.6.0` from
+separate directories and is not affected.
