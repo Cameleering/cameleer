@@ -5,6 +5,12 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **The HTTP server no longer closes a keep-alive connection after 1,000 requests.** `ServerConfig::max_keep_alive_requests`
+  defaulted to 1000, a leftover of the thread-per-connection server, so every client had to reconnect after 1,000
+  requests: in the 2026-11-23 droplet benchmark the load generator opened 700 to 5,700 connections per run against
+  Cameleer instead of 64 (one per 1,000 requests). The default is now 0, unlimited, as in Jetty, Vert.x and Undertow;
+  a limit can still be set in `ServerConfig`. Cameleer figures published before this change were measured with the
+  reconnects; on one Windows machine over loopback the change was worth 0% to 5% throughput.
 - **A route that blocks briefly no longer collapses the server's throughput.** On an idle server such a route (a Kafka or
   database call of 0.3 to 1 ms) looked fast and moved to the event-loop thread, where under load its calls ran one after
   the other; in the 2026-11-22 benchmark runs this cut some runs to 7,000-15,000 requests/s. A route is now also sent
