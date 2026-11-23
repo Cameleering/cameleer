@@ -11,9 +11,9 @@ name=$1; sc=$2; venv=${3:-}
 on "$B" "BENCH_KAFKA=$LP:9092 BENCH_PG=$LP VENV='$venv' /root/v/vserve.sh $name $sc 8080 70" >/dev/null
 on "$L" "/root/cameleer/target/release/cameleer-bench loadgen-remote $BP 8080 $sc 64 15 5 4" > "$OUT/vperf-load.txt" 2>/dev/null &
 sleep 25
-on "$B" 'pid=$(pgrep -f "/root/v/bin/'$name' serve" | tail -1); echo "threads=$(ls /proc/$pid/task | wc -l)";
+on "$B" 'pid=$(pgrep -x '$name'); echo "threads=$(ls /proc/$pid/task | wc -l)";
  perf stat -p $pid -e context-switches,cpu-migrations,task-clock -- sleep 10 2>&1 | grep -E "context-switches|cpu-migrations|task-clock|elapsed";
- perf record -q -g -p $pid -o /root/perf.data -- sleep 10 >/dev/null 2>&1; perf report -i /root/perf.data --no-children --sort sym 2>/dev/null | grep -v "^#" | grep "%" | head -25'
+ perf record -q -g -p $pid -o /root/perf.data -- sleep 10 >/dev/null 2>&1; perf report -i /root/perf.data --no-children --sort sym -g none 2>/dev/null | grep -v "^#" | grep "%" | head -22'
 wait
 grep RESULT "$OUT/vperf-load.txt" | cut -c1-200
 on "$B" '/root/v/vserve.sh wait' >/dev/null 2>&1
