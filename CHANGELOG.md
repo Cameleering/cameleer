@@ -3,6 +3,13 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+- **A route that blocks briefly no longer collapses the server's throughput.** On an idle server such a route (a Kafka or
+  database call of 0.3 to 1 ms) looked fast and moved to the event-loop thread, where under load its calls ran one after
+  the other; in the 2026-11-22 benchmark runs this cut some runs to 7,000-15,000 requests/s. A route is now also sent
+  back to the pool for a minute when its calls keep more than half of the loop threads' time busy over 100 ms.
+
 ## 0.8.0 (YYYY-MM-DD)
 
 gRPC and HTTP/2 on simoom 0.2.0: the gRPC server runs its calls on a pool of threads, the event loops start at
