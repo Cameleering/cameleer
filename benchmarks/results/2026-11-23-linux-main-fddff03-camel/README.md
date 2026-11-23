@@ -30,6 +30,8 @@ peak memory 8 to 37 MB against 213 to 428 MB. Cameleer's CPU is higher than Came
 ## Not covered
 
 Long-running behaviour: see the soak results (`../2026-11-23-linux-soak/`) for memory, threads and descriptors over an hour.
-The `connects` column of `results.txt` shows that Cameleer's load generator reconnected about 2,000 times in the MCP and
-HTTP-into-Kafka runs against 64 for Camel and the SDK; the cause (the benchmark's client or the server closing idle or aged
-connections) was not looked into.
+**Open finding:** the `connects` column of `results.txt` (connections the load generator had to open) is 64 for Camel and the
+SDK in every served scenario, and 700 to 5,700 for Cameleer (`http` 4,000 to 5,800, `rest-json` 4,700 to 5,300,
+`http-kafka` 1,600 to 2,000, `http-sql` 700 to 800, `mcp-session` 1,900 to 2,500): the Cameleer server (or its client) ends
+keep-alive connections that Camel keeps. Each reconnect costs the benchmark, so Cameleer's figures may be understated; the cause
+(a request or age limit of the server, or the load generator) was not looked into.

@@ -47,7 +47,8 @@ for e in $(seq 1 "$EPOCHS"); do
     || echo "FAILED scenario=$SC"; } | sed -e "s/^RESULT /RESULT epoch=$e side=$SIDE /" -e "s/^FAILED /FAILED epoch=$e side=$SIDE /" | tee -a "$RES"
 done
 kill $SAMPLER 2>/dev/null || true
-on "$S_PUB" "pkill -f 'cameleer-bench serve' || true; /root/cameleer/scripts/cloud-bench/bench-node.sh served-wait || true" 2>>"$OUT/run.log" | tee -a "$RES"
+# the server exits on its own when its time (the epochs plus a minute) is up
+{ on "$S_PUB" "/root/cameleer/scripts/cloud-bench/bench-node.sh served-wait" 2>>"$OUT/run.log" || true; } | tee -a "$RES"
 python3 - "$RES" <<'PY' | tee -a "$RES"
 import re,sys
 rs=[l for l in open(sys.argv[1]) if l.startswith('RESULT epoch=')]
