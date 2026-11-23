@@ -6,6 +6,7 @@ export PATH=/root/.cargo/bin:$PATH CARGO_TARGET_DIR=/root/v/target
 mkdir -p /root/v/bin
 for n in "$@"; do
   rm -rf /root/v/src && mkdir -p /root/v/src && tar -xzf "/root/v/tars/$n.tgz" -C /root/v/src
+  find /root/v/src -type f -exec touch {} +
   echo "building $n $(date -u +%H:%M:%S)" >&2
   (cd /root/v/src && cargo build -q --release -p cameleer-bench)
   cp /root/v/target/release/cameleer-bench "/root/v/bin/$n"
