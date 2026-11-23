@@ -263,6 +263,31 @@ timeout and built every audit record as a JSON object. Tools whose calls finish 
 timeout now run on the caller's thread with a deadline on the exchange (the route still stops at
 its next step once the timeout passes); others run on pooled workers.
 
+### Two fixes after 0.8.0: the governor and the asynchronous Kafka producer (2026-11-23)
+
+Three `c-4` droplets in `sfo2` (new ones), servers swapped, 64 connections, 15 s warm-up, 5 x 5 s, `main` at `7952563`
+against the same plus the two fixes (PRs 74 and 75) against `v0.6.0`. Raw data, method and tables:
+`benchmarks/results/2026-11-23-linux-fixes-final/`. These droplets and this session differ from the 0.8.0 round above,
+and no Apache Camel side was run, so the figures are comparable with each other and not with the ratios above.
+
+| scenario | with the fixes | `main` | `v0.6.0` |
+|---|---:|---:|---:|
+| HTTP into Kafka, req/s | **35,472** | 32,527 | 40,744 |
+| HTTP into Kafka, p99 | 3.09 ms | 3.40 ms | 2.71 ms |
+| HTTP into Kafka, peak memory | **31.5 MB** | 60.8 MB | 76.9 MB |
+| HTTP into Kafka, CPU per 1000 requests | 0.060 s | 0.072 s | 0.071 s |
+| HTTP into PostgreSQL, req/s | 9,654 | 9,665 | 10,536 |
+| `http`, `rest-json`, gRPC unary, `mcp-session` | within noise of `main` | | |
+| `mcp` (stateless) | 43,330 | 43,385 | 45,392 |
+
+- No throughput dips in 50 runs; on `main` 6 of 21 earlier runs fell to 7,000 to 15,000 req/s (a route that blocks briefly was
+  moved to the event-loop thread, fixed by PR 74).
+- HTTP into Kafka is 1.09x `main` at 17% less CPU per request and half the memory, and **still 0.87x of `v0.6.0`**; stateless
+  MCP is 0.95x of `v0.6.0` and HTTP into PostgreSQL 0.92x. These gaps are open.
+- One run of HTTP into PostgreSQL sat at about 7,700 req/s on both the fixed build and `main`; the cause is not known.
+- Not measured: Apache Camel in this session, the other producers (SQL, models, MCP client), which stay synchronous, and the
+  sender threads under long broker failure.
+
 ### Integration routes against `main`
 
 *(Cameleer 0.5.x, 2026-11-06. On 0.8.0 in `sfo2` the same two scenarios measured 31,351 req/s with p99 3.5 ms for

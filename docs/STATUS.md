@@ -624,6 +624,18 @@ review that led to this documentation pass: `docs/design/docs-review-2026-11-20.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).
 
+## Two fixes after 0.8.0 (2026-11-23, PRs 74, 75 and 76)
+
+Merged into `main`: the governor sends a route back to the pool when its calls keep the loop threads over half busy (no
+throughput dips in 50 runs, where 6 of 21 runs on `main` fell to 7,000 to 15,000 req/s), and the `kafka` producer has an
+asynchronous form for asynchronous routes (a send queued after stop fails instead of hanging). Droplet figures (`sfo2`, 64
+connections, servers swapped, `main` `7952563` against the fixes against `v0.6.0`): HTTP into Kafka 35,472 against 32,527
+against 40,744 req/s, peak memory 31.5 against 60.8 against 76.9 MB; results in
+`benchmarks/results/2026-11-23-linux-fixes-final/`, summary in `docs/BENCHMARKS.md`. Linux (WSL2): hermetic suite 2,989
+passed, 0 failed, 0 warnings; kfake 5/5 and 2/2, kcat and librdkafka 9/9. **Release gate not clean:** HTTP into Kafka is
+0.87x of `v0.6.0`, stateless MCP 0.95x, HTTP into PostgreSQL 0.92x with one unexplained run at 7,700 req/s. No Apache Camel
+side was run, so README and site ratios against Camel are unchanged.
+
 ## Start-up regression found and fixed (2026-11-22)
 
 The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31 ms on WSL2 (12 ms on the
