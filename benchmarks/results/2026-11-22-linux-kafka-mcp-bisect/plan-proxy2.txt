@@ -1,0 +1,3 @@
+# the proxy route (a raw-http target on the load node)
+main|-|http-proxy|main
+main-noasync|CAMEL_ASYNC_ROUTING=false|http-proxy|main
