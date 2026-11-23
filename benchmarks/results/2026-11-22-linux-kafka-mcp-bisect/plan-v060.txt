@@ -1,0 +1,12 @@
+# v0.6.0 (the last classic server) against main
+v060|-|http|v060
+main|-|http|main
+v060|-|rest-json|v060
+main|-|rest-json|main
+v060|-|grpc|v060
+main|-|grpc|main
+v060|-|mcp|v060
+main|-|mcp|main
+v060|-|mcp-session|v060
+main|-|mcp-session|main
+v060|-|http-kafka|v060

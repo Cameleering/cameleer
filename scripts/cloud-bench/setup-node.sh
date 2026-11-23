@@ -142,6 +142,7 @@ EOF
 
 case "$ROLE" in
   server) server ;;
+  base) base ;;  # only the common part (packages, kernel settings, Rust): for builds made by hand
   load) load "$@" ;;
   *) echo "usage: $0 server|load <ip>" >&2; exit 1 ;;
 esac
