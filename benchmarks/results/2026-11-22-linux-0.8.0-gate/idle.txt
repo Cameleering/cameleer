@@ -1,0 +1,12 @@
+IDLE label=v060 scenario=http rss_kb=6968 threads=2
+IDLE label=v060 scenario=rest-json rss_kb=7288 threads=2
+IDLE label=v060 scenario=mcp-session rss_kb=7508 threads=2
+IDLE label=main scenario=http rss_kb=7664 threads=4
+IDLE label=main scenario=rest-json rss_kb=7988 threads=4
+IDLE label=main scenario=mcp-session rss_kb=8472 threads=4
+IDLE label=v060 scenario=http rss_kb=7020 threads=2
+IDLE label=v060 scenario=rest-json rss_kb=7236 threads=2
+IDLE label=v060 scenario=mcp-session rss_kb=7556 threads=2
+IDLE label=main scenario=http rss_kb=7728 threads=4
+IDLE label=main scenario=rest-json rss_kb=7912 threads=4
+IDLE label=main scenario=mcp-session rss_kb=8208 threads=4

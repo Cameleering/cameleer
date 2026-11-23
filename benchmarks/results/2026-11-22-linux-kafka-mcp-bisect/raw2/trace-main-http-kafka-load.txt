@@ -1,0 +1,1 @@
+RESULT scenario=http-kafka msgs=279587 secs=20.002 tput=13978 tput_min=7840 tput_max=30955 mean_us=4577.72 p50_us=2670.59 p99_us=13565.95 max_us=20510.74 connects=392

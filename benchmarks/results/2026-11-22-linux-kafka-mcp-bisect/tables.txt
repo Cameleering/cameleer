@@ -1,0 +1,44 @@
+## http-kafka
+  k575          n=2 tput     39338  p99   2.77 ms  per-phase 1:38937 2:39740
+  v061          n=2 tput     31225  p99   3.72 ms  per-phase 1:30316 2:32134
+  v070          n=2 tput     21572  p99   9.87 ms  per-phase 1:30849 2:12296
+  pre           n=2 tput     32484  p99   3.28 ms  per-phase 1:32710 2:32257
+  main          n=2 tput     31496  p99   3.44 ms  per-phase 1:31796 2:31195
+  main-noasync  n=2 tput     31596  p99   3.39 ms  per-phase 1:31905 2:31287
+  main-lazy     n=2 tput     32416  p99   3.31 ms  per-phase 1:32546 2:32286
+  v060          n=2 tput     38759  p99   2.79 ms  per-phase 1:38464 2:39054
+## mcp-session
+  v070          n=2 tput     44570  p99   4.03 ms  per-phase 1:44648 2:44491
+  pre           n=2 tput     44508  p99   4.33 ms  per-phase 1:44863 2:44153
+  pr67          n=2 tput     45236  p99   3.93 ms  per-phase 1:45525 2:44946
+  pr68          n=2 tput     44473  p99   4.06 ms  per-phase 1:44388 2:44558
+  main          n=4 tput     44218  p99   4.15 ms  per-phase 1:43769 1:44638 2:44068 2:44396
+  main-lazy     n=2 tput     44667  p99   4.01 ms  per-phase 1:45153 2:44181
+  main-noasync  n=2 tput     44578  p99   4.19 ms  per-phase 1:44647 2:44508
+  main-ctl      n=2 tput     44263  p99   4.05 ms  per-phase 1:44327 2:44199
+  v060          n=2 tput     35290  p99   6.00 ms  per-phase 1:35332 2:35248
+## rest-json
+  v070          n=2 tput     86702  p99   2.13 ms  per-phase 1:84145 2:89260
+  pre           n=2 tput     90270  p99   1.91 ms  per-phase 1:94520 2:86020
+  main          n=4 tput     85801  p99   2.10 ms  per-phase 1:90864 1:91033 2:78611 2:82697
+  main-lazy     n=2 tput     86283  p99   2.09 ms  per-phase 1:85589 2:86977
+  main-noasync  n=2 tput     85719  p99   2.04 ms  per-phase 1:88718 2:82720
+  main-ctl      n=2 tput     82919  p99   2.21 ms  per-phase 1:80612 2:85226
+  v060          n=2 tput     74724  p99   2.42 ms  per-phase 1:75163 2:74284
+## http
+  v070          n=2 tput    104437  p99   1.66 ms  per-phase 1:102636 2:106238
+  pre           n=2 tput    110608  p99   1.49 ms  per-phase 1:121185 2:100032
+  main          n=4 tput    108645  p99   1.53 ms  per-phase 1:114582 1:114604 2:95461 2:109933
+  main-lazy     n=2 tput    112362  p99   1.56 ms  per-phase 1:115860 2:108864
+  main-noasync  n=2 tput    111780  p99   1.43 ms  per-phase 1:120159 2:103401
+  main-ctl      n=2 tput    110400  p99   1.56 ms  per-phase 1:117521 2:103279
+  v060          n=2 tput     90152  p99   2.47 ms  per-phase 1:90872 2:89433
+## http-proxy
+  main          n=2 tput     50956  p99   2.41 ms  per-phase 1:47720 2:54193
+  main-noasync  n=2 tput     10480  p99  16.29 ms  per-phase 1:10868 2:10093
+## grpc
+  v060          n=2 tput      8486  p99  19.53 ms  per-phase 1:8472 2:8500
+  main          n=2 tput     83274  p99   1.40 ms  per-phase 1:83037 2:83511
+## mcp
+  v060          n=2 tput     45440  p99   4.26 ms  per-phase 1:45509 2:45370
+  main          n=2 tput     42772  p99   4.20 ms  per-phase 1:43264 2:42281

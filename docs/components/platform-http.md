@@ -168,6 +168,8 @@ connections are fine. A route runs on the loop thread while it is fast, and on a
 threads while it blocks (a call to another service, a database); Cameleer learns which per route, by
 timing the route's calls. A route that blocks only briefly can look fast while the server is idle; when its
 calls keep more than half of the loop threads' time busy over 100 ms, it goes back to the pool for a minute.
+A keep-alive connection stays open for any number of requests (as in Jetty and Vert.x); the server
+closes it after 15 s idle.
 Header names in responses are lower case, as HTTP allows.
 
 ### Can I serve every path below a prefix?

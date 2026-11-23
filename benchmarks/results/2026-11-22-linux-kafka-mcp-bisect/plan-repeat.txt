@@ -1,0 +1,9 @@
+main|-|http-kafka|main
+main|-|http-kafka|main
+main|-|http-kafka|main
+v060|-|http-kafka|v060
+main|-|http-kafka|main
+main|-|http-sql|main
+main|-|http-sql|main
+v060|-|http-sql|v060
+main|-|http-sql|main
