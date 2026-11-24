@@ -1,0 +1,6 @@
+kasync2|-|http-kafka|kasync2
+kasync|-|http-kafka|kasync
+kasync2|-|http-kafka|kasync2
+v060|-|http-kafka|v060
+kasync2|-|http-kafka|kasync2
+kasync|-|http-kafka|kasync

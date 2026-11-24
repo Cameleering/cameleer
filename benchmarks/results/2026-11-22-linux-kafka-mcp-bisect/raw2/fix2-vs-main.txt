@@ -1,0 +1,56 @@
+RESULT phase=1 node=b label=fix2 scenario=http scenario=http msgs=2707117 secs=25.001 tput=108281 tput_min=102861 tput_max=119649 mean_us=590.69 p50_us=366.59 p99_us=1662.98 max_us=10925.30 connects=4265
+PROC phase=1 node=b label=fix2 scenario=http peak_rss_kb=9472 cpu_pct=221% user_s=66.91 sys_s=43.79
+RESULT phase=1 node=b label=main scenario=http scenario=http msgs=2847914 secs=25.001 tput=113914 tput_min=101704 tput_max=120976 mean_us=561.44 p50_us=448.51 p99_us=1646.59 max_us=16566.49 connects=4648
+PROC phase=1 node=b label=main scenario=http peak_rss_kb=9344 cpu_pct=230% user_s=70.38 sys_s=44.67
+RESULT phase=1 node=b label=fix2 scenario=http scenario=http msgs=2966580 secs=25.001 tput=118660 tput_min=116235 tput_max=120377 mean_us=538.92 p50_us=456.70 p99_us=1400.83 max_us=16310.86 connects=4765
+PROC phase=1 node=b label=fix2 scenario=http peak_rss_kb=9472 cpu_pct=231% user_s=71.55 sys_s=44.46
+RESULT phase=1 node=b label=main scenario=http scenario=http msgs=2752891 secs=25.005 tput=110092 tput_min=102409 tput_max=122533 mean_us=580.95 p50_us=436.22 p99_us=1728.51 max_us=12887.46 connects=4529
+PROC phase=1 node=b label=main scenario=http peak_rss_kb=9472 cpu_pct=226% user_s=68.95 sys_s=44.26
+RESULT phase=1 node=b label=fix2 scenario=rest-json scenario=rest-json msgs=2414756 secs=25.001 tput=96588 tput_min=93260 tput_max=98917 mean_us=662.23 p50_us=634.88 p99_us=1466.37 max_us=9339.41 connects=3852
+PROC phase=1 node=b label=fix2 scenario=rest-json peak_rss_kb=10240 cpu_pct=234% user_s=79.96 sys_s=37.07
+RESULT phase=1 node=b label=main scenario=rest-json scenario=rest-json msgs=2402421 secs=25.002 tput=96090 tput_min=91980 tput_max=99666 mean_us=665.68 p50_us=618.50 p99_us=1548.29 max_us=7618.47 connects=3889
+PROC phase=1 node=b label=main scenario=rest-json peak_rss_kb=10112 cpu_pct=235% user_s=80.57 sys_s=37.05
+RESULT phase=1 node=b label=fix2 scenario=http-kafka scenario=http-kafka msgs=770967 secs=25.001 tput=30838 tput_min=29941 tput_max=31337 mean_us=2074.97 p50_us=2023.42 p99_us=3522.56 max_us=103016.44 connects=1281
+PROC phase=1 node=b label=fix2 scenario=http-kafka peak_rss_kb=60928 cpu_pct=230% user_s=70.03 sys_s=45.20
+RESULT phase=1 node=b label=main scenario=http-kafka scenario=http-kafka msgs=206029 secs=25.000 tput=8241 tput_min=8026 tput_max=8393 mean_us=7765.56 p50_us=8290.30 p99_us=13697.02 max_us=22792.10 connects=375
+PROC phase=1 node=b label=main scenario=http-kafka peak_rss_kb=39808 cpu_pct=65% user_s=23.19 sys_s=9.76
+RESULT phase=1 node=b label=fix2 scenario=http-sql scenario=http-sql msgs=261568 secs=25.000 tput=10463 tput_min=10269 tput_max=10594 mean_us=6116.73 p50_us=5931.01 p99_us=11337.73 max_us=69953.99 connects=448
+PROC phase=1 node=b label=fix2 scenario=http-sql peak_rss_kb=30592 cpu_pct=104% user_s=27.57 sys_s=24.44
+RESULT phase=1 node=b label=main scenario=http-sql scenario=http-sql msgs=238131 secs=25.000 tput=9525 tput_min=5811 tput_max=10528 mean_us=6718.58 p50_us=5996.54 p99_us=22675.46 max_us=72871.95 connects=448
+PROC phase=1 node=b label=main scenario=http-sql peak_rss_kb=30208 cpu_pct=97% user_s=25.67 sys_s=22.96
+RESULT phase=1 node=b label=fix2 scenario=grpc scenario=grpc msgs=1945758 secs=25.001 tput=77829 tput_min=77380 tput_max=78260 mean_us=822.02 p50_us=790.53 p99_us=1531.90 max_us=10895.13 connects=4
+PROC phase=1 node=b label=fix2 scenario=grpc peak_rss_kb=9472 cpu_pct=153% user_s=57.67 sys_s=19.26
+RESULT phase=1 node=b label=main scenario=grpc scenario=grpc msgs=1925706 secs=25.001 tput=77026 tput_min=75906 tput_max=77645 mean_us=830.59 p50_us=806.91 p99_us=1499.14 max_us=9042.28 connects=4
+PROC phase=1 node=b label=main scenario=grpc peak_rss_kb=9344 cpu_pct=157% user_s=58.70 sys_s=20.21
+RESULT phase=1 node=b label=fix2 scenario=http-kafka scenario=http-kafka msgs=775760 secs=25.001 tput=31030 tput_min=30851 tput_max=31303 mean_us=2062.16 p50_us=2023.42 p99_us=3588.10 max_us=11726.48 connects=1276
+PROC phase=1 node=b label=fix2 scenario=http-kafka peak_rss_kb=61184 cpu_pct=231% user_s=70.11 sys_s=45.55
+RESULT phase=1 node=b label=main scenario=http-kafka scenario=http-kafka msgs=543541 secs=25.001 tput=21741 tput_min=8344 tput_max=30861 mean_us=2943.12 p50_us=2179.07 p99_us=10158.08 max_us=16516.00 connects=809
+PROC phase=1 node=b label=main scenario=http-kafka peak_rss_kb=55376 cpu_pct=147% user_s=46.46 sys_s=27.14
+RESULT phase=2 node=a label=main scenario=http-kafka scenario=http-kafka msgs=752071 secs=25.001 tput=30082 tput_min=23082 tput_max=32167 mean_us=2126.83 p50_us=1974.27 p99_us=5079.04 max_us=24760.31 connects=925
+PROC phase=2 node=a label=main scenario=http-kafka peak_rss_kb=57456 cpu_pct=162% user_s=49.96 sys_s=31.48
+RESULT phase=2 node=a label=fix2 scenario=http-kafka scenario=http-kafka msgs=796728 secs=25.001 tput=31868 tput_min=31685 tput_max=32203 mean_us=2007.91 p50_us=1974.27 p99_us=3588.10 max_us=9972.50 connects=1303
+PROC phase=2 node=a label=fix2 scenario=http-kafka peak_rss_kb=63872 cpu_pct=232% user_s=70.28 sys_s=45.94
+RESULT phase=2 node=a label=main scenario=grpc scenario=grpc msgs=1975443 secs=25.001 tput=79014 tput_min=78529 tput_max=79661 mean_us=809.66 p50_us=774.14 p99_us=1564.67 max_us=16858.06 connects=4
+PROC phase=2 node=a label=main scenario=grpc peak_rss_kb=9600 cpu_pct=151% user_s=57.94 sys_s=17.99
+RESULT phase=2 node=a label=fix2 scenario=grpc scenario=grpc msgs=1949863 secs=25.001 tput=77992 tput_min=77829 tput_max=78202 mean_us=820.26 p50_us=790.53 p99_us=1548.29 max_us=7572.01 connects=4
+PROC phase=2 node=a label=fix2 scenario=grpc peak_rss_kb=9600 cpu_pct=154% user_s=58.27 sys_s=18.87
+RESULT phase=2 node=a label=main scenario=http-sql scenario=http-sql msgs=272599 secs=25.001 tput=10904 tput_min=10784 tput_max=11052 mean_us=5869.14 p50_us=5734.40 p99_us=11206.66 max_us=60107.24 connects=448
+PROC phase=2 node=a label=main scenario=http-sql peak_rss_kb=31360 cpu_pct=102% user_s=26.50 sys_s=24.71
+RESULT phase=2 node=a label=fix2 scenario=http-sql scenario=http-sql msgs=266933 secs=25.000 tput=10677 tput_min=9676 tput_max=11081 mean_us=5993.74 p50_us=5668.86 p99_us=14352.38 max_us=74060.21 connects=448
+PROC phase=2 node=a label=fix2 scenario=http-sql peak_rss_kb=30464 cpu_pct=102% user_s=26.51 sys_s=24.65
+RESULT phase=2 node=a label=main scenario=http-kafka scenario=http-kafka msgs=783537 secs=25.001 tput=31341 tput_min=30919 tput_max=31672 mean_us=2041.66 p50_us=1974.27 p99_us=3719.17 max_us=71160.75 connects=1185
+PROC phase=2 node=a label=main scenario=http-kafka peak_rss_kb=62976 cpu_pct=212% user_s=64.89 sys_s=41.39
+RESULT phase=2 node=a label=fix2 scenario=http-kafka scenario=http-kafka msgs=798908 secs=25.000 tput=31956 tput_min=31572 tput_max=32406 mean_us=2002.45 p50_us=1957.89 p99_us=3555.33 max_us=10953.90 connects=1306
+PROC phase=2 node=a label=fix2 scenario=http-kafka peak_rss_kb=61312 cpu_pct=232% user_s=70.21 sys_s=46.00
+RESULT phase=2 node=a label=main scenario=rest-json scenario=rest-json msgs=2194473 secs=25.001 tput=87777 tput_min=78632 tput_max=98396 mean_us=728.81 p50_us=419.84 p99_us=2375.68 max_us=16155.16 connects=3487
+PROC phase=2 node=a label=main scenario=rest-json peak_rss_kb=9728 cpu_pct=224% user_s=73.90 sys_s=38.16
+RESULT phase=2 node=a label=fix2 scenario=rest-json scenario=rest-json msgs=2164417 secs=25.000 tput=86575 tput_min=82380 tput_max=91676 mean_us=738.95 p50_us=395.26 p99_us=2277.38 max_us=14094.57 connects=3564
+PROC phase=2 node=a label=fix2 scenario=rest-json peak_rss_kb=9984 cpu_pct=227% user_s=75.50 sys_s=38.04
+RESULT phase=2 node=a label=main scenario=http scenario=http msgs=2718061 secs=25.001 tput=108720 tput_min=98031 tput_max=121613 mean_us=588.31 p50_us=370.69 p99_us=1859.58 max_us=10796.15 connects=4560
+PROC phase=2 node=a label=main scenario=http peak_rss_kb=9344 cpu_pct=228% user_s=69.40 sys_s=45.03
+RESULT phase=2 node=a label=fix2 scenario=http scenario=http msgs=2601332 secs=25.005 tput=104032 tput_min=95907 tput_max=111546 mean_us=614.80 p50_us=292.86 p99_us=1859.58 max_us=10811.61 connects=4251
+PROC phase=2 node=a label=fix2 scenario=http peak_rss_kb=9600 cpu_pct=221% user_s=65.53 sys_s=45.09
+RESULT phase=2 node=a label=main scenario=http scenario=http msgs=2492274 secs=25.002 tput=99683 tput_min=96159 tput_max=106587 mean_us=641.72 p50_us=261.12 p99_us=1925.12 max_us=12810.68 connects=4041
+PROC phase=2 node=a label=main scenario=http peak_rss_kb=9344 cpu_pct=215% user_s=64.12 sys_s=43.68
+RESULT phase=2 node=a label=fix2 scenario=http scenario=http msgs=2406004 secs=25.001 tput=96238 tput_min=87706 tput_max=101513 mean_us=664.73 p50_us=234.50 p99_us=1990.66 max_us=9780.01 connects=4014
+PROC phase=2 node=a label=fix2 scenario=http peak_rss_kb=9984 cpu_pct=214% user_s=63.92 sys_s=43.56

@@ -446,3 +446,91 @@ fn concurrent_sends(in_flight: &str) {
     assert!(batches < 1 + SENDERS * EACH, "{batches} batches for {} records", 1 + SENDERS * EACH);
     ctx.stop().unwrap();
 }
+
+/// The asynchronous form of the producer (an asynchronous route's `to`): sends from many tasks share
+/// produce requests like the synchronous ones, keep their offsets and order, and complete on a sender
+/// thread without any caller thread waiting on the broker.
+#[test]
+fn asynchronous_sends_share_produce_requests_and_keep_their_offsets() {
+    let broker = KafkaBroker::start_with_partitions(1).unwrap();
+    let ctx = context();
+    ctx.start().unwrap();
+    let ep = ctx.get_endpoint(&format!("kafka:asyncbatched?brokers={}", broker.bootstrap())).unwrap();
+    let producer = ep.create_producer().unwrap();
+    assert!(producer.as_async().is_some());
+    const TASKS: usize = 16;
+    const EACH: usize = 50;
+    let handles: Vec<_> = (0..TASKS)
+        .map(|s| {
+            let producer = producer.clone();
+            std::thread::spawn(move || {
+                (0..EACH)
+                    .map(|i| {
+                        let body = format!("s{s}-{i}");
+                        let mut ex = Exchange::new(None);
+                        ex.set_body(body.clone());
+                        let a = producer.as_async().unwrap();
+                        cameleer_core::reactive::block_on(a.process_async(&mut ex)).unwrap();
+                        (body, int(&ex, "kafka.OFFSET"))
+                    })
+                    .collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let sent: Vec<Vec<(String, i64)>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let records = broker.records("asyncbatched", 0);
+    assert_eq!(records.len(), TASKS * EACH);
+    for per_task in &sent {
+        for (body, offset) in per_task {
+            assert_eq!(records[*offset as usize].value.as_deref(), Some(body.as_bytes()));
+        }
+        assert!(per_task.windows(2).all(|w| w[0].1 < w[1].1));
+    }
+    let batches = broker.batch_compression("asyncbatched", 0).len();
+    assert!(batches < TASKS * EACH, "{batches} batches for {} records", TASKS * EACH);
+    producer.stop().unwrap();
+    ctx.stop().unwrap();
+}
+
+/// A send that cannot reach a broker returns the error to the route.
+#[test]
+fn an_asynchronous_send_returns_the_connection_error() {
+    let ctx = context();
+    ctx.start().unwrap();
+    // nothing listens here: the sender cannot connect
+    let ep = ctx.get_endpoint("kafka:nowhere?brokers=127.0.0.1:1&requestTimeoutMs=500").unwrap();
+    let producer = ep.create_producer().unwrap();
+    let mut ex = Exchange::new(None);
+    ex.set_body("x");
+    let a = producer.as_async().unwrap();
+    let r = cameleer_core::reactive::block_on(a.process_async(&mut ex));
+    assert!(r.is_err());
+    producer.stop().unwrap();
+    ctx.stop().unwrap();
+}
+
+/// A send queued after the producer stopped is failed at once: its sender threads are gone, and
+/// without this it would wait for ever.
+#[test]
+fn an_asynchronous_send_after_stop_fails_instead_of_waiting() {
+    let broker = KafkaBroker::start_with_partitions(1).unwrap();
+    let ctx = context();
+    ctx.start().unwrap();
+    let ep = ctx.get_endpoint(&format!("kafka:afterstop?brokers={}", broker.bootstrap())).unwrap();
+    let producer = ep.create_producer().unwrap();
+    let a = producer.as_async().unwrap();
+    let mut ex = Exchange::new(None);
+    ex.set_body("before");
+    cameleer_core::reactive::block_on(a.process_async(&mut ex)).unwrap(); // starts the sender threads
+    producer.stop().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p2 = producer.clone();
+    std::thread::spawn(move || {
+        let mut ex = Exchange::new(None);
+        ex.set_body("after");
+        let r = cameleer_core::reactive::block_on(p2.as_async().unwrap().process_async(&mut ex));
+        let _ = tx.send(r.is_err());
+    });
+    assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(10)), Ok(true), "a send after stop must fail, not hang");
+    ctx.stop().unwrap();
+}

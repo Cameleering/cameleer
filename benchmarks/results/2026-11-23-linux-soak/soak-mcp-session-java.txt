@@ -1,0 +1,138 @@
+VERSION side=java impl=apache-camel camel=4.23.0 java=21.0.13+9-LTS vm=OpenJDK_64-Bit_Server_VM gc=G1_Young_Generation+G1_Concurrent_GC+G1_Old_Generation max_heap_mb=1986
+SAMPLE t=0 rss_kb=133984 threads=29 fds=154 cpu_ticks=285
+SAMPLE t=30 rss_kb=300328 threads=66 fds=218 cpu_ticks=8571
+SAMPLE t=60 rss_kb=300672 threads=66 fds=218 cpu_ticks=16000
+SAMPLE t=90 rss_kb=301300 threads=62 fds=218 cpu_ticks=23478
+SAMPLE t=120 rss_kb=301520 threads=62 fds=218 cpu_ticks=30943
+SAMPLE t=150 rss_kb=301728 threads=61 fds=218 cpu_ticks=38544
+SAMPLE t=180 rss_kb=302516 threads=63 fds=218 cpu_ticks=46328
+SAMPLE t=210 rss_kb=302720 threads=63 fds=218 cpu_ticks=54139
+SAMPLE t=240 rss_kb=303028 threads=64 fds=218 cpu_ticks=62012
+SAMPLE t=270 rss_kb=303284 threads=64 fds=218 cpu_ticks=69084
+SAMPLE t=301 rss_kb=303400 threads=62 fds=218 cpu_ticks=76325
+RESULT epoch=1 side=java scenario=mcp-session msgs=7728713 secs=300.000 tput=25762 tput_min=25762 tput_max=25762 mean_us=2483.98 p50_us=2072.58 p99_us=4620.29 max_us=11555.10 connects=64
+SAMPLE t=331 rss_kb=306744 threads=63 fds=154 cpu_ticks=83450
+SAMPLE t=361 rss_kb=323060 threads=64 fds=218 cpu_ticks=90048
+SAMPLE t=391 rss_kb=323344 threads=64 fds=218 cpu_ticks=97161
+SAMPLE t=421 rss_kb=323532 threads=63 fds=218 cpu_ticks=104287
+SAMPLE t=451 rss_kb=323740 threads=62 fds=218 cpu_ticks=111158
+SAMPLE t=481 rss_kb=323872 threads=61 fds=218 cpu_ticks=118133
+SAMPLE t=511 rss_kb=338932 threads=62 fds=218 cpu_ticks=125403
+SAMPLE t=541 rss_kb=339276 threads=62 fds=218 cpu_ticks=132540
+SAMPLE t=571 rss_kb=339304 threads=60 fds=218 cpu_ticks=139495
+SAMPLE t=601 rss_kb=339552 threads=62 fds=218 cpu_ticks=146661
+SAMPLE t=631 rss_kb=339664 threads=62 fds=218 cpu_ticks=153795
+RESULT epoch=2 side=java scenario=mcp-session msgs=7208036 secs=300.000 tput=24027 tput_min=24027 tput_max=24027 mean_us=2663.25 p50_us=2244.61 p99_us=4816.90 max_us=46552.51 connects=64
+SAMPLE t=661 rss_kb=346952 threads=61 fds=218 cpu_ticks=160223
+SAMPLE t=691 rss_kb=347084 threads=62 fds=218 cpu_ticks=167361
+SAMPLE t=721 rss_kb=347152 threads=62 fds=218 cpu_ticks=175093
+SAMPLE t=751 rss_kb=347340 threads=62 fds=218 cpu_ticks=182810
+SAMPLE t=781 rss_kb=347432 threads=62 fds=218 cpu_ticks=190680
+SAMPLE t=811 rss_kb=365224 threads=61 fds=218 cpu_ticks=198587
+SAMPLE t=841 rss_kb=390028 threads=62 fds=218 cpu_ticks=206396
+SAMPLE t=871 rss_kb=390100 threads=62 fds=218 cpu_ticks=214165
+SAMPLE t=901 rss_kb=390084 threads=61 fds=218 cpu_ticks=221945
+SAMPLE t=931 rss_kb=390384 threads=64 fds=218 cpu_ticks=229794
+RESULT epoch=3 side=java scenario=mcp-session msgs=7918799 secs=300.000 tput=26396 tput_min=26396 tput_max=26396 mean_us=2424.21 p50_us=2023.42 p99_us=4423.68 max_us=20906.63 connects=64
+SAMPLE t=961 rss_kb=395488 threads=64 fds=218 cpu_ticks=236645
+SAMPLE t=991 rss_kb=395360 threads=62 fds=218 cpu_ticks=244421
+SAMPLE t=1021 rss_kb=395368 threads=62 fds=218 cpu_ticks=252235
+SAMPLE t=1051 rss_kb=395316 threads=61 fds=218 cpu_ticks=260046
+SAMPLE t=1081 rss_kb=395316 threads=61 fds=218 cpu_ticks=267932
+SAMPLE t=1111 rss_kb=395336 threads=61 fds=218 cpu_ticks=275554
+SAMPLE t=1141 rss_kb=395336 threads=61 fds=218 cpu_ticks=282689
+SAMPLE t=1171 rss_kb=395336 threads=61 fds=218 cpu_ticks=289984
+SAMPLE t=1201 rss_kb=395336 threads=61 fds=218 cpu_ticks=297594
+SAMPLE t=1231 rss_kb=395464 threads=63 fds=218 cpu_ticks=305223
+RESULT epoch=4 side=java scenario=mcp-session msgs=7721243 secs=300.000 tput=25737 tput_min=25737 tput_max=25737 mean_us=2486.28 p50_us=2088.96 p99_us=4489.22 max_us=21912.66 connects=64
+SAMPLE t=1261 rss_kb=395632 threads=63 fds=218 cpu_ticks=311633
+SAMPLE t=1291 rss_kb=395604 threads=62 fds=218 cpu_ticks=318747
+SAMPLE t=1321 rss_kb=395548 threads=61 fds=218 cpu_ticks=325853
+SAMPLE t=1351 rss_kb=395548 threads=61 fds=218 cpu_ticks=332954
+SAMPLE t=1381 rss_kb=395616 threads=62 fds=218 cpu_ticks=340023
+SAMPLE t=1411 rss_kb=395680 threads=63 fds=218 cpu_ticks=347059
+SAMPLE t=1441 rss_kb=395684 threads=63 fds=218 cpu_ticks=354161
+SAMPLE t=1471 rss_kb=395624 threads=62 fds=218 cpu_ticks=361248
+SAMPLE t=1502 rss_kb=395660 threads=62 fds=218 cpu_ticks=368057
+SAMPLE t=1532 rss_kb=395660 threads=62 fds=218 cpu_ticks=375351
+RESULT epoch=5 side=java scenario=mcp-session msgs=7274701 secs=300.000 tput=24249 tput_min=24249 tput_max=24249 mean_us=2638.92 p50_us=2244.61 p99_us=4751.36 max_us=19873.86 connects=64
+SAMPLE t=1562 rss_kb=395760 threads=62 fds=218 cpu_ticks=382439
+SAMPLE t=1592 rss_kb=395760 threads=62 fds=218 cpu_ticks=390352
+SAMPLE t=1622 rss_kb=395760 threads=62 fds=218 cpu_ticks=398207
+SAMPLE t=1652 rss_kb=395696 threads=61 fds=218 cpu_ticks=405978
+SAMPLE t=1682 rss_kb=395696 threads=61 fds=218 cpu_ticks=413796
+SAMPLE t=1712 rss_kb=395696 threads=61 fds=218 cpu_ticks=421553
+SAMPLE t=1742 rss_kb=395764 threads=62 fds=218 cpu_ticks=429314
+SAMPLE t=1772 rss_kb=395768 threads=62 fds=218 cpu_ticks=437154
+SAMPLE t=1802 rss_kb=395768 threads=62 fds=218 cpu_ticks=445018
+SAMPLE t=1832 rss_kb=395704 threads=61 fds=218 cpu_ticks=452877
+RESULT epoch=6 side=java scenario=mcp-session msgs=8000473 secs=300.000 tput=26668 tput_min=26668 tput_max=26668 mean_us=2399.53 p50_us=2007.04 p99_us=4145.15 max_us=15095.43 connects=64
+SAMPLE t=1862 rss_kb=395948 threads=61 fds=218 cpu_ticks=459839
+SAMPLE t=1892 rss_kb=395884 threads=60 fds=218 cpu_ticks=467566
+SAMPLE t=1922 rss_kb=395884 threads=60 fds=218 cpu_ticks=475286
+SAMPLE t=1952 rss_kb=395948 threads=61 fds=218 cpu_ticks=483097
+SAMPLE t=1982 rss_kb=396080 threads=63 fds=218 cpu_ticks=490884
+SAMPLE t=2012 rss_kb=396080 threads=63 fds=218 cpu_ticks=498771
+SAMPLE t=2042 rss_kb=395892 threads=60 fds=218 cpu_ticks=506531
+SAMPLE t=2072 rss_kb=395956 threads=61 fds=218 cpu_ticks=514285
+SAMPLE t=2102 rss_kb=396020 threads=62 fds=218 cpu_ticks=522181
+SAMPLE t=2132 rss_kb=396020 threads=62 fds=218 cpu_ticks=530072
+RESULT epoch=7 side=java scenario=mcp-session msgs=7990350 secs=300.000 tput=26634 tput_min=26634 tput_max=26634 mean_us=2402.58 p50_us=2007.04 p99_us=4145.15 max_us=14171.26 connects=64
+SAMPLE t=2162 rss_kb=396252 threads=61 fds=218 cpu_ticks=536746
+SAMPLE t=2192 rss_kb=396124 threads=59 fds=218 cpu_ticks=544594
+SAMPLE t=2222 rss_kb=396380 threads=63 fds=218 cpu_ticks=552400
+SAMPLE t=2252 rss_kb=396380 threads=63 fds=218 cpu_ticks=559880
+SAMPLE t=2282 rss_kb=396252 threads=61 fds=218 cpu_ticks=567725
+SAMPLE t=2312 rss_kb=396316 threads=62 fds=218 cpu_ticks=573998
+SAMPLE t=2342 rss_kb=396316 threads=62 fds=218 cpu_ticks=580346
+SAMPLE t=2372 rss_kb=396316 threads=62 fds=218 cpu_ticks=586690
+SAMPLE t=2402 rss_kb=405544 threads=62 fds=218 cpu_ticks=593074
+SAMPLE t=2432 rss_kb=405544 threads=62 fds=218 cpu_ticks=599384
+RESULT epoch=8 side=java scenario=mcp-session msgs=7198971 secs=300.000 tput=23997 tput_min=23997 tput_max=23997 mean_us=2666.73 p50_us=2441.22 p99_us=5275.65 max_us=21993.85 connects=64
+SAMPLE t=2462 rss_kb=405724 threads=61 fds=218 cpu_ticks=605043
+SAMPLE t=2492 rss_kb=410368 threads=61 fds=218 cpu_ticks=611396
+SAMPLE t=2522 rss_kb=410372 threads=61 fds=218 cpu_ticks=618008
+SAMPLE t=2552 rss_kb=410380 threads=61 fds=218 cpu_ticks=624922
+SAMPLE t=2582 rss_kb=410380 threads=61 fds=218 cpu_ticks=631949
+SAMPLE t=2612 rss_kb=410444 threads=62 fds=218 cpu_ticks=638950
+SAMPLE t=2642 rss_kb=410444 threads=62 fds=218 cpu_ticks=645942
+SAMPLE t=2672 rss_kb=410380 threads=61 fds=218 cpu_ticks=652846
+SAMPLE t=2702 rss_kb=410384 threads=61 fds=218 cpu_ticks=659854
+SAMPLE t=2733 rss_kb=410384 threads=61 fds=218 cpu_ticks=666860
+RESULT epoch=9 side=java scenario=mcp-session msgs=7274698 secs=300.000 tput=24249 tput_min=24249 tput_max=24249 mean_us=2638.93 p50_us=2244.61 p99_us=5079.04 max_us=21688.57 connects=64
+SAMPLE t=2763 rss_kb=410532 threads=61 fds=218 cpu_ticks=673071
+SAMPLE t=2793 rss_kb=410468 threads=60 fds=218 cpu_ticks=679795
+SAMPLE t=2823 rss_kb=410532 threads=61 fds=218 cpu_ticks=687038
+SAMPLE t=2853 rss_kb=410532 threads=61 fds=218 cpu_ticks=694837
+SAMPLE t=2883 rss_kb=410532 threads=61 fds=218 cpu_ticks=702546
+SAMPLE t=2913 rss_kb=410532 threads=61 fds=218 cpu_ticks=710372
+SAMPLE t=2943 rss_kb=410468 threads=60 fds=218 cpu_ticks=717464
+SAMPLE t=2973 rss_kb=410592 threads=60 fds=218 cpu_ticks=724513
+SAMPLE t=3003 rss_kb=410656 threads=61 fds=218 cpu_ticks=731570
+SAMPLE t=3033 rss_kb=410656 threads=61 fds=218 cpu_ticks=738619
+RESULT epoch=10 side=java scenario=mcp-session msgs=7436416 secs=300.000 tput=24788 tput_min=24788 tput_max=24788 mean_us=2581.54 p50_us=2179.07 p99_us=4882.43 max_us=19085.14 connects=64
+SAMPLE t=3063 rss_kb=410764 threads=61 fds=218 cpu_ticks=744851
+SAMPLE t=3093 rss_kb=410772 threads=61 fds=218 cpu_ticks=751758
+SAMPLE t=3123 rss_kb=411028 threads=65 fds=218 cpu_ticks=758791
+SAMPLE t=3153 rss_kb=411028 threads=65 fds=218 cpu_ticks=765825
+SAMPLE t=3183 rss_kb=410772 threads=61 fds=218 cpu_ticks=772866
+SAMPLE t=3213 rss_kb=410708 threads=60 fds=218 cpu_ticks=779912
+SAMPLE t=3243 rss_kb=410772 threads=61 fds=218 cpu_ticks=786957
+SAMPLE t=3273 rss_kb=410772 threads=61 fds=218 cpu_ticks=793995
+SAMPLE t=3303 rss_kb=410836 threads=62 fds=218 cpu_ticks=801046
+SAMPLE t=3333 rss_kb=410836 threads=62 fds=218 cpu_ticks=808165
+RESULT epoch=11 side=java scenario=mcp-session msgs=7333823 secs=300.000 tput=24446 tput_min=24446 tput_max=24446 mean_us=2617.71 p50_us=2211.84 p99_us=4685.82 max_us=17825.12 connects=64
+SAMPLE t=3363 rss_kb=410812 threads=61 fds=154 cpu_ticks=815423
+SAMPLE t=3393 rss_kb=411148 threads=64 fds=218 cpu_ticks=822214
+SAMPLE t=3423 rss_kb=411148 threads=64 fds=218 cpu_ticks=829688
+SAMPLE t=3453 rss_kb=410896 threads=60 fds=218 cpu_ticks=837434
+SAMPLE t=3483 rss_kb=410896 threads=60 fds=218 cpu_ticks=845155
+SAMPLE t=3513 rss_kb=410900 threads=60 fds=218 cpu_ticks=852848
+SAMPLE t=3543 rss_kb=410900 threads=60 fds=218 cpu_ticks=860388
+SAMPLE t=3573 rss_kb=411028 threads=62 fds=218 cpu_ticks=868038
+SAMPLE t=3603 rss_kb=411156 threads=64 fds=218 cpu_ticks=875524
+SAMPLE t=3633 rss_kb=411156 threads=64 fds=218 cpu_ticks=883148
+SAMPLE t=3663 rss_kb=410900 threads=60 fds=218 cpu_ticks=890975
+RESULT epoch=12 side=java scenario=mcp-session msgs=7876174 secs=300.000 tput=26254 tput_min=26254 tput_max=26254 mean_us=2437.42 p50_us=2039.81 p99_us=4227.07 max_us=17314.41 connects=64
+PROC side=java scenario=mcp-session peak_rss_kb=410892 cpu_pct=241% user_s=4484.58 sys_s=4431.12
+SUMMARY epochs=12 tput_first=25762 tput_last=26254 p99_first_us=4620 p99_last_us=4227 rss_kb_start=339552 rss_kb_end=410900 rss_kb_max=411156 threads_end=60 fds_end=218

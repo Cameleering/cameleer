@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "cameleer"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-main",
@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-ai"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-amqp"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -29,7 +29,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-amqp10"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-amqp",
  "cameleer-core",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-attest"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-cloud"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-amqp10",
  "cameleer-core",
@@ -60,11 +60,11 @@ dependencies = [
 
 [[package]]
 name = "cameleer-core"
-version = "0.7.0"
+version = "0.8.0"
 
 [[package]]
 name = "cameleer-dataformats"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -73,7 +73,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-datastores"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-grpc"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -103,18 +103,20 @@ dependencies = [
 
 [[package]]
 name = "cameleer-http"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
  "simoom",
  "simoom-client",
+ "simoom-rt",
+ "simoom-sys",
  "simoom-tls",
 ]
 
 [[package]]
 name = "cameleer-kafka-mqtt"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -122,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-main"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-ai",
  "cameleer-amqp",
@@ -148,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-protocols"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -156,7 +158,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-saas"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -165,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-script"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -173,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-soap"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
@@ -183,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-sql"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -191,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "cameleer-ssh"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -199,14 +201,14 @@ dependencies = [
 
 [[package]]
 name = "cameleer-tls"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
 ]
 
 [[package]]
 name = "cameleer-xml"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-tls",
@@ -214,16 +216,16 @@ dependencies = [
 
 [[package]]
 name = "cameleer-yaml"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "cameleer-core",
 ]
 
 [[package]]
 name = "simoom"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c5c9115046985d4d6760388135f976e020e45a2a4226b5e2fb7eb6dae50c471"
+checksum = "b7f76943534bf8c01091ff5509b198657097c96af66d2dcd272ba1b3c6160294"
 dependencies = [
  "simoom-h2",
  "simoom-http1",
@@ -234,60 +236,61 @@ dependencies = [
 
 [[package]]
 name = "simoom-client"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "427723b25a68074264d30e5b1cc39ea0f6656063163e8b49c8e5d071692897c9"
+checksum = "fd6b147335ddfbfebd586dde8372b27d40e13f591dee925dc46b06d122222868"
 dependencies = [
  "simoom-h2",
  "simoom-http1",
+ "simoom-rt",
  "simoom-sys",
  "simoom-tls",
 ]
 
 [[package]]
 name = "simoom-h2"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc60c3d6403beebb43ff7420eb6a4ad76b295fc8026866b124c8751fa5f869bb"
+checksum = "8748b60ebd1f03832c8b8232d582f7e4d62a215520b34ba746a54ac3860d8c84"
 dependencies = [
  "simoom-hpack",
 ]
 
 [[package]]
 name = "simoom-hpack"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0aef415da9bd7ceca155dc3a5d3756636eb052fab70ef675df1f5905e6896874"
+checksum = "32d5c31551a5a0b588ba822c23c4031187aa9adcb2ffaeaa4d4bbdfcf2e76312"
 
 [[package]]
 name = "simoom-http1"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f300eb9a52d348d0bdf11dfde83183b5bf47736365f537e03ed65eb649befcf"
+checksum = "90e3ba693bb57cbc4e34b2010c0205dd1f209bb9fd7b8bbda308f11d4325fa38"
 dependencies = [
  "simoom-sys",
 ]
 
 [[package]]
 name = "simoom-rt"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18f24fd27db7c41df687d2569e2fb253111e4f37a4806bd4ed0231f9c92eea08"
+checksum = "687d98393dbfa940dd15ed46d523d31f87842e897d8bcacd88106b3dfb796c9a"
 dependencies = [
  "simoom-sys",
 ]
 
 [[package]]
 name = "simoom-sys"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "186509d46eaac603045959b205cd5c8c3592adb49f636be09a59a277ef34dd3b"
+checksum = "c0b8f83bc658021d49bb26795f3a6baeee08e3a85bd025169d2b6628948465e5"
 
 [[package]]
 name = "simoom-tls"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e6607d31d572dd1b77e7194ad97d409b9713e4f4b68fb6799fa2fd78d4f0674"
+checksum = "8d6385e96f1264d1e3552ad34e60c1a364392a5b569222c1da8eb83812732767"
 dependencies = [
  "simoom-sys",
 ]

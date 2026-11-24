@@ -13,6 +13,12 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Publish the release tags (X.Y.Z, X.Y, latest, health) for this version from the chosen ref instead of edge. Only to repair a release whose tag could not build its image; the image is then not built from the tag."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -84,10 +90,11 @@ jobs:
             latest=${{ matrix.latest }}
             suffix=${{ matrix.suffix }},onlatest=false
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' }}
-            type=raw,value=health,suffix=,enable=${{ matrix.dist == 'health' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-') }}
+            type=semver,pattern={{version}},value=${{ inputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }}
+            type=raw,value=edge,enable=${{ github.event_name == 'workflow_dispatch' && inputs.version == '' }}
+            type=raw,value=latest,enable=${{ matrix.dist == 'general' && inputs.version != '' && !contains(inputs.version, '-') }}
+            type=raw,value=health,suffix=,enable=${{ matrix.dist == 'health' && ((startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')) || (inputs.version != '' && !contains(inputs.version, '-'))) }}
             type=sha
           labels: |
             org.opencontainers.image.title=Cameleer

@@ -3,15 +3,36 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
-## 0.8.0 (YYYY-MM-DD)
+## 0.8.0 (2026-11-24)
 
 gRPC and HTTP/2 on simoom 0.2.0: the gRPC server runs its calls on a pool of threads, the event loops start at
-once, unary calls are cheaper, and the 2026-11-18 "HTTP/2 at 0.51x of HTTP/1.1" turned out to be mostly the
-benchmark's own client. Routes that call the `http` producer from a `platform-http` route now run asynchronously.
-The release has **behaviour changes** (marked **Changed** below; `docs/release-notes/0.8.0.md` lists them under
-Upgrading). All figures are from `docs/BENCHMARKS.md` and `benchmarks/results/2026-11-20-linux-0.8.0-candidate/`: three
-4-vCPU DigitalOcean droplets in `sfo2`, 0.8.0 against 0.7.0, one session.
+once, unary calls are cheaper, routes that call the `http` producer from a `platform-http` route run asynchronously,
+and the HTTP server's keep-alive limit and the governor that moves slow routes off the event loops are fixed. The
+release has **behaviour changes** (marked **Changed** below; `docs/release-notes/0.8.0.md` lists them under
+Upgrading). The 0.8.0 against 0.7.0 figures are from `docs/BENCHMARKS.md` and
+`benchmarks/results/2026-11-20-linux-0.8.0-candidate/` (three 4-vCPU DigitalOcean droplets in `sfo2`, one session);
+the comparison with Apache Camel is the 2026-11-23 session
+(`benchmarks/results/2026-11-23-linux-main-beb3385-camel/`).
 
+- **Changed: the HTTP server no longer closes a keep-alive connection after 1,000 requests.** `ServerConfig::max_keep_alive_requests`
+  defaulted to 1000, a leftover of the thread-per-connection server, so every client had to reconnect after 1,000
+  requests: in the 2026-11-23 droplet benchmark the load generator opened 700 to 5,700 connections per run against
+  Cameleer instead of 64 (one per 1,000 requests). The default is now 0, unlimited, as in Jetty, Vert.x and Undertow;
+  a limit can still be set in `ServerConfig`. Cameleer figures published before this change were measured with the
+  reconnects; on one Windows machine over loopback the change was worth 0% to 5% throughput.
+- **Changed: a route that blocks briefly no longer collapses the server's throughput.** On an idle server such a route (a Kafka or
+  database call of 0.3 to 1 ms) looked fast and moved to the event-loop thread, where under load its calls ran one after
+  the other; in the 2026-11-22 benchmark runs this cut some runs to 7,000-15,000 requests/s. A route is now also sent
+  back to the pool for a minute when its calls keep more than half of the loop threads' time busy over 100 ms.
+- **Changed: the `kafka` producer has an asynchronous form.** A `platform-http`, `jetty` or `netty-http` route that sends to Kafka
+  now waits for the broker's acknowledgement without holding a thread: sends are queued, up to `maxInFlightRequest`
+  sender threads (one per connection, started with the first asynchronous send) take them in batches, and the route
+  continues on the sender thread. Batching, partitioning, offsets and the exchange headers are the same as on the
+  synchronous path, which other routes still use. A send queued when the producer stops fails with an error.
+- **Fixed: start-up regression of 0.6.1 to 0.7.0.** The `startup` scenario went from about 2 ms to 12 to 31 ms because
+  simoom grows the descriptor table at server start and Linux then waits for an RCU grace period once a second thread
+  exists. `cameleer_http::register` now does it while the process is still single-threaded. Back to 2.8 ms in-process
+  and 3.0 ms with an HTTP route on the droplets (`docs/design/startup-regression-2026-11.md`).
 - **The gRPC server runs the threads of its calls on a pool** (PRs 62 and 65). A call used to start up to three
   threads (the call, the reader of its request messages and, with a deadline, the handler), and starting them limited
   the server to about 11,000 calls per second. A call is now one job on a process-wide cached pool (a worker starts
@@ -92,8 +113,14 @@ Upgrading). All figures are from `docs/BENCHMARKS.md` and `benchmarks/results/20
   - Design, all measurements and the porting plan: `docs/design/async-routing.md`.
 - **Benchmarks and docs.** `scripts/cloud-bench/peer.sh` drives the server with nghttp2's `h2load` as an
   independent client, `BENCH_SWAP=1` swaps the order of the sides, and `droplets.sh` defaults to `sfo2` (`c-4` is no
-  longer offered in `blr1` or `sfo3`). The comparison with Apache Camel is re-measured on 0.8.0 in one session (1.8x
-  to 15x on the JVM, p99 lower in every scenario; the 2026-11-06 table was Cameleer 0.4.0). `docs/BENCHMARKS.md`
+  longer offered in `blr1` or `sfo3`). The comparison with Apache Camel is re-measured in one session on 2026-11-23 (`main` at `beb3385`):
+  2.0x (HTTP) to 19.8x (Kafka stream) the throughput of Camel on the JVM, p99 lower in every scenario, start-up 3.0 ms
+  against 1,034 ms, 8 to 39 MB of peak memory against 211 to 421 MB, MCP session calls 2.73x Camel's `camel-mcp-server`
+  and 20.6x the TypeScript SDK. **Four ratios are lower than the ones published with 0.4.0 (2026-11-06):** seda
+  request-reply 5.6x (was 6.8x), the content-based router 2.6x (3.0x), CSV 2.2x (2.3x) and HTTP into Kafka 4.3x (5.0x,
+  measured on other machines). The 2026-11-23 droplets are faster and Camel on the JVM gained more from them than
+  Cameleer did. One-hour soaks: HTTP into Kafka 49.5k req/s (4.6x Camel), MCP session 63.0k calls/s (2.5x), flat
+  throughput, p99, threads and descriptors. `docs/BENCHMARKS.md`
   and the READMEs carry the new figures; the docs harness checks that `cameleer-*` version snippets match the
   workspace minor and that every `CAMEL_*` environment variable read in the code is documented.
 - **Not measured:** asynchronous routing on cloud machines (WSL2 only), h2load over TLS, gRPC streaming, the gRPC

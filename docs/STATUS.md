@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-21 (release 0.7.0 is the latest tag; 0.8.0 is prepared, see "0.8.0 candidate" below).
+_Last updated: 2026-11-24 (release 0.8.0; the section "0.8.0 candidate" below holds its measurements).
 Branch `main`._
 
 ## Name, packaging and release (2026-11-05)
@@ -304,7 +304,7 @@ in `docs/design/advantage-matrix.md` (internal).
   thread and socket, so every closed connection leaked a thread and two descriptors until the
   process ran out (`docs/INTEROP.md` bug 19, fixed in `cameleer-grpc` with a regression test).
 - **Open gaps (see the matrix; written 2026-11-07, the event-driven server core shipped in 0.6.1):** plain HTTP was 1.67x Camel and 68% of a do-nothing server on the
-  same machines (HTTP is now 1.8x Camel on the JVM, 0.8.0 round); MCP per-request CPU is about twice
+  same machines (HTTP is now 2.0x Camel on the JVM, 2026-11-23 round); MCP per-request CPU is about twice
   a plain HTTP request; on CPUs without SHA instructions the envelope costs 6 µs.
 
 ## MCP field test with Claude (2026-11-07, branch `agent-action-layer`)
@@ -594,6 +594,20 @@ Cameleer's own HTTP code or it is not used.
   - **Open:** phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 
+## 0.8.0 released (2026-11-24)
+
+0.8.0 is released from `main`: version bump PR, tag `v0.8.0`, 22 library crates (`cameleer-health` stays at 0.6.0, its
+code is unchanged), the `cameleer` wrapper 0.8.0, images, archives and the MCP Registry entry. Release gate: the owner
+accepted publishing with the 2026-11-23 Camel ratios, four of which are lower than the 2026-11-06 ones (seda
+request-reply 5.6x against 6.8x, router 2.6x against 3.0x, CSV 2.2x against 2.3x, HTTP into Kafka 4.3x against 5.0x on
+other machines). Tests on Windows 11 before the tag: `cargo build --workspace` 0 warnings, `cargo test --workspace`
+2,990 passed, 0 failed (one run of `component_timer` `stopping_a_route_from_its_own_timer_exchange_does_not_hang`
+failed once under load and passed 5/5 alone and in the full rerun; a timing-sensitive test, 10 ms period),
+`cameleer-main --no-default-features` 24 passed, with `--features health` 24 passed. The live, official and simulator
+tiers were not rerun for this release. Known: the published `cameleer-health` 0.6.0 requires `cameleer-core ^0.6`, so
+`cargo install cameleer-main --features health` from crates.io pulls two core versions; fix by releasing the pack at a
+new version.
+
 ## 0.8.0 candidate (2026-11-20/21)
 
 `main` (PRs 65, 67, 68, 69, 71 and simoom 0.2.0 from crates.io) is the 0.8.0 candidate; the release itself (version
@@ -623,6 +637,48 @@ review that led to this documentation pass: `docs/design/docs-review-2026-11-20.
 - **Not measured:** h2load over TLS, gRPC streaming, the gRPC client, Windows, the lazy-loops control.
 - **Not verified:** the live and simulator tiers (WSL2) on the new server and client, and the `gcloud` CLI
   check of the official tier (needs the Google Cloud SDK).
+
+## Two fixes after 0.8.0 (2026-11-23, PRs 74, 75 and 76)
+
+Merged into `main`: the governor sends a route back to the pool when its calls keep the loop threads over half busy (no
+throughput dips in 50 runs, where 6 of 21 runs on `main` fell to 7,000 to 15,000 req/s), and the `kafka` producer has an
+asynchronous form for asynchronous routes (a send queued after stop fails instead of hanging). Droplet figures (`sfo2`, 64
+connections, servers swapped, `main` `7952563` against the fixes against `v0.6.0`): HTTP into Kafka 35,472 against 32,527
+against 40,744 req/s, peak memory 31.5 against 60.8 against 76.9 MB; results in
+`benchmarks/results/2026-11-23-linux-fixes-final/`, summary in `docs/BENCHMARKS.md`. Linux (WSL2): hermetic suite 2,989
+passed, 0 failed, 0 warnings; kfake 5/5 and 2/2, kcat and librdkafka 9/9. **Release gate not clean:** HTTP into Kafka is
+0.87x of `v0.6.0`, stateless MCP 0.95x, HTTP into PostgreSQL 0.92x with one unexplained run at 7,700 req/s. No Apache Camel
+side was run in that session.
+
+## Against Apache Camel again, keep-alive fix and soak (2026-11-23, PR 78)
+
+- **Keep-alive fix (PR 78).** The HTTP server closed every keep-alive connection after 1,000 requests (simoom's
+  `max_requests_per_connection`), so the load generator reconnected 700 to 5,700 times per run against 64 for Camel.
+  The limit is now unlimited by default.
+- **Full suite against Camel on `main` `beb3385`** (`sfo2`, servers Xeon 8358 and 8280, one session, 78 records, 0 failed;
+  `benchmarks/results/2026-11-23-linux-main-beb3385-camel/`):
+  - HTTP fixed reply +21% and REST with JSON +15% against the run before the fix.
+  - 2.0x (HTTP) to 19.8x (Kafka stream) Camel on the JVM; p99 lower in every scenario.
+  - MCP session 55,313 calls/s against 20,254 (2.73x) and the TypeScript SDK's 2,684 (20.6x).
+  - Startup 3.05 against 1,034 ms; peak memory 8 to 39 MB against 211 to 421 MB.
+
+  This session is now the published comparison (README, `docs/BENCHMARKS.md`, the site).
+- **Lower than the previous published ratios:** seda request-reply 6.8x to 5.6x, the router 3.0x to 2.6x, CSV 2.3x to
+  2.2x, the startup headline 450x to 300x (339x exact), and memory up to 54x to 44x. Camel on the JVM gained more on
+  these CPUs than Cameleer did; Cameleer's own figures rose in all but the router. Under the release performance rule
+  these need a decision before the next release.
+- **One-hour soaks** (`scripts/cloud-bench/soak.sh`, `benchmarks/results/2026-11-23-linux-soak/`):
+  - HTTP into Kafka 49,530 req/s (4.6x Camel); MCP session 62,967 calls/s (2.5x).
+  - Cameleer: flat throughput and p99, constant threads and descriptors, 0.6 to 1.3 MB of RSS growth that slows.
+  - Camel on the JVM grows by 17 to 71 MB and the TypeScript SDK by 89 MB in the hour.
+
+## Start-up regression found and fixed (2026-11-22)
+
+The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31 ms on WSL2 (12 ms on the
+4-CPU droplets) in 0.6.1: simoom grows the descriptor table at server start, and Linux waits for an RCU grace
+period when a second thread exists. `cameleer_http::register` now does it while the process is single-threaded
+(test `early_descriptors`). Back to 2.8 ms. Details and per-release table: `docs/design/startup-regression-2026-11.md`.
+Not yet re-measured on a droplet.
 
 ## Pending / todo
 
@@ -694,7 +750,7 @@ Docker, or the lack of real accounts.
    PostgreSQL 16) against Apache Camel 4.23.0 on Java 21 and Camel Quarkus 3.40.0 native (Camel
    4.22.1, Mandrel 25.0.4.1). Cameleer is ahead in every scenario: 1.7–8.7x Camel JVM throughput,
    3 ms startup vs 1.1 s (native 30 ms), up to 54x less memory (Cameleer 0.4.0; replaced on 2026-11-20 by the 0.8.0 session:
-   1.8–15x, see "0.8.0 candidate"). Report: `docs/BENCHMARKS.md`
+   1.8–15x, see "0.8.0 candidate", and on 2026-11-23 by `main` `beb3385`: 2.0–19.8x, see "Against Apache Camel again"). Report: `docs/BENCHMARKS.md`
    (tables generated by `scripts/cloud-bench/summarize.py` from `benchmarks/results/`); landing
    page `site/compare/apache-camel-vs-cameleer/`. The run found and fixed three bugs: HTTP server
    32-worker keep-alive churn (now 200 workers), Kafka producer serializing concurrent sends (now
@@ -735,8 +791,8 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect about 2,980 passing
-   (Windows 11, 2026-11-09).
+1. `git checkout main && cargo test --workspace`. Expect about 2,990 passing
+   (Windows 11, 2026-11-24).
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
 4. Update this file, and `docs/INTEROP.md` or `docs/FEATURES.md` where relevant, as part of

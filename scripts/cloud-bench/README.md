@@ -63,6 +63,16 @@ size, cold start and memory of the `cameleer` command.
 a second pass can show whether the order of the sides matters (the 0.8.0 candidate round used it as its second 64
 connection pass).
 
+## Soak test
+
+`scripts/cloud-bench/soak.sh <scenario> <side> [a|b]` holds one served scenario (`http-kafka`, `mcp-session`) under constant load
+for `SOAK_MINUTES` (default 60) in epochs of `SOAK_EPOCH` seconds (default 300), and samples the server process every
+`SOAK_SAMPLE` seconds (default 30): resident memory, threads, open descriptors and CPU. The short runs above cannot show a
+memory or descriptor leak, a thread count that creeps up, or throughput and p99 that drift; the soak output has one RESULT line per
+epoch, the SAMPLE lines, the PROC record and a SUMMARY comparing the first and the last epoch. Run it for each side in turn
+(`rust`, `java`, `native` and, for `mcp-session`, `node`) on the same droplet to compare. `http-kafka` caps the retention of its
+topic at 500 MB per partition first, so the load node's disk does not fill.
+
 ## Telling a server limit from a client limit
 
 `scripts/cloud-bench/peer.sh` drives the same Cameleer server with nghttp2's `h2load` (HTTP/1.1, HTTP/2 with 4

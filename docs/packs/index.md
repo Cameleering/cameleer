@@ -15,7 +15,7 @@ standards lives in a pack instead. A pack:
 - ships an SBOM of exactly what is compiled in (`scripts/sbom.py`) and, since 0.6.1,
   SHA-256 sums and Sigstore signatures of its archives, and its own change log
   (`crates/cameleer-<pack>/CHANGELOG.md`);
-- describes itself (`cameleer version` prints `health 0.6.0 (core 0.7.0)`), so validation, the
+- describes itself (`cameleer version` prints `health 0.6.0 (core 0.8.0)`), so validation, the
   YAML DSL and error messages know its components without central tables.
 
 A route that names a pack's component in a build without the pack fails at start-up with a message

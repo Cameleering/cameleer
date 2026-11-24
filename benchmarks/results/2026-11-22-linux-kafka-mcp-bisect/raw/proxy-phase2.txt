@@ -1,0 +1,4 @@
+RESULT phase=2 node=a label=main-noasync scenario=http-proxy scenario=http-proxy msgs=252323 secs=25.000 tput=10093 tput_min=8951 tput_max=10457 mean_us=6341.72 p50_us=4882.43 p99_us=18219.01 max_us=22172.72 connects=438
+PROC phase=2 node=a label=main-noasync scenario=http-proxy peak_rss_kb=22768 cpu_pct=55% user_s=16.93 sys_s=10.87
+RESULT phase=2 node=a label=main scenario=http-proxy scenario=http-proxy msgs=1354860 secs=25.001 tput=54193 tput_min=51692 tput_max=56392 mean_us=1180.52 p50_us=1011.71 p99_us=2605.06 max_us=7050.43 connects=2172
+PROC phase=2 node=a label=main scenario=http-proxy peak_rss_kb=11384 cpu_pct=224% user_s=69.41 sys_s=42.77

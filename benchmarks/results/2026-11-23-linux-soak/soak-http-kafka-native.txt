@@ -1,0 +1,138 @@
+VERSION side=native impl=camel-quarkus-native camel=4.22.1 vm=Substrate_VM max_heap_mb=6352
+SAMPLE t=0 rss_kb=73564 threads=9 fds=39 cpu_ticks=1
+SAMPLE t=30 rss_kb=106984 threads=36 fds=104 cpu_ticks=4742
+SAMPLE t=60 rss_kb=105548 threads=36 fds=104 cpu_ticks=9522
+SAMPLE t=90 rss_kb=103160 threads=36 fds=104 cpu_ticks=14316
+SAMPLE t=120 rss_kb=104592 threads=36 fds=104 cpu_ticks=19041
+SAMPLE t=150 rss_kb=102216 threads=36 fds=104 cpu_ticks=23793
+SAMPLE t=180 rss_kb=103896 threads=36 fds=104 cpu_ticks=28581
+SAMPLE t=210 rss_kb=105668 threads=36 fds=104 cpu_ticks=33310
+SAMPLE t=240 rss_kb=106616 threads=36 fds=104 cpu_ticks=38063
+SAMPLE t=270 rss_kb=104628 threads=36 fds=104 cpu_ticks=42835
+SAMPLE t=300 rss_kb=106380 threads=36 fds=104 cpu_ticks=47602
+SAMPLE t=330 rss_kb=109848 threads=36 fds=104 cpu_ticks=52395
+RESULT epoch=1 side=native scenario=http-kafka msgs=3010596 secs=300.000 tput=10035 tput_min=10035 tput_max=10035 mean_us=6377.18 p50_us=6258.69 p99_us=10682.37 max_us=27454.05 connects=64
+SAMPLE t=360 rss_kb=110108 threads=36 fds=104 cpu_ticks=56744
+SAMPLE t=390 rss_kb=105680 threads=36 fds=104 cpu_ticks=61561
+SAMPLE t=420 rss_kb=107688 threads=36 fds=104 cpu_ticks=66330
+SAMPLE t=450 rss_kb=106156 threads=36 fds=104 cpu_ticks=71153
+SAMPLE t=480 rss_kb=104096 threads=36 fds=104 cpu_ticks=75942
+SAMPLE t=510 rss_kb=105004 threads=36 fds=104 cpu_ticks=80732
+SAMPLE t=540 rss_kb=106332 threads=36 fds=103 cpu_ticks=85485
+SAMPLE t=570 rss_kb=109976 threads=36 fds=103 cpu_ticks=90333
+SAMPLE t=600 rss_kb=107628 threads=36 fds=103 cpu_ticks=95201
+SAMPLE t=630 rss_kb=109640 threads=36 fds=103 cpu_ticks=100055
+RESULT epoch=2 side=native scenario=http-kafka msgs=3002500 secs=300.000 tput=10008 tput_min=10008 tput_max=10008 mean_us=6394.38 p50_us=6324.22 p99_us=10813.44 max_us=24480.91 connects=64
+SAMPLE t=660 rss_kb=110356 threads=36 fds=103 cpu_ticks=104359
+SAMPLE t=690 rss_kb=107244 threads=36 fds=103 cpu_ticks=109226
+SAMPLE t=720 rss_kb=108460 threads=36 fds=103 cpu_ticks=114074
+SAMPLE t=750 rss_kb=106804 threads=36 fds=103 cpu_ticks=118911
+SAMPLE t=780 rss_kb=112620 threads=36 fds=103 cpu_ticks=123758
+SAMPLE t=810 rss_kb=108676 threads=36 fds=103 cpu_ticks=128594
+SAMPLE t=840 rss_kb=110128 threads=36 fds=103 cpu_ticks=133443
+SAMPLE t=870 rss_kb=116016 threads=36 fds=103 cpu_ticks=138260
+SAMPLE t=900 rss_kb=106360 threads=36 fds=103 cpu_ticks=143057
+SAMPLE t=930 rss_kb=108232 threads=36 fds=103 cpu_ticks=147846
+RESULT epoch=3 side=native scenario=http-kafka msgs=2995354 secs=300.000 tput=9985 tput_min=9985 tput_max=9985 mean_us=6409.58 p50_us=6324.22 p99_us=10944.51 max_us=23209.74 connects=64
+SAMPLE t=960 rss_kb=109236 threads=36 fds=103 cpu_ticks=152106
+SAMPLE t=990 rss_kb=106076 threads=36 fds=103 cpu_ticks=156837
+SAMPLE t=1020 rss_kb=112672 threads=36 fds=103 cpu_ticks=161590
+SAMPLE t=1050 rss_kb=109844 threads=36 fds=103 cpu_ticks=166362
+SAMPLE t=1080 rss_kb=108944 threads=36 fds=103 cpu_ticks=171149
+SAMPLE t=1110 rss_kb=105228 threads=36 fds=103 cpu_ticks=175904
+SAMPLE t=1140 rss_kb=112076 threads=36 fds=103 cpu_ticks=180685
+SAMPLE t=1170 rss_kb=107272 threads=36 fds=103 cpu_ticks=185483
+SAMPLE t=1200 rss_kb=107216 threads=36 fds=103 cpu_ticks=190217
+SAMPLE t=1230 rss_kb=108736 threads=36 fds=103 cpu_ticks=194987
+RESULT epoch=4 side=native scenario=http-kafka msgs=3004632 secs=300.000 tput=10015 tput_min=10015 tput_max=10015 mean_us=6389.80 p50_us=6258.69 p99_us=10682.37 max_us=18799.77 connects=64
+SAMPLE t=1260 rss_kb=106156 threads=36 fds=103 cpu_ticks=199235
+SAMPLE t=1290 rss_kb=108388 threads=36 fds=103 cpu_ticks=204045
+SAMPLE t=1320 rss_kb=107072 threads=36 fds=103 cpu_ticks=208829
+SAMPLE t=1350 rss_kb=109224 threads=36 fds=103 cpu_ticks=213619
+SAMPLE t=1380 rss_kb=107284 threads=36 fds=103 cpu_ticks=218357
+SAMPLE t=1410 rss_kb=107736 threads=36 fds=103 cpu_ticks=223114
+SAMPLE t=1440 rss_kb=105736 threads=36 fds=103 cpu_ticks=227885
+SAMPLE t=1470 rss_kb=108264 threads=36 fds=103 cpu_ticks=232641
+SAMPLE t=1500 rss_kb=105716 threads=36 fds=103 cpu_ticks=237358
+SAMPLE t=1530 rss_kb=106740 threads=36 fds=103 cpu_ticks=242115
+RESULT epoch=5 side=native scenario=http-kafka msgs=3007708 secs=300.000 tput=10026 tput_min=10026 tput_max=10026 mean_us=6383.24 p50_us=6258.69 p99_us=10944.51 max_us=19088.69 connects=64
+SAMPLE t=1560 rss_kb=110292 threads=36 fds=103 cpu_ticks=246350
+SAMPLE t=1590 rss_kb=109384 threads=36 fds=103 cpu_ticks=251098
+SAMPLE t=1621 rss_kb=109108 threads=36 fds=103 cpu_ticks=255824
+SAMPLE t=1651 rss_kb=111268 threads=36 fds=103 cpu_ticks=260572
+SAMPLE t=1681 rss_kb=107832 threads=36 fds=103 cpu_ticks=265341
+SAMPLE t=1711 rss_kb=107304 threads=36 fds=103 cpu_ticks=270120
+SAMPLE t=1741 rss_kb=107316 threads=36 fds=103 cpu_ticks=274918
+SAMPLE t=1771 rss_kb=109064 threads=36 fds=103 cpu_ticks=279727
+SAMPLE t=1801 rss_kb=112952 threads=36 fds=103 cpu_ticks=284514
+SAMPLE t=1831 rss_kb=107772 threads=36 fds=103 cpu_ticks=289342
+RESULT epoch=6 side=native scenario=http-kafka msgs=3001971 secs=300.000 tput=10007 tput_min=10007 tput_max=10007 mean_us=6395.49 p50_us=6258.69 p99_us=10944.51 max_us=25921.54 connects=64
+SAMPLE t=1861 rss_kb=109608 threads=36 fds=103 cpu_ticks=293615
+SAMPLE t=1891 rss_kb=107196 threads=36 fds=103 cpu_ticks=298369
+SAMPLE t=1921 rss_kb=112504 threads=36 fds=103 cpu_ticks=303148
+SAMPLE t=1951 rss_kb=105584 threads=36 fds=103 cpu_ticks=307912
+SAMPLE t=1981 rss_kb=105788 threads=36 fds=103 cpu_ticks=312672
+SAMPLE t=2011 rss_kb=111596 threads=36 fds=103 cpu_ticks=317443
+SAMPLE t=2041 rss_kb=113296 threads=36 fds=103 cpu_ticks=322220
+SAMPLE t=2071 rss_kb=113252 threads=36 fds=103 cpu_ticks=326976
+SAMPLE t=2101 rss_kb=110344 threads=36 fds=103 cpu_ticks=331784
+SAMPLE t=2131 rss_kb=109328 threads=36 fds=103 cpu_ticks=336586
+RESULT epoch=7 side=native scenario=http-kafka msgs=2999623 secs=300.000 tput=9999 tput_min=9999 tput_max=9999 mean_us=6400.43 p50_us=6324.22 p99_us=10944.51 max_us=19276.01 connects=64
+SAMPLE t=2161 rss_kb=105252 threads=36 fds=103 cpu_ticks=340895
+SAMPLE t=2191 rss_kb=105760 threads=36 fds=103 cpu_ticks=345661
+SAMPLE t=2221 rss_kb=107292 threads=36 fds=103 cpu_ticks=350430
+SAMPLE t=2251 rss_kb=106864 threads=36 fds=103 cpu_ticks=355209
+SAMPLE t=2281 rss_kb=106352 threads=36 fds=103 cpu_ticks=359976
+SAMPLE t=2311 rss_kb=107960 threads=36 fds=103 cpu_ticks=364751
+SAMPLE t=2341 rss_kb=108904 threads=36 fds=103 cpu_ticks=369545
+SAMPLE t=2371 rss_kb=108060 threads=36 fds=103 cpu_ticks=374293
+SAMPLE t=2401 rss_kb=109804 threads=36 fds=103 cpu_ticks=379061
+SAMPLE t=2431 rss_kb=107512 threads=36 fds=103 cpu_ticks=383829
+RESULT epoch=8 side=native scenario=http-kafka msgs=3000459 secs=300.000 tput=10002 tput_min=10002 tput_max=10002 mean_us=6398.71 p50_us=6258.69 p99_us=11337.73 max_us=20498.54 connects=64
+SAMPLE t=2461 rss_kb=110652 threads=36 fds=103 cpu_ticks=388110
+SAMPLE t=2491 rss_kb=109172 threads=36 fds=103 cpu_ticks=392860
+SAMPLE t=2521 rss_kb=112512 threads=36 fds=103 cpu_ticks=397636
+SAMPLE t=2551 rss_kb=111508 threads=36 fds=103 cpu_ticks=402411
+SAMPLE t=2581 rss_kb=110476 threads=36 fds=103 cpu_ticks=407174
+SAMPLE t=2611 rss_kb=112308 threads=36 fds=103 cpu_ticks=411921
+SAMPLE t=2641 rss_kb=107996 threads=36 fds=103 cpu_ticks=416681
+SAMPLE t=2671 rss_kb=108072 threads=36 fds=103 cpu_ticks=421459
+SAMPLE t=2701 rss_kb=108052 threads=36 fds=103 cpu_ticks=426223
+SAMPLE t=2731 rss_kb=107372 threads=36 fds=103 cpu_ticks=430957
+RESULT epoch=9 side=native scenario=http-kafka msgs=3004268 secs=300.000 tput=10014 tput_min=10014 tput_max=10014 mean_us=6390.55 p50_us=6258.69 p99_us=11075.58 max_us=25010.58 connects=64
+SAMPLE t=2761 rss_kb=110176 threads=36 fds=103 cpu_ticks=435238
+SAMPLE t=2791 rss_kb=109540 threads=36 fds=103 cpu_ticks=440015
+SAMPLE t=2821 rss_kb=109232 threads=36 fds=103 cpu_ticks=444775
+SAMPLE t=2851 rss_kb=109112 threads=36 fds=103 cpu_ticks=449561
+SAMPLE t=2881 rss_kb=108536 threads=36 fds=103 cpu_ticks=454363
+SAMPLE t=2911 rss_kb=107720 threads=36 fds=103 cpu_ticks=459134
+SAMPLE t=2941 rss_kb=107796 threads=36 fds=103 cpu_ticks=463905
+SAMPLE t=2971 rss_kb=110024 threads=36 fds=103 cpu_ticks=468703
+SAMPLE t=3001 rss_kb=114312 threads=36 fds=103 cpu_ticks=473461
+SAMPLE t=3031 rss_kb=110812 threads=36 fds=103 cpu_ticks=478248
+RESULT epoch=10 side=native scenario=http-kafka msgs=2998725 secs=300.000 tput=9996 tput_min=9996 tput_max=9996 mean_us=6402.44 p50_us=6324.22 p99_us=10813.44 max_us=18399.88 connects=64
+SAMPLE t=3061 rss_kb=106756 threads=36 fds=39 cpu_ticks=482541
+SAMPLE t=3091 rss_kb=108532 threads=36 fds=103 cpu_ticks=487276
+SAMPLE t=3121 rss_kb=107416 threads=36 fds=103 cpu_ticks=492022
+SAMPLE t=3151 rss_kb=109316 threads=36 fds=103 cpu_ticks=496757
+SAMPLE t=3181 rss_kb=106508 threads=36 fds=103 cpu_ticks=501528
+SAMPLE t=3211 rss_kb=111236 threads=36 fds=103 cpu_ticks=506283
+SAMPLE t=3241 rss_kb=107644 threads=36 fds=103 cpu_ticks=511070
+SAMPLE t=3271 rss_kb=108472 threads=36 fds=103 cpu_ticks=515840
+SAMPLE t=3301 rss_kb=107432 threads=36 fds=103 cpu_ticks=520588
+SAMPLE t=3331 rss_kb=108260 threads=36 fds=103 cpu_ticks=525318
+RESULT epoch=11 side=native scenario=http-kafka msgs=3003798 secs=300.000 tput=10013 tput_min=10013 tput_max=10013 mean_us=6391.73 p50_us=6324.22 p99_us=10813.44 max_us=20188.73 connects=64
+SAMPLE t=3361 rss_kb=109812 threads=36 fds=39 cpu_ticks=530039
+SAMPLE t=3391 rss_kb=110288 threads=36 fds=103 cpu_ticks=534278
+SAMPLE t=3421 rss_kb=109440 threads=36 fds=103 cpu_ticks=538988
+SAMPLE t=3451 rss_kb=109768 threads=36 fds=103 cpu_ticks=543726
+SAMPLE t=3482 rss_kb=106744 threads=36 fds=103 cpu_ticks=548458
+SAMPLE t=3512 rss_kb=108288 threads=36 fds=103 cpu_ticks=553229
+SAMPLE t=3542 rss_kb=106472 threads=36 fds=103 cpu_ticks=557969
+SAMPLE t=3572 rss_kb=109640 threads=36 fds=103 cpu_ticks=562732
+SAMPLE t=3602 rss_kb=109464 threads=36 fds=103 cpu_ticks=567486
+SAMPLE t=3632 rss_kb=105928 threads=36 fds=103 cpu_ticks=572232
+SAMPLE t=3662 rss_kb=110068 threads=36 fds=103 cpu_ticks=576980
+RESULT epoch=12 side=native scenario=http-kafka msgs=3004569 secs=300.000 tput=10015 tput_min=10015 tput_max=10015 mean_us=6389.90 p50_us=6324.22 p99_us=10813.44 max_us=18086.28 connects=64
+PROC side=native scenario=http-kafka peak_rss_kb=132072 cpu_pct=156% user_s=4508.30 sys_s=1266.05
+SUMMARY epochs=12 tput_first=10035 tput_last=10015 p99_first_us=10682 p99_last_us=10813 rss_kb_start=107628 rss_kb_end=110068 rss_kb_max=116016 threads_end=36 fds_end=103

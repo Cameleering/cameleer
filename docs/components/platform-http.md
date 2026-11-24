@@ -100,8 +100,8 @@ fn device_readings_routes(b: &mut RouteBuilder) {
 
 ### Asynchronous routes
 
-A route that calls the `http` producer answers its requests without holding a server thread while it waits
-for the reply. This is on by default.
+A route that calls the `http` or the `kafka` producer answers its requests without holding a server thread
+while it waits for the reply (for Kafka, the acknowledgement of the broker). This is on by default.
 
 - **Where it runs:** the route continues on the event loop that read the reply.
   - Steps that only compute run there too: `setHeader`, `setBody` or `transform` with constant, header,
@@ -166,7 +166,11 @@ The server runs on [simoom](https://crates.io/crates/simoom), one event loop per
 idle keep-alive connection costs a few hundred bytes and no thread: tens of thousands of open
 connections are fine. A route runs on the loop thread while it is fast, and on a pool of at most 200
 threads while it blocks (a call to another service, a database); Cameleer learns which per route, by
-timing the route's calls. Header names in responses are lower case, as HTTP allows.
+timing the route's calls. A route that blocks only briefly can look fast while the server is idle; when its
+calls keep more than half of the loop threads' time busy over 100 ms, it goes back to the pool for a minute.
+A keep-alive connection stays open for any number of requests (as in Jetty and Vert.x); the server
+closes it after 15 s idle.
+Header names in responses are lower case, as HTTP allows.
 
 ### Can I serve every path below a prefix?
 Yes: `platform-http:/files?matchOnUriPrefix=true`; `CamelHttpPath` holds the full path.
