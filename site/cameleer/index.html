@@ -24,7 +24,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "SoftwareSourceCode", "name": "Cameleer", "alternateName": "rust-camel", "description": "An integration engine in the style of Apache Camel, written in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only. One native binary that starts in 3 ms and runs in megabytes, with a built-in AWS Lambda runtime. For AI agents it serves routes as MCP tools over Streamable HTTP and stdio and runs every tool call through JSON-schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts, compensation and a hash-chained audit log; it also has an agent step and tool calling in its model components.", "codeRepository": "https://github.com/cameleering/cameleer", "url": "https://cameleer.ing/cameleer/", "sameAs": ["https://github.com/cameleering/cameleer", "https://crates.io/crates/cameleer-main", "https://hub.docker.com/r/cameleering/cameleer"], "programmingLanguage": "Rust", "runtimePlatform": "Linux, macOS, Windows, Docker, AWS Lambda", "image": "https://cameleer.ing/og.png", "logo": "https://cameleer.ing/brand/cameleer-mark.png", "license": "https://www.apache.org/licenses/LICENSE-2.0", "author": {"@type": "Person", "name": "Sudheesh PM"}, "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7, DICOM", "@id": "https://cameleer.ing/cameleer/#software", "softwareVersion": "0.7.0", "publisher": {"@id": "https://cameleer.ing/#org"}, "maintainer": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
+{"@context": "https://schema.org", "@type": "SoftwareSourceCode", "name": "Cameleer", "alternateName": "rust-camel", "description": "An integration engine in the style of Apache Camel, written in Rust: routes, Enterprise Integration Patterns, about 230 components and the Rust, YAML and XML DSLs, built on the Rust standard library only. One native binary that starts in 3 ms and runs in megabytes, with a built-in AWS Lambda runtime. For AI agents it serves routes as MCP tools over Streamable HTTP and stdio and runs every tool call through JSON-schema validation, idempotency, approvals, rate limits, circuit breakers, timeouts, compensation and a hash-chained audit log; it also has an agent step and tool calling in its model components.", "codeRepository": "https://github.com/cameleering/cameleer", "url": "https://cameleer.ing/cameleer/", "sameAs": ["https://github.com/cameleering/cameleer", "https://crates.io/crates/cameleer-main", "https://hub.docker.com/r/cameleering/cameleer"], "programmingLanguage": "Rust", "runtimePlatform": "Linux, macOS, Windows, Docker, AWS Lambda", "image": "https://cameleer.ing/og.png", "logo": "https://cameleer.ing/brand/cameleer-mark.png", "license": "https://www.apache.org/licenses/LICENSE-2.0", "author": {"@type": "Person", "name": "Sudheesh PM"}, "keywords": "Apache Camel, Rust, integration framework, EIP, AI agents, MCP server, agent tool calls, serverless, AWS Lambda, edge, MQTT, HL7, DICOM", "@id": "https://cameleer.ing/cameleer/#software", "softwareVersion": "0.8.0", "publisher": {"@id": "https://cameleer.ing/#org"}, "maintainer": {"@id": "https://cameleer.ing/#org"}, "isPartOf": {"@id": "https://cameleer.ing/#website"}}
 </script>
 <link rel="stylesheet" href="../assets/site.css">
 <style>
@@ -414,8 +414,8 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <div class="item"><div class="label">Request-reply<small>in-memory queue</small></div><div class="bars"><div class="b r" data-w="100"><span>775k msgs/s</span></div><div class="b j" data-w="17.8"><span>138k</span></div></div><div class="x">5.6x</div></div>
     </div>
     <p class="fine"><strong>No p99 loss:</strong> Cameleer's p99 latency is lower in every scenario; for HTTP into Kafka it is 2.5 ms against Apache Camel's 7.6 ms, while serving 4.3 times the requests. Plain HTTP reaches 68% of a do-nothing server on the same machines; <a href="../simoom/">simoom</a>, the new HTTP engine, is measured to close that gap (<a href="../ledger/#simoom">its ledger rows</a>). Apache Camel compiled natively with Quarkus starts faster than on the JVM but has lower throughput; it is in the full comparison. <a href="compare/apache-camel-vs-cameleer/">Every scenario, the method and the raw data</a>.</p>
-    <p class="fine"><strong>0.7.0 against 0.6.1</strong> (2026-11-18, gRPC and HTTP/2 moved onto simoom; two builds of Cameleer, not Apache Camel): the gRPC server uses 29% less CPU per call (204 against 287 &micro;s) with a 35% lower p99 (10.85 against 16.66 ms); its throughput is level within noise (1.06x), because both builds stop near 11,000 calls per second. HTTP/2 measured at about half of HTTP/1.1 in that round (63,941 against 125,721), which was mostly the benchmark&rsquo;s own HTTP/2 client: in the 0.8.0 candidate round REST over HTTP/2 equals REST over HTTP/1.1. REST API with JSON showed 0.95x, within the noise of this setup. <a href="../docs/BENCHMARKS.html#grpc-and-http2-on-simoom-070-2026-11-18">The round, its limits and the raw data</a> · <a href="../ledger/#cameleer-0-7">ledger rows</a>.</p>
-    <p class="fine"><strong>0.8.0 against 0.7.0</strong> (measured 2026-11-20 on the release candidate): gRPC unary calls at 94,400 against 8,300 calls per second (11.4x; the ratio includes the thread pool that 0.7.0 lacks), p99 1.2 against 14.8 ms, 24 against 270 &micro;s of CPU per call. <strong>Losses:</strong> MCP tool calls are 0.96x to 0.98x of 0.7.0, probably a real 2% to 4% slowdown, cause not isolated; an HTTP route is ready 0.3 to 0.5 ms later. <a href="../docs/BENCHMARKS.html#080-candidate-against-070-and-against-an-independent-client-2026-11-20">The round and its raw data</a> · <a href="../ledger/#cameleer-0-8">ledger rows</a>.</p>
+    <p class="fine"><strong>0.7.0 against 0.6.1</strong> (2026-11-18, gRPC and HTTP/2 moved onto simoom; two builds of Cameleer, not Apache Camel): the gRPC server uses 29% less CPU per call (204 against 287 &micro;s) with a 35% lower p99 (10.85 against 16.66 ms); its throughput is level within noise (1.06x), because both builds stop near 11,000 calls per second. HTTP/2 measured at about half of HTTP/1.1 in that round (63,941 against 125,721), which was mostly the benchmark&rsquo;s own HTTP/2 client: in the 0.8.0 round REST over HTTP/2 equals REST over HTTP/1.1. REST API with JSON showed 0.95x, within the noise of this setup. <a href="../docs/BENCHMARKS.html#grpc-and-http2-on-simoom-070-2026-11-18">The round, its limits and the raw data</a> · <a href="../ledger/#cameleer-0-7">ledger rows</a>.</p>
+    <p class="fine"><strong>0.8.0 against 0.7.0</strong> (released 2026-11-24; measured 2026-11-20 on the release candidate): gRPC unary calls at 94,400 against 8,300 calls per second (11.4x; the ratio includes the thread pool that 0.7.0 lacks), p99 1.2 against 14.8 ms, 24 against 270 &micro;s of CPU per call. <strong>Losses:</strong> MCP tool calls are 0.96x to 0.98x of 0.7.0, probably a real 2% to 4% slowdown, cause not isolated; an HTTP route is ready 0.3 to 0.5 ms later. <a href="../docs/BENCHMARKS.html#080-candidate-against-070-and-against-an-independent-client-2026-11-20">The round and its raw data</a> · <a href="../ledger/#cameleer-0-8">ledger rows</a>.</p>
   </div>
 </section>
 
@@ -605,9 +605,9 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
   <div class="wrap">
     <h2 id="facts-h">Cameleer at a glance.</h2>
     <dl class="factbox">
-      <div><dt>Version</dt><dd>0.7.0 (2026-11-16)</dd></div>
+      <div><dt>Version</dt><dd>0.8.0 (2026-11-24)</dd></div>
       <div><dt>Licence</dt><dd>Apache License 2.0</dd></div>
-      <div><dt>Container</dt><dd><code>docker run cameleering/cameleer:0.7.0</code>; health pack: <code>:health</code></dd></div>
+      <div><dt>Container</dt><dd><code>docker run cameleering/cameleer:0.8.0</code>; health pack: <code>:health</code></dd></div>
       <div><dt>CLI</dt><dd><code>cargo install cameleer</code> (the <code>cameleer</code> command); in Rust, <code>cargo add cameleer</code>. The <code>cameleer</code> crate wraps <code>cameleer-main</code>, which works the same</dd></div>
       <div><dt>Downloads</dt><dd><a href="https://github.com/cameleering/cameleer/releases">signed archives</a> for Linux x86-64, Windows x86-64 and macOS arm64, each with SHA-256, SBOM and Sigstore bundle</dd></div>
       <div><dt>Source</dt><dd><a href="https://github.com/cameleering/cameleer">github.com/cameleering/cameleer</a></dd></div>
@@ -661,8 +661,8 @@ code.in { font-size: .9em; background: var(--grid); padding: 1px 6px; border-rad
       <div class="qs">
         <ol class="steps">
           <li><div>Add the crates to <code class="in">Cargo.toml</code><pre class="cmd"><code>[dependencies]
-cameleer-core = "0.5"
-cameleer-http = "0.5"</code></pre></div></li>
+cameleer-core = "0.8"
+cameleer-http = "0.8"</code></pre></div></li>
           <li><div>Write routes in the Rust DSL (right)</div></li>
           <li><div>Run and call it<pre class="cmd"><code>cargo run --release
 curl localhost:8080/api/greet/Ada</code></pre></div></li>
@@ -701,7 +701,7 @@ cameleer stop hello-api</code></pre></div></li>
           <header><span>One binary, Camel JBang's subcommands</span></header>
 <pre><code>$ cameleer run hello-api.camel.yaml
 <span class="tk-c">INFO  HTTP server started on 0.0.0.0:8080</span>
-<span class="tk-c">INFO  Cameleer 0.7.0 (camel-1) started (3 routes, 3 started)</span>
+<span class="tk-c">INFO  Cameleer 0.8.0 (camel-1) started (3 routes, 3 started)</span>
 
 $ cameleer validate hello-api.camel.yaml   <span class="tk-c"># before it runs</span>
 $ cameleer --help
@@ -808,7 +808,7 @@ $ cameleer --help
 
   // runtime toggle
   var data = {
-    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.7.0</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
+    rust: { lines: ['$ cameleer run triage.camel.yaml', '<span class="dim">Cameleer 0.8.0</span>', '<span class="ok">Started route triage in 3 ms</span>'], start: ['3 ms', 1], mem: ['8 MB', 2], size: ['one binary', 6] },
     java: { lines: ['$ camel run triage.camel.yaml', '<span class="dim">Apache Camel 4.23 (Java 21)</span>', '<span class="ok">Started route triage in 1.0 s</span>'], start: ['1.0 s', 100], mem: ['333 MB', 100], size: ['JDK + jars', 100] },
     native: { lines: ['$ ./triage-runner', '<span class="dim">Apache Camel 4.22 on Quarkus, native (Mandrel)</span>', '<span class="ok">Started route triage in 24 ms</span>'], start: ['24 ms', 3], mem: ['112 MB', 34], size: ['one binary, long native build', 40] }
   };

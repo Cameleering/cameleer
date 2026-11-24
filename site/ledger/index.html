@@ -86,8 +86,8 @@
 
 <section class="c-sec" id="cameleer">
   <div class="wrap">
-    <h2>Cameleer, measured 2026-11-23</h2>
-    <p class="intro">Cameleer <code>main</code> at commit <code>beb3385</code> against Apache Camel 4.23.0 on Java 21, the same routes on identical DigitalOcean c-4 machines (4 dedicated vCPUs each); each figure is the mean of two runs on two servers. Ratios are rounded down, Cameleer's times and memory up. The start-up ratio is computed from the unrounded means, Apache Camel on the JVM 1,034 ms and Cameleer 3.05 ms, which is 339x and is shown as 300x; the table shows the times rounded (1.0 s and 3.1 ms), so dividing the table's own figures gives a slightly different ratio (<a href="https://github.com/cameleering/cameleer/blob/main/benchmarks/results/2026-11-23-linux-main-beb3385-camel/summary.json">summary.json</a>).</p>
+    <h2>Cameleer 0.8.0, measured 2026-11-23</h2>
+    <p class="intro">Cameleer 0.8.0 (measured on <code>main</code> at commit <code>beb3385</code>, identical to the release for the benchmarked paths) against Apache Camel 4.23.0 on Java 21, in DigitalOcean sfo2, the same routes on identical DigitalOcean c-4 machines (4 dedicated vCPUs each); each figure is the mean of two runs on two servers. Ratios are rounded down, Cameleer's times and memory up. The start-up ratio is computed from the unrounded means, Apache Camel on the JVM 1,034 ms and Cameleer 3.05 ms, which is 339x and is shown as 300x; the table shows the times rounded (1.0 s and 3.1 ms), so dividing the table's own figures gives a slightly different ratio (<a href="https://github.com/cameleering/cameleer/blob/main/benchmarks/results/2026-11-23-linux-main-beb3385-camel/summary.json">summary.json</a>).</p>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>metric</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th><th class="num">result</th></tr></thead>
       <tbody>
@@ -111,9 +111,34 @@
     <h3>Known losses and limits</h3>
     <ul>
       <li>p99 latency is lower than Camel's in every scenario of this session. CPU is not: for HTTP into Kafka Cameleer uses more CPU than Camel (202% against 134% on the JVM and 142% native) while serving 4.3 times the requests.</li>
+      <li>Four ratios are lower than in the 2026-11-06 publication (Cameleer 0.4.0, other machines): seda request-reply 5.6x (was 6.8x), content-based router 2.6x (was 3.0x), CSV batch 2.2x (was 2.3x) and HTTP into Kafka 4.3x (was 5.0x). These droplets are faster (Xeon Platinum 8358 and 8280 in sfo2, against 8168 in blr1), and Apache Camel on the JVM gained more from them than Cameleer did. The 2026-11-06 figures are kept below as history.</li>
+      <li>Start-up is 339x, not the 450x published for 0.4.0. Part of the difference is the machines (Camel on the JVM starts in 1,034 ms here against 1,106 ms). The other part was a regression from 0.6.1 to 0.7.0: when the HTTP server started in a process that already had a second thread, enlarging its descriptor table cost one kernel grace period, about 10 ms on these droplets (12.3 ms in the 2026-11-20 round). 0.8.0 enlarges the table while the process is still single-threaded, which brought this scenario back to 3.05 ms. The rest of the gap to 2.45 ms is in part the event loops 0.8.0 starts eagerly, which cost 0.3 to 0.5 ms of start-up (measured 2026-11-20).</li>
       <li>Load model: the comparison with Apache Camel uses a closed-loop driver, the same on both sides: N workers each send the next request when the last is answered. Throughput is what each side sustains at saturation, and p99 is the latency at that saturation, timed from when each request was sent, so it is not corrected for coordinated omission. Read the p99 rows as relative (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</li>
       <li>Plain HTTP is the smallest throughput gain: a fixed-reply route reaches 2.0x Camel's throughput. In the 2026-11-06 run, before the HTTP server moved to simoom, it reached 68% of a do-nothing server on the same machines (<a href="../docs/BENCHMARKS.html#the-http-ceiling">the HTTP ceiling</a>).</li>
     </ul>
+    <h3>One hour at constant load (soak, 2026-11-23, same droplets)</h3>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>scenario, 64 connections, one hour</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th><th class="num">result</th></tr></thead>
+      <tbody>
+        <tr><td>HTTP into Kafka, mean throughput</td><td class="num">10,812 req/s</td><td class="num">49,530 req/s</td><td class="num res">4.5x</td></tr>
+        <tr><td>HTTP into Kafka, p99 over the hour</td><td class="num">6.9–7.0 ms</td><td class="num">2.1–2.3 ms</td><td class="num res">3x lower</td></tr>
+        <tr><td>HTTP into Kafka, memory start → end</td><td class="num">315 → 332 MB</td><td class="num">30.6 → 31.9 MB</td><td class="num res">10x less</td></tr>
+        <tr><td>MCP tool calls in a session, mean</td><td class="num">25,267 calls/s</td><td class="num">62,967 calls/s</td><td class="num res">2.4x</td></tr>
+        <tr><td>MCP, memory start → end</td><td class="num">340 → 411 MB</td><td class="num">24.8 → 25.4 MB</td><td class="num res">16x less</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Cameleer kept constant threads and descriptors over the hour; its memory grew 0.6 to 1.3 MB in 50 minutes, slowing. The MCP TypeScript SDK served 3,160 calls/s and slowed 5% over the hour. Raw data: <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-23-linux-soak">benchmarks/results/2026-11-23-linux-soak</a>.</p>
+    <h3>Superseded: Cameleer 0.4.0, measured 2026-11-06</h3>
+    <div class="c-table-wrap"><table class="c-table ledger">
+      <thead><tr><th>metric (DigitalOcean c-4, blr1, Apache Camel 4.23.0 on Java 21)</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer 0.4.0</th><th class="num">result</th></tr></thead>
+      <tbody>
+        <tr class="st-superseded"><td>time to a started context</td><td class="num">1,106 ms</td><td class="num">2.45 ms</td><td class="num res">450x faster</td></tr>
+        <tr class="st-superseded"><td>peak memory, 11 scenarios</td><td class="num">214–440 MB</td><td class="num">7–67 MB</td><td class="num res">4.8–54x less</td></tr>
+        <tr class="st-superseded"><td>throughput, 11 scenarios</td><td class="num">—</td><td class="num">—</td><td class="num res">1.7–8.7x</td></tr>
+        <tr class="st-superseded"><td>p99 latency, HTTP into Kafka</td><td class="num">7.8 ms</td><td class="num">8.6 ms</td><td class="num res">10% higher (loss)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Superseded by the 2026-11-23 session above; kept because the ledger never deletes a row. Raw data: <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-06-linux">benchmarks/results/2026-11-06-linux</a>.</p>
     <p class="note">Method, every scenario and the raw data: <a href="../docs/BENCHMARKS.html">BENCHMARKS</a> and <a href="../cameleer/compare/apache-camel-vs-cameleer/#how">how we tested</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-23-linux-main-beb3385-camel">benchmarks/results/2026-11-23-linux-main-beb3385-camel</a>, generated by <code>scripts/cloud-bench/summarize.py</code>.</p>
   </div>
 </section>
@@ -142,14 +167,14 @@
     <h3>Known losses and limits</h3>
     <ul>
       <li>REST API with JSON showed 0.95x on 0.7.0 (0.94x and 0.95x in the two runs). A later control round on the same droplets, in which this route ran identical code in both builds, varied by as much (0.98x and 0.91x; 0.91x to 1.06x across the HTTP, REST and MCP routes), so this is within the noise of the setup and not counted as a loss. An earlier version of this page listed it as one.</li>
-      <li>HTTP/2 was first measured at 0.51x of HTTP/1.1 on the same route, and this page listed it as a loss with an unknown cause. That was mostly the benchmark&rsquo;s own HTTP/2 client, and partly event loops that started lazily. In the 0.8.0 candidate round (2026-11-20, not released yet) REST over HTTP/2 equals REST over HTTP/1.1 (1.00x), and nghttp2&rsquo;s <code>h2load</code> gets 1.5x to 1.6x the server&rsquo;s HTTP/1.1 rate over HTTP/2 (two runs, two servers; not a like-for-like protocol test). See <a href="#cameleer-0-8">the next table</a>.</li>
-      <li>gRPC throughput stops at about 11,000 calls per second on both builds from 16 concurrent calls up, while neither the server nor the load generator is out of CPU. So the gRPC gain of 0.7.0 is CPU per call and tail latency, not throughput: 1.05x to 1.06x is within what two runs separate from noise. The limit was the threads started for each call: running them on a pool removes it (the tables below, not released yet).</li>
+      <li>HTTP/2 was first measured at 0.51x of HTTP/1.1 on the same route, and this page listed it as a loss with an unknown cause. That was mostly the benchmark&rsquo;s own HTTP/2 client, and partly event loops that started lazily. In the 0.8.0 round (measured 2026-11-20 on the release candidate) REST over HTTP/2 equals REST over HTTP/1.1 (1.00x), and nghttp2&rsquo;s <code>h2load</code> gets 1.5x to 1.6x the server&rsquo;s HTTP/1.1 rate over HTTP/2 (two runs, two servers; not a like-for-like protocol test). See <a href="#cameleer-0-8">the next table</a>.</li>
+      <li>gRPC throughput stops at about 11,000 calls per second on both builds from 16 concurrent calls up, while neither the server nor the load generator is out of CPU. So the gRPC gain of 0.7.0 is CPU per call and tail latency, not throughput: 1.05x to 1.06x is within what two runs separate from noise. The limit was the threads started for each call: running them on a pool removes it (the tables below, released in 0.8.0).</li>
       <li>At 256 connections gRPC is 1.05x (10,328 against 9,882 req/s), CPU per request 199 against 284 µs and p99 39 against 45 ms, but peak memory is higher: 18.9 against 17.5 MB (loss).</li>
       <li>Noise: the two servers differ by 10 to 25% in speed, and phase 1 was slower than phase 2 in the first run, so differences of a few percent between the builds are not results.</li>
       <li>Not measured: gRPC streaming calls, HTTP/2 over TLS, the gRPC client against the old client, Windows, and any comparison with Apache Camel for gRPC or HTTP/2.</li>
     </ul>
-    <h3 id="grpc-pool">After release 0.7.0, not released yet: gRPC calls on a pool of threads</h3>
-    <p class="intro">Measured 2026-11-19. The gRPC server runs each call as one job on a shared pool of threads instead of starting threads per call, and idle pool threads hand their memory back. This is on <code>main</code> but in no release yet. New: <code>main</code>; old: release 0.7.0 library code. Three DigitalOcean c-4 droplets in sfo3 (the rounds above used blr1, where c-4 was no longer available, so absolute figures differ a little; each comparison is within one session), the same load generator for both, each build on both servers in both phases; two runs at 64 concurrent calls, one at 256.</p>
+    <h3 id="grpc-pool">gRPC calls on a pool of threads (measured 2026-11-19; released in 0.8.0)</h3>
+    <p class="intro">Measured 2026-11-19. The gRPC server runs each call as one job on a shared pool of threads instead of starting threads per call, and idle pool threads hand their memory back. Released in 0.8.0 (2026-11-24). New: <code>main</code> at the time; old: release 0.7.0 library code. Three DigitalOcean c-4 droplets in sfo3 (the rounds above used blr1, where c-4 was no longer available, so absolute figures differ a little; each comparison is within one session), the same load generator for both, each build on both servers in both phases; two runs at 64 concurrent calls, one at 256.</p>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>gRPC unary call (protobuf)</th><th class="num">0.7.0</th><th class="num">with the pool</th><th class="num">result</th></tr></thead>
       <tbody>
@@ -168,10 +193,10 @@
       <li>Not measured: gRPC streaming calls, TLS, the gRPC client, Windows, long-lived idle calls.</li>
     </ul>
     <p class="note">Method and raw data: <a href="../docs/BENCHMARKS.html#grpc-on-a-pool-of-threads-without-the-memory-cost-2026-11-19">BENCHMARKS, gRPC on a pool of threads, without the memory cost</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-19-linux-grpc-memory">benchmarks/results/2026-11-19-linux-grpc-memory</a>.</p>
-    <h3 id="cameleer-0-8">0.8.0 candidate against 0.7.0, not released yet (measured 2026-11-20)</h3>
-    <p class="intro">The 0.8.0 candidate (commit <code>7ee75e7</code>: simoom 0.2.0 with event loops started eagerly, a cheaper gRPC unary path, fewer header copies, and the gRPC thread pool) against release 0.7.0, which has none of these. Three DigitalOcean c-4 droplets in sfo2 (Xeon Platinum 8168 servers; c-4 is no longer offered in blr1 or sfo3, so absolute figures differ from the rounds above; each comparison is within this session), the same load generator for both builds, each build on both servers in both phases; two runs at 64 connections (the second with the order of the sides swapped), one at 256. Not in a release until the 0.8.0 tag.</p>
+    <h3 id="cameleer-0-8">0.8.0 against 0.7.0 (released 2026-11-24; measured 2026-11-20 on the release candidate)</h3>
+    <p class="intro">The 0.8.0 release candidate (commit <code>7ee75e7</code>: simoom 0.2.0 with event loops started eagerly, a cheaper gRPC unary path, fewer header copies, and the gRPC thread pool) against release 0.7.0, which has none of these. Three DigitalOcean c-4 droplets in sfo2 (Xeon Platinum 8168 servers; c-4 is no longer offered in blr1 or sfo3, so absolute figures differ from the rounds above; each comparison is within this session), the same load generator for both builds, each build on both servers in both phases; two runs at 64 connections (the second with the order of the sides swapped), one at 256. All of it is in release 0.8.0 (2026-11-24).</p>
     <div class="c-table-wrap"><table class="c-table ledger">
-      <thead><tr><th>metric</th><th class="num">0.7.0</th><th class="num">0.8.0 candidate</th><th class="num">result</th></tr></thead>
+      <thead><tr><th>metric</th><th class="num">0.7.0</th><th class="num">0.8.0</th><th class="num">result</th></tr></thead>
       <tbody>
         <tr><td>gRPC unary call, 64 concurrent calls</td><td class="num">8,300 calls/s</td><td class="num">94,400 calls/s</td><td class="num res">11.4x</td></tr>
         <tr><td>gRPC unary call, 256 concurrent calls</td><td class="num">8,000 calls/s</td><td class="num">106,200 calls/s</td><td class="num res">13.3x</td></tr>
@@ -203,7 +228,7 @@
       <li>Asynchronous routing (on by default in 0.8.0) was measured on one WSL2 machine only, not on these droplets: 2.2x to 2.9x the requests per second and 26% to 33% less CPU per request for a <code>platform-http</code> to <code>http</code> proxy.</li>
       <li>Not measured: h2load over TLS, gRPC streaming calls, the gRPC client, Windows, asynchronous routing on droplets, and the lazy-loops control.</li>
     </ul>
-    <p class="note">Method and raw data: <a href="../docs/BENCHMARKS.html#080-candidate-against-070-and-against-an-independent-client-2026-11-20">BENCHMARKS, 0.8.0 candidate against 0.7.0</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-20-linux-0.8.0-candidate">benchmarks/results/2026-11-20-linux-0.8.0-candidate</a>.</p>
+    <p class="note">Method and raw data: <a href="../docs/BENCHMARKS.html#080-candidate-against-070-and-against-an-independent-client-2026-11-20">BENCHMARKS, 0.8.0 candidate against 0.7.0 (the 2026-11-20 round)</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-20-linux-0.8.0-candidate">benchmarks/results/2026-11-20-linux-0.8.0-candidate</a>.</p>
     <p class="note">Method, every scenario and the raw data: <a href="../docs/BENCHMARKS.html#grpc-and-http2-on-simoom-070-2026-11-18">BENCHMARKS, gRPC and HTTP/2 on simoom</a>; raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-18-linux-grpc-http2">benchmarks/results/2026-11-18-linux-grpc-http2</a>. The earlier simoom figures below (its HTTP/1.1 server against the server it replaced) are a separate round and still stand.</p>
   </div>
 </section>
