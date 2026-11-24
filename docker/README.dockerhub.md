@@ -67,6 +67,8 @@ docker run --rm -e KAFKA_BROKERS=kafka:9092 -e OPENAI_API_KEY \
 | `sha-<commit>` | the image of one commit |
 | `health`, `0.8.0-health`, `0.8-health`, `edge-health` | the same, plus the [health pack](https://github.com/cameleering/cameleer/blob/main/docs/packs/health/index.md): HL7 v2 and MLLP, FHIR R4, DICOM (DIMSE and DICOMweb), de-identification |
 
+The 0.8.0 images (`sha256:f40889b03919...` for `0.8.0`, `0.8` and `latest`; `sha256:6b55a0df49cd...` for the health tags; linux/amd64 and linux/arm64) were built from `main` at `6722d3a`, just after the `v0.8.0` tag, which could not build its arm64 image; that commit differs from the tag only by the toolchain pin, a workflow input and documentation ([release notes](https://github.com/cameleering/cameleer/blob/main/docs/release-notes/0.8.0.md#about-the-080-images)).
+
 The same image is published to `ghcr.io/cameleering/cameleer`. Every push carries an SBOM, build provenance and a GitHub attestation: `gh attestation verify oci://ghcr.io/cameleering/cameleer:latest --owner cameleering`.
 
 ## Configuration
