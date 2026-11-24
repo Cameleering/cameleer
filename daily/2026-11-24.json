@@ -1,0 +1,260 @@
+{
+  "date": "2026-11-24",
+  "repo": {
+    "forks": 1,
+    "open_issues": 14,
+    "stars": 3,
+    "watchers": 0
+  },
+  "views": {
+    "count": 183,
+    "uniques": 84,
+    "views": [
+      {
+        "timestamp": "2026-11-10T00:00:00Z",
+        "count": 6,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-11T00:00:00Z",
+        "count": 15,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-12T00:00:00Z",
+        "count": 29,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-13T00:00:00Z",
+        "count": 39,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-11-14T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-11-15T00:00:00Z",
+        "count": 6,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-16T00:00:00Z",
+        "count": 2,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-17T00:00:00Z",
+        "count": 5,
+        "uniques": 5
+      },
+      {
+        "timestamp": "2026-11-18T00:00:00Z",
+        "count": 7,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-11-19T00:00:00Z",
+        "count": 11,
+        "uniques": 11
+      },
+      {
+        "timestamp": "2026-11-20T00:00:00Z",
+        "count": 6,
+        "uniques": 6
+      },
+      {
+        "timestamp": "2026-11-21T00:00:00Z",
+        "count": 14,
+        "uniques": 14
+      },
+      {
+        "timestamp": "2026-11-22T00:00:00Z",
+        "count": 14,
+        "uniques": 11
+      },
+      {
+        "timestamp": "2026-11-23T00:00:00Z",
+        "count": 29,
+        "uniques": 28
+      }
+    ]
+  },
+  "clones": {
+    "count": 2767,
+    "uniques": 600,
+    "clones": [
+      {
+        "timestamp": "2026-11-10T00:00:00Z",
+        "count": 125,
+        "uniques": 29
+      },
+      {
+        "timestamp": "2026-11-11T00:00:00Z",
+        "count": 116,
+        "uniques": 35
+      },
+      {
+        "timestamp": "2026-11-12T00:00:00Z",
+        "count": 459,
+        "uniques": 106
+      },
+      {
+        "timestamp": "2026-11-13T00:00:00Z",
+        "count": 439,
+        "uniques": 82
+      },
+      {
+        "timestamp": "2026-11-14T00:00:00Z",
+        "count": 246,
+        "uniques": 80
+      },
+      {
+        "timestamp": "2026-11-15T00:00:00Z",
+        "count": 142,
+        "uniques": 52
+      },
+      {
+        "timestamp": "2026-11-16T00:00:00Z",
+        "count": 357,
+        "uniques": 45
+      },
+      {
+        "timestamp": "2026-11-17T00:00:00Z",
+        "count": 165,
+        "uniques": 53
+      },
+      {
+        "timestamp": "2026-11-18T00:00:00Z",
+        "count": 158,
+        "uniques": 40
+      },
+      {
+        "timestamp": "2026-11-19T00:00:00Z",
+        "count": 125,
+        "uniques": 48
+      },
+      {
+        "timestamp": "2026-11-20T00:00:00Z",
+        "count": 187,
+        "uniques": 89
+      },
+      {
+        "timestamp": "2026-11-21T00:00:00Z",
+        "count": 53,
+        "uniques": 27
+      },
+      {
+        "timestamp": "2026-11-22T00:00:00Z",
+        "count": 40,
+        "uniques": 20
+      },
+      {
+        "timestamp": "2026-11-23T00:00:00Z",
+        "count": 155,
+        "uniques": 45
+      }
+    ]
+  },
+  "referrers": [
+    {
+      "referrer": "github.com",
+      "count": 18,
+      "uniques": 3
+    },
+    {
+      "referrer": "Google",
+      "count": 4,
+      "uniques": 4
+    },
+    {
+      "referrer": "Bing",
+      "count": 2,
+      "uniques": 1
+    },
+    {
+      "referrer": "cameleer.ing",
+      "count": 2,
+      "uniques": 1
+    },
+    {
+      "referrer": "search.brave.com",
+      "count": 1,
+      "uniques": 1
+    }
+  ],
+  "paths": [
+    {
+      "path": "/Cameleering/cameleer",
+      "title": "Overview",
+      "count": 20,
+      "uniques": 6
+    },
+    {
+      "path": "/Cameleering/cameleer/pulls",
+      "title": "/pulls",
+      "count": 18,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer",
+      "title": "Overview",
+      "count": 13,
+      "uniques": 2
+    },
+    {
+      "path": "/Cameleering/cameleer/pulse",
+      "title": "/pulse",
+      "count": 4,
+      "uniques": 1
+    },
+    {
+      "path": "/cameleering/cameleer",
+      "title": "Overview",
+      "count": 3,
+      "uniques": 3
+    },
+    {
+      "path": "/Cameleering/cameleer/blob/main/docs/BENCHMARKS.md",
+      "title": "/blob/main/docs/BENCHMARKS.md",
+      "count": 2,
+      "uniques": 2
+    },
+    {
+      "path": "/cameleering/cameleer/tree/03b5bf609b24004cb1ddc8d01b1dcc68276b452a/crates/cameleer-script",
+      "title": "/tree/03b5bf609b24004cb1ddc8d01b1dcc68276b452a/crates/cameleer-script",
+      "count": 2,
+      "uniques": 2
+    },
+    {
+      "path": "/cameleering/cameleer/tree/acf9bc482487c40741ce27370625409d50bf1f14/crates/cameleer-dataformats",
+      "title": "/tree/acf9bc482487c40741ce27370625409d50bf1f14/crates/cameleer-dataformats",
+      "count": 2,
+      "uniques": 2
+    },
+    {
+      "path": "/cameleering/cameleer/tree/eef5efd9404363f7f3055160aaf4361a1951e638/crates/cameleer-kafka-mqtt",
+      "title": "/tree/eef5efd9404363f7f3055160aaf4361a1951e638/crates/cameleer-kafka-mqtt",
+      "count": 2,
+      "uniques": 2
+    },
+    {
+      "path": "/Cameleering/cameleer/actions/runs/43380707877/job/131743469524",
+      "title": "/actions/runs/43380707877/job/131743469524",
+      "count": 2,
+      "uniques": 1
+    }
+  ],
+  "crates_io": {
+    "crate": "cameleer-main",
+    "downloads": 131,
+    "recent_downloads": 131,
+    "max_version": "0.8.0"
+  },
+  "docker_hub": {
+    "pull_count": 1525,
+    "star_count": 0
+  }
+}
