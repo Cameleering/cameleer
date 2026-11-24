@@ -131,6 +131,10 @@ set `CAMEL_SERVER_LAZY_LOOPS=true` to keep the old start. `platform-http` routes
 (`CAMEL_ASYNC_ROUTING=false` turns that off) and are bounded by `maxInflightRequests` instead of the server's
 thread pool. The header iteration order is unchanged. Nothing else breaks.
 
+**The 0.8.0 images were built from `main` at `6722d3a`, after the tag**, because the tag's `rust-toolchain.toml` (1.99.1)
+did not match the builder image (1.100.0) and the arm64 build failed. The commit differs from `v0.8.0` only by the
+toolchain pin, the `version` input of `container.yml` and documentation; the crates and archives come from the tag.
+
 ## 0.7.1 (2026-11-17)
 
 - **The `cameleer` crate 0.7.1** changes only the MCP Registry name in its README and `server.json`:
