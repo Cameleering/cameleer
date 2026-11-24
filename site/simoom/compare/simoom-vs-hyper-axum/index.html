@@ -157,7 +157,7 @@
         <tr><td>Third-party crates</td><td>tokio, tower and their dependency trees</td><td class="win">0, not even for tests</td></tr>
         <tr><td>HTTP/3</td><td>not in hyper; the separate <code>h3</code> crate describes itself as experimental</td><td class="win">in-tree, a cargo feature; 54 of 58 QUIC Interop Runner pairs</td></tr>
         <tr><td>TLS</td><td>rustls or native-tls, chosen by you</td><td>its own TLS 1.3; not independently audited yet</td></tr>
-        <tr><td>Middleware and ecosystem</td><td class="win">tower layers, axum extractors, many integrations, years of production use</td><td>a router and optional helpers; version 0.1.0</td></tr>
+        <tr><td>Middleware and ecosystem</td><td class="win">tower layers, axum extractors, many integrations, years of production use</td><td>a router and optional helpers; version 0.2.0</td></tr>
         <tr><td>Status endpoint, 256 clients (req/s, 99% within 1 ms)</td><td>hyper 110,931; axum 101,477</td><td class="win">137,889 (24% more than hyper, 36% more than axum)</td></tr>
         <tr><td>CPU per request at a fixed 50,000 req/s</td><td>hyper 32.6 µs; axum 35.6 µs</td><td class="win">23.6 µs</td></tr>
         <tr><td>HTTPS API, 256 clients (req/s, 99% within 1 ms)</td><td>axum + rustls 88,990</td><td class="win">134,004 (30% more)</td></tr>
