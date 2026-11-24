@@ -1,0 +1,9 @@
+RESULT phase=1 node=b label=v060 scenario=http scenario=http msgs=2258901 secs=25.001 tput=90353 tput_min=89463 tput_max=91276 mean_us=708.01 p50_us=618.50 p99_us=2605.06 max_us=36746.47 connects=3637
+PROC phase=1 node=b label=v060 scenario=http peak_rss_kb=18432 cpu_pct=318% user_s=66.84 sys_s=92.57
+RESULT phase=1 node=b label=main scenario=http scenario=http msgs=2916343 secs=25.001 tput=116651 tput_min=106325 tput_max=123923 mean_us=548.31 p50_us=468.99 p99_us=1302.53 max_us=6915.97 connects=4741
+PROC phase=1 node=b label=main scenario=http peak_rss_kb=9472 cpu_pct=226% user_s=69.74 sys_s=43.42
+RESULT phase=1 node=b label=v060 scenario=rest-json scenario=rest-json msgs=1887004 secs=25.000 tput=75479 tput_min=75054 tput_max=75777 mean_us=847.59 p50_us=749.57 p99_us=2277.38 max_us=7983.44 connects=3055
+PROC phase=1 node=b label=v060 scenario=rest-json peak_rss_kb=20096 cpu_pct=319% user_s=78.58 sys_s=81.05
+RESULT phase=1 node=b label=main scenario=rest-json scenario=rest-json msgs=2166497 secs=25.001 tput=86657 tput_min=77941 tput_max=95327 mean_us=738.22 p50_us=477.18 p99_us=2056.19 max_us=4427.45 connects=3485
+PROC phase=1 node=b label=main scenario=rest-json peak_rss_kb=10240 cpu_pct=220% user_s=73.84 sys_s=36.48
+FAILED twice: v060|-|grpc|v060

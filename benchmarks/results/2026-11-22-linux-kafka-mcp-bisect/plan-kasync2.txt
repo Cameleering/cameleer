@@ -1,0 +1,10 @@
+kasync|-|http-kafka|kasync
+main|-|http-kafka|main
+kasync|-|http-kafka|kasync
+v060|-|http-kafka|v060
+kasync|-|http-kafka|kasync
+main|-|http-kafka|main
+kasync|-|http|kasync
+main|-|http|main
+kasync|-|mcp-session|kasync
+main|-|mcp-session|main

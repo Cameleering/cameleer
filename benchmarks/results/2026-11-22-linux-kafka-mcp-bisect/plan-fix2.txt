@@ -1,0 +1,14 @@
+fix2|-|http|fix2
+main|-|http|main
+fix2|-|http|fix2
+main|-|http|main
+fix2|-|rest-json|fix2
+main|-|rest-json|main
+fix2|-|http-kafka|fix2
+main|-|http-kafka|main
+fix2|-|http-sql|fix2
+main|-|http-sql|main
+fix2|-|grpc|fix2
+main|-|grpc|main
+fix2|-|http-kafka|fix2
+main|-|http-kafka|main
