@@ -1,6 +1,6 @@
 # Status and pending work
 
-_Last updated: 2026-11-21 (release 0.7.0 is the latest tag; 0.8.0 is prepared, see "0.8.0 candidate" below).
+_Last updated: 2026-11-24 (release 0.8.0; the section "0.8.0 candidate" below holds its measurements).
 Branch `main`._
 
 ## Name, packaging and release (2026-11-05)
@@ -594,6 +594,20 @@ Cameleer's own HTTP code or it is not used.
   - **Open:** phases 1-4.
 - **Still on the old code:** WebSocket, and the cloud components' own HTTP/1.1 client.
 
+## 0.8.0 released (2026-11-24)
+
+0.8.0 is released from `main`: version bump PR, tag `v0.8.0`, 22 library crates (`cameleer-health` stays at 0.6.0, its
+code is unchanged), the `cameleer` wrapper 0.8.0, images, archives and the MCP Registry entry. Release gate: the owner
+accepted publishing with the 2026-11-23 Camel ratios, four of which are lower than the 2026-11-06 ones (seda
+request-reply 5.6x against 6.8x, router 2.6x against 3.0x, CSV 2.2x against 2.3x, HTTP into Kafka 4.3x against 5.0x on
+other machines). Tests on Windows 11 before the tag: `cargo build --workspace` 0 warnings, `cargo test --workspace`
+2,990 passed, 0 failed (one run of `component_timer` `stopping_a_route_from_its_own_timer_exchange_does_not_hang`
+failed once under load and passed 5/5 alone and in the full rerun; a timing-sensitive test, 10 ms period),
+`cameleer-main --no-default-features` 24 passed, with `--features health` 24 passed. The live, official and simulator
+tiers were not rerun for this release. Known: the published `cameleer-health` 0.6.0 requires `cameleer-core ^0.6`, so
+`cargo install cameleer-main --features health` from crates.io pulls two core versions; fix by releasing the pack at a
+new version.
+
 ## 0.8.0 candidate (2026-11-20/21)
 
 `main` (PRs 65, 67, 68, 69, 71 and simoom 0.2.0 from crates.io) is the 0.8.0 candidate; the release itself (version
@@ -777,8 +791,8 @@ Docker, or the lack of real accounts.
 
 ## Resuming in a new session
 
-1. `git checkout main && cargo test --workspace`. Expect about 2,980 passing
-   (Windows 11, 2026-11-09).
+1. `git checkout main && cargo test --workspace`. Expect about 2,990 passing
+   (Windows 11, 2026-11-24).
 2. Pick an item above.
 3. Follow the workflow in `CLAUDE.md`.
 4. Update this file, and `docs/INTEROP.md` or `docs/FEATURES.md` where relevant, as part of

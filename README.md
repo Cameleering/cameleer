@@ -103,7 +103,10 @@ The table above is Cameleer `main` (2026-11-23, after 0.8.0's candidate, with th
 Apache Camel 4.23.0 on Java 21 and Camel Quarkus 3.40.0 native, all sides in one session on `c-4` droplets in
 DigitalOcean's `sfo2` region; p99 latency is lower than Camel's in every scenario.
 Absolute figures differ by 10 to 25% between the two servers of a session and by about 40% between sessions, so
-compare ratios inside a session. Under an hour of constant load, Cameleer held 49.5k req/s for HTTP into Kafka
+compare ratios inside a session. Four ratios are lower than the ones published before (2026-11-06, Cameleer 0.4.0):
+seda request-reply 5.6x (was 6.8x), the content-based router 2.6x (3.0x), CSV 2.2x (2.3x) and HTTP into Kafka 4.3x
+(5.0x, which was measured on other machines). The cause is the hardware: these droplets are faster and Camel on the
+JVM gained more from them than Cameleer did. Under an hour of constant load, Cameleer held 49.5k req/s for HTTP into Kafka
 (4.6x Camel) and 63.0k MCP calls/s (2.5x) with flat p99, threads and descriptors and about 1 MB of memory growth
 ([the soak results](benchmarks/results/2026-11-23-linux-soak/)).
 
@@ -440,8 +443,8 @@ same way. Kubernetes, Docker Compose and Cloud Run setups are in the
 
 ```toml
 [dependencies]
-cameleer-core = "0.7"
-cameleer-http = "0.7"
+cameleer-core = "0.8"
+cameleer-http = "0.8"
 ```
 
 ```rust

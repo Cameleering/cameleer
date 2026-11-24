@@ -100,6 +100,11 @@ one session and by about 40% between sessions and regions, so compare ratios ins
   Kafka 3.2x to 4.3x, MCP session 2.06x to 2.73x). Three in-process ratios fell: seda request-reply 6.8x to 5.6x,
   the content-based router 3.0x to 2.6x and CSV 2.3x to 2.2x. Cameleer's own figures rose in every in-process
   scenario but the router; Camel on the JVM gained more on these servers (Xeon 8358 and 8280 against 8168 before).
+- **Against the 2026-11-06 session (Cameleer 0.4.0), the figures published until 0.7.0.** Four ratios are lower:
+  seda request-reply 5.6x (6.8x then), the content-based router 2.6x (3.0x), CSV 2.2x (2.3x) and HTTP into Kafka 4.3x
+  (5.0x, measured on other machines). The 2026-11-23 droplets in `sfo2` are faster, and Camel on the JVM gained more
+  from them than Cameleer did; the table above is the current comparison and 0.8.0 is published with it, not with the
+  older, higher ratios.
 - **Over an hour.** One-hour soaks at constant load
   ([`benchmarks/results/2026-11-23-linux-soak/`](../benchmarks/results/2026-11-23-linux-soak/)): HTTP into Kafka
   49,530 req/s (4.6x Camel on the JVM) and the MCP session 62,967 calls/s (2.5x), with flat throughput and p99,
