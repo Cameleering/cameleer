@@ -1,0 +1,33 @@
+pid=10356 threads=68
+     1.000239598               7524      context-switches                 #    9.264 K/sec                     
+     1.000239598             812.18 msec task-clock                       #    0.812 CPUs utilized             
+     2.001236492               7441      context-switches                 #    8.946 K/sec                     
+     2.001236492             831.79 msec task-clock                       #    0.832 CPUs utilized             
+     3.002237557               7362      context-switches                 #    8.733 K/sec                     
+     3.002237557             843.02 msec task-clock                       #    0.843 CPUs utilized             
+     4.003261969               7631      context-switches                 #    9.294 K/sec                     
+     4.003261969             821.05 msec task-clock                       #    0.821 CPUs utilized             
+     5.004230622               7715      context-switches                 #    9.553 K/sec                     
+     5.004230622             807.60 msec task-clock                       #    0.808 CPUs utilized             
+     6.005232449               7875      context-switches                 #    9.851 K/sec                     
+     6.005232449             799.41 msec task-clock                       #    0.799 CPUs utilized             
+     7.006300099               7613      context-switches                 #    9.106 K/sec                     
+     7.006300099             836.06 msec task-clock                       #    0.836 CPUs utilized             
+     8.007240883               7511      context-switches                 #    9.121 K/sec                     
+     8.007240883             823.49 msec task-clock                       #    0.823 CPUs utilized             
+     9.008305130               7517      context-switches                 #    9.082 K/sec                     
+     9.008305130             827.66 msec task-clock                       #    0.828 CPUs utilized             
+    10.009241028               7474      context-switches                 #    9.028 K/sec                     
+    10.009241028             827.91 msec task-clock                       #    0.828 CPUs utilized             
+    11.010237502               7534      context-switches                 #    9.152 K/sec                     
+    11.010237502             823.18 msec task-clock                       #    0.823 CPUs utilized             
+    12.011239724               7675      context-switches                 #    9.423 K/sec                     
+    12.011239724             814.51 msec task-clock                       #    0.815 CPUs utilized             
+    13.012267405               7729      context-switches                 #    9.687 K/sec                     
+    13.012267405             797.87 msec task-clock                       #    0.798 CPUs utilized             
+    14.013230800              12347      context-switches                 #   13.141 K/sec                     
+    14.013230800             939.58 msec task-clock                       #    0.940 CPUs utilized             
+    15.014244910              82282      context-switches                 #   28.701 K/sec                     
+    15.014244910            2866.85 msec task-clock                       #    2.867 CPUs utilized             
+    16.002186012              81017      context-switches                 #   28.806 K/sec                     
+    16.002186012            2812.53 msec task-clock                       #    2.813 CPUs utilized             

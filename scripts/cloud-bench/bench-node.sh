@@ -7,6 +7,7 @@
 #   bench-node.sh stream <side> <warmup> <iter> <iters>      Kafka stream processing
 #   bench-node.sh serve <side> <scenario> <port> <secs>      start a served scenario, return at READY
 #   bench-node.sh served-wait                                wait for it to exit, print its PROC record
+#   bench-node.sh sample <every-s> <total-s>                 SAMPLE lines (rss, threads, descriptors, cpu ticks) of the served process
 #
 # BENCH_KAFKA, BENCH_PG and BENCH_RUN are passed through from run.sh.
 set -euo pipefail
@@ -67,6 +68,19 @@ case "$1" in
   served-wait)
     while kill -0 "$(cat /root/served.pid)" 2>/dev/null; do sleep 0.5; done
     cat /root/served.time
+    ;;
+  sample)
+    # the served process is the child of the `time` wrapper started by `serve`
+    every=$2; total=$3
+    wrapper=$(cat /root/served.pid)
+    pid=$(pgrep -P "$wrapper" | head -1 || true); pid=${pid:-$wrapper}
+    t0=$(date +%s); end=$((t0 + total))
+    while [ "$(date +%s)" -lt "$end" ] && kill -0 "$pid" 2>/dev/null; do
+      rss=$(awk '/^VmRSS/ {print $2}' "/proc/$pid/status"); thr=$(awk '/^Threads/ {print $2}' "/proc/$pid/status")
+      fds=$(ls "/proc/$pid/fd" 2>/dev/null | wc -l); cpu=$(awk '{print $14+$15}' "/proc/$pid/stat")
+      echo "SAMPLE t=$(( $(date +%s) - t0 )) rss_kb=${rss:-0} threads=${thr:-0} fds=$fds cpu_ticks=${cpu:-0}"
+      sleep "$every"
+    done
     ;;
   *) echo "usage: see the header of $0" >&2; exit 1 ;;
 esac

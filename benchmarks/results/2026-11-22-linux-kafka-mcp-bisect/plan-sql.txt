@@ -1,0 +1,8 @@
+v060|-|http-sql|v060
+main|-|http-sql|main
+main-ctl|-|http-sql|main
+v061|-|http-sql|v061
+v060|-|http-kafka|v060
+main|-|http-kafka|main
+v061|-|http-kafka|v061
+main-ctl|-|http-kafka|main

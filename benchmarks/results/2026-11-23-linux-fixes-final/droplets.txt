@@ -1,0 +1,3 @@
+cameleer-bench-a 159.65.68.205 10.120.0.5 active c-4 sfo2 622490692
+cameleer-bench-load 138.68.0.234 10.120.0.7 active c-4 sfo2 622490694
+cameleer-bench-b 157.230.143.60 10.120.0.6 active c-4 sfo2 622490693

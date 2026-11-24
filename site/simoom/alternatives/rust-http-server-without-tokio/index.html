@@ -145,7 +145,7 @@
         <tr><td><strong>tiny_http</strong></td><td>synchronous, thread per connection</td><td>HTTP/1.1</td><td>a small, easy server for tools and tests</td><td>threads get heavy with many connections; few built-in protocols</td></tr>
         <tr><td><strong>rouille</strong></td><td>a framework on tiny_http</td><td>HTTP/1.1</td><td>routing and helpers on a synchronous base</td><td>inherits tiny_http's model</td></tr>
         <tr><td><strong>may-minihttp</strong></td><td>stackful coroutines (<code>may</code>)</td><td>HTTP/1.1</td><td>raw throughput: 6-16% more status requests than simoom in campaign 4</td><td>HTTP/1.1 only; the soundness of stackful coroutines in Rust is debated</td></tr>
-        <tr><td><strong>simoom</strong></td><td>one event loop per CPU core; plain functions</td><td>HTTP/1.1, HTTP/2, HTTP/3, TLS 1.3, WebSocket, SSE, client</td><td>throughput per core, small builds, fast start, zero third-party crates</td><td>version 0.1.0; a small API, no middleware ecosystem; TLS not independently audited</td></tr>
+        <tr><td><strong>simoom</strong></td><td>one event loop per CPU core; plain functions</td><td>HTTP/1.1, HTTP/2, HTTP/3, TLS 1.3, WebSocket, SSE, client</td><td>throughput per core, small builds, fast start, zero third-party crates</td><td>version 0.2.0; a small API, no middleware ecosystem; TLS not independently audited</td></tr>
       </tbody>
     </table></div>
   </div>

@@ -165,11 +165,11 @@ Current results: [BENCHMARKS.md](BENCHMARKS.md); analysis: [../benchmarks/analys
 
 | Item | Why | Status |
 |---|---|---|
-| **HTTP benchmark with the load generator on a second machine** | a fair HTTP comparison | ✅ `scripts/cloud-bench`: Cameleer 1.8x Camel on a fixed reply (0.8.0, one session; [the HTTP ceiling](BENCHMARKS.md#the-http-ceiling) was measured before simoom and not repeated) |
+| **HTTP benchmark with the load generator on a second machine** | a fair HTTP comparison | ✅ `scripts/cloud-bench`: Cameleer 2.0x Camel on a fixed reply (`main`, 2026-11-23, one session; [the HTTP ceiling](BENCHMARKS.md#the-http-ceiling) was measured before simoom and not repeated) |
 | **Event-driven HTTP server core** | plain HTTP is the one scenario under 2x Camel; the request path, not the work, is the cost | ✅ simoom, an event loop per core (0.6.1) |
 | **Shared JSON object keys** (`ObjectMap` API change) | JSON parsing is the largest cost in split/aggregate (2.6x Camel today) | 🚧 |
 | **A smaller `Exchange`** (box `exception`, group `from_*`) | fewer bytes copied per split part and per seda hand-off | 🚧 |
-| **Kafka benchmark scenario** | a real broker on both sides | ✅ Kafka 4.3.2 in `scripts/cloud-bench`: 8.7x Camel on stream processing ([benchmarks](BENCHMARKS.md)) |
+| **Kafka benchmark scenario** | a real broker on both sides | ✅ Kafka 4.3.2 in `scripts/cloud-bench`: 19.8x Camel on stream processing (2026-11-23) ([benchmarks](BENCHMARKS.md)) |
 
 ### 2.4 Operations
 

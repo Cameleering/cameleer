@@ -1,0 +1,14 @@
+fix|-|http-kafka|fix
+fix|-|http-kafka|fix
+main|-|http-kafka|main
+fix|-|http-sql|fix
+main|-|http-sql|main
+fix|-|http|fix
+main|-|http|main
+fix|-|rest-json|fix
+main|-|rest-json|main
+fix|-|grpc|fix
+main|-|grpc|main
+fix|-|mcp-session|fix
+main|-|mcp-session|main
+fix|-|http-kafka|fix
