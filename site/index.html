@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Software Efficiency: Same Work, Less Machine | Cameleering</title>
-<meta name="description" content="Make software do the same work on less machine, and prove it. Cameleer starts in 3 ms where Apache Camel takes 1.1 s. The method and every result are open.">
+<meta name="description" content="Make software do the same work on less machine, and prove it. Cameleer starts in 3 ms where Apache Camel takes 1.0 s. The method and every result are open.">
 <link rel="canonical" href="https://cameleer.ing/">
 <meta name="theme-color" content="#ffffff">
 <meta name="google-site-verification" content="MvbqVebLUL_zfBeTqUJFrMzVbzt3An6QuIhFIasAcMA">
@@ -12,7 +12,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Cameleering">
 <meta property="og:title" content="The same work, on a fraction of the machine: Cameleering">
-<meta property="og:description" content="450x faster start-up, 300x cheaper cold starts, 51x more integrations per node, with the losses beside them, and the seven steps to get your own.">
+<meta property="og:description" content="300x faster start-up, 300x cheaper cold starts, 42x more integrations per node, with the losses beside them, and the seven steps to get your own.">
 <meta property="og:url" content="https://cameleer.ing/">
 <meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -41,7 +41,7 @@
  {"@type": "WebSite", "@id": "https://cameleer.ing/#website", "name": "Cameleering", "alternateName": "cameleer.ing", "url": "https://cameleer.ing/", "publisher": {"@id": "https://cameleer.ing/#org"}, "inLanguage": "en"},
  {"@type": "DefinedTerm", "@id": "https://cameleer.ing/#cameleering", "name": "Cameleering", "description": "The practice of making software carry the same load on less (less time, memory, size and dependencies) and proving every gain against the original, on the same hardware, with the method published.", "url": "https://cameleer.ing/", "inDefinedTermSet": {"@type": "DefinedTermSet", "name": "Cameleering", "url": "https://cameleer.ing/"}},
  {"@type": "ItemList", "name": "Cameleering projects", "itemListElement": [
-  {"@type": "ListItem", "position": 1, "item": {"@type": "SoftwareSourceCode", "@id": "https://cameleer.ing/cameleer/#software", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/", "codeRepository": "https://github.com/cameleering/cameleer", "programmingLanguage": "Rust", "license": "https://www.apache.org/licenses/LICENSE-2.0", "description": "An integration engine in the style of Apache Camel, one std-only native binary. Measured 2026-11-06.", "publisher": {"@id": "https://cameleer.ing/#org"}}},
+  {"@type": "ListItem", "position": 1, "item": {"@type": "SoftwareSourceCode", "@id": "https://cameleer.ing/cameleer/#software", "name": "Cameleer", "url": "https://cameleer.ing/cameleer/", "codeRepository": "https://github.com/cameleering/cameleer", "programmingLanguage": "Rust", "license": "https://www.apache.org/licenses/LICENSE-2.0", "description": "An integration engine in the style of Apache Camel, one std-only native binary. Measured 2026-11-23.", "publisher": {"@id": "https://cameleer.ing/#org"}}},
   {"@type": "ListItem", "position": 2, "item": {"@type": "SoftwareSourceCode", "@id": "https://cameleer.ing/simoom/#software", "name": "simoom", "url": "https://cameleer.ing/simoom/", "codeRepository": "https://github.com/Cameleering/simoom", "programmingLanguage": "Rust", "license": "https://www.apache.org/licenses/LICENSE-2.0", "description": "An embeddable HTTP/1.1, HTTP/2 and HTTP/3 server engine in std-only Rust. Measured 2026-11-09 to 2026-11-12.", "publisher": {"@id": "https://cameleer.ing/#org"}}},
   {"@type": "ListItem", "position": 3, "item": {"@type": "SoftwareSourceCode", "name": "karez", "url": "https://cameleer.ing/projects/#karez", "description": "Database connectivity shaped like JDBC, ODBC and ADBC, with Arrow results. Design stage, targets only."}},
   {"@type": "ListItem", "position": 4, "item": {"@type": "SoftwareSourceCode", "name": "ksar", "url": "https://cameleer.ing/projects/#ksar", "description": "Cryptographic primitives and PKI. Planned."}}]}
@@ -87,11 +87,11 @@
     <p class="quick">Looking for a project? <a href="cameleer/">Cameleer</a>, the integration engine · <a href="simoom/">simoom</a>, the HTTP engine · <a href="#playbook">the steps</a></p>
     <p class="outcomes-label">Results from projects built with the practice · each number names its project and its baseline</p>
     <div class="outcomes">
-      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>450x</b><em>faster start-up</em><span>1,106 ms to 2.45 ms for a started context (451x, shown rounded down; Apache Camel 4.23 on Java 21; on Quarkus native, 30 ms).</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>300x</b><em>faster start-up</em><span>1,034 ms to 3.05 ms for a started context (339x, shown rounded down; Apache Camel 4.23 on Java 21; on Quarkus native, 23.8 ms).</span><small>Cameleer vs Apache Camel</small></a>
       <a class="outcome" href="finops/#translate"><b>23x</b><em>smaller Lambda compute bill</em><span>$0.06 instead of $1.50 for a month of 10 million requests: execution time 3 ms instead of 7 ms, memory 128 MB instead of 512 MB, and cold starts that cost 300 times less.</span><small>Cameleer vs Apache Camel · arithmetic on measured time and memory</small></a>
-      <a class="outcome" href="finops/"><b>51x</b><em>more integrations per node</em><span>20 to 1,024 per 8 GiB on a direct route; 24 to 122 for HTTP into Kafka.</span><small>Cameleer · arithmetic on measured peak memory</small></a>
-      <a class="outcome" href="ledger/#cameleer"><b>54x</b><em>less memory, at best</em><span>Peak 214&ndash;440 MB to 7&ndash;67 MB: 4.8 to 54 times less across 11 scenarios.</span><small>Cameleer vs Apache Camel</small></a>
-      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>8.7x</b><em>the throughput, at best</em><span>1.7 to 8.7 times Apache Camel&rsquo;s messages per second, in all 11 scenarios, on the same machines.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="finops/"><b>42x</b><em>more integrations per node</em><span>24 to 1,024 per 8 GiB on a direct route; 24 to 282 for HTTP into Kafka.</span><small>Cameleer · arithmetic on measured peak memory</small></a>
+      <a class="outcome" href="ledger/#cameleer"><b>44x</b><em>less memory, at best</em><span>Peak 211&ndash;421 MB to 8&ndash;39 MB: 5.4 to 44 times less across 11 scenarios.</span><small>Cameleer vs Apache Camel</small></a>
+      <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>19.8x</b><em>the throughput, at best</em><span>2.0 to 19.8 times Apache Camel&rsquo;s messages per second, in all 11 scenarios, on the same machines (19.8x in Kafka stream processing; 5.6x at best in the others).</span><small>Cameleer vs Apache Camel</small></a>
       <a class="outcome" href="simoom/benchmarks/"><b>43%</b><em>less CPU per request</em><span>About 23 &micro;s to 13 &micro;s, with 1.7&ndash;1.8x the requests per second.</span><small>simoom vs the server it replaced</small></a>
     </div>
     <div class="cta"><a class="btn primary" href="#playbook">Run it on your software</a><a class="btn" href="ledger/">See every result in the ledger</a></div>
@@ -110,12 +110,12 @@
     <p class="intro">Two projects have run every step in public.</p>
     <div class="two">
       <div class="pane proof">
-        <h3><a href="cameleer/">Cameleer</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-06</span></h3>
+        <h3><a href="cameleer/">Cameleer</a> <span class="st st-measured">Cameleered</span> <span class="date">2026-11-23</span></h3>
         <p>An integration engine in the style of Apache Camel, and the first Cameleering project.</p>
         <ul>
           <li><b>Baseline:</b> Apache Camel 4.23.0 on Java 21 and 4.22.1 on Quarkus native, on identical DigitalOcean c-4 machines.</li>
           <li><b>Cut:</b> one std-only binary that keeps Camel&rsquo;s routes, YAML and endpoint URIs, with component families as build options.</li>
-          <li><b>Proved:</b> start-up 450x faster (10x against Quarkus native), 4.8&ndash;54x less memory, 1.7&ndash;8.7x the throughput.</li>
+          <li><b>Proved:</b> start-up 300x faster (7.7x against Quarkus native), 5.4&ndash;44x less memory, 2.0&ndash;19.8x the throughput, and a lower p99 in every scenario.</li>
         </ul>
         <p><a href="cameleer/compare/apache-camel-vs-cameleer/">Full comparison</a> · <a href="docs/BENCHMARKS.html">every scenario and the raw data</a></p>
       </div>
@@ -138,9 +138,9 @@
     <p class="intro">Software decides how much memory and CPU every instance needs. Flexera&rsquo;s 2026 survey puts cloud waste at 29% of infrastructure spend.</p>
     <div class="cards four benefits">
       <div class="card"><h3>A smaller bill</h3><p>Lambda bills execution time times memory, and since August 2025 the cold start too. Each request runs 3 ms in 128 MB instead of 7 ms in 512 MB, about <b>9 times less</b> per request, and a million cold starts cost <b>$0.03</b> instead of $9.17. For a month of 10 million requests the compute bill is $0.06 against $1.50.</p><p class="note">Arithmetic on measured numbers and AWS list prices. <a href="finops/">The arithmetic, with its limits</a></p></div>
-      <div class="card"><h3>Less waiting</h3><p>A started context in <b>3 ms</b> instead of 1.1 s. A REST API with JSON has a p99 of <b>2.6 ms</b> instead of 6.3 ms. Behind simoom, p99 fell from 0.87&ndash;0.91 ms to 0.32&ndash;0.44 ms while serving 1.7&ndash;1.8x the requests.</p><p class="note"><a href="cameleer/">Cameleer</a> · <a href="simoom/">simoom</a></p></div>
-      <div class="card"><h3>Fewer machines</h3><p><b>1,024</b> integrations fit in 8 GiB by peak memory instead of 20. At 1.7&ndash;8.7x the throughput on the same CPUs, the same load needs fewer vCPUs, and each costs about $29.55 a month on Fargate at list price.</p><p class="note">Arithmetic; real density is lower on both sides. <a href="finops/">Density and vCPU examples</a></p></div>
-      <div class="card"><h3>Simpler operations</h3><p>One binary with no JVM to install: <b>8 MB</b> of memory at start-up instead of 114 MB. simoom has no crates.io dependencies at all and holds 1,000 idle connections in <b>2.7 MB</b> instead of 7.7 MB.</p><p class="note"><a href="ledger/">Both rows in the ledger</a></p></div>
+      <div class="card"><h3>Less waiting</h3><p>A started context in <b>3 ms</b> instead of 1.0 s. A REST API with JSON has a p99 of <b>0.84 ms</b> instead of 5.0 ms. Behind simoom, p99 fell from 0.87&ndash;0.91 ms to 0.32&ndash;0.44 ms while serving 1.7&ndash;1.8x the requests.</p><p class="note"><a href="cameleer/">Cameleer</a> · <a href="simoom/">simoom</a></p></div>
+      <div class="card"><h3>Fewer machines</h3><p><b>1,024</b> integrations fit in 8 GiB by peak memory instead of 24. At 2.0&ndash;19.8x the throughput on the same CPUs, the same load needs fewer vCPUs, and each costs about $29.55 a month on Fargate at list price.</p><p class="note">Arithmetic; real density is lower on both sides. <a href="finops/">Density and vCPU examples</a></p></div>
+      <div class="card"><h3>Simpler operations</h3><p>One binary with no JVM to install: <b>9 MB</b> of memory at start-up instead of 116 MB. simoom has no crates.io dependencies at all and holds 1,000 idle connections in <b>2.7 MB</b> instead of 7.7 MB.</p><p class="note"><a href="ledger/">Both rows in the ledger</a></p></div>
     </div>
   </div>
 </section>
@@ -256,7 +256,7 @@
       <li id="s3">Huang et al., <a href="https://arxiv.org/abs/2402.02037">&ldquo;EffiBench: Benchmarking the Efficiency of Automatically Generated Code&rdquo;</a>, NeurIPS 2024.</li>
       <li id="s7">Green Software Foundation, <a href="https://greensoftware.foundation/standards/sci/">Software Carbon Intensity (SCI) specification</a>, published as ISO/IEC 21031:2024.</li>
       <li id="s8">FinOps Foundation, <a href="https://www.finops.org/introduction/what-is-finops/">What is FinOps?</a></li>
-      <li id="s9">Measurements: Cameleer in <a href="docs/BENCHMARKS.html">BENCHMARKS</a> (raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-06-linux">benchmarks/results/2026-11-06-linux</a>); simoom in <a href="simoom/benchmarks/">its benchmarks</a>; FinOps arithmetic and the Flexera survey on <a href="finops/">the FinOps page</a>; all summarized in <a href="ledger/">the ledger</a>.</li>
+      <li id="s9">Measurements: Cameleer in <a href="docs/BENCHMARKS.html">BENCHMARKS</a> (raw results in <a href="https://github.com/cameleering/cameleer/tree/main/benchmarks/results/2026-11-23-linux-main-beb3385-camel">benchmarks/results/2026-11-23-linux-main-beb3385-camel</a>); simoom in <a href="simoom/benchmarks/">its benchmarks</a>; FinOps arithmetic and the Flexera survey on <a href="finops/">the FinOps page</a>; all summarized in <a href="ledger/">the ledger</a>.</li>
     </ol>
   </div>
 </section>

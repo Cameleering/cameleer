@@ -164,16 +164,18 @@ Commands and settings for each: [Where to run it](mcp/deployment.md).
 
 ## How it compares
 
-Measured on three identical cloud machines (4 dedicated vCPUs each, 64 client connections), one
-tool answering a JSON document, all three sides in one session on 2026-11-20 with Cameleer 0.8.0
-([benchmarks](../BENCHMARKS.md#action-layer-and-mcp-2026-11-06-second-run); against 0.7.0 Cameleer's MCP is 0.96x to 0.98x, a slowdown whose cause was not isolated):
+Measured on three cloud machines (4 dedicated vCPUs each, 64 client connections), one
+tool answering a JSON document, all three sides in one session on 2026-11-23 with Cameleer `main` at `beb3385`
+([benchmarks](../BENCHMARKS.md#action-layer-and-mcp-2026-11-06-second-run)). Over an hour of constant load
+Cameleer held 62,967 calls/s with a flat p99 and 0.6 MB of memory growth, against 25,267 calls/s for Camel and
+3,160 for the TypeScript SDK ([soak results](../../benchmarks/results/2026-11-23-linux-soak/)):
 
 | | Cameleer | Apache Camel `camel-mcp-server` (JVM) | MCP TypeScript SDK (Node.js) |
 |---|---:|---:|---:|
-| `tools/call` in sessions (2025-06-18) | **43,254 calls/s** | 20,968 calls/s | 2,179 calls/s |
-| p99 latency | 4.4 ms | 5.6 ms | 57 ms |
-| peak memory | **22 MB** | 281 MB | 198 MB |
-| stateless `tools/call` (2026-07-28) | 41,532 calls/s, p99 4.6 ms | not offered | not offered |
+| `tools/call` in sessions (2025-06-18) | **55,313 calls/s** | 20,254 calls/s | 2,684 calls/s |
+| p99 latency | 4.0 ms | 5.8 ms | 47 ms |
+| peak memory | **23 MB** | 295 MB | 202 MB |
+| stateless `tools/call` (2026-07-28) | 52,435 calls/s, p99 4.1 ms | not offered | not offered |
 
 Each Cameleer call in that run went through the whole envelope (schema check, rate-limit and
 breaker bookkeeping, an audit record); the envelope costs about 6 µs per call on a Xeon of this class.

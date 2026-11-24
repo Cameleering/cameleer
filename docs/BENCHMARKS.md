@@ -8,16 +8,18 @@ This is the full report behind the
 [Apache Camel vs Cameleer comparison](https://cameleer.ing/cameleer/compare/apache-camel-vs-cameleer/).
 It compares three runtimes on the same routes:
 
-- **Cameleer** 0.8.0 (measured on the release candidate, commit `7ee75e7`), the native Rust binary;
+- **Cameleer** `main` at `beb3385` (2026-11-23: 0.8.0's candidate plus the governor, the asynchronous Kafka
+  producer and the keep-alive fix), the native Rust binary;
 - **Apache Camel on the JVM**: Camel 4.23.0 on Java 21, the way most Camel runs today;
 - **Apache Camel on Quarkus, native**: Camel 4.22.1 compiled ahead of time with Quarkus 3.40.0
   and Mandrel, the fastest-starting way to run Camel.
 
 Every number below is generated from the raw results in
 [`benchmarks/results/`](../benchmarks/results/) by `scripts/cloud-bench/summarize.py`; none is
-typed by hand. Each figure is the mean of two runs on two identical servers, all from **one session on
-2026-11-20** (Cameleer, both Camel builds and the MCP TypeScript SDK ran on the same droplets, in one go).
-The earlier published table was Cameleer 0.4.0 (2026-11-06); it is replaced, so this page no longer mixes
+typed by hand. Each figure is the mean of two runs on two servers, all from **one session on
+2026-11-23** (Cameleer, both Camel builds and the MCP TypeScript SDK ran on the same droplets, in one go;
+raw records in [`benchmarks/results/2026-11-23-linux-main-beb3385-camel/`](../benchmarks/results/2026-11-23-linux-main-beb3385-camel/)).
+It replaces the 0.8.0 candidate's session of 2026-11-20, which replaced Cameleer 0.4.0 (2026-11-06), so this page no longer mixes
 Cameleer releases or sessions in its main table. Absolute figures differ by 10 to 25% between the two servers of
 one session and by about 40% between sessions and regions, so compare ratios inside a session.
 
@@ -28,73 +30,81 @@ one session and by about 40% between sessions and regions, so compare ratios ins
 
 | scenario | Cameleer | Apache Camel (JVM) | Apache Camel (Quarkus native) | Cameleer vs Camel JVM | Cameleer vs Camel native |
 |---|---:|---:|---:|---:|---:|
-| Direct call through a route | 2,183,948 msg/s | 702,037 msg/s | 265,536 msg/s | 3.1x | 8.2x |
-| In-memory queue (seda), one-way | 1,530,109 msg/s | 577,238 msg/s | 332,326 msg/s | 2.6x | 4.6x |
-| In-memory queue (seda), request-reply | 722,258 msg/s | 105,184 msg/s | 63,132 msg/s | 6.8x | 11.4x |
-| Content-based router | 1,154,104 msg/s | 384,354 msg/s | 146,327 msg/s | 3.0x | 7.8x |
-| Split and aggregate a JSON order | 74,755 orders/s | 29,349 orders/s | 10,350 orders/s | 2.5x | 7.2x |
-| CSV batch (1,000-row files) | 1,102 files/s | 466 files/s | 188 files/s | 2.3x | 5.8x |
-| Kafka stream processing | 10,104 records/s | 662 records/s | 654 records/s | 15.2x | 15.4x |
-| HTTP, fixed reply | 102,131 req/s | 55,735 req/s | 27,828 req/s | 1.8x | 3.6x |
-| REST API with JSON | 88,440 req/s | 35,986 req/s | 17,938 req/s | 2.4x | 4.9x |
-| HTTP into Kafka | 31,351 req/s | 9,641 req/s | 9,006 req/s | 3.2x | 3.4x |
-| HTTP into PostgreSQL | 17,279 req/s | 7,394 req/s | 4,584 req/s | 2.3x | 3.7x |
+| Direct call through a route | 2,419,660 msg/s | 761,660 msg/s | 297,438 msg/s | 3.1x | 8.1x |
+| In-memory queue (seda), one-way | 1,786,960 msg/s | 662,535 msg/s | 386,344 msg/s | 2.6x | 4.6x |
+| In-memory queue (seda), request-reply | 775,338 msg/s | 137,808 msg/s | 91,450 msg/s | 5.6x | 8.4x |
+| Content-based router | 1,135,904 msg/s | 433,457 msg/s | 158,872 msg/s | 2.6x | 7.1x |
+| Split and aggregate a JSON order | 84,354 orders/s | 30,885 orders/s | 11,684 orders/s | 2.7x | 7.2x |
+| CSV batch (1,000-row files) | 1,264 files/s | 560 files/s | 237 files/s | 2.2x | 5.3x |
+| Kafka stream processing | 14,036 records/s | 706 records/s | 698 records/s | 19.8x | 20.1x |
+| HTTP, fixed reply | 146,114 req/s | 70,737 req/s | 35,360 req/s | 2.0x | 4.1x |
+| REST API with JSON | 141,276 req/s | 45,700 req/s | 22,604 req/s | 3.0x | 6.2x |
+| HTTP into Kafka | 44,402 req/s | 10,182 req/s | 9,550 req/s | 4.3x | 4.6x |
+| HTTP into PostgreSQL | 17,386 req/s | 8,088 req/s | 5,276 req/s | 2.1x | 3.2x |
 
 ### Latency, p99 (lower is better)
 
 | scenario | Cameleer | Apache Camel (JVM) | Apache Camel (Quarkus native) |
 |---|---:|---:|---:|
-| Direct call through a route | 1 µs | 3 µs | 10 µs |
-| In-memory queue (seda), request-reply | 33 µs | 88 µs | 148 µs |
-| Content-based router | 2 µs | 5 µs | 18 µs |
-| Split and aggregate a JSON order | 30 µs | 62 µs | 397 µs |
-| CSV batch (1,000-row files) | 1.9 ms | 3.4 ms | 11.7 ms |
-| HTTP, fixed reply | 1.7 ms | 3.7 ms | 7.2 ms |
-| REST API with JSON | 2.1 ms | 5.4 ms | 11.9 ms |
-| HTTP into Kafka | 3.5 ms | 8.1 ms | 13.0 ms |
-| HTTP into PostgreSQL | 9.4 ms | 11.3 ms | 22.8 ms |
+| Direct call through a route | 0 µs | 2 µs | 7 µs |
+| In-memory queue (seda), request-reply | 28 µs | 68 µs | 101 µs |
+| Content-based router | 1 µs | 4 µs | 15 µs |
+| Split and aggregate a JSON order | 21 µs | 55 µs | 180 µs |
+| CSV batch (1,000-row files) | 868 µs | 2.9 ms | 9.5 ms |
+| HTTP, fixed reply | 606 µs | 3.6 ms | 6.6 ms |
+| REST API with JSON | 836 µs | 5.0 ms | 10.2 ms |
+| HTTP into Kafka | 2.5 ms | 7.6 ms | 11.8 ms |
+| HTTP into PostgreSQL | 8.7 ms | 11.0 ms | 20.1 ms |
 
 ### Memory and CPU
 
 | scenario | Cameleer: peak memory | Apache Camel (JVM): peak memory | Apache Camel (Quarkus native): peak memory | Cameleer: CPU | Apache Camel (JVM): CPU | Apache Camel (Quarkus native): CPU |
 |---|---:|---:|---:|---:|---:|---:|
-| Direct call through a route | 8 MB | 331 MB | 113 MB | - | - | - |
-| In-memory queue (seda), one-way | 10 MB | 435 MB | 198 MB | - | - | - |
-| In-memory queue (seda), request-reply | 9 MB | 195 MB | 113 MB | - | - | - |
-| Content-based router | 8 MB | 328 MB | 113 MB | - | - | - |
-| Split and aggregate a JSON order | 8 MB | 323 MB | 113 MB | - | - | - |
-| CSV batch (1,000-row files) | 8 MB | 318 MB | 131 MB | - | - | - |
-| Kafka stream processing | 39 MB | 210 MB | 130 MB | - | - | - |
-| HTTP, fixed reply | 9 MB | 262 MB | 120 MB | 220% | 315% | 306% |
-| REST API with JSON | 10 MB | 411 MB | 124 MB | 224% | 312% | 303% |
-| HTTP into Kafka | 57 MB | 317 MB | 128 MB | 202% | 144% | 166% |
-| HTTP into PostgreSQL | 29 MB | 313 MB | 146 MB | 158% | 245% | 280% |
+| Direct call through a route | 8 MB | 334 MB | 112 MB | - | - | - |
+| In-memory queue (seda), one-way | 10 MB | 419 MB | 205 MB | - | - | - |
+| In-memory queue (seda), request-reply | 9 MB | 240 MB | 113 MB | - | - | - |
+| Content-based router | 8 MB | 302 MB | 113 MB | - | - | - |
+| Split and aggregate a JSON order | 8 MB | 326 MB | 113 MB | - | - | - |
+| CSV batch (1,000-row files) | 8 MB | 329 MB | 133 MB | - | - | - |
+| Kafka stream processing | 39 MB | 211 MB | 129 MB | - | - | - |
+| HTTP, fixed reply | 9 MB | 267 MB | 120 MB | 216% | 315% | 304% |
+| REST API with JSON | 9 MB | 421 MB | 133 MB | 236% | 310% | 303% |
+| HTTP into Kafka | 29 MB | 333 MB | 129 MB | 202% | 134% | 142% |
+| HTTP into PostgreSQL | 29 MB | 289 MB | 142 MB | 132% | 232% | 271% |
 
 ### Startup
 
 | | Cameleer | Apache Camel (JVM) | Apache Camel (Quarkus native) |
 |---|---:|---:|---:|
-| time to a started context | 12.3 ms | 1126.9 ms | 27.4 ms |
+| time to a started context | 3.0 ms | 1034.2 ms | 23.8 ms |
 | memory at startup | 9 MB | 116 MB | 69 MB |
 
 <!-- /bench:md-tables -->
 
 ## What the results show
 
-- **Startup.** Cameleer has its routes running in about 12 ms in this scenario (every in-process route plus an
-  HTTP route; the 0.4.0 run measured 2.5 ms, and the route set and the build both changed since, so the cause of the
-  difference was not isolated). One `platform-http` route is ready in about 3 ms (see "Size, cold start and memory of
-  0.8.0" below). Apache Camel on the JVM takes about a second; compiled natively with Quarkus it takes tens of
-  milliseconds.
+- **Startup.** Cameleer has its routes running in about 3 ms in this scenario (every in-process route plus an
+  HTTP route). The 0.8.0 candidate measured 12 ms here; the cause was the descriptor-table growth at server start,
+  fixed on 2026-11-22 (`docs/design/startup-regression-2026-11.md`). Apache Camel on the JVM takes about a second;
+  compiled natively with Quarkus it takes tens of milliseconds.
 - **Memory.** Cameleer runs these routes in tens of megabytes. Camel on the JVM uses hundreds;
   native Camel sits in between.
 - **Throughput.** Cameleer handles more messages per second than Camel on the JVM in every
   scenario, and more than native Camel by a wider margin: native Camel has no JIT compiler, so
   it trades throughput for startup.
 - **Latency.** Cameleer's p99 latency is lower than both Camel builds in every scenario of this session,
-  including HTTP into Kafka (3.5 ms against 8.1 ms on the JVM). The 0.4.0 run had one loss there (8.6 against
+  including HTTP into Kafka (2.5 ms against 7.6 ms on the JVM). The 0.4.0 run had one loss there (8.6 against
   7.8 ms); the Kafka producer change of 2026-11-06 removed it. The one place where Cameleer uses more CPU than the
-  JVM is HTTP into Kafka (202% against 144%), because it sends on several connections at once.
+  JVM is HTTP into Kafka (202% against 134%), because it sends on several connections at once.
+- **Against the 2026-11-20 session.** Most ratios rose (HTTP 1.8x to 2.0x, Kafka stream 15.2x to 19.8x, HTTP into
+  Kafka 3.2x to 4.3x, MCP session 2.06x to 2.73x). Three in-process ratios fell: seda request-reply 6.8x to 5.6x,
+  the content-based router 3.0x to 2.6x and CSV 2.3x to 2.2x. Cameleer's own figures rose in every in-process
+  scenario but the router; Camel on the JVM gained more on these servers (Xeon 8358 and 8280 against 8168 before).
+- **Over an hour.** One-hour soaks at constant load
+  ([`benchmarks/results/2026-11-23-linux-soak/`](../benchmarks/results/2026-11-23-linux-soak/)): HTTP into Kafka
+  49,530 req/s (4.6x Camel on the JVM) and the MCP session 62,967 calls/s (2.5x), with flat throughput and p99,
+  constant threads and descriptors, and 0.6 to 1.3 MB of memory growth. Camel on the JVM grew 17 to 71 MB and
+  the TypeScript SDK 89 MB in the same hour.
 
 ## The scenarios
 
@@ -123,15 +133,15 @@ Quarkus build compiles the same class from
 ## How we tested
 
 **Machines.** Three DigitalOcean CPU-optimized droplets (`c-4`) in region `sfo2` (this session; earlier rounds
-used `blr1`, then `sfo3`, which no longer offer `c-4`): 4 dedicated vCPUs (Intel Xeon Platinum 8168 at 2.7 GHz on
-the two servers, Platinum 8280 on the load machine), 8 GB RAM, Ubuntu 24.04, on one private network. Two
+used `blr1`, then `sfo3`, which no longer offer `c-4`): 4 dedicated vCPUs (Intel Xeon Platinum 8358 at 2.6 GHz on
+server a and the load machine, Platinum 8280 at 2.7 GHz on server b; the 2026-11-20 session had 8168s), 8 GB RAM, Ubuntu 24.04, on one private network. Two
 of them are servers that take turns running each runtime; the third runs the HTTP load
 generator, Apache Kafka 4.3.2 (KRaft, one broker, 4 partitions per topic) and PostgreSQL 16. All
 three get the same kernel settings
 ([`scripts/cloud-bench/setup-node.sh`](../scripts/cloud-bench/setup-node.sh)).
 
 **Runtimes.** Temurin 21.0.13 for Apache Camel 4.23.0, with no JVM flags. Camel Quarkus 3.40.0
-(Apache Camel 4.22.1) compiled with Mandrel 25.0.4.1. Cameleer 0.8.0 (the candidate) built with Rust
+(Apache Camel 4.22.1) compiled with Mandrel 25.0.4.1. Cameleer `main` at `beb3385` built with Rust
 1.99.1 in release mode. Every download is pinned and checksum-verified.
 
 **Method.**
@@ -198,6 +208,12 @@ roles halfway; each figure is the mean of the two phases). Raw records:
 run's figures, and why the TypeScript number changed, are under the table.
 
 ### MCP tool calls over the network
+
+**On `main` (2026-11-23, `beb3385`, the session of the main table):** `tools/call` in a session, mean of the two
+servers: Cameleer **55,313 calls/s**, p99 4.0 ms, 23 MB; Apache Camel `camel-mcp-server` 20,254 calls/s, 5.8 ms,
+295 MB; the MCP TypeScript SDK 2,684 calls/s, 47.4 ms, 202 MB. That is **2.73x Camel and 20.6x the SDK**, with a
+lower p99 than Camel. Stateless `tools/call` on Cameleer: 52,435 calls/s. Records:
+[`benchmarks/results/2026-11-23-linux-main-beb3385-camel/`](../benchmarks/results/2026-11-23-linux-main-beb3385-camel/).
 
 **On 0.8.0 (2026-11-20, one session, Cameleer, Camel and the TypeScript SDK on the same droplets in `sfo2`):**
 `tools/call` in a session, mean of the two servers: Cameleer **43,254 calls/s**, p99 4.36 ms, 22 MB; Apache Camel
@@ -290,9 +306,10 @@ and no Apache Camel side was run, so the figures are comparable with each other 
 
 ### Integration routes against `main`
 
-*(Cameleer 0.5.x, 2026-11-06. On 0.8.0 in `sfo2` the same two scenarios measured 31,351 req/s with p99 3.5 ms for
-HTTP into Kafka (3.2x Camel) and 10,104 records/s for Kafka stream processing (15.2x Camel); the machines and the
-session differ, and the lower HTTP-into-Kafka ratio than the 5.0x below was not investigated.)*
+*(Cameleer 0.5.x, 2026-11-06. On `main` on 2026-11-23 in `sfo2` the same two scenarios measured 44,402 req/s with
+p99 2.5 ms for HTTP into Kafka (4.3x Camel) and 14,036 records/s for Kafka stream processing (19.8x Camel); on 0.8.0
+on 2026-11-20, 31,351 req/s (3.2x) and 10,104 records/s (15.2x). The machines and the sessions differ; the ratio
+below 5.0x for HTTP into Kafka was not investigated further.)*
 
 No scenario got slower than `main`. Two got faster, from the Kafka producer's requests in flight
 on several connections (`maxInFlightRequest`, default 5):

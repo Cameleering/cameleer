@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Apache Camel MCP Server vs Cameleer | Cameleer</title>
-<meta name="description" content="Apache Camel 4.22 ships camel-mcp-server. Cameleer keeps its option names and adds an enforced reliability envelope: 39,922 vs 22,604 tool calls/s.">
+<meta name="description" content="Apache Camel 4.22 ships camel-mcp-server. Cameleer keeps its option names and adds an enforced reliability envelope: 55,313 vs 20,254 tool calls/s.">
 <link rel="canonical" href="https://cameleer.ing/cameleer/compare/camel-mcp-server-vs-cameleer/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -29,7 +29,7 @@
 {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Cameleering", "item": "https://cameleer.ing/"}, {"@type": "ListItem", "position": 2, "name": "Cameleer", "item": "https://cameleer.ing/cameleer/"}, {"@type": "ListItem", "position": 3, "name": "Compare", "item": "https://cameleer.ing/cameleer/compare/"}, {"@type": "ListItem", "position": 4, "name": "Camel MCP server vs Cameleer"}]}
 </script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do my Camel ai-tool routes and MCP properties carry over?", "acceptedAnswer": {"@type": "Answer", "text": "The ai-tool options (description, tags, parameter.*, argSchema, outputSchema, the four hints, returnDirect) and the camel.server.mcp-* properties use Camel's names and semantics, so YAML tool routes and their properties carry over. Java beans do not: an authorizationPolicy, for example, is a Rust implementation of ToolAuthorizationPolicy in Cameleer."}}, {"@type": "Question", "name": "Is Camel's MCP server unreliable?", "acceptedAnswer": {"@type": "Answer", "text": "No. In Camel the tool hints are advisory and the reliability is yours to build in the route with Camel's EIPs: idempotent consumer, saga, throttle, circuit breaker. Cameleer makes those checks part of every call, so a tool cannot forget them."}}, {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When the tools call Java libraries or beans, when you need a component Cameleer does not have, when the MCP server should live inside a Spring Boot or Quarkus application, or when you need commercial support."}}, {"@type": "Question", "name": "Are there benchmarks of the MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's camel-mcp-server on the JVM and 2,257 for a server written on the official TypeScript SDK, with 56 MB of memory against 289 MB and 197 MB. Stateless 2026-07-28 calls reached 50,514 per second in 26 MB. Every Cameleer call went through the full tool envelope."}}]}
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do my Camel ai-tool routes and MCP properties carry over?", "acceptedAnswer": {"@type": "Answer", "text": "The ai-tool options (description, tags, parameter.*, argSchema, outputSchema, the four hints, returnDirect) and the camel.server.mcp-* properties use Camel's names and semantics, so YAML tool routes and their properties carry over. Java beans do not: an authorizationPolicy, for example, is a Rust implementation of ToolAuthorizationPolicy in Cameleer."}}, {"@type": "Question", "name": "Is Camel's MCP server unreliable?", "acceptedAnswer": {"@type": "Answer", "text": "No. In Camel the tool hints are advisory and the reliability is yours to build in the route with Camel's EIPs: idempotent consumer, saga, throttle, circuit breaker. Cameleer makes those checks part of every call, so a tool cannot forget them."}}, {"@type": "Question", "name": "When should I stay on Apache Camel?", "acceptedAnswer": {"@type": "Answer", "text": "When the tools call Java libraries or beans, when you need a component Cameleer does not have, when the MCP server should live inside a Spring Boot or Quarkus application, or when you need commercial support."}}, {"@type": "Question", "name": "Are there benchmarks of the MCP server?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 55,313 MCP tool calls per second in sessions against 20,254 for Apache Camel's camel-mcp-server on the JVM and 2,684 for a server written on the official TypeScript SDK, with 23 MB of memory against 295 MB and 202 MB, and the lowest p99 (4.0 ms against 5.8 ms and 47.4 ms). Stateless 2026-07-28 calls reached 52,435 per second. Every Cameleer call went through the full tool envelope."}}]}
 </script>
 </head>
 <body>
@@ -75,7 +75,7 @@
       <div class="stat"><b>same</b><span>names</span><small><code>ai-tool</code> options and <code>camel.server.mcp-*</code> properties</small></div>
       <div class="stat"><b>11 steps</b><span>around every call</span><small>from kill switch to audit record</small></div>
       <div class="stat"><b>2 eras</b><span>of MCP on one endpoint</span><small>2026-07-28 and 2025-11-25</small></div>
-      <div class="stat"><b>1.77x</b><span>MCP calls per second</span><small>39,922 vs 22,604, in a fifth of the memory</small></div>
+      <div class="stat"><b>2.73x</b><span>MCP calls per second</span><small>55,313 vs 20,254, in a twelfth of the memory</small></div>
     </div>
   </div>
 </section>
@@ -165,20 +165,20 @@ camel.server.mcp-tags=support</pre>
     <div class="c-table-wrap"><table class="c-table">
       <thead><tr><th></th><th class="num">Apache Camel <code>camel-mcp-server</code> (JVM)</th><th class="num">MCP TypeScript SDK</th><th class="num">Cameleer</th></tr></thead>
       <tbody>
-        <tr><td>Tool calls per second (sessions)</td><td class="num">22,604</td><td class="num">2,257</td><td class="num"><span class="win">39,922</span></td></tr>
-        <tr><td>p99 latency</td><td class="num">5.2 ms</td><td class="num">55 ms</td><td class="num">6.3 ms</td></tr>
-        <tr><td>Peak memory</td><td class="num">289 MB</td><td class="num">197 MB</td><td class="num"><span class="win">56 MB</span></td></tr>
-        <tr><td>Stateless calls (2026-07-28)</td><td class="num">not offered</td><td class="num">not offered</td><td class="num"><span class="win">50,514/s in 26 MB</span></td></tr>
+        <tr><td>Tool calls per second (sessions)</td><td class="num">20,254</td><td class="num">2,684</td><td class="num"><span class="win">55,313</span></td></tr>
+        <tr><td>p99 latency</td><td class="num">5.8 ms</td><td class="num">47.4 ms</td><td class="num"><span class="win">4.0 ms</span></td></tr>
+        <tr><td>Peak memory</td><td class="num">295 MB</td><td class="num">202 MB</td><td class="num"><span class="win">23 MB</span></td></tr>
+        <tr><td>Stateless calls (2026-07-28)</td><td class="num">not offered</td><td class="num">not offered</td><td class="num"><span class="win">52,435/s</span></td></tr>
       </tbody>
     </table></div>
-    <p class="note">Every Cameleer call went through the whole tool envelope: schema check, rate-limit and breaker bookkeeping and a hash-chained audit record. Raw records and method: <a href="https://github.com/cameleering/cameleer/blob/main/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
+    <p class="note">Every Cameleer call went through the whole tool envelope: schema check, rate-limit and breaker bookkeeping and a hash-chained audit record. Measured on 2026-11-23 with Cameleer <code>main</code>. Raw records and method: <a href="https://github.com/cameleering/cameleer/blob/main/docs/BENCHMARKS.md">BENCHMARKS.md</a>.</p>
     <p class="intro">And the runtime underneath, measured on integration routes:</p>
     <div class="c-table-wrap"><table class="c-table">
       <thead><tr><th></th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th></tr></thead>
       <tbody>
-        <tr><td>Startup to routes running</td><td class="num">1.1 s</td><td class="num"><span class="win">3 ms</span></td></tr>
-        <tr><td>Memory, same route</td><td class="num">399 MB</td><td class="num"><span class="win">8 MB</span> (up to 54x less)</td></tr>
-        <tr><td>Throughput</td><td class="num">1x</td><td class="num"><span class="win">1.7–8.7x</span>, in every scenario</td></tr>
+        <tr><td>Startup to routes running</td><td class="num">1.0 s</td><td class="num"><span class="win">3 ms</span></td></tr>
+        <tr><td>Memory, same route</td><td class="num">333 MB</td><td class="num"><span class="win">8 MB</span> (up to 44x less)</td></tr>
+        <tr><td>Throughput</td><td class="num">1x</td><td class="num"><span class="win">2.0–19.8x</span>, in every scenario</td></tr>
       </tbody>
     </table></div>
     <p class="note">Method, machines and every scenario: <a href="../apache-camel-vs-cameleer/">Apache Camel vs Cameleer</a>. For a tool server, startup matters for stdio servers that a client starts on demand and for scale-to-zero deployments; memory matters when every developer or tenant runs their own server.</p>
@@ -217,7 +217,7 @@ camel.server.mcp-tags=support</pre>
     <details><summary>Do my Camel ai-tool routes and MCP properties carry over?</summary><p>The <code>ai-tool</code> options (<code>description</code>, <code>tags</code>, <code>parameter.*</code>, <code>argSchema</code>, <code>outputSchema</code>, the four hints, <code>returnDirect</code>) and the <code>camel.server.mcp-*</code> properties use Camel's names and semantics, so YAML tool routes and their properties carry over. Java beans do not: an <code>authorizationPolicy</code>, for example, is a Rust implementation of <code>ToolAuthorizationPolicy</code> in Cameleer.</p></details>
     <details><summary>Is Camel's MCP server unreliable?</summary><p>No. In Camel the tool hints are advisory and the reliability is yours to build in the route with Camel's EIPs: idempotent consumer, saga, throttle, circuit breaker. Cameleer makes those checks part of every call, so a tool cannot forget them.</p></details>
     <details><summary>When should I stay on Apache Camel?</summary><p>When the tools call Java libraries or beans, when you need a component Cameleer does not have, when the MCP server should live inside a Spring Boot or Quarkus application, or when you need commercial support.</p></details>
-    <details><summary>Are there benchmarks of the MCP server?</summary><p>Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 39,922 MCP tool calls per second in sessions against 22,604 for Apache Camel's camel-mcp-server on the JVM and 2,257 for a server written on the official TypeScript SDK, with 56 MB of memory against 289 MB and 197 MB. Stateless 2026-07-28 calls reached 50,514 per second in 26 MB. Every Cameleer call went through the full tool envelope.</p></details>
+    <details><summary>Are there benchmarks of the MCP server?</summary><p>Yes. On three identical cloud machines (4 dedicated vCPUs each, 64 client connections), Cameleer served 55,313 MCP tool calls per second in sessions against 20,254 for Apache Camel's camel-mcp-server on the JVM and 2,684 for a server written on the official TypeScript SDK, with 23 MB of memory against 295 MB and 202 MB, and the lowest p99 (4.0 ms against 5.8 ms and 47.4 ms). Stateless 2026-07-28 calls reached 52,435 per second. Every Cameleer call went through the full tool envelope.</p></details>
   </div>
 </section>
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Code Efficiency as a FinOps Lever | Cameleering</title>
-<meta name="description" content="What code efficiency saves on Lambda, Fargate and Kubernetes, worked from measurements: a 23x smaller Lambda compute bill and 51x more integrations per node.">
+<meta name="description" content="What code efficiency saves on Lambda, Fargate and Kubernetes, worked from measurements: a 23x smaller Lambda compute bill and 42x more integrations per node.">
 <link rel="canonical" href="https://cameleer.ing/finops/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -87,19 +87,19 @@
 <section class="c-sec" id="translate">
   <div class="wrap">
     <h2>From milliseconds and megabytes to money</h2>
-    <p class="intro">The worked examples below use one measured comparison: the same integration routes on Apache Camel 4.23 on Java 21 and on Cameleer, the first Cameleering project, on identical cloud machines (<a href="../ledger/">the ledger</a>). Prices are public on-demand list prices in us-east-1, checked on 2026-11-12. Each example says what it leaves out.</p>
+    <p class="intro">The worked examples below use one measured comparison: the same integration routes on Apache Camel 4.23 on Java 21 and on Cameleer, the first Cameleering project, on identical cloud machines (<a href="../ledger/">the ledger</a>). Examples 1 and 5 use the session of 2026-11-23; the Lambda examples 2 to 4 still use the start-up, p99 and peak memory figures of the 2026-11-06 session (Cameleer 0.4.0), which they show. Prices are public on-demand list prices in us-east-1, checked on 2026-11-12. Each example says what it leaves out.</p>
 
     <h3>1. Memory decides how many instances fit on a node</h3>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>route, peak memory (measured)</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th></tr></thead>
       <tbody>
-        <tr><td>direct call through a route</td><td class="num">399 MB</td><td class="num">7 MB</td></tr>
-        <tr><td>HTTP into Kafka (Cameleer's highest)</td><td class="num">328 MB</td><td class="num">67 MB</td></tr>
-        <tr><td>integrations that fit in 8 GiB, by peak memory alone, direct route</td><td class="num">20</td><td class="num">1,024</td></tr>
-        <tr><td>the same, HTTP into Kafka</td><td class="num">24</td><td class="num">122</td></tr>
+        <tr><td>direct call through a route</td><td class="num">333 MB</td><td class="num">8 MB</td></tr>
+        <tr><td>HTTP into Kafka</td><td class="num">333 MB</td><td class="num">29 MB</td></tr>
+        <tr><td>integrations that fit in 8 GiB, by peak memory alone, direct route</td><td class="num">24</td><td class="num">1,024</td></tr>
+        <tr><td>the same, HTTP into Kafka</td><td class="num">24</td><td class="num">282</td></tr>
       </tbody>
     </table></div>
-    <p class="note">Arithmetic, not a measurement: 8,192 MiB divided by peak memory. It ignores CPU, the operating system and the orchestrator's own overhead, so real density is lower on both sides. The point is the ratio: depending on the route, 5 to 51 times as many integrations per node, which is fewer nodes for the same work.</p>
+    <p class="note">Arithmetic, not a measurement: 8,192 MiB divided by peak memory. It ignores CPU, the operating system and the orchestrator's own overhead, so real density is lower on both sides. The point is the ratio: depending on the route, 5 to 44 times as many integrations per node, which is fewer nodes for the same work.</p>
 
     <h3>2. Cold starts are billed on AWS Lambda</h3>
     <p>Since 1 August 2025, AWS Lambda bills the initialization phase of on-demand functions at the normal duration rate <sup><a href="#s6">[6]</a></sup>, and duration is rounded up to the nearest millisecond at $0.0000166667 per GB-second on x86 <sup><a href="#s7">[7]</a></sup>.</p>
@@ -141,8 +141,8 @@
     <h3>5. Always-on containers pay for memory and vCPUs every hour</h3>
     <p>On AWS Fargate (Linux, x86), memory costs $0.004446 per GB-hour and a vCPU $0.04048 per hour <sup><a href="#s8">[8]</a></sup>, about $3.25 per GB and $29.55 per vCPU for a 730-hour month.</p>
     <ul>
-      <li><strong>Memory:</strong> 100 integrations that each need 391 MB less (399 MB against 8 MB) save about $127 a month at list price. Memory is cheap per unit; the larger effect is the node count in example 1.</li>
-      <li><strong>CPU:</strong> Cameleer handled 1.7 to 8.7 times Apache Camel's throughput on the same CPUs. At twice the throughput, the same load needs half the vCPUs: one fewer vCPU is about $29.55 a month, per vCPU, before any commitment discount.</li>
+      <li><strong>Memory:</strong> 100 integrations that each need 325 MB less (333 MB against 8 MB) save about $105 a month at list price. Memory is cheap per unit; the larger effect is the node count in example 1.</li>
+      <li><strong>CPU:</strong> Cameleer handled 2.0 to 19.8 times Apache Camel's throughput on the same CPUs. At twice the throughput, the same load needs half the vCPUs: one fewer vCPU is about $29.55 a month, per vCPU, before any commitment discount.</li>
     </ul>
     <p class="note">Azure Container Apps (consumption plan, eastus) charges $0.000024 per active vCPU-second and $0.000003 per GiB-second <sup><a href="#s9">[9]</a></sup>, so the same reasoning holds there.</p>
   </div>

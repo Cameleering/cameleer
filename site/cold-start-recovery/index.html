@@ -164,7 +164,7 @@
 <section class="c-sec" id="money">
   <div class="wrap">
     <h2>The money</h2>
-    <p>Since 1 August 2025 AWS Lambda bills the initialization phase of on-demand functions on managed runtimes with ZIP packaging; custom runtimes, container images and provisioned concurrency already paid for it <sup><a href="#s8">[8]</a></sup>. The first two clocks are now on the invoice. The <a href="../finops/">FinOps page</a> has the arithmetic; one line of it, at list price for 512 MB functions: a million cold starts cost $9.17 at 1.1 s and $0.03 at 3 ms. That is arithmetic on our measured start-up times, not a measured bill.</p>
+    <p>Since 1 August 2025 AWS Lambda bills the initialization phase of on-demand functions on managed runtimes with ZIP packaging; custom runtimes, container images and provisioned concurrency already paid for it <sup><a href="#s8">[8]</a></sup>. The first two clocks are now on the invoice. The <a href="../finops/">FinOps page</a> has the arithmetic; one line of it, at list price for 512 MB functions: a million cold starts cost $9.17 at 1.1 s and $0.03 at 3 ms. That is arithmetic on our start-up times measured on 2026-11-06, not a measured bill.</p>
   </div>
 </section>
 
@@ -175,14 +175,14 @@
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>project and measure</th><th>result</th><th>baseline</th><th>clock</th></tr></thead>
       <tbody>
-        <tr><td>Cameleer 0.4.0, time to a started context</td><td>3 ms</td><td>Apache Camel 4.23.0 on Java 21: 1.1 s; Apache Camel 4.22.1 on Quarkus native: 30 ms</td><td>2</td></tr>
-        <tr><td>Cameleer 0.4.0, memory at start-up</td><td>8 MB</td><td>Apache Camel 4.23.0 on Java 21: 114 MB</td><td>–</td></tr>
+        <tr><td>Cameleer (<code>main</code> at <code>beb3385</code>), time to a started context</td><td>3 ms</td><td>Apache Camel 4.23.0 on Java 21: 1.0 s; Apache Camel 4.22.1 on Quarkus native: 23.8 ms</td><td>2</td></tr>
+        <tr><td>Cameleer (<code>main</code> at <code>beb3385</code>), memory at start-up</td><td>9 MB</td><td>Apache Camel 4.23.0 on Java 21: 116 MB</td><td>–</td></tr>
         <tr><td>simoom, process start to first answer, default build</td><td>0.94 ms, 1st of 21</td><td>hyper 1.48 ms, the next best of 20 other servers</td><td>1</td></tr>
         <tr><td>simoom, first answer, plain / TLS</td><td>0.73 / 0.87 ms</td><td>cameleer-http, the server it replaced: 0.77 / 1.37 ms</td><td>1</td></tr>
       </tbody>
     </table></div>
     <ul>
-      <li><strong>Cameleer:</strong> DigitalOcean c-4 machines, 2026-11-06. The table shows rounded times; the means are 1,106 ms and 2.45 ms. Start-up is the time from spawning the process to its <code>READY</code> line, median of five (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</li>
+      <li><strong>Cameleer:</strong> DigitalOcean c-4 machines, 2026-11-23. The table shows rounded times; the means are 1,034 ms and 3.05 ms. Start-up is the time from spawning the process to its <code>READY</code> line, median of five (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</li>
       <li><strong>simoom against 20 servers:</strong> campaign 4, DigitalOcean c-4 droplets, 2026-11-12, one round, each server against simoom on the same droplet (<a href="../simoom/benchmarks/">simoom benchmarks</a>).</li>
       <li><strong>simoom against cameleer-http:</strong> one workstation, WSL2 on 12 CPUs, 2026-11-11, 10 alternating rounds.</li>
     </ul>
