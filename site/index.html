@@ -12,7 +12,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Cameleering">
 <meta property="og:title" content="The same work, on a fraction of the machine: Cameleering">
-<meta property="og:description" content="300x faster start-up, 300x cheaper cold starts, 42x more integrations per node, with the losses beside them, and the seven steps to get your own.">
+<meta property="og:description" content="300x faster start-up, 250x cheaper cold starts, 42x more integrations per node, with the losses beside them, and the seven steps to get your own.">
 <meta property="og:url" content="https://cameleer.ing/">
 <meta property="og:image" content="https://cameleer.ing/brand/cameleering/cameleering-og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -88,7 +88,7 @@
     <p class="outcomes-label">Results from projects built with the practice · each number names its project and its baseline</p>
     <div class="outcomes">
       <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>300x</b><em>faster start-up</em><span>1,034 ms to 3.05 ms for a started context (339x, shown rounded down; Apache Camel 4.23 on Java 21; on Quarkus native, 23.8 ms).</span><small>Cameleer vs Apache Camel</small></a>
-      <a class="outcome" href="finops/#translate"><b>23x</b><em>smaller Lambda compute bill</em><span>$0.06 instead of $1.50 for a month of 10 million requests: execution time 3 ms instead of 7 ms, memory 128 MB instead of 512 MB, and cold starts that cost 300 times less.</span><small>Cameleer vs Apache Camel · arithmetic on measured time and memory</small></a>
+      <a class="outcome" href="finops/#translate"><b>62x</b><em>smaller Lambda compute bill</em><span>$0.022 instead of $1.36 for a month of 10 million requests: execution time 1 ms instead of 6 ms, memory 128 MB instead of 512 MB, and cold starts that cost 250 times less.</span><small>Cameleer vs Apache Camel · arithmetic on measured time and memory</small></a>
       <a class="outcome" href="finops/"><b>42x</b><em>more integrations per node</em><span>24 to 1,024 per 8 GiB on a direct route; 24 to 282 for HTTP into Kafka.</span><small>Cameleer · arithmetic on measured peak memory</small></a>
       <a class="outcome" href="ledger/#cameleer"><b>44x</b><em>less memory, at best</em><span>Peak 211&ndash;421 MB to 8&ndash;39 MB: 5.4 to 44 times less across 11 scenarios.</span><small>Cameleer vs Apache Camel</small></a>
       <a class="outcome" href="cameleer/compare/apache-camel-vs-cameleer/"><b>19.8x</b><em>the throughput, at best</em><span>2.0 to 19.8 times Apache Camel&rsquo;s messages per second, in all 11 scenarios, on the same machines (19.8x in Kafka stream processing; 5.6x at best in the others).</span><small>Cameleer vs Apache Camel</small></a>
@@ -137,7 +137,7 @@
     <h2>What less machine buys you</h2>
     <p class="intro">Software decides how much memory and CPU every instance needs. Flexera&rsquo;s 2026 survey puts cloud waste at 29% of infrastructure spend.</p>
     <div class="cards four benefits">
-      <div class="card"><h3>A smaller bill</h3><p>Lambda bills execution time times memory, and since August 2025 the cold start too. Each request runs 3 ms in 128 MB instead of 7 ms in 512 MB, about <b>9 times less</b> per request, and a million cold starts cost <b>$0.03</b> instead of $9.17. For a month of 10 million requests the compute bill is $0.06 against $1.50.</p><p class="note">Arithmetic on measured numbers and AWS list prices. <a href="finops/">The arithmetic, with its limits</a></p></div>
+      <div class="card"><h3>A smaller bill</h3><p>Lambda bills execution time times memory, and since August 2025 the cold start too. Each request runs 1 ms in 128 MB instead of 6 ms in 512 MB, about <b>24 times less</b> per request, and a million cold starts cost <b>$0.04</b> instead of $8.62. For a month of 10 million requests the compute bill is $0.022 against $1.36.</p><p class="note">Arithmetic on measured numbers and AWS list prices. <a href="finops/">The arithmetic, with its limits</a></p></div>
       <div class="card"><h3>Less waiting</h3><p>A started context in <b>3 ms</b> instead of 1.0 s. A REST API with JSON has a p99 of <b>0.84 ms</b> instead of 5.0 ms. Behind simoom, p99 fell from 0.87&ndash;0.91 ms to 0.32&ndash;0.44 ms while serving 1.7&ndash;1.8x the requests.</p><p class="note"><a href="cameleer/">Cameleer</a> · <a href="simoom/">simoom</a></p></div>
       <div class="card"><h3>Fewer machines</h3><p><b>1,024</b> integrations fit in 8 GiB by peak memory instead of 24. At 2.0&ndash;19.8x the throughput on the same CPUs, the same load needs fewer vCPUs, and each costs about $29.55 a month on Fargate at list price.</p><p class="note">Arithmetic; real density is lower on both sides. <a href="finops/">Density and vCPU examples</a></p></div>
       <div class="card"><h3>Simpler operations</h3><p>One binary with no JVM to install: <b>9 MB</b> of memory at start-up instead of 116 MB. simoom has no crates.io dependencies at all and holds 1,000 idle connections in <b>2.7 MB</b> instead of 7.7 MB.</p><p class="note"><a href="ledger/">Both rows in the ledger</a></p></div>

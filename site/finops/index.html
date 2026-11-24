@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Code Efficiency as a FinOps Lever | Cameleering</title>
-<meta name="description" content="What code efficiency saves on Lambda, Fargate and Kubernetes, worked from measurements: a 23x smaller Lambda compute bill and 42x more integrations per node.">
+<meta name="description" content="What code efficiency saves on Lambda, Fargate and Kubernetes, worked from measurements: a 62x smaller Lambda compute bill and 42x more integrations per node.">
 <link rel="canonical" href="https://cameleer.ing/finops/">
 <meta name="theme-color" content="#ffffff">
 <meta property="og:type" content="article">
@@ -87,7 +87,7 @@
 <section class="c-sec" id="translate">
   <div class="wrap">
     <h2>From milliseconds and megabytes to money</h2>
-    <p class="intro">The worked examples below use one measured comparison: the same integration routes on Apache Camel 4.23 on Java 21 and on Cameleer, the first Cameleering project, on identical cloud machines (<a href="../ledger/">the ledger</a>). Examples 1 and 5 use the session of 2026-11-23; the Lambda examples 2 to 4 still use the start-up, p99 and peak memory figures of the 2026-11-06 session (Cameleer 0.4.0), which they show. Prices are public on-demand list prices in us-east-1, checked on 2026-11-12. Each example says what it leaves out.</p>
+    <p class="intro">The worked examples below use one measured comparison: the same integration routes on Apache Camel 4.23 on Java 21 and on Cameleer, the first Cameleering project, on identical cloud machines (<a href="../ledger/">the ledger</a>). All five use the session of 2026-11-23 (Cameleer <code>main</code> at <code>beb3385</code>). Prices are public on-demand list prices in us-east-1, checked on 2026-11-12. Each example says what it leaves out.</p>
 
     <h3>1. Memory decides how many instances fit on a node</h3>
     <div class="c-table-wrap"><table class="c-table ledger">
@@ -104,39 +104,39 @@
     <h3>2. Cold starts are billed on AWS Lambda</h3>
     <p>Since 1 August 2025, AWS Lambda bills the initialization phase of on-demand functions at the normal duration rate <sup><a href="#s6">[6]</a></sup>, and duration is rounded up to the nearest millisecond at $0.0000166667 per GB-second on x86 <sup><a href="#s7">[7]</a></sup>.</p>
     <div class="c-table-wrap"><table class="c-table ledger">
-      <thead><tr><th>per million cold starts, 512 MB function</th><th class="num">startup</th><th class="num">initialization cost</th></tr></thead>
+      <thead><tr><th>per million cold starts, 512 MB function</th><th class="num">startup (measured)</th><th class="num">billed, rounded up</th><th class="num">initialization cost</th></tr></thead>
       <tbody>
-        <tr><td>Apache Camel on Java 21</td><td class="num">1.1 s</td><td class="num">$9.17</td></tr>
-        <tr><td>Cameleer</td><td class="num">3 ms</td><td class="num">$0.03</td></tr>
+        <tr><td>Apache Camel on Java 21</td><td class="num">1,034.25 ms</td><td class="num">1,035 ms</td><td class="num">$8.62</td></tr>
+        <tr><td>Cameleer</td><td class="num">3.05 ms</td><td class="num">4 ms</td><td class="num">$0.04</td></tr>
       </tbody>
     </table></div>
-    <p class="note">Arithmetic: startup × 0.5 GB × $0.0000166667 × 1,000,000. The startup times were measured on cloud virtual machines, not inside Lambda; Lambda adds its own sandbox start on both sides. For JVM functions AWS also offers SnapStart, which cuts startup differently.</p>
+    <p class="note">Arithmetic: billed startup × 0.5 GB × $0.0000166667 × 1,000,000 (about 250 times less; Camel's cost rounded down, Cameleer's up). The startup times were measured on cloud virtual machines, not inside Lambda; Lambda adds its own sandbox start on both sides. For JVM functions AWS also offers SnapStart, which cuts startup differently.</p>
 
     <h3>3. Execution time and memory: what each request is billed</h3>
     <p>Lambda bills every invocation for its execution time, rounded up to the millisecond, times the memory setting. Both come from the same measured scenario, a REST API reading and answering JSON, on identical cloud machines (<a href="../docs/BENCHMARKS.html">BENCHMARKS</a>).</p>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>REST API with JSON</th><th class="num">Apache Camel (JVM)</th><th class="num">Cameleer</th></tr></thead>
       <tbody>
-        <tr><td>execution time per request, p99 (measured)</td><td class="num">6.3 ms</td><td class="num">2.6 ms</td></tr>
-        <tr><td>billed duration, rounded up to the millisecond</td><td class="num">7 ms</td><td class="num">3 ms</td></tr>
-        <tr><td>peak memory (measured)</td><td class="num">402 MB</td><td class="num">19 MB</td></tr>
+        <tr><td>execution time per request, p99 (measured)</td><td class="num">5.0 ms</td><td class="num">0.84 ms</td></tr>
+        <tr><td>billed duration, rounded up to the millisecond</td><td class="num">6 ms</td><td class="num">1 ms</td></tr>
+        <tr><td>peak memory (measured)</td><td class="num">421 MB</td><td class="num">9 MB</td></tr>
         <tr><td>smallest memory setting with room for that peak</td><td class="num">512 MB</td><td class="num">128 MB (the minimum)</td></tr>
-        <tr><td>duration cost per million invocations</td><td class="num">$0.0583</td><td class="num">$0.0063</td></tr>
+        <tr><td>duration cost per million invocations</td><td class="num">$0.0500</td><td class="num">$0.0021</td></tr>
       </tbody>
     </table></div>
-    <p class="note">Arithmetic: billed seconds × memory in GB × $0.0000166667 × 1,000,000; about 9 times less per request. Both sides also pay $0.20 per million requests. Caveats: the times were measured on cloud virtual machines over the network, not inside Lambda, and the p99 is used on purpose as a pessimistic duration: it comes from a closed-loop driver at saturation, so it includes queueing that a lightly loaded function would not see. Lambda gives a function CPU in proportion to its memory, so at 128 MB a CPU-bound route runs slower than on a full VM: measure the duration at each setting before you pick one.</p>
+    <p class="note">Arithmetic: billed seconds × memory in GB × $0.0000166667 × 1,000,000; about 24 times less per request. Both sides also pay $0.20 per million requests. Caveats: the times were measured on cloud virtual machines over the network, not inside Lambda, and the p99 is used on purpose as a pessimistic duration: it comes from a closed-loop driver at saturation, so it includes queueing that a lightly loaded function would not see. Lambda gives a function CPU in proportion to its memory, so at 128 MB a CPU-bound route runs slower than on a full VM: measure the duration at each setting before you pick one.</p>
 
     <h3>4. A month of requests: the Lambda compute bill</h3>
     <p>One example month: 10 million requests, one in a hundred a cold start, each side at its own memory setting from example 3.</p>
     <div class="c-table-wrap"><table class="c-table ledger">
       <thead><tr><th>10 million requests, 100,000 cold starts</th><th class="num">Apache Camel (JVM), 512 MB</th><th class="num">Cameleer, 128 MB</th></tr></thead>
       <tbody>
-        <tr><td>execution time (duration)</td><td class="num">$0.58</td><td class="num">$0.06</td></tr>
-        <tr><td>cold starts (initialization: 1.1 s against 3 ms)</td><td class="num">$0.92</td><td class="num">$0.0006</td></tr>
-        <tr><td><strong>compute bill</strong></td><td class="num"><strong>$1.50</strong></td><td class="num"><strong>$0.06</strong></td></tr>
+        <tr><td>execution time (duration)</td><td class="num">$0.50</td><td class="num">$0.021</td></tr>
+        <tr><td>cold starts (initialization: 1,035 ms against 4 ms billed)</td><td class="num">$0.86</td><td class="num">$0.0009</td></tr>
+        <tr><td><strong>compute bill</strong></td><td class="num"><strong>$1.36</strong></td><td class="num"><strong>$0.022</strong></td></tr>
       </tbody>
     </table></div>
-    <p class="note">Arithmetic on the measured numbers above and list prices: the compute bill is 23 times smaller. The per-request fee, $2.00 for 10 million requests, is the same on both sides and left out. Change the mix and the ratio moves: the more cold starts, the larger the gap; a route that waits on a slow database spends most of its time waiting, on either runtime.</p>
+    <p class="note">Arithmetic on the measured numbers above and list prices: the compute bill is 62 times smaller. The per-request fee, $2.00 for 10 million requests, is the same on both sides and left out. Change the mix and the ratio moves: the more cold starts, the larger the gap; a route that waits on a slow database spends most of its time waiting, on either runtime.</p>
 
     <h3>5. Always-on containers pay for memory and vCPUs every hour</h3>
     <p>On AWS Fargate (Linux, x86), memory costs $0.004446 per GB-hour and a vCPU $0.04048 per hour <sup><a href="#s8">[8]</a></sup>, about $3.25 per GB and $29.55 per vCPU for a 730-hour month.</p>
