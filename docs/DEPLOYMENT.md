@@ -18,6 +18,7 @@ covers the container image: Docker, Docker Compose, Kubernetes and serverless pl
 | Filesystem | nothing is written: `CAMEL_LOCAL_STATUS=false`, logs go to stdout; works with a read-only root filesystem |
 | Stop | `SIGTERM` stops the routes gracefully (about half a second for a REST route) |
 | Tags | `latest`, `0.8.0`, `0.8`, `health`, `0.8.0-health`, `0.8-health`, `edge` (manual builds of `main`), `sha-<commit>` |
+| 0.8.0 digests | `0.8.0`, `0.8`, `latest`: `sha256:f40889b03919daeb6f6e0f4d60005ae87103e25554c98ab9006558689c21e61f`; `health`, `0.8.0-health`, `0.8-health`: `sha256:6b55a0df49cd8dd133dc30651b804f69f7c3dfa015bdc96cce10d562c465af50`; both linux/amd64 and linux/arm64. Built from `main` at `6722d3a` just after the tag ([why](https://github.com/cameleering/cameleer/blob/main/docs/release-notes/0.8.0.md#about-the-080-images)); the crates and archives are built from the tag |
 | Supply chain | SBOM, max-mode build provenance and a GitHub attestation on every push |
 
 Verify an image's provenance:
