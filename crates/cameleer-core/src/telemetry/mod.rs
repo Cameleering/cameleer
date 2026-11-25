@@ -46,6 +46,10 @@ pub const ACTIVE_SPAN: &str = "CamelOpenTelemetryActiveSpan";
 pub const ACTIVE_TRACESTATE: &str = "CamelOpenTelemetryActiveTraceState";
 /// Exchange property holding the trace's baggage (a `baggage` header value; absent when empty).
 pub const ACTIVE_BAGGAGE: &str = "CamelOpenTelemetryBaggage";
+/// Exchange header with the active trace id, with `traceHeadersInclusion` (Camel's name).
+pub const TRACE_ID_HEADER: &str = "CAMEL_TRACE_ID";
+/// Exchange header with the active span id, with `traceHeadersInclusion` (Camel's name).
+pub const SPAN_ID_HEADER: &str = "CAMEL_SPAN_ID";
 /// Registry name of the installed [`Telemetry`].
 pub const REGISTRY_NAME: &str = "cameleer.telemetry";
 
@@ -91,8 +95,21 @@ pub struct TelemetryConfig {
     /// (`camel.opentelemetry.excludePatterns`, comma separated, wildcards and regular
     /// expressions as everywhere in Camel).
     pub exclude_patterns: Vec<String>,
+    /// Only these endpoint URIs, route ids or processor names are traced
+    /// (`camel.opentelemetry2.includePatterns`, e.g. `log*,direct*,setBody*`; empty: all).
+    pub include_patterns: Vec<String>,
     /// A span for every processor too (`camel.opentelemetry.traceProcessors`, default false).
     pub trace_processors: bool,
+    /// With `trace_processors`, no spans for Camel's own DSL processors (`log`, `setBody`, ...),
+    /// only for `process` and `bean` steps (`camel.opentelemetry2.disableCoreProcessors`).
+    pub disable_core_processors: bool,
+    /// Only routes and processors with an id given by the author are traced
+    /// (`camel.opentelemetry2.traceCustomIdOnly`): routes with a generated id (`route1`) get no
+    /// spans, nor do their sends; processor spans need `trace_processors` and a custom `.id()`.
+    pub trace_custom_id_only: bool,
+    /// Also write the active span's ids into the exchange headers `CAMEL_TRACE_ID` and
+    /// `CAMEL_SPAN_ID` (`camel.opentelemetry2.traceHeadersInclusion`).
+    pub trace_headers_inclusion: bool,
     /// Encode header keys for components that need it (`camel.opentelemetry.encoding`,
     /// default false): `-` becomes `_$dash$_` and `.` becomes `_$dot$_`, as Camel's JMS key
     /// format.
@@ -113,7 +130,11 @@ impl Default for TelemetryConfig {
         TelemetryConfig {
             instrumentation_name: "camel".into(),
             exclude_patterns: Vec::new(),
+            include_patterns: Vec::new(),
             trace_processors: false,
+            disable_core_processors: false,
+            trace_custom_id_only: false,
+            trace_headers_inclusion: false,
             encoding: false,
             sampler: Sampler::ParentBased(Box::new(Sampler::AlwaysOn)),
             propagate_trace_context: true,
@@ -302,16 +323,39 @@ impl Telemetry {
 
     /// Whether an endpoint URI, route id or processor id is excluded.
     pub fn is_excluded(&self, id: &str) -> bool {
-        if self.cfg.exclude_patterns.is_empty() {
+        Self::matches_any(&self.cfg.exclude_patterns, id)
+    }
+
+    /// Whether any of `ids` (an endpoint URI, a route id, a processor name) is not to be traced:
+    /// one matches an exclude pattern, or include patterns are set and none matches.
+    pub fn is_skipped(&self, ids: &[&str]) -> bool {
+        if ids.iter().any(|id| self.is_excluded(id)) {
+            return true;
+        }
+        !self.cfg.include_patterns.is_empty() && !ids.iter().any(|id| Self::matches_any(&self.cfg.include_patterns, id))
+    }
+
+    fn matches_any(patterns: &[String], id: &str) -> bool {
+        if patterns.is_empty() {
             return false;
         }
         // as Camel's `EndpointHelper.matchEndpoint`: the uri as given, normalized, and with
         // `://` written as `:` (so `mock:quiet*` matches `mock://quiet`)
         let normalized = crate::util::normalize_uri(id).ok();
         let short = id.replacen("://", ":", 1);
-        self.cfg.exclude_patterns.iter().any(|p| {
+        patterns.iter().any(|p| {
             crate::util::matches_pattern(id, p) || crate::util::matches_pattern(&short, p) || normalized.as_deref().map(|n| crate::util::matches_pattern(n, p)).unwrap_or(false)
         })
+    }
+
+    /// Whether a route id was given by the author (not generated as `route<N>`).
+    pub fn is_custom_route_id(id: &str) -> bool {
+        !(id.len() > 5 && id.starts_with("route") && id[5..].bytes().all(|b| b.is_ascii_digit()))
+    }
+
+    /// With `traceCustomIdOnly`, whether the exchange is in a route that is not traced.
+    fn in_untraced_route(&self, ex: &Exchange) -> bool {
+        self.cfg.trace_custom_id_only && ex.from_route_id.as_deref().map(|r| !Self::is_custom_route_id(r)).unwrap_or(false)
     }
 
     fn key<'a>(&self, k: &'a str) -> std::borrow::Cow<'a, str> {
@@ -404,6 +448,10 @@ impl Telemetry {
         if let Some(b) = baggage {
             ex.set_property(ACTIVE_BAGGAGE, b);
         }
+        if self.cfg.trace_headers_inclusion {
+            ex.set_header(TRACE_ID_HEADER, context.trace_id_hex());
+            ex.set_header(SPAN_ID_HEADER, context.span_id_hex());
+        }
         let (name, kind, attributes) = if sampled { describe(ex) } else { (String::new(), SpanKind::Internal, Vec::new()) };
         OpenSpan {
             context,
@@ -441,6 +489,11 @@ impl Telemetry {
     /// `error`, an `exception` event), restores the previous active span and hands the span
     /// to the span processor.
     pub fn end(&self, ex: &mut Exchange, mut span: OpenSpan, error: Option<&CamelError>) {
+        if self.cfg.trace_headers_inclusion {
+            if let (Some(p), true) = (&span.parent, span.parent_active) {
+                ex.set_header(SPAN_ID_HEADER, p.span_id_hex());
+            }
+        }
         match (&span.parent, span.parent_active) {
             (Some(p), true) => ex.set_property(ACTIVE_SPAN, active_bytes(p)),
             _ => {
@@ -528,7 +581,7 @@ impl RouteFactoryHook for TelemetryHook {
 
     fn wrap_route(&self, def: &RouteDefinition, rc: &RouteContext, processor: Arc<dyn Processor>) -> Result<Arc<dyn Processor>> {
         let uri = rc.context.get_endpoint(&def.input).map(|e| e.uri().to_string()).unwrap_or_else(|_| def.input.clone());
-        if self.t.is_excluded(&uri) || self.t.is_excluded(&rc.route_id) {
+        if self.t.is_skipped(&[&uri, &rc.route_id]) || (self.t.cfg.trace_custom_id_only && !Telemetry::is_custom_route_id(&rc.route_id)) {
             return Ok(processor);
         }
         let d = decorator::prepare(&uri, decorator::Role::Consumer, Some(&rc.route_id));
@@ -599,7 +652,7 @@ struct TelemetryProducers {
 impl ProducerWrapper for TelemetryProducers {
     fn wrap(&self, endpoint: &Arc<dyn Endpoint>, producer: Arc<dyn Producer>) -> Arc<dyn Producer> {
         let uri = endpoint.uri().to_string();
-        if self.t.is_excluded(&uri) {
+        if self.t.is_skipped(&[&uri]) {
             return producer;
         }
         let d = decorator::prepare(&uri, decorator::Role::Producer, None);
@@ -635,6 +688,9 @@ impl ProducerSpan {
 
 impl Processor for ProducerSpan {
     fn process(&self, ex: &mut Exchange) -> Result<()> {
+        if self.t.in_untraced_route(ex) {
+            return self.inner.process(ex);
+        }
         let span = self.open(ex);
         let r = with_current(span.ids(), || self.inner.process(ex));
         self.close(ex, span, &r);
@@ -652,6 +708,9 @@ impl AsyncProcessor for ProducerSpan {
     fn process_async<'a>(&'a self, ex: &'a mut Exchange) -> ProcessFuture<'a> {
         Box::pin(async move {
             let inner = self.inner.as_async().expect("as_async checked the inner producer");
+            if self.t.in_untraced_route(ex) {
+                return inner.process_async(ex).await;
+            }
             let span = self.open(ex);
             let r = InSpan { ids: span.ids(), inner: inner.process_async(ex) }.await;
             self.close(ex, span, &r);
@@ -683,8 +742,13 @@ struct ProcessorSpans {
 impl ChannelWrapper for ProcessorSpans {
     fn wrap(&self, rc: &RouteContext, def: &dyn ProcessorDefinition, processor: Arc<dyn Processor>) -> Result<Arc<dyn Processor>> {
         // Camel's processor span name: `<id>-<shortName>`, e.g. `log1-log`
+        let custom = def.id().is_some();
         let id = def.id().map(|s| s.to_string()).or_else(|| crate::management::node_id(rc, def)).unwrap_or_else(|| def.name().to_string());
-        if self.t.is_excluded(&id) || self.t.is_excluded(&format!("{}-{}", id, def.name())) {
+        let custom_step = matches!(def.name(), "process" | "bean");
+        if self.t.is_skipped(&[&id, &format!("{}-{}", id, def.name())])
+            || (self.t.cfg.disable_core_processors && !custom_step)
+            || (self.t.cfg.trace_custom_id_only && (!custom || !Telemetry::is_custom_route_id(&rc.route_id)))
+        {
             return Ok(processor);
         }
         let shared = Arc::new(vec![

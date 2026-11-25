@@ -223,3 +223,57 @@ fn encoding_writes_encoded_header_keys() {
     assert!(ctx.mock_endpoint("mock:e").unwrap().received_exchanges()[0].header("traceparent").is_some());
     ctx.stop().unwrap();
 }
+
+#[test]
+fn opentelemetry2_options_include_custom_ids_core_processors_and_headers() {
+    // includePatterns: only matching endpoints, routes and processors are traced
+    let (ctx, spans) = traced(TelemetryConfig { include_patterns: vec!["direct:in*".into(), "mock:kept".into()], ..Default::default() });
+    ctx.add_routes(|b| {
+        b.from("direct:in").route_id("in").to("mock:kept").to("mock:dropped");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    ctx.create_producer_template().send_body("direct:in", "x").unwrap();
+    let s = spans.wait_for(3, Duration::from_secs(5));
+    assert!(s.iter().all(|x| x.attribute("camel.uri") != Some(&AttrValue::from("mock://dropped"))), "{s:#?}");
+    assert!(s.iter().any(|x| x.attribute("camel.uri") == Some(&AttrValue::from("mock://kept"))));
+    ctx.stop().unwrap();
+
+    // traceCustomIdOnly: a route with a generated id has no spans, nor do its sends; in a
+    // traced route only processors with an id given by the author
+    let (ctx, spans) = traced(TelemetryConfig { trace_custom_id_only: true, trace_processors: true, ..Default::default() });
+    ctx.add_routes(|b| {
+        b.from("direct:anon").to("mock:anon");
+        b.from("direct:named").route_id("named").set_header("a", constant("1")).id("setA").set_header("b", constant("2")).to("mock:named");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let tpl = ctx.create_producer_template();
+    tpl.send_body("direct:anon", "x").unwrap();
+    tpl.send_body("direct:named", "y").unwrap();
+    std::thread::sleep(Duration::from_millis(50));
+    let s = spans.spans();
+    assert!(s.iter().all(|x| x.attribute("camel.uri") != Some(&AttrValue::from("mock://anon"))), "{s:#?}");
+    assert!(s.iter().any(|x| x.attribute("camel.route.id") == Some(&AttrValue::from("named")) && x.attribute("op") == Some(&AttrValue::from("EVENT_RECEIVED"))));
+    let procs: Vec<&str> = s.iter().filter(|x| x.attribute("op") == Some(&AttrValue::from("EVENT_PROCESS"))).map(|x| x.name.as_str()).collect();
+    assert_eq!(procs, vec!["setA-setHeader"]);
+    ctx.stop().unwrap();
+
+    // disableCoreProcessors: only `process` steps get processor spans
+    let (ctx, spans) = traced(TelemetryConfig { trace_processors: true, disable_core_processors: true, trace_headers_inclusion: true, ..Default::default() });
+    ctx.add_routes(|b| {
+        b.from("direct:c").route_id("c").set_header("a", constant("1")).process(|_ex: &mut Exchange| Ok(())).id("custom").to("mock:c");
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    ctx.create_producer_template().send_body("direct:c", "x").unwrap();
+    let s = spans.wait_for(4, Duration::from_secs(5));
+    let procs: Vec<&str> = s.iter().filter(|x| x.attribute("op") == Some(&AttrValue::from("EVENT_PROCESS"))).map(|x| x.name.as_str()).collect();
+    assert_eq!(procs, vec!["custom-process"]);
+    // traceHeadersInclusion: CAMEL_TRACE_ID and CAMEL_SPAN_ID name the span that sent to mock:c
+    let got = ctx.mock_endpoint("mock:c").unwrap().received_exchanges();
+    let mock = s.iter().find(|x| x.name == "mock").unwrap();
+    assert_eq!(got[0].header("CAMEL_TRACE_ID").unwrap().to_string(), cameleer_core::telemetry::context::hex(&mock.trace_id));
+    assert_eq!(got[0].header("CAMEL_SPAN_ID").unwrap().to_string(), cameleer_core::telemetry::context::hex(&mock.span_id));
+    ctx.stop().unwrap();
+}

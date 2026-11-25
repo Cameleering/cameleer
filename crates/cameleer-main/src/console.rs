@@ -21,6 +21,8 @@
 //! Endpoints:
 //!
 //! - `GET /q/health`, `/q/health/ready`, `/q/health/live`: JSON, `200` when UP, `503` when DOWN
+//!   (also at `/observe/health`, `/observe/health/ready`, `/observe/health/live`, the paths of
+//!   Camel's `camel-observability-services`; `/observe/metrics` is `/q/metrics`)
 //! - `GET /q/metrics`: Prometheus text exposition
 //! - `GET /q/info`: the Cameleer version, the compiled-in features and the packs with their
 //!   versions and what they add (also `/q/dev/packs`)
@@ -129,7 +131,8 @@ pub(crate) fn prop(props: &BTreeMap<String, String>, dashed: &str) -> Option<Str
 
 /// A running management server (an `/q/*` registration on the shared HTTP server of the port).
 pub struct DevConsoleServer {
-    registration: Mutex<Option<Registration>>,
+    /// `/q/*`, and `/observe/*` when health checks or metrics are on.
+    registration: Mutex<Vec<Registration>>,
     port: u16,
 }
 
@@ -148,11 +151,20 @@ impl DevConsoleServer {
         // port decides it for every route there
         let tls = if config.management_port { None } else { cameleer_http::platform::embedded_server_tls(ctx)? };
         let server_config = ServerConfig { name: "camel-console".into(), tls, ..Default::default() };
-        let reg = registry().register(&config.host, config.port, &server_config, spec, handler)?;
+        let reg = registry().register(&config.host, config.port, &server_config, spec, handler.clone())?;
         let port = reg.port;
+        let mut regs = vec![reg];
+        // camel-observability-services' paths, on the same server
+        if config.health || config.metrics {
+            let spec = HttpRouteSpec { path: "/observe/*".into(), ..Default::default() };
+            match registry().register(&config.host, port, &server_config, spec, handler) {
+                Ok(r) => regs.push(r),
+                Err(e) => cameleer_core::camel_warn!("Main", "/observe endpoints not served: {}", e.message),
+            }
+        }
         let scheme = if server_config.tls.is_some() { "https" } else { "http" };
         cameleer_core::camel_info!("Main", "Management HTTP server listening on {}://{}:{}/q (dev console: {}, health: {}, metrics: {})", scheme, config.host, port, config.dev_console, config.health, config.metrics);
-        Ok(DevConsoleServer { registration: Mutex::new(Some(reg)), port })
+        Ok(DevConsoleServer { registration: Mutex::new(regs), port })
     }
 
     /// The bound port.
@@ -163,7 +175,7 @@ impl DevConsoleServer {
     /// Stop serving (idempotent). The underlying server is stopped when no other
     /// consumer uses its port.
     pub fn stop(&self) {
-        if let Some(r) = self.registration.lock().unwrap().take() {
+        for r in std::mem::take(&mut *self.registration.lock().unwrap()) {
             registry().unregister(&r);
         }
     }
@@ -232,10 +244,10 @@ pub fn handle_request(ctx: &CamelContext, cfg: &ConsoleConfig, req: &HttpRequest
     let method = req.method.as_str();
     let get = method == "GET" || method == "HEAD";
     match segs.as_slice() {
-        ["q", "health"] if cfg.health && get => health_response(ctx.health()),
-        ["q", "health", "ready"] if cfg.health && get => health_response(ctx.health_readiness()),
-        ["q", "health", "live"] if cfg.health && get => health_response(ctx.health_liveness()),
-        ["q", "metrics"] if cfg.metrics && get => {
+        ["q" | "observe", "health"] if cfg.health && get => health_response(ctx.health()),
+        ["q" | "observe", "health", "ready"] if cfg.health && get => health_response(ctx.health_readiness()),
+        ["q" | "observe", "health", "live"] if cfg.health && get => health_response(ctx.health_liveness()),
+        ["q" | "observe", "metrics"] if cfg.metrics && get => {
             HttpResponse::text(200, ctx.managed_context().prometheus()).with_content_type("text/plain; version=0.0.4; charset=utf-8")
         }
         ["q", "info"] if (cfg.info || cfg.dev_console) && get => json(200, &info_value(ctx)),

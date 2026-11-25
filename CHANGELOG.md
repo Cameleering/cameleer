@@ -16,6 +16,11 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   (`OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, `OTEL_BSP_*`, ...).
   Flushed at stop and after each AWS Lambda invocation. With tracing off nothing of it runs. Guide:
   `docs/guides/opentelemetry.md`.
+- **`camel-opentelemetry2`'s options**: `camel.opentelemetry2.*` as well as `camel.opentelemetry.*` (the latter wins),
+  with `includePatterns`, `traceCustomIdOnly`, `disableCoreProcessors` and `traceHeadersInclusion` (`CAMEL_TRACE_ID`,
+  `CAMEL_SPAN_ID` headers).
+- **`/observe/health`, `/observe/health/live`, `/observe/health/ready` and `/observe/metrics`**: the paths of Camel's
+  `camel-observability-services`, next to `/q/*`.
 - **Trace ids in log lines and JSON log lines**: a line logged inside a span carries its trace and span id;
   `camel.main.log-format` (`CAMEL_LOG_FORMAT`, `cameleer run --log-format`) is `text`, `ecs` (Camel JBang's
   `--logging-json`, also accepted) or `logstash`.

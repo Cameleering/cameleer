@@ -107,7 +107,12 @@ parent is the exchange's active span only (as Camel's sending span: no extractio
 | `camel.opentelemetry.excludePatterns` | none | same: comma separated, matched against endpoint URIs (also with `://` written as `:`), route ids and processor ids, with wildcards and regular expressions |
 | `camel.opentelemetry.traceProcessors` | false | same |
 | `camel.opentelemetry.encoding` | false | same |
-| otel2 `includePatterns`, `traceCustomIdOnly`, `disableCoreProcessors`, `traceHeadersInclusion`, `exportTarget` | | not done |
+| `camel.opentelemetry2.*` | | the same options under otel2's prefix; the legacy prefix wins when both are set, as in Camel Main |
+| otel2 `includePatterns` | none | same: only matching endpoint URIs, route ids or processor names are traced |
+| otel2 `traceCustomIdOnly` | false | same; a generated route id is recognized by its form (`route<N>`), and a send is skipped when the exchange's first route is not traced |
+| otel2 `disableCoreProcessors` | false | with `traceProcessors`, spans only for `process` and `bean` steps |
+| otel2 `traceHeadersInclusion` | false | same: the headers `CAMEL_TRACE_ID` and `CAMEL_SPAN_ID` |
+| otel2 `exportTarget` | `tui` | not applicable: it picks the Java agent's target in Camel JBang |
 
 Camel leaves the SDK to the OpenTelemetry Java agent or autoconfiguration, which read the
 `OTEL_*` environment variables (or `otel.*` system properties). Cameleer reads them itself, in
@@ -186,7 +191,6 @@ JSON option; the layout belongs to the logging backend.
 | B3 and Jaeger propagators | not W3C; Camel only has them through the SDK | the Collector translates between formats |
 | Camel's MDC keys (`camel.exchangeId`, `camel.routeId`, ...) in log lines | needs per-step thread-local strings even when tracing is off | trace and span ids in log lines |
 | the `log` EIP as span events | needs a per-span event buffer reachable from the logger | the log line carries the span id |
-| otel2's `includePatterns`, `traceCustomIdOnly`, `traceHeadersInclusion` | rarely used | `excludePatterns` |
 | span links, exemplars | Camel does not set links | |
 
 ## 4. Overhead

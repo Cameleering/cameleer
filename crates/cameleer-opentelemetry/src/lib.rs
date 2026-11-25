@@ -34,8 +34,18 @@ pub use batch::{BatchConfig, BatchSpanProcessor, BatchStats};
 pub use config::{ExporterKind, OtlpConfig};
 pub use exporter::{ExportResult, OtlpHttpExporter, SpanExporter};
 
-/// Camel's options (`camel.opentelemetry.*`), in Camel's spelling.
-pub const OPTIONS: &[&str] = &["enabled", "instrumentationName", "encoding", "excludePatterns", "traceProcessors"];
+/// Camel's options (`camel.opentelemetry.*` and `camel.opentelemetry2.*`), in Camel's spelling.
+pub const OPTIONS: &[&str] = &[
+    "enabled",
+    "instrumentationName",
+    "encoding",
+    "excludePatterns",
+    "traceProcessors",
+    "includePatterns",
+    "disableCoreProcessors",
+    "traceCustomIdOnly",
+    "traceHeadersInclusion",
+];
 
 /// Drops every span (`OTEL_TRACES_EXPORTER=none`): spans are still created, so the context
 /// still propagates and log lines still carry ids.
@@ -62,9 +72,14 @@ impl OpenTelemetry {
     }
 }
 
+/// An option of `camel.opentelemetry.*` or, when that is not set, of `camel.opentelemetry2.*`
+/// (Camel Main gives the first one precedence too), in camelCase or kebab-case.
 fn camel_option(props: &dyn Fn(&str) -> Option<String>, name: &str) -> Option<String> {
     let kebab: String = name.chars().flat_map(|c| if c.is_ascii_uppercase() { vec!['-', c.to_ascii_lowercase()] } else { vec![c] }).collect();
-    props(&format!("camel.opentelemetry.{}", name)).or_else(|| props(&format!("camel.opentelemetry.{}", kebab))).map(|v| v.trim().to_string())
+    ["camel.opentelemetry", "camel.opentelemetry2"]
+        .iter()
+        .find_map(|prefix| props(&format!("{}.{}", prefix, name)).or_else(|| props(&format!("{}.{}", prefix, kebab))))
+        .map(|v| v.trim().to_string())
 }
 
 fn flag(v: Option<String>, name: &str) -> Result<Option<bool>> {
@@ -92,10 +107,17 @@ pub fn telemetry_config(props: &dyn Fn(&str) -> Option<String>) -> Result<Teleme
     if let Some(n) = camel_option(props, "instrumentationName").filter(|n| !n.is_empty()) {
         c.instrumentation_name = n;
     }
+    let list = |p: String| -> Vec<String> { p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect() };
     if let Some(p) = camel_option(props, "excludePatterns") {
-        c.exclude_patterns = p.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        c.exclude_patterns = list(p);
+    }
+    if let Some(p) = camel_option(props, "includePatterns") {
+        c.include_patterns = list(p);
     }
     c.trace_processors = flag(camel_option(props, "traceProcessors"), "traceProcessors")?.unwrap_or(false);
+    c.disable_core_processors = flag(camel_option(props, "disableCoreProcessors"), "disableCoreProcessors")?.unwrap_or(false);
+    c.trace_custom_id_only = flag(camel_option(props, "traceCustomIdOnly"), "traceCustomIdOnly")?.unwrap_or(false);
+    c.trace_headers_inclusion = flag(camel_option(props, "traceHeadersInclusion"), "traceHeadersInclusion")?.unwrap_or(false);
     c.encoding = flag(camel_option(props, "encoding"), "encoding")?.unwrap_or(false);
     c.sampler = config::sampler(&get)?;
     (c.propagate_trace_context, c.propagate_baggage) = config::propagators(&get)?;

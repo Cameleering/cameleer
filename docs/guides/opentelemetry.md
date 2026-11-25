@@ -31,15 +31,25 @@ Every route is traced from then on; nothing in the routes changes. Spans go to
 
 ## Options
 
-Camel's options (`camel.opentelemetry.*`, kebab-case accepted):
+Camel's options, under `camel.opentelemetry2.*` (`camel-opentelemetry2`) or
+`camel.opentelemetry.*` (`camel-opentelemetry`; it wins when both are set, as in Camel Main);
+camelCase or kebab-case:
 
 | option | default | meaning |
 |---|---|---|
 | `enabled` | `false` | turn tracing on; as in Camel Main, setting any other option below turns it on too |
-| `instrumentationName` | `camel` | the instrumentation scope name of the spans |
-| `excludePatterns` | | comma separated endpoint URIs, route ids or processor ids not to trace; wildcards (`log:*`) and regular expressions |
+| `excludePatterns` | | comma separated endpoint URIs, route ids or processor names not to trace (`log*,direct:audit,setBody*`); wildcards and regular expressions |
+| `includePatterns` | | trace only what matches (same forms); empty traces everything |
 | `traceProcessors` | `false` | a span for every processor too, named `<id>-<name>` (`setBody1-setBody`) |
+| `disableCoreProcessors` | `false` | with `traceProcessors`, spans only for `process` and `bean` steps, not for Camel's own DSL processors (`log`, `setBody`, ...) |
+| `traceCustomIdOnly` | `false` | trace only routes whose id the author gave (not a generated `route1`) and, with `traceProcessors`, only processors with a custom `id` |
+| `traceHeadersInclusion` | `false` | also put the active span's ids in the exchange headers `CAMEL_TRACE_ID` and `CAMEL_SPAN_ID` |
+| `instrumentationName` | `camel` | the instrumentation scope name of the spans (`camel-opentelemetry` only; otel2 always uses `camel`) |
 | `encoding` | `false` | encode header keys for carriers that forbid `-` (`_$dash$_`, as Camel's JMS key format) |
+
+`traceCustomIdOnly` recognizes a generated route id by its form, `route` and a number: a route
+you named `route7` yourself counts as generated. A send is skipped when the exchange's first
+route is not traced.
 
 The OpenTelemetry SDK settings, as environment variables or as properties (`otel.service.name`;
 a property wins):
@@ -199,8 +209,8 @@ them, and the routes keep their speed. Method and raw data:
 - Camel's MDC keys (`camel.exchangeId`, `camel.routeId`) are not in the log lines, only the trace
   and span id; the `log` EIP does not add span events.
 - `error` is a boolean attribute (`camel-opentelemetry2` writes the string `"true"`).
-- otel2's `includePatterns`, `traceCustomIdOnly`, `traceHeadersInclusion` and `exportTarget` are
-  not there.
+- otel2's `exportTarget` (where the OpenTelemetry Java agent of Camel JBang sends traces) does
+  not apply: the exporter is built in; set `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 ## Related
 

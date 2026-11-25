@@ -6,8 +6,8 @@
 
 | you want | use |
 |---|---|
-| liveness and readiness probes | `/q/health/live`, `/q/health/ready` (200 when UP, 503 when DOWN) |
-| metrics in Prometheus or Grafana | `/q/metrics`, Prometheus text format |
+| liveness and readiness probes | `/q/health/live`, `/q/health/ready` (200 when UP, 503 when DOWN); also at `/observe/health/live` and `/observe/health/ready` |
+| metrics in Prometheus or Grafana | `/q/metrics`, Prometheus text format; also at `/observe/metrics` |
 | which version, features and packs a running instance has | `/q/info` (`camel.server.infoEnabled=true`, or with the dev console) |
 | route state, statistics, endpoints | `/q/dev/routes`, `/q/dev/endpoints`, or `cameleer get routes` |
 | to start, stop or suspend a route at run time | `POST /q/dev/route/{id}/suspend`, or `cameleer cmd suspend-route` |
@@ -45,6 +45,16 @@ loopback interface (below).
 On `camel.server.port` the endpoints speak what the port speaks: with
 `camel.server.sslEnabled=true` they are HTTPS, next to your HTTPS routes
 ([TLS and security](tls-and-security.md#https-for-your-routes)).
+
+### The `/observe` paths of camel-observability-services
+
+Camel's `camel-observability-services` (Camel 4.9+) serves the same probes and metrics under
+`/observe`: `/observe/health`, `/observe/health/live`, `/observe/health/ready` and
+`/observe/metrics`. Cameleer answers those paths too, on the same server and with the same
+switches (`camel.server.healthCheckEnabled`, `camel.server.metricsEnabled`), so probes and scrape
+configurations written for it work unchanged. Since Camel 4.12 those endpoints are on a
+management port, 9876 by default; Cameleer serves them on `camel.server.port` (8080), or on its
+own [management port](#a-separate-management-port) when one is set: set it to 9876 to match.
 
 ## A separate management port
 

@@ -190,6 +190,19 @@ fn properties_and_environment_configure_install() {
     };
     assert!(cameleer_opentelemetry::is_enabled(&|k: &str| (k == "camel.opentelemetry.traceProcessors").then(|| "true".to_string())).unwrap());
     assert!(!cameleer_opentelemetry::is_enabled(&|_: &str| None).unwrap());
+    // camel-opentelemetry2's prefix; the legacy prefix wins when both are set
+    assert!(cameleer_opentelemetry::is_enabled(&|k: &str| (k == "camel.opentelemetry2.enabled").then(|| "true".to_string())).unwrap());
+    let both = |k: &str| match k {
+        "camel.opentelemetry.excludePatterns" => Some("a*".to_string()),
+        "camel.opentelemetry2.excludePatterns" => Some("b*".to_string()),
+        "camel.opentelemetry2.trace-custom-id-only" => Some("true".to_string()),
+        "camel.opentelemetry2.includePatterns" => Some("log*, direct*".to_string()),
+        _ => None,
+    };
+    let c = cameleer_opentelemetry::telemetry_config(&both).unwrap();
+    assert_eq!(c.exclude_patterns, vec!["a*".to_string()]);
+    assert_eq!(c.include_patterns, vec!["log*".to_string(), "direct*".to_string()]);
+    assert!(c.trace_custom_id_only);
     assert!(!cameleer_opentelemetry::is_enabled(&|k: &str| (k == "camel.opentelemetry.enabled").then(|| "false".to_string())).unwrap());
     let ctx = CamelContext::new();
     let otel = cameleer_opentelemetry::install(&ctx, &props).unwrap().unwrap();
