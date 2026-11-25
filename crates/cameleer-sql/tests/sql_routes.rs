@@ -387,3 +387,66 @@ fn camel_main_style_properties() {
     assert_eq!(ctx.create_producer_template().request_body("direct:q", Value::Null).unwrap(), Value::Int(42));
     ctx.stop().unwrap();
 }
+
+/// Records every statement run through the wrapped data source.
+struct Recording {
+    inner: Arc<dyn DataSource>,
+    log: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+struct RecordingConn {
+    inner: Box<dyn cameleer_sql::Connection>,
+    log: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl cameleer_sql::Connection for RecordingConn {
+    fn execute_with(&mut self, sql: &str, params: &[Value], options: &cameleer_sql::ExecuteOptions) -> Result<cameleer_sql::QueryResult> {
+        self.log.lock().unwrap().push(sql.to_string());
+        self.inner.execute_with(sql, params, options)
+    }
+    fn begin(&mut self) -> Result<()> {
+        self.inner.begin()
+    }
+    fn commit(&mut self) -> Result<()> {
+        self.inner.commit()
+    }
+    fn rollback(&mut self) -> Result<()> {
+        self.inner.rollback()
+    }
+    fn in_transaction(&self) -> bool {
+        self.inner.in_transaction()
+    }
+}
+
+impl DataSource for Recording {
+    fn get_connection(&self) -> Result<Box<dyn cameleer_sql::Connection>> {
+        Ok(Box::new(RecordingConn { inner: self.inner.get_connection()?, log: self.log.clone() }))
+    }
+    fn key(&self) -> String {
+        format!("recording:{}", self.inner.key())
+    }
+}
+
+/// Adding a group runs no `MAX(seq)` scan (the sequence is read once, at creation), and the
+/// insertion order of the keys survives a new repository on the same table.
+#[test]
+fn jdbc_aggregation_repository_adds_groups_without_a_max_scan() {
+    use cameleer_core::processor::routing::AggregationRepository;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ds: Arc<dyn DataSource> = Arc::new(Recording { inner: embedded(), log: log.clone() });
+    let ctx = context_with(ds.clone());
+    let repo = JdbcAggregationRepository::new(&ctx, ds.clone(), "agg_seq").unwrap();
+    let at_start = log.lock().unwrap().iter().filter(|s| s.contains("MAX(seq)")).count();
+    assert_eq!(at_start, 1, "the sequence is read once when the repository is created");
+    for k in ["b", "a", "c"] {
+        repo.add(k, Exchange::with_body(None, k));
+    }
+    repo.add("a", Exchange::with_body(None, "a2")); // an update keeps the group's place
+    assert_eq!(log.lock().unwrap().iter().filter(|s| s.contains("MAX(seq)")).count(), 1, "adding a group scanned seq");
+    assert_eq!(repo.keys(), ["b", "a", "c"]);
+    // a second repository on the same table (a restart) continues after the stored groups
+    let again = JdbcAggregationRepository::new(&ctx, ds.clone(), "agg_seq").unwrap();
+    again.add("d", Exchange::with_body(None, "d"));
+    repo.remove("b");
+    assert_eq!(again.keys(), ["a", "c", "d"]);
+}

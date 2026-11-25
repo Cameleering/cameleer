@@ -44,6 +44,26 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   in the `CAMEL_OFFICIAL_CLIENTS` tier, V1 and V4. Nothing has run against the real service. Not done: zstd
   compression (the default of Camel's SDK; Cameleer sends lz4, which the service accepts).
 
+Fixes found while evaluating third-party crates (`docs/design/pathscale-evaluation.md`, section 9). WSL2 figures on a
+Ryzen 5 5600X; none of them was measured on droplets.
+
+- **Aggregator with `completionTimeout`: no scan of every group per message.** Each exchange that left its group open
+  woke the timeout checker, which scanned every group's deadline while holding the lock the route needs. Deadlines are
+  now also kept in order, and the checker is woken only when a new deadline is the earliest. Per message, with one
+  sender: 2.9x faster with 10 open groups and 14.4x with 10,000 (18.7 µs to 1.3 µs).
+- **Regular expressions: iterating the matches of a large body is linear.** Every match copied the whole subject text,
+  so `split`, `replaceAll`, `find_iter`, Simple's `split`/`replaceAll` and `tokenize` with `regex=true` were
+  quadratic in the number of matches. Splitting a 64 KiB body with 13,000 separators: 418 ms to 2.9 ms. `replaceFirst`
+  now stops at the first match (441 ms to 0.08 ms on the same body).
+- **Embedded TCP servers no longer poll.** The accept threads of the `TcpServer`s behind websocket, syslog, mllp, the
+  netty TCP consumer and the test brokers slept 5 ms between non-blocking accepts. They now block, and `stop` wakes
+  them with a connection of its own (`cameleer_tls::net::wake_accept`).
+- **Cloud components reuse connections for streamed responses.** `HttpClient::send_to` (streamed model calls of Azure
+  OpenAI and Vertex AI/Gemini, S3 downloads) opened a new TCP and TLS connection per request; it now takes keep-alive
+  connections from the same pool as `send`. Streamed uploads and requests through a proxy still use a connection each.
+- **`JdbcAggregationRepository`: no `MAX(seq)` per new group.** The insertion sequence is read once when the
+  repository is created (over a new index on `seq`) and counted in the process afterwards.
+
 ## 0.8.0 (2026-11-24)
 
 gRPC and HTTP/2 on simoom 0.2.0: the gRPC server runs its calls on a pool of threads, the event loops start at

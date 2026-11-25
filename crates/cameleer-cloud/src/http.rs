@@ -6,7 +6,13 @@
 //! or, by default, the `HTTPS_PROXY` / `HTTP_PROXY` environment variables honouring
 //! `NO_PROXY` (host suffixes, `*`, IPv4 CIDRs; loopback addresses are never proxied from
 //! the environment). `https` goes through the proxy with `CONNECT`; plain `http` uses an
-//! absolute request target. Each request uses its own connection (`Connection: close`).
+//! absolute request target.
+//!
+//! Connections: without a proxy, [`HttpClient::send`] and [`HttpClient::send_to`] take keep-alive
+//! connections from a process-wide pool (by origin, TLS settings and timeout), so repeated calls to
+//! one service skip the TCP and TLS handshakes. Streamed uploads ([`HttpClient::send_streaming`])
+//! and requests through a proxy use a connection of their own (`Connection: close`): a streamed body
+//! cannot be sent again if a pooled connection turns out to be closed.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, TcpStream, ToSocketAddrs};
@@ -299,25 +305,33 @@ impl HttpClient {
         format!("{}://{}#{}#{}", if url.is_https() { "https" } else { "http" }, url.authority(), tls, self.timeout.as_millis())
     }
 
+    /// A pooled keep-alive connection for `req`, or a new one; true if it was reused.
+    fn pooled_connection(&self, key: &str, req: &Request) -> Result<(BufReader<Box<dyn Stream>>, bool)> {
+        if let Some(r) = cloud_pool().take(key) {
+            return Ok((r, true));
+        }
+        let url = &req.url;
+        let stream: Box<dyn Stream> = if url.is_https() { Box::new(self.tls_wrap(self.connect_tcp(&url.authority())?, url)?) } else { Box::new(self.connect_tcp(&url.authority())?) };
+        Ok((BufReader::new(stream), false))
+    }
+
+    /// Writes the request head and the buffered body on a keep-alive connection.
+    fn write_keep_alive(&self, reader: &mut BufReader<Box<dyn Stream>>, req: &Request) -> io::Result<()> {
+        let head = self.request_head(req, &req.url.target(), true, req.body.len() as u64, None);
+        let s = reader.get_mut();
+        s.write_all(head.as_bytes())?;
+        s.write_all(&req.body)?;
+        s.flush()
+    }
+
     fn send_pooled(&self, req: &Request) -> Result<Response> {
         let key = self.pool_key(&req.url);
         for attempt in 0..2 {
-            let (mut reader, reused) = match cloud_pool().take(&key) {
-                Some(r) => (r, true),
-                None => {
-                    let url = &req.url;
-                    let stream: Box<dyn Stream> = if url.is_https() { Box::new(self.tls_wrap(self.connect_tcp(&url.authority())?, url)?) } else { Box::new(self.connect_tcp(&url.authority())?) };
-                    (BufReader::new(stream), false)
-                }
-            };
-            let head = self.request_head(req, &req.url.target(), true, req.body.len() as u64, None);
-            let written = reader.get_mut().write_all(head.as_bytes()).and_then(|_| reader.get_mut().write_all(&req.body)).and_then(|_| reader.get_mut().flush());
-            let resp = written.and_then(|_| read_response(&mut reader, &req.method));
+            let (mut reader, reused) = self.pooled_connection(&key, req)?;
+            let resp = self.write_keep_alive(&mut reader, req).and_then(|_| read_response(&mut reader, &req.method));
             match resp {
                 Ok(r) => {
-                    let close = r.headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("connection") && v.to_ascii_lowercase().contains("close"));
-                    let delimited = req.method == "HEAD" || matches!(r.status, 204 | 304) || r.headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding"));
-                    if !close && delimited {
+                    if reusable(&req.method, r.status, &r.headers) {
                         cloud_pool().put(key, reader);
                     }
                     return Ok(r);
@@ -364,6 +378,9 @@ impl HttpClient {
     /// buffering it; the returned response then has an empty body. Error responses are buffered.
     /// Returns the response and the number of bytes written to `sink`.
     pub fn send_to(&self, req: &Request, sink: &mut dyn Write) -> Result<(Response, u64)> {
+        if self.proxy_for(&req.url).is_none() {
+            return self.send_to_pooled(req, sink);
+        }
         let mut reader = self.write_request(req, None)?;
         let (status, headers) = read_response_head(&mut reader).map_err(|e| self.io_err(req, e))?;
         if !(200..300).contains(&status) || req.method == "HEAD" || status == 204 {
@@ -372,6 +389,34 @@ impl HttpClient {
         }
         let n = copy_body(&mut reader, &headers, sink).map_err(|e| self.io_err(req, e))?;
         Ok((Response { status, headers, body: Vec::new() }, n))
+    }
+
+    /// [`HttpClient::send_to`] on a pooled keep-alive connection. A reused connection that the
+    /// server already closed is replaced once, but only while nothing has reached `sink` (before
+    /// the response head is read).
+    fn send_to_pooled(&self, req: &Request, sink: &mut dyn Write) -> Result<(Response, u64)> {
+        let key = self.pool_key(&req.url);
+        for attempt in 0..2 {
+            let (mut reader, reused) = self.pooled_connection(&key, req)?;
+            let (status, headers) = match self.write_keep_alive(&mut reader, req).and_then(|_| read_response_head(&mut reader)) {
+                Ok(h) => h,
+                Err(e) if reused && attempt == 0 && !matches!(e.kind(), io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock) => continue,
+                Err(e) => return Err(self.io_err(req, e)),
+            };
+            let no_body = req.method == "HEAD" || matches!(status, 204 | 304);
+            let (resp, n) = if !(200..300).contains(&status) || no_body {
+                let body = if no_body { Vec::new() } else { read_body(&mut reader, &headers, true).map_err(|e| self.io_err(req, e))? };
+                (Response { status, headers, body }, 0)
+            } else {
+                let n = copy_body(&mut reader, &headers, sink).map_err(|e| self.io_err(req, e))?;
+                (Response { status, headers, body: Vec::new() }, n)
+            };
+            if reusable(&req.method, resp.status, &resp.headers) {
+                cloud_pool().put(key, reader);
+            }
+            return Ok((resp, n));
+        }
+        Err(CamelError::new(core_kinds::IO, format!("I/O error talking to {}", req.url.origin())))
     }
 
     fn io_err(&self, req: &Request, e: io::Error) -> CamelError {
@@ -470,6 +515,14 @@ impl CloudPool {
             list.push((Instant::now(), r));
         }
     }
+}
+
+/// Whether a connection can go back to the pool after this response: the server did not ask to
+/// close it, and the body's end was delimited (so the next response starts where this one ended).
+fn reusable(method: &str, status: u16, headers: &[(String, String)]) -> bool {
+    let close = headers.iter().any(|(k, v)| k.eq_ignore_ascii_case("connection") && v.to_ascii_lowercase().contains("close"));
+    let delimited = method == "HEAD" || matches!(status, 204 | 304) || headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-length") || k.eq_ignore_ascii_case("transfer-encoding"));
+    !close && delimited
 }
 
 fn connect_err(authority: &str, e: io::Error) -> CamelError {
@@ -856,5 +909,87 @@ mod tests {
         let (_, headers) = read_response_head(&mut reader).unwrap();
         assert!(copy_body(&mut reader, &headers, &mut Vec::new()).is_err(), "truncated bodies are errors");
         assert_eq!(proxy_auth("http://u:p%40ss@h:1"), Some(format!("Basic {}", base64_encode(b"u:p@ss"))));
+    }
+
+    /// A keep-alive server that counts its connections. `mode` per connection: "keep" serves
+    /// requests until the client closes; "one-then-drop" serves one and closes silently (the
+    /// connection looks idle and alive to the client); "close" answers `Connection: close`.
+    fn counting_server(mode: &'static str) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let l = cameleer_tls::net::bind_loopback().unwrap();
+        let port = l.local_addr().unwrap().port();
+        let conns = Arc::new(AtomicUsize::new(0));
+        let c2 = conns.clone();
+        std::thread::spawn(move || {
+            for s in l.incoming() {
+                let Ok(s) = s else { break };
+                c2.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut r = BufReader::new(s.try_clone().unwrap());
+                    let mut w = s;
+                    loop {
+                        let Ok(Some(req)) = read_request(&mut r) else { return };
+                        let body = format!("hello {}", req.path);
+                        let conn = if mode == "close" { "close" } else { "keep-alive" };
+                        let head = format!("HTTP/1.1 200 OK
+Content-Length: {}
+Connection: {}
+
+", body.len(), conn);
+                        if w.write_all(head.as_bytes()).and_then(|_| w.write_all(body.as_bytes())).is_err() || mode != "keep" {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (port, conns)
+    }
+
+    fn get(port: u16, path: &str) -> Request {
+        Request::new("GET", Url::parse(&format!("http://127.0.0.1:{port}{path}")).unwrap())
+    }
+
+    #[test]
+    fn send_to_reuses_keep_alive_connections() {
+        use std::sync::atomic::Ordering;
+        let (port, conns) = counting_server("keep");
+        let client = HttpClient::new().with_proxy(Proxy::None).with_timeout(Duration::from_secs(5));
+        for i in 0..5 {
+            let mut sink = Vec::new();
+            let (resp, n) = client.send_to(&get(port, &format!("/s{i}")), &mut sink).unwrap();
+            assert_eq!((resp.status, n as usize), (200, sink.len()));
+            assert_eq!(String::from_utf8(sink).unwrap(), format!("hello /s{i}"));
+        }
+        // buffered and streamed calls share the pool
+        assert_eq!(client.send(&get(port, "/b")).unwrap().text(), "hello /b");
+        assert_eq!(conns.load(Ordering::SeqCst), 1, "every call opened its own connection");
+    }
+
+    #[test]
+    fn send_to_replaces_a_pooled_connection_the_server_closed() {
+        use std::sync::atomic::Ordering;
+        let (port, conns) = counting_server("one-then-drop");
+        let client = HttpClient::new().with_proxy(Proxy::None).with_timeout(Duration::from_secs(5));
+        for i in 0..3 {
+            let mut sink = Vec::new();
+            client.send_to(&get(port, &format!("/d{i}")), &mut sink).unwrap();
+            assert_eq!(String::from_utf8(sink).unwrap(), format!("hello /d{i}"));
+            std::thread::sleep(Duration::from_millis(20)); // let the server's close arrive
+        }
+        assert_eq!(conns.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn connection_close_responses_are_not_pooled() {
+        use std::sync::atomic::Ordering;
+        let (port, conns) = counting_server("close");
+        let client = HttpClient::new().with_proxy(Proxy::None).with_timeout(Duration::from_secs(5));
+        for i in 0..3 {
+            let mut sink = Vec::new();
+            client.send_to(&get(port, &format!("/c{i}")), &mut sink).unwrap();
+            assert_eq!(String::from_utf8(sink).unwrap(), format!("hello /c{i}"));
+        }
+        assert_eq!(conns.load(Ordering::SeqCst), 3);
     }
 }
