@@ -10,8 +10,8 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
   `listLogStores` on Alibaba Cloud Simple Log Service, with Camel's URI, options and `CamelAlibabaSls*` headers. Requests
   are signed with the SLS signature V1 (HMAC-SHA256 as Camel's SDK, or HMAC-SHA1) or V4, checked against the official Go
   and Python SDK test vectors; STS tokens with `securityToken`. Tested against `SlsMock`, an embedded emulator that
-  verifies every signature; an official-client test with Alibaba's Python SDK (`aliyun-log-python-sdk` 0.9.53,
-  checksum-verified) is in the `CAMEL_OFFICIAL_CLIENTS` tier. Nothing has run against the real service. Not done: zstd
+  verifies every signature, and against Alibaba's own Python SDK (`aliyun-log-python-sdk` 0.9.53, checksum-verified)
+  in the `CAMEL_OFFICIAL_CLIENTS` tier, V1 and V4. Nothing has run against the real service. Not done: zstd
   compression (the default of Camel's SDK; Cameleer sends lz4, which the service accepts).
 
 ## 0.8.0 (2026-11-24)

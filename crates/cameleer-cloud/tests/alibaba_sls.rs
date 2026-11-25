@@ -244,3 +244,44 @@ fn endpoint_configuration_errors() {
     }
     assert_eq!(cameleer_cloud::alibaba::sls::region_of_endpoint("cn-shanghai-intranet.log.aliyuncs.com").as_deref(), Some("cn-shanghai"));
 }
+
+/// Found by the official Python SDK: its V4 signer sends no Content-MD5 (the body is covered by
+/// x-log-content-sha256), and the mock must accept that; a V1 request with a body needs it.
+#[test]
+fn content_md5_is_required_for_v1_only() {
+    use cameleer_cloud::alibaba::sls_sign::{authorization_v1, authorization_v4};
+    use cameleer_cloud::http::{HttpClient, Proxy, Request, Url};
+    use cameleer_cloud::testing::alibaba::{ACCESS_KEY_SECRET, ENDPOINT};
+    use cameleer_cloud::util::{amz_date, http_date, now_secs, sha256_hex};
+    let m = mock();
+    let body = br#"{"logstoreName":"made-by-raw-request"}"#.to_vec();
+    let now = now_secs();
+    let send = |version: &str| {
+        let mut h: Vec<(String, String)> = vec![
+            ("Host".into(), format!("orders.{}", ENDPOINT)),
+            ("Content-Type".into(), "application/json".into()),
+            ("x-log-apiversion".into(), "0.6.0".into()),
+            ("x-log-bodyrawsize".into(), body.len().to_string()),
+        ];
+        let auth = if version == "v4" {
+            h.push(("x-log-date".into(), amz_date(now)));
+            h.push(("x-log-content-sha256".into(), sha256_hex(&body)));
+            authorization_v4(ACCESS_KEY_ID, ACCESS_KEY_SECRET, "cn-hangzhou", "POST", "/logstores", &[], &h)
+        } else {
+            h.push(("Date".into(), http_date(now)));
+            h.push(("x-log-signaturemethod".into(), "hmac-sha1".into()));
+            authorization_v1(ACCESS_KEY_ID, ACCESS_KEY_SECRET, "POST", "/logstores", &[], &h)
+        };
+        h.push(("Authorization".into(), auth));
+        let mut req = Request::new("POST", Url::parse(&format!("{}/logstores", m.url())).unwrap());
+        for (k, v) in h {
+            req = req.header(&k, v);
+        }
+        HttpClient::new().with_proxy(Proxy::None).send(&req.body(body.clone())).unwrap()
+    };
+    let v4 = send("v4");
+    assert_eq!(v4.status, 200, "{}", v4.text());
+    let v1 = send("v1");
+    assert_eq!(v1.status, 400);
+    assert!(v1.text().contains("InvalidContentMD5"), "{}", v1.text());
+}

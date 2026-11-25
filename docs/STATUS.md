@@ -682,9 +682,14 @@ side was run in that session.
 - **Verified:** the official Go and Python SDKs' signature test vectors (V1 HMAC-SHA1, V4, percent-encoding);
   `SlsMock` (`testing/alibaba.rs`) recomputes every signature, checks Content-MD5 and the raw size, decompresses and
   decodes the protobuf (`tests/alibaba_sls.rs`, `cameleer-main/tests/docs_cloud_alibaba.rs`).
-- **Not verified:** the real service (no Alibaba Cloud account), and the official-client test with Alibaba's Python SDK
-  (`tests/official_alibaba.rs`, `CAMEL_OFFICIAL_CLIENTS=1`, aliyun-log-python-sdk 0.9.53 checksum-pinned in
-  `scripts/official-clients.sh`), which has not run yet. Not built: zstd (the default of Camel's SDK), Camel's
+- **Official client:** `tests/official_alibaba.rs` (`CAMEL_OFFICIAL_CLIENTS=1`) passes with Alibaba's Python SDK,
+  aliyun-log-python-sdk 0.9.53 (sdist checksum-pinned in `scripts/official-clients.sh`), on Windows 11 with Python 3.12.10
+  (dependencies from pip: six 1.17.0, requests 2.32.3, python-dateutil 2.9.0.post0, protobuf 5.29.3, lz4 4.3.3, jmespath
+  1.0.1): V1 (HMAC-SHA1) and V4 signatures, CreateLogstore, PutLogs lz4 and uncompressed with topic, source and tags,
+  GetLogs with a query, ListLogStores, a wrong secret refused; the component reads what the SDK wrote. It found one mock
+  bug (V4 requests carry no Content-MD5; `docs/INTEROP.md` official-clients bug 20). Not yet run in the Ubuntu set-up of
+  `official-clients.sh` (apt dependencies).
+- **Not verified:** the real service (no Alibaba Cloud account). Not built: zstd (the default of Camel's SDK), Camel's
   `serviceKeys` / `slsClient` objects, ECS RAM roles and OIDC credentials.
 
 ## Start-up regression found and fixed (2026-11-22)

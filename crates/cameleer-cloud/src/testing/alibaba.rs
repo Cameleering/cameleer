@@ -162,11 +162,14 @@ fn authenticate(st: &State, req: &ServerRequest, path: &str, query: &[(String, S
     if req.header("x-log-apiversion") != Some("0.6.0") {
         return Err(error(400, "InvalidAPIVersion", "x-log-apiversion must be 0.6.0"));
     }
+    let auth = req.header("Authorization").ok_or_else(|| error(401, "Unauthorized", "the Authorization header is missing"))?;
+    // V1 signs Content-MD5, so a V1 request with a body must carry it; V4 covers the body with
+    // x-log-content-sha256 (the Python SDK sends no Content-MD5 there), but a sent MD5 must match
     let md5 = req.header("Content-MD5");
-    if !req.body.is_empty() && md5.map(|m| m != content_md5(&req.body)).unwrap_or(true) {
+    let md5_required = !req.body.is_empty() && auth.starts_with("LOG ");
+    if md5.map(|m| m != content_md5(&req.body)).unwrap_or(md5_required) {
         return Err(error(400, "InvalidContentMD5", "Content-MD5 does not match the body"));
     }
-    let auth = req.header("Authorization").ok_or_else(|| error(401, "Unauthorized", "the Authorization header is missing"))?;
     let headers: Vec<(String, String)> = req.headers.clone();
     let now = now_secs();
     let fresh = |t: Option<i64>| t.map(|t| (now - t).abs() <= 900).unwrap_or(false);
