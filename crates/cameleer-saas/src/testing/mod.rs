@@ -15,8 +15,10 @@
 //! | [`OpenAiMock`] | `chat/completions`, `embeddings` |
 //! | [`GraphqlMock`] | a GraphQL endpoint with a tiny books schema |
 //! | [`FeedMock`] | RSS / Atom documents |
+//! | [`SplunkHecMock`] | the HTTP Event Collector (`/services/collector/event`, `/raw`, `/health`), HTTP or HTTPS |
 
 mod services;
+mod splunk;
 
 use std::sync::{Arc, Mutex};
 
@@ -24,6 +26,7 @@ use cameleer_core::value::Value;
 use cameleer_http::{HttpRequest, HttpResponse, HttpServer, ServerConfig};
 
 pub use services::*;
+pub use splunk::SplunkHecMock;
 
 /// A recorded request.
 #[derive(Clone, Debug)]
@@ -118,10 +121,15 @@ pub struct MockServer {
 impl MockServer {
     /// Start a server on `127.0.0.1` with an ephemeral port.
     pub fn start(handler: impl Fn(&Recorded) -> HttpResponse + Send + Sync + 'static) -> MockServer {
+        MockServer::start_with(ServerConfig::default(), handler)
+    }
+
+    /// Like [`MockServer::start`] with a server configuration (`tls` for an HTTPS mock).
+    pub fn start_with(config: ServerConfig, handler: impl Fn(&Recorded) -> HttpResponse + Send + Sync + 'static) -> MockServer {
         let requests: Arc<Mutex<Vec<Recorded>>> = Arc::new(Mutex::new(Vec::new()));
         let reqs = requests.clone();
         let h: Arc<Handler> = Arc::new(handler);
-        let server = HttpServer::bind("127.0.0.1:0", ServerConfig::default(), move |r: &mut HttpRequest| {
+        let server = HttpServer::bind("127.0.0.1:0", config, move |r: &mut HttpRequest| {
             let rec = Recorded {
                 method: r.method.clone(),
                 path: r.path.clone(),

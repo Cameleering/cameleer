@@ -49,7 +49,7 @@ Branch `main`._
 
 ## Where things stand
 
-The implementation is complete against the feature list: `docs/FEATURES.md` has 228 rows, all
+The implementation is complete against the feature list: `docs/FEATURES.md` has 231 rows, all
 ✅. Results of the last full run, all in one container session:
 
 | check | result |
@@ -734,6 +734,19 @@ Design in `docs/design/metrics.md`. One std-only registry (`cameleer_core::metri
 (`benchmarks/results/2026-11-25-windows-metrics/`): off 0.96x to 1.04x of `main`; the default meters 0.1 to 0.26 µs per
 message. Left out: JVM binders, OpenMetrics, delta temporality, exemplars, meter rates and percentiles,
 `clearOnReload`, the long task timer.
+
+## Log pipeline components (2026-11-25)
+
+- **`splunk-hec`** (`cameleer-saas`, feature `saas`): Camel's producer to Splunk's HTTP Event Collector, its options,
+  the `CamelSplunkHECIndexTime` header, the JSON envelope and the 200-only success rule (`RuntimeCamelException`
+  otherwise). `skipTlsVerify=true` is refused. Hermetic tests against `testing::SplunkHecMock` (HTTP and HTTPS).
+  Not tested against a real Splunk: its image needs the license accepted, which is the owner's call.
+- **`lumberjack`** (`cameleer-protocols`, feature `protocols`): Camel's consumer, Lumberjack v1/v2 (window, JSON,
+  data, compressed frames; one ACK per window after the route; no ACK and a closed connection on failure), TLS.
+  Hermetic tests with `testing::LumberjackClient`; official tier `official_lumberjack.rs` with Filebeat 9.2.0 OSS
+  (3/3 on Windows 11 and on WSL2 Ubuntu 24.04, 2026-11-25).
+- Pages `docs/components/splunk-hec.md` and `lumberjack.md`, "Log pipelines" in the observability guide,
+  `examples/logs-to-splunk.camel.yaml`, FEATURES rows (231 with alibaba-sls).
 
 ## pathscale crates evaluated, five fixes from it (2026-11-25, branch `claude/busy-booth-479e16`)
 
