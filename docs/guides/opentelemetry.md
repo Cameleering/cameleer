@@ -167,6 +167,42 @@ curl -H 'traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01' -
 # open http://localhost:16686: trace 0af76519... has the POST and the orders spans
 ```
 
+## Metrics
+
+The context's meters (Camel's `camel.metrics.*` or `camel.opentelemetry.metrics.*` meters and
+those of the [micrometer](../components/micrometer.md), [metrics](../components/metrics.md) and
+[opentelemetry-metrics](../components/opentelemetry-metrics.md) components) are exported over
+OTLP/HTTP every minute when `OTEL_METRICS_EXPORTER=otlp` is set, or
+`camel.opentelemetry.metrics.enabled=true`:
+
+```properties
+camel.opentelemetry.metrics.enabled = true
+otel.exporter.otlp.endpoint = http://otel-collector:4318
+```
+
+| variable | default | |
+|---|---|---|
+| `OTEL_METRICS_EXPORTER` | | `otlp` turns the export on, `none` off; Prometheus is always served at `/q/metrics` |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `60000` | milliseconds between exports |
+| `OTEL_METRIC_EXPORT_TIMEOUT` | `30000` | milliseconds for one export |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | `$OTEL_EXPORTER_OTLP_ENDPOINT/v1/metrics` | the metrics url, used as is |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS`, `_TIMEOUT`, `_COMPRESSION`, `_CERTIFICATE`, ... | the general ones | as for traces |
+
+Every export sends cumulative values (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` delta
+and lowmemory are not supported): counters as monotonic sums, up-down counters as non-monotonic
+sums, gauges as gauges, timers as histograms in seconds, summaries and OpenTelemetry histograms
+with their bucket counts and the recent maximum. A failed export is logged once and retried at the
+next interval; nothing is lost, the values are cumulative. At shutdown a last export is made.
+
+`camel.opentelemetry.metrics.enabled=true` also turns on Camel's meters with
+`camel-opentelemetry-metrics`' names (`camel.route.policy`, `camel.exchange.elapsed`,
+`camel.exchange.sent` and `camel.message.history` as histograms in milliseconds, the
+`camel.exchanges.*` counters, `camel.exchanges.last.time`), with the starter's options
+`enableRoutePolicy`, `routePolicyLevel`, `routePolicyExcludePattern`, `enableMessageHistory`,
+`enableExchangeEventNotifier`, `baseEndpointUriExchangeEventNotifier` and
+`enableRouteEventNotifier`. It cannot be combined with `camel.metrics.enabled` (Camel allows one
+route policy per route).
+
 ## Reliability
 
 - Spans are queued (`OTEL_BSP_MAX_QUEUE_SIZE`) and sent in batches by one background thread; a
@@ -204,8 +240,8 @@ them, and the routes keep their speed. Method and raw data:
 - The tracer and exporter are built in; there is no OpenTelemetry Java agent or SDK to add.
 - Only W3C Trace Context and Baggage propagate; B3 and Jaeger headers do not.
 - Spans are exported over OTLP/HTTP with protobuf only (not gRPC or JSON).
-- Metrics are not exported over OTLP; scrape `/q/metrics` (Prometheus) with the Collector's
-  `prometheus` receiver. Logs are not exported over OTLP; collect the JSON lines.
+- Logs are not exported over OTLP; collect the JSON lines. Metrics are cumulative only (no delta
+  temporality) and have no exemplars.
 - Camel's MDC keys (`camel.exchangeId`, `camel.routeId`) are not in the log lines, only the trace
   and span id; the `log` EIP does not add span events.
 - `error` is a boolean attribute (`camel-opentelemetry2` writes the string `"true"`).

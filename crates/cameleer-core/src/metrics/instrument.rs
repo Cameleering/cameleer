@@ -309,7 +309,7 @@ impl RouteMeters {
                 t[failed as usize].record(d);
             }
             if let Some(g) = &self.last {
-                g.set(crate::util_time::now_millis() as f64);
+                g.set(crate::clock::now_system_time().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as f64).unwrap_or(0.0));
             }
         }
     }

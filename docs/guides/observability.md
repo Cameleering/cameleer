@@ -161,6 +161,55 @@ scrape_configs:
       - targets: ["orders:8080"]
 ```
 
+## Camel metrics
+
+`camel.metrics.enabled=true` adds Camel's own meters, as `camel-micrometer-prometheus` does,
+with Camel's names and tags, to `/q/metrics` and `/observe/metrics`:
+
+| meter | what | tags |
+|---|---|---|
+| `camel.route.policy` (timer) | processing time per route, and for the context | `camelContext`, `kind=CamelRoute`, `routeId` (`""` for the context), `eventType` (`route`, `context`) |
+| `camel.exchanges.total`, `.succeeded`, `.failed`, `.failures.handled`, `.external.redeliveries` (counters) | exchanges per route and for the context | the same |
+| `camel.exchange.event.notifier` (timer) | exchange processing (`ExchangeCompletedEvent`, `ExchangeFailedEvent`) and sends to endpoints (`ExchangeSentEvent`) | `camelContext`, `kind=CamelExchangeEvent`, `eventType`, `routeId`, `endpointName`, `failed` |
+| `camel.exchanges.inflight` (gauge) | inflight exchanges per route | `camelContext`, `kind`, `routeId` |
+| `camel.exchanges.last.timestamp` (gauge) | when the last exchange finished, epoch milliseconds | |
+| `camel.routes.added`, `camel.routes.running` (gauges, unit `routes`) | routes | `camelContext`, `kind=CamelRoute`, `eventType=RouteEvent` |
+| `camel.message.history` (timer, with `enableMessageHistory`) | time per step | `camelContext`, `kind=CamelMessageHistory`, `routeId`, `nodeId` |
+| `app.info` | the version and runtime | `camel.version`, `camel.context`, `camel.runtime.provider`, `camel.runtime.version` |
+
+In Prometheus they read as Micrometer writes them: `camel_route_policy_seconds_count`,
+`camel_exchanges_total`, `camel_exchange_event_notifier_seconds_sum`, `camel_routes_added_routes`.
+Without `camel.metrics.enabled` the endpoint still has the route statistics it always had
+(`camel_exchanges_total{camelContext,routeId}` and the others); with it, Camel's families replace
+those of the same name.
+
+| option | default | |
+|---|---|---|
+| `camel.metrics.enabled` | `false` | turn the meters on |
+| `camel.metrics.namingStrategy` | `default` | `legacy`: Camel 3 names (`CamelRoutePolicy`, `CamelExchangesSucceeded`, ...) |
+| `camel.metrics.enableRoutePolicy` | `true` | the route policy meters |
+| `camel.metrics.routePolicyLevel` | `all` | `context` (only the context), `route` (only the routes) |
+| `camel.metrics.enableExchangeEventNotifier` | `true` | the exchange event notifier meters |
+| `camel.metrics.baseEndpointURIExchangeEventNotifier` | `true` | `endpointName` without the options |
+| `camel.metrics.recordLastExchangeTimestamp` | `true` | the last-exchange gauge |
+| `camel.metrics.enableRouteEventNotifier` | `true` | the route gauges |
+| `camel.metrics.enableMessageHistory` | `false` | a timer per step (turns message history on) |
+| `camel.metrics.skipCamelInfo` | `false` | leave out `app.info` |
+| `camel.metrics.logMetricsOnShutdown` | `false` | log the meters at shutdown, as `json` or `prometheus` (`logMetricsOnShutdownFormat`), filtered by name (`logMetricsOnShutdownFilters`, wildcards) |
+| `camel.metrics.textFormatVersion` | `0.0.4` | only `0.0.4`; `1.0.0` (OpenMetrics) is refused |
+
+Routes add their own meters with the [micrometer](../components/micrometer.md),
+[metrics](../components/metrics.md) and
+[opentelemetry-metrics](../components/opentelemetry-metrics.md) components; all are on the same
+endpoint and, with `OTEL_METRICS_EXPORTER=otlp`, exported over OTLP
+([OpenTelemetry](opentelemetry.md#metrics)). `camel.metrics.binders` (JVM, thread pool and
+logback binders) does not apply: there is no JVM.
+
+What it costs: with the options off nothing is installed. The default meters cost about 0.1 to
+0.26 µs per message on one Windows desktop (`direct` 3.08 M → 1.84 M messages/s; `seda`
+4.80 M → 3.20 M; `cbr` 1.41 M → 1.04 M; measured with `cameleer-bench run` and
+`CAMEL_BENCH_METRICS=micrometer`, see `benchmarks/results/2026-11-25-windows-metrics/`).
+
 ## Developer consoles and route actions
 
 With `camel.server.devConsoleEnabled=true`:
@@ -269,9 +318,7 @@ Every command is in [the cameleer command line](cli.md).
 
 ## What is not there yet
 
-- **OpenTelemetry metrics and logs over OTLP** (`camel-micrometer`, `camel-opentelemetry-metrics`):
-  traces are exported over OTLP, metrics are not; scrape `/q/metrics` with the Collector's
-  `prometheus` receiver, and collect the JSON log lines.
+- **Logs over OTLP**: collect the JSON log lines (the Collector's `filelog` receiver).
 - **`camel-observation`** (Micrometer Observation): there is no Micrometer; the OpenTelemetry
   tracer covers the same spans.
 - **JMX**: there is no JVM, so there are no MBeans; the same data is in `/q/dev` and `/q/metrics`.
@@ -315,7 +362,9 @@ Set `camel.server.enabled=true` and `camel.server.healthCheckEnabled=true` (or r
 ### How do I get Prometheus metrics?
 
 Set `camel.server.enabled=true` and `camel.server.metricsEnabled=true`, and scrape
-`/q/metrics`. For per-step metrics add `camel.main.jmxManagementStatisticsLevel=Default`.
+`/q/metrics` (or `/observe/metrics`). For Camel's metric names and tags add
+`camel.metrics.enabled=true` ([Camel metrics](#camel-metrics)); for a timer per step,
+`camel.metrics.enableMessageHistory=true`.
 
 ### Does Cameleer support OpenTelemetry?
 
