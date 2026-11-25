@@ -1,6 +1,6 @@
 # Cloud credentials, regions and endpoints
 
-> How Cameleer's AWS and Azure components find credentials (keys, profiles, instance and container roles, web identity, managed identity, SAS tokens), choose a region, and talk to emulators such as LocalStack and Azurite.
+> How Cameleer's AWS, Azure and Alibaba Cloud components find credentials (keys, profiles, instance and container roles, web identity, managed identity, SAS tokens), choose a region, and talk to emulators such as LocalStack and Azurite.
 
 This guide covers every `aws*` component (for example [aws2-s3](../components/aws2-s3.md),
 [aws2-sqs](../components/aws2-sqs.md), [aws-bedrock](../components/aws-bedrock.md)) and every `azure-*`
@@ -160,6 +160,23 @@ with a well-known, public key:
 For Key Vault, Functions, OpenAI and Schema Registry, `uriEndpointOverride` replaces the service base
 URL. Service Bus and Event Hubs emulators are reached with a connection string that contains
 `UseDevelopmentEmulator=true`.
+
+## Alibaba Cloud
+
+The [alibaba-sls](../components/alibaba-sls.md) component signs its requests with an AccessKey pair:
+
+| setting | option | environment variable |
+|---|---|---|
+| AccessKey ID | `accessKey` | `ALIBABA_CLOUD_ACCESS_KEY_ID` |
+| AccessKey secret | `secretKey` | `ALIBABA_CLOUD_ACCESS_KEY_SECRET` |
+| STS token of a temporary AccessKey | `securityToken` | `ALIBABA_CLOUD_SECURITY_TOKEN` |
+
+The option wins over the environment variable. The endpoint is `endpoint` (for example
+`cn-hangzhou-intranet.log.aliyuncs.com` inside the region's VPC), else
+`{region}.log.aliyuncs.com`; requests go to `https://{project}.{endpoint}` and the server
+certificate is always verified. ECS instance roles, RAM role assumption and OIDC are not read
+yet: fetch an STS token outside Cameleer and pass it with `securityToken`. For an emulator, set
+`uriEndpointOverride` and `overrideEndpoint=true`; the `Host` header still names the project.
 
 ## Configure once for all endpoints
 
