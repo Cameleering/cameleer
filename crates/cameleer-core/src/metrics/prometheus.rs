@@ -169,3 +169,47 @@ mod tests {
         assert_eq!(sanitize("1a.b-c"), "_1a_b_c");
     }
 }
+
+/// The Prometheus endpoint's text: `base` (the route statistics of management) followed by the
+/// registry's meters. A family the registry has (the `camel.metrics.*` route policy, with Camel's
+/// full tags) replaces the one of the same name in `base`.
+pub fn merge(base: &str, registry: &MeterRegistry) -> String {
+    let reg = render(registry, &BTreeSet::new());
+    if reg.is_empty() {
+        return base.to_string();
+    }
+    let names = family_names(&reg);
+    let mut out = String::with_capacity(base.len() + reg.len());
+    let mut keep = true;
+    let mut current = String::new();
+    for line in base.lines() {
+        let family = line.strip_prefix("# HELP ").or_else(|| line.strip_prefix("# TYPE ")).and_then(|l| l.split_whitespace().next());
+        if let Some(f) = family {
+            if f != current {
+                current = f.to_string();
+                keep = !names.contains(f);
+            }
+        }
+        if keep {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str(&reg);
+    out
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    #[test]
+    fn registry_families_replace_base_families() {
+        let base = "# HELP a_total A\n# TYPE a_total counter\na_total{x=\"1\"} 1\n# HELP b B\n# TYPE b gauge\nb 2\n";
+        let r = MeterRegistry::default();
+        assert_eq!(merge(base, &r), base);
+        r.counter("a", &[("y".into(), "2".into())], Some("A2")).unwrap().increment(5.0);
+        let m = merge(base, &r);
+        assert_eq!(m, "# HELP b B\n# TYPE b gauge\nb 2\n# HELP a_total A2\n# TYPE a_total counter\na_total{y=\"2\"} 5.0\n");
+    }
+}

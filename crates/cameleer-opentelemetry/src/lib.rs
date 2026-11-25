@@ -185,3 +185,53 @@ pub fn install_with(ctx: &CamelContext, tcfg: TelemetryConfig, ocfg: OtlpConfig)
 
 /// Registry name of the exporter's [`BatchStats`] (read by `/q/metrics`).
 pub const STATS_NAME: &str = "cameleer.opentelemetry.stats";
+
+/// Exports the context's metric registry over OTLP/HTTP when `OTEL_METRICS_EXPORTER=otlp` is set,
+/// or `camel.opentelemetry.metrics.enabled=true` (and `OTEL_METRICS_EXPORTER` is not `none`).
+/// The exporter reads the `OTEL_EXPORTER_OTLP_*` settings with the `METRICS` variants
+/// (`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `_HEADERS`, ...; the base endpoint gets `/v1/metrics`),
+/// `OTEL_METRIC_EXPORT_INTERVAL` (60000 ms) and `OTEL_METRIC_EXPORT_TIMEOUT` (30000 ms).
+pub fn install_metrics(ctx: &CamelContext, props: &dyn Fn(&str) -> Option<String>) -> Result<Option<metrics::PeriodicMetricExporter>> {
+    let get = config::lookup_with(props);
+    let exporter = get("otel.metrics.exporter").map(|v| v.to_ascii_lowercase());
+    let enabled = flag(props("camel.opentelemetry.metrics.enabled").or_else(|| props("camel.opentelemetry.metrics.enabled".replace("enabled", "Enabled").as_str())), "metrics.enabled")?.unwrap_or(false);
+    match exporter.as_deref() {
+        Some("none") => return Ok(None),
+        Some("otlp") => {}
+        None if enabled => {}
+        None => return Ok(None),
+        Some(o) => return Err(CamelError::illegal_argument(format!("OTEL_METRICS_EXPORTER={} is not supported (otlp, none; Prometheus is served at /q/metrics)", o))),
+    }
+    if get("otel.sdk.disabled").map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false) {
+        return Ok(None);
+    }
+    // the trace settings with the METRICS variants of the signal-specific ones
+    let mlookup = |k: &str| -> Option<String> {
+        if k == "otel.traces.exporter" {
+            return None;
+        }
+        match k.strip_prefix("otel.exporter.otlp.traces.") {
+            Some(rest) => get(&format!("otel.exporter.otlp.metrics.{}", rest)),
+            None => get(k),
+        }
+    };
+    let mut cfg = OtlpConfig::from_lookup(&mlookup)?;
+    if mlookup("otel.exporter.otlp.traces.endpoint").is_none() {
+        if let Some(base) = cfg.endpoint.strip_suffix("/v1/traces") {
+            cfg.endpoint = format!("{}/v1/metrics", base);
+        }
+    }
+    let ms = |k: &str, d: u64| -> Result<std::time::Duration> {
+        match get(k) {
+            None => Ok(std::time::Duration::from_millis(d)),
+            Some(v) => v.parse().map(std::time::Duration::from_millis).map_err(|_| CamelError::illegal_argument(format!("{} must be milliseconds: {}", config::env_name(k), v))),
+        }
+    };
+    let interval = ms("otel.metric.export.interval", 60_000)?;
+    let timeout = ms("otel.metric.export.timeout", 30_000)?.min(cfg.timeout.max(std::time::Duration::from_millis(1)) * 3);
+    let registry = cameleer_core::metrics::MeterRegistry::of(ctx);
+    let start = registry.created_unix_nano;
+    let exp = OtlpHttpExporter::new(&cfg)?;
+    cameleer_core::camel_info!(exporter::LOGGER, "Exporting metrics to {} every {:?}", cfg.endpoint, interval);
+    Ok(Some(metrics::PeriodicMetricExporter::start(exp, "camel".into(), interval, timeout, start, metrics::registry_snapshot(registry))))
+}
