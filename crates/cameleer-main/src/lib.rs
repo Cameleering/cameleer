@@ -71,6 +71,8 @@ pub struct Main {
     /// The attestation endpoint (`camel.attestation.enabled`), stopped when dropped.
     #[cfg_attr(not(feature = "attest"), allow(dead_code))]
     attestation: std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>,
+    /// Flushes and stops the OpenTelemetry exporter (`camel.opentelemetry.enabled`).
+    otel_shutdown: Option<Box<dyn Fn(Duration) + Send + Sync>>,
     /// Properties set in code / on the command line (highest precedence).
     explicit: BTreeMap<String, String>,
     /// Defaults set in code / on the command line (lowest precedence).
@@ -159,6 +161,7 @@ impl Main {
             console: None,
             mcp: std::sync::Mutex::new(None),
             attestation: std::sync::Mutex::new(None),
+            otel_shutdown: None,
             defaults: BTreeMap::new(),
             explicit: BTreeMap::new(),
             profile_docs: Vec::new(),
@@ -506,10 +509,15 @@ impl Main {
                 cameleer_core::log::set_level(level);
             }
         }
+        if let Some(f) = console::prop(&self.properties, "camel.main.log-format") {
+            let format = cameleer_core::log::LogFormat::parse(&f).ok_or_else(|| CamelError::illegal_argument(format!("camel.main.log-format must be text, ecs (json) or logstash: {}", f)))?;
+            cameleer_core::log::set_format(format);
+        }
         if let Some(t) = self.config.shutdown_timeout {
             self.ctx.set_shutdown_timeout(t);
         }
         self.apply_management_properties()?;
+        self.start_opentelemetry()?;
         for c in std::mem::take(&mut self.configurers) {
             c(&self.ctx)?;
         }
@@ -670,6 +678,44 @@ impl Main {
         Ok(())
     }
 
+    /// OpenTelemetry tracing (`camel.opentelemetry.enabled=true`, the `opentelemetry` feature),
+    /// installed before the routes are created.
+    #[cfg(feature = "opentelemetry")]
+    fn start_opentelemetry(&mut self) -> Result<()> {
+        if cameleer_core::telemetry::telemetry(&self.ctx).is_some() {
+            return Ok(());
+        }
+        let props = self.properties.clone();
+        let env = self.env.clone();
+        let lookup = move |k: &str| -> Option<String> {
+            console::prop(&props, k).or_else(|| {
+                // the SDK's environment variables, from the injected environment in tests
+                let name = cameleer_opentelemetry::config::env_name(k);
+                env.as_ref().and_then(|e| e.get(&name).cloned())
+            })
+        };
+        if let Some(otel) = cameleer_opentelemetry::install(&self.ctx, &lookup)? {
+            let otel = Arc::new(otel);
+            self.otel_shutdown = Some(Box::new(move |t| otel.shutdown(t)));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "opentelemetry"))]
+    fn start_opentelemetry(&mut self) -> Result<()> {
+        if console::prop(&self.properties, "camel.opentelemetry.enabled").map(|v| v.trim().eq_ignore_ascii_case("true")).unwrap_or(false) {
+            return Err(CamelError::illegal_argument("camel.opentelemetry.enabled=true needs the opentelemetry feature: rebuild with --features opentelemetry"));
+        }
+        Ok(())
+    }
+
+    /// Exports the spans still queued and stops the OpenTelemetry exporter (at most 5 s).
+    fn stop_opentelemetry(&self) {
+        if let Some(f) = &self.otel_shutdown {
+            f(Duration::from_secs(5));
+        }
+    }
+
     /// Whether `camel.main.startupRecorder` (`startup-recorder`) is `logging`.
     fn startup_recorder_logging(&self) -> bool {
         config::relaxed_get(&self.properties, "camel.main.startup-recorder").map(|v| v.trim().eq_ignore_ascii_case("logging")).unwrap_or(false)
@@ -798,7 +844,9 @@ impl Main {
         if let Some(l) = self.local.take() {
             l.stop();
         }
-        self.ctx.stop()
+        let r = self.ctx.stop();
+        self.stop_opentelemetry();
+        r
     }
 
     /// [`Self::run`] as an AWS Lambda custom runtime: start, then serve invocations until a
@@ -833,6 +881,7 @@ impl Main {
             l.stop();
         }
         let stopped = self.ctx.stop();
+        self.stop_opentelemetry();
         result?;
         stopped
     }
@@ -842,7 +891,9 @@ impl Main {
         if let Some(l) = &self.local {
             l.stop();
         }
-        self.ctx.stop()
+        let r = self.ctx.stop();
+        self.stop_opentelemetry();
+        r
     }
 }
 

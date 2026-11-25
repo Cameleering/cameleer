@@ -144,6 +144,7 @@ dependencies = [
  "cameleer-health",
  "cameleer-http",
  "cameleer-kafka-mqtt",
+ "cameleer-opentelemetry",
  "cameleer-protocols",
  "cameleer-saas",
  "cameleer-script",

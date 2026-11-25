@@ -282,7 +282,16 @@ impl Telemetry {
 
     /// Whether an endpoint URI, route id or processor id is excluded.
     pub fn is_excluded(&self, id: &str) -> bool {
-        self.cfg.exclude_patterns.iter().any(|p| crate::util::matches_pattern(id, p) || crate::util::matches_pattern(crate::util::normalize_uri(id).as_deref().unwrap_or(id), p))
+        if self.cfg.exclude_patterns.is_empty() {
+            return false;
+        }
+        // as Camel's `EndpointHelper.matchEndpoint`: the uri as given, normalized, and with
+        // `://` written as `:` (so `mock:quiet*` matches `mock://quiet`)
+        let normalized = crate::util::normalize_uri(id).ok();
+        let short = id.replacen("://", ":", 1);
+        self.cfg.exclude_patterns.iter().any(|p| {
+            crate::util::matches_pattern(id, p) || crate::util::matches_pattern(&short, p) || normalized.as_deref().map(|n| crate::util::matches_pattern(n, p)).unwrap_or(false)
+        })
     }
 
     fn key(&self, k: &str) -> String {

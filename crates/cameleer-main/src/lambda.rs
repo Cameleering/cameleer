@@ -209,6 +209,11 @@ impl LambdaRuntime {
                 }
             };
             let outcome = self.handle(ctx, &inv);
+            // Lambda freezes the process between invocations: export this invocation's spans
+            // before answering, as the OpenTelemetry Lambda layers do
+            if let Some(t) = cameleer_core::telemetry::telemetry(ctx) {
+                t.force_flush(Duration::from_secs(2));
+            }
             if let Outcome::Error(kind, message) = &outcome {
                 cameleer_core::camel_error!("Lambda", "Invocation {} failed: {}: {}", inv.request_id, kind, message);
             }

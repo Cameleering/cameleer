@@ -157,12 +157,20 @@ pub fn start(uri: &str, role: Role, ex: &Exchange) -> SpanStart {
         Family::Internal => (strip_scheme_and_options(uri).chars().take(250).collect(), SpanKind::Internal),
         Family::Other => (s.to_string(), SpanKind::Internal),
     };
-    if s == "kafka" && role == Role::Producer {
+    // Camel's KafkaSpanDecorator reads these when the span starts
+    if s == "kafka" {
         if let Some(k) = header(ex, "kafka.KEY") {
             attributes.push(("kafka.key".into(), AttrValue::String(k)));
         }
         if let Some(p) = ex.header("kafka.PARTITION_KEY").and_then(|v| v.as_i64()) {
             attributes.push(("kafka.partition.key".into(), AttrValue::Int(p)));
+        }
+        if role == Role::Consumer {
+            for (h, a) in [("kafka.PARTITION", "kafka.partition"), ("kafka.OFFSET", "kafka.offset")] {
+                if let Some(v) = ex.header(h).and_then(|v| v.as_i64()) {
+                    attributes.push((a.into(), AttrValue::Int(v)));
+                }
+            }
         }
     }
     SpanStart { name, kind, attributes }
@@ -178,25 +186,11 @@ pub fn finish(uri: &str, role: Role, ex: &Exchange, span: &mut OpenSpan) {
             }
         }
         Family::Messaging => {
-            if s == "kafka" {
-                if role == Role::Consumer {
-                    if let Some(k) = header(ex, "kafka.KEY") {
-                        span.set_attribute("kafka.key", k);
-                    }
-                }
+            if s == "kafka" && role == Role::Producer {
+                // the producer sets the location of the record it sent
                 for (h, a) in [("kafka.PARTITION", "kafka.partition"), ("kafka.OFFSET", "kafka.offset")] {
                     if let Some(v) = ex.header(h).and_then(|v| v.as_i64()) {
                         span.set_attribute(a, v);
-                    }
-                }
-                // a producer learns its partition and offset from the record metadata
-                if let Some(Value::Array(meta)) = ex.header("org.apache.kafka.clients.producer.RecordMetadata") {
-                    if let Some(m) = meta.first() {
-                        for (k, a) in [("partition", "kafka.partition"), ("offset", "kafka.offset")] {
-                            if let Some(v) = m.get(k).and_then(|v| v.as_i64()) {
-                                span.set_attribute(a, v);
-                            }
-                        }
                     }
                 }
             }
