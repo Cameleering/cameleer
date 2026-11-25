@@ -116,7 +116,7 @@ pub fn feature_for(kind: &str, name: &str) -> Option<&'static str> {
         return Some(f);
     }
     // the cloud family is large; its schemes share prefixes
-    if kind == "component" && (name.starts_with("aws") || name.starts_with("azure-") || name.starts_with("google-")) {
+    if kind == "component" && (name.starts_with("aws") || name.starts_with("azure-") || name.starts_with("google-") || name.starts_with("alibaba-")) {
         return Some("cloud");
     }
     None
@@ -143,6 +143,7 @@ mod tests {
     #[test]
     fn cloud_prefixes_and_tables() {
         assert_eq!(feature_for("component", "aws2-s3"), Some("cloud"));
+        assert_eq!(feature_for("component", "alibaba-sls"), Some("cloud"));
         assert_eq!(feature_for("component", "azure-servicebus"), Some("amqp10"));
         assert_eq!(feature_for("component", "kafka"), Some("kafka-mqtt"));
         assert_eq!(feature_for("language", "groovy"), Some("script"));

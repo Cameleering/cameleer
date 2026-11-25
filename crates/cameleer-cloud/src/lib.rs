@@ -57,6 +57,7 @@
 //! | `google-mail`, `google-calendar`, `google-drive` | [`gcp::workspace`] | Gmail / Calendar / Drive REST (Drive file-change consumer) | service account + domain-wide delegation, or OAuth refresh token |
 //! | `google-mail-stream`, `google-calendar-stream`, `google-sheets-stream` | [`gcp::streams`] | new mails / event changes / appended rows (polling consumers) | OAuth refresh token or service account + delegation |
 //! | `google-vertexai`, `google-speech-to-text`, `google-text-to-speech` | [`gcp::ai`] | Vertex AI Gemini, Speech v1, Text-to-Speech v1 REST | service account JWT → OAuth2 |
+//! | `alibaba-sls` | [`alibaba::sls`] | Alibaba Cloud Simple Log Service REST (PutLogs protobuf, GetLogs, ListLogStores) | SLS signature V1 / V4 |
 //!
 //! `azure-servicebus` / `azure-eventhubs` (AMQP 1.0) live in `cameleer-amqp10`. [`register`] also
 //! installs the `aws:`, `azure:` and `gcp:` properties functions (secret placeholders) and the
@@ -81,6 +82,7 @@
 //! ctx.start().unwrap();
 //! ```
 
+pub mod alibaba;
 pub mod aws;
 pub mod azure;
 pub mod endpoint;
@@ -163,6 +165,7 @@ const COMPONENTS: &[(&str, ServiceFactory)] = &[
     ("google-vertexai", gcp::ai::create_vertexai),
     ("google-speech-to-text", gcp::ai::create_speech_to_text),
     ("google-text-to-speech", gcp::ai::create_text_to_speech),
+    ("alibaba-sls", alibaba::sls::create),
 ];
 
 /// Register the cloud components on a context (lazily created, see [`schemes`]) and the

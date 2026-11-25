@@ -49,7 +49,7 @@ Branch `main`._
 
 ## Where things stand
 
-The implementation is complete against the feature list: `docs/FEATURES.md` has 230 rows, all
+The implementation is complete against the feature list: `docs/FEATURES.md` has 231 rows, all
 ✅. Results of the last full run, all in one container session:
 
 | check | result |
@@ -672,6 +672,26 @@ side was run in that session.
   - Cameleer: flat throughput and p99, constant threads and descriptors, 0.6 to 1.3 MB of RSS growth that slows.
   - Camel on the JVM grows by 17 to 71 MB and the TypeScript SDK by 89 MB in the hour.
 
+## Alibaba Cloud Simple Log Service (2026-11-25, unreleased)
+
+- **`alibaba-sls`** (Camel's `camel-alibaba-sls`, Preview since Camel 4.23) in `cameleer-cloud`, feature `cloud`:
+  `putLogs` (protobuf `LogGroup`, lz4 / deflate / none), `getLogs` (the 2020-12-30 `POST /logstores/{name}/logs`),
+  `listLogStores`; Camel's URI, options and `CamelAlibabaSls*` headers; signature V1 (HMAC-SHA256 as Camel's SDK, or
+  HMAC-SHA1) and V4. Code in `crates/cameleer-cloud/src/alibaba/`, page `docs/components/alibaba-sls.md`, example
+  `examples/syslog-to-sls.camel.yaml`.
+- **Verified:** the official Go and Python SDKs' signature test vectors (V1 HMAC-SHA1, V4, percent-encoding);
+  `SlsMock` (`testing/alibaba.rs`) recomputes every signature, checks Content-MD5 and the raw size, decompresses and
+  decodes the protobuf (`tests/alibaba_sls.rs`, `cameleer-main/tests/docs_cloud_alibaba.rs`).
+- **Official client:** `tests/official_alibaba.rs` (`CAMEL_OFFICIAL_CLIENTS=1`) passes with Alibaba's Python SDK,
+  aliyun-log-python-sdk 0.9.53 (sdist checksum-pinned in `scripts/official-clients.sh`), on Windows 11 with Python 3.12.10
+  (dependencies from pip: six 1.17.0, requests 2.32.3, python-dateutil 2.9.0.post0, protobuf 5.29.3, lz4 4.3.3, jmespath
+  1.0.1): V1 (HMAC-SHA1) and V4 signatures, CreateLogstore, PutLogs lz4 and uncompressed with topic, source and tags,
+  GetLogs with a query, ListLogStores, a wrong secret refused; the component reads what the SDK wrote. It found one mock
+  bug (V4 requests carry no Content-MD5; `docs/INTEROP.md` official-clients bug 20). Not yet run in the Ubuntu set-up of
+  `official-clients.sh` (apt dependencies).
+- **Not verified:** the real service (no Alibaba Cloud account). Not built: zstd (the default of Camel's SDK), Camel's
+  `serviceKeys` / `slsClient` objects, ECS RAM roles and OIDC credentials.
+
 ## Start-up regression found and fixed (2026-11-22)
 
 The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31 ms on WSL2 (12 ms on the
@@ -691,7 +711,7 @@ Not yet re-measured on a droplet.
   Hermetic tests with `testing::LumberjackClient`; official tier `official_lumberjack.rs` with Filebeat 9.2.0 OSS
   (3/3 on Windows 11 and on WSL2 Ubuntu 24.04, 2026-11-25).
 - Pages `docs/components/splunk-hec.md` and `lumberjack.md`, "Log pipelines" in the observability guide,
-  `examples/logs-to-splunk.camel.yaml`, FEATURES rows (now 230).
+  `examples/logs-to-splunk.camel.yaml`, FEATURES rows (231 with alibaba-sls).
 
 ## Pending / todo
 

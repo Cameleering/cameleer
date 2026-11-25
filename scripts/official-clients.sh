@@ -3,7 +3,8 @@
 #
 # Drives Cameleer's embedded brokers, datastores, cloud emulators and protocol stacks with
 # independently written, officially published clients (librdkafka/kcat, pymongo, the DataStax
-# Cassandra driver, elasticsearch-py, redis-py, boto3, the Azure SDK for Python, gcloud /
+# Cassandra driver, elasticsearch-py, redis-py, boto3, the Azure SDK for Python, Alibaba Cloud's
+# SLS Python SDK (aliyun-log-python-sdk), gcloud /
 # gsutil / bq, grpcio, Go's crypto/tls and net/http, Elastic's Filebeat). The suites live in
 # crates/<crate>/tests/official_*.rs, the client programs in scripts/official-clients/.
 #
@@ -38,7 +39,29 @@ APT_PACKAGES=(
   python3-azure python3-azure-storage python3-azure-cosmos
   python3-grpcio python3-grpc-tools python3-protobuf
   python3-jwt python3-cryptography
+  python3-six python3-requests python3-dateutil python3-jmespath python3-dateparser
 )
+
+# Alibaba Cloud's SLS Python SDK is not packaged by Ubuntu: its source release from PyPI, pinned
+# and checked against this SHA-256 (the digest PyPI publishes for the file), unpacked under
+# /opt/camel-official; its dependencies are the python3-* packages above.
+SLS_SDK_VERSION=0.9.53
+SLS_SDK_SHA256=271dc74d366d3cf97f2c42e887f5f4200ef84b04c459b35f9a888a1916acf207
+SLS_SDK_URL="https://files.pythonhosted.org/packages/source/a/aliyun-log-python-sdk/aliyun_log_python_sdk-${SLS_SDK_VERSION}.tar.gz"
+SLS_SDK_DIR="${CAMEL_OFFICIAL_SLS_SDK:-/opt/camel-official/aliyun-log-python-sdk-${SLS_SDK_VERSION}}"
+
+install_sls_sdk() {
+  local sudo="$1" tmp
+  [ -d "$SLS_SDK_DIR/aliyun/log" ] && return 0
+  tmp=$(mktemp -d)
+  curl -fsSL -o "$tmp/sdk.tar.gz" "$SLS_SDK_URL"
+  echo "$SLS_SDK_SHA256  $tmp/sdk.tar.gz" | sha256sum -c - >/dev/null || { echo "aliyun-log-python-sdk: checksum mismatch" >&2; rm -rf "$tmp"; return 1; }
+  tar -xzf "$tmp/sdk.tar.gz" -C "$tmp"
+  $sudo mkdir -p "$(dirname "$SLS_SDK_DIR")"
+  $sudo rm -rf "$SLS_SDK_DIR"
+  $sudo mv "$tmp/aliyun_log_python_sdk-${SLS_SDK_VERSION}" "$SLS_SDK_DIR"
+  rm -rf "$tmp"
+}
 
 install() {
   local sudo=""
@@ -47,6 +70,7 @@ install() {
   DEBIAN_FRONTEND=noninteractive $sudo apt-get install -y -qq "${APT_PACKAGES[@]}"
   command -v "$GO" >/dev/null || DEBIAN_FRONTEND=noninteractive $sudo apt-get install -y -qq golang-go
   install_filebeat "$sudo"
+  install_sls_sdk "$sudo"
   command -v gcloud >/dev/null || echo "note: the Google Cloud SDK (gcloud/gsutil/bq) is not on PATH; the GCP CLI test needs it" >&2
 }
 
@@ -94,11 +118,12 @@ EOF
   echo "bq:              $(bq version 2>/dev/null | tail -1 || echo missing)"
   echo "go:              $("$GO" version 2>/dev/null || echo missing)"
   echo "filebeat:        $("$FILEBEAT" version 2>/dev/null || echo missing)"
+  echo "aliyun-log-sdk:  $(sed -n "s/^__version__ = '\(.*\)'/\1/p" "$SLS_SDK_DIR/aliyun/log/version.py" 2>/dev/null || echo missing)"
 }
 
 run_tests() {
   cd "$ROOT"
-  CAMEL_OFFICIAL_CLIENTS=1 CAMEL_OFFICIAL_PYTHON="$PY" CAMEL_OFFICIAL_GO="$(command -v "$GO")" CAMEL_OFFICIAL_FILEBEAT="$FILEBEAT" cargo test --workspace --test 'official_*' "$@"
+  CAMEL_OFFICIAL_CLIENTS=1 CAMEL_OFFICIAL_PYTHON="$PY" CAMEL_OFFICIAL_GO="$(command -v "$GO")" CAMEL_OFFICIAL_FILEBEAT="$FILEBEAT" CAMEL_OFFICIAL_SLS_SDK="$SLS_SDK_DIR" cargo test --workspace --test 'official_*' "$@"
 }
 
 case "${1:-}" in
