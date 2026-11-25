@@ -1,6 +1,6 @@
 # Observability: health checks, Prometheus metrics, logs and tracing
 
-> Cameleer exposes Camel's health checks at `/q/health`, Prometheus metrics at `/q/metrics` and developer consoles at `/q/dev/*` on its management server (`camel.server.*`, or `cameleer run --console`), logs to standard output, and traces messages with `--trace`, the backlog tracer and message history. The `cameleer ps`, `get`, `log` and `trace` commands show the same information from the command line.
+> Cameleer exposes Camel's health checks at `/q/health`, Prometheus metrics at `/q/metrics` and developer consoles at `/q/dev/*` on its management server (`camel.server.*`, or `cameleer run --console`), logs to standard output in text or JSON lines with trace ids, exports OpenTelemetry traces over OTLP (`camel.opentelemetry.enabled`), and traces messages with `--trace`, the backlog tracer and message history. The `cameleer ps`, `get`, `log` and `trace` commands show the same information from the command line.
 
 **Applies to:** the `cameleer` CLI, the Docker image and `cameleer_main::Main` · **Apache Camel:** [Camel Main HTTP server](https://camel.apache.org/components/next/others/main.html), [Health checks](https://camel.apache.org/manual/health-check.html), [Tracer](https://camel.apache.org/manual/tracer.html)
 
@@ -11,7 +11,8 @@
 | which version, features and packs a running instance has | `/q/info` (`camel.server.infoEnabled=true`, or with the dev console) |
 | route state, statistics, endpoints | `/q/dev/routes`, `/q/dev/endpoints`, or `cameleer get routes` |
 | to start, stop or suspend a route at run time | `POST /q/dev/route/{id}/suspend`, or `cameleer cmd suspend-route` |
-| logs | standard output; `CAMEL_LOG_LEVEL`, `--log-level` |
+| logs | standard output; `CAMEL_LOG_LEVEL`, `--log-level`; JSON lines with `--logging-json` or `camel.main.log-format=ecs` / `logstash` |
+| distributed traces in Jaeger, Tempo, Honeycomb, Datadog | `camel.opentelemetry.enabled=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` ([OpenTelemetry](opentelemetry.md)) |
 | to see each message move through a route | `--trace`, or the backlog tracer and `cameleer trace` |
 | to see where a failed message went | message history (`camel.main.message-history=true`) |
 
@@ -183,12 +184,37 @@ Cameleer logs to standard output in one line per event, in Camel's layout:
 |---|---|
 | `CAMEL_LOG_LEVEL` | the level: `TRACE`, `DEBUG`, `INFO` (default), `WARN`, `ERROR`, `OFF` |
 | `--log-level`, `camel.main.log-level` | the same, from the command line or a properties file |
+| `CAMEL_LOG_FORMAT`, `--log-format`, `camel.main.log-format` | `text` (default), `ecs` (Elastic Common Schema JSON, as Camel JBang's `--logging-json`; `json` is the same), `logstash` (logstash-logback-encoder JSON) |
+| `--logging-json` | Camel JBang's flag: the same as `--log-format ecs` |
 | the `log` EIP and the `log:` component | log from a route (`log: "${body}"`, `to: log:orders?level=DEBUG&showHeaders=true`) |
 
 A failed exchange is logged with the error handler's report: the exception, the exchange and, with
 message history on, the steps it went through. In a container, logs go to the container
 runtime; `cameleer run` outside a container also writes them to `$CAMEL_HOME`, where
-`cameleer log --follow` reads them. Logs are plain text; there is no JSON log format yet.
+`cameleer log --follow` reads them.
+
+With [OpenTelemetry tracing](opentelemetry.md) on, every line logged inside a span carries its
+trace and span id: after the thread in text lines
+(`INFO  [main] [0af7651916cd43dd8448eb211c80319c,b7ad6b7169203331] orders : ...`), as
+`trace.id`/`span.id` in ECS lines and `trace_id`/`span_id` in logstash lines:
+
+```json
+{"@timestamp":"2026-11-25T10:00:00.123Z","log.level":"INFO","message":"stored order 42","ecs.version":"1.2.0","process.thread.name":"main","log.logger":"orders","trace.id":"0af7651916cd43dd8448eb211c80319c","span.id":"b7ad6b7169203331"}
+```
+
+## Distributed tracing with OpenTelemetry
+
+`camel.opentelemetry.enabled=true` traces every route as Camel's `camel-opentelemetry2` does: a
+span per exchange and route, a span per send to an endpoint, the W3C `traceparent` carried
+through HTTP headers, Kafka record headers, JMS and AMQP properties and gRPC metadata, and the
+spans exported over OTLP/HTTP to the collector named by `OTEL_EXPORTER_OTLP_ENDPOINT`. Options,
+span names, attributes and costs are on the [OpenTelemetry](opentelemetry.md) page.
+
+```properties
+camel.opentelemetry.enabled = true
+otel.service.name = orders
+otel.exporter.otlp.endpoint = http://otel-collector:4318
+```
 
 ## Tracing a message
 
@@ -233,10 +259,14 @@ Every command is in [the cameleer command line](cli.md).
 
 ## What is not there yet
 
-- **OpenTelemetry** traces and metrics, and Camel's `camel-opentelemetry`, `camel-micrometer`
-  and `camel-observation` components: not implemented. Use the Prometheus endpoint for metrics.
+- **OpenTelemetry metrics and logs over OTLP** (`camel-micrometer`, `camel-opentelemetry-metrics`):
+  traces are exported over OTLP, metrics are not; scrape `/q/metrics` with the Collector's
+  `prometheus` receiver, and collect the JSON log lines.
+- **`camel-observation`** (Micrometer Observation): there is no Micrometer; the OpenTelemetry
+  tracer covers the same spans.
 - **JMX**: there is no JVM, so there are no MBeans; the same data is in `/q/dev` and `/q/metrics`.
-- **JSON logs**: logs are plain text lines.
+- **Camel's MDC keys** (`camel.exchangeId`, `camel.routeId`, ...) in log lines; the trace and span
+  id are there.
 
 ## A worked example
 
@@ -279,8 +309,10 @@ Set `camel.server.enabled=true` and `camel.server.metricsEnabled=true`, and scra
 
 ### Does Cameleer support OpenTelemetry?
 
-Not yet. Metrics are available in the Prometheus format at `/q/metrics`, which an OpenTelemetry
-Collector can scrape with its Prometheus receiver.
+Yes, for traces: set `camel.opentelemetry.enabled=true` and `OTEL_EXPORTER_OTLP_ENDPOINT`, and
+spans go to the collector over OTLP/HTTP, with the context propagated in W3C `traceparent`
+headers ([OpenTelemetry](opentelemetry.md)). Metrics are in the Prometheus format at
+`/q/metrics`, which the Collector can scrape with its Prometheus receiver.
 
 ### How do I see why a message failed?
 
@@ -289,8 +321,9 @@ the message went through. For a live view, run with `--trace`.
 
 ### Can I change the log format?
 
-Not yet: the layout is fixed, plain text, one line per event (plus the error report for failed
-messages).
+Yes: `camel.main.log-format` (or `CAMEL_LOG_FORMAT`, or `cameleer run --log-format`) is `text`,
+`ecs` or `logstash`; `cameleer run --logging-json` is `ecs`, as in Camel JBang. The JSON
+formats write one object per line, with the trace and span id when tracing is on.
 
 ## Related
 
@@ -298,6 +331,7 @@ messages).
   [Error handling](error-handling.md)
 - [Deployment](../DEPLOYMENT.md): Docker, Kubernetes, Cloud Run, AWS Lambda
 - [log](../components/log.md) component
+- [OpenTelemetry](opentelemetry.md): distributed tracing over OTLP
 - [Attestation in confidential VMs](attestation.md): `/q/attestation`, evidence of what runs
 
 ## Found a problem?

@@ -25,9 +25,9 @@ pub mod decorator;
 pub mod span;
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::context::{CamelContext, RouteFactoryHook};
 use crate::error::{CamelError, Result};
@@ -39,7 +39,8 @@ use crate::value::Value;
 pub use context::{SpanContext, BAGGAGE, TRACEPARENT, TRACESTATE};
 pub use span::{AttrValue, Attributes, SpanData, SpanEvent, SpanKind, SpanProcessor, StatusCode};
 
-/// Exchange property holding the active span's context as a `traceparent` value.
+/// Exchange property holding the active span's context: 25 bytes, trace id (16), span id (8)
+/// and trace flags (1).
 pub const ACTIVE_SPAN: &str = "CamelOpenTelemetryActiveSpan";
 /// Exchange property holding the active span's `tracestate` (absent when empty).
 pub const ACTIVE_TRACESTATE: &str = "CamelOpenTelemetryActiveTraceState";
@@ -123,13 +124,22 @@ impl Default for TelemetryConfig {
     }
 }
 
-/// Span counters of a [`Telemetry`].
-#[derive(Default, Debug)]
+/// Span counters of a [`Telemetry`] (striped: threads do not share a cache line).
+#[derive(Default)]
 pub struct TelemetryStats {
+    started: crate::stripe::Counter,
+    ended: crate::stripe::Counter,
+}
+
+impl TelemetryStats {
     /// Spans started (sampled or not).
-    pub started: AtomicU64,
+    pub fn started(&self) -> u64 {
+        self.started.get()
+    }
     /// Sampled spans handed to the span processor.
-    pub ended: AtomicU64,
+    pub fn ended(&self) -> u64 {
+        self.ended.get()
+    }
 }
 
 /// The installed tracer of a context.
@@ -212,14 +222,24 @@ pub struct SpanStart {
 pub struct OpenSpan {
     pub context: SpanContext,
     parent: Option<SpanContext>,
+    /// Whether the parent was the exchange's active span (restored when this one ends).
+    parent_active: bool,
     sampled: bool,
     name: String,
     kind: SpanKind,
     start_unix_nano: u64,
-    started: Instant,
+    /// The tick clock at the start (cheaper than `Instant` on every platform).
+    started: u64,
     attributes: Attributes,
-    /// The exchange's active span before this one, restored when it ends.
-    prev: Option<(Option<Value>, Option<Value>)>,
+    shared: Arc<Attributes>,
+}
+
+fn active_bytes(c: &SpanContext) -> Value {
+    let mut b = Vec::with_capacity(25);
+    b.extend_from_slice(&c.trace_id);
+    b.extend_from_slice(&c.span_id);
+    b.push(c.flags);
+    Value::Bytes(b)
 }
 
 impl OpenSpan {
@@ -294,11 +314,11 @@ impl Telemetry {
         })
     }
 
-    fn key(&self, k: &str) -> String {
+    fn key<'a>(&self, k: &'a str) -> std::borrow::Cow<'a, str> {
         if self.cfg.encoding {
-            encode_key(k)
+            std::borrow::Cow::Owned(encode_key(k))
         } else {
-            k.to_string()
+            std::borrow::Cow::Borrowed(k)
         }
     }
 
@@ -328,18 +348,27 @@ impl Telemetry {
 
     /// The active span of the exchange.
     pub fn active(ex: &Exchange) -> Option<SpanContext> {
-        let tp = ex.property(ACTIVE_SPAN)?.as_str()?;
-        let mut c = SpanContext::parse_traceparent(tp)?;
-        c.remote = false;
+        let Value::Bytes(b) = ex.property(ACTIVE_SPAN)? else { return None };
+        if b.len() != 25 {
+            return None;
+        }
+        let mut c = SpanContext { trace_id: b[..16].try_into().ok()?, span_id: b[16..24].try_into().ok()?, flags: b[24], trace_state: String::new(), remote: false };
         if let Some(ts) = ex.property(ACTIVE_TRACESTATE).and_then(|v| v.as_str()) {
             c.trace_state = ts.to_string();
         }
         Some(c)
     }
 
-    /// Starts a span and makes it the exchange's active span.
+    /// Starts a span from everything known up front (tests and custom spans).
     pub fn start(&self, ex: &mut Exchange, parent: Parent, start: SpanStart) -> OpenSpan {
-        self.stats.started.fetch_add(1, Ordering::Relaxed);
+        let SpanStart { name, kind, attributes } = start;
+        self.start_with(ex, parent, Arc::default(), move |_| (name, kind, attributes))
+    }
+
+    /// Starts a span and makes it the exchange's active span. `describe` gives the name, kind
+    /// and per-exchange attributes; it runs only for a sampled span.
+    pub fn start_with(&self, ex: &mut Exchange, parent: Parent, shared: Arc<Attributes>, describe: impl FnOnce(&Exchange) -> (String, SpanKind, Attributes)) -> OpenSpan {
+        self.stats.started.add(1);
         let mut baggage = None;
         let parent_ctx = match parent {
             Parent::Exchange => Self::active(ex),
@@ -353,6 +382,7 @@ impl Telemetry {
                 }
             },
         };
+        let parent_active = parent_ctx.as_ref().map(|p| !p.remote).unwrap_or(false);
         let trace_id = parent_ctx.as_ref().map(|p| p.trace_id).unwrap_or_else(context::new_trace_id);
         let sampled = self.cfg.sampler.should_sample(parent_ctx.as_ref(), &trace_id);
         let context = SpanContext {
@@ -362,30 +392,30 @@ impl Telemetry {
             trace_state: parent_ctx.as_ref().map(|p| p.trace_state.clone()).unwrap_or_default(),
             remote: false,
         };
-        let prev = Some((ex.property(ACTIVE_SPAN).cloned(), ex.property(ACTIVE_TRACESTATE).cloned()));
-        ex.set_property(ACTIVE_SPAN, context.traceparent());
-        if context.trace_state.is_empty() {
-            ex.properties.remove(ACTIVE_TRACESTATE);
-        } else {
-            ex.set_property(ACTIVE_TRACESTATE, context.trace_state.clone());
+        ex.set_property(ACTIVE_SPAN, active_bytes(&context));
+        // a child keeps its parent's trace state; only a span from headers changes it
+        if !parent_active {
+            if context.trace_state.is_empty() {
+                ex.properties.remove(ACTIVE_TRACESTATE);
+            } else {
+                ex.set_property(ACTIVE_TRACESTATE, context.trace_state.clone());
+            }
         }
         if let Some(b) = baggage {
             ex.set_property(ACTIVE_BAGGAGE, b);
         }
-        let mut attributes = start.attributes;
-        if !sampled {
-            attributes.clear();
-        }
+        let (name, kind, attributes) = if sampled { describe(ex) } else { (String::new(), SpanKind::Internal, Vec::new()) };
         OpenSpan {
             context,
             parent: parent_ctx,
+            parent_active,
             sampled,
-            name: start.name,
-            kind: start.kind,
-            start_unix_nano: now_unix_nano(),
-            started: Instant::now(),
+            name,
+            kind,
+            start_unix_nano: if sampled { now_unix_nano() } else { 0 },
+            started: if sampled { crate::clock::ticks() } else { 0 },
             attributes,
-            prev,
+            shared,
         }
     }
 
@@ -411,16 +441,8 @@ impl Telemetry {
     /// `error`, an `exception` event), restores the previous active span and hands the span
     /// to the span processor.
     pub fn end(&self, ex: &mut Exchange, mut span: OpenSpan, error: Option<&CamelError>) {
-        match span.prev.take() {
-            Some((Some(tp), ts)) => {
-                ex.set_property(ACTIVE_SPAN, tp);
-                match ts {
-                    Some(ts) => ex.set_property(ACTIVE_TRACESTATE, ts),
-                    None => {
-                        ex.properties.remove(ACTIVE_TRACESTATE);
-                    }
-                }
-            }
+        match (&span.parent, span.parent_active) {
+            (Some(p), true) => ex.set_property(ACTIVE_SPAN, active_bytes(p)),
             _ => {
                 ex.properties.remove(ACTIVE_SPAN);
                 ex.properties.remove(ACTIVE_TRACESTATE);
@@ -429,7 +451,7 @@ impl Telemetry {
         if !span.sampled {
             return;
         }
-        let end = span.start_unix_nano + span.started.elapsed().as_nanos() as u64;
+        let end = span.start_unix_nano + crate::clock::ticks_to_nanos(crate::clock::ticks().saturating_sub(span.started));
         let error = error.or(ex.exception.as_ref());
         let mut events = Vec::new();
         let (status, status_message) = match error {
@@ -451,11 +473,11 @@ impl Telemetry {
             }
             None => (StatusCode::Unset, String::new()),
         };
-        let limit = self.cfg.attribute_count_limit;
+        let limit = self.cfg.attribute_count_limit.saturating_sub(span.shared.len());
         let dropped = span.attributes.len().saturating_sub(limit) as u32;
         span.attributes.truncate(limit);
         let parent = span.parent.as_ref();
-        self.stats.ended.fetch_add(1, Ordering::Relaxed);
+        self.stats.ended.add(1);
         self.processor.on_end(SpanData {
             trace_id: span.context.trace_id,
             span_id: span.context.span_id,
@@ -468,6 +490,7 @@ impl Telemetry {
             start_unix_nano: span.start_unix_nano,
             end_unix_nano: end,
             attributes: span.attributes,
+            shared_attributes: span.shared,
             dropped_attributes: dropped,
             events,
             status,
@@ -508,26 +531,24 @@ impl RouteFactoryHook for TelemetryHook {
         if self.t.is_excluded(&uri) || self.t.is_excluded(&rc.route_id) {
             return Ok(processor);
         }
-        Ok(Arc::new(RouteSpan { t: self.t.clone(), route_id: rc.route_id.clone(), uri, inner: processor }))
+        let d = decorator::prepare(&uri, decorator::Role::Consumer, Some(&rc.route_id));
+        Ok(Arc::new(RouteSpan { t: self.t.clone(), d, inner: processor }))
     }
 }
 
 struct RouteSpan {
     t: Arc<Telemetry>,
-    route_id: String,
-    uri: String,
+    d: decorator::Prepared,
     inner: Arc<dyn Processor>,
 }
 
 impl RouteSpan {
     fn open(&self, ex: &mut Exchange) -> OpenSpan {
-        let mut start = decorator::start(&self.uri, decorator::Role::Consumer, ex);
-        start.attributes.push(("camel.route.id".into(), AttrValue::String(self.route_id.clone())));
-        self.t.start(ex, Parent::ExchangeOrHeaders, start)
+        self.t.start_with(ex, Parent::ExchangeOrHeaders, self.d.shared.clone(), |ex| decorator::dynamic(&self.d, ex))
     }
     fn close(&self, ex: &mut Exchange, mut span: OpenSpan, r: &Result<()>) {
         if span.sampled {
-            decorator::finish(&self.uri, decorator::Role::Consumer, ex, &mut span);
+            decorator::finish(&self.d, ex, &mut span);
         }
         let err = r.as_ref().err();
         self.t.end(ex, span, err);
@@ -581,29 +602,32 @@ impl ProducerWrapper for TelemetryProducers {
         if self.t.is_excluded(&uri) {
             return producer;
         }
-        Arc::new(ProducerSpan { t: self.t.clone(), uri, inner: producer })
+        let d = decorator::prepare(&uri, decorator::Role::Producer, None);
+        Arc::new(ProducerSpan { t: self.t.clone(), d, inner: producer })
     }
 }
 
 struct ProducerSpan {
     t: Arc<Telemetry>,
-    uri: String,
+    d: decorator::Prepared,
     inner: Arc<dyn Producer>,
 }
 
 impl ProducerSpan {
     fn open(&self, ex: &mut Exchange) -> OpenSpan {
-        let mut start = decorator::start(&self.uri, decorator::Role::Producer, ex);
-        if let Some(r) = &ex.from_route_id {
-            start.attributes.push(("camel.route.id".into(), AttrValue::String(r.to_string())));
-        }
-        let span = self.t.start(ex, Parent::Exchange, start);
+        let span = self.t.start_with(ex, Parent::Exchange, self.d.shared.clone(), |ex| {
+            let (name, kind, mut attrs) = decorator::dynamic(&self.d, ex);
+            if let Some(r) = &ex.from_route_id {
+                attrs.push(("camel.route.id".into(), AttrValue::String(r.to_string())));
+            }
+            (name, kind, attrs)
+        });
         self.t.inject(ex, &span);
         span
     }
     fn close(&self, ex: &mut Exchange, mut span: OpenSpan, r: &Result<()>) {
         if span.sampled {
-            decorator::finish(&self.uri, decorator::Role::Producer, ex, &mut span);
+            decorator::finish(&self.d, ex, &mut span);
         }
         self.t.end(ex, span, r.as_ref().err());
     }
@@ -663,31 +687,26 @@ impl ChannelWrapper for ProcessorSpans {
         if self.t.is_excluded(&id) || self.t.is_excluded(&format!("{}-{}", id, def.name())) {
             return Ok(processor);
         }
-        Ok(Arc::new(ProcessorSpan { t: self.t.clone(), route_id: rc.route_id.clone(), name: def.name().to_string(), id, inner: processor }))
+        let shared = Arc::new(vec![
+            ("camel.processor.id".into(), AttrValue::String(id.clone())),
+            ("camel.route.id".into(), AttrValue::String(rc.route_id.clone())),
+            ("op".into(), AttrValue::from("EVENT_PROCESS")),
+        ]);
+        Ok(Arc::new(ProcessorSpan { t: self.t.clone(), name: format!("{}-{}", id, def.name()), shared, inner: processor }))
     }
 }
 
 struct ProcessorSpan {
     t: Arc<Telemetry>,
-    route_id: String,
+    /// `<id>-<shortName>`
     name: String,
-    id: String,
+    shared: Arc<Attributes>,
     inner: Arc<dyn Processor>,
 }
 
 impl ProcessorSpan {
     fn open(&self, ex: &mut Exchange) -> OpenSpan {
-        let start = SpanStart {
-            name: format!("{}-{}", self.id, self.name),
-            kind: SpanKind::Internal,
-            attributes: vec![
-                ("camel.processor.id".into(), AttrValue::String(self.id.clone())),
-                ("camel.route.id".into(), AttrValue::String(self.route_id.clone())),
-                ("op".into(), AttrValue::from("EVENT_PROCESS")),
-                ("exchangeId".into(), AttrValue::String(ex.exchange_id.to_string())),
-            ],
-        };
-        self.t.start(ex, Parent::Exchange, start)
+        self.t.start_with(ex, Parent::Exchange, self.shared.clone(), |ex| (self.name.clone(), SpanKind::Internal, vec![("exchangeId".into(), AttrValue::String(ex.exchange_id.to_string()))]))
     }
 }
 

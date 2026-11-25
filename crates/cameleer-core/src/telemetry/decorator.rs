@@ -121,8 +121,21 @@ fn http_url(uri: &str, ex: &Exchange, role: Role) -> String {
     }
 }
 
-/// Name, kind and attributes of a new span for `uri`.
-pub fn start(uri: &str, role: Role, ex: &Exchange) -> SpanStart {
+/// What is known about an endpoint's spans before any exchange: computed once per route or
+/// producer, shared by all its spans.
+pub struct Prepared {
+    pub uri: String,
+    pub role: Role,
+    pub family: Family,
+    /// `component`, `url.scheme`, `camel.uri`, `url.path`, `url.query`, `op` (and the route id
+    /// of route spans).
+    pub shared: std::sync::Arc<super::Attributes>,
+    /// The span name when it does not depend on the exchange.
+    pub fixed_name: Option<String>,
+}
+
+/// Prepares the decorator of `uri`.
+pub fn prepare(uri: &str, role: Role, route_id: Option<&str>) -> Prepared {
     let s = scheme(uri);
     let fam = family(s);
     let masked = crate::component::log::mask_secrets(uri);
@@ -141,12 +154,30 @@ pub fn start(uri: &str, role: Role, ex: &Exchange) -> SpanStart {
         attributes.push(("url.query".into(), AttrValue::String(q.to_string())));
     }
     attributes.push(("op".into(), AttrValue::from(if role == Role::Consumer { "EVENT_RECEIVED" } else { "EVENT_SENT" })));
+    if let Some(r) = route_id {
+        attributes.push(("camel.route.id".into(), AttrValue::String(r.to_string())));
+    }
+    let fixed_name = match fam {
+        Family::Internal => Some(strip_scheme_and_options(uri).chars().take(250).collect()),
+        Family::Other => Some(s.to_string()),
+        _ => None,
+    };
+    Prepared { uri: uri.to_string(), role, family: fam, shared: std::sync::Arc::new(attributes), fixed_name }
+}
+
+/// The name, kind and per-exchange attributes of a new span.
+pub fn dynamic(p: &Prepared, ex: &Exchange) -> (String, SpanKind, super::Attributes) {
+    let (uri, role) = (p.uri.as_str(), p.role);
+    let s = scheme(uri);
+    let mut attributes: Vec<(String, AttrValue)> = Vec::with_capacity(4);
     attributes.push(("exchangeId".into(), AttrValue::String(ex.exchange_id.to_string())));
-    let (name, kind) = match fam {
+    let (name, kind) = match p.family {
         Family::Http => {
             let m = http_method(uri, ex);
             attributes.push(("http.method".into(), AttrValue::String(m.clone())));
-            attributes.push(("http.url".into(), AttrValue::String(crate::component::log::mask_secrets(&http_url(uri, ex, role)))));
+            let url = http_url(uri, ex, role);
+            let url = if url.contains('?') || url.contains('@') { crate::component::log::mask_secrets(&url) } else { url };
+            attributes.push(("http.url".into(), AttrValue::String(url)));
             (m, if role == Role::Consumer { SpanKind::Server } else { SpanKind::Client })
         }
         Family::Messaging => {
@@ -154,8 +185,7 @@ pub fn start(uri: &str, role: Role, ex: &Exchange) -> SpanStart {
             attributes.push(("messaging.destination.name".into(), AttrValue::String(d.clone())));
             (d, if role == Role::Consumer { SpanKind::Consumer } else { SpanKind::Producer })
         }
-        Family::Internal => (strip_scheme_and_options(uri).chars().take(250).collect(), SpanKind::Internal),
-        Family::Other => (s.to_string(), SpanKind::Internal),
+        Family::Internal | Family::Other => (p.fixed_name.clone().unwrap_or_default(), SpanKind::Internal),
     };
     // Camel's KafkaSpanDecorator reads these when the span starts
     if s == "kafka" {
@@ -173,13 +203,23 @@ pub fn start(uri: &str, role: Role, ex: &Exchange) -> SpanStart {
             }
         }
     }
+    (name, kind, attributes)
+}
+
+/// Name, kind and all attributes of a new span for `uri` (prepared and per-exchange together).
+pub fn start(uri: &str, role: Role, ex: &Exchange) -> SpanStart {
+    let p = prepare(uri, role, None);
+    let (name, kind, dynamic) = dynamic(&p, ex);
+    let mut attributes = (*p.shared).clone();
+    attributes.extend(dynamic);
     SpanStart { name, kind, attributes }
 }
 
 /// Attributes known once the exchange is done (status codes, offsets, message ids).
-pub fn finish(uri: &str, role: Role, ex: &Exchange, span: &mut OpenSpan) {
+pub fn finish(p: &Prepared, ex: &Exchange, span: &mut OpenSpan) {
+    let (uri, role) = (p.uri.as_str(), p.role);
     let s = scheme(uri);
-    match family(s) {
+    match p.family {
         Family::Http => {
             if let Some(c) = ex.header("CamelHttpResponseCode").and_then(|v| v.as_i64().or_else(|| v.to_string().parse().ok())) {
                 span.set_attribute("http.status_code", c);

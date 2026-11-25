@@ -143,6 +143,7 @@ fn span(w: &mut Writer, s: &SpanData) {
     w.uint(6, s.kind as u64);
     w.fixed64(7, s.start_unix_nano);
     w.fixed64(8, s.end_unix_nano);
+    attributes(w, 9, &s.shared_attributes);
     attributes(w, 9, &s.attributes);
     w.uint(10, s.dropped_attributes as u64);
     for e in &s.events {
@@ -338,6 +339,7 @@ fn decode_span(b: &[u8], scope: &str) -> Result<(SpanData, u32), String> {
         start_unix_nano: 0,
         end_unix_nano: 0,
         attributes: Vec::new(),
+        shared_attributes: Default::default(),
         dropped_attributes: 0,
         events: Vec::new(),
         status: StatusCode::Unset,
@@ -498,6 +500,7 @@ mod tests {
                 ("empty".into(), AttrValue::String(String::new())),
                 ("list".into(), AttrValue::StringArray(vec!["x".into(), "y".into()])),
             ],
+            shared_attributes: Default::default(),
             dropped_attributes: 2,
             events: vec![SpanEvent { name: "exception".into(), time_unix_nano: 5, attributes: vec![("exception.message".into(), "boom".into())] }],
             status: StatusCode::Error,

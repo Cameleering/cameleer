@@ -194,7 +194,7 @@ pub struct ConsoleExporter;
 impl SpanExporter for ConsoleExporter {
     fn export(&self, spans: &[SpanData], _budget: Duration) -> ExportResult {
         for s in spans {
-            let attrs: Vec<String> = s.attributes.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
+            let attrs: Vec<String> = s.all_attributes().map(|(k, v)| format!("{}={}", k, v)).collect();
             cameleer_core::camel_info!(
                 "org.apache.camel.opentelemetry.LoggingSpanExporter",
                 "'{}' : {} {} {} {:?} [tracer: {}] {{{}}}",

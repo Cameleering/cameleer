@@ -45,6 +45,7 @@ dependencies = [
  "cameleer-grpc",
  "cameleer-http",
  "cameleer-kafka-mqtt",
+ "cameleer-opentelemetry",
  "cameleer-sql",
  "simoom-client",
 ]

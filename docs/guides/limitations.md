@@ -53,8 +53,8 @@ below is checked against the build by `limitations_match_the_catalog` in
 
 | not available | instead |
 |---|---|
-| OpenTelemetry traces and metrics (`camel-opentelemetry`), Micrometer (`camel-micrometer`), `camel-observation` | Prometheus metrics at `/q/metrics`, which an OpenTelemetry Collector can scrape; the tracer for messages ([Observability](observability.md)). an MCP tool call passes the `traceparent`, `tracestate` and `baggage` of its `_meta` to the route as headers |
-| JSON log lines | plain text lines in Camel's format |
+| OpenTelemetry metrics and logs over OTLP, Micrometer (`camel-micrometer`), `camel-observation` | traces are exported over OTLP ([OpenTelemetry](opentelemetry.md)); Prometheus metrics at `/q/metrics`, which an OpenTelemetry Collector can scrape; JSON log lines with trace ids (`--logging-json`) for the Collector's `filelog` receiver |
+| OTLP over gRPC or as JSON, B3 and Jaeger propagation | OTLP/HTTP with protobuf (port 4318) and W3C Trace Context and Baggage; the Collector translates between formats |
 
 ## Data formats and files
 

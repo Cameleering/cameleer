@@ -123,6 +123,9 @@ pub struct SpanData {
     pub start_unix_nano: u64,
     pub end_unix_nano: u64,
     pub attributes: Attributes,
+    /// Attributes shared by every span of one route or endpoint (`component`, `camel.uri`, ...),
+    /// computed once; exporters write them before [`SpanData::attributes`].
+    pub shared_attributes: std::sync::Arc<Attributes>,
     /// Attributes dropped by the attribute count limit.
     pub dropped_attributes: u32,
     pub events: Vec<SpanEvent>,
@@ -135,7 +138,11 @@ pub struct SpanData {
 impl SpanData {
     /// The value of attribute `key`.
     pub fn attribute(&self, key: &str) -> Option<&AttrValue> {
-        self.attributes.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        self.attributes.iter().chain(self.shared_attributes.iter()).find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+    /// Every attribute: the shared ones, then the span's own.
+    pub fn all_attributes(&self) -> impl Iterator<Item = &(String, AttrValue)> {
+        self.shared_attributes.iter().chain(self.attributes.iter())
     }
     pub fn duration(&self) -> Duration {
         Duration::from_nanos(self.end_unix_nano.saturating_sub(self.start_unix_nano))

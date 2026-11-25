@@ -48,8 +48,51 @@ fn secs(s: &str) -> std::result::Result<Duration, String> {
     s.parse::<f64>().map(Duration::from_secs_f64).map_err(|_| format!("bad seconds: {s}"))
 }
 
+/// Tracing for the overhead measurement (`CAMEL_BENCH_OTEL`): unset or `off` installs nothing;
+/// `spans` installs the tracer with a span processor that drops every span (the cost of making
+/// spans and propagating them); `otlp` exports over OTLP/HTTP with the default batch settings to
+/// an in-process receiver that answers 200 and discards (the cost of the whole pipeline).
+fn bench_tracing(ctx: &CamelContext) -> Result<Option<(cameleer_opentelemetry::OpenTelemetry, Option<cameleer_opentelemetry::testing::OtlpReceiver>)>> {
+    use cameleer_opentelemetry::{ExporterKind, OtlpConfig};
+    let mode = std::env::var("CAMEL_BENCH_OTEL").unwrap_or_default();
+    let (cfg, rx) = match mode.as_str() {
+        "" | "off" => return Ok(None),
+        "spans" => (OtlpConfig { exporter: ExporterKind::None, ..OtlpConfig::default() }, None),
+        "otlp" => {
+            let rx = cameleer_opentelemetry::testing::OtlpReceiver::start_discarding();
+            (OtlpConfig { endpoint: rx.traces_url(), ..OtlpConfig::default() }, Some(rx))
+        }
+        o => return Err(CamelError::illegal_argument(format!("CAMEL_BENCH_OTEL must be off, spans or otlp: {o}"))),
+    };
+    let otel = cameleer_opentelemetry::install_with(ctx, cameleer_core::telemetry::TelemetryConfig::default(), cfg)?;
+    Ok(Some((otel, rx)))
+}
+
+/// Prints the tracing counters of [`bench_tracing`] to stderr.
+fn report_tracing(t: &Option<(cameleer_opentelemetry::OpenTelemetry, Option<cameleer_opentelemetry::testing::OtlpReceiver>)>) {
+    if let Some((otel, rx)) = t {
+        let st = otel.telemetry.stats();
+        let (exported, dropped, failed, batches) = otel.batch.as_ref().map(|b| b.stats().snapshot()).unwrap_or_default();
+        let (reqs, bytes) = rx.as_ref().map(|r| r.discarded()).unwrap_or_default();
+        eprintln!(
+            "TRACING spans_started={} spans_ended={} exported={} dropped={} failed={} batches={} requests={} bytes={}",
+            st.started(),
+            st.ended(),
+            exported,
+            dropped,
+            failed,
+            batches,
+            reqs,
+            bytes
+        );
+    }
+}
+
 fn context(sink: &Arc<AtomicU64>) -> Result<CamelContext> {
-    let ctx = CamelContext::new();
+    context_into(CamelContext::new(), sink)
+}
+
+fn context_into(ctx: CamelContext, sink: &Arc<AtomicU64>) -> Result<CamelContext> {
     cameleer_http::register(&ctx);
     cameleer_ai::register(&ctx);
     scenarios::add_routes(&ctx, sink)?;
@@ -118,13 +161,17 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
         Some("run") if args.len() == 5 => {
             let plan = Plan { warmup: secs(&args[2])?, iteration: secs(&args[3])?, iters: args[4].parse().map_err(|_| "bad iters")? };
             let sink = Arc::new(AtomicU64::new(0));
-            let ctx = context(&sink).map_err(s)?;
+            let ctx = CamelContext::new();
+            let tracing = bench_tracing(&ctx).map_err(s)?;
+            let ctx = context_into(ctx, &sink).map_err(s)?;
             ctx.start().map_err(s)?;
             version();
             println!("READY");
             let out = if args[1].starts_with("ai-") { cameleer_bench::ai::run(&ctx, &args[1], plan) } else { scenarios::run(&ctx, &sink, &args[1], plan) }.map_err(s)?;
             println!("{}", out.result_line(&args[1]));
-            ctx.stop().map_err(s)
+            let r = ctx.stop().map_err(s);
+            report_tracing(&tracing);
+            r
         }
         Some("http-server") if args.len() == 2 => {
             let port: u16 = args[1].parse().map_err(|_| "bad port")?;
@@ -144,7 +191,9 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
             let top = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(40);
             let scenario = args[1].clone();
             let sink = Arc::new(AtomicU64::new(0));
-            let ctx = context(&sink).map_err(s)?;
+            let ctx = CamelContext::new();
+            let _tracing = bench_tracing(&ctx).map_err(s)?;
+            let ctx = context_into(ctx, &sink).map_err(s)?;
             let port = measure::free_port();
             if scenario == "http" {
                 scenarios::add_http_route(&ctx, port).map_err(s)?;

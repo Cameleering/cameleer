@@ -42,6 +42,7 @@ names its feature in its header line (**Cargo feature:**).
 | `datastores` | `spring-redis`, `mongodb`, `mongodb-gridfs`, `elasticsearch`, `opensearch`, `cql` (Cassandra), `couchdb` | `cameleer-datastores` |
 | `grpc` | the `grpc` component and the `protobuf` data format | `cameleer-grpc` |
 | `kafka-mqtt` | `kafka`, `paho`, `paho-mqtt5` | `cameleer-kafka-mqtt` |
+| `opentelemetry` | OpenTelemetry tracing (`camel.opentelemetry.*`, `OTEL_*`): spans exported over OTLP/HTTP ([OpenTelemetry](opentelemetry.md)); the tracer and the JSON log formats are in every build | `cameleer-opentelemetry` |
 | `protocols` | `ftp`, `ftps`, `smtp`/`smtps`, `pop3`/`pop3s`, `imap`/`imaps`, `syslog`, `websocket`/`ws`/`wss`, `vertx-websocket`; the `syslog` data format | `cameleer-protocols` |
 | `saas` | `openai`, `llm`, `anthropic`, `gemini`, `slack`, `telegram`, `github`, `twilio`, `jira`, `webhook`, `graphql`, `rss`, `atom` | `cameleer-saas` |
 | `script` | the languages `js`/`javascript`, `groovy`, `python`, `java`/`joor`, `csimple`, `mvel`, `ognl`, `spel`, `datasonnet`, and the `mvel` component | `cameleer-script` |

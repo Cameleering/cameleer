@@ -17,6 +17,7 @@ pub const FEATURES: &[(&str, bool)] = &[
     ("datastores", cfg!(feature = "datastores")),
     ("grpc", cfg!(feature = "grpc")),
     ("kafka-mqtt", cfg!(feature = "kafka-mqtt")),
+    ("opentelemetry", cfg!(feature = "opentelemetry")),
     ("protocols", cfg!(feature = "protocols")),
     ("saas", cfg!(feature = "saas")),
     ("script", cfg!(feature = "script")),

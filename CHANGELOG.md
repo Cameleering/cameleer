@@ -3,6 +3,25 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+- **OpenTelemetry tracing** (`camel.opentelemetry.enabled=true`, cargo feature `opentelemetry`, in `full`), as Camel's
+  `camel-opentelemetry2`: a span for every exchange in every route, every send to an endpoint and, with
+  `camel.opentelemetry.traceProcessors=true`, every processor, with Camel's span names, kinds and attributes; W3C
+  `traceparent`, `tracestate` and `baggage` in and out through the message headers, so HTTP, Kafka, JMS, AMQP 1.0,
+  STOMP and gRPC carry the trace between services; Camel's `instrumentationName`, `excludePatterns` and `encoding`
+  options. Spans are exported over OTLP/HTTP with protobuf by the new `cameleer-opentelemetry` crate (std only): gzip,
+  headers, TLS with CA and client certificates, a batch span processor with a bounded queue that drops and counts when
+  full, retries of 429/502/503/504 with backoff and `Retry-After`; configured by the SDK's `OTEL_*` variables
+  (`OTEL_EXPORTER_OTLP_*`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_TRACES_SAMPLER`, `OTEL_BSP_*`, ...).
+  Flushed at stop and after each AWS Lambda invocation. With tracing off nothing of it runs. Guide:
+  `docs/guides/opentelemetry.md`.
+- **Trace ids in log lines and JSON log lines**: a line logged inside a span carries its trace and span id;
+  `camel.main.log-format` (`CAMEL_LOG_FORMAT`, `cameleer run --log-format`) is `text`, `ecs` (Camel JBang's
+  `--logging-json`, also accepted) or `logstash`.
+- `CamelContext::add_producer_wrapper` and `CamelContext::create_producer`: every producer the context creates passes
+  through the registered wrappers (used by the tracer).
+
 ## 0.8.0 (2026-11-24)
 
 gRPC and HTTP/2 on simoom 0.2.0: the gRPC server runs its calls on a pool of threads, the event loops start at

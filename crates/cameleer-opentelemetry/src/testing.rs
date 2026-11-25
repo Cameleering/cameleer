@@ -38,6 +38,10 @@ struct Inner {
     script: VecDeque<Answer>,
     /// Delay before answering (to make the exporter wait).
     delay: Duration,
+    /// Answer 200 without decoding or keeping anything (benchmarks).
+    discard: bool,
+    /// Requests and body bytes received while discarding.
+    discarded: (u64, u64),
 }
 
 /// The receiver; stops when dropped.
@@ -48,6 +52,19 @@ pub struct OtlpReceiver {
 }
 
 impl OtlpReceiver {
+    /// Starts a receiver that answers 200 to everything and keeps only counts (for
+    /// benchmarks: nothing is decoded or stored).
+    pub fn start_discarding() -> OtlpReceiver {
+        let r = Self::start();
+        r.inner.lock().unwrap().discard = true;
+        r
+    }
+
+    /// (requests, body bytes) received by a discarding receiver.
+    pub fn discarded(&self) -> (u64, u64) {
+        self.inner.lock().unwrap().discarded
+    }
+
     /// Starts on a free port of 127.0.0.1.
     pub fn start() -> OtlpReceiver {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind the OTLP receiver");
@@ -176,6 +193,15 @@ fn serve(conn: TcpStream, inner: Arc<Mutex<Inner>>) {
         }
         let (delay, scripted) = {
             let mut i = inner.lock().unwrap();
+            if i.discard {
+                i.discarded.0 += 1;
+                i.discarded.1 += body.len() as u64;
+                drop(i);
+                if w.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").is_err() {
+                    return;
+                }
+                continue;
+            }
             (i.delay, i.script.pop_front())
         };
         if !delay.is_zero() {

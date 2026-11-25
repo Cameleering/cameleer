@@ -23,6 +23,7 @@ fn span(name: &str) -> SpanData {
         start_unix_nano: 10,
         end_unix_nano: 20,
         attributes: vec![("k".into(), AttrValue::from("v"))],
+        shared_attributes: Default::default(),
         dropped_attributes: 0,
         events: Vec::new(),
         status: StatusCode::Unset,

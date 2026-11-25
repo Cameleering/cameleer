@@ -256,6 +256,7 @@ mod tests {
             start_unix_nano: 1,
             end_unix_nano: 2,
             attributes: Vec::new(),
+            shared_attributes: Default::default(),
             dropped_attributes: 0,
             events: Vec::new(),
             status: StatusCode::Unset,
