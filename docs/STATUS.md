@@ -672,6 +672,21 @@ side was run in that session.
   - Cameleer: flat throughput and p99, constant threads and descriptors, 0.6 to 1.3 MB of RSS growth that slows.
   - Camel on the JVM grows by 17 to 71 MB and the TypeScript SDK by 89 MB in the hour.
 
+## Alibaba Cloud Simple Log Service (2026-11-25, unreleased)
+
+- **`alibaba-sls`** (Camel's `camel-alibaba-sls`, Preview since Camel 4.23) in `cameleer-cloud`, feature `cloud`:
+  `putLogs` (protobuf `LogGroup`, lz4 / deflate / none), `getLogs` (the 2020-12-30 `POST /logstores/{name}/logs`),
+  `listLogStores`; Camel's URI, options and `CamelAlibabaSls*` headers; signature V1 (HMAC-SHA256 as Camel's SDK, or
+  HMAC-SHA1) and V4. Code in `crates/cameleer-cloud/src/alibaba/`, page `docs/components/alibaba-sls.md`, example
+  `examples/syslog-to-sls.camel.yaml`.
+- **Verified:** the official Go and Python SDKs' signature test vectors (V1 HMAC-SHA1, V4, percent-encoding);
+  `SlsMock` (`testing/alibaba.rs`) recomputes every signature, checks Content-MD5 and the raw size, decompresses and
+  decodes the protobuf (`tests/alibaba_sls.rs`, `cameleer-main/tests/docs_cloud_alibaba.rs`).
+- **Not verified:** the real service (no Alibaba Cloud account), and the official-client test with Alibaba's Python SDK
+  (`tests/official_alibaba.rs`, `CAMEL_OFFICIAL_CLIENTS=1`, aliyun-log-python-sdk 0.9.53 checksum-pinned in
+  `scripts/official-clients.sh`), which has not run yet. Not built: zstd (the default of Camel's SDK), Camel's
+  `serviceKeys` / `slsClient` objects, ECS RAM roles and OIDC credentials.
+
 ## Start-up regression found and fixed (2026-11-22)
 
 The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31 ms on WSL2 (12 ms on the

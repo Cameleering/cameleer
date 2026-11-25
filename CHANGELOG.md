@@ -3,6 +3,17 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+- **The `alibaba-sls` component** (Camel's `camel-alibaba-sls`, Preview since Camel 4.23), in `cameleer-cloud` and the
+  `cloud` feature: `putLogs` (the body as a protobuf `LogGroup`, compressed with lz4 or deflate), `getLogs` and
+  `listLogStores` on Alibaba Cloud Simple Log Service, with Camel's URI, options and `CamelAlibabaSls*` headers. Requests
+  are signed with the SLS signature V1 (HMAC-SHA256 as Camel's SDK, or HMAC-SHA1) or V4, checked against the official Go
+  and Python SDK test vectors; STS tokens with `securityToken`. Tested against `SlsMock`, an embedded emulator that
+  verifies every signature; an official-client test with Alibaba's Python SDK (`aliyun-log-python-sdk` 0.9.53,
+  checksum-verified) is in the `CAMEL_OFFICIAL_CLIENTS` tier. Nothing has run against the real service. Not done: zstd
+  compression (the default of Camel's SDK; Cameleer sends lz4, which the service accepts).
+
 ## 0.8.0 (2026-11-24)
 
 gRPC and HTTP/2 on simoom 0.2.0: the gRPC server runs its calls on a pool of threads, the event loops start at

@@ -37,7 +37,7 @@ names its feature in its header line (**Cargo feature:**).
 | `attest` | attestation in confidential VMs (`camel.attestation.*`): evidence from configfs-tsm and dstack, bound to the routes, configuration and TLS key, at `/q/attestation` and over MCP ([attestation](attestation.md)) | `cameleer-attest` |
 | `amqp` | `activemq`, `amqp-stomp`, `jms`, `rabbitmq`, `spring-rabbitmq`, `stomp` (AMQP 0-9-1, STOMP and JMS) | `cameleer-amqp` |
 | `amqp10` | `amqp` (AMQP 1.0, JMS over AMQP), `azure-servicebus`, `azure-eventhubs` | `cameleer-amqp10` |
-| `cloud` | every `aws*`, `azure-*` and `google-*` component except the two above (62 components: S3, SQS, SNS, DynamoDB, Lambda, Bedrock, Blob, Cosmos DB, Azure OpenAI, Pub/Sub, BigQuery, Vertex AI, ...) and the `{{aws:...}}`, `{{azure:...}}` and `{{gcp:...}}` secret placeholders | `cameleer-cloud` |
+| `cloud` | every `aws*`, `azure-*` and `google-*` component except the two above, and `alibaba-sls` (63 components: S3, SQS, SNS, DynamoDB, Lambda, Bedrock, Blob, Cosmos DB, Azure OpenAI, Pub/Sub, BigQuery, Vertex AI, Alibaba Cloud SLS, ...) and the `{{aws:...}}`, `{{azure:...}}` and `{{gcp:...}}` secret placeholders | `cameleer-cloud` |
 | `dataformats` | the data formats `asn1`, `avro`, `barcode`, `bindy`, `cbor`, `crypto`, `fory`, `ical`, `mime-multipart`, `pgp`, `tarfile`, `thrift`, `univocity`, `yaml`, `zipfile`, and the `thrift` component | `cameleer-dataformats` |
 | `datastores` | `spring-redis`, `mongodb`, `mongodb-gridfs`, `elasticsearch`, `opensearch`, `cql` (Cassandra), `couchdb` | `cameleer-datastores` |
 | `grpc` | the `grpc` component and the `protobuf` data format | `cameleer-grpc` |
