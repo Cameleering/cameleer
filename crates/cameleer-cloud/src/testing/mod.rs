@@ -12,12 +12,14 @@
 //! [`MockServer`] is the generic HTTP/1.1 server (optionally TLS, with a generated
 //! self-signed certificate) and [`ConnectProxy`] a minimal `CONNECT` proxy for proxy tests.
 
+pub mod alibaba;
 pub mod aws;
 pub mod azure;
 pub mod azure_services;
 pub mod gcp;
 pub mod imds;
 
+pub use alibaba::SlsMock;
 pub use aws::AwsMock;
 pub use azure::AzuriteMock;
 pub use azure_services::AzureMock;

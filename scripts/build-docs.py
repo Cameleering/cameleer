@@ -276,7 +276,7 @@ CATEGORY_ORDER = [
     "Core and routing", "Scheduling", "Files, shell and streams", "HTTP, REST and web services",
     "Messaging and streaming", "Network protocols", "Mail", "Databases and search",
     "AI and LLMs", "Chat and SaaS", "Amazon Web Services", "Microsoft Azure",
-    "Google Cloud and Workspace", "Templating", "XML, JSON and validation", "Other",
+    "Google Cloud and Workspace", "Alibaba Cloud", "Templating", "XML, JSON and validation", "Other",
 ]
 CATEGORIES = {
     "Core and routing": "bean browse class controlbus dataformat dataset dataset-test direct kamelet language log mock ref saga seda stub test vm",
@@ -306,6 +306,8 @@ def category_for(stem, explicit=None):
         return "Microsoft Azure"
     if stem.startswith("google-"):
         return "Google Cloud and Workspace"
+    if stem.startswith("alibaba-"):
+        return "Alibaba Cloud"
     return "Other"
 
 
