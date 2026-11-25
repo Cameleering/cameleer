@@ -50,7 +50,7 @@ pub const COMPONENTS: &[(&str, &[&str])] = &[
     ("ssh", &["sftp", "ssh"]),
     (
         "protocols",
-        &["ftp", "ftps", "imap", "imaps", "pop3", "pop3s", "smtp", "smtps", "syslog", "vertx-websocket", "websocket", "ws", "wss"],
+        &["ftp", "ftps", "imap", "imaps", "lumberjack", "pop3", "pop3s", "smtp", "smtps", "syslog", "vertx-websocket", "websocket", "ws", "wss"],
     ),
     ("kafka-mqtt", &["kafka", "paho", "paho-mqtt5"]),
     ("sql", &["jdbc", "sql", "sql-stored"]),
@@ -59,7 +59,7 @@ pub const COMPONENTS: &[(&str, &[&str])] = &[
     ("grpc", &["grpc"]),
     ("datastores", &["couchdb", "cql", "elasticsearch", "mongodb", "mongodb-gridfs", "opensearch", "spring-redis"]),
     ("script", &["mvel"]),
-    ("saas", &["anthropic", "atom", "gemini", "github", "graphql", "jira", "llm", "openai", "rss", "slack", "telegram", "twilio", "webhook"]),
+    ("saas", &["anthropic", "atom", "gemini", "github", "graphql", "jira", "llm", "openai", "rss", "slack", "splunk-hec", "telegram", "twilio", "webhook"]),
     ("soap", &["cxf", "cxfrs", "spring-ws"]),
     ("dataformats", &["thrift"]),
     ("templates", &["freemarker", "mustache", "string-template", "velocity"]),

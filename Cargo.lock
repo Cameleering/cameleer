@@ -180,6 +180,7 @@ version = "0.8.0"
 dependencies = [
  "cameleer-core",
  "cameleer-http",
+ "cameleer-tls",
  "cameleer-xml",
 ]
 

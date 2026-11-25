@@ -13,6 +13,7 @@
 //! | `webhook` | [`webhook`] | camel-webhook (exposes webhook-capable endpoints over `platform-http`) |
 //! | `graphql` | [`graphql`] | camel-graphql |
 //! | `rss`, `atom` | [`feed`] | camel-rss / camel-atom polling consumers |
+//! | `splunk-hec` | [`splunk_hec`] | camel-splunk-hec (events to the Splunk HTTP Event Collector) |
 //!
 //! Every connector has an endpoint-override option (`serverUrl`, `baseUri`, `baseUrl`,
 //! `jiraUrl`, `webhookUrl`...) and an embedded mock server in [`testing`], so tests never
@@ -27,6 +28,7 @@ pub mod jira;
 pub mod openai;
 pub mod rest;
 pub mod slack;
+pub mod splunk_hec;
 pub mod telegram;
 pub mod testing;
 pub mod twilio;
@@ -37,7 +39,7 @@ use std::sync::Arc;
 use cameleer_core::context::CamelContext;
 
 /// Register the connectors on a context (lazily created): `slack`, `telegram`, `github`,
-/// `twilio`, `jira`, `openai`, `webhook`, `graphql`, `rss`, `atom`. The `webhook` component
+/// `twilio`, `jira`, `openai`, `webhook`, `graphql`, `rss`, `atom`, `splunk-hec`. The `webhook` component
 /// needs an HTTP consumer component (`platform-http`, see `cameleer_http::register`).
 pub fn register(ctx: &CamelContext) {
     rest::register_kinds();
@@ -55,4 +57,5 @@ pub fn register(ctx: &CamelContext) {
     ctx.add_component_factory("graphql", || Arc::new(graphql::GraphqlComponent));
     ctx.add_component_factory("rss", || Arc::new(feed::FeedComponent::rss()));
     ctx.add_component_factory("atom", || Arc::new(feed::FeedComponent::atom()));
+    ctx.add_component_factory("splunk-hec", || Arc::new(splunk_hec::SplunkHecComponent));
 }
