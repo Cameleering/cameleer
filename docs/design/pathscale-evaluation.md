@@ -48,8 +48,9 @@ enough real value to reconsider the std-only rule.
 | worktable | **not useful** | no Windows; does not build fresh; slower than the repositories it would replace; persistence is best-effort, not durable |
 | ekostd | **not useful** | no Windows by design; zero clock on x86_64; simoom-sys already does this job |
 | endpoint-libs | **not useful** | duplicates Cameleer's MCP server (conformance 39/39, measured) over a WebSocket RPC Cameleer does not use; MIT; 46 crates |
-| ps-st3 | **borrow ideas only** | builds on Windows, no deps, has Miri CI; a work-stealing deque Cameleer does not need yet |
-| ps-regexr, jsonmax | **borrow ideas only** (not measured) | build on Windows; JIT/SIMD ideas worth reading if Cameleer's regex or JSON shows up in a profile |
+| ps-st3 | **not needed** (section 9) | builds on Windows, no deps, has Miri CI; no Cameleer pool has fork-join work to steal |
+| ps-regexr | **borrow ideas** (section 9) | the comparison exposed a quadratic copy in Cameleer's regex (64 KiB `split` 73 ms against 0.34 ms); fix std-only, then a literal prefilter |
+| jsonmax | **revisit when JSON shows in a profile** (section 9) | 1.8x faster parse and serialize at 64 KiB, slower on small documents |
 | ps-rusty_alloc, ps-reclaim, parking_lot_lite_hack, ps-simdutf8, ps-spsc | **not useful** | three of them fail on Windows; the rest duplicate Cameleer's own `alloc`, std locks and UTF-8 |
 
 The std-only rule does not need to change for any of these. Section 7 explains what changing it
@@ -172,10 +173,11 @@ Adopting nagoya would also mean:
 - a second reactor beside simoom's (the HTTP, gRPC and MCP servers run on simoom-rt);
 - moving timers and the governor off the loops.
 
-**Two ideas are worth borrowing:**
+**Ideas considered for borrowing:**
 
 - the `Sharded` reactor handle, for components outside simoom that need readiness (the old
-  thread-per-connection clients: WebSocket, the cloud components' HTTP/1.1);
+  thread-per-connection clients: WebSocket, the cloud components' HTTP/1.1). Section 9 found it
+  is not needed: simoom-rt already places a socket on a chosen loop;
 - the "timers live beside the pool, a program that never sleeps pays nothing" design note, which
   is how Cameleer's per-name timer threads already behave.
 
@@ -244,7 +246,9 @@ repositories on each point:
   (section 5.3).
 
 The idea worth keeping is secondary indexes on a repository (e.g. "groups older than T" without a
-scan). The aggregator's completion timeout already keeps its own deadline structure.
+scan). An earlier version of this note said the aggregator's completion timeout already keeps its
+own deadline structure. That was wrong: it is a `HashMap<key, Instant>` scanned in full. Section 9
+measures what a deadline index gains.
 
 ### 4.4 Proc macros for a typed route DSL
 
@@ -454,8 +458,8 @@ Cameleer's Windows test suite).
   std plus `simoom-sys`.
 - **endpoint-libs: not useful.** It duplicates the MCP server Cameleer already ships, with a
   larger tree, and it is MIT.
-- **ps-st3, ps-regexr, jsonmax: borrow ideas only** (work-stealing deque with Miri CI, JIT/SIMD
-  regex, SIMD JSON), when a profile points at regex or JSON. Not measured here.
+- **ps-st3: not needed. ps-regexr: borrow ideas. jsonmax: revisit when JSON shows in a
+  profile.** Measured in section 9.
 - **The other ps- crates: not useful** for an integration runtime.
 
 ## 7. What changing the std-only rule would cost and give
@@ -506,3 +510,173 @@ Not reported. Filing issues on another project is an outward action for the owne
    `parking_lot_lite_hack_core 0.9.16` uses `eko::libc_lite::EFAULT`, which `ekostd 0.2.13` exports
    only in its libc-rs stub.
 3. **nagoya:** `net::TcpStream` has no `set_nodelay` (the underlying `TcpSocket` does).
+
+## 9. Follow-up: the ideas worth borrowing (2026-11-25)
+
+A second pass checked each idea against Cameleer's code.
+
+- **Code measured.** Copies of `cameleer-core` and `cameleer-tls` taken at the commit that added
+  this note, in scratch crates.
+- **Machine.** Ryzen 5 5600X, native Windows 11 and WSL2 Ubuntu 24.04.
+- **Rounds.** Median [min-max] of 7 rounds (5 for the aggregator), sides alternated, runs pinned.
+- **Kept outside the repository.** Write-up, sources, the two prototype patches (`.diff`) and raw
+  results are in the session notes folder, `pathscale-eval/borrow-ideas.md` and
+  `pathscale-eval/borrow/`.
+- **Not landed.** Nothing below has been applied to `main`. The patches are prototypes.
+
+Code locations in this section were rechecked against the source.
+
+### 9.1 nagoya's sharded reactor: not needed
+
+simoom-rt already offers the same placement, with IOCP on Windows and without nagoya's hand-off
+to a worker:
+
+- `RuntimeHandle::loops()`
+- `LoopHandle::run`
+- `LoopCtx::adopt`
+
+What is still thread-per-connection outside simoom:
+
+| component | threads |
+|---|---|
+| the protocol `TcpServer`s (websocket, syslog, mllp consumers) | 1 accept thread plus 1 per connection: 2, 65 and 257 threads measured at 1, 64 and 256 connections |
+| the netty TCP consumer | 1 per connection |
+| the DICOM SCP | 1 per connection |
+| the thrift server | 1 per connection |
+| the MQTT client | 2 per connection |
+| the AMQP, STOMP and AMQP 1.0 clients | 1 to 2 per connection |
+
+These belong on simoom-rt, not on a second reactor.
+
+Two cheap fixes found on the way:
+
+- **Accept loops poll.** The three copies of the accept loop sleep 5 ms between polls:
+  - `cameleer-tls/src/net/endpoint.rs:236`
+  - `cameleer-amqp/src/common.rs:205`
+  - `cameleer-kafka-mqtt/src/net.rs:164`
+
+  That is about 5 ms of CPU per second for every idle server on Linux.
+- **AMQP 1.0 heartbeat.** The watchdog wakes every 20 ms per connection
+  (`cameleer-amqp10/src/transport.rs`).
+
+The cloud components' HTTP client is the most worthwhile move to simoom-client. The reason is not
+threads: it sends `Connection: close` on every request (`cameleer-cloud/src/http.rs`, module
+docs), so every cloud call pays a TCP connect and a full TLS handshake. Not measured.
+
+### 9.2 Secondary index: adopt, std-only, in the aggregator
+
+The completion timeout keeps a `HashMap<key, Instant>` (`processor/routing/aggregate.rs`).
+
+- Every exchange that leaves its group open inserts a deadline and calls `notify_all`.
+- The checker thread wakes and scans every deadline, under the mutex the route also takes.
+
+The prototype adds a `BTreeMap` ordered by deadline. It wakes the checker only when the new
+deadline becomes the earliest. It passes `routing_aggregate` (19 tests) and `conformance_eip`
+(48 tests).
+
+Linux, ns per message, one sender:
+
+| open groups | before | after | without a timeout (floor) | gain |
+|---:|---:|---:|---:|---:|
+| 10 | 2,339 | 806 | 595 | 2.9x |
+| 1,000 | 5,823 | 998 | 643 | 5.8x |
+| 10,000 | 18,650 | 1,296 | 979 | 14.4x |
+
+- Expiring 30,000 groups took 483 ms of CPU before and 136 ms after.
+- On Windows the pinned rounds point the same way but were noisy on the shared host. An unpinned
+  run gave 10.8x at 10,000 groups.
+
+Other findings, not measured:
+
+- The stream resequencer has the same wake-and-scan pattern, bounded by its capacity.
+- The JDBC aggregation repository runs `SELECT MAX(seq)` on an unindexed column for every new
+  group (`cameleer-sql/src/repository.rs`).
+- The throttler's per-key map never evicts keys.
+- The idempotent and Redis repositories are already keyed lookups.
+
+### 9.3 ps-st3 (work stealing): not needed
+
+Every job in Cameleer's pools comes from outside the pool:
+
+- `executor::ThreadPool`
+- the asynchronous-routing offload pool
+- the gRPC call pool (one job per call)
+- seda
+
+Most of these jobs block for their whole life. Work stealing pays off for fork-join CPU work,
+which Cameleer does not have, and short CPU work already runs on the loop that woke it. If a
+profile ever shows the pool's receiver mutex, the fix is a cheaper queue, not stealing.
+
+### 9.4 ps-regexr: fix a quadratic copy now, a literal prefilter later
+
+The comparison exposed a bug in Cameleer's engine. `to_captures` (`crates/cameleer-core/src/regex.rs`)
+copies the whole subject text and the group-name map into every match:
+
+```rust
+Captures { text: text.to_string(), spans, names: self.prog.names.clone() }
+```
+
+Everything that iterates matches pays it once per match:
+
+- `find_iter`, `split`, `replace_all`;
+- Simple's `split` and `replaceAll`;
+- `tokenize` with `regex=true`.
+
+Linux, 64 KiB input:
+
+| case | Cameleer today | with shared captures (prototype) | ps-regexr 0.6.0 |
+|---|---:|---:|---:|
+| `split` | 73 ms | 2.7-4.4 ms | 0.34 ms |
+| find all numbers | 77 ms | 2.7-4.4 ms | 0.28 ms |
+| `replaceAll` | 187 ms | about 3 ms (3.5x faster than ps-regexr) | 10.4 ms |
+
+- On Windows the "today" column is 131 to 280 ms.
+- The prototype shares the text and the names through an `Arc`. It passes 9 suites (200 tests).
+- The prototype was measured as a separate binary. Cases it does not touch came out 10 to 50%
+  slower there, which looks like code layout. It must be measured again in one A/B binary before
+  it lands.
+
+Elsewhere:
+
+- **Short inputs.** Cameleer is 4x to 17x slower than ps-regexr, but that is 0.2 to 2 µs per
+  evaluation.
+- **Compilation.** Cameleer compiles patterns 4x to 290x faster. That matters because Simple's
+  `replaceAll`, `split` and `matches`, and json-validator's `pattern` and `format`, compile on
+  every evaluation. A compiled-pattern cache helps there whatever the engine.
+- **Scanning.** The remaining gap is long input without a match: 9x for an email pattern, 463x for
+  an alternation of literals. A required-literal prefilter would close most of it.
+- **ps-regexr's JIT.** It made no measurable difference and compiles 3x to 8x slower. Without the
+  JIT the tree is 3 crates. With it, the tree is 17 to 18 crates, including two versions of syn.
+
+### 9.5 jsonmax: revisit when JSON shows in a route profile
+
+Linux:
+
+| case | Cameleer | jsonmax | Cameleer ÷ jsonmax |
+|---|---:|---:|---:|
+| parse, 185 B | 689 ns | 781 ns | 0.88x (Cameleer faster) |
+| parse, 64 KiB | 239 µs | 130 µs | 1.8x |
+| serialize, 64 KiB | 127 µs | 70 µs | 1.8x |
+| read one field, 185 B | 698 ns | 1.1 µs | 0.63x (Cameleer faster) |
+| read one field, 64 KiB | 255 µs | 87 µs, or 54 µs when skipping | 2.9x to 4.8x |
+| validate a small message | 4.5 µs | 1.4 µs | 3.2x |
+
+jsonmax's schema is its own flat format, not JSON Schema 2020-12, so the validation row compares
+only what the two have in common.
+
+Ideas worth porting std-only, in order:
+
+1. a schema compiled once per endpoint, with its regexes;
+2. a JsonPath that skips through the raw body for definite paths;
+3. a lazy or tape `Value`, only if a measured need appears.
+
+### 9.6 What to do with this
+
+None of it needs a dependency, and none of it changes the verdict in section 1. Three changes
+are worth their own branches:
+
+1. the aggregator deadline index;
+2. the shared captures in the regex engine, with an A/B rerun;
+3. the accept-loop polling.
+
+The cloud client move to simoom-client and the regex prefilter are larger and come after.
