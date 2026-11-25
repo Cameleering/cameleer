@@ -560,8 +560,9 @@ Two cheap fixes found on the way:
   (`cameleer-amqp10/src/transport.rs`).
 
 The cloud components' HTTP client is the most worthwhile move to simoom-client. The reason is not
-threads: it sends `Connection: close` on every request (`cameleer-cloud/src/http.rs`, module
-docs), so every cloud call pays a TCP connect and a full TLS handshake. Not measured.
+threads: its module docs said each request uses its own connection (`Connection: close`).
+Checked against the code, that is true only of `send_to`, `send_streaming` and proxied requests.
+`send` already used a keep-alive pool. See 9.6. Not measured.
 
 ### 9.2 Secondary index: adopt, std-only, in the aggregator
 
@@ -670,13 +671,32 @@ Ideas worth porting std-only, in order:
 2. a JsonPath that skips through the raw body for definite paths;
 3. a lazy or tape `Value`, only if a measured need appears.
 
-### 9.6 What to do with this
+### 9.6 What was done
 
-None of it needs a dependency, and none of it changes the verdict in section 1. Three changes
-are worth their own branches:
+None of it needed a dependency, and none of it changes the verdict in section 1. Five fixes
+landed on this branch (listed in `CHANGELOG.md`, Unreleased).
 
-1. the aggregator deadline index;
-2. the shared captures in the regex engine, with an A/B rerun;
-3. the accept-loop polling.
+1. **Aggregator deadline index.** The prototype, with a unit test and two route tests.
+2. **Regex shared captures.** `replaceFirst` now also stops at the first match. The rerun put the
+   old and the new `regex.rs` in one binary, so code layout affects both sides alike. Large-body
+   iteration is 76x to 142x faster on WSL2 and 44x to 165x on Windows. The untouched paths are
+   0.89x to 1.22x, with overlapping ranges, so the 10-50% seen in the separate-binary run was
+   layout.
+3. **Accept loops.** They block, and `stop` wakes them with a connection
+   (`cameleer_tls::net::wake_accept`). Tested to stop promptly, and on Linux to make no wake-ups
+   while idle.
+4. **Cloud client.** The claim in 9.1 that every cloud call reconnects was only partly true.
+   `HttpClient::send` already pooled keep-alive connections, and only its module comment said
+   `Connection: close`. `send_to`, the path of the streamed model calls and S3 downloads, now
+   uses the same pool. Streamed uploads and proxied requests keep a connection each, since a
+   streamed body cannot be resent on a stale connection.
+5. **JDBC aggregation repository.** The sequence is read once at creation (over a new index) and
+   counted in the process.
 
-The cloud client move to simoom-client and the regex prefilter are larger and come after.
+Still open:
+
+- the regex literal prefilter;
+- a compiled-pattern cache for Simple and json-validator;
+- moving the thread-per-connection servers and clients onto simoom-rt;
+- the stream resequencer's scan;
+- the throttler's unbounded key map.
