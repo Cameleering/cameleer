@@ -3,6 +3,22 @@
 All notable changes to Cameleer. Versions follow [Semantic Versioning](https://semver.org/); before
 1.0, a minor version can change behaviour, and each such change is listed under **Changed**.
 
+## Unreleased
+
+- **Added: the `splunk-hec` component** (Camel `camel-splunk-hec`, `saas` feature): a producer that sends each
+  exchange to Splunk's HTTP Event Collector as one event, with Camel's URI, options (`token`, `index`, `source`,
+  `sourceType`, `host`, `time`, `bodyOnly`, `headersOnly`, `splunkEndpoint`, `https`, `sslContextParameters`), the
+  `CamelSplunkHECIndexTime` header and Camel's JSON envelope. Only status 200 is success; other answers fail with
+  `RuntimeCamelException`. `skipTlsVerify=true` is refused: the certificate is always verified. Tested against an
+  embedded HEC mock (`cameleer_saas::testing::SplunkHecMock`), not against a real Splunk.
+- **Added: the `lumberjack` component** (Camel `camel-lumberjack`, `protocols` feature): a Lumberjack v1/v2 server for
+  Beats, Logstash and logstash-forwarder (window, JSON, data and compressed frames, one ACK per window after the
+  route, no ACK and a closed connection when an exchange fails), with TLS through `sslContextParameters`. The body is
+  the event map. Tested with an embedded client (`cameleer_protocols::testing::LumberjackClient`) and, in the
+  official-clients tier, with Filebeat 9.2.0 (OSS, pinned and SHA-512 checked by `scripts/official-clients.sh`).
+- **Added:** `examples/logs-to-splunk.camel.yaml` (Beats and syslog into Splunk) and a "Log pipelines" section in
+  the observability guide.
+
 ## 0.8.0 (2026-11-24)
 
 gRPC and HTTP/2 on simoom 0.2.0: the gRPC server runs its calls on a pool of threads, the event loops start at

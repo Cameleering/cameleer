@@ -119,6 +119,7 @@
   <url><loc>https://cameleer.ing/docs/components/kamelet.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/language.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/log.html</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/lumberjack.html</loc></url>
   <url><loc>https://cameleer.ing/docs/components/mcp.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mock.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/mongodb-gridfs.html</loc><lastmod>2026-11-12</lastmod></url>
@@ -144,6 +145,7 @@
   <url><loc>https://cameleer.ing/docs/components/sftp.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/slack.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/smtp.html</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://cameleer.ing/docs/components/splunk-hec.html</loc></url>
   <url><loc>https://cameleer.ing/docs/components/spring-rabbitmq.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/spring-redis.html</loc><lastmod>2026-11-12</lastmod></url>
   <url><loc>https://cameleer.ing/docs/components/spring-ws.html</loc><lastmod>2026-11-12</lastmod></url>

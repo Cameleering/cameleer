@@ -544,6 +544,7 @@ environment variables it needs and the exact `docker run` command.
 | AI ticket triage | [ai-ticket-triage.camel.yaml](examples/ai-ticket-triage.camel.yaml) | Kafka in, an LLM classifies each ticket P1 or P3, urgent tickets go to their own topic. Works with OpenAI or any OpenAI-compatible server (Ollama, vLLM, Azure OpenAI). |
 | Alerts to Slack | [alerts-to-slack.camel.yaml](examples/alerts-to-slack.camel.yaml) | An HTTP webhook takes monitoring alerts, keeps the critical ones and posts them to Slack. |
 | Files to S3 | [files-to-s3.camel.yaml](examples/files-to-s3.camel.yaml) | Watches a folder and uploads each new CSV file to S3, then moves it to `.done`. |
+| Logs to Splunk | [logs-to-splunk.camel.yaml](examples/logs-to-splunk.camel.yaml) | Filebeat (Lumberjack) and syslog in, debug messages dropped, everything else indexed in Splunk through the HTTP Event Collector. |
 | Rust REST service | [rest_service.rs](crates/cameleer-main/examples/rest_service.rs) | The Rust DSL with two crates: REST endpoints, JSON, an echo service. |
 | Embed YAML in Rust | [embed_yaml.rs](crates/cameleer-main/examples/embed_yaml.rs) | Your own binary that runs Camel YAML routes with every component. |
 

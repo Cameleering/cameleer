@@ -100,7 +100,7 @@ The full documentation as one plain-markdown file: https://cameleer.ing/llms-ful
 
 - [Docs home](https://cameleer.ing/docs/): what is where
 - [Guides](https://cameleer.ing/docs/guides/): Step-by-step guides for building, running and operating Cameleer routes. (45 pages)
-- [Components](https://cameleer.ing/docs/components/): Every Cameleer component: the endpoint schemes you use in from and to, grouped by category. (161 pages)
+- [Components](https://cameleer.ing/docs/components/): Every Cameleer component: the endpoint schemes you use in from and to, grouped by category. (163 pages)
 - [Languages](https://cameleer.ing/docs/languages/): The expression and predicate languages you can use in Cameleer routes, such as Simple, JSONPath and XPath. (21 pages)
 - [Data formats](https://cameleer.ing/docs/dataformats/): The data formats that marshal and unmarshal message bodies in Cameleer routes, such as JSON, CSV and Avro. (27 pages)
 
@@ -182,11 +182,11 @@ Section bundles (plain markdown, each small enough to fetch whole):
 - [Components: Files, shell and streams](https://cameleer.ing/cameleer/llms/components-files-shell-and-streams.txt): 7 pages
 - [Components: HTTP, REST and web services](https://cameleer.ing/cameleer/llms/components-http-rest-and-web-services.txt): 16 pages
 - [Components: Messaging and streaming](https://cameleer.ing/cameleer/llms/components-messaging-and-streaming.txt): 10 pages
-- [Components: Network protocols](https://cameleer.ing/cameleer/llms/components-network-protocols.txt): 4 pages
+- [Components: Network protocols](https://cameleer.ing/cameleer/llms/components-network-protocols.txt): 5 pages
 - [Components: Mail](https://cameleer.ing/cameleer/llms/components-mail.txt): 3 pages
 - [Components: Databases and search](https://cameleer.ing/cameleer/llms/components-databases-and-search.txt): 10 pages
 - [Components: AI and LLMs](https://cameleer.ing/cameleer/llms/components-ai-and-llms.txt): 11 pages
-- [Components: Chat and SaaS](https://cameleer.ing/cameleer/llms/components-chat-and-saas.txt): 5 pages
+- [Components: Chat and SaaS](https://cameleer.ing/cameleer/llms/components-chat-and-saas.txt): 6 pages
 - [Components: Amazon Web Services (part 1 of 2)](https://cameleer.ing/cameleer/llms/components-amazon-web-services-1.txt): 28 pages
 - [Components: Amazon Web Services (part 2 of 2)](https://cameleer.ing/cameleer/llms/components-amazon-web-services-2.txt): 4 pages
 - [Components: Microsoft Azure](https://cameleer.ing/cameleer/llms/components-microsoft-azure.txt): 11 pages

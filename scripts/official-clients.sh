@@ -4,7 +4,7 @@
 # Drives Cameleer's embedded brokers, datastores, cloud emulators and protocol stacks with
 # independently written, officially published clients (librdkafka/kcat, pymongo, the DataStax
 # Cassandra driver, elasticsearch-py, redis-py, boto3, the Azure SDK for Python, gcloud /
-# gsutil / bq, grpcio, Go's crypto/tls and net/http). The suites live in
+# gsutil / bq, grpcio, Go's crypto/tls and net/http, Elastic's Filebeat). The suites live in
 # crates/<crate>/tests/official_*.rs, the client programs in scripts/official-clients/.
 #
 #   scripts/official-clients.sh install    # apt-get install the clients (root, idempotent)
@@ -16,12 +16,20 @@
 # /opt/google-cloud-sdk, on PATH) and a Go toolchain >= 1.22 (/usr/local/go/bin/go, or set
 # CAMEL_OFFICIAL_GO; `golang-go` from apt also works). The Python clients are the Ubuntu 24.04
 # python3-* packages, run with /usr/bin/python3.12 (override with CAMEL_OFFICIAL_PYTHON).
+# Filebeat (the Apache-2.0 OSS build, for the lumberjack consumer) is downloaded from
+# artifacts.elastic.co at a pinned version and checked against a pinned SHA-512 before it is
+# unpacked into /opt/camel-official/filebeat (override with CAMEL_OFFICIAL_FILEBEAT).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PY="${CAMEL_OFFICIAL_PYTHON:-/usr/bin/python3.12}"
 GO="${CAMEL_OFFICIAL_GO:-/usr/local/go/bin/go}"
 [ -x "$GO" ] || GO=go
+
+FILEBEAT_VERSION=9.2.0
+FILEBEAT_SHA512_X86_64=86bf06f9f0cb71c7973a341ca1d6785c8e678a113e104febf4b594b1d6fbbb0eb194f49adb2c32f44b143c890336e35a3fcff019697e48d68529ac62dfee1f4c
+FILEBEAT_DIR=/opt/camel-official/filebeat
+FILEBEAT="${CAMEL_OFFICIAL_FILEBEAT:-$FILEBEAT_DIR/filebeat}"
 
 APT_PACKAGES=(
   kcat python3-confluent-kafka python3-lz4 python3-snappy
@@ -38,7 +46,27 @@ install() {
   $sudo apt-get update -qq
   DEBIAN_FRONTEND=noninteractive $sudo apt-get install -y -qq "${APT_PACKAGES[@]}"
   command -v "$GO" >/dev/null || DEBIAN_FRONTEND=noninteractive $sudo apt-get install -y -qq golang-go
+  install_filebeat "$sudo"
   command -v gcloud >/dev/null || echo "note: the Google Cloud SDK (gcloud/gsutil/bq) is not on PATH; the GCP CLI test needs it" >&2
+}
+
+# Filebeat OSS, pinned and checksum-verified (x86_64 only; other machines set CAMEL_OFFICIAL_FILEBEAT).
+install_filebeat() {
+  local sudo="$1"
+  if [ -x "$FILEBEAT_DIR/filebeat" ] && "$FILEBEAT_DIR/filebeat" version 2>/dev/null | grep -q "version $FILEBEAT_VERSION "; then
+    return
+  fi
+  if [ "$(uname -m)" != x86_64 ]; then
+    echo "note: Filebeat is pinned for x86_64 only; set CAMEL_OFFICIAL_FILEBEAT for the lumberjack test" >&2
+    return
+  fi
+  local name="filebeat-oss-$FILEBEAT_VERSION-linux-x86_64.tar.gz" tmp
+  tmp="$(mktemp -d)"
+  curl -fsSL -o "$tmp/$name" "https://artifacts.elastic.co/downloads/beats/filebeat/$name"
+  echo "$FILEBEAT_SHA512_X86_64  $tmp/$name" | sha512sum -c -
+  $sudo mkdir -p "$FILEBEAT_DIR"
+  $sudo tar -xzf "$tmp/$name" -C "$FILEBEAT_DIR" --strip-components=1
+  rm -rf "$tmp"
 }
 
 versions() {
@@ -65,11 +93,12 @@ EOF
   echo "gcloud:          $(gcloud version 2>/dev/null | head -1 || echo missing)"
   echo "bq:              $(bq version 2>/dev/null | tail -1 || echo missing)"
   echo "go:              $("$GO" version 2>/dev/null || echo missing)"
+  echo "filebeat:        $("$FILEBEAT" version 2>/dev/null || echo missing)"
 }
 
 run_tests() {
   cd "$ROOT"
-  CAMEL_OFFICIAL_CLIENTS=1 CAMEL_OFFICIAL_PYTHON="$PY" CAMEL_OFFICIAL_GO="$(command -v "$GO")" cargo test --workspace --test 'official_*' "$@"
+  CAMEL_OFFICIAL_CLIENTS=1 CAMEL_OFFICIAL_PYTHON="$PY" CAMEL_OFFICIAL_GO="$(command -v "$GO")" CAMEL_OFFICIAL_FILEBEAT="$FILEBEAT" cargo test --workspace --test 'official_*' "$@"
 }
 
 case "${1:-}" in

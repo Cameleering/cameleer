@@ -23,7 +23,7 @@ use cameleer_core::prelude::*;
 const PAGES: &[&str] = &[
     "activemq", "amqp", "amqp-stomp", "stomp", "jms", "rabbitmq", "spring-rabbitmq", "kafka", "paho", "paho-mqtt5", "seda", "vm", "direct", "timer",
     "scheduler", "cron", "quartz", "log", "mock", "test", "dataset", "dataset-test", "stub", "browse", "controlbus", "bean", "class", "ref", "language",
-    "dataformat", "kamelet", "saga", "exec", "stream", "syslog", "mllp", "netty",
+    "dataformat", "kamelet", "saga", "exec", "stream", "syslog", "lumberjack", "mllp", "netty",
 ];
 
 fn page(name: &str) -> String {
@@ -516,6 +516,18 @@ fn syslog_edge_gateway() {
 }
 
 #[test]
+fn lumberjack_filebeat() {
+    let port = free_port();
+    let yaml = replaced(example("lumberjack", "lumberjack-filebeat"), &[("to: log:beats", "to: mock:beats")]);
+    let r = start("lumberjack-filebeat", &yaml, &[("env:BEATS_PORT", port.to_string())], |_| Ok(()));
+    let mut c = cameleer_protocols::testing::LumberjackClient::connect("127.0.0.1", port).unwrap();
+    let event = r#"{"message":"GET /index.html 200","log":{"file":{"path":"/var/log/nginx/access.log"}}}"#;
+    assert_eq!(c.send_json(&[event], true).unwrap(), (b'2', 1));
+    let got = wait_mock(&r.ctx, "mock:beats", 1);
+    assert_eq!(got[0].body().to_string(), "/var/log/nginx/access.log: GET /index.html 200");
+}
+
+#[test]
 fn mllp_hl7_gateway() {
     let port = free_port();
     let yaml = replaced(example("mllp", "mllp-hl7-gateway"), &[("to: log:hl7", "to: mock:hl7")]);
@@ -729,6 +741,7 @@ fn rust_dsl_snippets_build() {
         ("stream", stream_dsl::routes),
         ("mllp", mllp_dsl::routes),
         ("syslog", syslog_dsl::routes),
+        ("lumberjack", lumberjack_dsl::routes),
         ("netty", netty_dsl::routes),
         ("kafka", kafka_dsl::routes),
         ("paho", paho_dsl::routes),
@@ -1159,6 +1172,19 @@ mod syslog_dsl {
                 .set_body(simple("${header.CamelSyslogHostname}: ${body[logMessage]}"))
                 .to("log:alerts")
                 .end();
+        })
+    }
+}
+
+mod lumberjack_dsl {
+    use cameleer_core::prelude::*;
+
+    pub fn routes(ctx: &CamelContext) -> Result<()> {
+        ctx.add_routes(|b| {
+            b.from("lumberjack:0.0.0.0:5044")
+                .route_id("filebeat-in")
+                .set_body(simple("${body[log][file][path]}: ${body[message]}"))
+                .to("log:beats");
         })
     }
 }

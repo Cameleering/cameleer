@@ -1,0 +1,33 @@
+# Logs to Splunk: a small log pipeline in place of Logstash. Filebeat (or any Beat) sends to the
+# Lumberjack port 5044, devices send syslog to UDP port 5514; debug messages are dropped and
+# everything else is indexed in Splunk through the HTTP Event Collector, one event per message.
+#
+# Needs: a Splunk HEC address and token.
+#   export SPLUNK_HEC=splunk.example.com:8088 SPLUNK_HEC_TOKEN=00000000-0000-0000-0000-000000000000
+#
+# Run with Docker:
+#   docker run --rm -p 5044:5044 -p 5514:5514/udp -e SPLUNK_HEC -e SPLUNK_HEC_TOKEN \
+#     -v "$PWD:/routes:ro" cameleering/cameleer run /routes/logs-to-splunk.camel.yaml
+# Run from source:
+#   cargo run --release -p cameleer-main --bin cameleer -- run examples/logs-to-splunk.camel.yaml
+# Try:
+#   filebeat with output.logstash.hosts: ["localhost:5044"]
+#   logger --udp --server localhost --port 5514 --rfc5424 "disk 91% full"
+- route:
+    id: beats-to-splunk
+    from:
+      uri: "lumberjack:0.0.0.0:{{env:BEATS_PORT:5044}}"
+      steps:
+        - filter:
+            simple: "${body[log][level]} != 'debug'"
+            steps:
+              - to: "splunk-hec:{{env:SPLUNK_HEC}}?token={{env:SPLUNK_HEC_TOKEN}}&https={{env:SPLUNK_HEC_HTTPS:true}}&index={{env:SPLUNK_INDEX:main}}&source=filebeat&sourceType=_json&bodyOnly=true"
+- route:
+    id: syslog-to-splunk
+    from:
+      uri: "syslog:udp://0.0.0.0:{{env:SYSLOG_PORT:5514}}"
+      steps:
+        - filter:
+            simple: "${header.CamelSyslogSeverity} != 'DEBUG'"
+            steps:
+              - to: "splunk-hec:{{env:SPLUNK_HEC}}?token={{env:SPLUNK_HEC_TOKEN}}&https={{env:SPLUNK_HEC_HTTPS:true}}&index={{env:SPLUNK_INDEX:main}}&source=syslog&sourceType=syslog&bodyOnly=true"
