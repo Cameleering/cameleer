@@ -57,6 +57,7 @@ mod h {
         "components/github.md",
         "components/jira.md",
         "components/slack.md",
+        "components/splunk-hec.md",
         "components/telegram.md",
         "components/twilio.md",
         "components/openai.md",
@@ -1684,6 +1685,30 @@ fn saas_mock(ctx: &CamelContext, uri: &str) -> MockEndpoint {
 
 fn saas_s(v: Option<&Value>) -> String {
     v.map(|v| v.to_string()).unwrap_or_default()
+}
+
+// ---------------------------------------------------------------- splunk-hec
+
+#[test]
+fn splunk_hec_from_beats_example() {
+    let hec = cameleer_saas::testing::SplunkHecMock::start();
+    let port = free_port();
+    let yaml = env_subst(&example("components/splunk-hec.md", "splunk-hec-from-beats"), &[("BEATS_PORT", &port.to_string()), ("SPLUNK_HEC", &hec.splunk_url()), ("SPLUNK_HEC_TOKEN", cameleer_saas::testing::SplunkHecMock::TOKEN)]);
+    // the mock speaks plain HTTP; the page's route uses the default https=true
+    let yaml = subst(&yaml, &[("&bodyOnly=true", "&bodyOnly=true&https=false")]);
+    let main = start_yaml("splunk-hec-from-beats", yaml, None);
+    let mut c = cameleer_protocols::testing::LumberjackClient::connect("127.0.0.1", port).unwrap();
+    let ack = c.send_json(&[r#"{"message":"payment failed","log":{"level":"error"}}"#, r#"{"message":"started","log":{"level":"info"}}"#], true).unwrap();
+    assert_eq!(ack, (b'2', 2));
+    wait_for("one event in Splunk", || hec.events().len() == 1);
+    let ev = &hec.events()[0];
+    assert_eq!(saas_s(ev.get("event").and_then(|e| e.get("message"))), "payment failed");
+    assert_eq!(saas_s(ev.get("index")), "main");
+    assert_eq!(saas_s(ev.get("sourcetype")), "_json");
+    assert_eq!(saas_s(ev.get("source")), "filebeat");
+    let r = &hec.server.requests()[0];
+    assert_eq!(r.header("Authorization"), Some(format!("Splunk {}", cameleer_saas::testing::SplunkHecMock::TOKEN).as_str()));
+    drop(main);
 }
 
 // ---------------------------------------------------------------- slack

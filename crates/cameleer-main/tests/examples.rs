@@ -227,3 +227,46 @@ fn hello_api_example() {
     assert_eq!(body, r#"{"id": "42", "status": "shipped"}"#);
     main.stop().unwrap();
 }
+
+#[test]
+fn logs_to_splunk_example() {
+    let hec = cameleer_saas::testing::SplunkHecMock::start();
+    let (beats, syslog) = (free_port(), {
+        let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        s.local_addr().unwrap().port()
+    });
+    let yaml = example(
+        "logs-to-splunk.camel.yaml",
+        &[
+            ("{{env:BEATS_PORT:5044}}", &beats.to_string()),
+            ("{{env:SYSLOG_PORT:5514}}", &syslog.to_string()),
+            ("{{env:SPLUNK_HEC}}", &hec.splunk_url()),
+            ("{{env:SPLUNK_HEC_TOKEN}}", cameleer_saas::testing::SplunkHecMock::TOKEN),
+            ("{{env:SPLUNK_HEC_HTTPS:true}}", "false"),
+        ],
+    );
+    let mut main = { let mut m = cameleer_main::new_main(); m.add_pack(&cameleer_health::HEALTH); m };
+    main.add_route_source("logs-to-splunk.camel.yaml", yaml);
+    main.start().unwrap();
+
+    let mut c = cameleer_protocols::testing::LumberjackClient::connect("127.0.0.1", beats).unwrap();
+    let ack = c
+        .send_json(&[r#"{"message":"disk 91% full","log":{"level":"warn"},"host":{"name":"web-01"}}"#, r#"{"message":"cache hit","log":{"level":"debug"}}"#], true)
+        .unwrap();
+    assert_eq!(ack, (b'2', 2));
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    udp.send_to(b"<15>1 2026-11-25T10:00:00Z router1 dhcpd - - - lease renewed", ("127.0.0.1", syslog)).unwrap();
+    udp.send_to(b"<34>1 2026-11-25T10:00:01Z router1 sshd - - - authentication failure", ("127.0.0.1", syslog)).unwrap();
+    wait_for("two events in Splunk", || hec.events().len() >= 2);
+    std::thread::sleep(Duration::from_millis(200));
+    let events = hec.events();
+    assert_eq!(events.len(), 2, "debug messages are dropped: {:?}", events);
+    let beat = events.iter().find(|e| e.get("source") == Some(&Value::from("filebeat"))).expect("the Beats event");
+    assert_eq!(beat.get("event").and_then(|e| e.get("message")), Some(&Value::from("disk 91% full")));
+    assert_eq!(beat.get("sourcetype"), Some(&Value::from("_json")));
+    assert_eq!(beat.get("index"), Some(&Value::from("main")));
+    let sys = events.iter().find(|e| e.get("source") == Some(&Value::from("syslog"))).expect("the syslog event");
+    assert_eq!(sys.get("event").and_then(|e| e.get("logMessage")), Some(&Value::from("authentication failure")));
+    assert_eq!(sys.get("event").and_then(|e| e.get("severity")), Some(&Value::from("CRIT")));
+    main.stop().unwrap();
+}

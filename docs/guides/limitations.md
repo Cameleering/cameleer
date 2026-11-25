@@ -90,6 +90,9 @@ These work and are tested, but not yet against the real thing:
 - **Cloud services.** The AWS, Azure and Google Cloud components are tested against embedded
   mock servers, the official SDKs' clients and third-party emulators (moto, Azurite,
   fake-gcs-server, pstest), not yet against real cloud accounts.
+- **Splunk.** The `splunk-hec` producer is tested against an embedded HTTP Event Collector mock
+  that answers with Splunk's status codes and messages, not yet against a real Splunk
+  (Splunk's own image requires accepting its license).
 - **AWS Lambda.** The custom runtime is tested end to end in AWS's `provided:al2023` image with
   the Runtime Interface Emulator, not yet on the Lambda service itself.
 - **Attestation** has not run on real confidential-computing hardware yet, and it does not

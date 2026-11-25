@@ -190,6 +190,39 @@ message history on, the steps it went through. In a container, logs go to the co
 runtime; `cameleer run` outside a container also writes them to `$CAMEL_HOME`, where
 `cameleer log --follow` reads them. Logs are plain text; there is no JSON log format yet.
 
+## Log pipelines
+
+Cameleer can also carry other programs' logs and metrics, the job Logstash or Fluentd often does in
+front of a log store. A route receives the events, filters and enriches them with the EIPs, and sends
+them on:
+
+| receive | send |
+|---|---|
+| [lumberjack](../components/lumberjack.md): Filebeat and the other Beats, Logstash (port 5044) | [splunk-hec](../components/splunk-hec.md): Splunk's HTTP Event Collector |
+| [syslog](../components/syslog.md): RFC 5424 and 3164 over UDP, TCP or TLS | [elasticsearch](../components/elasticsearch.md), [opensearch](../components/opensearch.md) |
+| [kafka](../components/kafka.md), [platform-http](../components/platform-http.md) (JSON over HTTP) | [kafka](../components/kafka.md), [aws2-cw](../components/aws2-cw.md) (CloudWatch metrics), [file](../components/file.md) |
+
+Beats events to Splunk, dropping debug messages:
+
+<!-- example: observability-beats-to-splunk -->
+```yaml
+- route:
+    id: beats-to-splunk
+    from:
+      uri: lumberjack:0.0.0.0:5044
+      steps:
+        - filter:
+            simple: "${body[log][level]} != 'debug'"
+            steps:
+              - to: "splunk-hec:{{env:SPLUNK_HEC:splunk.example.com:8088}}?token={{env:SPLUNK_HEC_TOKEN}}&index=main&sourceType=_json&bodyOnly=true"
+```
+
+[examples/logs-to-splunk.camel.yaml](https://github.com/cameleering/cameleer/blob/main/examples/logs-to-splunk.camel.yaml)
+adds syslog to the same pipeline. Delivery is at-least-once: the Lumberjack server acknowledges a
+window only after every event in it went through the route, and a failure makes the shipper send the
+window again. Make the route idempotent (an [idempotent consumer](eips/flow-control.md#idempotent-consumer) on an event id) when
+duplicates in the store matter.
+
 ## Tracing a message
 
 **The tracer** (`--trace`, `camel.main.tracing=true`) logs each message at each step, as Camel's
