@@ -21,7 +21,7 @@
 //! Timeouts and intervals are handled by a background thread started/stopped with
 //! the route; completed groups found by it are routed on that thread.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -321,7 +321,9 @@ impl ProcessorDefinition for AggregateDefinition {
 
 #[derive(Default)]
 struct AggState {
-    deadlines: HashMap<String, Instant>,
+    deadlines: HashMap<String, (Instant, u64)>,
+    by_deadline: BTreeMap<(Instant, u64), String>,
+    dseq: u64,
     closed: HashSet<String>,
     closed_order: VecDeque<String>,
     next_interval: Option<Instant>,
@@ -360,6 +362,24 @@ struct Completed {
 
 fn aggregated_size(ex: &Exchange) -> usize {
     ex.properties.get(props::AGGREGATED_SIZE).and_then(|v| v.as_i64()).unwrap_or(0).max(0) as usize
+}
+
+impl AggState {
+    /// Set the deadline of `key`; true when it is now the earliest one (the checker must wake).
+    fn set_deadline(&mut self, key: &str, at: Instant) -> bool {
+        self.dseq += 1;
+        let seq = self.dseq;
+        if let Some(old) = self.deadlines.insert(key.to_string(), (at, seq)) {
+            self.by_deadline.remove(&old);
+        }
+        self.by_deadline.insert((at, seq), key.to_string());
+        self.by_deadline.keys().next() == Some(&(at, seq))
+    }
+    fn remove_deadline(&mut self, key: &str) {
+        if let Some(old) = self.deadlines.remove(key) {
+            self.by_deadline.remove(&old);
+        }
+    }
 }
 
 impl AggInner {
@@ -410,7 +430,7 @@ impl AggInner {
 
     /// Remove a group and mark it completed.
     fn complete_group(&self, st: &mut AggState, key: &str, by: &'static str, out: &mut Vec<Completed>) {
-        st.deadlines.remove(key);
+        st.remove_deadline(key);
         if let Some(ex) = self.repo.remove(key) {
             self.close_key(st, key);
             out.push(Completed { key: key.to_string(), exchange: ex, by });
@@ -524,7 +544,7 @@ impl AggInner {
                     match (by, completed) {
                         (Some(by), Some(agg)) => {
                             if !st.deadlines.is_empty() {
-                                st.deadlines.remove(&key);
+                                st.remove_deadline(&key);
                             }
                             self.close_key(&mut st, &key);
                             out.push(Completed { key: key.clone(), exchange: agg, by });
@@ -535,8 +555,9 @@ impl AggInner {
                                 None => self.timeout,
                             };
                             if let Some(t) = timeout {
-                                st.deadlines.insert(key.clone(), Instant::now() + t);
-                                self.cond.notify_all();
+                                if st.set_deadline(&key, Instant::now() + t) {
+                                    self.cond.notify_all();
+                                }
                             }
                         }
                     }
@@ -577,7 +598,7 @@ impl AggInner {
             match by {
                 Some(by) => {
                     if !st.deadlines.is_empty() {
-                        st.deadlines.remove(&key);
+                        st.remove_deadline(&key);
                     }
                     self.repo.remove(&key);
                     self.close_key(&mut st, &key);
@@ -590,8 +611,9 @@ impl AggInner {
                         None => self.timeout,
                     };
                     if let Some(t) = timeout {
-                        st.deadlines.insert(key.clone(), Instant::now() + t);
-                        self.cond.notify_all();
+                        if st.set_deadline(&key, Instant::now() + t) {
+                            self.cond.notify_all();
+                        }
                     }
                 }
             }
@@ -612,7 +634,14 @@ impl AggInner {
             }
             let now = Instant::now();
             let mut out = Vec::new();
-            let expired: Vec<String> = st.deadlines.iter().filter(|(_, d)| **d <= now).map(|(k, _)| k.clone()).collect();
+            let mut expired: Vec<String> = Vec::new();
+            while let Some((&(d, _), _)) = st.by_deadline.first_key_value() {
+                if d > now {
+                    break;
+                }
+                let (_, k) = st.by_deadline.pop_first().unwrap();
+                expired.push(k);
+            }
             for k in expired {
                 st.deadlines.remove(&k);
                 if self.discard_on_timeout {
@@ -643,7 +672,7 @@ impl AggInner {
                 st = self.state.lock().unwrap();
                 continue;
             }
-            let mut wake = st.deadlines.values().min().copied();
+            let mut wake = st.by_deadline.keys().next().map(|(d, _)| *d);
             if let Some(n) = st.next_interval {
                 wake = Some(wake.map_or(n, |w| w.min(n)));
             }
@@ -722,5 +751,34 @@ impl Service for AggregateProcessor {
             self.force_completion();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AggState;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn deadline_index_stays_consistent_with_the_map() {
+        let mut st = AggState::default();
+        let t0 = Instant::now();
+        assert!(st.set_deadline("a", t0 + Duration::from_millis(30)), "the first deadline is the earliest");
+        assert!(!st.set_deadline("b", t0 + Duration::from_millis(50)));
+        assert!(st.set_deadline("c", t0 + Duration::from_millis(10)));
+        // moving "c" later replaces its entry instead of adding one
+        assert!(!st.set_deadline("c", t0 + Duration::from_millis(70)));
+        assert_eq!(st.deadlines.len(), 3);
+        assert_eq!(st.by_deadline.len(), 3);
+        let order: Vec<&str> = st.by_deadline.values().map(String::as_str).collect();
+        assert_eq!(order, ["a", "b", "c"]);
+        st.remove_deadline("a");
+        st.remove_deadline("missing");
+        assert_eq!(st.deadlines.len(), 2);
+        assert_eq!(st.by_deadline.len(), 2);
+        assert_eq!(st.by_deadline.values().next().map(String::as_str), Some("b"));
+        // two groups with the same deadline both stay in the index
+        assert!(!st.set_deadline("d", t0 + Duration::from_millis(50)));
+        assert_eq!(st.by_deadline.len(), 3);
     }
 }

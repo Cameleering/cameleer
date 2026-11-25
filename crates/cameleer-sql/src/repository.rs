@@ -1,5 +1,6 @@
 //! JDBC-backed repositories for the idempotent consumer and the aggregator.
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use cameleer_core::context::{CamelContext, WeakContext};
@@ -203,18 +204,28 @@ pub fn exchange_from_json(text: &str, ctx: Option<CamelContext>) -> Result<Excha
 ///
 /// Recovery: [`JdbcAggregationRepository::scan`] lists completed but unconfirmed exchange ids
 /// and [`JdbcAggregationRepository::recover`] loads one (no background recovery task).
+///
+/// The `seq` column orders [`AggregationRepository::keys`] by insertion. Its next value is read
+/// once (`MAX(seq)`, over an index) when the repository is created and counted in the process
+/// afterwards, so adding a group costs no extra query. Repositories in several processes sharing
+/// one table each count from where the table was when they started; their groups' order is then
+/// approximate (Camel's repository returns its keys in no order at all).
 pub struct JdbcAggregationRepository {
     ds: Arc<dyn DataSource>,
     table: String,
     ctx: Option<WeakContext>,
+    seq: AtomicI64,
 }
 
 impl JdbcAggregationRepository {
     /// Create the repository (tables `<name>` and `<name>_completed` are created if missing).
     pub fn new(ctx: &CamelContext, ds: Arc<dyn DataSource>, repository_name: &str) -> Result<Self> {
         valid_identifier(repository_name)?;
-        let r = JdbcAggregationRepository { ds, table: repository_name.to_string(), ctx: Some(ctx.downgrade()) };
+        let r = JdbcAggregationRepository { ds, table: repository_name.to_string(), ctx: Some(ctx.downgrade()), seq: AtomicI64::new(0) };
         r.create_tables()?;
+        let max_sql = format!("SELECT COALESCE(MAX(seq), 0) FROM {}", r.table);
+        let max = with_connection(&r.ds, |c| c.execute(&max_sql, &[]))?.scalar().and_then(|v| v.as_i64()).unwrap_or(0);
+        r.seq.store(max, Ordering::Relaxed);
         Ok(r)
     }
 
@@ -223,9 +234,12 @@ impl JdbcAggregationRepository {
         let t = &self.table;
         let a = format!("CREATE TABLE IF NOT EXISTS {} (id VARCHAR(255) NOT NULL PRIMARY KEY, exchange TEXT NOT NULL, version BIGINT NOT NULL, seq BIGINT NOT NULL)", t);
         let b = format!("CREATE TABLE IF NOT EXISTS {}_completed (id VARCHAR(255) NOT NULL PRIMARY KEY, exchange TEXT NOT NULL, version BIGINT NOT NULL)", t);
+        // for `keys` (ORDER BY seq) and the one MAX(seq) at start
+        let i = format!("CREATE INDEX IF NOT EXISTS {}_seq ON {} (seq)", t, t);
         with_connection(&self.ds, |c| {
             c.execute(&a, &[])?;
-            c.execute(&b, &[])
+            c.execute(&b, &[])?;
+            c.execute(&i, &[])
         })
         .map(|_| ())
     }
@@ -252,12 +266,9 @@ impl JdbcAggregationRepository {
             let sql = format!("UPDATE {} SET exchange = ?, version = version + 1 WHERE id = ?", t);
             with_connection(&self.ds, |c| c.execute(&sql, &[Value::String(json), Value::from(key)]))?;
         } else {
-            let seq_sql = format!("SELECT COALESCE(MAX(seq), 0) + 1 FROM {}", t);
+            let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
             let ins = format!("INSERT INTO {} (id, exchange, version, seq) VALUES (?, ?, 1, ?)", t);
-            with_connection(&self.ds, |c| {
-                let seq = c.execute(&seq_sql, &[])?.scalar().and_then(|v| v.as_i64()).unwrap_or(1);
-                c.execute(&ins, &[Value::from(key), Value::String(json), Value::Int(seq)])
-            })?;
+            with_connection(&self.ds, |c| c.execute(&ins, &[Value::from(key), Value::String(json), Value::Int(seq)]))?;
         }
         Ok(old)
     }

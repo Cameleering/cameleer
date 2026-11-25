@@ -204,7 +204,6 @@ impl TcpServer {
         let addr = host_port(host, port);
         let listener = super::bind_listener(&addr).map_err(|e| CamelError::io(format!("Failed to bind {} on {}: {}", name, addr, e)))?;
         let local = listener.local_addr().map_err(|e| CamelError::io(e.to_string()))?;
-        listener.set_nonblocking(true).map_err(|e| CamelError::io(e.to_string()))?;
         let running = Arc::new(AtomicBool::new(true));
         let conns: Arc<Mutex<HashMap<u64, TcpStream>>> = Arc::new(Mutex::new(HashMap::new()));
         let workers: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
@@ -215,8 +214,12 @@ impl TcpServer {
             .spawn(move || {
                 let ids = AtomicU64::new(1);
                 while run.load(Ordering::SeqCst) {
+                    // blocking: `stop` wakes this with a connection of its own (`wake_accept`)
                     match listener.accept() {
                         Ok((s, _)) => {
+                            if !run.load(Ordering::SeqCst) {
+                                break;
+                            }
                             let _ = s.set_nonblocking(false);
                             let id = ids.fetch_add(1, Ordering::Relaxed);
                             if let Ok(c) = s.try_clone() {
@@ -233,6 +236,7 @@ impl TcpServer {
                                 w.push(j);
                             }
                         }
+                        // a failed accept (out of descriptors, an aborted connection): back off briefly
                         Err(_) => std::thread::sleep(Duration::from_millis(5)),
                     }
                 }
@@ -258,7 +262,10 @@ impl TcpServer {
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         if let Some(a) = self.accept.lock().unwrap().take() {
-            let _ = a.join();
+            // the accept thread blocks in `accept`; a connection wakes it to see the flag
+            if super::wake_accept(self.local) || a.is_finished() {
+                let _ = a.join();
+            }
         }
         for s in self.conns.lock().unwrap().values() {
             let _ = super::shutdown_socket(s, std::net::Shutdown::Both);
@@ -302,5 +309,63 @@ mod tests {
     fn random_is_random() {
         assert_eq!(random_bytes(20).len(), 20);
         assert_ne!(random_bytes(16), random_bytes(16));
+    }
+
+    fn echo_server(host: &str) -> TcpServer {
+        TcpServer::bind(host, 0, "t", |mut s| {
+            use std::io::{Read, Write};
+            let mut b = [0u8; 4];
+            if s.read_exact(&mut b).is_ok() {
+                let _ = s.write_all(&b);
+            }
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn tcp_server_serves_and_stops_promptly_from_a_blocking_accept() {
+        use std::io::{Read, Write};
+        for host in ["127.0.0.1", "0.0.0.0"] {
+            let srv = echo_server(host);
+            let port = srv.port();
+            let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            c.write_all(b"ping").unwrap();
+            let mut b = [0u8; 4];
+            c.read_exact(&mut b).unwrap();
+            assert_eq!(&b, b"ping");
+            std::thread::sleep(Duration::from_millis(50)); // the accept thread is blocked again
+            let t = std::time::Instant::now();
+            srv.stop();
+            assert!(t.elapsed() < Duration::from_secs(1), "stop took {:?} ({host})", t.elapsed());
+            // the listener is closed, so the port can be bound again
+            drop(srv);
+            std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+        }
+    }
+
+    /// The accept thread blocks instead of polling: idle, it is never scheduled. (The old loop
+    /// slept 5 ms between non-blocking accepts, about 60 wake-ups in 300 ms.)
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn idle_tcp_server_accept_thread_does_not_wake() {
+        let srv = echo_server("127.0.0.1");
+        let name = format!("t-accept-{}", srv.port());
+        let switches = || -> Option<u64> {
+            for task in std::fs::read_dir("/proc/self/task").ok()? {
+                let dir = task.ok()?.path();
+                if std::fs::read_to_string(dir.join("comm")).ok()?.trim_end() == &name[..name.len().min(15)] {
+                    let status = std::fs::read_to_string(dir.join("status")).ok()?;
+                    let v = status.lines().find(|l| l.starts_with("voluntary_ctxt_switches"))?;
+                    return v.split_whitespace().nth(1)?.parse().ok();
+                }
+            }
+            None
+        };
+        std::thread::sleep(Duration::from_millis(50));
+        let before = switches().expect("accept thread not found");
+        std::thread::sleep(Duration::from_millis(300));
+        let after = switches().expect("accept thread not found");
+        assert!(after - before <= 2, "the idle accept thread woke {} times in 300 ms", after - before);
+        srv.stop();
     }
 }
