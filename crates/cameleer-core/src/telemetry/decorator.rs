@@ -1,0 +1,248 @@
+//! Span decorators (Camel `SpanDecorator` of `camel-tracing`): the name, kind and attributes
+//! of the span of an endpoint, per component.
+//!
+//! Names, kinds and attributes follow `camel-opentelemetry2` (Camel 4.11+, the module Camel
+//! recommends; `camel-opentelemetry` is deprecated since 4.19):
+//!
+//! - every span: `component` = `camel-<scheme>`, `url.scheme`, `camel.uri` (secrets masked),
+//!   `url.path`, `url.query`, `camel.route.id`, `op` (`EVENT_RECEIVED` or `EVENT_SENT`),
+//!   `exchangeId`;
+//! - HTTP components: name = the HTTP method; kinds `SERVER`/`CLIENT`; `http.method`,
+//!   `http.url`, and after the call `http.status_code`;
+//! - messaging components: name = the destination (topic, queue); kinds `CONSUMER`/`PRODUCER`;
+//!   `messaging.destination.name`, `messaging.message.id`, and Kafka's `kafka.partition`,
+//!   `kafka.offset`, `kafka.key`, `kafka.partition.key`;
+//! - internal components (`direct`, `seda`, ...): name = the URI without scheme and options;
+//! - any other component: name = the scheme. Both of these are `INTERNAL`.
+
+use crate::message::Exchange;
+use crate::value::Value;
+
+use super::{AttrValue, OpenSpan, SpanKind, SpanStart};
+
+/// Whether the span is for receiving (route input) or sending (a producer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Consumer,
+    Producer,
+}
+
+/// The decorator family of a component.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    Http,
+    Messaging,
+    Internal,
+    Other,
+}
+
+const HTTP: &[&str] = &["http", "https", "platform-http", "netty-http", "jetty", "undertow", "servlet", "vertx-http", "rest", "rest-openapi", "webhook", "knative"];
+const MESSAGING: &[&str] = &[
+    "kafka", "jms", "activemq", "activemq6", "amqp", "sjms", "sjms2", "rabbitmq", "spring-rabbitmq", "paho", "paho-mqtt5", "mqtt", "stomp", "nats", "pulsar", "aws2-sqs", "aws2-sns",
+    "aws2-kinesis", "azure-servicebus", "azure-eventhubs", "azure-storage-queue", "google-pubsub", "ironmq", "nsq", "jt400", "cometd", "hazelcast-queue", "hazelcast-topic", "springrabbit",
+];
+const INTERNAL: &[&str] = &["direct", "direct-vm", "seda", "vm", "disruptor", "disruptor-vm", "controlbus", "stub"];
+
+/// The scheme of an endpoint URI.
+pub fn scheme(uri: &str) -> &str {
+    uri.split(':').next().unwrap_or(uri)
+}
+
+pub fn family(scheme: &str) -> Family {
+    if HTTP.contains(&scheme) {
+        Family::Http
+    } else if MESSAGING.contains(&scheme) {
+        Family::Messaging
+    } else if INTERNAL.contains(&scheme) {
+        Family::Internal
+    } else {
+        Family::Other
+    }
+}
+
+/// The URI without scheme and options (Camel `stripSchemeAndOptions`).
+pub fn strip_scheme_and_options(uri: &str) -> &str {
+    let rest = uri.split_once(':').map(|(_, r)| r).unwrap_or(uri);
+    let rest = rest.trim_start_matches("//");
+    rest.split('?').next().unwrap_or(rest)
+}
+
+fn header(ex: &Exchange, k: &str) -> Option<String> {
+    match ex.header(k)? {
+        Value::Null => None,
+        Value::Bytes(b) => String::from_utf8(b.clone()).ok(),
+        v => Some(v.to_string()),
+    }
+}
+
+/// The messaging destination of an exchange at an endpoint.
+fn destination(scheme: &str, uri: &str, ex: &Exchange) -> String {
+    let from_header = match scheme {
+        "kafka" => header(ex, "kafka.TOPIC").or_else(|| header(ex, "kafka.OVERRIDE_TOPIC")),
+        "jms" | "activemq" | "activemq6" | "sjms" | "sjms2" | "amqp" => header(ex, "CamelJmsDestinationName"),
+        "aws2-sqs" => None,
+        _ => None,
+    };
+    let d = from_header.unwrap_or_else(|| strip_scheme_and_options(uri).to_string());
+    // jms:queue:orders, amqp:topic:prices
+    match d.split_once(':') {
+        Some(("queue" | "topic" | "temp-queue" | "temp-topic", name)) if matches!(scheme, "jms" | "activemq" | "activemq6" | "sjms" | "sjms2" | "amqp") => name.to_string(),
+        _ => d,
+    }
+}
+
+/// Camel's rule: the `CamelHttpMethod` header; else GET with a query (`CamelHttpQuery` or `?`
+/// in the URI); else POST when there is a body; else GET.
+fn http_method(uri: &str, ex: &Exchange) -> String {
+    match header(ex, "CamelHttpMethod") {
+        Some(m) => m.to_ascii_uppercase(),
+        None if header(ex, "CamelHttpQuery").is_some() || uri.contains('?') => "GET".into(),
+        None if ex.body().is_null() => "GET".into(),
+        None => "POST".into(),
+    }
+}
+
+fn http_url(uri: &str, ex: &Exchange, role: Role) -> String {
+    if let Some(u) = header(ex, "CamelHttpUrl") {
+        return u;
+    }
+    if role == Role::Consumer {
+        if let Some(u) = header(ex, "CamelHttpUri") {
+            return u;
+        }
+    }
+    let rest = strip_scheme_and_options(uri);
+    if rest.starts_with("http://") || rest.starts_with("https://") {
+        return rest.to_string();
+    }
+    match scheme(uri) {
+        "http" | "https" => format!("{}://{}", scheme(uri), rest),
+        _ => rest.to_string(),
+    }
+}
+
+/// Name, kind and attributes of a new span for `uri`.
+pub fn start(uri: &str, role: Role, ex: &Exchange) -> SpanStart {
+    let s = scheme(uri);
+    let fam = family(s);
+    let masked = crate::component::log::mask_secrets(uri);
+    let mut attributes: Vec<(String, AttrValue)> = vec![
+        ("component".into(), AttrValue::String(format!("camel-{}", s))),
+        ("url.scheme".into(), AttrValue::String(s.to_string())),
+        ("camel.uri".into(), AttrValue::String(masked.clone())),
+    ];
+    let rest = masked.split_once(':').map(|(_, r)| r).unwrap_or("");
+    let (path, query) = match rest.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (rest, None),
+    };
+    attributes.push(("url.path".into(), AttrValue::String(path.trim_start_matches("//").to_string())));
+    if let Some(q) = query {
+        attributes.push(("url.query".into(), AttrValue::String(q.to_string())));
+    }
+    attributes.push(("op".into(), AttrValue::from(if role == Role::Consumer { "EVENT_RECEIVED" } else { "EVENT_SENT" })));
+    attributes.push(("exchangeId".into(), AttrValue::String(ex.exchange_id.to_string())));
+    let (name, kind) = match fam {
+        Family::Http => {
+            let m = http_method(uri, ex);
+            attributes.push(("http.method".into(), AttrValue::String(m.clone())));
+            attributes.push(("http.url".into(), AttrValue::String(crate::component::log::mask_secrets(&http_url(uri, ex, role)))));
+            (m, if role == Role::Consumer { SpanKind::Server } else { SpanKind::Client })
+        }
+        Family::Messaging => {
+            let d = destination(s, uri, ex);
+            attributes.push(("messaging.destination.name".into(), AttrValue::String(d.clone())));
+            (d, if role == Role::Consumer { SpanKind::Consumer } else { SpanKind::Producer })
+        }
+        Family::Internal => (strip_scheme_and_options(uri).chars().take(250).collect(), SpanKind::Internal),
+        Family::Other => (s.to_string(), SpanKind::Internal),
+    };
+    if s == "kafka" && role == Role::Producer {
+        if let Some(k) = header(ex, "kafka.KEY") {
+            attributes.push(("kafka.key".into(), AttrValue::String(k)));
+        }
+        if let Some(p) = ex.header("kafka.PARTITION_KEY").and_then(|v| v.as_i64()) {
+            attributes.push(("kafka.partition.key".into(), AttrValue::Int(p)));
+        }
+    }
+    SpanStart { name, kind, attributes }
+}
+
+/// Attributes known once the exchange is done (status codes, offsets, message ids).
+pub fn finish(uri: &str, role: Role, ex: &Exchange, span: &mut OpenSpan) {
+    let s = scheme(uri);
+    match family(s) {
+        Family::Http => {
+            if let Some(c) = ex.header("CamelHttpResponseCode").and_then(|v| v.as_i64().or_else(|| v.to_string().parse().ok())) {
+                span.set_attribute("http.status_code", c);
+            }
+        }
+        Family::Messaging => {
+            if s == "kafka" {
+                if role == Role::Consumer {
+                    if let Some(k) = header(ex, "kafka.KEY") {
+                        span.set_attribute("kafka.key", k);
+                    }
+                }
+                for (h, a) in [("kafka.PARTITION", "kafka.partition"), ("kafka.OFFSET", "kafka.offset")] {
+                    if let Some(v) = ex.header(h).and_then(|v| v.as_i64()) {
+                        span.set_attribute(a, v);
+                    }
+                }
+                // a producer learns its partition and offset from the record metadata
+                if let Some(Value::Array(meta)) = ex.header("org.apache.kafka.clients.producer.RecordMetadata") {
+                    if let Some(m) = meta.first() {
+                        for (k, a) in [("partition", "kafka.partition"), ("offset", "kafka.offset")] {
+                            if let Some(v) = m.get(k).and_then(|v| v.as_i64()) {
+                                span.set_attribute(a, v);
+                            }
+                        }
+                    }
+                }
+            }
+            let id = match s {
+                "jms" | "activemq" | "activemq6" | "sjms" | "sjms2" | "amqp" => header(ex, "JMSMessageID").or_else(|| header(ex, "CamelJmsMessageId")),
+                "aws2-sqs" => header(ex, "CamelAwsSqsMessageId"),
+                "rabbitmq" | "spring-rabbitmq" => header(ex, "CamelRabbitmqMessageId"),
+                "google-pubsub" => header(ex, "CamelGooglePubsubMessageId"),
+                "azure-servicebus" => header(ex, "CamelAzureServiceBusMessageId"),
+                _ => None,
+            };
+            if let Some(id) = id {
+                span.set_attribute("messaging.message.id", id);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_and_kinds() {
+        let mut ex = Exchange::default();
+        let s = start("kafka:orders?brokers=localhost:9092", Role::Producer, &ex);
+        assert_eq!((s.name.as_str(), s.kind), ("orders", SpanKind::Producer));
+        let s = start("jms:queue:invoices", Role::Consumer, &ex);
+        assert_eq!((s.name.as_str(), s.kind), ("invoices", SpanKind::Consumer));
+        let s = start("http://example.com/x?password=secret", Role::Producer, &ex);
+        assert_eq!((s.name.as_str(), s.kind), ("GET", SpanKind::Client));
+        assert_eq!(s.attributes[2].1, AttrValue::from("http://example.com/x?password=xxxxxx"));
+        assert_eq!(s.attributes[4].1, AttrValue::from("password=xxxxxx"));
+        assert_eq!(start("http://example.com/x?a=1", Role::Producer, &Exchange::default()).name, "GET");
+        let mut b = Exchange::default();
+        b.message.set_body("x");
+        assert_eq!(start("http://example.com/x", Role::Producer, &b).name, "POST");
+        ex.set_header("CamelHttpMethod", "post");
+        let s = start("platform-http:/orders", Role::Consumer, &ex);
+        assert_eq!((s.name.as_str(), s.kind), ("POST", SpanKind::Server));
+        let s = start("direct:a", Role::Producer, &ex);
+        assert_eq!((s.name.as_str(), s.kind), ("a", SpanKind::Internal));
+        let s = start("timer:tick?period=1000", Role::Consumer, &ex);
+        assert_eq!((s.name.as_str(), s.kind), ("timer", SpanKind::Internal));
+        assert_eq!(s.attributes[0].1, AttrValue::from("camel-timer"));
+        assert_eq!(strip_scheme_and_options("http://h:1/p?q=1"), "h:1/p");
+    }
+}

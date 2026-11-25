@@ -110,7 +110,7 @@ impl ProcessorDefinition for ToDefinition {
     }
     fn create_processor(&self, rc: &RouteContext) -> Result<Arc<dyn Processor>> {
         let endpoint = rc.context.get_endpoint(&self.uri)?;
-        let producer = endpoint.create_producer()?;
+        let producer = rc.context.create_producer(&endpoint)?;
         rc.add_service(producer.clone());
         Ok(Arc::new(SendProcessor::new(endpoint.uri().to_string(), producer, self.pattern)))
     }

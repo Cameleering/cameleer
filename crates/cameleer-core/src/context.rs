@@ -621,6 +621,8 @@ pub(crate) struct ContextInner {
     has_notifiers: Arc<AtomicBool>,
     route_hooks: RwLock<Vec<Arc<dyn RouteFactoryHook>>>,
     channel_wrappers: RwLock<Vec<Arc<dyn ChannelWrapper>>>,
+    /// Wrap every producer the context creates (tracing); empty unless installed.
+    producer_wrappers: RwLock<Vec<Arc<dyn crate::telemetry::ProducerWrapper>>>,
     pub(crate) inflight: InflightRepository,
     pub(crate) exchange_counters: Arc<ExchangeCounters>,
     route_counter: AtomicUsize,
@@ -722,6 +724,7 @@ impl CamelContext {
                 has_notifiers: Arc::new(AtomicBool::new(false)),
                 route_hooks: RwLock::new(Vec::new()),
                 channel_wrappers: RwLock::new(Vec::new()),
+                producer_wrappers: RwLock::new(Vec::new()),
                 inflight: InflightRepository::default(),
                 exchange_counters: Arc::new(ExchangeCounters::default()),
                 route_counter: AtomicUsize::new(0),
@@ -1034,7 +1037,7 @@ impl CamelContext {
         let p = match cached {
             Some(p) => p,
             None => {
-                let p = endpoint.create_producer()?;
+                let p = self.create_producer(&endpoint)?;
                 p.start()?;
                 self.inner.producers.write().unwrap().insert(key, p.clone());
                 p
@@ -1130,6 +1133,23 @@ impl CamelContext {
     /// Register a hook applied to every route created after this call.
     pub fn add_route_factory_hook(&self, hook: Arc<dyn RouteFactoryHook>) {
         self.inner.route_hooks.write().unwrap().push(hook);
+    }
+
+    /// Register a producer wrapper: every producer the context creates from now on (for `to`,
+    /// `toD`, `wireTap`, recipient lists, templates...) is passed through it. Used by tracing
+    /// ([`crate::telemetry::install`]); producers created before are not wrapped.
+    pub fn add_producer_wrapper(&self, w: Arc<dyn crate::telemetry::ProducerWrapper>) {
+        self.inner.producer_wrappers.write().unwrap().push(w);
+    }
+
+    /// Create a producer of `endpoint`, passed through the producer wrappers.
+    pub fn create_producer(&self, endpoint: &Arc<dyn Endpoint>) -> Result<Arc<dyn Producer>> {
+        let mut p = endpoint.create_producer()?;
+        let wrappers = self.inner.producer_wrappers.read().unwrap();
+        for w in wrappers.iter() {
+            p = w.wrap(endpoint, p);
+        }
+        Ok(p)
     }
 
     /// Register a context-wide channel wrapper (applied to all processors in all routes).

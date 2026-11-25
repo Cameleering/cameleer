@@ -156,6 +156,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cameleer-opentelemetry"
+version = "0.8.0"
+dependencies = [
+ "cameleer-core",
+ "cameleer-http",
+ "cameleer-tls",
+]
+
+[[package]]
 name = "cameleer-protocols"
 version = "0.8.0"
 dependencies = [
