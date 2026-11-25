@@ -27,6 +27,7 @@ use cameleer_core::telemetry::{self, SpanData, SpanProcessor, Telemetry, Telemet
 pub mod batch;
 pub mod config;
 pub mod exporter;
+pub mod metrics;
 pub mod proto;
 pub mod testing;
 

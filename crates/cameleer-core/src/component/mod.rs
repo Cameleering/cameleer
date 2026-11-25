@@ -23,6 +23,7 @@
 //! | `string-template`, `velocity`, `freemarker` | [`templating`] Velocity / FreeMarker / StringTemplate engines |
 //! | `json-validator` | [`json_validator`] JSON Schema validation |
 //! | `validator` | [`xml_validator`] XML well-formedness validation |
+//! | `micrometer`, `metrics`, `opentelemetry-metrics` | [`meters`] counters, timers, summaries, gauges, meters in the context's metric registry |
 //!
 //! The template components are the cargo feature `templates` (on by default).
 //!
@@ -47,6 +48,7 @@ pub mod freemarker;
 pub mod json_validator;
 pub mod language;
 pub mod log;
+pub mod meters;
 pub mod mock;
 #[cfg(feature = "templates")]
 pub mod mustache;
@@ -118,4 +120,7 @@ pub fn register_builtin_components(ctx: &CamelContext) {
     }
     ctx.add_component_factory("json-validator", || Arc::new(json_validator::JsonValidatorComponent));
     ctx.add_component_factory("validator", || Arc::new(xml_validator::XmlValidatorComponent));
+    ctx.add_component_factory("micrometer", || Arc::new(meters::MetersComponent::micrometer()));
+    ctx.add_component_factory("metrics", || Arc::new(meters::MetersComponent::dropwizard()));
+    ctx.add_component_factory("opentelemetry-metrics", || Arc::new(meters::MetersComponent::opentelemetry()));
 }
