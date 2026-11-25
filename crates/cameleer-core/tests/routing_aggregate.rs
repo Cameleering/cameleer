@@ -503,3 +503,75 @@ fn a_failing_strategy_leaves_the_group_in_the_repository() {
     send(&t, "c", "1");
     assert_eq!(ctx.mock_endpoint("agg").unwrap().received_bodies(), vec![Value::from("a+b+c")]);
 }
+
+/// The completion timeout keeps its deadlines in an index ordered by deadline. Groups completed by
+/// size must leave the index (no later timeout completion), and every other group must complete by
+/// timeout exactly once.
+#[test]
+fn completion_timeout_with_many_groups_completes_each_group_once() {
+    let ctx = CamelContext::new();
+    ctx.add_routes(|b| {
+        b.from("direct:start")
+            .aggregate(header("id"), string("+"))
+            .completion_size(2)
+            .completion_timeout(Duration::from_millis(150))
+            .to("mock:aggregated")
+            .end();
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    // 500 groups; the even ones get a second message and complete by size
+    for i in 0..500 {
+        send(&t, "a", &i.to_string());
+    }
+    for i in (0..500).step_by(2) {
+        send(&t, "b", &i.to_string());
+    }
+    let m = ctx.mock_endpoint("aggregated").unwrap();
+    m.expected_message_count(500);
+    m.assert_is_satisfied_within(Duration::from_secs(5)).unwrap();
+    std::thread::sleep(Duration::from_millis(300)); // nothing may complete twice
+    let exchanges = m.received_exchanges();
+    assert_eq!(exchanges.len(), 500);
+    let mut seen = std::collections::HashSet::new();
+    for e in &exchanges {
+        let key = e.property(props::AGGREGATED_CORRELATION_KEY).unwrap().to_string();
+        let i: usize = key.parse().unwrap();
+        let by = e.property(props::AGGREGATED_COMPLETED_BY).unwrap().to_string();
+        assert_eq!(by, if i % 2 == 0 { "size" } else { "timeout" }, "group {i}");
+        assert!(seen.insert(i), "group {i} completed twice");
+    }
+    ctx.stop().unwrap();
+}
+
+/// `completionTimeout` is an inactivity timeout: each new exchange moves the group's deadline later,
+/// and the moved deadline is honoured (the group does not complete at its first deadline).
+#[test]
+fn completion_timeout_restarts_on_each_exchange_of_the_group() {
+    let ctx = CamelContext::new();
+    ctx.add_routes(|b| {
+        b.from("direct:start")
+            .aggregate(header("id"), string("+"))
+            .completion_timeout(Duration::from_millis(200))
+            .to("mock:aggregated")
+            .end();
+    })
+    .unwrap();
+    ctx.start().unwrap();
+    let t = ctx.create_producer_template();
+    let start = Instant::now();
+    for b in ["a", "b", "c", "d"] {
+        send(&t, b, "1");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let last = Instant::now() - Duration::from_millis(100);
+    let m = ctx.mock_endpoint("aggregated").unwrap();
+    m.expected_message_count(1);
+    m.assert_is_satisfied_within(Duration::from_secs(3)).unwrap();
+    assert_eq!(m.received_bodies(), vec![Value::from("a+b+c+d")]);
+    // completed no earlier than 200 ms after the last exchange, so well after the first deadline
+    assert!(last.elapsed() >= Duration::from_millis(150), "completed {:?} after the last exchange", last.elapsed());
+    assert!(start.elapsed() >= Duration::from_millis(500));
+    ctx.stop().unwrap();
+}

@@ -131,7 +131,6 @@ impl TcpServer {
         let addr = host_port(host, port);
         let listener = cameleer_tls::net::bind_listener(&addr).map_err(|e| CamelError::io(format!("Failed to bind {} on {}: {}", name, addr, e)))?;
         let local = listener.local_addr().map_err(|e| CamelError::io(e.to_string()))?;
-        listener.set_nonblocking(true).map_err(|e| CamelError::io(e.to_string()))?;
         let running = Arc::new(AtomicBool::new(true));
         let conns: Arc<Mutex<HashMap<u64, TcpStream>>> = Arc::new(Mutex::new(HashMap::new()));
         let workers: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
@@ -142,8 +141,12 @@ impl TcpServer {
             .spawn(move || {
                 let ids = AtomicU64::new(1);
                 while run.load(Ordering::SeqCst) {
+                    // blocking: `stop` wakes this with a connection of its own (`wake_accept`)
                     match listener.accept() {
                         Ok((s, _)) => {
+                            if !run.load(Ordering::SeqCst) {
+                                break;
+                            }
                             let _ = s.set_nonblocking(false);
                             let _ = s.set_nodelay(true);
                             let id = ids.fetch_add(1, Ordering::Relaxed);
@@ -161,6 +164,7 @@ impl TcpServer {
                                 w.push(j);
                             }
                         }
+                        // a failed accept (out of descriptors, an aborted connection): back off briefly
                         Err(_) => std::thread::sleep(Duration::from_millis(5)),
                     }
                 }
@@ -188,7 +192,10 @@ impl TcpServer {
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
         if let Some(a) = self.accept.lock().unwrap().take() {
-            let _ = a.join();
+            // the accept thread blocks in `accept`; a connection wakes it to see the flag
+            if cameleer_tls::net::wake_accept(self.local) || a.is_finished() {
+                let _ = a.join();
+            }
         }
         for s in self.conns.lock().unwrap().values() {
             let _ = cameleer_tls::net::shutdown_socket(s, std::net::Shutdown::Both);
