@@ -73,76 +73,93 @@ fn histogram_point(w: &mut Writer, id: &MeterId, start: u64, time: u64, d: &Dist
     });
 }
 
-/// Encodes one metric.
-fn metric(w: &mut Writer, id: &MeterId, r: &Registered, start: u64, time: u64) {
-    let desc = r.description.as_deref().unwrap_or("");
+fn same_kind(a: &MeterKind, b: &MeterKind) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
+/// Encodes one metric: the meters of `group` share a name and kind; each is a data point.
+fn metric(w: &mut Writer, group: &[(MeterId, Registered)], start: u64, time: u64) {
+    let (id0, r0) = &group[0];
+    let desc = group.iter().find_map(|(_, r)| r.description.clone()).unwrap_or_default();
     let header = |w: &mut Writer, name: &str, unit: &str| {
         w.string(1, name);
-        w.string(2, desc);
+        w.string(2, &desc);
         w.string(3, unit);
     };
-    match &r.kind {
-        MeterKind::Counter(c) => w.message(2, |w| {
-            header(w, &id.name, &r.unit);
+    match &r0.kind {
+        MeterKind::Counter(_) | MeterKind::Meter(_) | MeterKind::UpDownCounter(_) => w.message(2, |w| {
+            header(w, &id0.name, &r0.unit);
             w.message(7, |w| {
-                number_point(w, 1, id, start, time, Num::Double(c.count()));
+                for (id, r) in group {
+                    let v = match &r.kind {
+                        MeterKind::Counter(c) => Num::Double(c.count()),
+                        MeterKind::Meter(m) => Num::Int(m.count() as i64),
+                        MeterKind::UpDownCounter(g) => Num::Double(g.value()),
+                        _ => continue,
+                    };
+                    number_point(w, 1, id, start, time, v);
+                }
                 w.uint(2, CUMULATIVE);
-                w.bool(3, true);
+                w.bool(3, !matches!(r0.kind, MeterKind::UpDownCounter(_)));
             });
         }),
-        MeterKind::Meter(m) => w.message(2, |w| {
-            header(w, &id.name, &r.unit);
-            w.message(7, |w| {
-                number_point(w, 1, id, start, time, Num::Int(m.count() as i64));
-                w.uint(2, CUMULATIVE);
-                w.bool(3, true);
+        MeterKind::Gauge(_) | MeterKind::FnGauge(_) => w.message(2, |w| {
+            header(w, &id0.name, &r0.unit);
+            w.message(5, |w| {
+                for (id, r) in group {
+                    let v = match &r.kind {
+                        MeterKind::Gauge(g) => g.value(),
+                        MeterKind::FnGauge(g) => (g.0)(),
+                        _ => continue,
+                    };
+                    number_point(w, 1, id, start, time, Num::Double(v));
+                }
             });
         }),
-        MeterKind::UpDownCounter(g) => w.message(2, |w| {
-            header(w, &id.name, &r.unit);
-            w.message(7, |w| {
-                number_point(w, 1, id, start, time, Num::Double(g.value()));
-                w.uint(2, CUMULATIVE);
-                w.bool(3, false);
-            });
-        }),
-        MeterKind::Gauge(g) => w.message(2, |w| {
-            header(w, &id.name, &r.unit);
-            w.message(5, |w| number_point(w, 1, id, start, time, Num::Double(g.value())));
-        }),
-        MeterKind::FnGauge(g) => w.message(2, |w| {
-            header(w, &id.name, &r.unit);
-            w.message(5, |w| number_point(w, 1, id, start, time, Num::Double((g.0)())));
-        }),
-        MeterKind::Timer(t) => w.message(2, |w| {
-            header(w, &id.name, "s");
+        MeterKind::Timer(_) | MeterKind::Summary(_) => w.message(2, |w| {
+            header(w, &id0.name, if matches!(r0.kind, MeterKind::Timer(_)) { "s" } else { &r0.unit });
             w.message(9, |w| {
-                histogram_point(w, id, start, time, &t.0);
+                for (id, r) in group {
+                    match &r.kind {
+                        MeterKind::Timer(t) => histogram_point(w, id, start, time, &t.0),
+                        MeterKind::Summary(d) => histogram_point(w, id, start, time, d),
+                        _ => {}
+                    }
+                }
                 w.uint(2, CUMULATIVE);
             });
         }),
-        MeterKind::Summary(d) => w.message(2, |w| {
-            header(w, &id.name, &r.unit);
-            w.message(9, |w| {
-                histogram_point(w, id, start, time, d);
-                w.uint(2, CUMULATIVE);
-            });
-        }),
-        MeterKind::LongTaskTimer(t) => {
-            let (total, _) = t.durations();
+        MeterKind::LongTaskTimer(_) => {
+            let ltt = |r: &Registered| match &r.kind {
+                MeterKind::LongTaskTimer(t) => Some(t.clone()),
+                _ => None,
+            };
             w.message(2, |w| {
-                header(w, &format!("{}.active", id.name), "{tasks}");
-                w.message(5, |w| number_point(w, 1, id, start, time, Num::Int(t.active_tasks() as i64)));
+                header(w, &format!("{}.active", id0.name), "{tasks}");
+                w.message(5, |w| {
+                    for (id, r) in group {
+                        if let Some(t) = ltt(r) {
+                            number_point(w, 1, id, start, time, Num::Int(t.active_tasks() as i64));
+                        }
+                    }
+                });
             });
             w.message(2, |w| {
-                header(w, &format!("{}.duration", id.name), "s");
-                w.message(5, |w| number_point(w, 1, id, start, time, Num::Double(total)));
+                header(w, &format!("{}.duration", id0.name), "s");
+                w.message(5, |w| {
+                    for (id, r) in group {
+                        if let Some(t) = ltt(r) {
+                            number_point(w, 1, id, start, time, Num::Double(t.durations().0));
+                        }
+                    }
+                });
             });
         }
     }
 }
 
-/// Encodes an `ExportMetricsServiceRequest` with one resource and one scope.
+/// Encodes an `ExportMetricsServiceRequest` with one resource and one scope; the meters of one
+/// name and kind become one metric with a data point per tag set.
 pub fn encode_export_request(resource: &Attributes, scope: &str, meters: &[(MeterId, Registered)], start: u64) -> Vec<u8> {
     let time = now_nanos();
     let mut w = Writer::default();
@@ -153,8 +170,14 @@ pub fn encode_export_request(resource: &Attributes, scope: &str, meters: &[(Mete
                 w.string(1, scope);
                 w.string(2, env!("CARGO_PKG_VERSION"));
             });
-            for (id, r) in meters {
-                metric(w, id, r, start, time);
+            let mut i = 0;
+            while i < meters.len() {
+                let mut j = i + 1;
+                while j < meters.len() && meters[j].0.name == meters[i].0.name && same_kind(&meters[j].1.kind, &meters[i].1.kind) {
+                    j += 1;
+                }
+                metric(w, &meters[i..j], start, time);
+                i = j;
             }
         });
     });
