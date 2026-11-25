@@ -168,12 +168,16 @@ fn a_slow_or_absent_collector_never_slows_the_route() {
     assert!(t.elapsed() < Duration::from_secs(10), "{:?}", t.elapsed());
     assert_eq!(ctx.mock_endpoint("mock:hot").unwrap().received_counter(), 2000);
     let stats = otel.batch.as_ref().unwrap().stats();
-    assert!(stats.dropped.load(Ordering::Relaxed) > 5000, "{:?}", stats);
+    // How the 6,000 spans (3 per message) split between dropped (queue full) and failed (export
+    // refused) depends on how fast a refused connect returns: slow on Windows, immediate on
+    // Linux. Either way the queue overflows, nothing is exported and every span is counted.
+    assert!(stats.dropped.load(Ordering::Relaxed) > 0, "{:?}", stats);
     otel.force_flush(Duration::from_secs(5));
     assert!(stats.failed.load(Ordering::Relaxed) > 0, "{:?}", stats);
-    assert_eq!(stats.exported.load(Ordering::Relaxed), 0);
     ctx.stop().unwrap();
     otel.shutdown(Duration::from_secs(2));
+    assert_eq!(stats.exported.load(Ordering::Relaxed), 0);
+    assert_eq!(stats.dropped.load(Ordering::Relaxed) + stats.failed.load(Ordering::Relaxed), 6000, "{:?}", stats);
 }
 
 #[test]
