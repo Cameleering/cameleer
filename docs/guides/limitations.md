@@ -81,7 +81,6 @@ Cameleer; for anything else, `cameleer catalog components` lists every scheme in
 | `kubernetes-pods`, `kubernetes-deployments` | Kubernetes API |
 | `pulsar`, `nats`, `jt400`, `mina`, `ldap`, `smb` | other protocols |
 | `salesforce`, `servicenow`, `sap-netweaver` | enterprise applications |
-| `opentelemetry`, `micrometer` | telemetry |
 | `couchbase` | Couchbase (binary key-value protocol) |
 
 ## What has not been verified yet
