@@ -14,6 +14,7 @@ guides/configuration
 guides/cli
 guides/testing
 guides/observability
+guides/opentelemetry
 guides/tls-and-security
 guides/attestation
 guides/build-features

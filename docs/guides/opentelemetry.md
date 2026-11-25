@@ -171,8 +171,22 @@ curl -H 'traceparent: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01' -
 ## What it costs
 
 With tracing off (the default) the routing engine runs no tracing code at all: no hook, wrapper
-or per-message check is installed. Measured with `cameleer-bench` (`CAMEL_BENCH_OTEL=off`,
-`spans` or `otlp`) on one machine, see
+or per-message check is installed. With it on, a span costs about 0.1 to 0.35 µs. Measured with
+`cameleer-bench run` and `CAMEL_BENCH_OTEL` (`off`, `spans`: every span made and dropped, `otlp`:
+exported to a local receiver) on one Windows desktop (Ryzen 5 5600X), median of three
+interleaved rounds, messages per second:
+
+| scenario | 0.8.0 (`main`) | tracing off | tracing on | on, exported over OTLP |
+|---|---|---|---|---|
+| `direct` (one route, one `to`) | 4,011,814 | 3,707,191 | 923,424 | 622,524 |
+| `seda` (4 producers, 4 consumers) | 5,095,791 | 5,472,525 | 2,324,393 | 2,161,027 |
+| `cbr` (content-based router) | 1,548,251 | 1,665,587 | 719,423 | 617,865 |
+| `splitagg` (split 10 items, aggregate) | 100,357 | 93,828 | 72,106 | 57,431 |
+
+Off is within noise of 0.8.0 (0.92x to 1.08x). On, a `direct` route goes from 0.27 to 1.1 µs per
+message (2.5 spans each); a route that does any I/O will not notice. The exporter sent about
+0.8 million spans per second over one connection; beyond that the queue drops spans and counts
+them, and the routes keep their speed. Method and raw data:
 `benchmarks/results/2026-11-25-windows-opentelemetry/`.
 
 ## Differences from Apache Camel

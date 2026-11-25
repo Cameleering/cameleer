@@ -680,6 +680,29 @@ period when a second thread exists. `cameleer_http::register` now does it while 
 (test `early_descriptors`). Back to 2.8 ms. Details and per-release table: `docs/design/startup-regression-2026-11.md`.
 Not yet re-measured on a droplet.
 
+## OpenTelemetry tracing (2026-11-25, branch `opentelemetry`)
+
+Design and the mapping to Camel in `docs/design/opentelemetry.md`; user guide `docs/guides/opentelemetry.md`.
+
+- **Built:** `cameleer_core::telemetry` (route, producer and processor spans with `camel-opentelemetry2`'s names,
+  kinds and attributes; W3C Trace Context and Baggage on the message headers; samplers, limits, `excludePatterns`,
+  `encoding`; the producer-wrapper SPI `CamelContext::add_producer_wrapper`); the new crate `cameleer-opentelemetry`
+  (feature `opentelemetry`, in `full`: OTLP/HTTP protobuf exporter, batch span processor, `OTEL_*`, an embedded OTLP
+  receiver in `testing`); `Main` installs it from `camel.opentelemetry.*` and flushes at stop and after each Lambda
+  invocation; trace and span ids in log lines; `camel.main.log-format` / `CAMEL_LOG_FORMAT` / `--log-format` /
+  `--logging-json` (`text`, `ecs`, `logstash`).
+- **Tests:** core `tests/telemetry.rs` (7), `cameleer-opentelemetry` (8 unit, 6 exporter against the receiver: gzip,
+  headers, retries with `Retry-After`, final statuses, budget, partial success, drop and count with a dead collector),
+  `cameleer-main/tests/opentelemetry.rs` (one trace across HTTP, Kafka on the embedded broker and HTTP over three
+  services; `Main` from properties), propagation over JMS on STOMP, AMQP 1.0 and gRPC metadata.
+- **Official Collector:** `scripts/otel-collector.sh` (otelcol 0.165.0, SHA-256 pinned) and
+  `tests/official_otel_collector.rs` (`CAMEL_OFFICIAL_CLIENTS=1`). **Not run yet**: downloading the Collector was not
+  permitted in the session that built this; run `scripts/otel-collector.sh all` in WSL.
+- **Overhead** (`benchmarks/results/2026-11-25-windows-opentelemetry/`, one Windows desktop): off 0.92x to 1.08x of
+  `main` (noise); on, 0.1 to 0.35 µs per span; the exporter sends about 0.8 M spans/s and drops beyond.
+- **Left out:** OTLP metrics and logs, OTLP gRPC and JSON, B3/Jaeger propagators, Camel's MDC keys in log lines, the
+  `log` EIP as span events, otel2's `includePatterns`/`traceHeadersInclusion`; not measured on Linux or droplets.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it
