@@ -1177,7 +1177,7 @@ struct Program {
     insts: Vec<Inst>,
     classes: Vec<CharClass>,
     groups: usize,
-    names: BTreeMap<String, usize>,
+    names: Arc<BTreeMap<String, usize>>,
     nslots: usize,
 }
 
@@ -1191,9 +1191,9 @@ pub struct Regex {
 /// The result of a successful match: group spans as byte offsets.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Captures {
-    text: String,
+    text: Arc<str>,
     spans: Vec<Option<(usize, usize)>>,
-    names: BTreeMap<String, usize>,
+    names: Arc<BTreeMap<String, usize>>,
 }
 
 impl Captures {
@@ -1268,7 +1268,7 @@ impl Regex {
         let nslots = base + c.progress_slots;
         Ok(Regex {
             pattern: pattern.to_string(),
-            prog: Arc::new(Program { insts: c.prog, classes: c.classes, groups: p.groups, names: p.names, nslots }),
+            prog: Arc::new(Program { insts: c.prog, classes: c.classes, groups: p.groups, names: Arc::new(p.names), nslots }),
         })
     }
 
@@ -1330,7 +1330,7 @@ impl Regex {
         None
     }
 
-    fn to_captures(&self, text: &str, prep: &Prepared, slots: &[usize]) -> Captures {
+    fn to_captures(&self, text: &Arc<str>, prep: &Prepared, slots: &[usize]) -> Captures {
         let spans = (0..=self.prog.groups)
             .map(|g| {
                 let (s, e) = (slots[2 * g], slots[2 * g + 1]);
@@ -1341,7 +1341,7 @@ impl Regex {
                 }
             })
             .collect();
-        Captures { text: text.to_string(), spans, names: self.prog.names.clone() }
+        Captures { text: text.clone(), spans, names: self.prog.names.clone() }
     }
 
     /// True if the regex matches anywhere in `text` (Java `Matcher.find`).
@@ -1386,13 +1386,13 @@ impl Regex {
     /// Groups of a full match (the whole text must match).
     pub fn full_captures(&self, text: &str) -> Option<Captures> {
         let p = prepare(text);
-        self.search(&p.chars, 0, true).map(|s| self.to_captures(text, &p, &s))
+        self.search(&p.chars, 0, true).map(|s| self.to_captures(&Arc::from(text), &p, &s))
     }
 
     /// First match with spans and named-group access.
     pub fn captures_match(&self, text: &str) -> Option<Captures> {
         let p = prepare(text);
-        self.search(&p.chars, 0, false).map(|s| self.to_captures(text, &p, &s))
+        self.search(&p.chars, 0, false).map(|s| self.to_captures(&Arc::from(text), &p, &s))
     }
 
     /// Value of a named group in the first match.
@@ -1402,15 +1402,22 @@ impl Regex {
 
     /// All non-overlapping matches with their groups.
     pub fn captures_iter(&self, text: &str) -> Vec<Captures> {
+        self.captures_n(text, usize::MAX)
+    }
+
+    /// At most `n` non-overlapping matches. Every match shares one copy of `text` (copying it per
+    /// match made iterating the matches of a large body quadratic).
+    fn captures_n(&self, text: &str, n: usize) -> Vec<Captures> {
         let p = prepare(text);
+        let shared: Arc<str> = Arc::from(text);
         let mut out = Vec::new();
         let mut start = 0;
-        while start <= p.chars.len() {
+        while start <= p.chars.len() && out.len() < n {
             match self.search(&p.chars, start, false) {
                 None => break,
                 Some(s) => {
                     let (ms, me) = (s[0], s[1]);
-                    out.push(self.to_captures(text, &p, &s));
+                    out.push(self.to_captures(&shared, &p, &s));
                     start = if me == ms { me + 1 } else { me };
                 }
             }
@@ -1475,10 +1482,7 @@ impl Regex {
     fn replace_n(&self, text: &str, replacement: &str, n: usize) -> String {
         let mut out = String::new();
         let mut last = 0;
-        for (k, caps) in self.captures_iter(text).into_iter().enumerate() {
-            if k >= n {
-                break;
-            }
+        for caps in self.captures_n(text, n) {
             let (s, e) = caps.span(0).unwrap();
             out.push_str(&text[last..s]);
             self.expand(&caps, replacement, &mut out);
@@ -1678,5 +1682,42 @@ mod tests {
         let re = Regex::new("(?:a|b)*c").unwrap();
         let text = "ab".repeat(50_000) + "c";
         assert!(re.is_full_match(&text));
+    }
+}
+
+#[cfg(test)]
+mod shared_captures_tests {
+    use super::Regex;
+    use std::sync::Arc;
+
+    #[test]
+    fn matches_of_one_search_share_the_subject_text() {
+        let re = Regex::new("[0-9]+").unwrap();
+        let text = "1 22 333 4444";
+        let caps = re.captures_iter(text);
+        assert_eq!(caps.len(), 4);
+        assert!(caps.windows(2).all(|w| Arc::ptr_eq(&w[0].text, &w[1].text)), "each match copied the text");
+        assert!(caps.windows(2).all(|w| Arc::ptr_eq(&w[0].names, &w[1].names)), "each match copied the group names");
+        assert_eq!(caps.iter().map(|c| c.get(0).unwrap()).collect::<Vec<_>>(), ["1", "22", "333", "4444"]);
+    }
+
+    #[test]
+    fn replace_first_stops_after_the_first_match() {
+        let re = Regex::new("(a)(b)?").unwrap();
+        assert_eq!(re.replace_first("xaxabx", "[$1$2]"), "x[a]xabx");
+        assert_eq!(re.replace_all("xaxabx", "[$1$2]"), "x[a]x[ab]x");
+        assert_eq!(re.replace_first("none", "-"), "none");
+    }
+
+    #[test]
+    fn splitting_a_large_body_with_many_matches_is_linear() {
+        // 64 KiB of numbers separated by commas: about 13,000 matches. Before the matches shared
+        // the text this copied the body once per match (about 0.9 GB of copying).
+        let body: String = (0..13_000).map(|i| (i % 1000).to_string()).collect::<Vec<_>>().join(",");
+        let re = Regex::new(",").unwrap();
+        let parts = re.split(&body);
+        assert_eq!(parts.len(), 13_000);
+        assert_eq!(parts[999], "999");
+        assert_eq!(re.find_iter(&body).count(), 12_999);
     }
 }

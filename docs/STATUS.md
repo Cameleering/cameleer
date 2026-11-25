@@ -713,6 +713,30 @@ Not yet re-measured on a droplet.
 - Pages `docs/components/splunk-hec.md` and `lumberjack.md`, "Log pipelines" in the observability guide,
   `examples/logs-to-splunk.camel.yaml`, FEATURES rows (231 with alibaba-sls).
 
+## pathscale crates evaluated, five fixes from it (2026-11-25, branch `claude/busy-booth-479e16`)
+
+- **Evaluation.** `docs/design/pathscale-evaluation.md` covers nagoya, worktable, ekostd,
+  endpoint-libs and the ps- crates: none is adopted, and the std-only rule stays.
+  - No Windows.
+  - nagoya's timers never fire on x86_64 since 0.1.22.
+  - None of them is faster than the code it would replace.
+- **Fixes, from comparing against them** (section 9 there, `CHANGELOG.md` Unreleased):
+  - the aggregator's completion timeout keeps its deadlines in order (2.9x to 14.4x per message);
+  - regex matches share the subject text (64 KiB `split` 418 ms to 2.9 ms);
+  - the embedded `TcpServer` accept threads block instead of polling every 5 ms;
+  - the cloud `HttpClient::send_to` uses the keep-alive pool;
+  - `JdbcAggregationRepository` reads `MAX(seq)` once.
+- **Tests.**
+  - Windows 11: `cargo test --workspace --no-fail-fast` 3,001 passed, 0 failed, zero warnings.
+    In an earlier run, `cameleer-bench` `short_run_reports_throughput_and_latency` failed once
+    under load; it passed 3/3 alone.
+  - WSL2: the changed crates (core, tls, amqp, kafka-mqtt, cloud, sql) 1,332 passed and 1 failed,
+    the known timing-sensitive `component_timer` test. It passed 5/5 alone. `cancel.rs`
+    `a_passed_deadline_cancels_the_exchange_and_its_copies` failed once in an earlier run and
+    passed 5/5 alone.
+  - Live tiers not run. `JdbcAggregationRepository`'s new `CREATE INDEX IF NOT EXISTS` was
+    checked only against the embedded engine, not PostgreSQL.
+
 ## Pending / todo
 
 Everything below is extra verification of an implementation that's already done. None of it
