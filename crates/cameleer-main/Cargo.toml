@@ -30,6 +30,7 @@ cameleer-script = { path = "../cameleer-script", version = "0.8.0", optional = t
 cameleer-soap = { path = "../cameleer-soap", version = "0.8.0", optional = true }
 cameleer-saas = { path = "../cameleer-saas", version = "0.8.0", optional = true }
 cameleer-kafka-mqtt = { path = "../cameleer-kafka-mqtt", version = "0.8.0", optional = true }
+cameleer-opentelemetry = { path = "../cameleer-opentelemetry", version = "0.8.0", optional = true }
 cameleer-sql = { path = "../cameleer-sql", version = "0.8.0", optional = true }
 cameleer-ssh = { path = "../cameleer-ssh", version = "0.8.0", optional = true }
 cameleer-xml = { path = "../cameleer-xml", version = "0.8.0", optional = true }
@@ -50,7 +51,7 @@ default = ["full"]
 # nothing optional: `--no-default-features --features core` (or `FEATURES=core` for the image)
 core = []
 full = [
-    "ai", "amqp", "amqp10", "attest", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
+    "ai", "amqp", "amqp10", "attest", "cloud", "dataformats", "datastores", "grpc", "kafka-mqtt", "opentelemetry", "protocols", "saas", "script", "soap", "sql", "ssh", "xml",
     "templates", "jq", "xpath", "validate",
 ]
 templates = ["cameleer-core/templates"]
@@ -63,6 +64,8 @@ ai = ["dep:cameleer-ai", "cameleer-yaml/agent"]
 # attestation in hardware TEEs (camel.attestation.*): configfs-tsm and dstack evidence
 attest = ["dep:cameleer-attest"]
 amqp = ["dep:cameleer-amqp"]
+# OpenTelemetry tracing exported over OTLP/HTTP (camel.opentelemetry.*, OTEL_*)
+opentelemetry = ["dep:cameleer-opentelemetry"]
 amqp10 = ["dep:cameleer-amqp10"]
 cloud = ["dep:cameleer-cloud", "cameleer-yaml/agent"]
 dataformats = ["dep:cameleer-dataformats"]

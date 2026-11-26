@@ -74,6 +74,11 @@ fn management_endpoints_over_http() {
     assert_eq!(r.headers.get_all("Content-Type"), vec!["text/plain; version=0.0.4; charset=utf-8"]);
     let text = r.body_text();
     assert!(text.contains(&format!("camel_exchanges_total{{camelContext=\"{}\",routeId=\"hello\"}} 2", ctx.name())), "{}", text);
+    // the same endpoints at the paths of Camel's camel-observability-services
+    for p in ["/observe/health", "/observe/health/ready", "/observe/health/live", "/observe/metrics"] {
+        assert_eq!(c.get(&format!("{}{}", base, p)).unwrap().status, 200, "{p}");
+    }
+    assert_eq!(c.get(&format!("{}/observe/metrics", base)).unwrap().body_text().lines().next(), text.lines().next());
 
     // dev consoles
     let v = json::parse(&c.get(&format!("{}/q/dev", base)).unwrap().body_text()).unwrap();

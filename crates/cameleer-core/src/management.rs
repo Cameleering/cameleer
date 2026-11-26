@@ -1129,3 +1129,8 @@ mod tests {
         assert_eq!(p.snapshot().min_processing_time, 0);
     }
 }
+
+/// The node id management gave `def` in the route being created (`to3`, `log1`), if known.
+pub fn node_id(rc: &RouteContext, def: &dyn ProcessorDefinition) -> Option<String> {
+    rc.attribute::<NodeIndex>("camel.management.nodeIndex").and_then(|i| i.0.get(&def_addr(def)).map(|k| k.0.clone()))
+}

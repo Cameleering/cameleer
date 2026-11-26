@@ -14,6 +14,7 @@ same. Start with a guide, then look up the components your route uses.
 | look up a `cameleer` command or flag | [The cameleer command line](guides/cli.md) |
 | test routes with `cameleer validate`, `cameleer test` or Rust tests | [Testing](guides/testing.md) |
 | add health checks, Prometheus metrics, logs and tracing | [Observability](guides/observability.md) |
+| send distributed traces to Jaeger, Tempo or any OpenTelemetry backend | [OpenTelemetry](guides/opentelemetry.md) |
 | set up HTTPS, mutual TLS, trust stores and secrets | [TLS and security](guides/tls-and-security.md) |
 | prove to a client what runs, inside a confidential VM (since 0.6.0) | [Attestation](guides/attestation.md) |
 | send or receive messages with Kafka, HTTP, S3, Slack, SQL, ... | [Components](components/), one page per endpoint scheme, grouped by category |

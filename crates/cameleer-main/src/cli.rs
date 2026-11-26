@@ -6,7 +6,7 @@
 //!                                               Integration (.integration.yaml) from a template
 //! cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
 //!           [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop k=v]
-//!           [--log-level L] [--console] [--port N] [--trace]
+//!           [--log-level L] [--log-format F] [--logging-json] [--console] [--port N] [--trace]
 //! cameleer export [files...] --directory DIR [--name N] [--camel-path PATH]
 //!                                               standalone Cargo project embedding the routes
 //! cameleer bind <name> --source S --sink S [--step S]... [--property source.k=v]...
@@ -52,7 +52,7 @@ pub fn usage() -> &'static str {
   cameleer init <file> [--directory DIR]
   cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
             [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop key=value]
-            [--log-level LEVEL] [--console] [--port N] [--trace] [--mcp | --mcp-stdio] [--mcp-expose PATTERNS]
+            [--log-level LEVEL] [--log-format text|ecs|logstash] [--logging-json] [--console] [--port N] [--trace] [--mcp | --mcp-stdio] [--mcp-expose PATTERNS]
   cameleer export [files...] --directory DIR [--name N] [--camel-path PATH]
   cameleer bind <name> --source S --sink S [--step S]... [--property source.k=v]...
              [--error-handler log|none|sink:URI] [--output FILE]
@@ -337,9 +337,9 @@ fn init(args: &[String], out: &mut dyn Write) -> CliResult {
 // ---------------------------------------------------------------------------
 
 fn run_cmd(args: &[String]) -> CliResult {
-    let a = Args::parse(args, &["dev", "console", "trace", "background", "mcp", "mcp-stdio"])?;
+    let a = Args::parse(args, &["dev", "console", "trace", "background", "mcp", "mcp-stdio", "logging-json"])?;
     a.check(&[
-        "properties", "profile", "dev", "name", "background", "max-seconds", "max-messages", "max-idle-seconds", "prop", "log-level", "console",
+        "properties", "profile", "dev", "name", "background", "max-seconds", "max-messages", "max-idle-seconds", "prop", "log-level", "log-format", "logging-json", "console",
         "port", "trace", "mcp", "mcp-stdio", "mcp-expose",
     ])?;
     if a.flag("mcp-stdio") && a.flag("background") {
@@ -389,6 +389,7 @@ fn run_cmd(args: &[String]) -> CliResult {
         ("max-messages", "camel.main.duration-max-messages"),
         ("max-idle-seconds", "camel.main.duration-max-idle-seconds"),
         ("log-level", "camel.main.log-level"),
+        ("log-format", "camel.main.log-format"),
         ("name", "camel.main.name"),
     ] {
         if let Some(v) = a.get(opt) {
@@ -397,6 +398,10 @@ fn run_cmd(args: &[String]) -> CliResult {
     }
     if a.flag("dev") {
         main.set_property("camel.main.dev-reload", "true");
+    }
+    // Camel JBang's `--logging-json`: JSON lines in the ECS layout
+    if a.flag("logging-json") {
+        main.set_property("camel.main.log-format", "ecs");
     }
     if a.flag("console") {
         for k in ["camel.server.enabled", "camel.server.devConsoleEnabled", "camel.server.healthCheckEnabled", "camel.server.metricsEnabled"] {

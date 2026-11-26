@@ -1,0 +1,18 @@
+[package]
+name = "cameleer-opentelemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+readme.workspace = true
+keywords = ["camel", "opentelemetry", "otlp", "tracing", "observability"]
+categories = ["development-tools::debugging", "network-programming"]
+description = "Cameleer OpenTelemetry (std only): OTLP/HTTP protobuf span exporter with a bounded batch processor, configured by camel.opentelemetry.* and the OTEL_* environment variables"
+
+[dependencies]
+cameleer-core = { path = "../cameleer-core", version = "0.8.0", default-features = false }
+cameleer-http = { path = "../cameleer-http", version = "0.8.0", default-features = false }
+cameleer-tls = { path = "../cameleer-tls", version = "0.8.0" }
