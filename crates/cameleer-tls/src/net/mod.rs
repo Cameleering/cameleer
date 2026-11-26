@@ -130,6 +130,21 @@ fn is_transient_bind_error(e: &io::Error) -> bool {
     matches!(e.kind(), io::ErrorKind::AddrInUse | io::ErrorKind::AddrNotAvailable) || (cfg!(windows) && e.raw_os_error() == Some(WSAENOBUFS))
 }
 
+/// Wakes a thread blocked in `accept` on a listener bound to `local`, by connecting to it once.
+/// A blocking accept is not reliably woken by closing or shutting down its listener on every
+/// platform (Linux, Windows and macOS differ); a connection always wakes it. The accept loop must
+/// re-check its stop flag after each accepted connection. Returns false if no connection could be
+/// made within two seconds.
+pub fn wake_accept(local: SocketAddr) -> bool {
+    let target = if local.ip().is_unspecified() {
+        let ip: std::net::IpAddr = if local.is_ipv4() { std::net::Ipv4Addr::LOCALHOST.into() } else { std::net::Ipv6Addr::LOCALHOST.into() };
+        SocketAddr::new(ip, local.port())
+    } else {
+        local
+    };
+    TcpStream::connect_timeout(&target, Duration::from_secs(2)).is_ok()
+}
+
 /// Shuts `tcp` down and wakes threads blocked reading it, as `shutdown` does on
 /// Unix. On Windows `shutdown` does not interrupt a blocked `recv`, so the socket's
 /// pending I/O is cancelled too (the reader then gets an error).

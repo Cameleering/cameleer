@@ -276,7 +276,7 @@ CATEGORY_ORDER = [
     "Core and routing", "Scheduling", "Files, shell and streams", "HTTP, REST and web services",
     "Messaging and streaming", "Network protocols", "Mail", "Databases and search",
     "AI and LLMs", "Chat and SaaS", "Amazon Web Services", "Microsoft Azure",
-    "Google Cloud and Workspace", "Templating", "XML, JSON and validation", "Other",
+    "Google Cloud and Workspace", "Alibaba Cloud", "Templating", "XML, JSON and validation", "Other",
 ]
 CATEGORIES = {
     "Core and routing": "bean browse class controlbus dataformat dataset dataset-test direct kamelet language log mock ref saga seda stub test vm",
@@ -284,11 +284,11 @@ CATEGORIES = {
     "Files, shell and streams": "file ftp ftps sftp scp ssh exec stream",
     "HTTP, REST and web services": "http https platform-http rest netty-http jetty undertow webhook graphql cxf cxfrs spring-ws fhir websocket ws wss vertx-websocket rss atom",
     "Messaging and streaming": "kafka paho paho-mqtt5 amqp amqp-stomp activemq jms rabbitmq spring-rabbitmq stomp",
-    "Network protocols": "netty mllp syslog grpc thrift",
+    "Network protocols": "netty mllp syslog lumberjack grpc thrift",
     "Mail": "mail smtp smtps imap imaps pop3 pop3s",
     "Databases and search": "sql sql-stored jdbc mongodb mongodb-gridfs spring-redis redis cql cassandra couchdb elasticsearch opensearch",
     "AI and LLMs": "openai anthropic gemini ai-tool ai-resource ai-prompt mcp aws-bedrock aws-bedrock-agent-runtime aws2-bedrock azure-openai google-vertexai",
-    "Chat and SaaS": "slack telegram github jira twilio",
+    "Chat and SaaS": "slack telegram github jira twilio splunk-hec",
     "Templating": "mustache velocity freemarker string-template mvel",
     "XML, JSON and validation": "xslt xslt-saxon xquery xj validator json-validator xmlsecurity-sign xmlsecurity-verify xmlsecurity",
 }
@@ -306,6 +306,8 @@ def category_for(stem, explicit=None):
         return "Microsoft Azure"
     if stem.startswith("google-"):
         return "Google Cloud and Workspace"
+    if stem.startswith("alibaba-"):
+        return "Alibaba Cloud"
     return "Other"
 
 

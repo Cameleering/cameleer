@@ -83,6 +83,8 @@ pub mod kinds {
     pub const GOOGLE_JSON: &str = "GoogleJsonResponseException";
     /// OAuth2 token exchange failure.
     pub const GOOGLE_AUTH: &str = "GoogleAuthException";
+    /// Alibaba Cloud SDK errors (`com.aliyun.tea.TeaException`, thrown by the SLS client).
+    pub const ALIBABA_TEA: &str = "TeaException";
 }
 
 /// Register the exception hierarchy once (so `onException(AwsServiceException)` catches `S3Exception`).
@@ -146,6 +148,7 @@ pub fn ensure_kinds() {
         p(kinds::FIRESTORE, kinds::GOOGLE_SERVICE);
         p(kinds::GOOGLE_JSON, kinds::GOOGLE_SERVICE);
         p(kinds::GOOGLE_AUTH, cameleer_core::error::kinds::IO);
+        p(kinds::ALIBABA_TEA, cameleer_core::error::kinds::RUNTIME);
     });
 }
 

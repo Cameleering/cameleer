@@ -49,7 +49,7 @@ pub const COMPONENTS: &[(&str, &[&str])] = &[
     ("ssh", &["sftp", "ssh"]),
     (
         "protocols",
-        &["ftp", "ftps", "imap", "imaps", "pop3", "pop3s", "smtp", "smtps", "syslog", "vertx-websocket", "websocket", "ws", "wss"],
+        &["ftp", "ftps", "imap", "imaps", "lumberjack", "pop3", "pop3s", "smtp", "smtps", "syslog", "vertx-websocket", "websocket", "ws", "wss"],
     ),
     ("kafka-mqtt", &["kafka", "paho", "paho-mqtt5"]),
     ("sql", &["jdbc", "sql", "sql-stored"]),
@@ -58,7 +58,7 @@ pub const COMPONENTS: &[(&str, &[&str])] = &[
     ("grpc", &["grpc"]),
     ("datastores", &["couchdb", "cql", "elasticsearch", "mongodb", "mongodb-gridfs", "opensearch", "spring-redis"]),
     ("script", &["mvel"]),
-    ("saas", &["anthropic", "atom", "gemini", "github", "graphql", "jira", "llm", "openai", "rss", "slack", "telegram", "twilio", "webhook"]),
+    ("saas", &["anthropic", "atom", "gemini", "github", "graphql", "jira", "llm", "openai", "rss", "slack", "splunk-hec", "telegram", "twilio", "webhook"]),
     ("soap", &["cxf", "cxfrs", "spring-ws"]),
     ("dataformats", &["thrift"]),
     ("templates", &["freemarker", "mustache", "string-template", "velocity"]),
@@ -116,7 +116,7 @@ pub fn feature_for(kind: &str, name: &str) -> Option<&'static str> {
         return Some(f);
     }
     // the cloud family is large; its schemes share prefixes
-    if kind == "component" && (name.starts_with("aws") || name.starts_with("azure-") || name.starts_with("google-")) {
+    if kind == "component" && (name.starts_with("aws") || name.starts_with("azure-") || name.starts_with("google-") || name.starts_with("alibaba-")) {
         return Some("cloud");
     }
     None
@@ -143,6 +143,7 @@ mod tests {
     #[test]
     fn cloud_prefixes_and_tables() {
         assert_eq!(feature_for("component", "aws2-s3"), Some("cloud"));
+        assert_eq!(feature_for("component", "alibaba-sls"), Some("cloud"));
         assert_eq!(feature_for("component", "azure-servicebus"), Some("amqp10"));
         assert_eq!(feature_for("component", "kafka"), Some("kafka-mqtt"));
         assert_eq!(feature_for("language", "groovy"), Some("script"));

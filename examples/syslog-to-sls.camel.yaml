@@ -1,0 +1,22 @@
+# Syslog to Alibaba Cloud Simple Log Service: receive syslog (RFC 5424 and RFC 3164) over UDP, keep
+# warnings and worse, and write each message to an SLS Logstore as one log (host, severity,
+# facility, message and the other syslog fields as its keys).
+#
+# Needs: an SLS project with a Logstore named syslog, and an AccessKey that may write to it.
+#   export ALIBABA_CLOUD_ACCESS_KEY_ID=... ALIBABA_CLOUD_ACCESS_KEY_SECRET=...
+#   export SLS_PROJECT=my-project ALIBABA_CLOUD_REGION=cn-hangzhou   # optional: -Dsyslog.port (default 5514)
+#
+# Run with Docker (Linux):
+#   docker run --rm --network host --read-only -e ALIBABA_CLOUD_ACCESS_KEY_ID -e ALIBABA_CLOUD_ACCESS_KEY_SECRET \
+#     -e SLS_PROJECT -e ALIBABA_CLOUD_REGION -v "$PWD:/routes:ro" cameleering/cameleer run /routes/syslog-to-sls.camel.yaml
+# Try:
+#   logger -n 127.0.0.1 -P 5514 -d -p user.err "disk almost full"
+- route:
+    id: syslog-to-sls
+    from:
+      uri: "syslog:udp://{{syslog.host:0.0.0.0}}:{{syslog.port:5514}}"
+      steps:
+        - filter:
+            simple: "${header.CamelSyslogSeverity} in 'EMERG,ALERT,CRIT,ERR,WARNING'"
+            steps:
+              - to: "alibaba-sls:putLogs?project={{env:SLS_PROJECT:my-project}}&logStoreName=syslog&region={{env:ALIBABA_CLOUD_REGION:cn-hangzhou}}"

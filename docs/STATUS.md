@@ -49,7 +49,7 @@ Branch `main`._
 
 ## Where things stand
 
-The implementation is complete against the feature list: `docs/FEATURES.md` has 228 rows, all
+The implementation is complete against the feature list: `docs/FEATURES.md` has 231 rows, all
 ✅. Results of the last full run, all in one container session:
 
 | check | result |
@@ -672,6 +672,26 @@ side was run in that session.
   - Cameleer: flat throughput and p99, constant threads and descriptors, 0.6 to 1.3 MB of RSS growth that slows.
   - Camel on the JVM grows by 17 to 71 MB and the TypeScript SDK by 89 MB in the hour.
 
+## Alibaba Cloud Simple Log Service (2026-11-25, unreleased)
+
+- **`alibaba-sls`** (Camel's `camel-alibaba-sls`, Preview since Camel 4.23) in `cameleer-cloud`, feature `cloud`:
+  `putLogs` (protobuf `LogGroup`, lz4 / deflate / none), `getLogs` (the 2020-12-30 `POST /logstores/{name}/logs`),
+  `listLogStores`; Camel's URI, options and `CamelAlibabaSls*` headers; signature V1 (HMAC-SHA256 as Camel's SDK, or
+  HMAC-SHA1) and V4. Code in `crates/cameleer-cloud/src/alibaba/`, page `docs/components/alibaba-sls.md`, example
+  `examples/syslog-to-sls.camel.yaml`.
+- **Verified:** the official Go and Python SDKs' signature test vectors (V1 HMAC-SHA1, V4, percent-encoding);
+  `SlsMock` (`testing/alibaba.rs`) recomputes every signature, checks Content-MD5 and the raw size, decompresses and
+  decodes the protobuf (`tests/alibaba_sls.rs`, `cameleer-main/tests/docs_cloud_alibaba.rs`).
+- **Official client:** `tests/official_alibaba.rs` (`CAMEL_OFFICIAL_CLIENTS=1`) passes with Alibaba's Python SDK,
+  aliyun-log-python-sdk 0.9.53 (sdist checksum-pinned in `scripts/official-clients.sh`), on Windows 11 with Python 3.12.10
+  (dependencies from pip: six 1.17.0, requests 2.32.3, python-dateutil 2.9.0.post0, protobuf 5.29.3, lz4 4.3.3, jmespath
+  1.0.1): V1 (HMAC-SHA1) and V4 signatures, CreateLogstore, PutLogs lz4 and uncompressed with topic, source and tags,
+  GetLogs with a query, ListLogStores, a wrong secret refused; the component reads what the SDK wrote. It found one mock
+  bug (V4 requests carry no Content-MD5; `docs/INTEROP.md` official-clients bug 20). Not yet run in the Ubuntu set-up of
+  `official-clients.sh` (apt dependencies).
+- **Not verified:** the real service (no Alibaba Cloud account). Not built: zstd (the default of Camel's SDK), Camel's
+  `serviceKeys` / `slsClient` objects, ECS RAM roles and OIDC credentials.
+
 ## Start-up regression found and fixed (2026-11-22)
 
 The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31 ms on WSL2 (12 ms on the
@@ -679,6 +699,43 @@ The in-process `startup` scenario went from about 2 ms (0.4.0 to 0.6.0) to 27-31
 period when a second thread exists. `cameleer_http::register` now does it while the process is single-threaded
 (test `early_descriptors`). Back to 2.8 ms. Details and per-release table: `docs/design/startup-regression-2026-11.md`.
 Not yet re-measured on a droplet.
+
+## Log pipeline components (2026-11-25)
+
+- **`splunk-hec`** (`cameleer-saas`, feature `saas`): Camel's producer to Splunk's HTTP Event Collector, its options,
+  the `CamelSplunkHECIndexTime` header, the JSON envelope and the 200-only success rule (`RuntimeCamelException`
+  otherwise). `skipTlsVerify=true` is refused. Hermetic tests against `testing::SplunkHecMock` (HTTP and HTTPS).
+  Not tested against a real Splunk: its image needs the license accepted, which is the owner's call.
+- **`lumberjack`** (`cameleer-protocols`, feature `protocols`): Camel's consumer, Lumberjack v1/v2 (window, JSON,
+  data, compressed frames; one ACK per window after the route; no ACK and a closed connection on failure), TLS.
+  Hermetic tests with `testing::LumberjackClient`; official tier `official_lumberjack.rs` with Filebeat 9.2.0 OSS
+  (3/3 on Windows 11 and on WSL2 Ubuntu 24.04, 2026-11-25).
+- Pages `docs/components/splunk-hec.md` and `lumberjack.md`, "Log pipelines" in the observability guide,
+  `examples/logs-to-splunk.camel.yaml`, FEATURES rows (231 with alibaba-sls).
+
+## pathscale crates evaluated, five fixes from it (2026-11-25, branch `claude/busy-booth-479e16`)
+
+- **Evaluation.** `docs/design/pathscale-evaluation.md` covers nagoya, worktable, ekostd,
+  endpoint-libs and the ps- crates: none is adopted, and the std-only rule stays.
+  - No Windows.
+  - nagoya's timers never fire on x86_64 since 0.1.22.
+  - None of them is faster than the code it would replace.
+- **Fixes, from comparing against them** (section 9 there, `CHANGELOG.md` Unreleased):
+  - the aggregator's completion timeout keeps its deadlines in order (2.9x to 14.4x per message);
+  - regex matches share the subject text (64 KiB `split` 418 ms to 2.9 ms);
+  - the embedded `TcpServer` accept threads block instead of polling every 5 ms;
+  - the cloud `HttpClient::send_to` uses the keep-alive pool;
+  - `JdbcAggregationRepository` reads `MAX(seq)` once.
+- **Tests.**
+  - Windows 11: `cargo test --workspace --no-fail-fast` 3,001 passed, 0 failed, zero warnings.
+    In an earlier run, `cameleer-bench` `short_run_reports_throughput_and_latency` failed once
+    under load; it passed 3/3 alone.
+  - WSL2: the changed crates (core, tls, amqp, kafka-mqtt, cloud, sql) 1,332 passed and 1 failed,
+    the known timing-sensitive `component_timer` test. It passed 5/5 alone. `cancel.rs`
+    `a_passed_deadline_cancels_the_exchange_and_its_copies` failed once in an earlier run and
+    passed 5/5 alone.
+  - Live tiers not run. `JdbcAggregationRepository`'s new `CREATE INDEX IF NOT EXISTS` was
+    checked only against the embedded engine, not PostgreSQL.
 
 ## Pending / todo
 
