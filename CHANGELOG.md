@@ -5,6 +5,15 @@ All notable changes to Cameleer. Versions follow [Semantic Versioning](https://s
 
 ## Unreleased
 
+- **Metrics, as Camel's `micrometer`, `metrics` (Dropwizard) and `opentelemetry-metrics` components** on one std-only
+  metric registry: counters, timers, summaries, histograms, meters and gauges from routes with Camel's URIs, options,
+  `CamelMetrics*` headers and tags. `camel.metrics.enabled=true` adds Camel's built-in meters (`camel.route.policy`,
+  `camel.exchanges.*`, `camel.exchange.event.notifier`, `camel.exchanges.inflight`, `camel.routes.*`,
+  `camel.message.history`, `app.info`) with Camel's tags and the `camel.metrics.*` options (naming strategy, route
+  policy level, notifiers, message history, `logMetricsOnShutdown`); `camel.opentelemetry.metrics.*` the same with
+  `camel-opentelemetry-metrics`' names. Served in Micrometer's Prometheus names at `/q/metrics` and `/observe/metrics`,
+  and exported over OTLP/HTTP with `OTEL_METRICS_EXPORTER=otlp` (`OTEL_METRIC_EXPORT_INTERVAL`,
+  `OTEL_EXPORTER_OTLP_METRICS_*`). Off unless a component or option uses it.
 - **OpenTelemetry tracing** (`camel.opentelemetry.enabled=true`, cargo feature `opentelemetry`, in `full`), as Camel's
   `camel-opentelemetry2`: a span for every exchange in every route, every send to an endpoint and, with
   `camel.opentelemetry.traceProcessors=true`, every processor, with Camel's span names, kinds and attributes; W3C

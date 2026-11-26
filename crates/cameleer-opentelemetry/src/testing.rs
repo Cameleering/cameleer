@@ -34,6 +34,7 @@ pub type Answer = (u16, Vec<(String, String)>, Vec<u8>);
 #[derive(Default)]
 struct Inner {
     spans: Vec<ReceivedSpan>,
+    metrics: Vec<Vec<crate::metrics::ReceivedMetric>>,
     requests: Vec<ReceivedRequest>,
     script: VecDeque<Answer>,
     /// Delay before answering (to make the exporter wait).
@@ -114,6 +115,11 @@ impl OtlpReceiver {
 
     pub fn spans(&self) -> Vec<ReceivedSpan> {
         self.inner.lock().unwrap().spans.clone()
+    }
+
+    /// The metric exports received, one list of metrics per request.
+    pub fn metric_exports(&self) -> Vec<Vec<crate::metrics::ReceivedMetric>> {
+        self.inner.lock().unwrap().metrics.clone()
     }
 
     pub fn requests(&self) -> Vec<ReceivedRequest> {
@@ -221,6 +227,13 @@ fn serve(conn: TcpStream, inner: Arc<Mutex<Inner>>) {
                         (200, Vec::new(), Vec::new())
                     }
                     ("/v1/traces", Err(e)) => (400, Vec::new(), e.into_bytes()),
+                    ("/v1/metrics", _) => match crate::metrics::decode_export_request(&raw) {
+                        Ok(m) => {
+                            inner.lock().unwrap().metrics.push(m);
+                            (200, Vec::new(), Vec::new())
+                        }
+                        Err(e) => (400, Vec::new(), e.into_bytes()),
+                    },
                     _ => (404, Vec::new(), Vec::new()),
                 }
             }

@@ -53,7 +53,8 @@ below is checked against the build by `limitations_match_the_catalog` in
 
 | not available | instead |
 |---|---|
-| OpenTelemetry metrics and logs over OTLP, Micrometer (`camel-micrometer`), `camel-observation` | traces are exported over OTLP ([OpenTelemetry](opentelemetry.md)); Prometheus metrics at `/q/metrics`, which an OpenTelemetry Collector can scrape; JSON log lines with trace ids (`--logging-json`) for the Collector's `filelog` receiver |
+| OpenTelemetry logs over OTLP, `camel-observation` (Micrometer Observation) | traces and metrics are exported over OTLP ([OpenTelemetry](opentelemetry.md)); Prometheus metrics at `/q/metrics`; JSON log lines with trace ids (`--logging-json`) for the Collector's `filelog` receiver |
+| Micrometer's JVM, thread pool and logging binders (`camel.metrics.binders`), OpenMetrics text (`textFormatVersion=1.0.0`), delta temporality | Camel's route and exchange meters (`camel.metrics.enabled`), the Prometheus 0.0.4 text, cumulative OTLP metrics |
 | OTLP over gRPC or as JSON, B3 and Jaeger propagation | OTLP/HTTP with protobuf (port 4318) and W3C Trace Context and Baggage; the Collector translates between formats |
 
 ## Data formats and files
@@ -80,7 +81,6 @@ Cameleer; for anything else, `cameleer catalog components` lists every scheme in
 | `kubernetes-pods`, `kubernetes-deployments` | Kubernetes API |
 | `pulsar`, `nats`, `jt400`, `mina`, `ldap`, `smb` | other protocols |
 | `salesforce`, `servicenow`, `sap-netweaver` | enterprise applications |
-| `opentelemetry`, `micrometer` | telemetry |
 | `couchbase` | Couchbase (binary key-value protocol) |
 
 ## What has not been verified yet
