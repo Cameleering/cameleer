@@ -7,6 +7,8 @@ use cameleer_dataformats::pgp::{self, Signer, WriteOptions};
 
 struct Gpg {
     home: PathBuf,
+    /// The output of `gpg --version`.
+    version: String,
     /// `home` as the installed gpg expects it in `GNUPGHOME`.
     home_env: String,
 }
@@ -33,7 +35,7 @@ impl Gpg {
         // `GNUPGHOME=C:\...` as a relative path; give it `/c/...` instead.
         let msys = version.lines().any(|l| l.starts_with("Home: /"));
         let home_env = if msys { msys_path(&home) } else { home.to_string_lossy().to_string() };
-        Some(Gpg { home, home_env })
+        Some(Gpg { home, home_env, version })
     }
 
     /// Run gpg with stdin; returns (success, stdout, stderr).
@@ -62,6 +64,15 @@ impl Gpg {
         let (ok, out, err) = self.run(args, stdin);
         assert!(ok, "gpg {:?} failed: {}", args, err);
         out
+    }
+
+    /// libgcrypt 1.12.0 cannot reliably use an imported Cv25519 secret key, not even one
+    /// gpg generated and exported itself: the agent's key check while converting the key
+    /// reports "Point 'G' does not belong to curve 'E'" (uninitialised MPI limbs, depending
+    /// on memory contents), which gpg shows as "Bad passphrase". GnuPG T8094, fixed in
+    /// libgcrypt 1.12.1; Ubuntu 26.04 ships 1.12.0.
+    fn has_cv25519_import_bug(&self) -> bool {
+        self.version.lines().any(|l| l.trim() == "libgcrypt 1.12.0")
     }
 
     fn fingerprint(&self, uid: &str) -> String {
@@ -109,19 +120,29 @@ fn gpg_interop_with_our_keys() {
     // ours -> gpg
     let pubring = pgp::parse_keyring(alice.public_keyring.as_bytes()).unwrap();
     let secring = pgp::parse_keyring(alice.secret_keyring.as_bytes()).unwrap();
-    let signer = Signer { key: &secring[0].primary, secret: secring[0].primary.unlock(Some("alicepw")).unwrap() };
-    let msg = pgp::encrypt(b"Hello from Cameleer", &[&pubring[0].subkeys[0]], &[signer], &WriteOptions::default()).unwrap();
+    let signer = || Signer { key: &secring[0].primary, secret: secring[0].primary.unlock(Some("alicepw")).unwrap() };
+    let msg = pgp::encrypt(b"Hello from Cameleer", &[&pubring[0].subkeys[0]], &[signer()], &WriteOptions::default()).unwrap();
     let (ok, out, err) = g.run(&["--passphrase", "alicepw", "--status-fd", "2", "--decrypt"], &msg);
-    assert!(ok, "gpg decrypt failed: {}", err);
-    assert_eq!(out, b"Hello from Cameleer");
-    assert!(err.contains("GOODSIG"), "{}", err);
-    assert!(err.contains("DECRYPTION_OKAY"), "{}", err);
+    if !ok && err.contains("Bad passphrase") && g.has_cv25519_import_bug() {
+        // Not our key (docs/INTEROP.md): check our signature instead of the two decryptions.
+        eprintln!("this gpg cannot use imported Cv25519 secret keys (libgcrypt 1.12.0, GnuPG T8094): skipping gpg decryption to our key");
+        let signed = pgp::sign(b"Hello from Cameleer", &[signer()], &WriteOptions::default()).unwrap();
+        let (ok, out, err) = g.run(&["--status-fd", "2", "--decrypt"], &signed);
+        assert!(ok, "gpg verify failed: {}", err);
+        assert_eq!(out, b"Hello from Cameleer");
+        assert!(err.contains("GOODSIG"), "{}", err);
+    } else {
+        assert!(ok, "gpg decrypt failed: {}", err);
+        assert_eq!(out, b"Hello from Cameleer");
+        assert!(err.contains("GOODSIG"), "{}", err);
+        assert!(err.contains("DECRYPTION_OKAY"), "{}", err);
 
-    // armored, ZLIB, AES-128, unsigned
-    let opts = WriteOptions { sym: 7, compression: 2, ..Default::default() };
-    let bin = pgp::encrypt(b"armored", &[&pubring[0].subkeys[0]], &[], &opts).unwrap();
-    let armored = pgp::packet::armor("MESSAGE", &bin);
-    assert_eq!(g.ok(&["--passphrase", "alicepw", "--decrypt"], armored.as_bytes()), b"armored");
+        // armored, ZLIB, AES-128, unsigned
+        let opts = WriteOptions { sym: 7, compression: 2, ..Default::default() };
+        let bin = pgp::encrypt(b"armored", &[&pubring[0].subkeys[0]], &[], &opts).unwrap();
+        let armored = pgp::packet::armor("MESSAGE", &bin);
+        assert_eq!(g.ok(&["--passphrase", "alicepw", "--decrypt"], armored.as_bytes()), b"armored");
+    }
 
     // gpg -> ours
     let enc = g.ok(&["--passphrase", "alicepw", "--armor", "--sign", "--encrypt", "-r", "alice@example.com", "-u", "alice@example.com"], b"Hello from gpg");

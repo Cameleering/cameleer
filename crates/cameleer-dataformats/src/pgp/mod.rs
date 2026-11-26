@@ -340,6 +340,60 @@ mod tests {
     use super::*;
     use super::key::HASH_SHA512;
 
+    /// Checks a Cv25519 subkey the way GnuPG stores it: the secret is the native X25519
+    /// scalar reversed into a big-endian MPI of exactly 255 bits (clamped: top bits 01,
+    /// low three bits 0), and X25519 of that scalar is the public point after 0x40.
+    fn assert_cv25519_as_gnupg(sub: &key::Key, secret: &key::SecretParams) {
+        let d = match secret {
+            key::SecretParams::Scalar(d) => d.clone(),
+            _ => panic!("not an ECC secret"),
+        };
+        assert_eq!(d.len(), 32);
+        assert_eq!(d[0] & 0xc0, 0x40, "bit 254 set, bit 255 clear");
+        assert_eq!(d[31] & 7, 0, "low three bits clear");
+        let point = match &sub.public {
+            key::PublicParams::Ecdh { point, .. } => point.clone(),
+            _ => panic!("not an ECDH key"),
+        };
+        let mut native: [u8; 32] = d.try_into().unwrap();
+        native.reverse();
+        let mut expected = vec![0x40];
+        expected.extend_from_slice(&cameleer_tls::crypto::x25519::x25519_base(&native));
+        assert_eq!(point, expected);
+    }
+
+    /// A Cv25519 subkey generated and exported (unprotected) by GnuPG 2.4.8. We read it,
+    /// write it back byte for byte, and our generated subkeys follow the same layout.
+    /// (gpg with libgcrypt 1.12.0 cannot reliably use any imported Cv25519 secret key,
+    /// its own included: docs/INTEROP.md, GnuPG T8094. This pins that our keys are not
+    /// the cause.)
+    #[test]
+    fn cv25519_secret_key_encoding_matches_gnupg() {
+        let body = cameleer_tls::util::unhex(concat!(
+            "046b06e2af120a2b060104019755010501010740d3e9867b4d7e5ed78c4560c08f1228c3a50a6bf0620f81",
+            "bfe07e7555db6df747030108070000ff4266651855472d74d1ea9a2a838515b78a6a515e148b552d2c2ded8b",
+            "e2cd93200eab"
+        ));
+        let sub = key::Key::parse_secret(&body).unwrap();
+        assert_eq!(sub.key_id_hex(), "6B641D0A46BA9AD0");
+        let secret = sub.unlock(None).unwrap();
+        assert_cv25519_as_gnupg(&sub, &secret);
+        assert_eq!(sub.secret_body(&secret, None), body);
+
+        for _ in 0..64 {
+            let g = generate_ed25519("Alice <alice@example.com>", Some("pw")).unwrap();
+            let cert = parse_keyring(g.secret_keyring.as_bytes()).unwrap().remove(0);
+            let sub = &cert.subkeys[0];
+            let secret = sub.unlock(Some("pw")).unwrap();
+            assert_cv25519_as_gnupg(sub, &secret);
+            // the unprotected form uses GnuPG's exact layout: S2K usage 0, MPI, checksum
+            let plain = sub.secret_body(&secret, None);
+            let tail = &plain[sub.public_body.len()..];
+            assert_eq!(&tail[..3], &[0x00, 0x00, 0xff]);
+            assert_eq!(tail.len(), 1 + 2 + 32 + 2);
+        }
+    }
+
     #[test]
     fn ed25519_round_trip_signed() {
         let alice = generate_ed25519("Alice <alice@example.com>", Some("pw")).unwrap();
