@@ -155,35 +155,84 @@ pub fn backoff(initial: Duration, max: Duration, n: u32) -> Duration {
     Duration::from_secs_f64((base * (1.0 + jitter)).max(0.0))
 }
 
-impl SpanExporter for OtlpHttpExporter {
-    fn export(&self, spans: &[SpanData], budget: Duration) -> ExportResult {
-        if spans.is_empty() {
-            return ExportResult::Success;
+impl OtlpHttpExporter {
+    /// The resource attributes sent with every request.
+    pub fn resource(&self) -> &Attributes {
+        &self.resource
+    }
+
+    /// The same exporter for another signal's url (`/v1/metrics`).
+    pub fn with_url(&self, url: &str) -> Result<OtlpHttpExporter> {
+        let mut e = OtlpHttpExporter { url: cameleer_http::client::Url::parse(url)?, ..self.clone_settings() };
+        e.client = self.client.clone();
+        Ok(e)
+    }
+
+    fn clone_settings(&self) -> OtlpHttpExporter {
+        OtlpHttpExporter {
+            url: self.url.clone(),
+            client: self.client.clone(),
+            headers: self.headers.clone(),
+            gzip: self.gzip,
+            timeout: self.timeout,
+            resource: self.resource.clone(),
+            max_attempts: self.max_attempts,
+            initial_backoff: self.initial_backoff,
+            max_backoff: self.max_backoff,
         }
+    }
+
+    /// Posts an encoded request (compressed here when gzip is on), retrying as the
+    /// specification allows within `budget`. The error says whether the last failure was
+    /// retryable.
+    pub fn post(&self, raw: &[u8], budget: Duration) -> std::result::Result<(), String> {
+        self.post_body(&self.compress(raw), budget).map_err(|(m, _)| m)
+    }
+
+    fn compress(&self, raw: &[u8]) -> Vec<u8> {
+        if self.gzip {
+            cameleer_core::dataformat::compress::gzip_compress(raw, 6)
+        } else {
+            raw.to_vec()
+        }
+    }
+
+    fn post_body(&self, body: &[u8], budget: Duration) -> std::result::Result<(), (String, bool)> {
         let deadline = Instant::now() + budget;
-        let body = self.body(spans);
         let mut n = 0;
         loop {
             n += 1;
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return ExportResult::Failure("export timeout".into(), true);
+                return Err(("export timeout".into(), true));
             }
-            match self.attempt(&body, self.timeout.min(left)) {
-                Ok(()) => return ExportResult::Success,
-                Err((msg, false, _)) => return ExportResult::Failure(msg, false),
+            match self.attempt(body, self.timeout.min(left)) {
+                Ok(()) => return Ok(()),
+                Err((msg, false, _)) => return Err((msg, false)),
                 Err((msg, true, after)) => {
                     if n >= self.max_attempts {
-                        return ExportResult::Failure(msg, true);
+                        return Err((msg, true));
                     }
                     let wait = backoff(self.initial_backoff, self.max_backoff, n).max(after.unwrap_or_default());
                     if Instant::now() + wait >= deadline {
-                        return ExportResult::Failure(format!("{} (no time left to retry)", msg), true);
+                        return Err((format!("{} (no time left to retry)", msg), true));
                     }
                     cameleer_core::camel_debug!(LOGGER, "Export failed ({}), retry {} in {:?}", msg, n, wait);
                     std::thread::sleep(wait);
                 }
             }
+        }
+    }
+}
+
+impl SpanExporter for OtlpHttpExporter {
+    fn export(&self, spans: &[SpanData], budget: Duration) -> ExportResult {
+        if spans.is_empty() {
+            return ExportResult::Success;
+        }
+        match self.post_body(&self.body(spans), budget) {
+            Ok(()) => ExportResult::Success,
+            Err((m, retryable)) => ExportResult::Failure(m, retryable),
         }
     }
 }

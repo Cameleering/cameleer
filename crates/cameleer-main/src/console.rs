@@ -248,7 +248,13 @@ pub fn handle_request(ctx: &CamelContext, cfg: &ConsoleConfig, req: &HttpRequest
         ["q" | "observe", "health", "ready"] if cfg.health && get => health_response(ctx.health_readiness()),
         ["q" | "observe", "health", "live"] if cfg.health && get => health_response(ctx.health_liveness()),
         ["q" | "observe", "metrics"] if cfg.metrics && get => {
-            HttpResponse::text(200, ctx.managed_context().prometheus()).with_content_type("text/plain; version=0.0.4; charset=utf-8")
+            let base = ctx.managed_context().prometheus();
+            // the micrometer, metrics and opentelemetry-metrics meters and camel.metrics.*
+            let text = match cameleer_core::metrics::MeterRegistry::existing(ctx) {
+                Some(r) => cameleer_core::metrics::prometheus::merge(&base, &r),
+                None => base,
+            };
+            HttpResponse::text(200, text).with_content_type("text/plain; version=0.0.4; charset=utf-8")
         }
         ["q", "info"] if (cfg.info || cfg.dev_console) && get => json(200, &info_value(ctx)),
         ["q", "dev", "packs"] if cfg.dev_console && get => json(200, &info_value(ctx).get("packs").cloned().unwrap_or(Value::Array(Vec::new()))),

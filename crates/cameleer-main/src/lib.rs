@@ -20,6 +20,7 @@ pub mod features;
 pub mod integration;
 pub mod lambda;
 pub mod local;
+pub mod metrics;
 pub mod properties;
 #[cfg(feature = "validate")]
 pub mod schema;
@@ -73,6 +74,10 @@ pub struct Main {
     attestation: std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>,
     /// Flushes and stops the OpenTelemetry exporter (`camel.opentelemetry.enabled`).
     otel_shutdown: Option<Box<dyn Fn(Duration) + Send + Sync>>,
+    /// Exports the metrics a last time and stops the OTLP metric exporter.
+    metrics_shutdown: Option<Box<dyn Fn(Duration) + Send + Sync>>,
+    /// `camel.metrics.logMetricsOnShutdown`: format and name filters.
+    metrics_log: Option<(String, Vec<String>)>,
     /// Properties set in code / on the command line (highest precedence).
     explicit: BTreeMap<String, String>,
     /// Defaults set in code / on the command line (lowest precedence).
@@ -162,6 +167,8 @@ impl Main {
             mcp: std::sync::Mutex::new(None),
             attestation: std::sync::Mutex::new(None),
             otel_shutdown: None,
+            metrics_shutdown: None,
+            metrics_log: None,
             defaults: BTreeMap::new(),
             explicit: BTreeMap::new(),
             profile_docs: Vec::new(),
@@ -518,6 +525,7 @@ impl Main {
         }
         self.apply_management_properties()?;
         self.start_opentelemetry()?;
+        self.start_metrics()?;
         for c in std::mem::take(&mut self.configurers) {
             c(&self.ctx)?;
         }
@@ -709,11 +717,53 @@ impl Main {
         Ok(())
     }
 
-    /// Exports the spans still queued and stops the OpenTelemetry exporter (at most 5 s).
+    /// Exports the spans still queued and stops the OpenTelemetry exporter (at most 5 s); logs
+    /// and exports the metrics a last time.
     fn stop_opentelemetry(&self) {
         if let Some(f) = &self.otel_shutdown {
             f(Duration::from_secs(5));
         }
+        if let (Some((format, filters)), Some(r)) = (&self.metrics_log, cameleer_core::metrics::MeterRegistry::existing(&self.ctx)) {
+            let meters: Vec<_> = r.meters().into_iter().filter(|(id, _)| filters.is_empty() || filters.iter().any(|f| cameleer_core::util::matches_pattern(&id.name, f))).collect();
+            let text = if format == "prometheus" {
+                cameleer_core::metrics::prometheus::render_meters(&meters, &Default::default())
+            } else {
+                metrics::meters_json(&meters)
+            };
+            cameleer_core::camel_info!("MicrometerPrometheus", "Metrics on shutdown:\n{}", text.trim_end());
+        }
+        if let Some(f) = &self.metrics_shutdown {
+            f(Duration::from_secs(5));
+        }
+    }
+
+    /// The built-in meters (`camel.metrics.*`, `camel.opentelemetry.metrics.*`) and the OTLP
+    /// metric exporter, installed before the routes are created.
+    fn start_metrics(&mut self) -> Result<()> {
+        if self.metrics_shutdown.is_some() || cameleer_core::metrics::MeterRegistry::existing(&self.ctx).map(|r| !r.meters().is_empty()).unwrap_or(false) {
+            return Ok(());
+        }
+        if let Some(cfg) = metrics::config(&self.properties)? {
+            if cfg.message_history {
+                // as Camel: the message-history meters need message history
+                self.ctx.set_message_history(true);
+            }
+            cameleer_core::metrics::instrument::install(&self.ctx, cfg);
+        }
+        self.metrics_log = metrics::log_on_shutdown(&self.properties)?;
+        #[cfg(feature = "opentelemetry")]
+        {
+            let props = self.properties.clone();
+            let env = self.env.clone();
+            let lookup = move |k: &str| -> Option<String> {
+                console::prop(&props, k).or_else(|| env.as_ref().and_then(|e| e.get(&cameleer_opentelemetry::config::env_name(k)).cloned()))
+            };
+            if let Some(exp) = cameleer_opentelemetry::install_metrics(&self.ctx, &lookup)? {
+                let exp = Arc::new(exp);
+                self.metrics_shutdown = Some(Box::new(move |t| exp.shutdown(t)));
+            }
+        }
+        Ok(())
     }
 
     /// Whether `camel.main.startupRecorder` (`startup-recorder`) is `logging`.

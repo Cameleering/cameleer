@@ -723,6 +723,18 @@ Design and the mapping to Camel in `docs/design/opentelemetry.md`; user guide `d
 - **Left out:** OTLP metrics and logs, OTLP gRPC and JSON, B3/Jaeger propagators, Camel's MDC keys in log lines, the
   `log` EIP as span events, otel2's `includePatterns`/`traceHeadersInclusion`; not measured on Linux or droplets.
 
+## Metrics (2026-11-25, branch `metrics`, stacked on `opentelemetry`)
+
+Design in `docs/design/metrics.md`. One std-only registry (`cameleer_core::metrics`) behind the `micrometer`,
+`metrics` (Dropwizard) and `opentelemetry-metrics` components and Camel's built-in meters (`camel.metrics.*`, or
+`camel.opentelemetry.metrics.*` with otel names); Micrometer-style Prometheus text at `/q/metrics` and
+`/observe/metrics` (registry families replace management's of the same name); OTLP/HTTP metric export in
+`cameleer-opentelemetry` (`OTEL_METRICS_EXPORTER=otlp`, cumulative). Tests: core `tests/metrics.rs` (5),
+`cameleer-opentelemetry/tests/metrics_export.rs` (2), `cameleer-main/tests/metrics_main.rs` (2), unit tests. Overhead
+(`benchmarks/results/2026-11-25-windows-metrics/`): off 0.96x to 1.04x of `main`; the default meters 0.1 to 0.26 µs per
+message. Left out: JVM binders, OpenMetrics, delta temporality, exemplars, meter rates and percentiles,
+`clearOnReload`, the long task timer.
+
 ## Log pipeline components (2026-11-25)
 
 - **`splunk-hec`** (`cameleer-saas`, feature `saas`): Camel's producer to Splunk's HTTP Event Collector, its options,

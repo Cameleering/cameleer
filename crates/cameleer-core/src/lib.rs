@@ -29,6 +29,7 @@ pub mod language;
 pub mod log;
 pub mod management;
 pub mod message;
+pub mod metrics;
 pub mod model;
 pub mod multipart;
 pub mod pack;

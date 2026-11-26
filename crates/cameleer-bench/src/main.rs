@@ -68,6 +68,24 @@ fn bench_tracing(ctx: &CamelContext) -> Result<Option<(cameleer_opentelemetry::O
     Ok(Some((otel, rx)))
 }
 
+/// Camel's built-in meters for the overhead measurement (`CAMEL_BENCH_METRICS`): unset or `off`
+/// installs nothing; `micrometer` installs `camel.metrics.*` with its defaults (route policy,
+/// exchange and route event notifiers); `opentelemetry` the same with OpenTelemetry's names.
+fn bench_metrics(ctx: &CamelContext) -> Result<()> {
+    use cameleer_core::metrics::instrument::{install, Flavor, MetricsConfig};
+    match std::env::var("CAMEL_BENCH_METRICS").unwrap_or_default().as_str() {
+        "" | "off" => {}
+        "micrometer" => {
+            install(ctx, MetricsConfig::default());
+        }
+        "opentelemetry" => {
+            install(ctx, MetricsConfig { flavor: Flavor::OpenTelemetry, ..MetricsConfig::default() });
+        }
+        o => return Err(CamelError::illegal_argument(format!("CAMEL_BENCH_METRICS must be off, micrometer or opentelemetry: {o}"))),
+    }
+    Ok(())
+}
+
 /// Prints the tracing counters of [`bench_tracing`] to stderr.
 fn report_tracing(t: &Option<(cameleer_opentelemetry::OpenTelemetry, Option<cameleer_opentelemetry::testing::OtlpReceiver>)>) {
     if let Some((otel, rx)) = t {
@@ -163,6 +181,7 @@ fn dispatch(args: &[String]) -> std::result::Result<(), String> {
             let sink = Arc::new(AtomicU64::new(0));
             let ctx = CamelContext::new();
             let tracing = bench_tracing(&ctx).map_err(s)?;
+            bench_metrics(&ctx).map_err(s)?;
             let ctx = context_into(ctx, &sink).map_err(s)?;
             ctx.start().map_err(s)?;
             version();

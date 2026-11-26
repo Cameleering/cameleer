@@ -74,6 +74,33 @@ impl Writer {
         self.tag(field, FIXED64);
         self.buf.extend_from_slice(&v.to_le_bytes());
     }
+    /// A fixed64 (or sfixed64) field, also written when zero.
+    pub fn fixed64_always(&mut self, field: u32, v: u64) {
+        self.tag(field, FIXED64);
+        self.buf.extend_from_slice(&v.to_le_bytes());
+    }
+    /// A packed repeated fixed64 field (written even when empty only if `v` is non-empty).
+    pub fn packed_fixed64(&mut self, field: u32, v: &[u64]) {
+        if v.is_empty() {
+            return;
+        }
+        self.tag(field, LEN);
+        self.varint((v.len() * 8) as u64);
+        for x in v {
+            self.buf.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    /// A packed repeated double field.
+    pub fn packed_double(&mut self, field: u32, v: &[f64]) {
+        if v.is_empty() {
+            return;
+        }
+        self.tag(field, LEN);
+        self.varint((v.len() * 8) as u64);
+        for x in v {
+            self.buf.extend_from_slice(&x.to_le_bytes());
+        }
+    }
     pub fn fixed32(&mut self, field: u32, v: u32) {
         if v != 0 {
             self.tag(field, FIXED32);

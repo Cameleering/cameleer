@@ -1644,6 +1644,11 @@ impl CamelContext {
         self.inner.inflight.size()
     }
 
+    /// Number of inflight exchanges of one route.
+    pub fn inflight_route_count(&self, route_id: &str) -> usize {
+        self.inner.inflight.route_size(route_id)
+    }
+
     // --- templates ---
 
     pub fn create_producer_template(&self) -> ProducerTemplate {
