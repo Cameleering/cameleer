@@ -41,7 +41,7 @@ the same. An unknown option is an error that prints the usage.
 ```text
 cameleer run [files...] [--properties FILE] [--profile P] [--dev] [--name N] [--background]
              [--max-seconds N] [--max-messages N] [--max-idle-seconds N] [--prop key=value]
-             [--log-level LEVEL] [--console] [--port N] [--trace] [--mcp | --mcp-stdio]
+             [--log-level LEVEL] [--log-format text|ecs|logstash] [--logging-json] [--console] [--port N] [--trace] [--mcp | --mcp-stdio]
              [--mcp-expose PATTERNS]
 ```
 
@@ -63,6 +63,8 @@ stopped (Ctrl+C, `SIGTERM`, `cameleer stop`) or a limit set with `--max-seconds`
 | `--max-idle-seconds N` | stop after N seconds without a message | `camel.main.duration-max-idle-seconds` |
 | `--prop key=value` | set any configuration key; repeat it for several | |
 | `--log-level LEVEL` | `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR` or `OFF` | `camel.main.log-level` |
+| `--log-format FORMAT` | log lines as `text` (default), `ecs` or `logstash` JSON ([OpenTelemetry](opentelemetry.md#trace-ids-in-log-lines)) | `camel.main.log-format` |
+| `--logging-json` | Camel JBang's flag: JSON lines in the ECS layout, the same as `--log-format ecs` | `camel.main.log-format=ecs` |
 | `--console` | start the management server with the developer console, health checks and metrics | `camel.server.enabled`, `devConsoleEnabled`, `healthCheckEnabled`, `metricsEnabled` = `true` |
 | `--port N` | the HTTP port for REST, `platform-http` and the management server (default 8080) | `camel.server.port` |
 | `--trace` | trace every message through the routes | `camel.main.tracing=true` |

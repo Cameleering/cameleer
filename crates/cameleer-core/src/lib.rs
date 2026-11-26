@@ -40,6 +40,7 @@ pub mod stack;
 pub mod startup;
 pub mod stripe;
 pub mod supervising;
+pub mod telemetry;
 pub mod template;
 pub mod template_routes;
 pub mod tracer;

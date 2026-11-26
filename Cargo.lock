@@ -45,6 +45,7 @@ dependencies = [
  "cameleer-grpc",
  "cameleer-http",
  "cameleer-kafka-mqtt",
+ "cameleer-opentelemetry",
  "cameleer-sql",
  "simoom-client",
 ]
@@ -144,6 +145,7 @@ dependencies = [
  "cameleer-health",
  "cameleer-http",
  "cameleer-kafka-mqtt",
+ "cameleer-opentelemetry",
  "cameleer-protocols",
  "cameleer-saas",
  "cameleer-script",
@@ -153,6 +155,15 @@ dependencies = [
  "cameleer-tls",
  "cameleer-xml",
  "cameleer-yaml",
+]
+
+[[package]]
+name = "cameleer-opentelemetry"
+version = "0.8.0"
+dependencies = [
+ "cameleer-core",
+ "cameleer-http",
+ "cameleer-tls",
 ]
 
 [[package]]

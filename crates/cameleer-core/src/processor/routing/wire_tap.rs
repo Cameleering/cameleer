@@ -130,7 +130,7 @@ impl ProcessorDefinition for WireTapDefinition {
             TapTarget::Dynamic(simple(self.uri.clone()).def.resolve_expression(&rc.context)?)
         } else {
             let endpoint = rc.context.get_endpoint(&self.uri)?;
-            let producer = endpoint.create_producer()?;
+            let producer = rc.context.create_producer(&endpoint)?;
             rc.add_service(producer.clone());
             TapTarget::Static(producer)
         };
