@@ -1,0 +1,270 @@
+{
+  "date": "2026-11-26",
+  "repo": {
+    "forks": 1,
+    "open_issues": 14,
+    "stars": 3,
+    "watchers": 0
+  },
+  "views": {
+    "count": 344,
+    "uniques": 151,
+    "views": [
+      {
+        "timestamp": "2026-11-12T00:00:00Z",
+        "count": 29,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-13T00:00:00Z",
+        "count": 39,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-11-14T00:00:00Z",
+        "count": 0,
+        "uniques": 0
+      },
+      {
+        "timestamp": "2026-11-15T00:00:00Z",
+        "count": 6,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-16T00:00:00Z",
+        "count": 2,
+        "uniques": 2
+      },
+      {
+        "timestamp": "2026-11-17T00:00:00Z",
+        "count": 5,
+        "uniques": 5
+      },
+      {
+        "timestamp": "2026-11-18T00:00:00Z",
+        "count": 7,
+        "uniques": 4
+      },
+      {
+        "timestamp": "2026-11-19T00:00:00Z",
+        "count": 11,
+        "uniques": 11
+      },
+      {
+        "timestamp": "2026-11-20T00:00:00Z",
+        "count": 6,
+        "uniques": 6
+      },
+      {
+        "timestamp": "2026-11-21T00:00:00Z",
+        "count": 14,
+        "uniques": 14
+      },
+      {
+        "timestamp": "2026-11-22T00:00:00Z",
+        "count": 14,
+        "uniques": 11
+      },
+      {
+        "timestamp": "2026-11-23T00:00:00Z",
+        "count": 29,
+        "uniques": 28
+      },
+      {
+        "timestamp": "2026-11-24T00:00:00Z",
+        "count": 110,
+        "uniques": 32
+      },
+      {
+        "timestamp": "2026-11-25T00:00:00Z",
+        "count": 72,
+        "uniques": 44
+      }
+    ]
+  },
+  "clones": {
+    "count": 3093,
+    "uniques": 639,
+    "clones": [
+      {
+        "timestamp": "2026-11-12T00:00:00Z",
+        "count": 459,
+        "uniques": 106
+      },
+      {
+        "timestamp": "2026-11-13T00:00:00Z",
+        "count": 439,
+        "uniques": 82
+      },
+      {
+        "timestamp": "2026-11-14T00:00:00Z",
+        "count": 246,
+        "uniques": 80
+      },
+      {
+        "timestamp": "2026-11-15T00:00:00Z",
+        "count": 142,
+        "uniques": 52
+      },
+      {
+        "timestamp": "2026-11-16T00:00:00Z",
+        "count": 357,
+        "uniques": 45
+      },
+      {
+        "timestamp": "2026-11-17T00:00:00Z",
+        "count": 165,
+        "uniques": 53
+      },
+      {
+        "timestamp": "2026-11-18T00:00:00Z",
+        "count": 158,
+        "uniques": 40
+      },
+      {
+        "timestamp": "2026-11-19T00:00:00Z",
+        "count": 125,
+        "uniques": 48
+      },
+      {
+        "timestamp": "2026-11-20T00:00:00Z",
+        "count": 187,
+        "uniques": 89
+      },
+      {
+        "timestamp": "2026-11-21T00:00:00Z",
+        "count": 53,
+        "uniques": 27
+      },
+      {
+        "timestamp": "2026-11-22T00:00:00Z",
+        "count": 40,
+        "uniques": 20
+      },
+      {
+        "timestamp": "2026-11-23T00:00:00Z",
+        "count": 155,
+        "uniques": 45
+      },
+      {
+        "timestamp": "2026-11-24T00:00:00Z",
+        "count": 367,
+        "uniques": 88
+      },
+      {
+        "timestamp": "2026-11-25T00:00:00Z",
+        "count": 200,
+        "uniques": 48
+      }
+    ]
+  },
+  "referrers": [
+    {
+      "referrer": "github.com",
+      "count": 42,
+      "uniques": 17
+    },
+    {
+      "referrer": "linkedin.com",
+      "count": 21,
+      "uniques": 19
+    },
+    {
+      "referrer": "com.linkedin.android",
+      "count": 11,
+      "uniques": 9
+    },
+    {
+      "referrer": "Google",
+      "count": 6,
+      "uniques": 5
+    },
+    {
+      "referrer": "cameleer.ing",
+      "count": 3,
+      "uniques": 2
+    },
+    {
+      "referrer": "lnkd.in",
+      "count": 3,
+      "uniques": 2
+    },
+    {
+      "referrer": "search.brave.com",
+      "count": 1,
+      "uniques": 1
+    }
+  ],
+  "paths": [
+    {
+      "path": "/Cameleering/cameleer",
+      "title": "Overview",
+      "count": 60,
+      "uniques": 37
+    },
+    {
+      "path": "/cameleering/cameleer",
+      "title": "Overview",
+      "count": 37,
+      "uniques": 30
+    },
+    {
+      "path": "/Cameleering/cameleer/pulls",
+      "title": "/pulls",
+      "count": 20,
+      "uniques": 1
+    },
+    {
+      "path": "/Cameleering/cameleer/commits/main",
+      "title": "/commits/main",
+      "count": 16,
+      "uniques": 3
+    },
+    {
+      "path": "/Cameleering/cameleer/commits",
+      "title": "/commits",
+      "count": 12,
+      "uniques": 2
+    },
+    {
+      "path": "/Cameleering/cameleer/issues",
+      "title": "/issues",
+      "count": 10,
+      "uniques": 8
+    },
+    {
+      "path": "/Cameleering/cameleer/blob/main/docs/guides/limitations.md",
+      "title": "/blob/main/docs/guides/limitations.md",
+      "count": 4,
+      "uniques": 3
+    },
+    {
+      "path": "/Cameleering/cameleer/pulse",
+      "title": "/pulse",
+      "count": 4,
+      "uniques": 1
+    },
+    {
+      "path": "/pmsudhi/cameleer",
+      "title": "Overview",
+      "count": 4,
+      "uniques": 1
+    },
+    {
+      "path": "/Cameleering/cameleer/blob/main/docs/BENCHMARKS.md",
+      "title": "/blob/main/docs/BENCHMARKS.md",
+      "count": 3,
+      "uniques": 3
+    }
+  ],
+  "crates_io": {
+    "crate": "cameleer-main",
+    "downloads": 133,
+    "recent_downloads": 133,
+    "max_version": "0.8.0"
+  },
+  "docker_hub": {
+    "pull_count": 1689,
+    "star_count": 0
+  }
+}
