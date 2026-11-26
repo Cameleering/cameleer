@@ -107,6 +107,33 @@ embedded broker) print every frame to stderr, which is how bug 16 was diagnosed.
 * With RabbitMQ (no selectors) several producers must not share one fixed AMQP 1.0 `replyTo`
   queue: they would compete for each other's replies.
 
+## GnuPG and libgcrypt 1.12.0
+
+`crates/cameleer-dataformats/tests/pgp_gpg.rs` runs against whatever `gpg` is installed (CI:
+GitHub's `ubuntu-latest`, which moved from Ubuntu 24.04 to 26.04 during November 2026; runs
+landed on either image). On Ubuntu 26.04 (GnuPG 2.4.8, libgcrypt 1.12.0), gpg cannot reliably
+decrypt with an **imported** Cv25519 secret key, not even one it generated and exported itself.
+gpg reports `NO_SECKEY` and `public key decryption failed: Bad passphrase`, or `Bad secret key`
+for an unprotected key. The agent's debug log (`debug-level guru`) shows the real error: while
+converting the OpenPGP key, `gcry_pk_testkey` reports `Bad check: Point 'G' does not belong to
+curve 'E'`. This is libgcrypt's base point check, unrelated to the key's bytes. The cause is
+[GnuPG T8094](https://dev.gnupg.org/T8094) (uninitialised MPI limbs in ECC), fixed in libgcrypt
+1.12.1. Keys that gpg generates in its own home are unaffected, because they are never converted.
+
+Measured on 2026-11-25:
+- **Ubuntu 26.04 container (2.4.8, 1.12.0):** decryption to our key failed every time in the
+  first loops (8 of 8 protected keys, 3 of 3 unprotected), and a gpg key exported and re-imported into a fresh home failed too. Neither
+  failure is deterministic. One loop run decrypted gpg's own re-imported key and then failed on
+  ours.
+- **WSL2 Ubuntu 24.04 (2.4.4, 1.10.3):** 3,000 of 3,000 fresh keys passed.
+- **Windows (2.4.9):** all runs passed.
+
+Cameleer's encoding matches GnuPG's byte for byte. The unit test
+`pgp::tests::cv25519_secret_key_encoding_matches_gnupg` pins it with a subkey GnuPG 2.4.8 made.
+When gpg reports `libgcrypt 1.12.0` and decryption fails with `Bad passphrase`,
+`gpg_interop_with_our_keys` skips only the two gpg-decrypts-our-message steps. It checks our
+signature with gpg instead and prints the reason; everything else still runs.
+
 ## Apache ActiveMQ 5.17
 
 Apache ActiveMQ 5.17.6 from Ubuntu 24.04 (`activemq`, universe; OpenJDK 21), run on 2026-11-01.
